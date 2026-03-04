@@ -5,14 +5,16 @@ const DRAFT_KEY = "merchant-space:homeBlocks:draft:v2";
 const PUBLISHED_KEY = "merchant-space:homeBlocks:published:v1";
 const DRAFT_STORE_EVENT = "merchant-space:blocks-draft-changed";
 const PUBLISHED_STORE_EVENT = "merchant-space:blocks-published-changed";
+const PUBLISHED_HISTORY_KEY = "merchant-space:homeBlocks:published-history:v1";
 const PUBLISH_FAILURE_SNAPSHOTS_KEY = "merchant-space:publish-failure-snapshots:v1";
 const MAX_PUBLISH_FAILURE_SNAPSHOTS = 12;
+const MAX_PUBLISHED_HISTORY = 20;
 const MAX_RAW_STORAGE_LENGTH = 12_000_000;
 
-let lastDraftRaw: string | null | undefined;
-let lastDraftParsed: Block[] | undefined;
-let lastPublishedRaw: string | null | undefined;
-let lastPublishedParsed: Block[] | undefined;
+export type BlocksStoreScope = string | undefined;
+const DEFAULT_SCOPE = "default";
+const draftCacheByKey = new Map<string, { raw: string | null | undefined; parsed: Block[] | undefined }>();
+const publishedCacheByKey = new Map<string, { raw: string | null | undefined; parsed: Block[] | undefined }>();
 
 type PublishFailureSnapshot = {
   id: string;
@@ -21,6 +23,29 @@ type PublishFailureSnapshot = {
   bytes: number;
   blocks: Block[];
 };
+
+type PublishedHistorySnapshot = {
+  id: string;
+  at: string;
+  bytes: number;
+  blocks: Block[];
+};
+
+function scopeToken(scope?: BlocksStoreScope) {
+  const normalized = (scope ?? "").trim();
+  if (!normalized) return DEFAULT_SCOPE;
+  return normalized.replace(/[^a-zA-Z0-9:_-]/g, "_");
+}
+
+function scopedKey(baseKey: string, scope?: BlocksStoreScope) {
+  const token = scopeToken(scope);
+  return token === DEFAULT_SCOPE ? baseKey : `${baseKey}:${token}`;
+}
+
+function scopedEvent(baseEvent: string, scope?: BlocksStoreScope) {
+  const token = scopeToken(scope);
+  return token === DEFAULT_SCOPE ? baseEvent : `${baseEvent}:${token}`;
+}
 
 function loadBlocksByKey(key: string, fallback: Block[]): Block[] {
   if (typeof window === "undefined") return fallback;
@@ -76,71 +101,169 @@ function subscribeByKey(key: string, eventName: string, onChange: () => void): (
   };
 }
 
-export function loadBlocksFromStorage(fallback: Block[]): Block[] {
-  return loadBlocksByKey(DRAFT_KEY, fallback);
+export function loadBlocksFromStorage(fallback: Block[], scope?: BlocksStoreScope): Block[] {
+  return loadBlocksByKey(scopedKey(DRAFT_KEY, scope), fallback);
 }
 
-export function saveBlocksToStorage(blocks: Block[]) {
-  saveBlocksByKey(DRAFT_KEY, DRAFT_STORE_EVENT, blocks);
-  lastDraftRaw = typeof window === "undefined" ? null : localStorage.getItem(DRAFT_KEY);
-  lastDraftParsed = sanitizeBlocksForRuntime(blocks).blocks;
+export function saveBlocksToStorage(blocks: Block[], scope?: BlocksStoreScope) {
+  const key = scopedKey(DRAFT_KEY, scope);
+  saveBlocksByKey(key, scopedEvent(DRAFT_STORE_EVENT, scope), blocks);
+  draftCacheByKey.set(key, {
+    raw: typeof window === "undefined" ? null : localStorage.getItem(key),
+    parsed: sanitizeBlocksForRuntime(blocks).blocks,
+  });
 }
 
-export function loadPublishedBlocksFromStorage(fallback: Block[]): Block[] {
-  return loadBlocksByKey(PUBLISHED_KEY, fallback);
+export function loadPublishedBlocksFromStorage(fallback: Block[], scope?: BlocksStoreScope): Block[] {
+  return loadBlocksByKey(scopedKey(PUBLISHED_KEY, scope), fallback);
 }
 
-export function savePublishedBlocksToStorage(blocks: Block[]) {
-  saveBlocksByKey(PUBLISHED_KEY, PUBLISHED_STORE_EVENT, blocks);
-  lastPublishedRaw = typeof window === "undefined" ? null : localStorage.getItem(PUBLISHED_KEY);
-  lastPublishedParsed = sanitizeBlocksForRuntime(blocks).blocks;
+export function savePublishedBlocksToStorage(blocks: Block[], scope?: BlocksStoreScope) {
+  const key = scopedKey(PUBLISHED_KEY, scope);
+  saveBlocksByKey(key, scopedEvent(PUBLISHED_STORE_EVENT, scope), blocks);
+  publishedCacheByKey.set(key, {
+    raw: typeof window === "undefined" ? null : localStorage.getItem(key),
+    parsed: sanitizeBlocksForRuntime(blocks).blocks,
+  });
 }
 
-export function clearBlocksStorage() {
+function estimateUtf8Size(text: string) {
+  if (typeof TextEncoder !== "undefined") return new TextEncoder().encode(text).length;
+  return text.length;
+}
+
+function blocksStableHash(blocks: Block[]) {
+  try {
+    return JSON.stringify(sanitizeBlocksForRuntime(blocks).blocks);
+  } catch {
+    return "";
+  }
+}
+
+function readPublishedHistoryRaw(scope?: BlocksStoreScope): PublishedHistorySnapshot[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(scopedKey(PUBLISHED_HISTORY_KEY, scope));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    const items: PublishedHistorySnapshot[] = [];
+    parsed.forEach((item) => {
+      if (!item || typeof item !== "object") return;
+      const record = item as Record<string, unknown>;
+      if (typeof record.id !== "string" || typeof record.at !== "string") return;
+      if (!Array.isArray(record.blocks)) return;
+      const bytes = typeof record.bytes === "number" && Number.isFinite(record.bytes) ? Math.max(0, Math.round(record.bytes)) : 0;
+      items.push({
+        id: record.id,
+        at: record.at,
+        bytes,
+        blocks: sanitizeBlocksForRuntime(record.blocks as Block[]).blocks,
+      });
+    });
+    return items.slice(0, MAX_PUBLISHED_HISTORY);
+  } catch {
+    return [];
+  }
+}
+
+function writePublishedHistoryRaw(items: PublishedHistorySnapshot[], scope?: BlocksStoreScope) {
   if (typeof window === "undefined") return;
-  localStorage.removeItem(DRAFT_KEY);
-  lastDraftRaw = null;
-  lastDraftParsed = undefined;
-  window.dispatchEvent(new Event(DRAFT_STORE_EVENT));
+  try {
+    localStorage.setItem(scopedKey(PUBLISHED_HISTORY_KEY, scope), JSON.stringify(items.slice(0, MAX_PUBLISHED_HISTORY)));
+  } catch {
+    // ignore storage write failures
+  }
 }
 
-export function clearPublishedBlocksStorage() {
+function ensurePublishedHistorySeeded(scope?: BlocksStoreScope) {
   if (typeof window === "undefined") return;
-  localStorage.removeItem(PUBLISHED_KEY);
-  lastPublishedRaw = null;
-  lastPublishedParsed = undefined;
-  window.dispatchEvent(new Event(PUBLISHED_STORE_EVENT));
+  const currentHistory = readPublishedHistoryRaw(scope);
+  if (currentHistory.length > 0) return;
+  const currentPublished = loadPublishedBlocksFromStorage([], scope);
+  if (!Array.isArray(currentPublished) || currentPublished.length === 0) return;
+  const raw = JSON.stringify(currentPublished);
+  const seed: PublishedHistorySnapshot = {
+    id: `seed-${Date.now()}`,
+    at: new Date().toISOString(),
+    bytes: estimateUtf8Size(raw),
+    blocks: currentPublished,
+  };
+  writePublishedHistoryRaw([seed], scope);
 }
 
-export function subscribeBlocksStore(onChange: () => void): () => void {
-  return subscribeByKey(DRAFT_KEY, DRAFT_STORE_EVENT, onChange);
+export function recordPublishedVersion(blocks: Block[], scope?: BlocksStoreScope) {
+  if (typeof window === "undefined") return;
+  ensurePublishedHistorySeeded(scope);
+  const sanitized = sanitizeBlocksForRuntime(blocks).blocks;
+  const current = readPublishedHistoryRaw(scope);
+  const nextHash = blocksStableHash(sanitized);
+  const latestHash = current[0] ? blocksStableHash(current[0].blocks) : "";
+  if (nextHash && nextHash === latestHash) return;
+  const raw = JSON.stringify(sanitized);
+  const snapshot: PublishedHistorySnapshot = {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    at: new Date().toISOString(),
+    bytes: estimateUtf8Size(raw),
+    blocks: sanitized,
+  };
+  writePublishedHistoryRaw([snapshot, ...current], scope);
 }
 
-export function subscribePublishedBlocksStore(onChange: () => void): () => void {
-  return subscribeByKey(PUBLISHED_KEY, PUBLISHED_STORE_EVENT, onChange);
+export function rollbackToPreviousPublishedVersion(scope?: BlocksStoreScope): Block[] | null {
+  if (typeof window === "undefined") return null;
+  ensurePublishedHistorySeeded(scope);
+  const current = readPublishedHistoryRaw(scope);
+  if (current.length < 2) return null;
+  const [, target, ...rest] = current;
+  writePublishedHistoryRaw([target, ...rest], scope);
+  savePublishedBlocksToStorage(target.blocks, scope);
+  return target.blocks;
 }
 
-export function getBlocksSnapshot(fallback: Block[]): Block[] {
+export function clearBlocksStorage(scope?: BlocksStoreScope) {
+  if (typeof window === "undefined") return;
+  const key = scopedKey(DRAFT_KEY, scope);
+  localStorage.removeItem(key);
+  draftCacheByKey.delete(key);
+  window.dispatchEvent(new Event(scopedEvent(DRAFT_STORE_EVENT, scope)));
+}
+
+export function clearPublishedBlocksStorage(scope?: BlocksStoreScope) {
+  if (typeof window === "undefined") return;
+  const key = scopedKey(PUBLISHED_KEY, scope);
+  localStorage.removeItem(key);
+  publishedCacheByKey.delete(key);
+  window.dispatchEvent(new Event(scopedEvent(PUBLISHED_STORE_EVENT, scope)));
+}
+
+export function subscribeBlocksStore(onChange: () => void, scope?: BlocksStoreScope): () => void {
+  return subscribeByKey(scopedKey(DRAFT_KEY, scope), scopedEvent(DRAFT_STORE_EVENT, scope), onChange);
+}
+
+export function subscribePublishedBlocksStore(onChange: () => void, scope?: BlocksStoreScope): () => void {
+  return subscribeByKey(scopedKey(PUBLISHED_KEY, scope), scopedEvent(PUBLISHED_STORE_EVENT, scope), onChange);
+}
+
+export function getBlocksSnapshot(fallback: Block[], scope?: BlocksStoreScope): Block[] {
   if (typeof window === "undefined") return fallback;
-
-  const raw = localStorage.getItem(DRAFT_KEY);
-  if (raw === lastDraftRaw && lastDraftParsed) return lastDraftParsed;
-
-  const parsed = loadBlocksFromStorage(fallback);
-  lastDraftRaw = raw;
-  lastDraftParsed = parsed;
+  const key = scopedKey(DRAFT_KEY, scope);
+  const cached = draftCacheByKey.get(key);
+  const raw = localStorage.getItem(key);
+  if (cached && raw === cached.raw && cached.parsed) return cached.parsed;
+  const parsed = loadBlocksFromStorage(fallback, scope);
+  draftCacheByKey.set(key, { raw, parsed });
   return parsed;
 }
 
-export function getPublishedBlocksSnapshot(fallback: Block[]): Block[] {
+export function getPublishedBlocksSnapshot(fallback: Block[], scope?: BlocksStoreScope): Block[] {
   if (typeof window === "undefined") return fallback;
-
-  const raw = localStorage.getItem(PUBLISHED_KEY);
-  if (raw === lastPublishedRaw && lastPublishedParsed) return lastPublishedParsed;
-
-  const parsed = loadPublishedBlocksFromStorage(fallback);
-  lastPublishedRaw = raw;
-  lastPublishedParsed = parsed;
+  const key = scopedKey(PUBLISHED_KEY, scope);
+  const cached = publishedCacheByKey.get(key);
+  const raw = localStorage.getItem(key);
+  if (cached && raw === cached.raw && cached.parsed) return cached.parsed;
+  const parsed = loadPublishedBlocksFromStorage(fallback, scope);
+  publishedCacheByKey.set(key, { raw, parsed });
   return parsed;
 }
 
@@ -148,10 +271,10 @@ export function savePublishFailureSnapshot(input: {
   reason: string;
   bytes: number;
   blocks: Block[];
-}) {
+}, scope?: BlocksStoreScope) {
   if (typeof window === "undefined") return;
   try {
-    const current = readPublishFailureSnapshots();
+    const current = readPublishFailureSnapshots(scope);
     const sanitized = sanitizeBlocksForRuntime(input.blocks).blocks;
     const nextItem: PublishFailureSnapshot = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -161,16 +284,16 @@ export function savePublishFailureSnapshot(input: {
       blocks: sanitized,
     };
     const next = [nextItem, ...current].slice(0, MAX_PUBLISH_FAILURE_SNAPSHOTS);
-    localStorage.setItem(PUBLISH_FAILURE_SNAPSHOTS_KEY, JSON.stringify(next));
+    localStorage.setItem(scopedKey(PUBLISH_FAILURE_SNAPSHOTS_KEY, scope), JSON.stringify(next));
   } catch {
     // Ignore local cache write failures.
   }
 }
 
-export function readPublishFailureSnapshots(): PublishFailureSnapshot[] {
+export function readPublishFailureSnapshots(scope?: BlocksStoreScope): PublishFailureSnapshot[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = localStorage.getItem(PUBLISH_FAILURE_SNAPSHOTS_KEY);
+    const raw = localStorage.getItem(scopedKey(PUBLISH_FAILURE_SNAPSHOTS_KEY, scope));
     if (!raw) return [];
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
@@ -196,10 +319,10 @@ export function readPublishFailureSnapshots(): PublishFailureSnapshot[] {
   }
 }
 
-export function clearPublishFailureSnapshots() {
+export function clearPublishFailureSnapshots(scope?: BlocksStoreScope) {
   if (typeof window === "undefined") return;
   try {
-    localStorage.removeItem(PUBLISH_FAILURE_SNAPSHOTS_KEY);
+    localStorage.removeItem(scopedKey(PUBLISH_FAILURE_SNAPSHOTS_KEY, scope));
   } catch {
     // ignore storage write failures
   }

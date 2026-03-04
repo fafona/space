@@ -1,0 +1,1956 @@
+
+> merchant-space@0.1.0 dev
+> npm run check:env && next dev --webpack
+
+
+> merchant-space@0.1.0 check:env
+> node scripts/check-env.mjs
+
+[env-check] OK
+▲ Next.js 16.1.6 (webpack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.110.252:3000
+- Environments: .env.local
+
+✓ Starting...
+✓ Ready in 1421ms
+○ Compiling /admin ...
+ GET /admin 200 in 4.9s (compile: 4.7s, render: 259ms)
+ GET /admin 200 in 35ms (compile: 7ms, render: 28ms)
+ GET / 200 in 821ms (compile: 652ms, render: 169ms)
+ GET /admin 200 in 101ms (compile: 17ms, render: 83ms)
+ GET /super-admin 200 in 648ms (compile: 544ms, render: 104ms)
+ GET / 200 in 141ms (compile: 11ms, render: 130ms)
+ GET /admin 200 in 150ms (compile: 65ms, render: 85ms)
+ GET /super-admin/editor 200 in 537ms (compile: 417ms, render: 120ms)
+ GET /super-admin 200 in 29ms (compile: 5ms, render: 24ms)
+ GET /super-admin/editor 200 in 73ms (compile: 4ms, render: 70ms)
+ GET /super-admin/editor 200 in 40ms (compile: 3ms, render: 37ms)
+ GET /portal 200 in 496ms (compile: 390ms, render: 105ms)
+ GET /super-admin/editor 200 in 179ms (compile: 67ms, render: 112ms)
+ GET / 200 in 221ms (compile: 12ms, render: 209ms)
+ GET /admin 200 in 265ms (compile: 53ms, render: 211ms)
+ GET /super-admin/editor 200 in 236ms (compile: 72ms, render: 164ms)
+ GET /super-admin 200 in 267ms (compile: 131ms, render: 136ms)
+ GET /super-admin/editor 200 in 35ms (compile: 3ms, render: 32ms)
+⨯ ./src/app/portal/page.tsx
+Error: 
+
+Caused by:
+    0: Failed to read source code from D:\merchant-space\src\app\portal\page.tsx
+    1: stream did not contain valid UTF-8
+
+Import trace for requested module:
+./src/app/portal/page.tsx
+⨯ ./src/app/portal/page.tsx
+Error: 
+
+Caused by:
+    0: Failed to read source code from D:\merchant-space\src\app\portal\page.tsx
+    1: stream did not contain valid UTF-8
+
+Import trace for requested module:
+./src/app/portal/page.tsx
+ GET /portal 500 in 13.3s (compile: 13.1s, render: 117ms)
+ GET /admin 500 in 13.3s (compile: 13.1s, render: 109ms)
+ GET /super-admin/editor 500 in 13.3s (compile: 13.1s, render: 109ms)
+ GET / 500 in 13.2s (compile: 13.1s, render: 108ms)
+ GET /super-admin 500 in 13.2s (compile: 13.1s, render: 108ms)
+ GET /portal 500 in 54ms (compile: 20ms, render: 35ms)
+ GET /portal 500 in 47ms (compile: 12ms, render: 34ms)
+ GET /admin 500 in 54ms (compile: 20ms, render: 34ms)
+ GET /super-admin/editor 500 in 53ms (compile: 20ms, render: 34ms)
+ GET / 500 in 53ms (compile: 19ms, render: 34ms)
+ GET /super-admin 500 in 53ms (compile: 19ms, render: 33ms)
+○ Compiling /_error ...
+ GET /admin 500 in 44ms (compile: 12ms, render: 33ms)
+ GET /admin 500 in 42ms (compile: 10ms, render: 32ms)
+ GET /super-admin/editor 500 in 44ms (compile: 12ms, render: 32ms)
+ GET /super-admin/editor 500 in 41ms (compile: 10ms, render: 32ms)
+ GET / 500 in 44ms (compile: 12ms, render: 32ms)
+ GET /super-admin 500 in 43ms (compile: 12ms, render: 31ms)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename 'D:\merchant-space\.next\dev\cache\webpack\client-development-fallback\0.pack.gz_' -> 'D:\merchant-space\.next\dev\cache\webpack\client-development-fallback\0.pack.gz'
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename 'D:\merchant-space\.next\dev\cache\webpack\client-development-fallback\0.pack.gz_' -> 'D:\merchant-space\.next\dev\cache\webpack\client-development-fallback\0.pack.gz'
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename 'D:\merchant-space\.next\dev\cache\webpack\client-development-fallback\0.pack.gz_' -> 'D:\merchant-space\.next\dev\cache\webpack\client-development-fallback\0.pack.gz'
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename 'D:\merchant-space\.next\dev\cache\webpack\client-development-fallback\0.pack.gz_' -> 'D:\merchant-space\.next\dev\cache\webpack\client-development-fallback\0.pack.gz'
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⨯ ./src/app/portal/page.tsx
+Error:   x Expected ';', '}' or <eof>
+    ,-[D:\merchant-space\src\app\portal\page.tsx:19:1]
+ 16 | } from "@/lib/siteRouting";
+ 17 | import { useHydrated } from "@/lib/useHydrated";
+ 18 | 
+ 19 | type PlatformSite = PlatformState["sites"][number];`r`nconst EMPTY_BLOCKS: Block[] = [];`r`n`r`nexport default function PortalPage() {
+    :                                                    ^|^^^^^^^
+    :                                                     `-- This is the expression part of an expression statement
+ 20 |   const hydrated = useHydrated();
+ 21 |   const [platformState, setPlatformState] = useState(() => loadPlatformState());
+ 22 |   const portalPublishedBlocks = useSyncExternalStore(
+    `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+./src/app/portal/page.tsx
+ GET /portal 500 in 167ms
+ GET / 500 in 277ms
+ GET /super-admin 500 in 80ms
+ GET /admin 500 in 60ms
+ GET /super-admin/editor 500 in 263ms (compile: 165ms, render: 99ms)
+ GET /admin 500 in 142ms (compile: 117ms, render: 25ms)
+ GET /super-admin 500 in 141ms (compile: 117ms, render: 25ms)
+ GET /portal 500 in 40ms (compile: 16ms, render: 24ms)
+ GET / 500 in 34ms (compile: 10ms, render: 24ms)
+ GET /super-admin/editor 500 in 42ms (compile: 33ms, render: 10ms)
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⨯ ./src/app/portal/page.tsx
+Error:   x Unexpected token. Did you mean `{'>'}` or `&gt;`?
+     ,-[D:\merchant-space\src\app\portal\page.tsx:148:1]
+ 145 |         >
+ 146 |           <div className="rounded-2xl border bg-white/95 p-4 shadow-sm">
+ 147 |             <div className="mb-2 flex items-center justify-between">
+ 148 |               <div className="text-xs uppercase tracking-wide text-slate-500">鎬荤珯鍙鍖栧尯鍧?/div>
+     :                                                                                                      ^
+ 149 |               <div className="text-xs text-slate-500">鐢辫秴绾у悗鍙版墍瑙佸嵆鎵€寰楃紪杈戝櫒鍙戝竷</div>
+ 150 |             </div>
+ 151 |             <BlockRenderer
+     `----
+  x Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+     ,-[D:\merchant-space\src\app\portal\page.tsx:160:1]
+ 157 |             />
+ 158 |           </div>
+ 159 |         </section>
+ 160 |       ) : null}
+     :               ^
+ 161 | 
+ 162 |       {!hasPortalVisualBlocks ? (
+ 163 |         <section className="max-w-6xl mx-auto px-6 mb-6">
+     `----
+  x Expected '</', got 'jsx text'
+     ,-[D:\merchant-space\src\app\portal\page.tsx:159:1]
+ 156 |                   }}
+ 157 |                 />
+ 158 |               </div>
+ 159 | ,->         </section>
+ 160 | |         ) : null}
+ 161 | |   
+ 162 | `->       {!hasPortalVisualBlocks ? (
+ 163 |             <section className="max-w-6xl mx-auto px-6 mb-6">
+ 164 |               <div className="rounded-2xl border border-dashed bg-white p-6 text-sm text-slate-600">
+ 165 |                 鎬荤珯鏆傛湭鍙戝竷鍙鍖栧唴瀹癸紝璇峰埌瓒呯骇鍚庡彴缂栬緫鍣ㄥ彂甯冨悗鏌ョ湅銆?          </div>
+     `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+./src/app/portal/page.tsx
+ GET /admin 500 in 139ms
+ GET / 500 in 253ms
+ GET /super-admin 500 in 73ms
+ GET /super-admin/editor 500 in 55ms
+ GET /portal 500 in 163ms
+ GET /super-admin/editor 500 in 113ms (compile: 82ms, render: 30ms)
+ GET /super-admin 500 in 112ms (compile: 82ms, render: 30ms)
+ GET / 500 in 43ms (compile: 13ms, render: 29ms)
+ GET /admin 500 in 42ms (compile: 13ms, render: 29ms)
+ GET /portal 500 in 38ms (compile: 9ms, render: 29ms)
+ GET /portal 500 in 8ms (compile: 1945µs, render: 6ms)
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⨯ ./src/app/portal/page.tsx
+Error:   x Unexpected token. Did you mean `{'>'}` or `&gt;`?
+     ,-[D:\merchant-space\src\app\portal\page.tsx:148:1]
+ 145 |         >
+ 146 |           <div className="rounded-2xl border bg-white/95 p-4 shadow-sm">
+ 147 |             <div className="mb-2 flex items-center justify-between">
+ 148 |               <div className="text-xs uppercase tracking-wide text-slate-500">鎬荤珯鍙鍖栧尯鍧?/div>
+     :                                                                                                      ^
+ 149 |               <div className="text-xs text-slate-500">鐢辫秴绾у悗鍙版墍瑙佸嵆鎵€寰楃紪杈戝櫒鍙戝竷</div>
+ 150 |             </div>
+ 151 |             <BlockRenderer
+     `----
+  x Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+     ,-[D:\merchant-space\src\app\portal\page.tsx:160:1]
+ 157 |             />
+ 158 |           </div>
+ 159 |         </section>
+ 160 |       ) : null}
+     :               ^
+ 161 | 
+ 162 |       {!hasPortalVisualBlocks ? (
+ 163 |         <section className="max-w-6xl mx-auto px-6 mb-6">
+     `----
+  x Expected '</', got 'jsx text'
+     ,-[D:\merchant-space\src\app\portal\page.tsx:159:1]
+ 156 |                   }}
+ 157 |                 />
+ 158 |               </div>
+ 159 | ,->         </section>
+ 160 | |         ) : null}
+ 161 | |   
+ 162 | `->       {!hasPortalVisualBlocks ? (
+ 163 |             <section className="max-w-6xl mx-auto px-6 mb-6">
+ 164 |               <div className="rounded-2xl border border-dashed bg-white p-6 text-sm text-slate-600">
+ 165 |                 鎬荤珯鏆傛湭鍙戝竷鍙鍖栧唴瀹癸紝璇峰埌瓒呯骇鍚庡彴缂栬緫鍣ㄥ彂甯冨悗鏌ョ湅銆?          </div>
+     `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+./src/app/portal/page.tsx
+ GET /portal 500 in 263ms
+ GET / 500 in 73ms
+ GET /super-admin 500 in 56ms
+ GET /super-admin/editor 500 in 295ms
+ GET /admin 500 in 156ms
+ GET /super-admin 500 in 116ms (compile: 90ms, render: 26ms)
+ GET /super-admin/editor 500 in 115ms (compile: 90ms, render: 25ms)
+ GET / 500 in 45ms (compile: 21ms, render: 25ms)
+ GET /portal 500 in 41ms (compile: 17ms, render: 24ms)
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+ GET /admin 500 in 64ms
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+ GET /admin 500 in 121ms
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⨯ ./src/app/portal/page.tsx
+Error:   x Unexpected token. Did you mean `{'>'}` or `&gt;`?
+     ,-[D:\merchant-space\src\app\portal\page.tsx:148:1]
+ 145 |         >
+ 146 |           <div className="rounded-2xl border bg-white/95 p-4 shadow-sm">
+ 147 |             <div className="mb-2 flex items-center justify-between">
+ 148 |               <div className="text-xs uppercase tracking-wide text-slate-500">鎬荤珯鍙鍖栧尯鍧?/div>
+     :                                                                                                      ^
+ 149 |               <div className="text-xs text-slate-500">鐢辫秴绾у悗鍙版墍瑙佸嵆鎵€寰楃紪杈戝櫒鍙戝竷</div>
+ 150 |             </div>
+ 151 |             <BlockRenderer
+     `----
+  x Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+     ,-[D:\merchant-space\src\app\portal\page.tsx:160:1]
+ 157 |             />
+ 158 |           </div>
+ 159 |         </section>
+ 160 |       ) : null}
+     :               ^
+ 161 | 
+ 162 |       {!hasPortalVisualBlocks ? (
+ 163 |         <section className="max-w-6xl mx-auto px-6 mb-6">
+     `----
+  x Expected '</', got 'jsx text'
+     ,-[D:\merchant-space\src\app\portal\page.tsx:159:1]
+ 156 |                   }}
+ 157 |                 />
+ 158 |               </div>
+ 159 | ,->         </section>
+ 160 | |         ) : null}
+ 161 | |   
+ 162 | `->       {!hasPortalVisualBlocks ? (
+ 163 |             <section className="max-w-6xl mx-auto px-6 mb-6">
+ 164 |               <div className="rounded-2xl border border-dashed bg-white p-6 text-sm text-slate-600">
+ 165 |                 鎬荤珯鏆傛湭鍙戝竷鍙鍖栧唴瀹癸紝璇峰埌瓒呯骇鍚庡彴缂栬緫鍣ㄥ彂甯冨悗鏌ョ湅銆?          </div>
+     `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+./src/app/portal/page.tsx
+ GET /admin 500 in 419ms (compile: 390ms, render: 29ms)
+ GET /site/test-site 500 in 2.1s (compile: 2.1s, render: 6ms)
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+ GET / 500 in 254ms
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ GET /portal 500 in 360ms
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+ GET /super-admin/editor 500 in 371ms
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+ GET /admin 500 in 330ms
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+ GET /super-admin 500 in 374ms
+ GET /portal 200 in 1262ms (compile: 996ms, render: 266ms)
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ GET /portal 200 in 57ms (compile: 24ms, render: 33ms)
+ GET / 200 in 1367ms (compile: 1015ms, render: 352ms)
+ GET /super-admin 200 in 1277ms (compile: 920ms, render: 357ms)
+ GET /admin 200 in 1289ms (compile: 935ms, render: 355ms)
+ GET /super-admin/editor 200 in 1313ms (compile: 957ms, render: 357ms)
+ GET /portal 200 in 132ms (compile: 12ms, render: 120ms)
+ GET /super-admin/editor 200 in 34ms (compile: 3ms, render: 31ms)
+ GET /portal 200 in 108ms (compile: 8ms, render: 99ms)
+ GET /admin 200 in 107ms (compile: 36ms, render: 71ms)
+ GET / 200 in 108ms (compile: 23ms, render: 84ms)
+ GET /super-admin 200 in 107ms (compile: 50ms, render: 57ms)
+ GET /super-admin/editor 200 in 110ms (compile: 64ms, render: 46ms)
+ GET /super-admin/editor 200 in 32ms (compile: 4ms, render: 28ms)
+ GET /portal 200 in 87ms (compile: 10ms, render: 77ms)
+ GET /super-admin 200 in 87ms (compile: 39ms, render: 48ms)
+ GET / 200 in 87ms (compile: 53ms, render: 34ms)
+ GET /admin 200 in 88ms (compile: 66ms, render: 21ms)
+ GET /super-admin/editor 200 in 91ms (compile: 24ms, render: 67ms)
+ GET /super-admin/editor 200 in 28ms (compile: 7ms, render: 21ms)
+ GET /portal 200 in 33ms (compile: 6ms, render: 27ms)
+ GET /portal 200 in 156ms (compile: 57ms, render: 98ms)
+ GET /admin 200 in 173ms (compile: 17ms, render: 156ms)
+ GET / 200 in 173ms (compile: 131ms, render: 42ms)
+ GET /super-admin 200 in 174ms (compile: 107ms, render: 67ms)
+ GET /super-admin/editor 200 in 177ms (compile: 82ms, render: 95ms)
+ GET /super-admin/editor 200 in 33ms (compile: 6ms, render: 27ms)
+ GET /site/test-site 200 in 1111ms (compile: 984ms, render: 127ms)
+ GET /portal 200 in 19ms (compile: 3ms, render: 16ms)
+ GET /site/test-site 200 in 51ms (compile: 23ms, render: 28ms)
+ GET /portal 200 in 102ms (compile: 9ms, render: 93ms)
+ GET / 200 in 101ms (compile: 67ms, render: 34ms)
+ GET /super-admin 200 in 102ms (compile: 39ms, render: 63ms)
+ GET /admin 200 in 102ms (compile: 53ms, render: 49ms)
+ GET /super-admin/editor 200 in 106ms (compile: 25ms, render: 81ms)
+ GET /super-admin/editor 200 in 31ms (compile: 4ms, render: 28ms)
+ GET /portal 200 in 295ms (compile: 125ms, render: 170ms)
+ GET /admin 200 in 295ms (compile: 178ms, render: 117ms)
+ GET /super-admin 200 in 295ms (compile: 204ms, render: 91ms)
+ GET / 200 in 296ms (compile: 270ms, render: 26ms)
+ GET /super-admin/editor 200 in 298ms (compile: 241ms, render: 57ms)
+ GET /super-admin/editor 200 in 31ms (compile: 6ms, render: 24ms)
+⨯ ./src/app/site/[siteId]/page.tsx
+Error:   x Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+     ,-[D:\merchant-space\src\app\site\[siteId]\page.tsx:184:1]
+ 181 |             <Link href={`/admin?scope=${encodeURIComponent(siteScope)}`} className="ml-2 underline">
+ 182 |               去后台发布专属页面            </Link>
+ 183 |         </div>
+ 184 |       ) : null}
+     :               ^
+ 185 | 
+ 186 |       <BlockRenderer
+ 186 |         blocks={activeBlocks}
+     `----
+  x Expected '</', got ')'
+     ,-[D:\merchant-space\src\app\site\[siteId]\page.tsx:194:1]
+ 191 |         }}
+ 192 |       />
+ 193 |     </main>
+ 194 |   );
+     :   ^
+ 195 | }
+ 196 | 
+     `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+./src/app/site/[siteId]/page.tsx
+ GET /portal 500 in 11ms (compile: 2ms, render: 8ms)
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⨯ ./src/app/site/[siteId]/page.tsx
+Error:   x Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+     ,-[D:\merchant-space\src\app\site\[siteId]\page.tsx:184:1]
+ 181 |             <Link href={`/admin?scope=${encodeURIComponent(siteScope)}`} className="ml-2 underline">
+ 182 |               去后台发布专属页面            </Link>
+ 183 |         </div>
+ 184 |       ) : null}
+     :               ^
+ 185 | 
+ 186 |       <BlockRenderer
+ 186 |         blocks={activeBlocks}
+     `----
+  x Expected '</', got ')'
+     ,-[D:\merchant-space\src\app\site\[siteId]\page.tsx:194:1]
+ 191 |         }}
+ 192 |       />
+ 193 |     </main>
+ 194 |   );
+     :   ^
+ 195 | }
+ 196 | 
+     `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+./src/app/site/[siteId]/page.tsx
+ GET /portal 500 in 966ms (compile: 949ms, render: 18ms)
+ GET / 500 in 563ms (compile: 542ms, render: 21ms)
+ GET /super-admin/editor 500 in 612ms (compile: 591ms, render: 20ms)
+ GET /portal 500 in 83ms (compile: 54ms, render: 29ms)
+ GET /super-admin/editor 500 in 48ms (compile: 20ms, render: 28ms)
+ GET /admin 500 in 81ms (compile: 53ms, render: 28ms)
+⨯ ./src/app/site/[siteId]/page.tsx
+Error:   x Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+     ,-[D:\merchant-space\src\app\site\[siteId]\page.tsx:184:1]
+ 181 |             <Link href={`/admin?scope=${encodeURIComponent(siteScope)}`} className="ml-2 underline">
+ 182 |               去后台发布专属页面            </Link>
+ 183 |         </div>
+ 184 |       ) : null}
+     :               ^
+ 185 | 
+ 186 |       <BlockRenderer
+ 186 |         blocks={activeBlocks}
+     `----
+  x Expected '</', got ')'
+     ,-[D:\merchant-space\src\app\site\[siteId]\page.tsx:194:1]
+ 191 |         }}
+ 192 |       />
+ 193 |     </main>
+ 194 |   );
+     :   ^
+ 195 | }
+ 196 | 
+     `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+./src/app/site/[siteId]/page.tsx
+ GET /super-admin 500 in 1047ms (compile: 1022ms, render: 25ms)
+ GET /portal 500 in 978ms (compile: 954ms, render: 25ms)
+ GET /super-admin/editor 500 in 975ms (compile: 951ms, render: 24ms)
+ GET /admin 500 in 949ms (compile: 925ms, render: 24ms)
+ GET /site/test-site 500 in 2.5s (compile: 2.5s, render: 10ms)
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+ GET /super-admin 500 in 26ms (compile: 17ms, render: 9ms)
+○ Compiling /_not-found ...
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ GET /portal 500 in 150ms
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+ GET / 500 in 48ms
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+ GET /admin 500 in 175ms
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+ GET /super-admin/editor 500 in 122ms
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+ GET /super-admin 500 in 141ms
+ GET /portal 200 in 1427ms (compile: 1160ms, render: 267ms)
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ GET /portal 200 in 65ms (compile: 27ms, render: 39ms)
+ GET / 200 in 1494ms (compile: 1139ms, render: 355ms)
+ GET /super-admin 200 in 1463ms (compile: 1102ms, render: 361ms)
+ GET /admin 200 in 1480ms (compile: 1121ms, render: 359ms)
+ GET /super-admin/editor 200 in 1473ms (compile: 1113ms, render: 361ms)
+ GET /portal 200 in 123ms (compile: 12ms, render: 111ms)
+ GET /super-admin/editor 200 in 36ms (compile: 3ms, render: 33ms)
+ GET /portal 200 in 29ms (compile: 2ms, render: 27ms)
+ GET /site/test-site 200 in 52ms (compile: 20ms, render: 32ms)
+ GET /portal 200 in 85ms (compile: 8ms, render: 76ms)
+ GET / 200 in 85ms (compile: 23ms, render: 62ms)
+ GET /super-admin 200 in 84ms (compile: 64ms, render: 20ms)
+ GET /admin 200 in 102ms (compile: 35ms, render: 66ms)
+ GET /super-admin/editor 200 in 104ms (compile: 49ms, render: 54ms)
+ GET /super-admin/editor 200 in 31ms (compile: 6ms, render: 25ms)
+ GET /portal 200 in 37ms (compile: 3ms, render: 34ms)
+ GET /portal 200 in 32ms (compile: 3ms, render: 29ms)
+ GET /portal 200 in 32ms (compile: 3ms, render: 30ms)
+ GET /site/test-site 200 in 39ms (compile: 9ms, render: 30ms)
+ GET /site/test-site 200 in 32ms (compile: 3ms, render: 29ms)
+ GET /super-admin/editor 200 in 89ms (compile: 2ms, render: 87ms)
+ GET /admin 200 in 94ms (compile: 31ms, render: 63ms)
+ GET /super-admin 200 in 97ms (compile: 46ms, render: 51ms)
+ GET / 200 in 43ms (compile: 15ms, render: 28ms)
+ GET /super-admin 200 in 317ms (compile: 123ms, render: 194ms)
+ GET /admin 200 in 317ms (compile: 223ms, render: 94ms)
+ GET /portal 200 in 317ms (compile: 250ms, render: 67ms)
+ GET / 200 in 317ms (compile: 275ms, render: 42ms)
+ GET /super-admin/editor 200 in 321ms (compile: 181ms, render: 141ms)
+ GET /super-admin/editor 200 in 39ms (compile: 4ms, render: 35ms)
+ GET /super-admin 200 in 108ms (compile: 1286µs, render: 107ms)
+ GET /portal 200 in 102ms (compile: 8ms, render: 95ms)
+ GET /super-admin 200 in 104ms (compile: 23ms, render: 80ms)
+ GET /admin 200 in 103ms (compile: 37ms, render: 66ms)
+ GET / 200 in 103ms (compile: 66ms, render: 36ms)
+ GET /super-admin/editor 200 in 106ms (compile: 51ms, render: 55ms)
+ GET /super-admin/editor 200 in 39ms (compile: 4ms, render: 34ms)
+ GET /super-admin/editor 200 in 78ms (compile: 3ms, render: 75ms)
+ GET / 200 in 177ms (compile: 1788µs, render: 175ms)
+ GET /super-admin/editor 200 in 152ms (compile: 29ms, render: 123ms)
+ GET /portal 200 in 151ms (compile: 47ms, render: 104ms)
+ GET /admin 200 in 155ms (compile: 16ms, render: 139ms)
+ GET /super-admin 200 in 150ms (compile: 92ms, render: 58ms)
+ GET /super-admin/editor 200 in 45ms (compile: 5ms, render: 39ms)
+ GET /super-admin/editor 200 in 36ms (compile: 3ms, render: 33ms)
+ GET /super-admin/editor 200 in 33ms (compile: 3ms, render: 31ms)
+ GET /super-admin 200 in 249ms (compile: 74ms, render: 175ms)
+ GET /portal 200 in 249ms (compile: 119ms, render: 131ms)
+ GET / 200 in 249ms (compile: 187ms, render: 62ms)
+ GET /admin 200 in 249ms (compile: 224ms, render: 25ms)
+ GET /super-admin/editor 200 in 253ms (compile: 157ms, render: 96ms)
+ GET /super-admin 200 in 119ms (compile: 3ms, render: 116ms)
+ GET /super-admin 200 in 87ms (compile: 10ms, render: 77ms)
+ GET /portal 200 in 87ms (compile: 25ms, render: 63ms)
+ GET /admin 200 in 87ms (compile: 38ms, render: 49ms)
+ GET / 200 in 89ms (compile: 53ms, render: 35ms)
+ GET /super-admin/editor 200 in 91ms (compile: 66ms, render: 25ms)
+ GET /super-admin/editor 200 in 66ms (compile: 3ms, render: 63ms)
+ GET / 200 in 153ms (compile: 10ms, render: 142ms)
+ GET /admin 200 in 156ms (compile: 41ms, render: 115ms)
+ GET /portal 200 in 156ms (compile: 70ms, render: 86ms)
+ GET /super-admin 200 in 157ms (compile: 101ms, render: 56ms)
+ GET /super-admin 200 in 196ms (compile: 41ms, render: 155ms)
+ GET /portal 200 in 195ms (compile: 113ms, render: 82ms)
+ GET /admin 200 in 195ms (compile: 150ms, render: 45ms)
+ GET / 200 in 196ms (compile: 174ms, render: 22ms)
+ GET /super-admin/editor 200 in 200ms (compile: 87ms, render: 113ms)
+ GET /super-admin 200 in 81ms (compile: 1937µs, render: 79ms)
+ GET /super-admin 200 in 207ms (compile: 45ms, render: 161ms)
+ GET /portal 200 in 207ms (compile: 79ms, render: 128ms)
+ GET /admin 200 in 206ms (compile: 158ms, render: 48ms)
+ GET / 200 in 207ms (compile: 184ms, render: 22ms)
+ GET /super-admin/editor 200 in 211ms (compile: 117ms, render: 93ms)
+ GET /super-admin 200 in 77ms (compile: 1366µs, render: 76ms)
+ GET /super-admin 200 in 95ms (compile: 7ms, render: 88ms)
+ GET / 200 in 94ms (compile: 50ms, render: 44ms)
+ GET /portal 200 in 95ms (compile: 36ms, render: 59ms)
+ GET /admin 200 in 95ms (compile: 63ms, render: 32ms)
+ GET /super-admin/editor 200 in 98ms (compile: 22ms, render: 76ms)
+ GET /super-admin 200 in 201ms (compile: 41ms, render: 160ms)
+ GET / 200 in 201ms (compile: 73ms, render: 128ms)
+ GET /portal 200 in 200ms (compile: 178ms, render: 22ms)
+ GET /admin 200 in 201ms (compile: 151ms, render: 51ms)
+ GET /super-admin/editor 200 in 205ms (compile: 110ms, render: 95ms)
+ GET /super-admin 200 in 73ms (compile: 1337µs, render: 72ms)
+ GET /super-admin 200 in 207ms (compile: 42ms, render: 165ms)
+ GET /portal 200 in 207ms (compile: 80ms, render: 127ms)
+ GET /admin 200 in 209ms (compile: 120ms, render: 90ms)
+ GET / 200 in 209ms (compile: 184ms, render: 25ms)
+ GET /super-admin/editor 200 in 223ms (compile: 158ms, render: 64ms)
+ GET /super-admin 200 in 71ms (compile: 3ms, render: 68ms)
+ GET /site/site-main 200 in 1121ms (compile: 814ms, render: 307ms)
+ GET /portal 200 in 184ms (compile: 21ms, render: 163ms)
+ GET /admin 200 in 184ms (compile: 62ms, render: 122ms)
+ GET /super-admin 200 in 183ms (compile: 85ms, render: 98ms)
+ GET / 200 in 183ms (compile: 153ms, render: 30ms)
+ GET /super-admin/editor 200 in 187ms (compile: 126ms, render: 62ms)
+ GET /portal 200 in 200ms (compile: 1619µs, render: 198ms)
+ GET / 200 in 174ms (compile: 26ms, render: 147ms)
+ GET /admin 200 in 178ms (compile: 12ms, render: 166ms)
+ GET /super-admin 200 in 178ms (compile: 40ms, render: 138ms)
+ GET /super-admin/editor 200 in 178ms (compile: 54ms, render: 124ms)
+ GET /site/site-main 200 in 38ms (compile: 8ms, render: 30ms)
+ GET /site/site-main 200 in 36ms (compile: 8ms, render: 29ms)
+ GET /super-admin/editor 200 in 32ms (compile: 3ms, render: 29ms)
+ GET /super-admin 200 in 358ms (compile: 178ms, render: 181ms)
+ GET /admin 200 in 359ms (compile: 213ms, render: 145ms)
+ GET /portal 200 in 359ms (compile: 242ms, render: 117ms)
+ GET / 200 in 360ms (compile: 268ms, render: 92ms)
+ GET /super-admin/editor 200 in 364ms (compile: 136ms, render: 228ms)
+ GET /super-admin 200 in 69ms (compile: 23ms, render: 46ms)
+ GET /portal 200 in 69ms (compile: 37ms, render: 32ms)
+ GET /super-admin/editor 200 in 73ms (compile: 8ms, render: 65ms)
+ GET /admin 200 in 71ms (compile: 50ms, render: 21ms)
+ GET / 200 in 23ms (compile: 5ms, render: 19ms)
+ GET / 200 in 90ms (compile: 26ms, render: 64ms)
+ GET /portal 200 in 90ms (compile: 39ms, render: 52ms)
+ GET /super-admin 200 in 91ms (compile: 52ms, render: 39ms)
+ GET /admin 200 in 92ms (compile: 65ms, render: 26ms)
+ GET /super-admin/editor 200 in 95ms (compile: 10ms, render: 85ms)
+ GET /admin 200 in 229ms (compile: 126ms, render: 102ms)
+ GET /portal 200 in 228ms (compile: 152ms, render: 76ms)
+ GET / 200 in 228ms (compile: 204ms, render: 23ms)
+ GET /super-admin 200 in 229ms (compile: 178ms, render: 51ms)
+ GET /super-admin/editor 200 in 232ms (compile: 83ms, render: 149ms)
+ GET /admin 200 in 141ms (compile: 3ms, render: 139ms)
+ GET /super-admin/editor 200 in 45ms (compile: 6ms, render: 39ms)
+ GET / 200 in 89ms (compile: 26ms, render: 63ms)
+ GET /super-admin 200 in 89ms (compile: 40ms, render: 49ms)
+ GET /admin 200 in 88ms (compile: 54ms, render: 34ms)
+ GET /portal 200 in 89ms (compile: 70ms, render: 20ms)
+ GET /super-admin/editor 200 in 94ms (compile: 11ms, render: 83ms)
+ GET /portal 200 in 229ms (compile: 122ms, render: 107ms)
+ GET /super-admin 200 in 229ms (compile: 145ms, render: 85ms)
+ GET / 200 in 229ms (compile: 171ms, render: 58ms)
+ GET /admin 200 in 229ms (compile: 204ms, render: 25ms)
+ GET /super-admin/editor 200 in 234ms (compile: 91ms, render: 143ms)
+ GET /super-admin 200 in 90ms (compile: 24ms, render: 66ms)
+ GET /admin 200 in 90ms (compile: 38ms, render: 52ms)
+ GET /portal 200 in 90ms (compile: 54ms, render: 36ms)
+ GET / 200 in 90ms (compile: 68ms, render: 21ms)
+ GET /super-admin/editor 200 in 95ms (compile: 8ms, render: 87ms)
+ GET /portal 200 in 235ms (compile: 121ms, render: 115ms)
+ GET /super-admin 200 in 236ms (compile: 145ms, render: 91ms)
+ GET / 200 in 236ms (compile: 205ms, render: 31ms)
+ GET /admin 200 in 237ms (compile: 181ms, render: 56ms)
+ GET /super-admin/editor 200 in 240ms (compile: 80ms, render: 160ms)
+ GET /admin 200 in 234ms (compile: 168ms, render: 65ms)
+ GET /super-admin 200 in 235ms (compile: 134ms, render: 101ms)
+ GET /super-admin/editor 200 in 239ms (compile: 98ms, render: 141ms)
+ GET /portal 200 in 234ms (compile: 189ms, render: 46ms)
+ GET / 200 in 233ms (compile: 210ms, render: 23ms)
+ GET /admin 200 in 190ms (compile: 97ms, render: 93ms)
+ GET /super-admin 200 in 190ms (compile: 122ms, render: 68ms)
+ GET /portal 200 in 190ms (compile: 142ms, render: 48ms)
+ GET / 200 in 189ms (compile: 159ms, render: 30ms)
+ GET /super-admin/editor 200 in 193ms (compile: 57ms, render: 136ms)
+ GET /super-admin 200 in 233ms (compile: 134ms, render: 100ms)
+ GET /portal 200 in 233ms (compile: 162ms, render: 72ms)
+ GET /admin 200 in 233ms (compile: 210ms, render: 23ms)
+ GET / 200 in 234ms (compile: 178ms, render: 56ms)
+ GET /super-admin/editor 200 in 240ms (compile: 68ms, render: 172ms)
+ GET /portal 200 in 178ms (compile: 81ms, render: 97ms)
+ GET /super-admin 200 in 178ms (compile: 102ms, render: 75ms)
+ GET /admin 200 in 179ms (compile: 139ms, render: 40ms)
+ GET / 200 in 178ms (compile: 158ms, render: 20ms)
+ GET /super-admin/editor 200 in 183ms (compile: 54ms, render: 129ms)
+ GET / 200 in 187ms (compile: 83ms, render: 103ms)
+ GET /portal 200 in 187ms (compile: 101ms, render: 86ms)
+ GET /super-admin 200 in 187ms (compile: 126ms, render: 61ms)
+ GET /admin 200 in 187ms (compile: 163ms, render: 24ms)
+ GET /super-admin/editor 200 in 193ms (compile: 56ms, render: 137ms)
+ GET /super-admin/editor 200 in 219ms (compile: 2ms, render: 216ms)
+ GET /admin 200 in 223ms (compile: 144ms, render: 78ms)
+ GET /portal 200 in 224ms (compile: 160ms, render: 64ms)
+ GET /super-admin 200 in 83ms (compile: 26ms, render: 58ms)
+ GET / 200 in 84ms (compile: 39ms, render: 45ms)
+ GET /admin 200 in 84ms (compile: 51ms, render: 33ms)
+ GET /portal 200 in 83ms (compile: 63ms, render: 20ms)
+ GET /super-admin/editor 200 in 89ms (compile: 11ms, render: 78ms)
+ GET /portal 200 in 33ms (compile: 5ms, render: 28ms)
+ GET /admin 200 in 162ms (compile: 9ms, render: 153ms)
+ GET / 200 in 159ms (compile: 45ms, render: 114ms)
+ GET /super-admin/editor 200 in 164ms (compile: 74ms, render: 90ms)
+ GET /super-admin 200 in 134ms (compile: 75ms, render: 59ms)
+ GET /site/site-main 200 in 942ms (compile: 786ms, render: 156ms)
+ GET /super-admin 200 in 191ms (compile: 23ms, render: 168ms)
+ GET /admin 200 in 191ms (compile: 51ms, render: 140ms)
+ GET / 200 in 191ms (compile: 72ms, render: 119ms)
+ GET /super-admin/editor 200 in 196ms (compile: 95ms, render: 102ms)
+ GET / 200 in 74ms (compile: 11ms, render: 64ms)
+ GET /admin 200 in 74ms (compile: 23ms, render: 51ms)
+ GET /super-admin/editor 200 in 77ms (compile: 37ms, render: 40ms)
+ GET /super-admin 200 in 73ms (compile: 49ms, render: 24ms)
+ GET /site/site-sub 200 in 24ms (compile: 9ms, render: 15ms)
+ GET /site/site-sub 200 in 23ms (compile: 2ms, render: 20ms)
+ GET /site/site-sub 200 in 27ms (compile: 4ms, render: 23ms)
+ GET /portal 200 in 20ms (compile: 7ms, render: 13ms)
+ GET /site/site-main 200 in 22ms (compile: 7ms, render: 15ms)
+ GET /portal 200 in 259ms (compile: 120ms, render: 139ms)
+ GET /super-admin 200 in 258ms (compile: 187ms, render: 71ms)
+ GET /admin 200 in 258ms (compile: 216ms, render: 42ms)
+ GET /super-admin/editor 200 in 263ms (compile: 159ms, render: 104ms)
+ GET / 200 in 260ms (compile: 237ms, render: 24ms)
+ GET /portal 200 in 108ms (compile: 1442µs, render: 106ms)
+ GET /super-admin 200 in 87ms (compile: 24ms, render: 63ms)
+ GET / 200 in 87ms (compile: 39ms, render: 48ms)
+ GET /portal 200 in 87ms (compile: 53ms, render: 35ms)
+ GET /admin 200 in 88ms (compile: 67ms, render: 21ms)
+ GET /super-admin/editor 200 in 92ms (compile: 8ms, render: 84ms)
+ GET /portal 200 in 197ms (compile: 109ms, render: 88ms)
+ GET /admin 200 in 198ms (compile: 133ms, render: 65ms)
+ GET /super-admin 200 in 198ms (compile: 158ms, render: 40ms)
+ GET / 200 in 198ms (compile: 178ms, render: 20ms)
+ GET /super-admin/editor 200 in 202ms (compile: 70ms, render: 132ms)
+ GET /admin 200 in 384ms (compile: 216ms, render: 169ms)
+ GET / 200 in 384ms (compile: 242ms, render: 142ms)
+ GET /portal 200 in 389ms (compile: 267ms, render: 122ms)
+ GET /super-admin 200 in 389ms (compile: 293ms, render: 96ms)
+ GET /super-admin/editor 200 in 394ms (compile: 159ms, render: 235ms)
+ GET /admin 200 in 91ms (compile: 29ms, render: 62ms)
+ GET /super-admin 200 in 91ms (compile: 43ms, render: 48ms)
+ GET / 200 in 92ms (compile: 57ms, render: 34ms)
+ GET /super-admin/editor 200 in 95ms (compile: 14ms, render: 81ms)
+ GET /portal 200 in 87ms (compile: 65ms, render: 22ms)
+ GET /super-admin 200 in 87ms (compile: 24ms, render: 63ms)
+ GET / 200 in 86ms (compile: 68ms, render: 18ms)
+ GET /admin 200 in 87ms (compile: 54ms, render: 33ms)
+ GET /portal 200 in 88ms (compile: 40ms, render: 48ms)
+ GET /super-admin/editor 200 in 93ms (compile: 8ms, render: 84ms)
+ GET /super-admin 200 in 281ms (compile: 214ms, render: 67ms)
+ GET /admin 200 in 283ms (compile: 190ms, render: 93ms)
+ GET / 200 in 281ms (compile: 258ms, render: 23ms)
+ GET /portal 200 in 283ms (compile: 236ms, render: 47ms)
+ GET /super-admin/editor 200 in 288ms (compile: 136ms, render: 152ms)
+ GET /portal 200 in 241ms (compile: 140ms, render: 100ms)
+ GET / 200 in 240ms (compile: 162ms, render: 79ms)
+ GET /super-admin 200 in 240ms (compile: 185ms, render: 55ms)
+ GET /super-admin/editor 200 in 245ms (compile: 106ms, render: 140ms)
+ GET /admin 200 in 239ms (compile: 217ms, render: 23ms)
+ GET /portal 200 in 259ms (compile: 107ms, render: 152ms)
+ GET / 200 in 259ms (compile: 129ms, render: 130ms)
+ GET /admin 200 in 259ms (compile: 236ms, render: 23ms)
+ GET /super-admin 200 in 260ms (compile: 157ms, render: 103ms)
+ GET /super-admin/editor 200 in 264ms (compile: 71ms, render: 193ms)
+ GET /super-admin 200 in 196ms (compile: 92ms, render: 104ms)
+ GET /portal 200 in 196ms (compile: 123ms, render: 72ms)
+ GET /admin 200 in 193ms (compile: 170ms, render: 23ms)
+ GET / 200 in 197ms (compile: 141ms, render: 56ms)
+ GET /super-admin/editor 200 in 200ms (compile: 59ms, render: 141ms)
+ GET / 200 in 250ms (compile: 101ms, render: 149ms)
+ GET /portal 200 in 251ms (compile: 122ms, render: 128ms)
+ GET /super-admin 200 in 251ms (compile: 184ms, render: 67ms)
+ GET /admin 200 in 250ms (compile: 227ms, render: 24ms)
+ GET /super-admin/editor 200 in 254ms (compile: 66ms, render: 188ms)
+ GET /super-admin/editor 200 in 154ms (compile: 3ms, render: 151ms)
+ GET /admin 200 in 34ms (compile: 6ms, render: 28ms)
+ GET /portal 200 in 35ms (compile: 3ms, render: 32ms)
+ GET /portal 200 in 32ms (compile: 2ms, render: 30ms)
+ GET /super-admin 200 in 142ms (compile: 5ms, render: 138ms)
+ GET / 200 in 143ms (compile: 48ms, render: 95ms)
+ GET /admin 200 in 108ms (compile: 37ms, render: 71ms)
+ GET /super-admin/editor 200 in 108ms (compile: 52ms, render: 56ms)
+ GET /portal 200 in 32ms (compile: 3ms, render: 29ms)
+ GET /portal 200 in 30ms (compile: 3ms, render: 26ms)
+ GET /portal 200 in 30ms (compile: 4ms, render: 26ms)
+ GET /super-admin 200 in 311ms (compile: 196ms, render: 115ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 308ms (compile: 220ms, render: 88ms)
+ GET / 200 in 307ms (compile: 282ms, render: 24ms)
+ GET /admin 200 in 309ms (compile: 255ms, render: 53ms)
+ GET /super-admin/editor 200 in 315ms (compile: 150ms, render: 164ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 219ms (compile: 40ms, render: 179ms)
+ GET /super-admin 200 in 219ms (compile: 58ms, render: 161ms)
+ GET /admin 200 in 219ms (compile: 76ms, render: 143ms)
+ GET / 200 in 219ms (compile: 135ms, render: 84ms)
+ GET /super-admin/editor 200 in 225ms (compile: 19ms, render: 206ms)
+ GET /admin 200 in 102ms (compile: 25ms, render: 77ms)
+ GET / 200 in 102ms (compile: 40ms, render: 63ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 103ms (compile: 54ms, render: 49ms)
+ GET /super-admin/editor 200 in 107ms (compile: 10ms, render: 97ms)
+ GET /super-admin 200 in 104ms (compile: 72ms, render: 32ms)
+ GET /admin 200 in 308ms (compile: 212ms, render: 96ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 309ms (compile: 232ms, render: 77ms)
+ GET /super-admin/editor 200 in 313ms (compile: 154ms, render: 158ms)
+ GET /super-admin 200 in 308ms (compile: 256ms, render: 52ms)
+ GET / 200 in 307ms (compile: 281ms, render: 26ms)
+ GET /admin 200 in 328ms (compile: 207ms, render: 121ms)
+ GET / 200 in 328ms (compile: 267ms, render: 60ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 327ms (compile: 296ms, render: 31ms)
+ GET /super-admin 200 in 330ms (compile: 237ms, render: 93ms)
+ GET /super-admin/editor 200 in 335ms (compile: 151ms, render: 184ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 206ms (compile: 87ms, render: 118ms)
+ GET /super-admin 200 in 207ms (compile: 114ms, render: 93ms)
+ GET /admin 200 in 208ms (compile: 155ms, render: 53ms)
+ GET / 200 in 209ms (compile: 181ms, render: 28ms)
+ GET /super-admin/editor 200 in 213ms (compile: 58ms, render: 155ms)
+ GET /super-admin 200 in 280ms (compile: 119ms, render: 161ms)
+ GET /admin 200 in 280ms (compile: 164ms, render: 116ms)
+ GET /super-admin/editor 200 in 286ms (compile: 76ms, render: 210ms)
+ GET / 200 in 280ms (compile: 231ms, render: 49ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 278ms (compile: 255ms, render: 23ms)
+ GET /portal 200 in 229ms (compile: 5ms, render: 224ms)
+ GET /super-admin/editor 200 in 232ms (compile: 26ms, render: 206ms)
+ GET /admin 200 in 235ms (compile: 196ms, render: 40ms)
+ GET /super-admin 200 in 91ms (compile: 24ms, render: 67ms)
+ GET /admin 200 in 91ms (compile: 55ms, render: 36ms)
+ GET / 200 in 91ms (compile: 70ms, render: 21ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 93ms (compile: 39ms, render: 54ms)
+ GET /super-admin/editor 200 in 97ms (compile: 8ms, render: 89ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 235ms (compile: 100ms, render: 136ms)
+ GET / 200 in 236ms (compile: 122ms, render: 114ms)
+ GET /super-admin 200 in 236ms (compile: 150ms, render: 86ms)
+ GET /admin 200 in 236ms (compile: 193ms, render: 42ms)
+ GET /super-admin/editor 200 in 239ms (compile: 64ms, render: 175ms)
+ GET /portal 200 in 192ms (compile: 4ms, render: 188ms)
+ GET /super-admin/editor 200 in 196ms (compile: 115ms, render: 81ms)
+ GET /admin 200 in 198ms (compile: 129ms, render: 69ms)
+ GET /admin 200 in 89ms (compile: 26ms, render: 63ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 89ms (compile: 40ms, render: 49ms)
+ GET / 200 in 89ms (compile: 54ms, render: 35ms)
+ GET /super-admin 200 in 89ms (compile: 68ms, render: 21ms)
+ GET /super-admin/editor 200 in 95ms (compile: 8ms, render: 87ms)
+ GET /super-admin 200 in 86ms (compile: 50ms, render: 36ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 87ms (compile: 23ms, render: 65ms)
+ GET / 200 in 88ms (compile: 37ms, render: 51ms)
+ GET /admin 200 in 88ms (compile: 65ms, render: 23ms)
+ GET /super-admin/editor 200 in 92ms (compile: 7ms, render: 85ms)
+ GET /admin 200 in 93ms (compile: 24ms, render: 69ms)
+ GET / 200 in 93ms (compile: 55ms, render: 38ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 94ms (compile: 39ms, render: 55ms)
+ GET /super-admin 200 in 93ms (compile: 69ms, render: 24ms)
+ GET /super-admin/editor 200 in 100ms (compile: 9ms, render: 91ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 192ms (compile: 50ms, render: 142ms)
+ GET /admin 200 in 190ms (compile: 112ms, render: 78ms)
+ GET / 200 in 192ms (compile: 134ms, render: 58ms)
+ GET /super-admin 200 in 192ms (compile: 162ms, render: 30ms)
+ GET /super-admin/editor 200 in 197ms (compile: 83ms, render: 114ms)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename 'D:\merchant-space\.next\dev\cache\webpack\client-development-fallback\0.pack.gz_' -> 'D:\merchant-space\.next\dev\cache\webpack\client-development-fallback\0.pack.gz'
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename 'D:\merchant-space\.next\dev\cache\webpack\client-development-fallback\0.pack.gz_' -> 'D:\merchant-space\.next\dev\cache\webpack\client-development-fallback\0.pack.gz'
+ GET /super-admin 200 in 595ms (compile: 301ms, render: 294ms)
+ GET / 200 in 596ms (compile: 391ms, render: 205ms)
+ GET /super-admin/editor 200 in 600ms (compile: 252ms, render: 348ms)
+ GET /admin 200 in 595ms (compile: 483ms, render: 112ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 594ms (compile: 568ms, render: 26ms)
+ GET /super-admin/editor 200 in 306ms (compile: 4ms, render: 301ms)
+ GET /portal 200 in 309ms (compile: 266ms, render: 42ms)
+ GET /super-admin/editor 200 in 94ms (compile: 6ms, render: 88ms)
+ GET /portal 200 in 97ms (compile: 34ms, render: 63ms)
+ GET /admin 200 in 100ms (compile: 60ms, render: 40ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 523ms (compile: 155ms, render: 368ms)
+ GET /admin 200 in 522ms (compile: 372ms, render: 151ms)
+ GET / 200 in 522ms (compile: 466ms, render: 56ms)
+ GET /super-admin 200 in 522ms (compile: 494ms, render: 28ms)
+ GET /super-admin/editor 200 in 526ms (compile: 272ms, render: 255ms)
+ GET /super-admin 200 in 467ms (compile: 41ms, render: 427ms)
+ GET / 200 in 467ms (compile: 441ms, render: 27ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 470ms (compile: 136ms, render: 333ms)
+ GET /admin 200 in 468ms (compile: 340ms, render: 128ms)
+ GET /super-admin/editor 200 in 472ms (compile: 235ms, render: 237ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 474ms (compile: 111ms, render: 362ms)
+ GET / 200 in 472ms (compile: 452ms, render: 20ms)
+ GET /super-admin 200 in 474ms (compile: 144ms, render: 330ms)
+ GET /admin 200 in 474ms (compile: 352ms, render: 122ms)
+ GET /super-admin/editor 200 in 479ms (compile: 248ms, render: 231ms)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename 'D:\merchant-space\.next\dev\cache\webpack\client-development-fallback\0.pack.gz_' -> 'D:\merchant-space\.next\dev\cache\webpack\client-development-fallback\0.pack.gz'
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename 'D:\merchant-space\.next\dev\cache\webpack\client-development-fallback\0.pack.gz_' -> 'D:\merchant-space\.next\dev\cache\webpack\client-development-fallback\0.pack.gz'
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 574ms (compile: 215ms, render: 358ms)
+ GET /super-admin 200 in 574ms (compile: 263ms, render: 311ms)
+ GET / 200 in 573ms (compile: 450ms, render: 122ms)
+ GET /admin 200 in 573ms (compile: 547ms, render: 26ms)
+ GET /super-admin/editor 200 in 577ms (compile: 357ms, render: 220ms)
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack failed from D:\merchant-space\.next\dev\cache\webpack\client-development-fallback.pack.gz: Error: incorrect header check
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack failed from D:\merchant-space\.next\dev\cache\webpack\client-development-fallback.pack.gz: Error: incorrect header check
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack failed from D:\merchant-space\.next\dev\cache\webpack\client-development-fallback.pack.gz: Error: incorrect header check
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 313ms (compile: 94ms, render: 219ms)
+ GET /super-admin 200 in 313ms (compile: 138ms, render: 175ms)
+ GET /admin 200 in 312ms (compile: 247ms, render: 65ms)
+ GET / 200 in 312ms (compile: 291ms, render: 21ms)
+ GET /super-admin/editor 200 in 318ms (compile: 191ms, render: 126ms)
+ GET /portal 200 in 278ms (compile: 2ms, render: 276ms)
+ GET /admin 200 in 282ms (compile: 201ms, render: 81ms)
+ GET /super-admin/editor 200 in 285ms (compile: 215ms, render: 70ms)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename 'D:\merchant-space\.next\dev\cache\webpack\client-development-fallback\0.pack.gz_' -> 'D:\merchant-space\.next\dev\cache\webpack\client-development-fallback\0.pack.gz'
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename 'D:\merchant-space\.next\dev\cache\webpack\client-development-fallback\0.pack.gz_' -> 'D:\merchant-space\.next\dev\cache\webpack\client-development-fallback\0.pack.gz'
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 36ms (compile: 4ms, render: 32ms)
+ GET / 200 in 156ms (compile: 9ms, render: 147ms)
+ GET /super-admin 200 in 161ms (compile: 38ms, render: 123ms)
+ GET /admin 200 in 168ms (compile: 71ms, render: 97ms)
+ GET /super-admin/editor 200 in 155ms (compile: 89ms, render: 66ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 516ms (compile: 139ms, render: 377ms)
+ GET /admin 200 in 516ms (compile: 258ms, render: 258ms)
+ GET /super-admin 200 in 515ms (compile: 388ms, render: 127ms)
+ GET /super-admin/editor 200 in 519ms (compile: 358ms, render: 161ms)
+ GET / 200 in 516ms (compile: 488ms, render: 27ms)
+ GET /admin 200 in 478ms (compile: 221ms, render: 257ms)
+ GET /super-admin 200 in 478ms (compile: 354ms, render: 124ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 480ms (compile: 108ms, render: 373ms)
+ GET / 200 in 480ms (compile: 457ms, render: 23ms)
+ GET /super-admin/editor 200 in 483ms (compile: 324ms, render: 158ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 160ms (compile: 17ms, render: 144ms)
+ GET /admin 200 in 161ms (compile: 36ms, render: 125ms)
+ GET /super-admin 200 in 160ms (compile: 73ms, render: 87ms)
+ GET / 200 in 159ms (compile: 90ms, render: 69ms)
+ GET /super-admin/editor 200 in 165ms (compile: 54ms, render: 111ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 77ms (compile: 7ms, render: 70ms)
+ GET /admin 200 in 77ms (compile: 21ms, render: 56ms)
+ GET / 200 in 76ms (compile: 52ms, render: 24ms)
+ GET /super-admin 200 in 77ms (compile: 62ms, render: 14ms)
+ GET /super-admin/editor 200 in 80ms (compile: 36ms, render: 45ms)
+ GET /super-admin 200 in 86ms (compile: 37ms, render: 49ms)
+ GET /admin 200 in 86ms (compile: 52ms, render: 34ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 88ms (compile: 8ms, render: 80ms)
+ GET / 200 in 86ms (compile: 66ms, render: 21ms)
+ GET /super-admin/editor 200 in 93ms (compile: 22ms, render: 71ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 260ms (compile: 89ms, render: 172ms)
+ GET / 200 in 261ms (compile: 133ms, render: 128ms)
+ GET /super-admin 200 in 261ms (compile: 160ms, render: 101ms)
+ GET /admin 200 in 262ms (compile: 236ms, render: 26ms)
+ GET /super-admin/editor 200 in 264ms (compile: 198ms, render: 66ms)
+<w> [webpack.cache.PackFileCacheStrategy] Restoring pack failed from D:\merchant-space\.next\dev\cache\webpack\client-development-fallback.pack.gz: Error: incorrect header check
+ GET / 200 in 176ms (compile: 71ms, render: 105ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 178ms (compile: 44ms, render: 134ms)
+ GET /admin 200 in 177ms (compile: 96ms, render: 81ms)
+ GET /super-admin 200 in 177ms (compile: 125ms, render: 52ms)
+ GET /super-admin/editor 200 in 180ms (compile: 152ms, render: 28ms)
+ GET /super-admin 200 in 503ms (compile: 253ms, render: 250ms)
+ GET / 200 in 503ms (compile: 322ms, render: 181ms)
+ GET /admin 200 in 502ms (compile: 403ms, render: 98ms)
+ GET /super-admin/editor 200 in 508ms (compile: 213ms, render: 294ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 504ms (compile: 475ms, render: 29ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 397ms (compile: 105ms, render: 292ms)
+ GET / 200 in 395ms (compile: 261ms, render: 134ms)
+ GET /super-admin 200 in 396ms (compile: 291ms, render: 105ms)
+ GET /admin 200 in 394ms (compile: 369ms, render: 26ms)
+ GET /super-admin/editor 200 in 400ms (compile: 191ms, render: 209ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 253ms (compile: 54ms, render: 198ms)
+ GET /super-admin 200 in 252ms (compile: 132ms, render: 120ms)
+ GET /admin 200 in 253ms (compile: 102ms, render: 151ms)
+ GET / 200 in 252ms (compile: 171ms, render: 81ms)
+ GET /super-admin/editor 200 in 256ms (compile: 214ms, render: 43ms)
+ GET /super-admin 200 in 85ms (compile: 8ms, render: 77ms)
+ GET / 200 in 86ms (compile: 23ms, render: 63ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 88ms (compile: 37ms, render: 52ms)
+ GET /admin 200 in 87ms (compile: 49ms, render: 38ms)
+ GET /super-admin/editor 200 in 88ms (compile: 65ms, render: 23ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 226ms (compile: 51ms, render: 176ms)
+ GET /super-admin 200 in 228ms (compile: 81ms, render: 147ms)
+ GET / 200 in 228ms (compile: 205ms, render: 23ms)
+ GET /admin 200 in 230ms (compile: 166ms, render: 64ms)
+ GET /super-admin/editor 200 in 234ms (compile: 124ms, render: 110ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 231ms (compile: 53ms, render: 178ms)
+ GET / 200 in 230ms (compile: 91ms, render: 139ms)
+ GET /super-admin 200 in 230ms (compile: 157ms, render: 73ms)
+ GET /admin 200 in 231ms (compile: 197ms, render: 34ms)
+ GET /super-admin/editor 200 in 235ms (compile: 129ms, render: 105ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 408ms (compile: 103ms, render: 305ms)
+ GET /admin 200 in 406ms (compile: 224ms, render: 183ms)
+ GET /super-admin 200 in 408ms (compile: 138ms, render: 270ms)
+ GET / 200 in 406ms (compile: 384ms, render: 22ms)
+ GET /super-admin/editor 200 in 410ms (compile: 308ms, render: 102ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 258ms (compile: 55ms, render: 203ms)
+ GET /admin 200 in 259ms (compile: 104ms, render: 154ms)
+ GET /super-admin 200 in 259ms (compile: 138ms, render: 121ms)
+ GET / 200 in 261ms (compile: 235ms, render: 26ms)
+ GET /super-admin/editor 200 in 264ms (compile: 184ms, render: 80ms)
+ GET /super-admin/editor 200 in 268ms (compile: 5ms, render: 264ms)
+ GET /portal 200 in 275ms (compile: 206ms, render: 69ms)
+ GET /admin 200 in 277ms (compile: 219ms, render: 57ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 528ms (compile: 215ms, render: 314ms)
+ GET / 200 in 527ms (compile: 390ms, render: 137ms)
+ GET /admin 200 in 526ms (compile: 471ms, render: 55ms)
+ GET /super-admin 200 in 526ms (compile: 501ms, render: 25ms)
+ GET /super-admin/editor 200 in 531ms (compile: 316ms, render: 215ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 507ms (compile: 193ms, render: 314ms)
+ GET /admin 200 in 506ms (compile: 291ms, render: 214ms)
+ GET / 200 in 505ms (compile: 364ms, render: 141ms)
+ GET /super-admin 200 in 504ms (compile: 478ms, render: 26ms)
+ GET /super-admin/editor 200 in 508ms (compile: 447ms, render: 62ms)
+ GET /super-admin/editor 200 in 223ms (compile: 1596µs, render: 221ms)
+ GET /portal 200 in 39ms (compile: 5ms, render: 34ms)
+ GET /admin 200 in 426ms (compile: 117ms, render: 309ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 424ms (compile: 207ms, render: 217ms)
+ GET /super-admin 200 in 424ms (compile: 238ms, render: 186ms)
+ GET / 200 in 424ms (compile: 312ms, render: 112ms)
+ GET /super-admin/editor 200 in 427ms (compile: 395ms, render: 32ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 502ms (compile: 185ms, render: 317ms)
+ GET /super-admin 200 in 502ms (compile: 231ms, render: 271ms)
+ GET /admin 200 in 502ms (compile: 315ms, render: 186ms)
+ GET / 200 in 502ms (compile: 391ms, render: 111ms)
+ GET /super-admin/editor 200 in 503ms (compile: 474ms, render: 30ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 460ms (compile: 156ms, render: 304ms)
+ GET /admin 200 in 457ms (compile: 246ms, render: 211ms)
+ GET /super-admin 200 in 457ms (compile: 274ms, render: 183ms)
+ GET / 200 in 457ms (compile: 434ms, render: 24ms)
+ GET /super-admin/editor 200 in 459ms (compile: 359ms, render: 100ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 489ms (compile: 114ms, render: 375ms)
+ GET / 200 in 487ms (compile: 251ms, render: 236ms)
+ GET /admin 200 in 486ms (compile: 370ms, render: 116ms)
+ GET /super-admin 200 in 487ms (compile: 290ms, render: 198ms)
+ GET /super-admin/editor 200 in 489ms (compile: 456ms, render: 33ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 480ms (compile: 117ms, render: 363ms)
+ GET / 200 in 480ms (compile: 256ms, render: 224ms)
+ GET /super-admin 200 in 479ms (compile: 283ms, render: 197ms)
+ GET /admin 200 in 479ms (compile: 366ms, render: 113ms)
+ GET /super-admin/editor 200 in 481ms (compile: 451ms, render: 30ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 484ms (compile: 116ms, render: 368ms)
+ GET /admin 200 in 483ms (compile: 259ms, render: 225ms)
+ GET /super-admin 200 in 483ms (compile: 384ms, render: 99ms)
+ GET / 200 in 482ms (compile: 458ms, render: 24ms)
+ GET /super-admin/editor 200 in 485ms (compile: 354ms, render: 131ms)
+ GET /portal 200 in 226ms (compile: 1486µs, render: 225ms)
+ GET /super-admin/editor 200 in 62ms (compile: 6ms, render: 57ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 511ms (compile: 192ms, render: 319ms)
+ GET /admin 200 in 510ms (compile: 294ms, render: 216ms)
+ GET / 200 in 508ms (compile: 453ms, render: 54ms)
+ GET /super-admin 200 in 509ms (compile: 483ms, render: 25ms)
+ GET /super-admin/editor 200 in 512ms (compile: 378ms, render: 134ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 487ms (compile: 179ms, render: 308ms)
+ GET /super-admin 200 in 486ms (compile: 218ms, render: 267ms)
+ GET / 200 in 485ms (compile: 376ms, render: 108ms)
+ GET /admin 200 in 484ms (compile: 458ms, render: 26ms)
+ GET /super-admin/editor 200 in 487ms (compile: 301ms, render: 186ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 481ms (compile: 174ms, render: 307ms)
+ GET / 200 in 478ms (compile: 257ms, render: 221ms)
+ GET /admin 200 in 480ms (compile: 340ms, render: 140ms)
+ GET /super-admin 200 in 478ms (compile: 454ms, render: 24ms)
+ GET /super-admin/editor 200 in 482ms (compile: 422ms, render: 60ms)
+ GET /admin 200 in 469ms (compile: 175ms, render: 295ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 471ms (compile: 259ms, render: 212ms)
+ GET / 200 in 470ms (compile: 331ms, render: 139ms)
+ GET /super-admin 200 in 470ms (compile: 444ms, render: 26ms)
+ GET /super-admin/editor 200 in 473ms (compile: 414ms, render: 60ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 487ms (compile: 117ms, render: 369ms)
+ GET / 200 in 486ms (compile: 255ms, render: 232ms)
+ GET /admin 200 in 485ms (compile: 344ms, render: 141ms)
+ GET /super-admin 200 in 485ms (compile: 459ms, render: 27ms)
+ GET /super-admin/editor 200 in 489ms (compile: 427ms, render: 62ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 462ms (compile: 114ms, render: 348ms)
+ GET /super-admin 200 in 461ms (compile: 280ms, render: 181ms)
+ GET / 200 in 461ms (compile: 352ms, render: 109ms)
+ GET /admin 200 in 461ms (compile: 436ms, render: 25ms)
+ GET /super-admin/editor 200 in 465ms (compile: 259ms, render: 205ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 493ms (compile: 120ms, render: 372ms)
+ GET / 200 in 492ms (compile: 277ms, render: 215ms)
+ GET /super-admin 200 in 492ms (compile: 295ms, render: 197ms)
+ GET /admin 200 in 490ms (compile: 466ms, render: 24ms)
+ GET /super-admin/editor 200 in 494ms (compile: 377ms, render: 117ms)
+ GET /portal 200 in 210ms (compile: 1414µs, render: 208ms)
+ GET /admin 200 in 73ms (compile: 1641µs, render: 72ms)
+ GET /super-admin/editor 200 in 76ms (compile: 40ms, render: 36ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 578ms (compile: 193ms, render: 385ms)
+ GET /super-admin 200 in 577ms (compile: 240ms, render: 338ms)
+ GET /admin 200 in 577ms (compile: 324ms, render: 254ms)
+ GET / 200 in 577ms (compile: 401ms, render: 176ms)
+ GET /super-admin/editor 200 in 580ms (compile: 482ms, render: 98ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 90ms (compile: 10ms, render: 80ms)
+ GET / 200 in 90ms (compile: 24ms, render: 66ms)
+ GET /super-admin 200 in 90ms (compile: 37ms, render: 53ms)
+ GET /admin 200 in 90ms (compile: 51ms, render: 39ms)
+ GET /super-admin/editor 200 in 92ms (compile: 64ms, render: 28ms)
+ GET /portal 200 in 254ms (compile: 1802µs, render: 252ms)
+ GET /super-admin/editor 200 in 257ms (compile: 200ms, render: 56ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 87ms (compile: 9ms, render: 78ms)
+ GET / 200 in 86ms (compile: 23ms, render: 63ms)
+ GET /admin 200 in 88ms (compile: 37ms, render: 51ms)
+ GET /super-admin 200 in 87ms (compile: 65ms, render: 21ms)
+ GET /super-admin/editor 200 in 90ms (compile: 51ms, render: 39ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 90ms (compile: 9ms, render: 81ms)
+ GET / 200 in 90ms (compile: 25ms, render: 66ms)
+ GET /super-admin 200 in 90ms (compile: 53ms, render: 37ms)
+ GET /admin 200 in 91ms (compile: 69ms, render: 22ms)
+ GET /super-admin/editor 200 in 95ms (compile: 38ms, render: 56ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 30ms (compile: 2ms, render: 28ms)
+ GET /super-admin 200 in 149ms (compile: 5ms, render: 144ms)
+ GET /super-admin/editor 200 in 150ms (compile: 46ms, render: 104ms)
+ GET / 200 in 112ms (compile: 42ms, render: 70ms)
+ GET /admin 200 in 114ms (compile: 57ms, render: 57ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 533ms (compile: 217ms, render: 316ms)
+ GET / 200 in 528ms (compile: 302ms, render: 225ms)
+ GET /super-admin 200 in 515ms (compile: 491ms, render: 24ms)
+ GET /admin 200 in 517ms (compile: 461ms, render: 56ms)
+ GET /super-admin/editor 200 in 527ms (compile: 381ms, render: 146ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 482ms (compile: 168ms, render: 314ms)
+ GET /super-admin 200 in 482ms (compile: 212ms, render: 270ms)
+ GET / 200 in 481ms (compile: 286ms, render: 195ms)
+ GET /admin 200 in 480ms (compile: 456ms, render: 25ms)
+ GET /super-admin/editor 200 in 485ms (compile: 371ms, render: 113ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 498ms (compile: 118ms, render: 380ms)
+ GET /super-admin 200 in 494ms (compile: 221ms, render: 273ms)
+ GET /admin 200 in 491ms (compile: 388ms, render: 103ms)
+ GET / 200 in 491ms (compile: 468ms, render: 23ms)
+ GET /super-admin/editor 200 in 496ms (compile: 307ms, render: 189ms)
+ GET /portal 200 in 212ms (compile: 1355µs, render: 210ms)
+ GET /super-admin/editor 200 in 57ms (compile: 5ms, render: 52ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 586ms (compile: 199ms, render: 388ms)
+ GET /admin 200 in 586ms (compile: 299ms, render: 287ms)
+ GET / 200 in 586ms (compile: 374ms, render: 212ms)
+ GET /super-admin 200 in 588ms (compile: 492ms, render: 96ms)
+ GET /super-admin/editor 200 in 591ms (compile: 456ms, render: 135ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 90ms (compile: 10ms, render: 80ms)
+ GET /super-admin 200 in 90ms (compile: 25ms, render: 65ms)
+ GET / 200 in 90ms (compile: 39ms, render: 51ms)
+ GET /super-admin/editor 200 in 93ms (compile: 53ms, render: 40ms)
+ GET /admin 200 in 91ms (compile: 66ms, render: 25ms)
+ GET /portal 200 in 219ms (compile: 4ms, render: 215ms)
+ GET /super-admin/editor 200 in 258ms (compile: 202ms, render: 56ms)
+ GET /admin 200 in 465ms (compile: 175ms, render: 289ms)
+ GET / 200 in 463ms (compile: 341ms, render: 122ms)
+ GET /super-admin 200 in 463ms (compile: 365ms, render: 99ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 463ms (compile: 439ms, render: 23ms)
+ GET /super-admin/editor 200 in 468ms (compile: 265ms, render: 203ms)
+ GET /admin 200 in 461ms (compile: 173ms, render: 288ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 459ms (compile: 255ms, render: 204ms)
+ GET / 200 in 459ms (compile: 327ms, render: 131ms)
+ GET /super-admin 200 in 459ms (compile: 350ms, render: 110ms)
+ GET /super-admin/editor 200 in 462ms (compile: 432ms, render: 30ms)
+⨯ ./src/components/blocks/MerchantListBlock.tsx
+Error: 
+
+Caused by:
+    0: Failed to read source code from D:\merchant-space\src\components\blocks\MerchantListBlock.tsx
+    1: 系统找不到指定的文件。 (os error 2)
+
+Import trace for requested module:
+./src/components/blocks/MerchantListBlock.tsx
+./src/components/blocks/BlockRenderer.tsx
+./src/app/admin/AdminClient.tsx
+ GET / 200 in 383ms (compile: 184ms, render: 200ms)
+ GET /admin 200 in 385ms (compile: 104ms, render: 281ms)
+ GET /super-admin 200 in 382ms (compile: 358ms, render: 24ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 384ms (compile: 338ms, render: 46ms)
+ GET /super-admin/editor 200 in 387ms (compile: 264ms, render: 123ms)
+ GET /portal 200 in 206ms (compile: 1551µs, render: 204ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 433ms (compile: 123ms, render: 310ms)
+ GET /super-admin 200 in 432ms (compile: 249ms, render: 183ms)
+ GET / 200 in 431ms (compile: 325ms, render: 106ms)
+ GET /admin 200 in 431ms (compile: 408ms, render: 23ms)
+ GET /super-admin/editor 200 in 437ms (compile: 222ms, render: 215ms)
+ GET /admin 200 in 245ms (compile: 49ms, render: 196ms)
+ GET /super-admin 200 in 246ms (compile: 96ms, render: 150ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 250ms (compile: 76ms, render: 174ms)
+ GET / 200 in 249ms (compile: 192ms, render: 57ms)
+ GET /super-admin/editor 200 in 251ms (compile: 214ms, render: 37ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 419ms (compile: 117ms, render: 302ms)
+ GET /admin 200 in 420ms (compile: 207ms, render: 212ms)
+ GET / 200 in 420ms (compile: 286ms, render: 133ms)
+ GET /super-admin 200 in 419ms (compile: 395ms, render: 24ms)
+ GET /super-admin/editor 200 in 423ms (compile: 369ms, render: 54ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 435ms (compile: 126ms, render: 310ms)
+ GET /super-admin 200 in 435ms (compile: 165ms, render: 271ms)
+ GET /admin 200 in 434ms (compile: 332ms, render: 102ms)
+ GET / 200 in 436ms (compile: 411ms, render: 24ms)
+ GET /super-admin/editor 200 in 439ms (compile: 248ms, render: 192ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 421ms (compile: 102ms, render: 319ms)
+ GET /super-admin 200 in 422ms (compile: 132ms, render: 290ms)
+ GET /admin 200 in 422ms (compile: 217ms, render: 205ms)
+ GET / 200 in 422ms (compile: 397ms, render: 25ms)
+ GET /super-admin/editor 200 in 425ms (compile: 303ms, render: 122ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 413ms (compile: 98ms, render: 315ms)
+ GET / 200 in 412ms (compile: 211ms, render: 202ms)
+ GET /super-admin 200 in 414ms (compile: 129ms, render: 285ms)
+ GET /admin 200 in 413ms (compile: 391ms, render: 22ms)
+ GET /super-admin/editor 200 in 417ms (compile: 294ms, render: 123ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 391ms (compile: 92ms, render: 299ms)
+ GET / 200 in 390ms (compile: 254ms, render: 136ms)
+ GET /admin 200 in 391ms (compile: 181ms, render: 210ms)
+ GET /super-admin 200 in 391ms (compile: 277ms, render: 114ms)
+ GET /super-admin/editor 200 in 394ms (compile: 365ms, render: 29ms)
+ GET / 200 in 79ms (compile: 48ms, render: 31ms)
+ GET /super-admin 200 in 81ms (compile: 21ms, render: 59ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 82ms (compile: 7ms, render: 75ms)
+ GET /admin 200 in 80ms (compile: 61ms, render: 19ms)
+ GET /super-admin/editor 200 in 83ms (compile: 34ms, render: 49ms)
+ GET /admin 200 in 335ms (compile: 104ms, render: 231ms)
+ GET /super-admin 200 in 335ms (compile: 137ms, render: 198ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 335ms (compile: 176ms, render: 159ms)
+ GET / 200 in 335ms (compile: 312ms, render: 23ms)
+ GET /super-admin/editor 200 in 338ms (compile: 259ms, render: 79ms)
+ GET /admin 200 in 329ms (compile: 107ms, render: 223ms)
+ GET /super-admin 200 in 329ms (compile: 139ms, render: 191ms)
+ GET / 200 in 329ms (compile: 181ms, render: 148ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 330ms (compile: 306ms, render: 24ms)
+ GET /super-admin/editor 200 in 333ms (compile: 269ms, render: 64ms)
+ GET /portal 200 in 250ms (compile: 1811µs, render: 248ms)
+ GET /admin 200 in 252ms (compile: 198ms, render: 54ms)
+ GET / 200 in 326ms (compile: 57ms, render: 269ms)
+ GET /admin 200 in 326ms (compile: 142ms, render: 184ms)
+ GET /super-admin 200 in 325ms (compile: 202ms, render: 123ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 326ms (compile: 178ms, render: 148ms)
+ GET /super-admin/editor 200 in 328ms (compile: 298ms, render: 30ms)
+ GET /admin?scope=site-site-main 200 in 212ms (compile: 3ms, render: 209ms)
+ GET /admin 200 in 32ms (compile: 3ms, render: 29ms)
+ GET / 200 in 156ms (compile: 5ms, render: 151ms)
+ GET /super-admin 200 in 165ms (compile: 42ms, render: 122ms)
+ GET /super-admin/editor 200 in 133ms (compile: 49ms, render: 84ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 133ms (compile: 64ms, render: 69ms)
+ GET /admin 200 in 429ms (compile: 123ms, render: 306ms)
+ GET / 200 in 428ms (compile: 289ms, render: 139ms)
+ GET /portal?q=%E9%A6%96%E9%A1%B5 200 in 430ms (compile: 214ms, render: 216ms)
+ GET /super-admin 200 in 429ms (compile: 401ms, render: 28ms)
+ GET /super-admin/editor 200 in 432ms (compile: 373ms, render: 59ms)
+ GET /super-admin 200 in 449ms (compile: 177ms, render: 272ms)
+ GET /portal?country=ES&province=02&city=Abengibre 200 in 451ms (compile: 136ms, render: 315ms)
+ GET / 200 in 449ms (compile: 341ms, render: 109ms)
+ GET /admin 200 in 451ms (compile: 263ms, render: 188ms)
+ GET /super-admin/editor 200 in 452ms (compile: 424ms, render: 28ms)
+ GET /portal?country=ES&province=02&city=Abengibre 200 in 409ms (compile: 96ms, render: 313ms)
+ GET /admin 200 in 409ms (compile: 184ms, render: 225ms)
+ GET /super-admin 200 in 408ms (compile: 385ms, render: 24ms)
+ GET / 200 in 410ms (compile: 349ms, render: 61ms)
+ GET /super-admin/editor 200 in 413ms (compile: 269ms, render: 144ms)
+ GET /admin 200 in 276ms (compile: 1366µs, render: 275ms)
+ GET /super-admin 200 in 439ms (compile: 71ms, render: 367ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 438ms (compile: 253ms, render: 185ms)
+ GET /admin 200 in 439ms (compile: 337ms, render: 102ms)
+ GET / 200 in 441ms (compile: 417ms, render: 24ms)
+ GET /super-admin/editor 200 in 443ms (compile: 172ms, render: 272ms)
+ GET /admin 200 in 214ms (compile: 1509µs, render: 213ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 417ms (compile: 96ms, render: 321ms)
+ GET / 200 in 418ms (compile: 186ms, render: 232ms)
+ GET /admin 200 in 417ms (compile: 298ms, render: 120ms)
+ GET /super-admin 200 in 418ms (compile: 211ms, render: 207ms)
+ GET /super-admin/editor 200 in 420ms (compile: 389ms, render: 31ms)
+ GET /admin 200 in 535ms (compile: 155ms, render: 380ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 534ms (compile: 396ms, render: 138ms)
+ GET / 200 in 534ms (compile: 480ms, render: 54ms)
+ GET /super-admin 200 in 534ms (compile: 506ms, render: 28ms)
+ GET /super-admin/editor 200 in 539ms (compile: 304ms, render: 235ms)
+ GET /admin 200 in 427ms (compile: 106ms, render: 321ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 427ms (compile: 194ms, render: 233ms)
+ GET / 200 in 427ms (compile: 402ms, render: 25ms)
+ GET /super-admin 200 in 429ms (compile: 220ms, render: 210ms)
+ GET /super-admin/editor 200 in 433ms (compile: 303ms, render: 130ms)
+ GET /admin 200 in 427ms (compile: 103ms, render: 324ms)
+ GET / 200 in 424ms (compile: 402ms, render: 22ms)
+ GET /super-admin 200 in 426ms (compile: 306ms, render: 119ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 427ms (compile: 279ms, render: 148ms)
+ GET /super-admin/editor 200 in 431ms (compile: 194ms, render: 237ms)
+ GET /admin 200 in 424ms (compile: 103ms, render: 320ms)
+ GET / 200 in 423ms (compile: 199ms, render: 224ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 423ms (compile: 400ms, render: 23ms)
+ GET /super-admin 200 in 424ms (compile: 312ms, render: 112ms)
+ GET /super-admin/editor 200 in 427ms (compile: 283ms, render: 145ms)
+ GET /admin 200 in 577ms (compile: 155ms, render: 422ms)
+ GET / 200 in 576ms (compile: 361ms, render: 216ms)
+ GET /super-admin 200 in 576ms (compile: 385ms, render: 191ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 576ms (compile: 549ms, render: 27ms)
+ GET /super-admin/editor 200 in 579ms (compile: 461ms, render: 118ms)
+ GET /admin 200 in 224ms (compile: 1418µs, render: 223ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 33ms (compile: 3ms, render: 30ms)
+ GET / 200 in 141ms (compile: 6ms, render: 135ms)
+ GET /super-admin 200 in 151ms (compile: 36ms, render: 115ms)
+ GET /super-admin/editor 200 in 127ms (compile: 41ms, render: 86ms)
+ GET /admin 200 in 127ms (compile: 69ms, render: 58ms)
+ GET / 200 in 34ms (compile: 3ms, render: 31ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 32ms (compile: 3ms, render: 29ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 33ms (compile: 5ms, render: 29ms)
+ GET / 200 in 30ms (compile: 3ms, render: 27ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 519ms (compile: 312ms, render: 206ms)
+ GET /admin 200 in 518ms (compile: 395ms, render: 123ms)
+ GET /super-admin/editor 200 in 524ms (compile: 223ms, render: 302ms)
+ GET / 200 in 518ms (compile: 468ms, render: 50ms)
+ GET /super-admin 200 in 518ms (compile: 493ms, render: 25ms)
+ GET /super-admin 200 in 486ms (compile: 236ms, render: 251ms)
+ GET /super-admin/editor 200 in 490ms (compile: 202ms, render: 288ms)
+ GET /admin 200 in 482ms (compile: 387ms, render: 95ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 485ms (compile: 305ms, render: 179ms)
+ GET / 200 in 483ms (compile: 460ms, render: 23ms)
+ GET /admin 200 in 180ms (compile: 84ms, render: 96ms)
+ GET / 200 in 180ms (compile: 99ms, render: 82ms)
+ GET /super-admin 200 in 175ms (compile: 109ms, render: 66ms)
+ GET /super-admin/editor 200 in 186ms (compile: 69ms, render: 117ms)
+ GET /super-admin 200 in 214ms (compile: 93ms, render: 121ms)
+ GET /admin 200 in 214ms (compile: 139ms, render: 75ms)
+ GET / 200 in 214ms (compile: 177ms, render: 37ms)
+ GET /super-admin/editor 200 in 216ms (compile: 56ms, render: 160ms)
+ GET /portal?country=ES&province=41&city=Sevilla 404 in 1982ms (compile: 1951ms, render: 31ms)
+ GET /portal?country=ES&province=41&city=Sevilla 404 in 102ms (compile: 10ms, render: 92ms)
+ GET /portal?country=ES&province=41&city=Sevilla 404 in 98ms (compile: 22ms, render: 76ms)
+ GET /super-admin/editor 200 in 309ms (compile: 4ms, render: 304ms)
+ GET / 200 in 118ms (compile: 50ms, render: 68ms)
+ GET /admin 200 in 314ms (compile: 201ms, render: 113ms)
+ GET /super-admin 200 in 123ms (compile: 35ms, render: 88ms)
+ GET /portal?country=ES&province=41&city=Sevilla 404 in 27ms (compile: 3ms, render: 25ms)
+ GET / 200 in 166ms (compile: 72ms, render: 94ms)
+ GET /super-admin 200 in 166ms (compile: 87ms, render: 79ms)
+ GET /admin 200 in 167ms (compile: 106ms, render: 61ms)
+ GET /super-admin/editor 200 in 173ms (compile: 55ms, render: 118ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 1434ms (compile: 1224ms, render: 210ms)
+ GET /admin 200 in 215ms (compile: 39ms, render: 176ms)
+ GET /super-admin 200 in 215ms (compile: 65ms, render: 150ms)
+ GET / 200 in 215ms (compile: 103ms, render: 112ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 214ms (compile: 161ms, render: 53ms)
+ GET /super-admin/editor 200 in 219ms (compile: 144ms, render: 75ms)
+⨯ SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>) {
+  page: '/portal'
+}
+⨯ SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>) {
+  page: '/portal'
+}
+ GET /portal?country=ES&province=41&city=Sevilla 500 in 623ms (compile: 597ms, render: 26ms)
+ GET /portal?country=ES&province=41&city=Sevilla 500 in 618ms (compile: 593ms, render: 26ms)
+ GET / 200 in 422ms (compile: 5ms, render: 417ms)
+ GET /admin 200 in 481ms (compile: 227ms, render: 254ms)
+ GET /super-admin 200 in 265ms (compile: 107ms, render: 158ms)
+ GET /super-admin/editor 200 in 206ms (compile: 76ms, render: 129ms)
+ GET /super-admin 200 in 718ms (compile: 91ms, render: 627ms)
+ GET /admin 200 in 719ms (compile: 177ms, render: 541ms)
+ GET / 200 in 719ms (compile: 690ms, render: 29ms)
+ GET /super-admin/editor 200 in 722ms (compile: 651ms, render: 71ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 728ms (compile: 59ms, render: 668ms)
+ GET /super-admin/editor 200 in 157ms (compile: 4ms, render: 153ms)
+ GET /admin 200 in 159ms (compile: 61ms, render: 98ms)
+ GET / 200 in 104ms (compile: 37ms, render: 67ms)
+ GET /super-admin 200 in 107ms (compile: 49ms, render: 58ms)
+ GET /admin 200 in 431ms (compile: 212ms, render: 219ms)
+ GET / 200 in 430ms (compile: 258ms, render: 172ms)
+ GET /super-admin 200 in 429ms (compile: 368ms, render: 62ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 429ms (compile: 407ms, render: 22ms)
+ GET /super-admin/editor 200 in 433ms (compile: 341ms, render: 93ms)
+ GET /super-admin/editor 200 in 248ms (compile: 2ms, render: 246ms)
+ GET /portal 200 in 250ms (compile: 218ms, render: 32ms)
+ GET / 200 in 457ms (compile: 135ms, render: 322ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 457ms (compile: 230ms, render: 227ms)
+ GET /super-admin 200 in 457ms (compile: 256ms, render: 201ms)
+ GET /admin 200 in 456ms (compile: 341ms, render: 115ms)
+ GET /super-admin/editor 200 in 458ms (compile: 428ms, render: 30ms)
+ GET / 200 in 206ms (compile: 3ms, render: 204ms)
+ GET /super-admin 200 in 175ms (compile: 7ms, render: 168ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 175ms (compile: 44ms, render: 132ms)
+ GET /admin 200 in 160ms (compile: 55ms, render: 105ms)
+ GET /super-admin/editor 200 in 144ms (compile: 93ms, render: 50ms)
+ GET / 200 in 31ms (compile: 3ms, render: 29ms)
+ GET / 200 in 29ms (compile: 3ms, render: 26ms)
+ GET / 200 in 28ms (compile: 2ms, render: 25ms)
+ GET / 200 in 31ms (compile: 1740µs, render: 29ms)
+ GET /super-admin 200 in 460ms (compile: 193ms, render: 267ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 459ms (compile: 274ms, render: 185ms)
+ GET /admin 200 in 458ms (compile: 357ms, render: 101ms)
+ GET /super-admin/editor 200 in 464ms (compile: 147ms, render: 318ms)
+ GET / 200 in 460ms (compile: 436ms, render: 24ms)
+ GET / 200 in 199ms (compile: 2ms, render: 196ms)
+ GET /super-admin 200 in 167ms (compile: 4ms, render: 162ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 170ms (compile: 43ms, render: 127ms)
+ GET /admin 200 in 138ms (compile: 37ms, render: 101ms)
+ GET /super-admin/editor 200 in 138ms (compile: 55ms, render: 83ms)
+ GET /admin 200 in 35ms (compile: 3ms, render: 33ms)
+ GET /admin 200 in 587ms (compile: 278ms, render: 309ms)
+ GET / 200 in 586ms (compile: 368ms, render: 219ms)
+ GET /super-admin 200 in 586ms (compile: 397ms, render: 189ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 585ms (compile: 561ms, render: 24ms)
+ GET /super-admin/editor 200 in 588ms (compile: 485ms, render: 103ms)
+ GET / 200 in 210ms (compile: 2ms, render: 208ms)
+ GET /super-admin 200 in 173ms (compile: 5ms, render: 168ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 178ms (compile: 43ms, render: 136ms)
+ GET /super-admin/editor 200 in 144ms (compile: 55ms, render: 89ms)
+ GET /admin 200 in 145ms (compile: 40ms, render: 106ms)
+ GET / 200 in 448ms (compile: 125ms, render: 323ms)
+ GET /super-admin 200 in 448ms (compile: 170ms, render: 278ms)
+ GET /admin 200 in 447ms (compile: 422ms, render: 25ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 449ms (compile: 248ms, render: 202ms)
+ GET /super-admin/editor 200 in 451ms (compile: 336ms, render: 115ms)
+ GET / 200 in 357ms (compile: 67ms, render: 290ms)
+ GET /admin 200 in 357ms (compile: 155ms, render: 201ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 358ms (compile: 194ms, render: 164ms)
+ GET /super-admin 200 in 358ms (compile: 224ms, render: 133ms)
+ GET /super-admin/editor 200 in 360ms (compile: 331ms, render: 29ms)
+ GET / 200 in 203ms (compile: 3ms, render: 200ms)
+ GET /site/site-main 200 in 1868ms (compile: 1669ms, render: 200ms)
+ GET /site/site-main 200 in 31ms (compile: 4ms, render: 27ms)
+ GET /site/site-main 200 in 30ms (compile: 4ms, render: 26ms)
+ GET /super-admin 200 in 449ms (compile: 73ms, render: 375ms)
+ GET / 200 in 448ms (compile: 334ms, render: 114ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 449ms (compile: 170ms, render: 279ms)
+ GET /admin 200 in 450ms (compile: 416ms, render: 34ms)
+ GET /super-admin/editor 200 in 454ms (compile: 255ms, render: 199ms)
+ GET /admin 200 in 344ms (compile: 132ms, render: 212ms)
+ GET /super-admin 200 in 344ms (compile: 160ms, render: 185ms)
+ GET / 200 in 345ms (compile: 239ms, render: 106ms)
+ GET /super-admin/editor 200 in 348ms (compile: 76ms, render: 272ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 347ms (compile: 322ms, render: 24ms)
+ GET /admin 200 in 231ms (compile: 1415µs, render: 229ms)
+ GET /site/site-main 200 in 112ms (compile: 75ms, render: 37ms)
+ GET / 200 in 31ms (compile: 5ms, render: 26ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 162ms (compile: 3ms, render: 160ms)
+ GET /super-admin 200 in 129ms (compile: 16ms, render: 113ms)
+ GET /admin 200 in 128ms (compile: 45ms, render: 84ms)
+ GET /super-admin/editor 200 in 130ms (compile: 30ms, render: 100ms)
+ GET / 200 in 476ms (compile: 96ms, render: 381ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 477ms (compile: 178ms, render: 298ms)
+ GET /super-admin 200 in 477ms (compile: 206ms, render: 271ms)
+ GET /admin 200 in 478ms (compile: 293ms, render: 185ms)
+ GET /super-admin/editor 200 in 485ms (compile: 381ms, render: 104ms)
+ GET /super-admin 200 in 98ms (compile: 13ms, render: 85ms)
+ GET /admin 200 in 97ms (compile: 31ms, render: 66ms)
+ GET /super-admin/editor 200 in 101ms (compile: 48ms, render: 53ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 99ms (compile: 66ms, render: 33ms)
+ GET / 200 in 23ms (compile: 4ms, render: 19ms)
+ GET / 200 in 157ms (compile: 2ms, render: 154ms)
+ GET /admin 200 in 184ms (compile: 5ms, render: 179ms)
+ GET /super-admin/editor 200 in 186ms (compile: 73ms, render: 113ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 123ms (compile: 43ms, render: 80ms)
+ GET /super-admin 200 in 123ms (compile: 57ms, render: 66ms)
+ GET / 200 in 444ms (compile: 173ms, render: 271ms)
+ GET /super-admin 200 in 444ms (compile: 207ms, render: 237ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 443ms (compile: 246ms, render: 197ms)
+ GET /admin 200 in 444ms (compile: 329ms, render: 115ms)
+ GET /super-admin/editor 200 in 446ms (compile: 414ms, render: 32ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 507ms (compile: 185ms, render: 322ms)
+ GET /super-admin 200 in 506ms (compile: 392ms, render: 114ms)
+ GET / 200 in 507ms (compile: 278ms, render: 229ms)
+ GET /admin 200 in 507ms (compile: 483ms, render: 25ms)
+ GET /super-admin/editor 200 in 510ms (compile: 361ms, render: 150ms)
+⚠ Found a change in next.config.ts. Restarting the server to apply the changes...
+▲ Next.js 16.1.6 (webpack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.110.252:3000
+- Environments: .env.local
+
+✓ Starting...
+✓ Ready in 1333ms
+ GET /admin 200 in 3.4s (compile: 2.5s, render: 885ms)
+ GET /super-admin 200 in 3.4s (compile: 2.5s, render: 885ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 3.4s (compile: 2.5s, render: 874ms)
+ GET /super-admin/editor 200 in 3.4s (compile: 2.5s, render: 887ms)
+ GET /site/site-main 200 in 3.4s (compile: 2.9s, render: 484ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 196ms (compile: 25ms, render: 171ms)
+ GET /super-admin 200 in 188ms (compile: 71ms, render: 117ms)
+ GET /admin 200 in 188ms (compile: 121ms, render: 66ms)
+ GET /super-admin/editor 200 in 192ms (compile: 98ms, render: 94ms)
+ GET /site/site-main 200 in 191ms (compile: 158ms, render: 34ms)
+ GET /site/site-main 200 in 53ms (compile: 8ms, render: 45ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 169ms (compile: 5ms, render: 164ms)
+ GET /super-admin 200 in 174ms (compile: 45ms, render: 130ms)
+ GET /admin 200 in 145ms (compile: 46ms, render: 99ms)
+ GET /super-admin/editor 200 in 145ms (compile: 62ms, render: 83ms)
+ GET /site/site-main 200 in 45ms (compile: 9ms, render: 37ms)
+⚠ Found a change in next.config.ts. Restarting the server to apply the changes...
+▲ Next.js 16.1.6 (webpack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.110.252:3000
+- Environments: .env.local
+
+✓ Starting...
+✓ Ready in 1577ms
+ GET /super-admin 200 in 2.5s (compile: 1869ms, render: 671ms)
+ GET /admin 200 in 2.5s (compile: 1841ms, render: 671ms)
+ GET /super-admin/editor 200 in 2.6s (compile: 1903ms, render: 671ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 2.5s (compile: 1850ms, render: 671ms)
+ GET /site/site-main 200 in 2.6s (compile: 2.3s, render: 266ms)
+ GET /admin 200 in 144ms (compile: 14ms, render: 130ms)
+ GET /super-admin 200 in 143ms (compile: 55ms, render: 88ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 142ms (compile: 93ms, render: 49ms)
+ GET /super-admin/editor 200 in 146ms (compile: 73ms, render: 73ms)
+ GET /site/site-main 200 in 145ms (compile: 116ms, render: 29ms)
+ GET /site/site-main 200 in 38ms (compile: 8ms, render: 30ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 145ms (compile: 7ms, render: 139ms)
+ GET /super-admin 200 in 177ms (compile: 38ms, render: 139ms)
+ GET /super-admin/editor 200 in 152ms (compile: 52ms, render: 100ms)
+ GET /admin 200 in 50ms (compile: 8ms, render: 42ms)
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+ GET / 200 in 999ms (compile: 752ms, render: 246ms)
+ GET /admin 200 in 404ms (compile: 79ms, render: 325ms)
+ GET /super-admin 200 in 408ms (compile: 148ms, render: 260ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 280ms (compile: 203ms, render: 77ms)
+ GET /super-admin/editor 200 in 282ms (compile: 126ms, render: 156ms)
+ GET / 200 in 15ms (compile: 1390µs, render: 14ms)
+ GET / 200 in 33ms (compile: 3ms, render: 30ms)
+ GET / 200 in 30ms (compile: 3ms, render: 27ms)
+ GET / 200 in 28ms (compile: 3ms, render: 25ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 182ms (compile: 13ms, render: 169ms)
+ GET / 200 in 181ms (compile: 45ms, render: 137ms)
+ GET /super-admin 200 in 183ms (compile: 29ms, render: 153ms)
+ GET /admin 200 in 182ms (compile: 74ms, render: 107ms)
+ GET /super-admin/editor 200 in 187ms (compile: 59ms, render: 128ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 93ms (compile: 10ms, render: 84ms)
+ GET /super-admin 200 in 93ms (compile: 24ms, render: 70ms)
+ GET /admin 200 in 93ms (compile: 38ms, render: 56ms)
+ GET /super-admin/editor 200 in 96ms (compile: 53ms, render: 43ms)
+ GET / 200 in 95ms (compile: 71ms, render: 24ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 495ms (compile: 167ms, render: 328ms)
+ GET /admin 200 in 495ms (compile: 370ms, render: 125ms)
+ GET /super-admin 200 in 495ms (compile: 394ms, render: 101ms)
+ GET / 200 in 495ms (compile: 471ms, render: 24ms)
+ GET /super-admin/editor 200 in 499ms (compile: 279ms, render: 221ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 469ms (compile: 131ms, render: 339ms)
+ GET /super-admin 200 in 469ms (compile: 172ms, render: 297ms)
+ GET /admin 200 in 470ms (compile: 267ms, render: 203ms)
+ GET /super-admin/editor 200 in 472ms (compile: 367ms, render: 104ms)
+ GET / 200 in 94ms (compile: 63ms, render: 31ms)
+⨯ ./src/app/page.tsx
+Error:   x Expected ';', '}' or <eof>
+     ,-[D:\merchant-space\src\app\page.tsx:201:1]
+ 198 |   }, 0);
+ 199 |   const backgroundExtendPadding = Math.max(0, maxBlockOffsetY) + 160;
+ 200 | 
+ 201 |   if (!hydrated || isInitialLoading) {`r`n    return <LoadingProgressScreen message="正在加载页面..." />;`r`n  }
+     :                                       ^|^^
+     :                                        `-- This is the expression part of an expression statement
+ 202 | 
+ 203 |   return (
+ 204 |     <main
+     `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+./src/app/page.tsx
+⨯ ./src/app/page.tsx
+Error:   x Expected ';', '}' or <eof>
+     ,-[D:\merchant-space\src\app\page.tsx:201:1]
+ 198 |   }, 0);
+ 199 |   const backgroundExtendPadding = Math.max(0, maxBlockOffsetY) + 160;
+ 200 | 
+ 201 |   if (!hydrated || isInitialLoading) {`r`n    return <LoadingProgressScreen message="正在加载页面..." />;`r`n  }
+     :                                       ^|^^
+     :                                        `-- This is the expression part of an expression statement
+ 202 | 
+ 203 |   return (
+ 204 |     <main
+     `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+./src/app/page.tsx
+ GET /portal?country=ES&province=41&city=Sevilla 500 in 10.7s (compile: 10.6s, render: 134ms)
+ GET /super-admin 500 in 10.7s (compile: 10.6s, render: 131ms)
+ GET /super-admin/editor 500 in 10.7s (compile: 10.6s, render: 130ms)
+ GET /admin 500 in 10.7s (compile: 10.6s, render: 130ms)
+ GET / 500 in 10.7s (compile: 10.6s, render: 130ms)
+ GET /portal?country=ES&province=41&city=Sevilla 500 in 54ms (compile: 19ms, render: 36ms)
+ GET /portal?country=ES&province=41&city=Sevilla 500 in 47ms (compile: 12ms, render: 35ms)
+ GET /super-admin 500 in 54ms (compile: 19ms, render: 35ms)
+ GET /super-admin/editor 500 in 54ms (compile: 19ms, render: 34ms)
+ GET /admin 500 in 53ms (compile: 19ms, render: 34ms)
+ GET / 500 in 52ms (compile: 19ms, render: 34ms)
+ GET /super-admin 500 in 213ms (compile: 16ms, render: 197ms)
+ GET /super-admin 500 in 210ms (compile: 13ms, render: 197ms)
+ GET /admin 500 in 214ms (compile: 17ms, render: 197ms)
+ GET /super-admin/editor 500 in 213ms (compile: 16ms, render: 197ms)
+ GET /super-admin/editor 500 in 212ms (compile: 16ms, render: 196ms)
+ GET / 500 in 213ms (compile: 16ms, render: 196ms)
+○ Compiling /_error ...
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename 'D:\merchant-space\.next\dev\cache\webpack\client-development-fallback\1.pack.gz_' -> 'D:\merchant-space\.next\dev\cache\webpack\client-development-fallback\1.pack.gz'
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename 'D:\merchant-space\.next\dev\cache\webpack\client-development-fallback\1.pack.gz_' -> 'D:\merchant-space\.next\dev\cache\webpack\client-development-fallback\1.pack.gz'
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename 'D:\merchant-space\.next\dev\cache\webpack\client-development-fallback\1.pack.gz_' -> 'D:\merchant-space\.next\dev\cache\webpack\client-development-fallback\1.pack.gz'
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename 'D:\merchant-space\.next\dev\cache\webpack\client-development-fallback\1.pack.gz_' -> 'D:\merchant-space\.next\dev\cache\webpack\client-development-fallback\1.pack.gz'
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 1130ms (compile: 572ms, render: 557ms)
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 62ms (compile: 24ms, render: 38ms)
+ GET / 200 in 1108ms (compile: 470ms, render: 638ms)
+ GET /super-admin 200 in 1206ms (compile: 561ms, render: 645ms)
+ GET /admin 200 in 1351ms (compile: 706ms, render: 644ms)
+ GET /super-admin/editor 200 in 1144ms (compile: 496ms, render: 647ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 42ms (compile: 7ms, render: 35ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 142ms (compile: 54ms, render: 88ms)
+ GET /super-admin 200 in 141ms (compile: 73ms, render: 68ms)
+ GET /admin 200 in 140ms (compile: 87ms, render: 54ms)
+ GET / 200 in 100ms (compile: 77ms, render: 24ms)
+ GET /super-admin/editor 200 in 143ms (compile: 101ms, render: 42ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 89ms (compile: 11ms, render: 78ms)
+ GET /super-admin 200 in 87ms (compile: 24ms, render: 64ms)
+ GET /admin 200 in 89ms (compile: 39ms, render: 50ms)
+ GET / 200 in 89ms (compile: 53ms, render: 36ms)
+ GET /super-admin/editor 200 in 92ms (compile: 65ms, render: 27ms)
+⨯ ./src/app/site/[siteId]/page.tsx
+Error:   x Unterminated string constant
+    ,-[D:\merchant-space\src\app\site\[siteId]\page.tsx:49:1]
+ 46 | }
+ 47 | 
+ 48 | function fmt(iso: string | null) {
+ 49 |   if (!iso) return "鏈彂甯?;
+    :                    ^^^^^^^^^^
+ 50 |   const date = new Date(iso);
+ 51 |   return Number.isFinite(date.getTime()) ? date.toLocaleString("zh-CN", { hour12: false }) : iso;
+ 51 | }
+    `----
+  x Expected ';', '}' or <eof>
+     ,-[D:\merchant-space\src\app\site\[siteId]\page.tsx:138:1]
+ 135 |     };
+ 136 |   }, [hydrated, siteId]);
+ 137 | 
+ 138 |   if (!hydrated || isInitialLoading) {`n    return <LoadingProgressScreen message="正在加载站点..." />;`n  }
+     :                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^|^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     :                                                                        `-- This is the expression part of an expression statement
+ 139 | 
+ 140 |   if (!site) {
+ 140 |     return (
+     `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+./src/app/site/[siteId]/page.tsx
+⨯ ./src/app/site/[siteId]/page.tsx
+Error:   x Unterminated string constant
+    ,-[D:\merchant-space\src\app\site\[siteId]\page.tsx:49:1]
+ 46 | }
+ 47 | 
+ 48 | function fmt(iso: string | null) {
+ 49 |   if (!iso) return "鏈彂甯?;
+    :                    ^^^^^^^^^^
+ 50 |   const date = new Date(iso);
+ 51 |   return Number.isFinite(date.getTime()) ? date.toLocaleString("zh-CN", { hour12: false }) : iso;
+ 51 | }
+    `----
+  x Unexpected token. Did you mean `{'>'}` or `&gt;`?
+     ,-[D:\merchant-space\src\app\site\[siteId]\page.tsx:146:1]
+ 143 |     return (
+ 144 |       <main className="min-h-screen bg-slate-100 p-6">
+ 145 |         <div className="mx-auto max-w-6xl rounded-lg border bg-white p-6">
+ 146 |           <h1 className="text-xl font-bold text-slate-900">绔欑偣涓嶅瓨鍦?/h1>
+     :                                                                              ^
+ 147 |           <p className="mt-2 text-sm text-slate-600">璇ュ晢瀹剁珯鐐瑰彲鑳藉凡琚垹闄ゆ垨 ID 鏃犳晥銆?/p>
+ 148 |           <div className="mt-4">
+ 148 |             <Link href={buildPlatformHomeHref()} className="rounded border px-3 py-2 text-sm hover:bg-slate-50">
+     `----
+  x Unexpected token. Did you mean `{'>'}` or `&gt;`?
+     ,-[D:\merchant-space\src\app\site\[siteId]\page.tsx:147:1]
+ 144 |       <main className="min-h-screen bg-slate-100 p-6">
+ 145 |         <div className="mx-auto max-w-6xl rounded-lg border bg-white p-6">
+ 146 |           <h1 className="text-xl font-bold text-slate-900">绔欑偣涓嶅瓨鍦?/h1>
+ 147 |           <p className="mt-2 text-sm text-slate-600">璇ュ晢瀹剁珯鐐瑰彲鑳藉凡琚垹闄ゆ垨 ID 鏃犳晥銆?/p>
+     :                                                                                                        ^
+ 148 |           <div className="mt-4">
+ 149 |             <Link href={buildPlatformHomeHref()} className="rounded border px-3 py-2 text-sm hover:bg-slate-50">
+ 149 |               杩斿洖鎬荤珯棣栭〉            </Link>
+     `----
+  x Expected '</', got 'jsx text'
+     ,-[D:\merchant-space\src\app\site\[siteId]\page.tsx:152:1]
+ 149 |                 <Link href={buildPlatformHomeHref()} className="rounded border px-3 py-2 text-sm hover:bg-slate-50">
+ 150 |                   杩斿洖鎬荤珯棣栭〉            </Link>
+ 151 |               </div>
+ 152 | ,->         </div>
+ 153 | `->       </main>
+ 154 |         );
+ 155 |       }
+ 155 |     
+     `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+./src/app/site/[siteId]/page.tsx
+ GET / 200 in 91ms (compile: 43ms, render: 49ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 94ms (compile: 12ms, render: 82ms)
+ GET /admin 200 in 92ms (compile: 55ms, render: 37ms)
+ GET /super-admin 200 in 92ms (compile: 71ms, render: 21ms)
+ GET /super-admin/editor 200 in 96ms (compile: 27ms, render: 69ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 91ms (compile: 23ms, render: 68ms)
+ GET /admin 200 in 91ms (compile: 53ms, render: 39ms)
+ GET / 200 in 91ms (compile: 68ms, render: 23ms)
+ GET /super-admin 200 in 93ms (compile: 38ms, render: 56ms)
+ GET /super-admin/editor 200 in 97ms (compile: 8ms, render: 89ms)
+ GET /super-admin 200 in 537ms (compile: 234ms, render: 302ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 536ms (compile: 330ms, render: 206ms)
+ GET /admin 200 in 536ms (compile: 437ms, render: 100ms)
+ GET /super-admin/editor 200 in 541ms (compile: 187ms, render: 354ms)
+ GET / 200 in 539ms (compile: 513ms, render: 26ms)
+ GET / 200 in 316ms (compile: 4ms, render: 313ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 196ms (compile: 5ms, render: 191ms)
+ GET /super-admin 200 in 201ms (compile: 40ms, render: 162ms)
+ GET /admin 200 in 174ms (compile: 47ms, render: 127ms)
+ GET /super-admin/editor 200 in 174ms (compile: 62ms, render: 111ms)
+ GET / 200 in 505ms (compile: 140ms, render: 366ms)
+ GET /super-admin 200 in 503ms (compile: 166ms, render: 338ms)
+ GET /admin 200 in 505ms (compile: 274ms, render: 230ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 504ms (compile: 366ms, render: 139ms)
+ GET /super-admin/editor 200 in 505ms (compile: 475ms, render: 30ms)
+ GET / 200 in 293ms (compile: 3ms, render: 290ms)
+ GET /super-admin 200 in 192ms (compile: 2ms, render: 190ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 159ms (compile: 12ms, render: 147ms)
+ GET /super-admin/editor 200 in 159ms (compile: 26ms, render: 133ms)
+ GET /admin 200 in 159ms (compile: 41ms, render: 118ms)
+ GET / 200 in 36ms (compile: 7ms, render: 29ms)
+ GET / 200 in 593ms (compile: 209ms, render: 384ms)
+ GET /admin 200 in 590ms (compile: 335ms, render: 256ms)
+ GET /super-admin 200 in 589ms (compile: 469ms, render: 121ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 590ms (compile: 564ms, render: 26ms)
+ GET /super-admin/editor 200 in 594ms (compile: 441ms, render: 152ms)
+ GET / 200 in 91ms (compile: 9ms, render: 82ms)
+ GET /admin 200 in 91ms (compile: 38ms, render: 53ms)
+ GET /super-admin 200 in 90ms (compile: 52ms, render: 38ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 90ms (compile: 68ms, render: 22ms)
+ GET /super-admin/editor 200 in 95ms (compile: 23ms, render: 72ms)
+ GET /admin 200 in 504ms (compile: 178ms, render: 326ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 504ms (compile: 290ms, render: 213ms)
+ GET /super-admin 200 in 503ms (compile: 479ms, render: 24ms)
+ GET / 200 in 504ms (compile: 455ms, render: 50ms)
+ GET /super-admin/editor 200 in 509ms (compile: 374ms, render: 134ms)
+ GET /admin 200 in 443ms (compile: 128ms, render: 315ms)
+ GET / 200 in 442ms (compile: 303ms, render: 139ms)
+ GET /super-admin 200 in 442ms (compile: 327ms, render: 115ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 442ms (compile: 419ms, render: 23ms)
+ GET /super-admin/editor 200 in 444ms (compile: 222ms, render: 223ms)
+ GET /admin 200 in 449ms (compile: 130ms, render: 318ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 449ms (compile: 236ms, render: 213ms)
+ GET / 200 in 448ms (compile: 314ms, render: 134ms)
+ GET /super-admin 200 in 448ms (compile: 339ms, render: 109ms)
+ GET /super-admin/editor 200 in 451ms (compile: 423ms, render: 28ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 453ms (compile: 140ms, render: 313ms)
+ GET / 200 in 453ms (compile: 232ms, render: 222ms)
+ GET /admin 200 in 453ms (compile: 316ms, render: 137ms)
+ GET /super-admin 200 in 453ms (compile: 430ms, render: 23ms)
+ GET /super-admin/editor 200 in 457ms (compile: 401ms, render: 56ms)
+ GET /admin 200 in 354ms (compile: 4ms, render: 351ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 163ms (compile: 5ms, render: 158ms)
+ GET /super-admin 200 in 163ms (compile: 47ms, render: 117ms)
+ GET / 200 in 124ms (compile: 55ms, render: 69ms)
+ GET /super-admin/editor 200 in 128ms (compile: 69ms, render: 59ms)
+ GET / 200 in 33ms (compile: 4ms, render: 29ms)
+ GET /admin 200 in 40ms (compile: 4ms, render: 37ms)
+ GET / 200 in 28ms (compile: 3ms, render: 24ms)
+ GET /super-admin 200 in 523ms (compile: 110ms, render: 413ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 523ms (compile: 231ms, render: 292ms)
+ GET / 200 in 523ms (compile: 317ms, render: 206ms)
+ GET /admin 200 in 523ms (compile: 498ms, render: 24ms)
+ GET /super-admin/editor 200 in 526ms (compile: 402ms, render: 125ms)
+ GET / 200 in 297ms (compile: 3ms, render: 294ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 189ms (compile: 3ms, render: 186ms)
+ GET /super-admin 200 in 196ms (compile: 41ms, render: 155ms)
+ GET /super-admin/editor 200 in 167ms (compile: 48ms, render: 118ms)
+ GET /admin 200 in 167ms (compile: 65ms, render: 101ms)
+ GET / 200 in 530ms (compile: 165ms, render: 365ms)
+ GET /super-admin 200 in 530ms (compile: 211ms, render: 320ms)
+ GET /admin 200 in 531ms (compile: 301ms, render: 230ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 532ms (compile: 401ms, render: 130ms)
+ GET /super-admin/editor 200 in 535ms (compile: 496ms, render: 39ms)
+ GET /admin 200 in 458ms (compile: 124ms, render: 334ms)
+ GET / 200 in 457ms (compile: 248ms, render: 209ms)
+ GET /super-admin 200 in 459ms (compile: 158ms, render: 301ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 457ms (compile: 435ms, render: 22ms)
+ GET /super-admin/editor 200 in 461ms (compile: 330ms, render: 131ms)
+ GET /admin 200 in 471ms (compile: 129ms, render: 342ms)
+ GET / 200 in 470ms (compile: 226ms, render: 245ms)
+ GET /super-admin 200 in 470ms (compile: 337ms, render: 132ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 470ms (compile: 448ms, render: 22ms)
+ GET /super-admin/editor 200 in 473ms (compile: 309ms, render: 164ms)
+ GET /admin 200 in 510ms (compile: 166ms, render: 344ms)
+ GET / 200 in 509ms (compile: 264ms, render: 245ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 509ms (compile: 363ms, render: 146ms)
+ GET /super-admin 200 in 508ms (compile: 391ms, render: 117ms)
+ GET /super-admin/editor 200 in 509ms (compile: 479ms, render: 30ms)
+ GET /admin 200 in 350ms (compile: 3ms, render: 347ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 156ms (compile: 8ms, render: 148ms)
+ GET / 200 in 153ms (compile: 78ms, render: 75ms)
+ GET /super-admin 200 in 158ms (compile: 42ms, render: 115ms)
+ GET /super-admin/editor 200 in 140ms (compile: 96ms, render: 44ms)
+ GET /admin 200 in 482ms (compile: 129ms, render: 353ms)
+ GET /super-admin 200 in 482ms (compile: 273ms, render: 208ms)
+ GET / 200 in 482ms (compile: 369ms, render: 112ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 484ms (compile: 246ms, render: 238ms)
+ GET /super-admin/editor 200 in 485ms (compile: 457ms, render: 28ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 517ms (compile: 375ms, render: 141ms)
+ GET /admin 200 in 519ms (compile: 177ms, render: 342ms)
+ GET / 200 in 518ms (compile: 467ms, render: 51ms)
+ GET /super-admin 200 in 518ms (compile: 491ms, render: 27ms)
+ GET /super-admin/editor 200 in 524ms (compile: 271ms, render: 253ms)
+ GET /admin 200 in 520ms (compile: 154ms, render: 366ms)
+ GET / 200 in 520ms (compile: 353ms, render: 166ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 520ms (compile: 457ms, render: 63ms)
+ GET /super-admin 200 in 520ms (compile: 485ms, render: 34ms)
+ GET /super-admin/editor 200 in 523ms (compile: 260ms, render: 263ms)
+ GET /admin 200 in 534ms (compile: 184ms, render: 351ms)
+ GET /super-admin 200 in 534ms (compile: 222ms, render: 312ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 534ms (compile: 511ms, render: 23ms)
+ GET / 200 in 536ms (compile: 318ms, render: 218ms)
+ GET /super-admin/editor 200 in 536ms (compile: 403ms, render: 133ms)
+ GET /admin 200 in 342ms (compile: 3ms, render: 339ms)
+ GET /super-admin 200 in 162ms (compile: 13ms, render: 149ms)
+ GET / 200 in 156ms (compile: 82ms, render: 74ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 161ms (compile: 45ms, render: 116ms)
+ GET /super-admin/editor 200 in 157ms (compile: 110ms, render: 47ms)
+ GET /admin 200 in 33ms (compile: 3ms, render: 30ms)
+ GET /admin 200 in 487ms (compile: 132ms, render: 355ms)
+ GET / 200 in 487ms (compile: 325ms, render: 161ms)
+ GET /super-admin 200 in 487ms (compile: 351ms, render: 136ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 487ms (compile: 462ms, render: 25ms)
+ GET /super-admin/editor 200 in 492ms (compile: 228ms, render: 264ms)
+ GET /admin 200 in 528ms (compile: 175ms, render: 352ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 527ms (compile: 320ms, render: 207ms)
+ GET /super-admin 200 in 528ms (compile: 211ms, render: 317ms)
+ GET / 200 in 527ms (compile: 413ms, render: 113ms)
+ GET /super-admin/editor 200 in 529ms (compile: 499ms, render: 30ms)
+ GET /admin 200 in 318ms (compile: 2ms, render: 316ms)
+ GET / 200 in 164ms (compile: 47ms, render: 117ms)
+ GET /super-admin 200 in 169ms (compile: 12ms, render: 157ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 164ms (compile: 81ms, render: 83ms)
+ GET /super-admin/editor 200 in 164ms (compile: 109ms, render: 55ms)
+ GET / 200 in 29ms (compile: 1917µs, render: 27ms)
+ GET /admin 200 in 36ms (compile: 3ms, render: 34ms)
+ GET /super-admin 200 in 552ms (compile: 112ms, render: 440ms)
+ GET / 200 in 552ms (compile: 236ms, render: 317ms)
+ GET /admin 200 in 553ms (compile: 321ms, render: 232ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 552ms (compile: 528ms, render: 24ms)
+ GET /super-admin/editor 200 in 555ms (compile: 407ms, render: 149ms)
+ GET /super-admin 200 in 547ms (compile: 124ms, render: 423ms)
+ GET /admin 200 in 545ms (compile: 217ms, render: 328ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 545ms (compile: 326ms, render: 219ms)
+ GET / 200 in 546ms (compile: 429ms, render: 117ms)
+ GET /super-admin/editor 200 in 547ms (compile: 516ms, render: 31ms)
+ GET /super-admin 200 in 498ms (compile: 71ms, render: 428ms)
+ GET /admin 200 in 498ms (compile: 164ms, render: 335ms)
+ GET / 200 in 499ms (compile: 262ms, render: 237ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 499ms (compile: 472ms, render: 28ms)
+ GET /super-admin/editor 200 in 504ms (compile: 345ms, render: 159ms)
+ GET / 200 in 477ms (compile: 457ms, render: 20ms)
+ GET /admin 200 in 480ms (compile: 122ms, render: 358ms)
+ GET /super-admin 200 in 479ms (compile: 245ms, render: 234ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 478ms (compile: 357ms, render: 121ms)
+ GET /super-admin/editor 200 in 482ms (compile: 216ms, render: 266ms)
+ GET /admin 200 in 503ms (compile: 133ms, render: 371ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 503ms (compile: 254ms, render: 249ms)
+ GET / 200 in 503ms (compile: 357ms, render: 146ms)
+ GET /super-admin 200 in 503ms (compile: 383ms, render: 120ms)
+ GET /super-admin/editor 200 in 505ms (compile: 480ms, render: 26ms)
+ GET / 200 in 291ms (compile: 3ms, render: 288ms)
+ GET /super-admin 200 in 208ms (compile: 15ms, render: 193ms)
+ GET /admin 200 in 208ms (compile: 52ms, render: 156ms)
+ GET /super-admin/editor 200 in 208ms (compile: 121ms, render: 87ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 207ms (compile: 150ms, render: 57ms)
+ GET / 200 in 29ms (compile: 3ms, render: 26ms)
+ GET / 200 in 28ms (compile: 3ms, render: 25ms)
+ GET / 200 in 28ms (compile: 3ms, render: 26ms)
+ GET / 200 in 28ms (compile: 3ms, render: 25ms)
+ GET / 200 in 110ms (compile: 5ms, render: 106ms)
+ GET / 200 in 27ms (compile: 3ms, render: 24ms)
+ GET / 200 in 27ms (compile: 2ms, render: 24ms)
+ GET /admin 200 in 31ms (compile: 3ms, render: 28ms)
+ GET /admin 200 in 31ms (compile: 3ms, render: 28ms)
+ GET /admin 200 in 29ms (compile: 3ms, render: 27ms)
+ GET /admin 200 in 32ms (compile: 3ms, render: 29ms)
+ GET /admin 200 in 30ms (compile: 2ms, render: 27ms)
+ GET /admin 200 in 567ms (compile: 170ms, render: 397ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 567ms (compile: 312ms, render: 255ms)
+ GET / 200 in 565ms (compile: 536ms, render: 29ms)
+ GET /super-admin 200 in 567ms (compile: 340ms, render: 227ms)
+ GET /super-admin/editor 200 in 570ms (compile: 427ms, render: 142ms)
+ GET /admin 200 in 591ms (compile: 207ms, render: 384ms)
+ GET /super-admin 200 in 591ms (compile: 254ms, render: 337ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 591ms (compile: 371ms, render: 220ms)
+ GET / 200 in 590ms (compile: 477ms, render: 113ms)
+ GET /super-admin/editor 200 in 592ms (compile: 563ms, render: 29ms)
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+ GET /admin 200 in 430ms (compile: 11ms, render: 420ms)
+ GET / 200 in 486ms (compile: 310ms, render: 176ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 487ms (compile: 167ms, render: 321ms)
+ GET /super-admin 200 in 490ms (compile: 463ms, render: 27ms)
+ GET /super-admin/editor 200 in 492ms (compile: 433ms, render: 59ms)
+ GET /super-admin 200 in 470ms (compile: 8ms, render: 462ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 473ms (compile: 156ms, render: 317ms)
+ GET / 200 in 326ms (compile: 279ms, render: 47ms)
+ GET /super-admin/editor 200 in 474ms (compile: 348ms, render: 125ms)
+ GET /admin 200 in 116ms (compile: 77ms, render: 40ms)
+ GET /admin 200 in 35ms (compile: 4ms, render: 31ms)
+ GET /admin 200 in 32ms (compile: 3ms, render: 29ms)
+ GET /admin 200 in 37ms (compile: 3ms, render: 35ms)
+ GET /admin 200 in 41ms (compile: 1630µs, render: 39ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 539ms (compile: 287ms, render: 251ms)
+ GET /admin 200 in 541ms (compile: 145ms, render: 396ms)
+ GET / 200 in 539ms (compile: 394ms, render: 145ms)
+ GET /super-admin 200 in 540ms (compile: 514ms, render: 27ms)
+ GET /super-admin/editor 200 in 542ms (compile: 477ms, render: 65ms)
+ GET /admin 200 in 591ms (compile: 191ms, render: 400ms)
+ GET /super-admin/editor 200 in 592ms (compile: 290ms, render: 302ms)
+ GET /super-admin 200 in 589ms (compile: 320ms, render: 270ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 589ms (compile: 442ms, render: 147ms)
+ GET / 200 in 590ms (compile: 565ms, render: 25ms)
+ GET /super-admin 200 in 511ms (compile: 388ms, render: 123ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 514ms (compile: 167ms, render: 347ms)
+ GET / 200 in 513ms (compile: 367ms, render: 145ms)
+ GET /admin 200 in 514ms (compile: 260ms, render: 254ms)
+ GET /super-admin/editor 200 in 515ms (compile: 488ms, render: 27ms)
+ GET /admin 200 in 359ms (compile: 6ms, render: 353ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 166ms (compile: 7ms, render: 158ms)
+ GET / 200 in 165ms (compile: 49ms, render: 116ms)
+ GET /super-admin/editor 200 in 134ms (compile: 46ms, render: 87ms)
+ GET /super-admin 200 in 133ms (compile: 71ms, render: 61ms)
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+ GET /login 200 in 1629ms (compile: 933ms, render: 696ms)
+ GET / 200 in 545ms (compile: 106ms, render: 439ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 546ms (compile: 324ms, render: 222ms)
+ GET /super-admin 200 in 546ms (compile: 354ms, render: 192ms)
+ GET /super-admin/editor 200 in 549ms (compile: 449ms, render: 100ms)
+ GET /super-admin 200 in 67ms (compile: 22ms, render: 45ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 67ms (compile: 36ms, render: 31ms)
+ GET /super-admin/editor 200 in 72ms (compile: 8ms, render: 63ms)
+ GET / 200 in 69ms (compile: 50ms, render: 19ms)
+ GET /super-admin/editor 200 in 389ms (compile: 6ms, render: 383ms)
+ GET / 200 in 388ms (compile: 254ms, render: 134ms)
+ GET /super-admin 200 in 149ms (compile: 40ms, render: 110ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 149ms (compile: 54ms, render: 95ms)
+ GET /admin 200 in 148ms (compile: 94ms, render: 54ms)
+ GET / 200 in 30ms (compile: 3ms, render: 27ms)
+ GET /admin 200 in 33ms (compile: 4ms, render: 29ms)
+ GET /admin 200 in 33ms (compile: 3ms, render: 29ms)
+ GET /admin 200 in 33ms (compile: 3ms, render: 30ms)
+ GET / 200 in 29ms (compile: 3ms, render: 26ms)
+ GET /admin 200 in 32ms (compile: 3ms, render: 29ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 590ms (compile: 215ms, render: 375ms)
+ GET /super-admin 200 in 590ms (compile: 265ms, render: 325ms)
+ GET /admin 200 in 589ms (compile: 352ms, render: 238ms)
+ GET / 200 in 588ms (compile: 469ms, render: 120ms)
+ GET /super-admin/editor 200 in 592ms (compile: 561ms, render: 31ms)
+ GET /super-admin 200 in 87ms (compile: 7ms, render: 80ms)
+ GET /admin 200 in 87ms (compile: 22ms, render: 65ms)
+ GET / 200 in 87ms (compile: 37ms, render: 50ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 87ms (compile: 66ms, render: 21ms)
+ GET /super-admin/editor 200 in 92ms (compile: 50ms, render: 41ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 84ms (compile: 21ms, render: 63ms)
+ GET /super-admin 200 in 84ms (compile: 35ms, render: 49ms)
+ GET /admin 200 in 84ms (compile: 49ms, render: 36ms)
+ GET / 200 in 87ms (compile: 8ms, render: 79ms)
+ GET /super-admin/editor 200 in 88ms (compile: 63ms, render: 25ms)
+ GET /admin 200 in 341ms (compile: 3ms, render: 337ms)
+ GET / 200 in 157ms (compile: 58ms, render: 99ms)
+ GET /super-admin 200 in 162ms (compile: 9ms, render: 153ms)
+ GET /super-admin/editor 200 in 161ms (compile: 43ms, render: 118ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 160ms (compile: 112ms, render: 47ms)
+ GET /admin 200 in 35ms (compile: 3ms, render: 32ms)
+ GET / 200 in 31ms (compile: 3ms, render: 28ms)
+ GET /admin 200 in 489ms (compile: 176ms, render: 313ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 488ms (compile: 363ms, render: 125ms)
+ GET / 200 in 488ms (compile: 438ms, render: 49ms)
+ GET /super-admin 200 in 487ms (compile: 462ms, render: 25ms)
+ GET /super-admin/editor 200 in 492ms (compile: 286ms, render: 206ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 368ms (compile: 83ms, render: 285ms)
+ GET / 200 in 367ms (compile: 345ms, render: 21ms)
+ GET /super-admin 200 in 369ms (compile: 113ms, render: 256ms)
+ GET /admin 200 in 368ms (compile: 286ms, render: 82ms)
+ GET /super-admin/editor 200 in 371ms (compile: 199ms, render: 172ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 340ms (compile: 125ms, render: 215ms)
+ GET /admin 200 in 340ms (compile: 211ms, render: 129ms)
+ GET / 200 in 342ms (compile: 81ms, render: 261ms)
+ GET /super-admin 200 in 340ms (compile: 320ms, render: 20ms)
+ GET /super-admin/editor 200 in 344ms (compile: 297ms, render: 47ms)
+ GET /admin 200 in 346ms (compile: 231ms, render: 115ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 346ms (compile: 269ms, render: 76ms)
+ GET /super-admin 200 in 347ms (compile: 289ms, render: 58ms)
+ GET / 200 in 348ms (compile: 328ms, render: 20ms)
+ GET /super-admin/editor 200 in 352ms (compile: 131ms, render: 220ms)
+ GET /admin 200 in 198ms (compile: 113ms, render: 84ms)
+ GET /super-admin 200 in 99ms (compile: 35ms, render: 64ms)
+ GET / 200 in 97ms (compile: 47ms, render: 50ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 97ms (compile: 59ms, render: 37ms)
+ GET /super-admin/editor 200 in 98ms (compile: 73ms, render: 26ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 149ms (compile: 39ms, render: 109ms)
+ GET /super-admin 200 in 150ms (compile: 25ms, render: 125ms)
+ GET /admin 200 in 149ms (compile: 66ms, render: 83ms)
+ GET / 200 in 150ms (compile: 53ms, render: 97ms)
+ GET /super-admin/editor 200 in 154ms (compile: 9ms, render: 145ms)
+ GET /admin 200 in 101ms (compile: 9ms, render: 92ms)
+ GET /super-admin 200 in 101ms (compile: 24ms, render: 77ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 100ms (compile: 53ms, render: 47ms)
+ GET /super-admin/editor 200 in 104ms (compile: 38ms, render: 66ms)
+ GET / 200 in 101ms (compile: 77ms, render: 24ms)
+ GET /admin 200 in 391ms (compile: 4ms, render: 388ms)
+ GET /super-admin/editor 200 in 162ms (compile: 11ms, render: 150ms)
+ GET / 200 in 154ms (compile: 111ms, render: 43ms)
+ GET /super-admin 200 in 161ms (compile: 38ms, render: 123ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 159ms (compile: 77ms, render: 82ms)
+ GET /admin 200 in 33ms (compile: 3ms, render: 30ms)
+ GET /admin 200 in 33ms (compile: 3ms, render: 30ms)
+[?25h

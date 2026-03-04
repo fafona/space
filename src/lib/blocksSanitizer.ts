@@ -1,4 +1,5 @@
-import type { Block } from "@/data/homeBlocks";
+import type { Block } from "../data/homeBlocks";
+import { BLOCKS_SCHEMA_VERSION } from "./blocksSchema";
 
 const MAX_INLINE_IMAGE_URL_LENGTH = 6_000_000;
 const MAX_INLINE_AUDIO_URL_LENGTH = 4_000_000;
@@ -47,10 +48,44 @@ function sanitizeUnknown(input: unknown): { value: unknown; removed: number } {
   return { value: input, removed: 0 };
 }
 
+function normalizeSchemaVersion(value: unknown) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  const rounded = Math.floor(value);
+  return rounded > 0 ? rounded : null;
+}
+
+function migrateBlocksSchemaVersion(blocks: Block[]): { blocks: Block[]; migrated: number } {
+  if (!Array.isArray(blocks) || blocks.length === 0) {
+    return { blocks, migrated: 0 };
+  }
+
+  const first = blocks[0];
+  if (!first || !first.props || typeof first.props !== "object") {
+    return { blocks, migrated: 0 };
+  }
+
+  const currentVersion = normalizeSchemaVersion((first.props as Record<string, unknown>).schemaVersion);
+  if (currentVersion === BLOCKS_SCHEMA_VERSION) {
+    return { blocks, migrated: 0 };
+  }
+
+  const next = [...blocks];
+  next[0] = {
+    ...first,
+    props: {
+      ...first.props,
+      schemaVersion: BLOCKS_SCHEMA_VERSION,
+    } as never,
+  } as Block;
+  return { blocks: next, migrated: 1 };
+}
+
 export function sanitizeBlocksForRuntime(blocks: Block[]): { blocks: Block[]; removed: number } {
   const next = sanitizeUnknown(blocks);
+  const sanitizedBlocks = Array.isArray(next.value) ? (next.value as Block[]) : [];
+  const migrated = migrateBlocksSchemaVersion(sanitizedBlocks);
   return {
-    blocks: next.value as Block[],
-    removed: next.removed,
+    blocks: migrated.blocks,
+    removed: next.removed + migrated.migrated,
   };
 }

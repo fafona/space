@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+import { isSupabaseEnabled, supabase } from "@/lib/supabase";
 
 const CONTACT_CLICK_KEY = "merchant-space:contact-clicks:v1";
 const CONTACT_CLICK_DAILY_KEY = "merchant-space:contact-clicks-daily:v1";
@@ -44,6 +44,48 @@ export type RemoteAnalyticsSummary = {
 };
 
 let remoteAnalyticsTableAvailable: boolean | null = null;
+let remoteAnalyticsCooldownUntil = 0;
+const REMOTE_ANALYTICS_TIMEOUT_MS = 1500;
+const REMOTE_ANALYTICS_COOLDOWN_MS = 90_000;
+
+function isIgnorableRemoteError(reason: unknown) {
+  if (!reason || typeof reason !== "object") return false;
+  const record = reason as { name?: unknown; message?: unknown; __isAuthError?: unknown; status?: unknown };
+  const name = typeof record.name === "string" ? record.name : "";
+  const message = typeof record.message === "string" ? record.message : "";
+  if (name === "AbortError") return true;
+  if (message.includes("signal is aborted without reason")) return true;
+  if (record.__isAuthError === true && name === "AuthRetryableFetchError") return true;
+  if (record.__isAuthError === true && record.status === 0) return true;
+  return false;
+}
+
+function suspendRemoteAnalytics(ms = REMOTE_ANALYTICS_COOLDOWN_MS) {
+  remoteAnalyticsCooldownUntil = Date.now() + Math.max(1000, ms);
+}
+
+async function withRemoteTimeout<T>(task: PromiseLike<T>, timeoutMs = REMOTE_ANALYTICS_TIMEOUT_MS): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let timedOut = false;
+  const safeTask = Promise.resolve(task).catch((error) => {
+    if (timedOut) {
+      return new Promise<T>(() => {});
+    }
+    throw error;
+  });
+  const timeoutTask = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      reject(new Error("remote_analytics_timeout"));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([safeTask, timeoutTask]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 function readRaw(): ContactClickStats {
   if (typeof window === "undefined") return {};
@@ -192,7 +234,9 @@ function normalizeRemoteEventRows(rows: unknown[]): RemoteEventRow[] {
 
 async function trackRemoteEvent(input: RemoteEventInput) {
   if (typeof window === "undefined") return;
+  if (!isSupabaseEnabled) return;
   if (remoteAnalyticsTableAvailable === false) return;
+  if (Date.now() < remoteAnalyticsCooldownUntil) return;
   const payload = {
     event_type: input.eventType,
     channel: input.channel?.trim() || null,
@@ -204,27 +248,39 @@ async function trackRemoteEvent(input: RemoteEventInput) {
     created_at: new Date().toISOString(),
   };
 
-  const first = await supabase.from("page_events").insert(payload);
-  if (!first.error) {
-    remoteAnalyticsTableAvailable = true;
-    return;
-  }
-  if (isMissingTableError(first.error.message)) {
-    remoteAnalyticsTableAvailable = false;
-    return;
-  }
+  try {
+    const first = await withRemoteTimeout(supabase.from("page_events").insert(payload));
+    if (!first.error) {
+      remoteAnalyticsTableAvailable = true;
+      return;
+    }
+    if (isMissingTableError(first.error.message)) {
+      remoteAnalyticsTableAvailable = false;
+      return;
+    }
 
-  const fallback = await supabase.from("page_events").insert({
-    event_type: input.eventType,
-    channel: input.channel?.trim() || null,
-    created_at: new Date().toISOString(),
-  });
-  if (!fallback.error) {
-    remoteAnalyticsTableAvailable = true;
-    return;
-  }
-  if (isMissingTableError(fallback.error.message)) {
-    remoteAnalyticsTableAvailable = false;
+    const fallback = await withRemoteTimeout(
+      supabase.from("page_events").insert({
+        event_type: input.eventType,
+        channel: input.channel?.trim() || null,
+        created_at: new Date().toISOString(),
+      }),
+    );
+    if (!fallback.error) {
+      remoteAnalyticsTableAvailable = true;
+      return;
+    }
+    if (isMissingTableError(fallback.error.message)) {
+      remoteAnalyticsTableAvailable = false;
+      return;
+    }
+    suspendRemoteAnalytics();
+  } catch (error) {
+    if (isIgnorableRemoteError(error)) {
+      suspendRemoteAnalytics();
+      return;
+    }
+    suspendRemoteAnalytics();
   }
 }
 
@@ -296,64 +352,78 @@ export function readPublishEvents(): PublishEvent[] {
 }
 
 export async function readRemoteAnalyticsSummary(days = 30): Promise<RemoteAnalyticsSummary | null> {
+  if (!isSupabaseEnabled) return null;
   if (remoteAnalyticsTableAvailable === false) return null;
+  if (Date.now() < remoteAnalyticsCooldownUntil) return null;
 
-  const fromIso = toIsoDateWindow(Math.max(1, days));
-  const ordered = await supabase.from("page_events").select("*").gte("created_at", fromIso).order("created_at", { ascending: false }).limit(4000);
-  let rows: unknown[] = [];
-  if (!ordered.error) {
-    rows = Array.isArray(ordered.data) ? ordered.data : [];
-    remoteAnalyticsTableAvailable = true;
-  } else {
-    if (isMissingTableError(ordered.error.message)) {
-      remoteAnalyticsTableAvailable = false;
+  try {
+    const fromIso = toIsoDateWindow(Math.max(1, days));
+    const ordered = await withRemoteTimeout(
+      supabase.from("page_events").select("*").gte("created_at", fromIso).order("created_at", { ascending: false }).limit(4000),
+    );
+    let rows: unknown[] = [];
+    if (!ordered.error) {
+      rows = Array.isArray(ordered.data) ? ordered.data : [];
+      remoteAnalyticsTableAvailable = true;
+    } else {
+      if (isMissingTableError(ordered.error.message)) {
+        remoteAnalyticsTableAvailable = false;
+        return null;
+      }
+      const fallback = await withRemoteTimeout(supabase.from("page_events").select("*").limit(4000));
+      if (fallback.error) {
+        if (isMissingTableError(fallback.error.message)) remoteAnalyticsTableAvailable = false;
+        suspendRemoteAnalytics();
+        return null;
+      }
+      rows = Array.isArray(fallback.data) ? fallback.data : [];
+      remoteAnalyticsTableAvailable = true;
+    }
+
+    const events = normalizeRemoteEventRows(rows);
+    const nowMs = Date.now();
+    const inDays = (at: string, day: number) => {
+      const time = new Date(at).getTime();
+      if (!Number.isFinite(time)) return false;
+      return nowMs - time <= day * 24 * 60 * 60 * 1000;
+    };
+
+    const pageView1d = events.filter((item) => item.eventType === "page_view" && inDays(item.at, 1)).length;
+    const pageView7d = events.filter((item) => item.eventType === "page_view" && inDays(item.at, 7)).length;
+    const pageView30d = events.filter((item) => item.eventType === "page_view" && inDays(item.at, 30)).length;
+    const publish7d = events.filter((item) => item.eventType === "publish" && inDays(item.at, 7));
+    const publish30d = events.filter((item) => item.eventType === "publish" && inDays(item.at, 30));
+    const publishSuccess7d = publish7d.filter((item) => item.success === true).length;
+    const publishSuccess30d = publish30d.filter((item) => item.success === true).length;
+
+    const contactTopMap = new Map<string, number>();
+    events
+      .filter((item) => item.eventType === "contact_click" && inDays(item.at, 7))
+      .forEach((item) => {
+        const key = item.channel || "unknown";
+        contactTopMap.set(key, (contactTopMap.get(key) ?? 0) + 1);
+      });
+    const contactTop7d = Array.from(contactTopMap.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([channel, count]) => ({ channel, count }));
+
+    return {
+      pageView1d,
+      pageView7d,
+      pageView30d,
+      publishTotal7d: publish7d.length,
+      publishSuccess7d,
+      publishTotal30d: publish30d.length,
+      publishSuccess30d,
+      contactTop7d,
+    };
+  } catch (error) {
+    if (isIgnorableRemoteError(error)) {
+      suspendRemoteAnalytics();
       return null;
     }
-    const fallback = await supabase.from("page_events").select("*").limit(4000);
-    if (fallback.error) {
-      if (isMissingTableError(fallback.error.message)) remoteAnalyticsTableAvailable = false;
-      return null;
-    }
-    rows = Array.isArray(fallback.data) ? fallback.data : [];
-    remoteAnalyticsTableAvailable = true;
+    suspendRemoteAnalytics();
+    return null;
   }
-
-  const events = normalizeRemoteEventRows(rows);
-  const nowMs = Date.now();
-  const inDays = (at: string, day: number) => {
-    const time = new Date(at).getTime();
-    if (!Number.isFinite(time)) return false;
-    return nowMs - time <= day * 24 * 60 * 60 * 1000;
-  };
-
-  const pageView1d = events.filter((item) => item.eventType === "page_view" && inDays(item.at, 1)).length;
-  const pageView7d = events.filter((item) => item.eventType === "page_view" && inDays(item.at, 7)).length;
-  const pageView30d = events.filter((item) => item.eventType === "page_view" && inDays(item.at, 30)).length;
-  const publish7d = events.filter((item) => item.eventType === "publish" && inDays(item.at, 7));
-  const publish30d = events.filter((item) => item.eventType === "publish" && inDays(item.at, 30));
-  const publishSuccess7d = publish7d.filter((item) => item.success === true).length;
-  const publishSuccess30d = publish30d.filter((item) => item.success === true).length;
-
-  const contactTopMap = new Map<string, number>();
-  events
-    .filter((item) => item.eventType === "contact_click" && inDays(item.at, 7))
-    .forEach((item) => {
-      const key = item.channel || "unknown";
-      contactTopMap.set(key, (contactTopMap.get(key) ?? 0) + 1);
-    });
-  const contactTop7d = Array.from(contactTopMap.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 8)
-    .map(([channel, count]) => ({ channel, count }));
-
-  return {
-    pageView1d,
-    pageView7d,
-    pageView30d,
-    publishTotal7d: publish7d.length,
-    publishSuccess7d,
-    publishTotal30d: publish30d.length,
-    publishSuccess30d,
-    contactTop7d,
-  };
 }

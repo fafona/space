@@ -2,6 +2,8 @@
 import HeroBlock from "./HeroBlock";
 import TextBlock from "./TextBlock";
 import ListBlock from "./ListBlock";
+import SearchBarBlock from "./SearchBarBlock";
+import MerchantListBlock from "./MerchantListBlock";
 import ContactBlock from "./ContactBlock";
 import CommonBlock from "./CommonBlock";
 import GalleryBlock from "./GalleryBlock";
@@ -38,6 +40,10 @@ export default function BlockRenderer({
             return <TextBlock key={b.id} {...b.props} />;
           case "list":
             return <ListBlock key={b.id} {...b.props} />;
+          case "search-bar":
+            return <SearchBarBlock key={b.id} {...b.props} />;
+          case "merchant-list":
+            return <MerchantListBlock key={b.id} {...b.props} />;
           case "contact":
             return <ContactBlock key={b.id} {...b.props} />;
           case "music":

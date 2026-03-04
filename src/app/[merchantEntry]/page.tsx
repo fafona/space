@@ -1,0 +1,75 @@
+"use client";
+
+import Link from "next/link";
+import { useParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import AdminClient from "@/app/admin/AdminClient";
+import SitePageClient from "@/app/site/[siteId]/SitePageClient";
+import LoadingProgressScreen from "@/components/LoadingProgressScreen";
+import { loadPlatformState, subscribePlatformState } from "@/data/platformControlStore";
+import { isMerchantNumericId, normalizeDomainSuffix } from "@/lib/merchantIdentity";
+import { buildPlatformHomeHref } from "@/lib/siteRouting";
+import { useHydrated } from "@/lib/useHydrated";
+
+export default function MerchantEntryPage() {
+  const params = useParams<{ merchantEntry: string }>();
+  const merchantEntry = String(params?.merchantEntry ?? "").trim();
+  const hydrated = useHydrated();
+  const normalizedSuffix = useMemo(() => normalizeDomainSuffix(merchantEntry), [merchantEntry]);
+  const [platformState, setPlatformState] = useState(() => loadPlatformState());
+
+  useEffect(
+    () =>
+      subscribePlatformState(() => {
+        setPlatformState(loadPlatformState());
+      }),
+    [],
+  );
+
+  if (!hydrated) {
+    return <LoadingProgressScreen message="正在加载站点..." />;
+  }
+
+  if (merchantEntry && isMerchantNumericId(merchantEntry)) {
+    return <AdminClient forcedScope={`site-${merchantEntry}`} />;
+  }
+
+  const bySuffix = merchantEntry
+    ? [...platformState.sites]
+        .filter((site) => site.id !== "site-main")
+        .filter((site) => normalizeDomainSuffix(site.domainSuffix) === normalizedSuffix)
+        .sort((a, b) => {
+          const aNumeric = isMerchantNumericId(a.id) ? 1 : 0;
+          const bNumeric = isMerchantNumericId(b.id) ? 1 : 0;
+          if (aNumeric !== bNumeric) return bNumeric - aNumeric;
+          const aUpdated = new Date(a.updatedAt).getTime();
+          const bUpdated = new Date(b.updatedAt).getTime();
+          return (Number.isFinite(bUpdated) ? bUpdated : 0) - (Number.isFinite(aUpdated) ? aUpdated : 0);
+        })[0] ?? null
+    : null;
+  if (bySuffix) {
+    return <SitePageClient forcedSiteId={bySuffix.id} />;
+  }
+
+  const bySiteId = merchantEntry ? platformState.sites.find((site) => site.id === merchantEntry) : null;
+  if (bySiteId) {
+    return <SitePageClient forcedSiteId={bySiteId.id} />;
+  }
+
+  return (
+    <main className="min-h-screen bg-slate-100 p-6">
+      <div className="mx-auto max-w-3xl rounded-lg border bg-white p-6 shadow-sm">
+        <h1 className="text-lg font-semibold text-slate-900">地址未匹配到站点</h1>
+        <p className="mt-2 text-sm text-slate-600">请检查商户后台地址（8位 ID）或商户前台后缀是否正确。</p>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Link href="/login" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50">
+            去商户登录
+          </Link>
+          <Link href={buildPlatformHomeHref()} className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50">
+            去总站首页
+          </Link>
+        </div>
+      </div>
+    </main>
+  );
+}

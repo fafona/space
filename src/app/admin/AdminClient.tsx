@@ -16,15 +16,39 @@ import {
   type BackgroundEditableProps,
   type Block,
   type ImageFillMode,
+  type MerchantCardTextLayoutConfig,
+  type MerchantCardTextRole,
+  type TypographyEditableProps,
 } from "@/data/homeBlocks";
 import {
+  MERCHANT_INDUSTRY_OPTIONS,
+  createDefaultMerchantSortConfig,
+  createFeaturePackage,
+  createDefaultMerchantPermissionConfig,
+  loadPlatformState,
+  savePlatformState,
+  type Site,
+} from "@/data/platformControlStore";
+import {
+  loadBlocksFromStorage,
   loadPublishedBlocksFromStorage,
+  rollbackToPreviousPublishedVersion,
+  recordPublishedVersion,
   saveBlocksToStorage,
   savePublishedBlocksToStorage,
   savePublishFailureSnapshot,
   readPublishFailureSnapshots,
 } from "@/data/blockStore";
-import { supabase } from "@/lib/supabase";
+import {
+  BACKEND_UNAVAILABLE_NOTICE,
+  canReachSupabaseGateway,
+  isSupabaseEnabled,
+  isSupabaseFallbackMode,
+  resolvedSupabaseAnonKey,
+  resolvedSupabaseUrl,
+  supabase,
+  supabaseMissingEnvNotice,
+} from "@/lib/supabase";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
 import { BLOCK_BORDER_STYLE_OPTIONS, getBlockBorderClass, getBlockBorderInlineStyle } from "@/components/blocks/borderStyle";
 import { toRichHtml } from "@/components/blocks/richText";
@@ -61,7 +85,33 @@ import {
   readRemoteAnalyticsSummary,
   trackPublishEvent,
 } from "@/lib/analytics";
+import {
+  getEuropeCityOptions,
+  getEuropeCountryOptions,
+  getEuropeProvinceOptions,
+} from "@/lib/europeLocationOptions";
+import {
+  buildMerchantCardPlacement,
+  clampMerchantCardLayoutValue,
+  getMerchantTabKey,
+  getMerchantLayoutCanvasHeight,
+  getMerchantLayoutCanvasWidth,
+  getMerchantLayoutContainerHeight,
+  resolveMerchantListLayoutEntries,
+  type MerchantCardLayoutConfig,
+  type MerchantListLayoutKey,
+} from "@/lib/merchantCardLayout";
+import {
+  normalizeMerchantIndustryTabs,
+  toMerchantIndustryTabInputs,
+  type MerchantIndustryTabIndustry,
+  type MerchantIndustryTab,
+} from "@/lib/merchantIndustryTabs";
+import { broadcastPublishSync } from "@/lib/publishSync";
+import { ensureMerchantIdentityForUser, isMerchantNumericId } from "@/lib/merchantIdentity";
+import { buildMerchantFrontendHref, buildSiteStoreScope } from "@/lib/siteRouting";
 import BlockRenderer from "@/components/blocks/BlockRenderer";
+import MerchantProfileDialog from "@/components/admin/MerchantProfileDialog";
 
 const IMAGE_FILL_VALUES: ImageFillMode[] = [
   "cover",
@@ -116,6 +166,8 @@ const BLOCK_TYPE_LABELS: Record<Block["type"], string> = {
   hero: "通用",
   text: "通用",
   list: "通用",
+  "search-bar": "搜索",
+  "merchant-list": "商户列表",
   contact: "联系方式",
 };
 const MIN_BLOCK_WIDTH = 240;
@@ -124,6 +176,32 @@ const NUDGE_STEP = 4;
 const HISTORY_LIMIT = 120;
 const DEFAULT_TIP_DURATION_MS = 2600;
 const SAVE_PUBLISH_TIP_DURATION_MS = 5200;
+const AUTH_CHECK_TIMEOUT_MS = 6000;
+const ADMIN_PAGE_LOAD_TIMEOUT_MS = 35000;
+const MERCHANT_IDS_CACHE_KEY = "merchant-space:admin:merchant-ids:v2";
+const MERCHANT_IDS_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+
+function isSameBlocksSnapshot(a: Block[], b: Block[]) {
+  try {
+    return JSON.stringify(a) === JSON.stringify(b);
+  } catch {
+    return false;
+  }
+}
+
+function isIgnorableAbortReason(reason: unknown) {
+  if (!reason || typeof reason !== "object") return false;
+  const record = reason as { name?: unknown; message?: unknown; __isAuthError?: unknown; status?: unknown };
+  const name = typeof record.name === "string" ? record.name : "";
+  const message = typeof record.message === "string" ? record.message : "";
+  if (name === "AbortError") return true;
+  if (message.includes("signal is aborted without reason")) return true;
+  if (name === "AuthRetryableFetchError") return true;
+  if (Number(record.status) === 0) return true;
+  if (record.__isAuthError === true && name === "AuthRetryableFetchError") return true;
+  if (record.__isAuthError === true && record.status === 0) return true;
+  return false;
+}
 
 const MAX_ORIGINAL_IMAGE_DATA_URL_LENGTH = 6_000_000;
 const MAX_AUDIO_DATA_URL_LENGTH = 4_000_000;
@@ -156,7 +234,7 @@ const THEME_PRESETS: Record<
     noop: true,
   },
   cartoon: {
-    label: "卡通活力",
+    label: "卡通活动",
     fontFamily: "Trebuchet MS, sans-serif",
     fontColor: "#1f2937",
     blockBgColor: "#fff7cc",
@@ -165,7 +243,7 @@ const THEME_PRESETS: Record<
     pageBgColor: "#dbeafe",
   },
   retro: {
-    label: "经典怀旧",
+    label: "经典",
     fontFamily: "Georgia, serif",
     fontColor: "#4a3f35",
     blockBgColor: "#f4e7d3",
@@ -444,9 +522,9 @@ function getGalleryLayoutLabel(preset: GalleryLayoutPreset) {
   if (preset === "three-wide") return "三列";
   if (preset === "two-wide") return "双列";
   if (preset === "single-wide") return "通栏";
-  if (preset === "three-square") return "三列等宽";
+  if (preset === "three-square") return "涓夊垪绛夊";
   if (preset === "mosaic") return "拼接";
-  return "自定义样式";
+  return "臮义样";
 }
 
 function getFirstNavBlock(blocks: Block[]) {
@@ -472,6 +550,22 @@ function getNavSyncKey(blocks: Block[]) {
     : [];
   return JSON.stringify(items);
 }
+
+const MERCHANT_ONBOARDING_BLOCKS: Block[] = (() => {
+  const navBlock = homeBlocks.find((item) => item.type === "nav");
+  if (navBlock) return cloneBlocks([navBlock]);
+  return [
+    {
+      id: "b-nav",
+      type: "nav",
+      props: {
+        heading: "页面导航",
+        navOrientation: "horizontal",
+        navItems: [{ id: "b-nav-item-1", label: "页面1", pageId: "page-1" }],
+      },
+    },
+  ];
+})();
 
 function normalizeBlockWidth(value?: number) {
   if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
@@ -500,6 +594,16 @@ function toPlainText(value: string | undefined, fallback = "") {
     .replace(/&quot;/gi, '"')
     .replace(/&#39;/gi, "'");
   return noTags.trim() || fallback;
+}
+
+function hasVisibleRichText(value?: string) {
+  const raw = String(value ?? "");
+  if (!raw.trim()) return false;
+  const stripped = raw
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .trim();
+  return stripped.length > 0;
 }
 
 function toRgba(hex: string, alpha: number) {
@@ -614,6 +718,84 @@ function getColorLayerStyle(value: string, opacity: number) {
   };
 }
 
+type MerchantCardIndustryStyleConfig = {
+  bgColor?: string;
+  bgOpacity?: number;
+  borderStyle?: BlockBorderStyle;
+  borderColor?: string;
+};
+
+const DEFAULT_MERCHANT_CARD_TEXT_LAYOUT: Record<MerchantCardTextRole, { x: number; y: number }> = {
+  name: { x: 0, y: 0 },
+  industry: { x: 0, y: 30 },
+  domain: { x: 0, y: 52 },
+};
+
+function resolveMerchantCardTextPosition(layout: MerchantCardTextLayoutConfig | undefined, role: MerchantCardTextRole) {
+  const fallback = DEFAULT_MERCHANT_CARD_TEXT_LAYOUT[role];
+  const current = layout?.[role] ?? {};
+  const x = typeof current.x === "number" && Number.isFinite(current.x) ? Math.max(0, Math.round(current.x)) : fallback.x;
+  const y = typeof current.y === "number" && Number.isFinite(current.y) ? Math.max(0, Math.round(current.y)) : fallback.y;
+  return { x, y };
+}
+
+function normalizeMerchantCardTextLayoutConfig(layout: MerchantCardTextLayoutConfig | undefined): MerchantCardTextLayoutConfig {
+  return {
+    name: resolveMerchantCardTextPosition(layout, "name"),
+    industry: resolveMerchantCardTextPosition(layout, "industry"),
+    domain: resolveMerchantCardTextPosition(layout, "domain"),
+  };
+}
+
+function resolveMerchantIndustryCardStyle(
+  stylesByIndustry: Partial<Record<MerchantIndustryTabIndustry, MerchantCardIndustryStyleConfig>> | undefined,
+  targetIndustry: MerchantIndustryTabIndustry,
+  legacy: {
+    bgColor: string;
+    bgOpacity: number;
+    borderStyle: BlockBorderStyle;
+    borderColor: string;
+  },
+) {
+  const scoped = stylesByIndustry?.[targetIndustry];
+  const fallback = stylesByIndustry?.all;
+  const candidate = scoped ?? fallback;
+  if (!candidate) return legacy;
+  return {
+    bgColor: (candidate.bgColor ?? "").trim() || legacy.bgColor,
+    bgOpacity:
+      typeof candidate.bgOpacity === "number" && Number.isFinite(candidate.bgOpacity)
+        ? Math.max(0, Math.min(1, candidate.bgOpacity))
+        : legacy.bgOpacity,
+    borderStyle: (candidate.borderStyle ?? legacy.borderStyle) as BlockBorderStyle,
+    borderColor: (candidate.borderColor ?? "").trim() || legacy.borderColor,
+  };
+}
+
+function buildTypographyInlineStyle(style: TypographyEditableProps | undefined): Record<string, string | number> {
+  const result: Record<string, string | number> = {};
+  const fontFamily = (style?.fontFamily ?? "").trim();
+  const fontColor = (style?.fontColor ?? "").trim();
+  if (fontFamily) result.fontFamily = fontFamily;
+  if (typeof style?.fontSize === "number" && Number.isFinite(style.fontSize) && style.fontSize > 0) {
+    result.fontSize = Math.max(8, Math.min(120, style.fontSize));
+  }
+  if (style?.fontWeight) result.fontWeight = style.fontWeight;
+  if (style?.fontStyle) result.fontStyle = style.fontStyle;
+  if (style?.textDecoration) result.textDecoration = style.textDecoration;
+  if (fontColor) {
+    if (isGradientToken(fontColor)) {
+      result.backgroundImage = fontColor;
+      result.backgroundClip = "text";
+      result.WebkitBackgroundClip = "text";
+      result.color = "transparent";
+    } else {
+      result.color = fontColor;
+    }
+  }
+  return result;
+}
+
 function loadRecentColors(): string[] {
   if (typeof window === "undefined") return [];
   try {
@@ -637,7 +819,7 @@ function isInlineDataImageUrl(value: string) {
 function ensureSafeImageUrlSize(value: string | undefined) {
   if (!value) return value;
   if (isInlineDataImageUrl(value) && value.length > MAX_ORIGINAL_IMAGE_DATA_URL_LENGTH) {
-    throw new Error("图片数据过大，请上传较小图片或使用外链 URL");
+    throw new Error("图片数据过大，上传较小图片或使用URL");
   }
   return value;
 }
@@ -704,7 +886,7 @@ async function fileToOriginalImageDataUrl(
 
   const compressedDataUrl = await compressImageDataUrl(dataUrl, options);
   if (compressedDataUrl.length > MAX_ORIGINAL_IMAGE_DATA_URL_LENGTH) {
-    throw new Error("图片过大，请更换更小分辨率图片");
+    throw new Error("图片过大，更换更小分辨率图");
   }
   return compressedDataUrl;
 }
@@ -839,9 +1021,197 @@ function isMissingUpdatedAtColumn(message: string) {
   );
 }
 
+function isMissingMerchantIdColumn(message: string) {
+  return (
+    /column\s+pages\.merchant_id\s+does\s+not\s+exist/i.test(message) ||
+    /could not find the ['"]merchant_id['"] column of ['"]pages['"] in the schema cache/i.test(message)
+  );
+}
+
 function normalizeSaveErrorMessage(message: string) {
   return message.replace(/^保存失败[:：]\s*/u, "");
 }
+
+function shouldOfferCompressionPresetForPublishError(message: string) {
+  const normalized = String(message ?? "").toLowerCase();
+  if (!normalized) return false;
+  if (normalized.includes("service_role_key")) return false;
+  if (normalized.includes("发布通道未配置")) return false;
+  if (normalized.includes("登录会话")) return false;
+  if (normalized.includes("会话")) return false;
+  if (normalized.includes("auth")) return false;
+  if (normalized.includes("permission")) return false;
+  return true;
+}
+
+function readBlocksStoreScopeFromLocation(forcedScope?: string) {
+  const trimmedForced = (forcedScope ?? "").trim();
+  if (trimmedForced) return trimmedForced;
+  return "default";
+}
+
+function getSiteIdFromStoreScope(scope: string) {
+  const normalized = (scope ?? "").trim();
+  if (!normalized.startsWith("site-")) return "";
+  return normalized.slice("site-".length).trim();
+}
+
+function mergePreferredMerchantIds(primaryIds: string[], ...otherIdGroups: Array<string[] | undefined>) {
+  const next: string[] = [];
+  const push = (value: string) => {
+    const trimmed = (value ?? "").trim();
+    if (!trimmed) return;
+    if (!next.includes(trimmed)) next.push(trimmed);
+  };
+  primaryIds.forEach(push);
+  otherIdGroups.forEach((group) => (group ?? []).forEach(push));
+  return next;
+}
+
+function normalizeDomainSuffixForMerchant(value: string) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/^\/+|\/+$/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9_-]/g, "");
+}
+
+function normalizeBaseDomainForMerchant(value: string) {
+  const normalized = String(value ?? "")
+    .trim()
+    .replace(/^https?:\/\//i, "")
+    .replace(/\/+$/g, "");
+  return (normalized.split("/")[0] ?? "").trim();
+}
+
+function buildMerchantDomainFromBase(baseDomain: string, suffix: string) {
+  const base = normalizeBaseDomainForMerchant(baseDomain);
+  const normalizedSuffix = normalizeDomainSuffixForMerchant(suffix);
+  if (!base) return normalizedSuffix ? `/${normalizedSuffix}` : "";
+  if (!normalizedSuffix) return base;
+  return `${base}/${normalizedSuffix}`;
+}
+
+function ensureScopedMerchantSite(siteId: string, userEmail?: string | null) {
+  const normalizedSiteId = String(siteId ?? "").trim();
+  if (!normalizedSiteId) return null;
+  const state = loadPlatformState();
+  const existed = state.sites.find((item) => item.id === normalizedSiteId) ?? null;
+  if (existed) return existed;
+
+  const current = new Date().toISOString();
+  const mainSite = state.sites.find((item) => item.id === "site-main") ?? state.sites[0] ?? null;
+  const tenantId = mainSite?.tenantId ?? state.tenants[0]?.id ?? "tenant-demo";
+  const baseDomain =
+    normalizeBaseDomainForMerchant(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "") ||
+    normalizeBaseDomainForMerchant(mainSite?.domain ?? "") ||
+    "localhost:3000";
+  const nextSite: Site = {
+    id: normalizedSiteId,
+    tenantId,
+    merchantName: "",
+    domainSuffix: "",
+    contactAddress: "",
+    contactName: "",
+    contactPhone: "",
+    contactEmail: userEmail ? String(userEmail).trim().toLowerCase() : "",
+    name: `商户 ${normalizedSiteId}`,
+    domain: buildMerchantDomainFromBase(baseDomain, normalizedSiteId),
+    categoryId: mainSite?.categoryId ?? "",
+    category: mainSite?.category ?? "商户",
+    industry: "",
+    status: "online" as const,
+    publishedVersion: 1,
+    lastPublishedAt: null,
+    features: mainSite?.features ?? createFeaturePackage("basic"),
+    location: {
+      countryCode: "",
+      country: "",
+      provinceCode: "",
+      province: "",
+      city: "",
+    },
+    serviceExpiresAt: null,
+    permissionConfig: createDefaultMerchantPermissionConfig(),
+    merchantCardImageUrl: "",
+    sortConfig: createDefaultMerchantSortConfig(),
+    createdAt: current,
+    updatedAt: current,
+  };
+
+  savePlatformState({
+    ...state,
+    sites: [...state.sites, nextSite],
+  });
+
+  return nextSite;
+}
+
+function discoverSiteScopesFromLocalStorage() {
+  if (typeof window === "undefined") return [] as string[];
+  const prefixes = [
+    "merchant-space:homeBlocks:draft:v2:",
+    "merchant-space:homeBlocks:published:v1:",
+    "merchant-space:homeBlocks:published-history:v1:",
+  ];
+  const scopes = new Set<string>();
+  for (let i = 0; i < window.localStorage.length; i += 1) {
+    const key = window.localStorage.key(i) ?? "";
+    const prefix = prefixes.find((item) => key.startsWith(item));
+    if (!prefix) continue;
+    const scope = key.slice(prefix.length).trim();
+    if (!scope || scope === "default") continue;
+    if (!scope.startsWith("site-")) continue;
+    scopes.add(scope);
+  }
+  return Array.from(scopes);
+}
+
+type MerchantProfileLike = {
+  merchantName?: string;
+  domainSuffix?: string;
+  contactAddress?: string;
+  contactName?: string;
+  contactPhone?: string;
+  contactEmail?: string;
+  industry?: string;
+  location?: {
+    countryCode?: string;
+    country?: string;
+    province?: string;
+    city?: string;
+  };
+};
+
+function getMissingMerchantProfileFields(site: MerchantProfileLike | null | undefined) {
+  const missing: string[] = [];
+  if (!site) return ["商户站点"];
+  const merchantName = (site.merchantName ?? "").trim();
+  const domainSuffix = (site.domainSuffix ?? "").trim();
+  const countryCode = (site.location?.countryCode ?? "").trim();
+  const country = (site.location?.country ?? "").trim();
+  const province = (site.location?.province ?? "").trim();
+  const city = (site.location?.city ?? "").trim();
+  const industry = (site.industry ?? "").trim();
+
+  if (!merchantName) missing.push("商户名称");
+  if (!domainSuffix) missing.push("域名后缀");
+  if (!countryCode || !country) missing.push("国家");
+  if (!province) missing.push("省份");
+  if (!city) missing.push("城市");
+  if (!MERCHANT_INDUSTRY_OPTIONS.includes(industry as (typeof MERCHANT_INDUSTRY_OPTIONS)[number])) {
+    missing.push("行业");
+  }
+  return missing;
+}
+
+type AdminClientProps = {
+  forcedScope?: string;
+  editorTitle?: string;
+  frontendHref?: string;
+  editorMode?: "merchant" | "platform";
+};
 
 function estimateUtf8Size(value: string) {
   return new TextEncoder().encode(value).length;
@@ -973,7 +1343,7 @@ function runPublishPreflight(blocks: Block[], payloadBytes: number): PublishPref
 
   blocks.forEach((block) => {
     if (block.type === "gallery" && (!Array.isArray(block.props.images) || block.props.images.length === 0)) {
-      warnings.push(`相册区块为空：${block.id}`);
+      warnings.push(`相册区块为空{block.id}`);
     }
     if (block.type === "music" && !((block.props.audioUrl ?? "").trim())) {
       warnings.push(`音乐区块未设置音频：${block.id}`);
@@ -996,6 +1366,25 @@ function runPublishPreflight(blocks: Block[], payloadBytes: number): PublishPref
   if (maybeBrokenLinkCount > 0) warnings.push(`检测到 ${maybeBrokenLinkCount} 条联系方式可能无法跳转`);
 
   return { errors, warnings };
+}
+
+function countInlineImageDataUrls(value: unknown): number {
+  let count = 0;
+  const visit = (input: unknown) => {
+    if (typeof input === "string") {
+      if (/^data:image\//i.test(input)) count += 1;
+      return;
+    }
+    if (Array.isArray(input)) {
+      input.forEach(visit);
+      return;
+    }
+    if (input && typeof input === "object") {
+      Object.values(input as Record<string, unknown>).forEach(visit);
+    }
+  };
+  visit(value);
+  return count;
 }
 
 type RecompressStats = {
@@ -1130,6 +1519,50 @@ async function externalizeInlineImagesInBlocks(blocks: Block[], merchantHint: st
   return { blocks: next, stats };
 }
 
+type PublishOptimizationResult = {
+  blocks: Block[];
+  optimized: boolean;
+  summary: string | null;
+};
+
+async function optimizeBlocksForPublishIfNeeded(
+  blocks: Block[],
+  options: {
+    merchantHint: string;
+    uploadCompressionPreset: UploadCompressionPreset;
+  },
+): Promise<PublishOptimizationResult> {
+  const inlineImageCount = countInlineImageDataUrls(blocks);
+  const originalBytes = estimateUtf8Size(JSON.stringify(blocks));
+  const shouldOptimize = inlineImageCount > 0 && originalBytes >= 2 * 1024 * 1024;
+  if (!shouldOptimize) {
+    return {
+      blocks,
+      optimized: false,
+      summary: null,
+    };
+  }
+
+  const compressionOption =
+    IMAGE_COMPRESSION_OPTIONS[options.uploadCompressionPreset] ?? IMAGE_COMPRESSION_OPTIONS.high;
+  const recompressed = await recompressInlineImagesInBlocks(blocks, compressionOption);
+  const externalized = await externalizeInlineImagesInBlocks(
+    recompressed.blocks,
+    options.merchantHint || "public",
+  );
+  const nextBlocks = externalized.blocks;
+  const nextBytes = estimateUtf8Size(JSON.stringify(nextBlocks));
+  const optimized = !isSameBlocksSnapshot(nextBlocks, blocks);
+
+  return {
+    blocks: nextBlocks,
+    optimized,
+    summary: optimized
+      ? `发布前已优化图片：${formatBytes(originalBytes)} -> ${formatBytes(nextBytes)}（压缩 ${recompressed.stats.changed}/${recompressed.stats.visited}，外链 ${externalized.stats.replaced}/${externalized.stats.visited}）`
+      : null,
+  };
+}
+
 function sumDailyValues(stats: Record<string, number>, days: number, now = new Date()) {
   let total = 0;
   for (let i = 0; i < days; i += 1) {
@@ -1141,8 +1574,56 @@ function sumDailyValues(stats: Record<string, number>, days: number, now = new D
   return total;
 }
 
+function buildMerchantIdsCacheIdentity(sessionUserId?: string, email?: string) {
+  return `${(sessionUserId ?? "").trim()}::${(email ?? "").trim().toLowerCase()}`;
+}
+
+function readCachedMerchantIds(sessionUserId?: string, email?: string) {
+  if (typeof window === "undefined") return [];
+  const identity = buildMerchantIdsCacheIdentity(sessionUserId, email);
+  if (!identity.replaceAll(":", "").trim()) return [];
+  try {
+    const raw = sessionStorage.getItem(MERCHANT_IDS_CACHE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") return [];
+    const record = parsed as { identity?: unknown; ids?: unknown; at?: unknown };
+    if (record.identity !== identity) return [];
+    if (typeof record.at !== "number" || !Number.isFinite(record.at)) return [];
+    if (Date.now() - record.at > MERCHANT_IDS_CACHE_TTL_MS) return [];
+    if (!Array.isArray(record.ids)) return [];
+    return record.ids
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function writeCachedMerchantIds(sessionUserId: string | undefined, email: string | undefined, ids: string[]) {
+  if (typeof window === "undefined") return;
+  const identity = buildMerchantIdsCacheIdentity(sessionUserId, email);
+  if (!identity.replaceAll(":", "").trim()) return;
+  const normalized = [...new Set(ids.map((item) => item.trim()).filter(Boolean))];
+  if (normalized.length === 0) return;
+  try {
+    sessionStorage.setItem(
+      MERCHANT_IDS_CACHE_KEY,
+      JSON.stringify({
+        identity,
+        ids: normalized,
+        at: Date.now(),
+      }),
+    );
+  } catch {
+    // ignore cache write failures
+  }
+}
+
 async function resolveMerchantIds(sessionUserId?: string, email?: string, metadata?: Record<string, unknown>): Promise<string[]> {
   const ids: string[] = [];
+  const cachedIds = readCachedMerchantIds(sessionUserId, email);
   const pushId = (value: unknown) => {
     if (typeof value !== "string") return;
     const trimmed = value.trim();
@@ -1150,98 +1631,254 @@ async function resolveMerchantIds(sessionUserId?: string, email?: string, metada
     if (!ids.includes(trimmed)) ids.push(trimmed);
   };
 
-  pushId(sessionUserId);
-  pushId(metadata?.merchant_id);
-  pushId(metadata?.merchantId);
-  pushId(metadata?.merchantID);
-  pushId(metadata?.store_id);
-  pushId(metadata?.storeId);
-  pushId(metadata?.shop_id);
-  pushId(metadata?.shopId);
+  const metadataRecord = metadata ?? {};
+  pushId(metadataRecord.merchant_id);
+  pushId(metadataRecord.merchantId);
+  pushId(metadataRecord.merchantID);
+  pushId(metadataRecord.store_id);
+  pushId(metadataRecord.storeId);
+  pushId(metadataRecord.shop_id);
+  pushId(metadataRecord.shopId);
+  cachedIds.forEach(pushId);
 
-  if (!sessionUserId) return ids;
-
-  const lookupColumns = [
-    "user_id",
-    "auth_user_id",
-    "owner_user_id",
-    "owner_id",
-    "auth_id",
-    "created_by",
-    "created_by_user_id",
-  ];
-  for (const column of lookupColumns) {
-    const result = await supabase.from("merchants").select("id").eq(column, sessionUserId).limit(1).maybeSingle();
-    if (!result.error) pushId(result.data?.id);
+  if (!sessionUserId) {
+    return ids;
   }
 
-  const byId = await supabase.from("merchants").select("id").eq("id", sessionUserId).limit(1).maybeSingle();
-  if (!byId.error) pushId(byId.data?.id);
-
-  if (email) {
-    const emailColumns = ["email", "owner_email", "contact_email", "user_email"];
-    for (const column of emailColumns) {
-      const byEmail = await supabase.from("merchants").select("id").eq(column, email).limit(1).maybeSingle();
-      if (!byEmail.error) pushId(byEmail.data?.id);
+  try {
+    const ensured = await ensureMerchantIdentityForUser({
+      id: sessionUserId,
+      email: email ?? null,
+      user_metadata: metadataRecord,
+      app_metadata: metadataRecord,
+    });
+    ensured.merchantIds.forEach(pushId);
+    if (ensured.merchantId) {
+      pushId(ensured.merchantId);
     }
+  } catch {
+    // Keep cached + metadata ids when ensure step fails.
   }
 
-  const fallbackRow = await supabase.from("merchants").select("id").limit(1).maybeSingle();
-  if (!fallbackRow.error) {
-    pushId(fallbackRow.data?.id);
-  }
-
-  return ids;
+  const numericIds = ids.filter((item) => isMerchantNumericId(item)).sort((a, b) => Number(a) - Number(b));
+  const legacyIds = ids.filter((item) => !isMerchantNumericId(item));
+  const merged = [...numericIds, ...legacyIds];
+  writeCachedMerchantIds(sessionUserId, email, merged);
+  return merged;
 }
 
 async function loadBlocksFromSupabaseFallback(merchantIds: string[]) {
-  if (pagesSlugColumnSupported !== false) {
-    const bySlug = await supabase.from("pages").select("blocks").eq("slug", "home").single();
-    if (!bySlug.error && bySlug.data?.blocks && Array.isArray(bySlug.data.blocks)) {
-      pagesSlugColumnSupported = true;
-      return sanitizeBlocksForRuntime(bySlug.data.blocks as Block[]).blocks;
-    }
-
-    if (!bySlug.error || !isMissingSlugColumn(bySlug.error.message)) {
-      return null;
-    }
-    pagesSlugColumnSupported = false;
-  }
-
-  for (const merchantId of merchantIds) {
-    const byMerchant = await supabase
+  const queryOneMerchant = async (merchantId: string) => {
+    const byMerchantWithSlug = await supabase
       .from("pages")
       .select("blocks")
       .eq("merchant_id", merchantId)
+      .eq("slug", "home")
       .limit(1)
       .maybeSingle();
-    if (!byMerchant.error && byMerchant.data?.blocks && Array.isArray(byMerchant.data.blocks)) {
-      return sanitizeBlocksForRuntime(byMerchant.data.blocks as Block[]).blocks;
+    if (!byMerchantWithSlug.error && Array.isArray(byMerchantWithSlug.data?.blocks)) {
+      const sanitized = sanitizeBlocksForRuntime(byMerchantWithSlug.data.blocks as Block[]).blocks;
+      if (sanitized.length > 0) return sanitized;
+      return null;
+    }
+    if (!byMerchantWithSlug.error || !isMissingSlugColumn(byMerchantWithSlug.error.message)) return null;
+
+    const byMerchant = await supabase.from("pages").select("blocks").eq("merchant_id", merchantId).limit(1).maybeSingle();
+    if (!byMerchant.error && Array.isArray(byMerchant.data?.blocks)) {
+      const sanitized = sanitizeBlocksForRuntime(byMerchant.data.blocks as Block[]).blocks;
+      if (sanitized.length > 0) return sanitized;
+      return null;
+    }
+    return null;
+  };
+
+  const uniqueMerchantIds = [...new Set(merchantIds.map((item) => item.trim()).filter(Boolean))].slice(0, 8);
+  if (uniqueMerchantIds.length > 0) {
+    const settled = await Promise.allSettled(uniqueMerchantIds.map((merchantId) => queryOneMerchant(merchantId)));
+    for (const result of settled) {
+      if (result.status === "fulfilled" && Array.isArray(result.value) && result.value.length > 0) {
+        return result.value;
+      }
     }
   }
 
-  const byFirstRow = await supabase.from("pages").select("blocks").limit(1).maybeSingle();
-  if (!byFirstRow.error && byFirstRow.data?.blocks && Array.isArray(byFirstRow.data.blocks)) {
-    return sanitizeBlocksForRuntime(byFirstRow.data.blocks as Block[]).blocks;
+  return null;
+}
+
+async function loadBlocksViaRestFallback(merchantIds: string[], accessToken?: string | null) {
+  if (!accessToken) return null;
+  const baseUrl = (resolvedSupabaseUrl ?? "").trim().replace(/\/+$/, "");
+  if (!baseUrl) return null;
+  const uniqueMerchantIds = [...new Set(merchantIds.map((item) => item.trim()).filter(Boolean))].slice(0, 8);
+  if (uniqueMerchantIds.length > 0) {
+    const tasks = uniqueMerchantIds.map(async (merchantId) => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 12000);
+      try {
+        const query = new URLSearchParams({
+          select: "blocks",
+          merchant_id: `eq.${merchantId}`,
+          slug: "eq.home",
+          limit: "1",
+        });
+        const response = await fetch(`${baseUrl}/rest/v1/pages?${query.toString()}`, {
+          method: "GET",
+          headers: {
+            apikey: resolvedSupabaseAnonKey,
+            Authorization: `Bearer ${accessToken}`,
+          },
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!response.ok) return null;
+        const json = (await response.json()) as unknown;
+        if (!Array.isArray(json)) return null;
+        const first = json[0] as { blocks?: unknown } | undefined;
+        if (!first || !Array.isArray(first.blocks)) return null;
+        return sanitizeBlocksForRuntime(first.blocks as Block[]).blocks;
+      } catch {
+        return null;
+      } finally {
+        clearTimeout(timer);
+      }
+    });
+    const settled = await Promise.allSettled(tasks);
+    for (const result of settled) {
+      if (result.status === "fulfilled" && Array.isArray(result.value) && result.value.length > 0) {
+        return result.value;
+      }
+    }
+  }
+
+  return null;
+}
+
+async function loadPlatformBlocksFromSupabaseFallback() {
+  if (pagesSlugColumnSupported !== false) {
+    const globalWithSlug = await supabase
+      .from("pages")
+      .select("blocks")
+      .is("merchant_id", null)
+      .eq("slug", "home")
+      .limit(1)
+      .maybeSingle();
+    if (!globalWithSlug.error && Array.isArray(globalWithSlug.data?.blocks)) {
+      pagesSlugColumnSupported = true;
+      const sanitized = sanitizeBlocksForRuntime(globalWithSlug.data.blocks as Block[]).blocks;
+      if (sanitized.length > 0) return sanitized;
+      return null;
+    }
+    if (globalWithSlug.error && isMissingSlugColumn(globalWithSlug.error.message)) {
+      pagesSlugColumnSupported = false;
+    } else if (globalWithSlug.error) {
+      return null;
+    }
+  }
+
+  const globalWithoutSlug = await supabase.from("pages").select("blocks").is("merchant_id", null).limit(1).maybeSingle();
+  if (!globalWithoutSlug.error && Array.isArray(globalWithoutSlug.data?.blocks)) {
+    const sanitized = sanitizeBlocksForRuntime(globalWithoutSlug.data.blocks as Block[]).blocks;
+    if (sanitized.length > 0) return sanitized;
+    return null;
   }
   return null;
 }
 
-async function saveBlocksToSupabaseFallback(
-  payload: { blocks: Block[]; updated_at: string },
-  merchantIds: string[],
-): Promise<SaveErrorLike> {
+async function loadPlatformBlocksViaRestFallback(accessToken?: string | null) {
+  if (!accessToken) return null;
+  const baseUrl = (resolvedSupabaseUrl ?? "").trim().replace(/\/+$/, "");
+  if (!baseUrl) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12000);
+  try {
+    const query = new URLSearchParams({
+      select: "blocks",
+      slug: "eq.home",
+      limit: "1",
+    });
+    query.set("merchant_id", "is.null");
+    const response = await fetch(`${baseUrl}/rest/v1/pages?${query.toString()}`, {
+      method: "GET",
+      headers: {
+        apikey: resolvedSupabaseAnonKey,
+        Authorization: `Bearer ${accessToken}`,
+      },
+      cache: "no-store",
+      signal: controller.signal,
+    });
+  if (!response.ok) return null;
+  const json = (await response.json()) as unknown;
+  if (!Array.isArray(json)) return null;
+  const first = json[0] as { blocks?: unknown } | undefined;
+  if (!first || !Array.isArray(first.blocks)) return null;
+  const sanitized = sanitizeBlocksForRuntime(first.blocks as Block[]).blocks;
+  if (sanitized.length > 0) return sanitized;
+  return null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function getMerchantIdentityNotice(merchantIds: string[]) {
+  if (merchantIds.length > 0) return null;
+  return "未匹配到你的商户站点，当前仅展示本地草稿。请先在“商户信息”完善绑定。";
+}
+
+  async function saveBlocksToSupabaseFallback(
+    payload: { blocks: Block[]; updated_at: string },
+    merchantIds: string[],
+  ): Promise<SaveErrorLike> {
   const sanitizedBlocks = sanitizeBlocksForRuntime(payload.blocks).blocks;
 
   async function trySaveWithPayload(sanitizedPayload: { blocks: Block[]; updated_at?: string }): Promise<SaveErrorLike> {
-    if (pagesSlugColumnSupported !== false) {
-      const bySlug = await supabase.from("pages").update(sanitizedPayload).eq("slug", "home");
-      if (!bySlug.error) {
-        pagesSlugColumnSupported = true;
-        return null;
+    // Public homepage publish: only touch the global row (merchant_id is null).
+    if (merchantIds.length === 0) {
+      if (pagesSlugColumnSupported !== false) {
+        const scopedBySlug = await supabase
+          .from("pages")
+          .update(sanitizedPayload)
+          .is("merchant_id", null)
+          .eq("slug", "home");
+        if (!scopedBySlug.error) {
+          pagesSlugColumnSupported = true;
+          return null;
+        }
+
+        if (isMissingMerchantIdColumn(scopedBySlug.error.message)) {
+          const bySlug = await supabase.from("pages").update(sanitizedPayload).eq("slug", "home");
+          if (!bySlug.error) {
+            pagesSlugColumnSupported = true;
+            return null;
+          }
+          if (!isMissingSlugColumn(bySlug.error.message)) return bySlug.error;
+          pagesSlugColumnSupported = false;
+        } else {
+          if (!isMissingSlugColumn(scopedBySlug.error.message)) return scopedBySlug.error;
+          pagesSlugColumnSupported = false;
+        }
       }
-      if (!isMissingSlugColumn(bySlug.error.message)) return bySlug.error;
-      pagesSlugColumnSupported = false;
+
+      if (pagesSlugColumnSupported !== false) {
+        const initHome = await supabase.from("pages").insert({
+          ...sanitizedPayload,
+          slug: "home",
+        });
+        if (!initHome.error) {
+          pagesSlugColumnSupported = true;
+          return null;
+        }
+        if (isMissingSlugColumn(initHome.error.message)) {
+          pagesSlugColumnSupported = false;
+        } else {
+          return initHome.error;
+        }
+      }
+
+      return {
+        message: "未匹配到商户站点，已阻止写入远端。请先在“商户信息”完成绑定后再发布。",
+      };
     }
 
     for (const merchantId of merchantIds) {
@@ -1260,57 +1897,49 @@ async function saveBlocksToSupabaseFallback(
       }
     }
 
-    const anyRow = await supabase.from("pages").select("id").limit(1).maybeSingle();
-    if (anyRow.error) return anyRow.error;
-    const targetId = anyRow.data?.id;
-    if (targetId === undefined || targetId === null) {
-      const initErrors: string[] = [];
+    const initErrors: string[] = [];
 
-      for (const merchantId of merchantIds) {
-        const withSlug = await supabase.from("pages").insert({
+    for (const merchantId of merchantIds) {
+      const withSlug = await supabase.from("pages").insert({
+        ...sanitizedPayload,
+        merchant_id: merchantId,
+        slug: "home",
+      });
+      if (!withSlug.error) return null;
+      initErrors.push(`pages 初slug)失败(${merchantId}): ${withSlug.error.message}`);
+
+      if (isMissingSlugColumn(withSlug.error.message)) {
+        const withoutSlug = await supabase.from("pages").insert({
           ...sanitizedPayload,
           merchant_id: merchantId,
-          slug: "home",
         });
-        if (!withSlug.error) return null;
-        initErrors.push(`pages 初始化(含 slug)失败(${merchantId}): ${withSlug.error.message}`);
-
-        if (isMissingSlugColumn(withSlug.error.message)) {
-          const withoutSlug = await supabase.from("pages").insert({
-            ...sanitizedPayload,
-            merchant_id: merchantId,
-          });
-          if (!withoutSlug.error) return null;
-          initErrors.push(`pages 初始化(不含 slug)失败(${merchantId}): ${withoutSlug.error.message}`);
-        }
-
-        // Fallback: let DB default/trigger populate merchant_id when explicit id is invalid.
-        const autoMerchantWithSlug = await supabase.from("pages").insert({
-          ...sanitizedPayload,
-          slug: "home",
-        });
-        if (!autoMerchantWithSlug.error) return null;
-        initErrors.push(`pages 初始化(自动 merchant_id, 含 slug)失败(${merchantId}): ${autoMerchantWithSlug.error.message}`);
-
-        if (isMissingSlugColumn(autoMerchantWithSlug.error.message)) {
-          const autoMerchantWithoutSlug = await supabase.from("pages").insert(sanitizedPayload);
-          if (!autoMerchantWithoutSlug.error) return null;
-          initErrors.push(
-            `pages 初始化(自动 merchant_id, 不含 slug)失败(${merchantId}): ${autoMerchantWithoutSlug.error.message}`,
-          );
-        }
+        if (!withoutSlug.error) return null;
+        initErrors.push(`pages 初始插入（不含 slug）失败(${merchantId}): ${withoutSlug.error.message}`);
       }
 
-      return {
-        message:
-          initErrors.length > 0
-            ? `未找到可更新的 pages 记录，自动初始化失败。${initErrors.join("；")}`
-            : "未找到可更新的 pages 记录，且自动初始化失败。",
-      };
+      // Fallback: let DB default/trigger populate merchant_id when explicit id is invalid.
+      const autoMerchantWithSlug = await supabase.from("pages").insert({
+        ...sanitizedPayload,
+        slug: "home",
+      });
+      if (!autoMerchantWithSlug.error) return null;
+      initErrors.push(`pages 初始插入（自动 merchant_id，含 slug）失败(${merchantId}): ${autoMerchantWithSlug.error.message}`);
+
+      if (isMissingSlugColumn(autoMerchantWithSlug.error.message)) {
+        const autoMerchantWithoutSlug = await supabase.from("pages").insert(sanitizedPayload);
+        if (!autoMerchantWithoutSlug.error) return null;
+        initErrors.push(
+          `pages 初始插入（自动 merchant_id，不含 slug）失败(${merchantId}): ${autoMerchantWithoutSlug.error.message}`,
+        );
+      }
     }
 
-    const byId = await supabase.from("pages").update(sanitizedPayload).eq("id", targetId);
-    return byId.error ?? null;
+    return {
+      message:
+        initErrors.length > 0
+          ? `存在可更新 pages 记录，但自动初始化失败：${initErrors.join("；")}`
+          : "存在可更新 pages 记录，但初始化失败",
+    };
   }
 
   const withUpdatedAt = { blocks: sanitizedBlocks, updated_at: payload.updated_at };
@@ -1327,10 +1956,26 @@ async function saveBlocksToSupabaseFallback(
   return trySaveWithPayload({ blocks: sanitizedBlocks });
 }
 
-export default function AdminClient() {
-  const initialPlanConfig = getPagePlanConfigFromBlocks(homeBlocks);
+export default function AdminClient({
+  forcedScope,
+  editorTitle = "页面编辑",
+  frontendHref = "/site/site-main",
+  editorMode = "merchant",
+}: AdminClientProps = {}) {
+  const [storeScope] = useState<string>(() => readBlocksStoreScopeFromLocation(forcedScope));
+  const [justSignedIn] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return new URLSearchParams(window.location.search).get("justSignedIn") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const isPlatformEditor = editorMode === "platform";
+  const defaultEditorBlocks = isPlatformEditor ? homeBlocks : MERCHANT_ONBOARDING_BLOCKS;
+  const initialPlanConfig = getPagePlanConfigFromBlocks(defaultEditorBlocks);
   const initialMobilePlanConfig =
-    getEmbeddedMobilePlanConfig(homeBlocks) ?? adaptPlanConfigForMobile(JSON.parse(JSON.stringify(initialPlanConfig)) as PagePlanConfig);
+    getEmbeddedMobilePlanConfig(defaultEditorBlocks) ?? adaptPlanConfigForMobile(JSON.parse(JSON.stringify(initialPlanConfig)) as PagePlanConfig);
   const initialEditingPlanId = initialPlanConfig.activePlanId;
   const initialEditingPageId =
     initialPlanConfig.plans.find((plan) => plan.id === initialEditingPlanId)?.activePageId ?? "page-1";
@@ -1344,6 +1989,9 @@ export default function AdminClient() {
   const [editingPlanId, setEditingPlanId] = useState<PlanId>(initialEditingPlanId);
   const [editingPageId, setEditingPageId] = useState<string>(initialEditingPageId);
   const [blocks, setBlocks] = useState<Block[]>(initialBlocks);
+  const [hasAddedExtraBlock, setHasAddedExtraBlock] = useState(
+    () => initialBlocks.length > 1 || initialBlocks.some((item) => item.type !== "nav"),
+  );
   const [selectedId, setSelectedId] = useState<string>(initialBlocks[0]?.id ?? "");
   const [draggingBlockId, setDraggingBlockId] = useState<string | null>(null);
   const dragStartRef = useRef<{
@@ -1358,12 +2006,18 @@ export default function AdminClient() {
   const [newBlockType, setNewBlockType] = useState<Block["type"]>("common");
   const [previewViewport, setPreviewViewport] = useState<"desktop" | "mobile">("desktop");
   const [tip, setTip] = useState<string>("");
+  const [backendNotice, setBackendNotice] = useState<string | null>(supabaseMissingEnvNotice);
   const tipDurationMsRef = useRef<number | null>(DEFAULT_TIP_DURATION_MS);
   const tipDismissByPointerRef = useRef<boolean>(true);
   const [dialog, setDialog] = useState<CenterDialog | null>(null);
-  const [checkingAuth, setCheckingAuth] = useState(true);
+  const [checkingAuth, setCheckingAuth] = useState(false);
+  const [hasEditorContent, setHasEditorContent] = useState(true);
+  const [remoteContentVerified, setRemoteContentVerified] = useState<boolean>(!isSupabaseEnabled || isSupabaseFallbackMode);
   const [publishing, setPublishing] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [merchantProfileDialogOpen, setMerchantProfileDialogOpen] = useState(false);
+  const [merchantProfileAttention, setMerchantProfileAttention] = useState(false);
+  const merchantProfileButtonRef = useRef<HTMLButtonElement>(null);
   const [topBarCollapsed, setTopBarCollapsed] = useState(false);
   const topBarRef = useRef<HTMLDivElement>(null);
   const [topBarHeight, setTopBarHeight] = useState(0);
@@ -1424,6 +2078,13 @@ export default function AdminClient() {
     },
   });
 
+  useEffect(() => {
+    if (hasAddedExtraBlock) return;
+    if (blocks.length > 1 || blocks.some((item) => item.type !== "nav")) {
+      setHasAddedExtraBlock(true);
+    }
+  }, [blocks, hasAddedExtraBlock]);
+
   function recordRecentColor(value: string) {
     const normalized = normalizeRecentColorToken(value);
     if (!normalized) return;
@@ -1458,6 +2119,23 @@ export default function AdminClient() {
       durationMs: null,
       dismissOnPointer: true,
     });
+  }
+
+  function triggerMerchantProfileAttention() {
+    setMerchantProfileAttention(true);
+    const button = merchantProfileButtonRef.current;
+    if (!button || typeof button.animate !== "function") return;
+    button.animate(
+      [
+        { transform: "translateX(0)" },
+        { transform: "translateX(-5px)" },
+        { transform: "translateX(5px)" },
+        { transform: "translateX(-4px)" },
+        { transform: "translateX(4px)" },
+        { transform: "translateX(0)" },
+      ],
+      { duration: 380, iterations: 2, easing: "ease-in-out" },
+    );
   }
 
   function getCurrentImageCompressionOptions() {
@@ -1541,7 +2219,7 @@ export default function AdminClient() {
     setSelectedId(target.selectedId || target.blocks[0]?.id || "");
 
     const combinedLoaded = buildCombinedPersistedBlocks(loadedPlanConfig, loadedMobilePlanConfig);
-    saveBlocksToStorage(combinedLoaded);
+    saveBlocksToStorage(combinedLoaded, storeScope);
     themeBaseBlocksByPageRef.current.clear();
     if (options?.resetHistory !== false) {
       undoStackRef.current = [];
@@ -1553,7 +2231,7 @@ export default function AdminClient() {
   function toggleSelectedBlockLock() {
     const id = selectedIdRef.current;
     if (!id) {
-      showTip("请先选中一个区块");
+      showTip("请先选中丌");
       return;
     }
     const index = blocksRef.current.findIndex((block) => block.id === id);
@@ -1627,18 +2305,18 @@ export default function AdminClient() {
   }
 
   function rollbackToLastSuccessfulPublished() {
-    const published = loadPublishedBlocksFromStorage(homeBlocks);
-    if (!published || published.length === 0) {
-      showTip("未找到可回滚的已发布版本");
+    const previousPublished = rollbackToPreviousPublishedVersion(storeScope);
+    if (!previousPublished || previousPublished.length === 0) {
+      showTip("暂无可回滚的更早成功发布版本，请先完成至少一次成功发布");
       return;
     }
     pushUndoSnapshot(createSnapshot());
-    applyPersistedBlocksToEditor(published, { resetHistory: false });
+    applyPersistedBlocksToEditor(previousPublished, { resetHistory: false });
     showSavePublishTip("已回滚到上次成功发布版本");
   }
 
   function restoreLatestFailedSnapshot() {
-    const snapshots = readPublishFailureSnapshots();
+    const snapshots = readPublishFailureSnapshots(storeScope);
     if (snapshots.length === 0) {
       showTip("暂无发布失败快照");
       return;
@@ -1650,16 +2328,16 @@ export default function AdminClient() {
 
   async function recompressCurrentPageImages() {
     const options = getCurrentImageCompressionOptions();
-    showSavePublishTip("正在重压当前页图片...");
+    showSavePublishTip("正在重压当前页图..");
     try {
       const { blocks: nextBlocks, stats } = await recompressInlineImagesInBlocks(blocksRef.current, options);
       if (stats.visited === 0) {
-        showTip("当前页没有可重压的内嵌图片");
+        showTip("当前页没有可重压的内嵌图");
         return;
       }
       applyBlocks(nextBlocks, { selectedId: selectedIdRef.current || nextBlocks[0]?.id || "" });
       showSavePublishTip(
-        `重压完成：${stats.changed}/${stats.visited} 张，${formatBytes(stats.beforeBytes)} -> ${formatBytes(stats.afterBytes)}`,
+        `重压完成{stats.changed}/${stats.visited} 张，${formatBytes(stats.beforeBytes)} -> ${formatBytes(stats.afterBytes)}`,
       );
     } catch (error) {
       showTip(error instanceof Error ? error.message : "重压失败，请重试");
@@ -1669,25 +2347,35 @@ export default function AdminClient() {
   async function resolveFirstMerchantHint() {
     let merchantIds = merchantIdsRef.current;
     if (merchantIds.length === 0) {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      merchantIds = await resolveMerchantIds(session?.user?.id, session?.user?.email, {
-        ...(session?.user?.user_metadata ?? {}),
-        ...(session?.user?.app_metadata ?? {}),
-      });
-      merchantIdsRef.current = merchantIds;
+      try {
+        const gatewayReady = await canReachSupabaseGateway(Math.min(2500, AUTH_CHECK_TIMEOUT_MS));
+        if (!gatewayReady) return merchantIds[0] ?? "public";
+        const {
+          data: { session },
+        } = await withTimeout(
+          supabase.auth.getSession(),
+          AUTH_CHECK_TIMEOUT_MS,
+          "登录查超时，已回默商户标识",
+        );
+        merchantIds = await resolveMerchantIds(session?.user?.id, session?.user?.email, {
+          ...(session?.user?.user_metadata ?? {}),
+          ...(session?.user?.app_metadata ?? {}),
+        });
+        merchantIdsRef.current = merchantIds;
+      } catch {
+        merchantIds = merchantIdsRef.current;
+      }
     }
     return merchantIds[0] ?? "public";
   }
 
   async function externalizeCurrentPageLargeImages() {
-    showSavePublishTip("正在外链化大图...");
+    showSavePublishTip("正在外链化大..");
     try {
       const merchantHint = await resolveFirstMerchantHint();
       const { blocks: nextBlocks, stats } = await externalizeInlineImagesInBlocks(blocksRef.current, merchantHint);
       if (stats.visited === 0) {
-        showTip(`当前页没有超过 ${formatBytes(EXTERNALIZE_MIN_IMAGE_BYTES)} 的内嵌图片`);
+        showTip(`当前页面没有超过 ${formatBytes(EXTERNALIZE_MIN_IMAGE_BYTES)} 的内嵌图片`);
         return;
       }
       applyBlocks(nextBlocks, { selectedId: selectedIdRef.current || nextBlocks[0]?.id || "" });
@@ -1695,7 +2383,7 @@ export default function AdminClient() {
         `外链化完成：${stats.replaced}/${stats.visited} 张，${formatBytes(stats.beforeBytes)} -> ${formatBytes(stats.afterBytes)}`,
       );
     } catch (error) {
-      showTip(error instanceof Error ? error.message : "外链化失败，请检查存储配置");
+      showTip(error instanceof Error ? error.message : "外链化失败，请查存储配");
     }
   }
 
@@ -1710,13 +2398,13 @@ export default function AdminClient() {
     if (preset.noop) {
       const snapshot = themeBaseBlocksByPageRef.current.get(snapshotKey);
       if (!snapshot) {
-        showSavePublishTip("当前页未应用主题，无需还原");
+        showSavePublishTip("当前页面未应用主题，无需还原");
         return;
       }
       const restored = cloneBlocks(snapshot);
       applyBlocks(restored, { selectedId: selectedIdRef.current || restored[0]?.id || "" });
       themeBaseBlocksByPageRef.current.delete(snapshotKey);
-      showSavePublishTip("已清除主题效果，恢复到应用前状态");
+      showSavePublishTip("已清除主题效果，恢到应用前状");
       return;
     }
     if (!themeBaseBlocksByPageRef.current.has(snapshotKey)) {
@@ -1750,7 +2438,7 @@ export default function AdminClient() {
   function persistDraftForConfigs(activeConfig: PagePlanConfig) {
     const desktopConfig = previewViewport === "desktop" ? activeConfig : viewportStatesRef.current.desktop.planConfig;
     const mobileConfig = previewViewport === "mobile" ? activeConfig : viewportStatesRef.current.mobile.planConfig;
-    saveBlocksToStorage(buildCombinedPersistedBlocks(desktopConfig, mobileConfig));
+    saveBlocksToStorage(buildCombinedPersistedBlocks(desktopConfig, mobileConfig), storeScope);
   }
 
   function switchPreviewViewport(nextViewport: ViewportKey) {
@@ -1967,7 +2655,7 @@ export default function AdminClient() {
     setEditingPageId(target.editingPageId);
     setBlocks(cloneBlocks(target.blocks));
     setSelectedId(target.selectedId || target.blocks[0]?.id || "");
-    saveBlocksToStorage(buildCombinedPersistedBlocks(clonedStates.desktop.planConfig, clonedStates.mobile.planConfig));
+    saveBlocksToStorage(buildCombinedPersistedBlocks(clonedStates.desktop.planConfig, clonedStates.mobile.planConfig), storeScope);
   }
 
   function applyBlocks(next: Block[], options?: { selectedId?: string; recordHistory?: boolean }) {
@@ -2018,20 +2706,107 @@ export default function AdminClient() {
 
   async function trySaveWithResolvedMerchantIds(
     payload: { blocks: Block[]; updated_at: string },
+    preferredMerchantIds: string[] = [],
     timeoutMs = 45000,
   ) {
-    let merchantIds = merchantIdsRef.current;
-    if (merchantIds.length === 0) {
+    if (isPlatformEditor) {
+      merchantIdsRef.current = [];
+      return withTimeout(saveBlocksToSupabaseFallback(payload, []), timeoutMs);
+    }
+    const strictPreferred = [...new Set(preferredMerchantIds.map((item) => item.trim()).filter(Boolean))];
+    if (strictPreferred.length > 0) {
+      merchantIdsRef.current = strictPreferred;
+      return withTimeout(saveBlocksToSupabaseFallback(payload, strictPreferred), timeoutMs);
+    }
+    let merchantIds = mergePreferredMerchantIds(merchantIdsRef.current);
+    try {
+      const gatewayReady = await canReachSupabaseGateway(Math.min(2500, AUTH_CHECK_TIMEOUT_MS));
+      if (!gatewayReady) return withTimeout(saveBlocksToSupabaseFallback(payload, merchantIds), timeoutMs);
       const {
         data: { session },
-      } = await supabase.auth.getSession();
-      merchantIds = await resolveMerchantIds(session?.user?.id, session?.user?.email, {
+      } = await withTimeout(
+        supabase.auth.getSession(),
+        AUTH_CHECK_TIMEOUT_MS,
+        "商户鉴权超时，请稍后重试保存",
+      );
+      const resolvedMerchantIds = await resolveMerchantIds(session?.user?.id, session?.user?.email, {
         ...(session?.user?.user_metadata ?? {}),
         ...(session?.user?.app_metadata ?? {}),
       });
-      merchantIdsRef.current = merchantIds;
+      // Always prefer freshly resolved ids to avoid stale in-memory/session cache blocking publish.
+      if (resolvedMerchantIds.length > 0) {
+        merchantIds = mergePreferredMerchantIds(preferredMerchantIds, resolvedMerchantIds);
+        merchantIdsRef.current = merchantIds;
+      }
+    } catch {
+      merchantIds = merchantIdsRef.current;
     }
+    merchantIds = mergePreferredMerchantIds(preferredMerchantIds, merchantIds);
     return withTimeout(saveBlocksToSupabaseFallback(payload, merchantIds), timeoutMs);
+  }
+
+  async function trySaveViaServerPublishApi(
+    payload: { blocks: Block[]; updated_at: string },
+    preferredMerchantIds: string[] = [],
+    timeoutMs = 65000,
+  ): Promise<{ handled: boolean; error: SaveErrorLike }> {
+    const requestId = `publish-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      controller.abort();
+    }, Math.max(3000, timeoutMs));
+
+    try {
+      const merchantIds = isPlatformEditor
+        ? []
+        : mergePreferredMerchantIds(preferredMerchantIds, merchantIdsRef.current);
+      const response = await fetch("/api/publish", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        signal: controller.signal,
+        body: JSON.stringify({
+          requestId,
+          payload,
+          merchantIds,
+          isPlatformEditor,
+        }),
+      });
+      const data = (await response.json().catch(() => null)) as
+        | { ok?: boolean; code?: string; message?: string }
+        | null;
+
+      if (!response.ok) {
+        const code = typeof data?.code === "string" ? data.code : "";
+        const message = typeof data?.message === "string" ? data.message : `发布接口错误（HTTP ${response.status}）`;
+        if (code === "publish_service_unavailable") {
+          if (isPlatformEditor) {
+            return {
+              handled: true,
+              error: {
+                message: "超级后台发布通道未配置（缺少 SUPABASE_SERVICE_ROLE_KEY），暂不可发布。",
+              },
+            };
+          }
+          return { handled: false, error: null };
+        }
+        return { handled: true, error: { message } };
+      }
+      return { handled: true, error: null };
+    } catch {
+      if (isPlatformEditor) {
+        return {
+          handled: true,
+          error: {
+            message: "超级后台发布通道暂不可用，请检查网络或服务端配置后重试。",
+          },
+        };
+      }
+      return { handled: false, error: null };
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   function openAlert(message: string, title = "提示"): Promise<void> {
@@ -2078,49 +2853,401 @@ export default function AdminClient() {
   };
 
   useEffect(() => {
+    if (typeof window === "undefined") return () => {};
+    const onUnhandledRejection = (event: PromiseRejectionEvent) => {
+      if (!isIgnorableAbortReason(event.reason)) return;
+      event.preventDefault();
+    };
+    window.addEventListener("unhandledrejection", onUnhandledRejection);
+    return () => {
+      window.removeEventListener("unhandledrejection", onUnhandledRejection);
+    };
+  }, []);
+
+  useEffect(() => {
     let mounted = true;
+    let uiReleased = false;
+    const releaseCheckingScreen = (options?: { notice?: string | null }) => {
+      if (!mounted) return;
+      if (Object.prototype.hasOwnProperty.call(options ?? {}, "notice")) {
+        setBackendNotice(options?.notice ?? null);
+      }
+      if (!uiReleased) {
+        uiReleased = true;
+        setCheckingAuth(false);
+      }
+    };
+    const applyCachedEditorBlocks = () => {
+      const candidateScopes =
+        storeScope !== "default"
+          ? [storeScope]
+          : (() => {
+              const siteScopes = loadPlatformState()
+                .sites.map((item) => buildSiteStoreScope(item.id))
+                .filter((item) => item && item !== "default");
+              const discoveredScopes = discoverSiteScopesFromLocalStorage();
+              return [...new Set([...siteScopes, ...discoveredScopes, "default"])];
+            })();
+      for (const candidateScope of candidateScopes) {
+        const cachedDraft = loadBlocksFromStorage([], candidateScope);
+        const isCachedDraftDefault =
+          isSameBlocksSnapshot(cachedDraft, defaultEditorBlocks) ||
+          (!isPlatformEditor && isSameBlocksSnapshot(cachedDraft, homeBlocks));
+        if (cachedDraft.length > 0 && !isCachedDraftDefault) {
+          applyPersistedBlocksToEditorRef.current(cachedDraft, { resetHistory: true });
+          return cachedDraft;
+        }
+        const cachedPublished = loadPublishedBlocksFromStorage([], candidateScope);
+        const isCachedPublishedDefault =
+          isSameBlocksSnapshot(cachedPublished, defaultEditorBlocks) ||
+          (!isPlatformEditor && isSameBlocksSnapshot(cachedPublished, homeBlocks));
+        if (cachedPublished.length > 0 && !isCachedPublishedDefault) {
+          applyPersistedBlocksToEditorRef.current(cachedPublished, { resetHistory: true });
+          return cachedPublished;
+        }
+      }
+      return [];
+    };
+    if (!isSupabaseEnabled || isSupabaseFallbackMode) {
+      applyCachedEditorBlocks();
+      setHasEditorContent(true);
+      setRemoteContentVerified(true);
+      releaseCheckingScreen({
+        notice:
+          supabaseMissingEnvNotice ??
+          (isSupabaseFallbackMode
+            ? "开发环境离线模式：已跳过远程登录检查，使用本地缓存。"
+            : BACKEND_UNAVAILABLE_NOTICE),
+      });
+      return () => {
+        mounted = false;
+        merchantIdsRef.current = [];
+      };
+    }
+
+    setRemoteContentVerified(false);
+    const initialCached = applyCachedEditorBlocks();
+    if (initialCached.length > 0) {
+      releaseCheckingScreen();
+    } else {
+      setHasEditorContent(true);
+    }
+
+    const safetyTimeoutId = setTimeout(() => {
+      applyCachedEditorBlocks();
+      setHasEditorContent(true);
+      releaseCheckingScreen({ notice: null });
+    }, AUTH_CHECK_TIMEOUT_MS);
+    let authSubscription: { unsubscribe: () => void } | null = null;
+    const pollSession = async (timeoutMs: number) => {
+      const deadline = Date.now() + Math.max(400, timeoutMs);
+      while (Date.now() < deadline) {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        if (session) return session;
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 220);
+        });
+      }
+      return null;
+    };
+    const tryRecoverSessionFromStoredToken = async () => {
+      if (typeof window === "undefined") return null;
+      const extractTokens = (
+        input: unknown,
+      ): { access_token: string; refresh_token: string } | null => {
+        if (!input || typeof input !== "object") return null;
+        const record = input as Record<string, unknown>;
+        const containers: unknown[] = [record, record.currentSession, record.session];
+        for (const container of containers) {
+          if (!container || typeof container !== "object") continue;
+          const candidate = container as Record<string, unknown>;
+          const access = typeof candidate.access_token === "string" ? candidate.access_token.trim() : "";
+          const refresh = typeof candidate.refresh_token === "string" ? candidate.refresh_token.trim() : "";
+          if (access && refresh) return { access_token: access, refresh_token: refresh };
+        }
+        return null;
+      };
+      const expectedRef = (() => {
+        try {
+          const hostname = new URL(resolvedSupabaseUrl).hostname;
+          return hostname.split(".")[0]?.trim() ?? "";
+        } catch {
+          return "";
+        }
+      })();
+      const preferredKey = expectedRef ? `sb-${expectedRef}-auth-token` : "";
+      const candidateKeys: string[] = [];
+      if (preferredKey) candidateKeys.push(preferredKey);
+      for (let i = 0; i < window.localStorage.length; i += 1) {
+        const key = window.localStorage.key(i) ?? "";
+        if (!key.startsWith("sb-") || !key.endsWith("-auth-token")) continue;
+        if (!candidateKeys.includes(key)) candidateKeys.push(key);
+      }
+      for (const key of candidateKeys) {
+        try {
+          const raw = window.localStorage.getItem(key);
+          if (!raw) continue;
+          const parsed = JSON.parse(raw) as unknown;
+          const tokens = extractTokens(parsed);
+          if (!tokens) continue;
+          const { data } = await withTimeout(
+            supabase.auth.setSession(tokens),
+            Math.max(3000, Math.min(8000, AUTH_CHECK_TIMEOUT_MS)),
+            "本地会话恢复超时",
+          );
+          if (data.session) return data.session;
+        } catch {
+          // Continue trying remaining keys.
+        }
+      }
+      return null;
+    };
+    const recoverSession = async (timeoutMs: number) => {
+      const direct = await pollSession(timeoutMs);
+      if (direct) return direct;
+      const fromStored = await tryRecoverSessionFromStoredToken();
+      if (fromStored) return fromStored;
+      try {
+        const { data } = await withTimeout(
+          supabase.auth.refreshSession(),
+          Math.max(3200, Math.min(9000, timeoutMs + 2000)),
+          "会话恢复超时",
+        );
+        if (data.session) return data.session;
+      } catch {
+        // Ignore refresh failure and fall back to a final short poll.
+      }
+      return pollSession(1200);
+    };
+    const attachAuthListener = () => {
+      if (isPlatformEditor) return;
+      if (authSubscription || !mounted) return;
+      const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+        if (session || !mounted) return;
+        void (async () => {
+          const gatewayReady = await canReachSupabaseGateway(Math.min(2000, AUTH_CHECK_TIMEOUT_MS));
+          if (!mounted || !gatewayReady) return;
+          const confirmedSession = await recoverSession(justSignedIn ? 6000 : 4500);
+          if (!mounted || confirmedSession) return;
+          if (justSignedIn) {
+            setRemoteContentVerified(false);
+            setHasEditorContent(true);
+            setBackendNotice("登录状态同步延迟，已保留当前编辑页。请稍后再试；若仍失败可点重新登录。");
+            return;
+          }
+          setRemoteContentVerified(false);
+          setHasEditorContent(true);
+          setBackendNotice("未检测到登录会话，已保留当前编辑页。请重新登录后再发布。");
+          releaseCheckingScreen({ notice: "未检测到登录会话，已进入后台草稿模式。请重新登录后再发布。" });
+        })().catch(() => {
+          // Ignore listener network failures; keep current editor session.
+        });
+      });
+      authSubscription = data.subscription;
+    };
 
     (async () => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      try {
+        const gatewayReady = await canReachSupabaseGateway(Math.min(3000, AUTH_CHECK_TIMEOUT_MS));
+        if (!mounted) return;
+        if (!gatewayReady) {
+          setBackendNotice("后连不稳定，在尝试直接取远竡..");
+        }
 
-      if (!mounted) return;
-      if (!session) {
-        window.location.href = "/login";
-        return;
+        const {
+          data: { session: rawSession },
+          error: sessionError,
+        } = await withTimeout(
+          supabase.auth.getSession(),
+          AUTH_CHECK_TIMEOUT_MS,
+          "登录查超时，已使用本地缓存继综辑",
+        );
+        let session = rawSession;
+
+        if (!mounted) return;
+        clearTimeout(safetyTimeoutId);
+        if (sessionError) {
+          releaseCheckingScreen({ notice: BACKEND_UNAVAILABLE_NOTICE });
+          return;
+        }
+        if (!session) {
+          session = await recoverSession(justSignedIn ? 6000 : 4500);
+          if (!mounted) return;
+        }
+        if (!session) {
+          if (isPlatformEditor) {
+            setBackendNotice(null);
+            if (initialCached.length > 0) {
+              releaseCheckingScreen({ notice: null });
+            } else {
+              setHasEditorContent(true);
+              releaseCheckingScreen({ notice: null });
+            }
+          } else
+          if (justSignedIn) {
+            setRemoteContentVerified(false);
+            setHasEditorContent(true);
+            releaseCheckingScreen({ notice: "登录状态同步延迟，已进入后台草稿模式。请稍后再试发布；若仍失败请重新登录。" });
+            return;
+          } else {
+            setRemoteContentVerified(false);
+            setHasEditorContent(true);
+            releaseCheckingScreen({ notice: "未检测到登录会话，已进入后台草稿模式。请重新登录后再发布。" });
+            return;
+          }
+        }
+        if (session) {
+          attachAuthListener();
+        }
+        if (session && justSignedIn && typeof window !== "undefined") {
+          try {
+            const url = new URL(window.location.href);
+            if (url.searchParams.has("justSignedIn")) {
+              url.searchParams.delete("justSignedIn");
+              window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+            }
+          } catch {
+            // ignore URL cleanup failure
+          }
+        }
+        if (!isPlatformEditor || session) {
+          setBackendNotice(null);
+        }
+        if (initialCached.length > 0) {
+          releaseCheckingScreen();
+        }
+
+        let resolvedMerchantIds: string[] = [];
+          if (!isPlatformEditor) {
+            const activeSession = session;
+            if (!activeSession) {
+              releaseCheckingScreen({ notice: BACKEND_UNAVAILABLE_NOTICE });
+              return;
+            }
+            const merchantIds = await withTimeout(
+              (() => {
+                const scopedSiteId = getSiteIdFromStoreScope(storeScope).trim();
+                if (scopedSiteId) return Promise.resolve([scopedSiteId]);
+              return resolveMerchantIds(activeSession.user.id, activeSession.user.email, {
+                ...(activeSession.user.user_metadata ?? {}),
+                ...(activeSession.user.app_metadata ?? {}),
+              });
+            })(),
+            AUTH_CHECK_TIMEOUT_MS,
+            "商户识别超时，已使用朜缓存继续编辑",
+          );
+            if (!mounted) return;
+            const preferredByScope = getSiteIdFromStoreScope(storeScope);
+            resolvedMerchantIds = preferredByScope ? [preferredByScope] : mergePreferredMerchantIds(merchantIds);
+            merchantIdsRef.current = resolvedMerchantIds;
+            const scopedSiteId = getSiteIdFromStoreScope(storeScope).trim();
+            const preferredNumericId = resolvedMerchantIds.find((item) => isMerchantNumericId(item)) ?? "";
+            const currentMerchantSiteId = scopedSiteId || preferredNumericId || resolvedMerchantIds[0] || "";
+            if (!scopedSiteId && preferredNumericId) {
+              window.location.replace(`/${encodeURIComponent(preferredNumericId)}`);
+              return;
+            }
+            if (currentMerchantSiteId) {
+              ensureScopedMerchantSite(currentMerchantSiteId, activeSession.user.email);
+            }
+            const identityNotice = getMerchantIdentityNotice(resolvedMerchantIds);
+            if (identityNotice) {
+              setHasEditorContent(true);
+              releaseCheckingScreen({ notice: identityNotice });
+              return;
+          }
+        } else {
+          merchantIdsRef.current = [];
+        }
+        setHasEditorContent(true);
+        releaseCheckingScreen({ notice: null });
+        const accessToken = session?.access_token ?? null;
+        const restLoaded = await withTimeout(
+          isPlatformEditor
+            ? loadPlatformBlocksViaRestFallback(accessToken)
+            : loadBlocksViaRestFallback(resolvedMerchantIds, accessToken),
+          ADMIN_PAGE_LOAD_TIMEOUT_MS,
+          "页面内加载超时，已使用朜缓存继续编辑",
+        );
+        if (!mounted) return;
+        if (restLoaded && Array.isArray(restLoaded) && restLoaded.length > 0) {
+          setHasEditorContent(true);
+          setRemoteContentVerified(true);
+          applyPersistedBlocksToEditorRef.current(restLoaded);
+          const desktopLoaded = viewportStatesRef.current.desktop.planConfig;
+          const mobileLoaded = viewportStatesRef.current.mobile.planConfig;
+          const combinedLoaded = buildCombinedPersistedBlocks(desktopLoaded, mobileLoaded);
+          savePublishedBlocksToStorage(combinedLoaded, storeScope);
+          if (!isPlatformEditor) {
+            resolvedMerchantIds.forEach((siteId) => {
+              if ((siteId ?? "").trim()) savePublishedBlocksToStorage(combinedLoaded, buildSiteStoreScope(siteId));
+            });
+          }
+          releaseCheckingScreen({ notice: null });
+          return;
+        }
+        const loaded = await withTimeout(
+          isPlatformEditor ? loadPlatformBlocksFromSupabaseFallback() : loadBlocksFromSupabaseFallback(resolvedMerchantIds),
+          ADMIN_PAGE_LOAD_TIMEOUT_MS,
+          "页面内加载超时，已使用朜缓存继续编辑",
+        );
+        if (!mounted) return;
+        if (loaded && Array.isArray(loaded) && loaded.length > 0) {
+          setHasEditorContent(true);
+          setRemoteContentVerified(true);
+          applyPersistedBlocksToEditorRef.current(loaded);
+          const desktopLoaded = viewportStatesRef.current.desktop.planConfig;
+          const mobileLoaded = viewportStatesRef.current.mobile.planConfig;
+          const combinedLoaded = buildCombinedPersistedBlocks(desktopLoaded, mobileLoaded);
+          savePublishedBlocksToStorage(combinedLoaded, storeScope);
+          if (!isPlatformEditor) {
+            resolvedMerchantIds.forEach((siteId) => {
+              if ((siteId ?? "").trim()) savePublishedBlocksToStorage(combinedLoaded, buildSiteStoreScope(siteId));
+            });
+          }
+          releaseCheckingScreen({ notice: null });
+          return;
+        }
+        setHasEditorContent(true);
+        setRemoteContentVerified(gatewayReady);
+        releaseCheckingScreen({
+          notice: gatewayReady
+            ? null
+            : (isPlatformEditor
+                ? "远端连接不稳定，当前仅展示本地缓存。超级后台发布将走服务端通道。"
+                : "远连接不稳定，当前仅展示本地缓存，已临时锁定发布以防盖线上内容"),
+        });
+      } catch (error) {
+        if (!mounted) return;
+        clearTimeout(safetyTimeoutId);
+        const message = error instanceof Error ? error.message : "";
+        if (message.includes("超时")) {
+          applyCachedEditorBlocks();
+          setHasEditorContent(true);
+          setRemoteContentVerified(false);
+          releaseCheckingScreen({
+            notice: isPlatformEditor
+              ? "远端加载超时，当前仅展示本地缓存。超级后台发布将走服务端通道。"
+              : "远端加载超时，当前仅展示本地缓存，已临时锁定发布以防覆盖线上内容。",
+          });
+          return;
+        }
+        applyCachedEditorBlocks();
+        setHasEditorContent(true);
+        setRemoteContentVerified(false);
+        releaseCheckingScreen({ notice: BACKEND_UNAVAILABLE_NOTICE });
       }
-
-      const merchantIds = await resolveMerchantIds(
-        session.user.id,
-        session.user.email,
-        {
-          ...(session.user.user_metadata ?? {}),
-          ...(session.user.app_metadata ?? {}),
-        },
-      );
-      merchantIdsRef.current = merchantIds;
-      const loaded = await loadBlocksFromSupabaseFallback(merchantIds);
-      if (loaded && Array.isArray(loaded)) {
-        applyPersistedBlocksToEditorRef.current(loaded);
-        const desktopLoaded = viewportStatesRef.current.desktop.planConfig;
-        const mobileLoaded = viewportStatesRef.current.mobile.planConfig;
-        savePublishedBlocksToStorage(buildCombinedPersistedBlocks(desktopLoaded, mobileLoaded));
-      }
-
-      setCheckingAuth(false);
     })();
-
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!session) window.location.href = "/login";
-    });
 
     return () => {
       mounted = false;
-      authListener.subscription.unsubscribe();
+      clearTimeout(safetyTimeoutId);
+      if (authSubscription) authSubscription.unsubscribe();
       merchantIdsRef.current = [];
     };
-  }, []);
+  }, [defaultEditorBlocks, isPlatformEditor, justSignedIn, storeScope]);
 
   function updateBlockProps(blockId: string, patch: Partial<Block["props"]>) {
     const currentBlocks = blocksRef.current;
@@ -2242,20 +3369,24 @@ export default function AdminClient() {
   }, [blocks, editingPageId, editingPlanId, planConfig, previewViewport, selectedId]);
 
   useEffect(() => {
+    if (checkingAuth) return;
     const topBarNode = topBarRef.current;
     if (!topBarNode) return;
     const updateTopBarHeight = () => {
-      setTopBarHeight(Math.ceil(topBarNode.getBoundingClientRect().height));
+      const nextHeight = Math.ceil(topBarNode.getBoundingClientRect().height);
+      setTopBarHeight((prev) => (prev === nextHeight ? prev : nextHeight));
     };
     updateTopBarHeight();
+    const rafId = window.requestAnimationFrame(updateTopBarHeight);
     const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(updateTopBarHeight) : null;
     if (observer) observer.observe(topBarNode);
     window.addEventListener("resize", updateTopBarHeight);
     return () => {
+      window.cancelAnimationFrame(rafId);
       if (observer) observer.disconnect();
       window.removeEventListener("resize", updateTopBarHeight);
     };
-  }, [previewViewport, topBarCollapsed]);
+  }, [checkingAuth, previewViewport, topBarCollapsed]);
 
   useEffect(() => {
     const measureBackgroundHeight = () => {
@@ -2637,7 +3768,103 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       return {
         id,
         type,
-        props: { heading: "新的列表区块", items: ["列表项 1", "列表项 2"] },
+        props: { heading: "新的列表区块", items: ["列表1", "列表2"] },
+      };
+    }
+
+    if (type === "search-bar") {
+      const defaultCountryCode = getEuropeCountryOptions()[0]?.code ?? "";
+      const defaultProvinceCode = getEuropeProvinceOptions(defaultCountryCode)[0]?.code ?? "";
+      const defaultCity = getEuropeCityOptions(defaultCountryCode, defaultProvinceCode)[0] ?? "";
+      return {
+        id,
+        type,
+        props: {
+          heading: "搜索",
+          text: "攌城市定位与内容搜",
+          cityPlaceholder: "选择城市",
+          searchPlaceholder: "请输入商户名关键",
+          locateLabel: "定位",
+          actionLabel: "搜索",
+          defaultCountryCode,
+          defaultProvinceCode,
+          defaultCity,
+          searchLayout: {
+            locate: { x: 0, y: 0, width: 72, height: 40 },
+            country: { x: 82, y: 0, width: 190, height: 40 },
+            province: { x: 282, y: 0, width: 190, height: 40 },
+            city: { x: 482, y: 0, width: 190, height: 40 },
+            keyword: { x: 0, y: 52, width: 670, height: 40 },
+            action: { x: 680, y: 52, width: 72, height: 40 },
+          },
+        },
+      };
+    }
+
+    if (type === "merchant-list") {
+      return {
+        id,
+        type,
+        props: {
+          heading: "商户列表",
+          text: "臊展示平台注册商户的前台入口",
+          maxItems: 6,
+          emptyText: "暂无商户",
+          merchantTabButtonBgColor: "#ffffff",
+          merchantTabButtonBgOpacity: 1,
+          merchantTabButtonBorderStyle: "solid",
+          merchantTabButtonBorderColor: "#cbd5e1",
+          merchantTabButtonActiveBgColor: "#000000",
+          merchantTabButtonActiveBgOpacity: 1,
+          merchantTabButtonActiveBorderStyle: "solid",
+          merchantTabButtonActiveBorderColor: "#111827",
+          merchantPagerButtonBgColor: "#ffffff",
+          merchantPagerButtonBgOpacity: 1,
+          merchantPagerButtonBorderStyle: "solid",
+          merchantPagerButtonBorderColor: "#cbd5e1",
+          merchantPagerButtonDisabledBgColor: "#e5e7eb",
+          merchantPagerButtonDisabledBgOpacity: 1,
+          merchantPagerButtonDisabledBorderStyle: "solid",
+          merchantPagerButtonDisabledBorderColor: "#cbd5e1",
+          merchantCardBgColor: "#f8fafc",
+          merchantCardBgOpacity: 1,
+          merchantCardBorderStyle: "solid",
+          merchantCardBorderColor: "#cbd5e1",
+          merchantCardTypography: {
+            name: { fontSize: 16, fontWeight: "bold", fontColor: "#0f172a" },
+            industry: { fontSize: 12, fontColor: "#64748b" },
+            domain: { fontSize: 12, fontColor: "#64748b" },
+          },
+          merchantCardTextLayout: {
+            name: { x: 0, y: 0 },
+            industry: { x: 0, y: 30 },
+            domain: { x: 0, y: 52 },
+          },
+          merchantCardTextBoxVisible: false,
+          merchantCardIndustryStyles: {
+            all: {
+              bgColor: "#f8fafc",
+              bgOpacity: 1,
+              borderStyle: "solid",
+              borderColor: "#cbd5e1",
+            },
+          },
+          industryTabs: [
+            { id: "tab-recommended", label: "推荐", industry: "all" },
+            { id: "tab-catering", label: "餐饮", industry: "餐饮" },
+            { id: "tab-entertainment", label: "娱乐", industry: "娱乐" },
+            { id: "tab-retail", label: "零售", industry: "零售" },
+            { id: "tab-service", label: "服务", industry: "服务" },
+          ],
+          merchantCardLayout: {
+            tabs: { x: 0, y: 0, width: 520, height: 38 },
+            prev: { x: 0, y: 256, width: 92, height: 34 },
+            next: { x: 104, y: 256, width: 92, height: 34 },
+            card1: { x: 0, y: 52, width: 320, height: 190 },
+            card2: { x: 334, y: 52, width: 320, height: 190 },
+            card3: { x: 668, y: 52, width: 320, height: 190 },
+          },
+        },
       };
     }
 
@@ -2647,8 +3874,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       props: {
         heading: "联系方式",
         phone: "123-456-7890",
-        address: "中国",
-        addresses: ["中国"],
+        address: "涓浗",
+        addresses: ["涓浗"],
         mapZoom: 5,
         mapType: "roadmap",
         mapShowMarker: true,
@@ -2665,6 +3892,14 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }
 
   function addBlock() {
+    if (!isPlatformEditor && newBlockType === "gallery" && !canUseGalleryBlock) {
+      showTip("当前权限朼通相册区");
+      return;
+    }
+    if (!isPlatformEditor && newBlockType === "music" && !canUseMusicBlock) {
+      showTip("当前权限朼通音乐区");
+      return;
+    }
     if (newBlockType === "nav") {
       const mergedConfig = mergePlanConfigWithEditingBlocks(
         planConfigRef.current,
@@ -2676,7 +3911,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       const currentPlan = mergedConfig.plans.find((plan) => plan.id === editingPlanIdRef.current) ?? mergedConfig.plans[0];
       const exists = currentPlan?.pages?.some((page) => hasNavBlock(page.blocks));
       if (exists) {
-        setTip("导航区块只能有一个");
+        setTip("导航区块參有一");
         setTimeout(() => setTip(""), 1200);
         return;
       }
@@ -2684,7 +3919,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     const nextBlock = makeDefaultBlock(newBlockType);
     const next = [...blocks, nextBlock];
     applyBlocks(next, { selectedId: nextBlock.id });
-    setTip("已新增区块");
+    setTip("已新增区");
     setTimeout(() => setTip(""), 1200);
   }
 
@@ -2697,6 +3932,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       blocksRef.current,
       { syncNavPages: false },
     );
+    const targetPlanIndex = mergedConfig.plans.findIndex((plan) => plan.id === planId);
+    if (!isPlatformEditor && targetPlanIndex >= merchantPlanLimit) {
+      showTip(`当前权限仅允许使用前 ${merchantPlanLimit} 个方案`);
+      return;
+    }
     const targetPlan = mergedConfig.plans.find((plan) => plan.id === planId) ?? mergedConfig.plans[0];
     const targetPageId = targetPlan?.activePageId ?? "page-1";
     const targetBlocks = cloneBlocks(getBlocksForPage(targetPlan, targetPageId));
@@ -2750,7 +3990,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     if (currentIndex < 0) return;
     const target = blocks[currentIndex];
     const confirmed = await openConfirm(
-      `确认删除区块 ${currentIndex + 1}：${getBlockTypeLabel(target.type)}？`,
+      "确认删除区块 " + (currentIndex + 1) + ": " + getBlockTypeLabel(target.type) + "?",
       "删除确认",
     );
     if (!confirmed) return;
@@ -2795,7 +4035,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     } else {
       applyBlocks(next, { selectedId: nextSelected?.id ?? "" });
     }
-    setTip("已删除区块");
+    setTip("已删除区");
     setTimeout(() => setTip(""), 1200);
   }
 
@@ -2829,7 +4069,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       const result = await fileToOriginalImageDataUrl(file, imageCompressionOptions);
       updatePageBackground({ pageBgImageUrl: result });
       setPageImageDialogOpen(false);
-      setTip("页面背景图片已更新");
+      setTip("页面背景图片已更");
       setTimeout(() => setTip(""), 1200);
     } catch (error) {
       setTip(error instanceof Error ? error.message : "上传失败，请重试");
@@ -2873,14 +4113,28 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     setPageImageSettingsOpen(false);
   }
 
-  async function withTimeout<T>(task: PromiseLike<T>, timeoutMs = 45000): Promise<T> {
+  async function withTimeout<T>(
+    task: PromiseLike<T>,
+    timeoutMs = 45000,
+    timeoutMessage = "保存超时，请稍后重试",
+  ): Promise<T> {
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let timedOut = false;
+    const safeTask = Promise.resolve(task).catch((error) => {
+      if (timedOut) {
+        return new Promise<T>(() => {});
+      }
+      throw error;
+    });
     const timeoutTask = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error("保存超时，请稍后重试")), timeoutMs);
+      timer = setTimeout(() => {
+        timedOut = true;
+        reject(new Error(timeoutMessage));
+      }, timeoutMs);
     });
 
     try {
-      return await Promise.race([Promise.resolve(task), timeoutTask]);
+      return await Promise.race([safeTask, timeoutTask]);
     } finally {
       if (timer) clearTimeout(timer);
     }
@@ -2895,7 +4149,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     );
     setPlanConfig(mergedConfig);
     persistDraftForConfigs(mergedConfig);
-    showSavePublishTip("草稿已保存");
+    showSavePublishTip("草已保");
   }
 
   async function showAnalyticsSummary() {
@@ -2909,7 +4163,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     const mobileConfig = previewViewport === "mobile" ? mergedConfig : viewportStatesRef.current.mobile.planConfig;
     const combinedBlocks = buildCombinedPersistedBlocks(desktopConfig, mobileConfig);
     const payloadBytes = estimateUtf8Size(JSON.stringify(combinedBlocks));
-    const diffSummary = computePublishDiffSummary(combinedBlocks, loadPublishedBlocksFromStorage(homeBlocks));
+    const diffSummary = computePublishDiffSummary(combinedBlocks, loadPublishedBlocksFromStorage(defaultEditorBlocks, storeScope));
     const byType = new Map<string, number>();
     blocksRef.current.forEach((item) => {
       byType.set(item.type, (byType.get(item.type) ?? 0) + 1);
@@ -2941,27 +4195,31 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     };
     const publish7d = publishEvents.filter((item) => inLastDays(item.at, 7));
     const publish30d = publishEvents.filter((item) => inLastDays(item.at, 30));
-    const successRate7d =
-      publish7d.length > 0 ? `${Math.round((publish7d.filter((item) => item.success).length / publish7d.length) * 100)}%` : "暂无";
-    const successRate30d =
-      publish30d.length > 0 ? `${Math.round((publish30d.filter((item) => item.success).length / publish30d.length) * 100)}%` : "暂无";
+    let successRate7d = "暂无";
+    if (publish7d.length > 0) {
+      successRate7d = `${Math.round((publish7d.filter((item) => item.success).length / publish7d.length) * 100)}%`;
+    }
+    let successRate30d = "暂无";
+    if (publish30d.length > 0) {
+      successRate30d = `${Math.round((publish30d.filter((item) => item.success).length / publish30d.length) * 100)}%`;
+    }
     const remoteSummary = await readRemoteAnalyticsSummary(30);
-    const failureSnapshots = readPublishFailureSnapshots();
+    const failureSnapshots = readPublishFailureSnapshots(storeScope);
     const lines = [
       `当前页区块数量：${blocksRef.current.length}`,
       `发布体积估算：${formatBytes(payloadBytes)}`,
-      `相对已发布变化：改动${diffSummary.changedCount}，新增${diffSummary.addedCount}，删除${diffSummary.removedCount}`,
+      `相对已发布变化：改动 ${diffSummary.changedCount}，新增 ${diffSummary.addedCount}，删除 ${diffSummary.removedCount}`,
       "",
-      "访问趋势：",
+      "访问趋势",
       `- 今日：${visit1d}`,
       `- 7日：${visit7d}`,
       `- 30日：${visit30d}`,
       "",
-      "发布趋势：",
+      "发布趋势",
       `- 7日成功率：${successRate7d}（${publish7d.length}次）`,
       `- 30日成功率：${successRate30d}（${publish30d.length}次）`,
       "",
-      "发布失败快照：",
+      "发布失败记录",
       `- 本地保留：${failureSnapshots.length} 条`,
       ...(failureSnapshots[0]
         ? [`- 最近失败：${failureSnapshots[0].at} / ${failureSnapshots[0].reason}`]
@@ -2970,7 +4228,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       "区块类型统计（当前页）：",
       ...(Array.from(byType.entries()).length > 0
         ? Array.from(byType.entries()).map(([type, count]) => `- ${type}: ${count}`)
-        : ["- 无"]),
+        : ["- 暂无"]),
       "",
       "联系方式点击统计（本设备）：",
       ...(clickPairs.length > 0 ? clickPairs.map(([key, count]) => `- ${key}: ${count}`) : ["- 暂无"]),
@@ -2981,13 +4239,13 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       "远端统计（Supabase）：",
       ...(remoteSummary
         ? [
-            `- 访问：今日 ${remoteSummary.pageView1d} / 7日 ${remoteSummary.pageView7d} / 30日 ${remoteSummary.pageView30d}`,
-            `- 发布成功率(7日)：${
+            `- 访问：今${remoteSummary.pageView1d} / 7日${remoteSummary.pageView7d} / 30日${remoteSummary.pageView30d}`,
+            `- 发布成功率7日：${
               remoteSummary.publishTotal7d > 0
                 ? `${Math.round((remoteSummary.publishSuccess7d / remoteSummary.publishTotal7d) * 100)}%`
                 : "暂无"
             }`,
-            `- 发布成功率(30日)：${
+            `- 发布成功率30日：${
               remoteSummary.publishTotal30d > 0
                 ? `${Math.round((remoteSummary.publishSuccess30d / remoteSummary.publishTotal30d) * 100)}%`
                 : "暂无"
@@ -2996,7 +4254,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               ? remoteSummary.contactTop7d.map((item) => `- 联系方式7日：${item.channel} ${item.count}`)
               : ["- 联系方式7日：暂无"]),
           ]
-        : ["- 未启用或未检测到 page_events 表（已自动回退本地统计）"]),
+        : ["- 未启用或未检测到 page_events，已自动回退本地统计"]),
     ];
     await openAlert(lines.join("\n"), "数据统计");
   }
@@ -3006,10 +4264,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     if (result.errors.length > 0) {
       await openAlert(
         [
-          "发布体检未通过：",
+          "发布体检未通过",
           ...result.errors.map((item) => `- ${item}`),
           "",
-          "请先处理后再发布。",
+          "请先处理后再发布",
         ].join("\n"),
         "发布体检",
       );
@@ -3018,7 +4276,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     if (result.warnings.length > 0) {
       const confirmed = await openConfirm(
         [
-          "发布体检发现风险：",
+          "发布体检发现风险",
           ...result.warnings.map((item) => `- ${item}`),
           "",
           "是否仍继续发布？",
@@ -3032,29 +4290,129 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
   async function publishToFrontend() {
     if (publishing) return;
+    const scopedSiteIdForGuard = getSiteIdFromStoreScope(storeScope).trim();
+    if (!isPlatformEditor && !scopedSiteIdForGuard) {
+      showTip("当前不是商户站点作用域（缺少 site-xxx），已止发布以防写错", {
+        durationMs: 4200,
+        dismissOnPointer: true,
+      });
+      return;
+    }
+    if (!isPlatformEditor && !remoteContentVerified) {
+      showTip("远端内容未验证，已阻止发布（防止覆盖线上内容）。请先重新加载页面内容后再发布。", {
+        durationMs: 4200,
+        dismissOnPointer: true,
+      });
+      return;
+    }
+    let publishTargetSiteId = "";
+    if (!isPlatformEditor) {
+      const scopedId = getSiteIdFromStoreScope(storeScope);
+      const targetSiteId =
+        scopedId ||
+        editingSiteId ||
+        merchantIdsRef.current.find((item) => isMerchantNumericId(item)) ||
+        merchantIdsRef.current[0] ||
+        "";
+      if (targetSiteId) {
+        ensureScopedMerchantSite(targetSiteId, null);
+      }
+      const latestState = loadPlatformState();
+      publishTargetSiteId = targetSiteId;
+      const targetSite = targetSiteId ? latestState.sites.find((item) => item.id === targetSiteId) ?? null : null;
+      const missingFields = getMissingMerchantProfileFields(targetSite);
+      if (missingFields.length > 0) {
+        setTopBarCollapsed(false);
+        triggerMerchantProfileAttention();
+        showTip(`请先完善商户信息后再去前台（缺少：${missingFields.join("、")}）`);
+        return;
+      }
+    }
+    const mergedConfig = mergePlanConfigWithEditingBlocks(
+      planConfigRef.current,
+      editingPlanIdRef.current,
+      editingPageIdRef.current,
+      blocksRef.current,
+    );
+    const desktopConfig = previewViewport === "desktop" ? mergedConfig : viewportStatesRef.current.desktop.planConfig;
+    const mobileConfig = previewViewport === "mobile" ? mergedConfig : viewportStatesRef.current.mobile.planConfig;
+    let combinedBlocks = buildCombinedPersistedBlocks(desktopConfig, mobileConfig);
+
+    if (isSupabaseFallbackMode) {
+      const notice =
+        supabaseMissingEnvNotice ??
+        "Publish requires backend configuration. Please set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.";
+      setBackendNotice(notice);
+      showPublishFailedTip(notice);
+      return;
+    }
+    if (!isSupabaseEnabled) {
+      const notice = supabaseMissingEnvNotice ?? BACKEND_UNAVAILABLE_NOTICE;
+      setBackendNotice(notice);
+      showPublishFailedTip(notice);
+      return;
+    }
+    const gatewayReady = await canReachSupabaseGateway(Math.min(3000, AUTH_CHECK_TIMEOUT_MS));
+    if (!gatewayReady) {
+      setBackendNotice("后连不稳定，在尝试发..");
+    }
     setPublishing(true);
-    showSavePublishTip("发布中...");
+    showSavePublishTip("发布..");
 
     try {
-      const mergedConfig = mergePlanConfigWithEditingBlocks(
-        planConfigRef.current,
-        editingPlanIdRef.current,
-        editingPageIdRef.current,
-        blocksRef.current,
-      );
-      const desktopConfig = previewViewport === "desktop" ? mergedConfig : viewportStatesRef.current.desktop.planConfig;
-      const mobileConfig = previewViewport === "mobile" ? mergedConfig : viewportStatesRef.current.mobile.planConfig;
-      const combinedBlocks = buildCombinedPersistedBlocks(desktopConfig, mobileConfig);
+      const scopedSiteId = getSiteIdFromStoreScope(storeScope).trim();
+      const preferredMerchantIds = isPlatformEditor
+        ? []
+        : scopedSiteId
+          ? [scopedSiteId]
+          : mergePreferredMerchantIds([publishTargetSiteId, editingSiteId].filter(Boolean), merchantIdsRef.current);
+      const merchantHint =
+        (isPlatformEditor
+          ? "platform"
+          : (publishTargetSiteId ||
+              scopedSiteId ||
+              editingSiteId ||
+              preferredMerchantIds[0] ||
+              "public")
+        ).trim() || "public";
+      const optimization = await optimizeBlocksForPublishIfNeeded(combinedBlocks, {
+        merchantHint,
+        uploadCompressionPreset,
+      });
+      if (optimization.optimized) {
+        combinedBlocks = optimization.blocks;
+        applyPersistedBlocksToEditorRef.current(combinedBlocks, { resetHistory: false });
+        if (optimization.summary) showSavePublishTip(optimization.summary);
+      }
       const payload = {
         blocks: combinedBlocks,
         updated_at: new Date().toISOString(),
       };
       const payloadBytes = estimateUtf8Size(JSON.stringify(payload.blocks));
-      const publishedBlocks = loadPublishedBlocksFromStorage(homeBlocks);
+      if (!isPlatformEditor && merchantPublishSizeLimitBytes && payloadBytes > merchantPublishSizeLimitBytes) {
+        const message = `发布体积超出权限上限（当前 ${formatBytes(payloadBytes)}，上限 ${formatBytes(merchantPublishSizeLimitBytes)}）`;
+        showPublishFailedTip(message);
+        savePublishFailureSnapshot(
+          {
+            reason: "merchant-permission-size-limit",
+            bytes: payloadBytes,
+            blocks: combinedBlocks,
+          },
+          storeScope,
+        );
+        trackPublishEvent({
+          success: false,
+          bytes: payloadBytes,
+          changedBlocks: 1,
+          reason: "merchant-permission-size-limit",
+        });
+        return;
+      }
+      const publishedBlocks = loadPublishedBlocksFromStorage(defaultEditorBlocks, storeScope);
       const diffSummary = computePublishDiffSummary(combinedBlocks, publishedBlocks);
       const totalChanges = diffSummary.changedCount + diffSummary.addedCount + diffSummary.removedCount;
       if (totalChanges === 0) {
-        showSavePublishTip("无变更，已跳过发布");
+        showSavePublishTip("无变更，已跳过发");
         trackPublishEvent({
           success: true,
           bytes: payloadBytes,
@@ -3075,6 +4433,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         return;
       }
 
+      saveBlocksToStorage(combinedBlocks, storeScope);
+      recordPublishedVersion(combinedBlocks, storeScope);
+      savePublishedBlocksToStorage(combinedBlocks, storeScope);
+
       if (payloadBytes > MAX_PUBLISH_PAYLOAD_BYTES) {
         const breakdown = getPublishSizeBreakdown(payload.blocks);
         showPublishFailedTip(
@@ -3084,7 +4446,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           reason: "体积超限",
           bytes: payloadBytes,
           blocks: combinedBlocks,
-        });
+        }, storeScope);
         trackPublishEvent({
           success: false,
           bytes: payloadBytes,
@@ -3094,15 +4456,15 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         const lines: string[] = [
           `当前发布体积：${formatBytes(payloadBytes)}（上限：${formatBytes(MAX_PUBLISH_PAYLOAD_BYTES)}）`,
           "",
-          "占用最大的区块：",
+          "占用大的区块",
           ...(breakdown.blockTotals.length > 0
             ? breakdown.blockTotals.map((item) => `- ${item.path}: ${formatBytes(item.bytes)}`)
-            : ["- 无"]),
+            : ["- 鏃?"]),
         ];
         await openAlert(lines.join("\n"), "发布体积明细");
         const nextPreset = await openCompressionPresetDialog(
-          "请选择上传压缩策略。切换后会作用于后续上传的新图片，已有图片不会自动重压缩。",
-          "发布失败：内容过大",
+          "请择上传压缩策略。切换后会作用于后续上传的新图片，已有图片不会自动重压缩",
+          "发布失败：内容过",
         );
         if (nextPreset) {
           setUploadCompressionPreset(nextPreset);
@@ -3113,48 +4475,68 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         }
         return;
       }
-      // Keep draft locally first regardless of publish result.
-      saveBlocksToStorage(combinedBlocks);
       let error: SaveErrorLike = null;
-      try {
-        error = await trySaveWithResolvedMerchantIds(payload, 45000);
-      } catch (firstError) {
-        if (!(firstError instanceof Error) || !firstError.message.includes("保存超时")) {
-          throw firstError;
+      const serverPublishResult = await trySaveViaServerPublishApi(payload, preferredMerchantIds, 70000);
+      if (serverPublishResult.handled) {
+        error = serverPublishResult.error;
+      } else {
+        try {
+          error = await trySaveWithResolvedMerchantIds(payload, preferredMerchantIds, 45000);
+        } catch (firstError) {
+          if (!(firstError instanceof Error) || !firstError.message.includes("保存超时")) {
+            throw firstError;
+          }
+          showSavePublishTip("首次发布超时，正在自动重试...");
+          error = await trySaveWithResolvedMerchantIds(payload, preferredMerchantIds, 60000);
         }
-        showSavePublishTip("首次发布超时，正在自动重试...");
-        error = await trySaveWithResolvedMerchantIds(payload, 60000);
       }
 
       if (error) {
-        showPublishFailedTip(`草稿已保存，发布失败：${normalizeSaveErrorMessage(error.message)}`);
+        const normalizedReason = normalizeSaveErrorMessage(error.message);
+        showPublishFailedTip(`草稿已保存，发布失败：${normalizedReason}`);
         savePublishFailureSnapshot({
-          reason: normalizeSaveErrorMessage(error.message),
+          reason: normalizedReason,
           bytes: payloadBytes,
           blocks: combinedBlocks,
-        });
+        }, storeScope);
         trackPublishEvent({
           success: false,
           bytes: payloadBytes,
           changedBlocks: totalChanges,
-          reason: normalizeSaveErrorMessage(error.message),
+          reason: normalizedReason,
         });
-        const nextPreset = await openCompressionPresetDialog(
-          "可先切换上传压缩策略，再重新上传大图后发布。",
-          "发布失败",
-        );
-        if (nextPreset) {
-          setUploadCompressionPreset(nextPreset);
-          showTip(`已切换上传压缩：${IMAGE_COMPRESSION_OPTIONS[nextPreset].label}`, {
-            durationMs: 3200,
-            dismissOnPointer: true,
-          });
+        if (shouldOfferCompressionPresetForPublishError(normalizedReason)) {
+          const nextPreset = await openCompressionPresetDialog(
+            `真实错误：${normalizedReason}\n\n可先切换上传压缩策略，再重新上传大图后发布。`,
+            "发布失败",
+          );
+          if (nextPreset) {
+            setUploadCompressionPreset(nextPreset);
+            showTip(`已切换上传压缩：${IMAGE_COMPRESSION_OPTIONS[nextPreset].label}`, {
+              durationMs: 3200,
+              dismissOnPointer: true,
+            });
+          }
         }
         return;
       }
 
-      setPlanConfig(mergedConfig);
-      savePublishedBlocksToStorage(combinedBlocks);
+      recordPublishedVersion(publishedBlocks, storeScope);
+      recordPublishedVersion(combinedBlocks, storeScope);
+      savePublishedBlocksToStorage(combinedBlocks, storeScope);
+      if (!isPlatformEditor) {
+        const mirrorSiteIds = Array.from(
+          new Set(
+            [publishTargetSiteId, editingSiteId, getSiteIdFromStoreScope(storeScope), ...merchantIdsRef.current]
+              .map((item) => (item ?? "").trim())
+              .filter((item) => item.length > 0),
+          ),
+        );
+        mirrorSiteIds.forEach((siteId) => {
+          savePublishedBlocksToStorage(combinedBlocks, buildSiteStoreScope(siteId));
+        });
+        broadcastPublishSync(mirrorSiteIds);
+      }
       trackPublishEvent({
         success: true,
         bytes: payloadBytes,
@@ -3177,14 +4559,14 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         reason: message,
         bytes: payloadBytes,
         blocks: combinedBlocks,
-      });
+      }, storeScope);
       trackPublishEvent({
         success: false,
         bytes: payloadBytes,
         changedBlocks: Math.max(
           1,
           (() => {
-            const diff = computePublishDiffSummary(combinedBlocks, loadPublishedBlocksFromStorage(homeBlocks));
+            const diff = computePublishDiffSummary(combinedBlocks, loadPublishedBlocksFromStorage(defaultEditorBlocks, storeScope));
             return diff.changedCount + diff.addedCount + diff.removedCount;
           })(),
         ),
@@ -3195,15 +4577,18 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       } else {
         showPublishFailedTip(error instanceof Error ? error.message : "发布失败，请检查网络后重试");
       }
-      const nextPreset = await openCompressionPresetDialog(
-        "是否切换上传压缩策略后再试？切换后会作用于后续上传的新图片。",
-      );
-      if (nextPreset) {
-        setUploadCompressionPreset(nextPreset);
-        showTip(`已切换上传压缩：${IMAGE_COMPRESSION_OPTIONS[nextPreset].label}`, {
-          durationMs: 3200,
-          dismissOnPointer: true,
-        });
+      const caughtReason = error instanceof Error ? error.message : "发布失败，请检查网络后重试";
+      if (shouldOfferCompressionPresetForPublishError(caughtReason)) {
+        const nextPreset = await openCompressionPresetDialog(
+          `真实错误：${caughtReason}\n\n是否切换上传压缩策略后再试？切换后会作用于后续上传的新图片。`,
+        );
+        if (nextPreset) {
+          setUploadCompressionPreset(nextPreset);
+          showTip(`已切换上传压缩：${IMAGE_COMPRESSION_OPTIONS[nextPreset].label}`, {
+            durationMs: 3200,
+            dismissOnPointer: true,
+          });
+        }
       }
     } finally {
       setPublishing(false);
@@ -3212,22 +4597,72 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
   async function logout() {
     if (loggingOut) return;
-    setLoggingOut(true);
-    const { error } = await supabase.auth.signOut();
-    setLoggingOut(false);
-
-    if (error) {
-      setTip(`退出失败：${error.message}`);
+    if (!isSupabaseEnabled) {
+      window.location.href = "/login";
       return;
     }
-
-    window.location.href = "/login";
+    setLoggingOut(true);
+    try {
+      const { error } = await withTimeout(
+        supabase.auth.signOut(),
+        AUTH_CHECK_TIMEOUT_MS,
+        "出登录超时，请稍后重试",
+      );
+      if (error) {
+        setTip(`退出失败：${error.message}`);
+        return;
+      }
+      window.location.href = "/login";
+    } catch (error) {
+      setTip(error instanceof Error ? error.message : "出失败，请稍后重");
+    } finally {
+      setLoggingOut(false);
+    }
   }
 
   if (checkingAuth) {
     return (
       <main className="min-h-screen bg-gray-100 flex items-center justify-center">
-        <div className="text-sm text-gray-600">{"正在检查登录状态..."}</div>
+        <div className="text-sm text-gray-600">{"正在查登录状.."}</div>
+      </main>
+    );
+  }
+
+  if (!hasEditorContent && backendNotice) {
+    return (
+      <main className="min-h-screen bg-gray-100 p-6">
+        <div className="mx-auto max-w-3xl rounded-lg border bg-white p-6 shadow-sm">
+          <h1 className="text-lg font-semibold text-gray-900">未加载到可编辑页面</h1>
+          <p className="mt-2 text-sm text-gray-600">{backendNotice}</p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="rounded border bg-black px-3 py-2 text-sm text-white"
+              onClick={() => window.location.reload()}
+            >
+              重新加载
+            </button>
+            <button
+              type="button"
+              className="rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50"
+              onClick={() => {
+                setHasEditorContent(true);
+                setBackendNotice("当前使用空白模板继续编辑");
+              }}
+            >
+              使用空白模板继续
+            </button>
+            <button
+              type="button"
+              className="rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50"
+              onClick={() => {
+                window.location.href = "/login";
+              }}
+            >
+              重新登录
+            </button>
+          </div>
+        </div>
       </main>
     );
   }
@@ -3245,10 +4680,49 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const editingPlan = planConfig.plans.find((plan) => plan.id === editingPlanId) ?? planConfig.plans[0];
   const editingPages = editingPlan?.pages?.length
     ? editingPlan.pages
-    : [{ id: "page-1", name: "页面1", blocks: editingPlan?.blocks ?? homeBlocks }];
+    : [{ id: "page-1", name: "页面1", blocks: editingPlan?.blocks ?? defaultEditorBlocks }];
   const imageCompressionOptions = getCurrentImageCompressionOptions();
   const selectedBlock = blocks.find((item) => item.id === selectedId) ?? null;
   const selectedBlockLocked = selectedBlock?.props.blockLocked === true;
+  const merchantPlatformState = !isPlatformEditor ? loadPlatformState() : null;
+  const scopedSiteId = !isPlatformEditor ? getSiteIdFromStoreScope(storeScope) : "";
+  const fallbackMerchantSiteId =
+    !isPlatformEditor
+      ? merchantIdsRef.current.find((item) => isMerchantNumericId(item)) ?? merchantIdsRef.current[0] ?? ""
+      : "";
+  const editingSiteId =
+    !isPlatformEditor && merchantPlatformState
+      ? scopedSiteId || fallbackMerchantSiteId
+      : "";
+  const editingSite =
+    editingSiteId && merchantPlatformState
+      ? merchantPlatformState.sites.find((item) => item.id === editingSiteId) ?? null
+      : null;
+  const merchantPermissionConfig = !isPlatformEditor
+    ? (editingSite?.permissionConfig ?? createDefaultMerchantPermissionConfig())
+    : null;
+  const merchantPlanLimit = isPlatformEditor
+    ? planConfig.plans.length
+    : Math.max(1, Math.min(planConfig.plans.length, merchantPermissionConfig?.planLimit ?? 1));
+  const merchantPageLimit = isPlatformEditor
+    ? 12
+    : Math.max(1, Math.min(12, merchantPermissionConfig?.pageLimit ?? 1));
+  const missingMerchantProfileFields = !isPlatformEditor ? getMissingMerchantProfileFields(editingSite) : [];
+  const canUseInsertBackgroundByPermission = isPlatformEditor || Boolean(merchantPermissionConfig?.allowInsertBackground);
+  const canUseInsertBackground = canUseInsertBackgroundByPermission;
+  const canUseThemeEffects = isPlatformEditor || Boolean(merchantPermissionConfig?.allowThemeEffects);
+  const canUseGalleryBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowGalleryBlock);
+  const canUseMusicBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowMusicBlock);
+  const isCurrentBlockTypeLocked =
+    (!canUseGalleryBlock && newBlockType === "gallery") ||
+    (!canUseMusicBlock && newBlockType === "music");
+  const showAddBlockGuide = !isPlatformEditor && !hasAddedExtraBlock && blocks.length === 1 && blocks[0]?.type === "nav";
+  const merchantPublishSizeLimitBytes = !isPlatformEditor
+    ? Math.max(1, Math.round(merchantPermissionConfig?.publishSizeLimitMb ?? 1)) * 1024 * 1024
+    : null;
+  const effectiveFrontendHref = !isPlatformEditor
+    ? buildMerchantFrontendHref(editingSiteId || "site-main", editingSite?.domainSuffix)
+    : frontendHref;
   const maxBlockOffsetY = blocks.reduce((max, block) => {
     const value =
       typeof block.props.blockOffsetY === "number" && Number.isFinite(block.props.blockOffsetY)
@@ -3257,84 +4731,152 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     return Math.max(max, value);
   }, 0);
   const mobileFrontendPreviewPadding = Math.max(120, Math.max(0, maxBlockOffsetY) + 100);
+
+  function renderTopMostOverlay(content: ReactNode) {
+    if (typeof window === "undefined") return content;
+    return createPortal(content, document.body);
+  }
+
   return (
     <main
       className="min-h-screen bg-gray-100"
-      style={{ paddingTop: `${Math.max(topBarHeight, 56)}px` }}
+      style={{ paddingTop: topBarCollapsed ? "0px" : `${Math.max(topBarHeight, 56)}px` }}
       onMouseDownCapture={handleEditorMouseDownCapture}
+      data-editor-mode={editorMode}
     >
-      <div ref={topBarRef} data-editor-toolbar className="fixed inset-x-0 top-0 z-[15000] bg-white border-b shadow-sm">
-        <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="text-lg font-bold">{"页面编辑器"}</div>
-            <button
-              type="button"
-              className="px-2 py-1 rounded border bg-white hover:bg-gray-50 text-xs"
-              onClick={() => setTopBarCollapsed((prev) => !prev)}
-            >
-              {topBarCollapsed ? "展开" : "收起"}
-            </button>
+      {!topBarCollapsed && backendNotice ? (
+        <div className="max-w-6xl mx-auto px-6 pb-3">
+          <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-800">
+            {backendNotice}
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              className="px-3 py-2 rounded border bg-white hover:bg-gray-50"
-              onClick={() => (window.location.href = "/")}
-            >
-              {"去前台"}
-            </button>
-            <button
-              className="px-3 py-2 rounded border bg-white hover:bg-gray-50"
-              onClick={() => void showAnalyticsSummary()}
-            >
-              {"数据统计"}
-            </button>
-            <button
-              className="px-3 py-2 rounded border bg-white hover:bg-gray-50"
-              onClick={async () => {
-                const mergedConfig = mergePlanConfigWithEditingBlocks(
-                  planConfigRef.current,
-                  editingPlanIdRef.current,
-                  editingPageIdRef.current,
-                  blocksRef.current,
-                );
-                const desktopConfig = previewViewport === "desktop" ? mergedConfig : viewportStatesRef.current.desktop.planConfig;
-                const mobileConfig = previewViewport === "mobile" ? mergedConfig : viewportStatesRef.current.mobile.planConfig;
-                const combinedBlocks = buildCombinedPersistedBlocks(desktopConfig, mobileConfig);
-                const payloadBytes = estimateUtf8Size(JSON.stringify(combinedBlocks));
-                const passed = await runPublishPreflightDialog(combinedBlocks, payloadBytes);
-                if (passed) showTip("发布体检通过");
-              }}
-            >
-              {"发布体检"}
-            </button>
-            <button
-              className="px-3 py-2 rounded border bg-white hover:bg-gray-50"
-              onClick={rollbackToLastSuccessfulPublished}
-            >
-              {"回滚发布"}
-            </button>
-            <button
-              className="px-3 py-2 rounded border bg-white hover:bg-gray-50"
-              onClick={restoreLatestFailedSnapshot}
-            >
-              {"恢复失败草稿"}
-            </button>
-            <button
-              className="px-3 py-2 rounded bg-black text-white disabled:opacity-50"
-              onClick={publishToFrontend}
-              disabled={publishing}
-            >
-              {publishing ? "发布中..." : "发布"}
-            </button>
-          </div>
-          <button
-            className="px-3 py-2 rounded border bg-white hover:bg-gray-50 disabled:opacity-50"
-            onClick={logout}
-            disabled={loggingOut}
-          >
-            {loggingOut ? "退出中..." : "退出登录"}
-          </button>
         </div>
+      ) : null}
+      <div className="fixed left-0 top-0 z-[16000]">
+        <button
+          type="button"
+          className="h-8 w-8 rounded border bg-white text-base leading-none hover:bg-gray-50"
+          onClick={() => setTopBarCollapsed((prev) => !prev)}
+          title={topBarCollapsed ? "展开" : "收起"}
+          aria-label={topBarCollapsed ? "展开顶部工具栏" : "收起顶部工具栏"}
+        >
+          {topBarCollapsed ? "▾" : "▴"}
+        </button>
+      </div>
+      <div
+        ref={topBarRef}
+        data-editor-toolbar
+        data-editor-mode={editorMode}
+        className={topBarCollapsed ? "hidden" : "fixed inset-x-0 top-0 z-[15000] bg-white border-b shadow-sm"}
+      >
+        <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              {isPlatformEditor ? <div className="text-lg font-bold">{editorTitle}</div> : null}
+              {isPlatformEditor && storeScope !== "default" ? (
+                <div className="rounded border border-blue-300 bg-blue-50 px-2 py-1 text-xs text-blue-700">
+                  {isPlatformEditor ? "平台范围" : "站点范围"}：{storeScope}
+                </div>
+              ) : null}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                className="px-3 py-2 rounded border bg-white hover:bg-gray-50"
+                onClick={() => {
+                  if (!isPlatformEditor) {
+                    // reuse precomputed profile completeness for guard
+                    const missingFields = missingMerchantProfileFields;
+                    if (missingFields.length > 0) {
+                      setTopBarCollapsed(false);
+                      triggerMerchantProfileAttention();
+                      showTip(`请先完善商户信息后再去前台（缺少：${missingFields.join("、")}）`);
+                      return;
+                    }
+                  }
+                  const opened = window.open(effectiveFrontendHref, "_blank", "noopener,noreferrer");
+                  if (!opened) {
+                    showTip("浏览器拦截了新窗口，请允许弹窗后重试");
+                  }
+                }}
+              >
+                {"去前台"}
+              </button>
+              {!isPlatformEditor ? (
+                <button
+                  ref={merchantProfileButtonRef}
+                  className={`px-3 py-2 rounded border transition-colors disabled:opacity-50 ${
+                    merchantProfileAttention
+                      ? "border-rose-500 bg-rose-50 text-rose-700 hover:bg-rose-100"
+                      : "bg-white hover:bg-gray-50"
+                  }`}
+                  onClick={() => setMerchantProfileDialogOpen(true)}
+                  disabled={!editingSiteId}
+                >
+                  {"商户信息"}
+                </button>
+              ) : null}
+              <button
+                className="px-3 py-2 rounded border bg-white hover:bg-gray-50"
+                onClick={() => void showAnalyticsSummary()}
+              >
+                {"数据统计"}
+              </button>
+              <button
+                className="px-3 py-2 rounded border bg-white hover:bg-gray-50"
+                onClick={async () => {
+                  const mergedConfig = mergePlanConfigWithEditingBlocks(
+                    planConfigRef.current,
+                    editingPlanIdRef.current,
+                    editingPageIdRef.current,
+                    blocksRef.current,
+                  );
+                  const desktopConfig = previewViewport === "desktop" ? mergedConfig : viewportStatesRef.current.desktop.planConfig;
+                  const mobileConfig = previewViewport === "mobile" ? mergedConfig : viewportStatesRef.current.mobile.planConfig;
+                  const combinedBlocks = buildCombinedPersistedBlocks(desktopConfig, mobileConfig);
+                  const payloadBytes = estimateUtf8Size(JSON.stringify(combinedBlocks));
+                  const passed = await runPublishPreflightDialog(combinedBlocks, payloadBytes);
+                  if (passed) showTip("发布体检通过");
+                }}
+              >
+                {"发布体检"}
+              </button>
+              <button
+                className="px-3 py-2 rounded border bg-white hover:bg-gray-50"
+                onClick={rollbackToLastSuccessfulPublished}
+              >
+                {"回滚发布"}
+              </button>
+              <button
+                className="px-3 py-2 rounded border bg-white hover:bg-gray-50"
+                onClick={restoreLatestFailedSnapshot}
+              >
+                {"恢复失败草稿"}
+              </button>
+              <button
+                className="px-3 py-2 rounded bg-black text-white disabled:opacity-50"
+                onClick={publishToFrontend}
+                disabled={
+                  publishing ||
+                  (!isPlatformEditor && !remoteContentVerified) ||
+                  (!isPlatformEditor && !getSiteIdFromStoreScope(storeScope).trim())
+                }
+                title={
+                  !isPlatformEditor && !getSiteIdFromStoreScope(storeScope).trim()
+                    ? "缺少 site-xxx 作用域，暂不可发布"
+                    : (!isPlatformEditor && !remoteContentVerified)
+                      ? "远端内容未验证，暂不可发布"
+                      : undefined
+                }
+              >
+                {publishing ? "发布.." : "发布"}
+              </button>
+            </div>
+            <button
+              className="px-3 py-2 rounded border bg-white hover:bg-gray-50 disabled:opacity-50"
+              onClick={logout}
+              disabled={loggingOut}
+            >
+              {loggingOut ? "退出中..." : "退出登录"}
+            </button>
+          </div>
         {!topBarCollapsed ? (
           <>
             <div className="border-t">
@@ -3346,11 +4888,14 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                 onChange={(e) => switchEditingPlan(e.target.value as PlanId)}
                 title="选择要编辑的方案"
               >
-                {planConfig.plans.map((plan) => (
-                  <option key={plan.id} value={plan.id}>
-                    {"编辑："}{plan.name}
+                {planConfig.plans.map((plan, index) => {
+                  const locked = !isPlatformEditor && index + 1 > merchantPlanLimit;
+                  return (
+                  <option key={plan.id} value={plan.id} disabled={locked}>
+                    {"编辑"}{plan.name}{locked ? "（未开通）" : ""}
                   </option>
-                ))}
+                  );
+                })}
               </select>
               <select
                 className="border p-2 rounded min-w-[140px]"
@@ -3360,7 +4905,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               >
                 {editingPages.map((page) => (
                   <option key={page.id} value={page.id}>
-                    {"页面："}{toPlainText(page.name, page.id)}
+                    {toPlainText(page.name, page.id)}
                   </option>
                 ))}
               </select>
@@ -3387,11 +4932,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 	              >
 	                {"样式->手机"}
 	              </button>
-	              <button
-	                className="px-2 py-2 rounded border bg-white hover:bg-gray-50 text-xs"
-	                onClick={() => copySelectedBlockStyleToViewport("desktop")}
-	                title="将当前选中区块样式复制到PC端"
-	              >
+		              <button
+		                className="px-2 py-2 rounded border bg-white hover:bg-gray-50 text-xs"
+		                onClick={() => copySelectedBlockStyleToViewport("desktop")}
+		                title="将当前选中区块样式复制到PC端"
+		              >
 	                {"样式->PC"}
 	              </button>
 	              <div className="w-px h-6 bg-gray-200 mx-1" />
@@ -3433,8 +4978,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               </button>
               <div className="w-px h-6 bg-gray-200 mx-1" />
               <button
-                className="px-3 py-2 rounded border bg-white hover:bg-gray-50"
-                onClick={insertPageImage}
+                className={`px-3 py-2 rounded border ${
+                  canUseInsertBackground ? "bg-white hover:bg-gray-50" : "bg-gray-100 text-gray-400 cursor-not-allowed"
+                }`}
+                onClick={canUseInsertBackgroundByPermission ? insertPageImage : undefined}
+                disabled={!canUseInsertBackgroundByPermission}
+                title={!canUseInsertBackgroundByPermission ? "当前权限未开通插入背景" : undefined}
               >
                 {"插入背景"}
               </button>
@@ -3449,11 +4998,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 	                value={uploadCompressionPreset}
 	                onChange={(e) => setUploadCompressionPreset(e.target.value as UploadCompressionPreset)}
 	                title="上传压缩策略"
-              >
-                <option value="high">上传压缩：高质量</option>
-	                <option value="balanced">上传压缩：平衡</option>
-	                <option value="compact">上传压缩：压缩优先</option>
-	              </select>
+	              >
+	                <option value="high">上传压缩：高质量</option>
+		                <option value="balanced">上传压缩：平衡</option>
+		                <option value="compact">上传压缩：压缩优先</option>
+		              </select>
 	              <button
 	                className="px-3 py-2 rounded border bg-white hover:bg-gray-50"
 	                onClick={() => void externalizeCurrentPageLargeImages()}
@@ -3461,22 +5010,25 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 	              >
 	                {"外链化大图"}
 	              </button>
-	              <button
-	                className="px-3 py-2 rounded border bg-white hover:bg-gray-50"
-	                onClick={() => void recompressCurrentPageImages()}
-	                title="批量重压当前页内嵌图片"
-	              >
-	                {"重压当前页"}
-	              </button>
+		              <button
+		                className="px-3 py-2 rounded border bg-white hover:bg-gray-50"
+		                onClick={() => void recompressCurrentPageImages()}
+		                title="批量重压当前页内嵌图片"
+		              >
+		                {"重压当前页"}
+		              </button>
               <select
-                className="border p-2 rounded min-w-[130px]"
+                className={`border p-2 rounded min-w-[130px] ${
+                  canUseThemeEffects ? "" : "bg-gray-100 text-gray-400 cursor-not-allowed"
+                }`}
                 value={themePreset}
+                disabled={!canUseThemeEffects}
+	                title={!canUseThemeEffects ? "当前权限未开通主题效果" : "风格"}
                 onChange={(e) => {
                   const nextPreset = e.target.value as ThemePresetKey;
                   setThemePreset(nextPreset);
                   applyThemePresetToCurrentPage(nextPreset);
                 }}
-                title="风格"
               >
                 {(Object.entries(THEME_PRESETS) as Array<[ThemePresetKey, ThemePreset]>).map(([key, item]) => (
                   <option key={key} value={key}>
@@ -3501,23 +5053,39 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                 onChange={(e) => setNewBlockType(e.target.value as Block["type"])}
               >
                 <option value="common">{"通用"}</option>
-                <option value="gallery">{"相册"}</option>
+                <option value="gallery" disabled={!canUseGalleryBlock}>{"相册"}{!canUseGalleryBlock ? "（未开通）" : ""}</option>
                 <option value="chart">{"图表"}</option>
                 <option value="nav">{"导航"}</option>
-                <option value="music">{"音乐"}</option>
+                <option value="music" disabled={!canUseMusicBlock}>{"音乐"}{!canUseMusicBlock ? "（未开通）" : ""}</option>
                 <option value="contact">{"联系方式"}</option>
+                {isPlatformEditor ? <option value="search-bar">{"搜索"}</option> : null}
+                {isPlatformEditor ? <option value="merchant-list">{"商户列表"}</option> : null}
               </select>
-              <button
-                className="px-3 py-2 rounded border bg-white hover:bg-gray-50"
-                onClick={addBlock}
-                title="新增区块"
-                aria-label="新增区块"
-              >
-                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-                  <path d="M12 5v14" />
-                  <path d="M5 12h14" />
-                </svg>
-              </button>
+              <div className="relative">
+                <button
+                  className={`px-3 py-2 rounded border ${
+                    isCurrentBlockTypeLocked ? "bg-gray-100 text-gray-400 cursor-not-allowed" : "bg-white hover:bg-gray-50"
+                  }`}
+                  onClick={addBlock}
+                  title="新增区块"
+                  aria-label="新增区块"
+                  disabled={isCurrentBlockTypeLocked}
+                >
+                  <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                    <path d="M12 5v14" />
+                    <path d="M5 12h14" />
+                  </svg>
+                </button>
+                {showAddBlockGuide ? (
+                  <div className="absolute left-1/2 top-full z-20 mt-2 -translate-x-1/2 animate-pulse">
+	                    <div className="relative whitespace-nowrap rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 shadow-sm">
+	                      <span className="font-medium">在此处增加区块</span>
+	                      <span className="absolute left-1/2 -top-2 -translate-x-1/2 block w-0 h-0 border-l-[6px] border-r-[6px] border-b-[8px] border-l-transparent border-r-transparent border-b-amber-200" />
+                      <span className="absolute left-1/2 -top-[7px] -translate-x-1/2 block w-0 h-0 border-l-[5px] border-r-[5px] border-b-[7px] border-l-transparent border-r-transparent border-b-amber-50" />
+                    </div>
+                  </div>
+                ) : null}
+              </div>
                   <input
                     ref={pageImageInputRef}
                     className="hidden"
@@ -3576,8 +5144,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                   style={{ minHeight: `${Math.max(backgroundLayerMinHeight, 780)}px` }}
                 >
                   <div className="absolute inset-0 rounded-[28px] overflow-hidden pointer-events-none" style={pageBackgroundStyle} />
-                  <div className="relative z-10 w-full px-3 py-4 space-y-4">
-                    <div className="space-y-4">
+                  <div className="relative z-10 w-full px-3 py-4">
+                    <div className="space-y-0">
                       {blocks.map((block, index) => {
                         const sourceIndex = resizePreview ? blocks.findIndex((item) => item.id === resizePreview.blockId) : -1;
                         const previewOffsetY = sourceIndex >= 0 && index > sourceIndex ? -resizePreview!.heightDelta : 0;
@@ -3604,6 +5172,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                             }}
                             availablePages={editingPages.map((page) => ({ id: page.id, name: toPlainText(page.name, page.id) }))}
                             currentPageId={editingPageId}
+                            maxNavItems={merchantPageLimit}
                             recentColors={recentColors}
                             onRecordColor={recordRecentColor}
                             onClearRecentColors={clearRecentColors}
@@ -3624,8 +5193,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           className="min-h-screen"
           style={{ ...pageBackgroundStyle, minHeight: `${Math.max(backgroundLayerMinHeight, 0)}px` }}
         >
-          <div className="max-w-6xl mx-auto px-6 py-6 space-y-4">
-            <div className="space-y-4">
+          <div className="max-w-6xl mx-auto px-6 py-6">
+            <div className="space-y-0">
               {blocks.map((block, index) => {
                 const sourceIndex = resizePreview ? blocks.findIndex((item) => item.id === resizePreview.blockId) : -1;
                 const previewOffsetY = sourceIndex >= 0 && index > sourceIndex ? -resizePreview!.heightDelta : 0;
@@ -3652,6 +5221,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                     }}
                     availablePages={editingPages.map((page) => ({ id: page.id, name: toPlainText(page.name, page.id) }))}
                     currentPageId={editingPageId}
+                    maxNavItems={merchantPageLimit}
                     recentColors={recentColors}
                     onRecordColor={recordRecentColor}
                     onClearRecentColors={clearRecentColors}
@@ -3664,9 +5234,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         </div>
       )}
 
-      {pageImageDialogOpen ? (
-        <div className="fixed inset-0 z-[95] bg-black/40 flex items-center justify-center p-4">
-          <div className="w-full max-w-lg bg-white rounded-xl border p-4 space-y-3">
+      {pageImageDialogOpen
+        ? renderTopMostOverlay(
+        <div className="fixed inset-0 z-[2147483000] bg-black/40 flex items-center justify-center p-4">
+          <div className="w-full max-w-lg bg-white rounded-xl border p-4 space-y-3" onMouseDown={(event) => event.stopPropagation()}>
             <div className="text-sm font-semibold">{"插入背景"}</div>
             <div className="space-y-1">
               <div className="text-xs text-gray-600">图片 URL</div>
@@ -3679,7 +5250,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             </div>
             <div className="flex flex-wrap gap-2">
               <label className="px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm cursor-pointer">
-                {"上传背景图"}
+                {"上传背景"}
                 <input
                   className="hidden"
                   type="file"
@@ -3709,12 +5280,14 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               </button>
             </div>
           </div>
-        </div>
-      ) : null}
+        </div>,
+      )
+        : null}
 
-      {pageImageSettingsOpen ? (
-        <div className="fixed inset-0 z-[96] bg-transparent flex items-center justify-center p-4">
-          <div className="w-full max-w-lg bg-white rounded-xl border p-4 space-y-3">
+      {pageImageSettingsOpen
+        ? renderTopMostOverlay(
+        <div className="fixed inset-0 z-[2147483000] bg-transparent flex items-center justify-center p-4">
+          <div className="w-full max-w-lg bg-white rounded-xl border p-4 space-y-3" onMouseDown={(event) => event.stopPropagation()}>
             <div className="text-sm font-semibold">{"背景设置"}</div>
             <div className="space-y-1">
               <div className="text-xs text-gray-600">{"填充方式"}</div>
@@ -3796,7 +5369,69 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+      )
+        : null}
+
+      {merchantProfileDialogOpen && !isPlatformEditor ? (
+        <MerchantProfileDialog
+          open={merchantProfileDialogOpen}
+          siteBaseDomain={(() => {
+            const platformState = loadPlatformState();
+            const baseFromEnv = (process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "").trim();
+            const baseFromMainSite = (platformState.sites.find((item) => item.id === "site-main")?.domain ?? "").trim();
+            const fallback = (editingSite?.domain ?? "").trim();
+            return normalizeBaseDomainForMerchant(baseFromEnv || baseFromMainSite || fallback);
+          })()}
+          initialDomainSuffix={editingSite?.domainSuffix ?? ""}
+          takenDomainSuffixes={loadPlatformState()
+            .sites.filter((item) => item.id !== editingSiteId)
+            .map((item) => item.domainSuffix ?? "")}
+          initialMerchantName={editingSite?.merchantName ?? ""}
+          initialContactAddress={editingSite?.contactAddress ?? ""}
+          initialContactName={editingSite?.contactName ?? ""}
+          initialContactPhone={editingSite?.contactPhone ?? ""}
+          initialContactEmail={editingSite?.contactEmail ?? ""}
+          initialLocation={editingSite?.location ?? null}
+          initialIndustry={editingSite?.industry ?? null}
+          onClose={() => setMerchantProfileDialogOpen(false)}
+          onSave={({ merchantName, domainSuffix, contactAddress, contactName, contactPhone, contactEmail, location, industry }) => {
+            if (!editingSiteId) {
+              showTip("未找到可编辑的商户站点，无法保存");
+              return;
+            }
+            ensureScopedMerchantSite(editingSiteId, contactEmail || null);
+            const platformState = loadPlatformState();
+            const target = platformState.sites.find((item) => item.id === editingSiteId) ?? null;
+            const baseDomain =
+              (process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "").trim() ||
+              (platformState.sites.find((site) => site.id === "site-main")?.domain ?? "").trim() ||
+              (target?.domain ?? "");
+            savePlatformState({
+              ...platformState,
+              sites: platformState.sites.map((item) =>
+                item.id === editingSiteId
+                  ? {
+                      ...item,
+                      merchantName,
+                      domainSuffix: normalizeDomainSuffixForMerchant(domainSuffix),
+                      contactAddress,
+                      contactName,
+                      contactPhone,
+                      contactEmail,
+                      domain: buildMerchantDomainFromBase(baseDomain, domainSuffix),
+                      location,
+                      industry,
+                      updatedAt: new Date().toISOString(),
+                    }
+                  : item,
+              ),
+            });
+            setMerchantProfileDialogOpen(false);
+            setMerchantProfileAttention(false);
+            showTip("商户信息已保");
+          }}
+        />
       ) : null}
 
       {dialog ? (
@@ -3817,7 +5452,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                       setDialog(null);
                     }}
                   >
-                    {"高质量"}
+                    {"高质"}
                   </button>
                   <button
                     type="button"
@@ -3913,6 +5548,7 @@ function InlineEditorBlock({
   onAlert,
   availablePages,
   currentPageId,
+  maxNavItems = 12,
   recentColors,
   onRecordColor,
   onClearRecentColors,
@@ -3936,6 +5572,7 @@ function InlineEditorBlock({
   onAlert: (message: string) => void;
   availablePages: Array<{ id: string; name: string }>;
   currentPageId: string;
+  maxNavItems?: number;
   recentColors: string[];
   onRecordColor: (color: string) => void;
   onClearRecentColors: () => void;
@@ -4006,6 +5643,7 @@ type GalleryEditorImage = {
   const [typoItalic, setTypoItalic] = useState(false);
   const [typoUnderline, setTypoUnderline] = useState(false);
   const [typoRememberLast, setTypoRememberLast] = useState(false);
+  const [typographyTarget, setTypographyTarget] = useState<"editor" | "search-controls" | "merchant-controls">("editor");
   const [imageSettingsOpen, setImageSettingsOpen] = useState(false);
   const [borderSettingsOpen, setBorderSettingsOpen] = useState(false);
   const [layerSettingsOpen, setLayerSettingsOpen] = useState(false);
@@ -4019,6 +5657,59 @@ type GalleryEditorImage = {
   const [navItemActiveBgOpacityInput, setNavItemActiveBgOpacityInput] = useState(1);
   const [navItemActiveBorderStyleInput, setNavItemActiveBorderStyleInput] = useState<BlockBorderStyle>("solid");
   const [navItemActiveBorderColorInput, setNavItemActiveBorderColorInput] = useState("#111827");
+  const [navItemActiveTextColorInput, setNavItemActiveTextColorInput] = useState("#111827");
+  const [searchButtonStyleDialogOpen, setSearchButtonStyleDialogOpen] = useState(false);
+  const [searchButtonBgColorInput, setSearchButtonBgColorInput] = useState("#ffffff");
+  const [searchButtonBgOpacityInput, setSearchButtonBgOpacityInput] = useState(1);
+  const [searchButtonBorderStyleInput, setSearchButtonBorderStyleInput] = useState<BlockBorderStyle>("solid");
+  const [searchButtonBorderColorInput, setSearchButtonBorderColorInput] = useState("#6b7280");
+  const [searchButtonActiveBgColorInput, setSearchButtonActiveBgColorInput] = useState("#000000");
+  const [searchButtonActiveBgOpacityInput, setSearchButtonActiveBgOpacityInput] = useState(1);
+  const [searchButtonActiveBorderStyleInput, setSearchButtonActiveBorderStyleInput] = useState<BlockBorderStyle>("solid");
+  const [searchButtonActiveBorderColorInput, setSearchButtonActiveBorderColorInput] = useState("#111827");
+  const [merchantButtonStyleDialogOpen, setMerchantButtonStyleDialogOpen] = useState(false);
+  const [merchantTabButtonBgColorInput, setMerchantTabButtonBgColorInput] = useState("#ffffff");
+  const [merchantTabButtonBgOpacityInput, setMerchantTabButtonBgOpacityInput] = useState(1);
+  const [merchantTabButtonBorderStyleInput, setMerchantTabButtonBorderStyleInput] = useState<BlockBorderStyle>("solid");
+  const [merchantTabButtonBorderColorInput, setMerchantTabButtonBorderColorInput] = useState("#cbd5e1");
+  const [merchantTabButtonActiveBgColorInput, setMerchantTabButtonActiveBgColorInput] = useState("#000000");
+  const [merchantTabButtonActiveBgOpacityInput, setMerchantTabButtonActiveBgOpacityInput] = useState(1);
+  const [merchantTabButtonActiveBorderStyleInput, setMerchantTabButtonActiveBorderStyleInput] = useState<BlockBorderStyle>("solid");
+  const [merchantTabButtonActiveBorderColorInput, setMerchantTabButtonActiveBorderColorInput] = useState("#111827");
+  const [merchantPagerButtonBgColorInput, setMerchantPagerButtonBgColorInput] = useState("#ffffff");
+  const [merchantPagerButtonBgOpacityInput, setMerchantPagerButtonBgOpacityInput] = useState(1);
+  const [merchantPagerButtonBorderStyleInput, setMerchantPagerButtonBorderStyleInput] = useState<BlockBorderStyle>("solid");
+  const [merchantPagerButtonBorderColorInput, setMerchantPagerButtonBorderColorInput] = useState("#cbd5e1");
+  const [merchantPagerButtonDisabledBgColorInput, setMerchantPagerButtonDisabledBgColorInput] = useState("#e5e7eb");
+  const [merchantPagerButtonDisabledBgOpacityInput, setMerchantPagerButtonDisabledBgOpacityInput] = useState(1);
+  const [merchantPagerButtonDisabledBorderStyleInput, setMerchantPagerButtonDisabledBorderStyleInput] = useState<BlockBorderStyle>("solid");
+  const [merchantPagerButtonDisabledBorderColorInput, setMerchantPagerButtonDisabledBorderColorInput] = useState("#cbd5e1");
+  const [merchantCardStyleDialogOpen, setMerchantCardStyleDialogOpen] = useState(false);
+  const [merchantCardStyleIndustryTarget, setMerchantCardStyleIndustryTarget] = useState<MerchantIndustryTabIndustry>("all");
+  const [merchantCardBgColorInput, setMerchantCardBgColorInput] = useState("#f8fafc");
+  const [merchantCardBgOpacityInput, setMerchantCardBgOpacityInput] = useState(1);
+  const [merchantCardBorderStyleInput, setMerchantCardBorderStyleInput] = useState<BlockBorderStyle>("solid");
+  const [merchantCardBorderColorInput, setMerchantCardBorderColorInput] = useState("#cbd5e1");
+  const [merchantCardTypographyDialogOpen, setMerchantCardTypographyDialogOpen] = useState(false);
+  const [merchantCardTypographyTarget, setMerchantCardTypographyTarget] = useState<MerchantCardTextRole>("name");
+  const [merchantCardTypoFontFamilyInput, setMerchantCardTypoFontFamilyInput] = useState("");
+  const [merchantCardTypoFontSizeInput, setMerchantCardTypoFontSizeInput] = useState(16);
+  const [merchantCardTypoFontColorInput, setMerchantCardTypoFontColorInput] = useState("#111111");
+  const [merchantCardTypoBoldInput, setMerchantCardTypoBoldInput] = useState(false);
+  const [merchantCardTypoItalicInput, setMerchantCardTypoItalicInput] = useState(false);
+  const [merchantCardTypoUnderlineInput, setMerchantCardTypoUnderlineInput] = useState(false);
+  const [merchantCardTypoTextBoxVisibleInput, setMerchantCardTypoTextBoxVisibleInput] = useState(false);
+  const [merchantCardTypoLayoutDraft, setMerchantCardTypoLayoutDraft] = useState<MerchantCardTextLayoutConfig>(
+    normalizeMerchantCardTextLayoutConfig(undefined),
+  );
+  const merchantCardTypographyPreviewRef = useRef<HTMLDivElement | null>(null);
+  const merchantCardTypographyDragRef = useRef<{
+    role: MerchantCardTextRole;
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+  } | null>(null);
   const [settingsFillMode, setSettingsFillMode] = useState<ImageFillMode>("cover");
   const [settingsPosition, setSettingsPosition] = useState("center");
   const [settingsColor, setSettingsColor] = useState("");
@@ -4041,6 +5732,19 @@ type GalleryEditorImage = {
   const [contactSnapEnabled, setContactSnapEnabled] = useState(true);
   const [contactSnapStep, setContactSnapStep] = useState(8);
   const contactCanvasFocusRef = useRef<HTMLDivElement | null>(null);
+  const [activeSearchLayoutKeys, setActiveSearchLayoutKeys] = useState<
+    Array<"locate" | "country" | "province" | "city" | "keyword" | "action">
+  >([]);
+  const [activeMerchantIndustryTabId, setActiveMerchantIndustryTabId] = useState("tab-recommended");
+  const [merchantPreviewPageIndex, setMerchantPreviewPageIndex] = useState(0);
+  const [activeMerchantCardLayoutKeys, setActiveMerchantCardLayoutKeys] = useState<MerchantListLayoutKey[]>([]);
+  const [merchantCardLayoutSnapEnabled, setMerchantCardLayoutSnapEnabled] = useState(true);
+  const [merchantCardLayoutSnapStep, setMerchantCardLayoutSnapStep] = useState(8);
+  const merchantCardLayoutCanvasFocusRef = useRef<HTMLDivElement | null>(null);
+  const [searchLayoutSnapEnabled, setSearchLayoutSnapEnabled] = useState(true);
+  const [searchLayoutSnapStep, setSearchLayoutSnapStep] = useState(8);
+  const searchLayoutCanvasFocusRef = useRef<HTMLDivElement | null>(null);
+  const effectiveMaxNavItems = Math.max(1, Math.min(12, Math.round(Number(maxNavItems) || 12)));
   const galleryEditorPanelRef = useRef<HTMLDivElement | null>(null);
   const galleryDragRef = useRef<{
     id: string;
@@ -4270,7 +5974,7 @@ type GalleryEditorImage = {
   function addNavItem() {
     if (block.type !== "nav") return;
     const current = getNavItems();
-    if (current.length >= 12) return;
+    if (current.length >= effectiveMaxNavItems) return;
     const nextPageId = `page-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     commitNavItems([
       ...current,
@@ -4301,7 +6005,17 @@ type GalleryEditorImage = {
   }
 
   const hasOverlayOpen =
-    imageDialogOpen || typographyDialogOpen || imageSettingsOpen || borderSettingsOpen || layerSettingsOpen || galleryEditorOpen;
+    imageDialogOpen ||
+    typographyDialogOpen ||
+    imageSettingsOpen ||
+    borderSettingsOpen ||
+    navItemStyleDialogOpen ||
+    searchButtonStyleDialogOpen ||
+    merchantButtonStyleDialogOpen ||
+    merchantCardStyleDialogOpen ||
+    merchantCardTypographyDialogOpen ||
+    layerSettingsOpen ||
+    galleryEditorOpen;
 
   useEffect(() => {
     if (typeof document === "undefined" || !hasOverlayOpen) return;
@@ -4737,7 +6451,10 @@ type GalleryEditorImage = {
     if (field === "subtitle" && block.type === "hero") {
       return { subtitle: html };
     }
-    if (field === "text" && (block.type === "text" || block.type === "common" || block.type === "chart")) {
+    if (
+      field === "text" &&
+      (block.type === "text" || block.type === "common" || block.type === "chart" || block.type === "merchant-list" || block.type === "search-bar")
+    ) {
       return { text: html };
     }
     if (
@@ -4749,7 +6466,9 @@ type GalleryEditorImage = {
         block.type === "gallery" ||
         block.type === "chart" ||
         block.type === "music" ||
-        block.type === "nav")
+        block.type === "nav" ||
+        block.type === "merchant-list" ||
+        block.type === "search-bar")
     ) {
       return { heading: html };
     }
@@ -4785,12 +6504,47 @@ type GalleryEditorImage = {
 
   function editTypography() {
     const editor = activeEditorRef.current;
+    const currentRange = selectedRangeRef.current;
+    const canUseEditor = !!editor && !!currentRange && editor.contains(currentRange.commonAncestorContainer);
+    if (block.type === "search-bar" && !canUseEditor) {
+      setTypoFontFamily((block.props.fontFamily ?? "").trim());
+      setTypoFontSize(
+        typeof block.props.fontSize === "number" && Number.isFinite(block.props.fontSize)
+          ? Math.max(8, Math.min(96, Math.round(block.props.fontSize)))
+          : 16,
+      );
+      setTypoFontColor((block.props.fontColor ?? "").trim() || "#111111");
+      setTypoBold((block.props.fontWeight ?? "normal") === "bold");
+      setTypoItalic((block.props.fontStyle ?? "normal") === "italic");
+      setTypoUnderline((block.props.textDecoration ?? "none") === "underline");
+      setTypoRememberLast(true);
+      setTypographyTarget("search-controls");
+      setTypographyDialogOpen(true);
+      return;
+    }
+    if (block.type === "merchant-list" && !canUseEditor) {
+      setTypoFontFamily((block.props.fontFamily ?? "").trim());
+      setTypoFontSize(
+        typeof block.props.fontSize === "number" && Number.isFinite(block.props.fontSize)
+          ? Math.max(8, Math.min(96, Math.round(block.props.fontSize)))
+          : 16,
+      );
+      setTypoFontColor((block.props.fontColor ?? "").trim() || "#111111");
+      setTypoBold((block.props.fontWeight ?? "normal") === "bold");
+      setTypoItalic((block.props.fontStyle ?? "normal") === "italic");
+      setTypoUnderline((block.props.textDecoration ?? "none") === "underline");
+      setTypoRememberLast(true);
+      setTypographyTarget("merchant-controls");
+      setTypographyDialogOpen(true);
+      return;
+    }
     if (!editor) {
-      onAlert("请先点击要编辑的文本框");
+      onAlert("请先点击要编辑的文本");
       return;
     }
 
     if (typoRememberLast) {
+      setTypographyTarget("editor");
       setTypographyDialogOpen(true);
       return;
     }
@@ -4807,13 +6561,37 @@ type GalleryEditorImage = {
     setTypoItalic(style?.fontStyle === "italic");
     setTypoUnderline((style?.textDecorationLine ?? "").includes("underline"));
     setTypoRememberLast(true);
+    setTypographyTarget("editor");
     setTypographyDialogOpen(true);
   }
 
   function applyTypography() {
+    const size = Math.max(8, Math.min(96, Number(typoFontSize) || 16));
+    const blockLevelTypographyPatch: Partial<Block["props"]> = {
+      fontFamily: typoFontFamily.trim() || undefined,
+      fontColor: typoFontColor.trim() || undefined,
+      fontSize: size,
+      fontWeight: typoBold ? "bold" : "normal",
+      fontStyle: typoItalic ? "italic" : "normal",
+      textDecoration: typoUnderline ? "underline" : "none",
+    };
+    if (typographyTarget === "search-controls" && block.type === "search-bar") {
+      onChange(blockLevelTypographyPatch);
+      onRecordColor(typoFontColor);
+      setTypoRememberLast(true);
+      setTypographyDialogOpen(false);
+      return;
+    }
+    if (typographyTarget === "merchant-controls" && block.type === "merchant-list") {
+      onChange(blockLevelTypographyPatch);
+      onRecordColor(typoFontColor);
+      setTypoRememberLast(true);
+      setTypographyDialogOpen(false);
+      return;
+    }
     const editor = activeEditorRef.current;
     if (!editor) {
-      onAlert("请先点击要编辑的文本框");
+      onAlert("请先点击要编辑的文本");
       return;
     }
 
@@ -4835,7 +6613,6 @@ type GalleryEditorImage = {
     }
 
     const span = document.createElement("span");
-    const size = Math.max(8, Math.min(96, Number(typoFontSize) || 16));
     if (typoFontFamily.trim()) span.style.fontFamily = typoFontFamily.trim();
     if (typoFontColor.trim()) {
       if (isGradientToken(typoFontColor.trim())) {
@@ -4851,14 +6628,6 @@ type GalleryEditorImage = {
     span.style.fontWeight = typoBold ? "bold" : "normal";
     span.style.fontStyle = typoItalic ? "italic" : "normal";
     span.style.textDecoration = typoUnderline ? "underline" : "none";
-    const blockLevelTypographyPatch: Partial<Block["props"]> = {
-      fontFamily: typoFontFamily.trim() || undefined,
-      fontColor: typoFontColor.trim() || undefined,
-      fontSize: size,
-      fontWeight: typoBold ? "bold" : "normal",
-      fontStyle: typoItalic ? "italic" : "normal",
-      textDecoration: typoUnderline ? "underline" : "none",
-    };
     if (range.collapsed) {
       const marker = document.createTextNode("");
       span.appendChild(marker);
@@ -5132,7 +6901,7 @@ type GalleryEditorImage = {
       onChange({ text: nextText });
       return;
     }
-    onAlert("当前区块类型不支持插入文本");
+    onAlert("当前区块类型不支持插入文");
   }
 
   function handleCommonCanvasMouseDown(event: ReactMouseEvent<HTMLDivElement>) {
@@ -5228,6 +6997,7 @@ type GalleryEditorImage = {
     const currentBorderColor = (block.props.navItemBorderColor ?? "").trim();
     const currentActiveBgColor = (block.props.navItemActiveBgColor ?? "").trim();
     const currentActiveBorderColor = (block.props.navItemActiveBorderColor ?? "").trim();
+    const currentActiveTextColor = (block.props.navItemActiveTextColor ?? "").trim();
     setNavItemBgColorInput(currentBgColor || "#ffffff");
     setNavItemBgOpacityInput(
       typeof block.props.navItemBgOpacity === "number" && Number.isFinite(block.props.navItemBgOpacity)
@@ -5244,7 +7014,142 @@ type GalleryEditorImage = {
     );
     setNavItemActiveBorderStyleInput((block.props.navItemActiveBorderStyle ?? "solid") as BlockBorderStyle);
     setNavItemActiveBorderColorInput(currentActiveBorderColor || "#111827");
+    setNavItemActiveTextColorInput(currentActiveTextColor || "#111827");
     setNavItemStyleDialogOpen(true);
+  }
+
+  function editSearchButtonStyle() {
+    if (block.type !== "search-bar") return;
+    const currentBgColor = (block.props.searchButtonBgColor ?? "").trim();
+    const currentBorderColor = (block.props.searchButtonBorderColor ?? "").trim();
+    const currentActiveBgColor = (block.props.searchButtonActiveBgColor ?? "").trim();
+    const currentActiveBorderColor = (block.props.searchButtonActiveBorderColor ?? "").trim();
+    setSearchButtonBgColorInput(currentBgColor || "#ffffff");
+    setSearchButtonBgOpacityInput(
+      typeof block.props.searchButtonBgOpacity === "number" && Number.isFinite(block.props.searchButtonBgOpacity)
+        ? Math.max(0, Math.min(1, block.props.searchButtonBgOpacity))
+        : 1,
+    );
+    setSearchButtonBorderStyleInput((block.props.searchButtonBorderStyle ?? "solid") as BlockBorderStyle);
+    setSearchButtonBorderColorInput(currentBorderColor || "#6b7280");
+    setSearchButtonActiveBgColorInput(currentActiveBgColor || "#000000");
+    setSearchButtonActiveBgOpacityInput(
+      typeof block.props.searchButtonActiveBgOpacity === "number" && Number.isFinite(block.props.searchButtonActiveBgOpacity)
+        ? Math.max(0, Math.min(1, block.props.searchButtonActiveBgOpacity))
+        : 1,
+    );
+    setSearchButtonActiveBorderStyleInput((block.props.searchButtonActiveBorderStyle ?? "solid") as BlockBorderStyle);
+    setSearchButtonActiveBorderColorInput(currentActiveBorderColor || "#111827");
+    setSearchButtonStyleDialogOpen(true);
+  }
+
+  function editMerchantButtonStyle() {
+    if (block.type !== "merchant-list") return;
+    const tabBgColor = (block.props.merchantTabButtonBgColor ?? "").trim();
+    const tabBorderColor = (block.props.merchantTabButtonBorderColor ?? "").trim();
+    const tabActiveBgColor = (block.props.merchantTabButtonActiveBgColor ?? "").trim();
+    const tabActiveBorderColor = (block.props.merchantTabButtonActiveBorderColor ?? "").trim();
+    const pagerBgColor = (block.props.merchantPagerButtonBgColor ?? "").trim();
+    const pagerBorderColor = (block.props.merchantPagerButtonBorderColor ?? "").trim();
+    const pagerDisabledBgColor = (block.props.merchantPagerButtonDisabledBgColor ?? "").trim();
+    const pagerDisabledBorderColor = (block.props.merchantPagerButtonDisabledBorderColor ?? "").trim();
+    setMerchantTabButtonBgColorInput(tabBgColor || "#ffffff");
+    setMerchantTabButtonBgOpacityInput(
+      typeof block.props.merchantTabButtonBgOpacity === "number" && Number.isFinite(block.props.merchantTabButtonBgOpacity)
+        ? Math.max(0, Math.min(1, block.props.merchantTabButtonBgOpacity))
+        : 1,
+    );
+    setMerchantTabButtonBorderStyleInput((block.props.merchantTabButtonBorderStyle ?? "solid") as BlockBorderStyle);
+    setMerchantTabButtonBorderColorInput(tabBorderColor || "#cbd5e1");
+    setMerchantTabButtonActiveBgColorInput(tabActiveBgColor || "#000000");
+    setMerchantTabButtonActiveBgOpacityInput(
+      typeof block.props.merchantTabButtonActiveBgOpacity === "number" &&
+      Number.isFinite(block.props.merchantTabButtonActiveBgOpacity)
+        ? Math.max(0, Math.min(1, block.props.merchantTabButtonActiveBgOpacity))
+        : 1,
+    );
+    setMerchantTabButtonActiveBorderStyleInput(
+      (block.props.merchantTabButtonActiveBorderStyle ?? "solid") as BlockBorderStyle,
+    );
+    setMerchantTabButtonActiveBorderColorInput(tabActiveBorderColor || "#111827");
+    setMerchantPagerButtonBgColorInput(pagerBgColor || "#ffffff");
+    setMerchantPagerButtonBgOpacityInput(
+      typeof block.props.merchantPagerButtonBgOpacity === "number" && Number.isFinite(block.props.merchantPagerButtonBgOpacity)
+        ? Math.max(0, Math.min(1, block.props.merchantPagerButtonBgOpacity))
+        : 1,
+    );
+    setMerchantPagerButtonBorderStyleInput((block.props.merchantPagerButtonBorderStyle ?? "solid") as BlockBorderStyle);
+    setMerchantPagerButtonBorderColorInput(pagerBorderColor || "#cbd5e1");
+    setMerchantPagerButtonDisabledBgColorInput(pagerDisabledBgColor || "#e5e7eb");
+    setMerchantPagerButtonDisabledBgOpacityInput(
+      typeof block.props.merchantPagerButtonDisabledBgOpacity === "number" &&
+      Number.isFinite(block.props.merchantPagerButtonDisabledBgOpacity)
+        ? Math.max(0, Math.min(1, block.props.merchantPagerButtonDisabledBgOpacity))
+        : 1,
+    );
+    setMerchantPagerButtonDisabledBorderStyleInput(
+      (block.props.merchantPagerButtonDisabledBorderStyle ?? "solid") as BlockBorderStyle,
+    );
+    setMerchantPagerButtonDisabledBorderColorInput(pagerDisabledBorderColor || "#cbd5e1");
+    setMerchantButtonStyleDialogOpen(true);
+  }
+
+  function editMerchantCardStyle() {
+    if (block.type !== "merchant-list") return;
+    const cardBgColor = (block.props.merchantCardBgColor ?? "#f8fafc").trim() || "#f8fafc";
+    const cardBgOpacity =
+      typeof block.props.merchantCardBgOpacity === "number" && Number.isFinite(block.props.merchantCardBgOpacity)
+        ? Math.max(0, Math.min(1, block.props.merchantCardBgOpacity))
+        : 1;
+    const cardBorderStyle = (block.props.merchantCardBorderStyle ?? "solid") as BlockBorderStyle;
+    const cardBorderColor = normalizeNavBorderColor(block.props.merchantCardBorderColor ?? "#cbd5e1", "#cbd5e1");
+    const legacyStyle = {
+      bgColor: cardBgColor,
+      bgOpacity: cardBgOpacity,
+      borderStyle: cardBorderStyle,
+      borderColor: cardBorderColor,
+    };
+    const tabs = normalizeMerchantIndustryTabs(block.props.industryTabs);
+    const activeTab = tabs.find((item) => item.id === activeMerchantIndustryTabId) ?? tabs[0];
+    const targetIndustry = (activeTab?.industry ?? "all") as MerchantIndustryTabIndustry;
+    const scopedStyle = resolveMerchantIndustryCardStyle(
+      block.props.merchantCardIndustryStyles,
+      targetIndustry,
+      legacyStyle,
+    );
+    setMerchantCardStyleIndustryTarget(targetIndustry);
+    setMerchantCardBgColorInput(scopedStyle.bgColor);
+    setMerchantCardBgOpacityInput(scopedStyle.bgOpacity);
+    setMerchantCardBorderStyleInput(scopedStyle.borderStyle);
+    setMerchantCardBorderColorInput(scopedStyle.borderColor);
+    setMerchantCardStyleDialogOpen(true);
+  }
+
+  function onMerchantCardStyleIndustryTargetChange(nextTarget: MerchantIndustryTabIndustry) {
+    if (block.type !== "merchant-list") return;
+    setMerchantCardStyleIndustryTarget(nextTarget);
+    const cardBgColor = (block.props.merchantCardBgColor ?? "#f8fafc").trim() || "#f8fafc";
+    const cardBgOpacity =
+      typeof block.props.merchantCardBgOpacity === "number" && Number.isFinite(block.props.merchantCardBgOpacity)
+        ? Math.max(0, Math.min(1, block.props.merchantCardBgOpacity))
+        : 1;
+    const cardBorderStyle = (block.props.merchantCardBorderStyle ?? "solid") as BlockBorderStyle;
+    const cardBorderColor = normalizeNavBorderColor(block.props.merchantCardBorderColor ?? "#cbd5e1", "#cbd5e1");
+    const legacyStyle = {
+      bgColor: cardBgColor,
+      bgOpacity: cardBgOpacity,
+      borderStyle: cardBorderStyle,
+      borderColor: cardBorderColor,
+    };
+    const scopedStyle = resolveMerchantIndustryCardStyle(
+      block.props.merchantCardIndustryStyles,
+      nextTarget,
+      legacyStyle,
+    );
+    setMerchantCardBgColorInput(scopedStyle.bgColor);
+    setMerchantCardBgOpacityInput(scopedStyle.bgOpacity);
+    setMerchantCardBorderStyleInput(scopedStyle.borderStyle);
+    setMerchantCardBorderColorInput(scopedStyle.borderColor);
   }
 
   function openLayerSettings() {
@@ -5271,12 +7176,196 @@ type GalleryEditorImage = {
       navItemActiveBgOpacity: Math.max(0, Math.min(1, navItemActiveBgOpacityInput)),
       navItemActiveBorderStyle: navItemActiveBorderStyleInput,
       navItemActiveBorderColor: navItemActiveBorderColorInput.trim() || undefined,
+      navItemActiveTextColor: navItemActiveTextColorInput.trim() || undefined,
     });
     onRecordColor(navItemBgColorInput);
     onRecordColor(navItemBorderColorInput);
     onRecordColor(navItemActiveBgColorInput);
     onRecordColor(navItemActiveBorderColorInput);
+    onRecordColor(navItemActiveTextColorInput);
     setNavItemStyleDialogOpen(false);
+  }
+
+  function applySearchButtonStyle() {
+    if (block.type !== "search-bar") return;
+    onChange({
+      searchButtonBgColor: searchButtonBgColorInput.trim() || undefined,
+      searchButtonBgOpacity: Math.max(0, Math.min(1, searchButtonBgOpacityInput)),
+      searchButtonBorderStyle: searchButtonBorderStyleInput,
+      searchButtonBorderColor: searchButtonBorderColorInput.trim() || undefined,
+      searchButtonActiveBgColor: searchButtonActiveBgColorInput.trim() || undefined,
+      searchButtonActiveBgOpacity: Math.max(0, Math.min(1, searchButtonActiveBgOpacityInput)),
+      searchButtonActiveBorderStyle: searchButtonActiveBorderStyleInput,
+      searchButtonActiveBorderColor: searchButtonActiveBorderColorInput.trim() || undefined,
+    });
+    onRecordColor(searchButtonBgColorInput);
+    onRecordColor(searchButtonBorderColorInput);
+    onRecordColor(searchButtonActiveBgColorInput);
+    onRecordColor(searchButtonActiveBorderColorInput);
+    setSearchButtonStyleDialogOpen(false);
+  }
+
+  function applyMerchantButtonStyle() {
+    if (block.type !== "merchant-list") return;
+    onChange({
+      merchantTabButtonBgColor: merchantTabButtonBgColorInput.trim() || undefined,
+      merchantTabButtonBgOpacity: Math.max(0, Math.min(1, merchantTabButtonBgOpacityInput)),
+      merchantTabButtonBorderStyle: merchantTabButtonBorderStyleInput,
+      merchantTabButtonBorderColor: merchantTabButtonBorderColorInput.trim() || undefined,
+      merchantTabButtonActiveBgColor: merchantTabButtonActiveBgColorInput.trim() || undefined,
+      merchantTabButtonActiveBgOpacity: Math.max(0, Math.min(1, merchantTabButtonActiveBgOpacityInput)),
+      merchantTabButtonActiveBorderStyle: merchantTabButtonActiveBorderStyleInput,
+      merchantTabButtonActiveBorderColor: merchantTabButtonActiveBorderColorInput.trim() || undefined,
+      merchantPagerButtonBgColor: merchantPagerButtonBgColorInput.trim() || undefined,
+      merchantPagerButtonBgOpacity: Math.max(0, Math.min(1, merchantPagerButtonBgOpacityInput)),
+      merchantPagerButtonBorderStyle: merchantPagerButtonBorderStyleInput,
+      merchantPagerButtonBorderColor: merchantPagerButtonBorderColorInput.trim() || undefined,
+      merchantPagerButtonDisabledBgColor: merchantPagerButtonDisabledBgColorInput.trim() || undefined,
+      merchantPagerButtonDisabledBgOpacity: Math.max(0, Math.min(1, merchantPagerButtonDisabledBgOpacityInput)),
+      merchantPagerButtonDisabledBorderStyle: merchantPagerButtonDisabledBorderStyleInput,
+      merchantPagerButtonDisabledBorderColor: merchantPagerButtonDisabledBorderColorInput.trim() || undefined,
+    });
+    onRecordColor(merchantTabButtonBgColorInput);
+    onRecordColor(merchantTabButtonBorderColorInput);
+    onRecordColor(merchantTabButtonActiveBgColorInput);
+    onRecordColor(merchantTabButtonActiveBorderColorInput);
+    onRecordColor(merchantPagerButtonBgColorInput);
+    onRecordColor(merchantPagerButtonBorderColorInput);
+    onRecordColor(merchantPagerButtonDisabledBgColorInput);
+    onRecordColor(merchantPagerButtonDisabledBorderColorInput);
+    setMerchantButtonStyleDialogOpen(false);
+  }
+
+  function applyMerchantCardStyle() {
+    if (block.type !== "merchant-list") return;
+    const nextBgColor = merchantCardBgColorInput.trim() || undefined;
+    const nextBgOpacity = Math.max(0, Math.min(1, merchantCardBgOpacityInput));
+    const nextBorderColor = merchantCardBorderColorInput.trim() || undefined;
+    const nextIndustryStyles: Partial<Record<MerchantIndustryTabIndustry, MerchantCardIndustryStyleConfig>> = {
+      ...(block.props.merchantCardIndustryStyles ?? {}),
+      [merchantCardStyleIndustryTarget]: {
+        bgColor: nextBgColor,
+        bgOpacity: nextBgOpacity,
+        borderStyle: merchantCardBorderStyleInput,
+        borderColor: nextBorderColor,
+      },
+    };
+    onChange({
+      merchantCardIndustryStyles: nextIndustryStyles,
+      ...(merchantCardStyleIndustryTarget === "all"
+        ? {
+            merchantCardBgColor: nextBgColor,
+            merchantCardBgOpacity: nextBgOpacity,
+            merchantCardBorderStyle: merchantCardBorderStyleInput,
+            merchantCardBorderColor: nextBorderColor,
+          }
+        : {}),
+    });
+    onRecordColor(merchantCardBgColorInput);
+    onRecordColor(merchantCardBorderColorInput);
+    setMerchantCardStyleDialogOpen(false);
+  }
+
+  function merchantCardTypographyDefaults(role: MerchantCardTextRole) {
+    if (role === "name") {
+      return { fontSize: 16, fontColor: "#0f172a", fontWeight: "bold" as const };
+    }
+    return { fontSize: 12, fontColor: "#64748b", fontWeight: "normal" as const };
+  }
+
+  function loadMerchantCardTypographyInputs(role: MerchantCardTextRole) {
+    if (block.type !== "merchant-list") return;
+    const defaults = merchantCardTypographyDefaults(role);
+    const style = (block.props.merchantCardTypography?.[role] ?? {}) as TypographyEditableProps;
+    setMerchantCardTypoFontFamilyInput((style.fontFamily ?? "").trim());
+    setMerchantCardTypoFontSizeInput(
+      typeof style.fontSize === "number" && Number.isFinite(style.fontSize) && style.fontSize > 0
+        ? Math.max(8, Math.min(120, style.fontSize))
+        : defaults.fontSize,
+    );
+    setMerchantCardTypoFontColorInput((style.fontColor ?? "").trim() || defaults.fontColor);
+    setMerchantCardTypoBoldInput((style.fontWeight ?? defaults.fontWeight) === "bold");
+    setMerchantCardTypoItalicInput((style.fontStyle ?? "normal") === "italic");
+    setMerchantCardTypoUnderlineInput((style.textDecoration ?? "none") === "underline");
+  }
+
+  function loadMerchantCardTypographyLayoutInputs() {
+    if (block.type !== "merchant-list") return;
+    setMerchantCardTypoLayoutDraft(normalizeMerchantCardTextLayoutConfig(block.props.merchantCardTextLayout));
+    setMerchantCardTypoTextBoxVisibleInput(block.props.merchantCardTextBoxVisible === true);
+  }
+
+  function editMerchantCardTypography() {
+    if (block.type !== "merchant-list") return;
+    const target: MerchantCardTextRole = "name";
+    setMerchantCardTypographyTarget(target);
+    loadMerchantCardTypographyInputs(target);
+    loadMerchantCardTypographyLayoutInputs();
+    setMerchantCardTypographyDialogOpen(true);
+  }
+
+  function onMerchantCardTypographyTargetChange(nextTarget: MerchantCardTextRole) {
+    if (block.type !== "merchant-list") return;
+    setMerchantCardTypographyTarget(nextTarget);
+    loadMerchantCardTypographyInputs(nextTarget);
+  }
+
+  function applyMerchantCardTypography() {
+    if (block.type !== "merchant-list") return;
+    const nextStyle: TypographyEditableProps = {
+      fontFamily: merchantCardTypoFontFamilyInput.trim() || undefined,
+      fontSize: Math.max(8, Math.min(120, merchantCardTypoFontSizeInput)),
+      fontColor: merchantCardTypoFontColorInput.trim() || undefined,
+      fontWeight: merchantCardTypoBoldInput ? "bold" : "normal",
+      fontStyle: merchantCardTypoItalicInput ? "italic" : "normal",
+      textDecoration: merchantCardTypoUnderlineInput ? "underline" : "none",
+    };
+    onChange({
+      merchantCardTypography: {
+        ...(block.props.merchantCardTypography ?? {}),
+        [merchantCardTypographyTarget]: nextStyle,
+      },
+      merchantCardTextLayout: normalizeMerchantCardTextLayoutConfig(merchantCardTypoLayoutDraft),
+      merchantCardTextBoxVisible: merchantCardTypoTextBoxVisibleInput,
+    });
+    onRecordColor(merchantCardTypoFontColorInput);
+    setMerchantCardTypographyDialogOpen(false);
+  }
+
+  function startMerchantCardTypographyPreviewDrag(role: MerchantCardTextRole, event: ReactMouseEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (merchantCardTypographyTarget !== role) {
+      onMerchantCardTypographyTargetChange(role);
+    }
+    const start = resolveMerchantCardTextPosition(merchantCardTypoLayoutDraft, role);
+    merchantCardTypographyDragRef.current = {
+      role,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: start.x,
+      originY: start.y,
+    };
+    const onMove = (moveEvent: MouseEvent) => {
+      const dragging = merchantCardTypographyDragRef.current;
+      if (!dragging) return;
+      const dx = Math.round(moveEvent.clientX - dragging.startX);
+      const dy = Math.round(moveEvent.clientY - dragging.startY);
+      setMerchantCardTypoLayoutDraft((prev) => ({
+        ...normalizeMerchantCardTextLayoutConfig(prev),
+        [dragging.role]: {
+          x: Math.max(0, dragging.originX + dx),
+          y: Math.max(0, dragging.originY + dy),
+        },
+      }));
+    };
+    const onUp = () => {
+      merchantCardTypographyDragRef.current = null;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
   }
 
   const shellClass =
@@ -5392,7 +7481,7 @@ type GalleryEditorImage = {
             {"取消"}
           </button>
         </div>
-        <div className="text-xs text-gray-500">{"选择文件后会立即读取，不会自动覆盖原图片。"}</div>
+        <div className="text-xs text-gray-500">{"选择文件后会立即读取，不会自动盖原图片"}</div>
       </div>
     </div>
   ) : null;
@@ -5629,6 +7718,15 @@ type GalleryEditorImage = {
                     onPick={(color) => setNavItemActiveBorderColorInput(color)}
               />
             </div>
+            <div className="space-y-1">
+              <div className="text-xs text-gray-600">选中文字颜色</div>
+              <ColorOrGradientPicker value={navItemActiveTextColorInput} onChange={setNavItemActiveTextColorInput} />
+              <RecentColorBar
+                colors={recentColors}
+                    onClear={onClearRecentColors}
+                    onPick={(color) => setNavItemActiveTextColorInput(color)}
+              />
+            </div>
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -5639,6 +7737,619 @@ type GalleryEditorImage = {
             type="button"
             className="px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm"
             onClick={() => setNavItemStyleDialogOpen(false)}
+          >
+            取消
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
+  const searchButtonStyleDialog = searchButtonStyleDialogOpen ? renderOverlay(
+    <div data-editor-overlay className="fixed inset-0 z-[12000] bg-black/40 flex items-center justify-center p-4">
+      <div className="w-full max-w-5xl bg-white rounded-xl border p-4 space-y-3">
+        <div className="text-sm font-semibold">按钮样式</div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="space-y-3 rounded-lg border p-3">
+            <div className="text-xs font-semibold text-gray-700">定位按钮样式</div>
+            <div className="space-y-1">
+              <div className="text-xs text-gray-600">颜色</div>
+              <ColorOrGradientPicker value={searchButtonBgColorInput} onChange={setSearchButtonBgColorInput} />
+              <RecentColorBar
+                colors={recentColors}
+                onClear={onClearRecentColors}
+                onPick={(color) => setSearchButtonBgColorInput(color)}
+              />
+            </div>
+            <div className="space-y-1">
+              <div className="text-xs text-gray-600">透明度：{searchButtonBgOpacityInput.toFixed(2)}</div>
+              <input
+                className="w-full"
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={searchButtonBgOpacityInput}
+                onChange={(e) => setSearchButtonBgOpacityInput(Number(e.target.value))}
+              />
+            </div>
+            <div className="space-y-1">
+              <div className="text-xs text-gray-600">按钮框样式</div>
+              <div className="grid grid-cols-3 gap-2">
+                {BLOCK_BORDER_STYLE_OPTIONS.map((option) => (
+                  <button
+                    key={`search-locate-${option.value}`}
+                    type="button"
+                    className={`px-3 py-2 rounded text-sm border ${getBlockBorderClass(option.value)} ${
+                      searchButtonBorderStyleInput === option.value ? "ring-2 ring-black" : "bg-white"
+                    }`}
+                    style={getBlockBorderInlineStyle(option.value, searchButtonBorderColorInput)}
+                    onClick={() => setSearchButtonBorderStyleInput(option.value)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-1">
+              <div className="text-xs text-gray-600">按钮框颜色</div>
+              <ColorOrGradientPicker value={searchButtonBorderColorInput} onChange={setSearchButtonBorderColorInput} />
+              <RecentColorBar
+                colors={recentColors}
+                onClear={onClearRecentColors}
+                onPick={(color) => setSearchButtonBorderColorInput(color)}
+              />
+            </div>
+          </div>
+          <div className="space-y-3 rounded-lg border p-3">
+            <div className="text-xs font-semibold text-gray-700">搜索按钮样式</div>
+            <div className="space-y-1">
+              <div className="text-xs text-gray-600">颜色</div>
+              <ColorOrGradientPicker value={searchButtonActiveBgColorInput} onChange={setSearchButtonActiveBgColorInput} />
+              <RecentColorBar
+                colors={recentColors}
+                onClear={onClearRecentColors}
+                onPick={(color) => setSearchButtonActiveBgColorInput(color)}
+              />
+            </div>
+            <div className="space-y-1">
+              <div className="text-xs text-gray-600">透明度：{searchButtonActiveBgOpacityInput.toFixed(2)}</div>
+              <input
+                className="w-full"
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={searchButtonActiveBgOpacityInput}
+                onChange={(e) => setSearchButtonActiveBgOpacityInput(Number(e.target.value))}
+              />
+            </div>
+            <div className="space-y-1">
+              <div className="text-xs text-gray-600">按钮边框样式</div>
+              <div className="grid grid-cols-3 gap-2">
+                {BLOCK_BORDER_STYLE_OPTIONS.map((option) => (
+                  <button
+                    key={`search-action-${option.value}`}
+                    type="button"
+                    className={`px-3 py-2 rounded text-sm border ${getBlockBorderClass(option.value)} ${
+                      searchButtonActiveBorderStyleInput === option.value ? "ring-2 ring-black" : "bg-white"
+                    }`}
+                    style={getBlockBorderInlineStyle(option.value, searchButtonActiveBorderColorInput)}
+                    onClick={() => setSearchButtonActiveBorderStyleInput(option.value)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-1">
+              <div className="text-xs text-gray-600">按钮边框颜色</div>
+              <ColorOrGradientPicker value={searchButtonActiveBorderColorInput} onChange={setSearchButtonActiveBorderColorInput} />
+              <RecentColorBar
+                colors={recentColors}
+                onClear={onClearRecentColors}
+                onPick={(color) => setSearchButtonActiveBorderColorInput(color)}
+              />
+            </div>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className="px-3 py-2 rounded bg-black text-white text-sm" onClick={applySearchButtonStyle}>
+            应用
+          </button>
+          <button
+            type="button"
+            className="px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm"
+            onClick={() => setSearchButtonStyleDialogOpen(false)}
+          >
+            取消
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
+  const merchantButtonStyleDialog = merchantButtonStyleDialogOpen ? renderOverlay(
+    <div data-editor-overlay className="fixed inset-0 z-[12000] bg-black/40 flex items-center justify-center p-4">
+      <div className="w-full max-w-6xl bg-white rounded-xl border p-4 space-y-3">
+        <div className="text-sm font-semibold">按钮样式</div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="space-y-3 rounded-lg border p-3">
+            <div className="text-xs font-semibold text-gray-700">标签按钮样式</div>
+            <div className="space-y-1">
+              <div className="text-xs text-gray-600">颜色</div>
+              <ColorOrGradientPicker value={merchantTabButtonBgColorInput} onChange={setMerchantTabButtonBgColorInput} />
+              <RecentColorBar
+                colors={recentColors}
+                onClear={onClearRecentColors}
+                onPick={(color) => setMerchantTabButtonBgColorInput(color)}
+              />
+            </div>
+            <div className="space-y-1">
+              <div className="text-xs text-gray-600">透明度：{merchantTabButtonBgOpacityInput.toFixed(2)}</div>
+              <input
+                className="w-full"
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={merchantTabButtonBgOpacityInput}
+                onChange={(e) => setMerchantTabButtonBgOpacityInput(Number(e.target.value))}
+              />
+            </div>
+            <div className="space-y-1">
+              <div className="text-xs text-gray-600">按钮边框样式</div>
+              <div className="grid grid-cols-3 gap-2">
+                {BLOCK_BORDER_STYLE_OPTIONS.map((option) => (
+                  <button
+                    key={`merchant-tab-${option.value}`}
+                    type="button"
+                    className={`px-3 py-2 rounded text-sm border ${getBlockBorderClass(option.value)} ${
+                      merchantTabButtonBorderStyleInput === option.value ? "ring-2 ring-black" : "bg-white"
+                    }`}
+                    style={getBlockBorderInlineStyle(option.value, merchantTabButtonBorderColorInput)}
+                    onClick={() => setMerchantTabButtonBorderStyleInput(option.value)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-1">
+              <div className="text-xs text-gray-600">按钮边框颜色</div>
+              <ColorOrGradientPicker value={merchantTabButtonBorderColorInput} onChange={setMerchantTabButtonBorderColorInput} />
+              <RecentColorBar
+                colors={recentColors}
+                onClear={onClearRecentColors}
+                onPick={(color) => setMerchantTabButtonBorderColorInput(color)}
+              />
+            </div>
+          </div>
+          <div className="space-y-3 rounded-lg border p-3">
+            <div className="text-xs font-semibold text-gray-700">选中标签样式</div>
+            <div className="space-y-1">
+              <div className="text-xs text-gray-600">颜色</div>
+              <ColorOrGradientPicker value={merchantTabButtonActiveBgColorInput} onChange={setMerchantTabButtonActiveBgColorInput} />
+              <RecentColorBar
+                colors={recentColors}
+                onClear={onClearRecentColors}
+                onPick={(color) => setMerchantTabButtonActiveBgColorInput(color)}
+              />
+            </div>
+            <div className="space-y-1">
+              <div className="text-xs text-gray-600">透明度：{merchantTabButtonActiveBgOpacityInput.toFixed(2)}</div>
+              <input
+                className="w-full"
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={merchantTabButtonActiveBgOpacityInput}
+                onChange={(e) => setMerchantTabButtonActiveBgOpacityInput(Number(e.target.value))}
+              />
+            </div>
+            <div className="space-y-1">
+              <div className="text-xs text-gray-600">按钮边框样式</div>
+              <div className="grid grid-cols-3 gap-2">
+                {BLOCK_BORDER_STYLE_OPTIONS.map((option) => (
+                  <button
+                    key={`merchant-tab-active-${option.value}`}
+                    type="button"
+                    className={`px-3 py-2 rounded text-sm border ${getBlockBorderClass(option.value)} ${
+                      merchantTabButtonActiveBorderStyleInput === option.value ? "ring-2 ring-black" : "bg-white"
+                    }`}
+                    style={getBlockBorderInlineStyle(option.value, merchantTabButtonActiveBorderColorInput)}
+                    onClick={() => setMerchantTabButtonActiveBorderStyleInput(option.value)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-1">
+              <div className="text-xs text-gray-600">按钮边框颜色</div>
+              <ColorOrGradientPicker value={merchantTabButtonActiveBorderColorInput} onChange={setMerchantTabButtonActiveBorderColorInput} />
+              <RecentColorBar
+                colors={recentColors}
+                onClear={onClearRecentColors}
+                onPick={(color) => setMerchantTabButtonActiveBorderColorInput(color)}
+              />
+            </div>
+          </div>
+          <div className="space-y-3 rounded-lg border p-3">
+            <div className="text-xs font-semibold text-gray-700">分页按钮样式</div>
+            <div className="space-y-1">
+              <div className="text-xs text-gray-600">颜色</div>
+              <ColorOrGradientPicker value={merchantPagerButtonBgColorInput} onChange={setMerchantPagerButtonBgColorInput} />
+              <RecentColorBar
+                colors={recentColors}
+                onClear={onClearRecentColors}
+                onPick={(color) => setMerchantPagerButtonBgColorInput(color)}
+              />
+            </div>
+            <div className="space-y-1">
+              <div className="text-xs text-gray-600">透明度：{merchantPagerButtonBgOpacityInput.toFixed(2)}</div>
+              <input
+                className="w-full"
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={merchantPagerButtonBgOpacityInput}
+                onChange={(e) => setMerchantPagerButtonBgOpacityInput(Number(e.target.value))}
+              />
+            </div>
+            <div className="space-y-1">
+              <div className="text-xs text-gray-600">按钮边框样式</div>
+              <div className="grid grid-cols-3 gap-2">
+                {BLOCK_BORDER_STYLE_OPTIONS.map((option) => (
+                  <button
+                    key={`merchant-pager-${option.value}`}
+                    type="button"
+                    className={`px-3 py-2 rounded text-sm border ${getBlockBorderClass(option.value)} ${
+                      merchantPagerButtonBorderStyleInput === option.value ? "ring-2 ring-black" : "bg-white"
+                    }`}
+                    style={getBlockBorderInlineStyle(option.value, merchantPagerButtonBorderColorInput)}
+                    onClick={() => setMerchantPagerButtonBorderStyleInput(option.value)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-1">
+              <div className="text-xs text-gray-600">按钮边框颜色</div>
+              <ColorOrGradientPicker value={merchantPagerButtonBorderColorInput} onChange={setMerchantPagerButtonBorderColorInput} />
+              <RecentColorBar
+                colors={recentColors}
+                onClear={onClearRecentColors}
+                onPick={(color) => setMerchantPagerButtonBorderColorInput(color)}
+              />
+            </div>
+          </div>
+          <div className="space-y-3 rounded-lg border p-3">
+            <div className="text-xs font-semibold text-gray-700">分页禁用样式</div>
+            <div className="space-y-1">
+              <div className="text-xs text-gray-600">颜色</div>
+              <ColorOrGradientPicker value={merchantPagerButtonDisabledBgColorInput} onChange={setMerchantPagerButtonDisabledBgColorInput} />
+              <RecentColorBar
+                colors={recentColors}
+                onClear={onClearRecentColors}
+                onPick={(color) => setMerchantPagerButtonDisabledBgColorInput(color)}
+              />
+            </div>
+            <div className="space-y-1">
+              <div className="text-xs text-gray-600">透明度：{merchantPagerButtonDisabledBgOpacityInput.toFixed(2)}</div>
+              <input
+                className="w-full"
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={merchantPagerButtonDisabledBgOpacityInput}
+                onChange={(e) => setMerchantPagerButtonDisabledBgOpacityInput(Number(e.target.value))}
+              />
+            </div>
+            <div className="space-y-1">
+              <div className="text-xs text-gray-600">按钮边框样式</div>
+              <div className="grid grid-cols-3 gap-2">
+                {BLOCK_BORDER_STYLE_OPTIONS.map((option) => (
+                  <button
+                    key={`merchant-pager-disabled-${option.value}`}
+                    type="button"
+                    className={`px-3 py-2 rounded text-sm border ${getBlockBorderClass(option.value)} ${
+                      merchantPagerButtonDisabledBorderStyleInput === option.value ? "ring-2 ring-black" : "bg-white"
+                    }`}
+                    style={getBlockBorderInlineStyle(option.value, merchantPagerButtonDisabledBorderColorInput)}
+                    onClick={() => setMerchantPagerButtonDisabledBorderStyleInput(option.value)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-1">
+              <div className="text-xs text-gray-600">按钮边框颜色</div>
+              <ColorOrGradientPicker
+                value={merchantPagerButtonDisabledBorderColorInput}
+                onChange={setMerchantPagerButtonDisabledBorderColorInput}
+              />
+              <RecentColorBar
+                colors={recentColors}
+                onClear={onClearRecentColors}
+                onPick={(color) => setMerchantPagerButtonDisabledBorderColorInput(color)}
+              />
+            </div>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className="px-3 py-2 rounded bg-black text-white text-sm" onClick={applyMerchantButtonStyle}>
+            应用
+          </button>
+          <button
+            type="button"
+            className="px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm"
+            onClick={() => setMerchantButtonStyleDialogOpen(false)}
+          >
+            取消
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
+  const merchantCardStyleDialog = merchantCardStyleDialogOpen ? renderOverlay(
+    <div data-editor-overlay className="fixed inset-0 z-[12000] bg-black/40 flex items-center justify-center p-4">
+      <div className="w-full max-w-3xl bg-white rounded-xl border p-4 space-y-3">
+        <div className="text-sm font-semibold">商户卡片样式</div>
+        <div className="grid grid-cols-1 sm:grid-cols-[96px_minmax(0,1fr)] gap-2 items-center">
+          <div className="text-xs text-gray-600">行业</div>
+          <select
+            className="w-full rounded border px-2 py-2 text-sm bg-white"
+            value={merchantCardStyleIndustryTarget}
+            onChange={(e) => onMerchantCardStyleIndustryTargetChange(e.target.value as MerchantIndustryTabIndustry)}
+          >
+            <option value="all">推荐（全部）</option>
+            {MERCHANT_INDUSTRY_OPTIONS.map((industry) => (
+              <option key={`merchant-card-style-${industry}`} value={industry}>
+                {industry}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="space-y-3 rounded-lg border p-3">
+            <div className="space-y-1">
+              <div className="text-xs text-gray-600">颜色</div>
+              <ColorOrGradientPicker value={merchantCardBgColorInput} onChange={setMerchantCardBgColorInput} />
+              <RecentColorBar
+                colors={recentColors}
+                onClear={onClearRecentColors}
+                onPick={(color) => setMerchantCardBgColorInput(color)}
+              />
+            </div>
+            <div className="space-y-1">
+              <div className="text-xs text-gray-600">透明度：{merchantCardBgOpacityInput.toFixed(2)}</div>
+              <input
+                className="w-full"
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={merchantCardBgOpacityInput}
+                onChange={(e) => setMerchantCardBgOpacityInput(Number(e.target.value))}
+              />
+            </div>
+          </div>
+          <div className="space-y-3 rounded-lg border p-3">
+            <div className="space-y-1">
+              <div className="text-xs text-gray-600">商户卡片样式</div>
+              <div className="grid grid-cols-3 gap-2">
+                {BLOCK_BORDER_STYLE_OPTIONS.map((option) => (
+                  <button
+                    key={`merchant-card-${option.value}`}
+                    type="button"
+                    className={`px-3 py-2 rounded text-sm border ${getBlockBorderClass(option.value)} ${
+                      merchantCardBorderStyleInput === option.value ? "ring-2 ring-black" : "bg-white"
+                    }`}
+                    style={getBlockBorderInlineStyle(option.value, merchantCardBorderColorInput)}
+                    onClick={() => setMerchantCardBorderStyleInput(option.value)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-1">
+              <div className="text-xs text-gray-600">商户卡片颜色</div>
+              <ColorOrGradientPicker value={merchantCardBorderColorInput} onChange={setMerchantCardBorderColorInput} />
+              <RecentColorBar
+                colors={recentColors}
+                onClear={onClearRecentColors}
+                onPick={(color) => setMerchantCardBorderColorInput(color)}
+              />
+            </div>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className="px-3 py-2 rounded bg-black text-white text-sm" onClick={applyMerchantCardStyle}>
+            应用
+          </button>
+          <button
+            type="button"
+            className="px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm"
+            onClick={() => setMerchantCardStyleDialogOpen(false)}
+          >
+            取消
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
+  const merchantCardTypographyMap =
+    block.type === "merchant-list"
+      ? ((block.props.merchantCardTypography ?? {}) as Partial<Record<MerchantCardTextRole, TypographyEditableProps>>)
+      : {};
+  const merchantCardTypographyDraftStyle = buildTypographyInlineStyle({
+    fontFamily: merchantCardTypoFontFamilyInput.trim() || undefined,
+    fontSize: Math.max(8, Math.min(120, merchantCardTypoFontSizeInput)),
+    fontColor: merchantCardTypoFontColorInput.trim() || undefined,
+    fontWeight: merchantCardTypoBoldInput ? "bold" : "normal",
+    fontStyle: merchantCardTypoItalicInput ? "italic" : "normal",
+    textDecoration: merchantCardTypoUnderlineInput ? "underline" : "none",
+  });
+  const merchantCardNameStylePreview =
+    merchantCardTypographyTarget === "name"
+      ? merchantCardTypographyDraftStyle
+      : buildTypographyInlineStyle(merchantCardTypographyMap.name);
+  const merchantCardIndustryStylePreview =
+    merchantCardTypographyTarget === "industry"
+      ? merchantCardTypographyDraftStyle
+      : buildTypographyInlineStyle(merchantCardTypographyMap.industry);
+  const merchantCardDomainStylePreview =
+    merchantCardTypographyTarget === "domain"
+      ? merchantCardTypographyDraftStyle
+      : buildTypographyInlineStyle(merchantCardTypographyMap.domain);
+  const merchantCardTextLayoutDraftResolved = normalizeMerchantCardTextLayoutConfig(merchantCardTypoLayoutDraft);
+  const merchantCardNamePreviewPosition = resolveMerchantCardTextPosition(merchantCardTextLayoutDraftResolved, "name");
+  const merchantCardIndustryPreviewPosition = resolveMerchantCardTextPosition(merchantCardTextLayoutDraftResolved, "industry");
+  const merchantCardDomainPreviewPosition = resolveMerchantCardTextPosition(merchantCardTextLayoutDraftResolved, "domain");
+  const merchantCardPreviewTextBoxClass = merchantCardTypoTextBoxVisibleInput
+    ? "inline-flex w-fit max-w-full rounded border border-slate-300 bg-white/90 px-1.5 py-0.5"
+    : "inline-flex w-fit max-w-full";
+  const merchantCardTypographyDialog = merchantCardTypographyDialogOpen ? renderOverlay(
+    <div data-editor-overlay className="fixed inset-0 z-[12000] bg-black/40 flex items-center justify-center p-4">
+      <div className="w-full max-w-2xl bg-white rounded-xl border p-4 space-y-3">
+        <div className="text-sm font-semibold">商户卡片字体</div>
+        <div className="grid grid-cols-1 sm:grid-cols-[96px_minmax(0,1fr)] gap-2 items-center">
+          <div className="text-xs text-gray-600">璁剧疆椤</div>
+          <select
+            className="w-full rounded border px-2 py-2 text-sm bg-white"
+            value={merchantCardTypographyTarget}
+            onChange={(e) => onMerchantCardTypographyTargetChange(e.target.value as MerchantCardTextRole)}
+          >
+            <option value="name">名称</option>
+            <option value="industry">行业</option>
+            <option value="domain">域名</option>
+          </select>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-[1fr_140px] gap-2">
+          <div className="space-y-1">
+            <div className="text-xs text-gray-600">字体</div>
+            <select
+              className="border p-2 rounded w-full text-sm"
+              value={merchantCardTypoFontFamilyInput}
+              onChange={(e) => setMerchantCardTypoFontFamilyInput(e.target.value)}
+            >
+              <option value="">默认</option>
+              {FONT_FAMILY_OPTIONS.map((font) => (
+                <option key={`merchant-card-typo-${font}`} value={font}>
+                  {font}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-1">
+            <div className="text-xs text-gray-600">字号</div>
+            <select
+              className="border p-2 rounded w-full text-sm"
+              value={String(merchantCardTypoFontSizeInput)}
+              onChange={(e) => setMerchantCardTypoFontSizeInput(Number(e.target.value))}
+            >
+              {FONT_SIZE_OPTIONS.map((size) => (
+                <option key={`merchant-card-typo-size-${size}`} value={size}>
+                  {size}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            className={`px-3 py-2 rounded border text-sm ${merchantCardTypoBoldInput ? "bg-black text-white" : "bg-white"}`}
+            onClick={() => setMerchantCardTypoBoldInput((prev) => !prev)}
+          >
+            B
+          </button>
+          <button
+            type="button"
+            className={`px-3 py-2 rounded border text-sm ${merchantCardTypoItalicInput ? "bg-black text-white" : "bg-white"}`}
+            onClick={() => setMerchantCardTypoItalicInput((prev) => !prev)}
+          >
+            I
+          </button>
+          <button
+            type="button"
+            className={`px-3 py-2 rounded border text-sm ${merchantCardTypoUnderlineInput ? "bg-black text-white" : "bg-white"}`}
+            onClick={() => setMerchantCardTypoUnderlineInput((prev) => !prev)}
+          >
+            U
+          </button>
+        </div>
+        <div className="space-y-1">
+          <div className="text-xs text-gray-600">字体颜色</div>
+          <ColorOrGradientPicker value={merchantCardTypoFontColorInput} onChange={setMerchantCardTypoFontColorInput} />
+          <RecentColorBar
+            colors={recentColors}
+            onClear={onClearRecentColors}
+            onPick={(color) => setMerchantCardTypoFontColorInput(color)}
+          />
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="text-xs text-gray-600">文本框</div>
+          <label className="inline-flex items-center gap-1 text-xs rounded border px-2 py-1 bg-white">
+            <input
+              type="checkbox"
+              checked={merchantCardTypoTextBoxVisibleInput}
+              onChange={(e) => setMerchantCardTypoTextBoxVisibleInput(e.target.checked)}
+            />
+            <span>{merchantCardTypoTextBoxVisibleInput ? "开启" : "关闭"}</span>
+          </label>
+        </div>
+        <div ref={merchantCardTypographyPreviewRef} className="relative rounded border bg-gray-50 p-3 h-36 overflow-hidden">
+          <div
+            className={`${merchantCardPreviewTextBoxClass} text-base font-semibold text-slate-900 ${merchantCardTypographyTarget === "name" ? "ring-2 ring-blue-400/55" : ""} cursor-move`}
+            style={{
+              left: `${merchantCardNamePreviewPosition.x}px`,
+              top: `${merchantCardNamePreviewPosition.y}px`,
+              position: "absolute",
+              ...merchantCardNameStylePreview,
+            }}
+            onMouseDown={(event) => startMerchantCardTypographyPreviewDrag("name", event)}
+          >
+            <span className="truncate">商户名称</span>
+          </div>
+          <div
+            className={`${merchantCardPreviewTextBoxClass} text-xs text-slate-500 ${merchantCardTypographyTarget === "industry" ? "ring-2 ring-blue-400/55" : ""} cursor-move`}
+            style={{
+              left: `${merchantCardIndustryPreviewPosition.x}px`,
+              top: `${merchantCardIndustryPreviewPosition.y}px`,
+              position: "absolute",
+              ...merchantCardIndustryStylePreview,
+            }}
+            onMouseDown={(event) => startMerchantCardTypographyPreviewDrag("industry", event)}
+          >
+            <span className="truncate">餐饮</span>
+          </div>
+          <div
+            className={`${merchantCardPreviewTextBoxClass} text-xs text-slate-500 ${merchantCardTypographyTarget === "domain" ? "ring-2 ring-blue-400/55" : ""} cursor-move`}
+            style={{
+              left: `${merchantCardDomainPreviewPosition.x}px`,
+              top: `${merchantCardDomainPreviewPosition.y}px`,
+              position: "absolute",
+              ...merchantCardDomainStylePreview,
+            }}
+            onMouseDown={(event) => startMerchantCardTypographyPreviewDrag("domain", event)}
+          >
+            <span className="truncate">www.fafona.com/abc</span>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className="px-3 py-2 rounded bg-black text-white text-sm" onClick={applyMerchantCardTypography}>
+            应用
+          </button>
+          <button
+            type="button"
+            className="px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm"
+            onClick={() => setMerchantCardTypographyDialogOpen(false)}
           >
             取消
           </button>
@@ -5657,7 +8368,7 @@ type GalleryEditorImage = {
             setLayerSettingsOpen(false);
           }}
         >
-          {"置于顶层"}
+          {"缃簬椤跺眰"}
         </button>
         <button
           className="w-full px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm text-left"
@@ -5666,7 +8377,7 @@ type GalleryEditorImage = {
             setLayerSettingsOpen(false);
           }}
         >
-          {"上移一层"}
+          {"上移"}
         </button>
         <button
           className="w-full px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm text-left"
@@ -5675,7 +8386,7 @@ type GalleryEditorImage = {
             setLayerSettingsOpen(false);
           }}
         >
-          {"下移一层"}
+          {"下移"}
         </button>
         <button
           className="w-full px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm text-left"
@@ -5909,7 +8620,7 @@ type GalleryEditorImage = {
                       aria-label="删除"
                       title="删除"
                     >
-                      {"×"}
+                      {"脳"}
                     </button>
                     <div
                       className="absolute top-2 bottom-2 left-0 w-2 -translate-x-1 cursor-ew-resize"
@@ -6281,7 +8992,7 @@ type GalleryEditorImage = {
                       )}
                     </div>
                   ) : (
-                    <div className="h-full flex items-center justify-center text-sm text-gray-500">{"暂无可显示图片"}</div>
+                    <div className="h-full flex items-center justify-center text-sm text-gray-500">{"暂无变示图"}</div>
                   )}
                   <div
                     className="absolute top-0 left-0 h-full w-2 cursor-ew-resize z-10"
@@ -6437,7 +9148,7 @@ type GalleryEditorImage = {
                           <div className="fixed inset-0 z-[13000] bg-black/40 flex items-center justify-center p-4">
                             <div className="w-full max-w-6xl bg-white rounded-xl border shadow-xl overflow-hidden">
                               <div className="px-4 py-3 border-b flex items-center justify-between">
-                                <div className="text-sm font-semibold">{"自定义样式"}</div>
+                                <div className="text-sm font-semibold">{"臮义样"}</div>
                                 <button
                                   type="button"
                                   className="px-3 py-1 text-sm rounded border bg-white hover:bg-gray-50"
@@ -6498,12 +9209,12 @@ type GalleryEditorImage = {
                                         }`}
                                         onClick={() => setSelectedCustomRowIndex(rowIdx)}
                                       >
-                                        {"第"}{rowIdx + 1}{"行"}
+                                        {"绗?"}{rowIdx + 1}{"琛?"}
                                       </button>
                                     ))}
                                   </div>
                                   <div className="space-y-1">
-                                    <div className="text-xs text-gray-600">{"行高度"}</div>
+                                    <div className="text-xs text-gray-600">{"行高"}</div>
                                     <div className="flex items-center gap-2">
                                       <input
                                         type="range"
@@ -6563,19 +9274,19 @@ type GalleryEditorImage = {
                                       className="px-3 py-1 text-sm rounded border bg-white hover:bg-gray-50"
                                       onClick={removeSelectedRowLastFrame}
                                     >
-                                      {"删除最后一帧"}
+                                      {"删除后一"}
                                     </button>
                                     <button
                                       type="button"
                                       className="px-3 py-1 text-sm rounded border bg-white hover:bg-gray-50"
                                       onClick={clearSelectedRowFrames}
                                     >
-                                      {"清空当前行"}
+                                      {"清空当前"}
                                     </button>
                                   </div>
                                 </div>
                                 <div className="rounded border p-3 flex flex-col">
-                                  <div className="text-xs text-gray-500 mb-2">{"点击样式按钮即可添加到选中行。"}</div>
+                                  <div className="text-xs text-gray-500 mb-2">{"点击样式按钮即可添加到中行"}</div>
                                   <div className="grid grid-cols-2 gap-3">
                                     {CUSTOM_GALLERY_FRAME_WIDTHS.map((width) => (
                                       <button
@@ -6658,7 +9369,7 @@ type GalleryEditorImage = {
                           )
                         ) : (
                           <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-4 text-sm text-gray-500">
-                            {"暂无图片，请先上传图片"}
+                            {"暂无图片，先上传图"}
                           </div>
                         )}
                         </div>
@@ -6743,6 +9454,7 @@ type GalleryEditorImage = {
       block.props.navItemActiveBorderColor ?? navItemBorderColor,
       navItemBorderColor,
     );
+    const navItemActiveTextColor = (block.props.navItemActiveTextColor ?? "").trim();
     const navItemButtonClass = "px-3 py-2 rounded overflow-hidden text-sm whitespace-pre-wrap";
     const navItemButtonStyle = {
       ...getBlockBorderInlineStyle(navItemBorderStyle, navItemBorderColor),
@@ -6752,6 +9464,9 @@ type GalleryEditorImage = {
       ...getBlockBorderInlineStyle(navItemActiveBorderStyle, navItemActiveBorderColor),
       ...getColorLayerStyle(navItemActiveBgColor, navItemActiveBgOpacity),
     };
+    const navItemActiveLabelStyle = buildTypographyInlineStyle({
+      fontColor: navItemActiveTextColor,
+    });
     const navCardClass = `${cardClass.replace("bg-white", "").trim()} relative`;
     const navBlockSizeStyle =
       orientation === "vertical"
@@ -6825,12 +9540,14 @@ type GalleryEditorImage = {
                 >
                   -
                 </button>
-                <span className="min-w-[32px] text-center text-sm whitespace-nowrap shrink-0">{navItems.length}</span>
+                <span className="min-w-[78px] text-center text-sm whitespace-nowrap shrink-0">
+                  {navItems.length}/{effectiveMaxNavItems}
+                </span>
                 <button
                   type="button"
                   className="w-8 h-8 rounded border bg-white hover:bg-gray-50 disabled:opacity-40 shrink-0"
                   onClick={addNavItem}
-                  disabled={navItems.length >= 12}
+                  disabled={navItems.length >= effectiveMaxNavItems}
                 >
                   +
                 </button>
@@ -6872,7 +9589,10 @@ type GalleryEditorImage = {
                       setPreviewNavPageId(item.pageId);
                     }}
                   >
-                    <span dangerouslySetInnerHTML={{ __html: toRichHtml(item.label, "") }} />
+                    <span
+                      style={item.pageId === selectedNavPageId ? navItemActiveLabelStyle : undefined}
+                      dangerouslySetInnerHTML={{ __html: toRichHtml(item.label, "") }}
+                    />
                   </button>
                 ))}
               </div>
@@ -6896,7 +9616,10 @@ type GalleryEditorImage = {
                       setPreviewNavPageId(item.pageId);
                     }}
                   >
-                    <span dangerouslySetInnerHTML={{ __html: toRichHtml(item.label, "") }} />
+                    <span
+                      style={item.pageId === selectedNavPageId ? navItemActiveLabelStyle : undefined}
+                      dangerouslySetInnerHTML={{ __html: toRichHtml(item.label, "") }}
+                    />
                   </button>
                 ))}
               </div>
@@ -6974,13 +9697,13 @@ type GalleryEditorImage = {
                   value={chartType}
                   onChange={(e) => onChange({ chartType: e.target.value as "bar" | "line" | "pie" })}
                 >
-                  <option value="bar">{"柱状图"}</option>
-                  <option value="line">{"折线图"}</option>
+                  <option value="bar">{"柱状"}</option>
+                  <option value="line">{"折线"}</option>
                   <option value="pie">{"饼图"}</option>
                 </select>
                 <textarea
                   className="border p-2 rounded w-full min-h-[100px] text-gray-700"
-                  placeholder={"标签：每行一项"}
+                  placeholder={"标签：每行一个"}
                   value={labels.join("\n")}
                   onChange={(e) =>
                     onChange({
@@ -6993,7 +9716,7 @@ type GalleryEditorImage = {
                 />
                 <textarea
                   className="border p-2 rounded w-full min-h-[100px] text-gray-700"
-                  placeholder={"数值：每行一个数字"}
+                  placeholder={"数值：每行一个"}
                   value={values.join("\n")}
                   onChange={(e) =>
                     onChange({
@@ -7050,7 +9773,7 @@ type GalleryEditorImage = {
                     <div className="text-sm text-gray-600 space-y-1">
                       {pairs.map((item, idx) => (
                         <div key={`${item.label}-${idx}`}>
-                          {item.label}{"："}{item.value}
+                          {item.label}：{item.value}
                         </div>
                       ))}
                     </div>
@@ -7156,7 +9879,7 @@ type GalleryEditorImage = {
                   <option value="classic">{"经典样式"}</option>
                   <option value="minimal">{"简约样式"}</option>
                   <option value="card">{"卡片样式"}</option>
-                  <option value="hidden">{"隐藏播放器"}</option>
+                  <option value="hidden">{"隐藏样式"}</option>
                 </select>
               </div>
               {musicStyle === "hidden" ? (
@@ -7413,6 +10136,1829 @@ type GalleryEditorImage = {
     );
   }
 
+  if (block.type === "merchant-list") {
+    const maxItems =
+      typeof block.props.maxItems === "number" && Number.isFinite(block.props.maxItems)
+        ? Math.max(1, Math.min(24, Math.round(block.props.maxItems)))
+        : 6;
+    const emptyText = (block.props.emptyText ?? "").trim() || "暂无商户";
+    const merchantTabs = normalizeMerchantIndustryTabs(block.props.industryTabs);
+    const activeMerchantTab = merchantTabs.find((item) => item.id === activeMerchantIndustryTabId) ?? merchantTabs[0];
+    const activeIndustry = activeMerchantTab?.industry ?? "all";
+    const filteredMerchantSites = [...loadPlatformState().sites]
+      .filter((site) => (activeIndustry === "all" ? true : site.industry === activeIndustry))
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    const merchantTotalPages = Math.max(1, Math.ceil(filteredMerchantSites.length / maxItems));
+    const safeMerchantPreviewPageIndex = Math.min(merchantPreviewPageIndex, merchantTotalPages - 1);
+    const merchantSites = filteredMerchantSites.slice(
+      safeMerchantPreviewPageIndex * maxItems,
+      safeMerchantPreviewPageIndex * maxItems + maxItems,
+    );
+    const hasMerchantHeading = hasVisibleRichText(block.props.heading);
+    const hasMerchantText = hasVisibleRichText(block.props.text);
+    const merchantTabButtonBgColor = (block.props.merchantTabButtonBgColor ?? "#ffffff").trim() || "#ffffff";
+    const merchantTabButtonBgOpacity =
+      typeof block.props.merchantTabButtonBgOpacity === "number" && Number.isFinite(block.props.merchantTabButtonBgOpacity)
+        ? Math.max(0, Math.min(1, block.props.merchantTabButtonBgOpacity))
+        : 1;
+    const merchantTabButtonBorderStyle = (block.props.merchantTabButtonBorderStyle ?? "solid") as BlockBorderStyle;
+    const merchantTabButtonBorderColor = normalizeNavBorderColor(
+      block.props.merchantTabButtonBorderColor ?? "#cbd5e1",
+      "#cbd5e1",
+    );
+    const merchantTabButtonActiveBgColor =
+      (block.props.merchantTabButtonActiveBgColor ?? "#000000").trim() || "#000000";
+    const merchantTabButtonActiveBgOpacity =
+      typeof block.props.merchantTabButtonActiveBgOpacity === "number" &&
+      Number.isFinite(block.props.merchantTabButtonActiveBgOpacity)
+        ? Math.max(0, Math.min(1, block.props.merchantTabButtonActiveBgOpacity))
+        : 1;
+    const merchantTabButtonActiveBorderStyle =
+      (block.props.merchantTabButtonActiveBorderStyle ?? "solid") as BlockBorderStyle;
+    const merchantTabButtonActiveBorderColor = normalizeNavBorderColor(
+      block.props.merchantTabButtonActiveBorderColor ?? "#111827",
+      "#111827",
+    );
+    const merchantPagerButtonBgColor = (block.props.merchantPagerButtonBgColor ?? "#ffffff").trim() || "#ffffff";
+    const merchantPagerButtonBgOpacity =
+      typeof block.props.merchantPagerButtonBgOpacity === "number" && Number.isFinite(block.props.merchantPagerButtonBgOpacity)
+        ? Math.max(0, Math.min(1, block.props.merchantPagerButtonBgOpacity))
+        : 1;
+    const merchantPagerButtonBorderStyle = (block.props.merchantPagerButtonBorderStyle ?? "solid") as BlockBorderStyle;
+    const merchantPagerButtonBorderColor = normalizeNavBorderColor(
+      block.props.merchantPagerButtonBorderColor ?? "#cbd5e1",
+      "#cbd5e1",
+    );
+    const merchantPagerButtonDisabledBgColor =
+      (block.props.merchantPagerButtonDisabledBgColor ?? "#e5e7eb").trim() || "#e5e7eb";
+    const merchantPagerButtonDisabledBgOpacity =
+      typeof block.props.merchantPagerButtonDisabledBgOpacity === "number" &&
+      Number.isFinite(block.props.merchantPagerButtonDisabledBgOpacity)
+        ? Math.max(0, Math.min(1, block.props.merchantPagerButtonDisabledBgOpacity))
+        : 1;
+    const merchantPagerButtonDisabledBorderStyle =
+      (block.props.merchantPagerButtonDisabledBorderStyle ?? "solid") as BlockBorderStyle;
+    const merchantPagerButtonDisabledBorderColor = normalizeNavBorderColor(
+      block.props.merchantPagerButtonDisabledBorderColor ?? "#cbd5e1",
+      "#cbd5e1",
+    );
+    const merchantCardBgColor = (block.props.merchantCardBgColor ?? "#f8fafc").trim() || "#f8fafc";
+    const merchantCardBgOpacity =
+      typeof block.props.merchantCardBgOpacity === "number" && Number.isFinite(block.props.merchantCardBgOpacity)
+        ? Math.max(0, Math.min(1, block.props.merchantCardBgOpacity))
+        : 1;
+    const merchantCardBorderStyle = (block.props.merchantCardBorderStyle ?? "solid") as BlockBorderStyle;
+    const merchantCardBorderColor = normalizeNavBorderColor(block.props.merchantCardBorderColor ?? "#cbd5e1", "#cbd5e1");
+    const merchantTabButtonStyle = {
+      ...getBlockBorderInlineStyle(merchantTabButtonBorderStyle, merchantTabButtonBorderColor),
+      ...getColorLayerStyle(merchantTabButtonBgColor, merchantTabButtonBgOpacity),
+    };
+    const merchantTabButtonActiveStyle = {
+      ...getBlockBorderInlineStyle(merchantTabButtonActiveBorderStyle, merchantTabButtonActiveBorderColor),
+      ...getColorLayerStyle(merchantTabButtonActiveBgColor, merchantTabButtonActiveBgOpacity),
+    };
+    const merchantPagerButtonStyle = {
+      ...getBlockBorderInlineStyle(merchantPagerButtonBorderStyle, merchantPagerButtonBorderColor),
+      ...getColorLayerStyle(merchantPagerButtonBgColor, merchantPagerButtonBgOpacity),
+    };
+    const merchantPagerButtonDisabledStyle = {
+      ...getBlockBorderInlineStyle(merchantPagerButtonDisabledBorderStyle, merchantPagerButtonDisabledBorderColor),
+      ...getColorLayerStyle(merchantPagerButtonDisabledBgColor, merchantPagerButtonDisabledBgOpacity),
+    };
+    const legacyMerchantCardStyle = {
+      bgColor: merchantCardBgColor,
+      bgOpacity: merchantCardBgOpacity,
+      borderStyle: merchantCardBorderStyle,
+      borderColor: merchantCardBorderColor,
+    };
+    const merchantTabButtonBaseClass = "absolute rounded px-3 py-1.5 text-xs transition pointer-events-auto";
+    const merchantPagerButtonBaseClass =
+      "absolute rounded px-3 py-1.5 text-xs transition pointer-events-auto disabled:cursor-not-allowed";
+    const merchantTypographyBaseStyle: Record<string, string | number> = {};
+    if (block.props.fontFamily?.trim()) merchantTypographyBaseStyle.fontFamily = block.props.fontFamily.trim();
+    if (typeof block.props.fontSize === "number" && Number.isFinite(block.props.fontSize) && block.props.fontSize > 0) {
+      merchantTypographyBaseStyle.fontSize = block.props.fontSize;
+    }
+    if (block.props.fontWeight) merchantTypographyBaseStyle.fontWeight = block.props.fontWeight;
+    if (block.props.fontStyle) merchantTypographyBaseStyle.fontStyle = block.props.fontStyle;
+    if (block.props.textDecoration) merchantTypographyBaseStyle.textDecoration = block.props.textDecoration;
+    const merchantFontColor = (block.props.fontColor ?? "").trim();
+    const merchantFontColorIsGradient = !!merchantFontColor && isGradientToken(merchantFontColor);
+    const merchantButtonLabelStyle: Record<string, string | number> = {
+      ...merchantTypographyBaseStyle,
+      ...(merchantFontColor
+        ? merchantFontColorIsGradient
+          ? {
+              backgroundImage: merchantFontColor,
+              backgroundClip: "text",
+              WebkitBackgroundClip: "text",
+              color: "transparent",
+            }
+          : { color: merchantFontColor }
+        : {}),
+    };
+    const merchantInputTextStyle: Record<string, string | number> = {
+      ...merchantTypographyBaseStyle,
+      ...(merchantFontColor && !merchantFontColorIsGradient ? { color: merchantFontColor } : {}),
+    };
+    const merchantCardTypographyMap = (block.props.merchantCardTypography ??
+      {}) as Partial<Record<MerchantCardTextRole, TypographyEditableProps>>;
+    const merchantCardNameTextStyle = buildTypographyInlineStyle(merchantCardTypographyMap.name);
+    const merchantCardIndustryTextStyle = buildTypographyInlineStyle(merchantCardTypographyMap.industry);
+    const merchantCardDomainTextStyle = buildTypographyInlineStyle(merchantCardTypographyMap.domain);
+    const merchantCardTextLayout = (block.props.merchantCardTextLayout ?? {}) as MerchantCardTextLayoutConfig;
+    const merchantCardNameTextPosition = resolveMerchantCardTextPosition(merchantCardTextLayout, "name");
+    const merchantCardIndustryTextPosition = resolveMerchantCardTextPosition(merchantCardTextLayout, "industry");
+    const merchantCardDomainTextPosition = resolveMerchantCardTextPosition(merchantCardTextLayout, "domain");
+    const merchantCardTextBoxVisible = block.props.merchantCardTextBoxVisible === true;
+    const merchantCardTextBoxClass = merchantCardTextBoxVisible
+      ? "inline-flex w-fit max-w-full rounded border border-slate-300 bg-white/90 px-1.5 py-0.5"
+      : "inline-flex w-fit max-w-full";
+    const merchantCardLayout = (block.props.merchantCardLayout ?? {}) as MerchantCardLayoutConfig;
+    const merchantLayoutEntries = resolveMerchantListLayoutEntries(merchantCardLayout, maxItems, merchantTabs.length);
+    const merchantCardEntries = merchantLayoutEntries.filter((item) => item.kind === "card");
+    const merchantPrevLayout = merchantLayoutEntries.find((item) => item.kind === "prev");
+    const merchantNextLayout = merchantLayoutEntries.find((item) => item.kind === "next");
+    const merchantCardCanvasWidth = getMerchantLayoutCanvasWidth(merchantLayoutEntries);
+    const merchantCardCanvasHeight = getMerchantLayoutCanvasHeight(merchantLayoutEntries);
+    const merchantCardsContainerHeight = getMerchantLayoutContainerHeight(merchantLayoutEntries);
+    const merchantCardSnapStep = Math.max(2, Math.min(40, Math.round(merchantCardLayoutSnapStep) || 8));
+    const maybeSnapMerchantCard = (value: number, min = 0) => {
+      const clamped = Math.max(min, Math.round(value));
+      if (!merchantCardLayoutSnapEnabled) return clamped;
+      return Math.max(min, Math.round(clamped / merchantCardSnapStep) * merchantCardSnapStep);
+    };
+    const findMerchantCardEntry = (key: MerchantListLayoutKey) =>
+      merchantLayoutEntries.find((item) => item.key === key);
+    const saveMerchantTabs = (tabs: MerchantIndustryTab[]) => {
+      const normalized = normalizeMerchantIndustryTabs(tabs);
+      onChange({ industryTabs: toMerchantIndustryTabInputs(normalized) });
+      setActiveMerchantIndustryTabId((prev) =>
+        normalized.some((item) => item.id === prev) ? prev : (normalized[0]?.id ?? "tab-recommended"),
+      );
+    };
+    const selectMerchantCardLayoutEntry = (key: MerchantListLayoutKey, multi: boolean) => {
+      if (multi) {
+        setActiveMerchantCardLayoutKeys((prev) =>
+          prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key],
+        );
+      } else {
+        setActiveMerchantCardLayoutKeys([key]);
+      }
+    };
+    const startMerchantCardLayoutDrag = (key: MerchantListLayoutKey, event: ReactMouseEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const source = findMerchantCardEntry(key);
+      if (!source) return;
+      if (event.ctrlKey) {
+        selectMerchantCardLayoutEntry(key, true);
+        return;
+      }
+      const selectedKeys =
+        activeMerchantCardLayoutKeys.includes(key) && activeMerchantCardLayoutKeys.length > 0
+          ? activeMerchantCardLayoutKeys
+          : [key];
+      setActiveMerchantCardLayoutKeys(selectedKeys);
+      merchantCardLayoutCanvasFocusRef.current?.focus();
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const originMap = new Map(
+        selectedKeys.map((selectedKey) => {
+          const found = findMerchantCardEntry(selectedKey);
+          return [
+            selectedKey,
+            { x: found?.x ?? 0, y: found?.y ?? 0, width: found?.width ?? 300, height: found?.height ?? 180 },
+          ] as const;
+        }),
+      );
+      const onMove = (e: MouseEvent) => {
+        const dx = Math.round(e.clientX - startX);
+        const dy = Math.round(e.clientY - startY);
+        const nextLayout: MerchantCardLayoutConfig = { ...merchantCardLayout };
+        selectedKeys.forEach((selectedKey) => {
+          const origin = originMap.get(selectedKey);
+          const found = findMerchantCardEntry(selectedKey);
+          if (!origin || !found) return;
+          nextLayout[selectedKey] = {
+            x: maybeSnapMerchantCard(origin.x + dx),
+            y: maybeSnapMerchantCard(origin.y + dy),
+            width: clampMerchantCardLayoutValue(
+              (merchantCardLayout[selectedKey] ?? {}).width,
+              origin.width,
+              found.minWidth,
+            ),
+            height: clampMerchantCardLayoutValue(
+              (merchantCardLayout[selectedKey] ?? {}).height,
+              origin.height,
+              found.minHeight,
+            ),
+          };
+        });
+        onChange({ merchantCardLayout: nextLayout });
+      };
+      const onUp = () => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    };
+    const startMerchantCardLayoutResize = (
+      key: MerchantListLayoutKey,
+      direction: "width" | "height",
+      event: ReactMouseEvent<HTMLDivElement>,
+    ) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const source = findMerchantCardEntry(key);
+      if (!source) return;
+      const selectedKeys =
+        activeMerchantCardLayoutKeys.includes(key) && activeMerchantCardLayoutKeys.length > 0
+          ? activeMerchantCardLayoutKeys
+          : [key];
+      setActiveMerchantCardLayoutKeys(selectedKeys);
+      merchantCardLayoutCanvasFocusRef.current?.focus();
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const originWidths = new Map(
+        selectedKeys.map((selectedKey) => {
+          const found = findMerchantCardEntry(selectedKey);
+          return [selectedKey, found?.width ?? 300] as const;
+        }),
+      );
+      const originHeights = new Map(
+        selectedKeys.map((selectedKey) => {
+          const found = findMerchantCardEntry(selectedKey);
+          return [selectedKey, found?.height ?? 180] as const;
+        }),
+      );
+      const onMove = (e: MouseEvent) => {
+        const deltaWidth = Math.round(e.clientX - startX);
+        const deltaHeight = Math.round(e.clientY - startY);
+        const nextLayout: MerchantCardLayoutConfig = { ...merchantCardLayout };
+        selectedKeys.forEach((selectedKey) => {
+          const found = findMerchantCardEntry(selectedKey);
+          if (!found) return;
+          const current = merchantCardLayout[selectedKey] ?? {};
+          const originWidth = originWidths.get(selectedKey) ?? found.width;
+          const originHeight = originHeights.get(selectedKey) ?? found.height;
+          nextLayout[selectedKey] = {
+            x: clampMerchantCardLayoutValue(current.x, found.x),
+            y: clampMerchantCardLayoutValue(current.y, found.y),
+            width:
+              direction === "width"
+                ? maybeSnapMerchantCard(originWidth + deltaWidth, found.minWidth)
+                : clampMerchantCardLayoutValue(current.width, found.width, found.minWidth),
+            height:
+              direction === "height"
+                ? maybeSnapMerchantCard(originHeight + deltaHeight, found.minHeight)
+                : clampMerchantCardLayoutValue(current.height, found.height, found.minHeight),
+          };
+        });
+        onChange({ merchantCardLayout: nextLayout });
+      };
+      const onUp = () => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    };
+    const handleMerchantCardLayoutCanvasKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+      if (activeMerchantCardLayoutKeys.length === 0) return;
+      if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) return;
+      event.preventDefault();
+      const step = event.shiftKey
+        ? merchantCardLayoutSnapEnabled
+          ? Math.max(merchantCardSnapStep * 2, 10)
+          : 10
+        : merchantCardLayoutSnapEnabled
+          ? merchantCardSnapStep
+          : 2;
+      const deltaX = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
+      const deltaY = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
+      const nextLayout: MerchantCardLayoutConfig = { ...merchantCardLayout };
+      activeMerchantCardLayoutKeys.forEach((selectedKey) => {
+        const source = findMerchantCardEntry(selectedKey);
+        if (!source) return;
+        const current = merchantCardLayout[selectedKey] ?? {};
+        nextLayout[selectedKey] = {
+          x: maybeSnapMerchantCard(clampMerchantCardLayoutValue(current.x, source.x) + deltaX),
+          y: maybeSnapMerchantCard(clampMerchantCardLayoutValue(current.y, source.y) + deltaY),
+          width: clampMerchantCardLayoutValue(current.width, source.width, source.minWidth),
+          height: clampMerchantCardLayoutValue(current.height, source.height, source.minHeight),
+        };
+      });
+      onChange({ merchantCardLayout: nextLayout });
+    };
+    const alignSelectedMerchantCardEntries = (
+      mode: "left" | "right" | "same-width" | "same-height" | "distribute-x" | "distribute-y",
+    ) => {
+      const selected = merchantLayoutEntries.filter((item) => activeMerchantCardLayoutKeys.includes(item.key));
+      if (selected.length === 0) return;
+      const nextLayout: MerchantCardLayoutConfig = { ...merchantCardLayout };
+      if (mode === "left") {
+        const selectedMinLeft = Math.min(...selected.map((item) => item.x));
+        const deltaX = Math.max(0, selectedMinLeft);
+        selected.forEach((item) => {
+          const current = merchantCardLayout[item.key] ?? {};
+          nextLayout[item.key] = {
+            x: maybeSnapMerchantCard(Math.max(0, clampMerchantCardLayoutValue(current.x, item.x) - deltaX)),
+            y: clampMerchantCardLayoutValue(current.y, item.y),
+            width: clampMerchantCardLayoutValue(current.width, item.width, item.minWidth),
+            height: clampMerchantCardLayoutValue(current.height, item.height, item.minHeight),
+          };
+        });
+      }
+      if (mode === "right") {
+        const selectedMaxRight = Math.max(...selected.map((item) => item.x + item.width));
+        const deltaX = Math.max(0, merchantCardCanvasWidth - selectedMaxRight);
+        selected.forEach((item) => {
+          const current = merchantCardLayout[item.key] ?? {};
+          nextLayout[item.key] = {
+            x: maybeSnapMerchantCard(clampMerchantCardLayoutValue(current.x, item.x) + deltaX),
+            y: clampMerchantCardLayoutValue(current.y, item.y),
+            width: clampMerchantCardLayoutValue(current.width, item.width, item.minWidth),
+            height: clampMerchantCardLayoutValue(current.height, item.height, item.minHeight),
+          };
+        });
+      }
+      if (mode === "same-width") {
+        const width = Math.max(...selected.map((item) => item.width));
+        selected.forEach((item) => {
+          const current = merchantCardLayout[item.key] ?? {};
+          nextLayout[item.key] = {
+            x: clampMerchantCardLayoutValue(current.x, item.x),
+            y: clampMerchantCardLayoutValue(current.y, item.y),
+            width: Math.max(item.minWidth, width),
+            height: clampMerchantCardLayoutValue(current.height, item.height, item.minHeight),
+          };
+        });
+      }
+      if (mode === "same-height") {
+        const height = Math.max(...selected.map((item) => item.height));
+        selected.forEach((item) => {
+          const current = merchantCardLayout[item.key] ?? {};
+          nextLayout[item.key] = {
+            x: clampMerchantCardLayoutValue(current.x, item.x),
+            y: clampMerchantCardLayoutValue(current.y, item.y),
+            width: clampMerchantCardLayoutValue(current.width, item.width, item.minWidth),
+            height: Math.max(item.minHeight, height),
+          };
+        });
+      }
+      if (mode === "distribute-x") {
+        if (selected.length < 2) return;
+        const sorted = [...selected].sort((a, b) => a.x - b.x);
+        const totalWidth = sorted.reduce((sum, item) => sum + item.width, 0);
+        const gap = sorted.length > 1 ? Math.max(0, (merchantCardCanvasWidth - totalWidth) / (sorted.length - 1)) : 0;
+        const baselineY = Math.min(...sorted.map((item) => item.y));
+        let cursorX = 0;
+        sorted.forEach((item) => {
+          const current = merchantCardLayout[item.key] ?? {};
+          nextLayout[item.key] = {
+            x: Math.max(0, Math.round(cursorX)),
+            y: Math.max(0, Math.round(baselineY)),
+            width: clampMerchantCardLayoutValue(current.width, item.width, item.minWidth),
+            height: clampMerchantCardLayoutValue(current.height, item.height, item.minHeight),
+          };
+          cursorX += item.width + gap;
+        });
+      }
+      if (mode === "distribute-y") {
+        if (selected.length < 2) return;
+        const sorted = [...selected].sort((a, b) => a.y - b.y);
+        const totalHeight = sorted.reduce((sum, item) => sum + item.height, 0);
+        const gap = sorted.length > 1 ? Math.max(0, (merchantCardCanvasHeight - totalHeight) / (sorted.length - 1)) : 0;
+        const baselineX = Math.min(...sorted.map((item) => item.x));
+        let cursorY = 0;
+        sorted.forEach((item) => {
+          const current = merchantCardLayout[item.key] ?? {};
+          nextLayout[item.key] = {
+            x: Math.max(0, Math.round(baselineX)),
+            y: Math.max(0, Math.round(cursorY)),
+            width: clampMerchantCardLayoutValue(current.width, item.width, item.minWidth),
+            height: clampMerchantCardLayoutValue(current.height, item.height, item.minHeight),
+          };
+          cursorY += item.height + gap;
+        });
+      }
+      onChange({ merchantCardLayout: nextLayout });
+    };
+    const applyMerchantCardLayoutTemplate = (mode: "single-tight" | "single-wide" | "double-column") => {
+      if (merchantCardEntries.length === 0) return;
+      const safeCanvasWidth = Math.max(
+        260,
+        Math.min(
+          1200,
+          typeof block.props.blockWidth === "number" && Number.isFinite(block.props.blockWidth)
+            ? Math.round(block.props.blockWidth) - 64
+            : merchantCardCanvasWidth,
+        ),
+      );
+      const nextLayout: MerchantCardLayoutConfig = { ...merchantCardLayout };
+      if (mode === "single-tight") {
+        const width = Math.max(220, Math.min(safeCanvasWidth, 360));
+        merchantCardEntries.forEach((item, idx) => {
+          nextLayout[item.key] = {
+            x: 0,
+            y: maybeSnapMerchantCard(idx * 204),
+            width: Math.max(item.minWidth, width),
+            height: Math.max(item.minHeight, 190),
+          };
+        });
+      }
+      if (mode === "single-wide") {
+        const width = Math.max(260, safeCanvasWidth);
+        merchantCardEntries.forEach((item, idx) => {
+          nextLayout[item.key] = {
+            x: 0,
+            y: maybeSnapMerchantCard(idx * 214),
+            width: Math.max(item.minWidth, width),
+            height: Math.max(item.minHeight, 190),
+          };
+        });
+      }
+      if (mode === "double-column") {
+        const gap = 14;
+        const width = Math.max(220, Math.floor((safeCanvasWidth - gap) / 2));
+        merchantCardEntries.forEach((item, idx) => {
+          const col = idx % 2;
+          const row = Math.floor(idx / 2);
+          nextLayout[item.key] = {
+            x: maybeSnapMerchantCard(col * (width + gap)),
+            y: maybeSnapMerchantCard(row * 204),
+            width: Math.max(item.minWidth, width),
+            height: Math.max(item.minHeight, 190),
+          };
+        });
+      }
+      setActiveMerchantCardLayoutKeys(merchantCardEntries.map((item) => item.key));
+      onChange({ merchantCardLayout: nextLayout });
+    };
+
+    return (
+      <section
+        data-block-id={block.id}
+        className={`${shellClass} pointer-events-none`}
+        style={offsetStyle}
+      >
+        <EditorBlockHeader
+          draggingBlockId={draggingBlockId}
+          isSelected={isSelected}
+          onDragHandleMouseDown={onDragHandleMouseDown}
+          onNudge={onNudge}
+          onOpenLayerSettings={openLayerSettings}
+          onEditTypography={editTypography}
+          onInsertText={insertTextBox}
+          onInsertImage={insertImage}
+          onEditImageSettings={editImageSettings}
+          onEditBorderStyle={editBorderSettings}
+          onDelete={onDelete}
+        />
+        <div
+          ref={resizeTargetRef}
+          className={`${cardClass} relative`}
+          onClick={onSelect}
+          style={{ ...blockBackgroundStyle, ...blockSizeStyle, ...borderInlineStyle }}
+        >
+          {imageDialog}
+          {imageSettingsDialog}
+          {borderSettingsDialog}
+          {merchantButtonStyleDialog}
+          {merchantCardStyleDialog}
+          {merchantCardTypographyDialog}
+          {layerSettingsDialog}
+          {typographyDialog}
+          {isSelected ? (
+            <>
+              <div className="space-y-1 mt-3">
+                <RichTextEditor
+                  field="heading"
+                  className="border p-2 rounded w-full text-xl font-bold"
+                  value={block.props.heading ?? ""}
+                  onChange={handleRichFieldChange}
+                  onActivate={registerActiveEditor}
+                  onSelectionChange={updateSelectionRange}
+                />
+              </div>
+              <div className="space-y-1 mt-3">
+                <RichTextEditor
+                  field="text"
+                  className="border p-2 rounded w-full min-h-[90px] text-gray-700"
+                  value={block.props.text ?? ""}
+                  onChange={handleRichFieldChange}
+                  onActivate={registerActiveEditor}
+                  onSelectionChange={updateSelectionRange}
+                />
+              </div>
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <label className="space-y-1 text-sm text-gray-600">
+                  <span>显示数量</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={24}
+                    className="w-full rounded border p-2"
+                    value={maxItems}
+                    onChange={(e) =>
+                      onChange({
+                        maxItems: Math.max(1, Math.min(24, Number(e.target.value) || 1)),
+                      })
+                    }
+                  />
+                </label>
+                <label className="space-y-1 text-sm text-gray-600">
+                  <span>空状态文案</span>
+                  <textarea
+                    className="min-h-[88px] w-full rounded border p-2"
+                    value={block.props.emptyText ?? ""}
+                    onChange={(e) => onChange({ emptyText: e.target.value })}
+                  />
+                </label>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm"
+                  onClick={editMerchantButtonStyle}
+                >
+                  按钮样式
+                </button>
+                <button
+                  type="button"
+                  className="px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm"
+                  onClick={editMerchantCardStyle}
+                >
+                  商户框样式
+                </button>
+                <button
+                  type="button"
+                  className="px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm"
+                  onClick={editMerchantCardTypography}
+                >
+                  商户框字体
+                </button>
+              </div>
+              <div className="mt-3 rounded-lg border border-dashed border-gray-300 bg-gray-50 p-3">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-medium text-gray-800">标签行业设置</div>
+                  <button
+                    type="button"
+                    className="rounded border bg-white px-2 py-1 text-xs hover:bg-gray-100"
+                    onClick={() => {
+                      const next = [
+                        ...merchantTabs,
+                        {
+                          id: `tab-${Date.now()}`,
+                          label: `标签${merchantTabs.length + 1}`,
+                          industry: "餐饮" as const,
+                        },
+                      ];
+                      saveMerchantTabs(next);
+                    }}
+                  >
+                    新增标签
+                  </button>
+                </div>
+                <div className="mt-2 space-y-2">
+                  {merchantTabs.map((tab, index) => {
+                    const locked = index === 0;
+                    return (
+                      <div key={tab.id} className="grid gap-2 rounded border bg-white p-2 md:grid-cols-[1fr_140px_88px]">
+                        <input
+                          className={`rounded border px-2 py-1.5 text-sm ${locked ? "bg-gray-100 text-gray-500" : ""}`}
+                          value={tab.label}
+                          disabled={locked}
+                          style={merchantInputTextStyle}
+                          onChange={(event) => {
+                            const nextLabel = event.target.value;
+                            const next = merchantTabs.map((item, itemIndex) =>
+                              itemIndex === index ? { ...item, label: nextLabel } : item,
+                            );
+                            saveMerchantTabs(next);
+                          }}
+                        />
+                        <select
+                          className={`rounded border px-2 py-1.5 text-sm ${locked ? "bg-gray-100 text-gray-500" : ""}`}
+                          value={tab.industry}
+                          disabled={locked}
+                          onChange={(event) => {
+                            const nextIndustry = event.target.value as MerchantIndustryTab["industry"];
+                            const next = merchantTabs.map((item, itemIndex) =>
+                              itemIndex === index ? { ...item, industry: nextIndustry } : item,
+                            );
+                            saveMerchantTabs(next);
+                          }}
+                        >
+                          <option value="all">全部商户</option>
+                          {MERCHANT_INDUSTRY_OPTIONS.map((item) => (
+                            <option key={item} value={item}>
+                              {item}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          className={`rounded border px-2 py-1.5 text-xs ${
+                            locked ? "cursor-not-allowed bg-gray-100 text-gray-400" : "bg-white hover:bg-gray-100"
+                          }`}
+                          disabled={locked}
+                          onClick={() => {
+                            if (locked) return;
+                            saveMerchantTabs(merchantTabs.filter((_, itemIndex) => itemIndex !== index));
+                          }}
+                        >
+                          删除
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="mt-2 text-xs text-gray-500">首个标签固定为“推荐”，对应全部商户。</p>
+              </div>
+              <div className="mt-3">
+                <div className="text-xs text-gray-500 mb-2">拖动可改位置，拉伸右边缘改宽度，拉伸下边缘改高度</div>
+                <div className="mb-2 flex flex-wrap gap-2">
+                  <label className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded border bg-white">
+                    <input
+                      type="checkbox"
+                      checked={merchantCardLayoutSnapEnabled}
+                      onChange={(e) => setMerchantCardLayoutSnapEnabled(e.target.checked)}
+                    />
+                    {"吸附网格"}
+                  </label>
+                  <select
+                    className="px-2 py-1 text-xs rounded border bg-white"
+                    value={merchantCardLayoutSnapStep}
+                    onChange={(e) => setMerchantCardLayoutSnapStep(Math.max(2, Math.min(40, Number(e.target.value) || 8)))}
+                  >
+                    {[4, 6, 8, 10, 12, 16, 20].map((step) => (
+                      <option key={step} value={step}>
+                        {`网格 ${step}px`}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50"
+                    onClick={() => applyMerchantCardLayoutTemplate("single-tight")}
+                  >
+                    {"紧凑单列"}
+                  </button>
+                  <button
+                    type="button"
+                    className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50"
+                    onClick={() => applyMerchantCardLayoutTemplate("single-wide")}
+                  >
+                    {"宽松单列"}
+                  </button>
+                  <button
+                    type="button"
+                    className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50"
+                    onClick={() => applyMerchantCardLayoutTemplate("double-column")}
+                  >
+                    {"双列"}
+                  </button>
+                  <button
+                    type="button"
+                    className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50"
+                    onClick={() => alignSelectedMerchantCardEntries("left")}
+                  >
+                    {"左"}
+                  </button>
+                  <button
+                    type="button"
+                    className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50"
+                    onClick={() => alignSelectedMerchantCardEntries("right")}
+                  >
+                    {"右"}
+                  </button>
+                  <button
+                    type="button"
+                    className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50"
+                    onClick={() => alignSelectedMerchantCardEntries("same-width")}
+                  >
+                    {"统一宽度"}
+                  </button>
+                  <button
+                    type="button"
+                    className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50"
+                    onClick={() => alignSelectedMerchantCardEntries("same-height")}
+                  >
+                    {"统一高度"}
+                  </button>
+                  <button
+                    type="button"
+                    className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50"
+                    onClick={() => alignSelectedMerchantCardEntries("distribute-x")}
+                  >
+                    {"横向均分"}
+                  </button>
+                  <button
+                    type="button"
+                    className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50"
+                    onClick={() => alignSelectedMerchantCardEntries("distribute-y")}
+                  >
+                    {"纵向均分"}
+                  </button>
+                </div>
+                <div
+                  ref={merchantCardLayoutCanvasFocusRef}
+                  className="relative rounded border border-dashed border-gray-300 bg-transparent"
+                  style={{
+                    minHeight: `${merchantCardCanvasHeight}px`,
+                    width: `${merchantCardCanvasWidth}px`,
+                    maxWidth: "100%",
+                    backgroundImage: merchantCardLayoutSnapEnabled
+                      ? "linear-gradient(to right, rgba(17,24,39,0.08) 1px, transparent 1px), linear-gradient(to bottom, rgba(17,24,39,0.08) 1px, transparent 1px)"
+                      : undefined,
+                    backgroundSize: merchantCardLayoutSnapEnabled
+                      ? `${Math.max(2, Math.min(40, merchantCardLayoutSnapStep))}px ${Math.max(2, Math.min(40, merchantCardLayoutSnapStep))}px`
+                      : undefined,
+                  }}
+                  tabIndex={0}
+                  onKeyDown={handleMerchantCardLayoutCanvasKeyDown}
+                >
+                  {merchantLayoutEntries.map((item) => (
+                    <div
+                      key={item.key}
+                      className={`absolute rounded border bg-white px-2 py-1 shadow-sm cursor-move overflow-hidden ${
+                        activeMerchantCardLayoutKeys.includes(item.key)
+                          ? "border-blue-500 bg-blue-50/70 ring-4 ring-blue-400/45 shadow-md"
+                          : "border-gray-300"
+                      }`}
+                      style={{ left: `${item.x}px`, top: `${item.y}px`, width: `${item.width}px`, height: `${item.height}px` }}
+                      onMouseDown={(event) => startMerchantCardLayoutDrag(item.key, event)}
+                    >
+                      <div className="text-[11px] text-gray-500 truncate">{item.label}</div>
+                      <div className="text-xs text-gray-800 truncate">{`宽${item.width} 高${item.height}`}</div>
+                      <div
+                        className="absolute top-0 right-0 h-full w-2 cursor-ew-resize"
+                        onMouseDown={(event) => startMerchantCardLayoutResize(item.key, "width", event)}
+                      />
+                      <div
+                        className="absolute bottom-0 left-0 h-2 w-full cursor-ns-resize"
+                        onMouseDown={(event) => startMerchantCardLayoutResize(item.key, "height", event)}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              {hasMerchantHeading ? (
+                <h2
+                  className="text-xl font-bold whitespace-pre-wrap break-words"
+                  dangerouslySetInnerHTML={{ __html: toRichHtml(block.props.heading, "商户列表") }}
+                />
+              ) : null}
+              {hasMerchantText ? (
+                <div
+                  className="mt-2 text-sm text-gray-600 whitespace-pre-wrap break-words"
+                  dangerouslySetInnerHTML={{ __html: toRichHtml(block.props.text, "") }}
+                />
+              ) : null}
+              <div className="mt-4 max-w-full overflow-x-auto pb-1">
+                <div className="relative" style={{ width: `${merchantCardCanvasWidth}px`, minHeight: `${merchantCardsContainerHeight}px` }}>
+                  {merchantTabs.map((tab, index) => {
+                    const layout = merchantLayoutEntries.find(
+                      (item) => item.kind === "tab" && item.key === getMerchantTabKey(index),
+                    );
+                    if (!layout) return null;
+                    const active = tab.id === activeMerchantTab.id;
+                    return (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        className={`${merchantTabButtonBaseClass} ${getBlockBorderClass(
+                          active ? merchantTabButtonActiveBorderStyle : merchantTabButtonBorderStyle,
+                        )} ${active ? "text-white" : "text-slate-700 hover:brightness-[0.98]"}`}
+                        style={{
+                          left: `${layout.x}px`,
+                          top: `${layout.y}px`,
+                          width: `${layout.width}px`,
+                          height: `${layout.height}px`,
+                          ...(active ? merchantTabButtonActiveStyle : merchantTabButtonStyle),
+                        }}
+                        onClick={() => {
+                          setActiveMerchantIndustryTabId(tab.id);
+                          setMerchantPreviewPageIndex(0);
+                        }}
+                      >
+                        <span style={merchantButtonLabelStyle}>{tab.label}</span>
+                      </button>
+                    );
+                  })}
+                  {merchantSites.map((site, index) => {
+                    const layout = buildMerchantCardPlacement(merchantLayoutEntries, index);
+                    const targetIndustry = (site.industry || "all") as MerchantIndustryTabIndustry;
+                    const styleConfig = resolveMerchantIndustryCardStyle(
+                      block.props.merchantCardIndustryStyles,
+                      targetIndustry,
+                      legacyMerchantCardStyle,
+                    );
+                    const merchantCardStyle = {
+                      ...getBlockBorderInlineStyle(styleConfig.borderStyle, styleConfig.borderColor),
+                      ...getColorLayerStyle(styleConfig.bgColor, styleConfig.bgOpacity),
+                    };
+                    return (
+                      <article
+                        key={site.id}
+                        className={`absolute rounded-xl p-4 overflow-auto ${getBlockBorderClass(styleConfig.borderStyle)}`}
+                        style={{
+                          left: `${layout.x}px`,
+                          top: `${layout.y}px`,
+                          width: `${layout.width}px`,
+                          height: `${layout.height}px`,
+                          ...merchantCardStyle,
+                        }}
+                      >
+                        <div className="relative min-w-0 h-full">
+                          <div
+                            className={`${merchantCardTextBoxClass} text-base font-semibold text-slate-900`}
+                            style={{
+                              left: `${merchantCardNameTextPosition.x}px`,
+                              top: `${merchantCardNameTextPosition.y}px`,
+                              position: "absolute",
+                              ...merchantCardNameTextStyle,
+                            }}
+                          >
+                            <span className="truncate">{(site.merchantName ?? "").trim() || site.name}</span>
+                          </div>
+                          <div
+                            className={`${merchantCardTextBoxClass} text-xs text-slate-500`}
+                            style={{
+                              left: `${merchantCardIndustryTextPosition.x}px`,
+                              top: `${merchantCardIndustryTextPosition.y}px`,
+                              position: "absolute",
+                              ...merchantCardIndustryTextStyle,
+                            }}
+                          >
+                            <span className="truncate">{site.industry || site.category || "月"}</span>
+                          </div>
+                          <div
+                            className={`${merchantCardTextBoxClass} text-xs text-slate-500`}
+                            style={{
+                              left: `${merchantCardDomainTextPosition.x}px`,
+                              top: `${merchantCardDomainTextPosition.y}px`,
+                              position: "absolute",
+                              ...merchantCardDomainTextStyle,
+                            }}
+                          >
+                            <span className="truncate">{(site.location?.country ?? "") || "-"} / {(site.location?.province ?? "") || "-"} / {(site.location?.city ?? "") || "-"}</span>
+                          </div>
+                        </div>
+                      </article>
+                    );
+                  })}
+                  {merchantSites.length === 0 ? (
+                    <div
+                      className="absolute rounded-lg border border-dashed px-4 py-6 text-sm text-slate-500"
+                      style={{
+                        left: "0px",
+                        top: `${merchantCardEntries.length > 0 ? Math.min(...merchantCardEntries.map((item) => item.y)) : 52}px`,
+                        width: `${merchantCardCanvasWidth}px`,
+                        minHeight: `${Math.max(72, merchantCardEntries[0]?.height ?? 72)}px`,
+                      }}
+                    >
+                      {emptyText}
+                    </div>
+                  ) : null}
+                  {merchantPrevLayout ? (
+                    <button
+                      type="button"
+                      className={`${merchantPagerButtonBaseClass} ${getBlockBorderClass(
+                        safeMerchantPreviewPageIndex <= 0 ? merchantPagerButtonDisabledBorderStyle : merchantPagerButtonBorderStyle,
+                      )} ${safeMerchantPreviewPageIndex <= 0 ? "text-slate-500" : "text-slate-700 hover:brightness-[0.98]"}`}
+                      style={{
+                        left: `${merchantPrevLayout.x}px`,
+                        top: `${merchantPrevLayout.y}px`,
+                        width: `${merchantPrevLayout.width}px`,
+                        height: `${merchantPrevLayout.height}px`,
+                        ...(safeMerchantPreviewPageIndex <= 0 ? merchantPagerButtonDisabledStyle : merchantPagerButtonStyle),
+                      }}
+                      disabled={safeMerchantPreviewPageIndex <= 0}
+                      onClick={() => setMerchantPreviewPageIndex((prev) => Math.max(0, prev - 1))}
+                    >
+                      <span style={merchantButtonLabelStyle}>上一页</span>
+                    </button>
+                  ) : null}
+                  {merchantNextLayout ? (
+                    <button
+                      type="button"
+                      className={`${merchantPagerButtonBaseClass} ${getBlockBorderClass(
+                        safeMerchantPreviewPageIndex >= merchantTotalPages - 1
+                          ? merchantPagerButtonDisabledBorderStyle
+                          : merchantPagerButtonBorderStyle,
+                      )} ${safeMerchantPreviewPageIndex >= merchantTotalPages - 1 ? "text-slate-500" : "text-slate-700 hover:brightness-[0.98]"}`}
+                      style={{
+                        left: `${merchantNextLayout.x}px`,
+                        top: `${merchantNextLayout.y}px`,
+                        width: `${merchantNextLayout.width}px`,
+                        height: `${merchantNextLayout.height}px`,
+                        ...(safeMerchantPreviewPageIndex >= merchantTotalPages - 1
+                          ? merchantPagerButtonDisabledStyle
+                          : merchantPagerButtonStyle),
+                      }}
+                      disabled={safeMerchantPreviewPageIndex >= merchantTotalPages - 1}
+                      onClick={() => setMerchantPreviewPageIndex((prev) => Math.min(merchantTotalPages - 1, prev + 1))}
+                    >
+                      <span style={merchantButtonLabelStyle}>下一页</span>
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            </>
+          )}
+          {resizeHandles}
+        </div>
+      </section>
+    );
+  }
+
+  if (block.type === "search-bar") {
+    type SearchLayoutKey = "locate" | "country" | "province" | "city" | "keyword" | "action";
+    const locateLabel = (block.props.locateLabel ?? "").trim() || "定位";
+    const actionLabel = (block.props.actionLabel ?? "").trim() || "搜索";
+    const cityPlaceholder = (block.props.cityPlaceholder ?? "").trim() || "选择城市";
+    const searchPlaceholder = (block.props.searchPlaceholder ?? "").trim() || "鎼滅储鍐呭";
+    const countryOptions = getEuropeCountryOptions();
+    const resolvedCountryCode = (() => {
+      const fromProps = (block.props.defaultCountryCode ?? "").toUpperCase();
+      if (countryOptions.some((item) => item.code === fromProps)) return fromProps;
+      return countryOptions[0]?.code ?? "";
+    })();
+    const provinceOptions = getEuropeProvinceOptions(resolvedCountryCode);
+    const resolvedProvinceCode = (() => {
+      const fromProps = (block.props.defaultProvinceCode ?? "").trim();
+      if (provinceOptions.some((item) => item.code === fromProps)) return fromProps;
+      return provinceOptions[0]?.code ?? "";
+    })();
+    const cityOptions = getEuropeCityOptions(resolvedCountryCode, resolvedProvinceCode);
+    const resolvedCity = (() => {
+      const fromProps = (block.props.defaultCity ?? "").trim();
+      if (cityOptions.includes(fromProps)) return fromProps;
+      return cityOptions[0] ?? "";
+    })();
+    const resolvedCountryName = countryOptions.find((item) => item.code === resolvedCountryCode)?.name ?? "欧洲国家";
+    const resolvedProvinceName =
+      provinceOptions.find((item) => item.code === resolvedProvinceCode)?.name ?? "省份";
+    const hasSearchHeading = hasVisibleRichText(block.props.heading);
+    const hasSearchText = hasVisibleRichText(block.props.text);
+    const searchButtonBgColor = (block.props.searchButtonBgColor ?? "#ffffff").trim() || "#ffffff";
+    const searchButtonBgOpacity =
+      typeof block.props.searchButtonBgOpacity === "number" && Number.isFinite(block.props.searchButtonBgOpacity)
+        ? Math.max(0, Math.min(1, block.props.searchButtonBgOpacity))
+        : 1;
+    const searchButtonBorderStyle = (block.props.searchButtonBorderStyle ?? "solid") as BlockBorderStyle;
+    const searchButtonBorderColor = normalizeNavBorderColor(block.props.searchButtonBorderColor ?? "#6b7280", "#6b7280");
+    const searchButtonActiveBgColor = (block.props.searchButtonActiveBgColor ?? "#000000").trim() || "#000000";
+    const searchButtonActiveBgOpacity =
+      typeof block.props.searchButtonActiveBgOpacity === "number" && Number.isFinite(block.props.searchButtonActiveBgOpacity)
+        ? Math.max(0, Math.min(1, block.props.searchButtonActiveBgOpacity))
+        : 1;
+    const searchButtonActiveBorderStyle = (block.props.searchButtonActiveBorderStyle ?? "solid") as BlockBorderStyle;
+    const searchButtonActiveBorderColor = normalizeNavBorderColor(
+      block.props.searchButtonActiveBorderColor ?? "#111827",
+      "#111827",
+    );
+    const locateButtonClass = `flex h-full w-full items-center justify-center rounded px-3 text-sm hover:brightness-[0.98] ${getBlockBorderClass(searchButtonBorderStyle)}`;
+    const locateButtonStyle = {
+      ...getBlockBorderInlineStyle(searchButtonBorderStyle, searchButtonBorderColor),
+      ...getColorLayerStyle(searchButtonBgColor, searchButtonBgOpacity),
+    };
+    const actionButtonClass = `flex h-full w-full items-center justify-center whitespace-nowrap rounded px-4 text-sm text-white hover:brightness-[0.98] ${getBlockBorderClass(searchButtonActiveBorderStyle)}`;
+    const actionButtonStyle = {
+      ...getBlockBorderInlineStyle(searchButtonActiveBorderStyle, searchButtonActiveBorderColor),
+      ...getColorLayerStyle(searchButtonActiveBgColor, searchButtonActiveBgOpacity),
+    };
+    const searchTypographyBaseStyle: Record<string, string | number> = {};
+    if (block.props.fontFamily?.trim()) searchTypographyBaseStyle.fontFamily = block.props.fontFamily.trim();
+    if (typeof block.props.fontSize === "number" && Number.isFinite(block.props.fontSize) && block.props.fontSize > 0) {
+      searchTypographyBaseStyle.fontSize = block.props.fontSize;
+    }
+    if (block.props.fontWeight) searchTypographyBaseStyle.fontWeight = block.props.fontWeight;
+    if (block.props.fontStyle) searchTypographyBaseStyle.fontStyle = block.props.fontStyle;
+    if (block.props.textDecoration) searchTypographyBaseStyle.textDecoration = block.props.textDecoration;
+    const searchFontColor = (block.props.fontColor ?? "").trim();
+    const searchFontColorIsGradient = !!searchFontColor && isGradientToken(searchFontColor);
+    const searchButtonLabelStyle: Record<string, string | number> = {
+      ...searchTypographyBaseStyle,
+      ...(searchFontColor
+        ? searchFontColorIsGradient
+          ? {
+              backgroundImage: searchFontColor,
+              backgroundClip: "text",
+              WebkitBackgroundClip: "text",
+              color: "transparent",
+            }
+          : { color: searchFontColor }
+        : {}),
+    };
+    const searchInputTextStyle: Record<string, string | number> = {
+      ...searchTypographyBaseStyle,
+      ...(searchFontColor && !searchFontColorIsGradient ? { color: searchFontColor } : {}),
+    };
+    const searchLayout = block.props.searchLayout ?? {};
+    const clampSearchLayoutValue = (value: unknown, fallback: number, min = 0) =>
+      typeof value === "number" && Number.isFinite(value) ? Math.max(min, Math.round(value)) : fallback;
+    const searchEntries = [
+      {
+        key: "locate" as SearchLayoutKey,
+        label: "定位按钮",
+        value: locateLabel,
+        x: clampSearchLayoutValue(searchLayout.locate?.x, 0),
+        y: clampSearchLayoutValue(searchLayout.locate?.y, 0),
+        width: clampSearchLayoutValue(searchLayout.locate?.width, 72, 56),
+        height: clampSearchLayoutValue(searchLayout.locate?.height, 40, 32),
+        minWidth: 56,
+        minHeight: 32,
+      },
+      {
+        key: "country" as SearchLayoutKey,
+        label: "国",
+        value: resolvedCountryName,
+        x: clampSearchLayoutValue(searchLayout.country?.x, 82),
+        y: clampSearchLayoutValue(searchLayout.country?.y, 0),
+        width: clampSearchLayoutValue(searchLayout.country?.width, 190, 130),
+        height: clampSearchLayoutValue(searchLayout.country?.height, 40, 32),
+        minWidth: 130,
+        minHeight: 32,
+      },
+      {
+        key: "province" as SearchLayoutKey,
+        label: "省份",
+        value: resolvedProvinceName,
+        x: clampSearchLayoutValue(searchLayout.province?.x, 282),
+        y: clampSearchLayoutValue(searchLayout.province?.y, 0),
+        width: clampSearchLayoutValue(searchLayout.province?.width, 190, 130),
+        height: clampSearchLayoutValue(searchLayout.province?.height, 40, 32),
+        minWidth: 130,
+        minHeight: 32,
+      },
+      {
+        key: "city" as SearchLayoutKey,
+        label: "城市",
+        value: resolvedCity || cityPlaceholder,
+        x: clampSearchLayoutValue(searchLayout.city?.x, 482),
+        y: clampSearchLayoutValue(searchLayout.city?.y, 0),
+        width: clampSearchLayoutValue(searchLayout.city?.width, 190, 130),
+        height: clampSearchLayoutValue(searchLayout.city?.height, 40, 32),
+        minWidth: 130,
+        minHeight: 32,
+      },
+      {
+        key: "keyword" as SearchLayoutKey,
+        label: "搜索输入",
+        value: searchPlaceholder,
+        x: clampSearchLayoutValue(searchLayout.keyword?.x, 0),
+        y: clampSearchLayoutValue(searchLayout.keyword?.y, 52),
+        width: clampSearchLayoutValue(searchLayout.keyword?.width, 670, 180),
+        height: clampSearchLayoutValue(searchLayout.keyword?.height, 40, 32),
+        minWidth: 180,
+        minHeight: 32,
+      },
+      {
+        key: "action" as SearchLayoutKey,
+        label: "搜索按钮",
+        value: actionLabel,
+        x: clampSearchLayoutValue(searchLayout.action?.x, 680),
+        y: clampSearchLayoutValue(searchLayout.action?.y, 52),
+        width: clampSearchLayoutValue(searchLayout.action?.width, 72, 64),
+        height: clampSearchLayoutValue(searchLayout.action?.height, 40, 32),
+        minWidth: 64,
+        minHeight: 32,
+      },
+    ];
+    const findSearchEntry = (key: SearchLayoutKey) => searchEntries.find((item) => item.key === key);
+    const locateEntry = findSearchEntry("locate") ?? { x: 0, y: 0, width: 72, height: 40 };
+    const countryEntry = findSearchEntry("country") ?? { x: 82, y: 0, width: 190, height: 40 };
+    const provinceEntry = findSearchEntry("province") ?? { x: 282, y: 0, width: 190, height: 40 };
+    const cityEntry = findSearchEntry("city") ?? { x: 482, y: 0, width: 190, height: 40 };
+    const keywordEntry = findSearchEntry("keyword") ?? { x: 0, y: 52, width: 670, height: 40 };
+    const actionEntry = findSearchEntry("action") ?? { x: 680, y: 52, width: 72, height: 40 };
+    const searchCanvasHeight = Math.max(52, ...searchEntries.map((item) => item.y + item.height));
+    const searchPreviewOffsetY = Math.min(...searchEntries.map((item) => item.y));
+    const getSearchPreviewY = (value: number) => Math.max(0, value - searchPreviewOffsetY);
+    const searchPreviewCanvasHeight = Math.max(52, ...searchEntries.map((item) => getSearchPreviewY(item.y) + item.height));
+    const searchCanvasWidth = Math.max(260, ...searchEntries.map((item) => item.x + item.width));
+    const snapStep = Math.max(2, Math.min(40, Math.round(searchLayoutSnapStep) || 8));
+    const maybeSnap = (value: number, min = 0) => {
+      const clamped = Math.max(min, Math.round(value));
+      if (!searchLayoutSnapEnabled) return clamped;
+      return Math.max(min, Math.round(clamped / snapStep) * snapStep);
+    };
+    const selectSearchLayoutEntry = (key: SearchLayoutKey, multi: boolean) => {
+      if (multi) {
+        setActiveSearchLayoutKeys((prev) => (prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key]));
+      } else {
+        setActiveSearchLayoutKeys([key]);
+      }
+    };
+    const startSearchLayoutDrag = (key: SearchLayoutKey, event: ReactMouseEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const source = findSearchEntry(key);
+      if (!source) return;
+      if (event.ctrlKey) {
+        selectSearchLayoutEntry(key, true);
+        return;
+      }
+      const selectedKeys =
+        activeSearchLayoutKeys.includes(key) && activeSearchLayoutKeys.length > 0 ? activeSearchLayoutKeys : [key];
+      setActiveSearchLayoutKeys(selectedKeys);
+      searchLayoutCanvasFocusRef.current?.focus();
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const originMap = new Map(
+        selectedKeys.map((selectedKey) => {
+          const found = findSearchEntry(selectedKey);
+          return [
+            selectedKey,
+            { x: found?.x ?? 0, y: found?.y ?? 0, width: found?.width ?? 160, height: found?.height ?? 40 },
+          ] as const;
+        }),
+      );
+      const onMove = (e: MouseEvent) => {
+        const dx = Math.round(e.clientX - startX);
+        const dy = Math.round(e.clientY - startY);
+        const nextLayout = { ...searchLayout };
+        selectedKeys.forEach((selectedKey) => {
+          const origin = originMap.get(selectedKey);
+          const found = findSearchEntry(selectedKey);
+          if (!origin || !found) return;
+          nextLayout[selectedKey] = {
+            x: maybeSnap(origin.x + dx),
+            y: maybeSnap(origin.y + dy),
+            width: clampSearchLayoutValue((searchLayout[selectedKey] ?? {}).width, origin.width, found.minWidth),
+            height: clampSearchLayoutValue((searchLayout[selectedKey] ?? {}).height, origin.height, found.minHeight),
+          };
+        });
+        onChange({ searchLayout: nextLayout });
+      };
+      const onUp = () => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    };
+    const startSearchLayoutResize = (
+      key: SearchLayoutKey,
+      direction: "width" | "height",
+      event: ReactMouseEvent<HTMLDivElement>,
+    ) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const source = findSearchEntry(key);
+      if (!source) return;
+      const selectedKeys =
+        activeSearchLayoutKeys.includes(key) && activeSearchLayoutKeys.length > 0 ? activeSearchLayoutKeys : [key];
+      setActiveSearchLayoutKeys(selectedKeys);
+      searchLayoutCanvasFocusRef.current?.focus();
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const originWidths = new Map(
+        selectedKeys.map((selectedKey) => {
+          const found = findSearchEntry(selectedKey);
+          return [selectedKey, found?.width ?? 160] as const;
+        }),
+      );
+      const originHeights = new Map(
+        selectedKeys.map((selectedKey) => {
+          const found = findSearchEntry(selectedKey);
+          return [selectedKey, found?.height ?? 40] as const;
+        }),
+      );
+      const onMove = (e: MouseEvent) => {
+        const deltaWidth = Math.round(e.clientX - startX);
+        const deltaHeight = Math.round(e.clientY - startY);
+        const nextLayout = { ...searchLayout };
+        selectedKeys.forEach((selectedKey) => {
+          const found = findSearchEntry(selectedKey);
+          if (!found) return;
+          const current = searchLayout[selectedKey] ?? {};
+          const originWidth = originWidths.get(selectedKey) ?? found.width;
+          const originHeight = originHeights.get(selectedKey) ?? found.height;
+          nextLayout[selectedKey] = {
+            x: clampSearchLayoutValue(current.x, found.x),
+            y: clampSearchLayoutValue(current.y, found.y),
+            width:
+              direction === "width"
+                ? maybeSnap(originWidth + deltaWidth, found.minWidth)
+                : clampSearchLayoutValue(current.width, found.width, found.minWidth),
+            height:
+              direction === "height"
+                ? maybeSnap(originHeight + deltaHeight, found.minHeight)
+                : clampSearchLayoutValue(current.height, found.height, found.minHeight),
+          };
+        });
+        onChange({ searchLayout: nextLayout });
+      };
+      const onUp = () => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    };
+    const handleSearchLayoutCanvasKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+      if (activeSearchLayoutKeys.length === 0) return;
+      if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) return;
+      event.preventDefault();
+      const step = event.shiftKey ? (searchLayoutSnapEnabled ? Math.max(snapStep * 2, 10) : 10) : searchLayoutSnapEnabled ? snapStep : 2;
+      const deltaX = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
+      const deltaY = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
+      const nextLayout = { ...searchLayout };
+      activeSearchLayoutKeys.forEach((selectedKey) => {
+        const source = findSearchEntry(selectedKey);
+        if (!source) return;
+        const current = searchLayout[selectedKey] ?? {};
+        nextLayout[selectedKey] = {
+          x: maybeSnap(clampSearchLayoutValue(current.x, source.x) + deltaX),
+          y: maybeSnap(clampSearchLayoutValue(current.y, source.y) + deltaY),
+          width: clampSearchLayoutValue(current.width, source.width, source.minWidth),
+          height: clampSearchLayoutValue(current.height, source.height, source.minHeight),
+        };
+      });
+      onChange({ searchLayout: nextLayout });
+    };
+    const alignSelectedSearchLayoutEntries = (
+      mode: "left" | "right" | "same-width" | "same-height" | "distribute-x" | "distribute-y",
+    ) => {
+      const selected = searchEntries.filter((item) => activeSearchLayoutKeys.includes(item.key));
+      if (selected.length === 0) return;
+      const nextLayout = { ...searchLayout };
+      if (mode === "left") {
+        const selectedMinLeft = Math.min(...selected.map((item) => item.x));
+        const deltaX = Math.max(0, selectedMinLeft);
+        selected.forEach((item) => {
+          const current = searchLayout[item.key] ?? {};
+          nextLayout[item.key] = {
+            x: maybeSnap(Math.max(0, clampSearchLayoutValue(current.x, item.x) - deltaX)),
+            y: clampSearchLayoutValue(current.y, item.y),
+            width: clampSearchLayoutValue(current.width, item.width, item.minWidth),
+            height: clampSearchLayoutValue(current.height, item.height, item.minHeight),
+          };
+        });
+      }
+      if (mode === "right") {
+        const selectedMaxRight = Math.max(...selected.map((item) => item.x + item.width));
+        const deltaX = Math.max(0, searchCanvasWidth - selectedMaxRight);
+        selected.forEach((item) => {
+          const current = searchLayout[item.key] ?? {};
+          nextLayout[item.key] = {
+            x: maybeSnap(clampSearchLayoutValue(current.x, item.x) + deltaX),
+            y: clampSearchLayoutValue(current.y, item.y),
+            width: clampSearchLayoutValue(current.width, item.width, item.minWidth),
+            height: clampSearchLayoutValue(current.height, item.height, item.minHeight),
+          };
+        });
+      }
+      if (mode === "same-width") {
+        const width = Math.max(...selected.map((item) => item.width));
+        selected.forEach((item) => {
+          const current = searchLayout[item.key] ?? {};
+          nextLayout[item.key] = {
+            x: clampSearchLayoutValue(current.x, item.x),
+            y: clampSearchLayoutValue(current.y, item.y),
+            width: Math.max(item.minWidth, width),
+            height: clampSearchLayoutValue(current.height, item.height, item.minHeight),
+          };
+        });
+      }
+      if (mode === "same-height") {
+        const height = Math.max(...selected.map((item) => item.height));
+        selected.forEach((item) => {
+          const current = searchLayout[item.key] ?? {};
+          nextLayout[item.key] = {
+            x: clampSearchLayoutValue(current.x, item.x),
+            y: clampSearchLayoutValue(current.y, item.y),
+            width: clampSearchLayoutValue(current.width, item.width, item.minWidth),
+            height: Math.max(item.minHeight, height),
+          };
+        });
+      }
+      if (mode === "distribute-x") {
+        if (selected.length < 2) return;
+        const sorted = [...selected].sort((a, b) => a.x - b.x);
+        const totalWidth = sorted.reduce((sum, item) => sum + item.width, 0);
+        const gap = sorted.length > 1 ? Math.max(0, (searchCanvasWidth - totalWidth) / (sorted.length - 1)) : 0;
+        const baselineY = Math.min(...sorted.map((item) => item.y));
+        let cursorX = 0;
+        sorted.forEach((item) => {
+          const current = searchLayout[item.key] ?? {};
+          nextLayout[item.key] = {
+            x: Math.max(0, Math.round(cursorX)),
+            y: Math.max(0, Math.round(baselineY)),
+            width: clampSearchLayoutValue(current.width, item.width, item.minWidth),
+            height: clampSearchLayoutValue(current.height, item.height, item.minHeight),
+          };
+          cursorX += item.width + gap;
+        });
+      }
+      if (mode === "distribute-y") {
+        if (selected.length < 2) return;
+        const sorted = [...selected].sort((a, b) => a.y - b.y);
+        const totalHeight = sorted.reduce((sum, item) => sum + item.height, 0);
+        const gap = sorted.length > 1 ? Math.max(0, (searchCanvasHeight - totalHeight) / (sorted.length - 1)) : 0;
+        const baselineX = Math.min(...sorted.map((item) => item.x));
+        let cursorY = 0;
+        sorted.forEach((item) => {
+          const current = searchLayout[item.key] ?? {};
+          nextLayout[item.key] = {
+            x: Math.max(0, Math.round(baselineX)),
+            y: Math.max(0, Math.round(cursorY)),
+            width: clampSearchLayoutValue(current.width, item.width, item.minWidth),
+            height: clampSearchLayoutValue(current.height, item.height, item.minHeight),
+          };
+          cursorY += item.height + gap;
+        });
+      }
+      onChange({ searchLayout: nextLayout });
+    };
+    const applySearchLayoutTemplate = (mode: "single-tight" | "single-wide" | "double-column") => {
+      if (searchEntries.length === 0) return;
+      const safeCanvasWidth = Math.max(
+        260,
+        Math.min(
+          1200,
+          typeof block.props.blockWidth === "number" && Number.isFinite(block.props.blockWidth)
+            ? Math.round(block.props.blockWidth) - 64
+            : searchCanvasWidth,
+        ),
+      );
+      const nextLayout = { ...searchLayout };
+      if (mode === "single-tight") {
+        const width = Math.max(220, Math.min(safeCanvasWidth, 360));
+        searchEntries.forEach((item, idx) => {
+          nextLayout[item.key] = {
+            x: 0,
+            y: maybeSnap(idx * 48),
+            width: Math.max(item.minWidth, width),
+            height: Math.max(item.minHeight, 40),
+          };
+        });
+      }
+      if (mode === "single-wide") {
+        const width = Math.max(240, safeCanvasWidth);
+        searchEntries.forEach((item, idx) => {
+          nextLayout[item.key] = {
+            x: 0,
+            y: maybeSnap(idx * 56),
+            width: Math.max(item.minWidth, width),
+            height: Math.max(item.minHeight, 40),
+          };
+        });
+      }
+      if (mode === "double-column") {
+        const gap = 14;
+        const width = Math.max(160, Math.floor((safeCanvasWidth - gap) / 2));
+        searchEntries.forEach((item, idx) => {
+          const col = idx % 2;
+          const row = Math.floor(idx / 2);
+          nextLayout[item.key] = {
+            x: maybeSnap(col * (width + gap)),
+            y: maybeSnap(row * 56),
+            width: Math.max(item.minWidth, width),
+            height: Math.max(item.minHeight, 40),
+          };
+        });
+      }
+      setActiveSearchLayoutKeys(searchEntries.map((item) => item.key));
+      onChange({ searchLayout: nextLayout });
+    };
+
+    return (
+      <section
+        data-block-id={block.id}
+        className={`${shellClass} pointer-events-none`}
+        style={offsetStyle}
+      >
+        <EditorBlockHeader
+          draggingBlockId={draggingBlockId}
+          isSelected={isSelected}
+          onDragHandleMouseDown={onDragHandleMouseDown}
+          onNudge={onNudge}
+          onOpenLayerSettings={openLayerSettings}
+          onEditTypography={editTypography}
+          onInsertText={insertTextBox}
+          onInsertImage={insertImage}
+          onEditImageSettings={editImageSettings}
+          onEditBorderStyle={editBorderSettings}
+          onDelete={onDelete}
+        />
+        <div
+          ref={resizeTargetRef}
+          className={`${cardClass} relative`}
+          onClick={onSelect}
+          style={{ ...blockBackgroundStyle, ...blockSizeStyle, ...borderInlineStyle }}
+        >
+          {imageDialog}
+          {imageSettingsDialog}
+          {borderSettingsDialog}
+          {searchButtonStyleDialog}
+          {layerSettingsDialog}
+          {typographyDialog}
+          {isSelected ? (
+            <>
+              <div className="space-y-1 mt-3">
+                <RichTextEditor
+                  field="heading"
+                  className="border p-2 rounded w-full text-xl font-bold"
+                  value={block.props.heading ?? ""}
+                  onChange={handleRichFieldChange}
+                  onActivate={registerActiveEditor}
+                  onSelectionChange={updateSelectionRange}
+                />
+              </div>
+              <div className="space-y-1 mt-3">
+                <RichTextEditor
+                  field="text"
+                  className="border p-2 rounded w-full min-h-[86px] text-gray-700"
+                  value={block.props.text ?? ""}
+                  onChange={handleRichFieldChange}
+                  onActivate={registerActiveEditor}
+                  onSelectionChange={updateSelectionRange}
+                />
+              </div>
+              <div className="mt-3 grid gap-2 md:grid-cols-3">
+                <label className="space-y-1 text-sm text-gray-600">
+                  <span>默认国家</span>
+                  <select
+                    className="w-full rounded border p-2"
+                    value={resolvedCountryCode}
+                    onChange={(event) => {
+                      const nextCountryCode = event.target.value;
+                      const nextProvinceCode = getEuropeProvinceOptions(nextCountryCode)[0]?.code ?? "";
+                      const nextCity = getEuropeCityOptions(nextCountryCode, nextProvinceCode)[0] ?? "";
+                      onChange({
+                        defaultCountryCode: nextCountryCode,
+                        defaultProvinceCode: nextProvinceCode,
+                        defaultCity: nextCity,
+                      });
+                    }}
+                  >
+                    {countryOptions.length > 0 ? (
+                      countryOptions.map((item) => (
+                        <option key={item.code} value={item.code}>
+                          {item.name}
+                        </option>
+                      ))
+                    ) : (
+                      <option value="">欧洲国家</option>
+                    )}
+                  </select>
+                </label>
+                <label className="space-y-1 text-sm text-gray-600">
+                  <span>默认省份</span>
+                  <select
+                    className="w-full rounded border p-2"
+                    value={resolvedProvinceCode}
+                    onChange={(event) => {
+                      const nextProvinceCode = event.target.value;
+                      const nextCity = getEuropeCityOptions(resolvedCountryCode, nextProvinceCode)[0] ?? "";
+                      onChange({
+                        defaultCountryCode: resolvedCountryCode,
+                        defaultProvinceCode: nextProvinceCode,
+                        defaultCity: nextCity,
+                      });
+                    }}
+                  >
+                    {provinceOptions.length > 0 ? (
+                      provinceOptions.map((item) => (
+                        <option key={item.code} value={item.code}>
+                          {item.name}
+                        </option>
+                      ))
+                    ) : (
+                      <option value="">省份</option>
+                    )}
+                  </select>
+                </label>
+                <label className="space-y-1 text-sm text-gray-600">
+                  <span>默认城市</span>
+                  <select
+                    className="w-full rounded border p-2"
+                    value={resolvedCity}
+                    onChange={(event) => onChange({ defaultCity: event.target.value })}
+                  >
+                    {cityOptions.length > 0 ? (
+                      cityOptions.map((item) => (
+                        <option key={item} value={item}>
+                          {item}
+                        </option>
+                      ))
+                    ) : (
+                      <option value="">{cityPlaceholder}</option>
+                    )}
+                  </select>
+                </label>
+                <label className="space-y-1 text-sm text-gray-600">
+                  <span>城市占位文案</span>
+                  <input
+                    className="w-full rounded border p-2"
+                    value={block.props.cityPlaceholder ?? ""}
+                    onChange={(e) => onChange({ cityPlaceholder: e.target.value })}
+                  />
+                </label>
+                <label className="space-y-1 text-sm text-gray-600">
+                  <span>搜索框占位文案</span>
+                  <input
+                    className="w-full rounded border p-2"
+                    value={block.props.searchPlaceholder ?? ""}
+                    onChange={(e) => onChange({ searchPlaceholder: e.target.value })}
+                  />
+                </label>
+                <label className="space-y-1 text-sm text-gray-600">
+                  <span>定位按钮文案</span>
+                  <input
+                    className="w-full rounded border p-2"
+                    value={block.props.locateLabel ?? ""}
+                    onChange={(e) => onChange({ locateLabel: e.target.value })}
+                  />
+                </label>
+                <label className="space-y-1 text-sm text-gray-600">
+                  <span>搜索按钮文案</span>
+                  <input
+                    className="w-full rounded border p-2"
+                    value={block.props.actionLabel ?? ""}
+                    onChange={(e) => onChange({ actionLabel: e.target.value })}
+                  />
+                </label>
+                <div className="md:col-span-3">
+                  <button
+                    type="button"
+                    className="px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm"
+                    onClick={editSearchButtonStyle}
+                  >
+                    按钮样式
+                  </button>
+                </div>
+              </div>
+              <div className="mt-3">
+                <div className="text-xs text-gray-500 mb-2">拖动可改位置，拉伸右边缘改宽度，拉伸下边缘改高度</div>
+                <div className="mb-2 flex flex-wrap gap-2">
+                  <label className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded border bg-white">
+                    <input
+                      type="checkbox"
+                      checked={searchLayoutSnapEnabled}
+                      onChange={(e) => setSearchLayoutSnapEnabled(e.target.checked)}
+                    />
+                    {"吸附网格"}
+                  </label>
+                  <select
+                    className="px-2 py-1 text-xs rounded border bg-white"
+                    value={searchLayoutSnapStep}
+                    onChange={(e) => setSearchLayoutSnapStep(Math.max(2, Math.min(40, Number(e.target.value) || 8)))}
+                  >
+                    {[4, 6, 8, 10, 12, 16, 20].map((step) => (
+                      <option key={step} value={step}>
+                        {`网格 ${step}px`}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50"
+                    onClick={() => applySearchLayoutTemplate("single-tight")}
+                  >
+                    {"紧凑单列"}
+                  </button>
+                  <button
+                    type="button"
+                    className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50"
+                    onClick={() => applySearchLayoutTemplate("single-wide")}
+                  >
+                    {"宽松单列"}
+                  </button>
+                  <button
+                    type="button"
+                    className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50"
+                    onClick={() => applySearchLayoutTemplate("double-column")}
+                  >
+                    {"双列"}
+                  </button>
+                  <button
+                    type="button"
+                    className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50"
+                    onClick={() => alignSelectedSearchLayoutEntries("left")}
+                  >
+                    {"左"}
+                  </button>
+                  <button
+                    type="button"
+                    className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50"
+                    onClick={() => alignSelectedSearchLayoutEntries("right")}
+                  >
+                    {"右"}
+                  </button>
+                  <button
+                    type="button"
+                    className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50"
+                    onClick={() => alignSelectedSearchLayoutEntries("same-width")}
+                  >
+                    {"统一宽度"}
+                  </button>
+                  <button
+                    type="button"
+                    className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50"
+                    onClick={() => alignSelectedSearchLayoutEntries("same-height")}
+                  >
+                    {"统一高度"}
+                  </button>
+                  <button
+                    type="button"
+                    className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50"
+                    onClick={() => alignSelectedSearchLayoutEntries("distribute-x")}
+                  >
+                    {"横向均分"}
+                  </button>
+                  <button
+                    type="button"
+                    className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50"
+                    onClick={() => alignSelectedSearchLayoutEntries("distribute-y")}
+                  >
+                    {"纵向均分"}
+                  </button>
+                </div>
+                <div
+                  ref={searchLayoutCanvasFocusRef}
+                  className="relative rounded border border-dashed border-gray-300 bg-transparent"
+                  style={{
+                    minHeight: `${searchCanvasHeight}px`,
+                    width: `${searchCanvasWidth}px`,
+                    maxWidth: "100%",
+                    backgroundImage: searchLayoutSnapEnabled
+                      ? "linear-gradient(to right, rgba(17,24,39,0.08) 1px, transparent 1px), linear-gradient(to bottom, rgba(17,24,39,0.08) 1px, transparent 1px)"
+                      : undefined,
+                    backgroundSize: searchLayoutSnapEnabled
+                      ? `${Math.max(2, Math.min(40, searchLayoutSnapStep))}px ${Math.max(2, Math.min(40, searchLayoutSnapStep))}px`
+                      : undefined,
+                  }}
+                  tabIndex={0}
+                  onKeyDown={handleSearchLayoutCanvasKeyDown}
+                >
+                  {searchEntries.map((item) => (
+                    <div
+                      key={item.key}
+                      className={`absolute rounded border bg-white px-2 py-1 shadow-sm cursor-move overflow-hidden ${
+                        activeSearchLayoutKeys.includes(item.key)
+                          ? "border-blue-500 bg-blue-50/70 ring-4 ring-blue-400/45 shadow-md"
+                          : "border-gray-300"
+                      }`}
+                      style={{ left: `${item.x}px`, top: `${item.y}px`, width: `${item.width}px`, height: `${item.height}px` }}
+                      onMouseDown={(event) => startSearchLayoutDrag(item.key, event)}
+                    >
+                      <div className="text-[11px] text-gray-500 truncate">{item.label}</div>
+                      <div className="text-xs text-gray-800 truncate">{item.value}</div>
+                      <div
+                        className="absolute top-0 right-0 h-full w-2 cursor-ew-resize"
+                        onMouseDown={(event) => startSearchLayoutResize(item.key, "width", event)}
+                      />
+                      <div
+                        className="absolute bottom-0 left-0 h-2 w-full cursor-ns-resize"
+                        onMouseDown={(event) => startSearchLayoutResize(item.key, "height", event)}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              {hasSearchHeading ? (
+                <h2
+                  className="text-xl font-bold whitespace-pre-wrap break-words"
+                  dangerouslySetInnerHTML={{ __html: toRichHtml(block.props.heading, "") }}
+                />
+              ) : null}
+              {hasSearchText ? (
+                <div
+                  className="mt-2 text-gray-600 whitespace-pre-wrap break-words"
+                  dangerouslySetInnerHTML={{ __html: toRichHtml(block.props.text, "") }}
+                />
+              ) : null}
+              <form onSubmit={(event) => event.preventDefault()} className={`${hasSearchHeading || hasSearchText ? "mt-4 " : ""}space-y-3`}>
+                <div
+                  className="relative"
+                  style={{ minHeight: `${searchPreviewCanvasHeight}px`, width: `${searchCanvasWidth}px`, maxWidth: "100%" }}
+                >
+                  <div
+                    className="absolute"
+                    style={{
+                      left: `${locateEntry.x}px`,
+                      top: `${getSearchPreviewY(locateEntry.y)}px`,
+                      width: `${locateEntry.width}px`,
+                      height: `${locateEntry.height}px`,
+                    }}
+                  >
+                    <button
+                      type="button"
+                      className={locateButtonClass}
+                      style={locateButtonStyle}
+                    >
+                      <span style={searchButtonLabelStyle}>{locateLabel}</span>
+                    </button>
+                  </div>
+                  <div
+                    className="absolute"
+                    style={{
+                      left: `${countryEntry.x}px`,
+                      top: `${getSearchPreviewY(countryEntry.y)}px`,
+                      width: `${countryEntry.width}px`,
+                      height: `${countryEntry.height}px`,
+                    }}
+                  >
+                    <input
+                      readOnly
+                      className="h-full w-full rounded border bg-white px-2 text-sm text-slate-600 outline-none placeholder:text-current"
+                      style={searchInputTextStyle}
+                      value={resolvedCountryName}
+                      aria-label="国家"
+                    />
+                  </div>
+                  <div
+                    className="absolute"
+                    style={{
+                      left: `${provinceEntry.x}px`,
+                      top: `${getSearchPreviewY(provinceEntry.y)}px`,
+                      width: `${provinceEntry.width}px`,
+                      height: `${provinceEntry.height}px`,
+                    }}
+                  >
+                    <input
+                      readOnly
+                      className="h-full w-full rounded border bg-white px-2 text-sm text-slate-600 outline-none placeholder:text-current"
+                      style={searchInputTextStyle}
+                      value={resolvedProvinceName}
+                      aria-label="省份"
+                    />
+                  </div>
+                  <div
+                    className="absolute"
+                    style={{
+                      left: `${cityEntry.x}px`,
+                      top: `${getSearchPreviewY(cityEntry.y)}px`,
+                      width: `${cityEntry.width}px`,
+                      height: `${cityEntry.height}px`,
+                    }}
+                  >
+                    <input
+                      readOnly
+                      className="h-full w-full rounded border bg-white px-2 text-sm text-slate-600 outline-none placeholder:text-current"
+                      style={searchInputTextStyle}
+                      value={resolvedCity || cityPlaceholder}
+                      aria-label="城市"
+                    />
+                  </div>
+                  <div
+                    className="absolute"
+                    style={{
+                      left: `${keywordEntry.x}px`,
+                      top: `${getSearchPreviewY(keywordEntry.y)}px`,
+                      width: `${keywordEntry.width}px`,
+                      height: `${keywordEntry.height}px`,
+                    }}
+                  >
+                    <input
+                      readOnly
+                      className="h-full w-full rounded border bg-white px-3 text-sm text-slate-500 outline-none placeholder:text-current"
+                      style={searchInputTextStyle}
+                      placeholder={searchPlaceholder}
+                    />
+                  </div>
+                  <div
+                    className="absolute"
+                    style={{
+                      left: `${actionEntry.x}px`,
+                      top: `${getSearchPreviewY(actionEntry.y)}px`,
+                      width: `${actionEntry.width}px`,
+                      height: `${actionEntry.height}px`,
+                    }}
+                  >
+                    <button
+                      type="button"
+                      className={actionButtonClass}
+                      style={actionButtonStyle}
+                    >
+                      <span style={searchButtonLabelStyle}>{actionLabel}</span>
+                    </button>
+                  </div>
+                </div>
+              </form>
+              <div className="mt-2 text-xs text-slate-500">可点击定位，或手动选择国家/省份/城市。</div>
+            </>
+          )}
+          {resizeHandles}
+        </div>
+      </section>
+    );
+  }
+
   if (block.type === "contact") {
     type ContactEntryKey = "phone" | "email" | "whatsapp" | "wechat" | "tiktok" | "xiaohongshu" | "facebook" | "instagram";
     const contactLayout = block.props.contactLayout ?? {};
@@ -7441,10 +11987,15 @@ type GalleryEditorImage = {
         const x = typeof pos?.x === "number" && Number.isFinite(pos.x) ? Math.max(0, Math.round(pos.x)) : 0;
         const y = typeof pos?.y === "number" && Number.isFinite(pos.y) ? Math.max(0, Math.round(pos.y)) : index * 48;
         const width = typeof pos?.width === "number" && Number.isFinite(pos.width) ? Math.max(200, Math.round(pos.width)) : 360;
-        return { ...item, x, y, width };
+        const height = typeof pos?.height === "number" && Number.isFinite(pos.height) ? Math.max(32, Math.round(pos.height)) : 42;
+        return { ...item, x, y, width, height, minHeight: 32 };
       });
-    const contactCanvasHeight = Math.max(180, ...contactEntries.map((item) => item.y + 42));
+    const contactCanvasHeight = Math.max(180, ...contactEntries.map((item) => item.y + item.height));
     const contactCanvasWidth = Math.max(280, ...contactEntries.map((item) => item.x + item.width));
+    const contactTypographyStyle = buildTypographyInlineStyle(block.props);
+    if (!("color" in contactTypographyStyle) && !("backgroundImage" in contactTypographyStyle)) {
+      contactTypographyStyle.color = "#374151";
+    }
     const socialIconUrl = (label: string) => {
       if (label === "Email") return "/social-icons/maildotru.svg";
       if (label === "WhatsApp") return "/social-icons/whatsapp.svg";
@@ -7499,7 +12050,7 @@ type GalleryEditorImage = {
       const startY = event.clientY;
       const originMap = new Map(selectedKeys.map((selectedKey) => {
         const found = contactEntries.find((item) => item.key === selectedKey);
-        return [selectedKey, { x: found?.x ?? 0, y: found?.y ?? 0, width: found?.width ?? 360 }] as const;
+        return [selectedKey, { x: found?.x ?? 0, y: found?.y ?? 0, width: found?.width ?? 360, height: found?.height ?? 42 }] as const;
       }));
       const onMove = (e: MouseEvent) => {
         const dx = Math.round(e.clientX - startX);
@@ -7512,6 +12063,7 @@ type GalleryEditorImage = {
 	            x: maybeSnap(origin.x + dx),
 	            y: maybeSnap(origin.y + dy),
 	            width: clampContactLayoutValue((contactLayout[selectedKey] ?? {}).width, origin.width, 200),
+              height: clampContactLayoutValue((contactLayout[selectedKey] ?? {}).height, origin.height, 32),
 	          };
 	        });
         onChange({ contactLayout: nextLayout });
@@ -7523,7 +12075,11 @@ type GalleryEditorImage = {
       window.addEventListener("mousemove", onMove);
       window.addEventListener("mouseup", onUp);
     };
-    const startContactEntryResize = (key: ContactEntryKey, event: ReactMouseEvent<HTMLDivElement>) => {
+    const startContactEntryResize = (
+      key: ContactEntryKey,
+      direction: "width" | "height",
+      event: ReactMouseEvent<HTMLDivElement>,
+    ) => {
       event.preventDefault();
       event.stopPropagation();
       const source = contactEntries.find((item) => item.key === key);
@@ -7533,22 +12089,35 @@ type GalleryEditorImage = {
       setActiveContactEntryKeys(selectedKeys);
       contactCanvasFocusRef.current?.focus();
       const startX = event.clientX;
+      const startY = event.clientY;
       const originWidths = new Map(selectedKeys.map((selectedKey) => {
         const found = contactEntries.find((item) => item.key === selectedKey);
         return [selectedKey, found?.width ?? 360] as const;
       }));
+      const originHeights = new Map(selectedKeys.map((selectedKey) => {
+        const found = contactEntries.find((item) => item.key === selectedKey);
+        return [selectedKey, found?.height ?? 42] as const;
+      }));
       const onMove = (e: MouseEvent) => {
-        const delta = Math.round(e.clientX - startX);
+        const deltaWidth = Math.round(e.clientX - startX);
+        const deltaHeight = Math.round(e.clientY - startY);
         const nextLayout = { ...contactLayout };
         selectedKeys.forEach((selectedKey) => {
           const found = contactEntries.find((item) => item.key === selectedKey);
 	          const current = contactLayout[selectedKey] ?? {};
 	          const originWidth = originWidths.get(selectedKey) ?? found?.width ?? 360;
-	          const nextWidth = maybeSnap(originWidth + delta, 200);
+            const originHeight = originHeights.get(selectedKey) ?? found?.height ?? 42;
 	          nextLayout[selectedKey] = {
 	            x: clampContactLayoutValue(current.x, found?.x ?? 0),
 	            y: clampContactLayoutValue(current.y, found?.y ?? 0),
-            width: nextWidth,
+            width:
+              direction === "width"
+                ? maybeSnap(originWidth + deltaWidth, 200)
+                : clampContactLayoutValue(current.width, found?.width ?? 360, 200),
+            height:
+              direction === "height"
+                ? maybeSnap(originHeight + deltaHeight, 32)
+                : clampContactLayoutValue(current.height, found?.height ?? 42, 32),
           };
         });
         onChange({ contactLayout: nextLayout });
@@ -7576,6 +12145,7 @@ type GalleryEditorImage = {
 	          x: maybeSnap(clampContactLayoutValue(current.x, source.x) + deltaX),
 	          y: maybeSnap(clampContactLayoutValue(current.y, source.y) + deltaY),
 	          width: clampContactLayoutValue(current.width, source.width, 200),
+            height: clampContactLayoutValue(current.height, source.height, 32),
 	        };
 	      });
       onChange({ contactLayout: nextLayout });
@@ -7584,30 +12154,36 @@ type GalleryEditorImage = {
       const keys = activeContactEntryKeys.length > 0 ? activeContactEntryKeys : [];
       return contactEntries.filter((item) => keys.includes(item.key as ContactEntryKey));
     };
-    const alignSelectedContactEntries = (mode: "left" | "right" | "same-width" | "distribute-y") => {
+    const alignSelectedContactEntries = (
+      mode: "left" | "right" | "same-width" | "same-height" | "distribute-x" | "distribute-y",
+    ) => {
       const selected = getSelectedContactEntries();
       if (selected.length === 0) return;
       const selectedKeys = selected.map((item) => item.key as ContactEntryKey);
       const nextLayout = { ...contactLayout };
       if (mode === "left") {
-        const left = Math.min(...selected.map((item) => item.x));
+        const selectedMinLeft = Math.min(...selected.map((item) => item.x));
+        const deltaX = Math.max(0, selectedMinLeft);
         selected.forEach((item) => {
           const current = contactLayout[item.key as ContactEntryKey] ?? {};
           nextLayout[item.key as ContactEntryKey] = {
-            x: left,
+            x: maybeSnap(Math.max(0, clampContactLayoutValue(current.x, item.x) - deltaX)),
             y: clampContactLayoutValue(current.y, item.y),
             width: clampContactLayoutValue(current.width, item.width, 200),
+            height: clampContactLayoutValue(current.height, item.height, 32),
           };
         });
       }
       if (mode === "right") {
-        const right = Math.max(...selected.map((item) => item.x + item.width));
+        const selectedMaxRight = Math.max(...selected.map((item) => item.x + item.width));
+        const deltaX = Math.max(0, contactCanvasWidth - selectedMaxRight);
         selected.forEach((item) => {
           const current = contactLayout[item.key as ContactEntryKey] ?? {};
           nextLayout[item.key as ContactEntryKey] = {
-            x: Math.max(0, right - item.width),
+            x: maybeSnap(clampContactLayoutValue(current.x, item.x) + deltaX),
             y: clampContactLayoutValue(current.y, item.y),
             width: clampContactLayoutValue(current.width, item.width, 200),
+            height: clampContactLayoutValue(current.height, item.height, 32),
           };
         });
       }
@@ -7619,22 +12195,56 @@ type GalleryEditorImage = {
             x: clampContactLayoutValue(current.x, item.x),
             y: clampContactLayoutValue(current.y, item.y),
             width: Math.max(200, width),
+            height: clampContactLayoutValue(current.height, item.height, 32),
           };
         });
       }
-      if (mode === "distribute-y") {
-        if (selected.length < 3) return;
-        const sorted = [...selected].sort((a, b) => a.y - b.y);
-        const first = sorted[0];
-        const last = sorted[sorted.length - 1];
-        const step = (last.y - first.y) / (sorted.length - 1);
-        sorted.forEach((item, index) => {
+      if (mode === "same-height") {
+        const height = Math.max(...selected.map((item) => item.height));
+        selected.forEach((item) => {
           const current = contactLayout[item.key as ContactEntryKey] ?? {};
           nextLayout[item.key as ContactEntryKey] = {
             x: clampContactLayoutValue(current.x, item.x),
-            y: Math.max(0, Math.round(first.y + step * index)),
+            y: clampContactLayoutValue(current.y, item.y),
             width: clampContactLayoutValue(current.width, item.width, 200),
+            height: Math.max(32, height),
           };
+        });
+      }
+      if (mode === "distribute-x") {
+        if (selected.length < 2) return;
+        const sorted = [...selected].sort((a, b) => a.x - b.x);
+        const totalWidth = sorted.reduce((sum, item) => sum + item.width, 0);
+        const gap = sorted.length > 1 ? Math.max(0, (contactCanvasWidth - totalWidth) / (sorted.length - 1)) : 0;
+        const baselineY = Math.min(...sorted.map((item) => item.y));
+        let cursorX = 0;
+        sorted.forEach((item) => {
+          const current = contactLayout[item.key as ContactEntryKey] ?? {};
+          nextLayout[item.key as ContactEntryKey] = {
+            x: Math.max(0, Math.round(cursorX)),
+            y: Math.max(0, Math.round(baselineY)),
+            width: clampContactLayoutValue(current.width, item.width, 200),
+            height: clampContactLayoutValue(current.height, item.height, 32),
+          };
+          cursorX += item.width + gap;
+        });
+      }
+      if (mode === "distribute-y") {
+        if (selected.length < 2) return;
+        const sorted = [...selected].sort((a, b) => a.y - b.y);
+        const totalHeight = sorted.reduce((sum, item) => sum + item.height, 0);
+        const gap = sorted.length > 1 ? Math.max(0, (contactCanvasHeight - totalHeight) / (sorted.length - 1)) : 0;
+        const baselineX = Math.min(...sorted.map((item) => item.x));
+        let cursorY = 0;
+        sorted.forEach((item) => {
+          const current = contactLayout[item.key as ContactEntryKey] ?? {};
+          nextLayout[item.key as ContactEntryKey] = {
+            x: Math.max(0, Math.round(baselineX)),
+            y: Math.max(0, Math.round(cursorY)),
+            width: clampContactLayoutValue(current.width, item.width, 200),
+            height: clampContactLayoutValue(current.height, item.height, 32),
+          };
+          cursorY += item.height + gap;
         });
       }
       setActiveContactEntryKeys(selectedKeys);
@@ -7655,13 +12265,13 @@ type GalleryEditorImage = {
       if (mode === "single-tight") {
         const width = Math.max(220, Math.min(safeCanvasWidth, 360));
         contactEntries.forEach((item, idx) => {
-          nextLayout[item.key as ContactEntryKey] = { x: 0, y: maybeSnap(idx * 48), width };
+          nextLayout[item.key as ContactEntryKey] = { x: 0, y: maybeSnap(idx * 48), width, height: 42 };
         });
       }
       if (mode === "single-wide") {
         const width = Math.max(240, safeCanvasWidth);
         contactEntries.forEach((item, idx) => {
-          nextLayout[item.key as ContactEntryKey] = { x: 0, y: maybeSnap(idx * 56), width };
+          nextLayout[item.key as ContactEntryKey] = { x: 0, y: maybeSnap(idx * 56), width, height: 42 };
         });
       }
       if (mode === "double-column") {
@@ -7674,6 +12284,7 @@ type GalleryEditorImage = {
             x: maybeSnap(col * (width + gap)),
             y: maybeSnap(row * 56),
             width,
+            height: 42,
           };
         });
       }
@@ -7759,7 +12370,7 @@ type GalleryEditorImage = {
                   </div>
                   {contactAddressEditorValues.length > 0 ? (
                     contactAddressEditorValues.map((line, idx) => (
-                      <div key={`${idx}-${line}`} className="flex items-center gap-2">
+                      <div key={`contact-address-${idx}`} className="flex items-center gap-2">
                         <input
                           className="border p-2 rounded text-sm flex-1"
                           value={line}
@@ -7870,7 +12481,7 @@ type GalleryEditorImage = {
                 />
               </div>
               <div className="mt-3">
-                <div className="text-xs text-gray-500 mb-2">拖动条目可在联系方式区块内调整位置</div>
+                <div className="text-xs text-gray-500 mb-2">拖动条目可改位置，拉伸右边缘改宽度，拉伸下边缘改高度</div>
                 <div className="mb-2 flex flex-wrap gap-2">
                   <label className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded border bg-white">
                     <input
@@ -7896,35 +12507,35 @@ type GalleryEditorImage = {
                     className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50"
                     onClick={() => applyContactLayoutTemplate("single-tight")}
                   >
-                    {"模板: 紧凑单列"}
+                    {"紧凑单列"}
                   </button>
                   <button
                     type="button"
                     className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50"
                     onClick={() => applyContactLayoutTemplate("single-wide")}
                   >
-                    {"模板: 宽松单列"}
+                    {"宽松单列"}
                   </button>
                   <button
                     type="button"
                     className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50"
                     onClick={() => applyContactLayoutTemplate("double-column")}
                   >
-                    {"模板: 双列"}
+                    {"双列"}
                   </button>
                   <button
                     type="button"
                     className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50"
                     onClick={() => alignSelectedContactEntries("left")}
                   >
-                    {"左对齐"}
+                    {"左"}
                   </button>
                   <button
                     type="button"
                     className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50"
                     onClick={() => alignSelectedContactEntries("right")}
                   >
-                    {"右对齐"}
+                    {"右"}
                   </button>
                   <button
                     type="button"
@@ -7932,6 +12543,20 @@ type GalleryEditorImage = {
                     onClick={() => alignSelectedContactEntries("same-width")}
                   >
                     {"统一宽度"}
+                  </button>
+                  <button
+                    type="button"
+                    className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50"
+                    onClick={() => alignSelectedContactEntries("same-height")}
+                  >
+                    {"统一高度"}
+                  </button>
+                  <button
+                    type="button"
+                    className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50"
+                    onClick={() => alignSelectedContactEntries("distribute-x")}
+                  >
+                    {"横向均分"}
                   </button>
                   <button
                     type="button"
@@ -7961,15 +12586,17 @@ type GalleryEditorImage = {
                   {contactEntries.map((item) => (
                     <div
                       key={item.key}
-                      className={`absolute flex items-center justify-between gap-2 rounded border bg-white px-2 py-1 shadow-sm cursor-move ${
+                      className={`absolute flex items-center justify-between gap-2 rounded border bg-white px-2 py-1 shadow-sm cursor-move overflow-hidden ${
                         activeContactEntryKeys.includes(item.key as ContactEntryKey)
                           ? "border-blue-500 bg-blue-50/70 ring-4 ring-blue-400/45 shadow-md"
                           : "border-gray-300"
                       }`}
-                      style={{ left: `${item.x}px`, top: `${item.y}px`, width: `${item.width}px` }}
+                      style={{ left: `${item.x}px`, top: `${item.y}px`, width: `${item.width}px`, height: `${item.height}px` }}
                       onMouseDown={(event) => startContactEntryDrag(item.key as ContactEntryKey, event)}
                     >
-                      <span className="text-sm text-gray-700 min-w-0 break-all flex-1">{item.label}：{item.value}</span>
+                      <span className="min-w-0 break-all flex-1" style={contactTypographyStyle}>
+                        {item.label}：{item.value}
+                      </span>
                       <span className={socialIconClass(item.platformLabel)}>
                         {item.platformLabel === "Phone" ? (
                           <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" aria-hidden="true">
@@ -7987,7 +12614,11 @@ type GalleryEditorImage = {
                       </span>
                       <div
                         className="absolute top-0 right-0 h-full w-2 cursor-ew-resize"
-                        onMouseDown={(event) => startContactEntryResize(item.key as ContactEntryKey, event)}
+                        onMouseDown={(event) => startContactEntryResize(item.key as ContactEntryKey, "width", event)}
+                      />
+                      <div
+                        className="absolute bottom-0 left-0 h-2 w-full cursor-ns-resize"
+                        onMouseDown={(event) => startContactEntryResize(item.key as ContactEntryKey, "height", event)}
                       />
                     </div>
                   ))}
@@ -8000,28 +12631,44 @@ type GalleryEditorImage = {
                 className="text-xl font-bold whitespace-pre-wrap break-words"
                 dangerouslySetInnerHTML={{ __html: toRichHtml(block.props.heading, "") }}
               />
-              <div className="mt-2 text-gray-700 space-y-1">
+              <div className="mt-2 space-y-2">
                 {contactAddresses.length > 0 ? (
-                  contactAddresses.map((line, idx) => (
-                    <div key={`${line}-${idx}`} className="break-all">
-                      {`地址${contactAddresses.length > 1 ? idx + 1 : ""}：${line}`}
+                  contactAddresses.map((line, idx) => {
+                    const isActive = idx === 0;
+                    return (
+                    <div key={`${line}-${idx}`} className="flex items-start gap-2">
+                      <span className={`text-left break-all flex-1 rounded px-1 py-0.5 ${isActive ? "bg-black/5" : ""}`} style={contactTypographyStyle}>
+                        {`地址${contactAddresses.length > 1 ? idx + 1 : ""}：${line}`}
+                      </span>
+                      <span
+                        className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-white shadow-sm ${
+                          isActive ? "bg-[#EA4335]" : "bg-[#EA4335]/80"
+                        }`}
+                        aria-hidden="true"
+                      >
+                        <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current">
+                          <path d="M12 2a7 7 0 0 0-7 7c0 4.74 6.14 11.84 6.4 12.14a.8.8 0 0 0 1.2 0C12.86 20.84 19 13.74 19 9a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5z" />
+                        </svg>
+                      </span>
                     </div>
-                  ))
+                  )})
                 ) : (
-                  <div dangerouslySetInnerHTML={{ __html: `地址：${toRichHtml(block.props.address, "")}` }} />
+                  <div className="break-all" style={contactTypographyStyle}>{`地址：${toPlainText(block.props.address, "")}`}</div>
                 )}
               </div>
               <div
-                className="mt-3 relative rounded border border-gray-200 bg-transparent"
+                className="mt-3 relative bg-transparent"
                 style={{ minHeight: `${contactCanvasHeight}px`, width: `${contactCanvasWidth}px`, maxWidth: "100%" }}
               >
                 {contactEntries.map((item) => (
                   <div
                     key={item.key}
-                    className="absolute flex items-center justify-between gap-2 rounded border bg-white px-2 py-1 shadow-sm"
-                    style={{ left: `${item.x}px`, top: `${item.y}px`, width: `${item.width}px` }}
+                    className="absolute flex items-center justify-between gap-2 px-1 py-1 overflow-hidden"
+                    style={{ left: `${item.x}px`, top: `${item.y}px`, width: `${item.width}px`, height: `${item.height}px` }}
                   >
-                    <span className="text-sm text-gray-700 min-w-0 break-all flex-1">{item.label}：{item.value}</span>
+                    <span className="min-w-0 break-all flex-1" style={contactTypographyStyle}>
+                      {item.label}：{item.value}
+                    </span>
                     <span className={socialIconClass(item.platformLabel)}>
                       {item.platformLabel === "Phone" ? (
                         <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" aria-hidden="true">
@@ -8122,131 +12769,162 @@ function ColorOrGradientPickerInner({
   const [startColor, setStartColor] = useState(parsed.startColor);
   const [endColor, setEndColor] = useState(parsed.endColor);
   const [direction, setDirection] = useState<GradientDirection>(parsed.direction);
+  const [open, setOpen] = useState(false);
+  const pickerRef = useRef<HTMLDivElement | null>(null);
+
+  const resetDraftFromValue = () => {
+    const nextParsed = parseGradientValue(value);
+    setMode(allowGradient ? nextParsed.mode : "solid");
+    setSolidColor(nextParsed.solidColor);
+    setStartColor(nextParsed.startColor);
+    setEndColor(nextParsed.endColor);
+    setDirection(nextParsed.direction);
+  };
+
+  const commitDraft = () => {
+    if (mode === "solid" || !allowGradient) {
+      onChange(normalizeHexColor(solidColor) ?? "#ffffff");
+      setOpen(false);
+      return;
+    }
+    onChange(buildLinearGradient(direction, startColor, endColor));
+    setOpen(false);
+  };
+
+  const cancelDraft = () => {
+    resetDraftFromValue();
+    setOpen(false);
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target;
+      if (!target || !(target instanceof Node)) return;
+      if (pickerRef.current?.contains(target)) return;
+      const nextParsed = parseGradientValue(value);
+      setMode(allowGradient ? nextParsed.mode : "solid");
+      setSolidColor(nextParsed.solidColor);
+      setStartColor(nextParsed.startColor);
+      setEndColor(nextParsed.endColor);
+      setDirection(nextParsed.direction);
+      setOpen(false);
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [open, value, allowGradient]);
+
+  const committedPreview = isGradientToken(value)
+    ? { backgroundImage: value }
+    : { backgroundColor: normalizeHexColor(value) ?? "#ffffff" };
+  const draftGradientPreview = buildLinearGradient(direction, startColor, endColor);
 
   return (
-    <div className="space-y-2 rounded border p-2">
-      <div className="flex gap-2">
-        <button
-          type="button"
-          className={`px-2 py-1 text-xs rounded border ${mode === "solid" ? "bg-black text-white border-black" : "bg-white"}`}
-          onClick={() => {
-            setMode("solid");
-            onChange(normalizeHexColor(solidColor) ?? "#ffffff");
-          }}
-        >
-          纯色
-        </button>
-        {allowGradient ? (
-          <button
-            type="button"
-            className={`px-2 py-1 text-xs rounded border ${mode === "gradient" ? "bg-black text-white border-black" : "bg-white"}`}
-            onClick={() => {
-              setMode("gradient");
-              onChange(buildLinearGradient(direction, startColor, endColor));
-            }}
-          >
-            渐变
-          </button>
-        ) : null}
-      </div>
-      {mode === "solid" || !allowGradient ? (
-        <div className="grid grid-cols-[120px_1fr] gap-2 items-end">
-          <input
-            className="border p-1 rounded w-full h-10"
-            type="color"
-            value={normalizeHexColor(solidColor) ?? "#ffffff"}
-            onChange={(e) => {
-              setSolidColor(e.target.value);
-              onChange(e.target.value);
-            }}
-          />
-          <input
-            className="border p-2 rounded w-full text-sm"
-            value={solidColor}
-            placeholder="#ffffff"
-            onChange={(e) => {
-              const next = e.target.value;
-              setSolidColor(next);
-              onChange(next);
-            }}
-          />
-        </div>
-      ) : (
-        <div className="space-y-2">
-          <div className="grid grid-cols-2 gap-2">
-            <div className="space-y-1">
-              <div className="grid grid-cols-[44px_1fr] gap-2">
-                <input
-                  className="border p-1 rounded w-11 h-10"
-                  type="color"
-                  value={normalizeHexColor(startColor) ?? "#ffffff"}
-                  onChange={(e) => {
-                    const next = e.target.value;
-                    setStartColor(next);
-                    onChange(buildLinearGradient(direction, next, endColor));
-                  }}
-                />
-                <input
-                  className="border p-2 rounded w-full text-sm"
-                  value={startColor}
-                  onChange={(e) => {
-                    const next = e.target.value;
-                    setStartColor(next);
-                    const normalized = normalizeHexColor(next);
-                    if (normalized) {
-                      onChange(buildLinearGradient(direction, normalized, endColor));
-                    }
-                  }}
-                />
-              </div>
-            </div>
-            <div className="space-y-1">
-              <div className="grid grid-cols-[44px_1fr] gap-2">
-                <input
-                  className="border p-1 rounded w-11 h-10"
-                  type="color"
-                  value={normalizeHexColor(endColor) ?? "#000000"}
-                  onChange={(e) => {
-                    const next = e.target.value;
-                    setEndColor(next);
-                    onChange(buildLinearGradient(direction, startColor, next));
-                  }}
-                />
-                <input
-                  className="border p-2 rounded w-full text-sm"
-                  value={endColor}
-                  onChange={(e) => {
-                    const next = e.target.value;
-                    setEndColor(next);
-                    const normalized = normalizeHexColor(next);
-                    if (normalized) {
-                      onChange(buildLinearGradient(direction, startColor, normalized));
-                    }
-                  }}
-                />
-              </div>
-            </div>
-          </div>
-          <div className="space-y-1">
-            <select
-              className="border p-2 rounded w-full text-sm"
-              value={direction}
-              onChange={(e) => {
-                const next = e.target.value as GradientDirection;
-                setDirection(next);
-                onChange(buildLinearGradient(next, startColor, endColor));
-              }}
+    <div ref={pickerRef} className="relative space-y-2">
+      <button
+        type="button"
+        className="w-full rounded border bg-white px-2 py-2 text-left text-sm hover:bg-gray-50"
+        onClick={() => {
+          if (open) {
+            cancelDraft();
+            return;
+          }
+          resetDraftFromValue();
+          setOpen(true);
+        }}
+      >
+        <span className="flex items-center gap-2">
+          <span className="h-6 w-10 rounded border border-gray-300" style={committedPreview} />
+          <span className="min-w-0 flex-1 truncate text-xs text-gray-700" title={value}>
+            {value || "#ffffff"}
+          </span>
+          <span className="shrink-0 rounded border px-2 py-0.5 text-xs">{open ? "关闭" : "编辑"}</span>
+        </span>
+      </button>
+
+      {open ? (
+        <div className="absolute left-0 top-full z-[14000] mt-1 w-[min(560px,calc(100vw-2rem))] space-y-2 rounded border bg-white p-2 shadow-xl">
+          <div className="flex gap-2">
+            <button
+              type="button"
+              className={`px-2 py-1 text-xs rounded border ${mode === "solid" ? "bg-black text-white border-black" : "bg-white"}`}
+              onClick={() => setMode("solid")}
             >
-              {GRADIENT_DIRECTION_OPTIONS.map((item) => (
-                <option key={item.value} value={item.value}>
-                  {item.label}
-                </option>
-              ))}
-            </select>
+              纯色
+            </button>
+            {allowGradient ? (
+              <button
+                type="button"
+                className={`px-2 py-1 text-xs rounded border ${mode === "gradient" ? "bg-black text-white border-black" : "bg-white"}`}
+                onClick={() => setMode("gradient")}
+              >
+                渐变
+              </button>
+            ) : null}
           </div>
-          <div className="h-8 rounded border" style={{ backgroundImage: buildLinearGradient(direction, startColor, endColor) }} />
+          {mode === "solid" || !allowGradient ? (
+            <div className="grid grid-cols-[120px_1fr] gap-2 items-end">
+              <input
+                className="border p-1 rounded w-full h-10"
+                type="color"
+                value={normalizeHexColor(solidColor) ?? "#ffffff"}
+                onChange={(e) => setSolidColor(e.target.value)}
+              />
+              <input
+                className="border p-2 rounded w-full text-sm"
+                value={solidColor}
+                placeholder="#ffffff"
+                onChange={(e) => setSolidColor(e.target.value)}
+              />
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <div className="grid grid-cols-[44px_1fr] gap-2">
+                    <input
+                      className="border p-1 rounded w-11 h-10"
+                      type="color"
+                      value={normalizeHexColor(startColor) ?? "#ffffff"}
+                      onChange={(e) => setStartColor(e.target.value)}
+                    />
+                    <input className="border p-2 rounded w-full text-sm" value={startColor} onChange={(e) => setStartColor(e.target.value)} />
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <div className="grid grid-cols-[44px_1fr] gap-2">
+                    <input
+                      className="border p-1 rounded w-11 h-10"
+                      type="color"
+                      value={normalizeHexColor(endColor) ?? "#000000"}
+                      onChange={(e) => setEndColor(e.target.value)}
+                    />
+                    <input className="border p-2 rounded w-full text-sm" value={endColor} onChange={(e) => setEndColor(e.target.value)} />
+                  </div>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <select className="border p-2 rounded w-full text-sm" value={direction} onChange={(e) => setDirection(e.target.value as GradientDirection)}>
+                  {GRADIENT_DIRECTION_OPTIONS.map((item) => (
+                    <option key={item.value} value={item.value}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="h-8 rounded border" style={{ backgroundImage: draftGradientPreview }} />
+            </div>
+          )}
+          <div className="flex items-center justify-end gap-2 pt-1">
+            <button type="button" className="px-3 py-1.5 rounded border bg-white hover:bg-gray-50 text-xs" onClick={cancelDraft}>
+              取消
+            </button>
+            <button type="button" className="px-3 py-1.5 rounded bg-black text-white text-xs" onClick={commitDraft}>
+              确认
+            </button>
+          </div>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -8484,6 +13162,13 @@ function EditorBlockHeader({
     </div>
   );
 }
+
+
+
+
+
+
+
 
 
 

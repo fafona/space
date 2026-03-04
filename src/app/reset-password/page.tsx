@@ -1,30 +1,42 @@
-"use client";
+﻿"use client";
 
 import { useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { useI18n } from "@/components/I18nProvider";
+import { canReachSupabaseGateway, supabase } from "@/lib/supabase";
 
 export default function ResetPasswordPage() {
+  const { t } = useI18n();
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [msg, setMsg] = useState("");
   const [saving, setSaving] = useState(false);
 
   function validate(): string | null {
-    if (!password) return "请输入新密码";
-    if (password.length < 6) return "新密码至少 6 位";
-    if (!confirmPassword) return "请再次输入新密码";
-    if (password !== confirmPassword) return "两次输入的密码不一致";
+    if (!password) return t("reset.requiredNewPassword");
+    if (password.length < 6) return t("reset.newPasswordTooShort");
+    if (!confirmPassword) return t("reset.requiredConfirmPassword");
+    if (password !== confirmPassword) return t("reset.passwordMismatch");
     return null;
   }
 
   async function withTimeout<T>(task: Promise<T>, timeoutMs = 15000): Promise<T> {
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let timedOut = false;
+    const safeTask = task.catch((error) => {
+      if (timedOut) {
+        return new Promise<T>(() => {});
+      }
+      throw error;
+    });
     const timeoutTask = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error("请求超时，请稍后重试")), timeoutMs);
+      timer = setTimeout(() => {
+        timedOut = true;
+        reject(new Error(t("login.timeout")));
+      }, timeoutMs);
     });
 
     try {
-      return await Promise.race([task, timeoutTask]);
+      return await Promise.race([safeTask, timeoutTask]);
     } finally {
       if (timer) clearTimeout(timer);
     }
@@ -35,6 +47,9 @@ export default function ResetPasswordPage() {
     setMsg("");
     const validationError = validate();
     if (validationError) return setMsg(validationError);
+    if (!(await canReachSupabaseGateway(4000))) {
+      return setMsg(t("login.backendUnavailable"));
+    }
 
     setSaving(true);
     try {
@@ -42,68 +57,68 @@ export default function ResetPasswordPage() {
 
       if (error) {
         if (/session/i.test(error.message)) {
-          setMsg("重置会话已失效，请回到登录页重新发送找回密码邮件。");
+          setMsg(t("reset.sessionExpired"));
           return;
         }
         setMsg(error.message);
         return;
       }
 
-      setMsg("密码已重置成功，正在跳转到登录页...");
+      setMsg(t("reset.successRedirect"));
       setTimeout(() => {
         window.location.href = "/login";
       }, 900);
     } catch (error) {
-      setMsg(error instanceof Error ? error.message : "请求失败，请检查网络后重试");
+      setMsg(error instanceof Error ? error.message : t("login.requestFailed"));
     } finally {
       setSaving(false);
     }
   }
 
   return (
-    <main className="min-h-screen bg-gray-100 flex items-center justify-center p-6">
-      <div className="w-full max-w-md bg-white border rounded-xl p-6 space-y-4">
-        <h1 className="text-xl font-bold">重置密码</h1>
+    <main className="flex min-h-screen items-center justify-center bg-gray-100 p-6">
+      <div className="w-full max-w-md space-y-4 rounded-xl border bg-white p-6">
+        <h1 className="text-xl font-bold">{t("reset.title")}</h1>
 
         <div className="space-y-2">
-          <div className="text-sm text-gray-600">新密码</div>
+          <div className="text-sm text-gray-600">{t("reset.newPassword")}</div>
           <input
-            className="border p-2 w-full rounded"
+            className="w-full rounded border p-2"
             type="password"
             autoComplete="new-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="至少 6 位"
+            placeholder={t("login.passwordMin6")}
           />
         </div>
 
         <div className="space-y-2">
-          <div className="text-sm text-gray-600">确认新密码</div>
+          <div className="text-sm text-gray-600">{t("reset.confirmPassword")}</div>
           <input
-            className="border p-2 w-full rounded"
+            className="w-full rounded border p-2"
             type="password"
             autoComplete="new-password"
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
-            placeholder="再次输入新密码"
+            placeholder={t("reset.inputConfirmPasswordAgain")}
           />
         </div>
 
         {msg ? <div className="text-sm text-red-600">{msg}</div> : null}
 
         <button
-          className="w-full px-3 py-2 rounded bg-black text-white disabled:opacity-40"
+          className="w-full rounded bg-black px-3 py-2 text-white disabled:opacity-40"
           onClick={updatePassword}
           disabled={saving}
         >
-          {saving ? "提交中..." : "确认重置密码"}
+          {saving ? t("reset.submitting") : t("reset.confirmReset")}
         </button>
 
         <button
-          className="w-full px-3 py-2 rounded border bg-white hover:bg-gray-50"
+          className="w-full rounded border bg-white px-3 py-2 hover:bg-gray-50"
           onClick={() => (window.location.href = "/login")}
         >
-          返回登录
+          {t("common.backToLogin")}
         </button>
       </div>
     </main>

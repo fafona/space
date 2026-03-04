@@ -1,36 +1,35 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# merchant-space
 
-## Getting Started
+本项目包含「商家站点 + 总站导航 + 超级后台」三套入口。
 
-First, run the development server:
+## 本地启动
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+启动后默认访问 `http://localhost:3000`。
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## 路由约定（当前统一定义）
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- `/`：商家前台
+- `/admin`：商家后台（编辑商家页面内容）
+- `/super-admin`：超级后台（管理总站数据与平台治理）
+- `/portal`：总站（行业与商户导航网站）
+- `/industry/[slug]`：总站下的行业聚合页
+- `/site/[siteId]`：商家站点前台页
 
-## Learn More
+## 职责边界
 
-To learn more about Next.js, take a look at the following resources:
+- 超级后台编辑的是总站（行业分类、总站分区、站点归类、平台治理）。
+- 商家后台编辑的是商家页面内容。
+- 总站用于聚合行业和商户入口，用户可在总站点击进入商家前台页面。
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## 校验命令
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+npm run lint
+npm test
+npm run build
+```

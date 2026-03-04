@@ -40,3 +40,38 @@ input[type="reset"]:disabled,
 [role="button"][aria-disabled="true"] {
   cursor: default !important;
 }
+
+/* Hide Google Translate banner/tooltip and reset forced top offset. */
+html {
+  margin-top: 0 !important;
+  top: 0 !important;
+}
+
+body {
+  top: 0 !important;
+  margin-top: 0 !important;
+}
+
+.skiptranslate,
+iframe.skiptranslate,
+iframe.goog-te-banner-frame,
+.goog-te-banner-frame,
+.goog-te-banner-frame.skiptranslate,
+#goog-gt-tt,
+.goog-te-balloon-frame,
+.VIpgJd-ZVi9od-ORHb,
+.VIpgJd-yAWNEb-L7lbkb {
+  display: none !important;
+  visibility: hidden !important;
+  height: 0 !important;
+}
+
+body.translated-ltr,
+body.translated-rtl {
+  top: 0 !important;
+}
+
+/* Hide first paint until client-side local translation finishes. */
+html[data-i18n-pending="1"] body {
+  visibility: hidden;
+}

@@ -1,0 +1,1407 @@
+
+> merchant-space@0.1.0 dev
+> npm run check:env && next dev --webpack
+
+
+> merchant-space@0.1.0 check:env
+> node scripts/check-env.mjs
+
+[env-check] OK
+▲ Next.js 16.1.6 (webpack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.110.252:3000
+- Environments: .env.local
+
+✓ Starting...
+✓ Ready in 2.6s
+ GET / 200 in 2.1s (compile: 1879ms, render: 248ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 2.1s (compile: 1872ms, render: 251ms)
+ GET /super-admin 200 in 2.1s (compile: 1863ms, render: 251ms)
+ GET /super-admin/editor 200 in 1334ms (compile: 1082ms, render: 253ms)
+ GET /admin 200 in 2.1s (compile: 1863ms, render: 251ms)
+ GET /super-admin/editor 200 in 21ms (compile: 3ms, render: 18ms)
+ GET / 200 in 478ms (compile: 256ms, render: 222ms)
+ GET /admin 200 in 481ms (compile: 370ms, render: 110ms)
+ GET /super-admin 200 in 483ms (compile: 281ms, render: 203ms)
+ GET /super-admin/editor 200 in 490ms (compile: 152ms, render: 338ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 486ms (compile: 451ms, render: 35ms)
+ GET / 200 in 476ms (compile: 362ms, render: 114ms)
+ GET /admin 200 in 483ms (compile: 153ms, render: 330ms)
+ GET /super-admin 200 in 482ms (compile: 202ms, render: 280ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 483ms (compile: 282ms, render: 202ms)
+ GET /super-admin/editor 200 in 110ms (compile: 75ms, render: 35ms)
+ GET / 200 in 461ms (compile: 245ms, render: 216ms)
+ GET /admin 200 in 463ms (compile: 410ms, render: 53ms)
+ GET /super-admin 200 in 463ms (compile: 436ms, render: 28ms)
+ GET /super-admin/editor 200 in 470ms (compile: 146ms, render: 324ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 469ms (compile: 325ms, render: 144ms)
+ GET / 200 in 389ms (compile: 369ms, render: 20ms)
+ GET /admin 200 in 392ms (compile: 102ms, render: 290ms)
+ GET /super-admin 200 in 392ms (compile: 292ms, render: 100ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 396ms (compile: 269ms, render: 127ms)
+ GET /super-admin/editor 200 in 399ms (compile: 194ms, render: 205ms)
+ GET / 200 in 400ms (compile: 277ms, render: 123ms)
+ GET /super-admin 200 in 402ms (compile: 300ms, render: 102ms)
+ GET /admin 200 in 404ms (compile: 203ms, render: 201ms)
+ GET /super-admin/editor 200 in 407ms (compile: 106ms, render: 301ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 405ms (compile: 377ms, render: 28ms)
+ GET / 200 in 342ms (compile: 296ms, render: 46ms)
+ GET /admin 200 in 345ms (compile: 248ms, render: 97ms)
+ GET /super-admin 200 in 345ms (compile: 320ms, render: 25ms)
+ GET /super-admin/editor 200 in 350ms (compile: 113ms, render: 236ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 349ms (compile: 162ms, render: 186ms)
+ GET / 200 in 353ms (compile: 304ms, render: 50ms)
+ GET /admin 200 in 357ms (compile: 229ms, render: 128ms)
+ GET /super-admin 200 in 356ms (compile: 329ms, render: 27ms)
+ GET /super-admin/editor 200 in 359ms (compile: 133ms, render: 226ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 360ms (compile: 268ms, render: 92ms)
+ GET / 200 in 352ms (compile: 294ms, render: 58ms)
+ GET /admin 200 in 355ms (compile: 230ms, render: 125ms)
+ GET /super-admin 200 in 355ms (compile: 256ms, render: 99ms)
+ GET /super-admin/editor 200 in 360ms (compile: 131ms, render: 228ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 358ms (compile: 330ms, render: 28ms)
+ GET / 200 in 487ms (compile: 300ms, render: 187ms)
+ GET /super-admin 200 in 491ms (compile: 220ms, render: 270ms)
+ GET /admin 200 in 490ms (compile: 463ms, render: 27ms)
+ GET /super-admin/editor 200 in 495ms (compile: 171ms, render: 323ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 492ms (compile: 378ms, render: 114ms)
+ GET / 200 in 457ms (compile: 436ms, render: 21ms)
+ GET /super-admin 200 in 460ms (compile: 257ms, render: 203ms)
+ GET /admin 200 in 460ms (compile: 342ms, render: 118ms)
+ GET /super-admin/editor 200 in 463ms (compile: 130ms, render: 332ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 463ms (compile: 230ms, render: 233ms)
+ GET / 200 in 439ms (compile: 331ms, render: 108ms)
+ GET /super-admin 200 in 442ms (compile: 249ms, render: 193ms)
+ GET /super-admin/editor 200 in 444ms (compile: 131ms, render: 313ms)
+ GET /admin 200 in 442ms (compile: 415ms, render: 26ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 445ms (compile: 223ms, render: 222ms)
+ GET / 200 in 448ms (compile: 429ms, render: 19ms)
+ GET /super-admin 200 in 451ms (compile: 251ms, render: 199ms)
+ GET /admin 200 in 451ms (compile: 339ms, render: 113ms)
+ GET /super-admin/editor 200 in 456ms (compile: 132ms, render: 324ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 456ms (compile: 225ms, render: 231ms)
+ GET / 200 in 458ms (compile: 436ms, render: 22ms)
+ GET /super-admin 200 in 461ms (compile: 347ms, render: 114ms)
+ GET /admin 200 in 462ms (compile: 318ms, render: 144ms)
+ GET /super-admin/editor 200 in 464ms (compile: 134ms, render: 330ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 465ms (compile: 231ms, render: 234ms)
+ GET / 200 in 514ms (compile: 373ms, render: 141ms)
+ GET /super-admin 200 in 515ms (compile: 490ms, render: 25ms)
+ GET /admin 200 in 516ms (compile: 461ms, render: 56ms)
+ GET /super-admin/editor 200 in 520ms (compile: 179ms, render: 341ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 520ms (compile: 289ms, render: 231ms)
+ GET / 200 in 447ms (compile: 226ms, render: 221ms)
+ GET /admin 200 in 449ms (compile: 310ms, render: 138ms)
+ GET /super-admin 200 in 448ms (compile: 339ms, render: 109ms)
+ GET /super-admin/editor 200 in 453ms (compile: 129ms, render: 324ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 451ms (compile: 424ms, render: 27ms)
+ GET / 200 in 424ms (compile: 239ms, render: 186ms)
+ GET /super-admin 200 in 426ms (compile: 154ms, render: 272ms)
+ GET /admin 200 in 426ms (compile: 401ms, render: 26ms)
+ GET /super-admin/editor 200 in 430ms (compile: 117ms, render: 313ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 430ms (compile: 313ms, render: 117ms)
+ GET /super-admin/editor 200 in 413ms (compile: 4ms, render: 409ms)
+ GET / 200 in 504ms (compile: 310ms, render: 194ms)
+ GET /super-admin 200 in 505ms (compile: 227ms, render: 278ms)
+ GET /admin 200 in 504ms (compile: 480ms, render: 24ms)
+ GET /super-admin/editor 200 in 508ms (compile: 181ms, render: 328ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 507ms (compile: 388ms, render: 119ms)
+ GET / 200 in 435ms (compile: 207ms, render: 228ms)
+ GET /super-admin 200 in 435ms (compile: 315ms, render: 121ms)
+ GET /admin 200 in 435ms (compile: 411ms, render: 24ms)
+ GET /super-admin/editor 200 in 439ms (compile: 119ms, render: 320ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 438ms (compile: 286ms, render: 151ms)
+ GET / 200 in 509ms (compile: 388ms, render: 121ms)
+ GET /super-admin 200 in 513ms (compile: 220ms, render: 293ms)
+ GET /admin 200 in 512ms (compile: 481ms, render: 31ms)
+ GET /super-admin/editor 200 in 516ms (compile: 169ms, render: 348ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 515ms (compile: 307ms, render: 208ms)
+ GET / 200 in 494ms (compile: 444ms, render: 50ms)
+ GET /admin 200 in 497ms (compile: 352ms, render: 145ms)
+ GET /super-admin 200 in 497ms (compile: 471ms, render: 26ms)
+ GET /super-admin/editor 200 in 501ms (compile: 159ms, render: 342ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 501ms (compile: 266ms, render: 235ms)
+ GET / 200 in 451ms (compile: 313ms, render: 137ms)
+ GET /admin 200 in 451ms (compile: 426ms, render: 25ms)
+ GET /super-admin 200 in 453ms (compile: 341ms, render: 112ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 456ms (compile: 229ms, render: 227ms)
+ GET /super-admin/editor 200 in 457ms (compile: 133ms, render: 324ms)
+ GET / 200 in 455ms (compile: 351ms, render: 103ms)
+ GET /super-admin 200 in 457ms (compile: 172ms, render: 285ms)
+ GET /admin 200 in 457ms (compile: 258ms, render: 199ms)
+ GET /super-admin/editor 200 in 460ms (compile: 133ms, render: 327ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 459ms (compile: 434ms, render: 25ms)
+ GET / 200 in 489ms (compile: 468ms, render: 21ms)
+ GET /super-admin 200 in 491ms (compile: 303ms, render: 189ms)
+ GET /admin 200 in 492ms (compile: 391ms, render: 101ms)
+ GET /super-admin/editor 200 in 497ms (compile: 168ms, render: 329ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 496ms (compile: 267ms, render: 229ms)
+ GET / 200 in 471ms (compile: 248ms, render: 223ms)
+ GET /admin 200 in 472ms (compile: 331ms, render: 141ms)
+ GET /super-admin 200 in 473ms (compile: 363ms, render: 110ms)
+ GET /super-admin/editor 200 in 477ms (compile: 153ms, render: 324ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 475ms (compile: 448ms, render: 28ms)
+ GET / 200 in 365ms (compile: 221ms, render: 144ms)
+ GET /super-admin 200 in 366ms (compile: 249ms, render: 117ms)
+ GET /admin 200 in 366ms (compile: 343ms, render: 23ms)
+ GET /super-admin/editor 200 in 370ms (compile: 131ms, render: 239ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 371ms (compile: 182ms, render: 189ms)
+ GET / 200 in 354ms (compile: 334ms, render: 21ms)
+ GET /super-admin 200 in 357ms (compile: 171ms, render: 186ms)
+ GET /admin 200 in 357ms (compile: 295ms, render: 63ms)
+ GET /super-admin/editor 200 in 361ms (compile: 132ms, render: 230ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 361ms (compile: 209ms, render: 152ms)
+ GET / 200 in 351ms (compile: 296ms, render: 55ms)
+ GET /super-admin 200 in 354ms (compile: 170ms, render: 184ms)
+ GET /admin 200 in 354ms (compile: 255ms, render: 99ms)
+ GET /super-admin/editor 200 in 357ms (compile: 131ms, render: 226ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 356ms (compile: 331ms, render: 25ms)
+ GET / 200 in 363ms (compile: 181ms, render: 182ms)
+ GET /super-admin 200 in 363ms (compile: 246ms, render: 116ms)
+ GET /admin 200 in 363ms (compile: 340ms, render: 23ms)
+ GET /super-admin/editor 200 in 367ms (compile: 132ms, render: 235ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 367ms (compile: 217ms, render: 150ms)
+ GET / 200 in 360ms (compile: 181ms, render: 179ms)
+ GET /super-admin 200 in 363ms (compile: 206ms, render: 156ms)
+ GET /admin 200 in 364ms (compile: 338ms, render: 26ms)
+ GET /super-admin/editor 200 in 367ms (compile: 130ms, render: 237ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 367ms (compile: 245ms, render: 121ms)
+ GET / 200 in 346ms (compile: 326ms, render: 20ms)
+ GET /admin 200 in 401ms (compile: 310ms, render: 91ms)
+ GET /super-admin 200 in 349ms (compile: 288ms, render: 61ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 404ms (compile: 127ms, render: 277ms)
+ GET /super-admin/editor 200 in 407ms (compile: 222ms, render: 185ms)
+ GET / 200 in 363ms (compile: 339ms, render: 24ms)
+ GET /super-admin 200 in 364ms (compile: 289ms, render: 76ms)
+ GET /admin 200 in 367ms (compile: 260ms, render: 107ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 368ms (compile: 176ms, render: 192ms)
+ GET /super-admin/editor 200 in 371ms (compile: 128ms, render: 243ms)
+ GET /super-admin/editor 200 in 371ms (compile: 3ms, render: 367ms)
+ GET / 200 in 488ms (compile: 259ms, render: 228ms)
+ GET /admin 200 in 490ms (compile: 462ms, render: 28ms)
+ GET /super-admin 200 in 491ms (compile: 369ms, render: 122ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 493ms (compile: 339ms, render: 153ms)
+ GET /super-admin/editor 200 in 496ms (compile: 159ms, render: 337ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 356ms (compile: 6ms, render: 350ms)
+ GET /super-admin 200 in 220ms (compile: 3ms, render: 218ms)
+ GET / 200 in 182ms (compile: 33ms, render: 150ms)
+ GET /admin 200 in 191ms (compile: 19ms, render: 173ms)
+ GET /super-admin/editor 200 in 192ms (compile: 46ms, render: 146ms)
+ GET / 200 in 494ms (compile: 256ms, render: 238ms)
+ GET /super-admin 200 in 496ms (compile: 285ms, render: 211ms)
+ GET /admin 200 in 496ms (compile: 469ms, render: 27ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 499ms (compile: 155ms, render: 344ms)
+ GET /super-admin/editor 200 in 499ms (compile: 373ms, render: 126ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 307ms (compile: 3ms, render: 304ms)
+ GET / 200 in 208ms (compile: 10ms, render: 199ms)
+ GET /super-admin/editor 200 in 215ms (compile: 44ms, render: 171ms)
+ GET /super-admin 200 in 215ms (compile: 114ms, render: 100ms)
+ GET /admin 200 in 189ms (compile: 131ms, render: 59ms)
+ GET / 200 in 491ms (compile: 471ms, render: 20ms)
+ GET /admin 200 in 493ms (compile: 351ms, render: 143ms)
+ GET /super-admin 200 in 494ms (compile: 382ms, render: 112ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 496ms (compile: 263ms, render: 233ms)
+ GET /super-admin/editor 200 in 498ms (compile: 161ms, render: 337ms)
+ GET / 200 in 445ms (compile: 126ms, render: 319ms)
+ GET /admin 200 in 444ms (compile: 419ms, render: 24ms)
+ GET /super-admin 200 in 445ms (compile: 243ms, render: 202ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 448ms (compile: 214ms, render: 234ms)
+ GET /super-admin/editor 200 in 447ms (compile: 329ms, render: 118ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 274ms (compile: 3ms, render: 271ms)
+ GET / 200 in 206ms (compile: 7ms, render: 199ms)
+ GET /admin 200 in 211ms (compile: 40ms, render: 172ms)
+ GET /super-admin 200 in 186ms (compile: 86ms, render: 100ms)
+ GET /super-admin/editor 200 in 187ms (compile: 118ms, render: 68ms)
+ GET /super-admin/editor 200 in 34ms (compile: 3ms, render: 31ms)
+ GET /super-admin/editor 200 in 34ms (compile: 2ms, render: 32ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 42ms (compile: 4ms, render: 37ms)
+ GET / 200 in 485ms (compile: 264ms, render: 221ms)
+ GET /super-admin/editor 200 in 490ms (compile: 162ms, render: 328ms)
+ GET /admin 200 in 487ms (compile: 459ms, render: 27ms)
+ GET /super-admin 200 in 488ms (compile: 372ms, render: 116ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 489ms (compile: 341ms, render: 148ms)
+ GET /super-admin/editor 200 in 356ms (compile: 4ms, render: 352ms)
+ GET / 200 in 155ms (compile: 11ms, render: 144ms)
+ GET /super-admin 200 in 155ms (compile: 40ms, render: 115ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 154ms (compile: 75ms, render: 79ms)
+ GET /admin 200 in 156ms (compile: 107ms, render: 48ms)
+ GET / 200 in 500ms (compile: 392ms, render: 109ms)
+ GET /super-admin 200 in 504ms (compile: 225ms, render: 279ms)
+ GET /admin 200 in 502ms (compile: 477ms, render: 25ms)
+ GET /super-admin/editor 200 in 507ms (compile: 172ms, render: 335ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 507ms (compile: 308ms, render: 199ms)
+ GET / 200 in 452ms (compile: 222ms, render: 230ms)
+ GET /super-admin 200 in 454ms (compile: 431ms, render: 24ms)
+ GET /admin 200 in 455ms (compile: 400ms, render: 56ms)
+ GET /super-admin/editor 200 in 457ms (compile: 308ms, render: 148ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 459ms (compile: 130ms, render: 329ms)
+ GET / 200 in 434ms (compile: 223ms, render: 212ms)
+ GET /super-admin/editor 200 in 541ms (compile: 248ms, render: 293ms)
+ GET /admin 200 in 440ms (compile: 307ms, render: 133ms)
+ GET /super-admin 200 in 436ms (compile: 408ms, render: 28ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 440ms (compile: 381ms, render: 60ms)
+ GET / 200 in 490ms (compile: 262ms, render: 228ms)
+ GET /admin 200 in 494ms (compile: 161ms, render: 333ms)
+ GET /super-admin 200 in 493ms (compile: 466ms, render: 27ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 495ms (compile: 435ms, render: 60ms)
+ GET /super-admin/editor 200 in 497ms (compile: 346ms, render: 151ms)
+ GET / 200 in 439ms (compile: 418ms, render: 21ms)
+ GET /admin 200 in 443ms (compile: 129ms, render: 314ms)
+ GET /super-admin 200 in 443ms (compile: 248ms, render: 195ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 446ms (compile: 217ms, render: 229ms)
+ GET /super-admin/editor 200 in 446ms (compile: 336ms, render: 110ms)
+ GET / 200 in 442ms (compile: 123ms, render: 319ms)
+ GET /admin 200 in 443ms (compile: 391ms, render: 52ms)
+ GET /super-admin 200 in 444ms (compile: 417ms, render: 27ms)
+ GET /super-admin/editor 200 in 447ms (compile: 216ms, render: 231ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 447ms (compile: 303ms, render: 144ms)
+ GET / 200 in 454ms (compile: 130ms, render: 324ms)
+ GET /super-admin 200 in 454ms (compile: 251ms, render: 203ms)
+ GET /admin 200 in 454ms (compile: 336ms, render: 118ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 456ms (compile: 221ms, render: 235ms)
+ GET /super-admin/editor 200 in 457ms (compile: 428ms, render: 29ms)
+ GET /super-admin/editor 200 in 411ms (compile: 2ms, render: 409ms)
+ GET /admin 200 in 164ms (compile: 10ms, render: 154ms)
+ GET / 200 in 158ms (compile: 116ms, render: 42ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 166ms (compile: 38ms, render: 128ms)
+ GET /super-admin 200 in 164ms (compile: 77ms, render: 88ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 35ms (compile: 3ms, render: 32ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 49ms (compile: 1821µs, render: 47ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 32ms (compile: 3ms, render: 29ms)
+ GET / 200 in 485ms (compile: 251ms, render: 233ms)
+ GET /super-admin 200 in 486ms (compile: 284ms, render: 202ms)
+ GET /admin 200 in 486ms (compile: 461ms, render: 25ms)
+ GET /super-admin/editor 200 in 490ms (compile: 149ms, render: 342ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 489ms (compile: 368ms, render: 121ms)
+ GET / 200 in 446ms (compile: 170ms, render: 275ms)
+ GET /admin 200 in 447ms (compile: 258ms, render: 189ms)
+ GET /super-admin 200 in 449ms (compile: 84ms, render: 365ms)
+ GET /super-admin/editor 200 in 448ms (compile: 421ms, render: 27ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 451ms (compile: 335ms, render: 116ms)
+ GET / 200 in 490ms (compile: 363ms, render: 127ms)
+ GET /admin 200 in 493ms (compile: 286ms, render: 206ms)
+ GET /super-admin/editor 200 in 498ms (compile: 191ms, render: 307ms)
+ GET /super-admin 200 in 490ms (compile: 465ms, render: 24ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 492ms (compile: 435ms, render: 58ms)
+ GET / 200 in 550ms (compile: 353ms, render: 197ms)
+ GET /super-admin/editor 200 in 558ms (compile: 196ms, render: 362ms)
+ GET /super-admin 200 in 552ms (compile: 383ms, render: 169ms)
+ GET /admin 200 in 552ms (compile: 470ms, render: 82ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 557ms (compile: 280ms, render: 278ms)
+ GET /admin 200 in 97ms (compile: 27ms, render: 70ms)
+ GET /super-admin/editor 200 in 98ms (compile: 10ms, render: 88ms)
+ GET /super-admin 200 in 97ms (compile: 46ms, render: 50ms)
+ GET / 200 in 94ms (compile: 59ms, render: 35ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 96ms (compile: 72ms, render: 24ms)
+ GET / 200 in 442ms (compile: 346ms, render: 96ms)
+ GET /admin 200 in 446ms (compile: 238ms, render: 208ms)
+ GET /super-admin 200 in 445ms (compile: 269ms, render: 176ms)
+ GET /super-admin/editor 200 in 451ms (compile: 137ms, render: 313ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 448ms (compile: 421ms, render: 27ms)
+ GET / 200 in 355ms (compile: 335ms, render: 21ms)
+ GET /admin 200 in 358ms (compile: 130ms, render: 228ms)
+ GET /super-admin 200 in 359ms (compile: 171ms, render: 188ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 361ms (compile: 211ms, render: 150ms)
+ GET /super-admin/editor 200 in 361ms (compile: 295ms, render: 66ms)
+ GET / 200 in 411ms (compile: 358ms, render: 53ms)
+ GET /admin 200 in 413ms (compile: 150ms, render: 263ms)
+ GET /super-admin 200 in 412ms (compile: 388ms, render: 25ms)
+ GET /super-admin/editor 200 in 416ms (compile: 269ms, render: 147ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 417ms (compile: 314ms, render: 103ms)
+ GET / 200 in 414ms (compile: 249ms, render: 165ms)
+ GET /admin 200 in 415ms (compile: 390ms, render: 26ms)
+ GET /super-admin 200 in 417ms (compile: 279ms, render: 138ms)
+ GET /super-admin/editor 200 in 419ms (compile: 150ms, render: 269ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 420ms (compile: 207ms, render: 213ms)
+ GET / 200 in 533ms (compile: 432ms, render: 100ms)
+ GET /super-admin 200 in 536ms (compile: 243ms, render: 293ms)
+ GET /admin 200 in 536ms (compile: 343ms, render: 193ms)
+ GET /super-admin/editor 200 in 540ms (compile: 180ms, render: 360ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 538ms (compile: 510ms, render: 28ms)
+ GET / 200 in 514ms (compile: 398ms, render: 116ms)
+ GET /admin 200 in 517ms (compile: 274ms, render: 244ms)
+ GET /super-admin 200 in 518ms (compile: 306ms, render: 212ms)
+ GET /super-admin/editor 200 in 521ms (compile: 162ms, render: 359ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 520ms (compile: 491ms, render: 29ms)
+ GET / 200 in 547ms (compile: 302ms, render: 245ms)
+ GET /super-admin 200 in 548ms (compile: 200ms, render: 349ms)
+ GET /admin 200 in 548ms (compile: 524ms, render: 24ms)
+ GET /super-admin/editor 200 in 552ms (compile: 156ms, render: 396ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 552ms (compile: 404ms, render: 147ms)
+ GET / 200 in 536ms (compile: 396ms, render: 140ms)
+ GET /super-admin 200 in 540ms (compile: 193ms, render: 346ms)
+ GET /admin 200 in 538ms (compile: 515ms, render: 24ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 541ms (compile: 297ms, render: 244ms)
+ GET /super-admin/editor 200 in 544ms (compile: 149ms, render: 395ms)
+ GET / 200 in 460ms (compile: 343ms, render: 117ms)
+ GET /admin 200 in 462ms (compile: 438ms, render: 24ms)
+ GET /super-admin 200 in 464ms (compile: 175ms, render: 290ms)
+ GET /super-admin/editor 200 in 466ms (compile: 132ms, render: 335ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 465ms (compile: 260ms, render: 206ms)
+ GET / 200 in 527ms (compile: 503ms, render: 23ms)
+ GET /super-admin 200 in 529ms (compile: 312ms, render: 217ms)
+ GET /admin 200 in 529ms (compile: 403ms, render: 126ms)
+ GET /super-admin/editor 200 in 533ms (compile: 167ms, render: 366ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 534ms (compile: 278ms, render: 257ms)
+ GET / 200 in 458ms (compile: 129ms, render: 329ms)
+ GET /admin 200 in 460ms (compile: 226ms, render: 233ms)
+ GET /super-admin 200 in 459ms (compile: 259ms, render: 201ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 462ms (compile: 347ms, render: 115ms)
+ GET /super-admin/editor 200 in 461ms (compile: 432ms, render: 29ms)
+ GET / 200 in 463ms (compile: 310ms, render: 152ms)
+ GET /admin 200 in 464ms (compile: 406ms, render: 58ms)
+ GET /super-admin 200 in 464ms (compile: 440ms, render: 24ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 467ms (compile: 218ms, render: 249ms)
+ GET /super-admin/editor 200 in 468ms (compile: 121ms, render: 347ms)
+ GET / 200 in 469ms (compile: 233ms, render: 236ms)
+ GET /admin 200 in 470ms (compile: 447ms, render: 24ms)
+ GET /super-admin 200 in 472ms (compile: 353ms, render: 119ms)
+ GET /super-admin/editor 200 in 475ms (compile: 133ms, render: 341ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 475ms (compile: 320ms, render: 154ms)
+ GET / 200 in 429ms (compile: 371ms, render: 58ms)
+ GET /admin 200 in 432ms (compile: 220ms, render: 212ms)
+ GET /super-admin/editor 200 in 435ms (compile: 122ms, render: 313ms)
+ GET /super-admin 200 in 432ms (compile: 403ms, render: 30ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 435ms (compile: 295ms, render: 139ms)
+ GET / 200 in 443ms (compile: 123ms, render: 319ms)
+ GET /admin 200 in 443ms (compile: 221ms, render: 222ms)
+ GET /super-admin 200 in 441ms (compile: 252ms, render: 189ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 443ms (compile: 328ms, render: 115ms)
+ GET /super-admin/editor 200 in 442ms (compile: 411ms, render: 31ms)
+ GET / 200 in 557ms (compile: 331ms, render: 225ms)
+ GET /super-admin 200 in 556ms (compile: 529ms, render: 27ms)
+ GET /admin 200 in 558ms (compile: 420ms, render: 139ms)
+ GET /super-admin/editor 200 in 563ms (compile: 245ms, render: 318ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 560ms (compile: 497ms, render: 63ms)
+ GET / 200 in 378ms (compile: 227ms, render: 151ms)
+ GET /super-admin 200 in 379ms (compile: 259ms, render: 119ms)
+ GET /admin 200 in 379ms (compile: 353ms, render: 26ms)
+ GET /super-admin/editor 200 in 382ms (compile: 135ms, render: 247ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 383ms (compile: 187ms, render: 196ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 327ms (compile: 3ms, render: 324ms)
+ GET /admin 200 in 217ms (compile: 13ms, render: 204ms)
+ GET / 200 in 210ms (compile: 126ms, render: 83ms)
+ GET /super-admin 200 in 217ms (compile: 92ms, render: 125ms)
+ GET /super-admin/editor 200 in 216ms (compile: 154ms, render: 61ms)
+ GET / 200 in 485ms (compile: 244ms, render: 242ms)
+ GET /admin 200 in 488ms (compile: 330ms, render: 158ms)
+ GET /super-admin 200 in 488ms (compile: 365ms, render: 123ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 491ms (compile: 149ms, render: 343ms)
+ GET /super-admin/editor 200 in 490ms (compile: 460ms, render: 30ms)
+ GET / 200 in 374ms (compile: 354ms, render: 20ms)
+ GET /admin 200 in 377ms (compile: 280ms, render: 97ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 382ms (compile: 91ms, render: 292ms)
+ GET /super-admin 200 in 378ms (compile: 314ms, render: 64ms)
+ GET /super-admin/editor 200 in 382ms (compile: 190ms, render: 193ms)
+ GET /super-admin/editor 200 in 488ms (compile: 156ms, render: 332ms)
+ GET / 200 in 298ms (compile: 276ms, render: 22ms)
+ GET /admin 200 in 486ms (compile: 265ms, render: 221ms)
+ GET /super-admin 200 in 487ms (compile: 300ms, render: 186ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 488ms (compile: 383ms, render: 105ms)
+ GET / 200 in 412ms (compile: 219ms, render: 193ms)
+ GET /admin 200 in 413ms (compile: 304ms, render: 109ms)
+ GET /super-admin 200 in 413ms (compile: 339ms, render: 74ms)
+ GET /super-admin/editor 200 in 418ms (compile: 157ms, render: 260ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 416ms (compile: 389ms, render: 27ms)
+ GET / 200 in 361ms (compile: 177ms, render: 183ms)
+ GET /admin 200 in 360ms (compile: 339ms, render: 21ms)
+ GET /super-admin 200 in 362ms (compile: 244ms, render: 118ms)
+ GET /super-admin/editor 200 in 364ms (compile: 129ms, render: 236ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 364ms (compile: 213ms, render: 150ms)
+ GET / 200 in 176ms (compile: 17ms, render: 159ms)
+ GET /admin 200 in 178ms (compile: 68ms, render: 110ms)
+ GET /super-admin 200 in 181ms (compile: 53ms, render: 128ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 183ms (compile: 38ms, render: 145ms)
+ GET /super-admin/editor 200 in 183ms (compile: 90ms, render: 93ms)
+ GET / 200 in 89ms (compile: 23ms, render: 67ms)
+ GET /admin 200 in 92ms (compile: 9ms, render: 83ms)
+ GET /super-admin 200 in 92ms (compile: 36ms, render: 55ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 94ms (compile: 53ms, render: 41ms)
+ GET /super-admin/editor 200 in 94ms (compile: 68ms, render: 26ms)
+ GET / 200 in 463ms (compile: 442ms, render: 21ms)
+ GET /super-admin 200 in 467ms (compile: 204ms, render: 263ms)
+ GET /admin 200 in 468ms (compile: 291ms, render: 177ms)
+ GET /super-admin/editor 200 in 471ms (compile: 151ms, render: 320ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 471ms (compile: 367ms, render: 104ms)
+ GET / 200 in 444ms (compile: 423ms, render: 21ms)
+ GET /super-admin 200 in 449ms (compile: 183ms, render: 266ms)
+ GET /admin 200 in 450ms (compile: 270ms, render: 179ms)
+ GET /super-admin/editor 200 in 452ms (compile: 132ms, render: 320ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 451ms (compile: 345ms, render: 106ms)
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 214ms (compile: 3ms, render: 211ms)
+ GET /super-admin/editor 200 in 204ms (compile: 5ms, render: 199ms)
+ GET /admin 200 in 241ms (compile: 68ms, render: 173ms)
+ GET / 200 in 182ms (compile: 51ms, render: 131ms)
+ GET /super-admin 200 in 186ms (compile: 37ms, render: 149ms)
+ GET / 200 in 676ms (compile: 651ms, render: 25ms)
+ GET /super-admin 200 in 680ms (compile: 491ms, render: 189ms)
+ GET /admin 200 in 680ms (compile: 579ms, render: 101ms)
+ GET /super-admin/editor 200 in 683ms (compile: 285ms, render: 399ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 692ms (compile: 194ms, render: 498ms)
+ GET /super-admin/editor 200 in 187ms (compile: 4ms, render: 183ms)
+ GET / 200 in 214ms (compile: 70ms, render: 145ms)
+ GET /admin 200 in 161ms (compile: 40ms, render: 122ms)
+ GET /super-admin 200 in 160ms (compile: 64ms, render: 95ms)
+ GET / 200 in 668ms (compile: 125ms, render: 543ms)
+ GET /admin 200 in 670ms (compile: 226ms, render: 444ms)
+ GET /super-admin 200 in 670ms (compile: 264ms, render: 406ms)
+ GET /super-admin/editor 200 in 671ms (compile: 351ms, render: 320ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 677ms (compile: 435ms, render: 242ms)
+ GET /admin 200 in 181ms (compile: 1770µs, render: 179ms)
+ GET / 200 in 121ms (compile: 33ms, render: 88ms)
+ GET /super-admin 200 in 126ms (compile: 16ms, render: 111ms)
+ GET /super-admin/editor 200 in 126ms (compile: 46ms, render: 80ms)
+ GET / 200 in 385ms (compile: 269ms, render: 115ms)
+ GET /super-admin 200 in 388ms (compile: 137ms, render: 251ms)
+ GET /admin 200 in 386ms (compile: 363ms, render: 23ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 391ms (compile: 87ms, render: 305ms)
+ GET /super-admin/editor 200 in 391ms (compile: 225ms, render: 166ms)
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ GET / 200 in 229ms (compile: 115ms, render: 114ms)
+ GET /super-admin/editor 200 in 1077ms (compile: 635ms, render: 442ms)
+ GET /super-admin 200 in 233ms (compile: 73ms, render: 159ms)
+ GET /admin 200 in 233ms (compile: 202ms, render: 31ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 238ms (compile: 32ms, render: 205ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 140ms (compile: 3ms, render: 137ms)
+ GET / 200 in 108ms (compile: 8ms, render: 100ms)
+ GET /admin 200 in 112ms (compile: 29ms, render: 83ms)
+ GET /super-admin 200 in 112ms (compile: 42ms, render: 70ms)
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ GET /super-admin/editor 200 in 1107ms (compile: 571ms, render: 536ms)
+ GET / 200 in 204ms (compile: 102ms, render: 102ms)
+ GET /super-admin 200 in 207ms (compile: 65ms, render: 142ms)
+ GET /admin 200 in 206ms (compile: 180ms, render: 26ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 210ms (compile: 34ms, render: 176ms)
+ GET / 200 in 136ms (compile: 3ms, render: 133ms)
+ GET /super-admin 200 in 116ms (compile: 9ms, render: 107ms)
+ GET /admin 200 in 115ms (compile: 39ms, render: 76ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 115ms (compile: 53ms, render: 62ms)
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ GET /super-admin/editor 200 in 1128ms (compile: 569ms, render: 558ms)
+ GET / 200 in 209ms (compile: 187ms, render: 21ms)
+ GET /admin 200 in 211ms (compile: 149ms, render: 62ms)
+ GET /super-admin 200 in 213ms (compile: 62ms, render: 150ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 215ms (compile: 30ms, render: 186ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 137ms (compile: 3ms, render: 134ms)
+ GET / 200 in 109ms (compile: 60ms, render: 49ms)
+ GET /super-admin 200 in 113ms (compile: 8ms, render: 105ms)
+ GET /admin 200 in 114ms (compile: 22ms, render: 91ms)
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ GET /super-admin/editor 200 in 1179ms (compile: 637ms, render: 542ms)
+ GET / 200 in 216ms (compile: 105ms, render: 111ms)
+ GET /super-admin 200 in 219ms (compile: 67ms, render: 152ms)
+ GET /admin 200 in 218ms (compile: 189ms, render: 29ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 224ms (compile: 33ms, render: 191ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 151ms (compile: 5ms, render: 146ms)
+ GET / 200 in 151ms (compile: 40ms, render: 111ms)
+ GET /admin 200 in 122ms (compile: 38ms, render: 84ms)
+ GET /super-admin 200 in 123ms (compile: 64ms, render: 59ms)
+ GET /super-admin 200 in 421ms (compile: 144ms, render: 277ms)
+ GET /admin 200 in 421ms (compile: 231ms, render: 189ms)
+ GET / 200 in 416ms (compile: 395ms, render: 21ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 425ms (compile: 105ms, render: 320ms)
+ GET /super-admin/editor 200 in 423ms (compile: 316ms, render: 107ms)
+ GET / 200 in 163ms (compile: 49ms, render: 114ms)
+ GET /admin 200 in 167ms (compile: 12ms, render: 155ms)
+ GET /super-admin 200 in 167ms (compile: 34ms, render: 133ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 168ms (compile: 64ms, render: 104ms)
+ GET /super-admin/editor 200 in 168ms (compile: 79ms, render: 90ms)
+ GET / 200 in 94ms (compile: 26ms, render: 68ms)
+ GET /super-admin 200 in 95ms (compile: 56ms, render: 39ms)
+ GET /super-admin/editor 200 in 98ms (compile: 10ms, render: 87ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 99ms (compile: 44ms, render: 54ms)
+ GET /admin 200 in 95ms (compile: 69ms, render: 26ms)
+ GET / 200 in 457ms (compile: 435ms, render: 22ms)
+ GET /admin 200 in 460ms (compile: 242ms, render: 218ms)
+ GET /super-admin 200 in 460ms (compile: 279ms, render: 181ms)
+ GET /super-admin/editor 200 in 463ms (compile: 133ms, render: 330ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 464ms (compile: 355ms, render: 109ms)
+ GET / 200 in 404ms (compile: 218ms, render: 186ms)
+ GET /super-admin 200 in 406ms (compile: 144ms, render: 262ms)
+ GET /admin 200 in 405ms (compile: 381ms, render: 24ms)
+ GET /super-admin/editor 200 in 409ms (compile: 103ms, render: 307ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 409ms (compile: 291ms, render: 118ms)
+ GET / 200 in 336ms (compile: 149ms, render: 186ms)
+ GET /admin 200 in 337ms (compile: 270ms, render: 67ms)
+ GET /super-admin 200 in 337ms (compile: 313ms, render: 24ms)
+ GET /super-admin/editor 200 in 342ms (compile: 104ms, render: 238ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 341ms (compile: 186ms, render: 155ms)
+ GET / 200 in 329ms (compile: 180ms, render: 149ms)
+ GET /admin 200 in 329ms (compile: 305ms, render: 24ms)
+ GET /super-admin/editor 200 in 333ms (compile: 100ms, render: 233ms)
+ GET /super-admin 200 in 331ms (compile: 211ms, render: 120ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 333ms (compile: 145ms, render: 188ms)
+ GET / 200 in 324ms (compile: 181ms, render: 144ms)
+ GET /admin 200 in 326ms (compile: 303ms, render: 23ms)
+ GET /super-admin 200 in 327ms (compile: 214ms, render: 113ms)
+ GET /super-admin/editor 200 in 330ms (compile: 102ms, render: 228ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 331ms (compile: 147ms, render: 184ms)
+ GET / 200 in 338ms (compile: 183ms, render: 155ms)
+ GET /admin 200 in 339ms (compile: 317ms, render: 22ms)
+ GET /super-admin 200 in 341ms (compile: 144ms, render: 197ms)
+ GET /super-admin/editor 200 in 345ms (compile: 104ms, render: 241ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 343ms (compile: 220ms, render: 124ms)
+ GET / 200 in 347ms (compile: 286ms, render: 61ms)
+ GET /admin 200 in 349ms (compile: 238ms, render: 111ms)
+ GET /super-admin 200 in 348ms (compile: 320ms, render: 28ms)
+ GET /super-admin/editor 200 in 353ms (compile: 108ms, render: 246ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 354ms (compile: 153ms, render: 201ms)
+ GET / 200 in 333ms (compile: 148ms, render: 185ms)
+ GET /admin 200 in 333ms (compile: 241ms, render: 93ms)
+ GET /super-admin 200 in 335ms (compile: 310ms, render: 25ms)
+ GET /super-admin/editor 200 in 339ms (compile: 104ms, render: 235ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 337ms (compile: 278ms, render: 59ms)
+ GET / 200 in 488ms (compile: 373ms, render: 115ms)
+ GET /super-admin 200 in 492ms (compile: 204ms, render: 287ms)
+ GET /super-admin/editor 200 in 494ms (compile: 144ms, render: 350ms)
+ GET /admin 200 in 492ms (compile: 466ms, render: 25ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 495ms (compile: 293ms, render: 202ms)
+ GET / 200 in 451ms (compile: 429ms, render: 21ms)
+ GET /super-admin 200 in 453ms (compile: 347ms, render: 106ms)
+ GET /admin 200 in 455ms (compile: 312ms, render: 143ms)
+ GET /super-admin/editor 200 in 458ms (compile: 130ms, render: 328ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 458ms (compile: 226ms, render: 232ms)
+ GET / 200 in 463ms (compile: 300ms, render: 163ms)
+ GET /admin 200 in 464ms (compile: 401ms, render: 63ms)
+ GET /super-admin/editor 200 in 468ms (compile: 120ms, render: 348ms)
+ GET /super-admin 200 in 464ms (compile: 438ms, render: 26ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 470ms (compile: 212ms, render: 258ms)
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ GET / 200 in 221ms (compile: 76ms, render: 145ms)
+ GET /super-admin/editor 200 in 1223ms (compile: 573ms, render: 650ms)
+ GET /super-admin 200 in 223ms (compile: 108ms, render: 116ms)
+ GET /admin 200 in 222ms (compile: 196ms, render: 26ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 228ms (compile: 37ms, render: 191ms)
+ GET / 200 in 228ms (compile: 42ms, render: 186ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 233ms (compile: 9ms, render: 223ms)
+ GET /super-admin 200 in 231ms (compile: 70ms, render: 161ms)
+ GET /admin 200 in 200ms (compile: 143ms, render: 57ms)
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ GET /super-admin/editor 200 in 1233ms (compile: 601ms, render: 632ms)
+ GET / 200 in 209ms (compile: 187ms, render: 22ms)
+ GET /super-admin 200 in 213ms (compile: 30ms, render: 183ms)
+ GET /admin 200 in 212ms (compile: 151ms, render: 62ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 214ms (compile: 68ms, render: 147ms)
+ GET /super-admin 200 in 231ms (compile: 8ms, render: 224ms)
+ GET / 200 in 228ms (compile: 42ms, render: 186ms)
+ GET /admin 200 in 232ms (compile: 75ms, render: 157ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 199ms (compile: 134ms, render: 65ms)
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ GET /super-admin/editor 200 in 1184ms (compile: 585ms, render: 599ms)
+ GET / 200 in 209ms (compile: 188ms, render: 21ms)
+ GET /super-admin 200 in 211ms (compile: 27ms, render: 184ms)
+ GET /admin 200 in 210ms (compile: 149ms, render: 61ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 213ms (compile: 65ms, render: 148ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 142ms (compile: 4ms, render: 137ms)
+ GET / 200 in 113ms (compile: 39ms, render: 74ms)
+ GET /admin 200 in 132ms (compile: 28ms, render: 104ms)
+ GET /super-admin 200 in 117ms (compile: 51ms, render: 66ms)
+⨯ ./src/lib/merchantCardLayout.ts
+Error: 
+
+Caused by:
+    0: Failed to read source code from D:\merchant-space\src\lib\merchantCardLayout.ts
+    1: 系统找不到指定的文件。 (os error 2)
+
+Import trace for requested module:
+./src/lib/merchantCardLayout.ts
+./src/app/admin/AdminClient.tsx
+⨯ ./src/lib/merchantCardLayout.ts
+Error: 
+
+Caused by:
+    0: Failed to read source code from D:\merchant-space\src\lib\merchantCardLayout.ts
+    1: 系统找不到指定的文件。 (os error 2)
+
+Import trace for requested module:
+./src/lib/merchantCardLayout.ts
+./src/app/admin/AdminClient.tsx
+ GET / 200 in 685ms (compile: 488ms, render: 197ms)
+ GET /super-admin/editor 200 in 700ms (compile: 313ms, render: 386ms)
+ GET /admin 200 in 690ms (compile: 412ms, render: 277ms)
+ GET /super-admin 200 in 669ms (compile: 588ms, render: 81ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 689ms (compile: 562ms, render: 128ms)
+ GET /admin 200 in 78ms (compile: 9ms, render: 69ms)
+ GET / 200 in 76ms (compile: 39ms, render: 37ms)
+ GET /super-admin 200 in 79ms (compile: 23ms, render: 56ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 80ms (compile: 53ms, render: 27ms)
+ GET /super-admin/editor 200 in 39ms (compile: 9ms, render: 30ms)
+ GET / 200 in 454ms (compile: 233ms, render: 221ms)
+ GET /admin 200 in 456ms (compile: 319ms, render: 137ms)
+ GET /super-admin 200 in 455ms (compile: 430ms, render: 25ms)
+ GET /super-admin/editor 200 in 459ms (compile: 136ms, render: 323ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 458ms (compile: 394ms, render: 64ms)
+ GET / 200 in 454ms (compile: 318ms, render: 136ms)
+ GET /admin 200 in 457ms (compile: 243ms, render: 213ms)
+ GET /super-admin 200 in 456ms (compile: 351ms, render: 105ms)
+ GET /super-admin/editor 200 in 460ms (compile: 139ms, render: 321ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 459ms (compile: 431ms, render: 28ms)
+ GET / 200 in 341ms (compile: 189ms, render: 152ms)
+ GET /super-admin 200 in 342ms (compile: 221ms, render: 121ms)
+ GET /admin 200 in 342ms (compile: 319ms, render: 24ms)
+ GET /super-admin/editor 200 in 347ms (compile: 106ms, render: 241ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 346ms (compile: 151ms, render: 195ms)
+⚠ ./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardCanvasWidth' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardCanvasWidth').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardPatternHeight' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardPatternHeight').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardsContainerHeight' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardsContainerHeight').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/components/blocks/MerchantListBlock.tsx
+Attempted import error: 'getMerchantCardCanvasWidth' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardCanvasWidth').
+
+Import trace for requested module:
+./src/components/blocks/MerchantListBlock.tsx
+./src/components/blocks/BlockRenderer.tsx
+./src/app/page.tsx
+
+./src/components/blocks/MerchantListBlock.tsx
+Attempted import error: 'getMerchantCardsContainerHeight' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardsContainerHeight').
+
+Import trace for requested module:
+./src/components/blocks/MerchantListBlock.tsx
+./src/components/blocks/BlockRenderer.tsx
+./src/app/page.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardCanvasWidth' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardCanvasWidth').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardPatternHeight' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardPatternHeight').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardsContainerHeight' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardsContainerHeight').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/components/blocks/MerchantListBlock.tsx
+Attempted import error: 'getMerchantCardCanvasWidth' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardCanvasWidth').
+
+Import trace for requested module:
+./src/components/blocks/MerchantListBlock.tsx
+./src/components/blocks/BlockRenderer.tsx
+./src/app/portal/page.tsx
+
+./src/components/blocks/MerchantListBlock.tsx
+Attempted import error: 'getMerchantCardsContainerHeight' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardsContainerHeight').
+
+Import trace for requested module:
+./src/components/blocks/MerchantListBlock.tsx
+./src/components/blocks/BlockRenderer.tsx
+./src/app/portal/page.tsx
+ GET / 200 in 539ms (compile: 444ms, render: 96ms)
+ GET /admin 200 in 542ms (compile: 329ms, render: 213ms)
+ GET /super-admin 200 in 542ms (compile: 368ms, render: 174ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 548ms (compile: 125ms, render: 423ms)
+ GET /super-admin/editor 200 in 548ms (compile: 228ms, render: 320ms)
+⚠ ./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardCanvasWidth' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardCanvasWidth').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardPatternHeight' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardPatternHeight').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardsContainerHeight' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardsContainerHeight').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/components/blocks/MerchantListBlock.tsx
+Attempted import error: 'getMerchantCardCanvasWidth' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardCanvasWidth').
+
+Import trace for requested module:
+./src/components/blocks/MerchantListBlock.tsx
+./src/components/blocks/BlockRenderer.tsx
+./src/app/page.tsx
+
+./src/components/blocks/MerchantListBlock.tsx
+Attempted import error: 'getMerchantCardsContainerHeight' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardsContainerHeight').
+
+Import trace for requested module:
+./src/components/blocks/MerchantListBlock.tsx
+./src/components/blocks/BlockRenderer.tsx
+./src/app/page.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardCanvasWidth' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardCanvasWidth').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardPatternHeight' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardPatternHeight').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardsContainerHeight' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardsContainerHeight').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/components/blocks/MerchantListBlock.tsx
+Attempted import error: 'getMerchantCardCanvasWidth' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardCanvasWidth').
+
+Import trace for requested module:
+./src/components/blocks/MerchantListBlock.tsx
+./src/components/blocks/BlockRenderer.tsx
+./src/app/portal/page.tsx
+
+./src/components/blocks/MerchantListBlock.tsx
+Attempted import error: 'getMerchantCardsContainerHeight' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardsContainerHeight').
+
+Import trace for requested module:
+./src/components/blocks/MerchantListBlock.tsx
+./src/components/blocks/BlockRenderer.tsx
+./src/app/portal/page.tsx
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ GET / 200 in 333ms (compile: 41ms, render: 293ms)
+ GET /admin 200 in 338ms (compile: 26ms, render: 311ms)
+ GET /super-admin/editor 200 in 340ms (compile: 10ms, render: 330ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 339ms (compile: 62ms, render: 277ms)
+ GET /super-admin 200 in 336ms (compile: 77ms, render: 259ms)
+ GET /super-admin/editor 200 in 276ms (compile: 23ms, render: 253ms)
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 40ms (compile: 3ms, render: 37ms)
+ GET / 200 in 179ms (compile: 5ms, render: 173ms)
+ GET /admin 200 in 181ms (compile: 39ms, render: 141ms)
+ GET /super-admin 200 in 153ms (compile: 42ms, render: 112ms)
+⚠ ./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardCanvasWidth' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardCanvasWidth').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardPatternHeight' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardPatternHeight').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardsContainerHeight' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardsContainerHeight').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardCanvasWidth' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardCanvasWidth').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardPatternHeight' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardPatternHeight').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardsContainerHeight' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardsContainerHeight').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+ GET / 200 in 686ms (compile: 512ms, render: 174ms)
+ GET /super-admin 200 in 687ms (compile: 546ms, render: 141ms)
+ GET /admin 200 in 687ms (compile: 636ms, render: 51ms)
+ GET /super-admin/editor 200 in 877ms (compile: 328ms, render: 549ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 699ms (compile: 441ms, render: 259ms)
+ GET / 200 in 111ms (compile: 4ms, render: 107ms)
+ GET /admin 200 in 126ms (compile: 12ms, render: 114ms)
+ GET /super-admin 200 in 125ms (compile: 35ms, render: 89ms)
+⚠ ./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardCanvasWidth' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardCanvasWidth').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardPatternHeight' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardPatternHeight').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardsContainerHeight' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardsContainerHeight').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardCanvasWidth' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardCanvasWidth').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardPatternHeight' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardPatternHeight').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardsContainerHeight' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardsContainerHeight').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+ GET / 200 in 598ms (compile: 388ms, render: 209ms)
+ GET /super-admin 200 in 600ms (compile: 225ms, render: 375ms)
+ GET /admin 200 in 600ms (compile: 311ms, render: 289ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 608ms (compile: 192ms, render: 416ms)
+ GET /super-admin/editor 200 in 609ms (compile: 111ms, render: 498ms)
+ GET /super-admin 200 in 150ms (compile: 4ms, render: 146ms)
+ GET / 200 in 151ms (compile: 41ms, render: 111ms)
+ GET /admin 200 in 250ms (compile: 35ms, render: 215ms)
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+⚠ ./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardCanvasWidth' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardCanvasWidth').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardPatternHeight' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardPatternHeight').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardsContainerHeight' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardsContainerHeight').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardCanvasWidth' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardCanvasWidth').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardPatternHeight' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardPatternHeight').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardsContainerHeight' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardsContainerHeight').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 1204ms (compile: 756ms, render: 448ms)
+ GET /super-admin/editor 200 in 1322ms (compile: 872ms, render: 449ms)
+ GET / 200 in 226ms (compile: 202ms, render: 24ms)
+ GET /admin 200 in 230ms (compile: 87ms, render: 143ms)
+ GET /super-admin 200 in 229ms (compile: 127ms, render: 102ms)
+ GET / 200 in 154ms (compile: 4ms, render: 150ms)
+ GET /super-admin 200 in 160ms (compile: 35ms, render: 124ms)
+ GET /admin 200 in 134ms (compile: 44ms, render: 90ms)
+⚠ ./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardCanvasWidth' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardCanvasWidth').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardPatternHeight' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardPatternHeight').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardsContainerHeight' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardsContainerHeight').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardCanvasWidth' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardCanvasWidth').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardPatternHeight' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardPatternHeight').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardsContainerHeight' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardsContainerHeight').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+ GET / 200 in 310ms (compile: 194ms, render: 115ms)
+ GET /super-admin/editor 200 in 609ms (compile: 111ms, render: 498ms)
+ GET /super-admin 200 in 473ms (compile: 280ms, render: 193ms)
+ GET /admin 200 in 311ms (compile: 282ms, render: 30ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 610ms (compile: 362ms, render: 248ms)
+ GET / 200 in 150ms (compile: 4ms, render: 146ms)
+ GET /super-admin 200 in 153ms (compile: 33ms, render: 120ms)
+ GET /admin 200 in 128ms (compile: 43ms, render: 85ms)
+⚠ ./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardCanvasWidth' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardCanvasWidth').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardPatternHeight' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardPatternHeight').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardsContainerHeight' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardsContainerHeight').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardCanvasWidth' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardCanvasWidth').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardPatternHeight' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardPatternHeight').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardsContainerHeight' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardsContainerHeight').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+ GET /super-admin 200 in 613ms (compile: 322ms, render: 291ms)
+ GET / 200 in 607ms (compile: 488ms, render: 119ms)
+ GET /admin 200 in 609ms (compile: 577ms, render: 32ms)
+ GET /super-admin/editor 200 in 622ms (compile: 114ms, render: 508ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 619ms (compile: 399ms, render: 220ms)
+ GET /admin 200 in 152ms (compile: 5ms, render: 147ms)
+ GET / 200 in 152ms (compile: 37ms, render: 116ms)
+ GET /super-admin 200 in 127ms (compile: 36ms, render: 90ms)
+⚠ ./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardCanvasWidth' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardCanvasWidth').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardPatternHeight' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardPatternHeight').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardsContainerHeight' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardsContainerHeight').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardCanvasWidth' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardCanvasWidth').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardPatternHeight' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardPatternHeight').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+
+./src/app/admin/AdminClient.tsx
+Attempted import error: 'getMerchantCardsContainerHeight' is not exported from '@/lib/merchantCardLayout' (imported as 'getMerchantCardsContainerHeight').
+
+Import trace for requested module:
+./src/app/admin/AdminClient.tsx
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ GET / 200 in 313ms (compile: 157ms, render: 155ms)
+ GET /super-admin/editor 200 in 616ms (compile: 110ms, render: 506ms)
+ GET /admin 200 in 318ms (compile: 247ms, render: 71ms)
+ GET /super-admin 200 in 316ms (compile: 284ms, render: 32ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 328ms (compile: 76ms, render: 252ms)
+ GET /super-admin 200 in 152ms (compile: 4ms, render: 148ms)
+ GET / 200 in 151ms (compile: 41ms, render: 110ms)
+ GET /admin 200 in 121ms (compile: 39ms, render: 82ms)
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 2.6s (compile: 2.1s, render: 523ms)
+ GET /super-admin/editor 200 in 2.2s (compile: 1723ms, render: 525ms)
+ GET / 200 in 241ms (compile: 179ms, render: 62ms)
+ GET /admin 200 in 246ms (compile: 89ms, render: 156ms)
+ GET /super-admin 200 in 244ms (compile: 214ms, render: 30ms)
+ GET /super-admin 200 in 121ms (compile: 5ms, render: 116ms)
+ GET /admin 200 in 179ms (compile: 43ms, render: 136ms)
+ GET / 200 in 142ms (compile: 44ms, render: 98ms)
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 1421ms (compile: 779ms, render: 641ms)
+ GET /super-admin/editor 200 in 1291ms (compile: 648ms, render: 644ms)
+ GET / 200 in 224ms (compile: 114ms, render: 110ms)
+ GET /super-admin 200 in 228ms (compile: 38ms, render: 190ms)
+ GET /admin 200 in 226ms (compile: 199ms, render: 27ms)
+ GET / 200 in 175ms (compile: 5ms, render: 171ms)
+ GET /super-admin 200 in 210ms (compile: 36ms, render: 174ms)
+ GET /admin 200 in 184ms (compile: 42ms, render: 142ms)
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 1470ms (compile: 841ms, render: 629ms)
+ GET /super-admin/editor 200 in 1315ms (compile: 685ms, render: 630ms)
+ GET / 200 in 230ms (compile: 206ms, render: 24ms)
+ GET /admin 200 in 234ms (compile: 84ms, render: 150ms)
+ GET /super-admin 200 in 234ms (compile: 122ms, render: 113ms)
+ GET /admin 200 in 113ms (compile: 4ms, render: 110ms)
+ GET / 200 in 175ms (compile: 41ms, render: 134ms)
+ GET /super-admin 200 in 181ms (compile: 14ms, render: 167ms)
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 1614ms (compile: 1125ms, render: 489ms)
+ GET / 200 in 242ms (compile: 82ms, render: 160ms)
+ GET /super-admin/editor 200 in 1478ms (compile: 986ms, render: 491ms)
+ GET /admin 200 in 244ms (compile: 177ms, render: 67ms)
+ GET /super-admin 200 in 244ms (compile: 215ms, render: 29ms)
+ GET /super-admin 200 in 207ms (compile: 6ms, render: 202ms)
+ GET /admin 200 in 208ms (compile: 41ms, render: 168ms)
+ GET / 200 in 174ms (compile: 47ms, render: 127ms)
+ GET / 200 in 612ms (compile: 402ms, render: 210ms)
+ GET /admin 200 in 614ms (compile: 281ms, render: 333ms)
+ GET /super-admin 200 in 615ms (compile: 317ms, render: 298ms)
+ GET /super-admin/editor 200 in 624ms (compile: 112ms, render: 512ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 624ms (compile: 193ms, render: 431ms)
+ GET /admin 200 in 161ms (compile: 7ms, render: 155ms)
+ GET /super-admin 200 in 162ms (compile: 54ms, render: 108ms)
+ GET / 200 in 124ms (compile: 53ms, render: 71ms)
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 1385ms (compile: 717ms, render: 668ms)
+ GET / 200 in 303ms (compile: 281ms, render: 22ms)
+ GET /super-admin 200 in 306ms (compile: 109ms, render: 197ms)
+ GET /admin 200 in 306ms (compile: 197ms, render: 109ms)
+ GET /super-admin/editor 200 in 308ms (compile: 71ms, render: 237ms)
+ GET /super-admin/editor 200 in 168ms (compile: 7ms, render: 161ms)
+ GET /super-admin 200 in 195ms (compile: 62ms, render: 133ms)
+ GET / 200 in 193ms (compile: 99ms, render: 94ms)
+ GET /admin 200 in 140ms (compile: 69ms, render: 70ms)
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 1412ms (compile: 739ms, render: 673ms)
+ GET / 200 in 313ms (compile: 206ms, render: 107ms)
+ GET /super-admin 200 in 314ms (compile: 117ms, render: 198ms)
+ GET /admin 200 in 315ms (compile: 289ms, render: 26ms)
+ GET /super-admin/editor 200 in 321ms (compile: 82ms, render: 239ms)
+ GET /super-admin/editor 200 in 203ms (compile: 5ms, render: 197ms)
+ GET /admin 200 in 205ms (compile: 63ms, render: 141ms)
+ GET / 200 in 131ms (compile: 52ms, render: 79ms)
+ GET /super-admin 200 in 150ms (compile: 40ms, render: 109ms)
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 1403ms (compile: 725ms, render: 679ms)
+ GET / 200 in 314ms (compile: 170ms, render: 145ms)
+ GET /super-admin 200 in 313ms (compile: 202ms, render: 112ms)
+ GET /admin 200 in 313ms (compile: 287ms, render: 26ms)
+ GET /super-admin/editor 200 in 320ms (compile: 82ms, render: 238ms)
+ GET / 200 in 176ms (compile: 65ms, render: 111ms)
+ GET /super-admin/editor 200 in 178ms (compile: 5ms, render: 173ms)
+ GET /super-admin 200 in 133ms (compile: 36ms, render: 97ms)
+ GET /admin 200 in 135ms (compile: 23ms, render: 112ms)
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 1395ms (compile: 717ms, render: 679ms)
+ GET / 200 in 319ms (compile: 171ms, render: 147ms)
+ GET /admin 200 in 320ms (compile: 294ms, render: 26ms)
+ GET /super-admin 200 in 321ms (compile: 208ms, render: 113ms)
+ GET /super-admin/editor 200 in 324ms (compile: 80ms, render: 245ms)
+ GET /super-admin/editor 200 in 173ms (compile: 6ms, render: 167ms)
+ GET /admin 200 in 199ms (compile: 64ms, render: 135ms)
+ GET / 200 in 198ms (compile: 95ms, render: 103ms)
+ GET /super-admin 200 in 128ms (compile: 48ms, render: 80ms)
+ GET / 200 in 589ms (compile: 336ms, render: 252ms)
+ GET /super-admin 200 in 591ms (compile: 246ms, render: 345ms)
+ GET /admin 200 in 591ms (compile: 424ms, render: 166ms)
+ GET /super-admin/editor 200 in 594ms (compile: 208ms, render: 386ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 603ms (compile: 114ms, render: 488ms)
+ GET /super-admin/editor 200 in 165ms (compile: 4ms, render: 161ms)
+ GET /super-admin 200 in 194ms (compile: 67ms, render: 128ms)
+ GET / 200 in 136ms (compile: 44ms, render: 93ms)
+ GET /admin 200 in 137ms (compile: 64ms, render: 73ms)
+ GET / 200 in 641ms (compile: 522ms, render: 119ms)
+ GET /super-admin 200 in 643ms (compile: 445ms, render: 198ms)
+ GET /admin 200 in 643ms (compile: 612ms, render: 31ms)
+ GET /super-admin/editor 200 in 646ms (compile: 405ms, render: 242ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 652ms (compile: 114ms, render: 539ms)
+ GET /super-admin/editor 200 in 176ms (compile: 4ms, render: 172ms)
+ GET / 200 in 177ms (compile: 71ms, render: 106ms)
+ GET /admin 200 in 125ms (compile: 37ms, render: 87ms)
+ GET /super-admin 200 in 125ms (compile: 52ms, render: 73ms)
+ GET / 200 in 457ms (compile: 270ms, render: 187ms)
+ GET /super-admin 200 in 461ms (compile: 195ms, render: 266ms)
+ GET /admin 200 in 460ms (compile: 354ms, render: 106ms)
+ GET /super-admin/editor 200 in 463ms (compile: 136ms, render: 327ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 462ms (compile: 434ms, render: 28ms)
+ GET / 200 in 451ms (compile: 354ms, render: 98ms)
+ GET /admin 200 in 456ms (compile: 239ms, render: 217ms)
+ GET /super-admin 200 in 456ms (compile: 277ms, render: 179ms)
+ GET /super-admin/editor 200 in 458ms (compile: 129ms, render: 329ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 457ms (compile: 426ms, render: 30ms)
+ GET / 200 in 382ms (compile: 136ms, render: 246ms)
+ GET /admin 200 in 384ms (compile: 221ms, render: 163ms)
+ GET /super-admin 200 in 384ms (compile: 261ms, render: 124ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 389ms (compile: 85ms, render: 304ms)
+ GET /super-admin/editor 200 in 387ms (compile: 357ms, render: 30ms)
+ GET / 200 in 333ms (compile: 314ms, render: 19ms)
+ GET /super-admin 200 in 336ms (compile: 149ms, render: 187ms)
+ GET /admin 200 in 336ms (compile: 234ms, render: 102ms)
+ GET /super-admin/editor 200 in 341ms (compile: 103ms, render: 237ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 339ms (compile: 271ms, render: 68ms)
+ GET / 200 in 341ms (compile: 64ms, render: 277ms)
+ GET /super-admin 200 in 341ms (compile: 192ms, render: 150ms)
+ GET /admin 200 in 342ms (compile: 278ms, render: 64ms)
+ GET /super-admin/editor 200 in 344ms (compile: 154ms, render: 190ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 344ms (compile: 318ms, render: 25ms)
+ GET / 200 in 519ms (compile: 120ms, render: 399ms)
+ GET /super-admin 200 in 521ms (compile: 178ms, render: 343ms)
+ GET /admin 200 in 521ms (compile: 268ms, render: 253ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 523ms (compile: 345ms, render: 179ms)
+ GET /super-admin/editor 200 in 524ms (compile: 435ms, render: 88ms)
+ GET /super-admin 200 in 91ms (compile: 24ms, render: 67ms)
+ GET /admin 200 in 91ms (compile: 38ms, render: 53ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 94ms (compile: 10ms, render: 83ms)
+ GET /super-admin/editor 200 in 92ms (compile: 51ms, render: 41ms)
+ GET / 200 in 90ms (compile: 66ms, render: 24ms)
+ GET / 200 in 458ms (compile: 126ms, render: 333ms)
+ GET /super-admin 200 in 460ms (compile: 178ms, render: 282ms)
+ GET /admin 200 in 460ms (compile: 355ms, render: 105ms)
+ GET /super-admin/editor 200 in 462ms (compile: 265ms, render: 198ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 463ms (compile: 434ms, render: 29ms)
+ GET / 200 in 401ms (compile: 249ms, render: 152ms)
+ GET /admin 200 in 402ms (compile: 339ms, render: 63ms)
+ GET /super-admin 200 in 402ms (compile: 377ms, render: 25ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 406ms (compile: 97ms, render: 309ms)
+ GET /super-admin/editor 200 in 407ms (compile: 175ms, render: 231ms)
+ GET / 200 in 412ms (compile: 391ms, render: 21ms)
+ GET /super-admin 200 in 416ms (compile: 58ms, render: 359ms)
+ GET /admin 200 in 415ms (compile: 311ms, render: 104ms)
+ GET /super-admin/editor 200 in 418ms (compile: 225ms, render: 194ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 420ms (compile: 139ms, render: 280ms)
+ GET / 200 in 340ms (compile: 58ms, render: 282ms)
+ GET /super-admin 200 in 341ms (compile: 99ms, render: 242ms)
+ GET /admin 200 in 341ms (compile: 183ms, render: 158ms)
+ GET /super-admin/editor 200 in 343ms (compile: 269ms, render: 74ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 343ms (compile: 317ms, render: 26ms)
+ GET / 200 in 333ms (compile: 222ms, render: 111ms)
+ GET /super-admin 200 in 337ms (compile: 56ms, render: 281ms)
+ GET /admin 200 in 335ms (compile: 312ms, render: 23ms)
+ GET /super-admin/editor 200 in 339ms (compile: 150ms, render: 190ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 339ms (compile: 187ms, render: 152ms)
+ GET / 200 in 331ms (compile: 265ms, render: 67ms)
+ GET /admin 200 in 333ms (compile: 228ms, render: 105ms)
+ GET /super-admin 200 in 333ms (compile: 310ms, render: 22ms)
+ GET /super-admin/editor 200 in 337ms (compile: 101ms, render: 236ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 337ms (compile: 145ms, render: 192ms)
+ GET / 200 in 339ms (compile: 99ms, render: 241ms)
+ GET /super-admin 200 in 342ms (compile: 56ms, render: 286ms)
+ GET /admin 200 in 340ms (compile: 283ms, render: 58ms)
+ GET /super-admin/editor 200 in 344ms (compile: 183ms, render: 160ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 343ms (compile: 319ms, render: 24ms)
+ GET / 200 in 352ms (compile: 136ms, render: 216ms)
+ GET /super-admin 200 in 356ms (compile: 58ms, render: 298ms)
+ GET /admin 200 in 354ms (compile: 331ms, render: 23ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 357ms (compile: 101ms, render: 256ms)
+ GET /super-admin/editor 200 in 357ms (compile: 231ms, render: 126ms)
+ GET / 200 in 608ms (compile: 589ms, render: 20ms)
+ GET /super-admin 200 in 610ms (compile: 547ms, render: 63ms)
+ GET /admin 200 in 611ms (compile: 506ms, render: 105ms)
+ GET /super-admin/editor 200 in 613ms (compile: 415ms, render: 198ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 615ms (compile: 90ms, render: 525ms)
+ GET / 200 in 354ms (compile: 66ms, render: 288ms)
+ GET /super-admin 200 in 354ms (compile: 110ms, render: 244ms)
+ GET /admin 200 in 355ms (compile: 233ms, render: 122ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 357ms (compile: 142ms, render: 216ms)
+ GET /super-admin/editor 200 in 358ms (compile: 328ms, render: 30ms)
+ GET / 200 in 619ms (compile: 367ms, render: 252ms)
+ GET /super-admin 200 in 622ms (compile: 183ms, render: 439ms)
+ GET /admin 200 in 620ms (compile: 594ms, render: 26ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 624ms (compile: 492ms, render: 131ms)
+ GET /super-admin/editor 200 in 626ms (compile: 453ms, render: 173ms)
+ GET / 200 in 393ms (compile: 120ms, render: 272ms)
+ GET /super-admin 200 in 395ms (compile: 73ms, render: 322ms)
+ GET /admin 200 in 394ms (compile: 216ms, render: 178ms)
+ GET /super-admin/editor 200 in 397ms (compile: 322ms, render: 74ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 396ms (compile: 370ms, render: 26ms)
+ GET / 200 in 474ms (compile: 274ms, render: 200ms)
+ GET /admin 200 in 477ms (compile: 137ms, render: 340ms)
+ GET /super-admin 200 in 477ms (compile: 195ms, render: 282ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 479ms (compile: 353ms, render: 127ms)
+ GET /super-admin/editor 200 in 479ms (compile: 449ms, render: 30ms)
+ GET / 200 in 529ms (compile: 369ms, render: 160ms)
+ GET /super-admin 200 in 533ms (compile: 205ms, render: 328ms)
+ GET /admin 200 in 533ms (compile: 294ms, render: 238ms)
+ GET /super-admin/editor 200 in 538ms (compile: 142ms, render: 396ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 537ms (compile: 447ms, render: 89ms)
+ GET / 200 in 86ms (compile: 22ms, render: 63ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 91ms (compile: 9ms, render: 82ms)
+ GET /admin 200 in 89ms (compile: 36ms, render: 53ms)
+ GET /super-admin 200 in 88ms (compile: 49ms, render: 39ms)
+ GET /super-admin/editor 200 in 90ms (compile: 64ms, render: 26ms)
+ GET / 200 in 387ms (compile: 230ms, render: 157ms)
+ GET /super-admin 200 in 387ms (compile: 268ms, render: 119ms)
+ GET /admin 200 in 388ms (compile: 365ms, render: 24ms)
+ GET /super-admin/editor 200 in 392ms (compile: 133ms, render: 258ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 392ms (compile: 190ms, render: 202ms)
+ GET / 200 in 341ms (compile: 322ms, render: 18ms)
+ GET /admin 200 in 344ms (compile: 246ms, render: 98ms)
+ GET /super-admin 200 in 344ms (compile: 285ms, render: 59ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 346ms (compile: 150ms, render: 195ms)
+ GET /super-admin/editor 200 in 348ms (compile: 107ms, render: 241ms)
+ GET / 200 in 341ms (compile: 150ms, render: 191ms)
+ GET /super-admin 200 in 342ms (compile: 186ms, render: 156ms)
+ GET /admin 200 in 342ms (compile: 318ms, render: 24ms)
+ GET /super-admin/editor 200 in 345ms (compile: 107ms, render: 238ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 345ms (compile: 223ms, render: 121ms)
+ GET / 200 in 428ms (compile: 365ms, render: 63ms)
+ GET /admin 200 in 430ms (compile: 284ms, render: 146ms)
+ GET /super-admin 200 in 430ms (compile: 404ms, render: 27ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 434ms (compile: 199ms, render: 236ms)
+ GET /super-admin/editor 200 in 436ms (compile: 116ms, render: 320ms)
+ GET /super-admin/editor 200 in 225ms (compile: 4ms, render: 221ms)
+ GET /super-admin 200 in 156ms (compile: 8ms, render: 148ms)
+ GET / 200 in 153ms (compile: 45ms, render: 107ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 122ms (compile: 45ms, render: 77ms)
+ GET /admin 200 in 119ms (compile: 71ms, render: 48ms)
+ GET / 200 in 472ms (compile: 232ms, render: 241ms)
+ GET /admin 200 in 473ms (compile: 404ms, render: 69ms)
+ GET /super-admin 200 in 473ms (compile: 447ms, render: 27ms)
+ GET /super-admin/editor 200 in 478ms (compile: 135ms, render: 343ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 477ms (compile: 308ms, render: 169ms)
+ GET / 200 in 469ms (compile: 123ms, render: 345ms)
+ GET /admin 200 in 470ms (compile: 303ms, render: 166ms)
+ GET /super-admin 200 in 470ms (compile: 351ms, render: 119ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 473ms (compile: 217ms, render: 256ms)
+ GET /super-admin/editor 200 in 472ms (compile: 443ms, render: 30ms)
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 200ms (compile: 3ms, render: 197ms)
+ GET / 200 in 227ms (compile: 107ms, render: 120ms)
+ GET /admin 200 in 231ms (compile: 11ms, render: 220ms)
+ GET /super-admin 200 in 232ms (compile: 134ms, render: 98ms)
+ GET /super-admin/editor 200 in 231ms (compile: 169ms, render: 63ms)
+ GET / 200 in 649ms (compile: 622ms, render: 28ms)
+ GET /super-admin 200 in 652ms (compile: 277ms, render: 375ms)
+ GET /admin 200 in 653ms (compile: 365ms, render: 287ms)
+ GET /super-admin/editor 200 in 657ms (compile: 234ms, render: 423ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 662ms (compile: 129ms, render: 533ms)
+ GET /super-admin/editor 200 in 179ms (compile: 4ms, render: 175ms)
+ GET /admin 200 in 185ms (compile: 69ms, render: 117ms)
+ GET / 200 in 124ms (compile: 37ms, render: 86ms)
+ GET /super-admin 200 in 127ms (compile: 50ms, render: 77ms)
+ GET / 200 in 348ms (compile: 201ms, render: 148ms)
+ GET /admin 200 in 350ms (compile: 326ms, render: 24ms)
+ GET /super-admin 200 in 351ms (compile: 239ms, render: 112ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 354ms (compile: 162ms, render: 192ms)
+ GET /super-admin/editor 200 in 356ms (compile: 115ms, render: 241ms)
+ GET /site/site-main 200 in 1844ms (compile: 1809ms, render: 35ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 280ms (compile: 28ms, render: 252ms)
+ GET / 200 in 317ms (compile: 127ms, render: 190ms)
+ GET /admin 200 in 323ms (compile: 45ms, render: 278ms)
+ GET /super-admin 200 in 322ms (compile: 177ms, render: 144ms)
+ GET /super-admin/editor 200 in 322ms (compile: 248ms, render: 74ms)
+ GET / 200 in 510ms (compile: 277ms, render: 233ms)
+ GET /super-admin 200 in 511ms (compile: 320ms, render: 191ms)
+ GET /admin 200 in 508ms (compile: 405ms, render: 103ms)
+ GET /super-admin/editor 200 in 515ms (compile: 183ms, render: 331ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 511ms (compile: 482ms, render: 29ms)
+ GET / 200 in 399ms (compile: 88ms, render: 312ms)
+ GET /super-admin 200 in 401ms (compile: 145ms, render: 256ms)
+ GET /admin 200 in 401ms (compile: 374ms, render: 26ms)
+ GET /super-admin/editor 200 in 404ms (compile: 235ms, render: 168ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 404ms (compile: 277ms, render: 127ms)
+ GET / 200 in 94ms (compile: 44ms, render: 50ms)
+ GET /super-admin 200 in 96ms (compile: 9ms, render: 88ms)
+ GET /admin 200 in 96ms (compile: 57ms, render: 39ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 98ms (compile: 29ms, render: 69ms)
+ GET /super-admin/editor 200 in 99ms (compile: 72ms, render: 28ms)
+ GET / 200 in 93ms (compile: 70ms, render: 23ms)
+ GET /super-admin 200 in 97ms (compile: 9ms, render: 88ms)
+ GET /admin 200 in 96ms (compile: 54ms, render: 42ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 98ms (compile: 39ms, render: 59ms)
+ GET /super-admin/editor 200 in 101ms (compile: 24ms, render: 77ms)
+ GET / 200 in 87ms (compile: 50ms, render: 37ms)
+ GET /admin 200 in 90ms (compile: 8ms, render: 82ms)
+ GET /super-admin 200 in 90ms (compile: 23ms, render: 67ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 93ms (compile: 37ms, render: 56ms)
+ GET /super-admin/editor 200 in 93ms (compile: 67ms, render: 26ms)
+ GET / 200 in 90ms (compile: 24ms, render: 66ms)
+ GET /super-admin 200 in 91ms (compile: 8ms, render: 83ms)
+ GET /admin 200 in 92ms (compile: 54ms, render: 38ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 93ms (compile: 39ms, render: 55ms)
+ GET /super-admin/editor 200 in 94ms (compile: 68ms, render: 26ms)
+ GET / 200 in 89ms (compile: 22ms, render: 67ms)
+ GET /admin 200 in 93ms (compile: 8ms, render: 85ms)
+ GET /super-admin 200 in 92ms (compile: 69ms, render: 23ms)
+ GET /super-admin/editor 200 in 95ms (compile: 36ms, render: 59ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 96ms (compile: 51ms, render: 45ms)
+  Reload env: .env.local
+ GET / 200 in 445ms (compile: 348ms, render: 97ms)
+ GET /admin 200 in 448ms (compile: 251ms, render: 197ms)
+ GET /super-admin 200 in 448ms (compile: 274ms, render: 173ms)
+ GET /super-admin/editor 200 in 451ms (compile: 142ms, render: 310ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 450ms (compile: 424ms, render: 26ms)
+ GET /admin 200 in 239ms (compile: 4ms, render: 235ms)
+ GET /super-admin 200 in 167ms (compile: 6ms, render: 161ms)
+ GET / 200 in 126ms (compile: 55ms, render: 71ms)
+ GET /super-admin/editor 200 in 170ms (compile: 53ms, render: 117ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 132ms (compile: 41ms, render: 91ms)
+ GET /admin 200 in 38ms (compile: 4ms, render: 34ms)
+  Reload env: .env.local
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+ GET / 200 in 2.7s (compile: 2.3s, render: 402ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 3.0s (compile: 2.6s, render: 408ms)
+ GET /super-admin 200 in 2.7s (compile: 2.3s, render: 407ms)
+ GET /admin 200 in 2.4s (compile: 1952ms, render: 407ms)
+ GET /super-admin/editor 200 in 4.0s (compile: 3.6s, render: 406ms)
+⚠ Fast Refresh had to perform a full reload. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+ GET /login 200 in 1125ms (compile: 779ms, render: 346ms)
+ GET / 200 in 229ms (compile: 83ms, render: 146ms)
+ GET /super-admin 200 in 231ms (compile: 104ms, render: 127ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 231ms (compile: 143ms, render: 89ms)
+ GET /super-admin/editor 200 in 225ms (compile: 196ms, render: 29ms)
+ GET /super-admin 200 in 279ms (compile: 5ms, render: 275ms)
+ GET /super-admin/editor 200 in 285ms (compile: 47ms, render: 238ms)
+ GET / 200 in 244ms (compile: 163ms, render: 81ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 247ms (compile: 177ms, render: 69ms)
+ GET / 200 in 169ms (compile: 42ms, render: 127ms)
+ GET /super-admin 200 in 166ms (compile: 91ms, render: 75ms)
+ GET /portal?country=ES&province=41&city=Sevilla 200 in 174ms (compile: 22ms, render: 153ms)
+ GET /login 200 in 167ms (compile: 122ms, render: 44ms)
+ GET /super-admin/editor 200 in 168ms (compile: 143ms, render: 25ms)
+[?25h

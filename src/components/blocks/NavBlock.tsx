@@ -22,6 +22,7 @@ type NavBlockProps = BackgroundEditableProps & {
   navItemActiveBgOpacity?: number;
   navItemActiveBorderStyle?: BlockBorderStyle;
   navItemActiveBorderColor?: string;
+  navItemActiveTextColor?: string;
   navItems?: NavItem[];
   currentPageId?: string;
   onNavigatePage?: (pageId: string) => void;
@@ -75,6 +76,20 @@ function getColorLayerStyle(value: string, opacity: number) {
   return {
     backgroundColor: toRgba(value, opacity),
   };
+}
+
+function buildLabelColorStyle(color: string) {
+  const trimmed = color.trim();
+  if (!trimmed) return {};
+  if (isGradientToken(trimmed)) {
+    return {
+      backgroundImage: trimmed,
+      backgroundClip: "text",
+      WebkitBackgroundClip: "text",
+      color: "transparent",
+    };
+  }
+  return { color: trimmed };
 }
 
 export default function NavBlock(props: NavBlockProps) {
@@ -148,6 +163,8 @@ export default function NavBlock(props: NavBlockProps) {
     ...getBlockBorderInlineStyle(navItemActiveBorderStyle, navItemActiveBorderColor),
     ...getColorLayerStyle(navItemActiveBgColor, navItemActiveBgOpacity),
   };
+  const navItemActiveTextColor = (props.navItemActiveTextColor ?? "").trim();
+  const navItemActiveLabelStyle = buildLabelColorStyle(navItemActiveTextColor);
 
   return (
     <section
@@ -193,7 +210,10 @@ export default function NavBlock(props: NavBlockProps) {
                 style={isActive ? navItemActiveStyle : navItemStyle}
                 onClick={() => props.onNavigatePage?.(item.pageId)}
               >
-                <span dangerouslySetInnerHTML={{ __html: toRichHtml(item.label, "") }} />
+                <span
+                  style={isActive ? navItemActiveLabelStyle : undefined}
+                  dangerouslySetInnerHTML={{ __html: toRichHtml(item.label, "") }}
+                />
               </button>
             );
           })}

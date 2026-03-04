@@ -1,27 +1,38 @@
 ﻿"use client";
 
-import { useEffect, useState, useSyncExternalStore } from "react";
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import LoadingProgressScreen from "@/components/LoadingProgressScreen";
 import BlockRenderer from "@/components/blocks/BlockRenderer";
-import { homeBlocks, type Block } from "@/data/homeBlocks";
-import {
-  getPublishedBlocksSnapshot,
-  savePublishedBlocksToStorage,
-  subscribePublishedBlocksStore,
-} from "@/data/blockStore";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
-import { cloneBlocks, getPagePlanConfigFromBlocks } from "@/lib/pagePlans";
-import { supabase } from "@/lib/supabase";
-import { sanitizeBlocksForRuntime } from "@/lib/blocksSanitizer";
+import {
+  loadPublishedBlocksFromStorage,
+} from "@/data/blockStore";
+import { homeBlocks, type Block } from "@/data/homeBlocks";
 import { trackPageView } from "@/lib/analytics";
+import { sanitizeBlocksForRuntime } from "@/lib/blocksSanitizer";
+import { cloneBlocks, getPagePlanConfigFromBlocks } from "@/lib/pagePlans";
+import {
+  canReachSupabaseGateway,
+  isSupabaseEnabled,
+  supabase,
+} from "@/lib/supabase";
+import { useHydrated } from "@/lib/useHydrated";
+import { useI18n } from "@/components/I18nProvider";
 
 const MOBILE_BREAKPOINT = 768;
+const MIN_INITIAL_LOADING_MS = 0;
 
 function getEmbeddedMobilePlanConfig(sourceBlocks: Block[]) {
-  const carrier = sourceBlocks.find((block) => !!(block?.props as { pagePlanConfigMobile?: unknown } | undefined)?.pagePlanConfigMobile);
+  const carrier = sourceBlocks.find(
+    (block) => !!(block?.props as { pagePlanConfigMobile?: unknown } | undefined)?.pagePlanConfigMobile,
+  );
   const rawMobile = (carrier?.props as { pagePlanConfigMobile?: unknown } | undefined)?.pagePlanConfigMobile;
   if (!rawMobile) return null;
   const cloned = cloneBlocks(sourceBlocks);
-  const carrierIndex = cloned.findIndex((block) => !!(block?.props as { pagePlanConfigMobile?: unknown } | undefined)?.pagePlanConfigMobile);
+  const carrierIndex = cloned.findIndex(
+    (block) => !!(block?.props as { pagePlanConfigMobile?: unknown } | undefined)?.pagePlanConfigMobile,
+  );
   if (carrierIndex >= 0) {
     cloned[carrierIndex] = {
       ...cloned[carrierIndex],
@@ -38,19 +49,26 @@ function getEmbeddedMobilePlanConfig(sourceBlocks: Block[]) {
 function isMissingSlugColumn(message: string) {
   return (
     /column\s+pages\.slug\s+does\s+not\s+exist/i.test(message) ||
-    /could not find the ['\"]slug['\"] column of ['\"]pages['\"] in the schema cache/i.test(message)
+    /could not find the ['"]slug['"] column of ['"]pages['"] in the schema cache/i.test(message)
+  );
+}
+
+function isMissingMerchantIdColumn(message: string) {
+  return (
+    /column\s+pages\.merchant_id\s+does\s+not\s+exist/i.test(message) ||
+    /could not find the ['"]merchant_id['"] column of ['"]pages['"] in the schema cache/i.test(message)
   );
 }
 
 export default function HomePage() {
+  const { t } = useI18n();
+  const hydrated = useHydrated();
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [dbBlocks, setDbBlocks] = useState<Block[] | null>(null);
+  const [localBlocks, setLocalBlocks] = useState<Block[] | null>(null);
   const [isMobileViewport, setIsMobileViewport] = useState(false);
-  const blocks = useSyncExternalStore(
-    subscribePublishedBlocksStore,
-    () => getPublishedBlocksSnapshot(homeBlocks),
-    () => homeBlocks,
-  );
-  const sourceBlocks = dbBlocks ?? blocks;
+
+  const sourceBlocks = dbBlocks ?? localBlocks ?? homeBlocks;
   const desktopPlanConfig = getPagePlanConfigFromBlocks(sourceBlocks);
   const mobilePlanConfig = getEmbeddedMobilePlanConfig(sourceBlocks);
   const planConfig = isMobileViewport && mobilePlanConfig ? mobilePlanConfig : desktopPlanConfig;
@@ -77,32 +95,63 @@ export default function HomePage() {
 
   useEffect(() => {
     let mounted = true;
+    const loadingTimer = setTimeout(() => {
+      if (mounted) setIsInitialLoading(false);
+    }, MIN_INITIAL_LOADING_MS);
+    if (!isSupabaseEnabled) {
+      return () => {
+        mounted = false;
+        clearTimeout(loadingTimer);
+      };
+    }
 
     (async () => {
-      const bySlug = await supabase.from("pages").select("blocks").eq("slug", "home").single();
-      if (!mounted) return;
+      try {
+        const gatewayReady = await canReachSupabaseGateway(4000);
+        if (!mounted || !gatewayReady) return;
 
-      if (!bySlug.error && Array.isArray(bySlug.data?.blocks)) {
-        const next = sanitizeBlocksForRuntime(bySlug.data.blocks as Block[]).blocks;
-        setDbBlocks(next);
-        savePublishedBlocksToStorage(next);
-        return;
-      }
+        let bySlug = await supabase
+          .from("pages")
+          .select("blocks")
+          .is("merchant_id", null)
+          .eq("slug", "home")
+          .limit(1)
+          .maybeSingle();
+        if (bySlug.error && isMissingMerchantIdColumn(bySlug.error.message)) {
+          bySlug = await supabase.from("pages").select("blocks").eq("slug", "home").limit(1).maybeSingle();
+        }
+        if (!mounted) return;
 
-      if (!bySlug.error || !isMissingSlugColumn(bySlug.error.message)) return;
-      const byFirstRow = await supabase.from("pages").select("blocks").limit(1).maybeSingle();
-      if (!mounted) return;
-      if (!byFirstRow.error && Array.isArray(byFirstRow.data?.blocks)) {
-        const next = sanitizeBlocksForRuntime(byFirstRow.data.blocks as Block[]).blocks;
-        setDbBlocks(next);
-        savePublishedBlocksToStorage(next);
+        if (!bySlug.error && Array.isArray(bySlug.data?.blocks)) {
+          const next = sanitizeBlocksForRuntime(bySlug.data.blocks as Block[]).blocks;
+          setDbBlocks(next);
+          return;
+        }
+
+        if (!bySlug.error || !isMissingSlugColumn(bySlug.error.message)) {
+          return;
+        }
+      } catch {
+        // Keep local rendered content when backend is unavailable.
       }
     })();
 
     return () => {
       mounted = false;
+      clearTimeout(loadingTimer);
     };
   }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    const timer = setTimeout(() => {
+      const loaded = loadPublishedBlocksFromStorage(homeBlocks);
+      setLocalBlocks(loaded);
+    }, 0);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [hydrated]);
 
   const activePage =
     activePlan?.pages?.find((page) => page.id === resolvedPageId) ??
@@ -128,18 +177,22 @@ export default function HomePage() {
   }, 0);
   const backgroundExtendPadding = Math.max(0, maxBlockOffsetY) + 160;
 
+  if (!hydrated || isInitialLoading) {
+    return <LoadingProgressScreen message={t("common.loadingPage")} />;
+  }
+
   return (
     <main
       className="min-h-screen bg-gray-50 py-8"
       style={{ ...pageBackgroundStyle, paddingBottom: `calc(2rem + ${backgroundExtendPadding}px)` }}
     >
       <div className="max-w-6xl mx-auto px-6 mb-4 flex items-center justify-end gap-2">
-        <a
+        <Link
           href="/login"
           className="inline-flex items-center rounded-lg border bg-white px-4 py-2 text-sm font-medium hover:bg-gray-100"
         >
-          后台登录
-        </a>
+          {t("common.adminLogin")}
+        </Link>
       </div>
       <BlockRenderer
         blocks={activeBlocks}
@@ -151,3 +204,4 @@ export default function HomePage() {
     </main>
   );
 }
+

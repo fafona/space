@@ -1,9 +1,11 @@
 ﻿import type { CustomGalleryLayout, GalleryLayoutPreset } from "@/lib/galleryLayout";
+import { BLOCKS_SCHEMA_VERSION } from "../lib/blocksSchema";
 
 export type ImageFillMode = "cover" | "contain" | "fill" | "repeat" | "repeat-x" | "repeat-y";
 export type BlockBorderStyle = "none" | "glass" | "soft" | "solid" | "dashed" | "double" | "accent";
 
 export type BackgroundEditableProps = {
+  schemaVersion?: number;
   bgImageUrl?: string;
   bgFillMode?: ImageFillMode;
   bgPosition?: string;
@@ -53,9 +55,108 @@ export type TypographyEditableProps = {
   textDecoration?: "none" | "underline";
 };
 
+export type MerchantCardTextRole = "name" | "industry" | "domain";
+export type MerchantCardTextLayoutConfig = Partial<
+  Record<
+    MerchantCardTextRole,
+    {
+      x?: number;
+      y?: number;
+    }
+  >
+>;
+
 type HeroProps = BackgroundEditableProps & TypographyEditableProps & { title: string; subtitle?: string };
 type TextProps = BackgroundEditableProps & TypographyEditableProps & { heading: string; text: string };
 type ListProps = BackgroundEditableProps & TypographyEditableProps & { heading: string; items: string[] };
+type SearchBarProps = BackgroundEditableProps &
+  TypographyEditableProps & {
+    heading?: string;
+    text?: string;
+    cityPlaceholder?: string;
+    searchPlaceholder?: string;
+    locateLabel?: string;
+    actionLabel?: string;
+    defaultCountryCode?: string;
+    defaultProvinceCode?: string;
+    defaultCity?: string;
+    searchButtonBgColor?: string;
+    searchButtonBgOpacity?: number;
+    searchButtonBorderStyle?: BlockBorderStyle;
+    searchButtonBorderColor?: string;
+    searchButtonActiveBgColor?: string;
+    searchButtonActiveBgOpacity?: number;
+    searchButtonActiveBorderStyle?: BlockBorderStyle;
+    searchButtonActiveBorderColor?: string;
+    searchLayout?: Partial<
+      Record<
+        "locate" | "country" | "province" | "city" | "keyword" | "action",
+        {
+          x?: number;
+          y?: number;
+          width?: number;
+          height?: number;
+        }
+      >
+    >;
+  };
+type MerchantListProps = BackgroundEditableProps &
+  TypographyEditableProps & {
+    heading: string;
+    text?: string;
+    maxItems?: number;
+    emptyText?: string;
+    merchantTabButtonBgColor?: string;
+    merchantTabButtonBgOpacity?: number;
+    merchantTabButtonBorderStyle?: BlockBorderStyle;
+    merchantTabButtonBorderColor?: string;
+    merchantTabButtonActiveBgColor?: string;
+    merchantTabButtonActiveBgOpacity?: number;
+    merchantTabButtonActiveBorderStyle?: BlockBorderStyle;
+    merchantTabButtonActiveBorderColor?: string;
+    merchantPagerButtonBgColor?: string;
+    merchantPagerButtonBgOpacity?: number;
+    merchantPagerButtonBorderStyle?: BlockBorderStyle;
+    merchantPagerButtonBorderColor?: string;
+    merchantPagerButtonDisabledBgColor?: string;
+    merchantPagerButtonDisabledBgOpacity?: number;
+    merchantPagerButtonDisabledBorderStyle?: BlockBorderStyle;
+    merchantPagerButtonDisabledBorderColor?: string;
+    merchantCardBgColor?: string;
+    merchantCardBgOpacity?: number;
+    merchantCardBorderStyle?: BlockBorderStyle;
+    merchantCardBorderColor?: string;
+    merchantCardTypography?: Partial<Record<MerchantCardTextRole, TypographyEditableProps>>;
+    merchantCardTextLayout?: MerchantCardTextLayoutConfig;
+    merchantCardTextBoxVisible?: boolean;
+    merchantCardIndustryStyles?: Partial<
+      Record<
+        "all" | "餐饮" | "娱乐" | "零售" | "服务",
+        {
+          bgColor?: string;
+          bgOpacity?: number;
+          borderStyle?: BlockBorderStyle;
+          borderColor?: string;
+        }
+      >
+    >;
+    industryTabs?: Array<{
+      id?: string;
+      label?: string;
+      industry?: "all" | "餐饮" | "娱乐" | "零售" | "服务";
+    }>;
+    merchantCardLayout?: Partial<
+      Record<
+        string,
+        {
+          x?: number;
+          y?: number;
+          width?: number;
+          height?: number;
+        }
+      >
+    >;
+  };
 type ContactProps = BackgroundEditableProps &
   TypographyEditableProps & {
     heading: string;
@@ -79,6 +180,7 @@ type ContactProps = BackgroundEditableProps &
           x?: number;
           y?: number;
           width?: number;
+          height?: number;
         }
       >
     >;
@@ -146,6 +248,7 @@ type NavProps = BackgroundEditableProps &
     navItemActiveBgOpacity?: number;
     navItemActiveBorderStyle?: BlockBorderStyle;
     navItemActiveBorderColor?: string;
+    navItemActiveTextColor?: string;
     navItems?: Array<{
       id: string;
       label: string;
@@ -161,6 +264,8 @@ export type Block =
   | { id: string; type: "hero"; props: HeroProps }
   | { id: string; type: "text"; props: TextProps }
   | { id: string; type: "list"; props: ListProps }
+  | { id: string; type: "search-bar"; props: SearchBarProps }
+  | { id: string; type: "merchant-list"; props: MerchantListProps }
   | { id: string; type: "contact"; props: ContactProps }
   | { id: string; type: "music"; props: MusicProps };
 
@@ -169,6 +274,7 @@ export const homeBlocks: Block[] = [
     id: "b-common",
     type: "common",
     props: {
+      schemaVersion: BLOCKS_SCHEMA_VERSION,
       commonTextBoxes: [],
     },
   },
@@ -204,4 +310,6 @@ export const homeBlocks: Block[] = [
     },
   },
 ];
+
+
 

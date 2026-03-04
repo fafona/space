@@ -2,7 +2,8 @@
 
 import Image from "next/image";
 import { useState } from "react";
-import type { BackgroundEditableProps } from "@/data/homeBlocks";
+import type { CSSProperties } from "react";
+import type { BackgroundEditableProps, TypographyEditableProps } from "@/data/homeBlocks";
 import { trackContactClick } from "@/lib/analytics";
 import { getBackgroundStyle } from "./backgroundStyle";
 import { getBlockBorderClass, getBlockBorderInlineStyle } from "./borderStyle";
@@ -18,7 +19,8 @@ type ContactLayoutKey =
   | "facebook"
   | "instagram";
 
-type ContactBlockProps = BackgroundEditableProps & {
+type ContactBlockProps = BackgroundEditableProps &
+  TypographyEditableProps & {
   heading?: string;
   phone?: string;
   address?: string;
@@ -33,8 +35,8 @@ type ContactBlockProps = BackgroundEditableProps & {
   xiaohongshu?: string;
   facebook?: string;
   instagram?: string;
-  contactLayout?: Partial<Record<ContactLayoutKey, { x?: number; y?: number; width?: number }>>;
-};
+  contactLayout?: Partial<Record<ContactLayoutKey, { x?: number; y?: number; width?: number; height?: number }>>;
+  };
 
 type ContactEntry = {
   key: ContactLayoutKey;
@@ -123,9 +125,45 @@ function clampWidth(value: unknown, fallback = 360) {
   return Math.max(200, Math.round(value));
 }
 
+function clampHeight(value: unknown, fallback = 42) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  return Math.max(32, Math.round(value));
+}
+
 function clampMapZoom(value: unknown, fallback = 5) {
   if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
   return Math.max(2, Math.min(20, Math.round(value)));
+}
+
+function isGradientToken(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  return /^(linear-gradient|radial-gradient|conic-gradient)\(/i.test(trimmed);
+}
+
+function buildContactTypographyStyle(props: TypographyEditableProps): CSSProperties {
+  const style: CSSProperties = {};
+  const fontFamily = (props.fontFamily ?? "").trim();
+  const fontColor = (props.fontColor ?? "").trim();
+  if (fontFamily) style.fontFamily = fontFamily;
+  if (typeof props.fontSize === "number" && Number.isFinite(props.fontSize) && props.fontSize > 0) {
+    style.fontSize = Math.max(8, Math.min(120, props.fontSize));
+  }
+  if (props.fontWeight) style.fontWeight = props.fontWeight;
+  if (props.fontStyle) style.fontStyle = props.fontStyle;
+  if (props.textDecoration) style.textDecoration = props.textDecoration;
+  if (fontColor) {
+    if (isGradientToken(fontColor)) {
+      style.backgroundImage = fontColor;
+      style.backgroundClip = "text";
+      style.WebkitBackgroundClip = "text";
+      style.color = "transparent";
+    } else {
+      style.color = fontColor;
+    }
+  }
+  if (!style.color && !style.backgroundImage) style.color = "#374151";
+  return style;
 }
 
 export default function ContactBlock(props: ContactBlockProps) {
@@ -264,10 +302,12 @@ export default function ContactBlock(props: ContactBlockProps) {
       x: clampCoord(p?.x ?? 0),
       y: clampCoord(p?.y ?? index * 48),
       width: clampWidth(p?.width),
+      height: clampHeight(p?.height),
     };
   });
-  const contentHeight = Math.max(170, ...withPos.map((item) => item.y + 42));
+  const contentHeight = Math.max(170, ...withPos.map((item) => item.y + item.height));
   const contentWidth = Math.max(260, ...withPos.map((item) => item.x + item.width));
+  const contactTypographyStyle = buildContactTypographyStyle(props);
 
   return (
     <section className="max-w-6xl mx-auto px-6 py-6" style={offsetStyle}>
@@ -279,7 +319,7 @@ export default function ContactBlock(props: ContactBlockProps) {
           className="text-xl font-bold whitespace-pre-wrap break-words"
           dangerouslySetInnerHTML={{ __html: toRichHtml(props.heading, "联系方式") }}
         />
-        <div className="mt-2 space-y-2 text-gray-700">
+        <div className="mt-2 space-y-2">
           {addressList.length > 0 ? (
             addressList.map((line, idx) => {
               const isActive = idx === safeAddressIndex;
@@ -288,6 +328,7 @@ export default function ContactBlock(props: ContactBlockProps) {
                   <button
                     type="button"
                     className={`text-left break-all flex-1 rounded px-1 py-0.5 ${isActive ? "bg-black/5" : ""}`}
+                    style={contactTypographyStyle}
                     onClick={() => {
                       setActiveAddressIndex(idx);
                       if (!showMap) setShowMap(true);
@@ -317,7 +358,7 @@ export default function ContactBlock(props: ContactBlockProps) {
               );
             })
           ) : (
-            <div className="break-all" dangerouslySetInnerHTML={{ __html: `地址：${toRichHtml(props.address, "中国")}` }} />
+            <div className="break-all" style={contactTypographyStyle} dangerouslySetInnerHTML={{ __html: `地址：${toRichHtml(props.address, "中国")}` }} />
           )}
         </div>
         {showMap && mapEmbedUrl ? (
@@ -340,10 +381,10 @@ export default function ContactBlock(props: ContactBlockProps) {
             return (
               <div
                 key={item.key}
-                className="absolute flex items-center justify-between gap-2 px-1 py-1"
-                style={{ left: `${item.x}px`, top: `${item.y}px`, width: `${item.width}px` }}
+                className="absolute flex items-center justify-between gap-2 px-1 py-1 overflow-hidden"
+                style={{ left: `${item.x}px`, top: `${item.y}px`, width: `${item.width}px`, height: `${item.height}px` }}
               >
-                <span className="text-sm text-gray-700 min-w-0 break-all flex-1">{item.label}：{item.value}</span>
+                <span className="min-w-0 break-all flex-1" style={contactTypographyStyle}>{item.label}：{item.value}</span>
                 {item.href ? (
                   <a
                     href={item.href}

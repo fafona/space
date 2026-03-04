@@ -1,0 +1,20 @@
+
+> merchant-space@0.1.0 dev
+> npm run check:env && next dev --webpack
+
+
+> merchant-space@0.1.0 check:env
+> node scripts/check-env.mjs
+
+[env-check] OK
+▲ Next.js 16.1.6 (webpack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.110.252:3000
+- Environments: .env.local
+
+✓ Starting...
+✓ Ready in 1090ms
+ GET /admin?scope=site-site-main 200 in 2.1s (compile: 1874ms, render: 240ms)
+ GET /admin 200 in 2.1s (compile: 1859ms, render: 249ms)
+ GET /site/site-main 200 in 2.2s (compile: 2.2s, render: 57ms)
+ GET /site/site-main 200 in 33ms (compile: 8ms, render: 25ms)
