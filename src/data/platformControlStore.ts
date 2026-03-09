@@ -118,6 +118,7 @@ export type Site = {
   id: string;
   tenantId: string;
   merchantName?: string;
+  domainPrefix?: string;
   domainSuffix?: string;
   contactAddress?: string;
   contactName?: string;
@@ -911,9 +912,23 @@ function normalizeState(input: PlatformState): PlatformState {
     tenants: Array.isArray(input.tenants) ? input.tenants : [],
     sites: Array.isArray(input.sites)
         ? input.sites.map((site, idx) => ({
+            ...(function () {
+              const normalizedDomainPrefix = normalizeText(
+                (site as { domainPrefix?: unknown }).domainPrefix ?? (site as { domainSuffix?: unknown }).domainSuffix,
+              ).toLowerCase();
+              return {
+                domainPrefix: normalizedDomainPrefix,
+                domainSuffix: normalizedDomainPrefix,
+              };
+            })(),
             ...site,
             merchantName: normalizeText((site as { merchantName?: unknown }).merchantName),
-            domainSuffix: normalizeText((site as { domainSuffix?: unknown }).domainSuffix).toLowerCase(),
+            domainPrefix: normalizeText(
+              (site as { domainPrefix?: unknown }).domainPrefix ?? (site as { domainSuffix?: unknown }).domainSuffix,
+            ).toLowerCase(),
+            domainSuffix: normalizeText(
+              (site as { domainPrefix?: unknown }).domainPrefix ?? (site as { domainSuffix?: unknown }).domainSuffix,
+            ).toLowerCase(),
             contactAddress: normalizeText((site as { contactAddress?: unknown }).contactAddress),
             contactName: normalizeText((site as { contactName?: unknown }).contactName),
             contactPhone: normalizeText((site as { contactPhone?: unknown }).contactPhone),
@@ -1133,6 +1148,7 @@ export function createHomeLayoutSection(input: {
 export function createSite(input: {
   tenantId: string;
   merchantName?: string;
+  domainPrefix?: string;
   domainSuffix?: string;
   contactAddress?: string;
   contactName?: string;
@@ -1149,11 +1165,13 @@ export function createSite(input: {
   const current = nowIso();
   const name = input.name.trim();
   const domain = input.domain.trim();
+  const normalizedDomainPrefix = normalizeText(input.domainPrefix ?? input.domainSuffix).toLowerCase();
   return {
     id: nextId("site"),
     tenantId: input.tenantId,
     merchantName: normalizeText(input.merchantName),
-    domainSuffix: normalizeText(input.domainSuffix).toLowerCase(),
+    domainPrefix: normalizedDomainPrefix,
+    domainSuffix: normalizedDomainPrefix,
     contactAddress: normalizeText(input.contactAddress),
     contactName: normalizeText(input.contactName),
     contactPhone: normalizeText(input.contactPhone),

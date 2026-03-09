@@ -9,6 +9,7 @@ function isIgnorableRejectionReason(reason: unknown) {
   const message = typeof record.message === "string" ? record.message : "";
   if (name === "AbortError") return true;
   if (message.includes("signal is aborted without reason")) return true;
+  if (/invalid refresh token|already used/i.test(message)) return true;
   if (name === "AuthRetryableFetchError") return true;
   if (Number(record.status) === 0) return true;
   if (record.__isAuthError === true && name === "AuthRetryableFetchError") return true;

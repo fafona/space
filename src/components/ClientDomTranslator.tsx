@@ -14,6 +14,17 @@ import {
 const TRANSLATABLE_ATTRS = ["placeholder", "title", "aria-label"] as const;
 const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT"]);
 
+function isEditableElement(element: Element | null) {
+  if (!element) return false;
+  if (element instanceof HTMLInputElement) {
+    return !["button", "submit", "reset", "checkbox", "radio", "file", "color", "range"].includes(element.type);
+  }
+  if (element instanceof HTMLTextAreaElement) return true;
+  if (element instanceof HTMLSelectElement) return true;
+  if (element instanceof HTMLElement && element.isContentEditable) return true;
+  return false;
+}
+
 type MerchantTextNode = Text & {
   __merchantSourceText?: string;
 };
@@ -178,7 +189,9 @@ function traverseAndApply(
   if (root.nodeType === Node.TEXT_NODE) {
     const parentElement = root.parentElement;
     const shouldSkip =
-      skipSubtree || Boolean(parentElement?.closest("[data-no-translate='1']"));
+      skipSubtree ||
+      Boolean(parentElement?.closest("[data-no-translate='1']")) ||
+      isEditableElement(parentElement);
     if (!shouldSkip) {
       collectMissingAndApplyText(root as MerchantTextNode, locale, missing, guard, sourceRecoveryLocale);
     }
@@ -192,7 +205,8 @@ function traverseAndApply(
     skipSubtree ||
     Boolean(element.closest("[data-no-translate='1']")) ||
     element.getAttribute("data-no-translate") === "1" ||
-    SKIP_TAGS.has(element.tagName.toUpperCase());
+    SKIP_TAGS.has(element.tagName.toUpperCase()) ||
+    isEditableElement(element);
 
   if (!nextSkip) {
     collectMissingAndApplyAttrs(element, locale, missing, guard, sourceRecoveryLocale);

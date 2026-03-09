@@ -1,17 +1,21 @@
 ﻿"use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
 import BlockRenderer from "@/components/blocks/BlockRenderer";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
+import SitePageClient from "@/app/site/[siteId]/SitePageClient";
 import {
   loadPublishedBlocksFromStorage,
 } from "@/data/blockStore";
 import { homeBlocks, type Block } from "@/data/homeBlocks";
+import { loadPlatformState, subscribePlatformState } from "@/data/platformControlStore";
 import { trackPageView } from "@/lib/analytics";
 import { sanitizeBlocksForRuntime } from "@/lib/blocksSanitizer";
+import { normalizeDomainPrefix } from "@/lib/merchantIdentity";
 import { cloneBlocks, getPagePlanConfigFromBlocks } from "@/lib/pagePlans";
+import { extractMerchantPrefixFromHost } from "@/lib/siteRouting";
 import {
   canReachSupabaseGateway,
   isSupabaseEnabled,
@@ -63,6 +67,7 @@ function isMissingMerchantIdColumn(message: string) {
 export default function HomePage() {
   const { t } = useI18n();
   const hydrated = useHydrated();
+  const [platformState, setPlatformState] = useState(() => loadPlatformState());
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [dbBlocks, setDbBlocks] = useState<Block[] | null>(null);
   const [localBlocks, setLocalBlocks] = useState<Block[] | null>(null);
@@ -76,6 +81,12 @@ export default function HomePage() {
   const [currentPageId, setCurrentPageId] = useState<string>(activePlan?.activePageId ?? "page-1");
   const resolvedPageId =
     activePlan?.pages?.some((page) => page.id === currentPageId) ? currentPageId : activePlan?.activePageId ?? "page-1";
+
+  useEffect(() => {
+    return subscribePlatformState(() => {
+      setPlatformState(loadPlatformState());
+    });
+  }, []);
 
   useEffect(() => {
     const syncViewport = () => {
@@ -158,6 +169,22 @@ export default function HomePage() {
     activePlan?.pages?.find((page) => page.id === activePlan.activePageId) ??
     activePlan?.pages?.[0];
   const activeBlocks = cloneBlocks(activePage?.blocks ?? activePlan?.blocks ?? sourceBlocks);
+  const hostMatchedSite = useMemo(() => {
+    if (typeof window === "undefined") return null;
+    const mainSite = platformState.sites.find((site) => site.id === "site-main") ?? platformState.sites[0] ?? null;
+    const hostPrefix = extractMerchantPrefixFromHost(
+      window.location.host,
+      process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? mainSite?.domain ?? "",
+    );
+    if (!hostPrefix) return null;
+    return (
+      platformState.sites.find(
+        (site) =>
+          site.id !== "site-main" &&
+          normalizeDomainPrefix(site.domainPrefix ?? site.domainSuffix) === hostPrefix,
+      ) ?? null
+    );
+  }, [platformState]);
   const pageBackgroundSource = activeBlocks[0]?.props;
   const pageBackgroundStyle = getBackgroundStyle({
     imageUrl: pageBackgroundSource?.pageBgImageUrl,
@@ -179,6 +206,10 @@ export default function HomePage() {
 
   if (!hydrated || isInitialLoading) {
     return <LoadingProgressScreen message={t("common.loadingPage")} />;
+  }
+
+  if (hostMatchedSite) {
+    return <SitePageClient forcedSiteId={hostMatchedSite.id} />;
   }
 
   return (

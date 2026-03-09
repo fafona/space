@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import type { BackgroundEditableProps, BlockBorderStyle, TypographyEditableProps } from "@/data/homeBlocks";
 import {
   findBestProvinceAndCity,
@@ -10,6 +10,7 @@ import {
   getEuropeCountryOptions,
   getEuropeProvinceOptions,
 } from "@/lib/europeLocationOptions";
+import { resolveReverseGeocodeLocation, type ReverseGeocodeResponse } from "@/lib/reverseGeocodeLocation";
 import { getBackgroundStyle } from "./backgroundStyle";
 import { getBlockBorderClass, getBlockBorderInlineStyle } from "./borderStyle";
 import { toRichHtml } from "./richText";
@@ -46,21 +47,9 @@ type SearchBarBlockProps = BackgroundEditableProps &
   >;
 };
 
-type ReverseGeocodeResponse = {
-  countryCode?: string;
-  principalSubdivision?: string;
-  city?: string;
-  locality?: string;
-  localityName?: string;
-  localityInfo?: {
-    administrative?: Array<{
-      name?: string;
-    }>;
-  };
-};
-
 const CUSTOM_PROVINCE_PREFIX = "__custom_province__:";
 const TYPEAHEAD_LIMIT = 30;
+const MAX_AUTO_APPLY_LOCATION_ACCURACY_METERS = 3000;
 
 type SearchOption = {
   value: string;
@@ -86,7 +75,15 @@ function normalizeLocationValue(value: string) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
-    .replace(/[^a-z0-9]/g, "");
+    .replace(/[^\p{L}\p{N}]/gu, "");
+}
+
+function resolveDropdownFilterInput(inputValue: string, selectedValue: string, isOpen: boolean) {
+  if (!isOpen) return inputValue;
+  const normalizedInput = normalizeLocationValue(inputValue);
+  const normalizedSelected = normalizeLocationValue(selectedValue);
+  if (normalizedInput && normalizedInput === normalizedSelected) return "";
+  return inputValue;
 }
 
 function hasVisibleRichText(value?: string) {
@@ -151,7 +148,7 @@ function getColorLayerStyle(value: string, opacity: number) {
 
 function buildFuzzyOptions(options: SearchOption[], inputValue: string, limit = TYPEAHEAD_LIMIT) {
   const normalized = normalizeLocationValue(inputValue);
-  if (!normalized) return options.slice(0, limit);
+  if (!normalized) return options;
 
   const starts: SearchOption[] = [];
   const includes: SearchOption[] = [];
@@ -175,23 +172,37 @@ function clampLayoutNumber(value: unknown, fallback: number, min = 0) {
   return typeof value === "number" && Number.isFinite(value) ? Math.max(min, Math.round(value)) : fallback;
 }
 
+function logLocateDebug(label: string, detail: Record<string, unknown>) {
+  if (process.env.NODE_ENV === "production") return;
+  console.info(`[search-bar:locate] ${label}`, detail);
+}
+
 export default function SearchBarBlock(props: SearchBarBlockProps) {
   const countryOptions = useMemo(() => getEuropeCountryOptions(), []);
+  const normalizedText = useMemo(() => {
+    const raw = typeof props.text === "string" ? props.text.trim() : "";
+    if (!raw) return "";
+    if (raw === "攌城市定位与内容搜") return "城市定位与内容搜索";
+    return raw;
+  }, [props.text]);
   const initialCountryCode = useMemo(() => {
     const fromProps = (props.defaultCountryCode ?? "").toUpperCase();
+    if (!fromProps) return "";
     if (countryOptions.some((item) => item.code === fromProps)) return fromProps;
-    return countryOptions[0]?.code ?? "";
+    return "";
   }, [countryOptions, props.defaultCountryCode]);
   const initialProvinceCode = useMemo(() => {
+    if (!initialCountryCode) return "";
     const provinces = getEuropeProvinceOptions(initialCountryCode);
     const fromProps = (props.defaultProvinceCode ?? "").trim();
     if (provinces.some((item) => item.code === fromProps)) return fromProps;
-    return provinces[0]?.code ?? "";
+    return "";
   }, [initialCountryCode, props.defaultProvinceCode]);
   const initialCity = useMemo(() => {
+    if (!initialCountryCode || !initialProvinceCode) return "";
     const cityByName = findBestCityName(initialCountryCode, initialProvinceCode, props.defaultCity ?? "");
     if (cityByName) return cityByName;
-    return getEuropeCityOptions(initialCountryCode, initialProvinceCode)[0] ?? "";
+    return "";
   }, [initialCountryCode, initialProvinceCode, props.defaultCity]);
   const initialCountryName = useMemo(
     () => countryOptions.find((item) => item.code === initialCountryCode)?.name ?? "",
@@ -216,6 +227,11 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
   const [keyword, setKeyword] = useState("");
   const [locating, setLocating] = useState(false);
   const [locationHint, setLocationHint] = useState("");
+  const [debugLocateText, setDebugLocateText] = useState("");
+  const provinceInputRef = useRef<HTMLInputElement | null>(null);
+  const cityInputRef = useRef<HTMLInputElement | null>(null);
+  const provinceDropdownRef = useRef<HTMLDivElement | null>(null);
+  const cityDropdownRef = useRef<HTMLDivElement | null>(null);
 
   const locateLabel = (props.locateLabel ?? "").trim() || "定位";
   const actionLabel = (props.actionLabel ?? "").trim() || "搜索";
@@ -234,12 +250,6 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
     if (provinceOptions.some((item) => item.code === provinceCode)) return provinceOptions;
     return [{ code: provinceCode, name: customName, cities: [customCityName || city].filter(Boolean) }, ...provinceOptions];
   }, [provinceOptions, provinceCode, customProvinceName, customCityName, city]);
-  const citySelectOptions = useMemo(() => {
-    const list = [...cityOptions];
-    const custom = (customCityName || city).trim();
-    if (custom && !list.includes(custom)) list.unshift(custom);
-    return list;
-  }, [cityOptions, customCityName, city]);
   const selectedCountryName = useMemo(
     () => countryOptions.find((item) => item.code === countryCode)?.name ?? "",
     [countryOptions, countryCode],
@@ -248,6 +258,20 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
     () => provinceSelectOptions.find((item) => item.code === provinceCode)?.name ?? customProvinceName,
     [provinceSelectOptions, provinceCode, customProvinceName],
   );
+  const citySelectOptions = useMemo(() => {
+    const list = [...cityOptions];
+    const custom = (customCityName || city).trim();
+    if (custom && !list.includes(custom)) list.unshift(custom);
+    const normalizedProvinceName = normalizeLocationValue(selectedProvinceName);
+    if (normalizedProvinceName) {
+      const sameNameCityIndex = list.findIndex((item) => normalizeLocationValue(item) === normalizedProvinceName);
+      if (sameNameCityIndex > 0) {
+        const [sameNameCity] = list.splice(sameNameCityIndex, 1);
+        list.unshift(sameNameCity);
+      }
+    }
+    return list;
+  }, [cityOptions, customCityName, city, selectedProvinceName]);
   const countrySearchOptions = useMemo<SearchOption[]>(
     () => countryOptions.map((item) => ({ value: item.code, label: item.name })),
     [countryOptions],
@@ -260,17 +284,29 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
     () => citySelectOptions.map((item) => ({ value: item, label: item })),
     [citySelectOptions],
   );
+  const effectiveCountryFilterInput = useMemo(
+    () => resolveDropdownFilterInput(countryInput, selectedCountryName, countryOpen),
+    [countryInput, selectedCountryName, countryOpen],
+  );
+  const effectiveProvinceFilterInput = useMemo(
+    () => resolveDropdownFilterInput(provinceInput, selectedProvinceName, provinceOpen),
+    [provinceInput, selectedProvinceName, provinceOpen],
+  );
+  const effectiveCityFilterInput = useMemo(
+    () => resolveDropdownFilterInput(cityInput, city, cityOpen),
+    [cityInput, city, cityOpen],
+  );
   const countryFilteredOptions = useMemo(
-    () => buildFuzzyOptions(countrySearchOptions, countryInput),
-    [countrySearchOptions, countryInput],
+    () => buildFuzzyOptions(countrySearchOptions, effectiveCountryFilterInput),
+    [countrySearchOptions, effectiveCountryFilterInput],
   );
   const provinceFilteredOptions = useMemo(
-    () => buildFuzzyOptions(provinceSearchOptions, provinceInput),
-    [provinceSearchOptions, provinceInput],
+    () => buildFuzzyOptions(provinceSearchOptions, effectiveProvinceFilterInput),
+    [provinceSearchOptions, effectiveProvinceFilterInput],
   );
   const cityFilteredOptions = useMemo(
-    () => buildFuzzyOptions(citySearchOptions, cityInput),
-    [citySearchOptions, cityInput],
+    () => buildFuzzyOptions(citySearchOptions, effectiveCityFilterInput),
+    [citySearchOptions, effectiveCityFilterInput],
   );
 
   useEffect(() => {
@@ -306,6 +342,16 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
   useEffect(() => {
     setCityInput(city);
   }, [city]);
+
+  useEffect(() => {
+    if (!provinceOpen || !provinceDropdownRef.current) return;
+    provinceDropdownRef.current.scrollTop = 0;
+  }, [provinceOpen, provinceFilteredOptions]);
+
+  useEffect(() => {
+    if (!cityOpen || !cityDropdownRef.current) return;
+    cityDropdownRef.current.scrollTop = 0;
+  }, [cityOpen, cityFilteredOptions]);
 
   const cardStyle = getBackgroundStyle({
     imageUrl: props.bgImageUrl,
@@ -401,7 +447,6 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
   };
   const searchInputTextStyle: Record<string, string | number> = {
     ...searchTypographyBaseStyle,
-    ...(searchFontColor && !searchFontColorIsGradient ? { color: searchFontColor } : {}),
   };
 
   const locationHintClass = useMemo(() => {
@@ -410,7 +455,7 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
     return "text-emerald-600";
   }, [locationHint]);
   const hasHeading = hasVisibleRichText(props.heading);
-  const hasText = hasVisibleRichText(props.text);
+  const hasText = hasVisibleRichText(normalizedText);
 
   const searchLayout = props.searchLayout ?? {};
   const searchLayoutEntries = [
@@ -478,9 +523,14 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
     setCountryInput(nextCountry?.name ?? "");
     setProvinceInput("");
     setCityInput("");
+    setLocationHint("");
     setCountryOpen(false);
-    setProvinceOpen(false);
+    setProvinceOpen(true);
     setCityOpen(false);
+    window.setTimeout(() => {
+      provinceInputRef.current?.focus();
+      provinceDropdownRef.current?.scrollTo({ top: 0 });
+    }, 0);
   };
 
   const selectProvinceCode = (nextProvinceCode: string) => {
@@ -491,14 +541,20 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
     setCustomCityName("");
     setProvinceInput(nextProvinceName);
     setCityInput("");
+    setLocationHint("");
     setProvinceOpen(false);
-    setCityOpen(false);
+    setCityOpen(true);
+    window.setTimeout(() => {
+      cityInputRef.current?.focus();
+      cityDropdownRef.current?.scrollTo({ top: 0 });
+    }, 0);
   };
 
   const selectCityName = (nextCity: string) => {
     setCity(nextCity);
     setCustomCityName("");
     setCityInput(nextCity);
+    setLocationHint("");
     setCityOpen(false);
   };
 
@@ -511,6 +567,7 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
       setCity("");
       setProvinceInput("");
       setCityInput("");
+      setLocationHint("");
       setProvinceOpen(false);
       return;
     }
@@ -520,6 +577,7 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
     setCustomCityName("");
     setCity("");
     setCityInput("");
+    setLocationHint("");
     setProvinceOpen(false);
   };
 
@@ -539,6 +597,7 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
     setCity(name);
     setCustomCityName(name);
     setCityInput(name);
+    setLocationHint("");
     setCityOpen(false);
   };
 
@@ -570,94 +629,260 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
     });
   };
 
+  const applyResolvedPayload = (
+    payload: ReverseGeocodeResponse,
+    options: {
+      debugLabel: string;
+      accuracy?: number | null;
+      locationHintPrefix?: string;
+    },
+  ) => {
+    const nextCountryCode = (payload.countryCode ?? "").toUpperCase();
+    const matchedCountry = findEuropeCountryByCode(nextCountryCode);
+    logLocateDebug("reverse-geocode-payload", {
+      source: options.debugLabel,
+      lookupSource: payload.lookupSource ?? "",
+      accuracy: options.accuracy ?? null,
+      countryCode: payload.countryCode ?? "",
+      countryName: payload.countryName ?? "",
+      principalSubdivision: payload.principalSubdivision ?? "",
+      principalSubdivisionCode: payload.principalSubdivisionCode ?? "",
+      city: payload.city ?? "",
+      locality: payload.locality ?? "",
+      localityName: payload.localityName ?? "",
+    });
+    if (!matchedCountry) {
+      logLocateDebug("country-not-supported", {
+        source: options.debugLabel,
+        lookupSource: payload.lookupSource ?? "",
+        accuracy: options.accuracy ?? null,
+        countryCode: nextCountryCode,
+      });
+      setLocationHint("已定位，但当前城市不在支持的国家列表中");
+      if (process.env.NODE_ENV !== "production") {
+        setDebugLocateText(
+          `${options.debugLabel} unsupported country=${nextCountryCode} lookupSource=${payload.lookupSource ?? "-"}`,
+        );
+      }
+      return false;
+    }
+
+    const { provinceName, cityName, provinceSource, citySource } = resolveReverseGeocodeLocation(payload);
+    const matched = findBestProvinceAndCity(matchedCountry.code, provinceName, cityName);
+    const knownProvinces = getEuropeProvinceOptions(matchedCountry.code);
+    const resolvedProvinceCode = matched.provinceCode || "";
+    const fallbackProvinceCode = !resolvedProvinceCode && !provinceName ? knownProvinces[0]?.code || "" : "";
+    const activeProvinceCode = resolvedProvinceCode || fallbackProvinceCode;
+    const resolvedProvince = knownProvinces.find((item) => item.code === activeProvinceCode) ?? null;
+    const provinceCities = activeProvinceCode ? getEuropeCityOptions(matchedCountry.code, activeProvinceCode) : [];
+    const normalizedCityName = normalizeLocationValue(cityName);
+    const exactCityInProvince =
+      normalizedCityName && provinceCities.length > 0
+        ? provinceCities.find((item) => normalizeLocationValue(item) === normalizedCityName) ?? ""
+        : "";
+    const resolvedCity = matched.cityName || exactCityInProvince || cityName || provinceCities[0] || "";
+    const resolvedProvinceName = resolvedProvince?.name || provinceName || "";
+    const hasKnownProvince = !!resolvedProvince;
+    const useCustomProvince = !hasKnownProvince && !!provinceName;
+    const useCustomCity = !!resolvedCity && !provinceCities.includes(resolvedCity);
+    logLocateDebug("resolved-location", {
+      source: options.debugLabel,
+      lookupSource: payload.lookupSource ?? "",
+      accuracy: options.accuracy ?? null,
+      matchedCountryCode: matchedCountry.code,
+      matchedCountryName: matchedCountry.name,
+      rawProvinceName: provinceName,
+      rawCityName: cityName,
+      provinceSource,
+      citySource,
+      resolvedProvinceCode,
+      activeProvinceCode,
+      resolvedProvinceName,
+      resolvedCity,
+      useCustomProvince,
+      useCustomCity,
+    });
+
+    setCountryCode(matchedCountry.code);
+    setCountryInput(matchedCountry.name);
+    if (useCustomProvince) {
+      setProvinceCode(`${CUSTOM_PROVINCE_PREFIX}${provinceName}`);
+      setCustomProvinceName(provinceName);
+      setProvinceInput(provinceName);
+    } else {
+      setProvinceCode(activeProvinceCode);
+      setCustomProvinceName("");
+      setProvinceInput(resolvedProvinceName);
+    }
+    setCustomCityName(useCustomCity ? resolvedCity : "");
+    setCity(resolvedCity);
+    setCityInput(resolvedCity);
+    setLocationHint(
+      `${options.locationHintPrefix ?? "已定位"}: ${matchedCountry.name}${resolvedProvinceName ? ` / ${resolvedProvinceName}` : ""}${
+        resolvedCity ? ` / ${resolvedCity}` : ""
+      }`,
+    );
+    if (process.env.NODE_ENV !== "production") {
+      setDebugLocateText(
+        `${options.debugLabel} raw=${matchedCountry.name}/${provinceName || "-"}/${cityName || "-"} -> matched=${matchedCountry.name}/${resolvedProvinceName || "-"}/${resolvedCity || "-"} lookupSource=${payload.lookupSource ?? "-"} accuracy=${options.accuracy !== null && options.accuracy !== undefined ? `${Math.round(options.accuracy)}m` : '-'}`,
+      );
+    }
+    const searchProvinceCode = resolvedProvinceCode ? activeProvinceCode : "";
+    const searchProvinceName = resolvedProvinceCode ? resolvedProvinceName : "";
+    const searchCity = resolvedProvinceCode && provinceCities.includes(resolvedCity) ? resolvedCity : "";
+    triggerSearch({
+      countryCode: matchedCountry.code,
+      country: matchedCountry.name,
+      provinceCode: searchProvinceCode,
+      province: searchProvinceName,
+      city: searchCity,
+      keyword: keyword.trim(),
+    });
+    return true;
+  };
+
+  const fetchIpFallbackLocation = async (reason: string, accuracy?: number | null) => {
+    logLocateDebug("ip-fallback-start", {
+      reason,
+      accuracy: accuracy ?? null,
+    });
+    try {
+      const response = await fetch("https://api.bigdatacloud.net/data/reverse-geocode-client?localityLanguage=en", {
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        logLocateDebug("ip-fallback-http-error", {
+          reason,
+          accuracy: accuracy ?? null,
+          status: response.status,
+          statusText: response.statusText,
+        });
+        setLocationHint("自动定位不可用，请手动选择国家/省份/城市");
+        if (process.env.NODE_ENV !== "production") {
+          setDebugLocateText(
+            `ip fallback http error status=${response.status} reason=${reason} accuracy=${accuracy ?? "-"}`,
+          );
+        }
+        return false;
+      }
+      const payload = (await response.json()) as ReverseGeocodeResponse;
+      return applyResolvedPayload(payload, {
+        debugLabel: `ip-fallback(${reason})`,
+        accuracy,
+        locationHintPrefix: "IP定位",
+      });
+    } catch (error) {
+      logLocateDebug("ip-fallback-exception", {
+        reason,
+        accuracy: accuracy ?? null,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      setLocationHint("自动定位不可用，请手动选择国家/省份/城市");
+      if (process.env.NODE_ENV !== "production") {
+        setDebugLocateText(
+          `ip fallback exception=${error instanceof Error ? error.message : String(error)} reason=${reason}`,
+        );
+      }
+      return false;
+    }
+  };
+
   const onLocate = () => {
     if (typeof navigator === "undefined" || !navigator.geolocation) {
-      setLocationHint("当前浏览器不支持定位");
+      if (process.env.NODE_ENV !== "production") setDebugLocateText("geolocation unavailable -> trying ip fallback");
+      setLocating(true);
+      void fetchIpFallbackLocation("geolocation-unavailable").finally(() => setLocating(false));
       return;
     }
     setLocating(true);
     setLocationHint("");
+    if (process.env.NODE_ENV !== "production") setDebugLocateText("requesting geolocation...");
     navigator.geolocation.getCurrentPosition(
       async (position) => {
         const lat = position.coords.latitude;
         const lng = position.coords.longitude;
+        const accuracy = position.coords.accuracy;
+        if (process.env.NODE_ENV !== "production") {
+          setDebugLocateText(`coords lat=${lat.toFixed(6)} lng=${lng.toFixed(6)} accuracy=${Math.round(accuracy)}m`);
+        }
+        logLocateDebug("position", {
+          latitude: lat,
+          longitude: lng,
+          accuracy,
+        });
+        if (accuracy > MAX_AUTO_APPLY_LOCATION_ACCURACY_METERS) {
+          logLocateDebug("position-accuracy-too-low", {
+            latitude: lat,
+            longitude: lng,
+            accuracy,
+            maxAutoApplyAccuracy: MAX_AUTO_APPLY_LOCATION_ACCURACY_METERS,
+          });
+          if (process.env.NODE_ENV !== "production") {
+            setDebugLocateText(
+              `coords lat=${lat.toFixed(6)} lng=${lng.toFixed(6)} accuracy=${Math.round(accuracy)}m -> trying ip fallback`,
+            );
+          }
+          void fetchIpFallbackLocation("low-accuracy", accuracy).finally(() => setLocating(false));
+          return;
+        }
         try {
           const response = await fetch(
             `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lng}&localityLanguage=en`,
             { cache: "no-store" },
           );
           if (!response.ok) {
+            logLocateDebug("reverse-geocode-http-error", {
+              status: response.status,
+              statusText: response.statusText,
+              latitude: lat,
+              longitude: lng,
+              accuracy,
+            });
             setLocationHint("定位成功，但城市解析失败");
+            if (process.env.NODE_ENV !== "production") {
+              setDebugLocateText(
+                `reverse geocode http error status=${response.status} lat=${lat.toFixed(6)} lng=${lng.toFixed(6)}`,
+              );
+            }
             return;
           }
           const payload = (await response.json()) as ReverseGeocodeResponse;
-          const nextCountryCode = (payload.countryCode ?? "").toUpperCase();
-          const matchedCountry = findEuropeCountryByCode(nextCountryCode);
-          if (!matchedCountry) {
-            setLocationHint("已定位，但当前城市不在欧洲国家列表中");
-            return;
-          }
-
-          const provinceName =
-            (payload.principalSubdivision ?? "").trim() ||
-            (payload.localityInfo?.administrative?.[0]?.name ?? "").trim();
-          const cityName =
-            (payload.city ?? "").trim() || (payload.locality ?? "").trim() || (payload.localityName ?? "").trim();
-          const matched = findBestProvinceAndCity(matchedCountry.code, provinceName, cityName);
-          const knownProvinces = getEuropeProvinceOptions(matchedCountry.code);
-          const resolvedProvinceCode = matched.provinceCode || "";
-          const fallbackProvinceCode = !resolvedProvinceCode && !provinceName ? knownProvinces[0]?.code || "" : "";
-          const activeProvinceCode = resolvedProvinceCode || fallbackProvinceCode;
-          const resolvedProvince = knownProvinces.find((item) => item.code === activeProvinceCode) ?? null;
-          const provinceCities = activeProvinceCode ? getEuropeCityOptions(matchedCountry.code, activeProvinceCode) : [];
-          const normalizedCityName = normalizeLocationValue(cityName);
-          const exactCityInProvince =
-            normalizedCityName && provinceCities.length > 0
-              ? provinceCities.find((item) => normalizeLocationValue(item) === normalizedCityName) ?? ""
-              : "";
-          const resolvedCity = matched.cityName || exactCityInProvince || cityName || provinceCities[0] || "";
-          const resolvedProvinceName = resolvedProvince?.name || provinceName || "";
-          const hasKnownProvince = !!resolvedProvince;
-          const useCustomProvince = !hasKnownProvince && !!provinceName;
-          const useCustomCity = !!resolvedCity && !provinceCities.includes(resolvedCity);
-
-          setCountryCode(matchedCountry.code);
-          if (useCustomProvince) {
-            setProvinceCode(`${CUSTOM_PROVINCE_PREFIX}${provinceName}`);
-            setCustomProvinceName(provinceName);
-          } else {
-            setProvinceCode(activeProvinceCode);
-            setCustomProvinceName("");
-          }
-          setCustomCityName(useCustomCity ? resolvedCity : "");
-          setCity(resolvedCity);
-          setLocationHint(
-            `已定位: ${matchedCountry.name}${resolvedProvinceName ? ` / ${resolvedProvinceName}` : ""}${
-              resolvedCity ? ` / ${resolvedCity}` : ""
-            }`,
-          );
-          triggerSearch({
-            countryCode: matchedCountry.code,
-            country: matchedCountry.name,
-            provinceCode: useCustomProvince ? resolvedProvinceName : activeProvinceCode,
-            province: resolvedProvinceName,
-            city: resolvedCity,
-            keyword: keyword.trim(),
+          applyResolvedPayload(payload, {
+            debugLabel: "browser-geolocation",
+            accuracy,
           });
-        } catch {
+        } catch (error) {
+          logLocateDebug("reverse-geocode-exception", {
+            latitude: lat,
+            longitude: lng,
+            accuracy,
+            error: error instanceof Error ? error.message : String(error),
+          });
           setLocationHint("定位成功，但城市解析失败，请手动选择");
+          if (process.env.NODE_ENV !== "production") {
+            setDebugLocateText(
+              `reverse geocode exception=${error instanceof Error ? error.message : String(error)} lat=${lat.toFixed(6)} lng=${lng.toFixed(6)} -> trying ip fallback`,
+            );
+          }
+          await fetchIpFallbackLocation("reverse-geocode-exception", accuracy);
         } finally {
           setLocating(false);
         }
       },
-      () => {
-        setLocating(false);
-        setLocationHint("定位失败");
+      (error) => {
+        logLocateDebug("geolocation-error", {
+          code: error.code,
+          message: error.message,
+        });
+        if (process.env.NODE_ENV !== "production") {
+          setDebugLocateText(`geolocation error code=${error.code} message=${error.message} -> trying ip fallback`);
+        }
+        void fetchIpFallbackLocation(`geolocation-error-${error.code}`).finally(() => setLocating(false));
       },
       {
-        enableHighAccuracy: false,
-        timeout: 12_000,
-        maximumAge: 300_000,
+        enableHighAccuracy: true,
+        timeout: 15_000,
+        maximumAge: 0,
       },
     );
   };
@@ -682,7 +907,7 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
         {hasText ? (
           <div
             className="mt-2 text-sm text-gray-600 whitespace-pre-wrap break-words"
-            dangerouslySetInnerHTML={{ __html: toRichHtml(props.text, "") }}
+            dangerouslySetInnerHTML={{ __html: toRichHtml(normalizedText, "") }}
           />
         ) : null}
         <form onSubmit={onSearch} className={`${hasHeading || hasText ? "mt-4 " : ""}space-y-3`}>
@@ -763,7 +988,7 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
                       selectCountryCode(countryFilteredOptions[0].value);
                     }
                   }}
-                  className="h-full w-full rounded border bg-white px-2 text-sm outline-none focus:ring-2 focus:ring-blue-200 placeholder:text-current"
+                  className="h-full w-full rounded border bg-white px-2 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-blue-200 placeholder:text-slate-400"
                   style={searchInputTextStyle}
                 />
                 {countryOpen && countryFilteredOptions.length > 0 ? (
@@ -797,6 +1022,7 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
             >
               <div className="relative h-full">
                 <input
+                  ref={provinceInputRef}
                   value={provinceInput}
                   placeholder="省份"
                   onChange={(event) => {
@@ -838,11 +1064,14 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
                     }
                     commitCustomProvince();
                   }}
-                  className="h-full w-full rounded border bg-white px-2 text-sm outline-none focus:ring-2 focus:ring-blue-200 placeholder:text-current"
+                  className="h-full w-full rounded border bg-white px-2 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-blue-200 placeholder:text-slate-400"
                   style={searchInputTextStyle}
                 />
                 {provinceOpen && provinceFilteredOptions.length > 0 ? (
-                  <div className="absolute left-0 right-0 top-[calc(100%+4px)] z-20 max-h-56 overflow-auto rounded border bg-white shadow">
+                  <div
+                    ref={provinceDropdownRef}
+                    className="absolute left-0 right-0 top-[calc(100%+4px)] z-20 max-h-56 overflow-auto rounded border bg-white shadow"
+                  >
                     {provinceFilteredOptions.map((item) => (
                       <button
                         key={item.value}
@@ -872,6 +1101,7 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
             >
               <div className="relative h-full">
                 <input
+                  ref={cityInputRef}
                   value={cityInput}
                   placeholder={cityPlaceholder}
                   onChange={(event) => {
@@ -912,11 +1142,14 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
                     }
                     commitCustomCity();
                   }}
-                  className="h-full w-full rounded border bg-white px-2 text-sm outline-none focus:ring-2 focus:ring-blue-200 placeholder:text-current"
+                  className="h-full w-full rounded border bg-white px-2 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-blue-200 placeholder:text-slate-400"
                   style={searchInputTextStyle}
                 />
                 {cityOpen && cityFilteredOptions.length > 0 ? (
-                  <div className="absolute left-0 right-0 top-[calc(100%+4px)] z-20 max-h-56 overflow-auto rounded border bg-white shadow">
+                  <div
+                    ref={cityDropdownRef}
+                    className="absolute left-0 right-0 top-[calc(100%+4px)] z-20 max-h-56 overflow-auto rounded border bg-white shadow"
+                  >
                     {cityFilteredOptions.map((item) => (
                       <button
                         key={item.value}
@@ -947,7 +1180,7 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
               <input
                 value={keyword}
                 onChange={(e) => setKeyword(e.target.value)}
-                className="h-full w-full rounded border bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-blue-200 placeholder:text-current"
+                className="h-full w-full rounded border bg-white px-3 text-sm text-slate-600 outline-none focus:ring-2 focus:ring-blue-200 placeholder:text-slate-400"
                 style={searchInputTextStyle}
                 placeholder={searchPlaceholder}
               />

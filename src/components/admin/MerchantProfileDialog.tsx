@@ -12,13 +12,15 @@ import {
   getEuropeCountryOptions,
   getEuropeProvinceOptions,
 } from "@/lib/europeLocationOptions";
+import { buildMerchantDomain, resolveMerchantRootHost } from "@/lib/siteRouting";
 
 type MerchantProfileDialogProps = {
   open: boolean;
   siteId?: string | null;
   siteBaseDomain: string;
-  initialDomainSuffix?: string | null;
-  takenDomainSuffixes?: string[];
+  initialServiceExpiresAt?: string | null;
+  initialDomainPrefix?: string | null;
+  takenDomainPrefixes?: string[];
   initialMerchantName?: string | null;
   initialContactAddress?: string | null;
   initialContactName?: string | null;
@@ -29,7 +31,7 @@ type MerchantProfileDialogProps = {
   onClose: () => void;
   onSave: (input: {
     merchantName: string;
-    domainSuffix: string;
+    domainPrefix: string;
     contactAddress: string;
     contactName: string;
     contactPhone: string;
@@ -50,7 +52,7 @@ const DOMAIN_SUFFIX_SUBMIT_COOLDOWN_MS = 60 * 1000;
 
 function getDomainSuffixCooldownStorageKey(siteId?: string | null) {
   const normalizedSiteId = String(siteId ?? "").trim() || "unknown-site";
-  return `merchant-space:merchant-profile:domain-suffix-last-submit:v1:${normalizedSiteId}`;
+  return `merchant-space:merchant-profile:domain-prefix-last-submit:v2:${normalizedSiteId}`;
 }
 
 function readDomainSuffixLastSubmitAt(siteId?: string | null) {
@@ -84,12 +86,12 @@ function normalizeLocationValue(value: string) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
-    .replace(/[^a-z0-9]/g, "");
+    .replace(/[^\p{L}\p{N}]/gu, "");
 }
 
 function buildFuzzyOptions(options: SearchOption[], inputValue: string, limit = TYPEAHEAD_LIMIT) {
   const normalized = normalizeLocationValue(inputValue);
-  if (!normalized) return options.slice(0, limit);
+  if (!normalized) return options;
 
   const starts: SearchOption[] = [];
   const includes: SearchOption[] = [];
@@ -113,9 +115,16 @@ function normalizeIndustry(value: unknown): MerchantIndustry {
   return MERCHANT_INDUSTRY_OPTIONS.includes(raw as MerchantIndustry) ? (raw as MerchantIndustry) : "";
 }
 
+function formatServiceExpiresAt(iso?: string | null) {
+  const raw = String(iso ?? "").trim();
+  if (!raw) return "未设置";
+  const date = new Date(raw);
+  return Number.isFinite(date.getTime()) ? date.toLocaleString("zh-CN", { hour12: false }) : raw;
+}
+
 type MerchantProfileInitialState = {
   merchantName: string;
-  domainSuffix: string;
+  domainPrefix: string;
   contactAddress: string;
   contactName: string;
   contactPhone: string;
@@ -134,7 +143,7 @@ type MerchantProfileInitialState = {
 function buildInitialState(
   countryOptions: ReturnType<typeof getEuropeCountryOptions>,
   initialMerchantName?: string | null,
-  initialDomainSuffix?: string | null,
+  initialDomainPrefix?: string | null,
   initialContactAddress?: string | null,
   initialContactName?: string | null,
   initialContactPhone?: string | null,
@@ -177,7 +186,7 @@ function buildInitialState(
 
   return {
     merchantName: (initialMerchantName ?? "").trim(),
-    domainSuffix: (initialDomainSuffix ?? "").trim().toLowerCase(),
+    domainPrefix: (initialDomainPrefix ?? "").trim().toLowerCase(),
     contactAddress: (initialContactAddress ?? "").trim(),
     contactName: (initialContactName ?? "").trim(),
     contactPhone: (initialContactPhone ?? "").trim(),
@@ -198,8 +207,9 @@ export default function MerchantProfileDialog({
   open,
   siteId,
   siteBaseDomain,
-  initialDomainSuffix,
-  takenDomainSuffixes,
+  initialServiceExpiresAt,
+  initialDomainPrefix,
+  takenDomainPrefixes,
   initialMerchantName,
   initialContactAddress,
   initialContactName,
@@ -216,7 +226,7 @@ export default function MerchantProfileDialog({
       buildInitialState(
         countryOptions,
         initialMerchantName,
-        initialDomainSuffix,
+        initialDomainPrefix,
         initialContactAddress,
         initialContactName,
         initialContactPhone,
@@ -227,7 +237,7 @@ export default function MerchantProfileDialog({
     [
       countryOptions,
       initialMerchantName,
-      initialDomainSuffix,
+      initialDomainPrefix,
       initialContactAddress,
       initialContactName,
       initialContactPhone,
@@ -237,10 +247,10 @@ export default function MerchantProfileDialog({
     ],
   );
   const [merchantName, setMerchantName] = useState(initialState.merchantName);
-  const [domainSuffixInput, setDomainSuffixInput] = useState(initialState.domainSuffix);
-  const [domainSuffixConfirmed, setDomainSuffixConfirmed] = useState(initialState.domainSuffix);
-  const [domainSuffixMessage, setDomainSuffixMessage] = useState<string>("");
-  const [domainSuffixError, setDomainSuffixError] = useState<string>("");
+  const [domainPrefixInput, setDomainPrefixInput] = useState(initialState.domainPrefix);
+  const [domainPrefixConfirmed, setDomainPrefixConfirmed] = useState(initialState.domainPrefix);
+  const [domainPrefixMessage, setDomainPrefixMessage] = useState<string>("");
+  const [domainPrefixError, setDomainPrefixError] = useState<string>("");
   const [contactAddress, setContactAddress] = useState(initialState.contactAddress);
   const [contactName, setContactName] = useState(initialState.contactName);
   const [contactPhone, setContactPhone] = useState(initialState.contactPhone);
@@ -258,14 +268,14 @@ export default function MerchantProfileDialog({
   const [customCityName, setCustomCityName] = useState(initialState.customCityName);
   const [industry, setIndustry] = useState<MerchantIndustry>(initialState.industry);
   const [domainSubmitCooldownLeftSec, setDomainSubmitCooldownLeftSec] = useState(0);
-  const normalizedTakenSuffixes = useMemo(
+  const normalizedTakenPrefixes = useMemo(
     () =>
       new Set(
-        (takenDomainSuffixes ?? [])
+        (takenDomainPrefixes ?? [])
           .map((item) => String(item ?? "").trim().toLowerCase().replace(/^\/+|\/+$/g, ""))
           .filter(Boolean),
       ),
-    [takenDomainSuffixes],
+    [takenDomainPrefixes],
   );
   const normalizedBaseDomain = useMemo(() => {
     const raw = String(siteBaseDomain ?? "").trim();
@@ -274,13 +284,17 @@ export default function MerchantProfileDialog({
     const hostOnly = withoutProtocol.split("/")[0] ?? "";
     return hostOnly.trim();
   }, [siteBaseDomain]);
+  const merchantRootHost = useMemo(
+    () => resolveMerchantRootHost(normalizedBaseDomain) || normalizedBaseDomain,
+    [normalizedBaseDomain],
+  );
   const domainPreview = useMemo(() => {
-    if (!normalizedBaseDomain) return "";
-    if (!domainSuffixConfirmed) return normalizedBaseDomain;
-    return `${normalizedBaseDomain}/${domainSuffixConfirmed}`;
-  }, [normalizedBaseDomain, domainSuffixConfirmed]);
+    if (!merchantRootHost) return "";
+    if (!domainPrefixConfirmed) return merchantRootHost;
+    return buildMerchantDomain(merchantRootHost, domainPrefixConfirmed)?.replace(/^https?:\/\//i, "") ?? merchantRootHost;
+  }, [merchantRootHost, domainPrefixConfirmed]);
 
-  function normalizeDomainSuffix(value: string) {
+  function normalizeDomainPrefix(value: string) {
     return String(value ?? "")
       .trim()
       .toLowerCase()
@@ -308,35 +322,35 @@ export default function MerchantProfileDialog({
     };
   }, [computeDomainSubmitCooldownLeftSec, open]);
 
-  function submitDomainSuffix() {
+  function submitDomainPrefix() {
     if (domainSubmitCooldownLeftSec > 0) {
-      setDomainSuffixError(`域名后缀提交后需等待 1 分钟，剩余 ${domainSubmitCooldownLeftSec} 秒`);
-      setDomainSuffixMessage("");
+      setDomainPrefixError(`域名前缀提交后需等待 1 分钟，剩余 ${domainSubmitCooldownLeftSec} 秒`);
+      setDomainPrefixMessage("");
       return;
     }
-    const normalized = normalizeDomainSuffix(domainSuffixInput);
+    const normalized = normalizeDomainPrefix(domainPrefixInput);
     if (!normalized) {
-      setDomainSuffixError("请输入有效后缀（仅支持字母、数字、-、_）");
-      setDomainSuffixMessage("");
-      setDomainSuffixConfirmed("");
+      setDomainPrefixError("请输入有效前缀（仅支持字母、数字、-、_）");
+      setDomainPrefixMessage("");
+      setDomainPrefixConfirmed("");
       return;
     }
     if (/^\d{8}$/.test(normalized)) {
-      setDomainSuffixError("后缀不能使用 8 位纯数字（该格式保留给后台地址）");
-      setDomainSuffixMessage("");
-      setDomainSuffixConfirmed("");
+      setDomainPrefixError("前缀不能使用 8 位纯数字（该格式保留给后台地址）");
+      setDomainPrefixMessage("");
+      setDomainPrefixConfirmed("");
       return;
     }
-    if (normalizedTakenSuffixes.has(normalized)) {
-      setDomainSuffixError("该后缀已被使用，请更换后重新提交");
-      setDomainSuffixMessage("");
-      setDomainSuffixConfirmed("");
+    if (normalizedTakenPrefixes.has(normalized)) {
+      setDomainPrefixError("该前缀已被使用，请更换后重新提交");
+      setDomainPrefixMessage("");
+      setDomainPrefixConfirmed("");
       return;
     }
-    setDomainSuffixInput(normalized);
-    setDomainSuffixConfirmed(normalized);
-    setDomainSuffixError("");
-    setDomainSuffixMessage("后缀可用，域名已更新");
+    setDomainPrefixInput(normalized);
+    setDomainPrefixConfirmed(normalized);
+    setDomainPrefixError("");
+    setDomainPrefixMessage("前缀可用，地址已更新");
     const now = Date.now();
     writeDomainSuffixLastSubmitAt(siteId, now);
     setDomainSubmitCooldownLeftSec(Math.ceil(DOMAIN_SUFFIX_SUBMIT_COOLDOWN_MS / 1000));
@@ -491,7 +505,11 @@ export default function MerchantProfileDialog({
         <div>
           <h2 className="text-base font-semibold">商户信息</h2>
           <div className="mt-1 text-xs text-slate-500">
-            {domainPreview || "请先填写并提交域名后缀。"}
+            {domainPreview || "请先填写并提交域名前缀。"}
+          </div>
+          <div className="mt-2 rounded border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+            <span className="text-slate-500">到期时间：</span>
+            <span>{formatServiceExpiresAt(initialServiceExpiresAt)}</span>
           </div>
         </div>
 
@@ -506,17 +524,17 @@ export default function MerchantProfileDialog({
         </div>
 
         <div>
-          <div className="mb-1 text-xs text-slate-600">域名后缀</div>
+          <div className="mb-1 text-xs text-slate-600">域名前缀</div>
           <div className="flex items-center gap-2">
             <input
-              value={domainSuffixInput}
-              placeholder="例如 abc"
+              value={domainPrefixInput}
+              placeholder="例如 merchant-a"
               onChange={(event) => {
-                setDomainSuffixInput(event.target.value);
-                const normalized = normalizeDomainSuffix(event.target.value);
-                if (normalized !== domainSuffixConfirmed) {
-                  setDomainSuffixMessage("");
-                  setDomainSuffixError("");
+                setDomainPrefixInput(event.target.value);
+                const normalized = normalizeDomainPrefix(event.target.value);
+                if (normalized !== domainPrefixConfirmed) {
+                  setDomainPrefixMessage("");
+                  setDomainPrefixError("");
                 }
               }}
               className="w-full rounded border bg-white px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-200"
@@ -524,17 +542,17 @@ export default function MerchantProfileDialog({
             <button
               type="button"
               className="shrink-0 rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-              onClick={submitDomainSuffix}
+              onClick={submitDomainPrefix}
               disabled={domainSubmitCooldownLeftSec > 0}
             >
-              {domainSubmitCooldownLeftSec > 0 ? `提交后缀 (${domainSubmitCooldownLeftSec}s)` : "提交后缀"}
+              {domainSubmitCooldownLeftSec > 0 ? `提交前缀 (${domainSubmitCooldownLeftSec}s)` : "提交前缀"}
             </button>
           </div>
-          {normalizedBaseDomain ? (
-            <div className="mt-1 text-xs text-slate-500">{`基础域名：${normalizedBaseDomain}`}</div>
+          {merchantRootHost ? (
+            <div className="mt-1 text-xs text-slate-500">{`主域名：${merchantRootHost}`}</div>
           ) : null}
-          {domainSuffixError ? <div className="mt-1 text-xs text-rose-600">{domainSuffixError}</div> : null}
-          {domainSuffixMessage ? <div className="mt-1 text-xs text-emerald-600">{domainSuffixMessage}</div> : null}
+          {domainPrefixError ? <div className="mt-1 text-xs text-rose-600">{domainPrefixError}</div> : null}
+          {domainPrefixMessage ? <div className="mt-1 text-xs text-emerald-600">{domainPrefixMessage}</div> : null}
         </div>
 
         <div>
@@ -792,9 +810,9 @@ export default function MerchantProfileDialog({
             type="button"
             className="rounded bg-black px-3 py-2 text-sm text-white hover:opacity-90"
             onClick={() => {
-              if (!domainSuffixConfirmed) {
-                setDomainSuffixError("请先提交并通过后缀校验");
-                setDomainSuffixMessage("");
+              if (!domainPrefixConfirmed) {
+                setDomainPrefixError("请先提交并通过前缀校验");
+                setDomainPrefixMessage("");
                 return;
               }
               const normalizedCountryCode = countryCode.trim().toUpperCase();
@@ -819,7 +837,7 @@ export default function MerchantProfileDialog({
                   };
               onSave({
                 merchantName: merchantName.trim(),
-                domainSuffix: domainSuffixConfirmed,
+                domainPrefix: domainPrefixConfirmed,
                 contactAddress: contactAddress.trim(),
                 contactName: contactName.trim(),
                 contactPhone: contactPhone.trim(),

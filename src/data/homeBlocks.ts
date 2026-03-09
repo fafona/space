@@ -1,5 +1,13 @@
 ﻿import type { CustomGalleryLayout, GalleryLayoutPreset } from "@/lib/galleryLayout";
 import { BLOCKS_SCHEMA_VERSION } from "../lib/blocksSchema";
+import type {
+  ProductContainerMode,
+  ProductImageAspectRatio,
+  ProductItemInput,
+  ProductLayoutPreset,
+  ProductPriceAlign,
+  ProductTagPosition,
+} from "@/lib/productBlock";
 
 export type ImageFillMode = "cover" | "contain" | "fill" | "repeat" | "repeat-x" | "repeat-y";
 export type BlockBorderStyle = "none" | "glass" | "soft" | "solid" | "dashed" | "double" | "accent";
@@ -236,6 +244,41 @@ type MusicProps = BackgroundEditableProps &
     audioUrl?: string;
     musicPlayerStyle?: "classic" | "minimal" | "card" | "hidden";
   };
+type ProductProps = BackgroundEditableProps &
+  TypographyEditableProps & {
+    heading?: string;
+    text?: string;
+    products?: ProductItemInput[];
+    productLayoutPreset?: ProductLayoutPreset;
+    productImageAspectRatio?: ProductImageAspectRatio;
+    productImageSize?: number;
+    productPricePrefix?: string;
+    productShowCode?: boolean;
+    productShowDescription?: boolean;
+    productPriceAlign?: ProductPriceAlign;
+    productTagOptions?: string[];
+    productTagPosition?: ProductTagPosition;
+    productTagFontSize?: number;
+    productTagWidth?: number;
+    productTagHideUnselected?: boolean;
+    productGroupByTag?: boolean;
+    productTagBgColor?: string;
+    productTagBgOpacity?: number;
+    productTagActiveBgColor?: string;
+    productTagActiveBgOpacity?: number;
+    productContainerMode?: ProductContainerMode;
+    productItemsPerPage?: number;
+    productDetailImageSize?: number;
+    productDetailShowCode?: boolean;
+    productDetailShowName?: boolean;
+    productDetailShowDescription?: boolean;
+    productDetailShowPrice?: boolean;
+    productDetailFullImage?: boolean;
+    productCardBgColor?: string;
+    productCardBgOpacity?: number;
+    productCardBorderStyle?: BlockBorderStyle;
+    productCardBorderColor?: string;
+  };
 type NavProps = BackgroundEditableProps &
   TypographyEditableProps & {
     heading?: string;
@@ -267,6 +310,7 @@ export type Block =
   | { id: string; type: "search-bar"; props: SearchBarProps }
   | { id: string; type: "merchant-list"; props: MerchantListProps }
   | { id: string; type: "contact"; props: ContactProps }
+  | { id: string; type: "product"; props: ProductProps }
   | { id: string; type: "music"; props: MusicProps };
 
 export const homeBlocks: Block[] = [

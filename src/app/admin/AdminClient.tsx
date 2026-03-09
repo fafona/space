@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type CSSProperties,
   type ChangeEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
@@ -61,6 +62,7 @@ import {
   type PagePlanConfig,
   type PlanId,
 } from "@/lib/pagePlans";
+import { countInlineAssets } from "@/lib/inlineAssetStats";
 import {
   CUSTOM_GALLERY_FRAME_WIDTHS,
   GALLERY_LAYOUT_PRESETS,
@@ -107,9 +109,42 @@ import {
   type MerchantIndustryTabIndustry,
   type MerchantIndustryTab,
 } from "@/lib/merchantIndustryTabs";
+import {
+  arrangeProductItemsByTag,
+  PRODUCT_CONTAINER_MODE_OPTIONS,
+  PRODUCT_IMAGE_ASPECT_OPTIONS,
+  PRODUCT_LAYOUT_OPTIONS,
+  PRODUCT_PRICE_ALIGN_OPTIONS,
+  PRODUCT_PRICE_PREFIX_OPTIONS,
+  PRODUCT_TAG_POSITION_OPTIONS,
+  createProductItemId,
+  defaultProductItemsPerPage,
+  normalizeProductContainerMode,
+  normalizeProductImageAspectRatio,
+  normalizeProductItems,
+  normalizeProductItemsPerPage,
+  normalizeProductLayoutPreset,
+  normalizeProductPriceAlign,
+  normalizeProductTagOptions,
+  normalizeProductTagPosition,
+  productContainerViewportHeight,
+  productGridClass,
+  productPriceText,
+  type ProductContainerMode,
+  type ProductImageAspectRatio,
+  type ProductItem,
+  type ProductLayoutPreset,
+  type ProductPriceAlign,
+  type ProductTagPosition,
+} from "@/lib/productBlock";
+import {
+  mergeImportedProductImages,
+  mergeImportedProductRows,
+  parseProductWorkbook,
+} from "@/lib/productImport";
 import { broadcastPublishSync } from "@/lib/publishSync";
 import { ensureMerchantIdentityForUser, isMerchantNumericId } from "@/lib/merchantIdentity";
-import { buildMerchantFrontendHref, buildSiteStoreScope } from "@/lib/siteRouting";
+import { buildMerchantDomain, buildMerchantFrontendHref, buildSiteStoreScope } from "@/lib/siteRouting";
 import BlockRenderer from "@/components/blocks/BlockRenderer";
 import MerchantProfileDialog from "@/components/admin/MerchantProfileDialog";
 
@@ -168,6 +203,7 @@ const BLOCK_TYPE_LABELS: Record<Block["type"], string> = {
   list: "通用",
   "search-bar": "搜索",
   "merchant-list": "商户列表",
+  product: "产品",
   contact: "联系方式",
 };
 const MIN_BLOCK_WIDTH = 240;
@@ -196,6 +232,7 @@ function isIgnorableAbortReason(reason: unknown) {
   const message = typeof record.message === "string" ? record.message : "";
   if (name === "AbortError") return true;
   if (message.includes("signal is aborted without reason")) return true;
+  if (/invalid refresh token|already used/i.test(message)) return true;
   if (name === "AuthRetryableFetchError") return true;
   if (Number(record.status) === 0) return true;
   if (record.__isAuthError === true && name === "AuthRetryableFetchError") return true;
@@ -214,6 +251,7 @@ const IMAGE_COMPRESSION_OPTIONS: Record<UploadCompressionPreset, { label: string
   balanced: { label: "平衡", maxSide: 2600, quality: 0.88 },
   compact: { label: "压缩优先", maxSide: 2000, quality: 0.8 },
 };
+const PRODUCT_IMAGE_UPLOAD_OPTIONS = { maxSide: 1600, quality: 0.82 } as const;
 type ThemePresetKey = "none" | "cartoon" | "retro" | "minimal" | "future" | "luxury" | "magazine" | "commerce" | "cinema";
 type ThemePreset = {
   label: string;
@@ -326,6 +364,7 @@ const GALLERY_FRAME_WIDTH_LABELS: Record<CustomGalleryFrameWidth, string> = {
   "2/3": "2/3",
 };
 type ViewportKey = "desktop" | "mobile";
+type ProductSettingsSectionKey = "basic" | "tags" | "card" | "detail";
 const MOBILE_SIZE_SCALE = 0.82;
 const MOBILE_CONTENT_MAX_WIDTH = 340;
 const MOBILE_SAFE_PADDING = 12;
@@ -891,6 +930,28 @@ async function fileToOriginalImageDataUrl(
   return compressedDataUrl;
 }
 
+async function fileToOptimizedImageDataUrl(
+  file: File,
+  options: { maxSide: number; quality: number },
+): Promise<string> {
+  if (!file.type.startsWith("image/")) {
+    throw new Error("请选择图片文件");
+  }
+  if (file.size > MAX_IMAGE_FILE_BYTES) {
+    throw new Error("图片文件过大，请选择 10MB 以内图片");
+  }
+
+  const originalDataUrl = await fileToDataUrl(file);
+  const compressedDataUrl = await compressImageDataUrl(originalDataUrl, options);
+  const candidate = compressedDataUrl.length > 0 && compressedDataUrl.length < originalDataUrl.length
+    ? compressedDataUrl
+    : originalDataUrl;
+  if (candidate.length > MAX_ORIGINAL_IMAGE_DATA_URL_LENGTH) {
+    throw new Error("图片过大，更换更小分辨率图");
+  }
+  return candidate;
+}
+
 async function fileToAudioDataUrl(file: File): Promise<string> {
   if (!file.type.startsWith("audio/")) {
     throw new Error("请选择音频文件");
@@ -913,8 +974,8 @@ async function fileToAudioDataUrl(file: File): Promise<string> {
   return dataUrl;
 }
 
-function parseImageDataUrlMeta(dataUrl: string) {
-  const matched = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,/i);
+function parseDataUrlMeta(dataUrl: string) {
+  const matched = dataUrl.match(/^data:((?:image|audio)\/[a-zA-Z0-9.+-]+);base64,/i);
   if (!matched) return null;
   const mime = matched[1].toLowerCase();
   const extension = (() => {
@@ -924,9 +985,17 @@ function parseImageDataUrlMeta(dataUrl: string) {
     if (mime === "image/gif") return "gif";
     if (mime === "image/bmp") return "bmp";
     if (mime === "image/svg+xml") return "svg";
+    if (mime === "audio/mpeg") return "mp3";
+    if (mime === "audio/mp3") return "mp3";
+    if (mime === "audio/wav") return "wav";
+    if (mime === "audio/x-wav") return "wav";
+    if (mime === "audio/ogg") return "ogg";
+    if (mime === "audio/aac") return "aac";
+    if (mime === "audio/webm") return "webm";
+    if (mime === "audio/mp4") return "m4a";
     return "img";
   })();
-  return { mime, extension, prefixLength: matched[0].length };
+  return { mime, extension };
 }
 
 function dataUrlToBlob(dataUrl: string, mime: string) {
@@ -939,8 +1008,8 @@ function dataUrlToBlob(dataUrl: string, mime: string) {
   return new Blob([bytes], { type: mime });
 }
 
-async function uploadImageDataUrlToSupabase(dataUrl: string, merchantHint = "public"): Promise<string | null> {
-  const meta = parseImageDataUrlMeta(dataUrl);
+async function uploadDataUrlToSupabase(dataUrl: string, merchantHint = "public", folder = "merchant-assets"): Promise<string | null> {
+  const meta = parseDataUrlMeta(dataUrl);
   if (!meta) return null;
   const blob = dataUrlToBlob(dataUrl, meta.mime);
   const now = new Date();
@@ -949,7 +1018,7 @@ async function uploadImageDataUrlToSupabase(dataUrl: string, merchantHint = "pub
   const bucketCandidates = ["page-assets", "assets", "uploads", "public"];
 
   for (const bucket of bucketCandidates) {
-    const objectPath = `merchant-assets/${merchantHint}/${yyyy}/${mm}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${meta.extension}`;
+    const objectPath = `${folder}/${merchantHint}/${yyyy}/${mm}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${meta.extension}`;
     const uploaded = await supabase.storage.from(bucket).upload(objectPath, blob, {
       contentType: meta.mime,
       upsert: false,
@@ -959,6 +1028,14 @@ async function uploadImageDataUrlToSupabase(dataUrl: string, merchantHint = "pub
     if (data?.publicUrl) return data.publicUrl;
   }
   return null;
+}
+
+async function uploadImageDataUrlToSupabase(dataUrl: string, merchantHint = "public"): Promise<string | null> {
+  return uploadDataUrlToSupabase(dataUrl, merchantHint, "merchant-assets");
+}
+
+async function uploadAudioDataUrlToSupabase(dataUrl: string, merchantHint = "public"): Promise<string | null> {
+  return uploadDataUrlToSupabase(dataUrl, merchantHint, "merchant-audio");
 }
 
 type PageBackgroundPatch = Pick<
@@ -1068,7 +1145,7 @@ function mergePreferredMerchantIds(primaryIds: string[], ...otherIdGroups: Array
   return next;
 }
 
-function normalizeDomainSuffixForMerchant(value: string) {
+function normalizeDomainPrefixForMerchant(value: string) {
   return String(value ?? "")
     .trim()
     .toLowerCase()
@@ -1085,12 +1162,14 @@ function normalizeBaseDomainForMerchant(value: string) {
   return (normalized.split("/")[0] ?? "").trim();
 }
 
-function buildMerchantDomainFromBase(baseDomain: string, suffix: string) {
-  const base = normalizeBaseDomainForMerchant(baseDomain);
-  const normalizedSuffix = normalizeDomainSuffixForMerchant(suffix);
-  if (!base) return normalizedSuffix ? `/${normalizedSuffix}` : "";
-  if (!normalizedSuffix) return base;
-  return `${base}/${normalizedSuffix}`;
+function buildMerchantDomainFromBase(baseDomain: string, prefix: string) {
+  const normalizedBase = normalizeBaseDomainForMerchant(baseDomain);
+  const normalizedPrefix = normalizeDomainPrefixForMerchant(prefix);
+  if (!normalizedPrefix) return normalizedBase;
+  const subdomainDomain = buildMerchantDomain(baseDomain, normalizedPrefix)?.replace(/^https?:\/\//i, "") ?? "";
+  if (subdomainDomain) return subdomainDomain;
+  if (!normalizedBase) return normalizedPrefix;
+  return `${normalizedBase}/${normalizedPrefix}`;
 }
 
 function ensureScopedMerchantSite(siteId: string, userEmail?: string | null) {
@@ -1111,6 +1190,7 @@ function ensureScopedMerchantSite(siteId: string, userEmail?: string | null) {
     id: normalizedSiteId,
     tenantId,
     merchantName: "",
+    domainPrefix: "",
     domainSuffix: "",
     contactAddress: "",
     contactName: "",
@@ -1170,6 +1250,7 @@ function discoverSiteScopesFromLocalStorage() {
 
 type MerchantProfileLike = {
   merchantName?: string;
+  domainPrefix?: string;
   domainSuffix?: string;
   contactAddress?: string;
   contactName?: string;
@@ -1188,7 +1269,7 @@ function getMissingMerchantProfileFields(site: MerchantProfileLike | null | unde
   const missing: string[] = [];
   if (!site) return ["商户站点"];
   const merchantName = (site.merchantName ?? "").trim();
-  const domainSuffix = (site.domainSuffix ?? "").trim();
+  const domainPrefix = (site.domainPrefix ?? site.domainSuffix ?? "").trim();
   const countryCode = (site.location?.countryCode ?? "").trim();
   const country = (site.location?.country ?? "").trim();
   const province = (site.location?.province ?? "").trim();
@@ -1196,7 +1277,7 @@ function getMissingMerchantProfileFields(site: MerchantProfileLike | null | unde
   const industry = (site.industry ?? "").trim();
 
   if (!merchantName) missing.push("商户名称");
-  if (!domainSuffix) missing.push("域名后缀");
+  if (!domainPrefix) missing.push("域名前缀");
   if (!countryCode || !country) missing.push("国家");
   if (!province) missing.push("省份");
   if (!city) missing.push("城市");
@@ -1321,25 +1402,8 @@ function runPublishPreflight(blocks: Block[], payloadBytes: number): PublishPref
     warnings.push(`发布体积接近或超过上限：${formatBytes(payloadBytes)} / ${formatBytes(MAX_PUBLISH_PAYLOAD_BYTES)}`);
   }
 
-  let inlineImageCount = 0;
-  let inlineAudioCount = 0;
+  const inlineAssets = countInlineAssets(blocks);
   let maybeBrokenLinkCount = 0;
-
-  const visit = (value: unknown) => {
-    if (typeof value === "string") {
-      if (/^data:image\//i.test(value)) inlineImageCount += 1;
-      if (/^data:audio\//i.test(value)) inlineAudioCount += 1;
-      return;
-    }
-    if (Array.isArray(value)) {
-      value.forEach(visit);
-      return;
-    }
-    if (value && typeof value === "object") {
-      Object.values(value as Record<string, unknown>).forEach(visit);
-    }
-  };
-  visit(blocks);
 
   blocks.forEach((block) => {
     if (block.type === "gallery" && (!Array.isArray(block.props.images) || block.props.images.length === 0)) {
@@ -1361,8 +1425,8 @@ function runPublishPreflight(blocks: Block[], payloadBytes: number): PublishPref
     }
   });
 
-  if (inlineImageCount >= 24) warnings.push(`内嵌图片较多：${inlineImageCount} 张，建议外链或批量压缩`);
-  if (inlineAudioCount >= 2) warnings.push(`内嵌音频较多：${inlineAudioCount} 个，建议外链`);
+  if (inlineAssets.imageCount >= 24) warnings.push(`内嵌图片较多：${inlineAssets.imageCount} 张，建议外链或批量压缩`);
+  if (inlineAssets.audioCount >= 2) warnings.push(`内嵌音频较多：${inlineAssets.audioCount} 个，建议外链`);
   if (maybeBrokenLinkCount > 0) warnings.push(`检测到 ${maybeBrokenLinkCount} 条联系方式可能无法跳转`);
 
   return { errors, warnings };
@@ -1466,11 +1530,12 @@ async function externalizeInlineImagesUnknown(
   input: unknown,
   merchantHint: string,
   stats: ExternalizeStats,
+  minBytes = EXTERNALIZE_MIN_IMAGE_BYTES,
 ): Promise<unknown> {
   if (typeof input === "string") {
     if (!/^data:image\//i.test(input)) return input;
     const bytes = estimateUtf8Size(input);
-    if (bytes < EXTERNALIZE_MIN_IMAGE_BYTES) return input;
+    if (bytes < minBytes) return input;
     stats.visited += 1;
     stats.beforeBytes += bytes;
     try {
@@ -1507,7 +1572,11 @@ async function externalizeInlineImagesUnknown(
   return input;
 }
 
-async function externalizeInlineImagesInBlocks(blocks: Block[], merchantHint: string) {
+async function externalizeInlineImagesInBlocks(
+  blocks: Block[],
+  merchantHint: string,
+  minBytes = EXTERNALIZE_MIN_IMAGE_BYTES,
+) {
   const stats: ExternalizeStats = {
     visited: 0,
     replaced: 0,
@@ -1515,7 +1584,66 @@ async function externalizeInlineImagesInBlocks(blocks: Block[], merchantHint: st
     beforeBytes: 0,
     afterBytes: 0,
   };
-  const next = (await externalizeInlineImagesUnknown(blocks, merchantHint, stats)) as Block[];
+  const next = (await externalizeInlineImagesUnknown(blocks, merchantHint, stats, minBytes)) as Block[];
+  return { blocks: next, stats };
+}
+
+async function externalizeInlineAudioUnknown(
+  input: unknown,
+  merchantHint: string,
+  stats: ExternalizeStats,
+): Promise<unknown> {
+  if (typeof input === "string") {
+    if (!/^data:audio\//i.test(input)) return input;
+    const bytes = estimateUtf8Size(input);
+    stats.visited += 1;
+    stats.beforeBytes += bytes;
+    try {
+      const url = await uploadAudioDataUrlToSupabase(input, merchantHint);
+      if (!url) {
+        stats.failed += 1;
+        stats.afterBytes += bytes;
+        return input;
+      }
+      stats.replaced += 1;
+      const after = estimateUtf8Size(url);
+      stats.afterBytes += after;
+      return url;
+    } catch {
+      stats.failed += 1;
+      stats.afterBytes += bytes;
+      return input;
+    }
+  }
+
+  if (Array.isArray(input)) {
+    const next: unknown[] = [];
+    for (const item of input) {
+      next.push(await externalizeInlineAudioUnknown(item, merchantHint, stats));
+    }
+    return next;
+  }
+
+  if (input && typeof input === "object") {
+    const nextRecord: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
+      nextRecord[key] = await externalizeInlineAudioUnknown(value, merchantHint, stats);
+    }
+    return nextRecord;
+  }
+
+  return input;
+}
+
+async function externalizeInlineAudioInBlocks(blocks: Block[], merchantHint: string) {
+  const stats: ExternalizeStats = {
+    visited: 0,
+    replaced: 0,
+    failed: 0,
+    beforeBytes: 0,
+    afterBytes: 0,
+  };
+  const next = (await externalizeInlineAudioUnknown(blocks, merchantHint, stats)) as Block[];
   return { blocks: next, stats };
 }
 
@@ -1534,7 +1662,7 @@ async function optimizeBlocksForPublishIfNeeded(
 ): Promise<PublishOptimizationResult> {
   const inlineImageCount = countInlineImageDataUrls(blocks);
   const originalBytes = estimateUtf8Size(JSON.stringify(blocks));
-  const shouldOptimize = inlineImageCount > 0 && originalBytes >= 2 * 1024 * 1024;
+  const shouldOptimize = inlineImageCount > 0;
   if (!shouldOptimize) {
     return {
       blocks,
@@ -1549,8 +1677,13 @@ async function optimizeBlocksForPublishIfNeeded(
   const externalized = await externalizeInlineImagesInBlocks(
     recompressed.blocks,
     options.merchantHint || "public",
+    1,
   );
-  const nextBlocks = externalized.blocks;
+  const audioExternalized = await externalizeInlineAudioInBlocks(
+    externalized.blocks,
+    options.merchantHint || "public",
+  );
+  const nextBlocks = audioExternalized.blocks;
   const nextBytes = estimateUtf8Size(JSON.stringify(nextBlocks));
   const optimized = !isSameBlocksSnapshot(nextBlocks, blocks);
 
@@ -1558,7 +1691,7 @@ async function optimizeBlocksForPublishIfNeeded(
     blocks: nextBlocks,
     optimized,
     summary: optimized
-      ? `发布前已优化图片：${formatBytes(originalBytes)} -> ${formatBytes(nextBytes)}（压缩 ${recompressed.stats.changed}/${recompressed.stats.visited}，外链 ${externalized.stats.replaced}/${externalized.stats.visited}）`
+      ? `发布前已优化资源：${formatBytes(originalBytes)} -> ${formatBytes(nextBytes)}（压缩图片 ${recompressed.stats.changed}/${recompressed.stats.visited}，外链图片 ${externalized.stats.replaced}/${externalized.stats.visited}，外链音频 ${audioExternalized.stats.replaced}/${audioExternalized.stats.visited}）`
       : null,
   };
 }
@@ -2021,6 +2154,7 @@ export default function AdminClient({
   const [topBarCollapsed, setTopBarCollapsed] = useState(false);
   const topBarRef = useRef<HTMLDivElement>(null);
   const [topBarHeight, setTopBarHeight] = useState(0);
+  const [isDesktopEditorSidebar, setIsDesktopEditorSidebar] = useState(false);
   const [uploadCompressionPreset, setUploadCompressionPreset] = useState<UploadCompressionPreset>("high");
   const [themePreset, setThemePreset] = useState<ThemePresetKey>("none");
   const pageImageInputRef = useRef<HTMLInputElement>(null);
@@ -2369,6 +2503,46 @@ export default function AdminClient({
     return merchantIds[0] ?? "public";
   }
 
+  async function persistInlineImageForEditor(dataUrl: string) {
+    const safeValue = ensureSafeImageUrlSize(dataUrl);
+    if (!safeValue || !isInlineDataImageUrl(safeValue)) {
+      return { value: safeValue ?? "", externalized: false };
+    }
+    const merchantHint = ((isPlatformEditor ? "platform" : await resolveFirstMerchantHint()) || "public").trim() || "public";
+    const uploadedUrl = await uploadImageDataUrlToSupabase(safeValue, merchantHint);
+    if (uploadedUrl) {
+      return { value: uploadedUrl, externalized: true };
+    }
+    return { value: safeValue, externalized: false };
+  }
+
+  async function persistImageFileForEditor(file: File) {
+    const dataUrl = await fileToOriginalImageDataUrl(file, imageCompressionOptions);
+    return persistInlineImageForEditor(dataUrl);
+  }
+
+  async function persistProductImageFileForEditor(file: File) {
+    const dataUrl = await fileToOptimizedImageDataUrl(file, PRODUCT_IMAGE_UPLOAD_OPTIONS);
+    return persistInlineImageForEditor(dataUrl);
+  }
+
+  async function persistInlineAudioForEditor(dataUrl: string) {
+    if (!/^data:audio\//i.test(dataUrl)) {
+      return { value: dataUrl, externalized: false };
+    }
+    const merchantHint = ((isPlatformEditor ? "platform" : await resolveFirstMerchantHint()) || "public").trim() || "public";
+    const uploadedUrl = await uploadAudioDataUrlToSupabase(dataUrl, merchantHint);
+    if (uploadedUrl) {
+      return { value: uploadedUrl, externalized: true };
+    }
+    return { value: dataUrl, externalized: false };
+  }
+
+  async function persistAudioFileForEditor(file: File) {
+    const dataUrl = await fileToAudioDataUrl(file);
+    return persistInlineAudioForEditor(dataUrl);
+  }
+
   async function externalizeCurrentPageLargeImages() {
     showSavePublishTip("正在外链化大..");
     try {
@@ -2658,13 +2832,13 @@ export default function AdminClient({
     saveBlocksToStorage(buildCombinedPersistedBlocks(clonedStates.desktop.planConfig, clonedStates.mobile.planConfig), storeScope);
   }
 
-  function applyBlocks(next: Block[], options?: { selectedId?: string; recordHistory?: boolean }) {
+  function applyBlocks(next: Block[], options?: { selectedId?: string; recordHistory?: boolean; syncNavPages?: boolean }) {
     if (options?.recordHistory !== false) {
       pushUndoSnapshot(createSnapshot());
     }
     const navSyncKeyBefore = getNavSyncKey(blocksRef.current);
     const navSyncKeyAfter = getNavSyncKey(next);
-    const shouldSyncNavPages = navSyncKeyBefore !== navSyncKeyAfter;
+    const shouldSyncNavPages = options?.syncNavPages ?? (navSyncKeyBefore !== navSyncKeyAfter);
     const nextPlanConfig = mergePlanConfigWithEditingBlocks(
       planConfigRef.current,
       editingPlanIdRef.current,
@@ -2952,6 +3126,8 @@ export default function AdminClient({
       }
       return null;
     };
+    const isInvalidRefreshTokenMessage = (message: string) =>
+      /invalid refresh token|already used/i.test(String(message ?? ""));
     const tryRecoverSessionFromStoredToken = async () => {
       if (typeof window === "undefined") return null;
       const extractTokens = (
@@ -2978,48 +3154,59 @@ export default function AdminClient({
         }
       })();
       const preferredKey = expectedRef ? `sb-${expectedRef}-auth-token` : "";
-      const candidateKeys: string[] = [];
-      if (preferredKey) candidateKeys.push(preferredKey);
-      for (let i = 0; i < window.localStorage.length; i += 1) {
-        const key = window.localStorage.key(i) ?? "";
-        if (!key.startsWith("sb-") || !key.endsWith("-auth-token")) continue;
-        if (!candidateKeys.includes(key)) candidateKeys.push(key);
-      }
-      for (const key of candidateKeys) {
-        try {
-          const raw = window.localStorage.getItem(key);
-          if (!raw) continue;
-          const parsed = JSON.parse(raw) as unknown;
-          const tokens = extractTokens(parsed);
-          if (!tokens) continue;
-          const { data } = await withTimeout(
-            supabase.auth.setSession(tokens),
-            Math.max(3000, Math.min(8000, AUTH_CHECK_TIMEOUT_MS)),
-            "本地会话恢复超时",
-          );
-          if (data.session) return data.session;
-        } catch {
-          // Continue trying remaining keys.
+      if (!preferredKey) return null;
+      try {
+        const raw = window.localStorage.getItem(preferredKey);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw) as unknown;
+        const tokens = extractTokens(parsed);
+        if (!tokens) return null;
+        const { data } = await withTimeout(
+          supabase.auth.setSession(tokens),
+          Math.max(3000, Math.min(8000, AUTH_CHECK_TIMEOUT_MS)),
+          "本地会话恢复超时",
+        );
+        if (data.session) return data.session;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "";
+        if (isInvalidRefreshTokenMessage(message)) {
+          try {
+            window.localStorage.removeItem(preferredKey);
+          } catch {
+            // ignore localStorage failure
+          }
         }
       }
       return null;
     };
+    let recoverSessionInFlight: Promise<Awaited<ReturnType<typeof pollSession>>> | null = null;
     const recoverSession = async (timeoutMs: number) => {
-      const direct = await pollSession(timeoutMs);
-      if (direct) return direct;
-      const fromStored = await tryRecoverSessionFromStoredToken();
-      if (fromStored) return fromStored;
+      if (recoverSessionInFlight) return recoverSessionInFlight;
+      const task = (async () => {
+        const direct = await pollSession(timeoutMs);
+        if (direct) return direct;
+        const fromStored = await tryRecoverSessionFromStoredToken();
+        if (fromStored) return fromStored;
+        try {
+          const { data } = await withTimeout(
+            supabase.auth.refreshSession(),
+            Math.max(3200, Math.min(9000, timeoutMs + 2000)),
+            "会话恢复超时",
+          );
+          if (data.session) return data.session;
+        } catch {
+          // Ignore refresh failure and fall back to a final short poll.
+        }
+        return pollSession(1200);
+      })();
+      recoverSessionInFlight = task;
       try {
-        const { data } = await withTimeout(
-          supabase.auth.refreshSession(),
-          Math.max(3200, Math.min(9000, timeoutMs + 2000)),
-          "会话恢复超时",
-        );
-        if (data.session) return data.session;
-      } catch {
-        // Ignore refresh failure and fall back to a final short poll.
+        return await task;
+      } finally {
+        if (recoverSessionInFlight === task) {
+          recoverSessionInFlight = null;
+        }
       }
-      return pollSession(1200);
     };
     const attachAuthListener = () => {
       if (isPlatformEditor) return;
@@ -3263,6 +3450,91 @@ export default function AdminClient({
     applyBlocks(next);
   }
 
+  function applyNavSettingsToOtherPages(blockId: string) {
+    if (editingPages.length <= 1) {
+      showTip("当前只有一个页面，无需导航栏对齐");
+      return;
+    }
+    const currentBlocks = blocksRef.current;
+    const target = currentBlocks.find((item) => item.id === blockId);
+    if (!target || target.type !== "nav") return;
+    const canonicalNav = cloneBlocks([target])[0];
+    const buildViewportBlocksWithCanonicalNav = (sourceBlocks: Block[]) => {
+      const pageBackgroundPatch = getPageBackgroundPatch(sourceBlocks[0]);
+      const base = stripNavBlocks(sourceBlocks);
+      const rebuiltBlocks = [cloneBlocks([canonicalNav])[0], ...base];
+      if (rebuiltBlocks[0]) {
+        rebuiltBlocks[0] = {
+          ...rebuiltBlocks[0],
+          props: { ...rebuiltBlocks[0].props, ...pageBackgroundPatch } as never,
+        } as Block;
+      }
+      return rebuiltBlocks;
+    };
+    const syncViewportState = (state: ViewportEditorState): ViewportEditorState => {
+      const planIndex = state.planConfig.plans.findIndex((plan) => plan.id === state.editingPlanId);
+      const safePlanIndex = planIndex >= 0 ? planIndex : 0;
+      const sourcePlan = state.planConfig.plans[safePlanIndex] ?? null;
+      if (!sourcePlan) return state;
+      const sourcePages = sourcePlan.pages.length > 0 ? sourcePlan.pages : [{ id: state.editingPageId, name: "页面1", blocks: state.blocks }];
+      const syncedPages = sourcePages.map((page) => ({
+        ...page,
+        blocks: buildViewportBlocksWithCanonicalNav(page.blocks),
+      }));
+      const nextActivePageId =
+        syncedPages.find((page) => page.id === state.editingPageId)?.id ??
+        syncedPages.find((page) => page.id === sourcePlan.activePageId)?.id ??
+        syncedPages[0]?.id ??
+        state.editingPageId;
+      const activePage = syncedPages.find((page) => page.id === nextActivePageId) ?? syncedPages[0];
+      const syncedPlan = {
+        ...sourcePlan,
+        pages: syncedPages,
+        activePageId: nextActivePageId,
+        blocks: cloneBlocks(activePage?.blocks ?? sourcePlan.blocks),
+      };
+      const syncedPlanConfig = {
+        ...state.planConfig,
+        plans: state.planConfig.plans.map((plan, idx) => (idx === safePlanIndex ? syncedPlan : plan)),
+      };
+      const nextBlocks = cloneBlocks(activePage?.blocks ?? state.blocks);
+      const nextSelectedId =
+        nextBlocks.some((item) => item.id === state.selectedId)
+          ? state.selectedId
+          : nextBlocks.some((item) => item.id === blockId)
+            ? blockId
+            : (nextBlocks[0]?.id ?? "");
+      return {
+        ...state,
+        planConfig: syncedPlanConfig,
+        editingPageId: nextActivePageId,
+        blocks: nextBlocks,
+        selectedId: nextSelectedId,
+      };
+    };
+
+    pushUndoSnapshot(createSnapshot());
+    const targetViewport = previewViewport;
+    const nextViewportStates = cloneViewportStates(viewportStatesRef.current);
+    nextViewportStates[targetViewport] = syncViewportState(nextViewportStates[targetViewport]);
+    viewportStatesRef.current = nextViewportStates;
+
+    const activeState = nextViewportStates[targetViewport];
+    planConfigRef.current = clonePlanConfig(activeState.planConfig);
+    editingPlanIdRef.current = activeState.editingPlanId;
+    editingPageIdRef.current = activeState.editingPageId;
+    blocksRef.current = cloneBlocks(activeState.blocks);
+    selectedIdRef.current = activeState.selectedId || blockId;
+    setPlanConfig(clonePlanConfig(activeState.planConfig));
+    setEditingPlanId(activeState.editingPlanId);
+    setEditingPageId(activeState.editingPageId);
+    setBlocks(cloneBlocks(activeState.blocks));
+    setSelectedId(activeState.selectedId || blockId);
+    persistDraftForConfigs(activeState.planConfig);
+    syncHistoryFlags();
+    showTip(targetViewport === "mobile" ? "已将当前页导航设置应用到其他页面（手机）" : "已将当前页导航设置应用到其他页面（PC）");
+  }
+
   function resizeBlockWithoutAffectingOthers(
     blockId: string,
     patch: Partial<Block["props"]>,
@@ -3369,11 +3641,20 @@ export default function AdminClient({
   }, [blocks, editingPageId, editingPlanId, planConfig, previewViewport, selectedId]);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    const media = window.matchMedia("(min-width: 1024px)");
+    const updateLayoutMode = () => setIsDesktopEditorSidebar(media.matches);
+    updateLayoutMode();
+    media.addEventListener("change", updateLayoutMode);
+    return () => media.removeEventListener("change", updateLayoutMode);
+  }, []);
+
+  useEffect(() => {
     if (checkingAuth) return;
     const topBarNode = topBarRef.current;
     if (!topBarNode) return;
     const updateTopBarHeight = () => {
-      const nextHeight = Math.ceil(topBarNode.getBoundingClientRect().height);
+      const nextHeight = isDesktopEditorSidebar ? 0 : Math.ceil(topBarNode.getBoundingClientRect().height);
       setTopBarHeight((prev) => (prev === nextHeight ? prev : nextHeight));
     };
     updateTopBarHeight();
@@ -3386,7 +3667,7 @@ export default function AdminClient({
       if (observer) observer.disconnect();
       window.removeEventListener("resize", updateTopBarHeight);
     };
-  }, [checkingAuth, previewViewport, topBarCollapsed]);
+  }, [checkingAuth, isDesktopEditorSidebar, previewViewport, topBarCollapsed]);
 
   useEffect(() => {
     const measureBackgroundHeight = () => {
@@ -3773,22 +4054,19 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
 
     if (type === "search-bar") {
-      const defaultCountryCode = getEuropeCountryOptions()[0]?.code ?? "";
-      const defaultProvinceCode = getEuropeProvinceOptions(defaultCountryCode)[0]?.code ?? "";
-      const defaultCity = getEuropeCityOptions(defaultCountryCode, defaultProvinceCode)[0] ?? "";
       return {
         id,
         type,
         props: {
           heading: "搜索",
-          text: "攌城市定位与内容搜",
+          text: "城市定位与内容搜索",
           cityPlaceholder: "选择城市",
-          searchPlaceholder: "请输入商户名关键",
+          searchPlaceholder: "请输入商户名称关键词",
           locateLabel: "定位",
           actionLabel: "搜索",
-          defaultCountryCode,
-          defaultProvinceCode,
-          defaultCity,
+          defaultCountryCode: "",
+          defaultProvinceCode: "",
+          defaultCity: "",
           searchLayout: {
             locate: { x: 0, y: 0, width: 72, height: 40 },
             country: { x: 82, y: 0, width: 190, height: 40 },
@@ -3864,6 +4142,57 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             card2: { x: 334, y: 52, width: 320, height: 190 },
             card3: { x: 668, y: 52, width: 320, height: 190 },
           },
+        },
+      };
+    }
+
+    if (type === "product") {
+      return {
+        id,
+        type,
+        props: {
+          heading: "产品展示",
+          text: "支持产品图片、编号、名称、介绍和价格展示。",
+          productLayoutPreset: "list",
+          productImageAspectRatio: "square",
+          productImageSize: 220,
+          productPricePrefix: "€",
+          productShowCode: true,
+          productShowDescription: true,
+          productPriceAlign: "left",
+          productTagOptions: ["推荐"],
+          productTagPosition: "top",
+          productTagFontSize: 12,
+          productTagWidth: 92,
+          productTagHideUnselected: true,
+          productGroupByTag: false,
+          productTagBgColor: "#0f172a",
+          productTagBgOpacity: 0.82,
+          productTagActiveBgColor: "#1d4ed8",
+          productTagActiveBgOpacity: 0.94,
+          productContainerMode: "auto",
+          productItemsPerPage: 3,
+          productDetailImageSize: 420,
+          productDetailShowCode: true,
+          productDetailShowName: true,
+          productDetailShowDescription: true,
+          productDetailShowPrice: true,
+          productDetailFullImage: false,
+          productCardBgColor: "#ffffff",
+          productCardBgOpacity: 0.9,
+          productCardBorderStyle: "solid",
+          productCardBorderColor: "#e2e8f0",
+          products: [
+            {
+              id: createProductItemId(),
+              code: "SKU-001",
+              name: "示例产品",
+              description: "在这里填写产品卖点、规格或简短介绍。",
+              price: "39.90",
+              tag: "推荐",
+              imageUrl: "",
+            },
+          ],
         },
       };
     }
@@ -4066,10 +4395,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     const file = event.target.files?.[0];
     if (!file) return;
     try {
-      const result = await fileToOriginalImageDataUrl(file, imageCompressionOptions);
-      updatePageBackground({ pageBgImageUrl: result });
+      const result = await persistImageFileForEditor(file);
+      updatePageBackground({ pageBgImageUrl: result.value });
       setPageImageDialogOpen(false);
-      setTip("页面背景图片已更");
+      setTip(result.externalized ? "页面背景图片已上传" : "页面背景图片已更");
       setTimeout(() => setTip(""), 1200);
     } catch (error) {
       setTip(error instanceof Error ? error.message : "上传失败，请重试");
@@ -4388,6 +4717,29 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         blocks: combinedBlocks,
         updated_at: new Date().toISOString(),
       };
+      const remainingInlineAssets = countInlineAssets(payload.blocks);
+      if (remainingInlineAssets.totalCount > 0) {
+        const inlineParts: string[] = [];
+        if (remainingInlineAssets.imageCount > 0) inlineParts.push(`图片 ${remainingInlineAssets.imageCount}`);
+        if (remainingInlineAssets.audioCount > 0) inlineParts.push(`音频 ${remainingInlineAssets.audioCount}`);
+        const message = `发布已阻止：仍有未外链化资源（${inlineParts.join("，")}）`;
+        showPublishFailedTip(message);
+        savePublishFailureSnapshot(
+          {
+            reason: "inline-assets-blocked",
+            bytes: estimateUtf8Size(JSON.stringify(payload.blocks)),
+            blocks: combinedBlocks,
+          },
+          storeScope,
+        );
+        trackPublishEvent({
+          success: false,
+          bytes: estimateUtf8Size(JSON.stringify(payload.blocks)),
+          changedBlocks: 1,
+          reason: "inline-assets-blocked",
+        });
+        return;
+      }
       const payloadBytes = estimateUtf8Size(JSON.stringify(payload.blocks));
       if (!isPlatformEditor && merchantPublishSizeLimitBytes && payloadBytes > merchantPublishSizeLimitBytes) {
         const message = `发布体积超出权限上限（当前 ${formatBytes(payloadBytes)}，上限 ${formatBytes(merchantPublishSizeLimitBytes)}）`;
@@ -4698,6 +5050,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     editingSiteId && merchantPlatformState
       ? merchantPlatformState.sites.find((item) => item.id === editingSiteId) ?? null
       : null;
+  const merchantDisplayName = !isPlatformEditor
+    ? ((editingSite?.merchantName ?? "").trim() || "未设置商户名称")
+    : "";
   const merchantPermissionConfig = !isPlatformEditor
     ? (editingSite?.permissionConfig ?? createDefaultMerchantPermissionConfig())
     : null;
@@ -4721,7 +5076,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     ? Math.max(1, Math.round(merchantPermissionConfig?.publishSizeLimitMb ?? 1)) * 1024 * 1024
     : null;
   const effectiveFrontendHref = !isPlatformEditor
-    ? buildMerchantFrontendHref(editingSiteId || "site-main", editingSite?.domainSuffix)
+    ? buildMerchantFrontendHref(editingSiteId || "site-main", editingSite?.domainPrefix ?? editingSite?.domainSuffix)
     : frontendHref;
   const maxBlockOffsetY = blocks.reduce((max, block) => {
     const value =
@@ -4739,8 +5094,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
   return (
     <main
-      className="min-h-screen bg-gray-100"
-      style={{ paddingTop: topBarCollapsed ? "0px" : `${Math.max(topBarHeight, 56)}px` }}
+      className={`min-h-screen bg-gray-100 ${topBarCollapsed ? "" : "lg:pl-[320px]"}`}
+      style={{
+        paddingTop: topBarCollapsed ? "0px" : isDesktopEditorSidebar ? "0px" : `${Math.max(topBarHeight, 56)}px`,
+      }}
       onMouseDownCapture={handleEditorMouseDownCapture}
       data-editor-mode={editorMode}
     >
@@ -4751,33 +5108,66 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           </div>
         </div>
       ) : null}
-      <div className="fixed left-0 top-0 z-[16000]">
+      <div
+        className={`fixed z-[16000] ${
+          isDesktopEditorSidebar
+            ? topBarCollapsed
+              ? "left-0 top-6"
+              : "left-[320px] top-6"
+            : "left-0 top-3"
+        }`}
+      >
         <button
           type="button"
-          className="h-8 w-8 rounded border bg-white text-base leading-none hover:bg-gray-50"
+          className={`flex items-center justify-center border bg-white text-base leading-none shadow-sm transition-colors hover:bg-gray-50 ${
+            isDesktopEditorSidebar
+              ? "h-12 w-7 rounded-r-lg border-l-0"
+              : "h-10 w-7 rounded-r-lg border-l-0"
+          }`}
           onClick={() => setTopBarCollapsed((prev) => !prev)}
-          title={topBarCollapsed ? "展开" : "收起"}
-          aria-label={topBarCollapsed ? "展开顶部工具栏" : "收起顶部工具栏"}
+          title={topBarCollapsed ? "展开侧栏" : "收起侧栏"}
+          aria-label={topBarCollapsed ? "展开编辑侧栏" : "收起编辑侧栏"}
         >
-          {topBarCollapsed ? "▾" : "▴"}
+          {topBarCollapsed ? "›" : "‹"}
         </button>
       </div>
       <div
         ref={topBarRef}
         data-editor-toolbar
         data-editor-mode={editorMode}
-        className={topBarCollapsed ? "hidden" : "fixed inset-x-0 top-0 z-[15000] bg-white border-b shadow-sm"}
+        className={
+          topBarCollapsed
+            ? "hidden"
+            : "fixed inset-x-0 top-0 z-[15000] bg-white border-b shadow-sm lg:inset-y-0 lg:left-0 lg:right-auto lg:w-[320px] lg:overflow-y-auto lg:border-b-0 lg:border-r"
+        }
       >
-        <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
-            <div className="flex items-center gap-3">
+        <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between gap-3 lg:mx-0 lg:max-w-none lg:flex-col lg:items-stretch lg:justify-start lg:px-4 lg:py-4">
+            <div className="flex items-center gap-3 lg:flex-col lg:items-stretch">
               {isPlatformEditor ? <div className="text-lg font-bold">{editorTitle}</div> : null}
+              {!isPlatformEditor ? (
+                <div className="flex items-center justify-between gap-3 rounded border border-slate-300 bg-slate-50 px-3 py-1">
+                  <div className="min-w-0">
+                    <div className="text-[11px] leading-4 text-slate-500">当前商户</div>
+                    <div className="max-w-[180px] truncate text-sm font-semibold text-slate-900" title={merchantDisplayName}>
+                      {merchantDisplayName}
+                    </div>
+                  </div>
+                  <button
+                    className="shrink-0 rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-50"
+                    onClick={logout}
+                    disabled={loggingOut}
+                  >
+                    {loggingOut ? "退出中..." : "退出登录"}
+                  </button>
+                </div>
+              ) : null}
               {isPlatformEditor && storeScope !== "default" ? (
                 <div className="rounded border border-blue-300 bg-blue-50 px-2 py-1 text-xs text-blue-700">
                   {isPlatformEditor ? "平台范围" : "站点范围"}：{storeScope}
                 </div>
               ) : null}
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 lg:grid lg:grid-cols-2">
               <button
                 className="px-3 py-2 rounded border bg-white hover:bg-gray-50"
                 onClick={() => {
@@ -4851,7 +5241,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                 {"恢复失败草稿"}
               </button>
               <button
-                className="px-3 py-2 rounded bg-black text-white disabled:opacity-50"
+                className="px-3 py-2 rounded bg-black text-white disabled:opacity-50 lg:col-span-2"
                 onClick={publishToFrontend}
                 disabled={
                   publishing ||
@@ -4869,235 +5259,227 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                 {publishing ? "发布.." : "发布"}
               </button>
             </div>
-            <button
-              className="px-3 py-2 rounded border bg-white hover:bg-gray-50 disabled:opacity-50"
-              onClick={logout}
-              disabled={loggingOut}
-            >
-              {loggingOut ? "退出中..." : "退出登录"}
-            </button>
           </div>
         {!topBarCollapsed ? (
           <>
             <div className="border-t">
-              <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2 flex-wrap">
-              <select
-                className="border p-2 rounded min-w-[140px]"
-                value={editingPlanId}
-                onChange={(e) => switchEditingPlan(e.target.value as PlanId)}
-                title="选择要编辑的方案"
-              >
-                {planConfig.plans.map((plan, index) => {
-                  const locked = !isPlatformEditor && index + 1 > merchantPlanLimit;
-                  return (
-                  <option key={plan.id} value={plan.id} disabled={locked}>
-                    {"编辑"}{plan.name}{locked ? "（未开通）" : ""}
-                  </option>
-                  );
-                })}
-              </select>
-              <select
-                className="border p-2 rounded min-w-[140px]"
-                value={editingPageId}
-                onChange={(e) => switchEditingPage(e.target.value)}
-                title="选择要编辑的页面"
-              >
-                {editingPages.map((page) => (
-                  <option key={page.id} value={page.id}>
-                    {toPlainText(page.name, page.id)}
-                  </option>
-                ))}
-              </select>
-	              <div className="inline-flex items-center rounded border overflow-hidden">
-	                <button
-	                  type="button"
-	                  className={`px-3 py-2 text-sm ${previewViewport === "desktop" ? "bg-black text-white" : "bg-white hover:bg-gray-50"}`}
-	                  onClick={() => switchPreviewViewport("desktop")}
-                >
-                  PC
-                </button>
-                <button
-                  type="button"
-                  className={`px-3 py-2 text-sm border-l ${previewViewport === "mobile" ? "bg-black text-white" : "bg-white hover:bg-gray-50"}`}
-                  onClick={() => switchPreviewViewport("mobile")}
-                >
-	                  手机
-	                </button>
-	              </div>
-	              <button
-	                className="px-2 py-2 rounded border bg-white hover:bg-gray-50 text-xs"
-	                onClick={() => copySelectedBlockStyleToViewport("mobile")}
-	                title="将当前选中区块样式复制到手机端"
-	              >
-	                {"样式->手机"}
-	              </button>
-		              <button
-		                className="px-2 py-2 rounded border bg-white hover:bg-gray-50 text-xs"
-		                onClick={() => copySelectedBlockStyleToViewport("desktop")}
-		                title="将当前选中区块样式复制到PC端"
-		              >
-	                {"样式->PC"}
-	              </button>
-	              <div className="w-px h-6 bg-gray-200 mx-1" />
-              <button
-                className="px-3 py-2 rounded bg-black text-white disabled:opacity-50"
-                onClick={saveDraft}
-                title="保存草稿"
-                aria-label="保存草稿"
-              >
-                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-                  <path d="M5 4h12l2 2v14H5z" />
-                  <path d="M8 4v6h8V4" />
-                  <path d="M8 18h8" />
-                </svg>
-              </button>
-              <button
-                className="px-3 py-2 rounded border bg-white hover:bg-gray-50 disabled:opacity-50"
-                onClick={undoEdit}
-                disabled={!canUndo}
-                title="撤销"
-                aria-label="撤销"
-              >
-                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-                  <path d="M9 8 5 12l4 4" />
-                  <path d="M6 12h8a5 5 0 0 1 0 10h-1" />
-                </svg>
-              </button>
-              <button
-                className="px-3 py-2 rounded border bg-white hover:bg-gray-50 disabled:opacity-50"
-                onClick={redoEdit}
-                disabled={!canRedo}
-                title="重复"
-                aria-label="重复"
-              >
-                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-                  <path d="m15 8 4 4-4 4" />
-                  <path d="M18 12h-8a5 5 0 0 0 0 10h1" />
-                </svg>
-              </button>
-              <div className="w-px h-6 bg-gray-200 mx-1" />
-              <button
-                className={`px-3 py-2 rounded border ${
-                  canUseInsertBackground ? "bg-white hover:bg-gray-50" : "bg-gray-100 text-gray-400 cursor-not-allowed"
-                }`}
-                onClick={canUseInsertBackgroundByPermission ? insertPageImage : undefined}
-                disabled={!canUseInsertBackgroundByPermission}
-                title={!canUseInsertBackgroundByPermission ? "当前权限未开通插入背景" : undefined}
-              >
-                {"插入背景"}
-              </button>
-              <button
-                className="px-3 py-2 rounded border bg-white hover:bg-gray-50"
-                onClick={() => void editPageImageSettings()}
-              >
-                {"背景参数"}
-              </button>
-	              <select
-	                className="border p-2 rounded min-w-[120px]"
-	                value={uploadCompressionPreset}
-	                onChange={(e) => setUploadCompressionPreset(e.target.value as UploadCompressionPreset)}
-	                title="上传压缩策略"
-	              >
-	                <option value="high">上传压缩：高质量</option>
-		                <option value="balanced">上传压缩：平衡</option>
-		                <option value="compact">上传压缩：压缩优先</option>
-		              </select>
-	              <button
-	                className="px-3 py-2 rounded border bg-white hover:bg-gray-50"
-	                onClick={() => void externalizeCurrentPageLargeImages()}
-	                title="把当前页大图转为外链 URL"
-	              >
-	                {"外链化大图"}
-	              </button>
-		              <button
-		                className="px-3 py-2 rounded border bg-white hover:bg-gray-50"
-		                onClick={() => void recompressCurrentPageImages()}
-		                title="批量重压当前页内嵌图片"
-		              >
-		                {"重压当前页"}
-		              </button>
-              <select
-                className={`border p-2 rounded min-w-[130px] ${
-                  canUseThemeEffects ? "" : "bg-gray-100 text-gray-400 cursor-not-allowed"
-                }`}
-                value={themePreset}
-                disabled={!canUseThemeEffects}
-	                title={!canUseThemeEffects ? "当前权限未开通主题效果" : "风格"}
-                onChange={(e) => {
-                  const nextPreset = e.target.value as ThemePresetKey;
-                  setThemePreset(nextPreset);
-                  applyThemePresetToCurrentPage(nextPreset);
-                }}
-              >
-                {(Object.entries(THEME_PRESETS) as Array<[ThemePresetKey, ThemePreset]>).map(([key, item]) => (
-                  <option key={key} value={key}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-              <button
-                className="px-3 py-2 rounded border bg-white hover:bg-gray-50"
-                onClick={toggleSelectedBlockLock}
-                title="锁定后不可拖动微调"
-              >
-                {"锁定/解锁"}
-              </button>
-              <div className="text-xs text-gray-600 px-1">
-                {selectedBlock ? (selectedBlockLocked ? "已锁定" : "未锁定") : "未选中区块"}
-              </div>
-              <div className="w-px h-6 bg-gray-200 mx-1" />
-              <select
-                className="border p-2 rounded min-w-[180px]"
-                value={newBlockType}
-                onChange={(e) => setNewBlockType(e.target.value as Block["type"])}
-              >
-                <option value="common">{"通用"}</option>
-                <option value="gallery" disabled={!canUseGalleryBlock}>{"相册"}{!canUseGalleryBlock ? "（未开通）" : ""}</option>
-                <option value="chart">{"图表"}</option>
-                <option value="nav">{"导航"}</option>
-                <option value="music" disabled={!canUseMusicBlock}>{"音乐"}{!canUseMusicBlock ? "（未开通）" : ""}</option>
-                <option value="contact">{"联系方式"}</option>
-                {isPlatformEditor ? <option value="search-bar">{"搜索"}</option> : null}
-                {isPlatformEditor ? <option value="merchant-list">{"商户列表"}</option> : null}
-              </select>
-              <div className="relative">
-                <button
-                  className={`px-3 py-2 rounded border ${
-                    isCurrentBlockTypeLocked ? "bg-gray-100 text-gray-400 cursor-not-allowed" : "bg-white hover:bg-gray-50"
-                  }`}
-                  onClick={addBlock}
-                  title="新增区块"
-                  aria-label="新增区块"
-                  disabled={isCurrentBlockTypeLocked}
-                >
-                  <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-                    <path d="M12 5v14" />
-                    <path d="M5 12h14" />
-                  </svg>
-                </button>
-                {showAddBlockGuide ? (
-                  <div className="absolute left-1/2 top-full z-20 mt-2 -translate-x-1/2 animate-pulse">
-	                    <div className="relative whitespace-nowrap rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 shadow-sm">
-	                      <span className="font-medium">在此处增加区块</span>
-	                      <span className="absolute left-1/2 -top-2 -translate-x-1/2 block w-0 h-0 border-l-[6px] border-r-[6px] border-b-[8px] border-l-transparent border-r-transparent border-b-amber-200" />
-                      <span className="absolute left-1/2 -top-[7px] -translate-x-1/2 block w-0 h-0 border-l-[5px] border-r-[5px] border-b-[7px] border-l-transparent border-r-transparent border-b-amber-50" />
-                    </div>
+              <div className="max-w-6xl mx-auto px-6 py-3 lg:mx-0 lg:max-w-none lg:px-4 lg:py-4">
+                <div className="flex items-center gap-2 flex-wrap lg:flex-col lg:items-stretch lg:gap-4">
+                  <div className="flex items-center gap-2 flex-wrap lg:flex-col lg:items-stretch">
+                    <select
+                      className="border p-2 rounded min-w-[140px] lg:w-full"
+                      value={editingPlanId}
+                      onChange={(e) => switchEditingPlan(e.target.value as PlanId)}
+                      title="选择要编辑的方案"
+                    >
+                      {planConfig.plans.map((plan, index) => {
+                        const locked = !isPlatformEditor && index + 1 > merchantPlanLimit;
+                        return (
+                          <option key={plan.id} value={plan.id} disabled={locked}>
+                            {"编辑"}{plan.name}{locked ? "（未开通）" : ""}
+                          </option>
+                        );
+                      })}
+                    </select>
+                    <select
+                      className="border p-2 rounded min-w-[140px] lg:w-full"
+                      value={editingPageId}
+                      onChange={(e) => switchEditingPage(e.target.value)}
+                      title="选择要编辑的页面"
+                    >
+                      {editingPages.map((page) => (
+                        <option key={page.id} value={page.id}>
+                          {toPlainText(page.name, page.id)}
+                        </option>
+                      ))}
+                    </select>
                   </div>
-                ) : null}
-              </div>
-                  <input
-                    ref={pageImageInputRef}
-                    className="hidden"
-                    type="file"
-                    accept="image/*"
-                    onChange={handlePageImageUpload}
-                  />
+
+                  <div className="h-px w-full bg-gray-200 hidden lg:block" />
+
+                  <div className="flex items-center gap-2 flex-wrap lg:flex-col lg:items-stretch">
+                    <div className="inline-flex items-center rounded border overflow-hidden lg:w-full">
+                      <button
+                        type="button"
+                        className={`px-3 py-2 text-sm lg:flex-1 ${previewViewport === "desktop" ? "bg-black text-white" : "bg-white hover:bg-gray-50"}`}
+                        onClick={() => switchPreviewViewport("desktop")}
+                      >
+                        PC
+                      </button>
+                      <button
+                        type="button"
+                        className={`px-3 py-2 text-sm border-l lg:flex-1 ${previewViewport === "mobile" ? "bg-black text-white" : "bg-white hover:bg-gray-50"}`}
+                        onClick={() => switchPreviewViewport("mobile")}
+                      >
+                        手机
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap lg:grid lg:grid-cols-2">
+                      <button
+                        className="px-2 py-2 rounded border bg-white hover:bg-gray-50 text-xs lg:w-full"
+                        onClick={() => copySelectedBlockStyleToViewport("mobile")}
+                        title="将当前选中区块样式复制到手机端"
+                      >
+                        {"样式->手机"}
+                      </button>
+                      <button
+                        className="px-2 py-2 rounded border bg-white hover:bg-gray-50 text-xs lg:w-full"
+                        onClick={() => copySelectedBlockStyleToViewport("desktop")}
+                        title="将当前选中区块样式复制到PC端"
+                      >
+                        {"样式->PC"}
+                      </button>
+                    </div>
+                    {previewViewport === "mobile" ? (
+                      <button
+                        type="button"
+                        className="hidden lg:block px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm"
+                        onClick={() => void readDesktopIntoMobile()}
+                      >
+                        读取PC
+                      </button>
+                    ) : null}
+                  </div>
+
+                  <div className="h-px w-full bg-gray-200 hidden lg:block" />
+
+                  <div className="flex items-center gap-2 flex-wrap lg:grid lg:grid-cols-3">
+                    <button
+                      className="px-3 py-2 rounded bg-black text-white disabled:opacity-50 lg:w-full"
+                      onClick={saveDraft}
+                      title="保存草稿"
+                      aria-label="保存草稿"
+                    >
+                      <svg viewBox="0 0 24 24" className="h-5 w-5 mx-auto" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                        <path d="M5 4h12l2 2v14H5z" />
+                        <path d="M8 4v6h8V4" />
+                        <path d="M8 18h8" />
+                      </svg>
+                    </button>
+                    <button
+                      className="px-3 py-2 rounded border bg-white hover:bg-gray-50 disabled:opacity-50 lg:w-full"
+                      onClick={undoEdit}
+                      disabled={!canUndo}
+                      title="撤销"
+                      aria-label="撤销"
+                    >
+                      <svg viewBox="0 0 24 24" className="h-5 w-5 mx-auto" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                        <path d="M9 8 5 12l4 4" />
+                        <path d="M6 12h8a5 5 0 0 1 0 10h-1" />
+                      </svg>
+                    </button>
+                    <button
+                      className="px-3 py-2 rounded border bg-white hover:bg-gray-50 disabled:opacity-50 lg:w-full"
+                      onClick={redoEdit}
+                      disabled={!canRedo}
+                      title="重复"
+                      aria-label="重复"
+                    >
+                      <svg viewBox="0 0 24 24" className="h-5 w-5 mx-auto" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                        <path d="m15 8 4 4-4 4" />
+                        <path d="M18 12h-8a5 5 0 0 0 0 10h1" />
+                      </svg>
+                    </button>
+                  </div>
+
+                  <div className="h-px w-full bg-gray-200 hidden lg:block" />
+
+                  <div className="flex items-center gap-2 flex-wrap lg:flex-col lg:items-stretch">
+                    <div className="grid gap-2 lg:grid-cols-2">
+                      <button
+                        className={`px-3 py-2 rounded border lg:w-full ${
+                          canUseInsertBackground ? "bg-white hover:bg-gray-50" : "bg-gray-100 text-gray-400 cursor-not-allowed"
+                        }`}
+                        onClick={canUseInsertBackgroundByPermission ? insertPageImage : undefined}
+                        disabled={!canUseInsertBackgroundByPermission}
+                        title={!canUseInsertBackgroundByPermission ? "当前权限未开通插入背景" : undefined}
+                      >
+                        {"插入背景"}
+                      </button>
+                      <button
+                        className="px-3 py-2 rounded border bg-white hover:bg-gray-50 lg:w-full"
+                        onClick={() => void editPageImageSettings()}
+                      >
+                        {"背景参数"}
+                      </button>
+                    </div>
+                    <select
+                      className={`border p-2 rounded min-w-[130px] lg:w-full ${
+                        canUseThemeEffects ? "" : "bg-gray-100 text-gray-400 cursor-not-allowed"
+                      }`}
+                      value={themePreset}
+                      disabled={!canUseThemeEffects}
+                      title={!canUseThemeEffects ? "当前权限未开通主题效果" : "风格"}
+                      onChange={(e) => {
+                        const nextPreset = e.target.value as ThemePresetKey;
+                        setThemePreset(nextPreset);
+                        applyThemePresetToCurrentPage(nextPreset);
+                      }}
+                      >
+                      {(Object.entries(THEME_PRESETS) as Array<[ThemePresetKey, ThemePreset]>).map(([key, item]) => (
+                        <option key={key} value={key}>
+                          {item.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="h-px w-full bg-gray-200 hidden lg:block" />
+
+                  <div className="grid grid-cols-[minmax(0,1fr)_56px] items-start gap-2">
+                    <select
+                      className="border p-2 rounded min-w-0 w-full"
+                      value={newBlockType}
+                      onChange={(e) => setNewBlockType(e.target.value as Block["type"])}
+                    >
+                      <option value="common">{"通用"}</option>
+                      <option value="gallery" disabled={!canUseGalleryBlock}>{"相册"}{!canUseGalleryBlock ? "（未开通）" : ""}</option>
+                      <option value="chart">{"图表"}</option>
+                      <option value="nav">{"导航"}</option>
+                      <option value="music" disabled={!canUseMusicBlock}>{"音乐"}{!canUseMusicBlock ? "（未开通）" : ""}</option>
+                      <option value="product">{"产品"}</option>
+                      <option value="contact">{"联系方式"}</option>
+                      {isPlatformEditor ? <option value="search-bar">{"搜索"}</option> : null}
+                      {isPlatformEditor ? <option value="merchant-list">{"商户列表"}</option> : null}
+                    </select>
+                    <div className="relative">
+                      <button
+                        className={`px-3 py-2 rounded border w-full ${
+                          isCurrentBlockTypeLocked ? "bg-gray-100 text-gray-400 cursor-not-allowed" : "bg-white hover:bg-gray-50"
+                        }`}
+                        onClick={addBlock}
+                        title="新增区块"
+                        aria-label="新增区块"
+                        disabled={isCurrentBlockTypeLocked}
+                      >
+                        <svg viewBox="0 0 24 24" className="h-5 w-5 mx-auto" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                          <path d="M12 5v14" />
+                          <path d="M5 12h14" />
+                        </svg>
+                      </button>
+                      {showAddBlockGuide ? (
+                        <div className="absolute left-1/2 top-full z-20 mt-2 -translate-x-1/2 animate-pulse">
+                          <div className="relative whitespace-nowrap rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 shadow-sm">
+                            <span className="font-medium">在此处增加区块</span>
+                            <span className="absolute left-1/2 -top-2 -translate-x-1/2 block w-0 h-0 border-l-[6px] border-r-[6px] border-b-[8px] border-l-transparent border-r-transparent border-b-amber-200" />
+                            <span className="absolute left-1/2 -top-[7px] -translate-x-1/2 block w-0 h-0 border-l-[5px] border-r-[5px] border-b-[7px] border-l-transparent border-r-transparent border-b-amber-50" />
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                    <input
+                      ref={pageImageInputRef}
+                      className="hidden"
+                      type="file"
+                      accept="image/*"
+                      onChange={handlePageImageUpload}
+                    />
+                  </div>
                 </div>
               </div>
             </div>
             {previewViewport === "mobile" ? (
-              <div className="border-t">
+              <div className="border-t lg:hidden">
                 <div className="max-w-6xl mx-auto px-6 py-2">
                   <button
                     type="button"
@@ -5176,7 +5558,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                             recentColors={recentColors}
                             onRecordColor={recordRecentColor}
                             onClearRecentColors={clearRecentColors}
-                            imageCompressionOptions={imageCompressionOptions}
+                            onApplyNavSettingsToOtherPages={applyNavSettingsToOtherPages}
+                            onPersistImageFile={persistImageFileForEditor}
+                            onPersistProductImageFile={persistProductImageFileForEditor}
+                            onPersistAudioFile={persistAudioFileForEditor}
                           />
                         );
                       })}
@@ -5225,7 +5610,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                     recentColors={recentColors}
                     onRecordColor={recordRecentColor}
                     onClearRecentColors={clearRecentColors}
-                    imageCompressionOptions={imageCompressionOptions}
+                    onApplyNavSettingsToOtherPages={applyNavSettingsToOtherPages}
+                    onPersistImageFile={persistImageFileForEditor}
+                    onPersistProductImageFile={persistProductImageFileForEditor}
+                    onPersistAudioFile={persistAudioFileForEditor}
                   />
                 );
               })}
@@ -5383,10 +5771,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             const fallback = (editingSite?.domain ?? "").trim();
             return normalizeBaseDomainForMerchant(baseFromEnv || baseFromMainSite || fallback);
           })()}
-          initialDomainSuffix={editingSite?.domainSuffix ?? ""}
-          takenDomainSuffixes={loadPlatformState()
+          initialServiceExpiresAt={editingSite?.serviceExpiresAt ?? null}
+          initialDomainPrefix={editingSite?.domainPrefix ?? editingSite?.domainSuffix ?? ""}
+          takenDomainPrefixes={loadPlatformState()
             .sites.filter((item) => item.id !== editingSiteId)
-            .map((item) => item.domainSuffix ?? "")}
+            .map((item) => item.domainPrefix ?? item.domainSuffix ?? "")}
           initialMerchantName={editingSite?.merchantName ?? ""}
           initialContactAddress={editingSite?.contactAddress ?? ""}
           initialContactName={editingSite?.contactName ?? ""}
@@ -5395,7 +5784,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           initialLocation={editingSite?.location ?? null}
           initialIndustry={editingSite?.industry ?? null}
           onClose={() => setMerchantProfileDialogOpen(false)}
-          onSave={({ merchantName, domainSuffix, contactAddress, contactName, contactPhone, contactEmail, location, industry }) => {
+          onSave={({ merchantName, domainPrefix, contactAddress, contactName, contactPhone, contactEmail, location, industry }) => {
             if (!editingSiteId) {
               showTip("未找到可编辑的商户站点，无法保存");
               return;
@@ -5414,12 +5803,13 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                   ? {
                       ...item,
                       merchantName,
-                      domainSuffix: normalizeDomainSuffixForMerchant(domainSuffix),
+                      domainPrefix: normalizeDomainPrefixForMerchant(domainPrefix),
+                      domainSuffix: normalizeDomainPrefixForMerchant(domainPrefix),
                       contactAddress,
                       contactName,
                       contactPhone,
                       contactEmail,
-                      domain: buildMerchantDomainFromBase(baseDomain, domainSuffix),
+                      domain: buildMerchantDomainFromBase(baseDomain, domainPrefix),
                       location,
                       industry,
                       updatedAt: new Date().toISOString(),
@@ -5521,7 +5911,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         </div>
       ) : null}
       {tip ? (
-        <div className="fixed inset-0 z-[110] pointer-events-none flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[2147483500] pointer-events-none flex items-center justify-center p-4">
           <div className="px-4 py-2 rounded-lg bg-black/85 text-white text-sm shadow-lg">{tip}</div>
         </div>
       ) : null}
@@ -5552,7 +5942,10 @@ function InlineEditorBlock({
   recentColors,
   onRecordColor,
   onClearRecentColors,
-  imageCompressionOptions,
+  onApplyNavSettingsToOtherPages,
+  onPersistImageFile,
+  onPersistProductImageFile,
+  onPersistAudioFile,
 }: {
   block: Block;
   draggingBlockId: string | null;
@@ -5576,7 +5969,10 @@ function InlineEditorBlock({
   recentColors: string[];
   onRecordColor: (color: string) => void;
   onClearRecentColors: () => void;
-  imageCompressionOptions: { maxSide: number; quality: number };
+  onApplyNavSettingsToOtherPages: (blockId: string) => void;
+  onPersistImageFile: (file: File) => Promise<{ value: string; externalized: boolean }>;
+  onPersistProductImageFile: (file: File) => Promise<{ value: string; externalized: boolean }>;
+  onPersistAudioFile: (file: File) => Promise<{ value: string; externalized: boolean }>;
 }) {
   type CommonEditorTextBox = {
     id: string;
@@ -5597,6 +5993,7 @@ type GalleryEditorImage = {
     scaleX: number;
     scaleY: number;
   };
+  type ProductEditorItem = ProductItem;
   type NavEditorItem = {
     id: string;
     label: string;
@@ -5605,6 +6002,8 @@ type GalleryEditorImage = {
 
   const imageInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
+  const productExcelInputRef = useRef<HTMLInputElement>(null);
+  const productImageBatchInputRef = useRef<HTMLInputElement>(null);
   const musicInputRef = useRef<HTMLInputElement>(null);
   const commonCanvasRef = useRef<HTMLDivElement | null>(null);
   const commonBoxDragRef = useRef<{
@@ -5737,6 +6136,14 @@ type GalleryEditorImage = {
   >([]);
   const [activeMerchantIndustryTabId, setActiveMerchantIndustryTabId] = useState("tab-recommended");
   const [merchantPreviewPageIndex, setMerchantPreviewPageIndex] = useState(0);
+  const [productPreviewPageByBlockId, setProductPreviewPageByBlockId] = useState<Record<string, number>>({});
+  const [productPreviewTagByBlockId, setProductPreviewTagByBlockId] = useState<Record<string, string | null>>({});
+  const [productTagOptionsDraftByBlockId, setProductTagOptionsDraftByBlockId] = useState<Record<string, string>>({});
+  const [productDetailPreview, setProductDetailPreview] = useState<{ blockId: string; itemId: string } | null>(null);
+  const [productSettingsCollapsedByBlockId, setProductSettingsCollapsedByBlockId] = useState<
+    Record<string, Partial<Record<ProductSettingsSectionKey, boolean>>>
+  >({});
+  const productPreviewScrollViewportRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const [activeMerchantCardLayoutKeys, setActiveMerchantCardLayoutKeys] = useState<MerchantListLayoutKey[]>([]);
   const [merchantCardLayoutSnapEnabled, setMerchantCardLayoutSnapEnabled] = useState(true);
   const [merchantCardLayoutSnapStep, setMerchantCardLayoutSnapStep] = useState(8);
@@ -5821,6 +6228,54 @@ type GalleryEditorImage = {
   function getGalleryImages() {
     if (block.type !== "gallery") return [];
     return normalizeGalleryImages(block.props.images);
+  }
+
+  function getProductItems(): ProductEditorItem[] {
+    if (block.type !== "product") return [];
+    return normalizeProductItems(block.props.products);
+  }
+
+  function commitProductItems(items: ProductEditorItem[]) {
+    if (block.type !== "product") return;
+    onChange({
+      products: items.map((item) => ({
+        id: item.id,
+        code: item.code,
+        name: item.name,
+        description: item.description,
+        price: item.price,
+        imageUrl: item.imageUrl,
+        tag: item.tag,
+      })),
+    });
+  }
+
+  function updateProductItem(id: string, patch: Partial<ProductEditorItem>) {
+    if (block.type !== "product") return;
+    commitProductItems(
+      getProductItems().map((item) => (item.id === id ? { ...item, ...patch } : item)),
+    );
+  }
+
+  function addProductItem() {
+    if (block.type !== "product") return;
+    commitProductItems([
+      ...getProductItems(),
+      {
+        id: createProductItemId(),
+        code: "",
+        name: "",
+        description: "",
+        price: "",
+        imageUrl: "",
+        tag: "",
+      },
+    ]);
+  }
+
+  function removeProductItem(id: string) {
+    if (block.type !== "product") return;
+    commitProductItems(getProductItems().filter((item) => item.id !== id));
   }
 
   function commitGalleryImages(nextItems: GalleryEditorImage[]) {
@@ -6453,7 +6908,12 @@ type GalleryEditorImage = {
     }
     if (
       field === "text" &&
-      (block.type === "text" || block.type === "common" || block.type === "chart" || block.type === "merchant-list" || block.type === "search-bar")
+      (block.type === "text" ||
+        block.type === "common" ||
+        block.type === "chart" ||
+        block.type === "merchant-list" ||
+        block.type === "search-bar" ||
+        block.type === "product")
     ) {
       return { text: html };
     }
@@ -6468,7 +6928,8 @@ type GalleryEditorImage = {
         block.type === "music" ||
         block.type === "nav" ||
         block.type === "merchant-list" ||
-        block.type === "search-bar")
+        block.type === "search-bar" ||
+        block.type === "product")
     ) {
       return { heading: html };
     }
@@ -6719,9 +7180,9 @@ type GalleryEditorImage = {
     const file = event.target.files?.[0];
     if (!file) return;
     try {
-      const result = await fileToOriginalImageDataUrl(file, imageCompressionOptions);
+      const result = await onPersistImageFile(file);
       onChange({
-        bgImageUrl: result,
+        bgImageUrl: result.value,
         bgImageOpacity:
           typeof block.props.bgImageOpacity === "number" && Number.isFinite(block.props.bgImageOpacity)
             ? Math.max(0, Math.min(1, block.props.bgImageOpacity))
@@ -6736,6 +7197,9 @@ type GalleryEditorImage = {
         bgPosition: block.props.bgPosition ?? "center",
       });
       setImageDialogOpen(false);
+      if (!result.externalized) {
+        onAlert("图片已写入当前草稿，但未上传到存储；发布前会再次尝试外链化。");
+      }
     } catch (error) {
       onAlert(error instanceof Error ? error.message : "上传失败，请重试");
     } finally {
@@ -6749,11 +7213,11 @@ type GalleryEditorImage = {
     const files = Array.from(event.target.files ?? []);
     if (files.length === 0) return;
     try {
-      const uploaded = await Promise.all(files.map((file) => fileToOriginalImageDataUrl(file, imageCompressionOptions)));
+      const uploaded = await Promise.all(files.map((file) => onPersistImageFile(file)));
       const existing = getGalleryImages();
-      const uploadedItems = uploaded.map((url, idx) => ({
+      const uploadedItems = uploaded.map((result, idx) => ({
         id: `img-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
-        url,
+        url: result.value,
         featured: existing.length === 0 && idx === 0,
         fitToFrame: false,
         offsetX: 0,
@@ -6764,6 +7228,9 @@ type GalleryEditorImage = {
       onChange({
         images: [...existing, ...uploadedItems],
       });
+      if (uploaded.some((item) => !item.externalized)) {
+        onAlert("部分图片未上传到存储，当前先保存在草稿中；发布前会再次尝试外链化。");
+      }
     } catch (error) {
       onAlert(error instanceof Error ? error.message : "上传失败，请重试");
     } finally {
@@ -6777,8 +7244,11 @@ type GalleryEditorImage = {
     const file = event.target.files?.[0];
     if (!file) return;
     try {
-      const result = await fileToOriginalImageDataUrl(file, imageCompressionOptions);
-      updateGalleryImage(id, { url: result });
+      const result = await onPersistImageFile(file);
+      updateGalleryImage(id, { url: result.value });
+      if (!result.externalized) {
+        onAlert("图片已替换到草稿，但未上传到存储；发布前会再次尝试外链化。");
+      }
     } catch (error) {
       onAlert(error instanceof Error ? error.message : "上传失败，请重试");
     } finally {
@@ -6792,10 +7262,84 @@ type GalleryEditorImage = {
     const file = event.target.files?.[0];
     if (!file) return;
     try {
-      const result = await fileToAudioDataUrl(file);
-      onChange({ audioUrl: result });
+      const result = await onPersistAudioFile(file);
+      onChange({ audioUrl: result.value });
+      if (!result.externalized) {
+        onAlert("音频已写入当前草稿，但未上传到存储；发布前会阻止内嵌音频。");
+      }
     } catch (error) {
       onAlert(error instanceof Error ? error.message : "上传失败，请重试");
+    } finally {
+      inputEl.value = "";
+    }
+  }
+
+  async function onReplaceProductImage(id: string, event: ChangeEvent<HTMLInputElement>) {
+    if (block.type !== "product") return;
+    const inputEl = event.currentTarget;
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const result = await onPersistProductImageFile(file);
+      updateProductItem(id, { imageUrl: result.value });
+      if (!result.externalized) {
+        onAlert("产品图片已写入草稿，但未上传到存储；发布前会再次尝试外链化。");
+      }
+    } catch (error) {
+      onAlert(error instanceof Error ? error.message : "上传失败，请重试");
+    } finally {
+      inputEl.value = "";
+    }
+  }
+
+  async function onImportProductSheet(event: ChangeEvent<HTMLInputElement>) {
+    if (block.type !== "product") return;
+    const inputEl = event.currentTarget;
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const buffer = await file.arrayBuffer();
+      const parsed = parseProductWorkbook(buffer);
+      if (parsed.items.length === 0) {
+        onAlert("表格中没有可导入的产品数据。");
+        return;
+      }
+      const merged = mergeImportedProductRows(getProductItems(), parsed.items);
+      commitProductItems(normalizeProductItems(merged));
+      onAlert(`已导入 ${parsed.rowCount} 条产品文字信息。`);
+    } catch (error) {
+      onAlert(error instanceof Error ? error.message : "Excel 导入失败，请检查文件格式。");
+    } finally {
+      inputEl.value = "";
+    }
+  }
+
+  async function onImportProductImages(event: ChangeEvent<HTMLInputElement>) {
+    if (block.type !== "product") return;
+    const inputEl = event.currentTarget;
+    const files = Array.from(event.target.files ?? []);
+    if (files.length === 0) return;
+    try {
+      const uploaded = await Promise.all(files.map(async (file) => ({
+        fileName: file.name,
+        uploaded: await onPersistProductImageFile(file),
+      })));
+      const merged = mergeImportedProductImages(
+        getProductItems(),
+        uploaded.map((entry) => ({
+          fileName: entry.fileName,
+          imageUrl: entry.uploaded.value,
+        })),
+      );
+      commitProductItems(merged.items);
+      const baseMessage = `按编号匹配完成：成功 ${merged.matched} 张，未匹配 ${merged.unmatched} 张。`;
+      if (uploaded.some((entry) => !entry.uploaded.externalized)) {
+        onAlert(`${baseMessage} 部分图片仍保存在草稿中，发布前会再次尝试外链化。`);
+      } else {
+        onAlert(baseMessage);
+      }
+    } catch (error) {
+      onAlert(error instanceof Error ? error.message : "图片导入失败，请重试");
     } finally {
       inputEl.value = "";
     }
@@ -9209,7 +9753,7 @@ type GalleryEditorImage = {
                                         }`}
                                         onClick={() => setSelectedCustomRowIndex(rowIdx)}
                                       >
-                                        {"绗?"}{rowIdx + 1}{"琛?"}
+                                        {"第"}{rowIdx + 1}{"行"}
                                       </button>
                                     ))}
                                   </div>
@@ -9557,6 +10101,15 @@ type GalleryEditorImage = {
                   onClick={editNavItemStyle}
                 >
                   栏目样式
+                </button>
+                <button
+                  type="button"
+                  className="px-3 py-1 rounded border bg-white hover:bg-gray-50 text-sm whitespace-nowrap shrink-0 disabled:opacity-40"
+                  onClick={() => onApplyNavSettingsToOtherPages(block.id)}
+                  disabled={availablePages.length <= 1}
+                  title={availablePages.length <= 1 ? "当前只有一个页面" : "将当前页导航设置应用到其他页面"}
+                >
+                  导航栏对齐
                 </button>
               </div>
               <div className="space-y-2">
@@ -10128,6 +10681,1801 @@ type GalleryEditorImage = {
                   ))}
                 </ul>
               ) : null}
+            </>
+          )}
+          {resizeHandles}
+        </div>
+      </section>
+    );
+  }
+
+  if (block.type === "product") {
+    const productItems = getProductItems();
+    const productLayoutPreset = normalizeProductLayoutPreset(block.props.productLayoutPreset);
+    const productContainerMode = normalizeProductContainerMode(block.props.productContainerMode);
+    const productItemsPerPage = normalizeProductItemsPerPage(block.props.productItemsPerPage, productLayoutPreset);
+    const productImageAspectRatio = normalizeProductImageAspectRatio(block.props.productImageAspectRatio);
+    const productImageSize =
+      typeof block.props.productImageSize === "number" && Number.isFinite(block.props.productImageSize)
+        ? Math.max(40, Math.min(420, Math.round(block.props.productImageSize)))
+        : 220;
+    const productPricePrefix = (block.props.productPricePrefix ?? "").trim();
+    const productShowCode = block.props.productShowCode !== false;
+    const productShowDescription = block.props.productShowDescription !== false;
+    const productPriceAlign = normalizeProductPriceAlign(block.props.productPriceAlign);
+    const productTagPosition = normalizeProductTagPosition(block.props.productTagPosition);
+    const productTagFontSize =
+      typeof block.props.productTagFontSize === "number" && Number.isFinite(block.props.productTagFontSize)
+        ? Math.max(10, Math.min(28, Math.round(block.props.productTagFontSize)))
+        : 12;
+    const productTagWidth =
+      typeof block.props.productTagWidth === "number" && Number.isFinite(block.props.productTagWidth)
+        ? Math.max(56, Math.min(220, Math.round(block.props.productTagWidth)))
+        : 92;
+    const productTagHideUnselected = block.props.productTagHideUnselected !== false;
+    const productGroupByTag = block.props.productGroupByTag === true;
+    const productTagBgColor = (block.props.productTagBgColor ?? "#0f172a").trim() || "#0f172a";
+    const productTagBgOpacity =
+      typeof block.props.productTagBgOpacity === "number" && Number.isFinite(block.props.productTagBgOpacity)
+        ? Math.max(0, Math.min(1, block.props.productTagBgOpacity))
+        : 0.82;
+    const productTagActiveBgColor = (block.props.productTagActiveBgColor ?? "#1d4ed8").trim() || "#1d4ed8";
+    const productTagActiveBgOpacity =
+      typeof block.props.productTagActiveBgOpacity === "number" && Number.isFinite(block.props.productTagActiveBgOpacity)
+        ? Math.max(0, Math.min(1, block.props.productTagActiveBgOpacity))
+        : 0.94;
+    const productDetailImageSize =
+      typeof block.props.productDetailImageSize === "number" && Number.isFinite(block.props.productDetailImageSize)
+        ? Math.max(180, Math.min(720, Math.round(block.props.productDetailImageSize)))
+        : 420;
+    const productDetailShowCode = block.props.productDetailShowCode !== false;
+    const productDetailShowName = block.props.productDetailShowName !== false;
+    const productDetailShowDescription = block.props.productDetailShowDescription !== false;
+    const productDetailShowPrice = block.props.productDetailShowPrice !== false;
+    const productDetailFullImage = block.props.productDetailFullImage === true;
+    const productCardBgColor = (block.props.productCardBgColor ?? "#ffffff").trim() || "#ffffff";
+    const productCardBgOpacity =
+      typeof block.props.productCardBgOpacity === "number" && Number.isFinite(block.props.productCardBgOpacity)
+        ? Math.max(0, Math.min(1, block.props.productCardBgOpacity))
+        : 0.9;
+    const productCardBorderStyle = block.props.productCardBorderStyle ?? "solid";
+    const productCardBorderColor = (block.props.productCardBorderColor ?? "#e2e8f0").trim() || "#e2e8f0";
+    const productPricePrefixMode = PRODUCT_PRICE_PREFIX_OPTIONS.some((item) => item.value === productPricePrefix)
+      ? productPricePrefix
+      : "__custom__";
+    const compactProductEditor = typeof blockWidth === "number" && blockWidth <= 420;
+    const hasProductHeading = hasVisibleRichText(block.props.heading);
+    const hasProductText = hasVisibleRichText(block.props.text);
+    const savedProductTagOptions = normalizeProductTagOptions(block.props.productTagOptions);
+    const productTagOptionsText = productTagOptionsDraftByBlockId[block.id] ?? savedProductTagOptions.join("\n");
+    const productTagOptions = Array.from(
+      new Set([
+        ...normalizeProductTagOptions(productTagOptionsText.split(/\r?\n/)),
+        ...savedProductTagOptions,
+        ...productItems.map((item) => item.tag).filter(Boolean),
+      ]),
+    );
+    const productTags = productTagOptions;
+    const arrangedProductItems = arrangeProductItemsByTag(productItems, productTags, productGroupByTag);
+    const productSectionCollapsed = productSettingsCollapsedByBlockId[block.id] ?? {};
+    const rawActiveProductTag = productPreviewTagByBlockId[block.id] ?? null;
+    const activeProductTag = rawActiveProductTag && productTags.includes(rawActiveProductTag) ? rawActiveProductTag : null;
+    const filteredProductItems =
+      productTagHideUnselected && activeProductTag ? arrangedProductItems.filter((item) => item.tag === activeProductTag) : arrangedProductItems;
+    const previewPageCount =
+      productContainerMode === "paged" ? Math.max(1, Math.ceil(filteredProductItems.length / productItemsPerPage)) : 1;
+    const rawPreviewPageIndex = productPreviewPageByBlockId[block.id] ?? 0;
+    const previewPageIndex = Math.min(rawPreviewPageIndex, Math.max(0, previewPageCount - 1));
+    const previewStartIndex = previewPageIndex * productItemsPerPage;
+    const previewItems =
+      productContainerMode === "paged"
+        ? filteredProductItems.slice(previewStartIndex, previewStartIndex + productItemsPerPage)
+        : filteredProductItems;
+    const previewScrollViewportHeight =
+      productContainerMode === "scroll"
+        ? productContainerViewportHeight(productLayoutPreset, productImageSize, productItemsPerPage)
+        : null;
+    const featuredProduct = previewItems[0] ?? null;
+    const secondaryProducts = previewItems.slice(1);
+    const detailPreviewProduct =
+      productDetailPreview?.blockId === block.id
+        ? arrangedProductItems.find((item) => item.id === productDetailPreview.itemId) ?? arrangedProductItems[0] ?? null
+        : null;
+    const productPlaceholderCount =
+      productContainerMode === "paged" && productLayoutPreset !== "spotlight"
+        ? Math.max(0, productItemsPerPage - previewItems.length)
+        : 0;
+    const productRatioPair =
+      productImageAspectRatio === "landscape"
+        ? { width: 4, height: 3 }
+        : productImageAspectRatio === "portrait"
+          ? { width: 3, height: 4 }
+          : { width: 1, height: 1 };
+    const productDetailImageWidth = Math.max(
+      180,
+      Math.round((productDetailImageSize * productRatioPair.width) / productRatioPair.height),
+    );
+    const productListImageWidth = Math.max(1, Math.round((productImageSize * productRatioPair.width) / productRatioPair.height));
+    const productCardBackgroundStyle = getColorLayerStyle(productCardBgColor, productCardBgOpacity);
+    const productCardBorderClass = getBlockBorderClass(productCardBorderStyle);
+    const productCardBorderInlineStyle = getBlockBorderInlineStyle(productCardBorderStyle, productCardBorderColor);
+    const productPriceAlignClass =
+      productPriceAlign === "center"
+        ? "justify-center text-center"
+        : productPriceAlign === "right"
+          ? "justify-end text-right"
+          : "justify-start text-left";
+    const productDetailPriceAlignClass = productPriceAlignClass;
+    const getReadableProductTagTextColor = (value: string) => {
+      const trimmed = value.trim();
+      if (!/^#([0-9a-fA-F]{6})$/.test(trimmed)) return "#ffffff";
+      const r = Number.parseInt(trimmed.slice(1, 3), 16);
+      const g = Number.parseInt(trimmed.slice(3, 5), 16);
+      const b = Number.parseInt(trimmed.slice(5, 7), 16);
+      const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+      return luminance > 0.68 ? "#0f172a" : "#ffffff";
+    };
+    const getProductTagPlacementStyle = (position: ProductTagPosition): CSSProperties => {
+      const gap = "0.75rem";
+      if (position === "left") return { top: "50%", left: gap, transform: "translateY(-50%)" };
+      if (position === "right") return { top: "50%", right: gap, transform: "translateY(-50%)" };
+      return { top: gap, left: "50%", transform: "translateX(-50%)" };
+    };
+    const renderProductTag = (tag: string, onClick?: () => void) => {
+      const safeTag = (tag ?? "").trim();
+      if (!safeTag) return null;
+      return (
+        <button
+          type="button"
+          className={`absolute z-[3] max-w-full truncate rounded-full border border-white/30 font-medium shadow-sm ${
+            onClick ? "pointer-events-auto cursor-pointer hover:opacity-90" : "pointer-events-none"
+          }`}
+          style={{
+            ...getColorLayerStyle(productTagBgColor, productTagBgOpacity),
+            ...getProductTagPlacementStyle(productTagPosition),
+            fontSize: `${productTagFontSize}px`,
+            lineHeight: 1.2,
+            color: getReadableProductTagTextColor(productTagBgColor),
+            padding: `${Math.max(4, Math.round(productTagFontSize * 0.3))}px ${Math.max(8, Math.round(productTagFontSize * 0.72))}px`,
+            maxWidth: "calc(100% - 1.5rem)",
+          }}
+          title={safeTag}
+          onClick={(event) => {
+            event.stopPropagation();
+            onClick?.();
+          }}
+        >
+          {safeTag}
+        </button>
+      );
+    };
+    const applyProductTagOptions = (rawValue: string) => {
+      const nextOptions = Array.from(new Set(rawValue.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)));
+      const allowed = new Set(nextOptions);
+      const nextItems = getProductItems().map((item) => (item.tag && !allowed.has(item.tag) ? { ...item, tag: "" } : item));
+      commitProductItems(nextItems);
+      onChange({ productTagOptions: nextOptions });
+      setProductTagOptionsDraftByBlockId((current) => ({
+        ...current,
+        [block.id]: nextOptions.join("\n"),
+      }));
+      setProductPreviewTagByBlockId((current) => ({
+        ...current,
+        [block.id]: current[block.id] && allowed.has(current[block.id] as string) ? current[block.id] : null,
+      }));
+    };
+    const handleProductTagOptionsDraftChange = (rawValue: string) => {
+      setProductTagOptionsDraftByBlockId((current) => ({
+        ...current,
+        [block.id]: rawValue,
+      }));
+    };
+    const handlePreviewTagSelect = (tag: string | null) => {
+      setProductPreviewTagByBlockId((current) => ({
+        ...current,
+        [block.id]: tag,
+      }));
+      const scrollToPreviewItem = (targetId: string | null) => {
+        if (!targetId) return;
+        requestAnimationFrame(() => {
+          const viewport = productPreviewScrollViewportRefs.current[block.id];
+          const selector = `[data-product-preview-item-id="${targetId}"]`;
+          const target = viewport?.querySelector<HTMLElement>(selector) ?? document.querySelector<HTMLElement>(selector);
+          if (!target) return;
+          if (viewport) {
+            const offset = target.offsetTop - viewport.offsetTop;
+            viewport.scrollTo({ top: Math.max(0, offset - 8), behavior: "smooth" });
+            return;
+          }
+          target.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+        });
+      };
+      if (tag == null) {
+        setProductPreviewPageByBlockId((current) => ({
+          ...current,
+          [block.id]: 0,
+        }));
+        requestAnimationFrame(() => {
+          productPreviewScrollViewportRefs.current[block.id]?.scrollTo({ top: 0, behavior: "smooth" });
+        });
+        return;
+      }
+      const firstMatchIndex = arrangedProductItems.findIndex((item) => item.tag === tag);
+      if (firstMatchIndex < 0) return;
+      if (productContainerMode === "paged") {
+        setProductPreviewPageByBlockId((current) => ({
+          ...current,
+          [block.id]: Math.floor(firstMatchIndex / productItemsPerPage),
+        }));
+        requestAnimationFrame(() => {
+          productPreviewScrollViewportRefs.current[block.id]?.scrollTo({ top: 0, behavior: "smooth" });
+        });
+        return;
+      }
+      scrollToPreviewItem(arrangedProductItems[firstMatchIndex]?.id ?? null);
+    };
+    const productCodeClampStyle = {
+      overflow: "hidden" as const,
+      textOverflow: "ellipsis" as const,
+      whiteSpace: "nowrap" as const,
+    };
+    const getProductLineClampStyle = (lines: number) =>
+      ({
+        display: "-webkit-box",
+        WebkitLineClamp: lines,
+        WebkitBoxOrient: "vertical",
+        overflow: "hidden",
+      }) as CSSProperties;
+    const getProductImageFrameStyle = (options: { list?: boolean; featured?: boolean; editor?: boolean } = {}) => {
+      if (options.list) {
+        return {
+          width: `${productListImageWidth}px`,
+          maxWidth: "100%",
+          height: `${productImageSize}px`,
+        };
+      }
+      if (options.editor) {
+        return {
+          width: `${Math.max(40, Math.round((productImageSize * productRatioPair.width) / productRatioPair.height))}px`,
+          maxWidth: "100%",
+          height: `${productImageSize}px`,
+        };
+      }
+      return {
+        width: "100%",
+        height: `${options.featured ? productImageSize + 60 : productImageSize}px`,
+      };
+    };
+
+    const renderProductPlaceholder = (key: string, options: { list?: boolean } = {}) => {
+      const placeholderCardStyle = options.list
+        ? ({
+            "--product-list-card-height": `${productImageSize + 32}px`,
+          } as CSSProperties)
+        : undefined;
+      return (
+        <div
+          key={key}
+          aria-hidden="true"
+          className={
+            options.list
+              ? "invisible flex w-full flex-col gap-4 p-4 sm:h-[var(--product-list-card-height)] sm:max-h-[var(--product-list-card-height)] sm:flex-row"
+              : "invisible flex h-full w-full flex-col"
+          }
+          style={placeholderCardStyle}
+        >
+          <div
+            className={`relative overflow-hidden bg-slate-100 ${options.list ? "shrink-0 self-start rounded-lg" : ""}`}
+            style={getProductImageFrameStyle(options)}
+          />
+          <div className={options.list ? "flex min-w-0 flex-1 flex-col overflow-hidden" : "flex min-h-[170px] flex-1 flex-col overflow-hidden p-4"} />
+        </div>
+      );
+    };
+
+    const renderProductCard = (
+      item: ProductEditorItem,
+      options: { list?: boolean; featured?: boolean } = {},
+    ) => {
+      const priceText = productPriceText(item.price, productPricePrefix);
+      const textWrapStyle = { overflowWrap: "anywhere" as const, wordBreak: "break-word" as const };
+      const productNameClampStyle = getProductLineClampStyle(options.list ? 2 : 2);
+      const productDescriptionClampStyle = getProductLineClampStyle(options.featured ? 5 : options.list ? 4 : 3);
+      const productListCardStyle = options.list
+        ? ({
+            "--product-list-card-height": `${productImageSize + 32}px`,
+          } as CSSProperties)
+        : undefined;
+      return (
+        <article
+          key={item.id}
+          data-product-preview-item-id={item.id}
+          className={`relative overflow-hidden rounded-xl shadow-sm ${productCardBorderClass} ${
+            options.list
+              ? "flex flex-col gap-4 p-4 sm:h-[var(--product-list-card-height)] sm:max-h-[var(--product-list-card-height)] sm:flex-row"
+              : "flex h-full flex-col"
+          } ${options.featured ? "lg:min-h-[360px]" : ""}`}
+          style={{ ...productCardBackgroundStyle, ...productCardBorderInlineStyle, ...productListCardStyle }}
+        >
+          <div
+            className={`relative overflow-hidden bg-slate-100 ${options.list ? "shrink-0 self-start rounded-lg" : ""}`}
+            style={getProductImageFrameStyle(options)}
+          >
+            {item.imageUrl ? (
+              <NextImage
+                src={item.imageUrl}
+                alt={item.name || item.code || "产品图片"}
+                fill
+                unoptimized
+                sizes="100vw"
+                className="object-cover"
+              />
+            ) : (
+              <div className="flex h-full items-center justify-center text-sm text-slate-400">{"暂无图片"}</div>
+            )}
+            {renderProductTag(
+              item.tag,
+              item.tag ? () => handlePreviewTagSelect(item.tag) : undefined,
+            )}
+          </div>
+          <div className={options.list ? "flex min-w-0 flex-1 flex-col overflow-hidden" : "flex min-h-[170px] flex-1 flex-col p-4 overflow-hidden"}>
+            {productShowCode && item.code ? (
+              <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500" style={{ ...textWrapStyle, ...productCodeClampStyle }}>
+                {item.code}
+              </div>
+            ) : null}
+            <div className="mt-2 text-lg font-semibold text-slate-900" style={{ ...textWrapStyle, ...productNameClampStyle }}>
+              {item.name || "未命名产品"}
+            </div>
+            {productShowDescription && item.description ? (
+              <div className="mt-2 text-sm leading-6 text-slate-600" style={{ ...textWrapStyle, ...productDescriptionClampStyle }}>
+                {item.description}
+              </div>
+            ) : null}
+            {priceText ? (
+              <div className={`mt-auto flex min-h-[2.75rem] w-full shrink-0 items-end pt-4 text-lg font-semibold text-sky-700 ${productPriceAlignClass}`}>
+                <div className="w-full">{priceText}</div>
+              </div>
+            ) : null}
+          </div>
+        </article>
+      );
+    };
+
+    const renderProductPreview = () => {
+      if (filteredProductItems.length === 0) {
+        return (
+          <div className="mt-4 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-5 text-sm text-slate-500">
+            {activeProductTag ? `当前分类“${activeProductTag}”下暂无产品。` : "暂无产品，请先新增产品或导入数据。"}
+          </div>
+        );
+      }
+      if (productLayoutPreset === "spotlight" && featuredProduct) {
+        return (
+          <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
+            {renderProductCard(featuredProduct, { featured: true })}
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
+              {secondaryProducts.map((item) => renderProductCard(item))}
+            </div>
+          </div>
+        );
+      }
+      if (productLayoutPreset === "list") {
+        return (
+          <div className="mt-4 space-y-4">
+            {previewItems.map((item) => renderProductCard(item, { list: true }))}
+            {Array.from({ length: productPlaceholderCount }, (_, index) => renderProductPlaceholder(`product-preview-list-${index}`, { list: true }))}
+          </div>
+        );
+      }
+      return (
+        <div className={`mt-4 ${productGridClass(productLayoutPreset)}`}>
+          {previewItems.map((item) => renderProductCard(item))}
+          {Array.from({ length: productPlaceholderCount }, (_, index) => renderProductPlaceholder(`product-preview-grid-${index}`))}
+        </div>
+      );
+    };
+
+    const renderProductPreviewWithFilters = () => {
+      const content = productContainerMode === "scroll" && previewScrollViewportHeight ? (
+        <div
+          ref={(node) => {
+            productPreviewScrollViewportRefs.current[block.id] = node;
+          }}
+          className="min-w-0 overflow-y-auto pr-1"
+          style={{ maxHeight: `${previewScrollViewportHeight}px` }}
+        >
+          {renderProductPreview()}
+        </div>
+      ) : (
+        renderProductPreview()
+      );
+
+      if (productTagPosition === "left") {
+        return (
+          <div className="mt-4 grid gap-4 lg:grid-cols-[auto_minmax(0,1fr)]">
+            {renderProductTagFilters()}
+            <div className="min-w-0">{content}</div>
+          </div>
+        );
+      }
+
+      if (productTagPosition === "right") {
+        return (
+          <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto]">
+            <div className="min-w-0">{content}</div>
+            {renderProductTagFilters()}
+          </div>
+        );
+      }
+
+      return (
+        <>
+          {renderProductTagFilters()}
+          {content}
+        </>
+      );
+    };
+
+    const renderProductTagFilters = () =>
+      productTags.length > 0 ? (
+        <div
+          className={
+            productTagPosition === "top"
+              ? "mt-4 flex flex-wrap gap-2"
+              : productTagPosition === "left"
+                ? "mt-4 mr-4 flex float-left w-max flex-col items-start gap-2"
+                : "mt-4 ml-4 flex float-right w-max flex-col items-end gap-2"
+          }
+        >
+          {productTagHideUnselected ? (
+            <button
+              type="button"
+              className={`truncate rounded-full border border-white/30 px-3 py-1.5 transition-opacity ${
+                activeProductTag === null ? "ring-2 ring-slate-900/30 shadow-sm" : ""
+              }`}
+              style={{
+                width: `${productTagWidth}px`,
+                ...(activeProductTag === null
+                  ? getColorLayerStyle(productTagActiveBgColor, productTagActiveBgOpacity)
+                  : getColorLayerStyle(productTagBgColor, productTagBgOpacity)),
+                color: getReadableProductTagTextColor(activeProductTag === null ? productTagActiveBgColor : productTagBgColor),
+                fontSize: `${productTagFontSize}px`,
+              }}
+              onClick={() => handlePreviewTagSelect(null)}
+            >
+              全部
+            </button>
+          ) : null}
+          {productTags.map((tag) => (
+            <button
+              key={tag}
+              type="button"
+              className={`truncate rounded-full border border-white/30 px-3 py-1.5 transition-opacity ${activeProductTag === tag ? "ring-2 ring-slate-900/30 shadow-sm" : ""}`}
+              style={{
+                width: `${productTagWidth}px`,
+                ...(activeProductTag === tag
+                  ? getColorLayerStyle(productTagActiveBgColor, productTagActiveBgOpacity)
+                  : getColorLayerStyle(productTagBgColor, productTagBgOpacity)),
+                color: getReadableProductTagTextColor(activeProductTag === tag ? productTagActiveBgColor : productTagBgColor),
+                fontSize: `${productTagFontSize}px`,
+              }}
+              onClick={() => handlePreviewTagSelect(tag)}
+            >
+              {tag}
+            </button>
+          ))}
+        </div>
+      ) : null;
+
+    const renderProductSettingsSection = (
+      section: ProductSettingsSectionKey,
+      title: string,
+      content: ReactNode,
+      options: { wrapperClassName?: string; bodyClassName?: string } = {},
+    ) => {
+      const collapsed = productSectionCollapsed[section] === true;
+      return (
+        <div className={options.wrapperClassName ?? "rounded-lg border border-slate-200 bg-slate-50 p-4"}>
+          <button
+            type="button"
+            className="flex w-full items-center justify-between text-left"
+            onClick={() =>
+              setProductSettingsCollapsedByBlockId((current) => ({
+                ...current,
+                [block.id]: {
+                  ...(current[block.id] ?? {}),
+                  [section]: !(current[block.id]?.[section] === true),
+                },
+              }))
+            }
+          >
+            <div className="text-sm font-medium text-slate-700">{title}</div>
+            <div className="text-xs text-slate-500">{collapsed ? "展开" : "收起"}</div>
+          </button>
+          {!collapsed ? <div className={options.bodyClassName ?? "mt-3"}>{content}</div> : null}
+        </div>
+      );
+    };
+
+    const renderProductPager = () =>
+      productContainerMode === "paged" && previewPageCount > 1 ? (
+        <div className="mt-5 flex items-center justify-center gap-3">
+          <button
+            type="button"
+            className="rounded-full border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
+            onClick={() =>
+              setProductPreviewPageByBlockId((current) => ({
+                ...current,
+                [block.id]: Math.max(0, previewPageIndex - 1),
+              }))
+            }
+            disabled={previewPageIndex === 0}
+          >
+            上一页
+          </button>
+          <div className="text-sm text-slate-600">{`${previewPageIndex + 1} / ${previewPageCount}`}</div>
+          <button
+            type="button"
+            className="rounded-full border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
+            onClick={() =>
+              setProductPreviewPageByBlockId((current) => ({
+                ...current,
+                [block.id]: Math.min(previewPageCount - 1, previewPageIndex + 1),
+              }))
+            }
+            disabled={previewPageIndex >= previewPageCount - 1}
+          >
+            下一页
+          </button>
+        </div>
+      ) : null;
+
+    const openProductDetailPreview = () => {
+      const target = productItems[0];
+      if (!target) {
+        onAlert("请先新增产品后再预览详情页。");
+        return;
+      }
+      setProductDetailPreview({ blockId: block.id, itemId: target.id });
+    };
+
+    const productDetailPreviewDialog =
+      detailPreviewProduct !== null
+        ? renderOverlay(
+            <div data-editor-overlay className="fixed inset-0 z-[12000] bg-black/50 p-4">
+              <div className="mx-auto flex h-full max-w-5xl items-center justify-center">
+                <div className="relative max-h-[90vh] w-full overflow-auto rounded-3xl bg-white p-5 shadow-2xl sm:p-6">
+                  <button
+                    type="button"
+                    className="absolute right-4 top-4 rounded-full border border-slate-200 bg-white px-3 py-1 text-sm text-slate-600 hover:bg-slate-50"
+                    onClick={() => setProductDetailPreview(null)}
+                  >
+                    关闭
+                  </button>
+                  <div className="mb-4 text-sm font-medium text-slate-500">详情页预览</div>
+                  {productDetailFullImage ? (
+                    <div className="relative overflow-hidden rounded-[1.25rem] bg-slate-100" style={{ height: "min(88vh, 960px)", minHeight: "min(88vh, 960px)" }}>
+                      {detailPreviewProduct.imageUrl ? (
+                        <NextImage
+                          src={detailPreviewProduct.imageUrl}
+                          alt={detailPreviewProduct.name || detailPreviewProduct.code || "产品图片"}
+                          fill
+                          unoptimized
+                          sizes="100vw"
+                          className="object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-full items-center justify-center text-sm text-slate-400">暂无图片</div>
+                      )}
+                      {productDetailShowCode || productDetailShowName || productDetailShowDescription || productDetailShowPrice ? (
+                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/45 to-transparent p-5 text-white sm:p-7">
+                          <div className="mx-auto max-w-3xl">
+                            {productDetailShowCode && detailPreviewProduct.code ? (
+                              <div className="text-xs uppercase tracking-[0.24em] text-white/75">{detailPreviewProduct.code}</div>
+                            ) : null}
+                            {productDetailShowName ? (
+                              <h3 className="mt-2 break-words text-2xl font-semibold text-white sm:text-3xl">
+                                {detailPreviewProduct.name || "未命名产品"}
+                              </h3>
+                            ) : null}
+                            {productDetailShowDescription && detailPreviewProduct.description ? (
+                              <div className="mt-3 break-words whitespace-pre-wrap text-sm leading-7 text-white/90 sm:text-base">
+                                {detailPreviewProduct.description}
+                              </div>
+                            ) : null}
+                            {productDetailShowPrice && productPriceText(detailPreviewProduct.price, productPricePrefix) ? (
+                              <div className={`mt-4 flex w-full text-2xl font-semibold text-white ${productDetailPriceAlignClass}`}>
+                                <div className="w-full">{productPriceText(detailPreviewProduct.price, productPricePrefix)}</div>
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <div className="grid gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]">
+                      <div
+                        className="relative overflow-hidden rounded-2xl bg-slate-100"
+                        style={{
+                          width: "100%",
+                          maxWidth: `${productDetailImageWidth}px`,
+                          aspectRatio: `${productRatioPair.width} / ${productRatioPair.height}`,
+                        }}
+                      >
+                        {detailPreviewProduct.imageUrl ? (
+                          <NextImage
+                            src={detailPreviewProduct.imageUrl}
+                            alt={detailPreviewProduct.name || detailPreviewProduct.code || "产品图片"}
+                            fill
+                            unoptimized
+                            sizes="100vw"
+                            className="object-cover"
+                          />
+                        ) : (
+                          <div className="flex h-full items-center justify-center text-sm text-slate-400">暂无图片</div>
+                        )}
+                      </div>
+                      <div className="flex min-h-full flex-col">
+                        {productDetailShowCode && detailPreviewProduct.code ? (
+                          <div className="text-xs uppercase tracking-[0.24em] text-slate-500">{detailPreviewProduct.code}</div>
+                        ) : null}
+                        {productDetailShowName ? (
+                          <h3 className="mt-2 break-words text-2xl font-semibold text-slate-900">
+                            {detailPreviewProduct.name || "未命名产品"}
+                          </h3>
+                        ) : null}
+                        {productDetailShowDescription && detailPreviewProduct.description ? (
+                          <div className="mt-4 break-words whitespace-pre-wrap text-sm leading-7 text-slate-600">
+                            {detailPreviewProduct.description}
+                          </div>
+                        ) : null}
+                        {productDetailShowPrice && productPriceText(detailPreviewProduct.price, productPricePrefix) ? (
+                          <div className={`mt-auto flex w-full pt-6 text-2xl font-semibold text-sky-700 ${productDetailPriceAlignClass}`}>
+                            <div className="w-full">{productPriceText(detailPreviewProduct.price, productPricePrefix)}</div>
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>,
+          )
+        : null;
+
+    return (
+      <section data-block-id={block.id} className={`${shellClass} pointer-events-none`} style={offsetStyle}>
+        <EditorBlockHeader
+          draggingBlockId={draggingBlockId}
+          isSelected={isSelected}
+          onDragHandleMouseDown={onDragHandleMouseDown}
+          onNudge={onNudge}
+          onOpenLayerSettings={openLayerSettings}
+          onEditTypography={editTypography}
+          onInsertText={insertTextBox}
+          onInsertImage={insertImage}
+          onEditImageSettings={editImageSettings}
+          onEditBorderStyle={editBorderSettings}
+          onDelete={onDelete}
+        />
+        <div
+          ref={resizeTargetRef}
+          className={`${cardClass} relative`}
+          onClick={onSelect}
+          style={{ ...blockBackgroundStyle, ...blockSizeStyle, ...borderInlineStyle }}
+        >
+          {imageDialog}
+          {imageSettingsDialog}
+          {borderSettingsDialog}
+          {layerSettingsDialog}
+          {typographyDialog}
+          {isSelected ? (
+            <div className={compactProductEditor ? "pb-1" : undefined}>
+              <input
+                ref={productExcelInputRef}
+                className="hidden"
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                onChange={(event) => {
+                  void onImportProductSheet(event);
+                }}
+              />
+              <input
+                ref={productImageBatchInputRef}
+                className="hidden"
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={(event) => {
+                  void onImportProductImages(event);
+                }}
+              />
+              <div className="space-y-1 mt-3">
+                <RichTextEditor
+                  field="heading"
+                  className="border p-2 rounded w-full text-xl font-bold"
+                  value={block.props.heading ?? ""}
+                  onChange={handleRichFieldChange}
+                  onActivate={registerActiveEditor}
+                  onSelectionChange={updateSelectionRange}
+                />
+              </div>
+              <div className="space-y-1 mt-3">
+                <RichTextEditor
+                  field="text"
+                  className="border p-2 rounded w-full min-h-[90px] text-gray-700"
+                  value={block.props.text ?? ""}
+                  onChange={handleRichFieldChange}
+                  onActivate={registerActiveEditor}
+                  onSelectionChange={updateSelectionRange}
+                />
+              </div>
+              {compactProductEditor ? (
+                <div className="mt-4 space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <label className="space-y-1 text-sm">
+                      <span className="block text-gray-600">排列方式</span>
+                      <select
+                        className="w-full rounded border px-3 py-2 bg-white"
+                        value={productLayoutPreset}
+                        onChange={(event) => onChange({ productLayoutPreset: event.target.value as ProductLayoutPreset })}
+                      >
+                        {PRODUCT_LAYOUT_OPTIONS.map((item) => (
+                          <option key={item.value} value={item.value}>
+                            {item.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="space-y-1 text-sm">
+                      <span className="block text-gray-600">图片比例</span>
+                      <select
+                        className="w-full rounded border px-3 py-2 bg-white"
+                        value={productImageAspectRatio}
+                        onChange={(event) => onChange({ productImageAspectRatio: event.target.value as ProductImageAspectRatio })}
+                      >
+                        {PRODUCT_IMAGE_ASPECT_OPTIONS.map((item) => (
+                          <option key={item.value} value={item.value}>
+                            {item.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                  <label className="block space-y-2 text-sm">
+                    <span className="block text-gray-600">图片尺寸</span>
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="range"
+                        min={40}
+                        max={420}
+                        step={10}
+                        className="flex-1"
+                        value={productImageSize}
+                        onChange={(event) => onChange({ productImageSize: Number(event.target.value) })}
+                      />
+                      <input
+                        type="number"
+                        min={40}
+                        max={420}
+                        className="w-20 rounded border px-2 py-2"
+                        value={productImageSize}
+                        onChange={(event) =>
+                          onChange({ productImageSize: Math.max(40, Math.min(420, Number(event.target.value) || 40)) })
+                        }
+                      />
+                    </div>
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={productShowCode}
+                      onChange={(event) => onChange({ productShowCode: event.target.checked })}
+                    />
+                    <span>显示编号</span>
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={productShowDescription}
+                      onChange={(event) => onChange({ productShowDescription: event.target.checked })}
+                    />
+                    <span>显示介绍</span>
+                  </label>
+                  <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <div className="text-sm font-medium text-slate-700">分类标签样式</div>
+                    <label className="space-y-1 text-sm">
+                      <span className="block text-gray-600">标签位置</span>
+                      <select
+                        className="w-full rounded border px-3 py-2 bg-white"
+                        value={productTagPosition}
+                        onChange={(event) => onChange({ productTagPosition: event.target.value as ProductTagPosition })}
+                      >
+                        {PRODUCT_TAG_POSITION_OPTIONS.map((item) => (
+                          <option key={item.value} value={item.value}>
+                            {item.label}
+                          </option>
+                        ))}
+                      </select>
+                      <div className="text-xs text-gray-500">控制分类筛选标签条显示在上侧、左侧或右侧。</div>
+                    </label>
+                    <label className="block space-y-2 text-sm">
+                      <span className="block text-gray-600">字体大小</span>
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="range"
+                          min={10}
+                          max={28}
+                          step={1}
+                          className="flex-1"
+                          value={productTagFontSize}
+                          onChange={(event) => onChange({ productTagFontSize: Number(event.target.value) })}
+                        />
+                        <input
+                          type="number"
+                          min={10}
+                          max={28}
+                          className="w-20 rounded border px-2 py-2"
+                          value={productTagFontSize}
+                          onChange={(event) =>
+                            onChange({ productTagFontSize: Math.max(10, Math.min(28, Number(event.target.value) || 10)) })
+                          }
+                        />
+                      </div>
+                    </label>
+                    <label className="block space-y-2 text-sm">
+                      <span className="block text-gray-600">标签尺寸</span>
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="range"
+                          min={56}
+                          max={220}
+                          step={4}
+                          className="flex-1"
+                          value={productTagWidth}
+                          onChange={(event) => onChange({ productTagWidth: Number(event.target.value) })}
+                        />
+                        <input
+                          type="number"
+                          min={56}
+                          max={220}
+                          className="w-20 rounded border px-2 py-2"
+                          value={productTagWidth}
+                          onChange={(event) =>
+                            onChange({ productTagWidth: Math.max(56, Math.min(220, Number(event.target.value) || 56)) })
+                          }
+                        />
+                      </div>
+                    </label>
+                    <div className="grid grid-cols-2 gap-3 text-sm text-gray-700">
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={productTagHideUnselected}
+                          onChange={(event) => onChange({ productTagHideUnselected: event.target.checked })}
+                        />
+                        <span>隐藏未选中</span>
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={productGroupByTag}
+                          onChange={(event) => onChange({ productGroupByTag: event.target.checked })}
+                        />
+                        <span>按分类排列</span>
+                      </label>
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <div className="space-y-2 rounded-lg border border-slate-200 bg-white p-3">
+                        <div className="text-xs font-medium text-slate-700">默认样式</div>
+                        <ColorOrGradientPicker value={productTagBgColor} onChange={(value) => onChange({ productTagBgColor: value })} />
+                        <RecentColorBar
+                          colors={recentColors}
+                          onClear={onClearRecentColors}
+                          onPick={(color) => onChange({ productTagBgColor: color })}
+                          allowGradients
+                          selectedValue={productTagBgColor}
+                        />
+                        <label className="block space-y-2 text-sm">
+                          <span className="block text-gray-600">透明度：{productTagBgOpacity.toFixed(2)}</span>
+                          <input
+                            type="range"
+                            min={0}
+                            max={1}
+                            step={0.01}
+                            className="w-full"
+                            value={productTagBgOpacity}
+                            onChange={(event) => onChange({ productTagBgOpacity: Number(event.target.value) })}
+                          />
+                        </label>
+                      </div>
+                      <div className="space-y-2 rounded-lg border border-slate-200 bg-white p-3">
+                        <div className="text-xs font-medium text-slate-700">选中样式</div>
+                        <ColorOrGradientPicker
+                          value={productTagActiveBgColor}
+                          onChange={(value) => onChange({ productTagActiveBgColor: value })}
+                        />
+                        <RecentColorBar
+                          colors={recentColors}
+                          onClear={onClearRecentColors}
+                          onPick={(color) => onChange({ productTagActiveBgColor: color })}
+                          allowGradients
+                          selectedValue={productTagActiveBgColor}
+                        />
+                        <label className="block space-y-2 text-sm">
+                          <span className="block text-gray-600">透明度：{productTagActiveBgOpacity.toFixed(2)}</span>
+                          <input
+                            type="range"
+                            min={0}
+                            max={1}
+                            step={0.01}
+                            className="w-full"
+                            value={productTagActiveBgOpacity}
+                            onChange={(event) => onChange({ productTagActiveBgOpacity: Number(event.target.value) })}
+                          />
+                        </label>
+                      </div>
+                    </div>
+                    <label className="block space-y-2 text-sm">
+                      <span className="block text-gray-600">分类列表</span>
+                      <textarea
+                        className="min-h-[110px] w-full rounded border px-3 py-2"
+                        value={productTagOptionsText}
+                        onChange={(event) => handleProductTagOptionsDraftChange(event.target.value)}
+                        onBlur={(event) => applyProductTagOptions(event.target.value)}
+                        placeholder={"每行一个分类，例如：\n推荐\n新品\n热卖"}
+                      />
+                      <div className="text-xs text-gray-500">产品编辑卡里会从这里下拉选择分类。</div>
+                    </label>
+                  </div>
+                  <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <div className="text-sm font-medium text-slate-700">产品框样式</div>
+                    <div className="space-y-1">
+                      <div className="text-xs text-gray-600">底色</div>
+                      <ColorOrGradientPicker value={productCardBgColor} onChange={(value) => onChange({ productCardBgColor: value })} />
+                      <RecentColorBar
+                        colors={recentColors}
+                        onClear={onClearRecentColors}
+                        onPick={(color) => onChange({ productCardBgColor: color })}
+                        allowGradients
+                        selectedValue={productCardBgColor}
+                      />
+                    </div>
+                    <label className="block space-y-2 text-sm">
+                      <span className="block text-gray-600">透明度：{productCardBgOpacity.toFixed(2)}</span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.01}
+                        className="w-full"
+                        value={productCardBgOpacity}
+                        onChange={(event) => onChange({ productCardBgOpacity: Number(event.target.value) })}
+                      />
+                    </label>
+                    <div className="space-y-1">
+                      <div className="text-xs text-gray-600">边框样式</div>
+                      <div className="grid grid-cols-3 gap-2">
+                        {BLOCK_BORDER_STYLE_OPTIONS.map((option) => (
+                          <button
+                            key={option.value}
+                            type="button"
+                            className={`rounded px-2 py-2 text-xs ${getBlockBorderClass(option.value)} ${
+                              productCardBorderStyle === option.value ? "ring-2 ring-black" : "bg-white"
+                            }`}
+                            style={getBlockBorderInlineStyle(option.value, productCardBorderColor)}
+                            onClick={() => onChange({ productCardBorderStyle: option.value })}
+                          >
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <div className="text-xs text-gray-600">边框颜色</div>
+                      <ColorOrGradientPicker
+                        value={productCardBorderColor}
+                        onChange={(value) => onChange({ productCardBorderColor: value })}
+                      />
+                      <RecentColorBar
+                        colors={recentColors}
+                        onClear={onClearRecentColors}
+                        onPick={(color) => onChange({ productCardBorderColor: color })}
+                        allowGradients
+                        selectedValue={productCardBorderColor}
+                      />
+                    </div>
+                  </div>
+                  <label className="space-y-1 text-sm">
+                    <span className="block text-gray-600">价格前缀</span>
+                    <div className="grid grid-cols-[minmax(0,1fr)_96px] gap-3">
+                      <select
+                        className="w-full rounded border px-3 py-2 bg-white"
+                        value={productPricePrefixMode}
+                        onChange={(event) => {
+                          const next = event.target.value;
+                          if (next === "__custom__") {
+                            onChange({ productPricePrefix: "" });
+                            return;
+                          }
+                          onChange({ productPricePrefix: next });
+                        }}
+                      >
+                        {PRODUCT_PRICE_PREFIX_OPTIONS.map((item) => (
+                          <option key={item.value} value={item.value}>
+                            {item.label}
+                          </option>
+                        ))}
+                        <option value="__custom__">自定义</option>
+                      </select>
+                      {productPricePrefixMode === "__custom__" ? (
+                        <input
+                          className="w-full rounded border px-3 py-2"
+                          value={productPricePrefix}
+                          onChange={(event) => onChange({ productPricePrefix: event.target.value })}
+                          placeholder="自定义"
+                        />
+                      ) : (
+                        <div />
+                      )}
+                    </div>
+                  </label>
+                  <label className="space-y-1 text-sm">
+                    <span className="block text-gray-600">价格位置</span>
+                    <select
+                      className="w-full rounded border px-3 py-2 bg-white"
+                      value={productPriceAlign}
+                      onChange={(event) => onChange({ productPriceAlign: event.target.value as ProductPriceAlign })}
+                    >
+                      {PRODUCT_PRICE_ALIGN_OPTIONS.map((item) => (
+                        <option key={item.value} value={item.value}>
+                          {item.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="space-y-1 text-sm">
+                    <span className="block text-gray-600">区块模式</span>
+                    <select
+                      className="w-full rounded border px-3 py-2 bg-white"
+                      value={productContainerMode}
+                      onChange={(event) =>
+                        onChange({
+                          productContainerMode: event.target.value as ProductContainerMode,
+                          productItemsPerPage:
+                            event.target.value === "auto"
+                              ? block.props.productItemsPerPage
+                              : block.props.productItemsPerPage ?? defaultProductItemsPerPage(productLayoutPreset),
+                        })
+                      }
+                    >
+                      {PRODUCT_CONTAINER_MODE_OPTIONS.map((item) => (
+                        <option key={item.value} value={item.value}>
+                          {item.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {productContainerMode !== "auto" ? (
+                    <label className="space-y-1 text-sm">
+                      <span className="block text-gray-600">{productContainerMode === "paged" ? "每页数量" : "可视数量"}</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={24}
+                        className="w-full rounded border px-3 py-2"
+                        value={productItemsPerPage}
+                        onChange={(event) =>
+                          onChange({ productItemsPerPage: Math.max(1, Math.min(24, Number(event.target.value) || 1)) })
+                        }
+                      />
+                    </label>
+                  ) : null}
+                  <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <div className="text-sm font-medium text-slate-700">详情页设置</div>
+                    <label className="block space-y-2 text-sm">
+                      <span className="block text-gray-600">详情图尺寸</span>
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="range"
+                          min={180}
+                          max={720}
+                          step={20}
+                          className="flex-1"
+                          value={productDetailImageSize}
+                          onChange={(event) => onChange({ productDetailImageSize: Number(event.target.value) })}
+                        />
+                        <input
+                          type="number"
+                          min={180}
+                          max={720}
+                          className="w-20 rounded border px-2 py-2"
+                          value={productDetailImageSize}
+                          onChange={(event) =>
+                            onChange({ productDetailImageSize: Math.max(180, Math.min(720, Number(event.target.value) || 180)) })
+                          }
+                        />
+                      </div>
+                    </label>
+                    <div className="grid grid-cols-2 gap-2 text-sm text-gray-700">
+                      <label className="col-span-2 flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={productDetailFullImage}
+                          onChange={(event) => onChange({ productDetailFullImage: event.target.checked })}
+                        />
+                        <span>全图展示</span>
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={productDetailShowCode}
+                          onChange={(event) => onChange({ productDetailShowCode: event.target.checked })}
+                        />
+                        <span>显示编号</span>
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={productDetailShowName}
+                          onChange={(event) => onChange({ productDetailShowName: event.target.checked })}
+                        />
+                        <span>显示名称</span>
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={productDetailShowDescription}
+                          onChange={(event) => onChange({ productDetailShowDescription: event.target.checked })}
+                        />
+                        <span>显示介绍</span>
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={productDetailShowPrice}
+                          onChange={(event) => onChange({ productDetailShowPrice: event.target.checked })}
+                        />
+                        <span>显示价格</span>
+                      </label>
+                    </div>
+                    <button
+                      type="button"
+                      className="w-full rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50"
+                      onClick={openProductDetailPreview}
+                    >
+                      预览详情
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      className="rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50"
+                      onClick={() => productExcelInputRef.current?.click()}
+                    >
+                      {"导入 Excel"}
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50"
+                      onClick={() => productImageBatchInputRef.current?.click()}
+                    >
+                      {"按编号导入图片"}
+                    </button>
+                    <button
+                      type="button"
+                      className="col-span-2 rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50"
+                      onClick={addProductItem}
+                    >
+                      {"新增产品"}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-4 grid gap-4">
+                  {renderProductSettingsSection(
+                    "basic",
+                    "基础展示",
+                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                    <label className="space-y-1 text-sm">
+                      <span className="block text-gray-600">排列方式</span>
+                      <select
+                        className="w-full rounded border px-3 py-2 bg-white"
+                        value={productLayoutPreset}
+                        onChange={(event) => onChange({ productLayoutPreset: event.target.value as ProductLayoutPreset })}
+                      >
+                        {PRODUCT_LAYOUT_OPTIONS.map((item) => (
+                          <option key={item.value} value={item.value}>
+                            {item.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="space-y-1 text-sm">
+                      <span className="block text-gray-600">图片比例</span>
+                      <select
+                        className="w-full rounded border px-3 py-2 bg-white"
+                        value={productImageAspectRatio}
+                        onChange={(event) => onChange({ productImageAspectRatio: event.target.value as ProductImageAspectRatio })}
+                      >
+                        {PRODUCT_IMAGE_ASPECT_OPTIONS.map((item) => (
+                          <option key={item.value} value={item.value}>
+                            {item.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="space-y-2 text-sm md:col-span-2">
+                      <span className="block text-gray-600">图片尺寸</span>
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="range"
+                          min={40}
+                          max={420}
+                          step={10}
+                          className="flex-1"
+                          value={productImageSize}
+                          onChange={(event) => onChange({ productImageSize: Number(event.target.value) })}
+                        />
+                        <input
+                          type="number"
+                          min={40}
+                          max={420}
+                          className="w-20 rounded border px-2 py-2"
+                          value={productImageSize}
+                          onChange={(event) =>
+                            onChange({ productImageSize: Math.max(40, Math.min(420, Number(event.target.value) || 40)) })
+                          }
+                        />
+                      </div>
+                    </label>
+                    <label className="space-y-1 text-sm md:col-span-2">
+                      <span className="block text-gray-600">价格前缀</span>
+                      <div className="grid grid-cols-[minmax(0,1fr)_96px] gap-3">
+                        <select
+                          className="w-full rounded border px-3 py-2 bg-white"
+                          value={productPricePrefixMode}
+                          onChange={(event) => {
+                            const next = event.target.value;
+                            if (next === "__custom__") {
+                              onChange({ productPricePrefix: "" });
+                              return;
+                            }
+                            onChange({ productPricePrefix: next });
+                          }}
+                        >
+                          {PRODUCT_PRICE_PREFIX_OPTIONS.map((item) => (
+                            <option key={item.value} value={item.value}>
+                              {item.label}
+                            </option>
+                          ))}
+                          <option value="__custom__">自定义</option>
+                        </select>
+                        {productPricePrefixMode === "__custom__" ? (
+                          <input
+                            className="w-full rounded border px-3 py-2"
+                            value={productPricePrefix}
+                            onChange={(event) => onChange({ productPricePrefix: event.target.value })}
+                            placeholder="自定义"
+                          />
+                        ) : (
+                          <div />
+                        )}
+                      </div>
+                    </label>
+                    <label className="space-y-1 text-sm">
+                      <span className="block text-gray-600">价格位置</span>
+                      <select
+                        className="w-full rounded border px-3 py-2 bg-white"
+                        value={productPriceAlign}
+                        onChange={(event) => onChange({ productPriceAlign: event.target.value as ProductPriceAlign })}
+                      >
+                        {PRODUCT_PRICE_ALIGN_OPTIONS.map((item) => (
+                          <option key={item.value} value={item.value}>
+                            {item.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="space-y-1 text-sm">
+                      <span className="block text-gray-600">区块模式</span>
+                      <select
+                        className="w-full rounded border px-3 py-2 bg-white"
+                        value={productContainerMode}
+                        onChange={(event) =>
+                          onChange({
+                            productContainerMode: event.target.value as ProductContainerMode,
+                            productItemsPerPage:
+                              event.target.value === "auto"
+                                ? block.props.productItemsPerPage
+                                : block.props.productItemsPerPage ?? defaultProductItemsPerPage(productLayoutPreset),
+                          })
+                        }
+                      >
+                        {PRODUCT_CONTAINER_MODE_OPTIONS.map((item) => (
+                          <option key={item.value} value={item.value}>
+                            {item.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {productContainerMode !== "auto" ? (
+                      <label className="space-y-1 text-sm">
+                        <span className="block text-gray-600">{productContainerMode === "paged" ? "每页数量" : "可视数量"}</span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={24}
+                          className="w-full rounded border px-3 py-2"
+                          value={productItemsPerPage}
+                          onChange={(event) =>
+                            onChange({ productItemsPerPage: Math.max(1, Math.min(24, Number(event.target.value) || 1)) })
+                          }
+                        />
+                      </label>
+                    ) : (
+                      <div />
+                    )}
+                    <div className="grid gap-2 text-sm text-gray-700 sm:grid-cols-2 xl:col-span-4">
+                      <label className="flex items-center gap-2 rounded border border-slate-200 bg-white px-3 py-2">
+                        <input
+                          type="checkbox"
+                          checked={productShowCode}
+                          onChange={(event) => onChange({ productShowCode: event.target.checked })}
+                        />
+                        <span>显示编号</span>
+                      </label>
+                      <label className="flex items-center gap-2 rounded border border-slate-200 bg-white px-3 py-2">
+                        <input
+                          type="checkbox"
+                          checked={productShowDescription}
+                          onChange={(event) => onChange({ productShowDescription: event.target.checked })}
+                        />
+                        <span>显示介绍</span>
+                      </label>
+                    </div>
+                    </div>,
+                  )}
+                  {renderProductSettingsSection(
+                    "tags",
+                    "分类标签样式",
+                    <div className="space-y-4">
+                    <div className="grid gap-4 lg:grid-cols-[180px_220px_220px_minmax(0,1fr)]">
+                    <label className="space-y-1 text-sm">
+                      <span className="block text-gray-600">标签位置</span>
+                      <select
+                        className="w-full rounded border px-3 py-2 bg-white"
+                        value={productTagPosition}
+                        onChange={(event) => onChange({ productTagPosition: event.target.value as ProductTagPosition })}
+                      >
+                        {PRODUCT_TAG_POSITION_OPTIONS.map((item) => (
+                          <option key={item.value} value={item.value}>
+                            {item.label}
+                          </option>
+                        ))}
+                      </select>
+                      <div className="text-xs text-gray-500">控制分类筛选标签条显示在上侧、左侧或右侧。</div>
+                    </label>
+                    <label className="space-y-2 text-sm">
+                      <span className="block text-gray-600">字体大小</span>
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="range"
+                          min={10}
+                          max={28}
+                          step={1}
+                          className="flex-1"
+                          value={productTagFontSize}
+                          onChange={(event) => onChange({ productTagFontSize: Number(event.target.value) })}
+                        />
+                        <input
+                          type="number"
+                          min={10}
+                          max={28}
+                          className="w-20 rounded border px-2 py-2"
+                          value={productTagFontSize}
+                          onChange={(event) =>
+                            onChange({ productTagFontSize: Math.max(10, Math.min(28, Number(event.target.value) || 10)) })
+                          }
+                        />
+                      </div>
+                    </label>
+                    <label className="space-y-2 text-sm">
+                      <span className="block text-gray-600">标签尺寸</span>
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="range"
+                          min={56}
+                          max={220}
+                          step={4}
+                          className="flex-1"
+                          value={productTagWidth}
+                          onChange={(event) => onChange({ productTagWidth: Number(event.target.value) })}
+                        />
+                        <input
+                          type="number"
+                          min={56}
+                          max={220}
+                          className="w-20 rounded border px-2 py-2"
+                          value={productTagWidth}
+                          onChange={(event) =>
+                            onChange({ productTagWidth: Math.max(56, Math.min(220, Number(event.target.value) || 56)) })
+                          }
+                        />
+                      </div>
+                    </label>
+                    <div className="grid content-start gap-2 text-sm text-gray-700 sm:grid-cols-2 lg:grid-cols-1 2xl:grid-cols-2">
+                      <label className="flex items-center gap-2 rounded border border-slate-200 bg-white px-3 py-2">
+                        <input
+                          type="checkbox"
+                          checked={productTagHideUnselected}
+                          onChange={(event) => onChange({ productTagHideUnselected: event.target.checked })}
+                        />
+                        <span>隐藏未选中</span>
+                      </label>
+                      <label className="flex items-center gap-2 rounded border border-slate-200 bg-white px-3 py-2">
+                        <input
+                          type="checkbox"
+                          checked={productGroupByTag}
+                          onChange={(event) => onChange({ productGroupByTag: event.target.checked })}
+                        />
+                        <span>按分类排列</span>
+                      </label>
+                    </div>
+                    </div>
+                    <div className="grid gap-4 lg:grid-cols-2">
+                      <div className="space-y-2 rounded-lg border border-slate-200 bg-white p-3">
+                        <div className="text-sm font-medium text-slate-700">默认样式</div>
+                        <ColorOrGradientPicker value={productTagBgColor} onChange={(value) => onChange({ productTagBgColor: value })} />
+                        <RecentColorBar
+                          colors={recentColors}
+                          onClear={onClearRecentColors}
+                          onPick={(color) => onChange({ productTagBgColor: color })}
+                          allowGradients
+                          selectedValue={productTagBgColor}
+                        />
+                        <div className="pt-2 text-xs text-gray-600">透明度：{productTagBgOpacity.toFixed(2)}</div>
+                        <input
+                          type="range"
+                          min={0}
+                          max={1}
+                          step={0.01}
+                          className="w-full"
+                          value={productTagBgOpacity}
+                          onChange={(event) => onChange({ productTagBgOpacity: Number(event.target.value) })}
+                        />
+                      </div>
+                      <div className="space-y-2 rounded-lg border border-slate-200 bg-white p-3">
+                        <div className="text-sm font-medium text-slate-700">选中样式</div>
+                        <ColorOrGradientPicker
+                          value={productTagActiveBgColor}
+                          onChange={(value) => onChange({ productTagActiveBgColor: value })}
+                        />
+                        <RecentColorBar
+                          colors={recentColors}
+                          onClear={onClearRecentColors}
+                          onPick={(color) => onChange({ productTagActiveBgColor: color })}
+                          allowGradients
+                          selectedValue={productTagActiveBgColor}
+                        />
+                        <div className="pt-2 text-xs text-gray-600">透明度：{productTagActiveBgOpacity.toFixed(2)}</div>
+                        <input
+                          type="range"
+                          min={0}
+                          max={1}
+                          step={0.01}
+                          className="w-full"
+                          value={productTagActiveBgOpacity}
+                          onChange={(event) => onChange({ productTagActiveBgOpacity: Number(event.target.value) })}
+                        />
+                      </div>
+                    </div>
+                    <label className="space-y-2 text-sm">
+                      <span className="block text-gray-600">分类列表</span>
+                      <textarea
+                        className="min-h-[110px] w-full rounded border px-3 py-2"
+                        value={productTagOptionsText}
+                        onChange={(event) => handleProductTagOptionsDraftChange(event.target.value)}
+                        onBlur={(event) => applyProductTagOptions(event.target.value)}
+                        placeholder={"每行一个分类，例如：\n推荐\n新品\n热卖"}
+                      />
+                      <div className="text-xs text-gray-500">产品编辑卡里会从这里下拉选择分类。</div>
+                    </label>
+                    </div>,
+                  )}
+                  {renderProductSettingsSection(
+                    "card",
+                    "产品框样式",
+                    <div className="space-y-4">
+                    <div className="grid gap-4 lg:grid-cols-2">
+                      <div className="space-y-2 rounded-lg border border-slate-200 bg-white p-3">
+                        <div className="text-sm font-medium text-slate-700">产品框底色</div>
+                        <ColorOrGradientPicker value={productCardBgColor} onChange={(value) => onChange({ productCardBgColor: value })} />
+                        <RecentColorBar
+                          colors={recentColors}
+                          onClear={onClearRecentColors}
+                          onPick={(color) => onChange({ productCardBgColor: color })}
+                          allowGradients
+                          selectedValue={productCardBgColor}
+                        />
+                        <label className="block space-y-2 text-sm">
+                          <span className="block text-gray-600">透明度：{productCardBgOpacity.toFixed(2)}</span>
+                          <input
+                            type="range"
+                            min={0}
+                            max={1}
+                            step={0.01}
+                            className="w-full"
+                            value={productCardBgOpacity}
+                            onChange={(event) => onChange({ productCardBgOpacity: Number(event.target.value) })}
+                          />
+                        </label>
+                      </div>
+                      <div className="space-y-2 rounded-lg border border-slate-200 bg-white p-3">
+                        <div className="text-sm font-medium text-slate-700">边框颜色</div>
+                        <ColorOrGradientPicker
+                          value={productCardBorderColor}
+                          onChange={(value) => onChange({ productCardBorderColor: value })}
+                        />
+                        <RecentColorBar
+                          colors={recentColors}
+                          onClear={onClearRecentColors}
+                          onPick={(color) => onChange({ productCardBorderColor: color })}
+                          allowGradients
+                          selectedValue={productCardBorderColor}
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-2 rounded-lg border border-slate-200 bg-white p-3">
+                      <div className="text-sm font-medium text-slate-700">产品框边框</div>
+                      <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
+                        {BLOCK_BORDER_STYLE_OPTIONS.map((option) => (
+                          <button
+                            key={option.value}
+                            type="button"
+                            className={`rounded px-3 py-2 text-sm ${getBlockBorderClass(option.value)} ${
+                              productCardBorderStyle === option.value ? "ring-2 ring-black" : "bg-white"
+                            }`}
+                            style={getBlockBorderInlineStyle(option.value, productCardBorderColor)}
+                            onClick={() => onChange({ productCardBorderStyle: option.value })}
+                          >
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    </div>,
+                  )}
+                  {renderProductSettingsSection(
+                    "detail",
+                    "详情页设置",
+                    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px]">
+                      <div className="space-y-2">
+                      <div className="grid grid-cols-2 gap-2 text-sm text-gray-700">
+                        <label className="col-span-2 flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={productDetailFullImage}
+                            onChange={(event) => onChange({ productDetailFullImage: event.target.checked })}
+                          />
+                          <span>全图展示</span>
+                        </label>
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={productDetailShowCode}
+                            onChange={(event) => onChange({ productDetailShowCode: event.target.checked })}
+                          />
+                          <span>显示编号</span>
+                        </label>
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={productDetailShowName}
+                            onChange={(event) => onChange({ productDetailShowName: event.target.checked })}
+                          />
+                          <span>显示名称</span>
+                        </label>
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={productDetailShowDescription}
+                            onChange={(event) => onChange({ productDetailShowDescription: event.target.checked })}
+                          />
+                          <span>显示介绍</span>
+                        </label>
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={productDetailShowPrice}
+                            onChange={(event) => onChange({ productDetailShowPrice: event.target.checked })}
+                          />
+                          <span>显示价格</span>
+                        </label>
+                      </div>
+                      <button
+                        type="button"
+                        className="rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50"
+                        onClick={openProductDetailPreview}
+                      >
+                        预览详情
+                      </button>
+                      </div>
+                      <label className="space-y-2 text-sm">
+                        <span className="block text-gray-600">详情图尺寸</span>
+                        <div className="flex items-center gap-3">
+                          <input
+                            type="range"
+                            min={180}
+                            max={720}
+                            step={20}
+                            className="flex-1"
+                            value={productDetailImageSize}
+                            onChange={(event) => onChange({ productDetailImageSize: Number(event.target.value) })}
+                          />
+                          <input
+                            type="number"
+                            min={180}
+                            max={720}
+                            className="w-24 rounded border px-2 py-2"
+                            value={productDetailImageSize}
+                            onChange={(event) =>
+                              onChange({ productDetailImageSize: Math.max(180, Math.min(720, Number(event.target.value) || 180)) })
+                            }
+                          />
+                        </div>
+                      </label>
+                    </div>,
+                    { bodyClassName: "mt-3" },
+                  )}
+                  <div className="mt-4 grid grid-cols-3 gap-3">
+                    <button
+                      type="button"
+                      className="rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50"
+                      onClick={() => productExcelInputRef.current?.click()}
+                    >
+                      {"导入 Excel"}
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50"
+                      onClick={() => productImageBatchInputRef.current?.click()}
+                    >
+                      {"按编号导入图片"}
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50"
+                      onClick={addProductItem}
+                    >
+                      {"新增产品"}
+                    </button>
+                  </div>
+                </div>
+              )}
+              <div className="mt-2 text-xs text-gray-500">
+                {"图片批量导入会按文件名匹配产品编号，例如 SKU-001.jpg -> SKU-001。Excel 支持列名：编号、名称、介绍、价格、分类/标签。"}
+              </div>
+              {renderProductPreviewWithFilters()}
+              {renderProductPager()}
+              {productDetailPreviewDialog}
+              <div className="mt-5 space-y-4">
+                {productItems.length === 0 ? (
+                  <div className="rounded border border-dashed border-gray-300 bg-gray-50 p-4 text-sm text-gray-500">
+                    {"暂无产品，点击“新增产品”或导入 Excel。"}
+                  </div>
+                ) : (
+                  productItems.map((item, index) => (
+                    <div key={item.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="text-sm font-semibold text-slate-800">{`产品 ${index + 1}`}</div>
+                        <button
+                          type="button"
+                          className="rounded border bg-white px-2 py-1 text-xs hover:bg-gray-50"
+                          onClick={() => removeProductItem(item.id)}
+                        >
+                          删除
+                        </button>
+                      </div>
+                      <div className={`mt-3 grid gap-4 ${compactProductEditor ? "grid-cols-1" : "lg:grid-cols-[180px_minmax(0,1fr)]"}`}>
+                        <div>
+                          <div
+                            className={`relative overflow-hidden rounded-lg border bg-slate-100 ${productLayoutPreset === "list" ? "shrink-0 self-start" : ""}`}
+                            style={getProductImageFrameStyle({ list: productLayoutPreset === "list", editor: true })}
+                          >
+                            {item.imageUrl ? (
+                              <NextImage src={item.imageUrl} alt={item.name || item.code || "产品图片"} fill unoptimized sizes="240px" className="object-cover" />
+                            ) : (
+                              <div className="flex h-full items-center justify-center text-sm text-slate-400">{"暂无图片"}</div>
+                            )}
+                          </div>
+                          <label className="mt-3 inline-flex cursor-pointer items-center rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50">
+                            {"上传图片"}
+                            <input
+                              className="hidden"
+                              type="file"
+                              accept="image/*"
+                              onChange={(event) => {
+                                void onReplaceProductImage(item.id, event);
+                              }}
+                            />
+                          </label>
+                        </div>
+                        <div className={`grid gap-3 ${compactProductEditor ? "grid-cols-1" : "md:grid-cols-2"}`}>
+                          <label className="text-sm text-gray-600">
+                            <div className="mb-1">编号</div>
+                            <input
+                              className="w-full rounded border px-3 py-2"
+                              value={item.code}
+                              onChange={(event) => updateProductItem(item.id, { code: event.target.value })}
+                              placeholder="SKU-001"
+                            />
+                          </label>
+                          <label className="text-sm text-gray-600">
+                            <div className="mb-1">价格</div>
+                            <input
+                              className="w-full rounded border px-3 py-2"
+                              value={item.price}
+                              onChange={(event) => updateProductItem(item.id, { price: event.target.value })}
+                              placeholder="39.90"
+                            />
+                          </label>
+                          <label className={`text-sm text-gray-600 ${compactProductEditor ? "" : "md:col-span-2"}`}>
+                            <div className="mb-1">选择分类</div>
+                            <select
+                              className="w-full rounded border px-3 py-2 bg-white"
+                              value={item.tag}
+                              onChange={(event) => updateProductItem(item.id, { tag: event.target.value })}
+                            >
+                              <option value="">未分类</option>
+                              {productTagOptions.map((tag) => (
+                                <option key={`${item.id}-${tag}`} value={tag}>
+                                  {tag}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className={`text-sm text-gray-600 ${compactProductEditor ? "" : "md:col-span-2"}`}>
+                            <div className="mb-1">名称</div>
+                            <input
+                              className="w-full rounded border px-3 py-2"
+                              value={item.name}
+                              onChange={(event) => updateProductItem(item.id, { name: event.target.value })}
+                              placeholder="输入产品名称"
+                            />
+                          </label>
+                          <label className={`text-sm text-gray-600 ${compactProductEditor ? "" : "md:col-span-2"}`}>
+                            <div className="mb-1">介绍</div>
+                            <textarea
+                              className="min-h-[110px] w-full rounded border px-3 py-2"
+                              value={item.description}
+                              onChange={(event) => updateProductItem(item.id, { description: event.target.value })}
+                              placeholder="输入产品介绍、规格或卖点"
+                            />
+                          </label>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          ) : (
+            <>
+              {hasProductHeading ? (
+                <h2
+                  className="text-xl font-bold whitespace-pre-wrap break-words"
+                  dangerouslySetInnerHTML={{ __html: toRichHtml(block.props.heading, "产品展示") }}
+                />
+              ) : null}
+              {hasProductText ? (
+                <div
+                  className="mt-2 text-sm text-gray-600 whitespace-pre-wrap break-words"
+                  dangerouslySetInnerHTML={{ __html: toRichHtml(block.props.text, "") }}
+                />
+              ) : null}
+              {renderProductPreviewWithFilters()}
             </>
           )}
           {resizeHandles}
@@ -11084,7 +13432,7 @@ type GalleryEditorImage = {
     const locateLabel = (block.props.locateLabel ?? "").trim() || "定位";
     const actionLabel = (block.props.actionLabel ?? "").trim() || "搜索";
     const cityPlaceholder = (block.props.cityPlaceholder ?? "").trim() || "选择城市";
-    const searchPlaceholder = (block.props.searchPlaceholder ?? "").trim() || "鎼滅储鍐呭";
+    const searchPlaceholder = (block.props.searchPlaceholder ?? "").trim() || "请输入关键词";
     const countryOptions = getEuropeCountryOptions();
     const resolvedCountryCode = (() => {
       const fromProps = (block.props.defaultCountryCode ?? "").toUpperCase();
@@ -11103,7 +13451,7 @@ type GalleryEditorImage = {
       if (cityOptions.includes(fromProps)) return fromProps;
       return cityOptions[0] ?? "";
     })();
-    const resolvedCountryName = countryOptions.find((item) => item.code === resolvedCountryCode)?.name ?? "欧洲国家";
+    const resolvedCountryName = countryOptions.find((item) => item.code === resolvedCountryCode)?.name ?? "国家";
     const resolvedProvinceName =
       provinceOptions.find((item) => item.code === resolvedProvinceCode)?.name ?? "省份";
     const hasSearchHeading = hasVisibleRichText(block.props.heading);
@@ -11160,7 +13508,6 @@ type GalleryEditorImage = {
     };
     const searchInputTextStyle: Record<string, string | number> = {
       ...searchTypographyBaseStyle,
-      ...(searchFontColor && !searchFontColorIsGradient ? { color: searchFontColor } : {}),
     };
     const searchLayout = block.props.searchLayout ?? {};
     const clampSearchLayoutValue = (value: unknown, fallback: number, min = 0) =>
@@ -11609,7 +13956,7 @@ type GalleryEditorImage = {
                         </option>
                       ))
                     ) : (
-                      <option value="">欧洲国家</option>
+                      <option value="">国家</option>
                     )}
                   </select>
                 </label>
@@ -12705,13 +15052,18 @@ function RecentColorBar({
   onPick,
   onClear,
   allowGradients = true,
+  selectedValue,
 }: {
   colors: string[];
   onPick: (color: string) => void;
   onClear?: () => void;
   allowGradients?: boolean;
+  selectedValue?: string;
 }) {
   const shownColors = allowGradients ? colors : colors.filter((item) => !isGradientToken(item));
+  const swatchSize = 24;
+  const swatchGap = 6;
+  const visibleSwatchCount = 10;
   return (
     <div className="pt-1 space-y-1">
       <div className="flex items-center justify-between">
@@ -12723,17 +15075,23 @@ function RecentColorBar({
         ) : null}
       </div>
       {shownColors.length > 0 ? (
-        <div className="flex flex-wrap gap-2">
-          {shownColors.map((color) => (
-            <button
-              key={color}
-              type="button"
-              className="w-6 h-6 rounded border border-gray-300"
-              style={isGradientToken(color) ? { backgroundImage: color } : { backgroundColor: color }}
-              title={color}
-              onClick={() => onPick(color)}
-            />
-          ))}
+        <div style={{ width: `${visibleSwatchCount * swatchSize + (visibleSwatchCount - 1) * swatchGap}px` }}>
+          <div className="flex flex-nowrap gap-1.5">
+            {shownColors.slice(0, visibleSwatchCount).map((color) => {
+              const isSelected = selectedValue?.trim().toLowerCase() === color.trim().toLowerCase();
+              return (
+                <button
+                  key={color}
+                  type="button"
+                  aria-pressed={isSelected}
+                  className={`h-6 w-6 shrink-0 rounded border transition ${isSelected ? "border-slate-900 ring-2 ring-sky-500/70" : "border-gray-300"}`}
+                  style={isGradientToken(color) ? { backgroundImage: color } : { backgroundColor: color }}
+                  title={color}
+                  onClick={() => onPick(color)}
+                />
+              );
+            })}
+          </div>
         </div>
       ) : (
         <div className="text-xs text-gray-400 border border-dashed rounded px-2 py-2">暂无最近颜色</div>
@@ -12985,6 +15343,7 @@ function RichTextEditor({
       data-field={field}
       data-nav-item-id={dataNavItemId}
       data-common-box-id={dataCommonBoxId}
+      data-no-translate="1"
       className={`${className} whitespace-pre-wrap break-words focus:outline-none`}
       contentEditable
       suppressContentEditableWarning

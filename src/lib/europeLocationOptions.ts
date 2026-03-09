@@ -1,3 +1,5 @@
+import { CHINA_COUNTRY_OPTION } from "./chinaLocationOptions.generated";
+
 export type EuropeProvinceOption = {
   code: string;
   name: string;
@@ -74148,21 +74150,23 @@ export const EUROPE_COUNTRY_OPTIONS: EuropeCountryOption[] = [
   }
 ];
 
+export const SUPPORTED_COUNTRY_OPTIONS: EuropeCountryOption[] = [...EUROPE_COUNTRY_OPTIONS, CHINA_COUNTRY_OPTION];
+
 function normalizeMatchValue(value: string) {
   return value
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
-    .replace(/[^a-z0-9]/g, "");
+    .replace(/[^\p{L}\p{N}]/gu, "");
 }
 
 export function getEuropeCountryOptions() {
-  return EUROPE_COUNTRY_OPTIONS;
+  return SUPPORTED_COUNTRY_OPTIONS;
 }
 
 export function getEuropeProvinceOptions(countryCode: string) {
   const code = (countryCode ?? "").toUpperCase();
-  const country = EUROPE_COUNTRY_OPTIONS.find((item) => item.code === code);
+  const country = getEuropeCountryOptions().find((item) => item.code === code);
   return country?.provinces ?? [];
 }
 
@@ -74173,7 +74177,7 @@ export function getEuropeCityOptions(countryCode: string, provinceCode: string) 
 
 export function findEuropeCountryByCode(countryCode: string) {
   const code = (countryCode ?? "").toUpperCase();
-  return EUROPE_COUNTRY_OPTIONS.find((item) => item.code === code) ?? null;
+  return getEuropeCountryOptions().find((item) => item.code === code) ?? null;
 }
 
 export function findBestProvinceCode(countryCode: string, provinceName: string) {

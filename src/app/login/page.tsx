@@ -180,16 +180,6 @@ export default function LoginPage() {
         setNeedConfirmEmail(isEmailNotConfirmed(error.message));
         return setMsg(normalizeError(error.message));
       }
-      if (data.session?.access_token && data.session?.refresh_token) {
-        try {
-          await supabase.auth.setSession({
-            access_token: data.session.access_token,
-            refresh_token: data.session.refresh_token,
-          });
-        } catch {
-          // Ignore setSession failures and rely on default persistence.
-        }
-      }
       if (data.session?.user) {
         const persistedUser = await waitForPersistedSessionUser();
         await redirectToMerchantBackend(persistedUser ?? data.session.user);

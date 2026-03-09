@@ -7,7 +7,7 @@ import AdminClient from "@/app/admin/AdminClient";
 import SitePageClient from "@/app/site/[siteId]/SitePageClient";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
 import { loadPlatformState, subscribePlatformState } from "@/data/platformControlStore";
-import { isMerchantNumericId, normalizeDomainSuffix } from "@/lib/merchantIdentity";
+import { isMerchantNumericId, normalizeDomainPrefix } from "@/lib/merchantIdentity";
 import { buildPlatformHomeHref } from "@/lib/siteRouting";
 import { useHydrated } from "@/lib/useHydrated";
 
@@ -15,7 +15,7 @@ export default function MerchantEntryPage() {
   const params = useParams<{ merchantEntry: string }>();
   const merchantEntry = String(params?.merchantEntry ?? "").trim();
   const hydrated = useHydrated();
-  const normalizedSuffix = useMemo(() => normalizeDomainSuffix(merchantEntry), [merchantEntry]);
+  const normalizedPrefix = useMemo(() => normalizeDomainPrefix(merchantEntry), [merchantEntry]);
   const [platformState, setPlatformState] = useState(() => loadPlatformState());
 
   useEffect(
@@ -34,10 +34,10 @@ export default function MerchantEntryPage() {
     return <AdminClient forcedScope={`site-${merchantEntry}`} />;
   }
 
-  const bySuffix = merchantEntry
+  const byPrefix = merchantEntry
     ? [...platformState.sites]
         .filter((site) => site.id !== "site-main")
-        .filter((site) => normalizeDomainSuffix(site.domainSuffix) === normalizedSuffix)
+        .filter((site) => normalizeDomainPrefix(site.domainPrefix ?? site.domainSuffix) === normalizedPrefix)
         .sort((a, b) => {
           const aNumeric = isMerchantNumericId(a.id) ? 1 : 0;
           const bNumeric = isMerchantNumericId(b.id) ? 1 : 0;
@@ -47,8 +47,8 @@ export default function MerchantEntryPage() {
           return (Number.isFinite(bUpdated) ? bUpdated : 0) - (Number.isFinite(aUpdated) ? aUpdated : 0);
         })[0] ?? null
     : null;
-  if (bySuffix) {
-    return <SitePageClient forcedSiteId={bySuffix.id} />;
+  if (byPrefix) {
+    return <SitePageClient forcedSiteId={byPrefix.id} />;
   }
 
   const bySiteId = merchantEntry ? platformState.sites.find((site) => site.id === merchantEntry) : null;
@@ -60,7 +60,7 @@ export default function MerchantEntryPage() {
     <main className="min-h-screen bg-slate-100 p-6">
       <div className="mx-auto max-w-3xl rounded-lg border bg-white p-6 shadow-sm">
         <h1 className="text-lg font-semibold text-slate-900">地址未匹配到站点</h1>
-        <p className="mt-2 text-sm text-slate-600">请检查商户后台地址（8位 ID）或商户前台后缀是否正确。</p>
+        <p className="mt-2 text-sm text-slate-600">请检查商户后台地址（8位 ID）或商户前台前缀是否正确。</p>
         <div className="mt-4 flex flex-wrap gap-2">
           <Link href="/login" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50">
             去商户登录

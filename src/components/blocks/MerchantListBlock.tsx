@@ -103,13 +103,14 @@ const EMPTY_SEARCH_FILTER: SearchFilter = {
   keyword: "",
 };
 const INITIAL_SORT_NOW_MS = Date.now();
+const REAL_MERCHANT_SITE_ID_REGEX = /^\d{8}$/;
 
 function normalizeLocationValue(value: string) {
   return String(value ?? "")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
-    .replace(/[^a-z0-9]/g, "");
+    .replace(/[^\p{L}\p{N}]/gu, "");
 }
 
 function toRgba(hex: string, alpha: number) {
@@ -300,6 +301,11 @@ function getSiteDisplayName(site: PlatformState["sites"][number]) {
   return ((site.merchantName ?? "").trim() || site.name || "").trim();
 }
 
+function isRealRegisteredMerchantSite(site: PlatformState["sites"][number]) {
+  const siteId = String(site.id ?? "").trim();
+  return REAL_MERCHANT_SITE_ID_REGEX.test(siteId);
+}
+
 function resolveRankLevelByFilter(filter: SearchFilter): MerchantRankLevel {
   if ((filter.city ?? "").trim()) return "city";
   if ((filter.provinceCode ?? "").trim() || (filter.province ?? "").trim()) return "province";
@@ -435,6 +441,7 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
       const rankLevel = resolveRankLevelByFilter(searchFilter);
       const siteViews30d = readSitePageView30dMap(sortNowMs);
       const sorted = [...platformState.sites]
+        .filter((site) => isRealRegisteredMerchantSite(site))
         .filter((site) => siteMatchesFilter(site, searchFilter))
         .filter((site) => (activeIndustry === "all" ? true : site.industry === activeIndustry))
         .sort((a, b) => {
@@ -698,7 +705,7 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
               return (
                 <Link
                   key={site.id}
-                  href={buildMerchantFrontendHref(site.id, site.domainSuffix)}
+                  href={buildMerchantFrontendHref(site.id, site.domainPrefix ?? site.domainSuffix)}
                   className={`absolute block rounded-xl p-4 overflow-auto hover:brightness-[0.98] ${getBlockBorderClass(
                     styleConfig.borderStyle,
                   )}`}

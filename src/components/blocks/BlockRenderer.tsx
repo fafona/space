@@ -10,6 +10,7 @@ import GalleryBlock from "./GalleryBlock";
 import ChartBlock from "./ChartBlock";
 import MusicBlock from "./MusicBlock";
 import NavBlock from "./NavBlock";
+import ProductBlock from "./ProductBlock";
 
 export default function BlockRenderer({
   blocks,
@@ -48,6 +49,8 @@ export default function BlockRenderer({
             return <ContactBlock key={b.id} {...b.props} />;
           case "music":
             return <MusicBlock key={b.id} {...b.props} />;
+          case "product":
+            return <ProductBlock key={b.id} {...b.props} />;
           default:
             return null;
         }

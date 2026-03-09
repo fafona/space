@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import type { Block } from "@/data/homeBlocks";
 import { sanitizeBlocksForRuntime } from "@/lib/blocksSanitizer";
+import { getInlinePublishPayloadViolation } from "@/lib/publishPayloadValidation";
 
 type SaveErrorLike = { message: string } | null;
 
@@ -314,6 +315,18 @@ export async function POST(request: Request) {
       return makeCachedResponse(status, responseBody);
     }
 
+    const inlineViolation = getInlinePublishPayloadViolation(payloadBlocks);
+    if (inlineViolation) {
+      const status = 400;
+      const responseBody = {
+        ok: false,
+        code: "inline_assets_not_allowed",
+        message: inlineViolation,
+        requestId,
+      };
+      resultCache.set(requestId, { at: Date.now(), status, body: responseBody });
+      return makeCachedResponse(status, responseBody);
+    }
     const normalizedUpdatedAt = Number.isFinite(new Date(updatedAtRaw).getTime())
       ? new Date(updatedAtRaw).toISOString()
       : new Date().toISOString();

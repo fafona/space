@@ -52,7 +52,7 @@ import {
   clearSuperAdminAuthenticated,
   isSuperAdminAuthenticated,
 } from "@/lib/superAdminAuth";
-import { isSupabaseEnabled } from "@/lib/supabase";
+import { supabase } from "@/lib/supabase";
 import { useHydrated } from "@/lib/useHydrated";
 
 function fmt(iso: string | null) {
@@ -213,6 +213,54 @@ async function optimizeMerchantCardImage(file: File) {
   }
 
   return best;
+}
+
+function parseMerchantCardImageDataUrlMeta(dataUrl: string) {
+  const matched = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,/i);
+  if (!matched) return null;
+  const mime = matched[1].toLowerCase();
+  const extension = (() => {
+    if (mime === "image/jpeg") return "jpg";
+    if (mime === "image/png") return "png";
+    if (mime === "image/webp") return "webp";
+    if (mime === "image/gif") return "gif";
+    if (mime === "image/bmp") return "bmp";
+    if (mime === "image/svg+xml") return "svg";
+    return "img";
+  })();
+  return { mime, extension };
+}
+
+function dataUrlToBlob(dataUrl: string, mime: string) {
+  const base64 = dataUrl.split(",")[1] ?? "";
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new Blob([bytes], { type: mime });
+}
+
+async function uploadMerchantCardImageDataUrlToSupabase(dataUrl: string, siteHint = "merchant-card") {
+  const meta = parseMerchantCardImageDataUrlMeta(dataUrl);
+  if (!meta) return null;
+  const blob = dataUrlToBlob(dataUrl, meta.mime);
+  const now = new Date();
+  const yyyy = `${now.getFullYear()}`;
+  const mm = `${now.getMonth() + 1}`.padStart(2, "0");
+  const bucketCandidates = ["page-assets", "assets", "uploads", "public"];
+
+  for (const bucket of bucketCandidates) {
+    const objectPath = `merchant-cards/${siteHint}/${yyyy}/${mm}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${meta.extension}`;
+    const uploaded = await supabase.storage.from(bucket).upload(objectPath, blob, {
+      contentType: meta.mime,
+      upsert: false,
+    });
+    if (uploaded.error) continue;
+    const { data } = supabase.storage.from(bucket).getPublicUrl(objectPath);
+    if (data?.publicUrl) return data.publicUrl;
+  }
+  return null;
 }
 
 function daysBetweenNow(isoDate: string, nowMs: number) {
@@ -652,7 +700,7 @@ type MerchantUserRow = {
   site: Site;
   userEmail: string;
   merchantName: string;
-  suffix: string;
+  prefix: string;
   industry: string;
   city: string;
   sizeBytes: number;
@@ -668,7 +716,7 @@ type MerchantTableSortField =
   | "seq"
   | "user"
   | "name"
-  | "suffix"
+  | "prefix"
   | "industry"
   | "city"
   | "size"
@@ -874,7 +922,7 @@ export default function SuperAdminClient() {
         const owner = merchantOwnerBySiteId.get(site.id);
         const userEmail = (site.contactEmail ?? "").trim() || owner?.email || "-";
         const merchantName = (site.merchantName ?? "").trim() || site.name;
-        const suffix = (site.domainSuffix ?? "").trim();
+        const prefix = (site.domainPrefix ?? site.domainSuffix ?? "").trim();
         const industry = (site.industry ?? "").trim() || "未设置";
         const city = (site.location?.city ?? "").trim() || "-";
         const sizeBytes = readMerchantPublishedBytes(site.id);
@@ -887,7 +935,7 @@ export default function SuperAdminClient() {
           site,
           userEmail,
           merchantName,
-          suffix,
+          prefix,
           industry,
           city,
           sizeBytes,
@@ -916,7 +964,7 @@ export default function SuperAdminClient() {
       merchantRows.filter((row) => {
         const q = userKeyword.trim().toLowerCase();
         if (!q) return true;
-        return [row.userEmail, row.merchantName, row.suffix, row.industry, row.city, row.site.domain]
+        return [row.userEmail, row.merchantName, row.prefix, row.industry, row.city, row.site.domain]
           .join(" ")
           .toLowerCase()
           .includes(q);
@@ -943,8 +991,8 @@ export default function SuperAdminClient() {
         case "name":
           delta = text(left.merchantName).localeCompare(text(right.merchantName), "zh-CN");
           break;
-        case "suffix":
-          delta = text(left.suffix).localeCompare(text(right.suffix), "zh-CN");
+        case "prefix":
+          delta = text(left.prefix).localeCompare(text(right.prefix), "zh-CN");
           break;
         case "industry":
           delta = text(left.industry).localeCompare(text(right.industry), "zh-CN");
@@ -1640,8 +1688,16 @@ export default function SuperAdminClient() {
         setTip(`图片体积过大（${formatBytes(bytes)}），请使用更小图片`);
         return;
       }
-      setConfigMerchantCardImage(optimized);
-      setTip(`图片已自动压缩：${formatBytes(file.size)} -> ${formatBytes(bytes)}`);
+      const uploadedUrl = await uploadMerchantCardImageDataUrlToSupabase(
+        optimized,
+        selectedMerchantSite?.id ?? "merchant-card",
+      );
+      if (!uploadedUrl) {
+        setTip("图片上传到存储失败，请检查存储配置后重试");
+        return;
+      }
+      setConfigMerchantCardImage(uploadedUrl);
+      setTip(`图片已压缩并上传：${formatBytes(file.size)} -> ${formatBytes(bytes)}`);
     } catch (error) {
       setTip(error instanceof Error ? error.message : "读取图片失败，请重试");
     } finally {
@@ -1649,7 +1705,7 @@ export default function SuperAdminClient() {
     }
   }
 
-  function saveMerchantConfigAction() {
+  async function saveMerchantConfigAction() {
     if (!guard("user.manage", SUPER_ADMIN_MESSAGES.noUserPermission)) return;
     if (!selectedMerchantSite) {
       setTip(SUPER_ADMIN_MESSAGES.selectMerchantFirst);
@@ -1676,7 +1732,16 @@ export default function SuperAdminClient() {
       industryProvinceRank: parseRankInput(configIndustryProvinceRank),
       industryCityRank: parseRankInput(configIndustryCityRank),
     };
-    const nextMerchantCardImage = configMerchantCardImage.trim();
+    let nextMerchantCardImage = configMerchantCardImage.trim();
+    if (/^data:image\//i.test(nextMerchantCardImage)) {
+      const uploadedUrl = await uploadMerchantCardImageDataUrlToSupabase(nextMerchantCardImage, selectedMerchantSite.id);
+      if (!uploadedUrl) {
+        setTip("商户框图片仍是内嵌图片，且上传到存储失败，请重新上传后再保存");
+        return;
+      }
+      nextMerchantCardImage = uploadedUrl;
+      setConfigMerchantCardImage(uploadedUrl);
+    }
     const prevPermission = selectedMerchantSite.permissionConfig ?? createDefaultMerchantPermissionConfig();
     const prevSortConfig = selectedMerchantSite.sortConfig ?? createDefaultMerchantSortConfig();
     const prevMerchantCardImage = (selectedMerchantSite.merchantCardImageUrl ?? "").trim();
@@ -2683,7 +2748,7 @@ export default function SuperAdminClient() {
                   <div className="grid gap-2 md:grid-cols-5">
                     <input
                       className="rounded border px-3 py-2 text-sm md:col-span-2"
-                      placeholder="搜索用户/名称/后缀/行业/城市/域名"
+                      placeholder="搜索用户/名称/前缀/行业/城市/域名"
                       value={userKeyword}
                       onChange={(e) => {
                         setUserKeyword(e.target.value);
@@ -2722,8 +2787,8 @@ export default function SuperAdminClient() {
                             </th>
                             <th className="px-3 py-2">
                               <div className="flex items-center justify-between gap-2">
-                                <span>后缀</span>
-                                {renderMerchantSortToggle("suffix")}
+                                <span>前缀</span>
+                                {renderMerchantSortToggle("prefix")}
                               </div>
                             </th>
                             <th className="px-3 py-2">
@@ -2778,7 +2843,7 @@ export default function SuperAdminClient() {
                                 <td className="px-3 py-2 text-xs text-slate-500">{seq}</td>
                                 <td className="px-3 py-2 text-xs">{row.userEmail || "-"}</td>
                                 <td className="px-3 py-2 text-xs">{row.merchantName}</td>
-                                <td className="px-3 py-2 text-xs">{row.suffix || "-"}</td>
+                                <td className="px-3 py-2 text-xs">{row.prefix || "-"}</td>
                                 <td className="px-3 py-2 text-xs">{row.industry || "-"}</td>
                                 <td className="px-3 py-2 text-xs">{row.city || "-"}</td>
                                 <td className="px-3 py-2 text-xs">{formatBytes(row.sizeBytes)}</td>
@@ -2799,7 +2864,7 @@ export default function SuperAdminClient() {
                                       详情
                                     </button>
                                     <Link
-                                      href={buildMerchantFrontendHref(row.site.id, row.site.domainSuffix)}
+                                      href={buildMerchantFrontendHref(row.site.id, row.site.domainPrefix ?? row.site.domainSuffix)}
                                       target="_blank"
                                       rel="noreferrer"
                                       className="rounded border px-2 py-1"

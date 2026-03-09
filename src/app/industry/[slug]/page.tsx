@@ -116,7 +116,7 @@ export default function IndustryPage() {
                   <div className="mt-1 text-xs text-slate-500">已发布版本：v{site.publishedVersion}</div>
                   <div className="mt-1 text-xs text-slate-500">最近发布：{fmt(site.lastPublishedAt)}</div>
                   <div className="mt-3">
-                    <Link href={buildMerchantFrontendHref(site.id, site.domainSuffix)} className="rounded border bg-black px-3 py-2 text-xs text-white">
+                    <Link href={buildMerchantFrontendHref(site.id, site.domainPrefix ?? site.domainSuffix)} className="rounded border bg-black px-3 py-2 text-xs text-white">
                       进入商家站点
                     </Link>
                   </div>

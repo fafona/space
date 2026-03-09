@@ -8,6 +8,10 @@
     "check:encoding": "node scripts/check-mojibake.mjs",
     "check:encoding:strict": "node scripts/check-mojibake.mjs --strict",
     "check:supabase": "node scripts/check-supabase-health.mjs",
+    "audit:inline-assets": "node scripts/audit-inline-page-assets.mjs",
+    "migrate:inline-images": "node scripts/externalize-inline-page-images.mjs",
+    "gen:china-locations": "node scripts/generate-china-location-options.mjs",
+    "repair:platform-home-mojibake": "node scripts/repair-platform-home-mojibake.mjs",
     "gen:dom-i18n": "node scripts/generate-dom-translations.mjs",
     "hooks:install": "node scripts/setup-git-hooks.mjs",
     "prepare": "node scripts/setup-git-hooks.mjs",
@@ -16,7 +20,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "npm run test:sanitizer",
-    "test:sanitizer": "tsx --test src/lib/blocksSanitizer.test.ts"
+    "test:sanitizer": "tsx --test src/lib/blocksSanitizer.test.ts src/lib/europeLocationOptions.test.ts src/lib/inlineAssetStats.test.ts src/lib/reverseGeocodeLocation.test.ts src/lib/productImport.test.ts src/app/api/publish/route.test.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -25,7 +29,8 @@
     "@supabase/supabase-js": "^2.93.3",
     "next": "16.1.6",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
