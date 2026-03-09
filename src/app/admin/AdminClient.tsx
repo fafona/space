@@ -3654,7 +3654,7 @@ export default function AdminClient({
     const topBarNode = topBarRef.current;
     if (!topBarNode) return;
     const updateTopBarHeight = () => {
-      const nextHeight = isDesktopEditorSidebar ? 0 : Math.ceil(topBarNode.getBoundingClientRect().height);
+      const nextHeight = (isPlatformEditor || isDesktopEditorSidebar) ? 0 : Math.ceil(topBarNode.getBoundingClientRect().height);
       setTopBarHeight((prev) => (prev === nextHeight ? prev : nextHeight));
     };
     updateTopBarHeight();
@@ -3667,7 +3667,7 @@ export default function AdminClient({
       if (observer) observer.disconnect();
       window.removeEventListener("resize", updateTopBarHeight);
     };
-  }, [checkingAuth, isDesktopEditorSidebar, previewViewport, topBarCollapsed]);
+  }, [checkingAuth, isDesktopEditorSidebar, isPlatformEditor, previewViewport, topBarCollapsed]);
 
   useEffect(() => {
     const measureBackgroundHeight = () => {
@@ -5086,25 +5086,26 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     return Math.max(max, value);
   }, 0);
   const mobileFrontendPreviewPadding = Math.max(120, Math.max(0, maxBlockOffsetY) + 100);
+  const shouldUseDesktopEditorSidebar = isPlatformEditor || isDesktopEditorSidebar;
 
   function renderTopMostOverlay(content: ReactNode) {
     if (typeof window === "undefined") return content;
     return createPortal(content, document.body);
   }
 
-  const editorMainClassName = `min-h-screen bg-gray-100 ${!topBarCollapsed && isDesktopEditorSidebar ? "pl-[320px]" : ""}`;
+  const editorMainClassName = `min-h-screen bg-gray-100 ${!topBarCollapsed && shouldUseDesktopEditorSidebar ? "pl-[320px]" : ""}`;
   const toolbarWrapperClassName = topBarCollapsed
     ? "hidden"
-    : isDesktopEditorSidebar
+    : shouldUseDesktopEditorSidebar
       ? "fixed inset-y-0 left-0 z-[15000] w-[320px] overflow-y-auto border-r bg-white shadow-sm"
       : "fixed inset-x-0 top-0 z-[15000] border-b bg-white shadow-sm";
-  const toolbarContentClassName = isDesktopEditorSidebar
+  const toolbarContentClassName = shouldUseDesktopEditorSidebar
     ? "mx-0 flex max-w-none flex-col items-stretch justify-start gap-3 px-4 py-4"
     : "mx-auto flex max-w-6xl items-center justify-between gap-3 px-6 py-3";
-  const toolbarHeaderClassName = isDesktopEditorSidebar
+  const toolbarHeaderClassName = shouldUseDesktopEditorSidebar
     ? "flex flex-col items-stretch gap-3"
     : "flex items-center gap-3";
-  const toolbarActionsClassName = isDesktopEditorSidebar
+  const toolbarActionsClassName = shouldUseDesktopEditorSidebar
     ? "grid grid-cols-2 gap-2"
     : "flex items-center gap-2";
 
@@ -5112,7 +5113,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     <main
       className={editorMainClassName}
       style={{
-        paddingTop: topBarCollapsed ? "0px" : isDesktopEditorSidebar ? "0px" : `${Math.max(topBarHeight, 56)}px`,
+        paddingTop: topBarCollapsed ? "0px" : shouldUseDesktopEditorSidebar ? "0px" : `${Math.max(topBarHeight, 56)}px`,
       }}
       onMouseDownCapture={handleEditorMouseDownCapture}
       data-editor-mode={editorMode}
@@ -5126,7 +5127,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       ) : null}
       <div
         className={`fixed z-[16000] ${
-          isDesktopEditorSidebar
+          shouldUseDesktopEditorSidebar
             ? topBarCollapsed
               ? "left-0 top-6"
               : "left-[320px] top-6"
@@ -5136,7 +5137,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         <button
           type="button"
           className={`flex items-center justify-center border bg-white text-base leading-none shadow-sm transition-colors hover:bg-gray-50 ${
-            isDesktopEditorSidebar
+            shouldUseDesktopEditorSidebar
               ? "h-12 w-7 rounded-r-lg border-l-0"
               : "h-10 w-7 rounded-r-lg border-l-0"
           }`}
