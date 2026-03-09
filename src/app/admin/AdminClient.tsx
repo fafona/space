@@ -5092,9 +5092,25 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     return createPortal(content, document.body);
   }
 
+  const editorMainClassName = `min-h-screen bg-gray-100 ${!topBarCollapsed && isDesktopEditorSidebar ? "pl-[320px]" : ""}`;
+  const toolbarWrapperClassName = topBarCollapsed
+    ? "hidden"
+    : isDesktopEditorSidebar
+      ? "fixed inset-y-0 left-0 z-[15000] w-[320px] overflow-y-auto border-r bg-white shadow-sm"
+      : "fixed inset-x-0 top-0 z-[15000] border-b bg-white shadow-sm";
+  const toolbarContentClassName = isDesktopEditorSidebar
+    ? "mx-0 flex max-w-none flex-col items-stretch justify-start gap-3 px-4 py-4"
+    : "mx-auto flex max-w-6xl items-center justify-between gap-3 px-6 py-3";
+  const toolbarHeaderClassName = isDesktopEditorSidebar
+    ? "flex flex-col items-stretch gap-3"
+    : "flex items-center gap-3";
+  const toolbarActionsClassName = isDesktopEditorSidebar
+    ? "grid grid-cols-2 gap-2"
+    : "flex items-center gap-2";
+
   return (
     <main
-      className={`min-h-screen bg-gray-100 ${topBarCollapsed ? "" : "lg:pl-[320px]"}`}
+      className={editorMainClassName}
       style={{
         paddingTop: topBarCollapsed ? "0px" : isDesktopEditorSidebar ? "0px" : `${Math.max(topBarHeight, 56)}px`,
       }}
@@ -5135,14 +5151,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         ref={topBarRef}
         data-editor-toolbar
         data-editor-mode={editorMode}
-        className={
-          topBarCollapsed
-            ? "hidden"
-            : "fixed inset-x-0 top-0 z-[15000] bg-white border-b shadow-sm lg:inset-y-0 lg:left-0 lg:right-auto lg:w-[320px] lg:overflow-y-auto lg:border-b-0 lg:border-r"
-        }
+        className={toolbarWrapperClassName}
       >
-        <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between gap-3 lg:mx-0 lg:max-w-none lg:flex-col lg:items-stretch lg:justify-start lg:px-4 lg:py-4">
-            <div className="flex items-center gap-3 lg:flex-col lg:items-stretch">
+        <div className={toolbarContentClassName}>
+            <div className={toolbarHeaderClassName}>
               {isPlatformEditor ? <div className="text-lg font-bold">{editorTitle}</div> : null}
               {!isPlatformEditor ? (
                 <div className="flex items-center justify-between gap-3 rounded border border-slate-300 bg-slate-50 px-3 py-1">
@@ -5167,7 +5179,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                 </div>
               ) : null}
             </div>
-            <div className="flex items-center gap-2 lg:grid lg:grid-cols-2">
+            <div className={toolbarActionsClassName}>
               <button
                 className="px-3 py-2 rounded border bg-white hover:bg-gray-50"
                 onClick={() => {
