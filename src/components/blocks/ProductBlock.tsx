@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import Image from "next/image";
 import type { BackgroundEditableProps, BlockBorderStyle, TypographyEditableProps } from "@/data/homeBlocks";
@@ -149,6 +149,10 @@ function getProductTagPlacementStyle(position: ProductTagPosition): CSSPropertie
   return { top: gap, left: "50%", transform: "translateX(-50%)" };
 }
 
+function getProductCardDomId(id: string) {
+  return `product-card-${id}`;
+}
+
 function renderProductTag(
   tag: string,
   options: {
@@ -207,7 +211,6 @@ function renderProductCard(
     cardBorderColor: string;
     onOpen: (id: string) => void;
     onSelectTag: (tag: string) => void;
-    onCardRef?: (id: string, node: HTMLDivElement | null) => void;
     list?: boolean;
     spotlight?: boolean;
   },
@@ -243,9 +246,7 @@ function renderProductCard(
   return (
     <div
       key={item.id}
-      ref={(node) => {
-        options.onCardRef?.(item.id, node);
-      }}
+      id={getProductCardDomId(item.id)}
       role="button"
       tabIndex={0}
       onClick={() => options.onOpen(item.id)}
@@ -403,9 +404,9 @@ export default function ProductBlock(props: ProductBlockProps) {
   const [pageIndex, setPageIndex] = useState(0);
   const [activeProductId, setActiveProductId] = useState<string | null>(null);
   const [activeTag, setActiveTag] = useState<string | null>(null);
-  const productCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
-  const pendingScrollProductIdRef = useRef<string | null>(null);
-  const filteredProducts = tagHideUnselected && activeTag ? arrangedProducts.filter((item) => item.tag === activeTag) : arrangedProducts;
+  const [pendingScrollProductId, setPendingScrollProductId] = useState<string | null>(null);
+  const selectedTag = activeTag && productTags.includes(activeTag) ? activeTag : null;
+  const filteredProducts = tagHideUnselected && selectedTag ? arrangedProducts.filter((item) => item.tag === selectedTag) : arrangedProducts;
   const totalPages = containerMode === "paged" ? Math.max(1, Math.ceil(filteredProducts.length / itemsPerPage)) : 1;
   const normalizedPageIndex = Math.min(pageIndex, Math.max(0, totalPages - 1));
   const pageStart = normalizedPageIndex * itemsPerPage;
@@ -433,52 +434,42 @@ export default function ProductBlock(props: ProductBlockProps) {
   }, [activeProductId]);
 
   useEffect(() => {
-    setPageIndex((current) => Math.min(current, Math.max(0, totalPages - 1)));
-  }, [totalPages]);
-
-  useEffect(() => {
-    if (activeTag && !productTags.includes(activeTag)) {
-      setActiveTag(null);
-    }
-  }, [activeTag, productTags]);
-
-  useEffect(() => {
-    const targetId = pendingScrollProductIdRef.current;
+    const targetId = pendingScrollProductId;
     if (!targetId) return;
-    const target = productCardRefs.current[targetId];
+    const target = document.getElementById(getProductCardDomId(targetId));
     if (!target) return;
-    pendingScrollProductIdRef.current = null;
     requestAnimationFrame(() => {
       target.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+      setPendingScrollProductId(null);
     });
-  }, [pagedProducts, activeTag, tagHideUnselected]);
+  }, [pagedProducts, pendingScrollProductId, selectedTag, tagHideUnselected]);
 
   const handleSelectTag = (tag: string | null) => {
     setActiveTag(tag);
     if (tag == null) {
       setPageIndex(0);
-      pendingScrollProductIdRef.current = null;
+      setPendingScrollProductId(null);
       return;
     }
     const firstMatchIndex = arrangedProducts.findIndex((item) => item.tag === tag);
     if (firstMatchIndex < 0) {
       setPageIndex(0);
-      pendingScrollProductIdRef.current = null;
+      setPendingScrollProductId(null);
       return;
     }
-    pendingScrollProductIdRef.current = arrangedProducts[firstMatchIndex]?.id ?? null;
+    const targetId = arrangedProducts[firstMatchIndex]?.id ?? null;
+    setPendingScrollProductId(targetId);
     if (containerMode === "paged") {
       setPageIndex(Math.floor(firstMatchIndex / itemsPerPage));
       return;
     }
-    const targetId = arrangedProducts[firstMatchIndex]?.id;
     if (targetId) {
-      const target = productCardRefs.current[targetId];
+      const target = document.getElementById(getProductCardDomId(targetId));
       if (target) {
         requestAnimationFrame(() => {
           target.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
         });
-        pendingScrollProductIdRef.current = null;
+        setPendingScrollProductId(null);
       }
     }
   };
@@ -504,9 +495,6 @@ export default function ProductBlock(props: ProductBlockProps) {
       cardBorderColor: productCardBorderColor,
       onOpen: setActiveProductId,
       onSelectTag: (tag) => handleSelectTag(tag),
-      onCardRef: (id, node) => {
-        productCardRefs.current[id] = node;
-      },
       ...extra,
     });
 
@@ -525,14 +513,14 @@ export default function ProductBlock(props: ProductBlockProps) {
           <button
             type="button"
             className={`truncate rounded-full border border-white/30 px-3 py-1.5 transition-opacity ${
-              activeTag === null ? "ring-2 ring-slate-900/30 shadow-sm" : ""
+              selectedTag === null ? "ring-2 ring-slate-900/30 shadow-sm" : ""
             }`}
             style={{
               width: `${tagWidth}px`,
-              ...(activeTag === null
+              ...(selectedTag === null
                 ? getColorLayerStyle(tagActiveBgColor, tagActiveBgOpacity)
                 : getColorLayerStyle(tagBgColor, tagBgOpacity)),
-              color: getReadableTagTextColor(activeTag === null ? tagActiveBgColor : tagBgColor),
+              color: getReadableTagTextColor(selectedTag === null ? tagActiveBgColor : tagBgColor),
               fontSize: `${tagFontSize}px`,
             }}
             onClick={() => handleSelectTag(null)}
@@ -544,13 +532,13 @@ export default function ProductBlock(props: ProductBlockProps) {
           <button
             key={tag}
             type="button"
-            className={`truncate rounded-full border border-white/30 px-3 py-1.5 transition-opacity ${activeTag === tag ? "ring-2 ring-slate-900/30 shadow-sm" : ""}`}
+            className={`truncate rounded-full border border-white/30 px-3 py-1.5 transition-opacity ${selectedTag === tag ? "ring-2 ring-slate-900/30 shadow-sm" : ""}`}
             style={{
               width: `${tagWidth}px`,
-              ...(activeTag === tag
+              ...(selectedTag === tag
                 ? getColorLayerStyle(tagActiveBgColor, tagActiveBgOpacity)
                 : getColorLayerStyle(tagBgColor, tagBgOpacity)),
-              color: getReadableTagTextColor(activeTag === tag ? tagActiveBgColor : tagBgColor),
+              color: getReadableTagTextColor(selectedTag === tag ? tagActiveBgColor : tagBgColor),
               fontSize: `${tagFontSize}px`,
             }}
             onClick={() => handleSelectTag(tag)}
