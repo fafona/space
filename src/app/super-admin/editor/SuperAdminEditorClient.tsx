@@ -3,11 +3,15 @@
 import { useEffect } from "react";
 import AdminClient from "../../admin/AdminClient";
 import { PLATFORM_EDITOR_SCOPE } from "@/lib/siteRouting";
-import { buildSuperAdminLoginHref, isSuperAdminAuthenticated } from "@/lib/superAdminAuth";
+import { buildSuperAdminLoginHref, isSuperAdminAuthenticated, syncSuperAdminAuthenticatedCookie } from "@/lib/superAdminAuth";
 import { useHydrated } from "@/lib/useHydrated";
 
 export default function SuperAdminEditorClient() {
   const hydrated = useHydrated();
+  useEffect(() => {
+    if (!hydrated) return;
+    syncSuperAdminAuthenticatedCookie();
+  }, [hydrated]);
   const ready = hydrated && isSuperAdminAuthenticated();
   const editorBuildLabel = "SUPER-ADMIN-EDITOR-V3";
 

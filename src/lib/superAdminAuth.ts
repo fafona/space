@@ -37,6 +37,16 @@ export function isSuperAdminAuthenticated() {
   return localStorage.getItem(SUPER_ADMIN_SESSION_KEY) === SUPER_ADMIN_SESSION_VALUE || readSuperAdminCookie();
 }
 
+export function syncSuperAdminAuthenticatedCookie() {
+  if (typeof window === "undefined") return false;
+  const hasLocalSession = localStorage.getItem(SUPER_ADMIN_SESSION_KEY) === SUPER_ADMIN_SESSION_VALUE;
+  if (!hasLocalSession) return readSuperAdminCookie();
+  if (!readSuperAdminCookie()) {
+    writeSuperAdminCookie(true);
+  }
+  return true;
+}
+
 export function setSuperAdminAuthenticated() {
   if (typeof window === "undefined") return;
   localStorage.setItem(SUPER_ADMIN_SESSION_KEY, SUPER_ADMIN_SESSION_VALUE);

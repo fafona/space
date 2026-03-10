@@ -51,6 +51,7 @@ import {
   buildSuperAdminLoginHref,
   clearSuperAdminAuthenticated,
   isSuperAdminAuthenticated,
+  syncSuperAdminAuthenticatedCookie,
 } from "@/lib/superAdminAuth";
 import { supabase } from "@/lib/supabase";
 import { useHydrated } from "@/lib/useHydrated";
@@ -736,6 +737,10 @@ function buildPortalDraft(state: PlatformState): PortalDraft {
 
 export default function SuperAdminClient() {
   const hydrated = useHydrated();
+  useEffect(() => {
+    if (!hydrated) return;
+    syncSuperAdminAuthenticatedCookie();
+  }, [hydrated]);
   const authed = hydrated && isSuperAdminAuthenticated();
   const [activeMenu, setActiveMenu] = useState<"site_editor" | "user_manage" | "stats" | "logs">("site_editor");
   const [state, setState] = useState<PlatformState>(() => loadPlatformState());
