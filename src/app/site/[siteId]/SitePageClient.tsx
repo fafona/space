@@ -17,14 +17,20 @@ import { sanitizeBlocksForRuntime } from "@/lib/blocksSanitizer";
 import { cloneBlocks, getPagePlanConfigFromBlocks } from "@/lib/pagePlans";
 import { PUBLISH_SYNC_STORAGE_KEY, subscribePublishSync } from "@/lib/publishSync";
 import { buildMerchantBackendHref, buildPlatformHomeHref, buildSiteStoreScope } from "@/lib/siteRouting";
-import { isSupabaseEnabled, resolvedSupabaseAnonKey, resolvedSupabaseUrl, supabase } from "@/lib/supabase";
+import {
+  canReachSupabaseGateway,
+  isSupabaseEnabled,
+  resolvedSupabaseAnonKey,
+  resolvedSupabaseUrl,
+  supabase,
+} from "@/lib/supabase";
 import { useHydrated } from "@/lib/useHydrated";
 
 const MOBILE_BREAKPOINT = 768;
 const EMPTY_BLOCKS: Block[] = [];
 const MIN_INITIAL_LOADING_MS = 0;
-const SITE_REMOTE_FETCH_TIMEOUT_MS = 35000;
-const SITE_REMOTE_SETTLE_TIMEOUT_MS = 38000;
+const SITE_REMOTE_FETCH_TIMEOUT_MS = 8000;
+const SITE_REMOTE_SETTLE_TIMEOUT_MS = 9000;
 
 function getPublishedScopeCandidates(siteId: string, siteScope: string) {
   const normalizedSiteId = (siteId ?? "").trim();
@@ -283,6 +289,9 @@ export function SitePageClient({ forcedSiteId }: SitePageClientProps = {}) {
 
     (async () => {
       try {
+        const gatewayReady = await canReachSupabaseGateway(3000);
+        if (!mounted || !gatewayReady) return;
+
         const accessTokenTask = getAccessTokenQuickly(900);
         const anonRestTask = withTimeout(fetchPublishedSiteBlocksViaRest(siteId), SITE_REMOTE_FETCH_TIMEOUT_MS);
         const sdkTask = withTimeout(

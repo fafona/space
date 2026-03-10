@@ -1,0 +1,68 @@
+name: Deploy Production
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch to deploy
+        required: true
+        default: main
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'master'))
+    runs-on: ubuntu-latest
+    env:
+      DEPLOY_BRANCH: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || github.event.workflow_run.head_branch }}
+      DEPLOY_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || github.event.workflow_run.head_sha }}
+
+    steps:
+      - name: Checkout Tested Commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.DEPLOY_REF }}
+
+      - name: Setup SSH
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          test -n "$SSH_HOST"
+          test -n "$SSH_PRIVATE_KEY"
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -p "${SSH_PORT:-22}" -H "$SSH_HOST" >> ~/.ssh/known_hosts
+
+      - name: Deploy To Server
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          APP_DIR: ${{ secrets.APP_DIR }}
+          APP_NAME: ${{ secrets.APP_NAME }}
+          APP_PORT: ${{ secrets.APP_PORT }}
+          APP_BRANCH: ${{ env.DEPLOY_BRANCH }}
+        run: |
+          test -n "$SSH_USER"
+          test -n "$APP_DIR"
+          ssh -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" \
+            "APP_DIR='$APP_DIR' APP_NAME='${APP_NAME:-merchant-space}' APP_PORT='${APP_PORT:-3000}' APP_BRANCH='$APP_BRANCH' bash -s" \
+            < scripts/deploy.production.sh

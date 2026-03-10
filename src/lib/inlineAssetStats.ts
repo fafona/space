@@ -37,3 +37,7 @@ export function countInlineAssets(input: unknown): InlineAssetStats {
   visitInlineAssets(input, stats);
   return stats;
 }
+
+export function hasInlineAssets(input: unknown) {
+  return countInlineAssets(input).totalCount > 0;
+}

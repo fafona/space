@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { countInlineAssets } from "./inlineAssetStats";
+import { countInlineAssets, hasInlineAssets } from "./inlineAssetStats";
 
 test("counts nested inline images and audio data urls", () => {
   const stats = countInlineAssets({
@@ -31,4 +31,22 @@ test("ignores normal urls and plain strings", () => {
     audioCount: 0,
     totalCount: 0,
   });
+});
+
+test("detects inline audio-only payloads as publish-optimization candidates", () => {
+  assert.equal(
+    hasInlineAssets({
+      audio: "data:audio/mp3;base64,def",
+      text: "hello",
+    }),
+    true,
+  );
+
+  assert.equal(
+    hasInlineAssets({
+      audio: "https://example.com/audio.mp3",
+      text: "hello",
+    }),
+    false,
+  );
 });

@@ -62,7 +62,7 @@ import {
   type PagePlanConfig,
   type PlanId,
 } from "@/lib/pagePlans";
-import { countInlineAssets } from "@/lib/inlineAssetStats";
+import { countInlineAssets, hasInlineAssets } from "@/lib/inlineAssetStats";
 import {
   CUSTOM_GALLERY_FRAME_WIDTHS,
   GALLERY_LAYOUT_PRESETS,
@@ -1008,9 +1008,52 @@ function dataUrlToBlob(dataUrl: string, mime: string) {
   return new Blob([bytes], { type: mime });
 }
 
+async function getAssetUploadAccessToken(timeoutMs = 900) {
+  try {
+    const sessionTask = supabase.auth.getSession();
+    const timeoutTask = new Promise<null>((resolve) => {
+      setTimeout(() => resolve(null), Math.max(200, timeoutMs));
+    });
+    const result = (await Promise.race([sessionTask, timeoutTask])) as Awaited<typeof sessionTask> | null;
+    const token = result?.data?.session?.access_token ?? "";
+    return token.trim() || "";
+  } catch {
+    return "";
+  }
+}
+
+async function uploadDataUrlViaServerApi(dataUrl: string, merchantHint = "public", folder = "merchant-assets"): Promise<string | null> {
+  try {
+    const accessToken = await getAssetUploadAccessToken();
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+    };
+    if (accessToken) {
+      headers.Authorization = `Bearer ${accessToken}`;
+    }
+    const response = await fetch("/api/assets/upload", {
+      method: "POST",
+      headers,
+      credentials: "same-origin",
+      body: JSON.stringify({
+        dataUrl,
+        merchantHint,
+        folder,
+      }),
+    });
+    if (!response.ok) return null;
+    const payload = (await response.json().catch(() => null)) as { url?: unknown } | null;
+    return typeof payload?.url === "string" && payload.url.trim() ? payload.url.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
 async function uploadDataUrlToSupabase(dataUrl: string, merchantHint = "public", folder = "merchant-assets"): Promise<string | null> {
   const meta = parseDataUrlMeta(dataUrl);
   if (!meta) return null;
+  const uploadedViaServer = await uploadDataUrlViaServerApi(dataUrl, merchantHint, folder);
+  if (uploadedViaServer) return uploadedViaServer;
   const blob = dataUrlToBlob(dataUrl, meta.mime);
   const now = new Date();
   const yyyy = `${now.getFullYear()}`;
@@ -1081,7 +1124,13 @@ type ViewportEditorState = {
   selectedId: string;
 };
 
+type GlobalPageRecord = {
+  id?: string | number | null;
+  blocks?: unknown;
+} | null;
+
 let pagesSlugColumnSupported: boolean | null = null;
+let pagesMerchantIdColumnSupported: boolean | null = null;
 let pagesUpdatedAtColumnSupported: boolean | null = null;
 
 function isMissingSlugColumn(message: string) {
@@ -1107,6 +1156,74 @@ function isMissingMerchantIdColumn(message: string) {
 
 function normalizeSaveErrorMessage(message: string) {
   return message.replace(/^保存失败[:：]\s*/u, "");
+}
+
+async function queryGlobalPageRecord(columns: string): Promise<{ record: GlobalPageRecord; error: SaveErrorLike }> {
+  if (pagesSlugColumnSupported !== false && pagesMerchantIdColumnSupported !== false) {
+    const scopedBySlug = await supabase
+      .from("pages")
+      .select(columns)
+      .is("merchant_id", null)
+      .eq("slug", "home")
+      .limit(1)
+      .maybeSingle();
+    if (!scopedBySlug.error) {
+      pagesSlugColumnSupported = true;
+      pagesMerchantIdColumnSupported = true;
+      return {
+        record: (scopedBySlug.data ?? null) as GlobalPageRecord,
+        error: null,
+      };
+    }
+    if (isMissingMerchantIdColumn(scopedBySlug.error.message)) {
+      pagesMerchantIdColumnSupported = false;
+    } else if (isMissingSlugColumn(scopedBySlug.error.message)) {
+      pagesSlugColumnSupported = false;
+    } else {
+      return { record: null, error: scopedBySlug.error };
+    }
+  }
+
+  if (pagesSlugColumnSupported !== false) {
+    const bySlug = await supabase.from("pages").select(columns).eq("slug", "home").limit(1).maybeSingle();
+    if (!bySlug.error) {
+      pagesSlugColumnSupported = true;
+      return {
+        record: (bySlug.data ?? null) as GlobalPageRecord,
+        error: null,
+      };
+    }
+    if (isMissingSlugColumn(bySlug.error.message)) {
+      pagesSlugColumnSupported = false;
+    } else {
+      return { record: null, error: bySlug.error };
+    }
+  }
+
+  if (pagesMerchantIdColumnSupported !== false) {
+    const byMerchantId = await supabase.from("pages").select(columns).is("merchant_id", null).limit(1).maybeSingle();
+    if (!byMerchantId.error) {
+      pagesMerchantIdColumnSupported = true;
+      return {
+        record: (byMerchantId.data ?? null) as GlobalPageRecord,
+        error: null,
+      };
+    }
+    if (isMissingMerchantIdColumn(byMerchantId.error.message)) {
+      pagesMerchantIdColumnSupported = false;
+    } else {
+      return { record: null, error: byMerchantId.error };
+    }
+  }
+
+  const fallback = await supabase.from("pages").select(columns).limit(1).maybeSingle();
+  if (fallback.error) {
+    return { record: null, error: fallback.error };
+  }
+  return {
+    record: (fallback.data ?? null) as GlobalPageRecord,
+    error: null,
+  };
 }
 
 function shouldOfferCompressionPresetForPublishError(message: string) {
@@ -1433,25 +1550,6 @@ function runPublishPreflight(blocks: Block[], payloadBytes: number): PublishPref
   return { errors, warnings };
 }
 
-function countInlineImageDataUrls(value: unknown): number {
-  let count = 0;
-  const visit = (input: unknown) => {
-    if (typeof input === "string") {
-      if (/^data:image\//i.test(input)) count += 1;
-      return;
-    }
-    if (Array.isArray(input)) {
-      input.forEach(visit);
-      return;
-    }
-    if (input && typeof input === "object") {
-      Object.values(input as Record<string, unknown>).forEach(visit);
-    }
-  };
-  visit(value);
-  return count;
-}
-
 type RecompressStats = {
   visited: number;
   changed: number;
@@ -1661,9 +1759,8 @@ async function optimizeBlocksForPublishIfNeeded(
     uploadCompressionPreset: UploadCompressionPreset;
   },
 ): Promise<PublishOptimizationResult> {
-  const inlineImageCount = countInlineImageDataUrls(blocks);
   const originalBytes = estimateUtf8Size(JSON.stringify(blocks));
-  const shouldOptimize = inlineImageCount > 0;
+  const shouldOptimize = hasInlineAssets(blocks);
   if (!shouldOptimize) {
     return {
       blocks,
@@ -1888,33 +1985,10 @@ async function loadBlocksViaRestFallback(merchantIds: string[], accessToken?: st
 }
 
 async function loadPlatformBlocksFromSupabaseFallback() {
-  if (pagesSlugColumnSupported !== false) {
-    const globalWithSlug = await supabase
-      .from("pages")
-      .select("blocks")
-      .is("merchant_id", null)
-      .eq("slug", "home")
-      .limit(1)
-      .maybeSingle();
-    if (!globalWithSlug.error && Array.isArray(globalWithSlug.data?.blocks)) {
-      pagesSlugColumnSupported = true;
-      const sanitized = sanitizeBlocksForRuntime(globalWithSlug.data.blocks as Block[]).blocks;
-      if (sanitized.length > 0) return sanitized;
-      return null;
-    }
-    if (globalWithSlug.error && isMissingSlugColumn(globalWithSlug.error.message)) {
-      pagesSlugColumnSupported = false;
-    } else if (globalWithSlug.error) {
-      return null;
-    }
-  }
-
-  const globalWithoutSlug = await supabase.from("pages").select("blocks").is("merchant_id", null).limit(1).maybeSingle();
-  if (!globalWithoutSlug.error && Array.isArray(globalWithoutSlug.data?.blocks)) {
-    const sanitized = sanitizeBlocksForRuntime(globalWithoutSlug.data.blocks as Block[]).blocks;
-    if (sanitized.length > 0) return sanitized;
-    return null;
-  }
+  const result = await queryGlobalPageRecord("blocks");
+  if (result.error || !Array.isArray(result.record?.blocks)) return null;
+  const sanitized = sanitizeBlocksForRuntime(result.record.blocks as Block[]).blocks;
+  if (sanitized.length > 0) return sanitized;
   return null;
 }
 
@@ -1969,29 +2043,14 @@ function getMerchantIdentityNotice(merchantIds: string[]) {
   async function trySaveWithPayload(sanitizedPayload: { blocks: Block[]; updated_at?: string }): Promise<SaveErrorLike> {
     // Public homepage publish: only touch the global row (merchant_id is null).
     if (merchantIds.length === 0) {
-      if (pagesSlugColumnSupported !== false) {
-        const scopedBySlug = await supabase
-          .from("pages")
-          .update(sanitizedPayload)
-          .is("merchant_id", null)
-          .eq("slug", "home");
-        if (!scopedBySlug.error) {
-          pagesSlugColumnSupported = true;
-          return null;
-        }
+      const existingGlobal = await queryGlobalPageRecord("id");
+      if (existingGlobal.error) return existingGlobal.error;
 
-        if (isMissingMerchantIdColumn(scopedBySlug.error.message)) {
-          const bySlug = await supabase.from("pages").update(sanitizedPayload).eq("slug", "home");
-          if (!bySlug.error) {
-            pagesSlugColumnSupported = true;
-            return null;
-          }
-          if (!isMissingSlugColumn(bySlug.error.message)) return bySlug.error;
-          pagesSlugColumnSupported = false;
-        } else {
-          if (!isMissingSlugColumn(scopedBySlug.error.message)) return scopedBySlug.error;
-          pagesSlugColumnSupported = false;
-        }
+      const globalRowId = existingGlobal.record?.id;
+      if (globalRowId !== undefined && globalRowId !== null) {
+        const byId = await supabase.from("pages").update(sanitizedPayload).eq("id", globalRowId);
+        if (!byId.error) return null;
+        return byId.error;
       }
 
       if (pagesSlugColumnSupported !== false) {
@@ -2010,9 +2069,9 @@ function getMerchantIdentityNotice(merchantIds: string[]) {
         }
       }
 
-      return {
-        message: "未匹配到商户站点，已阻止写入远端。请先在“商户信息”完成绑定后再发布。",
-      };
+      const initWithoutSlug = await supabase.from("pages").insert(sanitizedPayload);
+      if (!initWithoutSlug.error) return null;
+      return initWithoutSlug.error;
     }
 
     for (const merchantId of merchantIds) {
@@ -2957,28 +3016,12 @@ export default function AdminClient({
         const code = typeof data?.code === "string" ? data.code : "";
         const message = typeof data?.message === "string" ? data.message : `发布接口错误（HTTP ${response.status}）`;
         if (code === "publish_service_unavailable") {
-          if (isPlatformEditor) {
-            return {
-              handled: true,
-              error: {
-                message: "超级后台发布通道未配置（缺少 SUPABASE_SERVICE_ROLE_KEY），暂不可发布。",
-              },
-            };
-          }
           return { handled: false, error: null };
         }
         return { handled: true, error: { message } };
       }
       return { handled: true, error: null };
     } catch {
-      if (isPlatformEditor) {
-        return {
-          handled: true,
-          error: {
-            message: "超级后台发布通道暂不可用，请检查网络或服务端配置后重试。",
-          },
-        };
-      }
       return { handled: false, error: null };
     } finally {
       clearTimeout(timer);

@@ -8,6 +8,7 @@
     "check:encoding": "node scripts/check-mojibake.mjs",
     "check:encoding:strict": "node scripts/check-mojibake.mjs --strict",
     "check:supabase": "node scripts/check-supabase-health.mjs",
+    "check:publish-stack": "node scripts/check-publish-stack.mjs",
     "audit:inline-assets": "node scripts/audit-inline-page-assets.mjs",
     "migrate:inline-images": "node scripts/externalize-inline-page-images.mjs",
     "gen:china-locations": "node scripts/generate-china-location-options.mjs",

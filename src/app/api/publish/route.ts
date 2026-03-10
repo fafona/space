@@ -36,6 +36,11 @@ type LooseSupabaseClient = {
   from: (table: string) => LooseQueryBuilder;
 };
 
+type GlobalPageRecord = {
+  id?: string | number | null;
+  blocks?: unknown;
+} | null;
+
 type PublishCachedResult = {
   at: number;
   status: number;
@@ -125,36 +130,95 @@ async function saveBlocksToPagesTable(
   const sanitizedBlocks = sanitizeBlocksForRuntime(payload.blocks).blocks;
   const state = {
     pagesSlugColumnSupported: null as boolean | null,
+    pagesMerchantIdColumnSupported: null as boolean | null,
     pagesUpdatedAtColumnSupported: null as boolean | null,
+  };
+
+  const queryGlobalPageRecord = async (columns: string): Promise<{ record: GlobalPageRecord; error: SaveErrorLike }> => {
+    if (state.pagesSlugColumnSupported !== false && state.pagesMerchantIdColumnSupported !== false) {
+      const scopedBySlug = await supabase
+        .from("pages")
+        .select(columns)
+        .is("merchant_id", null)
+        .eq("slug", "home")
+        .limit(1)
+        .maybeSingle();
+      if (!scopedBySlug.error) {
+        state.pagesSlugColumnSupported = true;
+        state.pagesMerchantIdColumnSupported = true;
+        return {
+          record: (scopedBySlug.data ?? null) as GlobalPageRecord,
+          error: null,
+        };
+      }
+
+      const scopedMessage = toErrorMessage(scopedBySlug.error);
+      if (isMissingMerchantIdColumn(scopedMessage)) {
+        state.pagesMerchantIdColumnSupported = false;
+      } else if (isMissingSlugColumn(scopedMessage)) {
+        state.pagesSlugColumnSupported = false;
+      } else {
+        return { record: null, error: { message: scopedMessage } };
+      }
+    }
+
+    if (state.pagesSlugColumnSupported !== false) {
+      const bySlug = await supabase.from("pages").select(columns).eq("slug", "home").limit(1).maybeSingle();
+      if (!bySlug.error) {
+        state.pagesSlugColumnSupported = true;
+        return {
+          record: (bySlug.data ?? null) as GlobalPageRecord,
+          error: null,
+        };
+      }
+
+      const slugMessage = toErrorMessage(bySlug.error);
+      if (isMissingSlugColumn(slugMessage)) {
+        state.pagesSlugColumnSupported = false;
+      } else {
+        return { record: null, error: { message: slugMessage } };
+      }
+    }
+
+    if (state.pagesMerchantIdColumnSupported !== false) {
+      const byMerchantId = await supabase.from("pages").select(columns).is("merchant_id", null).limit(1).maybeSingle();
+      if (!byMerchantId.error) {
+        state.pagesMerchantIdColumnSupported = true;
+        return {
+          record: (byMerchantId.data ?? null) as GlobalPageRecord,
+          error: null,
+        };
+      }
+
+      const merchantMessage = toErrorMessage(byMerchantId.error);
+      if (isMissingMerchantIdColumn(merchantMessage)) {
+        state.pagesMerchantIdColumnSupported = false;
+      } else {
+        return { record: null, error: { message: merchantMessage } };
+      }
+    }
+
+    const fallback = await supabase.from("pages").select(columns).limit(1).maybeSingle();
+    if (fallback.error) {
+      return { record: null, error: { message: toErrorMessage(fallback.error) } };
+    }
+
+    return {
+      record: (fallback.data ?? null) as GlobalPageRecord,
+      error: null,
+    };
   };
 
   const trySaveWithPayload = async (sanitizedPayload: { blocks: Block[]; updated_at?: string }): Promise<SaveErrorLike> => {
     if (merchantIds.length === 0) {
-      if (state.pagesSlugColumnSupported !== false) {
-        const scopedBySlug = await supabase
-          .from("pages")
-          .update(sanitizedPayload)
-          .is("merchant_id", null)
-          .eq("slug", "home");
-        if (!scopedBySlug.error) {
-          state.pagesSlugColumnSupported = true;
-          return null;
-        }
+      const existingGlobal = await queryGlobalPageRecord("id");
+      if (existingGlobal.error) return existingGlobal.error;
 
-        const scopedMessage = toErrorMessage(scopedBySlug.error);
-        if (isMissingMerchantIdColumn(scopedMessage)) {
-          const bySlug = await supabase.from("pages").update(sanitizedPayload).eq("slug", "home");
-          if (!bySlug.error) {
-            state.pagesSlugColumnSupported = true;
-            return null;
-          }
-          const slugMessage = toErrorMessage(bySlug.error);
-          if (!isMissingSlugColumn(slugMessage)) return { message: slugMessage };
-          state.pagesSlugColumnSupported = false;
-        } else {
-          if (!isMissingSlugColumn(scopedMessage)) return { message: scopedMessage };
-          state.pagesSlugColumnSupported = false;
-        }
+      const globalRowId = existingGlobal.record?.id;
+      if (globalRowId !== undefined && globalRowId !== null) {
+        const byId = await supabase.from("pages").update(sanitizedPayload).eq("id", globalRowId);
+        if (!byId.error) return null;
+        return { message: toErrorMessage(byId.error) };
       }
 
       if (state.pagesSlugColumnSupported !== false) {
@@ -174,7 +238,9 @@ async function saveBlocksToPagesTable(
         }
       }
 
-      return { message: "未匹配到全局页面记录，无法写入远端。" };
+      const initWithoutSlug = await supabase.from("pages").insert(sanitizedPayload);
+      if (!initWithoutSlug.error) return null;
+      return { message: toErrorMessage(initWithoutSlug.error) };
     }
 
     for (const merchantId of merchantIds) {

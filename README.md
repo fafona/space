@@ -33,3 +33,22 @@ npm run lint
 npm test
 npm run build
 ```
+
+## 自动部署
+
+当前仓库已经有 CI 工作流 `/.github/workflows/ci.yml`，可以继续用 GitHub Actions 做生产自动部署：
+
+1. 服务器准备
+   在服务器安装 `node 20`、`npm`、`pm2`、`git`，并把仓库先 clone 到固定目录，例如 `/var/www/merchant-space`
+2. 服务器环境变量
+   在服务器项目目录准备 `.env.local`，至少包含 `NEXT_PUBLIC_SUPABASE_URL`、`NEXT_PUBLIC_SUPABASE_ANON_KEY`、`SUPABASE_SERVICE_ROLE_KEY`
+3. GitHub Secrets
+   在仓库配置 `SSH_HOST`、`SSH_PORT`、`SSH_USER`、`SSH_PRIVATE_KEY`、`APP_DIR`
+   可选：`APP_NAME`、`APP_PORT`
+4. 自动触发
+   推送到 `main` 或 `master` 后，CI 成功会触发 `/.github/workflows/deploy.yml`
+   也可以在 GitHub Actions 页面手动触发 `Deploy Production`
+5. 服务器执行内容
+   工作流会通过 `/scripts/deploy.production.sh` 在服务器执行 `git pull`、`npm ci`、`npm run build`、`pm2 restart`
+
+如果 `faolla.com` 继续指向你当前服务器 IP，这套方式是最省改动的。若后续改用 Vercel，则要把域名 DNS 一起切过去。
