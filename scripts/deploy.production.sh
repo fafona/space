@@ -39,10 +39,10 @@ npm ci
 npm run build
 
 if pm2 describe "$APP_NAME" >/dev/null 2>&1; then
-  pm2 restart "$APP_NAME" --update-env
-else
-  PORT="$APP_PORT" pm2 start npm --name "$APP_NAME" -- start -- -p "$APP_PORT"
+  pm2 delete "$APP_NAME" >/dev/null 2>&1 || true
 fi
+
+PORT="$APP_PORT" pm2 start npm --name "$APP_NAME" -- start -- -p "$APP_PORT"
 
 pm2 save
 echo "[deploy] deploy finished"
