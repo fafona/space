@@ -1292,6 +1292,7 @@ type AdminClientProps = {
   editorTitle?: string;
   frontendHref?: string;
   editorMode?: "merchant" | "platform";
+  forceDesktopEditorSidebar?: boolean;
 };
 
 function estimateUtf8Size(value: string) {
@@ -2094,6 +2095,7 @@ export default function AdminClient({
   editorTitle = "页面编辑",
   frontendHref = "/site/site-main",
   editorMode = "merchant",
+  forceDesktopEditorSidebar = false,
 }: AdminClientProps = {}) {
   const [storeScope] = useState<string>(() => readBlocksStoreScopeFromLocation(forcedScope));
   const [justSignedIn] = useState<boolean>(() => {
@@ -5086,7 +5088,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     return Math.max(max, value);
   }, 0);
   const mobileFrontendPreviewPadding = Math.max(120, Math.max(0, maxBlockOffsetY) + 100);
-  const shouldUseDesktopEditorSidebar = isPlatformEditor || isDesktopEditorSidebar;
+  const shouldUseDesktopEditorSidebar = forceDesktopEditorSidebar || isPlatformEditor || isDesktopEditorSidebar;
 
   function renderTopMostOverlay(content: ReactNode) {
     if (typeof window === "undefined") return content;
@@ -5117,6 +5119,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       }}
       onMouseDownCapture={handleEditorMouseDownCapture}
       data-editor-mode={editorMode}
+      data-force-desktop-sidebar={forceDesktopEditorSidebar ? "1" : "0"}
     >
       {!topBarCollapsed && backendNotice ? (
         <div className="max-w-6xl mx-auto px-6 pb-3">

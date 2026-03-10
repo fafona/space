@@ -31,6 +31,7 @@ export default function SuperAdminEditorClient() {
   return (
     <AdminClient
       editorMode="platform"
+      forceDesktopEditorSidebar
       forcedScope={PLATFORM_EDITOR_SCOPE}
       editorTitle="Portal Visual Editor"
       frontendHref="/portal"
