@@ -5,6 +5,7 @@ import AdminClient from "../../admin/AdminClient";
 import { PLATFORM_EDITOR_SCOPE } from "@/lib/siteRouting";
 import { buildSuperAdminLoginHref, isSuperAdminAuthenticated, syncSuperAdminAuthenticatedCookie } from "@/lib/superAdminAuth";
 import { useHydrated } from "@/lib/useHydrated";
+import { SUPER_ADMIN_EDITOR_BUILD_TOKEN } from "./buildToken";
 
 export default function SuperAdminEditorClient() {
   const hydrated = useHydrated();
@@ -13,7 +14,7 @@ export default function SuperAdminEditorClient() {
     syncSuperAdminAuthenticatedCookie();
   }, [hydrated]);
   const ready = hydrated && isSuperAdminAuthenticated();
-  const editorBuildLabel = "SUPER-ADMIN-EDITOR-V3";
+  const editorBuildLabel = `SUPER-ADMIN-EDITOR-${SUPER_ADMIN_EDITOR_BUILD_TOKEN}`;
 
   useEffect(() => {
     if (!hydrated) return;
@@ -42,7 +43,7 @@ export default function SuperAdminEditorClient() {
         editorMode="platform"
         forceDesktopEditorSidebar
         forcedScope={PLATFORM_EDITOR_SCOPE}
-        editorTitle="Portal Visual Editor"
+        editorTitle={`Portal Visual Editor · ${SUPER_ADMIN_EDITOR_BUILD_TOKEN}`}
         frontendHref="/portal"
       />
     </>
