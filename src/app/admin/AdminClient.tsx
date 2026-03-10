@@ -2491,7 +2491,7 @@ export default function AdminClient({
         } = await withTimeout(
           supabase.auth.getSession(),
           AUTH_CHECK_TIMEOUT_MS,
-          "登录查超时，已回默商户标识",
+          "登录检查超时，已回退到默认商户标识",
         );
         merchantIds = await resolveMerchantIds(session?.user?.id, session?.user?.email, {
           ...(session?.user?.user_metadata ?? {}),
@@ -3242,7 +3242,7 @@ export default function AdminClient({
         const gatewayReady = await canReachSupabaseGateway(Math.min(3000, AUTH_CHECK_TIMEOUT_MS));
         if (!mounted) return;
         if (!gatewayReady) {
-          setBackendNotice("后连不稳定，在尝试直接取远竡..");
+          setBackendNotice("后端连接不稳定，正在尝试直接获取远端内容...");
         }
 
         const {
@@ -3251,7 +3251,7 @@ export default function AdminClient({
         } = await withTimeout(
           supabase.auth.getSession(),
           AUTH_CHECK_TIMEOUT_MS,
-          "登录查超时，已使用本地缓存继综辑",
+          "登录检查超时，已使用本地缓存继续编辑",
         );
         let session = rawSession;
 
@@ -4685,7 +4685,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
     const gatewayReady = await canReachSupabaseGateway(Math.min(3000, AUTH_CHECK_TIMEOUT_MS));
     if (!gatewayReady) {
-      setBackendNotice("后连不稳定，在尝试发..");
+      setBackendNotice("后端连接不稳定，正在尝试发布...");
     }
     setPublishing(true);
     showSavePublishTip("发布..");
