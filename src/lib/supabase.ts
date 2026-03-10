@@ -197,36 +197,61 @@ export const supabase = createClient(resolvedSupabaseUrl, resolvedSupabaseAnonKe
   },
 });
 
-export async function canReachSupabaseGateway(timeoutMs = 4000): Promise<boolean> {
-  if (!isSupabaseEnabled || typeof fetch !== "function") return false;
-  if (isSupabaseCooldownActive()) return false;
+async function probeSupabaseEndpoint(
+  path: string,
+  timeoutMs: number,
+  headers: Record<string, string>,
+): Promise<{ ok: boolean; shouldCooldown: boolean }> {
   const controller = new AbortController();
   const timer = setTimeout(() => {
     controller.abort();
   }, Math.max(200, timeoutMs));
 
   try {
-    const response = await fetch(`${resolvedSupabaseUrl}/auth/v1/settings`, {
+    const response = await fetch(`${resolvedSupabaseUrl}${path}`, {
       method: "GET",
-      headers: {
-        apikey: resolvedSupabaseAnonKey,
-      },
+      headers,
       cache: "no-store",
       signal: controller.signal,
     });
     const ok = response.status >= 200 && response.status < 500;
-    if (ok) {
-      clearSupabaseCooldown();
-      return true;
-    }
-    if (response.status >= 520) {
-      activateSupabaseCooldown();
-    }
-    return false;
+    return {
+      ok,
+      shouldCooldown: response.status >= 520,
+    };
   } catch {
-    activateSupabaseCooldown();
-    return false;
+    return {
+      ok: false,
+      shouldCooldown: true,
+    };
   } finally {
     clearTimeout(timer);
   }
+}
+
+export async function canReachSupabaseGateway(timeoutMs = 4000): Promise<boolean> {
+  if (!isSupabaseEnabled || typeof fetch !== "function") return false;
+  if (isSupabaseCooldownActive()) return false;
+
+  const authProbe = await probeSupabaseEndpoint("/auth/v1/settings", timeoutMs, {
+    apikey: resolvedSupabaseAnonKey,
+  });
+  if (authProbe.ok) {
+    clearSupabaseCooldown();
+    return true;
+  }
+
+  const restProbe = await probeSupabaseEndpoint("/rest/v1/", timeoutMs, {
+    apikey: resolvedSupabaseAnonKey,
+    Authorization: `Bearer ${resolvedSupabaseAnonKey}`,
+  });
+  if (restProbe.ok) {
+    clearSupabaseCooldown();
+    return true;
+  }
+
+  if (authProbe.shouldCooldown || restProbe.shouldCooldown) {
+    activateSupabaseCooldown();
+  }
+  return false;
 }
