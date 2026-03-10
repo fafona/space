@@ -23,7 +23,7 @@ export default function SuperAdminEditorClient() {
     return (
       <main className="min-h-screen bg-slate-100 p-6">
         <div className="mx-auto max-w-6xl rounded-lg border bg-white p-4 text-sm text-slate-600">
-          正在验证总后台编辑权限...
+          正在验证超级后台编辑权限...
         </div>
       </main>
     );
@@ -31,9 +31,9 @@ export default function SuperAdminEditorClient() {
 
   return (
     <>
-      <div className="pointer-events-none fixed left-4 top-4 z-[21000] rounded-full border border-rose-300 bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-700 shadow-sm">
+      <span className="sr-only" data-super-admin-editor-client-build={editorBuildLabel}>
         {editorBuildLabel}
-      </div>
+      </span>
       <AdminClient
         editorMode="platform"
         forceDesktopEditorSidebar
