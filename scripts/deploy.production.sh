@@ -42,6 +42,19 @@ if pm2 describe "$APP_NAME" >/dev/null 2>&1; then
   pm2 delete "$APP_NAME" >/dev/null 2>&1 || true
 fi
 
+if command -v ss >/dev/null 2>&1; then
+  for _ in $(seq 1 20); do
+    if ! ss -ltn "( sport = :$APP_PORT )" | grep -Fq ":$APP_PORT"; then
+      break
+    fi
+    sleep 1
+  done
+  if ss -ltn "( sport = :$APP_PORT )" | grep -Fq ":$APP_PORT"; then
+    echo "[deploy] port $APP_PORT is still in use after waiting"
+    exit 1
+  fi
+fi
+
 PORT="$APP_PORT" pm2 start npm --name "$APP_NAME" -- start -- -p "$APP_PORT"
 
 pm2 save
