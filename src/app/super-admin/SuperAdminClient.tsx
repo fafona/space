@@ -54,6 +54,7 @@ import {
 } from "@/lib/superAdminAuth";
 import { supabase } from "@/lib/supabase";
 import { useHydrated } from "@/lib/useHydrated";
+import { SUPER_ADMIN_EDITOR_BUILD_TOKEN } from "./editor/buildToken";
 
 function fmt(iso: string | null) {
   if (!iso) return "-";
@@ -2279,7 +2280,7 @@ export default function SuperAdminClient() {
                 <section className="rounded-lg border bg-white p-4">
                   <div className="flex flex-wrap items-center gap-2 text-sm">
                     <Link
-                      href="/super-admin/editor"
+                      href={`/super-admin/editor?build=${encodeURIComponent(SUPER_ADMIN_EDITOR_BUILD_TOKEN)}`}
                       target="_blank"
                       rel="noreferrer"
                       className="rounded border bg-black px-3 py-2 text-white"
