@@ -9,6 +9,7 @@ import { useHydrated } from "@/lib/useHydrated";
 export default function SuperAdminEditorClient() {
   const hydrated = useHydrated();
   const ready = hydrated && isSuperAdminAuthenticated();
+  const editorBuildLabel = "SUPER-ADMIN-EDITOR-V3";
 
   useEffect(() => {
     if (!hydrated) return;
@@ -29,12 +30,17 @@ export default function SuperAdminEditorClient() {
   }
 
   return (
-    <AdminClient
-      editorMode="platform"
-      forceDesktopEditorSidebar
-      forcedScope={PLATFORM_EDITOR_SCOPE}
-      editorTitle="Portal Visual Editor"
-      frontendHref="/portal"
-    />
+    <>
+      <div className="pointer-events-none fixed left-4 top-4 z-[21000] rounded-full border border-rose-300 bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-700 shadow-sm">
+        {editorBuildLabel}
+      </div>
+      <AdminClient
+        editorMode="platform"
+        forceDesktopEditorSidebar
+        forcedScope={PLATFORM_EDITOR_SCOPE}
+        editorTitle="Portal Visual Editor"
+        frontendHref="/portal"
+      />
+    </>
   );
 }
