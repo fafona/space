@@ -130,7 +130,7 @@ async function tryAllocateSequentialMerchantId(user: SessionLikeUser): Promise<s
     const candidateId = String(candidate);
     const { error } = await supabase.from("merchants").insert({
       id: candidateId,
-      name: email ? email.split("@")[0] : "",
+      name: "",
       email: email || null,
       owner_email: email || null,
       contact_email: email || null,

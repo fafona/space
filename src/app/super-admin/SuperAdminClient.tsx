@@ -764,6 +764,20 @@ type MerchantUserRow = {
   statusKey: "active" | "paused" | "unlinked";
 };
 
+type MerchantSiteContext = {
+  site: Site;
+  userEmail: string;
+  prefix: string;
+  industry: string;
+  city: string;
+  sizeBytes: number;
+  visits: MerchantVisits;
+  expireAt: string | null;
+  expired: boolean;
+  statusKey: "active" | "paused";
+  statusLabel: "正常" | "暂停";
+};
+
 type BackendMerchantAccount = {
   merchantId: string;
   merchantName: string;
@@ -1016,18 +1030,14 @@ export default function SuperAdminClient() {
     return map;
   }, [state.users]);
   const merchantRows = useMemo(() => {
-    const backendAccountByEmail = new Map(
-      backendMerchantAccounts
-        .map((account) => [normalizeEmailValue(account.email), account] as const)
-        .filter(([email]) => Boolean(email)),
-    );
-    const siteRows: MerchantUserRow[] = state.sites
+    const siteContextByEmail = new Map<string, MerchantSiteContext>();
+    state.sites
       .filter((site) => site.id !== "site-main")
-      .map((site) => {
+      .forEach((site) => {
         const owner = merchantOwnerBySiteId.get(site.id);
-        const userEmail = (site.contactEmail ?? "").trim() || owner?.email || "-";
-        const backendAccount = backendAccountByEmail.get(normalizeEmailValue(userEmail)) ?? null;
-        const merchantName = (site.merchantName ?? "").trim() || site.name;
+        const userEmail = (site.contactEmail ?? "").trim() || owner?.email || "";
+        const emailKey = normalizeEmailValue(userEmail);
+        if (!emailKey) return;
         const prefix = (site.domainPrefix ?? site.domainSuffix ?? "").trim();
         const industry = (site.industry ?? "").trim() || "未设置";
         const city = (site.location?.city ?? "").trim() || "-";
@@ -1037,53 +1047,73 @@ export default function SuperAdminClient() {
         const expired = !!expireAt && Number.isFinite(new Date(expireAt).getTime()) && new Date(expireAt).getTime() <= nowMs;
         const manuallyPaused = site.status !== "online";
         const statusKey: "active" | "paused" = expired || manuallyPaused ? "paused" : "active";
-        return {
+        const candidate: MerchantSiteContext = {
           site,
-          hasSite: true,
-          backendAccount,
-          merchantId: normalizeMerchantIdValue(backendAccount?.merchantId) || "-",
           userEmail,
-          merchantName,
           prefix,
           industry,
           city,
           sizeBytes,
           visits,
-          registerAt: site.createdAt,
           expireAt,
           expired,
-          statusLabel: statusKey === "active" ? "正常" : "暂停",
           statusKey,
+          statusLabel: statusKey === "active" ? "正常" : "暂停",
         };
+        const current = siteContextByEmail.get(emailKey);
+        if (!current) {
+          siteContextByEmail.set(emailKey, candidate);
+          return;
+        }
+        const currentTs = new Date(current.site.createdAt).getTime();
+        const candidateTs = new Date(candidate.site.createdAt).getTime();
+        if (candidateTs > currentTs) {
+          siteContextByEmail.set(emailKey, candidate);
+        }
       });
 
-    const siteEmails = new Set(
-      siteRows
-        .map((row) => normalizeEmailValue(row.userEmail))
-        .filter(Boolean),
-    );
-    const backendRows: MerchantUserRow[] = backendMerchantAccounts
-      .filter((account) => !siteEmails.has(normalizeEmailValue(account.email)))
-      .map((account) => ({
-        site: buildBackendOnlySite(account),
-        hasSite: false,
+    const sorted: MerchantUserRow[] = backendMerchantAccounts.map((account) => {
+      const siteContext = siteContextByEmail.get(normalizeEmailValue(account.email)) ?? null;
+      if (!siteContext) {
+        return {
+          site: buildBackendOnlySite(account),
+          hasSite: false,
+          backendAccount: account,
+          merchantId: normalizeMerchantIdValue(account.merchantId) || "-",
+          userEmail: account.email || "-",
+          merchantName: (account.merchantName ?? "").trim(),
+          prefix: "-",
+          industry: "未建站",
+          city: "-",
+          sizeBytes: 0,
+          visits: { today: 0, day7: 0, day30: 0, total: 0 },
+          registerAt: account.createdAt ?? nextIsoNow(),
+          expireAt: null,
+          expired: false,
+          statusLabel: "未建站",
+          statusKey: "unlinked",
+        };
+      }
+      return {
+        site: siteContext.site,
+        hasSite: true,
         backendAccount: account,
         merchantId: normalizeMerchantIdValue(account.merchantId) || "-",
-        userEmail: account.email || "-",
+        userEmail: account.email || siteContext.userEmail || "-",
         merchantName: (account.merchantName ?? "").trim(),
-        prefix: "-",
-        industry: "未建站",
-        city: "-",
-        sizeBytes: 0,
-        visits: { today: 0, day7: 0, day30: 0, total: 0 },
-        registerAt: account.createdAt ?? nextIsoNow(),
-        expireAt: null,
-        expired: false,
-        statusLabel: "未建站",
-        statusKey: "unlinked",
-      }));
+        prefix: siteContext.prefix,
+        industry: siteContext.industry,
+        city: siteContext.city,
+        sizeBytes: siteContext.sizeBytes,
+        visits: siteContext.visits,
+        registerAt: account.createdAt ?? siteContext.site.createdAt,
+        expireAt: siteContext.expireAt,
+        expired: siteContext.expired,
+        statusLabel: siteContext.statusLabel,
+        statusKey: siteContext.statusKey,
+      };
+    });
 
-    const sorted = [...siteRows, ...backendRows];
     const sortRule = state.homeLayout.merchantDefaultSortRule;
     sorted.sort((a, b) => {
       if (sortRule === "name_asc") return a.merchantName.localeCompare(b.merchantName, "zh-CN");
@@ -3115,7 +3145,7 @@ export default function SuperAdminClient() {
                               <tr key={`${account.merchantId}-${account.email}`} className="border-t">
                                 <td className="px-3 py-2 text-xs">{account.email || "-"}</td>
                                 <td className="px-3 py-2 text-xs">{account.merchantId || "-"}</td>
-                                <td className="px-3 py-2 text-xs">{account.merchantName || "-"}</td>
+                                <td className="px-3 py-2 text-xs">{account.merchantName}</td>
                                 <td className="px-3 py-2 text-xs text-slate-500">{fmt(account.createdAt)}</td>
                                 <td className="px-3 py-2 text-xs">
                                   <span className={`rounded border px-2 py-0.5 ${badgeClass(account.emailConfirmed ? "approved" : "pending")}`}>
@@ -3243,7 +3273,7 @@ export default function SuperAdminClient() {
                           ) : (
                             <div className="space-y-3 text-xs">
                               <div className="rounded border bg-slate-50 px-3 py-2 text-slate-600">
-                                配置对象：{selectedMerchantRow.merchantName} ({selectedMerchantRow.userEmail || "-"})
+                                配置对象：{selectedMerchantRow.userEmail || "-"}
                               </div>
                               <div className="grid gap-2 md:grid-cols-2">
                               <label className="space-y-1">
@@ -3346,7 +3376,7 @@ export default function SuperAdminClient() {
                                           ...previewMerchantNameTextStyle,
                                         }}
                                       >
-                                        <span className="truncate">{selectedMerchantRow.merchantName || "商户名称"}</span>
+                                        <span className="truncate">{selectedMerchantRow.merchantName}</span>
                                       </div>
                                       <div
                                         className={`${previewMerchantCardTextBoxClass} text-xs text-slate-500`}
