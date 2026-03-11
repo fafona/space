@@ -66,6 +66,11 @@ function normalizeEmailValue(value: string | null | undefined) {
   return String(value ?? "").trim().toLowerCase();
 }
 
+function normalizeMerchantIdValue(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim();
+  return /^\d+$/.test(normalized) ? normalized : "";
+}
+
 function buildBackendOnlySite(account: BackendMerchantAccount): Site {
   const timestamp = account.createdAt ?? nextIsoNow();
   const merchantName = (account.merchantName ?? "").trim();
@@ -1036,7 +1041,7 @@ export default function SuperAdminClient() {
           site,
           hasSite: true,
           backendAccount,
-          merchantId: backendAccount?.merchantId || "-",
+          merchantId: normalizeMerchantIdValue(backendAccount?.merchantId) || "-",
           userEmail,
           merchantName,
           prefix,
@@ -1063,7 +1068,7 @@ export default function SuperAdminClient() {
         site: buildBackendOnlySite(account),
         hasSite: false,
         backendAccount: account,
-        merchantId: account.merchantId || "-",
+        merchantId: normalizeMerchantIdValue(account.merchantId) || "-",
         userEmail: account.email || "-",
         merchantName: (account.merchantName ?? "").trim(),
         prefix: "-",

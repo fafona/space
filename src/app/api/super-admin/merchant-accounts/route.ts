@@ -64,6 +64,10 @@ function normalizeEmail(...values: Array<string | null | undefined>) {
   return "";
 }
 
+function isNumericMerchantId(value: string | null | undefined) {
+  return /^\d+$/.test(String(value ?? "").trim());
+}
+
 async function listAuthUsers(supabase: AdminListUsersClient) {
   const users: AuthUserSummary[] = [];
   let page = 1;
@@ -90,6 +94,17 @@ function sortByCreatedAtDesc(items: MerchantAccountItem[]) {
     const rightTs = new Date(right.createdAt ?? 0).getTime();
     return rightTs - leftTs;
   });
+}
+
+function choosePreferredMerchantAccount(current: MerchantAccountItem | undefined, candidate: MerchantAccountItem) {
+  if (!current) return candidate;
+  const currentNumeric = isNumericMerchantId(current.merchantId);
+  const candidateNumeric = isNumericMerchantId(candidate.merchantId);
+  if (candidateNumeric && !currentNumeric) return candidate;
+  if (currentNumeric && !candidateNumeric) return current;
+  const currentTs = new Date(current.createdAt ?? 0).getTime();
+  const candidateTs = new Date(candidate.createdAt ?? 0).getTime();
+  return candidateTs > currentTs ? candidate : current;
 }
 
 export async function GET(request: Request) {
@@ -185,7 +200,20 @@ export async function GET(request: Request) {
         lastSignInAt: user.last_sign_in_at ?? null,
       }));
 
-    return NextResponse.json({ items: sortByCreatedAtDesc([...merchantItems, ...authOnlyItems]) });
+    const dedupedByEmail = new Map<string, MerchantAccountItem>();
+    for (const item of [...merchantItems, ...authOnlyItems]) {
+      const key = item.email || item.authUserId || `${item.merchantId}:${item.createdAt ?? ""}`;
+      dedupedByEmail.set(key, choosePreferredMerchantAccount(dedupedByEmail.get(key), item));
+    }
+
+    const items = sortByCreatedAtDesc(
+      [...dedupedByEmail.values()].map((item) => ({
+        ...item,
+        merchantId: isNumericMerchantId(item.merchantId) ? item.merchantId : "",
+      })),
+    );
+
+    return NextResponse.json({ items });
   } catch (error) {
     return NextResponse.json(
       {
