@@ -1,4 +1,7 @@
-﻿import type { Block } from "@/data/homeBlocks";
+"use client";
+
+import { Component, type ReactNode } from "react";
+import type { Block } from "@/data/homeBlocks";
 import HeroBlock from "./HeroBlock";
 import TextBlock from "./TextBlock";
 import ListBlock from "./ListBlock";
@@ -11,6 +14,26 @@ import ChartBlock from "./ChartBlock";
 import MusicBlock from "./MusicBlock";
 import NavBlock from "./NavBlock";
 import ProductBlock from "./ProductBlock";
+
+class BlockRuntimeBoundary extends Component<{ blockId: string; children: ReactNode }, { hasError: boolean }> {
+  constructor(props: { blockId: string; children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error) {
+    console.error(`Block render failed: ${this.props.blockId}`, error);
+  }
+
+  render() {
+    if (this.state.hasError) return null;
+    return this.props.children;
+  }
+}
 
 export default function BlockRenderer({
   blocks,
@@ -26,34 +49,54 @@ export default function BlockRenderer({
   return (
     <>
       {blocks.map((b) => {
+        let content: ReactNode = null;
         switch (b.type) {
           case "common":
-            return <CommonBlock key={b.id} {...b.props} />;
+            content = <CommonBlock {...b.props} />;
+            break;
           case "gallery":
-            return <GalleryBlock key={b.id} {...b.props} />;
+            content = <GalleryBlock {...b.props} />;
+            break;
           case "chart":
-            return <ChartBlock key={b.id} {...b.props} />;
+            content = <ChartBlock {...b.props} />;
+            break;
           case "nav":
-            return <NavBlock key={b.id} {...b.props} currentPageId={currentPageId} onNavigatePage={onNavigatePage} />;
+            content = <NavBlock {...b.props} currentPageId={currentPageId} onNavigatePage={onNavigatePage} />;
+            break;
           case "hero":
-            return <HeroBlock key={b.id} {...b.props} />;
+            content = <HeroBlock {...b.props} />;
+            break;
           case "text":
-            return <TextBlock key={b.id} {...b.props} />;
+            content = <TextBlock {...b.props} />;
+            break;
           case "list":
-            return <ListBlock key={b.id} {...b.props} />;
+            content = <ListBlock {...b.props} />;
+            break;
           case "search-bar":
-            return <SearchBarBlock key={b.id} {...b.props} />;
+            content = <SearchBarBlock {...b.props} />;
+            break;
           case "merchant-list":
-            return <MerchantListBlock key={b.id} {...b.props} />;
+            content = <MerchantListBlock {...b.props} />;
+            break;
           case "contact":
-            return <ContactBlock key={b.id} {...b.props} />;
+            content = <ContactBlock {...b.props} />;
+            break;
           case "music":
-            return <MusicBlock key={b.id} {...b.props} />;
+            content = <MusicBlock {...b.props} />;
+            break;
           case "product":
-            return <ProductBlock key={b.id} {...b.props} />;
+            content = <ProductBlock {...b.props} />;
+            break;
           default:
-            return null;
+            content = null;
+            break;
         }
+        if (!content) return null;
+        return (
+          <BlockRuntimeBoundary key={b.id} blockId={b.id}>
+            {content}
+          </BlockRuntimeBoundary>
+        );
       })}
     </>
   );
