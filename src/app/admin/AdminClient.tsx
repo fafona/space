@@ -8013,13 +8013,10 @@ type GalleryEditorImage = {
     imageOpacity: block.props.bgImageOpacity,
     colorOpacity: block.props.bgColorOpacity,
   });
-  const editorPanelMinWidth = isSelected
-    ? (
-        block.type === "product" || block.type === "merchant-list" || block.type === "search-bar"
-          ? "min(980px, calc(100vw - 2rem))"
-          : "min(760px, calc(100vw - 2rem))"
-      )
-    : undefined;
+  const selectedEditorMinWidth =
+    block.type === "product" || block.type === "merchant-list" || block.type === "search-bar"
+      ? "min(980px, calc(100vw - 2rem))"
+      : "min(760px, calc(100vw - 2rem))";
   const blockWidth = draftResize?.width ?? normalizeBlockWidth(block.props.blockWidth);
   const blockHeight = draftResize?.height ?? normalizeBlockHeight(block.props.blockHeight);
   const isDraggingSource = draggingBlockId === block.id;
@@ -8048,8 +8045,18 @@ type GalleryEditorImage = {
   const blockSizeStyle = {
     width: blockWidth ? `${blockWidth}px` : undefined,
     height: blockHeight ? `${blockHeight}px` : undefined,
-    minWidth: editorPanelMinWidth,
   };
+  function renderSelectedEditor(content: ReactNode) {
+    return (
+      <div
+        data-editor-panel
+        className="relative w-max max-w-[calc(100vw-2rem)]"
+        style={{ minWidth: selectedEditorMinWidth }}
+      >
+        {content}
+      </div>
+    );
+  }
   const resizeHandles = isBlockLocked ? null : (
     <>
       <div
@@ -9578,7 +9585,7 @@ type GalleryEditorImage = {
           {borderSettingsDialog}
           {layerSettingsDialog}
           {typographyDialog}
-          {isSelected ? (
+          {isSelected ? renderSelectedEditor(
             <>
               <div className="space-y-1 mt-3 mx-auto" style={galleryHeadingStyle}>
                 <RichTextEditor
@@ -10137,7 +10144,7 @@ type GalleryEditorImage = {
           {navItemStyleDialog}
           {layerSettingsDialog}
           {typographyDialog}
-          {isSelected ? (
+          {isSelected ? renderSelectedEditor(
             <div className="space-y-3">
               <RichTextEditor
                 field="heading"
@@ -10314,7 +10321,7 @@ type GalleryEditorImage = {
           {borderSettingsDialog}
           {layerSettingsDialog}
           {typographyDialog}
-          {isSelected ? (
+          {isSelected ? renderSelectedEditor(
             <>
               <div className="space-y-1 mt-3">
                 <RichTextEditor
@@ -10373,7 +10380,7 @@ type GalleryEditorImage = {
                   }
                 />
               </div>
-            </>
+            </>,
           ) : (
             <>
               <h2 className="text-xl font-bold whitespace-pre-wrap break-words" dangerouslySetInnerHTML={{ __html: toRichHtml(block.props.heading, "") }} />
@@ -10477,7 +10484,7 @@ type GalleryEditorImage = {
           {borderSettingsDialog}
           {layerSettingsDialog}
           {typographyDialog}
-          {isSelected ? (
+          {isSelected ? renderSelectedEditor(
             <>
               <div className="space-y-1 mt-3">
                 <RichTextEditor
@@ -10538,7 +10545,7 @@ type GalleryEditorImage = {
                   {"暂无音频，请先上传音频"}
                 </div>
               )}
-            </>
+            </>,
           ) : (
             <>
               <h2
@@ -10591,7 +10598,7 @@ type GalleryEditorImage = {
           {borderSettingsDialog}
           {layerSettingsDialog}
           {typographyDialog}
-          {isSelected ? (
+          {isSelected ? renderSelectedEditor(
             <>
               <div className="space-y-1 mt-3">
                 <RichTextEditor
@@ -10613,7 +10620,7 @@ type GalleryEditorImage = {
                   onSelectionChange={updateSelectionRange}
                 />
               </div>
-            </>
+            </>,
           ) : (
             <>
               <h1 className="text-3xl font-bold whitespace-pre-wrap break-words" dangerouslySetInnerHTML={{ __html: toRichHtml(block.props.title, "") }} />
@@ -10660,7 +10667,7 @@ type GalleryEditorImage = {
           {borderSettingsDialog}
           {layerSettingsDialog}
           {typographyDialog}
-          {isSelected ? (
+          {isSelected ? renderSelectedEditor(
             <>
               <div className="space-y-1 mt-3">
                 <RichTextEditor
@@ -10682,7 +10689,7 @@ type GalleryEditorImage = {
                   onSelectionChange={updateSelectionRange}
                 />
               </div>
-            </>
+            </>,
           ) : (
             <>
               <h2
@@ -10733,7 +10740,7 @@ type GalleryEditorImage = {
           {borderSettingsDialog}
           {layerSettingsDialog}
           {typographyDialog}
-          {isSelected ? (
+          {isSelected ? renderSelectedEditor(
             <>
               <div className="space-y-1 mt-3">
                 <RichTextEditor
@@ -10759,7 +10766,7 @@ type GalleryEditorImage = {
                   }
                 />
               </div>
-            </>
+            </>,
           ) : (
             <>
               <h2
@@ -11432,7 +11439,7 @@ type GalleryEditorImage = {
                   )}
                 </div>
               </div>
-            </div>,
+            </div>
           )
         : null;
 
@@ -11462,7 +11469,7 @@ type GalleryEditorImage = {
           {borderSettingsDialog}
           {layerSettingsDialog}
           {typographyDialog}
-          {isSelected ? (
+          {isSelected ? renderSelectedEditor(
             <div className={compactProductEditor ? "pb-1" : undefined}>
               <input
                 ref={productExcelInputRef}
@@ -13071,7 +13078,7 @@ type GalleryEditorImage = {
           {merchantCardTypographyDialog}
           {layerSettingsDialog}
           {typographyDialog}
-          {isSelected ? (
+          {isSelected ? renderSelectedEditor(
             <>
               <div className="space-y-1 mt-3">
                 <RichTextEditor
@@ -13346,7 +13353,7 @@ type GalleryEditorImage = {
                   ))}
                 </div>
               </div>
-            </>
+            </>,
           ) : (
             <>
               {hasMerchantHeading ? (
@@ -14002,7 +14009,7 @@ type GalleryEditorImage = {
           {searchButtonStyleDialog}
           {layerSettingsDialog}
           {typographyDialog}
-          {isSelected ? (
+          {isSelected ? renderSelectedEditor(
             <>
               <div className="space-y-1 mt-3">
                 <RichTextEditor
@@ -14266,7 +14273,7 @@ type GalleryEditorImage = {
                   ))}
                 </div>
               </div>
-            </>
+            </>,
           ) : (
             <>
               {hasSearchHeading ? (
@@ -14768,7 +14775,7 @@ type GalleryEditorImage = {
           {borderSettingsDialog}
           {layerSettingsDialog}
           {typographyDialog}
-          {isSelected ? (
+          {isSelected ? renderSelectedEditor(
             <>
               <div className="space-y-1 mt-3">
                 <RichTextEditor
@@ -15061,7 +15068,7 @@ type GalleryEditorImage = {
                   ))}
                 </div>
               </div>
-            </>
+            </>,
           ) : (
             <>
               <h2
