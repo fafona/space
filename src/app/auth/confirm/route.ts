@@ -17,17 +17,29 @@ function readEnv(name: string) {
   return (process.env[name] ?? "").trim();
 }
 
-function resolveSafeRedirect(requestUrl: URL, rawRedirectTo: string | null, type: EmailOtpType) {
+function resolvePublicOrigin(request: Request, requestUrl: URL) {
+  const forwardedProto = (request.headers.get("x-forwarded-proto") ?? "").split(",")[0]?.trim();
+  const forwardedHost = (request.headers.get("x-forwarded-host") ?? "").split(",")[0]?.trim();
+  const host = (request.headers.get("host") ?? "").trim();
+  const publicHost = forwardedHost || host;
+  const protocol = forwardedProto || requestUrl.protocol.replace(/:$/, "") || "http";
+  if (publicHost) {
+    return `${protocol}://${publicHost}`;
+  }
+  return requestUrl.origin;
+}
+
+function resolveSafeRedirect(publicOrigin: string, rawRedirectTo: string | null, type: EmailOtpType) {
   const fallbackPath = type === "recovery" ? "/reset-password" : "/login";
-  if (!rawRedirectTo) return new URL(fallbackPath, requestUrl.origin);
+  if (!rawRedirectTo) return new URL(fallbackPath, publicOrigin);
   try {
-    const nextUrl = new URL(rawRedirectTo, requestUrl.origin);
-    if (nextUrl.origin !== requestUrl.origin) {
-      return new URL(fallbackPath, requestUrl.origin);
+    const nextUrl = new URL(rawRedirectTo, publicOrigin);
+    if (nextUrl.origin !== publicOrigin) {
+      return new URL(fallbackPath, publicOrigin);
     }
     return nextUrl;
   } catch {
-    return new URL(fallbackPath, requestUrl.origin);
+    return new URL(fallbackPath, publicOrigin);
   }
 }
 
@@ -45,11 +57,12 @@ export async function GET(request: Request) {
   const requestUrl = new URL(request.url);
   const tokenHash = (requestUrl.searchParams.get("token_hash") ?? requestUrl.searchParams.get("token") ?? "").trim();
   const rawType = (requestUrl.searchParams.get("type") ?? "").trim() as EmailOtpType;
-  const redirectTo = resolveSafeRedirect(requestUrl, requestUrl.searchParams.get("redirect_to"), rawType || "signup");
+  const publicOrigin = resolvePublicOrigin(request, requestUrl);
+  const redirectTo = resolveSafeRedirect(publicOrigin, requestUrl.searchParams.get("redirect_to"), rawType || "signup");
 
   if (!tokenHash || !SUPPORTED_TYPES.has(rawType)) {
     return NextResponse.redirect(
-      appendResultParams(redirectTo, false, "验证链接无效，请重新发送验证邮件。"),
+      appendResultParams(redirectTo, false, "验证链接无效或已过期，请重新发送验证邮件。"),
       { status: 303 },
     );
   }
