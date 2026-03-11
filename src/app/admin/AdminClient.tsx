@@ -561,9 +561,9 @@ function getGalleryLayoutLabel(preset: GalleryLayoutPreset) {
   if (preset === "three-wide") return "三列";
   if (preset === "two-wide") return "双列";
   if (preset === "single-wide") return "通栏";
-  if (preset === "three-square") return "涓夊垪绛夊";
+  if (preset === "three-square") return "三列等宽";
   if (preset === "mosaic") return "拼接";
-  return "臮义样";
+  return "自定义样式";
 }
 
 function getFirstNavBlock(blocks: Block[]) {
@@ -4286,11 +4286,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
   function addBlock() {
     if (!isPlatformEditor && newBlockType === "gallery" && !canUseGalleryBlock) {
-      showTip("当前权限朼通相册区");
+      showTip("当前权限未开通相册区块");
       return;
     }
     if (!isPlatformEditor && newBlockType === "music" && !canUseMusicBlock) {
-      showTip("当前权限朼通音乐区");
+      showTip("当前权限未开通音乐区块");
       return;
     }
     if (!isPlatformEditor && newBlockType === "product" && !canUseProductBlock) {
@@ -4308,7 +4308,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       const currentPlan = mergedConfig.plans.find((plan) => plan.id === editingPlanIdRef.current) ?? mergedConfig.plans[0];
       const exists = currentPlan?.pages?.some((page) => hasNavBlock(page.blocks));
       if (exists) {
-        setTip("导航区块參有一");
+        setTip("导航区块只能有一个");
         setTimeout(() => setTip(""), 1200);
         return;
       }
@@ -4316,7 +4316,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     const nextBlock = makeDefaultBlock(newBlockType);
     const next = [...blocks, nextBlock];
     applyBlocks(next, { selectedId: nextBlock.id });
-    setTip("已新增区");
+    setTip("已新增区块");
     setTimeout(() => setTip(""), 1200);
   }
 
@@ -7529,7 +7529,7 @@ type GalleryEditorImage = {
       onChange({ text: nextText });
       return;
     }
-    onAlert("当前区块类型不支持插入文");
+    onAlert("当前区块类型不支持插入文字");
   }
 
   function handleCommonCanvasMouseDown(event: ReactMouseEvent<HTMLDivElement>) {
@@ -9248,7 +9248,7 @@ type GalleryEditorImage = {
                       aria-label="删除"
                       title="删除"
                     >
-                      {"脳"}
+                      {"删"}
                     </button>
                     <div
                       className="absolute top-2 bottom-2 left-0 w-2 -translate-x-1 cursor-ew-resize"
