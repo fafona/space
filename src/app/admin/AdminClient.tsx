@@ -3308,6 +3308,25 @@ export default function AdminClient({
           session = await recoverSession(justSignedIn ? 6000 : 4500);
           if (!mounted) return;
         }
+        if (session) {
+          try {
+            const { data, error } = await withTimeout(
+              supabase.auth.getUser(),
+              Math.max(2500, Math.min(6000, AUTH_CHECK_TIMEOUT_MS)),
+              "登录校验超时，已回退到重新登录",
+            );
+            if (error || !data.user) {
+              await supabase.auth.signOut({ scope: "local" }).catch(() => {
+                // ignore local session cleanup failure
+              });
+              session = null;
+            } else {
+              session = { ...session, user: data.user };
+            }
+          } catch {
+            // Keep current session on transient validation failure.
+          }
+        }
         if (!session) {
           if (isPlatformEditor) {
             setBackendNotice(null);

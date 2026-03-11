@@ -83,6 +83,22 @@ function LoginPageInner() {
     return !(data.session || user?.email_confirmed_at || emailVerified);
   }
 
+  async function readValidatedSessionUser() {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session?.user) return null;
+
+    const { data, error } = await supabase.auth.getUser();
+    if (error || !data.user) {
+      await supabase.auth.signOut({ scope: "local" }).catch(() => {
+        // ignore local cleanup failure
+      });
+      return null;
+    }
+    return data.user;
+  }
+
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -94,12 +110,11 @@ function LoginPageInner() {
       if (mounted && nextEmailConfirmationRequired !== null) {
         setEmailConfirmationRequired(nextEmailConfirmationRequired);
       }
-      await supabase.auth
-        .getSession()
-        .then(({ data }) => {
+      await readValidatedSessionUser()
+        .then((user) => {
           if (!mounted) return;
-          if (data.session) {
-            void redirectToMerchantBackend(data.session.user);
+          if (user) {
+            void redirectToMerchantBackend(user);
           }
         })
         .catch(() => {
@@ -220,10 +235,8 @@ function LoginPageInner() {
   async function waitForPersistedSessionUser(timeoutMs = 3000) {
     const deadline = Date.now() + Math.max(400, timeoutMs);
     while (Date.now() < deadline) {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (session?.user) return session.user;
+      const user = await readValidatedSessionUser();
+      if (user) return user;
       await new Promise<void>((resolve) => {
         setTimeout(resolve, 120);
       });
@@ -315,8 +328,8 @@ function LoginPageInner() {
         return;
       }
       const persistedUser = await waitForPersistedSessionUser();
-      const sessionResult = persistedUser ? null : await supabase.auth.getSession();
-      await redirectToMerchantBackend(persistedUser ?? sessionResult?.data.session?.user);
+      const sessionUser = persistedUser ?? (await readValidatedSessionUser());
+      await redirectToMerchantBackend(sessionUser);
     } catch (error) {
       setMsg(error instanceof Error ? error.message : t("login.requestFailed"));
     } finally {
