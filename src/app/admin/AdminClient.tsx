@@ -8099,9 +8099,17 @@ type GalleryEditorImage = {
     colorOpacity: block.props.bgColorOpacity,
   });
   const selectedEditorMinWidth =
-    block.type === "product" || block.type === "merchant-list" || block.type === "search-bar"
+    block.type === "merchant-list" || block.type === "search-bar"
       ? "min(980px, calc(100vw - 2rem))"
-      : "min(760px, calc(100vw - 2rem))";
+      : block.type === "product"
+        ? "min(760px, calc(100vw - 2rem))"
+        : "min(760px, calc(100vw - 2rem))";
+  const selectedEditorPreferredWidth =
+    block.type === "merchant-list" || block.type === "search-bar"
+      ? "min(980px, calc(100vw - 2rem))"
+      : block.type === "product"
+        ? "min(820px, calc(100vw - 2rem))"
+        : undefined;
   const blockWidth = draftResize?.width ?? normalizeBlockWidth(block.props.blockWidth);
   const blockHeight = draftResize?.height ?? normalizeBlockHeight(block.props.blockHeight);
   const isDraggingSource = draggingBlockId === block.id;
@@ -8135,8 +8143,11 @@ type GalleryEditorImage = {
     return (
       <div
         data-editor-panel
-        className="relative w-max max-w-[calc(100vw-2rem)]"
-        style={{ minWidth: selectedEditorMinWidth }}
+        className={`relative max-w-[calc(100vw-2rem)] ${selectedEditorPreferredWidth ? "w-full" : "w-max"}`}
+        style={{
+          minWidth: selectedEditorMinWidth,
+          width: selectedEditorPreferredWidth,
+        }}
       >
         {content}
       </div>
