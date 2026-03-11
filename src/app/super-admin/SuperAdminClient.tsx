@@ -71,20 +71,23 @@ function normalizeMerchantIdValue(value: string | null | undefined) {
   return /^\d+$/.test(normalized) ? normalized : "";
 }
 
+function getMerchantProfileName(site: Pick<Site, "merchantName"> | null | undefined) {
+  return (site?.merchantName ?? "").trim();
+}
+
 function buildBackendOnlySite(account: BackendMerchantAccount): Site {
   const timestamp = account.createdAt ?? nextIsoNow();
-  const merchantName = (account.merchantName ?? "").trim();
   return {
     id: `backend-${account.merchantId || account.email || "merchant"}`,
     tenantId: "backend-only",
-    merchantName,
+    merchantName: "",
     domainPrefix: "",
     domainSuffix: "",
     contactAddress: "",
     contactName: "",
     contactPhone: "",
     contactEmail: account.email,
-    name: merchantName,
+    name: "",
     domain: "",
     categoryId: "unlinked",
     category: "未建站",
@@ -1089,7 +1092,7 @@ export default function SuperAdminClient() {
           backendAccount: account,
           merchantId: normalizeMerchantIdValue(account.merchantId) || "-",
           userEmail: account.email || "-",
-          merchantName: (account.merchantName ?? "").trim(),
+          merchantName: "",
           prefix: "-",
           industry: "未建站",
           city: "-",
@@ -1108,7 +1111,7 @@ export default function SuperAdminClient() {
         backendAccount: account,
         merchantId: normalizeMerchantIdValue(account.merchantId) || "-",
         userEmail: account.email || siteContext.userEmail || "-",
-        merchantName: (account.merchantName ?? "").trim(),
+        merchantName: getMerchantProfileName(siteContext.site),
         prefix: siteContext.prefix,
         industry: siteContext.industry,
         city: siteContext.city,
@@ -3158,7 +3161,7 @@ export default function SuperAdminClient() {
                               <tr key={`${account.merchantId}-${account.email}`} className="border-t">
                                 <td className="px-3 py-2 text-xs">{account.email || "-"}</td>
                                 <td className="px-3 py-2 text-xs">{account.merchantId || "-"}</td>
-                                <td className="px-3 py-2 text-xs">{account.merchantName}</td>
+                                <td className="px-3 py-2 text-xs" />
                                 <td className="px-3 py-2 text-xs text-slate-500">{fmt(account.createdAt)}</td>
                                 <td className="px-3 py-2 text-xs">
                                   <span className={`rounded border px-2 py-0.5 ${badgeClass(account.emailConfirmed ? "approved" : "pending")}`}>
