@@ -5581,7 +5581,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
       {previewViewport === "mobile" ? (
         <div className="min-h-screen bg-gray-200 py-6">
-          <div className="mx-auto w-full max-w-[1280px] px-3 lg:px-4 flex items-start justify-center gap-20">
+          <div className="mx-auto flex w-full max-w-[1280px] items-start justify-center gap-20 px-3 lg:mx-0 lg:max-w-[980px] lg:justify-start lg:gap-12 lg:px-4">
             <div className="hidden lg:block w-[430px] shrink-0">
               <div className="sticky" style={{ top: `${Math.max(topBarHeight + 16, 72)}px` }}>
                 <div className="rounded-[36px] border-8 border-gray-900 bg-black p-2 shadow-2xl">
