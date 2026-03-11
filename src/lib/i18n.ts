@@ -109,6 +109,7 @@ export type TranslationKey =
   | "login.forgot"
   | "login.resend"
   | "login.firstRegisterTip"
+  | "login.firstRegisterTipAutoConfirm"
   | "login.offlineDev"
   | "login.requiredEmail"
   | "login.invalidEmail"
@@ -167,6 +168,7 @@ const EN_BUNDLE: TranslationBundle = {
   "login.forgot": "Forgot password (email reset)",
   "login.resend": "Resend verification email",
   "login.firstRegisterTip": "After registration, verify your email first, then sign in.",
+  "login.firstRegisterTipAutoConfirm": "After registration, you can sign in immediately with your email and password.",
   "login.offlineDev": "Enter editor offline (dev only)",
   "login.requiredEmail": "Please enter email",
   "login.invalidEmail": "Please enter a valid email",
@@ -225,6 +227,7 @@ const ZH_CN_BUNDLE: TranslationBundle = {
   "login.forgot": "忘记密码（通过邮箱找回）",
   "login.resend": "重发验证邮件",
   "login.firstRegisterTip": "首次注册后需要先验证邮箱，再进行登录。",
+  "login.firstRegisterTipAutoConfirm": "注册后可直接使用邮箱和密码登录。",
   "login.offlineDev": "离线进入编辑器（仅开发）",
   "login.requiredEmail": "请输入邮箱",
   "login.invalidEmail": "请输入正确的邮箱格式",
@@ -282,6 +285,7 @@ const ZH_TW_BUNDLE: TranslationBundle = {
   "login.forgot": "忘記密碼（透過信箱找回）",
   "login.resend": "重發驗證郵件",
   "login.firstRegisterTip": "首次註冊後需要先驗證信箱，再進行登入。",
+  "login.firstRegisterTipAutoConfirm": "註冊後可直接使用信箱與密碼登入。",
   "login.offlineDev": "離線進入編輯器（僅開發）",
   "login.requiredEmail": "請輸入信箱",
   "login.invalidEmail": "請輸入正確的信箱格式",
@@ -337,6 +341,7 @@ const JA_BUNDLE: TranslationBundle = {
   "login.forgot": "パスワードを忘れた場合（メール再設定）",
   "login.resend": "確認メールを再送信",
   "login.firstRegisterTip": "初回登録後は、メール確認を完了してからログインしてください。",
+  "login.firstRegisterTipAutoConfirm": "登録後すぐにメールアドレスとパスワードでログインできます。",
   "login.offlineDev": "オフラインでエディタに入る（開発専用）",
   "login.requiredEmail": "メールを入力してください",
   "login.invalidEmail": "有効なメールアドレスを入力してください",
@@ -395,6 +400,7 @@ const KO_BUNDLE: TranslationBundle = {
   "login.forgot": "비밀번호 찾기 (이메일 재설정)",
   "login.resend": "인증 메일 재전송",
   "login.firstRegisterTip": "처음 가입 후 이메일 인증을 완료한 뒤 로그인하세요.",
+  "login.firstRegisterTipAutoConfirm": "가입 후 이메일과 비밀번호로 바로 로그인할 수 있습니다.",
   "login.offlineDev": "오프라인 편집기 진입 (개발 전용)",
   "login.requiredEmail": "이메일을 입력하세요",
   "login.invalidEmail": "올바른 이메일 형식을 입력하세요",

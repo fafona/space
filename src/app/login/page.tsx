@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useI18n } from "@/components/I18nProvider";
 import { ensureMerchantIdentityForUser } from "@/lib/merchantIdentity";
 import { buildMerchantBackendHref } from "@/lib/siteRouting";
-import { canReachSupabaseGateway, supabase } from "@/lib/supabase";
+import { canReachSupabaseGateway, resolvedSupabaseAnonKey, resolvedSupabaseUrl, supabase } from "@/lib/supabase";
 
 export default function LoginPage() {
   const { t } = useI18n();
@@ -14,6 +14,7 @@ export default function LoginPage() {
   const [msg, setMsg] = useState<string>("");
   const [gatewayReachable, setGatewayReachable] = useState<boolean | null>(null);
   const [needConfirmEmail, setNeedConfirmEmail] = useState(false);
+  const [emailConfirmationRequired, setEmailConfirmationRequired] = useState<boolean | null>(null);
   const [pendingAction, setPendingAction] = useState<"signin" | "signup" | "forgot" | "resend" | null>(null);
 
   async function redirectToMerchantBackend(user?: {
@@ -40,6 +41,31 @@ export default function LoginPage() {
     window.location.href = withJustSignedIn("/admin");
   }
 
+  async function readEmailConfirmationRequired() {
+    try {
+      const response = await fetch(`${resolvedSupabaseUrl}/auth/v1/settings`, {
+        headers: { apikey: resolvedSupabaseAnonKey },
+        cache: "no-store",
+      });
+      if (!response.ok) return null;
+      const payload = (await response.json()) as { mailer_autoconfirm?: unknown };
+      return typeof payload.mailer_autoconfirm === "boolean" ? !payload.mailer_autoconfirm : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function signUpNeedsEmailConfirmation(data: {
+    session?: { user?: { email_confirmed_at?: string | null; user_metadata?: Record<string, unknown> | null } | null } | null;
+    user?: { email_confirmed_at?: string | null; user_metadata?: Record<string, unknown> | null } | null;
+  }) {
+    const user = data.session?.user ?? data.user ?? null;
+    const metadata = user?.user_metadata;
+    const emailVerified =
+      metadata && typeof metadata === "object" ? (metadata.email_verified as boolean | undefined) === true : false;
+    return !(data.session || user?.email_confirmed_at || emailVerified);
+  }
+
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -47,6 +73,10 @@ export default function LoginPage() {
       if (!mounted) return;
       setGatewayReachable(gatewayReady);
       if (!gatewayReady) return;
+      const nextEmailConfirmationRequired = await readEmailConfirmationRequired();
+      if (mounted && nextEmailConfirmationRequired !== null) {
+        setEmailConfirmationRequired(nextEmailConfirmationRequired);
+      }
       await supabase.auth
         .getSession()
         .then(({ data }) => {
@@ -140,8 +170,23 @@ export default function LoginPage() {
 
     setPendingAction("signup");
     try {
-      const { error } = await withTimeout(supabase.auth.signUp({ email: email.trim(), password }));
+      const { data, error } = await withTimeout(
+        supabase.auth.signUp({
+          email: email.trim(),
+          password,
+          options: {
+            emailRedirectTo: `${window.location.origin}/login`,
+          },
+        }),
+      );
       if (error) return setMsg(normalizeError(error.message));
+      const needsConfirmation = signUpNeedsEmailConfirmation(data);
+      setEmailConfirmationRequired(needsConfirmation);
+      if (!needsConfirmation) {
+        const persistedUser = await waitForPersistedSessionUser();
+        await redirectToMerchantBackend(persistedUser ?? data.session?.user ?? data.user);
+        return;
+      }
       setMsg(t("login.signupSuccess"));
       setNeedConfirmEmail(true);
     } catch (error) {
@@ -335,7 +380,9 @@ export default function LoginPage() {
           </button>
         ) : null}
 
-        <div className="text-xs text-gray-500">{t("login.firstRegisterTip")}</div>
+        <div className="text-xs text-gray-500">
+          {emailConfirmationRequired === false ? t("login.firstRegisterTipAutoConfirm") : t("login.firstRegisterTip")}
+        </div>
       </div>
     </main>
   );
