@@ -1,13 +1,15 @@
 ﻿"use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useI18n } from "@/components/I18nProvider";
 import { ensureMerchantIdentityForUser } from "@/lib/merchantIdentity";
 import { buildMerchantBackendHref } from "@/lib/siteRouting";
 import { canReachSupabaseGateway, resolvedSupabaseAnonKey, resolvedSupabaseUrl, supabase } from "@/lib/supabase";
 
-export default function LoginPage() {
+function LoginPageInner() {
   const { locale, t } = useI18n();
+  const searchParams = useSearchParams();
   const isDevelopment = process.env.NODE_ENV === "development";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -16,6 +18,21 @@ export default function LoginPage() {
   const [needConfirmEmail, setNeedConfirmEmail] = useState(false);
   const [emailConfirmationRequired, setEmailConfirmationRequired] = useState<boolean | null>(null);
   const [pendingAction, setPendingAction] = useState<"signin" | "signup" | "forgot" | "resend" | null>(null);
+
+  useEffect(() => {
+    const confirmed = (searchParams.get("confirmed") ?? "").trim();
+    const message = (searchParams.get("confirm_message") ?? "").trim();
+    if (!confirmed && !message) return;
+    if (confirmed === "1") {
+      setNeedConfirmEmail(false);
+      setMsg(message || "邮箱验证成功，请直接登录。");
+      return;
+    }
+    if (confirmed === "0") {
+      setNeedConfirmEmail(true);
+      setMsg(message || "邮箱验证失败，请重新发送验证邮件。");
+    }
+  }, [searchParams]);
 
   async function redirectToMerchantBackend(user?: {
     id?: string;
@@ -452,5 +469,13 @@ export default function LoginPage() {
         </div>
       </div>
     </main>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<main className="min-h-screen bg-gray-100" />}>
+      <LoginPageInner />
+    </Suspense>
   );
 }
