@@ -6,6 +6,28 @@ import { SUPER_ADMIN_SESSION_COOKIE, SUPER_ADMIN_SESSION_VALUE } from "@/lib/sup
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
+type LoosePostgrestError = { message?: string } | null;
+type LoosePostgrestResponse = {
+  data?: unknown;
+  error: LoosePostgrestError;
+};
+type LooseQueryBuilder = PromiseLike<LoosePostgrestResponse> & {
+  select: (columns: string) => LooseQueryBuilder;
+  update: (payload: never) => LooseQueryBuilder;
+  eq: (column: string, value: unknown) => LooseQueryBuilder;
+  limit: (value: number) => LooseQueryBuilder;
+  maybeSingle: () => Promise<LoosePostgrestResponse>;
+};
+type LooseSupabaseClient = {
+  from: (table: string) => LooseQueryBuilder;
+  auth: {
+    getUser: (token: string) => Promise<{
+      data: { user: { id?: string; email?: string | null } | null };
+      error: { message?: string } | null;
+    }>;
+  };
+};
+
 type MerchantRow = {
   id?: string | null;
 };
@@ -46,11 +68,11 @@ function isMissingUpdatedAtColumn(message: string) {
 }
 
 async function getAuthorizedMerchantIds(
-  supabase: any,
+  supabase: LooseSupabaseClient,
   userId: string,
   email: string,
 ) {
-  const lookups: Array<PromiseLike<{ data: MerchantRow[] | null; error: { message?: string } | null }>> = [];
+  const lookups: LooseQueryBuilder[] = [];
 
   if (userId) {
     ["user_id", "auth_user_id", "owner_user_id", "owner_id", "auth_id", "created_by", "created_by_user_id"].forEach(
@@ -82,7 +104,7 @@ async function getAuthorizedMerchantIds(
 
 async function isAuthorizedForMerchant(
   request: Request,
-  supabase: any,
+  supabase: LooseSupabaseClient,
   merchantId: string,
 ) {
   const cookieHeader = request.headers.get("cookie") ?? "";
@@ -107,7 +129,7 @@ async function isAuthorizedForMerchant(
 }
 
 async function updateMerchantSlug(
-  supabase: any,
+  supabase: LooseSupabaseClient,
   merchantId: string,
   slug: string,
 ) {
@@ -136,22 +158,24 @@ async function updateMerchantSlug(
     return { ok: true, updated: true };
   }
 
-  if (isMissingUpdatedAtColumn(withUpdatedAt.error.message)) {
+  const withUpdatedAtMessage = String(withUpdatedAt.error?.message ?? "");
+  if (isMissingUpdatedAtColumn(withUpdatedAtMessage)) {
     const withoutUpdatedAt = await supabase.from("pages").update({ slug } as never).eq("id", rowId);
     if (!withoutUpdatedAt.error) {
       return { ok: true, updated: true };
     }
-    if (isMissingSlugColumn(withoutUpdatedAt.error.message)) {
+    const withoutUpdatedAtMessage = String(withoutUpdatedAt.error?.message ?? "");
+    if (isMissingSlugColumn(withoutUpdatedAtMessage)) {
       return { ok: false, status: 503, message: "pages.slug column missing" };
     }
-    return { ok: false, status: 409, message: withoutUpdatedAt.error.message };
+    return { ok: false, status: 409, message: withoutUpdatedAtMessage };
   }
 
-  if (isMissingSlugColumn(withUpdatedAt.error.message)) {
+  if (isMissingSlugColumn(withUpdatedAtMessage)) {
     return { ok: false, status: 503, message: "pages.slug column missing" };
   }
 
-  return { ok: false, status: 409, message: withUpdatedAt.error.message };
+  return { ok: false, status: 409, message: withUpdatedAtMessage };
 }
 
 export async function POST(request: Request) {
@@ -181,7 +205,7 @@ export async function POST(request: Request) {
         autoRefreshToken: false,
         detectSessionInUrl: false,
       },
-    });
+    }) as unknown as LooseSupabaseClient;
 
     const authorized = await isAuthorizedForMerchant(request, supabase, merchantId);
     if (!authorized) {

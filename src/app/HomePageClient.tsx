@@ -43,7 +43,10 @@ export default function HomePageClient({ initialBlocks }: { initialBlocks: Block
   const { t } = useI18n();
   const [platformState, setPlatformState] = useState(() => loadPlatformState());
   const [isMobileViewport, setIsMobileViewport] = useState(false);
-  const [resolvedHostSiteId, setResolvedHostSiteId] = useState("");
+  const [remoteHostLookup, setRemoteHostLookup] = useState<{ prefix: string; siteId: string }>({
+    prefix: "",
+    siteId: "",
+  });
   const sourceBlocks = initialBlocks.length > 0 ? initialBlocks : homeBlocks;
   const desktopPlanConfig = getPagePlanConfigFromBlocks(sourceBlocks);
   const mobilePlanConfig = getEmbeddedMobilePlanConfig(sourceBlocks);
@@ -96,31 +99,30 @@ export default function HomePageClient({ initialBlocks }: { initialBlocks: Block
       ) ?? null
     );
   }, [platformState]);
-  useEffect(() => {
-    if (typeof window === "undefined" || hostMatchedSite) {
-      setResolvedHostSiteId("");
-      return;
-    }
-
+  const hostPrefix = useMemo(() => {
+    if (typeof window === "undefined") return "";
     const mainSite = platformState.sites.find((site) => site.id === "site-main") ?? platformState.sites[0] ?? null;
-    const hostPrefix = extractMerchantPrefixFromHost(
+    return extractMerchantPrefixFromHost(
       window.location.host,
       process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? mainSite?.domain ?? "",
     );
-    if (!hostPrefix) {
-      setResolvedHostSiteId("");
-      return;
-    }
+  }, [platformState]);
+  useEffect(() => {
+    if (typeof window === "undefined" || hostMatchedSite || !hostPrefix) return;
 
     let mounted = true;
     void resolvePublishedSiteByPrefix(hostPrefix).then((resolved) => {
       if (!mounted) return;
-      setResolvedHostSiteId(resolved?.siteId ?? "");
+      setRemoteHostLookup({
+        prefix: hostPrefix,
+        siteId: resolved?.siteId ?? "",
+      });
     });
     return () => {
       mounted = false;
     };
-  }, [hostMatchedSite, platformState]);
+  }, [hostMatchedSite, hostPrefix]);
+  const resolvedHostSiteId = !hostMatchedSite && hostPrefix && remoteHostLookup.prefix === hostPrefix ? remoteHostLookup.siteId : "";
   const pageBackgroundSource = activeBlocks[0]?.props;
   const pageBackgroundStyle = getBackgroundStyle({
     imageUrl: pageBackgroundSource?.pageBgImageUrl,

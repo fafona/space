@@ -18,8 +18,10 @@ export default function MerchantEntryPage() {
   const hydrated = useHydrated();
   const normalizedPrefix = useMemo(() => normalizeDomainPrefix(merchantEntry), [merchantEntry]);
   const [platformState, setPlatformState] = useState(() => loadPlatformState());
-  const [resolvedSiteId, setResolvedSiteId] = useState("");
-  const [remoteResolved, setRemoteResolved] = useState(false);
+  const [remoteLookup, setRemoteLookup] = useState<{ prefix: string; siteId: string }>({
+    prefix: "",
+    siteId: "",
+  });
 
   useEffect(
     () =>
@@ -30,25 +32,24 @@ export default function MerchantEntryPage() {
   );
 
   useEffect(() => {
-    if (!hydrated) return;
-    if (!merchantEntry || isMerchantNumericId(merchantEntry)) {
-      setResolvedSiteId("");
-      setRemoteResolved(true);
-      return;
-    }
+    if (!hydrated || !merchantEntry || isMerchantNumericId(merchantEntry)) return;
 
     let mounted = true;
-    setResolvedSiteId("");
-    setRemoteResolved(false);
-    void resolvePublishedSiteByPrefix(normalizedPrefix).then((resolved) => {
+    const lookupPrefix = normalizedPrefix;
+    void resolvePublishedSiteByPrefix(lookupPrefix).then((resolved) => {
       if (!mounted) return;
-      setResolvedSiteId(resolved?.siteId ?? "");
-      setRemoteResolved(true);
+      setRemoteLookup({
+        prefix: lookupPrefix,
+        siteId: resolved?.siteId ?? "",
+      });
     });
     return () => {
       mounted = false;
     };
   }, [hydrated, merchantEntry, normalizedPrefix]);
+
+  const resolvedSiteId = remoteLookup.prefix === normalizedPrefix ? remoteLookup.siteId : "";
+  const remoteResolved = !merchantEntry || isMerchantNumericId(merchantEntry) || remoteLookup.prefix === normalizedPrefix;
 
   if (!hydrated) {
     return <LoadingProgressScreen message="\u6b63\u5728\u52a0\u8f7d\u7ad9\u70b9..." />;
