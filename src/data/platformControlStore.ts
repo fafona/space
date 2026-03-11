@@ -49,8 +49,8 @@ export type FeatureMeta = {
   description: string;
 };
 
-export type MerchantIndustry = "" | "餐饮" | "娱乐" | "零售" | "服务";
-export const MERCHANT_INDUSTRY_OPTIONS: MerchantIndustry[] = ["餐饮", "娱乐", "零售", "服务"];
+export type MerchantIndustry = "" | "餐饮" | "娱乐" | "零售" | "服务" | "组织";
+export const MERCHANT_INDUSTRY_OPTIONS: Exclude<MerchantIndustry, "">[] = ["餐饮", "娱乐", "零售", "服务", "组织"];
 
 export type Tenant = {
   id: string;
@@ -340,8 +340,8 @@ function normalizeText(value: unknown) {
 }
 
 function normalizeSiteIndustry(value: unknown): MerchantIndustry {
-  const raw = normalizeText(value) as MerchantIndustry;
-  return MERCHANT_INDUSTRY_OPTIONS.includes(raw) ? raw : "";
+  const raw = normalizeText(value);
+  return MERCHANT_INDUSTRY_OPTIONS.find((item) => item === raw) ?? "";
 }
 
 function normalizeMerchantSortRule(value: unknown): MerchantSortRule {

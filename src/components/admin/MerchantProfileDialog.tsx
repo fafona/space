@@ -112,7 +112,7 @@ function buildFuzzyOptions(options: SearchOption[], inputValue: string, limit = 
 
 function normalizeIndustry(value: unknown): MerchantIndustry {
   const raw = typeof value === "string" ? value.trim() : "";
-  return MERCHANT_INDUSTRY_OPTIONS.includes(raw as MerchantIndustry) ? (raw as MerchantIndustry) : "";
+  return MERCHANT_INDUSTRY_OPTIONS.find((item) => item === raw) ?? "";
 }
 
 function formatServiceExpiresAt(iso?: string | null) {

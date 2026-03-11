@@ -20,7 +20,10 @@ const DEFAULT_MERCHANT_INDUSTRY_TABS: MerchantIndustryTab[] = [
   { id: "tab-entertainment", label: "娱乐", industry: "娱乐" },
   { id: "tab-retail", label: "零售", industry: "零售" },
   { id: "tab-service", label: "服务", industry: "服务" },
+  { id: "tab-organization", label: "组织", industry: "组织" },
 ];
+
+const DEFAULT_MERCHANT_INDUSTRY: Exclude<MerchantIndustry, ""> = "餐饮";
 
 function toTrimmedText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
@@ -50,14 +53,18 @@ function normalizeRestIndustry(input: MerchantIndustryTabInput | null | undefine
   const fromLabel = MERCHANT_INDUSTRY_OPTIONS.find((item) => item === label) as
     | Exclude<MerchantIndustry, "">
     | undefined;
-  return fromLabel ?? "餐饮";
+  return fromLabel ?? DEFAULT_MERCHANT_INDUSTRY;
+}
+
+export function createDefaultMerchantIndustryTabs(): MerchantIndustryTab[] {
+  return DEFAULT_MERCHANT_INDUSTRY_TABS.map((item) => ({ ...item }));
 }
 
 export function normalizeMerchantIndustryTabs(
   source: Array<MerchantIndustryTabInput | null | undefined> | undefined,
 ): MerchantIndustryTab[] {
   if (!Array.isArray(source) || source.length === 0) {
-    return [...DEFAULT_MERCHANT_INDUSTRY_TABS];
+    return createDefaultMerchantIndustryTabs();
   }
 
   const used = new Set<string>();

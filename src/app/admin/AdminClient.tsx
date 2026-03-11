@@ -104,6 +104,7 @@ import {
   type MerchantListLayoutKey,
 } from "@/lib/merchantCardLayout";
 import {
+  createDefaultMerchantIndustryTabs,
   normalizeMerchantIndustryTabs,
   toMerchantIndustryTabInputs,
   type MerchantIndustryTabIndustry,
@@ -1398,7 +1399,7 @@ function getMissingMerchantProfileFields(site: MerchantProfileLike | null | unde
   if (!countryCode || !country) missing.push("国家");
   if (!province) missing.push("省份");
   if (!city) missing.push("城市");
-  if (!MERCHANT_INDUSTRY_OPTIONS.includes(industry as (typeof MERCHANT_INDUSTRY_OPTIONS)[number])) {
+  if (!MERCHANT_INDUSTRY_OPTIONS.some((item) => item === industry)) {
     missing.push("行业");
   }
   return missing;
@@ -4191,13 +4192,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               borderColor: "#cbd5e1",
             },
           },
-          industryTabs: [
-            { id: "tab-recommended", label: "推荐", industry: "all" },
-            { id: "tab-catering", label: "餐饮", industry: "餐饮" },
-            { id: "tab-entertainment", label: "娱乐", industry: "娱乐" },
-            { id: "tab-retail", label: "零售", industry: "零售" },
-            { id: "tab-service", label: "服务", industry: "服务" },
-          ],
+          industryTabs: createDefaultMerchantIndustryTabs(),
           merchantCardLayout: {
             tabs: { x: 0, y: 0, width: 520, height: 38 },
             prev: { x: 0, y: 256, width: 92, height: 34 },
@@ -13160,7 +13155,7 @@ type GalleryEditorImage = {
                         {
                           id: `tab-${Date.now()}`,
                           label: `标签${merchantTabs.length + 1}`,
-                          industry: "餐饮" as const,
+                          industry: (MERCHANT_INDUSTRY_OPTIONS[0] ?? "餐饮") as MerchantIndustryTab["industry"],
                         },
                       ];
                       saveMerchantTabs(next);

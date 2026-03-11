@@ -1,5 +1,6 @@
 ﻿import type { CustomGalleryLayout, GalleryLayoutPreset } from "@/lib/galleryLayout";
 import { BLOCKS_SCHEMA_VERSION } from "../lib/blocksSchema";
+import type { MerchantIndustry } from "./platformControlStore";
 import type {
   ProductContainerMode,
   ProductImageAspectRatio,
@@ -74,6 +75,8 @@ export type MerchantCardTextLayoutConfig = Partial<
   >
 >;
 
+type MerchantListIndustry = "all" | Exclude<MerchantIndustry, "">;
+
 type HeroProps = BackgroundEditableProps & TypographyEditableProps & { title: string; subtitle?: string };
 type TextProps = BackgroundEditableProps & TypographyEditableProps & { heading: string; text: string };
 type ListProps = BackgroundEditableProps & TypographyEditableProps & { heading: string; items: string[] };
@@ -139,7 +142,7 @@ type MerchantListProps = BackgroundEditableProps &
     merchantCardTextBoxVisible?: boolean;
     merchantCardIndustryStyles?: Partial<
       Record<
-        "all" | "餐饮" | "娱乐" | "零售" | "服务",
+        MerchantListIndustry,
         {
           bgColor?: string;
           bgOpacity?: number;
@@ -151,7 +154,7 @@ type MerchantListProps = BackgroundEditableProps &
     industryTabs?: Array<{
       id?: string;
       label?: string;
-      industry?: "all" | "餐饮" | "娱乐" | "零售" | "服务";
+      industry?: MerchantListIndustry;
     }>;
     merchantCardLayout?: Partial<
       Record<

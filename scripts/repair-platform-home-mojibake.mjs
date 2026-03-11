@@ -54,11 +54,12 @@ function repairMerchantListBlock(block) {
       { id: "tab-entertainment", label: "\u5a31\u4e50", industry: "\u5a31\u4e50" },
       { id: "tab-retail", label: "\u96f6\u552e", industry: "\u96f6\u552e" },
       { id: "tab-service", label: "\u670d\u52a1", industry: "\u670d\u52a1" },
+      { id: "tab-organization", label: "\u7ec4\u7ec7", industry: "\u7ec4\u7ec7" },
     ];
     if (next.props.merchantCardIndustryStyles && next.props.merchantCardIndustryStyles["??"]) {
       const fallbackStyle = next.props.merchantCardIndustryStyles["??"];
       delete next.props.merchantCardIndustryStyles["??"];
-      for (const key of ["\u9910\u996e", "\u5a31\u4e50", "\u96f6\u552e", "\u670d\u52a1"]) {
+      for (const key of ["\u9910\u996e", "\u5a31\u4e50", "\u96f6\u552e", "\u670d\u52a1", "\u7ec4\u7ec7"]) {
         if (!next.props.merchantCardIndustryStyles[key]) {
           next.props.merchantCardIndustryStyles[key] = fallbackStyle;
         }
