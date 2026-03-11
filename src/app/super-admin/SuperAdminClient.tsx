@@ -62,6 +62,10 @@ function fmt(iso: string | null) {
   return Number.isFinite(date.getTime()) ? date.toLocaleString("zh-CN", { hour12: false }) : iso;
 }
 
+function normalizeEmailValue(value: string | null | undefined) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
 function badgeClass(value: string) {
   if (["active", "online", "success", "approved"].includes(value)) {
     return "border-emerald-300 bg-emerald-50 text-emerald-700";
@@ -713,6 +717,17 @@ type MerchantUserRow = {
   statusKey: "active" | "paused";
 };
 
+type BackendMerchantAccount = {
+  merchantId: string;
+  merchantName: string;
+  email: string;
+  createdAt: string | null;
+  authUserId: string | null;
+  emailConfirmed: boolean;
+  emailConfirmedAt: string | null;
+  lastSignInAt: string | null;
+};
+
 type MerchantTableSortField =
   | "seq"
   | "user"
@@ -803,6 +818,9 @@ export default function SuperAdminClient() {
   const [merchantTableSortOrder, setMerchantTableSortOrder] = useState<"asc" | "desc">("asc");
   const [merchantTablePage, setMerchantTablePage] = useState(1);
   const [merchantPanelOpen, setMerchantPanelOpen] = useState(false);
+  const [backendMerchantAccounts, setBackendMerchantAccounts] = useState<BackendMerchantAccount[]>([]);
+  const [backendMerchantAccountsLoading, setBackendMerchantAccountsLoading] = useState(false);
+  const [backendMerchantAccountsError, setBackendMerchantAccountsError] = useState("");
   const checklistStorageKeyRef = useRef(releaseChecklistStorageKeyForToday());
   const [releaseChecklistState, setReleaseChecklistState] = useState<Record<string, boolean>>(() =>
     loadReleaseChecklistStateFromStorage(),
@@ -842,6 +860,36 @@ export default function SuperAdminClient() {
       const next = `${window.location.pathname}${window.location.search}`;
       window.location.href = buildSuperAdminLoginHref(next);
     }
+  }, [authed, hydrated]);
+
+  useEffect(() => {
+    if (!hydrated || !authed) return;
+    let cancelled = false;
+    setBackendMerchantAccountsLoading(true);
+    setBackendMerchantAccountsError("");
+    fetch("/api/super-admin/merchant-accounts", {
+      method: "GET",
+      cache: "no-store",
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`merchant_account_http_${response.status}`);
+        }
+        const payload = (await response.json()) as { items?: BackendMerchantAccount[] };
+        if (cancelled) return;
+        setBackendMerchantAccounts(Array.isArray(payload.items) ? payload.items : []);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setBackendMerchantAccounts([]);
+        setBackendMerchantAccountsError(error instanceof Error ? error.message : "merchant_account_load_failed");
+      })
+      .finally(() => {
+        if (!cancelled) setBackendMerchantAccountsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [authed, hydrated]);
 
   useEffect(() => {
@@ -976,6 +1024,14 @@ export default function SuperAdminClient() {
       }),
     [merchantRows, userKeyword],
   );
+  const backendAccountsWithoutSite = useMemo(() => {
+    const siteEmails = new Set(
+      merchantRows
+        .map((row) => normalizeEmailValue(row.userEmail))
+        .filter(Boolean),
+    );
+    return backendMerchantAccounts.filter((account) => !siteEmails.has(normalizeEmailValue(account.email)));
+  }, [backendMerchantAccounts, merchantRows]);
   const displayMerchantRows = useMemo(() => {
     const rows = filteredMerchantRows.map((row, idx) => ({ row, seq: idx + 1 }));
     const text = (value: string) => value.trim().toLowerCase();
@@ -2924,6 +2980,58 @@ export default function SuperAdminClient() {
                         </button>
                       </div>
                     </div>
+                  </div>
+
+                  <div className="rounded-lg border bg-white p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold text-slate-900">后端已注册但未进入站点列表的账号</div>
+                        <div className="text-xs text-slate-500">
+                          这部分来自线上真实 `auth + merchants` 数据，不依赖当前浏览器本地的超级后台站点配置。
+                        </div>
+                      </div>
+                      <div className="rounded border bg-slate-50 px-3 py-2 text-sm">
+                        未入列账号：{backendAccountsWithoutSite.length}
+                      </div>
+                    </div>
+                    {backendMerchantAccountsLoading ? (
+                      <div className="mt-3 text-xs text-slate-500">正在加载后端注册账号…</div>
+                    ) : backendMerchantAccountsError ? (
+                      <div className="mt-3 text-xs text-rose-600">后端注册账号加载失败：{backendMerchantAccountsError}</div>
+                    ) : backendAccountsWithoutSite.length === 0 ? (
+                      <div className="mt-3 text-xs text-slate-500">当前没有“已注册但未进入站点列表”的账号。</div>
+                    ) : (
+                      <div className="mt-3 overflow-x-auto">
+                        <table className="min-w-full text-left text-sm">
+                          <thead className="bg-slate-50 text-xs text-slate-600">
+                            <tr>
+                              <th className="px-3 py-2">邮箱</th>
+                              <th className="px-3 py-2">商户ID</th>
+                              <th className="px-3 py-2">名称</th>
+                              <th className="px-3 py-2">注册时间</th>
+                              <th className="px-3 py-2">邮箱验证</th>
+                              <th className="px-3 py-2">最近登录</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {backendAccountsWithoutSite.map((account) => (
+                              <tr key={`${account.merchantId}-${account.email}`} className="border-t">
+                                <td className="px-3 py-2 text-xs">{account.email || "-"}</td>
+                                <td className="px-3 py-2 text-xs">{account.merchantId || "-"}</td>
+                                <td className="px-3 py-2 text-xs">{account.merchantName || "-"}</td>
+                                <td className="px-3 py-2 text-xs text-slate-500">{fmt(account.createdAt)}</td>
+                                <td className="px-3 py-2 text-xs">
+                                  <span className={`rounded border px-2 py-0.5 ${badgeClass(account.emailConfirmed ? "approved" : "pending")}`}>
+                                    {account.emailConfirmed ? "已验证" : "未验证"}
+                                  </span>
+                                </td>
+                                <td className="px-3 py-2 text-xs text-slate-500">{fmt(account.lastSignInAt)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
                   </div>
 
                   {merchantPanelOpen ? (
