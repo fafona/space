@@ -668,7 +668,13 @@ function describePermissionValue(
   key: keyof MerchantConfigSnapshot["permissionConfig"],
   value: MerchantConfigSnapshot["permissionConfig"][keyof MerchantConfigSnapshot["permissionConfig"]],
 ) {
-  if (key === "allowInsertBackground" || key === "allowThemeEffects" || key === "allowGalleryBlock" || key === "allowMusicBlock") {
+  if (
+    key === "allowInsertBackground" ||
+    key === "allowThemeEffects" ||
+    key === "allowGalleryBlock" ||
+    key === "allowMusicBlock" ||
+    key === "allowProductBlock"
+  ) {
     return value === true ? "是" : "否";
   }
   return `${value ?? "-"}`;
@@ -699,6 +705,7 @@ function buildMerchantConfigDiffLines(current: MerchantConfigSnapshot, target: M
     { key: "allowThemeEffects", label: "可主题效果" },
     { key: "allowGalleryBlock", label: "可相册区块" },
     { key: "allowMusicBlock", label: "可音乐区块" },
+    { key: "allowProductBlock", label: "可产品区块" },
   ];
   permissionFields.forEach(({ key, label }) => {
     const fromValue = current.permissionConfig[key];
@@ -865,6 +872,7 @@ export default function SuperAdminClient() {
   const [configAllowThemeEffects, setConfigAllowThemeEffects] = useState(false);
   const [configAllowGalleryBlock, setConfigAllowGalleryBlock] = useState(false);
   const [configAllowMusicBlock, setConfigAllowMusicBlock] = useState(false);
+  const [configAllowProductBlock, setConfigAllowProductBlock] = useState(false);
   const [configMerchantCardImage, setConfigMerchantCardImage] = useState("");
   const [configRecommendedCountryRank, setConfigRecommendedCountryRank] = useState("");
   const [configRecommendedProvinceRank, setConfigRecommendedProvinceRank] = useState("");
@@ -1512,6 +1520,7 @@ export default function SuperAdminClient() {
     setConfigAllowThemeEffects(permission.allowThemeEffects);
     setConfigAllowGalleryBlock(permission.allowGalleryBlock);
     setConfigAllowMusicBlock(permission.allowMusicBlock);
+    setConfigAllowProductBlock(permission.allowProductBlock);
     setConfigMerchantCardImage((site.merchantCardImageUrl ?? "").trim());
     setConfigRecommendedCountryRank(rankInput(sortConfig.recommendedCountryRank));
     setConfigRecommendedProvinceRank(rankInput(sortConfig.recommendedProvinceRank));
@@ -1948,6 +1957,9 @@ export default function SuperAdminClient() {
     if (prevPermission.allowMusicBlock !== configAllowMusicBlock) {
       pendingChanges.push(`音乐区块：${formatBool(prevPermission.allowMusicBlock)} -> ${formatBool(configAllowMusicBlock)}`);
     }
+    if (prevPermission.allowProductBlock !== configAllowProductBlock) {
+      pendingChanges.push(`产品区块：${formatBool(prevPermission.allowProductBlock)} -> ${formatBool(configAllowProductBlock)}`);
+    }
     if (prevMerchantCardImage !== nextMerchantCardImage) {
       pendingChanges.push(`商户框图片：${prevMerchantCardImage ? "已上传" : "默认样式"} -> ${nextMerchantCardImage ? "已上传" : "默认样式"}`);
     }
@@ -1993,6 +2005,7 @@ export default function SuperAdminClient() {
         allowThemeEffects: configAllowThemeEffects,
         allowGalleryBlock: configAllowGalleryBlock,
         allowMusicBlock: configAllowMusicBlock,
+        allowProductBlock: configAllowProductBlock,
       },
       merchantCardImageUrl: nextMerchantCardImage,
       sortConfig,
@@ -3317,6 +3330,10 @@ export default function SuperAdminClient() {
                               <label className="flex items-center gap-2 rounded border px-2 py-1.5">
                                 <input type="checkbox" checked={configAllowMusicBlock} onChange={(e) => setConfigAllowMusicBlock(e.target.checked)} />
                                 音乐区块
+                              </label>
+                              <label className="flex items-center gap-2 rounded border px-2 py-1.5">
+                                <input type="checkbox" checked={configAllowProductBlock} onChange={(e) => setConfigAllowProductBlock(e.target.checked)} />
+                                产品区块
                               </label>
                             </div>
                             <div className="rounded border p-2">

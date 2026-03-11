@@ -4293,6 +4293,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       showTip("当前权限朼通音乐区");
       return;
     }
+    if (!isPlatformEditor && newBlockType === "product" && !canUseProductBlock) {
+      showTip("当前权限未开通产品区块");
+      return;
+    }
     if (newBlockType === "nav") {
       const mergedConfig = mergePlanConfigWithEditingBlocks(
         planConfigRef.current,
@@ -5132,9 +5136,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const canUseThemeEffects = isPlatformEditor || Boolean(merchantPermissionConfig?.allowThemeEffects);
   const canUseGalleryBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowGalleryBlock);
   const canUseMusicBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowMusicBlock);
+  const canUseProductBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowProductBlock);
   const isCurrentBlockTypeLocked =
     (!canUseGalleryBlock && newBlockType === "gallery") ||
-    (!canUseMusicBlock && newBlockType === "music");
+    (!canUseMusicBlock && newBlockType === "music") ||
+    (!canUseProductBlock && newBlockType === "product");
   const showAddBlockGuide = !isPlatformEditor && !hasAddedExtraBlock && blocks.length === 1 && blocks[0]?.type === "nav";
   const merchantPublishSizeLimitBytes = !isPlatformEditor
     ? Math.max(1, Math.round(merchantPermissionConfig?.publishSizeLimitMb ?? 1)) * 1024 * 1024
@@ -5515,7 +5521,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                       <option value="chart">{"图表"}</option>
                       <option value="nav">{"导航"}</option>
                       <option value="music" disabled={!canUseMusicBlock}>{"音乐"}{!canUseMusicBlock ? "（未开通）" : ""}</option>
-                      <option value="product">{"产品"}</option>
+                      <option value="product" disabled={!canUseProductBlock}>{"产品"}{!canUseProductBlock ? "（未开通）" : ""}</option>
                       <option value="contact">{"联系方式"}</option>
                       {isPlatformEditor ? <option value="search-bar">{"搜索"}</option> : null}
                       {isPlatformEditor ? <option value="merchant-list">{"商户列表"}</option> : null}
