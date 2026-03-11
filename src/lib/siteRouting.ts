@@ -2,7 +2,7 @@ export function buildSiteStoreScope(siteId: string) {
   return `site-${siteId}`;
 }
 
-export const PLATFORM_HOME_PATH = "/portal";
+export const PLATFORM_HOME_PATH = "/";
 export const PLATFORM_EDITOR_SCOPE = "portal";
 
 export function buildSiteHref(siteId: string) {

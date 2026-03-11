@@ -2587,7 +2587,7 @@ export default function SuperAdminClient() {
                       <div className="rounded-xl border bg-slate-50 p-3">
                         <div className="mb-2 flex items-center justify-between">
                           <h3 className="text-sm font-semibold">实时预览（导航数据）</h3>
-                          <span className="text-xs text-slate-500">对应 /portal</span>
+                          <span className="text-xs text-slate-500">对应 /</span>
                         </div>
 
                         <div className="space-y-3">

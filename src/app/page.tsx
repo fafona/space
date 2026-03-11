@@ -1,13 +1,15 @@
 ﻿"use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
 import BlockRenderer from "@/components/blocks/BlockRenderer";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
 import SitePageClient from "@/app/site/[siteId]/SitePageClient";
 import {
-  loadPublishedBlocksFromStorage,
+  getPublishedBlocksSnapshot,
+  savePublishedBlocksToStorage,
+  subscribePublishedBlocksStore,
 } from "@/data/blockStore";
 import { homeBlocks, type Block } from "@/data/homeBlocks";
 import { loadPlatformState, subscribePlatformState } from "@/data/platformControlStore";
@@ -15,7 +17,7 @@ import { trackPageView } from "@/lib/analytics";
 import { sanitizeBlocksForRuntime } from "@/lib/blocksSanitizer";
 import { normalizeDomainPrefix } from "@/lib/merchantIdentity";
 import { cloneBlocks, getPagePlanConfigFromBlocks } from "@/lib/pagePlans";
-import { extractMerchantPrefixFromHost } from "@/lib/siteRouting";
+import { extractMerchantPrefixFromHost, PLATFORM_EDITOR_SCOPE } from "@/lib/siteRouting";
 import {
   canReachSupabaseGateway,
   isSupabaseEnabled,
@@ -26,6 +28,7 @@ import { useI18n } from "@/components/I18nProvider";
 
 const MOBILE_BREAKPOINT = 768;
 const MIN_INITIAL_LOADING_MS = 0;
+const EMPTY_BLOCKS: Block[] = [];
 
 function getEmbeddedMobilePlanConfig(sourceBlocks: Block[]) {
   const carrier = sourceBlocks.find(
@@ -70,10 +73,14 @@ export default function HomePage() {
   const [platformState, setPlatformState] = useState(() => loadPlatformState());
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [dbBlocks, setDbBlocks] = useState<Block[] | null>(null);
-  const [localBlocks, setLocalBlocks] = useState<Block[] | null>(null);
   const [isMobileViewport, setIsMobileViewport] = useState(false);
+  const publishedBlocks = useSyncExternalStore(
+    (onChange) => subscribePublishedBlocksStore(onChange, PLATFORM_EDITOR_SCOPE),
+    () => getPublishedBlocksSnapshot(EMPTY_BLOCKS, PLATFORM_EDITOR_SCOPE),
+    () => EMPTY_BLOCKS,
+  );
 
-  const sourceBlocks = dbBlocks ?? localBlocks ?? homeBlocks;
+  const sourceBlocks = publishedBlocks.length > 0 ? publishedBlocks : dbBlocks ?? homeBlocks;
   const desktopPlanConfig = getPagePlanConfigFromBlocks(sourceBlocks);
   const mobilePlanConfig = getEmbeddedMobilePlanConfig(sourceBlocks);
   const planConfig = isMobileViewport && mobilePlanConfig ? mobilePlanConfig : desktopPlanConfig;
@@ -136,6 +143,7 @@ export default function HomePage() {
         if (!bySlug.error && Array.isArray(bySlug.data?.blocks)) {
           const next = sanitizeBlocksForRuntime(bySlug.data.blocks as Block[]).blocks;
           setDbBlocks(next);
+          savePublishedBlocksToStorage(next, PLATFORM_EDITOR_SCOPE);
           return;
         }
 
@@ -152,17 +160,6 @@ export default function HomePage() {
       clearTimeout(loadingTimer);
     };
   }, []);
-
-  useEffect(() => {
-    if (!hydrated) return;
-    const timer = setTimeout(() => {
-      const loaded = loadPublishedBlocksFromStorage(homeBlocks);
-      setLocalBlocks(loaded);
-    }, 0);
-    return () => {
-      clearTimeout(timer);
-    };
-  }, [hydrated]);
 
   const activePage =
     activePlan?.pages?.find((page) => page.id === resolvedPageId) ??
