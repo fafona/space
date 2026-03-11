@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { SUPER_ADMIN_SESSION_COOKIE, SUPER_ADMIN_SESSION_VALUE } from "@/lib/superAdminSession";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 type MerchantRow = {
   id: string;
   name?: string | null;
