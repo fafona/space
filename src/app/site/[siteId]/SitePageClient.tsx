@@ -128,38 +128,46 @@ async function getAccessTokenQuickly(timeoutMs = 1200) {
 async function fetchPublishedSiteBlocksViaRest(siteId: string, bearerToken?: string) {
   const base = (resolvedSupabaseUrl ?? "").trim().replace(/\/+$/, "");
   if (!base || !siteId) return null;
-  const query = new URLSearchParams({
-    select: "blocks",
-    merchant_id: `eq.${siteId}`,
-    slug: "eq.home",
-    limit: "1",
-  });
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), SITE_REMOTE_FETCH_TIMEOUT_MS);
-  try {
-    const headers: Record<string, string> = {
-      apikey: resolvedSupabaseAnonKey,
-    };
-    if ((bearerToken ?? "").trim()) {
-      headers.Authorization = `Bearer ${bearerToken}`;
-    }
-    const response = await fetch(`${base}/rest/v1/pages?${query.toString()}`, {
-      method: "GET",
-      headers,
-      cache: "no-store",
-      signal: controller.signal,
+  const queryOne = async (slug?: string) => {
+    const query = new URLSearchParams({
+      select: "blocks",
+      merchant_id: `eq.${siteId}`,
+      limit: "1",
     });
-    if (!response.ok) return null;
-    const json = (await response.json()) as unknown;
-    if (!Array.isArray(json) || json.length === 0) return null;
-    const first = json[0] as { blocks?: unknown };
-    if (!Array.isArray(first?.blocks)) return null;
-    return sanitizeBlocksForRuntime(first.blocks as Block[]).blocks;
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
+    if (slug) query.set("slug", `eq.${slug}`);
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), SITE_REMOTE_FETCH_TIMEOUT_MS);
+    try {
+      const headers: Record<string, string> = {
+        apikey: resolvedSupabaseAnonKey,
+      };
+      if ((bearerToken ?? "").trim()) {
+        headers.Authorization = `Bearer ${bearerToken}`;
+      }
+      const response = await fetch(`${base}/rest/v1/pages?${query.toString()}`, {
+        method: "GET",
+        headers,
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      if (!response.ok) return null;
+      const json = (await response.json()) as unknown;
+      if (!Array.isArray(json) || json.length === 0) return null;
+      const first = json[0] as { blocks?: unknown };
+      if (!Array.isArray(first?.blocks)) return null;
+      const sanitized = sanitizeBlocksForRuntime(first.blocks as Block[]).blocks;
+      return sanitized.length > 0 ? sanitized : null;
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  const byHome = await queryOne("home");
+  if (byHome) return byHome;
+  return queryOne();
 }
 
 type SitePageClientProps = {
@@ -212,10 +220,7 @@ export function SitePageClient({ forcedSiteId }: SitePageClientProps = {}) {
     [],
   );
 
-  const site = useMemo(
-    () => platformState.sites.find((item) => item.id === siteId) ?? null,
-    [platformState.sites, siteId],
-  );
+  const site = useMemo(() => platformState.sites.find((item) => item.id === siteId) ?? null, [platformState.sites, siteId]);
   useEffect(() => {
     if (!hydrated || !site || !resolvedPageId) return;
     trackPageView(`site:${site.id}:${resolvedPageId}`);
@@ -296,18 +301,15 @@ export function SitePageClient({ forcedSiteId }: SitePageClientProps = {}) {
         const anonRestTask = withTimeout(fetchPublishedSiteBlocksViaRest(siteId), SITE_REMOTE_FETCH_TIMEOUT_MS);
         const sdkTask = withTimeout(
           (async () => {
-            let result = await supabase
-              .from("pages")
-              .select("blocks")
-              .eq("merchant_id", siteId)
-              .eq("slug", "home")
-              .limit(1)
-              .maybeSingle();
+            let result = await supabase.from("pages").select("blocks").eq("merchant_id", siteId).eq("slug", "home").limit(1).maybeSingle();
             if (result.error && isMissingSlugColumn(result.error.message)) {
+              result = await supabase.from("pages").select("blocks").eq("merchant_id", siteId).limit(1).maybeSingle();
+            } else if (!result.error && !Array.isArray(result.data?.blocks)) {
               result = await supabase.from("pages").select("blocks").eq("merchant_id", siteId).limit(1).maybeSingle();
             }
             if (!result.error && Array.isArray(result.data?.blocks)) {
-              return sanitizeBlocksForRuntime(result.data.blocks as Block[]).blocks;
+              const sanitized = sanitizeBlocksForRuntime(result.data.blocks as Block[]).blocks;
+              if (sanitized.length > 0) return sanitized;
             }
             return null;
           })(),
@@ -342,12 +344,12 @@ export function SitePageClient({ forcedSiteId }: SitePageClientProps = {}) {
     };
   }, [hydrated, siteId, siteScope]);
 
-  const waitingForPublishedSync = !!site && !dbBlocks && !hasScopedLocalBlocks && !remoteResolved;
+  const waitingForPublishedSync = Boolean(siteId) && !dbBlocks && !hasScopedLocalBlocks && !remoteResolved;
   if (!hydrated || isInitialLoading || waitingForPublishedSync) {
     return <LoadingProgressScreen message="正在加载站点..." />;
   }
 
-  if (!site) {
+  if (!site && !hasRenderableBlocks) {
     return (
       <main className="min-h-screen bg-slate-100 p-6">
         <div className="mx-auto max-w-6xl rounded-lg border bg-white p-6">
@@ -370,7 +372,7 @@ export function SitePageClient({ forcedSiteId }: SitePageClientProps = {}) {
           <h1 className="text-xl font-bold text-slate-900">该站点暂无已发布内容</h1>
           <p className="mt-2 text-sm text-slate-600">请先在后台发布该商户的专属页面。</p>
           <div className="mt-4 flex flex-wrap gap-2">
-            <Link href={buildMerchantBackendHref(site.id)} className="rounded border px-3 py-2 text-sm hover:bg-slate-50">
+            <Link href={buildMerchantBackendHref(site?.id ?? siteId)} className="rounded border px-3 py-2 text-sm hover:bg-slate-50">
               去后台发布专属页面
             </Link>
             <Link href={buildPlatformHomeHref()} className="rounded border px-3 py-2 text-sm hover:bg-slate-50">

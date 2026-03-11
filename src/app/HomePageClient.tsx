@@ -11,6 +11,7 @@ import { useI18n } from "@/components/I18nProvider";
 import { trackPageView } from "@/lib/analytics";
 import { normalizeDomainPrefix } from "@/lib/merchantIdentity";
 import { cloneBlocks, getPagePlanConfigFromBlocks } from "@/lib/pagePlans";
+import { resolvePublishedSiteByPrefix } from "@/lib/publishedSiteLookup";
 import { extractMerchantPrefixFromHost } from "@/lib/siteRouting";
 
 const MOBILE_BREAKPOINT = 768;
@@ -42,6 +43,7 @@ export default function HomePageClient({ initialBlocks }: { initialBlocks: Block
   const { t } = useI18n();
   const [platformState, setPlatformState] = useState(() => loadPlatformState());
   const [isMobileViewport, setIsMobileViewport] = useState(false);
+  const [resolvedHostSiteId, setResolvedHostSiteId] = useState("");
   const sourceBlocks = initialBlocks.length > 0 ? initialBlocks : homeBlocks;
   const desktopPlanConfig = getPagePlanConfigFromBlocks(sourceBlocks);
   const mobilePlanConfig = getEmbeddedMobilePlanConfig(sourceBlocks);
@@ -94,6 +96,31 @@ export default function HomePageClient({ initialBlocks }: { initialBlocks: Block
       ) ?? null
     );
   }, [platformState]);
+  useEffect(() => {
+    if (typeof window === "undefined" || hostMatchedSite) {
+      setResolvedHostSiteId("");
+      return;
+    }
+
+    const mainSite = platformState.sites.find((site) => site.id === "site-main") ?? platformState.sites[0] ?? null;
+    const hostPrefix = extractMerchantPrefixFromHost(
+      window.location.host,
+      process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? mainSite?.domain ?? "",
+    );
+    if (!hostPrefix) {
+      setResolvedHostSiteId("");
+      return;
+    }
+
+    let mounted = true;
+    void resolvePublishedSiteByPrefix(hostPrefix).then((resolved) => {
+      if (!mounted) return;
+      setResolvedHostSiteId(resolved?.siteId ?? "");
+    });
+    return () => {
+      mounted = false;
+    };
+  }, [hostMatchedSite, platformState]);
   const pageBackgroundSource = activeBlocks[0]?.props;
   const pageBackgroundStyle = getBackgroundStyle({
     imageUrl: pageBackgroundSource?.pageBgImageUrl,
@@ -115,6 +142,10 @@ export default function HomePageClient({ initialBlocks }: { initialBlocks: Block
 
   if (hostMatchedSite) {
     return <SitePageClient forcedSiteId={hostMatchedSite.id} />;
+  }
+
+  if (resolvedHostSiteId) {
+    return <SitePageClient forcedSiteId={resolvedHostSiteId} />;
   }
 
   return (

@@ -1911,9 +1911,7 @@ async function loadBlocksFromSupabaseFallback(merchantIds: string[]) {
     if (!byMerchantWithSlug.error && Array.isArray(byMerchantWithSlug.data?.blocks)) {
       const sanitized = sanitizeBlocksForRuntime(byMerchantWithSlug.data.blocks as Block[]).blocks;
       if (sanitized.length > 0) return sanitized;
-      return null;
     }
-    if (!byMerchantWithSlug.error || !isMissingSlugColumn(byMerchantWithSlug.error.message)) return null;
 
     const byMerchant = await supabase.from("pages").select("blocks").eq("merchant_id", merchantId).limit(1).maybeSingle();
     if (!byMerchant.error && Array.isArray(byMerchant.data?.blocks)) {
@@ -1921,6 +1919,7 @@ async function loadBlocksFromSupabaseFallback(merchantIds: string[]) {
       if (sanitized.length > 0) return sanitized;
       return null;
     }
+    if (!byMerchantWithSlug.error || !isMissingSlugColumn(byMerchantWithSlug.error.message)) return null;
     return null;
   };
 
@@ -1944,35 +1943,42 @@ async function loadBlocksViaRestFallback(merchantIds: string[], accessToken?: st
   const uniqueMerchantIds = [...new Set(merchantIds.map((item) => item.trim()).filter(Boolean))].slice(0, 8);
   if (uniqueMerchantIds.length > 0) {
     const tasks = uniqueMerchantIds.map(async (merchantId) => {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 12000);
-      try {
-        const query = new URLSearchParams({
-          select: "blocks",
-          merchant_id: `eq.${merchantId}`,
-          slug: "eq.home",
-          limit: "1",
-        });
-        const response = await fetch(`${baseUrl}/rest/v1/pages?${query.toString()}`, {
-          method: "GET",
-          headers: {
-            apikey: resolvedSupabaseAnonKey,
-            Authorization: `Bearer ${accessToken}`,
-          },
-          cache: "no-store",
-          signal: controller.signal,
-        });
-        if (!response.ok) return null;
-        const json = (await response.json()) as unknown;
-        if (!Array.isArray(json)) return null;
-        const first = json[0] as { blocks?: unknown } | undefined;
-        if (!first || !Array.isArray(first.blocks)) return null;
-        return sanitizeBlocksForRuntime(first.blocks as Block[]).blocks;
-      } catch {
-        return null;
-      } finally {
-        clearTimeout(timer);
-      }
+      const queryOne = async (slug?: string) => {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 12000);
+        try {
+          const query = new URLSearchParams({
+            select: "blocks",
+            merchant_id: `eq.${merchantId}`,
+            limit: "1",
+          });
+          if (slug) query.set("slug", `eq.${slug}`);
+          const response = await fetch(`${baseUrl}/rest/v1/pages?${query.toString()}`, {
+            method: "GET",
+            headers: {
+              apikey: resolvedSupabaseAnonKey,
+              Authorization: `Bearer ${accessToken}`,
+            },
+            cache: "no-store",
+            signal: controller.signal,
+          });
+          if (!response.ok) return null;
+          const json = (await response.json()) as unknown;
+          if (!Array.isArray(json)) return null;
+          const first = json[0] as { blocks?: unknown } | undefined;
+          if (!first || !Array.isArray(first.blocks)) return null;
+          const sanitized = sanitizeBlocksForRuntime(first.blocks as Block[]).blocks;
+          return sanitized.length > 0 ? sanitized : null;
+        } catch {
+          return null;
+        } finally {
+          clearTimeout(timer);
+        }
+      };
+
+      const byHome = await queryOne("home");
+      if (byHome) return byHome;
+      return queryOne();
     });
     const settled = await Promise.allSettled(tasks);
     for (const result of settled) {
@@ -2038,8 +2044,10 @@ function getMerchantIdentityNotice(merchantIds: string[]) {
   async function saveBlocksToSupabaseFallback(
     payload: { blocks: Block[]; updated_at: string },
     merchantIds: string[],
+    merchantSlug = "",
   ): Promise<SaveErrorLike> {
   const sanitizedBlocks = sanitizeBlocksForRuntime(payload.blocks).blocks;
+  const normalizedMerchantSlug = normalizeDomainPrefixForMerchant(merchantSlug) || "home";
 
   async function trySaveWithPayload(sanitizedPayload: { blocks: Block[]; updated_at?: string }): Promise<SaveErrorLike> {
     // Public homepage publish: only touch the global row (merchant_id is null).
@@ -2085,6 +2093,21 @@ function getMerchantIdentityNotice(merchantIds: string[]) {
       if (byMerchant.error) continue;
 
       if (byMerchant.data?.id !== undefined && byMerchant.data?.id !== null) {
+        if (pagesSlugColumnSupported !== false) {
+          const byIdWithSlug = await supabase
+            .from("pages")
+            .update({ ...sanitizedPayload, slug: normalizedMerchantSlug })
+            .eq("id", byMerchant.data.id);
+          if (!byIdWithSlug.error) {
+            pagesSlugColumnSupported = true;
+            return null;
+          }
+          if (!isMissingSlugColumn(byIdWithSlug.error.message)) {
+            return byIdWithSlug.error;
+          }
+          pagesSlugColumnSupported = false;
+        }
+
         const byId = await supabase.from("pages").update(sanitizedPayload).eq("id", byMerchant.data.id);
         if (!byId.error) return null;
         return byId.error;
@@ -2097,10 +2120,10 @@ function getMerchantIdentityNotice(merchantIds: string[]) {
       const withSlug = await supabase.from("pages").insert({
         ...sanitizedPayload,
         merchant_id: merchantId,
-        slug: "home",
+        slug: normalizedMerchantSlug,
       });
       if (!withSlug.error) return null;
-      initErrors.push(`pages 初slug)失败(${merchantId}): ${withSlug.error.message}`);
+      initErrors.push(`pages 初始插入（含 slug）失败(${merchantId}): ${withSlug.error.message}`);
 
       if (isMissingSlugColumn(withSlug.error.message)) {
         const withoutSlug = await supabase.from("pages").insert({
@@ -2114,7 +2137,7 @@ function getMerchantIdentityNotice(merchantIds: string[]) {
       // Fallback: let DB default/trigger populate merchant_id when explicit id is invalid.
       const autoMerchantWithSlug = await supabase.from("pages").insert({
         ...sanitizedPayload,
-        slug: "home",
+        slug: normalizedMerchantSlug,
       });
       if (!autoMerchantWithSlug.error) return null;
       initErrors.push(`pages 初始插入（自动 merchant_id，含 slug）失败(${merchantId}): ${autoMerchantWithSlug.error.message}`);
@@ -2943,6 +2966,7 @@ export default function AdminClient({
   async function trySaveWithResolvedMerchantIds(
     payload: { blocks: Block[]; updated_at: string },
     preferredMerchantIds: string[] = [],
+    merchantSlug = "",
     timeoutMs = 45000,
   ) {
     if (isPlatformEditor) {
@@ -2952,12 +2976,12 @@ export default function AdminClient({
     const strictPreferred = [...new Set(preferredMerchantIds.map((item) => item.trim()).filter(Boolean))];
     if (strictPreferred.length > 0) {
       merchantIdsRef.current = strictPreferred;
-      return withTimeout(saveBlocksToSupabaseFallback(payload, strictPreferred), timeoutMs);
+      return withTimeout(saveBlocksToSupabaseFallback(payload, strictPreferred, merchantSlug), timeoutMs);
     }
     let merchantIds = mergePreferredMerchantIds(merchantIdsRef.current);
     try {
       const gatewayReady = await canReachSupabaseGateway(Math.min(2500, AUTH_CHECK_TIMEOUT_MS));
-      if (!gatewayReady) return withTimeout(saveBlocksToSupabaseFallback(payload, merchantIds), timeoutMs);
+      if (!gatewayReady) return withTimeout(saveBlocksToSupabaseFallback(payload, merchantIds, merchantSlug), timeoutMs);
       const {
         data: { session },
       } = await withTimeout(
@@ -2978,12 +3002,13 @@ export default function AdminClient({
       merchantIds = merchantIdsRef.current;
     }
     merchantIds = mergePreferredMerchantIds(preferredMerchantIds, merchantIds);
-    return withTimeout(saveBlocksToSupabaseFallback(payload, merchantIds), timeoutMs);
+    return withTimeout(saveBlocksToSupabaseFallback(payload, merchantIds, merchantSlug), timeoutMs);
   }
 
   async function trySaveViaServerPublishApi(
     payload: { blocks: Block[]; updated_at: string },
     preferredMerchantIds: string[] = [],
+    merchantSlug = "",
     timeoutMs = 65000,
   ): Promise<{ handled: boolean; error: SaveErrorLike }> {
     const requestId = `publish-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -3006,6 +3031,7 @@ export default function AdminClient({
           requestId,
           payload,
           merchantIds,
+          merchantSlug,
           isPlatformEditor,
         }),
       });
@@ -4532,6 +4558,57 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
   }
 
+  async function syncMerchantDomainBinding(merchantId: string, domainPrefix: string) {
+    const normalizedMerchantId = String(merchantId ?? "").trim();
+    const normalizedPrefix = normalizeDomainPrefixForMerchant(domainPrefix);
+    if (!normalizedMerchantId || !normalizedPrefix || !isSupabaseEnabled) {
+      return { ok: false as const, updated: false };
+    }
+
+    let accessToken = "";
+    try {
+      const sessionResult = await withTimeout(
+        supabase.auth.getSession(),
+        Math.min(2500, AUTH_CHECK_TIMEOUT_MS),
+        "同步商户域名前缀超时",
+      );
+      accessToken = String(sessionResult.data.session?.access_token ?? "").trim();
+    } catch {
+      accessToken = "";
+    }
+
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+    };
+    if (accessToken) {
+      headers.Authorization = `Bearer ${accessToken}`;
+    }
+
+    const response = await fetch("/api/merchant-domain-binding", {
+      method: "POST",
+      headers,
+      credentials: "same-origin",
+      body: JSON.stringify({
+        merchantId: normalizedMerchantId,
+        domainPrefix: normalizedPrefix,
+      }),
+    });
+
+    const data = (await response.json().catch(() => null)) as { updated?: unknown; message?: unknown } | null;
+    if (!response.ok) {
+      return {
+        ok: false as const,
+        updated: false,
+        message: typeof data?.message === "string" ? data.message : `HTTP ${response.status}`,
+      };
+    }
+
+    return {
+      ok: true as const,
+      updated: data?.updated === true,
+    };
+  }
+
   function saveDraft() {
     const mergedConfig = mergePlanConfigWithEditingBlocks(
       planConfigRef.current,
@@ -4698,6 +4775,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       return;
     }
     let publishTargetSiteId = "";
+    let publishTargetDomainPrefix = "";
     if (!isPlatformEditor) {
       const scopedId = getSiteIdFromStoreScope(storeScope);
       const targetSiteId =
@@ -4712,6 +4790,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       const latestState = loadPlatformState();
       publishTargetSiteId = targetSiteId;
       const targetSite = targetSiteId ? latestState.sites.find((item) => item.id === targetSiteId) ?? null : null;
+      publishTargetDomainPrefix = normalizeDomainPrefixForMerchant(targetSite?.domainPrefix ?? targetSite?.domainSuffix ?? "");
       const missingFields = getMissingMerchantProfileFields(targetSite);
       if (missingFields.length > 0) {
         setTopBarCollapsed(false);
@@ -4891,18 +4970,18 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         return;
       }
       let error: SaveErrorLike = null;
-      const serverPublishResult = await trySaveViaServerPublishApi(payload, preferredMerchantIds, 70000);
+      const serverPublishResult = await trySaveViaServerPublishApi(payload, preferredMerchantIds, publishTargetDomainPrefix, 70000);
       if (serverPublishResult.handled) {
         error = serverPublishResult.error;
       } else {
         try {
-          error = await trySaveWithResolvedMerchantIds(payload, preferredMerchantIds, 45000);
+          error = await trySaveWithResolvedMerchantIds(payload, preferredMerchantIds, publishTargetDomainPrefix, 45000);
         } catch (firstError) {
           if (!(firstError instanceof Error) || !firstError.message.includes("保存超时")) {
             throw firstError;
           }
           showSavePublishTip("首次发布超时，正在自动重试...");
-          error = await trySaveWithResolvedMerchantIds(payload, preferredMerchantIds, 60000);
+          error = await trySaveWithResolvedMerchantIds(payload, preferredMerchantIds, publishTargetDomainPrefix, 60000);
         }
       }
 
@@ -5843,6 +5922,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       {merchantProfileDialogOpen && !isPlatformEditor ? (
         <MerchantProfileDialog
           open={merchantProfileDialogOpen}
+          siteId={editingSiteId}
           siteBaseDomain={(() => {
             const platformState = loadPlatformState();
             const baseFromEnv = (process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "").trim();
@@ -5871,6 +5951,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             ensureScopedMerchantSite(editingSiteId, contactEmail || null);
             const platformState = loadPlatformState();
             const target = platformState.sites.find((item) => item.id === editingSiteId) ?? null;
+            const normalizedDomainPrefix = normalizeDomainPrefixForMerchant(domainPrefix);
             const baseDomain =
               (process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "").trim() ||
               (platformState.sites.find((site) => site.id === "site-main")?.domain ?? "").trim() ||
@@ -5882,8 +5963,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                   ? {
                       ...item,
                       merchantName,
-                      domainPrefix: normalizeDomainPrefixForMerchant(domainPrefix),
-                      domainSuffix: normalizeDomainPrefixForMerchant(domainPrefix),
+                      domainPrefix: normalizedDomainPrefix,
+                      domainSuffix: normalizedDomainPrefix,
                       contactAddress,
                       contactName,
                       contactPhone,
@@ -5898,7 +5979,16 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             });
             setMerchantProfileDialogOpen(false);
             setMerchantProfileAttention(false);
-            showTip("商户信息已保");
+            showTip("商户信息已保存");
+            void syncMerchantDomainBinding(editingSiteId, normalizedDomainPrefix).then((result) => {
+              if (!result.ok) {
+                showTip("商户信息已保存；线上前缀映射同步失败，重新发布后会自动修复");
+                return;
+              }
+              if (!result.updated) {
+                showTip("商户信息已保存；当前还没有线上页面记录，首次发布后前台地址才会生效");
+              }
+            });
           }}
         />
       ) : null}

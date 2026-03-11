@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import type { Block } from "@/data/homeBlocks";
 import { sanitizeBlocksForRuntime } from "@/lib/blocksSanitizer";
+import { normalizeDomainPrefix } from "@/lib/merchantIdentity";
 import { getInlinePublishPayloadViolation } from "@/lib/publishPayloadValidation";
 
 type SaveErrorLike = { message: string } | null;
@@ -13,6 +14,7 @@ type PublishRequestBody = {
     updated_at?: string;
   };
   merchantIds?: string[];
+  merchantSlug?: string;
   isPlatformEditor?: boolean;
 };
 
@@ -126,8 +128,10 @@ async function saveBlocksToPagesTable(
   supabase: LooseSupabaseClient,
   payload: { blocks: Block[]; updated_at: string },
   merchantIds: string[],
+  merchantSlug: string,
 ) {
   const sanitizedBlocks = sanitizeBlocksForRuntime(payload.blocks).blocks;
+  const normalizedMerchantSlug = normalizeDomainPrefix(merchantSlug) || "home";
   const state = {
     pagesSlugColumnSupported: null as boolean | null,
     pagesMerchantIdColumnSupported: null as boolean | null,
@@ -253,6 +257,22 @@ async function saveBlocksToPagesTable(
       if (byMerchant.error) continue;
       const byMerchantRecord = (byMerchant.data ?? null) as { id?: string | number | null } | null;
       if (byMerchantRecord?.id !== undefined && byMerchantRecord?.id !== null) {
+        if (state.pagesSlugColumnSupported !== false) {
+          const byIdWithSlug = await supabase
+            .from("pages")
+            .update({ ...sanitizedPayload, slug: normalizedMerchantSlug })
+            .eq("id", byMerchantRecord.id);
+          if (!byIdWithSlug.error) {
+            state.pagesSlugColumnSupported = true;
+            return null;
+          }
+          const byIdWithSlugMessage = toErrorMessage(byIdWithSlug.error);
+          if (!isMissingSlugColumn(byIdWithSlugMessage)) {
+            return { message: byIdWithSlugMessage };
+          }
+          state.pagesSlugColumnSupported = false;
+        }
+
         const byId = await supabase.from("pages").update(sanitizedPayload).eq("id", byMerchantRecord.id);
         if (!byId.error) return null;
         return { message: toErrorMessage(byId.error) };
@@ -264,7 +284,7 @@ async function saveBlocksToPagesTable(
       const withSlug = await supabase.from("pages").insert({
         ...sanitizedPayload,
         merchant_id: merchantId,
-        slug: "home",
+        slug: normalizedMerchantSlug,
       });
       if (!withSlug.error) return null;
       const withSlugMessage = toErrorMessage(withSlug.error);
@@ -281,7 +301,7 @@ async function saveBlocksToPagesTable(
 
       const autoMerchantWithSlug = await supabase.from("pages").insert({
         ...sanitizedPayload,
-        slug: "home",
+        slug: normalizedMerchantSlug,
       });
       if (!autoMerchantWithSlug.error) return null;
       const autoWithSlugMessage = toErrorMessage(autoMerchantWithSlug.error);
@@ -320,10 +340,11 @@ async function saveWithRetry(
   supabase: LooseSupabaseClient,
   payload: { blocks: Block[]; updated_at: string },
   merchantIds: string[],
+  merchantSlug: string,
 ) {
   let lastError: SaveErrorLike = null;
   for (let attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt += 1) {
-    const error = await saveBlocksToPagesTable(supabase, payload, merchantIds);
+    const error = await saveBlocksToPagesTable(supabase, payload, merchantIds, merchantSlug);
     if (!error) return null;
     lastError = error;
     if (!isTransientSaveError(error.message) || attempt === MAX_RETRY_ATTEMPTS) break;
@@ -398,6 +419,7 @@ export async function POST(request: Request) {
       : new Date().toISOString();
     const isPlatformEditor = body.isPlatformEditor === true;
     const merchantIds = normalizeMerchantIds(body.merchantIds, isPlatformEditor);
+    const merchantSlug = isPlatformEditor ? "home" : normalizeDomainPrefix(body.merchantSlug);
 
     const supabase = createClient(supabaseUrl, serviceRoleKey, {
       auth: {
@@ -417,6 +439,7 @@ export async function POST(request: Request) {
         updated_at: normalizedUpdatedAt,
       },
       merchantIds,
+      merchantSlug,
     );
 
     if (saveError) {
