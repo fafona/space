@@ -17,8 +17,20 @@ type MerchantRow = {
 type AuthUserSummary = {
   id: string;
   email?: string | null;
+  created_at?: string | null;
   email_confirmed_at?: string | null;
   last_sign_in_at?: string | null;
+};
+
+type MerchantAccountItem = {
+  merchantId: string;
+  merchantName: string;
+  email: string;
+  createdAt: string | null;
+  authUserId: string | null;
+  emailConfirmed: boolean;
+  emailConfirmedAt: string | null;
+  lastSignInAt: string | null;
 };
 
 type AdminListUsersClient = {
@@ -61,6 +73,7 @@ async function listAuthUsers(supabase: AdminListUsersClient) {
     const chunk = (data?.users ?? []).map((user) => ({
       id: user.id,
       email: user.email,
+      created_at: user.created_at ?? null,
       email_confirmed_at: user.email_confirmed_at,
       last_sign_in_at: user.last_sign_in_at,
     }));
@@ -69,6 +82,14 @@ async function listAuthUsers(supabase: AdminListUsersClient) {
     page += 1;
   }
   return users;
+}
+
+function sortByCreatedAtDesc(items: MerchantAccountItem[]) {
+  return [...items].sort((left, right) => {
+    const leftTs = new Date(left.createdAt ?? 0).getTime();
+    const rightTs = new Date(right.createdAt ?? 0).getTime();
+    return rightTs - leftTs;
+  });
 }
 
 export async function GET(request: Request) {
@@ -110,10 +131,10 @@ export async function GET(request: Request) {
     const authByEmail = new Map(
       authUsers
         .map((user) => [normalizeEmail(user.email), user] as const)
-        .filter(([email]) => !!email),
+        .filter(([email]) => Boolean(email)),
     );
 
-    const items = ((merchants ?? []) as MerchantRow[]).map((merchant) => {
+    const merchantItems: MerchantAccountItem[] = ((merchants ?? []) as MerchantRow[]).map((merchant) => {
       const email = normalizeEmail(
         merchant.user_email,
         merchant.email,
@@ -129,9 +150,9 @@ export async function GET(request: Request) {
 
       return {
         merchantId: String(merchant.id ?? "").trim(),
-        merchantName: String(merchant.name ?? "").trim() || "未命名商户",
+        merchantName: String(merchant.name ?? "").trim(),
         email,
-        createdAt: merchant.created_at ?? null,
+        createdAt: merchant.created_at ?? authUser?.created_at ?? null,
         authUserId: (authUser?.id ?? fallbackAuthUserId) || null,
         emailConfirmed: Boolean(authUser?.email_confirmed_at),
         emailConfirmedAt: authUser?.email_confirmed_at ?? null,
@@ -139,7 +160,32 @@ export async function GET(request: Request) {
       };
     });
 
-    return NextResponse.json({ items });
+    const linkedAuthKeys = new Set(
+      merchantItems.flatMap((item) => {
+        const keys: string[] = [];
+        if (item.authUserId) keys.push(`id:${item.authUserId}`);
+        if (item.email) keys.push(`email:${item.email}`);
+        return keys;
+      }),
+    );
+
+    const authOnlyItems: MerchantAccountItem[] = authUsers
+      .filter((user) => {
+        const email = normalizeEmail(user.email);
+        return !linkedAuthKeys.has(`id:${user.id}`) && (!email || !linkedAuthKeys.has(`email:${email}`));
+      })
+      .map((user) => ({
+        merchantId: "",
+        merchantName: "",
+        email: normalizeEmail(user.email),
+        createdAt: user.created_at ?? null,
+        authUserId: user.id,
+        emailConfirmed: Boolean(user.email_confirmed_at),
+        emailConfirmedAt: user.email_confirmed_at ?? null,
+        lastSignInAt: user.last_sign_in_at ?? null,
+      }));
+
+    return NextResponse.json({ items: sortByCreatedAtDesc([...merchantItems, ...authOnlyItems]) });
   } catch (error) {
     return NextResponse.json(
       {
