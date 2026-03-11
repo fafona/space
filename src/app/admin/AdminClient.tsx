@@ -8003,7 +8003,7 @@ type GalleryEditorImage = {
   const cardClass =
     block.type === "hero"
       ? "max-w-6xl mx-auto px-6 py-10 pointer-events-auto"
-      : `bg-white rounded-xl shadow-sm p-6 overflow-hidden pointer-events-auto ${borderClass}`;
+      : `bg-white rounded-xl shadow-sm p-6 pointer-events-auto ${isSelected ? "overflow-visible" : "overflow-hidden"} ${borderClass}`;
   const blockBackgroundStyle = getBackgroundStyle({
     imageUrl: block.props.bgImageUrl,
     fillMode: block.props.bgFillMode,
@@ -8013,6 +8013,13 @@ type GalleryEditorImage = {
     imageOpacity: block.props.bgImageOpacity,
     colorOpacity: block.props.bgColorOpacity,
   });
+  const editorPanelMinWidth = isSelected
+    ? (
+        block.type === "product" || block.type === "merchant-list" || block.type === "search-bar"
+          ? "min(980px, calc(100vw - 2rem))"
+          : "min(760px, calc(100vw - 2rem))"
+      )
+    : undefined;
   const blockWidth = draftResize?.width ?? normalizeBlockWidth(block.props.blockWidth);
   const blockHeight = draftResize?.height ?? normalizeBlockHeight(block.props.blockHeight);
   const isDraggingSource = draggingBlockId === block.id;
@@ -8041,6 +8048,7 @@ type GalleryEditorImage = {
   const blockSizeStyle = {
     width: blockWidth ? `${blockWidth}px` : undefined,
     height: blockHeight ? `${blockHeight}px` : undefined,
+    minWidth: editorPanelMinWidth,
   };
   const resizeHandles = isBlockLocked ? null : (
     <>
