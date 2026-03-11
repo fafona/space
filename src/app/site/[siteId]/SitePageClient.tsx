@@ -170,6 +170,28 @@ async function fetchPublishedSiteBlocksViaRest(siteId: string, bearerToken?: str
   return queryOne();
 }
 
+async function fetchPublishedSiteBlocksViaApi(siteId: string) {
+  if (!siteId) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SITE_REMOTE_FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(`/api/site-published?siteId=${encodeURIComponent(siteId)}`, {
+      method: "GET",
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    if (!response.ok) return null;
+    const json = (await response.json().catch(() => null)) as { blocks?: unknown } | null;
+    if (!Array.isArray(json?.blocks)) return null;
+    const sanitized = sanitizeBlocksForRuntime(json.blocks as Block[]).blocks;
+    return sanitized.length > 0 ? sanitized : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 type SitePageClientProps = {
   forcedSiteId?: string;
 };
@@ -282,7 +304,7 @@ export function SitePageClient({ forcedSiteId }: SitePageClientProps = {}) {
   }, [hydrated, siteId, siteScope]);
 
   useEffect(() => {
-    if (!hydrated || !siteId || !isSupabaseEnabled) {
+    if (!hydrated || !siteId) {
       setRemoteResolved(true);
       return;
     }
@@ -294,36 +316,41 @@ export function SitePageClient({ forcedSiteId }: SitePageClientProps = {}) {
 
     (async () => {
       try {
-        const gatewayReady = await canReachSupabaseGateway(3000);
-        if (!mounted || !gatewayReady) return;
+        let nextBlocks = await withTimeout(fetchPublishedSiteBlocksViaApi(siteId), SITE_REMOTE_FETCH_TIMEOUT_MS);
 
-        const accessTokenTask = getAccessTokenQuickly(900);
-        const anonRestTask = withTimeout(fetchPublishedSiteBlocksViaRest(siteId), SITE_REMOTE_FETCH_TIMEOUT_MS);
-        const sdkTask = withTimeout(
-          (async () => {
-            let result = await supabase.from("pages").select("blocks").eq("merchant_id", siteId).eq("slug", "home").limit(1).maybeSingle();
-            if (result.error && isMissingSlugColumn(result.error.message)) {
-              result = await supabase.from("pages").select("blocks").eq("merchant_id", siteId).limit(1).maybeSingle();
-            } else if (!result.error && !Array.isArray(result.data?.blocks)) {
-              result = await supabase.from("pages").select("blocks").eq("merchant_id", siteId).limit(1).maybeSingle();
-            }
-            if (!result.error && Array.isArray(result.data?.blocks)) {
-              const sanitized = sanitizeBlocksForRuntime(result.data.blocks as Block[]).blocks;
-              if (sanitized.length > 0) return sanitized;
-            }
-            return null;
-          })(),
-          SITE_REMOTE_FETCH_TIMEOUT_MS,
-        );
+        if (!nextBlocks && isSupabaseEnabled) {
+          const gatewayReady = await canReachSupabaseGateway(3000);
+          if (!mounted) return;
+          if (gatewayReady) {
+            const accessTokenTask = getAccessTokenQuickly(900);
+            const anonRestTask = withTimeout(fetchPublishedSiteBlocksViaRest(siteId), SITE_REMOTE_FETCH_TIMEOUT_MS);
+            const sdkTask = withTimeout(
+              (async () => {
+                let result = await supabase.from("pages").select("blocks").eq("merchant_id", siteId).eq("slug", "home").limit(1).maybeSingle();
+                if (result.error && isMissingSlugColumn(result.error.message)) {
+                  result = await supabase.from("pages").select("blocks").eq("merchant_id", siteId).limit(1).maybeSingle();
+                } else if (!result.error && !Array.isArray(result.data?.blocks)) {
+                  result = await supabase.from("pages").select("blocks").eq("merchant_id", siteId).limit(1).maybeSingle();
+                }
+                if (!result.error && Array.isArray(result.data?.blocks)) {
+                  const sanitized = sanitizeBlocksForRuntime(result.data.blocks as Block[]).blocks;
+                  if (sanitized.length > 0) return sanitized;
+                }
+                return null;
+              })(),
+              SITE_REMOTE_FETCH_TIMEOUT_MS,
+            );
 
-        let nextBlocks = await anonRestTask;
-        if (!nextBlocks) {
-          nextBlocks = await sdkTask;
-        }
-        if (!nextBlocks) {
-          const accessToken = await accessTokenTask;
-          if (accessToken) {
-            nextBlocks = await withTimeout(fetchPublishedSiteBlocksViaRest(siteId, accessToken), SITE_REMOTE_FETCH_TIMEOUT_MS);
+            nextBlocks = await anonRestTask;
+            if (!nextBlocks) {
+              nextBlocks = await sdkTask;
+            }
+            if (!nextBlocks) {
+              const accessToken = await accessTokenTask;
+              if (accessToken) {
+                nextBlocks = await withTimeout(fetchPublishedSiteBlocksViaRest(siteId, accessToken), SITE_REMOTE_FETCH_TIMEOUT_MS);
+              }
+            }
           }
         }
         if (!mounted || !nextBlocks) return;
@@ -349,7 +376,7 @@ export function SitePageClient({ forcedSiteId }: SitePageClientProps = {}) {
     return <LoadingProgressScreen message="正在加载站点..." />;
   }
 
-  if (!site && !hasRenderableBlocks) {
+  if (!site && !hasRenderableBlocks && !forcedSiteId) {
     return (
       <main className="min-h-screen bg-slate-100 p-6">
         <div className="mx-auto max-w-6xl rounded-lg border bg-white p-6">
