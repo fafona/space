@@ -68,17 +68,18 @@ function normalizeEmailValue(value: string | null | undefined) {
 
 function buildBackendOnlySite(account: BackendMerchantAccount): Site {
   const timestamp = account.createdAt ?? nextIsoNow();
+  const merchantName = (account.merchantName ?? "").trim();
   return {
     id: `backend-${account.merchantId || account.email || "merchant"}`,
     tenantId: "backend-only",
-    merchantName: account.merchantName,
+    merchantName,
     domainPrefix: "",
     domainSuffix: "",
     contactAddress: "",
     contactName: "",
     contactPhone: "",
     contactEmail: account.email,
-    name: account.merchantName || account.email || "未建站商户",
+    name: merchantName,
     domain: "",
     categoryId: "unlinked",
     category: "未建站",
@@ -1064,7 +1065,7 @@ export default function SuperAdminClient() {
         backendAccount: account,
         merchantId: account.merchantId || "-",
         userEmail: account.email || "-",
-        merchantName: account.merchantName || account.email || "未命名商户",
+        merchantName: (account.merchantName ?? "").trim(),
         prefix: "-",
         industry: "未建站",
         city: "-",
