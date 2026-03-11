@@ -14773,13 +14773,11 @@ type GalleryEditorImage = {
                 />
               </div>
               <div className="space-y-1 mt-3">
-                <RichTextEditor
-                  field="phone"
+                <input
                   className="border p-2 rounded w-full text-gray-700"
-                  value={block.props.phone ?? ""}
-                  onChange={handleRichFieldChange}
-                  onActivate={registerActiveEditor}
-                  onSelectionChange={updateSelectionRange}
+                  value={toPlainText(block.props.phone ?? "", "")}
+                  placeholder="电话号码"
+                  onChange={(event) => onChange({ phone: event.target.value })}
                 />
               </div>
               <div className="space-y-1 mt-3">
