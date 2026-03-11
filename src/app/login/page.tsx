@@ -7,7 +7,7 @@ import { buildMerchantBackendHref } from "@/lib/siteRouting";
 import { canReachSupabaseGateway, resolvedSupabaseAnonKey, resolvedSupabaseUrl, supabase } from "@/lib/supabase";
 
 export default function LoginPage() {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   const isDevelopment = process.env.NODE_ENV === "development";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -115,6 +115,58 @@ export default function LoginPage() {
     return /invalid (authentication|login) credentials|invalid_grant/i.test(message);
   }
 
+  function isUserAlreadyRegistered(message: string, code?: string) {
+    if (code === "user_already_exists") return true;
+    return /user already registered/i.test(message);
+  }
+
+  function getRegisteredAccountMessage(confirmed: boolean) {
+    const normalizedLocale = locale.trim().toLowerCase();
+    if (normalizedLocale.startsWith("zh-tw")) {
+      return confirmed
+        ? "此信箱已註冊，請直接登入。"
+        : "此信箱已註冊，但尚未完成信箱驗證。請先驗證信箱，或點擊下方「重發驗證郵件」。";
+    }
+    if (normalizedLocale.startsWith("ja")) {
+      return confirmed
+        ? "このメールアドレスは既に登録されています。直接ログインしてください。"
+        : "このメールアドレスは既に登録されていますが、メール確認が未完了です。先に確認するか、下の確認メール再送を使ってください。";
+    }
+    if (normalizedLocale.startsWith("ko")) {
+      return confirmed
+        ? "이 이메일은 이미 등록되어 있습니다. 바로 로그인해 주세요."
+        : "이 이메일은 이미 등록되어 있지만 이메일 인증이 아직 끝나지 않았습니다. 먼저 인증하거나 아래의 인증 메일 재전송을 눌러 주세요.";
+    }
+    if (normalizedLocale.startsWith("zh")) {
+      return confirmed
+        ? "该邮箱已注册，请直接登录。"
+        : "该邮箱已注册，但还没完成邮箱验证。请先验证邮箱，或点击下方“重发验证邮件”。";
+    }
+    return confirmed
+      ? "This email is already registered. Please sign in."
+      : "This email is already registered but not verified yet. Verify your email first, or use resend verification below.";
+  }
+
+  async function readRegistrationStatus(emailValue: string) {
+    try {
+      const response = await fetch("/api/auth/status", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ email: emailValue.trim() }),
+      });
+      if (!response.ok) return null;
+      const payload = (await response.json()) as { exists?: unknown; confirmed?: unknown };
+      return {
+        exists: payload.exists === true,
+        confirmed: payload.confirmed === true,
+      };
+    } catch {
+      return null;
+    }
+  }
+
   function normalizeError(message: string) {
     if (isEmailNotConfirmed(message)) {
       return t("login.emailNotConfirmed");
@@ -186,7 +238,15 @@ export default function LoginPage() {
           },
         }),
       );
-      if (error) return setMsg(normalizeError(error.message));
+      if (error) {
+        if (isUserAlreadyRegistered(error.message, (error as { code?: string }).code)) {
+          const status = await readRegistrationStatus(email);
+          const confirmed = status?.exists ? status.confirmed : true;
+          setNeedConfirmEmail(!confirmed);
+          return setMsg(getRegisteredAccountMessage(confirmed));
+        }
+        return setMsg(normalizeError(error.message));
+      }
       const needsConfirmation = signUpNeedsEmailConfirmation(data);
       setEmailConfirmationRequired(needsConfirmation);
       if (!needsConfirmation) {
