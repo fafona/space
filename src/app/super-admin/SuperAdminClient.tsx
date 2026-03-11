@@ -743,6 +743,7 @@ type MerchantUserRow = {
   site: Site;
   hasSite: boolean;
   backendAccount: BackendMerchantAccount | null;
+  merchantId: string;
   userEmail: string;
   merchantName: string;
   prefix: string;
@@ -1009,11 +1010,17 @@ export default function SuperAdminClient() {
     return map;
   }, [state.users]);
   const merchantRows = useMemo(() => {
+    const backendAccountByEmail = new Map(
+      backendMerchantAccounts
+        .map((account) => [normalizeEmailValue(account.email), account] as const)
+        .filter(([email]) => Boolean(email)),
+    );
     const siteRows: MerchantUserRow[] = state.sites
       .filter((site) => site.id !== "site-main")
       .map((site) => {
         const owner = merchantOwnerBySiteId.get(site.id);
         const userEmail = (site.contactEmail ?? "").trim() || owner?.email || "-";
+        const backendAccount = backendAccountByEmail.get(normalizeEmailValue(userEmail)) ?? null;
         const merchantName = (site.merchantName ?? "").trim() || site.name;
         const prefix = (site.domainPrefix ?? site.domainSuffix ?? "").trim();
         const industry = (site.industry ?? "").trim() || "未设置";
@@ -1027,7 +1034,8 @@ export default function SuperAdminClient() {
         return {
           site,
           hasSite: true,
-          backendAccount: null,
+          backendAccount,
+          merchantId: backendAccount?.merchantId || "-",
           userEmail,
           merchantName,
           prefix,
@@ -1054,6 +1062,7 @@ export default function SuperAdminClient() {
         site: buildBackendOnlySite(account),
         hasSite: false,
         backendAccount: account,
+        merchantId: account.merchantId || "-",
         userEmail: account.email || "-",
         merchantName: account.merchantName || account.email || "未命名商户",
         prefix: "-",
@@ -1084,7 +1093,7 @@ export default function SuperAdminClient() {
       merchantRows.filter((row) => {
         const q = userKeyword.trim().toLowerCase();
         if (!q) return true;
-        return [row.userEmail, row.merchantName, row.prefix, row.industry, row.city, row.site.domain]
+        return [row.userEmail, row.merchantId, row.merchantName, row.prefix, row.industry, row.city, row.site.domain]
           .join(" ")
           .toLowerCase()
           .includes(q);
@@ -2878,7 +2887,7 @@ export default function SuperAdminClient() {
                   <div className="grid gap-2 md:grid-cols-5">
                     <input
                       className="rounded border px-3 py-2 text-sm md:col-span-2"
-                      placeholder="搜索用户/名称/前缀/行业/城市/域名"
+                      placeholder="搜索用户/ID/名称/前缀/行业/城市/域名"
                       value={userKeyword}
                       onChange={(e) => {
                         setUserKeyword(e.target.value);
@@ -2908,6 +2917,11 @@ export default function SuperAdminClient() {
                               <div className="flex items-center justify-between gap-2">
                                 <span>用户</span>
                                 {renderMerchantSortToggle("user")}
+                              </div>
+                            </th>
+                            <th className="px-3 py-2">
+                              <div className="flex items-center justify-between gap-2">
+                                <span>ID</span>
                               </div>
                             </th>
                             <th className="px-3 py-2">
@@ -2973,6 +2987,7 @@ export default function SuperAdminClient() {
                               <tr key={row.site.id} className={`border-t ${selectedMerchantRow?.site.id === row.site.id ? "bg-blue-50/30" : ""}`}>
                                 <td className="px-3 py-2 text-xs text-slate-500">{seq}</td>
                                 <td className="px-3 py-2 text-xs">{row.userEmail || "-"}</td>
+                                <td className="px-3 py-2 text-xs">{row.merchantId || "-"}</td>
                                 <td className="px-3 py-2 text-xs">{row.merchantName}</td>
                                 <td className="px-3 py-2 text-xs">{row.prefix || "-"}</td>
                                 <td className="px-3 py-2 text-xs">{row.industry || "-"}</td>
@@ -3024,7 +3039,7 @@ export default function SuperAdminClient() {
                           })}
                           {filteredMerchantRows.length === 0 ? (
                             <tr>
-                              <td colSpan={12} className="px-3 py-6 text-center text-xs text-slate-500">
+                              <td colSpan={13} className="px-3 py-6 text-center text-xs text-slate-500">
                                 暂无注册商户用户
                               </td>
                             </tr>
