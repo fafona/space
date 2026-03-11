@@ -111,9 +111,16 @@ export default function LoginPage() {
     return /Email not confirmed/i.test(message);
   }
 
+  function isInvalidCredentials(message: string) {
+    return /invalid (authentication|login) credentials|invalid_grant/i.test(message);
+  }
+
   function normalizeError(message: string) {
     if (isEmailNotConfirmed(message)) {
       return t("login.emailNotConfirmed");
+    }
+    if (isInvalidCredentials(message)) {
+      return t("superLogin.invalid");
     }
     return message;
   }
