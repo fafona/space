@@ -4266,9 +4266,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       type,
       props: {
         heading: "联系方式",
-        phone: "123-456-7890",
-        address: "涓浗",
-        addresses: ["涓浗"],
+        phone: "",
+        address: "",
+        addresses: [],
         mapZoom: 5,
         mapType: "roadmap",
         mapShowMarker: true,
