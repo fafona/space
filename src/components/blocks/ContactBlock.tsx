@@ -188,8 +188,7 @@ export default function ContactBlock(props: ContactBlockProps) {
       : undefined;
   const sizeStyle = {
     width: blockWidth ? `${blockWidth}px` : undefined,
-    height: blockHeight ? `${blockHeight}px` : undefined,
-    overflow: blockHeight ? ("auto" as const) : undefined,
+    minHeight: blockHeight ? `${blockHeight}px` : undefined,
   };
   const offsetX =
     typeof props.blockOffsetX === "number" && Number.isFinite(props.blockOffsetX)
