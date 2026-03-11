@@ -21,6 +21,17 @@ type AuthUserSummary = {
   last_sign_in_at?: string | null;
 };
 
+type AdminListUsersClient = {
+  auth: {
+    admin: {
+      listUsers: (params: { page: number; perPage: number }) => Promise<{
+        data: { users: AuthUserSummary[] } | null;
+        error: Error | null;
+      }>;
+    };
+  };
+};
+
 function parseCookieValue(cookieHeader: string, key: string) {
   return cookieHeader
     .split(";")
@@ -41,13 +52,13 @@ function normalizeEmail(...values: Array<string | null | undefined>) {
   return "";
 }
 
-async function listAuthUsers(supabase: any) {
+async function listAuthUsers(supabase: AdminListUsersClient) {
   const users: AuthUserSummary[] = [];
   let page = 1;
   while (true) {
     const { data, error } = await supabase.auth.admin.listUsers({ page, perPage: 200 });
     if (error) throw error;
-    const chunk = (data?.users ?? []).map((user: any) => ({
+    const chunk = (data?.users ?? []).map((user) => ({
       id: user.id,
       email: user.email,
       email_confirmed_at: user.email_confirmed_at,
