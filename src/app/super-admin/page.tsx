@@ -1,7 +1,7 @@
-import SuperAdminClient from "./SuperAdminClient";
+import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
 export default function SuperAdminPage() {
-  return <SuperAdminClient />;
+  redirect("/super-admin/latest");
 }
