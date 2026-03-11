@@ -66,6 +66,44 @@ function normalizeEmailValue(value: string | null | undefined) {
   return String(value ?? "").trim().toLowerCase();
 }
 
+function buildBackendOnlySite(account: BackendMerchantAccount): Site {
+  const timestamp = account.createdAt ?? nextIsoNow();
+  return {
+    id: `backend-${account.merchantId || account.email || "merchant"}`,
+    tenantId: "backend-only",
+    merchantName: account.merchantName,
+    domainPrefix: "",
+    domainSuffix: "",
+    contactAddress: "",
+    contactName: "",
+    contactPhone: "",
+    contactEmail: account.email,
+    name: account.merchantName || account.email || "未建站商户",
+    domain: "",
+    categoryId: "unlinked",
+    category: "未建站",
+    industry: "",
+    status: "offline",
+    publishedVersion: 0,
+    lastPublishedAt: null,
+    features: createFeaturePackage("basic"),
+    location: {
+      countryCode: "",
+      country: "",
+      provinceCode: "",
+      province: "",
+      city: "",
+    },
+    serviceExpiresAt: null,
+    permissionConfig: createDefaultMerchantPermissionConfig(),
+    merchantCardImageUrl: "",
+    sortConfig: createDefaultMerchantSortConfig(),
+    configHistory: [],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+}
+
 function badgeClass(value: string) {
   if (["active", "online", "success", "approved"].includes(value)) {
     return "border-emerald-300 bg-emerald-50 text-emerald-700";
@@ -703,6 +741,8 @@ type PortalDraft = {
 
 type MerchantUserRow = {
   site: Site;
+  hasSite: boolean;
+  backendAccount: BackendMerchantAccount | null;
   userEmail: string;
   merchantName: string;
   prefix: string;
@@ -713,8 +753,8 @@ type MerchantUserRow = {
   registerAt: string;
   expireAt: string | null;
   expired: boolean;
-  statusLabel: "正常" | "暂停";
-  statusKey: "active" | "paused";
+  statusLabel: "正常" | "暂停" | "未建站";
+  statusKey: "active" | "paused" | "unlinked";
 };
 
 type BackendMerchantAccount = {
@@ -969,7 +1009,7 @@ export default function SuperAdminClient() {
     return map;
   }, [state.users]);
   const merchantRows = useMemo(() => {
-    const rows: MerchantUserRow[] = state.sites
+    const siteRows: MerchantUserRow[] = state.sites
       .filter((site) => site.id !== "site-main")
       .map((site) => {
         const owner = merchantOwnerBySiteId.get(site.id);
@@ -986,6 +1026,8 @@ export default function SuperAdminClient() {
         const statusKey: "active" | "paused" = expired || manuallyPaused ? "paused" : "active";
         return {
           site,
+          hasSite: true,
+          backendAccount: null,
           userEmail,
           merchantName,
           prefix,
@@ -1001,7 +1043,32 @@ export default function SuperAdminClient() {
         };
       });
 
-    const sorted = [...rows];
+    const siteEmails = new Set(
+      siteRows
+        .map((row) => normalizeEmailValue(row.userEmail))
+        .filter(Boolean),
+    );
+    const backendRows: MerchantUserRow[] = backendMerchantAccounts
+      .filter((account) => !siteEmails.has(normalizeEmailValue(account.email)))
+      .map((account) => ({
+        site: buildBackendOnlySite(account),
+        hasSite: false,
+        backendAccount: account,
+        userEmail: account.email || "-",
+        merchantName: account.merchantName || account.email || "未命名商户",
+        prefix: "-",
+        industry: "未建站",
+        city: "-",
+        sizeBytes: 0,
+        visits: { today: 0, day7: 0, day30: 0, total: 0 },
+        registerAt: account.createdAt ?? nextIsoNow(),
+        expireAt: null,
+        expired: false,
+        statusLabel: "未建站",
+        statusKey: "unlinked",
+      }));
+
+    const sorted = [...siteRows, ...backendRows];
     const sortRule = state.homeLayout.merchantDefaultSortRule;
     sorted.sort((a, b) => {
       if (sortRule === "name_asc") return a.merchantName.localeCompare(b.merchantName, "zh-CN");
@@ -1011,7 +1078,7 @@ export default function SuperAdminClient() {
       return new Date(b.registerAt).getTime() - new Date(a.registerAt).getTime();
     });
     return sorted;
-  }, [merchantOwnerBySiteId, nowMs, state.homeLayout.merchantDefaultSortRule, state.sites]);
+  }, [backendMerchantAccounts, merchantOwnerBySiteId, nowMs, state.homeLayout.merchantDefaultSortRule, state.sites]);
   const filteredMerchantRows = useMemo(
     () =>
       merchantRows.filter((row) => {
@@ -1027,6 +1094,7 @@ export default function SuperAdminClient() {
   const backendAccountsWithoutSite = useMemo(() => {
     const siteEmails = new Set(
       merchantRows
+        .filter((row) => row.hasSite)
         .map((row) => normalizeEmailValue(row.userEmail))
         .filter(Boolean),
     );
@@ -1100,7 +1168,7 @@ export default function SuperAdminClient() {
   }, [clampedMerchantTablePage, displayMerchantRows]);
   const selectedMerchantRow =
     merchantRows.find((item) => item.site.id === merchantDetailSiteId) ?? filteredMerchantRows[0] ?? merchantRows[0] ?? null;
-  const selectedMerchantSite = selectedMerchantRow?.site ?? null;
+  const selectedMerchantSite = selectedMerchantRow?.hasSite ? selectedMerchantRow.site : null;
   const selectedMerchantConfigHistory = selectedMerchantSite?.configHistory ?? [];
   const merchantDefaultSortRule = state.homeLayout.merchantDefaultSortRule;
   const merchantVisit30BySiteId = useMemo(
@@ -1297,7 +1365,8 @@ export default function SuperAdminClient() {
       ? "inline-flex w-fit max-w-full rounded border border-slate-300 bg-white/90 px-1.5 py-0.5"
       : "inline-flex w-fit max-w-full";
   const merchantActiveCount = filteredMerchantRows.filter((item) => item.statusKey === "active").length;
-  const merchantPausedCount = filteredMerchantRows.length - merchantActiveCount;
+  const merchantPausedCount = filteredMerchantRows.filter((item) => item.statusKey === "paused").length;
+  const merchantUnlinkedCount = filteredMerchantRows.filter((item) => item.statusKey === "unlinked").length;
   const releaseChecklistCheckedCount = RELEASE_REGRESSION_CHECKLIST.filter((item) => releaseChecklistState[item.id]).length;
   const portalSitesByCategory = useMemo(() => {
     const map = new Map<string, PlatformState["sites"]>();
@@ -2819,6 +2888,7 @@ export default function SuperAdminClient() {
                     <div className="rounded border bg-slate-50 px-3 py-2 text-sm">注册用户：{filteredMerchantRows.length}</div>
                     <div className="rounded border bg-slate-50 px-3 py-2 text-sm">正常用户：{merchantActiveCount}</div>
                     <div className="rounded border bg-slate-50 px-3 py-2 text-sm">暂停用户：{merchantPausedCount}</div>
+                    <div className="rounded border bg-slate-50 px-3 py-2 text-sm">未建站：{merchantUnlinkedCount}</div>
                   </div>
                 </div>
 
@@ -2924,23 +2994,29 @@ export default function SuperAdminClient() {
                                     >
                                       详情
                                     </button>
-                                    <Link
-                                      href={buildMerchantFrontendHref(row.site.id, row.site.domainPrefix ?? row.site.domainSuffix)}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                      className="rounded border px-2 py-1"
-                                    >
-                                      查看前台
-                                    </Link>
-                                    <button className="rounded border px-2 py-1" onClick={() => toggleMerchantServiceAction(row.site.id)}>
-                                      {row.statusKey === "active" ? "暂停服务" : "开启服务"}
-                                    </button>
-                                    <button
-                                      className="rounded border px-2 py-1"
-                                      onClick={() => openMerchantConfigPanel(row.site)}
-                                    >
-                                      配置
-                                    </button>
+                                    {row.hasSite ? (
+                                      <>
+                                        <Link
+                                          href={buildMerchantFrontendHref(row.site.id, row.site.domainPrefix ?? row.site.domainSuffix)}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="rounded border px-2 py-1"
+                                        >
+                                          查看前台
+                                        </Link>
+                                        <button className="rounded border px-2 py-1" onClick={() => toggleMerchantServiceAction(row.site.id)}>
+                                          {row.statusKey === "active" ? "暂停服务" : "开启服务"}
+                                        </button>
+                                        <button
+                                          className="rounded border px-2 py-1"
+                                          onClick={() => openMerchantConfigPanel(row.site)}
+                                        >
+                                          配置
+                                        </button>
+                                      </>
+                                    ) : (
+                                      <span className="rounded border border-dashed px-2 py-1 text-slate-400">待建站</span>
+                                    )}
                                   </div>
                                 </td>
                               </tr>
@@ -3054,11 +3130,12 @@ export default function SuperAdminClient() {
                           详情
                         </button>
                         <button
-                          className={`rounded border px-2 py-1 ${userPanelMode === "config" ? "bg-black text-white" : "bg-white"}`}
+                          className={`rounded border px-2 py-1 ${userPanelMode === "config" ? "bg-black text-white" : "bg-white"} ${selectedMerchantSite ? "" : "opacity-40"}`}
                           onClick={() => {
                             if (selectedMerchantSite) hydrateMerchantConfigDraft(selectedMerchantSite);
                             setUserPanelMode("config");
                           }}
+                          disabled={!selectedMerchantSite}
                         >
                           配置
                         </button>
@@ -3079,6 +3156,11 @@ export default function SuperAdminClient() {
                               <div className="text-slate-500">用户</div>
                               <div className="font-medium text-slate-900">{selectedMerchantRow.userEmail || "-"}</div>
                             </div>
+                            {!selectedMerchantRow.hasSite ? (
+                              <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-amber-800">
+                                该账号已注册并已进入后端商户数据，但还没有创建站点，所以不会出现在原有站点列表逻辑里。
+                              </div>
+                            ) : null}
                             <div className="grid grid-cols-2 gap-2">
                               <div className="rounded border px-3 py-2">
                                 <div className="text-slate-500">名称</div>
@@ -3086,7 +3168,7 @@ export default function SuperAdminClient() {
                               </div>
                               <div className="rounded border px-3 py-2">
                                 <div className="text-slate-500">域名</div>
-                                <div className="truncate font-medium">{selectedMerchantRow.site.domain || "-"}</div>
+                                <div className="truncate font-medium">{selectedMerchantSite?.domain || "-"}</div>
                               </div>
                               <div className="rounded border px-3 py-2">
                                 <div className="text-slate-500">行业</div>
@@ -3095,24 +3177,24 @@ export default function SuperAdminClient() {
                               <div className="rounded border px-3 py-2">
                                 <div className="text-slate-500">国家 / 省 / 城市</div>
                                 <div>
-                                  {(selectedMerchantRow.site.location.country || "-")} / {(selectedMerchantRow.site.location.province || "-")} / {(selectedMerchantRow.site.location.city || "-")}
+                                  {(selectedMerchantSite?.location.country || "-")} / {(selectedMerchantSite?.location.province || "-")} / {(selectedMerchantSite?.location.city || "-")}
                                 </div>
                               </div>
                               <div className="rounded border px-3 py-2">
                                 <div className="text-slate-500">地址</div>
-                                <div>{selectedMerchantRow.site.contactAddress || "-"}</div>
+                                <div>{selectedMerchantSite?.contactAddress || "-"}</div>
                               </div>
                               <div className="rounded border px-3 py-2">
                                 <div className="text-slate-500">联系人</div>
-                                <div>{selectedMerchantRow.site.contactName || "-"}</div>
+                                <div>{selectedMerchantSite?.contactName || "-"}</div>
                               </div>
                               <div className="rounded border px-3 py-2">
                                 <div className="text-slate-500">电话</div>
-                                <div>{selectedMerchantRow.site.contactPhone || "-"}</div>
+                                <div>{selectedMerchantSite?.contactPhone || "-"}</div>
                               </div>
                               <div className="rounded border px-3 py-2">
                                 <div className="text-slate-500">邮箱</div>
-                                <div>{selectedMerchantRow.site.contactEmail || selectedMerchantRow.userEmail || "-"}</div>
+                                <div>{selectedMerchantSite?.contactEmail || selectedMerchantRow.userEmail || "-"}</div>
                               </div>
                               <div className="rounded border px-3 py-2">
                                 <div className="text-slate-500">体积</div>
@@ -3133,11 +3215,16 @@ export default function SuperAdminClient() {
                             </div>
                           </div>
                         ) : (
-                          <div className="space-y-3 text-xs">
-                            <div className="rounded border bg-slate-50 px-3 py-2 text-slate-600">
-                              配置对象：{selectedMerchantRow.merchantName} ({selectedMerchantRow.userEmail || "-"})
+                          !selectedMerchantSite ? (
+                            <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                              该账号尚未创建站点，当前没有可配置的站点参数。先为它建站后，才能配置前台、域名、服务状态和发布内容。
                             </div>
-                            <div className="grid gap-2 md:grid-cols-2">
+                          ) : (
+                            <div className="space-y-3 text-xs">
+                              <div className="rounded border bg-slate-50 px-3 py-2 text-slate-600">
+                                配置对象：{selectedMerchantRow.merchantName} ({selectedMerchantRow.userEmail || "-"})
+                              </div>
+                              <div className="grid gap-2 md:grid-cols-2">
                               <label className="space-y-1">
                                 <div className="text-slate-500">到期时间</div>
                                 <input
@@ -3260,7 +3347,7 @@ export default function SuperAdminClient() {
                                           ...previewMerchantDomainTextStyle,
                                         }}
                                       >
-                                        <span className="truncate">{selectedMerchantRow.site.domain || "域名"}</span>
+                                        <span className="truncate">{selectedMerchantSite?.domain || "域名"}</span>
                                       </div>
                                     </div>
                                   </div>
@@ -3487,7 +3574,7 @@ export default function SuperAdminClient() {
                               </div>
                             </div>
                           </div>
-                        )}
+                        ))}
                       </>
                     ) : (
                       <div className="text-sm text-slate-500">暂无用户</div>
