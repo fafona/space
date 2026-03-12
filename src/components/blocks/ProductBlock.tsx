@@ -436,7 +436,9 @@ export default function ProductBlock(props: ProductBlockProps) {
     const targetId = pendingScrollProductId;
     if (!targetId) return;
     scrollToProductCard(targetId);
-    setPendingScrollProductId(null);
+    requestAnimationFrame(() => {
+      setPendingScrollProductId((current) => (current === targetId ? null : current));
+    });
   }, [pagedProducts, pendingScrollProductId, selectedTag, tagHideUnselected]);
 
   const handleSelectTag = (tag: string | null) => {
