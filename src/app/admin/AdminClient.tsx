@@ -5720,6 +5720,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                             onPersistImageFile={persistImageFileForEditor}
                             onPersistProductImageFile={persistProductImageFileForEditor}
                             onPersistAudioFile={persistAudioFileForEditor}
+                            previewViewport={previewViewport}
                           />
                         );
                       })}
@@ -5772,6 +5773,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                     onPersistImageFile={persistImageFileForEditor}
                     onPersistProductImageFile={persistProductImageFileForEditor}
                     onPersistAudioFile={persistAudioFileForEditor}
+                    previewViewport={previewViewport}
                   />
                 );
               })}
@@ -6115,6 +6117,7 @@ function InlineEditorBlock({
   onPersistImageFile,
   onPersistProductImageFile,
   onPersistAudioFile,
+  previewViewport,
 }: {
   block: Block;
   draggingBlockId: string | null;
@@ -6142,6 +6145,7 @@ function InlineEditorBlock({
   onPersistImageFile: (file: File) => Promise<{ value: string; externalized: boolean }>;
   onPersistProductImageFile: (file: File) => Promise<{ value: string; externalized: boolean }>;
   onPersistAudioFile: (file: File) => Promise<{ value: string; externalized: boolean }>;
+  previewViewport: "desktop" | "mobile";
 }) {
   type CommonEditorTextBox = {
     id: string;
@@ -8098,18 +8102,23 @@ type GalleryEditorImage = {
     imageOpacity: block.props.bgImageOpacity,
     colorOpacity: block.props.bgColorOpacity,
   });
+  const isMobileInlineEditorViewport = previewViewport === "mobile";
   const selectedEditorMinWidth =
-    block.type === "merchant-list" || block.type === "search-bar"
-      ? "min(980px, calc(100vw - 2rem))"
-      : block.type === "product"
-        ? "min(760px, calc(100vw - 2rem))"
-        : "min(760px, calc(100vw - 2rem))";
+    isMobileInlineEditorViewport
+      ? "min(400px, calc(100vw - 2rem))"
+      : block.type === "merchant-list" || block.type === "search-bar"
+        ? "min(980px, calc(100vw - 2rem))"
+        : block.type === "product"
+          ? "min(760px, calc(100vw - 2rem))"
+          : "min(760px, calc(100vw - 2rem))";
   const selectedEditorPreferredWidth =
-    block.type === "merchant-list" || block.type === "search-bar"
-      ? "min(980px, calc(100vw - 2rem))"
-      : block.type === "product"
-        ? "min(820px, calc(100vw - 2rem))"
-        : undefined;
+    isMobileInlineEditorViewport
+      ? "min(400px, calc(100vw - 2rem))"
+      : block.type === "merchant-list" || block.type === "search-bar"
+        ? "min(980px, calc(100vw - 2rem))"
+        : block.type === "product"
+          ? "min(820px, calc(100vw - 2rem))"
+          : undefined;
   const blockWidth = draftResize?.width ?? normalizeBlockWidth(block.props.blockWidth);
   const blockHeight = draftResize?.height ?? normalizeBlockHeight(block.props.blockHeight);
   const isDraggingSource = draggingBlockId === block.id;
