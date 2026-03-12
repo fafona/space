@@ -66,7 +66,7 @@ export default function GlobalLanguageSwitcher() {
       <div ref={rootRef} className="pointer-events-auto relative">
         <button
           type="button"
-          className="flex items-center gap-2 rounded-lg border border-slate-300 bg-white/95 px-2 py-1.5 text-xs text-slate-800 shadow-md backdrop-blur hover:bg-white"
+          className="flex items-center gap-0 rounded-lg border border-slate-300 bg-white/95 px-2 py-1.5 text-xs text-slate-800 shadow-md backdrop-blur hover:bg-white md:gap-2"
           onClick={() => setOpen((prev) => !prev)}
           aria-label={t("lang.placeholder")}
           aria-expanded={open}
@@ -79,7 +79,7 @@ export default function GlobalLanguageSwitcher() {
             className="rounded-[2px] border border-slate-200 object-cover"
             loading="eager"
           />
-          <span>{selected.label}</span>
+          <span className="hidden md:inline">{selected.label}</span>
         </button>
         {open ? (
           <div className="absolute right-0 mt-1 max-h-[60vh] w-[17rem] overflow-y-auto rounded-lg border border-slate-300 bg-white p-2 text-xs shadow-lg">
