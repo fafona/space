@@ -11082,40 +11082,6 @@ type GalleryEditorImage = {
       const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
       return luminance > 0.68 ? "#0f172a" : "#ffffff";
     };
-    const getProductTagPlacementStyle = (position: ProductTagPosition): CSSProperties => {
-      const gap = "0.75rem";
-      if (position === "left") return { top: "50%", left: gap, transform: "translateY(-50%)" };
-      if (position === "right") return { top: "50%", right: gap, transform: "translateY(-50%)" };
-      return { top: gap, left: "50%", transform: "translateX(-50%)" };
-    };
-    const renderProductTag = (tag: string, onClick?: () => void) => {
-      const safeTag = (tag ?? "").trim();
-      if (!safeTag) return null;
-      return (
-        <button
-          type="button"
-          className={`absolute z-[3] max-w-full truncate rounded-full border border-white/30 font-medium shadow-sm ${
-            onClick ? "pointer-events-auto cursor-pointer hover:opacity-90" : "pointer-events-none"
-          }`}
-          style={{
-            ...getColorLayerStyle(productTagBgColor, productTagBgOpacity),
-            ...getProductTagPlacementStyle(productTagPosition),
-            fontSize: `${productTagFontSize}px`,
-            lineHeight: 1.2,
-            color: getReadableProductTagTextColor(productTagBgColor),
-            padding: `${Math.max(4, Math.round(productTagFontSize * 0.3))}px ${Math.max(8, Math.round(productTagFontSize * 0.72))}px`,
-            maxWidth: "calc(100% - 1.5rem)",
-          }}
-          title={safeTag}
-          onClick={(event) => {
-            event.stopPropagation();
-            onClick?.();
-          }}
-        >
-          {safeTag}
-        </button>
-      );
-    };
     const applyProductTagOptions = (rawValue: string) => {
       const nextOptions = Array.from(new Set(rawValue.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)));
       const allowed = new Set(nextOptions);
@@ -11279,10 +11245,6 @@ type GalleryEditorImage = {
               />
             ) : (
               <div className="flex h-full items-center justify-center text-sm text-slate-400">{"暂无图片"}</div>
-            )}
-            {renderProductTag(
-              item.tag,
-              item.tag ? () => handlePreviewTagSelect(item.tag) : undefined,
             )}
           </div>
           <div className={options.list ? "flex min-w-0 flex-1 flex-col overflow-hidden" : "flex min-h-[170px] flex-1 flex-col p-4 overflow-hidden"}>

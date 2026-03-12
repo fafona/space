@@ -170,54 +170,8 @@ function getReadableTagTextColor(value: string) {
   return luminance > 0.68 ? "#0f172a" : "#ffffff";
 }
 
-function getProductTagPlacementStyle(position: ProductTagPosition): CSSProperties {
-  const gap = "0.75rem";
-  if (position === "left") return { top: "50%", left: gap, transform: "translateY(-50%)" };
-  if (position === "right") return { top: "50%", right: gap, transform: "translateY(-50%)" };
-  return { top: gap, left: "50%", transform: "translateX(-50%)" };
-}
-
 function getProductCardDomId(id: string) {
   return `product-card-${id}`;
-}
-
-function renderProductTag(
-  tag: string,
-  options: {
-    position: ProductTagPosition;
-    fontSize: number;
-    bgColor: string;
-    bgOpacity: number;
-    onClick?: () => void;
-  },
-) {
-  const safeTag = tag.trim();
-  if (!safeTag) return null;
-  const style: CSSProperties = {
-    ...getColorLayerStyle(options.bgColor, options.bgOpacity),
-    ...getProductTagPlacementStyle(options.position),
-    fontSize: `${options.fontSize}px`,
-    lineHeight: 1.2,
-    color: getReadableTagTextColor(options.bgColor),
-    padding: `${Math.max(4, Math.round(options.fontSize * 0.3))}px ${Math.max(8, Math.round(options.fontSize * 0.72))}px`,
-    maxWidth: "calc(100% - 1.5rem)",
-  };
-  return (
-    <button
-      type="button"
-      className={`absolute z-[3] max-w-full truncate rounded-full border border-white/30 font-medium shadow-sm ${
-        options.onClick ? "pointer-events-auto cursor-pointer hover:opacity-90" : "pointer-events-none"
-      }`}
-      style={style}
-      title={safeTag}
-      onClick={(event) => {
-        event.stopPropagation();
-        options.onClick?.();
-      }}
-    >
-      {safeTag}
-    </button>
-  );
 }
 
 function renderProductCard(
@@ -229,10 +183,6 @@ function renderProductCard(
     showCode: boolean;
     showDescription: boolean;
     priceAlign: ProductPriceAlign;
-    tagPosition: ProductTagPosition;
-    tagFontSize: number;
-    tagBgColor: string;
-    tagBgOpacity: number;
     cardBgColor: string;
     cardBgOpacity: number;
     cardBorderStyle: BlockBorderStyle;
@@ -242,7 +192,6 @@ function renderProductCard(
     descriptionTextStyle: CSSProperties;
     priceTextStyle: CSSProperties;
     onOpen: (id: string) => void;
-    onSelectTag: (tag: string) => void;
     list?: boolean;
     spotlight?: boolean;
   },
@@ -304,13 +253,6 @@ function renderProductCard(
         ) : (
           <div className="flex h-full items-center justify-center text-sm text-slate-400">暂无图片</div>
         )}
-        {renderProductTag(item.tag, {
-          position: options.tagPosition,
-          fontSize: options.tagFontSize,
-          bgColor: options.tagBgColor,
-          bgOpacity: options.tagBgOpacity,
-          onClick: item.tag ? () => options.onSelectTag(item.tag) : undefined,
-        })}
       </div>
       <div className={options.list ? "flex min-w-0 flex-1 flex-col overflow-hidden" : "flex min-h-[180px] flex-1 flex-col overflow-hidden p-4"}>
         {options.showCode && item.code ? (
@@ -526,10 +468,6 @@ export default function ProductBlock(props: ProductBlockProps) {
       showCode,
       showDescription,
       priceAlign,
-      tagPosition,
-      tagFontSize,
-      tagBgColor,
-      tagBgOpacity,
       cardBgColor: productCardBgColor,
       cardBgOpacity: productCardBgOpacity,
       cardBorderStyle: productCardBorderStyle,
@@ -539,7 +477,6 @@ export default function ProductBlock(props: ProductBlockProps) {
       descriptionTextStyle: productDescriptionTextStyle,
       priceTextStyle: productPriceTextStyle,
       onOpen: setActiveProductId,
-      onSelectTag: (tag) => handleSelectTag(tag),
       ...extra,
     });
 
