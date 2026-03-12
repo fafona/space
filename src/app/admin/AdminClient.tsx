@@ -112,6 +112,7 @@ import {
 } from "@/lib/merchantIndustryTabs";
 import {
   arrangeProductItemsByTag,
+  groupArrangedProductItemsByTag,
   PRODUCT_CONTAINER_MODE_OPTIONS,
   PRODUCT_IMAGE_ASPECT_OPTIONS,
   PRODUCT_LAYOUT_OPTIONS,
@@ -11042,8 +11043,6 @@ type GalleryEditorImage = {
       productContainerMode === "scroll"
         ? productContainerViewportHeight(productLayoutPreset, productImageSize, productItemsPerPage)
         : null;
-    const featuredProduct = previewItems[0] ?? null;
-    const secondaryProducts = previewItems.slice(1);
     const detailPreviewProduct =
       productDetailPreview?.blockId === block.id
         ? arrangedProductItems.find((item) => item.id === productDetailPreview.itemId) ?? arrangedProductItems[0] ?? null
@@ -11279,6 +11278,54 @@ type GalleryEditorImage = {
       );
     };
 
+    const renderProductGroupHeading = (label: string, key: string) => (
+      <div key={key} className="flex items-center gap-3">
+        <div className="h-px flex-1 bg-slate-200" />
+        <div className="shrink-0 text-sm font-semibold tracking-[0.08em] text-slate-700">{label || "未分类"}</div>
+        <div className="h-px flex-1 bg-slate-200" />
+      </div>
+    );
+
+    const renderProductPreviewCollection = (
+      items: ProductEditorItem[],
+      options: { placeholderPrefix: string; includePlaceholders: boolean },
+    ) => {
+      if (productLayoutPreset === "spotlight" && items[0]) {
+        const featured = items[0];
+        const secondary = items.slice(1);
+        return (
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
+            {renderProductCard(featured, { featured: true })}
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
+              {secondary.map((item) => renderProductCard(item))}
+            </div>
+          </div>
+        );
+      }
+      if (productLayoutPreset === "list") {
+        return (
+          <div className="space-y-4">
+            {items.map((item) => renderProductCard(item, { list: true }))}
+            {options.includePlaceholders
+              ? Array.from({ length: productPlaceholderCount }, (_, index) =>
+                  renderProductPlaceholder(`${options.placeholderPrefix}-list-${index}`, { list: true }),
+                )
+              : null}
+          </div>
+        );
+      }
+      return (
+        <div className={productGridClass(productLayoutPreset)}>
+          {items.map((item) => renderProductCard(item))}
+          {options.includePlaceholders
+            ? Array.from({ length: productPlaceholderCount }, (_, index) =>
+                renderProductPlaceholder(`${options.placeholderPrefix}-grid-${index}`),
+              )
+            : null}
+        </div>
+      );
+    };
+
     const renderProductPreview = () => {
       if (filteredProductItems.length === 0) {
         return (
@@ -11287,28 +11334,30 @@ type GalleryEditorImage = {
           </div>
         );
       }
-      if (productLayoutPreset === "spotlight" && featuredProduct) {
+
+      if (productGroupByTag) {
+        const groups = groupArrangedProductItemsByTag(previewItems);
         return (
-          <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
-            {renderProductCard(featuredProduct, { featured: true })}
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
-              {secondaryProducts.map((item) => renderProductCard(item))}
-            </div>
+          <div className="mt-4 space-y-6">
+            {groups.map((group, index) => (
+              <div key={`${group.tag || "untagged"}-${index}`} className="space-y-4">
+                {renderProductGroupHeading(group.tag, `product-preview-group-${group.tag || "untagged"}-${index}`)}
+                {renderProductPreviewCollection(group.items, {
+                  placeholderPrefix: `product-preview-group-${group.tag || "untagged"}-${index}`,
+                  includePlaceholders: false,
+                })}
+              </div>
+            ))}
           </div>
         );
       }
-      if (productLayoutPreset === "list") {
-        return (
-          <div className="mt-4 space-y-4">
-            {previewItems.map((item) => renderProductCard(item, { list: true }))}
-            {Array.from({ length: productPlaceholderCount }, (_, index) => renderProductPlaceholder(`product-preview-list-${index}`, { list: true }))}
-          </div>
-        );
-      }
+
       return (
-        <div className={`mt-4 ${productGridClass(productLayoutPreset)}`}>
-          {previewItems.map((item) => renderProductCard(item))}
-          {Array.from({ length: productPlaceholderCount }, (_, index) => renderProductPlaceholder(`product-preview-grid-${index}`))}
+        <div className="mt-4">
+          {renderProductPreviewCollection(previewItems, {
+            placeholderPrefix: "product-preview",
+            includePlaceholders: true,
+          })}
         </div>
       );
     };

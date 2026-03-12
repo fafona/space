@@ -6,6 +6,7 @@ import Image from "next/image";
 import type { BackgroundEditableProps, BlockBorderStyle, TypographyEditableProps } from "@/data/homeBlocks";
 import {
   arrangeProductItemsByTag,
+  groupArrangedProductItemsByTag,
   isMeaningfulProductItem,
   normalizeProductContainerMode,
   normalizeProductImageAspectRatio,
@@ -396,8 +397,6 @@ export default function ProductBlock(props: ProductBlockProps) {
   const pagedProducts = containerMode === "paged" ? filteredProducts.slice(pageStart, pageStart + itemsPerPage) : filteredProducts;
   const scrollViewportHeight =
     containerMode === "scroll" ? productContainerViewportHeight(layoutPreset, imageSize, itemsPerPage) : null;
-  const first = pagedProducts[0];
-  const rest = pagedProducts.slice(1);
   const activeProduct = arrangedProducts.find((item) => item.id === activeProductId) ?? products.find((item) => item.id === activeProductId) ?? null;
   const placeholderCount =
     containerMode === "paged" && layoutPreset !== "spotlight" ? Math.max(0, itemsPerPage - pagedProducts.length) : 0;
@@ -531,34 +530,101 @@ export default function ProductBlock(props: ProductBlockProps) {
       </div>
     ) : null;
 
-  const renderProductContent = () => (
-    <>
-      {filteredProducts.length === 0 ? (
-        <div className="mt-4 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-6 text-sm text-slate-500">
-          暂无产品，请在后台添加产品信息。
-        </div>
-      ) : layoutPreset === "spotlight" && first ? (
-        <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
-          {renderCard(first, {
+  const renderProductGroupHeading = (label: string, key: string) => (
+    <div key={key} className="flex items-center gap-3">
+      <div className="h-px flex-1 bg-slate-200" />
+      <div className="shrink-0 text-sm font-semibold tracking-[0.08em] text-slate-700">{label || "未分类"}</div>
+      <div className="h-px flex-1 bg-slate-200" />
+    </div>
+  );
+
+  const renderProductCollection = (
+    items: ReturnType<typeof normalizeProductItems>,
+    options: { placeholderPrefix: string; includePlaceholders: boolean },
+  ) => {
+    if (layoutPreset === "spotlight" && items[0]) {
+      const featured = items[0];
+      const secondary = items.slice(1);
+      return (
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
+          {renderCard(featured, {
             spotlight: true,
             imageAspectRatio: imageAspectRatio === "portrait" ? "landscape" : imageAspectRatio,
           })}
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">{rest.map((item) => renderCard(item))}</div>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">{secondary.map((item) => renderCard(item))}</div>
         </div>
-      ) : layoutPreset === "list" ? (
-        <div className="mt-5 space-y-4">
-          {pagedProducts.map((item) => renderCard(item, { list: true }))}
-          {Array.from({ length: placeholderCount }, (_, index) => renderPlaceholderCard(`list-placeholder-${index}`, { list: true }))}
+      );
+    }
+
+    if (layoutPreset === "list") {
+      return (
+        <div className="space-y-4">
+          {items.map((item) => renderCard(item, { list: true }))}
+          {options.includePlaceholders
+            ? Array.from({ length: placeholderCount }, (_, index) =>
+                renderPlaceholderCard(`${options.placeholderPrefix}-list-${index}`, { list: true }),
+              )
+            : null}
         </div>
-      ) : (
-        <div className={`mt-5 ${productGridClass(layoutPreset)}`}>
-          {pagedProducts.map((item) => renderCard(item))}
-          {Array.from({ length: placeholderCount }, (_, index) => renderPlaceholderCard(`grid-placeholder-${index}`))}
+      );
+    }
+
+    return (
+      <div className={productGridClass(layoutPreset)}>
+        {items.map((item) => renderCard(item))}
+        {options.includePlaceholders
+          ? Array.from({ length: placeholderCount }, (_, index) =>
+              renderPlaceholderCard(`${options.placeholderPrefix}-grid-${index}`),
+            )
+          : null}
+      </div>
+    );
+  };
+
+  const renderProductContent = () => {
+    if (filteredProducts.length === 0) {
+      return (
+        <>
+          <div className="mt-4 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-6 text-sm text-slate-500">
+            暂无产品，请在后台添加产品信息。
+          </div>
+          {renderPager()}
+        </>
+      );
+    }
+
+    if (groupedByTag) {
+      const groups = groupArrangedProductItemsByTag(pagedProducts);
+      return (
+        <>
+          <div className="mt-5 space-y-6">
+            {groups.map((group, index) => (
+              <div key={`${group.tag || "untagged"}-${index}`} className="space-y-4">
+                {renderProductGroupHeading(group.tag, `product-group-${group.tag || "untagged"}-${index}`)}
+                {renderProductCollection(group.items, {
+                  placeholderPrefix: `product-group-${group.tag || "untagged"}-${index}`,
+                  includePlaceholders: false,
+                })}
+              </div>
+            ))}
+          </div>
+          {renderPager()}
+        </>
+      );
+    }
+
+    return (
+      <>
+        <div className="mt-5">
+          {renderProductCollection(pagedProducts, {
+            placeholderPrefix: "product",
+            includePlaceholders: true,
+          })}
         </div>
-      )}
-      {renderPager()}
-    </>
-  );
+        {renderPager()}
+      </>
+    );
+  };
 
   const renderProductsWithFilters = () => {
     const content = containerMode === "scroll" && scrollViewportHeight ? (

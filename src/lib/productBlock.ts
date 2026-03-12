@@ -118,6 +118,20 @@ export function arrangeProductItemsByTag<T extends { tag?: string }>(items: T[],
     .map((entry) => entry.item);
 }
 
+export function groupArrangedProductItemsByTag<T extends { tag?: string }>(items: T[]) {
+  const groups: Array<{ tag: string; items: T[] }> = [];
+  items.forEach((item) => {
+    const tag = String(item.tag ?? "").trim();
+    const lastGroup = groups[groups.length - 1];
+    if (lastGroup && lastGroup.tag === tag) {
+      lastGroup.items.push(item);
+      return;
+    }
+    groups.push({ tag, items: [item] });
+  });
+  return groups;
+}
+
 export function isMeaningfulProductItem(item: ProductItemInput | ProductItem | undefined) {
   if (!item) return false;
   return Boolean(

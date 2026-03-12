@@ -21,7 +21,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "npm run test:sanitizer",
-    "test:sanitizer": "tsx --test src/lib/blocksSanitizer.test.ts src/lib/europeLocationOptions.test.ts src/lib/inlineAssetStats.test.ts src/lib/reverseGeocodeLocation.test.ts src/lib/productImport.test.ts src/lib/merchantIndustryTabs.test.ts src/app/api/publish/route.test.ts"
+    "test:sanitizer": "tsx --test src/lib/blocksSanitizer.test.ts src/lib/europeLocationOptions.test.ts src/lib/inlineAssetStats.test.ts src/lib/reverseGeocodeLocation.test.ts src/lib/productImport.test.ts src/lib/productBlock.test.ts src/lib/merchantIndustryTabs.test.ts src/app/api/publish/route.test.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
