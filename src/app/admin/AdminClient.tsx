@@ -11116,10 +11116,10 @@ type GalleryEditorImage = {
           if (!target) return;
           if (viewport) {
             const offset = target.offsetTop - viewport.offsetTop;
-            viewport.scrollTo({ top: Math.max(0, offset - 8), behavior: "smooth" });
+            viewport.scrollTo({ top: Math.max(0, offset), behavior: "smooth" });
             return;
           }
-          target.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+          target.scrollIntoView({ behavior: "smooth", block: "start", inline: "nearest" });
         });
       };
       if (tag == null) {

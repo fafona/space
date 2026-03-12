@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import Image from "next/image";
 import type { BackgroundEditableProps, BlockBorderStyle, TypographyEditableProps } from "@/data/homeBlocks";
@@ -389,6 +389,7 @@ export default function ProductBlock(props: ProductBlockProps) {
   const [activeProductId, setActiveProductId] = useState<string | null>(null);
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [pendingScrollProductId, setPendingScrollProductId] = useState<string | null>(null);
+  const scrollViewportRef = useRef<HTMLDivElement | null>(null);
   const selectedTag = activeTag && productTags.includes(activeTag) ? activeTag : null;
   const filteredProducts = tagHideUnselected && selectedTag ? arrangedProducts.filter((item) => item.tag === selectedTag) : arrangedProducts;
   const totalPages = containerMode === "paged" ? Math.max(1, Math.ceil(filteredProducts.length / itemsPerPage)) : 1;
@@ -415,15 +416,27 @@ export default function ProductBlock(props: ProductBlockProps) {
     };
   }, [activeProductId]);
 
+  const scrollToProductCard = (targetId: string | null) => {
+    if (!targetId) return;
+    requestAnimationFrame(() => {
+      const viewport = scrollViewportRef.current;
+      const selector = `#${getProductCardDomId(targetId)}`;
+      const target = viewport?.querySelector<HTMLElement>(selector) ?? document.querySelector<HTMLElement>(selector);
+      if (!target) return;
+      if (viewport) {
+        const offset = target.offsetTop - viewport.offsetTop;
+        viewport.scrollTo({ top: Math.max(0, offset), behavior: "smooth" });
+        return;
+      }
+      target.scrollIntoView({ behavior: "smooth", block: "start", inline: "nearest" });
+    });
+  };
+
   useEffect(() => {
     const targetId = pendingScrollProductId;
     if (!targetId) return;
-    const target = document.getElementById(getProductCardDomId(targetId));
-    if (!target) return;
-    requestAnimationFrame(() => {
-      target.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
-      setPendingScrollProductId(null);
-    });
+    scrollToProductCard(targetId);
+    setPendingScrollProductId(null);
   }, [pagedProducts, pendingScrollProductId, selectedTag, tagHideUnselected]);
 
   const handleSelectTag = (tag: string | null) => {
@@ -431,6 +444,9 @@ export default function ProductBlock(props: ProductBlockProps) {
     if (tag == null) {
       setPageIndex(0);
       setPendingScrollProductId(null);
+      requestAnimationFrame(() => {
+        scrollViewportRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+      });
       return;
     }
     const firstMatchIndex = arrangedProducts.findIndex((item) => item.tag === tag);
@@ -446,13 +462,8 @@ export default function ProductBlock(props: ProductBlockProps) {
       return;
     }
     if (targetId) {
-      const target = document.getElementById(getProductCardDomId(targetId));
-      if (target) {
-        requestAnimationFrame(() => {
-          target.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
-        });
-        setPendingScrollProductId(null);
-      }
+      scrollToProductCard(targetId);
+      setPendingScrollProductId(null);
     }
   };
 
@@ -628,7 +639,7 @@ export default function ProductBlock(props: ProductBlockProps) {
 
   const renderProductsWithFilters = () => {
     const content = containerMode === "scroll" && scrollViewportHeight ? (
-      <div className="min-w-0 overflow-y-auto pr-1" style={{ maxHeight: `${scrollViewportHeight}px` }}>
+      <div ref={scrollViewportRef} className="min-w-0 overflow-y-auto pr-1" style={{ maxHeight: `${scrollViewportHeight}px` }}>
         {renderProductContent()}
       </div>
     ) : (
