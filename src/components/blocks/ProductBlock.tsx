@@ -63,6 +63,10 @@ type ProductBlockProps = BackgroundEditableProps &
     productCardBgOpacity?: number;
     productCardBorderStyle?: BlockBorderStyle;
     productCardBorderColor?: string;
+    productCodeTypography?: TypographyEditableProps;
+    productNameTypography?: TypographyEditableProps;
+    productDescriptionTypography?: TypographyEditableProps;
+    productPriceTypography?: TypographyEditableProps;
   };
 
 function getProductAspectRatioPair(value: ProductImageAspectRatio) {
@@ -130,6 +134,30 @@ function getMultiLineClampStyle(lines: number): CSSProperties {
     WebkitBoxOrient: "vertical",
     overflow: "hidden",
   } as CSSProperties;
+}
+
+function buildTypographyStyle(style: TypographyEditableProps | undefined): CSSProperties {
+  const next: CSSProperties = {};
+  const fontFamily = (style?.fontFamily ?? "").trim();
+  const fontColor = (style?.fontColor ?? "").trim();
+  if (fontFamily) next.fontFamily = fontFamily;
+  if (typeof style?.fontSize === "number" && Number.isFinite(style.fontSize) && style.fontSize > 0) {
+    next.fontSize = Math.max(8, Math.min(120, style.fontSize));
+  }
+  if (style?.fontWeight) next.fontWeight = style.fontWeight;
+  if (style?.fontStyle) next.fontStyle = style.fontStyle;
+  if (style?.textDecoration) next.textDecoration = style.textDecoration;
+  if (fontColor) {
+    if (isGradientToken(fontColor)) {
+      next.backgroundImage = fontColor;
+      next.backgroundClip = "text";
+      next.WebkitBackgroundClip = "text";
+      next.color = "transparent";
+    } else {
+      next.color = fontColor;
+    }
+  }
+  return next;
 }
 
 function getReadableTagTextColor(value: string) {
@@ -209,6 +237,10 @@ function renderProductCard(
     cardBgOpacity: number;
     cardBorderStyle: BlockBorderStyle;
     cardBorderColor: string;
+    codeTextStyle: CSSProperties;
+    nameTextStyle: CSSProperties;
+    descriptionTextStyle: CSSProperties;
+    priceTextStyle: CSSProperties;
     onOpen: (id: string) => void;
     onSelectTag: (tag: string) => void;
     list?: boolean;
@@ -282,21 +314,26 @@ function renderProductCard(
       </div>
       <div className={options.list ? "flex min-w-0 flex-1 flex-col overflow-hidden" : "flex min-h-[180px] flex-1 flex-col overflow-hidden p-4"}>
         {options.showCode && item.code ? (
-          <div className="text-xs uppercase tracking-[0.24em] text-slate-500" style={{ ...textWrapStyle, ...codeClampStyle }}>
+          <div
+            className="text-xs uppercase tracking-[0.24em] text-slate-500"
+            style={{ ...textWrapStyle, ...codeClampStyle, ...options.codeTextStyle }}
+          >
             {item.code}
           </div>
         ) : null}
-        <h3 className="mt-2 text-lg font-semibold text-slate-900" style={{ ...textWrapStyle, ...nameClampStyle }}>
+        <h3 className="mt-2 text-lg font-semibold text-slate-900" style={{ ...textWrapStyle, ...nameClampStyle, ...options.nameTextStyle }}>
           {item.name || "未命名产品"}
         </h3>
         {options.showDescription && item.description ? (
-          <p className="mt-2 text-sm leading-6 text-slate-600" style={{ ...textWrapStyle, ...descriptionClampStyle }}>
+          <p className="mt-2 text-sm leading-6 text-slate-600" style={{ ...textWrapStyle, ...descriptionClampStyle, ...options.descriptionTextStyle }}>
             {item.description}
           </p>
         ) : null}
         {priceText ? (
           <div className={`mt-auto flex min-h-[2.75rem] w-full shrink-0 items-end pt-4 text-lg font-semibold text-sky-700 ${priceAlignClass}`}>
-            <div className="w-full">{priceText}</div>
+            <div className="w-full" style={options.priceTextStyle}>
+              {priceText}
+            </div>
           </div>
         ) : null}
       </div>
@@ -363,6 +400,10 @@ export default function ProductBlock(props: ProductBlockProps) {
       : 0.9;
   const productCardBorderStyle = props.productCardBorderStyle ?? "solid";
   const productCardBorderColor = (props.productCardBorderColor ?? "#e2e8f0").trim() || "#e2e8f0";
+  const productCodeTextStyle = buildTypographyStyle(props.productCodeTypography);
+  const productNameTextStyle = buildTypographyStyle(props.productNameTypography);
+  const productDescriptionTextStyle = buildTypographyStyle(props.productDescriptionTypography);
+  const productPriceTextStyle = buildTypographyStyle(props.productPriceTypography);
   const cardStyle = getBackgroundStyle({
     imageUrl: props.bgImageUrl,
     fillMode: props.bgFillMode,
@@ -493,6 +534,10 @@ export default function ProductBlock(props: ProductBlockProps) {
       cardBgOpacity: productCardBgOpacity,
       cardBorderStyle: productCardBorderStyle,
       cardBorderColor: productCardBorderColor,
+      codeTextStyle: productCodeTextStyle,
+      nameTextStyle: productNameTextStyle,
+      descriptionTextStyle: productDescriptionTextStyle,
+      priceTextStyle: productPriceTextStyle,
       onOpen: setActiveProductId,
       onSelectTag: (tag) => handleSelectTag(tag),
       ...extra,
@@ -699,19 +744,28 @@ export default function ProductBlock(props: ProductBlockProps) {
                   <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/45 to-transparent p-5 text-white sm:p-7">
                     <div className="mx-auto max-w-3xl">
                       {detailShowCode && activeProduct.code ? (
-                        <div className="text-xs uppercase tracking-[0.24em] text-white/75">{activeProduct.code}</div>
+                        <div className="text-xs uppercase tracking-[0.24em] text-white/75" style={productCodeTextStyle}>
+                          {activeProduct.code}
+                        </div>
                       ) : null}
                       {detailShowName ? (
-                        <h3 className="mt-2 break-words text-2xl font-semibold text-white sm:text-3xl">{activeProduct.name || "未命名产品"}</h3>
+                        <h3 className="mt-2 break-words text-2xl font-semibold text-white sm:text-3xl" style={productNameTextStyle}>
+                          {activeProduct.name || "未命名产品"}
+                        </h3>
                       ) : null}
                       {detailShowDescription && activeProduct.description ? (
-                        <div className="mt-3 break-words whitespace-pre-wrap text-sm leading-7 text-white/90 sm:text-base">
+                        <div
+                          className="mt-3 break-words whitespace-pre-wrap text-sm leading-7 text-white/90 sm:text-base"
+                          style={productDescriptionTextStyle}
+                        >
                           {activeProduct.description}
                         </div>
                       ) : null}
                       {detailShowPrice && productPriceText(activeProduct.price, pricePrefix) ? (
                         <div className={`mt-4 flex w-full text-2xl font-semibold text-white ${detailPriceAlignClass}`}>
-                          <div className="w-full">{productPriceText(activeProduct.price, pricePrefix)}</div>
+                          <div className="w-full" style={productPriceTextStyle}>
+                            {productPriceText(activeProduct.price, pricePrefix)}
+                          </div>
                         </div>
                       ) : null}
                     </div>
@@ -735,14 +789,26 @@ export default function ProductBlock(props: ProductBlockProps) {
                   )}
                 </div>
                 <div className="flex min-h-full flex-col">
-                  {detailShowCode && activeProduct.code ? <div className="text-xs uppercase tracking-[0.24em] text-slate-500">{activeProduct.code}</div> : null}
-                  {detailShowName ? <h3 className="mt-2 break-words text-2xl font-semibold text-slate-900">{activeProduct.name || "未命名产品"}</h3> : null}
+                  {detailShowCode && activeProduct.code ? (
+                    <div className="text-xs uppercase tracking-[0.24em] text-slate-500" style={productCodeTextStyle}>
+                      {activeProduct.code}
+                    </div>
+                  ) : null}
+                  {detailShowName ? (
+                    <h3 className="mt-2 break-words text-2xl font-semibold text-slate-900" style={productNameTextStyle}>
+                      {activeProduct.name || "未命名产品"}
+                    </h3>
+                  ) : null}
                   {detailShowDescription && activeProduct.description ? (
-                    <div className="mt-4 break-words whitespace-pre-wrap text-sm leading-7 text-slate-600">{activeProduct.description}</div>
+                    <div className="mt-4 break-words whitespace-pre-wrap text-sm leading-7 text-slate-600" style={productDescriptionTextStyle}>
+                      {activeProduct.description}
+                    </div>
                   ) : null}
                   {detailShowPrice && productPriceText(activeProduct.price, pricePrefix) ? (
                     <div className={`mt-auto flex w-full pt-6 text-2xl font-semibold text-sky-700 ${detailPriceAlignClass}`}>
-                      <div className="w-full">{productPriceText(activeProduct.price, pricePrefix)}</div>
+                      <div className="w-full" style={productPriceTextStyle}>
+                        {productPriceText(activeProduct.price, pricePrefix)}
+                      </div>
                     </div>
                   ) : null}
                 </div>

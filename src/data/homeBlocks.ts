@@ -281,6 +281,10 @@ type ProductProps = BackgroundEditableProps &
     productCardBgOpacity?: number;
     productCardBorderStyle?: BlockBorderStyle;
     productCardBorderColor?: string;
+    productCodeTypography?: TypographyEditableProps;
+    productNameTypography?: TypographyEditableProps;
+    productDescriptionTypography?: TypographyEditableProps;
+    productPriceTypography?: TypographyEditableProps;
   };
 type NavProps = BackgroundEditableProps &
   TypographyEditableProps & {

@@ -365,7 +365,8 @@ const GALLERY_FRAME_WIDTH_LABELS: Record<CustomGalleryFrameWidth, string> = {
   "2/3": "2/3",
 };
 type ViewportKey = "desktop" | "mobile";
-type ProductSettingsSectionKey = "basic" | "tags" | "card" | "detail";
+type ProductSettingsSectionKey = "basic" | "typography" | "tags" | "card" | "detail";
+type ProductTypographyRole = "code" | "name" | "description" | "price";
 const MOBILE_SIZE_SCALE = 0.82;
 const MOBILE_CONTENT_MAX_WIDTH = 340;
 const MOBILE_SAFE_PADDING = 12;
@@ -4267,6 +4268,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           productCardBgOpacity: 0.9,
           productCardBorderStyle: "solid",
           productCardBorderColor: "#e2e8f0",
+          productCodeTypography: {},
+          productNameTypography: {},
+          productDescriptionTypography: {},
+          productPriceTypography: {},
           products: [
             {
               id: createProductItemId(),
@@ -10944,6 +10949,64 @@ type GalleryEditorImage = {
         : 0.9;
     const productCardBorderStyle = block.props.productCardBorderStyle ?? "solid";
     const productCardBorderColor = (block.props.productCardBorderColor ?? "#e2e8f0").trim() || "#e2e8f0";
+    const productTypographyMeta: Record<
+      ProductTypographyRole,
+      { label: string; sample: string; helperText: string }
+    > = {
+      code: { label: "编号", sample: "SKU-001", helperText: "用于产品编号，例如 SKU-001。" },
+      name: { label: "名称", sample: "示例产品", helperText: "用于产品名称标题。" },
+      description: { label: "介绍", sample: "在这里填写产品卖点、规格或简短介绍。", helperText: "用于产品简介和详情介绍。" },
+      price: { label: "价格", sample: `${productPricePrefix || "€"}39.90`, helperText: "用于价格文本。" },
+    };
+    const getProductTypographyStyle = (role: ProductTypographyRole): TypographyEditableProps | undefined => {
+      switch (role) {
+        case "code":
+          return block.props.productCodeTypography;
+        case "name":
+          return block.props.productNameTypography;
+        case "description":
+          return block.props.productDescriptionTypography;
+        case "price":
+          return block.props.productPriceTypography;
+      }
+    };
+    const normalizeProductTypographyStyle = (style: TypographyEditableProps): TypographyEditableProps => {
+      const next: TypographyEditableProps = {};
+      const fontFamily = (style.fontFamily ?? "").trim();
+      const fontColor = (style.fontColor ?? "").trim();
+      if (fontFamily) next.fontFamily = fontFamily;
+      if (typeof style.fontSize === "number" && Number.isFinite(style.fontSize) && style.fontSize > 0) next.fontSize = style.fontSize;
+      if (style.fontWeight) next.fontWeight = style.fontWeight;
+      if (style.fontStyle) next.fontStyle = style.fontStyle;
+      if (style.textDecoration) next.textDecoration = style.textDecoration;
+      if (fontColor) next.fontColor = fontColor;
+      return next;
+    };
+    const updateProductTypographyStyle = (
+      role: ProductTypographyRole,
+      patch: Partial<TypographyEditableProps> | null,
+    ) => {
+      const current = getProductTypographyStyle(role) ?? {};
+      const nextStyle = patch === null ? {} : normalizeProductTypographyStyle({ ...current, ...patch } as TypographyEditableProps);
+      switch (role) {
+        case "code":
+          onChange({ productCodeTypography: nextStyle });
+          return;
+        case "name":
+          onChange({ productNameTypography: nextStyle });
+          return;
+        case "description":
+          onChange({ productDescriptionTypography: nextStyle });
+          return;
+        case "price":
+          onChange({ productPriceTypography: nextStyle });
+          return;
+      }
+    };
+    const productCodeTextStyle = buildTypographyInlineStyle(block.props.productCodeTypography);
+    const productNameTextStyle = buildTypographyInlineStyle(block.props.productNameTypography);
+    const productDescriptionTextStyle = buildTypographyInlineStyle(block.props.productDescriptionTypography);
+    const productPriceTextStyle = buildTypographyInlineStyle(block.props.productPriceTypography);
     const productPricePrefixMode = PRODUCT_PRICE_PREFIX_OPTIONS.some((item) => item.value === productPricePrefix)
       ? productPricePrefix
       : "__custom__";
@@ -11224,21 +11287,29 @@ type GalleryEditorImage = {
           </div>
           <div className={options.list ? "flex min-w-0 flex-1 flex-col overflow-hidden" : "flex min-h-[170px] flex-1 flex-col p-4 overflow-hidden"}>
             {productShowCode && item.code ? (
-              <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500" style={{ ...textWrapStyle, ...productCodeClampStyle }}>
+              <div
+                className="text-[11px] uppercase tracking-[0.2em] text-slate-500"
+                style={{ ...textWrapStyle, ...productCodeClampStyle, ...productCodeTextStyle }}
+              >
                 {item.code}
               </div>
             ) : null}
-            <div className="mt-2 text-lg font-semibold text-slate-900" style={{ ...textWrapStyle, ...productNameClampStyle }}>
+            <div className="mt-2 text-lg font-semibold text-slate-900" style={{ ...textWrapStyle, ...productNameClampStyle, ...productNameTextStyle }}>
               {item.name || "未命名产品"}
             </div>
             {productShowDescription && item.description ? (
-              <div className="mt-2 text-sm leading-6 text-slate-600" style={{ ...textWrapStyle, ...productDescriptionClampStyle }}>
+              <div
+                className="mt-2 text-sm leading-6 text-slate-600"
+                style={{ ...textWrapStyle, ...productDescriptionClampStyle, ...productDescriptionTextStyle }}
+              >
                 {item.description}
               </div>
             ) : null}
             {priceText ? (
               <div className={`mt-auto flex min-h-[2.75rem] w-full shrink-0 items-end pt-4 text-lg font-semibold text-sky-700 ${productPriceAlignClass}`}>
-                <div className="w-full">{priceText}</div>
+                <div className="w-full" style={productPriceTextStyle}>
+                  {priceText}
+                </div>
               </div>
             ) : null}
           </div>
@@ -11402,6 +11473,135 @@ type GalleryEditorImage = {
       );
     };
 
+    const getProductTypographyPreviewClassName = (role: ProductTypographyRole) => {
+      switch (role) {
+        case "code":
+          return "text-[11px] uppercase tracking-[0.2em] text-slate-500";
+        case "name":
+          return "text-lg font-semibold text-slate-900";
+        case "description":
+          return "text-sm leading-6 text-slate-600";
+        case "price":
+          return "text-lg font-semibold text-sky-700";
+      }
+    };
+
+    const renderProductTypographyControls = (compact = false) => (
+      <div className="space-y-4">
+        {(Object.keys(productTypographyMeta) as ProductTypographyRole[]).map((role) => {
+          const currentStyle = getProductTypographyStyle(role) ?? {};
+          const previewStyle = buildTypographyInlineStyle(currentStyle);
+          const hasCustomTypography =
+            !!currentStyle.fontFamily ||
+            typeof currentStyle.fontSize === "number" ||
+            !!currentStyle.fontWeight ||
+            !!currentStyle.fontStyle ||
+            !!currentStyle.textDecoration ||
+            !!currentStyle.fontColor;
+          return (
+            <div key={role} className="space-y-3 rounded-lg border border-slate-200 bg-white p-3">
+              <div className={`gap-3 ${compact ? "grid" : "flex items-start justify-between"}`}>
+                <div className="space-y-1">
+                  <div className="text-sm font-medium text-slate-700">{productTypographyMeta[role].label}</div>
+                  <div className="text-xs text-gray-500">{productTypographyMeta[role].helperText}</div>
+                </div>
+                <button
+                  type="button"
+                  className="rounded border bg-white px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={!hasCustomTypography}
+                  onClick={() => updateProductTypographyStyle(role, null)}
+                >
+                  恢复默认
+                </button>
+              </div>
+              <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-2">
+                <div className={getProductTypographyPreviewClassName(role)} style={previewStyle}>
+                  {productTypographyMeta[role].sample}
+                </div>
+              </div>
+              <div className={`grid gap-3 ${compact ? "grid-cols-1" : "md:grid-cols-[minmax(0,1fr)_120px]"}`}>
+                <label className="space-y-1 text-sm">
+                  <span className="block text-gray-600">字体</span>
+                  <select
+                    className="w-full rounded border px-3 py-2 bg-white"
+                    value={currentStyle.fontFamily ?? ""}
+                    onChange={(event) => updateProductTypographyStyle(role, { fontFamily: event.target.value })}
+                  >
+                    <option value="">默认</option>
+                    {FONT_FAMILY_OPTIONS.map((font) => (
+                      <option key={`product-typography-${role}-${font}`} value={font}>
+                        {font}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="space-y-1 text-sm">
+                  <span className="block text-gray-600">字号</span>
+                  <select
+                    className="w-full rounded border px-3 py-2 bg-white"
+                    value={typeof currentStyle.fontSize === "number" ? String(currentStyle.fontSize) : ""}
+                    onChange={(event) =>
+                      updateProductTypographyStyle(role, {
+                        fontSize: event.target.value ? Number(event.target.value) : undefined,
+                      })
+                    }
+                  >
+                    <option value="">默认</option>
+                    {FONT_SIZE_OPTIONS.map((size) => (
+                      <option key={`product-typography-size-${role}-${size}`} value={size}>
+                        {size}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className={`rounded border px-3 py-2 text-sm ${currentStyle.fontWeight === "bold" ? "bg-black text-white" : "bg-white"}`}
+                  onClick={() => updateProductTypographyStyle(role, { fontWeight: currentStyle.fontWeight === "bold" ? undefined : "bold" })}
+                >
+                  B
+                </button>
+                <button
+                  type="button"
+                  className={`rounded border px-3 py-2 text-sm ${currentStyle.fontStyle === "italic" ? "bg-black text-white" : "bg-white"}`}
+                  onClick={() => updateProductTypographyStyle(role, { fontStyle: currentStyle.fontStyle === "italic" ? undefined : "italic" })}
+                >
+                  I
+                </button>
+                <button
+                  type="button"
+                  className={`rounded border px-3 py-2 text-sm ${currentStyle.textDecoration === "underline" ? "bg-black text-white" : "bg-white"}`}
+                  onClick={() =>
+                    updateProductTypographyStyle(role, {
+                      textDecoration: currentStyle.textDecoration === "underline" ? undefined : "underline",
+                    })
+                  }
+                >
+                  U
+                </button>
+              </div>
+              <div className="space-y-2">
+                <div className="text-sm text-gray-600">字体颜色</div>
+                <ColorOrGradientPicker
+                  value={(currentStyle.fontColor ?? "#111827").trim() || "#111827"}
+                  onChange={(value) => updateProductTypographyStyle(role, { fontColor: value })}
+                />
+                <RecentColorBar
+                  colors={recentColors}
+                  onClear={onClearRecentColors}
+                  onPick={(color) => updateProductTypographyStyle(role, { fontColor: color })}
+                  allowGradients
+                  selectedValue={(currentStyle.fontColor ?? "#111827").trim() || "#111827"}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+
     const renderProductPager = () =>
       productContainerMode === "paged" && previewPageCount > 1 ? (
         <div className="mt-5 flex items-center justify-center gap-3">
@@ -11476,21 +11676,28 @@ type GalleryEditorImage = {
                         <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/45 to-transparent p-5 text-white sm:p-7">
                           <div className="mx-auto max-w-3xl">
                             {productDetailShowCode && detailPreviewProduct.code ? (
-                              <div className="text-xs uppercase tracking-[0.24em] text-white/75">{detailPreviewProduct.code}</div>
+                              <div className="text-xs uppercase tracking-[0.24em] text-white/75" style={productCodeTextStyle}>
+                                {detailPreviewProduct.code}
+                              </div>
                             ) : null}
                             {productDetailShowName ? (
-                              <h3 className="mt-2 break-words text-2xl font-semibold text-white sm:text-3xl">
+                              <h3 className="mt-2 break-words text-2xl font-semibold text-white sm:text-3xl" style={productNameTextStyle}>
                                 {detailPreviewProduct.name || "未命名产品"}
                               </h3>
                             ) : null}
                             {productDetailShowDescription && detailPreviewProduct.description ? (
-                              <div className="mt-3 break-words whitespace-pre-wrap text-sm leading-7 text-white/90 sm:text-base">
+                              <div
+                                className="mt-3 break-words whitespace-pre-wrap text-sm leading-7 text-white/90 sm:text-base"
+                                style={productDescriptionTextStyle}
+                              >
                                 {detailPreviewProduct.description}
                               </div>
                             ) : null}
                             {productDetailShowPrice && productPriceText(detailPreviewProduct.price, productPricePrefix) ? (
                               <div className={`mt-4 flex w-full text-2xl font-semibold text-white ${productDetailPriceAlignClass}`}>
-                                <div className="w-full">{productPriceText(detailPreviewProduct.price, productPricePrefix)}</div>
+                                <div className="w-full" style={productPriceTextStyle}>
+                                  {productPriceText(detailPreviewProduct.price, productPricePrefix)}
+                                </div>
                               </div>
                             ) : null}
                           </div>
@@ -11522,21 +11729,25 @@ type GalleryEditorImage = {
                       </div>
                       <div className="flex min-h-full flex-col">
                         {productDetailShowCode && detailPreviewProduct.code ? (
-                          <div className="text-xs uppercase tracking-[0.24em] text-slate-500">{detailPreviewProduct.code}</div>
+                          <div className="text-xs uppercase tracking-[0.24em] text-slate-500" style={productCodeTextStyle}>
+                            {detailPreviewProduct.code}
+                          </div>
                         ) : null}
                         {productDetailShowName ? (
-                          <h3 className="mt-2 break-words text-2xl font-semibold text-slate-900">
+                          <h3 className="mt-2 break-words text-2xl font-semibold text-slate-900" style={productNameTextStyle}>
                             {detailPreviewProduct.name || "未命名产品"}
                           </h3>
                         ) : null}
                         {productDetailShowDescription && detailPreviewProduct.description ? (
-                          <div className="mt-4 break-words whitespace-pre-wrap text-sm leading-7 text-slate-600">
+                          <div className="mt-4 break-words whitespace-pre-wrap text-sm leading-7 text-slate-600" style={productDescriptionTextStyle}>
                             {detailPreviewProduct.description}
                           </div>
                         ) : null}
                         {productDetailShowPrice && productPriceText(detailPreviewProduct.price, productPricePrefix) ? (
                           <div className={`mt-auto flex w-full pt-6 text-2xl font-semibold text-sky-700 ${productDetailPriceAlignClass}`}>
-                            <div className="w-full">{productPriceText(detailPreviewProduct.price, productPricePrefix)}</div>
+                            <div className="w-full" style={productPriceTextStyle}>
+                              {productPriceText(detailPreviewProduct.price, productPricePrefix)}
+                            </div>
                           </div>
                         ) : null}
                       </div>
@@ -11890,6 +12101,10 @@ type GalleryEditorImage = {
                         selectedValue={productCardBorderColor}
                       />
                     </div>
+                  </div>
+                  <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <div className="text-sm font-medium text-slate-700">文字样式</div>
+                    {renderProductTypographyControls(true)}
                   </div>
                   <label className="space-y-1 text-sm">
                     <span className="block text-gray-600">价格前缀</span>
@@ -12450,6 +12665,11 @@ type GalleryEditorImage = {
                       </div>
                     </div>
                     </div>,
+                  )}
+                  {renderProductSettingsSection(
+                    "typography",
+                    "文字样式",
+                    renderProductTypographyControls(false),
                   )}
                   {renderProductSettingsSection(
                     "detail",
