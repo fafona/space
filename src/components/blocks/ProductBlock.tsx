@@ -744,10 +744,11 @@ export default function ProductBlock(props: ProductBlockProps) {
           >
             <button
               type="button"
-              className={`absolute right-4 top-4 rounded-full px-3 py-1 text-sm ${detailFullImage ? "border border-slate-200 bg-white/90 text-slate-700 hover:bg-white" : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
+              className={`absolute right-4 top-4 z-10 flex h-10 w-10 items-center justify-center rounded-full text-2xl leading-none ${detailFullImage ? "border border-slate-200 bg-white/90 text-slate-700 hover:bg-white" : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
               onClick={() => setActiveProductId(null)}
+              aria-label="关闭"
             >
-              关闭
+              ×
             </button>
             {detailFullImage ? (
               <div className="relative overflow-hidden rounded-[1.25rem] bg-slate-100" style={{ height: "min(88vh, 960px)", minHeight: "min(88vh, 960px)" }}>

@@ -11663,10 +11663,11 @@ type GalleryEditorImage = {
                 <div className="relative max-h-[90vh] w-full overflow-auto rounded-3xl bg-white p-5 shadow-2xl sm:p-6">
                   <button
                     type="button"
-                    className="absolute right-4 top-4 rounded-full border border-slate-200 bg-white px-3 py-1 text-sm text-slate-600 hover:bg-slate-50"
+                    className="absolute right-4 top-4 z-10 flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-2xl leading-none text-slate-600 hover:bg-slate-50"
                     onClick={() => setProductDetailPreview(null)}
+                    aria-label="关闭"
                   >
-                    关闭
+                    ×
                   </button>
                   <div className="mb-4 text-sm font-medium text-slate-500">详情页预览</div>
                   {productDetailFullImage ? (
