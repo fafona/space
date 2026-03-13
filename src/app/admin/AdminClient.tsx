@@ -9099,6 +9099,19 @@ type GalleryEditorImage = {
     width: blockWidth ? `${blockWidth}px` : undefined,
     height: blockHeight ? `${blockHeight}px` : undefined,
   };
+  const blockPreviewOverflowStyle: CSSProperties = isEditingBlock
+    ? { overflow: "visible" }
+    : blockHeight
+      ? { overflow: "auto" }
+      : block.type === "search-bar"
+        ? { overflow: "visible" }
+        : {};
+  const blockPreviewShellStyle = {
+    ...blockBackgroundStyle,
+    ...blockSizeStyle,
+    ...blockPreviewOverflowStyle,
+    ...borderInlineStyle,
+  };
   function renderSelectedEditor(content: ReactNode) {
     return (
       <div
@@ -10226,7 +10239,7 @@ type GalleryEditorImage = {
           ref={resizeTargetRef}
           className={`${cardClass} relative !overflow-visible`}
           onClick={onSelect}
-          style={{ ...blockBackgroundStyle, ...blockSizeStyle, ...borderInlineStyle }}
+          style={blockPreviewShellStyle}
         >
           {imageDialog}
           {imageSettingsDialog}
@@ -12744,7 +12757,7 @@ type GalleryEditorImage = {
           ref={resizeTargetRef}
           className={`${cardClass} relative`}
           onClick={onSelect}
-          style={{ ...blockBackgroundStyle, ...blockSizeStyle, ...borderInlineStyle }}
+          style={blockPreviewShellStyle}
         >
           {imageDialog}
           {imageSettingsDialog}
@@ -14361,7 +14374,7 @@ type GalleryEditorImage = {
           ref={resizeTargetRef}
           className={`${cardClass} relative`}
           onClick={onSelect}
-          style={{ ...blockBackgroundStyle, ...blockSizeStyle, ...borderInlineStyle }}
+          style={blockPreviewShellStyle}
         >
           {imageDialog}
           {imageSettingsDialog}
@@ -15294,7 +15307,7 @@ type GalleryEditorImage = {
           ref={resizeTargetRef}
           className={`${cardClass} relative`}
           onClick={onSelect}
-          style={{ ...blockBackgroundStyle, ...blockSizeStyle, ...borderInlineStyle }}
+          style={blockPreviewShellStyle}
         >
           {imageDialog}
           {imageSettingsDialog}
