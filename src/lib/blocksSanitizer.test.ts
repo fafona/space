@@ -144,3 +144,74 @@ test("normalizes legacy portal search and merchant list overlap sequence", () =>
   assert.equal((blocks[2]?.props as Record<string, unknown>).blockOffsetY, 0);
   assert.equal((blocks[3]?.props as Record<string, unknown>).blockOffsetY, 0);
 });
+
+test("normalizes legacy mobile portal search sequence without nav block", () => {
+  const input = [
+    makeCommonBlock({
+      commonTextBoxes: [],
+      pagePlanConfigMobile: {
+        activePlanId: "plan-1",
+        plans: [
+          {
+            id: "plan-1",
+            activePageId: "page-1",
+            pages: [
+              {
+                id: "page-1",
+                name: "首页",
+                blocks: [
+                  {
+                    id: "b-merchant",
+                    type: "merchant-list",
+                    props: {
+                      heading: "商户列表",
+                      text: "说明",
+                      blockOffsetX: -17,
+                      blockOffsetY: 304,
+                    },
+                  },
+                  {
+                    id: "b-contact",
+                    type: "contact",
+                    props: {
+                      heading: "联系我们",
+                      phone: "",
+                      address: "",
+                      blockOffsetX: -17,
+                      blockOffsetY: 267,
+                    },
+                  },
+                  {
+                    id: "b-search",
+                    type: "search-bar",
+                    props: {
+                      heading: "搜索",
+                      text: "说明",
+                      blockOffsetX: -19,
+                      blockOffsetY: -1251,
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    }),
+  ];
+
+  const result = sanitizeBlocksForRuntime(input);
+  const props = result.blocks[0].props as Record<string, unknown>;
+  const pagePlanConfigMobile = props.pagePlanConfigMobile as {
+    plans: Array<{ pages: Array<{ blocks: Block[] }> }>;
+  };
+  const blocks = pagePlanConfigMobile.plans[0]?.pages[0]?.blocks ?? [];
+
+  assert.deepEqual(
+    blocks.map((block) => block.type),
+    ["search-bar", "merchant-list", "contact"],
+  );
+  assert.equal((blocks[0]?.props as Record<string, unknown>).blockOffsetY, 0);
+  assert.equal((blocks[1]?.props as Record<string, unknown>).blockOffsetY, 0);
+  assert.equal((blocks[2]?.props as Record<string, unknown>).blockOffsetY, 0);
+});

@@ -96,19 +96,18 @@ function shouldNormalizeLegacyPortalSequence(blocks: Block[]) {
   const merchantIndex = blocks.findIndex((block) => block.type === "merchant-list");
   const contactIndex = blocks.findIndex((block) => block.type === "contact");
   const searchIndex = blocks.findIndex((block) => block.type === "search-bar");
-  if (navIndex < 0 || merchantIndex < 0 || contactIndex < 0 || searchIndex < 0) return false;
+  if (merchantIndex < 0 || searchIndex < 0) return false;
 
   const merchantOffsetY = normalizeOffsetValue(blocks[merchantIndex]?.props?.blockOffsetY);
-  const contactOffsetY = normalizeOffsetValue(blocks[contactIndex]?.props?.blockOffsetY);
   const searchOffsetY = normalizeOffsetValue(blocks[searchIndex]?.props?.blockOffsetY);
+  const contactOffsetY = contactIndex >= 0 ? normalizeOffsetValue(blocks[contactIndex]?.props?.blockOffsetY) : 0;
 
   return (
-    searchIndex > contactIndex &&
-    contactIndex > merchantIndex &&
-    merchantIndex > navIndex &&
     searchOffsetY <= -600 &&
     merchantOffsetY >= 100 &&
-    contactOffsetY >= 100
+    searchIndex > merchantIndex &&
+    (contactIndex < 0 || (searchIndex > contactIndex && contactOffsetY >= 100)) &&
+    (navIndex < 0 || navIndex < merchantIndex)
   );
 }
 
