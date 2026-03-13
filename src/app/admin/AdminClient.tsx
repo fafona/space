@@ -11922,6 +11922,7 @@ type GalleryEditorImage = {
                   </label>
                   <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
                     <div className="text-sm font-medium text-slate-700">分类标签样式</div>
+                    <div className="grid gap-3 md:grid-cols-[180px_minmax(0,1fr)_minmax(0,1fr)]">
                     <label className="space-y-1 text-sm">
                       <span className="block text-gray-600">标签位置</span>
                       <select
@@ -11935,7 +11936,6 @@ type GalleryEditorImage = {
                           </option>
                         ))}
                       </select>
-                      <div className="text-xs text-gray-500">控制分类筛选标签条显示在上侧、左侧或右侧。</div>
                     </label>
                     <label className="block space-y-2 text-sm">
                       <span className="block text-gray-600">字体大小</span>
@@ -11985,7 +11985,8 @@ type GalleryEditorImage = {
                         />
                       </div>
                     </label>
-                    <div className="grid grid-cols-2 gap-3 text-sm text-gray-700">
+                    </div>
+                    <div className="grid gap-3 text-sm text-gray-700 sm:grid-cols-2">
                       <label className="flex items-center gap-2">
                         <input
                           type="checkbox"
@@ -12482,7 +12483,7 @@ type GalleryEditorImage = {
                     "tags",
                     "分类标签样式",
                     <div className="space-y-4">
-                    <div className="grid gap-4 lg:grid-cols-[180px_220px_220px_minmax(0,1fr)]">
+                    <div className="grid gap-4 lg:grid-cols-[180px_220px_220px]">
                     <label className="space-y-1 text-sm">
                       <span className="block text-gray-600">标签位置</span>
                       <select
@@ -12496,7 +12497,6 @@ type GalleryEditorImage = {
                           </option>
                         ))}
                       </select>
-                      <div className="text-xs text-gray-500">控制分类筛选标签条显示在上侧、左侧或右侧。</div>
                     </label>
                     <label className="space-y-2 text-sm">
                       <span className="block text-gray-600">字体大小</span>
@@ -12546,7 +12546,8 @@ type GalleryEditorImage = {
                         />
                       </div>
                     </label>
-                    <div className="grid content-start gap-2 text-sm text-gray-700 sm:grid-cols-2 lg:grid-cols-1 2xl:grid-cols-2">
+                    </div>
+                    <div className="grid gap-2 text-sm text-gray-700 sm:grid-cols-2">
                       <label className="flex items-center gap-2 rounded border border-slate-200 bg-white px-3 py-2">
                         <input
                           type="checkbox"
@@ -12563,7 +12564,6 @@ type GalleryEditorImage = {
                         />
                         <span>按分类排列</span>
                       </label>
-                    </div>
                     </div>
                     <div className="grid gap-4 lg:grid-cols-2">
                       <div className="space-y-2 rounded-lg border border-slate-200 bg-white p-3">
