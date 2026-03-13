@@ -15440,7 +15440,7 @@ type GalleryEditorImage = {
                   ref={searchLayoutCanvasFocusRef}
                   className="relative rounded border border-dashed border-gray-300 bg-transparent"
                   style={{
-                    minHeight: `${searchCanvasHeight}px`,
+                    minHeight: `${searchPreviewCanvasHeight}px`,
                     width: `${searchCanvasWidth}px`,
                     maxWidth: "100%",
                     backgroundImage: searchLayoutSnapEnabled
@@ -15461,7 +15461,12 @@ type GalleryEditorImage = {
                           ? "border-blue-500 bg-blue-50/70 ring-4 ring-blue-400/45 shadow-md"
                           : "border-gray-300"
                       }`}
-                      style={{ left: `${item.x}px`, top: `${item.y}px`, width: `${item.width}px`, height: `${item.height}px` }}
+                      style={{
+                        left: `${item.x}px`,
+                        top: `${getSearchPreviewY(item.y)}px`,
+                        width: `${item.width}px`,
+                        height: `${item.height}px`,
+                      }}
                       onMouseDown={(event) => startSearchLayoutDrag(item.key, event)}
                     >
                       <div className="text-[11px] text-gray-500 truncate">{item.label}</div>
