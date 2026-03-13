@@ -15535,11 +15535,6 @@ function RecentColorBar({
             })}
           </div>
         </div>
-        {onClear ? (
-          <button type="button" className="shrink-0 rounded border bg-white px-2 py-1 text-xs hover:bg-gray-50" onClick={onClear}>
-            清空
-          </button>
-        ) : null}
       </div>
     ) : (
       <div className="rounded border border-dashed px-2 py-2 text-xs text-gray-400">暂无最近颜色</div>
