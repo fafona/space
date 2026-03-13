@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent } from "react";
-import { getBlocksSnapshot, getPublishedBlocksSnapshot, subscribeBlocksStore, subscribePublishedBlocksStore } from "@/data/blockStore";
+import { getBlocksSnapshot, getPublishedBlocksSnapshot, loadPublishedBlocksFromStorage, subscribeBlocksStore, subscribePublishedBlocksStore } from "@/data/blockStore";
 import type { Block, MerchantCardTextLayoutConfig, MerchantCardTextRole, TypographyEditableProps } from "@/data/homeBlocks";
 import {
   FEATURE_CATALOG,
@@ -18,6 +18,7 @@ import {
   createFeaturePackage,
   createHomeLayoutSection,
   createIndustryCategory,
+  createPlanTemplate,
   createPageAsset,
   createPlatformUser,
   createRole,
@@ -111,6 +112,28 @@ function buildBackendOnlySite(account: BackendMerchantAccount): Site {
     createdAt: timestamp,
     updatedAt: timestamp,
   };
+}
+
+async function fetchPublishedBlocksForTemplateCapture(siteId: string) {
+  const normalizedSiteId = String(siteId ?? "").trim();
+  if (!normalizedSiteId) return [] as Block[];
+  try {
+    const response = await fetch(`/api/site-published?siteId=${encodeURIComponent(normalizedSiteId)}`, {
+      method: "GET",
+      cache: "no-store",
+    });
+    if (response.ok) {
+      const json = (await response.json().catch(() => null)) as { blocks?: unknown } | null;
+      if (Array.isArray(json?.blocks) && json.blocks.length > 0) {
+        return json.blocks as Block[];
+      }
+    }
+  } catch {
+    // Fallback to local published cache below.
+  }
+  const scoped = loadPublishedBlocksFromStorage([], buildSiteStoreScope(normalizedSiteId));
+  if (scoped.length > 0) return scoped;
+  return loadPublishedBlocksFromStorage([], normalizedSiteId);
 }
 
 function badgeClass(value: string) {
@@ -831,6 +854,7 @@ export default function SuperAdminClient() {
   const [state, setState] = useState<PlatformState>(() => loadPlatformState());
   const stateRef = useRef<PlatformState>(state);
   const [tip, setTip] = useState("");
+  const [capturingTemplateSiteId, setCapturingTemplateSiteId] = useState("");
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [remotePv30, setRemotePv30] = useState<number | null>(null);
 
@@ -1544,6 +1568,51 @@ export default function SuperAdminClient() {
     hydrateMerchantConfigDraft(site);
     setUserPanelMode("config");
     setMerchantPanelOpen(true);
+  }
+
+  async function captureMerchantTemplate(site: Site) {
+    const siteId = (site.id ?? "").trim();
+    if (!siteId) {
+      setTip("缺少站点 ID，无法收录方案");
+      return;
+    }
+    setCapturingTemplateSiteId(siteId);
+    try {
+      const blocks = await fetchPublishedBlocksForTemplateCapture(siteId);
+      if (!Array.isArray(blocks) || blocks.length === 0) {
+        setTip("该站点暂无可收录的已发布方案，请先发布前台");
+        return;
+      }
+      const template = createPlanTemplate({
+        name: (site.merchantName ?? "").trim() || (site.name ?? "").trim() || "未命名方案",
+        sourceSiteId: siteId,
+        sourceSiteName: (site.merchantName ?? "").trim() || (site.name ?? "").trim(),
+        sourceSiteDomain: (site.domain ?? "").trim(),
+        sourceIndustry: site.industry,
+        blocks,
+      });
+      const saved = commit((prev) =>
+        withAudit(
+          {
+            ...prev,
+            planTemplates: [template, ...(prev.planTemplates ?? [])],
+          },
+          "plan_template_capture",
+          "plan_template",
+          template.id,
+          `${template.name}${template.sourceSiteName ? ` <- ${template.sourceSiteName}` : ""}`,
+        ),
+      );
+      if (!saved) {
+        setTip("方案模板保存失败，请重试");
+        return;
+      }
+      setTip(`已收录方案：${template.name}`);
+    } catch (error) {
+      setTip(error instanceof Error ? error.message : "方案收录失败，请重试");
+    } finally {
+      setCapturingTemplateSiteId("");
+    }
   }
 
   function createTenantAction() {
@@ -3079,6 +3148,13 @@ export default function SuperAdminClient() {
                                           onClick={() => openMerchantConfigPanel(row.site)}
                                         >
                                           配置
+                                        </button>
+                                        <button
+                                          className="rounded border px-2 py-1 disabled:opacity-50"
+                                          onClick={() => void captureMerchantTemplate(row.site)}
+                                          disabled={capturingTemplateSiteId === row.site.id}
+                                        >
+                                          {capturingTemplateSiteId === row.site.id ? "收录中.." : "收录方案"}
                                         </button>
                                       </>
                                     ) : (

@@ -23,11 +23,15 @@ import {
 } from "@/data/homeBlocks";
 import {
   MERCHANT_INDUSTRY_OPTIONS,
+  PLAN_TEMPLATE_CATEGORY_OPTIONS,
   createDefaultMerchantSortConfig,
   createFeaturePackage,
   createDefaultMerchantPermissionConfig,
   loadPlatformState,
   savePlatformState,
+  subscribePlatformState,
+  type PlanTemplate,
+  type PlanTemplateCategory,
   type Site,
 } from "@/data/platformControlStore";
 import {
@@ -63,6 +67,12 @@ import {
   type PlanId,
 } from "@/lib/pagePlans";
 import { countInlineAssets, hasInlineAssets } from "@/lib/inlineAssetStats";
+import {
+  PLAN_TEMPLATE_FILTER_OPTIONS,
+  type PlanTemplateFilterCategory,
+  matchPlanTemplateCategory,
+  summarizePlanTemplateBlocks,
+} from "@/lib/planTemplates";
 import {
   CUSTOM_GALLERY_FRAME_WIDTHS,
   GALLERY_LAYOUT_PRESETS,
@@ -2708,6 +2718,10 @@ export default function AdminClient({
   const [isDesktopEditorSidebar, setIsDesktopEditorSidebar] = useState(false);
   const [uploadCompressionPreset, setUploadCompressionPreset] = useState<UploadCompressionPreset>("high");
   const [themePreset, setThemePreset] = useState<ThemePresetKey>("none");
+  const [planTemplateDialogOpen, setPlanTemplateDialogOpen] = useState(false);
+  const [planTemplateSearch, setPlanTemplateSearch] = useState("");
+  const [planTemplateFilter, setPlanTemplateFilter] = useState<PlanTemplateFilterCategory>("全部");
+  const [planTemplates, setPlanTemplates] = useState<PlanTemplate[]>(() => loadPlatformState().planTemplates ?? []);
   const pageImageInputRef = useRef<HTMLInputElement>(null);
   const [pageImageDialogOpen, setPageImageDialogOpen] = useState(false);
   const [pageImageUrlInput, setPageImageUrlInput] = useState("");
@@ -2769,6 +2783,23 @@ export default function AdminClient({
       setHasAddedExtraBlock(true);
     }
   }, [blocks, hasAddedExtraBlock]);
+
+  useEffect(
+    () =>
+      subscribePlatformState(() => {
+        setPlanTemplates(loadPlatformState().planTemplates ?? []);
+      }),
+    [],
+  );
+
+  useEffect(() => {
+    if (!planTemplateDialogOpen || typeof document === "undefined") return () => {};
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [planTemplateDialogOpen]);
 
   function recordRecentColor(value: string) {
     const normalized = normalizeRecentColorToken(value);
@@ -3605,6 +3636,77 @@ export default function AdminClient({
     return new Promise((resolve) => {
       setDialog({ type: "confirm", title, message, resolve });
     });
+  }
+
+  function persistPlanTemplates(nextTemplates: PlanTemplate[]) {
+    const platformState = loadPlatformState();
+    const saved = savePlatformState({
+      ...platformState,
+      planTemplates: nextTemplates,
+    });
+    if (!saved) {
+      showTip("方案模板保存失败，请重试");
+      return false;
+    }
+    setPlanTemplates(nextTemplates);
+    return true;
+  }
+
+  function updatePlanTemplateDraft(
+    templateId: string,
+    patch: Partial<Pick<PlanTemplate, "name" | "category">>,
+    options?: { persist?: boolean },
+  ) {
+    const nextTemplates = planTemplates.map((template) =>
+      template.id === templateId
+        ? {
+            ...template,
+            name: typeof patch.name === "string" ? patch.name : template.name,
+            category: (patch.category as PlanTemplateCategory | undefined) ?? template.category,
+            updatedAt: new Date().toISOString(),
+          }
+        : template,
+    );
+    setPlanTemplates(nextTemplates);
+    if (options?.persist) {
+      return persistPlanTemplates(
+        nextTemplates.map((template) =>
+          template.id === templateId
+            ? {
+                ...template,
+                name: template.name.trim() || "未命名方案",
+              }
+            : template,
+        ),
+      );
+    }
+    return true;
+  }
+
+  async function deletePlanTemplate(template: PlanTemplate) {
+    const confirmed = await openConfirm(`删除方案模板「${template.name}」后不可恢复，是否继续？`, "删除方案模板");
+    if (!confirmed) return;
+    const currentTemplates = loadPlatformState().planTemplates ?? [];
+    const nextTemplates = currentTemplates.filter((item) => item.id !== template.id);
+    if (!persistPlanTemplates(nextTemplates)) return;
+    showTip(`已删除方案：${template.name}`);
+  }
+
+  async function applyPlanTemplate(template: PlanTemplate) {
+    const loadedBlocks = Array.isArray(template.blocks) ? (template.blocks as Block[]) : [];
+    if (loadedBlocks.length === 0) {
+      showTip("该方案没有可应用的页面内容");
+      return;
+    }
+    const confirmed = await openConfirm(
+      `应用方案「${template.name}」会覆盖当前编辑中的整套 PC 和手机方案，是否继续？`,
+      "应用方案模板",
+    );
+    if (!confirmed) return;
+    pushUndoSnapshot(createSnapshot());
+    applyPersistedBlocksToEditorRef.current(loadedBlocks, { resetHistory: false });
+    setPlanTemplateDialogOpen(false);
+    showTip(`已应用方案：${template.name}`);
   }
 
   function openCompressionPresetDialog(
@@ -5775,6 +5877,26 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }, 0);
   const mobileFrontendPreviewPadding = Math.max(120, Math.max(0, maxBlockOffsetY) + 100);
   const shouldUseDesktopEditorSidebar = forceDesktopEditorSidebar || isPlatformEditor || isDesktopEditorSidebar;
+  const planTemplateKeyword = planTemplateSearch.trim().toLowerCase();
+  const filteredPlanTemplates = planTemplates.filter((template) => {
+    if (!matchPlanTemplateCategory(template, planTemplateFilter)) return false;
+    if (!planTemplateKeyword) return true;
+    const haystack = [
+      template.name,
+      template.sourceSiteName,
+      template.sourceSiteDomain,
+      template.sourceSiteId,
+      template.category,
+      template.sourceIndustry,
+    ]
+      .join("\n")
+      .toLowerCase();
+    return haystack.includes(planTemplateKeyword);
+  });
+  const planTemplateCards = filteredPlanTemplates.map((template) => ({
+    template,
+    summary: summarizePlanTemplateBlocks(template.blocks),
+  }));
 
   function renderTopMostOverlay(content: ReactNode) {
     if (typeof window === "undefined") return content;
@@ -5968,6 +6090,15 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               <div className="max-w-6xl mx-auto px-6 py-3 lg:mx-0 lg:max-w-none lg:px-4 lg:py-4">
                 <div className="flex items-center gap-2 flex-wrap lg:flex-col lg:items-stretch lg:gap-4">
                   <div className="flex items-center gap-2 flex-wrap lg:flex-col lg:items-stretch">
+                    {isPlatformEditor ? (
+                      <button
+                        type="button"
+                        className="rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50 lg:w-full"
+                        onClick={() => setPlanTemplateDialogOpen(true)}
+                      >
+                        方案模板
+                      </button>
+                    ) : null}
                     <select
                       className="border p-2 rounded min-w-[140px] lg:w-full"
                       value={editingPlanId}
@@ -6538,6 +6669,194 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           }}
         />
       ) : null}
+
+      {planTemplateDialogOpen && isPlatformEditor
+        ? renderTopMostOverlay(
+            <div
+              data-editor-overlay
+              className="fixed inset-0 z-[2147482600] bg-black/45 p-4"
+              onMouseDown={(event) => {
+                if (event.target === event.currentTarget) {
+                  setPlanTemplateDialogOpen(false);
+                }
+              }}
+            >
+              <div className="mx-auto flex h-full max-h-[calc(100vh-2rem)] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl">
+                <div className="flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4">
+                  <div className="space-y-1">
+                    <div className="text-lg font-semibold text-slate-900">方案模板</div>
+                    <div className="text-sm text-slate-500">选择整套已收录方案，一次应用 PC 和手机端页面配置。</div>
+                  </div>
+                  <button
+                    type="button"
+                    className="rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50"
+                    onClick={() => setPlanTemplateDialogOpen(false)}
+                  >
+                    关闭
+                  </button>
+                </div>
+
+                <div className="space-y-3 border-b px-5 py-4">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <input
+                      className="min-w-[220px] flex-1 rounded border px-3 py-2 text-sm"
+                      value={planTemplateSearch}
+                      onChange={(event) => setPlanTemplateSearch(event.target.value)}
+                      placeholder="搜索方案名称 / 来源网站 / 域名前缀 / 分类"
+                    />
+                    <div className="text-sm text-slate-500">共 {filteredPlanTemplates.length} 个方案</div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {PLAN_TEMPLATE_FILTER_OPTIONS.map((option) => (
+                      <button
+                        key={option}
+                        type="button"
+                        className={`rounded-full border px-3 py-1.5 text-sm transition-colors ${
+                          planTemplateFilter === option
+                            ? "border-black bg-black text-white"
+                            : "bg-white text-slate-700 hover:bg-slate-50"
+                        }`}
+                        onClick={() => setPlanTemplateFilter(option)}
+                      >
+                        {option}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+                  {planTemplateCards.length > 0 ? (
+                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                      {planTemplateCards.map(({ template, summary }) => {
+                        const sourceLabel =
+                          template.sourceSiteName || template.sourceSiteDomain || template.sourceSiteId || "未记录来源网站";
+                        const blockLabels = summary.labels.length > 0 ? summary.labels : ["未识别区块"];
+                        return (
+                          <article key={template.id} className="overflow-hidden rounded-2xl border bg-slate-50 shadow-sm">
+                            <div className="space-y-4 p-4">
+                              <div className="rounded-2xl bg-gradient-to-br from-slate-950 via-slate-800 to-slate-600 p-4 text-white">
+                                <div className="flex flex-wrap items-start justify-between gap-3">
+                                  <div className="min-w-0 flex-1 space-y-1">
+                                    <div className="text-xs uppercase tracking-[0.22em] text-white/60">模板预览</div>
+                                    <div className="truncate text-base font-semibold" title={summary.previewTitle || template.name}>
+                                      {summary.previewTitle || template.name}
+                                    </div>
+                                  </div>
+                                  <span className="rounded-full border border-white/20 bg-white/10 px-2 py-1 text-xs">
+                                    {summary.hasMobile ? "PC + 手机" : "仅 PC"}
+                                  </span>
+                                </div>
+                                <div className="mt-4 grid grid-cols-3 gap-2 text-xs">
+                                  <div className="rounded-xl bg-white/10 px-3 py-2">
+                                    <div className="text-white/60">方案</div>
+                                    <div className="mt-1 text-sm font-semibold">{summary.planCount}</div>
+                                  </div>
+                                  <div className="rounded-xl bg-white/10 px-3 py-2">
+                                    <div className="text-white/60">页面</div>
+                                    <div className="mt-1 text-sm font-semibold">{summary.pageCount}</div>
+                                  </div>
+                                  <div className="rounded-xl bg-white/10 px-3 py-2">
+                                    <div className="text-white/60">区块</div>
+                                    <div className="mt-1 text-sm font-semibold">{summary.blockCount}</div>
+                                  </div>
+                                </div>
+                                <div className="mt-4 flex flex-wrap gap-2">
+                                  {blockLabels.map((label) => (
+                                    <span key={`${template.id}-${label}`} className="rounded-full bg-white/10 px-2 py-1 text-xs">
+                                      {label}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+
+                              <div className="space-y-3">
+                                <div className="flex items-start gap-3">
+                                  <label className="min-w-0 flex-1 space-y-1">
+                                    <div className="text-xs font-medium text-slate-500">方案名称</div>
+                                    <input
+                                      className="w-full rounded border bg-white px-3 py-2 text-sm"
+                                      value={template.name}
+                                      onChange={(event) =>
+                                        updatePlanTemplateDraft(template.id, {
+                                          name: event.target.value,
+                                        })
+                                      }
+                                      onBlur={() => updatePlanTemplateDraft(template.id, {}, { persist: true })}
+                                      onKeyDown={(event) => {
+                                        if (event.key === "Enter") {
+                                          event.preventDefault();
+                                          (event.currentTarget as HTMLInputElement).blur();
+                                        }
+                                      }}
+                                      placeholder="请输入方案名称"
+                                    />
+                                  </label>
+                                  <button
+                                    type="button"
+                                    className="mt-6 rounded border border-rose-200 bg-white px-3 py-2 text-sm text-rose-600 hover:bg-rose-50"
+                                    onClick={() => void deletePlanTemplate(template)}
+                                  >
+                                    删除
+                                  </button>
+                                </div>
+
+                                <div className="grid gap-3 md:grid-cols-[150px_minmax(0,1fr)]">
+                                  <label className="space-y-1">
+                                    <div className="text-xs font-medium text-slate-500">方案分类</div>
+                                    <select
+                                      className="w-full rounded border bg-white px-3 py-2 text-sm"
+                                      value={template.category}
+                                      onChange={(event) =>
+                                        updatePlanTemplateDraft(
+                                          template.id,
+                                          { category: event.target.value as PlanTemplateCategory },
+                                          { persist: true },
+                                        )
+                                      }
+                                    >
+                                      {PLAN_TEMPLATE_CATEGORY_OPTIONS.map((option) => (
+                                        <option key={option} value={option}>
+                                          {option}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                  <div className="space-y-1">
+                                    <div className="text-xs font-medium text-slate-500">来源网站</div>
+                                    <div className="rounded border bg-white px-3 py-2 text-sm text-slate-700" title={sourceLabel}>
+                                      {sourceLabel}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-white px-3 py-3">
+                                  <div className="text-xs text-slate-500">
+                                    创建于 {new Date(template.createdAt).toLocaleString("zh-CN", { hour12: false })}
+                                  </div>
+                                  <button
+                                    type="button"
+                                    className="rounded bg-black px-4 py-2 text-sm text-white hover:bg-slate-800"
+                                    onClick={() => void applyPlanTemplate(template)}
+                                  >
+                                    应用整套方案
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="flex h-full min-h-[260px] items-center justify-center rounded-2xl border border-dashed bg-slate-50 px-6 text-center text-sm text-slate-500">
+                      当前没有匹配的方案模板。你可以先去超级后台用户列表点击“收录方案”。
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>,
+          )
+        : null}
 
       {dialog ? (
         <div className="fixed inset-0 z-[20000] bg-black/40 flex items-center justify-center p-4">

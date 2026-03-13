@@ -51,6 +51,8 @@ export type FeatureMeta = {
 
 export type MerchantIndustry = "" | "餐饮" | "娱乐" | "零售" | "服务" | "组织";
 export const MERCHANT_INDUSTRY_OPTIONS: Exclude<MerchantIndustry, "">[] = ["餐饮", "娱乐", "零售", "服务", "组织"];
+export type PlanTemplateCategory = Exclude<MerchantIndustry, ""> | "其他";
+export const PLAN_TEMPLATE_CATEGORY_OPTIONS: PlanTemplateCategory[] = ["餐饮", "娱乐", "零售", "服务", "组织", "其他"];
 
 export type Tenant = {
   id: string;
@@ -253,10 +255,24 @@ export type AuditRecord = {
   detail: string;
 };
 
+export type PlanTemplate = {
+  id: string;
+  name: string;
+  category: PlanTemplateCategory;
+  sourceSiteId: string;
+  sourceSiteName: string;
+  sourceSiteDomain: string;
+  sourceIndustry: MerchantIndustry;
+  blocks: unknown[];
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type PlatformState = {
   version: number;
   tenants: Tenant[];
   sites: Site[];
+  planTemplates: PlanTemplate[];
   industryCategories: IndustryCategory[];
   homeLayout: HomeLayoutConfig;
   roles: PlatformRole[];
@@ -342,6 +358,11 @@ function normalizeText(value: unknown) {
 function normalizeSiteIndustry(value: unknown): MerchantIndustry {
   const raw = normalizeText(value);
   return MERCHANT_INDUSTRY_OPTIONS.find((item) => item === raw) ?? "";
+}
+
+export function resolvePlanTemplateCategory(industry: unknown): PlanTemplateCategory {
+  const normalized = normalizeSiteIndustry(industry);
+  return normalized || "其他";
 }
 
 function normalizeMerchantSortRule(value: unknown): MerchantSortRule {
@@ -589,6 +610,51 @@ function normalizeIndustryCategories(input: unknown): IndustryCategory[] {
   return rows;
 }
 
+function normalizePlanTemplateBlocks(value: unknown) {
+  if (!Array.isArray(value)) return [] as unknown[];
+  try {
+    return JSON.parse(JSON.stringify(value)) as unknown[];
+  } catch {
+    return [] as unknown[];
+  }
+}
+
+function normalizePlanTemplate(value: unknown): PlanTemplate | null {
+  const source = value && typeof value === "object" ? (value as Partial<PlanTemplate>) : null;
+  if (!source) return null;
+  const id = normalizeText(source.id);
+  if (!id) return null;
+  const current = nowIso();
+  return {
+    id,
+    name: normalizeText(source.name) || "未命名方案",
+    category: resolvePlanTemplateCategory(source.category),
+    sourceSiteId: normalizeText(source.sourceSiteId),
+    sourceSiteName: normalizeText(source.sourceSiteName),
+    sourceSiteDomain: normalizeText(source.sourceSiteDomain),
+    sourceIndustry: normalizeSiteIndustry(source.sourceIndustry),
+    blocks: normalizePlanTemplateBlocks(source.blocks),
+    createdAt: normalizeText(source.createdAt) || current,
+    updatedAt: normalizeText(source.updatedAt) || normalizeText(source.createdAt) || current,
+  };
+}
+
+function normalizePlanTemplates(value: unknown): PlanTemplate[] {
+  if (!Array.isArray(value)) return [];
+  const rows = value
+    .map((item) => normalizePlanTemplate(item))
+    .filter((item): item is PlanTemplate => !!item);
+  const unique = new Map<string, PlanTemplate>();
+  for (const row of rows) {
+    unique.set(row.id, row);
+  }
+  return [...unique.values()].sort((left, right) => {
+    const leftTime = new Date(left.updatedAt).getTime();
+    const rightTime = new Date(right.updatedAt).getTime();
+    return (Number.isFinite(rightTime) ? rightTime : 0) - (Number.isFinite(leftTime) ? leftTime : 0);
+  });
+}
+
 function normalizeHomeLayout(input: unknown, categories: IndustryCategory[]): HomeLayoutConfig {
   const fallback = createDefaultHomeLayoutConfig();
   const validCategoryIds = new Set(categories.map((item) => item.id));
@@ -741,6 +807,7 @@ function createDefaultState(): PlatformState {
         updatedAt: current,
       },
     ],
+    planTemplates: [],
     industryCategories,
     homeLayout,
     roles: [
@@ -955,6 +1022,7 @@ function normalizeState(input: PlatformState): PlatformState {
           configHistory: normalizeMerchantConfigHistory((site as { configHistory?: unknown }).configHistory),
         }))
       : [],
+    planTemplates: normalizePlanTemplates((input as Partial<PlatformState>).planTemplates),
     industryCategories,
     homeLayout,
     roles: Array.isArray(input.roles) ? input.roles : [],
@@ -1194,6 +1262,30 @@ export function createSite(input: {
     merchantCardImageUrl: "",
     sortConfig: createDefaultMerchantSortConfig(),
     configHistory: [],
+    createdAt: current,
+    updatedAt: current,
+  };
+}
+
+export function createPlanTemplate(input: {
+  name: string;
+  category?: PlanTemplateCategory;
+  sourceSiteId?: string;
+  sourceSiteName?: string;
+  sourceSiteDomain?: string;
+  sourceIndustry?: MerchantIndustry;
+  blocks?: unknown[];
+}): PlanTemplate {
+  const current = nowIso();
+  return {
+    id: nextId("template"),
+    name: normalizeText(input.name) || "未命名方案",
+    category: resolvePlanTemplateCategory(input.category ?? input.sourceIndustry),
+    sourceSiteId: normalizeText(input.sourceSiteId),
+    sourceSiteName: normalizeText(input.sourceSiteName),
+    sourceSiteDomain: normalizeText(input.sourceSiteDomain),
+    sourceIndustry: normalizeSiteIndustry(input.sourceIndustry),
+    blocks: normalizePlanTemplateBlocks(input.blocks),
     createdAt: current,
     updatedAt: current,
   };
