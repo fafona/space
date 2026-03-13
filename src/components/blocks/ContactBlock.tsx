@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import Image from "next/image";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import type { BackgroundEditableProps, TypographyEditableProps } from "@/data/homeBlocks";
 import { trackContactClick } from "@/lib/analytics";
@@ -172,6 +172,8 @@ function buildContactTypographyStyle(props: TypographyEditableProps): CSSPropert
 export default function ContactBlock(props: ContactBlockProps) {
   const [showMap, setShowMap] = useState(false);
   const [activeAddressIndex, setActiveAddressIndex] = useState(0);
+  const [contactNotice, setContactNotice] = useState("");
+  const contactNoticeTimerRef = useRef<number | null>(null);
   const cardStyle = getBackgroundStyle({
     imageUrl: props.bgImageUrl,
     fillMode: props.bgFillMode,
@@ -311,6 +313,25 @@ export default function ContactBlock(props: ContactBlockProps) {
   const contentWidth = Math.max(260, ...withPos.map((item) => item.x + item.width));
   const contactTypographyStyle = buildContactTypographyStyle(props);
 
+  useEffect(() => {
+    return () => {
+      if (contactNoticeTimerRef.current) {
+        window.clearTimeout(contactNoticeTimerRef.current);
+      }
+    };
+  }, []);
+
+  const showTemporaryContactNotice = (message: string) => {
+    if (contactNoticeTimerRef.current) {
+      window.clearTimeout(contactNoticeTimerRef.current);
+    }
+    setContactNotice(message);
+    contactNoticeTimerRef.current = window.setTimeout(() => {
+      setContactNotice("");
+      contactNoticeTimerRef.current = null;
+    }, 3200);
+  };
+
   return (
     <section className="max-w-6xl mx-auto px-6 py-6" style={offsetStyle}>
       <div
@@ -396,11 +417,18 @@ export default function ContactBlock(props: ContactBlockProps) {
                     onClick={() => {
                       trackContactClick(item.key);
                       if (item.key === "wechat") {
-                        void navigator.clipboard?.writeText(item.value).catch(() => {});
+                        void navigator.clipboard?.writeText(item.value).then(
+                          () => {
+                            showTemporaryContactNotice(`已复制微信号 ${item.value}，如未直达联系人，请在微信中粘贴搜索。`);
+                          },
+                          () => {
+                            showTemporaryContactNotice(`请在微信中搜索：${item.value}`);
+                          },
+                        );
                       }
                     }}
-                    aria-label={`打开${item.label}`}
-                    title={`打开${item.label}`}
+                    aria-label={item.key === "wechat" ? `打开微信并复制${item.label}` : `打开${item.label}`}
+                    title={item.key === "wechat" ? `打开微信并复制${item.label}` : `打开${item.label}`}
                   >
                     {item.key === "phone" ? (
                       <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" aria-hidden="true">
@@ -415,6 +443,7 @@ export default function ContactBlock(props: ContactBlockProps) {
             );
           })}
         </div>
+        {contactNotice ? <div className="mt-2 text-xs text-slate-600">{contactNotice}</div> : null}
       </div>
     </section>
   );
