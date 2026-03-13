@@ -11511,10 +11511,15 @@ type GalleryEditorImage = {
             !!currentStyle.fontColor;
           return (
             <div key={role} className="space-y-3 rounded-lg border border-slate-200 bg-white p-3">
-              <div className={`gap-3 ${compact ? "grid" : "flex items-start justify-between"}`}>
-                <div className="space-y-1">
-                  <div className="text-sm font-medium text-slate-700">{productTypographyMeta[role].label}</div>
-                  <div className="text-xs text-gray-500">{productTypographyMeta[role].helperText}</div>
+              <div className={`flex flex-wrap items-center gap-3 ${compact ? "" : "justify-between"}`}>
+                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
+                  <div className="shrink-0 text-sm font-medium text-slate-700">{productTypographyMeta[role].label}</div>
+                  <div className="shrink-0 text-xs text-slate-500">预览</div>
+                  <div className="min-w-[140px] flex-1 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-2">
+                    <div className={getProductTypographyPreviewClassName(role)} style={previewStyle}>
+                      {productTypographyMeta[role].sample}
+                    </div>
+                  </div>
                 </div>
                 <button
                   type="button"
@@ -11525,16 +11530,11 @@ type GalleryEditorImage = {
                   恢复默认
                 </button>
               </div>
-              <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-2">
-                <div className={getProductTypographyPreviewClassName(role)} style={previewStyle}>
-                  {productTypographyMeta[role].sample}
-                </div>
-              </div>
-              <div className={`grid gap-3 ${compact ? "grid-cols-1" : "md:grid-cols-[minmax(0,1fr)_120px]"}`}>
-                <label className="space-y-1 text-sm">
-                  <span className="block text-gray-600">字体</span>
+              <div className="flex flex-wrap items-center gap-3">
+                <label className="flex min-w-[240px] flex-1 items-center gap-2 text-sm">
+                  <span className="shrink-0 text-gray-600">字体</span>
                   <select
-                    className="w-full rounded border px-3 py-2 bg-white"
+                    className="min-w-0 flex-1 rounded border bg-white px-3 py-2"
                     value={currentStyle.fontFamily ?? ""}
                     onChange={(event) => updateProductTypographyStyle(role, { fontFamily: event.target.value })}
                   >
@@ -11546,10 +11546,10 @@ type GalleryEditorImage = {
                     ))}
                   </select>
                 </label>
-                <label className="space-y-1 text-sm">
-                  <span className="block text-gray-600">字号</span>
+                <label className="flex items-center gap-2 text-sm">
+                  <span className="shrink-0 text-gray-600">字号</span>
                   <select
-                    className="w-full rounded border px-3 py-2 bg-white"
+                    className="min-w-[96px] rounded border bg-white px-3 py-2"
                     value={typeof currentStyle.fontSize === "number" ? String(currentStyle.fontSize) : ""}
                     onChange={(event) =>
                       updateProductTypographyStyle(role, {
@@ -11565,47 +11565,57 @@ type GalleryEditorImage = {
                     ))}
                   </select>
                 </label>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    className={`rounded border px-3 py-2 text-sm ${currentStyle.fontWeight === "bold" ? "bg-black text-white" : "bg-white"}`}
+                    onClick={() => updateProductTypographyStyle(role, { fontWeight: currentStyle.fontWeight === "bold" ? undefined : "bold" })}
+                  >
+                    B
+                  </button>
+                  <button
+                    type="button"
+                    className={`rounded border px-3 py-2 text-sm ${currentStyle.fontStyle === "italic" ? "bg-black text-white" : "bg-white"}`}
+                    onClick={() => updateProductTypographyStyle(role, { fontStyle: currentStyle.fontStyle === "italic" ? undefined : "italic" })}
+                  >
+                    I
+                  </button>
+                  <button
+                    type="button"
+                    className={`rounded border px-3 py-2 text-sm ${currentStyle.textDecoration === "underline" ? "bg-black text-white" : "bg-white"}`}
+                    onClick={() =>
+                      updateProductTypographyStyle(role, {
+                        textDecoration: currentStyle.textDecoration === "underline" ? undefined : "underline",
+                      })
+                    }
+                  >
+                    U
+                  </button>
+                </div>
               </div>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  className={`rounded border px-3 py-2 text-sm ${currentStyle.fontWeight === "bold" ? "bg-black text-white" : "bg-white"}`}
-                  onClick={() => updateProductTypographyStyle(role, { fontWeight: currentStyle.fontWeight === "bold" ? undefined : "bold" })}
-                >
-                  B
-                </button>
-                <button
-                  type="button"
-                  className={`rounded border px-3 py-2 text-sm ${currentStyle.fontStyle === "italic" ? "bg-black text-white" : "bg-white"}`}
-                  onClick={() => updateProductTypographyStyle(role, { fontStyle: currentStyle.fontStyle === "italic" ? undefined : "italic" })}
-                >
-                  I
-                </button>
-                <button
-                  type="button"
-                  className={`rounded border px-3 py-2 text-sm ${currentStyle.textDecoration === "underline" ? "bg-black text-white" : "bg-white"}`}
-                  onClick={() =>
-                    updateProductTypographyStyle(role, {
-                      textDecoration: currentStyle.textDecoration === "underline" ? undefined : "underline",
-                    })
-                  }
-                >
-                  U
-                </button>
-              </div>
-              <div className="space-y-2">
-                <div className="text-sm text-gray-600">字体颜色</div>
-                <ColorOrGradientPicker
-                  value={(currentStyle.fontColor ?? "#111827").trim() || "#111827"}
-                  onChange={(value) => updateProductTypographyStyle(role, { fontColor: value })}
-                />
-                <RecentColorBar
-                  colors={recentColors}
-                  onClear={onClearRecentColors}
-                  onPick={(color) => updateProductTypographyStyle(role, { fontColor: color })}
-                  allowGradients
-                  selectedValue={(currentStyle.fontColor ?? "#111827").trim() || "#111827"}
-                />
+              <div className={`grid gap-3 ${compact ? "grid-cols-1" : "lg:grid-cols-[minmax(0,1fr)_minmax(280px,auto)]"}`}>
+                <label className="flex min-w-0 items-center gap-2 text-sm">
+                  <span className="shrink-0 text-gray-600">颜色</span>
+                  <div className="min-w-0 flex-1">
+                    <ColorOrGradientPicker
+                      value={(currentStyle.fontColor ?? "#111827").trim() || "#111827"}
+                      onChange={(value) => updateProductTypographyStyle(role, { fontColor: value })}
+                    />
+                  </div>
+                </label>
+                <div className="flex min-w-0 items-center gap-2 text-sm">
+                  <span className="shrink-0 text-gray-600">最近颜色</span>
+                  <div className="min-w-0 flex-1">
+                    <RecentColorBar
+                      colors={recentColors}
+                      onClear={onClearRecentColors}
+                      onPick={(color) => updateProductTypographyStyle(role, { fontColor: color })}
+                      allowGradients
+                      selectedValue={(currentStyle.fontColor ?? "#111827").trim() || "#111827"}
+                      compact
+                    />
+                  </div>
+                </div>
               </div>
             </div>
           );
@@ -15487,17 +15497,50 @@ function RecentColorBar({
   onClear,
   allowGradients = true,
   selectedValue,
+  compact = false,
 }: {
   colors: string[];
   onPick: (color: string) => void;
   onClear?: () => void;
   allowGradients?: boolean;
   selectedValue?: string;
+  compact?: boolean;
 }) {
   const shownColors = allowGradients ? colors : colors.filter((item) => !isGradientToken(item));
   const swatchSize = 24;
   const swatchGap = 6;
   const visibleSwatchCount = 10;
+  if (compact) {
+    return shownColors.length > 0 ? (
+      <div className="flex min-w-0 items-center gap-2">
+        <div className="min-w-0 overflow-x-auto">
+          <div className="flex flex-nowrap gap-1.5">
+            {shownColors.slice(0, visibleSwatchCount).map((color) => {
+              const isSelected = selectedValue?.trim().toLowerCase() === color.trim().toLowerCase();
+              return (
+                <button
+                  key={color}
+                  type="button"
+                  aria-pressed={isSelected}
+                  className={`h-6 w-6 shrink-0 rounded border transition ${isSelected ? "border-slate-900 ring-2 ring-sky-500/70" : "border-gray-300"}`}
+                  style={isGradientToken(color) ? { backgroundImage: color } : { backgroundColor: color }}
+                  title={color}
+                  onClick={() => onPick(color)}
+                />
+              );
+            })}
+          </div>
+        </div>
+        {onClear ? (
+          <button type="button" className="shrink-0 rounded border bg-white px-2 py-1 text-xs hover:bg-gray-50" onClick={onClear}>
+            清空
+          </button>
+        ) : null}
+      </div>
+    ) : (
+      <div className="rounded border border-dashed px-2 py-2 text-xs text-gray-400">暂无最近颜色</div>
+    );
+  }
   return (
     <div className="pt-1 space-y-1">
       <div className="flex items-center justify-between">
