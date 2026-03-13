@@ -825,6 +825,7 @@ type BackendMerchantAccount = {
 type MerchantTableSortField =
   | "seq"
   | "user"
+  | "id"
   | "name"
   | "prefix"
   | "industry"
@@ -1183,6 +1184,14 @@ export default function SuperAdminClient() {
   const displayMerchantRows = useMemo(() => {
     const rows = filteredMerchantRows.map((row, idx) => ({ row, seq: idx + 1 }));
     const text = (value: string) => value.trim().toLowerCase();
+    const merchantIdRank = (value: string) => {
+      const normalized = value.trim();
+      if (!normalized || normalized === "-") {
+        return merchantTableSortOrder === "asc" ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY;
+      }
+      if (/^\d+$/.test(normalized)) return Number(normalized);
+      return merchantTableSortOrder === "asc" ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY;
+    };
     const expireTs = (iso: string | null) => {
       if (!iso) return merchantTableSortOrder === "asc" ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY;
       const ts = new Date(iso).getTime();
@@ -1196,6 +1205,12 @@ export default function SuperAdminClient() {
       switch (merchantTableSortField) {
         case "user":
           delta = text(left.userEmail).localeCompare(text(right.userEmail), "zh-CN");
+          break;
+        case "id":
+          delta = merchantIdRank(left.merchantId) - merchantIdRank(right.merchantId);
+          if (delta === 0) {
+            delta = text(left.merchantId).localeCompare(text(right.merchantId), "zh-CN");
+          }
           break;
         case "name":
           delta = text(left.merchantName).localeCompare(text(right.merchantName), "zh-CN");
@@ -3043,6 +3058,7 @@ export default function SuperAdminClient() {
                             <th className="px-3 py-2">
                               <div className="flex items-center justify-between gap-2">
                                 <span>ID</span>
+                                {renderMerchantSortToggle("id")}
                               </div>
                             </th>
                             <th className="px-3 py-2">
