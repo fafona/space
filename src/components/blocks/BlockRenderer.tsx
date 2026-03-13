@@ -14,6 +14,7 @@ import ChartBlock from "./ChartBlock";
 import MusicBlock from "./MusicBlock";
 import NavBlock from "./NavBlock";
 import ProductBlock from "./ProductBlock";
+import { getBlockRenderStackOrder } from "@/lib/blockStacking";
 
 class BlockRuntimeBoundary extends Component<{ blockId: string; children: ReactNode }, { hasError: boolean }> {
   constructor(props: { blockId: string; children: ReactNode }) {
@@ -48,7 +49,7 @@ export default function BlockRenderer({
 
   return (
     <>
-      {blocks.map((b) => {
+      {blocks.map((b, index) => {
         let content: ReactNode = null;
         switch (b.type) {
           case "common":
@@ -93,9 +94,15 @@ export default function BlockRenderer({
         }
         if (!content) return null;
         return (
-          <BlockRuntimeBoundary key={b.id} blockId={b.id}>
-            {content}
-          </BlockRuntimeBoundary>
+          <div
+            key={b.id}
+            className="relative"
+            style={{ zIndex: getBlockRenderStackOrder(b, index, blocks.length) }}
+          >
+            <BlockRuntimeBoundary blockId={b.id}>
+              {content}
+            </BlockRuntimeBoundary>
+          </div>
         );
       })}
     </>

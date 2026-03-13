@@ -115,6 +115,7 @@ import {
   type MerchantCardLayoutConfig,
   type MerchantListLayoutKey,
 } from "@/lib/merchantCardLayout";
+import { getBlockRenderStackOrder } from "@/lib/blockStacking";
 import {
   createDefaultMerchantIndustryTabs,
   normalizeMerchantIndustryTabs,
@@ -6452,39 +6453,46 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                       {blocks.map((block, index) => {
                         const sourceIndex = resizePreview ? blocks.findIndex((item) => item.id === resizePreview.blockId) : -1;
                         const previewOffsetY = sourceIndex >= 0 && index > sourceIndex ? -resizePreview!.heightDelta : 0;
+                        const wrapperStackOrder =
+                          draggingBlockId === block.id
+                            ? 1_000_000
+                            : block.id === selectedId
+                              ? 999_999
+                              : getBlockRenderStackOrder(block, index, blocks.length);
                         return (
-                          <InlineEditorBlock
-                            key={block.id}
-                            block={block}
-                            draggingBlockId={draggingBlockId}
-                            isSelected={block.id === selectedId}
-                            onDragHandleMouseDown={(point) => startDraggingBlock(block.id, point)}
-                            onNudge={(dx, dy) => nudgeBlock(block.id, dx, dy)}
-                            onLayerToFront={() => moveBlockToLayerEdge(block.id, "front")}
-                            onLayerUp={() => moveBlockLayerByOne(block.id, "up")}
-                            onLayerDown={() => moveBlockLayerByOne(block.id, "down")}
-                            onLayerToBack={() => moveBlockToLayerEdge(block.id, "back")}
-                            onSelect={() => setSelectedId(block.id)}
-                            onChange={(patch) => updateBlockProps(block.id, patch)}
-                            onResizePreview={(heightDelta) => previewResizeWithoutAffectingOthers(block.id, heightDelta)}
-                            onResizeCommit={(patch, heightDelta) => resizeBlockWithoutAffectingOthers(block.id, patch, heightDelta)}
-                            previewOffsetY={previewOffsetY}
-                            onDelete={() => void deleteBlock(block.id)}
-                            onAlert={(message) => {
-                              void openAlert(message);
-                            }}
-                            availablePages={editingPages.map((page) => ({ id: page.id, name: toPlainText(page.name, page.id) }))}
-                            currentPageId={editingPageId}
-                            maxNavItems={merchantPageLimit}
-                            recentColors={recentColors}
-                            onRecordColor={recordRecentColor}
-                            onClearRecentColors={clearRecentColors}
-                            onApplyNavSettingsToOtherPages={applyNavSettingsToOtherPages}
-                            onPersistImageFile={persistImageFileForEditor}
-                            onPersistProductImageFile={persistProductImageFileForEditor}
-                            onPersistAudioFile={persistAudioFileForEditor}
-                            previewViewport={previewViewport}
-                          />
+                          <div key={block.id} className="relative" style={{ zIndex: wrapperStackOrder }}>
+                            <InlineEditorBlock
+                              block={block}
+                              draggingBlockId={draggingBlockId}
+                              isSelected={block.id === selectedId}
+                              onDragHandleMouseDown={(point) => startDraggingBlock(block.id, point)}
+                              onNudge={(dx, dy) => nudgeBlock(block.id, dx, dy)}
+                              onLayerToFront={() => moveBlockToLayerEdge(block.id, "front")}
+                              onLayerUp={() => moveBlockLayerByOne(block.id, "up")}
+                              onLayerDown={() => moveBlockLayerByOne(block.id, "down")}
+                              onLayerToBack={() => moveBlockToLayerEdge(block.id, "back")}
+                              onSelect={() => setSelectedId(block.id)}
+                              onChange={(patch) => updateBlockProps(block.id, patch)}
+                              onResizePreview={(heightDelta) => previewResizeWithoutAffectingOthers(block.id, heightDelta)}
+                              onResizeCommit={(patch, heightDelta) => resizeBlockWithoutAffectingOthers(block.id, patch, heightDelta)}
+                              previewOffsetY={previewOffsetY}
+                              onDelete={() => void deleteBlock(block.id)}
+                              onAlert={(message) => {
+                                void openAlert(message);
+                              }}
+                              availablePages={editingPages.map((page) => ({ id: page.id, name: toPlainText(page.name, page.id) }))}
+                              currentPageId={editingPageId}
+                              maxNavItems={merchantPageLimit}
+                              recentColors={recentColors}
+                              onRecordColor={recordRecentColor}
+                              onClearRecentColors={clearRecentColors}
+                              onApplyNavSettingsToOtherPages={applyNavSettingsToOtherPages}
+                              onPersistImageFile={persistImageFileForEditor}
+                              onPersistProductImageFile={persistProductImageFileForEditor}
+                              onPersistAudioFile={persistAudioFileForEditor}
+                              previewViewport={previewViewport}
+                            />
+                          </div>
                         );
                       })}
                     </div>
@@ -6505,39 +6513,46 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               {blocks.map((block, index) => {
                 const sourceIndex = resizePreview ? blocks.findIndex((item) => item.id === resizePreview.blockId) : -1;
                 const previewOffsetY = sourceIndex >= 0 && index > sourceIndex ? -resizePreview!.heightDelta : 0;
+                const wrapperStackOrder =
+                  draggingBlockId === block.id
+                    ? 1_000_000
+                    : block.id === selectedId
+                      ? 999_999
+                      : getBlockRenderStackOrder(block, index, blocks.length);
                 return (
-                  <InlineEditorBlock
-                    key={block.id}
-                    block={block}
-                    draggingBlockId={draggingBlockId}
-                    isSelected={block.id === selectedId}
-                    onDragHandleMouseDown={(point) => startDraggingBlock(block.id, point)}
-                    onNudge={(dx, dy) => nudgeBlock(block.id, dx, dy)}
-                    onLayerToFront={() => moveBlockToLayerEdge(block.id, "front")}
-                    onLayerUp={() => moveBlockLayerByOne(block.id, "up")}
-                    onLayerDown={() => moveBlockLayerByOne(block.id, "down")}
-                    onLayerToBack={() => moveBlockToLayerEdge(block.id, "back")}
-                    onSelect={() => setSelectedId(block.id)}
-                    onChange={(patch) => updateBlockProps(block.id, patch)}
-                    onResizePreview={(heightDelta) => previewResizeWithoutAffectingOthers(block.id, heightDelta)}
-                    onResizeCommit={(patch, heightDelta) => resizeBlockWithoutAffectingOthers(block.id, patch, heightDelta)}
-                    previewOffsetY={previewOffsetY}
-                    onDelete={() => void deleteBlock(block.id)}
-                    onAlert={(message) => {
-                      void openAlert(message);
-                    }}
-                    availablePages={editingPages.map((page) => ({ id: page.id, name: toPlainText(page.name, page.id) }))}
-                    currentPageId={editingPageId}
-                    maxNavItems={merchantPageLimit}
-                    recentColors={recentColors}
-                    onRecordColor={recordRecentColor}
-                    onClearRecentColors={clearRecentColors}
-                    onApplyNavSettingsToOtherPages={applyNavSettingsToOtherPages}
-                    onPersistImageFile={persistImageFileForEditor}
-                    onPersistProductImageFile={persistProductImageFileForEditor}
-                    onPersistAudioFile={persistAudioFileForEditor}
-                    previewViewport={previewViewport}
-                  />
+                  <div key={block.id} className="relative" style={{ zIndex: wrapperStackOrder }}>
+                    <InlineEditorBlock
+                      block={block}
+                      draggingBlockId={draggingBlockId}
+                      isSelected={block.id === selectedId}
+                      onDragHandleMouseDown={(point) => startDraggingBlock(block.id, point)}
+                      onNudge={(dx, dy) => nudgeBlock(block.id, dx, dy)}
+                      onLayerToFront={() => moveBlockToLayerEdge(block.id, "front")}
+                      onLayerUp={() => moveBlockLayerByOne(block.id, "up")}
+                      onLayerDown={() => moveBlockLayerByOne(block.id, "down")}
+                      onLayerToBack={() => moveBlockToLayerEdge(block.id, "back")}
+                      onSelect={() => setSelectedId(block.id)}
+                      onChange={(patch) => updateBlockProps(block.id, patch)}
+                      onResizePreview={(heightDelta) => previewResizeWithoutAffectingOthers(block.id, heightDelta)}
+                      onResizeCommit={(patch, heightDelta) => resizeBlockWithoutAffectingOthers(block.id, patch, heightDelta)}
+                      previewOffsetY={previewOffsetY}
+                      onDelete={() => void deleteBlock(block.id)}
+                      onAlert={(message) => {
+                        void openAlert(message);
+                      }}
+                      availablePages={editingPages.map((page) => ({ id: page.id, name: toPlainText(page.name, page.id) }))}
+                      currentPageId={editingPageId}
+                      maxNavItems={merchantPageLimit}
+                      recentColors={recentColors}
+                      onRecordColor={recordRecentColor}
+                      onClearRecentColors={clearRecentColors}
+                      onApplyNavSettingsToOtherPages={applyNavSettingsToOtherPages}
+                      onPersistImageFile={persistImageFileForEditor}
+                      onPersistProductImageFile={persistProductImageFileForEditor}
+                      onPersistAudioFile={persistAudioFileForEditor}
+                      previewViewport={previewViewport}
+                    />
+                  </div>
                 );
               })}
             </div>
