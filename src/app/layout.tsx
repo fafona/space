@@ -4,6 +4,13 @@ import ClientDomTranslator from "@/components/ClientDomTranslator";
 import GlobalLanguageSwitcher from "@/components/GlobalLanguageSwitcher";
 import { I18nProvider } from "@/components/I18nProvider";
 import UnhandledRejectionGuard from "@/components/UnhandledRejectionGuard";
+import type { Viewport } from "next";
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+};
 
 const IGNORE_REJECTION_SCRIPT = `
 (() => {

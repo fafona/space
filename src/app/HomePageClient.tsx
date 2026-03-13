@@ -16,6 +16,19 @@ import { extractMerchantPrefixFromHost } from "@/lib/siteRouting";
 
 const MOBILE_BREAKPOINT = 768;
 
+function readViewportWidth() {
+  if (typeof window === "undefined") return 0;
+  const visualViewportWidth = window.visualViewport?.width;
+  if (typeof visualViewportWidth === "number" && Number.isFinite(visualViewportWidth) && visualViewportWidth > 0) {
+    return visualViewportWidth;
+  }
+  const documentWidth = document.documentElement?.clientWidth;
+  if (typeof documentWidth === "number" && Number.isFinite(documentWidth) && documentWidth > 0) {
+    return documentWidth;
+  }
+  return window.innerWidth;
+}
+
 function getEmbeddedMobilePlanConfig(sourceBlocks: Block[]) {
   const carrier = sourceBlocks.find(
     (block) => !!(block?.props as { pagePlanConfigMobile?: unknown } | undefined)?.pagePlanConfigMobile,
@@ -64,12 +77,14 @@ export default function HomePageClient({ initialBlocks }: { initialBlocks: Block
 
   useEffect(() => {
     const syncViewport = () => {
-      setIsMobileViewport(window.innerWidth <= MOBILE_BREAKPOINT);
+      setIsMobileViewport(readViewportWidth() <= MOBILE_BREAKPOINT);
     };
     syncViewport();
     window.addEventListener("resize", syncViewport);
+    window.visualViewport?.addEventListener("resize", syncViewport);
     return () => {
       window.removeEventListener("resize", syncViewport);
+      window.visualViewport?.removeEventListener("resize", syncViewport);
     };
   }, []);
 
