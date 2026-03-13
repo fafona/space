@@ -177,6 +177,14 @@ function logLocateDebug(label: string, detail: Record<string, unknown>) {
   console.info(`[search-bar:locate] ${label}`, detail);
 }
 
+function readViewportWidth() {
+  if (typeof window === "undefined") return 0;
+  if (window.visualViewport?.width) return window.visualViewport.width;
+  const documentWidth = document.documentElement?.clientWidth;
+  if (typeof documentWidth === "number" && documentWidth > 0) return documentWidth;
+  return window.innerWidth;
+}
+
 export default function SearchBarBlock(props: SearchBarBlockProps) {
   const countryOptions = useMemo(() => getEuropeCountryOptions(), []);
   const normalizedText = useMemo(() => {
@@ -228,6 +236,7 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
   const [locating, setLocating] = useState(false);
   const [locationHint, setLocationHint] = useState("");
   const [debugLocateText, setDebugLocateText] = useState("");
+  const [isMobileViewport, setIsMobileViewport] = useState(false);
   const provinceInputRef = useRef<HTMLInputElement | null>(null);
   const cityInputRef = useRef<HTMLInputElement | null>(null);
   const provinceDropdownRef = useRef<HTMLDivElement | null>(null);
@@ -353,6 +362,19 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
     cityDropdownRef.current.scrollTop = 0;
   }, [cityOpen, cityFilteredOptions]);
 
+  useEffect(() => {
+    const syncViewportWidth = () => {
+      setIsMobileViewport(readViewportWidth() <= 640);
+    };
+    syncViewportWidth();
+    window.addEventListener("resize", syncViewportWidth);
+    window.visualViewport?.addEventListener("resize", syncViewportWidth);
+    return () => {
+      window.removeEventListener("resize", syncViewportWidth);
+      window.visualViewport?.removeEventListener("resize", syncViewportWidth);
+    };
+  }, []);
+
   const cardStyle = getBackgroundStyle({
     imageUrl: props.bgImageUrl,
     fillMode: props.bgFillMode,
@@ -448,6 +470,13 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
   const searchInputTextStyle: Record<string, string | number> = {
     ...searchTypographyBaseStyle,
   };
+  const resolvedSearchInputFontSize =
+    typeof searchTypographyBaseStyle.fontSize === "number" && Number.isFinite(searchTypographyBaseStyle.fontSize)
+      ? searchTypographyBaseStyle.fontSize
+      : undefined;
+  if (isMobileViewport) {
+    searchInputTextStyle.fontSize = Math.max(16, resolvedSearchInputFontSize ?? 16);
+  }
 
   const locationHintClass = useMemo(() => {
     if (!locationHint) return "text-slate-500";
