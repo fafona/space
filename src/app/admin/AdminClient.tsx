@@ -11849,12 +11849,12 @@ type GalleryEditorImage = {
                 />
               </div>
               {compactProductEditor ? (
-                <div className="mt-4 space-y-3">
-                  <div className="grid grid-cols-2 gap-3">
+                <div className="mt-4 space-y-2.5">
+                  <div className="grid grid-cols-2 gap-2.5">
                     <label className="space-y-1 text-sm">
                       <span className="block text-gray-600">排列方式</span>
                       <select
-                        className="w-full rounded border px-3 py-2 bg-white"
+                        className="w-full rounded border bg-white px-3 py-1.5"
                         value={productLayoutPreset}
                         onChange={(event) => onChange({ productLayoutPreset: event.target.value as ProductLayoutPreset })}
                       >
@@ -11868,7 +11868,7 @@ type GalleryEditorImage = {
                     <label className="space-y-1 text-sm">
                       <span className="block text-gray-600">图片比例</span>
                       <select
-                        className="w-full rounded border px-3 py-2 bg-white"
+                        className="w-full rounded border bg-white px-3 py-1.5"
                         value={productImageAspectRatio}
                         onChange={(event) => onChange({ productImageAspectRatio: event.target.value as ProductImageAspectRatio })}
                       >
@@ -11880,9 +11880,9 @@ type GalleryEditorImage = {
                       </select>
                     </label>
                   </div>
-                  <label className="block space-y-2 text-sm">
+                  <label className="block space-y-1.5 text-sm">
                     <span className="block text-gray-600">图片尺寸</span>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2.5">
                       <input
                         type="range"
                         min={40}
@@ -11896,7 +11896,7 @@ type GalleryEditorImage = {
                         type="number"
                         min={40}
                         max={420}
-                        className="w-20 rounded border px-2 py-2"
+                        className="w-20 rounded border px-2 py-1.5"
                         value={productImageSize}
                         onChange={(event) =>
                           onChange({ productImageSize: Math.max(40, Math.min(420, Number(event.target.value) || 40)) })
@@ -11904,22 +11904,24 @@ type GalleryEditorImage = {
                       />
                     </div>
                   </label>
-                  <label className="flex items-center gap-2 text-sm text-gray-700">
-                    <input
-                      type="checkbox"
-                      checked={productShowCode}
-                      onChange={(event) => onChange({ productShowCode: event.target.checked })}
-                    />
-                    <span>显示编号</span>
-                  </label>
-                  <label className="flex items-center gap-2 text-sm text-gray-700">
-                    <input
-                      type="checkbox"
-                      checked={productShowDescription}
-                      onChange={(event) => onChange({ productShowDescription: event.target.checked })}
-                    />
-                    <span>显示介绍</span>
-                  </label>
+                  <div className="grid gap-2 text-sm text-gray-700 sm:grid-cols-2">
+                    <label className="flex items-center gap-2 rounded border border-slate-200 bg-white px-3 py-1.5">
+                      <input
+                        type="checkbox"
+                        checked={productShowCode}
+                        onChange={(event) => onChange({ productShowCode: event.target.checked })}
+                      />
+                      <span>显示编号</span>
+                    </label>
+                    <label className="flex items-center gap-2 rounded border border-slate-200 bg-white px-3 py-1.5">
+                      <input
+                        type="checkbox"
+                        checked={productShowDescription}
+                        onChange={(event) => onChange({ productShowDescription: event.target.checked })}
+                      />
+                      <span>显示介绍</span>
+                    </label>
+                  </div>
                   <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
                     <div className="text-sm font-medium text-slate-700">分类标签样式</div>
                     <div className="grid gap-3 md:grid-cols-[180px_minmax(0,1fr)_minmax(0,1fr)]">
@@ -12319,11 +12321,11 @@ type GalleryEditorImage = {
                   {renderProductSettingsSection(
                     "basic",
                     "基础展示",
-                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                     <label className="space-y-1 text-sm">
                       <span className="block text-gray-600">排列方式</span>
                       <select
-                        className="w-full rounded border px-3 py-2 bg-white"
+                        className="w-full rounded border bg-white px-3 py-1.5"
                         value={productLayoutPreset}
                         onChange={(event) => onChange({ productLayoutPreset: event.target.value as ProductLayoutPreset })}
                       >
@@ -12337,7 +12339,7 @@ type GalleryEditorImage = {
                     <label className="space-y-1 text-sm">
                       <span className="block text-gray-600">图片比例</span>
                       <select
-                        className="w-full rounded border px-3 py-2 bg-white"
+                        className="w-full rounded border bg-white px-3 py-1.5"
                         value={productImageAspectRatio}
                         onChange={(event) => onChange({ productImageAspectRatio: event.target.value as ProductImageAspectRatio })}
                       >
@@ -12348,9 +12350,9 @@ type GalleryEditorImage = {
                         ))}
                       </select>
                     </label>
-                    <label className="space-y-2 text-sm md:col-span-2">
+                    <label className="space-y-1.5 text-sm md:col-span-2">
                       <span className="block text-gray-600">图片尺寸</span>
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-2.5">
                         <input
                           type="range"
                           min={40}
@@ -12364,7 +12366,7 @@ type GalleryEditorImage = {
                           type="number"
                           min={40}
                           max={420}
-                          className="w-20 rounded border px-2 py-2"
+                          className="w-20 rounded border px-2 py-1.5"
                           value={productImageSize}
                           onChange={(event) =>
                             onChange({ productImageSize: Math.max(40, Math.min(420, Number(event.target.value) || 40)) })
@@ -12374,9 +12376,9 @@ type GalleryEditorImage = {
                     </label>
                     <label className="space-y-1 text-sm md:col-span-2">
                       <span className="block text-gray-600">价格前缀</span>
-                      <div className="grid grid-cols-[minmax(0,1fr)_96px] gap-3">
+                      <div className="grid grid-cols-[minmax(0,1fr)_96px] gap-2.5">
                         <select
-                          className="w-full rounded border px-3 py-2 bg-white"
+                          className="w-full rounded border bg-white px-3 py-1.5"
                           value={productPricePrefixMode}
                           onChange={(event) => {
                             const next = event.target.value;
@@ -12396,7 +12398,7 @@ type GalleryEditorImage = {
                         </select>
                         {productPricePrefixMode === "__custom__" ? (
                           <input
-                            className="w-full rounded border px-3 py-2"
+                            className="w-full rounded border px-3 py-1.5"
                             value={productPricePrefix}
                             onChange={(event) => onChange({ productPricePrefix: event.target.value })}
                             placeholder="自定义"
@@ -12409,7 +12411,7 @@ type GalleryEditorImage = {
                     <label className="space-y-1 text-sm">
                       <span className="block text-gray-600">价格位置</span>
                       <select
-                        className="w-full rounded border px-3 py-2 bg-white"
+                        className="w-full rounded border bg-white px-3 py-1.5"
                         value={productPriceAlign}
                         onChange={(event) => onChange({ productPriceAlign: event.target.value as ProductPriceAlign })}
                       >
@@ -12423,7 +12425,7 @@ type GalleryEditorImage = {
                     <label className="space-y-1 text-sm">
                       <span className="block text-gray-600">区块模式</span>
                       <select
-                        className="w-full rounded border px-3 py-2 bg-white"
+                        className="w-full rounded border bg-white px-3 py-1.5"
                         value={productContainerMode}
                         onChange={(event) =>
                           onChange({
@@ -12449,7 +12451,7 @@ type GalleryEditorImage = {
                           type="number"
                           min={1}
                           max={24}
-                          className="w-full rounded border px-3 py-2"
+                          className="w-full rounded border px-3 py-1.5"
                           value={productItemsPerPage}
                           onChange={(event) =>
                             onChange({ productItemsPerPage: Math.max(1, Math.min(24, Number(event.target.value) || 1)) })
@@ -12460,7 +12462,7 @@ type GalleryEditorImage = {
                       <div />
                     )}
                     <div className="grid gap-2 text-sm text-gray-700 sm:grid-cols-2 xl:col-span-4">
-                      <label className="flex items-center gap-2 rounded border border-slate-200 bg-white px-3 py-2">
+                      <label className="flex items-center gap-2 rounded border border-slate-200 bg-white px-3 py-1.5">
                         <input
                           type="checkbox"
                           checked={productShowCode}
@@ -12468,7 +12470,7 @@ type GalleryEditorImage = {
                         />
                         <span>显示编号</span>
                       </label>
-                      <label className="flex items-center gap-2 rounded border border-slate-200 bg-white px-3 py-2">
+                      <label className="flex items-center gap-2 rounded border border-slate-200 bg-white px-3 py-1.5">
                         <input
                           type="checkbox"
                           checked={productShowDescription}
