@@ -72,3 +72,75 @@ test("keeps current schemaVersion and normal URLs unchanged", () => {
   assert.equal(props.heroImage, smallImage);
   assert.equal(result.removed, 0);
 });
+
+test("normalizes legacy portal search and merchant list overlap sequence", () => {
+  const input = [
+    makeCommonBlock({
+      commonTextBoxes: [],
+      pagePlanConfig: {
+        activePlanId: "plan-1",
+        plans: [
+          {
+            id: "plan-1",
+            activePageId: "page-1",
+            pages: [
+              {
+                id: "page-1",
+                name: "首页",
+                blocks: [
+                  { id: "b-nav", type: "nav", props: { heading: "导航", navItems: [] } },
+                  {
+                    id: "b-merchant",
+                    type: "merchant-list",
+                    props: {
+                      heading: "商户列表",
+                      text: "说明",
+                      blockOffsetX: 1,
+                      blockOffsetY: 225,
+                    },
+                  },
+                  {
+                    id: "b-contact",
+                    type: "contact",
+                    props: {
+                      heading: "联系我们",
+                      phone: "",
+                      address: "",
+                      blockOffsetX: 1,
+                      blockOffsetY: 189,
+                    },
+                  },
+                  {
+                    id: "b-search",
+                    type: "search-bar",
+                    props: {
+                      heading: "搜索",
+                      text: "说明",
+                      blockOffsetX: 1,
+                      blockOffsetY: -1287,
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    }),
+  ];
+
+  const result = sanitizeBlocksForRuntime(input);
+  const props = result.blocks[0].props as Record<string, unknown>;
+  const pagePlanConfig = props.pagePlanConfig as {
+    plans: Array<{ pages: Array<{ blocks: Block[] }> }>;
+  };
+  const blocks = pagePlanConfig.plans[0]?.pages[0]?.blocks ?? [];
+
+  assert.deepEqual(
+    blocks.map((block) => block.type),
+    ["nav", "search-bar", "merchant-list", "contact"],
+  );
+  assert.equal((blocks[1]?.props as Record<string, unknown>).blockOffsetY, 0);
+  assert.equal((blocks[2]?.props as Record<string, unknown>).blockOffsetY, 0);
+  assert.equal((blocks[3]?.props as Record<string, unknown>).blockOffsetY, 0);
+});
