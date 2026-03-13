@@ -80,7 +80,10 @@ function buildSocialHref(label: string, rawValue?: string) {
   if (/^weixin:\/\//i.test(value)) return value;
 
   if (label === "Email") return `mailto:${value}`;
-  if (label === "WeChat") return "weixin://";
+  if (label === "WeChat") {
+    const wechatId = value.replace(/^@+/, "").trim();
+    return wechatId ? `weixin://dl/chat?username=${encodeURIComponent(wechatId)}` : "weixin://";
+  }
   if (label === "WhatsApp") {
     const digits = value.replace(/[^\d]/g, "");
     return digits ? `https://wa.me/${digits}` : null;
