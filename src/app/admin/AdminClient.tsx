@@ -11593,10 +11593,10 @@ type GalleryEditorImage = {
                   </button>
                 </div>
               </div>
-              <div className={`grid gap-3 ${compact ? "grid-cols-1" : "lg:grid-cols-[minmax(0,1fr)_minmax(280px,auto)]"}`}>
+              <div className={`grid gap-3 ${compact ? "grid-cols-1" : "lg:grid-cols-[240px_minmax(312px,auto)]"}`}>
                 <label className="flex min-w-0 items-center gap-2 text-sm">
                   <span className="shrink-0 text-gray-600">颜色</span>
-                  <div className="min-w-0 flex-1">
+                  <div className="w-[180px] min-w-0">
                     <ColorOrGradientPicker
                       value={(currentStyle.fontColor ?? "#111827").trim() || "#111827"}
                       onChange={(value) => updateProductTypographyStyle(role, { fontColor: value })}
@@ -11604,7 +11604,6 @@ type GalleryEditorImage = {
                   </div>
                 </label>
                 <div className="flex min-w-0 items-center gap-2 text-sm">
-                  <span className="shrink-0 text-gray-600">最近颜色</span>
                   <div className="min-w-0 flex-1">
                     <RecentColorBar
                       colors={recentColors}
@@ -15514,8 +15513,11 @@ function RecentColorBar({
   const visibleSwatchCount = 10;
   if (compact) {
     return shownColors.length > 0 ? (
-      <div className="flex min-w-0 items-center gap-2">
-        <div className="min-w-0 overflow-x-auto">
+      <div className="flex w-full items-center gap-2">
+        <div
+          className="overflow-hidden"
+          style={{ width: `${visibleSwatchCount * swatchSize + (visibleSwatchCount - 1) * swatchGap}px` }}
+        >
           <div className="flex flex-nowrap gap-1.5">
             {shownColors.slice(0, visibleSwatchCount).map((color) => {
               const isSelected = selectedValue?.trim().toLowerCase() === color.trim().toLowerCase();
