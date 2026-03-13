@@ -7,6 +7,7 @@ import type {
   BlockBorderStyle,
   MerchantCardTextLayoutConfig,
   MerchantCardTextRole,
+  MerchantListPublishedSite,
   TypographyEditableProps,
 } from "@/data/homeBlocks";
 import { loadPlatformState, subscribePlatformState, type MerchantSortRule, type PlatformState } from "@/data/platformControlStore";
@@ -71,8 +72,12 @@ type MerchantListBlockProps = BackgroundEditableProps &
     >
   >;
   industryTabs?: MerchantIndustryTabInput[];
+  publishedMerchantSnapshot?: MerchantListPublishedSite[];
+  publishedMerchantDefaultSortRule?: MerchantSortRule;
   merchantCardLayout?: MerchantCardLayoutConfig;
 };
+
+type MerchantListRuntimeSite = PlatformState["sites"][number] | MerchantListPublishedSite;
 
 type PortalSearchDetail = {
   countryCode?: string;
@@ -255,7 +260,7 @@ function normalizeSearchFilter(input?: PortalSearchDetail): SearchFilter {
   };
 }
 
-function siteMatchesFilter(site: PlatformState["sites"][number], filter: SearchFilter) {
+function siteMatchesFilter(site: MerchantListRuntimeSite, filter: SearchFilter) {
   const siteCountryCode = normalizeLocationValue(site.location?.countryCode ?? "");
   const siteCountryName = normalizeLocationValue(site.location?.country ?? "");
   const siteProvinceCode = normalizeLocationValue(site.location?.provinceCode ?? "");
@@ -297,11 +302,11 @@ function parseIsoTime(iso: string | null | undefined) {
   return Number.isFinite(time) ? time : 0;
 }
 
-function getSiteDisplayName(site: PlatformState["sites"][number]) {
+function getSiteDisplayName(site: MerchantListRuntimeSite) {
   return ((site.merchantName ?? "").trim() || site.name || "").trim();
 }
 
-function isRealRegisteredMerchantSite(site: PlatformState["sites"][number]) {
+function isRealRegisteredMerchantSite(site: MerchantListRuntimeSite) {
   const siteId = String(site.id ?? "").trim();
   return REAL_MERCHANT_SITE_ID_REGEX.test(siteId);
 }
@@ -314,7 +319,7 @@ function resolveRankLevelByFilter(filter: SearchFilter): MerchantRankLevel {
 }
 
 function readManualRankForSite(
-  site: PlatformState["sites"][number],
+  site: MerchantListRuntimeSite,
   scope: MerchantRankScope,
   level: MerchantRankLevel,
 ) {
@@ -358,8 +363,8 @@ function readSitePageView30dMap(nowMs: number) {
 }
 
 function compareByDefaultRule(
-  a: PlatformState["sites"][number],
-  b: PlatformState["sites"][number],
+  a: MerchantListRuntimeSite,
+  b: MerchantListRuntimeSite,
   rule: MerchantSortRule,
   siteViews30d: Map<string, number>,
 ) {
@@ -433,14 +438,20 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
   const industryTabs = useMemo(() => normalizeMerchantIndustryTabs(props.industryTabs), [props.industryTabs]);
   const activeTab = industryTabs.find((item) => item.id === activeTabId) ?? industryTabs[0];
   const activeIndustry = activeTab?.industry ?? "all";
-  const merchantDefaultSortRule = platformState.homeLayout.merchantDefaultSortRule;
+  const hasPublishedMerchantSnapshot = Array.isArray(props.publishedMerchantSnapshot);
+  const merchantSitesSource: MerchantListRuntimeSite[] = hasPublishedMerchantSnapshot
+    ? [...(props.publishedMerchantSnapshot ?? [])]
+    : [...platformState.sites];
+  const merchantDefaultSortRule = hasPublishedMerchantSnapshot
+    ? props.publishedMerchantDefaultSortRule ?? "created_desc"
+    : platformState.homeLayout.merchantDefaultSortRule;
 
   const filteredSites = useMemo(
     () => {
       const rankScope: MerchantRankScope = activeIndustry === "all" ? "recommended" : "industry";
       const rankLevel = resolveRankLevelByFilter(searchFilter);
       const siteViews30d = readSitePageView30dMap(sortNowMs);
-      const sorted = [...platformState.sites]
+      const sorted = merchantSitesSource
         .filter((site) => isRealRegisteredMerchantSite(site))
         .filter((site) => siteMatchesFilter(site, searchFilter))
         .filter((site) => (activeIndustry === "all" ? true : site.industry === activeIndustry))
@@ -456,7 +467,7 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
         });
       return sorted;
     },
-    [activeIndustry, merchantDefaultSortRule, platformState.sites, searchFilter, sortNowMs],
+    [activeIndustry, merchantDefaultSortRule, merchantSitesSource, searchFilter, sortNowMs],
   );
   const totalPages = Math.max(1, Math.ceil(filteredSites.length / maxItems));
   const safePageIndex = Math.min(pageIndex, totalPages - 1);

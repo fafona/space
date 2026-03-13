@@ -19,6 +19,7 @@ import {
   type ImageFillMode,
   type MerchantCardTextLayoutConfig,
   type MerchantCardTextRole,
+  type MerchantListPublishedSite,
   type TypographyEditableProps,
 } from "@/data/homeBlocks";
 import {
@@ -30,6 +31,7 @@ import {
   loadPlatformState,
   savePlatformState,
   subscribePlatformState,
+  type MerchantSortRule,
   type PlanTemplate,
   type PlanTemplateCategory,
   type Site,
@@ -2892,6 +2894,92 @@ export default function AdminClient({
     return desktopBlocks;
   }
 
+  function buildPublishedMerchantSnapshot(): {
+    sites: MerchantListPublishedSite[];
+    defaultSortRule: MerchantSortRule;
+  } {
+    const state = loadPlatformState();
+    const sites = state.sites
+      .filter((site) => /^\d{8}$/.test(String(site.id ?? "").trim()))
+      .map<MerchantListPublishedSite>((site) => ({
+        id: String(site.id ?? "").trim(),
+        merchantName: (site.merchantName ?? "").trim(),
+        domainPrefix: (site.domainPrefix ?? "").trim(),
+        domainSuffix: (site.domainSuffix ?? "").trim(),
+        name: (site.name ?? "").trim(),
+        domain: (site.domain ?? "").trim(),
+        category: (site.category ?? "").trim(),
+        industry: site.industry ?? "",
+        location: {
+          countryCode: (site.location?.countryCode ?? "").trim(),
+          country: (site.location?.country ?? "").trim(),
+          provinceCode: (site.location?.provinceCode ?? "").trim(),
+          province: (site.location?.province ?? "").trim(),
+          city: (site.location?.city ?? "").trim(),
+        },
+        merchantCardImageUrl: (site.merchantCardImageUrl ?? "").trim(),
+        sortConfig: site.sortConfig ?? createDefaultMerchantSortConfig(),
+        createdAt: (site.createdAt ?? "").trim(),
+      }));
+    return {
+      sites,
+      defaultSortRule: state.homeLayout.merchantDefaultSortRule,
+    };
+  }
+
+  function injectPublishedMerchantSnapshot(sourceBlocks: Block[]): Block[] {
+    const { sites, defaultSortRule } = buildPublishedMerchantSnapshot();
+
+    const patchPlanConfig = (input: unknown) => {
+      if (!input || typeof input !== "object") return input;
+      const planConfig = input as {
+        activePlanId?: unknown;
+        plans?: Array<{
+          id?: unknown;
+          name?: unknown;
+          blocks?: Block[];
+          pages?: Array<{ id?: unknown; name?: unknown; blocks?: Block[] }>;
+          activePageId?: unknown;
+        }>;
+      };
+      if (!Array.isArray(planConfig.plans)) return input;
+      return {
+        ...planConfig,
+        plans: planConfig.plans.map((plan) => ({
+          ...plan,
+          blocks: Array.isArray(plan.blocks) ? patchBlocks(plan.blocks) : plan.blocks,
+          pages: Array.isArray(plan.pages)
+            ? plan.pages.map((page) => ({
+                ...page,
+                blocks: Array.isArray(page.blocks) ? patchBlocks(page.blocks) : page.blocks,
+              }))
+            : plan.pages,
+        })),
+      };
+    };
+
+    const patchBlock = (block: Block): Block => {
+      const nextProps = { ...block.props } as Record<string, unknown>;
+      if (block.type === "merchant-list") {
+        nextProps.publishedMerchantSnapshot = sites;
+        nextProps.publishedMerchantDefaultSortRule = defaultSortRule;
+      }
+      if ("pagePlanConfig" in nextProps) {
+        nextProps.pagePlanConfig = patchPlanConfig(nextProps.pagePlanConfig);
+      }
+      if ("pagePlanConfigMobile" in nextProps) {
+        nextProps.pagePlanConfigMobile = patchPlanConfig(nextProps.pagePlanConfigMobile);
+      }
+      return {
+        ...block,
+        props: nextProps as never,
+      } as Block;
+    };
+
+    const patchBlocks = (blocks: Block[]) => blocks.map((block) => patchBlock(block));
+    return patchBlocks(sourceBlocks);
+  }
+
   function isBlockLocked(block: Block | undefined) {
     return block?.props?.blockLocked === true;
   }
@@ -5453,7 +5541,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     );
     const desktopConfig = previewViewport === "desktop" ? mergedConfig : viewportStatesRef.current.desktop.planConfig;
     const mobileConfig = previewViewport === "mobile" ? mergedConfig : viewportStatesRef.current.mobile.planConfig;
-    let combinedBlocks = buildCombinedPersistedBlocks(desktopConfig, mobileConfig);
+    let combinedBlocks = injectPublishedMerchantSnapshot(buildCombinedPersistedBlocks(desktopConfig, mobileConfig));
 
     if (isSupabaseFallbackMode) {
       const notice =
@@ -14741,19 +14829,19 @@ type GalleryEditorImage = {
     const resolvedCountryCode = (() => {
       const fromProps = (block.props.defaultCountryCode ?? "").toUpperCase();
       if (countryOptions.some((item) => item.code === fromProps)) return fromProps;
-      return countryOptions[0]?.code ?? "";
+      return "";
     })();
     const provinceOptions = getEuropeProvinceOptions(resolvedCountryCode);
     const resolvedProvinceCode = (() => {
       const fromProps = (block.props.defaultProvinceCode ?? "").trim();
       if (provinceOptions.some((item) => item.code === fromProps)) return fromProps;
-      return provinceOptions[0]?.code ?? "";
+      return "";
     })();
     const cityOptions = getEuropeCityOptions(resolvedCountryCode, resolvedProvinceCode);
     const resolvedCity = (() => {
       const fromProps = (block.props.defaultCity ?? "").trim();
       if (cityOptions.includes(fromProps)) return fromProps;
-      return cityOptions[0] ?? "";
+      return "";
     })();
     const resolvedCountryName = countryOptions.find((item) => item.code === resolvedCountryCode)?.name ?? "国家";
     const resolvedProvinceName =

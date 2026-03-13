@@ -1,6 +1,6 @@
 ﻿import type { CustomGalleryLayout, GalleryLayoutPreset } from "@/lib/galleryLayout";
 import { BLOCKS_SCHEMA_VERSION } from "../lib/blocksSchema";
-import type { MerchantIndustry } from "./platformControlStore";
+import type { MerchantIndustry, MerchantSortConfig, MerchantSortRule, SiteLocation } from "./platformControlStore";
 import type {
   ProductContainerMode,
   ProductImageAspectRatio,
@@ -76,6 +76,21 @@ export type MerchantCardTextLayoutConfig = Partial<
 >;
 
 type MerchantListIndustry = "all" | Exclude<MerchantIndustry, "">;
+
+export type MerchantListPublishedSite = {
+  id: string;
+  merchantName?: string;
+  domainPrefix?: string;
+  domainSuffix?: string;
+  name: string;
+  domain: string;
+  category: string;
+  industry: MerchantIndustry;
+  location: SiteLocation;
+  merchantCardImageUrl?: string;
+  sortConfig: MerchantSortConfig;
+  createdAt: string;
+};
 
 type HeroProps = BackgroundEditableProps & TypographyEditableProps & { title: string; subtitle?: string };
 type TextProps = BackgroundEditableProps & TypographyEditableProps & { heading: string; text: string };
@@ -156,6 +171,8 @@ type MerchantListProps = BackgroundEditableProps &
       label?: string;
       industry?: MerchantListIndustry;
     }>;
+    publishedMerchantSnapshot?: MerchantListPublishedSite[];
+    publishedMerchantDefaultSortRule?: MerchantSortRule;
     merchantCardLayout?: Partial<
       Record<
         string,
