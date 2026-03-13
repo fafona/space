@@ -13899,6 +13899,7 @@ type GalleryEditorImage = {
     const activeMerchantTab = merchantTabs.find((item) => item.id === activeMerchantIndustryTabId) ?? merchantTabs[0];
     const activeIndustry = activeMerchantTab?.industry ?? "all";
     const filteredMerchantSites = [...loadPlatformState().sites]
+      .filter((site) => isMerchantNumericId(String(site.id ?? "").trim()))
       .filter((site) => (activeIndustry === "all" ? true : site.industry === activeIndustry))
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     const merchantTotalPages = Math.max(1, Math.ceil(filteredMerchantSites.length / maxItems));
