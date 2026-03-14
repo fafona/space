@@ -5,7 +5,7 @@ import { isMerchantNumericId, normalizeDomainPrefix } from "@/lib/merchantIdenti
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-type SiteResolveRow = {
+export type SiteResolveRow = {
   merchant_id?: string | null;
   slug?: string | null;
   updated_at?: string | null;
@@ -21,7 +21,7 @@ function toTimestamp(value: string | null | undefined) {
   return Number.isFinite(time) ? time : 0;
 }
 
-function choosePreferredRow(current: SiteResolveRow | null, candidate: SiteResolveRow) {
+export function choosePreferredSiteResolveRow(current: SiteResolveRow | null, candidate: SiteResolveRow) {
   if (!current) return candidate;
   const currentMerchantId = String(current.merchant_id ?? "").trim();
   const candidateMerchantId = String(candidate.merchant_id ?? "").trim();
@@ -33,6 +33,12 @@ function choosePreferredRow(current: SiteResolveRow | null, candidate: SiteResol
   const currentUpdatedAt = Math.max(toTimestamp(current.updated_at), toTimestamp(current.created_at));
   const candidateUpdatedAt = Math.max(toTimestamp(candidate.updated_at), toTimestamp(candidate.created_at));
   return candidateUpdatedAt >= currentUpdatedAt ? candidate : current;
+}
+
+export function pickResolvedSiteRow(rows: SiteResolveRow[]) {
+  return rows
+    .filter((item) => String(item.merchant_id ?? "").trim().length > 0)
+    .reduce<SiteResolveRow | null>((best, item) => choosePreferredSiteResolveRow(best, item), null);
 }
 
 export async function GET(request: Request) {
@@ -73,9 +79,7 @@ export async function GET(request: Request) {
       );
     }
 
-    const chosen = ((data ?? []) as SiteResolveRow[])
-      .filter((item) => String(item.merchant_id ?? "").trim().length > 0)
-      .reduce<SiteResolveRow | null>((best, item) => choosePreferredRow(best, item), null);
+    const chosen = pickResolvedSiteRow((data ?? []) as SiteResolveRow[]);
 
     const siteId = String(chosen?.merchant_id ?? "").trim();
     if (!siteId) {
