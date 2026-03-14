@@ -904,6 +904,7 @@ export default function SuperAdminClient() {
   const [planTemplateFilter, setPlanTemplateFilter] = useState<PlanTemplateFilterCategory>("全部");
   const [planTemplateNameDrafts, setPlanTemplateNameDrafts] = useState<Record<string, string>>({});
   const [planTemplateCoverPreview, setPlanTemplateCoverPreview] = useState<{ url: string; name: string } | null>(null);
+  const [planTemplateCoverPreviewScale, setPlanTemplateCoverPreviewScale] = useState(1);
   const [planTemplateApplyDialog, setPlanTemplateApplyDialog] = useState<{ templateId: string } | null>(null);
   const [planTemplateApplyScope, setPlanTemplateApplyScope] = useState<PlanTemplateApplyScope>(() =>
     createDefaultPlanTemplateApplyScope([]),
@@ -978,6 +979,10 @@ export default function SuperAdminClient() {
   const [releaseChecklistState, setReleaseChecklistState] = useState<Record<string, boolean>>(() =>
     loadReleaseChecklistStateFromStorage(),
   );
+
+  useEffect(() => {
+    setPlanTemplateCoverPreviewScale(1);
+  }, [planTemplateCoverPreview?.url]);
   const portalDraftBlocks = useSyncExternalStore(
     (onChange) => subscribeBlocksStore(onChange, PLATFORM_EDITOR_SCOPE),
     () => getBlocksSnapshot(EMPTY_BLOCKS, PLATFORM_EDITOR_SCOPE),
@@ -4217,20 +4222,48 @@ export default function SuperAdminClient() {
                             <div className="max-h-[92vh] w-full max-w-5xl overflow-hidden rounded-2xl border bg-white shadow-2xl">
                               <div className="flex items-center justify-between border-b px-5 py-4">
                                 <div className="text-base font-semibold text-slate-900">{planTemplateCoverPreview.name}</div>
-                                <button
-                                  type="button"
-                                  className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
-                                  onClick={() => setPlanTemplateCoverPreview(null)}
-                                >
-                                  关闭
-                                </button>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <button
+                                    type="button"
+                                    className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                                    onClick={() =>
+                                      setPlanTemplateCoverPreviewScale((current) => Math.max(0.5, Number((current - 0.25).toFixed(2))))
+                                    }
+                                  >
+                                    缩小
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="min-w-[72px] rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                                    onClick={() => setPlanTemplateCoverPreviewScale(1)}
+                                  >
+                                    {Math.round(planTemplateCoverPreviewScale * 100)}%
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                                    onClick={() =>
+                                      setPlanTemplateCoverPreviewScale((current) => Math.min(3, Number((current + 0.25).toFixed(2))))
+                                    }
+                                  >
+                                    放大
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                                    onClick={() => setPlanTemplateCoverPreview(null)}
+                                  >
+                                    关闭
+                                  </button>
+                                </div>
                               </div>
-                              <div className="bg-black p-4">
+                              <div className="max-h-[78vh] overflow-auto bg-black p-4">
                                 {/* eslint-disable-next-line @next/next/no-img-element */}
                                 <img
                                   src={planTemplateCoverPreview.url}
                                   alt={planTemplateCoverPreview.name}
-                                  className="mx-auto max-h-[78vh] w-auto max-w-full rounded-xl object-contain"
+                                  className="mx-auto h-auto max-w-none rounded-xl object-contain"
+                                  style={{ width: `${Math.round(planTemplateCoverPreviewScale * 100)}%` }}
                                 />
                               </div>
                             </div>
