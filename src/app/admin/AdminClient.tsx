@@ -6428,7 +6428,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                     className="relative rounded-[28px] overflow-hidden min-h-[780px]"
                     style={{ ...pageBackgroundStyle, paddingBottom: `${mobileFrontendPreviewPadding}px` }}
                   >
-                    <div className="relative z-10 w-full px-3 py-4">
+                    <div className="relative z-10 w-full py-4">
                       <BlockRenderer
                         blocks={blocks}
                         currentPageId={editingPageId}
@@ -6449,7 +6449,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                   style={{ minHeight: `${Math.max(backgroundLayerMinHeight, 780)}px` }}
                 >
                   <div className="absolute inset-0 rounded-[28px] overflow-hidden pointer-events-none" style={pageBackgroundStyle} />
-                  <div className="relative z-10 w-full px-3 py-4">
+                  <div className="relative z-10 w-full py-4">
                     <div className="space-y-0">
                       {blocks.map((block, index) => {
                         const sourceIndex = resizePreview ? blocks.findIndex((item) => item.id === resizePreview.blockId) : -1;

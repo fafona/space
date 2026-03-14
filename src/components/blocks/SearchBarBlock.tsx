@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import type { BackgroundEditableProps, BlockBorderStyle, TypographyEditableProps } from "@/data/homeBlocks";
 import {
   findBestProvinceAndCity,
@@ -177,14 +177,6 @@ function logLocateDebug(label: string, detail: Record<string, unknown>) {
   console.info(`[search-bar:locate] ${label}`, detail);
 }
 
-function readViewportWidth() {
-  if (typeof window === "undefined") return 0;
-  if (window.visualViewport?.width) return window.visualViewport.width;
-  const documentWidth = document.documentElement?.clientWidth;
-  if (typeof documentWidth === "number" && documentWidth > 0) return documentWidth;
-  return window.innerWidth;
-}
-
 export default function SearchBarBlock(props: SearchBarBlockProps) {
   const countryOptions = useMemo(() => getEuropeCountryOptions(), []);
   const normalizedText = useMemo(() => {
@@ -236,7 +228,6 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
   const [locating, setLocating] = useState(false);
   const [locationHint, setLocationHint] = useState("");
   const [debugLocateText, setDebugLocateText] = useState("");
-  const [isMobileViewport, setIsMobileViewport] = useState(false);
   const provinceInputRef = useRef<HTMLInputElement | null>(null);
   const cityInputRef = useRef<HTMLInputElement | null>(null);
   const provinceDropdownRef = useRef<HTMLDivElement | null>(null);
@@ -362,19 +353,6 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
     cityDropdownRef.current.scrollTop = 0;
   }, [cityOpen, cityFilteredOptions]);
 
-  useEffect(() => {
-    const syncViewportWidth = () => {
-      setIsMobileViewport(readViewportWidth() <= 640);
-    };
-    syncViewportWidth();
-    window.addEventListener("resize", syncViewportWidth);
-    window.visualViewport?.addEventListener("resize", syncViewportWidth);
-    return () => {
-      window.removeEventListener("resize", syncViewportWidth);
-      window.visualViewport?.removeEventListener("resize", syncViewportWidth);
-    };
-  }, []);
-
   const cardStyle = getBackgroundStyle({
     imageUrl: props.bgImageUrl,
     fillMode: props.bgFillMode,
@@ -474,9 +452,10 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
     typeof searchTypographyBaseStyle.fontSize === "number" && Number.isFinite(searchTypographyBaseStyle.fontSize)
       ? searchTypographyBaseStyle.fontSize
       : undefined;
-  if (isMobileViewport) {
-    searchInputTextStyle.fontSize = Math.max(16, resolvedSearchInputFontSize ?? 16);
-  }
+  const searchInputMobileSafeStyle = {
+    ...(searchInputTextStyle as CSSProperties),
+  } as CSSProperties & Record<string, string | number>;
+  searchInputMobileSafeStyle["--mobile-safe-font-size"] = `${Math.max(0, resolvedSearchInputFontSize ?? 16)}px`;
 
   const locationHintClass = useMemo(() => {
     if (!locationHint) return "text-slate-500";
@@ -1017,8 +996,8 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
                       selectCountryCode(countryFilteredOptions[0].value);
                     }
                   }}
-                  className="h-full w-full rounded border bg-white px-2 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-blue-200 placeholder:text-slate-400"
-                  style={searchInputTextStyle}
+                  className="mobile-safe-input-text h-full w-full rounded border bg-white px-2 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-blue-200 placeholder:text-slate-400"
+                  style={searchInputMobileSafeStyle}
                 />
                 {countryOpen && countryFilteredOptions.length > 0 ? (
                   <div className="absolute left-0 right-0 top-[calc(100%+4px)] z-20 max-h-56 overflow-auto rounded border bg-white shadow">
@@ -1093,8 +1072,8 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
                     }
                     commitCustomProvince();
                   }}
-                  className="h-full w-full rounded border bg-white px-2 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-blue-200 placeholder:text-slate-400"
-                  style={searchInputTextStyle}
+                  className="mobile-safe-input-text h-full w-full rounded border bg-white px-2 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-blue-200 placeholder:text-slate-400"
+                  style={searchInputMobileSafeStyle}
                 />
                 {provinceOpen && provinceFilteredOptions.length > 0 ? (
                   <div
@@ -1171,8 +1150,8 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
                     }
                     commitCustomCity();
                   }}
-                  className="h-full w-full rounded border bg-white px-2 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-blue-200 placeholder:text-slate-400"
-                  style={searchInputTextStyle}
+                  className="mobile-safe-input-text h-full w-full rounded border bg-white px-2 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-blue-200 placeholder:text-slate-400"
+                  style={searchInputMobileSafeStyle}
                 />
                 {cityOpen && cityFilteredOptions.length > 0 ? (
                   <div
@@ -1209,8 +1188,8 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
               <input
                 value={keyword}
                 onChange={(e) => setKeyword(e.target.value)}
-                className="h-full w-full rounded border bg-white px-3 text-sm text-slate-600 outline-none focus:ring-2 focus:ring-blue-200 placeholder:text-slate-400"
-                style={searchInputTextStyle}
+                className="mobile-safe-input-text h-full w-full rounded border bg-white px-3 text-sm text-slate-600 outline-none focus:ring-2 focus:ring-blue-200 placeholder:text-slate-400"
+                style={searchInputMobileSafeStyle}
                 placeholder={searchPlaceholder}
               />
             </div>

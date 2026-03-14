@@ -75,3 +75,9 @@ body.translated-rtl {
 html[data-i18n-pending="1"] body {
   visibility: hidden;
 }
+
+@media (max-width: 767px) {
+  .mobile-safe-input-text {
+    font-size: max(16px, var(--mobile-safe-font-size, 16px)) !important;
+  }
+}
