@@ -2725,6 +2725,7 @@ export default function AdminClient({
   const [planTemplateSearch, setPlanTemplateSearch] = useState("");
   const [planTemplateFilter, setPlanTemplateFilter] = useState<PlanTemplateFilterCategory>("全部");
   const [planTemplates, setPlanTemplates] = useState<PlanTemplate[]>(() => loadPlatformState().planTemplates ?? []);
+  const [planTemplateCoverPreview, setPlanTemplateCoverPreview] = useState<{ url: string; name: string } | null>(null);
   const pageImageInputRef = useRef<HTMLInputElement>(null);
   const [pageImageDialogOpen, setPageImageDialogOpen] = useState(false);
   const [pageImageUrlInput, setPageImageUrlInput] = useState("");
@@ -6834,43 +6835,69 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                         const sourceLabel =
                           template.sourceSiteName || template.sourceSiteDomain || template.sourceSiteId || "未记录来源网站";
                         const blockLabels = summary.labels.length > 0 ? summary.labels : ["未识别区块"];
+                        const coverImageUrl = (template.coverImageUrl ?? "").trim();
                         return (
                           <article key={template.id} className="overflow-hidden rounded-2xl border bg-slate-50 shadow-sm">
                             <div className="space-y-4 p-4">
-                              <div className="rounded-2xl bg-gradient-to-br from-slate-950 via-slate-800 to-slate-600 p-4 text-white">
-                                <div className="flex flex-wrap items-start justify-between gap-3">
-                                  <div className="min-w-0 flex-1 space-y-1">
-                                    <div className="text-xs uppercase tracking-[0.22em] text-white/60">模板预览</div>
-                                    <div className="truncate text-base font-semibold" title={summary.previewTitle || template.name}>
-                                      {summary.previewTitle || template.name}
+                              <button
+                                type="button"
+                                className="group relative block aspect-[16/10] w-full overflow-hidden rounded-2xl border bg-gradient-to-br from-slate-950 via-slate-800 to-slate-600 text-left text-white"
+                                onClick={() => coverImageUrl && setPlanTemplateCoverPreview({ url: coverImageUrl, name: template.name })}
+                                disabled={!coverImageUrl}
+                              >
+                                {coverImageUrl ? (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img
+                                    src={coverImageUrl}
+                                    alt={template.name}
+                                    className="absolute inset-0 h-full w-full object-cover transition duration-200 group-hover:scale-[1.02]"
+                                  />
+                                ) : null}
+                                <div className={`absolute inset-0 ${coverImageUrl ? "bg-slate-950/45" : "bg-gradient-to-br from-slate-950 via-slate-800 to-slate-600"}`} />
+                                <div className="relative flex h-full flex-col justify-between p-4">
+                                  <div className="flex flex-wrap items-start justify-between gap-3">
+                                    <div className="min-w-0 flex-1 space-y-1">
+                                      <div className="text-xs uppercase tracking-[0.22em] text-white/60">模板封面</div>
+                                      <div className="truncate text-base font-semibold" title={summary.previewTitle || template.name}>
+                                        {summary.previewTitle || template.name}
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <span className="rounded-full border border-white/20 bg-white/10 px-2 py-1 text-xs">
+                                        {summary.hasMobile ? "PC + 手机" : "仅 PC"}
+                                      </span>
+                                      {coverImageUrl ? (
+                                        <span className="rounded-full border border-white/20 bg-white/10 px-2 py-1 text-xs">点击预览</span>
+                                      ) : (
+                                        <span className="rounded-full border border-white/20 bg-white/10 px-2 py-1 text-xs">暂无封面</span>
+                                      )}
                                     </div>
                                   </div>
-                                  <span className="rounded-full border border-white/20 bg-white/10 px-2 py-1 text-xs">
-                                    {summary.hasMobile ? "PC + 手机" : "仅 PC"}
-                                  </span>
-                                </div>
-                                <div className="mt-4 grid grid-cols-3 gap-2 text-xs">
-                                  <div className="rounded-xl bg-white/10 px-3 py-2">
-                                    <div className="text-white/60">方案</div>
-                                    <div className="mt-1 text-sm font-semibold">{summary.planCount}</div>
+                                  <div className="space-y-3">
+                                    <div className="mt-4 grid grid-cols-3 gap-2 text-xs">
+                                      <div className="rounded-xl bg-white/10 px-3 py-2">
+                                        <div className="text-white/60">方案</div>
+                                        <div className="mt-1 text-sm font-semibold">{summary.planCount}</div>
+                                      </div>
+                                      <div className="rounded-xl bg-white/10 px-3 py-2">
+                                        <div className="text-white/60">页面</div>
+                                        <div className="mt-1 text-sm font-semibold">{summary.pageCount}</div>
+                                      </div>
+                                      <div className="rounded-xl bg-white/10 px-3 py-2">
+                                        <div className="text-white/60">区块</div>
+                                        <div className="mt-1 text-sm font-semibold">{summary.blockCount}</div>
+                                      </div>
+                                    </div>
+                                    <div className="mt-4 flex flex-wrap gap-2">
+                                      {blockLabels.map((label) => (
+                                        <span key={`${template.id}-${label}`} className="rounded-full bg-white/10 px-2 py-1 text-xs">
+                                          {label}
+                                        </span>
+                                      ))}
+                                    </div>
                                   </div>
-                                  <div className="rounded-xl bg-white/10 px-3 py-2">
-                                    <div className="text-white/60">页面</div>
-                                    <div className="mt-1 text-sm font-semibold">{summary.pageCount}</div>
-                                  </div>
-                                  <div className="rounded-xl bg-white/10 px-3 py-2">
-                                    <div className="text-white/60">区块</div>
-                                    <div className="mt-1 text-sm font-semibold">{summary.blockCount}</div>
-                                  </div>
                                 </div>
-                                <div className="mt-4 flex flex-wrap gap-2">
-                                  {blockLabels.map((label) => (
-                                    <span key={`${template.id}-${label}`} className="rounded-full bg-white/10 px-2 py-1 text-xs">
-                                      {label}
-                                    </span>
-                                  ))}
-                                </div>
-                              </div>
+                              </button>
 
                               <div className="space-y-3">
                                 <div className="flex items-start gap-3">
@@ -6936,13 +6963,24 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                                   <div className="text-xs text-slate-500">
                                     创建于 {new Date(template.createdAt).toLocaleString("zh-CN", { hour12: false })}
                                   </div>
-                                  <button
-                                    type="button"
-                                    className="rounded bg-black px-4 py-2 text-sm text-white hover:bg-slate-800"
-                                    onClick={() => void applyPlanTemplate(template)}
-                                  >
-                                    应用整套方案
-                                  </button>
+                                  <div className="flex flex-wrap gap-2">
+                                    {coverImageUrl ? (
+                                      <button
+                                        type="button"
+                                        className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                                        onClick={() => setPlanTemplateCoverPreview({ url: coverImageUrl, name: template.name })}
+                                      >
+                                        预览封面
+                                      </button>
+                                    ) : null}
+                                    <button
+                                      type="button"
+                                      className="rounded bg-black px-4 py-2 text-sm text-white hover:bg-slate-800"
+                                      onClick={() => void applyPlanTemplate(template)}
+                                    >
+                                      应用整套方案
+                                    </button>
+                                  </div>
                                 </div>
                               </div>
                             </div>
@@ -6960,6 +6998,31 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             </div>,
           )
         : null}
+
+      {planTemplateCoverPreview ? (
+        <div className="fixed inset-0 z-[18000] flex items-center justify-center bg-black/65 p-4">
+          <div className="max-h-[92vh] w-full max-w-5xl overflow-hidden rounded-2xl border bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b px-5 py-4">
+              <div className="text-base font-semibold text-slate-900">{planTemplateCoverPreview.name}</div>
+              <button
+                type="button"
+                className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                onClick={() => setPlanTemplateCoverPreview(null)}
+              >
+                关闭
+              </button>
+            </div>
+            <div className="bg-black p-4">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={planTemplateCoverPreview.url}
+                alt={planTemplateCoverPreview.name}
+                className="mx-auto max-h-[78vh] w-auto max-w-full rounded-xl object-contain"
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {dialog ? (
         <div className="fixed inset-0 z-[20000] bg-black/40 flex items-center justify-center p-4">

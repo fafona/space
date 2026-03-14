@@ -1,4 +1,6 @@
-﻿export type PermissionKey =
+﻿import { extractPlanTemplateCoverImage } from "@/lib/planTemplateRuntime";
+
+export type PermissionKey =
   | "dashboard.view"
   | "tenant.view"
   | "tenant.manage"
@@ -263,6 +265,7 @@ export type PlanTemplate = {
   sourceSiteName: string;
   sourceSiteDomain: string;
   sourceIndustry: MerchantIndustry;
+  coverImageUrl?: string;
   blocks: unknown[];
   createdAt: string;
   updatedAt: string;
@@ -633,6 +636,7 @@ function normalizePlanTemplate(value: unknown): PlanTemplate | null {
     sourceSiteName: normalizeText(source.sourceSiteName),
     sourceSiteDomain: normalizeText(source.sourceSiteDomain),
     sourceIndustry: normalizeSiteIndustry(source.sourceIndustry),
+    coverImageUrl: normalizeText(source.coverImageUrl) || extractPlanTemplateCoverImage(source.blocks),
     blocks: normalizePlanTemplateBlocks(source.blocks),
     createdAt: normalizeText(source.createdAt) || current,
     updatedAt: normalizeText(source.updatedAt) || normalizeText(source.createdAt) || current,
@@ -1274,9 +1278,11 @@ export function createPlanTemplate(input: {
   sourceSiteName?: string;
   sourceSiteDomain?: string;
   sourceIndustry?: MerchantIndustry;
+  coverImageUrl?: string;
   blocks?: unknown[];
 }): PlanTemplate {
   const current = nowIso();
+  const blocks = normalizePlanTemplateBlocks(input.blocks);
   return {
     id: nextId("template"),
     name: normalizeText(input.name) || "未命名方案",
@@ -1285,7 +1291,8 @@ export function createPlanTemplate(input: {
     sourceSiteName: normalizeText(input.sourceSiteName),
     sourceSiteDomain: normalizeText(input.sourceSiteDomain),
     sourceIndustry: normalizeSiteIndustry(input.sourceIndustry),
-    blocks: normalizePlanTemplateBlocks(input.blocks),
+    coverImageUrl: normalizeText(input.coverImageUrl) || extractPlanTemplateCoverImage(blocks),
+    blocks,
     createdAt: current,
     updatedAt: current,
   };
