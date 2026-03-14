@@ -50,9 +50,9 @@ export type PlanTemplateReplaceOptions = {
 export const DEFAULT_PLAN_TEMPLATE_REPLACE_OPTIONS: PlanTemplateReplaceOptions = {
   typography: true,
   buttonStyles: true,
-  galleryImages: true,
-  productData: true,
-  contactInfo: true,
+  galleryImages: false,
+  productData: false,
+  contactInfo: false,
 };
 
 const PAGE_BACKGROUND_KEYS = [
@@ -167,26 +167,11 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
-function firstImageFromBlock(block: Block | undefined): string {
+function firstBackgroundImageFromBlock(block: Block | undefined): string {
   if (!block) return "";
   const props = (block.props ?? {}) as Record<string, unknown>;
   if (isNonEmptyString(props.pageBgImageUrl)) return props.pageBgImageUrl.trim();
   if (isNonEmptyString(props.bgImageUrl)) return props.bgImageUrl.trim();
-  if (block.type === "gallery" && Array.isArray(props.images)) {
-    for (const item of props.images) {
-      if (isNonEmptyString(item)) return item.trim();
-      if (item && typeof item === "object" && isNonEmptyString((item as { url?: unknown }).url)) {
-        return String((item as { url?: unknown }).url).trim();
-      }
-    }
-  }
-  if (block.type === "product" && Array.isArray(props.products)) {
-    for (const item of props.products) {
-      if (item && typeof item === "object" && isNonEmptyString((item as { imageUrl?: unknown }).imageUrl)) {
-        return String((item as { imageUrl?: unknown }).imageUrl).trim();
-      }
-    }
-  }
   return "";
 }
 
@@ -412,13 +397,13 @@ export function extractPlanTemplateCoverImage(rawBlocks: unknown) {
   for (const plan of config.plans) {
     for (const page of plan.pages ?? []) {
       for (const block of page.blocks ?? []) {
-        const image = firstImageFromBlock(block);
+        const image = firstBackgroundImageFromBlock(block);
         if (image) return image;
       }
     }
   }
   for (const block of blocks) {
-    const image = firstImageFromBlock(block);
+    const image = firstBackgroundImageFromBlock(block);
     if (image) return image;
   }
   return "";

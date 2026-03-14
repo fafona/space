@@ -6836,14 +6836,18 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                           template.sourceSiteName || template.sourceSiteDomain || template.sourceSiteId || "未记录来源网站";
                         const blockLabels = summary.labels.length > 0 ? summary.labels : ["未识别区块"];
                         const coverImageUrl = (template.coverImageUrl ?? "").trim();
+                        const previewImageUrl = (template.previewImageUrl ?? "").trim();
                         return (
                           <article key={template.id} className="overflow-hidden rounded-2xl border bg-slate-50 shadow-sm">
                             <div className="space-y-4 p-4">
                               <button
                                 type="button"
                                 className="group relative block aspect-[16/10] w-full overflow-hidden rounded-2xl border bg-gradient-to-br from-slate-950 via-slate-800 to-slate-600 text-left text-white"
-                                onClick={() => coverImageUrl && setPlanTemplateCoverPreview({ url: coverImageUrl, name: template.name })}
-                                disabled={!coverImageUrl}
+                                onClick={() =>
+                                  previewImageUrl &&
+                                  setPlanTemplateCoverPreview({ url: previewImageUrl, name: `${template.name} · 页面1预览` })
+                                }
+                                disabled={!previewImageUrl}
                               >
                                 {coverImageUrl ? (
                                   // eslint-disable-next-line @next/next/no-img-element
@@ -6866,8 +6870,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                                       <span className="rounded-full border border-white/20 bg-white/10 px-2 py-1 text-xs">
                                         {summary.hasMobile ? "PC + 手机" : "仅 PC"}
                                       </span>
-                                      {coverImageUrl ? (
-                                        <span className="rounded-full border border-white/20 bg-white/10 px-2 py-1 text-xs">点击预览</span>
+                                      {previewImageUrl ? (
+                                        <span className="rounded-full border border-white/20 bg-white/10 px-2 py-1 text-xs">点击预览页面1</span>
+                                      ) : coverImageUrl ? (
+                                        <span className="rounded-full border border-white/20 bg-white/10 px-2 py-1 text-xs">仅封面</span>
                                       ) : (
                                         <span className="rounded-full border border-white/20 bg-white/10 px-2 py-1 text-xs">暂无封面</span>
                                       )}
@@ -6964,13 +6970,15 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                                     创建于 {new Date(template.createdAt).toLocaleString("zh-CN", { hour12: false })}
                                   </div>
                                   <div className="flex flex-wrap gap-2">
-                                    {coverImageUrl ? (
+                                    {previewImageUrl ? (
                                       <button
                                         type="button"
                                         className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
-                                        onClick={() => setPlanTemplateCoverPreview({ url: coverImageUrl, name: template.name })}
+                                        onClick={() =>
+                                          setPlanTemplateCoverPreview({ url: previewImageUrl, name: `${template.name} · 页面1预览` })
+                                        }
                                       >
-                                        预览封面
+                                        预览页面1
                                       </button>
                                     ) : null}
                                     <button

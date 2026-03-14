@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import type { Block } from "@/data/homeBlocks";
 import { buildPersistedBlocksFromPlanConfig, type PagePlanConfig } from "@/lib/pagePlans";
 import {
+  DEFAULT_PLAN_TEMPLATE_REPLACE_OPTIONS,
   applyPlanTemplateToBlocks,
   extractPlanTemplateCoverImage,
   type PlanTemplateApplyScope,
@@ -53,6 +54,12 @@ test("extractPlanTemplateCoverImage prefers page background image", () => {
   );
 
   assert.equal(extractPlanTemplateCoverImage(blocks), "https://example.com/cover.jpg");
+});
+
+test("default plan template replace options keep data blocks untouched", () => {
+  assert.equal(DEFAULT_PLAN_TEMPLATE_REPLACE_OPTIONS.galleryImages, false);
+  assert.equal(DEFAULT_PLAN_TEMPLATE_REPLACE_OPTIONS.productData, false);
+  assert.equal(DEFAULT_PLAN_TEMPLATE_REPLACE_OPTIONS.contactInfo, false);
 });
 
 test("applyPlanTemplateToBlocks preserves opted-out style and data fields", () => {

@@ -266,6 +266,8 @@ export type PlanTemplate = {
   sourceSiteDomain: string;
   sourceIndustry: MerchantIndustry;
   coverImageUrl?: string;
+  previewImageUrl?: string;
+  planPreviewImageUrls?: Record<string, string>;
   blocks: unknown[];
   createdAt: string;
   updatedAt: string;
@@ -622,6 +624,15 @@ function normalizePlanTemplateBlocks(value: unknown) {
   }
 }
 
+function normalizePlanTemplatePreviewImages(value: unknown) {
+  if (!value || typeof value !== "object") return {} as Record<string, string>;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .map(([key, url]) => [normalizeText(key), normalizeText(url)] as const)
+      .filter(([key, url]) => key && url),
+  );
+}
+
 function normalizePlanTemplate(value: unknown): PlanTemplate | null {
   const source = value && typeof value === "object" ? (value as Partial<PlanTemplate>) : null;
   if (!source) return null;
@@ -637,6 +648,8 @@ function normalizePlanTemplate(value: unknown): PlanTemplate | null {
     sourceSiteDomain: normalizeText(source.sourceSiteDomain),
     sourceIndustry: normalizeSiteIndustry(source.sourceIndustry),
     coverImageUrl: normalizeText(source.coverImageUrl) || extractPlanTemplateCoverImage(source.blocks),
+    previewImageUrl: normalizeText(source.previewImageUrl),
+    planPreviewImageUrls: normalizePlanTemplatePreviewImages(source.planPreviewImageUrls),
     blocks: normalizePlanTemplateBlocks(source.blocks),
     createdAt: normalizeText(source.createdAt) || current,
     updatedAt: normalizeText(source.updatedAt) || normalizeText(source.createdAt) || current,
@@ -1279,6 +1292,8 @@ export function createPlanTemplate(input: {
   sourceSiteDomain?: string;
   sourceIndustry?: MerchantIndustry;
   coverImageUrl?: string;
+  previewImageUrl?: string;
+  planPreviewImageUrls?: Record<string, string>;
   blocks?: unknown[];
 }): PlanTemplate {
   const current = nowIso();
@@ -1292,6 +1307,8 @@ export function createPlanTemplate(input: {
     sourceSiteDomain: normalizeText(input.sourceSiteDomain),
     sourceIndustry: normalizeSiteIndustry(input.sourceIndustry),
     coverImageUrl: normalizeText(input.coverImageUrl) || extractPlanTemplateCoverImage(blocks),
+    previewImageUrl: normalizeText(input.previewImageUrl),
+    planPreviewImageUrls: normalizePlanTemplatePreviewImages(input.planPreviewImageUrls),
     blocks,
     createdAt: current,
     updatedAt: current,
