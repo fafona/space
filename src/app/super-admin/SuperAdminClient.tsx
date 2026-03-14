@@ -69,12 +69,17 @@ import {
   DEFAULT_PLAN_TEMPLATE_REPLACE_OPTIONS,
   applyPlanTemplateToBlocks,
   createDefaultPlanTemplateApplyScope,
+  extractPlanTemplateCoverBackground,
   getPlanTemplateViewportOptions,
   hasPlanTemplateApplySelection,
   type PlanTemplateApplyScope,
   type PlanTemplateReplaceOptions,
 } from "@/lib/planTemplateRuntime";
-import { capturePlanTemplatePreviewAssets } from "@/lib/planTemplatePreviewCapture";
+import {
+  capturePlanTemplatePreviewAssets,
+  PLAN_TEMPLATE_PREVIEW_VARIANT,
+} from "@/lib/planTemplatePreviewCapture";
+import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
 import { buildMerchantFrontendHref, buildPlatformHomeHref, buildSiteStoreScope, PLATFORM_EDITOR_SCOPE } from "@/lib/siteRouting";
 import { getPagePlanConfigFromBlocks } from "@/lib/pagePlans";
 import {
@@ -1690,10 +1695,61 @@ export default function SuperAdminClient() {
     setPlanTemplateDialogOpen(true);
   }
 
+  function needsPlanTemplatePreviewRefresh(template: PlanTemplate) {
+    if ((template.previewVariant ?? "").trim() !== PLAN_TEMPLATE_PREVIEW_VARIANT) return true;
+    const planPreviewKeys = Object.keys(template.planPreviewImageUrls ?? {}).filter((key) => key.trim());
+    return planPreviewKeys.length === 0;
+  }
+
+  async function ensurePlanTemplatePreviewAssets(template: PlanTemplate) {
+    if (!needsPlanTemplatePreviewRefresh(template)) return template;
+    const blocks = Array.isArray(template.blocks) ? (template.blocks as Block[]) : [];
+    if (blocks.length === 0) return template;
+    const previewAssets = await capturePlanTemplatePreviewAssets(blocks).catch(() => null);
+    if (!previewAssets) return template;
+    const nextTemplate: PlanTemplate = {
+      ...template,
+      previewImageUrl: previewAssets.previewImageUrl,
+      planPreviewImageUrls: previewAssets.planPreviewImageUrls,
+      previewVariant: previewAssets.previewVariant,
+      updatedAt: nextIsoNow(),
+    };
+    commit((prev) => ({
+      ...prev,
+      planTemplates: sortPlanTemplatesByUpdatedAt(
+        prev.planTemplates.map((item) => (item.id === template.id ? nextTemplate : item)),
+      ),
+    }));
+    return nextTemplate;
+  }
+
+  async function openPlanTemplatePreview(template: PlanTemplate, planId?: string, planName?: string) {
+    const refreshedTemplate = await ensurePlanTemplatePreviewAssets(template);
+    const previewUrl = planId
+      ? String((refreshedTemplate.planPreviewImageUrls ?? {})[planId] ?? "").trim()
+      : (refreshedTemplate.previewImageUrl ?? "").trim();
+    if (!previewUrl) return;
+    setPlanTemplateCoverPreview({
+      url: previewUrl,
+      name: planId ? `${refreshedTemplate.name} · ${planName || "方案"} 预览` : `${refreshedTemplate.name} · 方案预览`,
+    });
+  }
+
+  function getPlanTemplateCoverSurface(template: PlanTemplate) {
+    const coverImageUrl = (template.coverImageUrl ?? "").trim();
+    const coverBackground = extractPlanTemplateCoverBackground(template.blocks);
+    return {
+      coverImageUrl,
+      coverBackgroundStyle: !coverImageUrl && coverBackground ? getBackgroundStyle(coverBackground) : null,
+      hasCustomCoverBackground: !coverImageUrl && !!coverBackground,
+    };
+  }
+
   function openPlanTemplateApplyDialog(template: PlanTemplate) {
     setPlanTemplateApplyDialog({ templateId: template.id });
     setPlanTemplateApplyScope(createDefaultPlanTemplateApplyScope(template.blocks));
     setPlanTemplateReplaceOptions({ ...DEFAULT_PLAN_TEMPLATE_REPLACE_OPTIONS });
+    void ensurePlanTemplatePreviewAssets(template);
   }
 
   function updatePlanTemplateViewportEnabled(viewport: "desktop" | "mobile", enabled: boolean) {
@@ -1754,9 +1810,10 @@ export default function SuperAdminClient() {
       }
       const previewAssets =
         (await capturePlanTemplatePreviewAssets(blocks).catch(() => ({
+          previewVariant: "",
           previewImageUrl: "",
           planPreviewImageUrls: {} as Record<string, string>,
-        }))) ?? { previewImageUrl: "", planPreviewImageUrls: {} as Record<string, string> };
+        }))) ?? { previewVariant: "", previewImageUrl: "", planPreviewImageUrls: {} as Record<string, string> };
       const template = createPlanTemplate({
         name: (site.merchantName ?? "").trim() || (site.name ?? "").trim() || "未命名方案",
         sourceSiteId: siteId,
@@ -1765,6 +1822,7 @@ export default function SuperAdminClient() {
         sourceIndustry: site.industry,
         previewImageUrl: previewAssets.previewImageUrl,
         planPreviewImageUrls: previewAssets.planPreviewImageUrls,
+        previewVariant: previewAssets.previewVariant,
         blocks,
       });
       const saved = commit((prev) =>
@@ -3744,19 +3802,19 @@ export default function SuperAdminClient() {
                                     template.sourceSiteName || template.sourceSiteDomain || template.sourceSiteId || "未记录来源网站";
                                   const blockLabels = summary.labels.length > 0 ? summary.labels : ["未识别区块"];
                                   const nameDraft = planTemplateNameDrafts[template.id] ?? template.name;
-                                  const coverImageUrl = (template.coverImageUrl ?? "").trim();
+                                  const { coverImageUrl, coverBackgroundStyle, hasCustomCoverBackground } =
+                                    getPlanTemplateCoverSurface(template);
                                   const previewImageUrl = (template.previewImageUrl ?? "").trim();
+                                  const canPreviewTemplate = !!previewImageUrl || needsPlanTemplatePreviewRefresh(template);
                                   return (
                                     <article key={template.id} className="overflow-hidden rounded-2xl border bg-slate-50 shadow-sm">
                                       <div className="space-y-4 p-4">
                                         <button
                                           type="button"
                                           className="group relative block aspect-[16/10] w-full overflow-hidden rounded-2xl border bg-gradient-to-br from-slate-950 via-slate-800 to-slate-600 text-left text-white"
-                                          onClick={() =>
-                                            previewImageUrl &&
-                                            setPlanTemplateCoverPreview({ url: previewImageUrl, name: `${template.name} · 页面1预览` })
-                                          }
-                                          disabled={!previewImageUrl}
+                                          onClick={() => void openPlanTemplatePreview(template)}
+                                          disabled={!canPreviewTemplate}
+                                          style={coverBackgroundStyle ?? undefined}
                                         >
                                           {coverImageUrl ? (
                                             // eslint-disable-next-line @next/next/no-img-element
@@ -3766,7 +3824,15 @@ export default function SuperAdminClient() {
                                               className="absolute inset-0 h-full w-full object-cover transition duration-200 group-hover:scale-[1.02]"
                                             />
                                           ) : null}
-                                          <div className={`absolute inset-0 ${coverImageUrl ? "bg-slate-950/45" : "bg-gradient-to-br from-slate-950 via-slate-800 to-slate-600"}`} />
+                                          <div
+                                            className={`absolute inset-0 ${
+                                              coverImageUrl
+                                                ? "bg-slate-950/45"
+                                                : hasCustomCoverBackground
+                                                  ? "bg-slate-950/16"
+                                                  : "bg-gradient-to-br from-slate-950 via-slate-800 to-slate-600"
+                                            }`}
+                                          />
                                           <div className="relative flex h-full flex-col justify-between p-4">
                                             <div className="flex flex-wrap items-start justify-between gap-3">
                                               <div className="min-w-0 flex-1 space-y-1">
@@ -3779,8 +3845,8 @@ export default function SuperAdminClient() {
                                                 <span className="rounded-full border border-white/20 bg-white/10 px-2 py-1 text-xs">
                                                   {summary.hasMobile ? "PC + 手机" : "仅 PC"}
                                                 </span>
-                                                {previewImageUrl ? (
-                                                  <span className="rounded-full border border-white/20 bg-white/10 px-2 py-1 text-xs">点击预览页面1</span>
+                                                {canPreviewTemplate ? (
+                                                  <span className="rounded-full border border-white/20 bg-white/10 px-2 py-1 text-xs">点击预览方案</span>
                                                 ) : coverImageUrl ? (
                                                   <span className="rounded-full border border-white/20 bg-white/10 px-2 py-1 text-xs">仅封面</span>
                                                 ) : (
@@ -3870,15 +3936,13 @@ export default function SuperAdminClient() {
                                               <div>应用对象：{siteLabel}</div>
                                             </div>
                                             <div className="flex flex-wrap gap-2">
-                                              {previewImageUrl ? (
+                                              {canPreviewTemplate ? (
                                                 <button
                                                   type="button"
                                                   className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
-                                                  onClick={() =>
-                                                    setPlanTemplateCoverPreview({ url: previewImageUrl, name: `${template.name} · 页面1预览` })
-                                                  }
+                                                  onClick={() => void openPlanTemplatePreview(template)}
                                                 >
-                                                  预览页面1
+                                                  预览方案
                                                 </button>
                                               ) : null}
                                               <button
@@ -3937,30 +4001,36 @@ export default function SuperAdminClient() {
                                   <div className="space-y-4">
                                     <div className="overflow-hidden rounded-2xl border bg-slate-50">
                                       <div className="relative aspect-[4/3] w-full bg-slate-900">
-                                        {(planTemplateApplyTemplate.coverImageUrl ?? "").trim() ? (
-                                          // eslint-disable-next-line @next/next/no-img-element
-                                          <img
-                                            src={(planTemplateApplyTemplate.coverImageUrl ?? "").trim()}
-                                            alt={planTemplateApplyTemplate.name}
-                                            className="h-full w-full object-cover"
-                                          />
-                                        ) : (
-                                          <div className="flex h-full items-center justify-center bg-gradient-to-br from-slate-900 via-slate-700 to-slate-500 text-sm text-white/80">
-                                            暂无封面
-                                          </div>
-                                        )}
-                                        {((planTemplateApplyTemplate.previewImageUrl ?? "").trim() || (planTemplateApplyTemplate.coverImageUrl ?? "").trim()) ? (
+                                        {(() => {
+                                          const { coverImageUrl, coverBackgroundStyle, hasCustomCoverBackground } =
+                                            getPlanTemplateCoverSurface(planTemplateApplyTemplate);
+                                          if (coverImageUrl) {
+                                            return (
+                                              // eslint-disable-next-line @next/next/no-img-element
+                                              <img
+                                                src={coverImageUrl}
+                                                alt={planTemplateApplyTemplate.name}
+                                                className="h-full w-full object-cover"
+                                              />
+                                            );
+                                          }
+                                          if (coverBackgroundStyle) {
+                                            return <div className="h-full w-full" style={coverBackgroundStyle} />;
+                                          }
+                                          return (
+                                            <div className="flex h-full items-center justify-center bg-gradient-to-br from-slate-900 via-slate-700 to-slate-500 text-sm text-white/80">
+                                              暂无封面
+                                            </div>
+                                          );
+                                        })()}
+                                        {((planTemplateApplyTemplate.previewImageUrl ?? "").trim() ||
+                                        (planTemplateApplyTemplate.coverImageUrl ?? "").trim() ||
+                                        needsPlanTemplatePreviewRefresh(planTemplateApplyTemplate)) ? (
                                           <button
                                             type="button"
                                             className="absolute right-3 top-3 rounded-full bg-black/55 px-3 py-1 text-xs text-white hover:bg-black/70"
-                                            onClick={() =>
-                                              (planTemplateApplyTemplate.previewImageUrl ?? "").trim() &&
-                                              setPlanTemplateCoverPreview({
-                                                url: (planTemplateApplyTemplate.previewImageUrl ?? "").trim(),
-                                                name: `${planTemplateApplyTemplate.name} · 页面1预览`,
-                                              })
-                                            }
-                                            disabled={!(planTemplateApplyTemplate.previewImageUrl ?? "").trim()}
+                                            onClick={() => void openPlanTemplatePreview(planTemplateApplyTemplate)}
+                                            disabled={false}
                                           >
                                             预览
                                           </button>
@@ -4039,18 +4109,14 @@ export default function SuperAdminClient() {
                                                   <div key={`${viewportOption.viewport}-${plan.planId}`} className="space-y-2">
                                                     <div className="flex items-center justify-between gap-3">
                                                       <div className="text-xs font-medium text-slate-500">{plan.planName}</div>
-                                                      {((planTemplateApplyTemplate.planPreviewImageUrls ?? {})[plan.planId] ?? "").trim() ? (
+                                                      {((planTemplateApplyTemplate.planPreviewImageUrls ?? {})[plan.planId] ?? "").trim() ||
+                                                      needsPlanTemplatePreviewRefresh(planTemplateApplyTemplate) ? (
                                                         <button
                                                           type="button"
                                                           className="rounded border bg-white px-2 py-1 text-xs text-slate-700 hover:bg-slate-50"
-                                                          onClick={() =>
-                                                            setPlanTemplateCoverPreview({
-                                                              url: String((planTemplateApplyTemplate.planPreviewImageUrls ?? {})[plan.planId] ?? "").trim(),
-                                                              name: `${planTemplateApplyTemplate.name} · ${plan.planName} 页面1预览`,
-                                                            })
-                                                          }
+                                                          onClick={() => void openPlanTemplatePreview(planTemplateApplyTemplate, plan.planId, plan.planName)}
                                                         >
-                                                          预览页面1
+                                                          预览方案
                                                         </button>
                                                       ) : null}
                                                     </div>

@@ -268,6 +268,7 @@ export type PlanTemplate = {
   coverImageUrl?: string;
   previewImageUrl?: string;
   planPreviewImageUrls?: Record<string, string>;
+  previewVariant?: string;
   blocks: unknown[];
   createdAt: string;
   updatedAt: string;
@@ -650,6 +651,7 @@ function normalizePlanTemplate(value: unknown): PlanTemplate | null {
     coverImageUrl: normalizeText(source.coverImageUrl) || extractPlanTemplateCoverImage(source.blocks),
     previewImageUrl: normalizeText(source.previewImageUrl),
     planPreviewImageUrls: normalizePlanTemplatePreviewImages(source.planPreviewImageUrls),
+    previewVariant: normalizeText((source as { previewVariant?: unknown }).previewVariant),
     blocks: normalizePlanTemplateBlocks(source.blocks),
     createdAt: normalizeText(source.createdAt) || current,
     updatedAt: normalizeText(source.updatedAt) || normalizeText(source.createdAt) || current,
@@ -1294,6 +1296,7 @@ export function createPlanTemplate(input: {
   coverImageUrl?: string;
   previewImageUrl?: string;
   planPreviewImageUrls?: Record<string, string>;
+  previewVariant?: string;
   blocks?: unknown[];
 }): PlanTemplate {
   const current = nowIso();
@@ -1309,6 +1312,7 @@ export function createPlanTemplate(input: {
     coverImageUrl: normalizeText(input.coverImageUrl) || extractPlanTemplateCoverImage(blocks),
     previewImageUrl: normalizeText(input.previewImageUrl),
     planPreviewImageUrls: normalizePlanTemplatePreviewImages(input.planPreviewImageUrls),
+    previewVariant: normalizeText(input.previewVariant),
     blocks,
     createdAt: current,
     updatedAt: current,

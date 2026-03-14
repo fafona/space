@@ -5,6 +5,7 @@ import { buildPersistedBlocksFromPlanConfig, type PagePlanConfig } from "@/lib/p
 import {
   DEFAULT_PLAN_TEMPLATE_REPLACE_OPTIONS,
   applyPlanTemplateToBlocks,
+  extractPlanTemplateCoverBackground,
   extractPlanTemplateCoverImage,
   type PlanTemplateApplyScope,
   type PlanTemplateReplaceOptions,
@@ -54,6 +55,32 @@ test("extractPlanTemplateCoverImage prefers page background image", () => {
   );
 
   assert.equal(extractPlanTemplateCoverImage(blocks), "https://example.com/cover.jpg");
+});
+
+test("extractPlanTemplateCoverBackground falls back to captured background color", () => {
+  const blocks = buildPersistedBlocksFromPlanConfig(
+    makeConfig([
+      {
+        id: "search",
+        type: "search-bar",
+        props: {
+          heading: "鎼滅储",
+          pageBgColor: "linear-gradient(135deg, #112233 0%, #445566 100%)",
+          pageBgColorOpacity: 0.82,
+        },
+      },
+    ]),
+  );
+
+  assert.deepEqual(extractPlanTemplateCoverBackground(blocks), {
+    color: "linear-gradient(135deg, #112233 0%, #445566 100%)",
+    colorOpacity: 0.82,
+    fillMode: undefined,
+    imageOpacity: undefined,
+    imageUrl: undefined,
+    opacity: undefined,
+    position: undefined,
+  });
 });
 
 test("default plan template replace options keep data blocks untouched", () => {

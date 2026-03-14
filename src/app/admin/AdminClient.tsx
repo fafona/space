@@ -75,6 +75,7 @@ import {
   matchPlanTemplateCategory,
   summarizePlanTemplateBlocks,
 } from "@/lib/planTemplates";
+import { extractPlanTemplateCoverBackground } from "@/lib/planTemplateRuntime";
 import {
   CUSTOM_GALLERY_FRAME_WIDTHS,
   GALLERY_LAYOUT_PRESETS,
@@ -6836,6 +6837,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                           template.sourceSiteName || template.sourceSiteDomain || template.sourceSiteId || "未记录来源网站";
                         const blockLabels = summary.labels.length > 0 ? summary.labels : ["未识别区块"];
                         const coverImageUrl = (template.coverImageUrl ?? "").trim();
+                        const coverBackground = extractPlanTemplateCoverBackground(template.blocks);
+                        const coverBackgroundStyle =
+                          !coverImageUrl && coverBackground ? getBackgroundStyle(coverBackground) : null;
+                        const hasCustomCoverBackground = !!coverBackgroundStyle;
                         const previewImageUrl = (template.previewImageUrl ?? "").trim();
                         return (
                           <article key={template.id} className="overflow-hidden rounded-2xl border bg-slate-50 shadow-sm">
@@ -6845,9 +6850,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                                 className="group relative block aspect-[16/10] w-full overflow-hidden rounded-2xl border bg-gradient-to-br from-slate-950 via-slate-800 to-slate-600 text-left text-white"
                                 onClick={() =>
                                   previewImageUrl &&
-                                  setPlanTemplateCoverPreview({ url: previewImageUrl, name: `${template.name} · 页面1预览` })
+                                  setPlanTemplateCoverPreview({ url: previewImageUrl, name: `${template.name} · 方案预览` })
                                 }
                                 disabled={!previewImageUrl}
+                                style={coverBackgroundStyle ?? undefined}
                               >
                                 {coverImageUrl ? (
                                   // eslint-disable-next-line @next/next/no-img-element
@@ -6857,7 +6863,15 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                                     className="absolute inset-0 h-full w-full object-cover transition duration-200 group-hover:scale-[1.02]"
                                   />
                                 ) : null}
-                                <div className={`absolute inset-0 ${coverImageUrl ? "bg-slate-950/45" : "bg-gradient-to-br from-slate-950 via-slate-800 to-slate-600"}`} />
+                                <div
+                                  className={`absolute inset-0 ${
+                                    coverImageUrl
+                                      ? "bg-slate-950/45"
+                                      : hasCustomCoverBackground
+                                        ? "bg-slate-950/16"
+                                        : "bg-gradient-to-br from-slate-950 via-slate-800 to-slate-600"
+                                  }`}
+                                />
                                 <div className="relative flex h-full flex-col justify-between p-4">
                                   <div className="flex flex-wrap items-start justify-between gap-3">
                                     <div className="min-w-0 flex-1 space-y-1">
@@ -6871,7 +6885,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                                         {summary.hasMobile ? "PC + 手机" : "仅 PC"}
                                       </span>
                                       {previewImageUrl ? (
-                                        <span className="rounded-full border border-white/20 bg-white/10 px-2 py-1 text-xs">点击预览页面1</span>
+                                        <span className="rounded-full border border-white/20 bg-white/10 px-2 py-1 text-xs">点击预览方案</span>
                                       ) : coverImageUrl ? (
                                         <span className="rounded-full border border-white/20 bg-white/10 px-2 py-1 text-xs">仅封面</span>
                                       ) : (
@@ -6975,10 +6989,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                                         type="button"
                                         className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
                                         onClick={() =>
-                                          setPlanTemplateCoverPreview({ url: previewImageUrl, name: `${template.name} · 页面1预览` })
+                                          setPlanTemplateCoverPreview({ url: previewImageUrl, name: `${template.name} · 方案预览` })
                                         }
                                       >
-                                        预览页面1
+                                        预览方案
                                       </button>
                                     ) : null}
                                     <button

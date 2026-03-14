@@ -1,4 +1,4 @@
-import type { Block } from "@/data/homeBlocks";
+import type { Block, ImageFillMode } from "@/data/homeBlocks";
 import {
   buildPersistedBlocksFromPlanConfig,
   cloneBlocks,
@@ -45,6 +45,16 @@ export type PlanTemplateReplaceOptions = {
   galleryImages: boolean;
   productData: boolean;
   contactInfo: boolean;
+};
+
+export type PlanTemplateCoverBackground = {
+  imageUrl?: string;
+  fillMode?: ImageFillMode;
+  position?: string;
+  color?: string;
+  opacity?: number;
+  imageOpacity?: number;
+  colorOpacity?: number;
 };
 
 export const DEFAULT_PLAN_TEMPLATE_REPLACE_OPTIONS: PlanTemplateReplaceOptions = {
@@ -173,6 +183,60 @@ function firstBackgroundImageFromBlock(block: Block | undefined): string {
   if (isNonEmptyString(props.pageBgImageUrl)) return props.pageBgImageUrl.trim();
   if (isNonEmptyString(props.bgImageUrl)) return props.bgImageUrl.trim();
   return "";
+}
+
+function firstCoverBackgroundFromBlock(block: Block | undefined): PlanTemplateCoverBackground | null {
+  if (!block) return null;
+  const props = (block.props ?? {}) as Record<string, unknown>;
+  const imageUrl = isNonEmptyString(props.pageBgImageUrl)
+    ? props.pageBgImageUrl.trim()
+    : isNonEmptyString(props.bgImageUrl)
+      ? props.bgImageUrl.trim()
+      : "";
+  const color = isNonEmptyString(props.pageBgColor)
+    ? props.pageBgColor.trim()
+    : isNonEmptyString(props.bgColor)
+      ? props.bgColor.trim()
+      : "";
+  const fillMode = isNonEmptyString(props.pageBgFillMode)
+    ? props.pageBgFillMode.trim()
+    : isNonEmptyString(props.bgFillMode)
+      ? props.bgFillMode.trim()
+      : "";
+  const position = isNonEmptyString(props.pageBgPosition)
+    ? props.pageBgPosition.trim()
+    : isNonEmptyString(props.bgPosition)
+      ? props.bgPosition.trim()
+      : "";
+  const opacity =
+    typeof props.pageBgOpacity === "number" && Number.isFinite(props.pageBgOpacity)
+      ? props.pageBgOpacity
+      : typeof props.bgOpacity === "number" && Number.isFinite(props.bgOpacity)
+        ? props.bgOpacity
+        : undefined;
+  const imageOpacity =
+    typeof props.pageBgImageOpacity === "number" && Number.isFinite(props.pageBgImageOpacity)
+      ? props.pageBgImageOpacity
+      : typeof props.bgImageOpacity === "number" && Number.isFinite(props.bgImageOpacity)
+        ? props.bgImageOpacity
+        : undefined;
+  const colorOpacity =
+    typeof props.pageBgColorOpacity === "number" && Number.isFinite(props.pageBgColorOpacity)
+      ? props.pageBgColorOpacity
+      : typeof props.bgColorOpacity === "number" && Number.isFinite(props.bgColorOpacity)
+        ? props.bgColorOpacity
+        : undefined;
+
+  if (!imageUrl && !color) return null;
+  return {
+    imageUrl: imageUrl || undefined,
+    fillMode: (fillMode || undefined) as ImageFillMode | undefined,
+    position: position || undefined,
+    color: color || undefined,
+    opacity,
+    imageOpacity,
+    colorOpacity,
+  };
 }
 
 function makePageKey(planId: string, pageIndex: number) {
@@ -407,6 +471,25 @@ export function extractPlanTemplateCoverImage(rawBlocks: unknown) {
     if (image) return image;
   }
   return "";
+}
+
+export function extractPlanTemplateCoverBackground(rawBlocks: unknown) {
+  const blocks = safeBlocks(rawBlocks);
+  if (blocks.length === 0) return null;
+  const config = getPagePlanConfigFromBlocks(blocks);
+  for (const plan of config.plans) {
+    for (const page of plan.pages ?? []) {
+      for (const block of page.blocks ?? []) {
+        const background = firstCoverBackgroundFromBlock(block);
+        if (background) return background;
+      }
+    }
+  }
+  for (const block of blocks) {
+    const background = firstCoverBackgroundFromBlock(block);
+    if (background) return background;
+  }
+  return null;
 }
 
 export function getPlanTemplateViewportOptions(rawBlocks: unknown): PlanTemplateViewportOption[] {
