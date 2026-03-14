@@ -2,7 +2,15 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent } from "react";
-import { getBlocksSnapshot, getPublishedBlocksSnapshot, loadPublishedBlocksFromStorage, subscribeBlocksStore, subscribePublishedBlocksStore } from "@/data/blockStore";
+import {
+  getBlocksSnapshot,
+  getPublishedBlocksSnapshot,
+  loadPublishedBlocksFromStorage,
+  recordPublishedVersion,
+  savePublishedBlocksToStorage,
+  subscribeBlocksStore,
+  subscribePublishedBlocksStore,
+} from "@/data/blockStore";
 import type { Block, MerchantCardTextLayoutConfig, MerchantCardTextRole, TypographyEditableProps } from "@/data/homeBlocks";
 import {
   FEATURE_CATALOG,
@@ -26,6 +34,7 @@ import {
   createTenant,
   loadPlatformState,
   nextIsoNow,
+  PLAN_TEMPLATE_CATEGORY_OPTIONS,
   resolvePermissionsForUser,
   savePlatformState,
   subscribePlatformState,
@@ -37,6 +46,8 @@ import {
   type MerchantConfigHistoryEntry,
   type MerchantConfigSnapshot,
   type PermissionKey,
+  type PlanTemplate,
+  type PlanTemplateCategory,
   type PlatformState,
   type PublishStatus,
   type Site,
@@ -46,6 +57,12 @@ import {
 } from "@/data/platformControlStore";
 import { SUPER_ADMIN_MESSAGES } from "@/constants/messages";
 import { readPageViewDailyStats, readPublishEvents, readRemoteAnalyticsSummary, trackPublishEvent } from "@/lib/analytics";
+import {
+  matchPlanTemplateCategory,
+  PLAN_TEMPLATE_FILTER_OPTIONS,
+  summarizePlanTemplateBlocks,
+  type PlanTemplateFilterCategory,
+} from "@/lib/planTemplates";
 import { buildMerchantFrontendHref, buildPlatformHomeHref, buildSiteStoreScope, PLATFORM_EDITOR_SCOPE } from "@/lib/siteRouting";
 import { getPagePlanConfigFromBlocks } from "@/lib/pagePlans";
 import {
@@ -836,6 +853,14 @@ type MerchantTableSortField =
   | "expireAt"
   | "status";
 
+function sortPlanTemplatesByUpdatedAt(planTemplates: PlanTemplate[]) {
+  return [...planTemplates].sort((left, right) => {
+    const leftTime = new Date(left.updatedAt).getTime();
+    const rightTime = new Date(right.updatedAt).getTime();
+    return (Number.isFinite(rightTime) ? rightTime : 0) - (Number.isFinite(leftTime) ? leftTime : 0);
+  });
+}
+
 function buildPortalDraft(state: PlatformState): PortalDraft {
   return {
     heroTitle: state.homeLayout.heroTitle,
@@ -856,6 +881,12 @@ export default function SuperAdminClient() {
   const stateRef = useRef<PlatformState>(state);
   const [tip, setTip] = useState("");
   const [capturingTemplateSiteId, setCapturingTemplateSiteId] = useState("");
+  const [planTemplateDialogOpen, setPlanTemplateDialogOpen] = useState(false);
+  const [planTemplateTargetSiteId, setPlanTemplateTargetSiteId] = useState("");
+  const [planTemplateSearch, setPlanTemplateSearch] = useState("");
+  const [planTemplateFilter, setPlanTemplateFilter] = useState<PlanTemplateFilterCategory>("全部");
+  const [planTemplateNameDrafts, setPlanTemplateNameDrafts] = useState<Record<string, string>>({});
+  const [applyingPlanTemplateId, setApplyingPlanTemplateId] = useState("");
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [remotePv30, setRemotePv30] = useState<number | null>(null);
 
@@ -1181,6 +1212,36 @@ export default function SuperAdminClient() {
     );
     return backendMerchantAccounts.filter((account) => !siteEmails.has(normalizeEmailValue(account.email)));
   }, [backendMerchantAccounts, merchantRows]);
+  const planTemplateTargetSite =
+    state.sites.find((site) => site.id === planTemplateTargetSiteId) ?? null;
+  const planTemplateKeyword = planTemplateSearch.trim().toLowerCase();
+  const filteredPlanTemplates = useMemo(
+    () =>
+      (state.planTemplates ?? []).filter((template) => {
+        if (!matchPlanTemplateCategory(template, planTemplateFilter)) return false;
+        if (!planTemplateKeyword) return true;
+        const haystack = [
+          template.name,
+          template.sourceSiteName,
+          template.sourceSiteDomain,
+          template.sourceSiteId,
+          template.category,
+          template.sourceIndustry,
+        ]
+          .join("\n")
+          .toLowerCase();
+        return haystack.includes(planTemplateKeyword);
+      }),
+    [planTemplateFilter, planTemplateKeyword, state.planTemplates],
+  );
+  const planTemplateCards = useMemo(
+    () =>
+      filteredPlanTemplates.map((template) => ({
+        template,
+        summary: summarizePlanTemplateBlocks(template.blocks),
+      })),
+    [filteredPlanTemplates],
+  );
   const displayMerchantRows = useMemo(() => {
     const rows = filteredMerchantRows.map((row, idx) => ({ row, seq: idx + 1 }));
     const text = (value: string) => value.trim().toLowerCase();
@@ -1585,6 +1646,14 @@ export default function SuperAdminClient() {
     setMerchantPanelOpen(true);
   }
 
+  function openPlanTemplateDialogForSite(site: Site) {
+    setPlanTemplateTargetSiteId(site.id);
+    setPlanTemplateSearch("");
+    setPlanTemplateFilter("全部");
+    setPlanTemplateNameDrafts({});
+    setPlanTemplateDialogOpen(true);
+  }
+
   async function captureMerchantTemplate(site: Site) {
     const siteId = (site.id ?? "").trim();
     if (!siteId) {
@@ -1627,6 +1696,205 @@ export default function SuperAdminClient() {
       setTip(error instanceof Error ? error.message : "方案收录失败，请重试");
     } finally {
       setCapturingTemplateSiteId("");
+    }
+  }
+
+  function updatePlanTemplateNameDraft(templateId: string, value: string) {
+    setPlanTemplateNameDrafts((prev) => ({
+      ...prev,
+      [templateId]: value,
+    }));
+  }
+
+  function clearPlanTemplateNameDraft(templateId: string) {
+    setPlanTemplateNameDrafts((prev) => {
+      if (!(templateId in prev)) return prev;
+      const next = { ...prev };
+      delete next[templateId];
+      return next;
+    });
+  }
+
+  function persistPlanTemplateName(templateId: string) {
+    const template = state.planTemplates.find((item) => item.id === templateId);
+    if (!template) {
+      clearPlanTemplateNameDraft(templateId);
+      return;
+    }
+    const draft = planTemplateNameDrafts[templateId];
+    if (draft === undefined) return;
+    const nextName = draft.trim() || "未命名方案";
+    if (nextName === template.name) {
+      clearPlanTemplateNameDraft(templateId);
+      return;
+    }
+    const updatedAt = nextIsoNow();
+    const saved = commit((prev) =>
+      withAudit(
+        {
+          ...prev,
+          planTemplates: sortPlanTemplatesByUpdatedAt(
+            prev.planTemplates.map((item) =>
+              item.id === templateId ? { ...item, name: nextName, updatedAt } : item,
+            ),
+          ),
+        },
+        "plan_template_update",
+        "plan_template",
+        templateId,
+        `名称：${template.name} -> ${nextName}`,
+      ),
+    );
+    if (!saved) {
+      setTip("方案模板名称保存失败，请重试");
+      return;
+    }
+    clearPlanTemplateNameDraft(templateId);
+  }
+
+  function updatePlanTemplateCategory(templateId: string, category: PlanTemplateCategory) {
+    const template = state.planTemplates.find((item) => item.id === templateId);
+    if (!template || template.category === category) return;
+    const updatedAt = nextIsoNow();
+    const saved = commit((prev) =>
+      withAudit(
+        {
+          ...prev,
+          planTemplates: sortPlanTemplatesByUpdatedAt(
+            prev.planTemplates.map((item) =>
+              item.id === templateId ? { ...item, category, updatedAt } : item,
+            ),
+          ),
+        },
+        "plan_template_update",
+        "plan_template",
+        templateId,
+        `分类：${template.category} -> ${category}`,
+      ),
+    );
+    if (!saved) {
+      setTip("方案模板分类保存失败，请重试");
+    }
+  }
+
+  function deletePlanTemplateFromDialog(template: PlanTemplate) {
+    if (typeof window !== "undefined") {
+      const confirmed = window.confirm(`确定删除方案模板「${template.name}」吗？`);
+      if (!confirmed) return;
+    }
+    const saved = commit((prev) =>
+      withAudit(
+        {
+          ...prev,
+          planTemplates: prev.planTemplates.filter((item) => item.id !== template.id),
+        },
+        "plan_template_delete",
+        "plan_template",
+        template.id,
+        template.name,
+      ),
+    );
+    if (!saved) {
+      setTip("删除方案模板失败，请重试");
+      return;
+    }
+    clearPlanTemplateNameDraft(template.id);
+    setTip(`已删除方案模板：${template.name}`);
+  }
+
+  async function applyPlanTemplateToSite(template: PlanTemplate, site: Site) {
+    if (!guard("publish.trigger", SUPER_ADMIN_MESSAGES.noPublishPermission)) return;
+    const siteId = (site.id ?? "").trim();
+    if (!siteId) {
+      setTip("缺少站点 ID，无法应用方案模板");
+      return;
+    }
+    const blocks = Array.isArray(template.blocks) ? (JSON.parse(JSON.stringify(template.blocks)) as Block[]) : [];
+    if (blocks.length === 0) {
+      setTip("该方案模板没有可发布的页面内容");
+      return;
+    }
+    const siteLabel = getSiteDisplayName(site) || site.domain || siteId;
+    if (typeof window !== "undefined") {
+      const confirmed = window.confirm(`确定将方案「${template.name}」直接应用到 ${siteLabel} 的前台吗？这会覆盖当前已发布内容。`);
+      if (!confirmed) return;
+    }
+    const requestId = `super-admin-plan-template-${siteId}-${Date.now()}`;
+    const publishedAt = nextIsoNow();
+    const note = `应用方案模板：${template.name}`;
+    const publishStatus: PublishStatus = "success";
+    setApplyingPlanTemplateId(template.id);
+    try {
+      const response = await fetch("/api/publish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requestId,
+          payload: {
+            blocks,
+            updated_at: publishedAt,
+          },
+          merchantIds: [siteId],
+          merchantSlug: (site.domainPrefix ?? site.domainSuffix ?? "").trim(),
+          isPlatformEditor: false,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as { message?: string } | null;
+      if (!response.ok) {
+        setTip(payload?.message || "方案模板应用失败，请稍后重试");
+        return;
+      }
+
+      savePublishedBlocksToStorage(blocks, buildSiteStoreScope(siteId));
+      recordPublishedVersion(blocks, buildSiteStoreScope(siteId));
+
+      const saved = commit((prev) => {
+        const target = prev.sites.find((item) => item.id === siteId);
+        if (!target) return prev;
+        const version = target.publishedVersion + 1;
+        return withAudit(
+          {
+            ...prev,
+            sites: prev.sites.map((item) =>
+              item.id === siteId
+                ? {
+                    ...item,
+                    publishedVersion: version,
+                    lastPublishedAt: publishedAt,
+                    updatedAt: publishedAt,
+                  }
+                : item,
+            ),
+            publishRecords: [
+              {
+                id: `publish-template-${Date.now()}`,
+                tenantId: target.tenantId,
+                siteId,
+                version,
+                status: publishStatus,
+                operator: operatorName,
+                notes: note,
+                at: publishedAt,
+              },
+              ...prev.publishRecords,
+            ].slice(0, 600),
+          },
+          "plan_template_apply",
+          "site",
+          siteId,
+          `${template.name} -> ${siteLabel}`,
+        );
+      });
+      if (!saved) {
+        setTip("方案模板已发布，但本地状态更新失败，请刷新后确认");
+        return;
+      }
+      setPlanTemplateDialogOpen(false);
+      setTip(`已将方案「${template.name}」应用到 ${siteLabel}`);
+    } catch (error) {
+      setTip(error instanceof Error ? error.message : "方案模板应用失败，请稍后重试");
+    } finally {
+      setApplyingPlanTemplateId("");
     }
   }
 
@@ -3166,6 +3434,12 @@ export default function SuperAdminClient() {
                                           配置
                                         </button>
                                         <button
+                                          className="rounded border px-2 py-1"
+                                          onClick={() => openPlanTemplateDialogForSite(row.site)}
+                                        >
+                                          方案模板
+                                        </button>
+                                        <button
                                           className="rounded border px-2 py-1 disabled:opacity-50"
                                           onClick={() => void captureMerchantTemplate(row.site)}
                                           disabled={capturingTemplateSiteId === row.site.id}
@@ -3268,6 +3542,191 @@ export default function SuperAdminClient() {
                       </div>
                     )}
                   </div>
+
+                  {planTemplateDialogOpen ? (
+                    <>
+                      <button
+                        type="button"
+                        className="fixed inset-0 z-[122] bg-black/45"
+                        onClick={() => setPlanTemplateDialogOpen(false)}
+                        aria-label="关闭方案模板弹窗"
+                      />
+                      <div className="fixed inset-0 z-[123] flex items-center justify-center p-4">
+                        <div className="flex h-full max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl">
+                          <div className="flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4">
+                            <div className="space-y-1">
+                              <div className="text-lg font-semibold text-slate-900">方案模板</div>
+                              <div className="text-sm text-slate-500">
+                                选择整套已收录方案，直接应用到 {planTemplateTargetSite ? (getSiteDisplayName(planTemplateTargetSite) || planTemplateTargetSite.domain || planTemplateTargetSite.id) : "目标商户"} 的前台。
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              className="rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50"
+                              onClick={() => setPlanTemplateDialogOpen(false)}
+                            >
+                              关闭
+                            </button>
+                          </div>
+
+                          <div className="space-y-3 border-b px-5 py-4">
+                            <div className="flex flex-wrap items-center gap-3">
+                              <input
+                                className="min-w-[220px] flex-1 rounded border px-3 py-2 text-sm"
+                                value={planTemplateSearch}
+                                onChange={(event) => setPlanTemplateSearch(event.target.value)}
+                                placeholder="搜索方案名称 / 来源网站 / 域名前缀 / 分类"
+                              />
+                              <div className="text-sm text-slate-500">共 {filteredPlanTemplates.length} 个方案</div>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              {PLAN_TEMPLATE_FILTER_OPTIONS.map((option) => (
+                                <button
+                                  key={option}
+                                  type="button"
+                                  className={`rounded-full border px-3 py-1.5 text-sm transition-colors ${
+                                    planTemplateFilter === option
+                                      ? "border-black bg-black text-white"
+                                      : "bg-white text-slate-700 hover:bg-slate-50"
+                                  }`}
+                                  onClick={() => setPlanTemplateFilter(option)}
+                                >
+                                  {option}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+                            {planTemplateCards.length > 0 ? (
+                              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                                {planTemplateCards.map(({ template, summary }) => {
+                                  const siteLabel =
+                                    planTemplateTargetSite
+                                      ? getSiteDisplayName(planTemplateTargetSite) || planTemplateTargetSite.domain || planTemplateTargetSite.id
+                                      : "目标商户";
+                                  const sourceLabel =
+                                    template.sourceSiteName || template.sourceSiteDomain || template.sourceSiteId || "未记录来源网站";
+                                  const blockLabels = summary.labels.length > 0 ? summary.labels : ["未识别区块"];
+                                  const nameDraft = planTemplateNameDrafts[template.id] ?? template.name;
+                                  return (
+                                    <article key={template.id} className="overflow-hidden rounded-2xl border bg-slate-50 shadow-sm">
+                                      <div className="space-y-4 p-4">
+                                        <div className="rounded-2xl bg-gradient-to-br from-slate-950 via-slate-800 to-slate-600 p-4 text-white">
+                                          <div className="flex flex-wrap items-start justify-between gap-3">
+                                            <div className="min-w-0 flex-1 space-y-1">
+                                              <div className="text-xs uppercase tracking-[0.22em] text-white/60">模板预览</div>
+                                              <div className="truncate text-base font-semibold" title={summary.previewTitle || template.name}>
+                                                {summary.previewTitle || template.name}
+                                              </div>
+                                            </div>
+                                            <span className="rounded-full border border-white/20 bg-white/10 px-2 py-1 text-xs">
+                                              {summary.hasMobile ? "PC + 手机" : "仅 PC"}
+                                            </span>
+                                          </div>
+                                          <div className="mt-4 grid grid-cols-3 gap-2 text-xs">
+                                            <div className="rounded-xl bg-white/10 px-3 py-2">
+                                              <div className="text-white/60">方案</div>
+                                              <div className="mt-1 text-sm font-semibold">{summary.planCount}</div>
+                                            </div>
+                                            <div className="rounded-xl bg-white/10 px-3 py-2">
+                                              <div className="text-white/60">页面</div>
+                                              <div className="mt-1 text-sm font-semibold">{summary.pageCount}</div>
+                                            </div>
+                                            <div className="rounded-xl bg-white/10 px-3 py-2">
+                                              <div className="text-white/60">区块</div>
+                                              <div className="mt-1 text-sm font-semibold">{summary.blockCount}</div>
+                                            </div>
+                                          </div>
+                                          <div className="mt-4 flex flex-wrap gap-2">
+                                            {blockLabels.map((label) => (
+                                              <span key={`${template.id}-${label}`} className="rounded-full bg-white/10 px-2 py-1 text-xs">
+                                                {label}
+                                              </span>
+                                            ))}
+                                          </div>
+                                        </div>
+
+                                        <div className="space-y-3">
+                                          <div className="flex items-start gap-3">
+                                            <label className="min-w-0 flex-1 space-y-1">
+                                              <div className="text-xs font-medium text-slate-500">方案名称</div>
+                                              <input
+                                                className="w-full rounded border bg-white px-3 py-2 text-sm"
+                                                value={nameDraft}
+                                                onChange={(event) => updatePlanTemplateNameDraft(template.id, event.target.value)}
+                                                onBlur={() => persistPlanTemplateName(template.id)}
+                                                onKeyDown={(event) => {
+                                                  if (event.key === "Enter") {
+                                                    event.preventDefault();
+                                                    (event.currentTarget as HTMLInputElement).blur();
+                                                  }
+                                                }}
+                                                placeholder="请输入方案名称"
+                                              />
+                                            </label>
+                                            <button
+                                              type="button"
+                                              className="mt-6 rounded border border-rose-200 bg-white px-3 py-2 text-sm text-rose-600 hover:bg-rose-50"
+                                              onClick={() => deletePlanTemplateFromDialog(template)}
+                                            >
+                                              删除
+                                            </button>
+                                          </div>
+
+                                          <div className="grid gap-3 md:grid-cols-[150px_minmax(0,1fr)]">
+                                            <label className="space-y-1">
+                                              <div className="text-xs font-medium text-slate-500">方案分类</div>
+                                              <select
+                                                className="w-full rounded border bg-white px-3 py-2 text-sm"
+                                                value={template.category}
+                                                onChange={(event) => updatePlanTemplateCategory(template.id, event.target.value as PlanTemplateCategory)}
+                                              >
+                                                {PLAN_TEMPLATE_CATEGORY_OPTIONS.map((option) => (
+                                                  <option key={option} value={option}>
+                                                    {option}
+                                                  </option>
+                                                ))}
+                                              </select>
+                                            </label>
+                                            <div className="space-y-1">
+                                              <div className="text-xs font-medium text-slate-500">来源网站</div>
+                                              <div className="rounded border bg-white px-3 py-2 text-sm text-slate-700" title={sourceLabel}>
+                                                {sourceLabel}
+                                              </div>
+                                            </div>
+                                          </div>
+
+                                          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-white px-3 py-3">
+                                            <div className="space-y-1 text-xs text-slate-500">
+                                              <div>创建于 {new Date(template.createdAt).toLocaleString("zh-CN", { hour12: false })}</div>
+                                              <div>应用对象：{siteLabel}</div>
+                                            </div>
+                                            <button
+                                              type="button"
+                                              className="rounded bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                                              onClick={() => planTemplateTargetSite && void applyPlanTemplateToSite(template, planTemplateTargetSite)}
+                                              disabled={!planTemplateTargetSite || applyingPlanTemplateId === template.id}
+                                            >
+                                              {applyingPlanTemplateId === template.id ? "应用中..." : "应用到该商户"}
+                                            </button>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </article>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <div className="flex h-full min-h-[260px] items-center justify-center rounded-2xl border border-dashed bg-slate-50 px-6 text-center text-sm text-slate-500">
+                                当前没有匹配的方案模板。你可以先在用户列表点击“收录方案”。
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  ) : null}
 
                   {merchantPanelOpen ? (
                     <>
