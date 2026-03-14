@@ -7346,6 +7346,7 @@ type GalleryEditorImage = {
     Record<string, Partial<Record<ProductSettingsSectionKey, boolean>>>
   >({});
   const productPreviewScrollViewportRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const productPreviewRootRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const [activeMerchantCardLayoutKeys, setActiveMerchantCardLayoutKeys] = useState<MerchantListLayoutKey[]>([]);
   const [merchantCardLayoutSnapEnabled, setMerchantCardLayoutSnapEnabled] = useState(true);
   const [merchantCardLayoutSnapStep, setMerchantCardLayoutSnapStep] = useState(8);
@@ -12138,6 +12139,7 @@ type GalleryEditorImage = {
         [block.id]: rawValue,
       }));
     };
+    const getProductGroupTagKey = (tag: string) => encodeURIComponent((tag || "untagged").trim() || "untagged");
     const handlePreviewTagSelect = (tag: string | null) => {
       setProductPreviewTagByBlockId((current) => ({
         ...current,
@@ -12158,6 +12160,25 @@ type GalleryEditorImage = {
           target.scrollIntoView({ behavior: "smooth", block: "start", inline: "nearest" });
         });
       };
+      const scrollToPreviewGroup = (targetTag: string | null) => {
+        if (!targetTag) return;
+        const targetKey = getProductGroupTagKey(targetTag);
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            const viewport = productPreviewScrollViewportRefs.current[block.id];
+            const root = productPreviewRootRefs.current[block.id];
+            const selector = `[data-product-preview-group-key="${targetKey}"]`;
+            const target = root?.querySelector<HTMLElement>(selector) ?? document.querySelector<HTMLElement>(selector);
+            if (!target) return;
+            if (viewport && viewport.contains(target)) {
+              const offset = target.offsetTop - viewport.offsetTop;
+              viewport.scrollTo({ top: Math.max(0, offset), behavior: "smooth" });
+              return;
+            }
+            target.scrollIntoView({ behavior: "smooth", block: "start", inline: "nearest" });
+          });
+        });
+      };
       if (tag == null) {
         setProductPreviewPageByBlockId((current) => ({
           ...current,
@@ -12175,9 +12196,17 @@ type GalleryEditorImage = {
           ...current,
           [block.id]: Math.floor(firstMatchIndex / productItemsPerPage),
         }));
+        if (productGroupByTag) {
+          scrollToPreviewGroup(tag);
+          return;
+        }
         requestAnimationFrame(() => {
           productPreviewScrollViewportRefs.current[block.id]?.scrollTo({ top: 0, behavior: "smooth" });
         });
+        return;
+      }
+      if (productGroupByTag) {
+        scrollToPreviewGroup(tag);
         return;
       }
       scrollToPreviewItem(arrangedProductItems[firstMatchIndex]?.id ?? null);
@@ -12315,7 +12344,7 @@ type GalleryEditorImage = {
     };
 
     const renderProductGroupHeading = (label: string, key: string) => (
-      <div key={key} className="flex items-center gap-3">
+      <div key={key} data-product-preview-group-key={getProductGroupTagKey(label)} className="flex items-center gap-3">
         <div className="h-px flex-1 bg-slate-200" />
         <div className="shrink-0 text-sm font-semibold tracking-[0.08em] text-slate-700">{label || "未分类"}</div>
         <div className="h-px flex-1 bg-slate-200" />
@@ -12399,6 +12428,15 @@ type GalleryEditorImage = {
     };
 
     const renderProductPreviewWithFilters = () => {
+      const contentBody = (
+        <div
+          ref={(node) => {
+            productPreviewRootRefs.current[block.id] = node;
+          }}
+        >
+          {renderProductPreview()}
+        </div>
+      );
       const content = productContainerMode === "scroll" && previewScrollViewportHeight ? (
         <div
           ref={(node) => {
@@ -12407,10 +12445,10 @@ type GalleryEditorImage = {
           className="min-w-0 overflow-y-auto pr-1"
           style={{ maxHeight: `${previewScrollViewportHeight}px` }}
         >
-          {renderProductPreview()}
+          {contentBody}
         </div>
       ) : (
-        renderProductPreview()
+        contentBody
       );
 
       if (productTagPosition === "left") {

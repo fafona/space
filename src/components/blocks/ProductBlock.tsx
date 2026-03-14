@@ -175,6 +175,10 @@ function getProductCardDomId(id: string) {
   return `product-card-${id}`;
 }
 
+function getProductGroupTagKey(tag: string) {
+  return encodeURIComponent((tag || "untagged").trim() || "untagged");
+}
+
 function renderProductCard(
   item: ReturnType<typeof normalizeProductItems>[number],
   options: {
@@ -388,7 +392,7 @@ export default function ProductBlock(props: ProductBlockProps) {
   const [pageIndex, setPageIndex] = useState(0);
   const [activeProductId, setActiveProductId] = useState<string | null>(null);
   const [activeTag, setActiveTag] = useState<string | null>(null);
-  const [pendingScrollProductId, setPendingScrollProductId] = useState<string | null>(null);
+  const rootRef = useRef<HTMLElement | null>(null);
   const scrollViewportRef = useRef<HTMLDivElement | null>(null);
   const selectedTag = activeTag && productTags.includes(activeTag) ? activeTag : null;
   const filteredProducts = tagHideUnselected && selectedTag ? arrangedProducts.filter((item) => item.tag === selectedTag) : arrangedProducts;
@@ -419,33 +423,46 @@ export default function ProductBlock(props: ProductBlockProps) {
   const scrollToProductCard = (targetId: string | null) => {
     if (!targetId) return;
     requestAnimationFrame(() => {
-      const viewport = scrollViewportRef.current;
-      const selector = `#${getProductCardDomId(targetId)}`;
-      const target = viewport?.querySelector<HTMLElement>(selector) ?? document.querySelector<HTMLElement>(selector);
-      if (!target) return;
-      if (viewport) {
-        const offset = target.offsetTop - viewport.offsetTop;
-        viewport.scrollTo({ top: Math.max(0, offset), behavior: "smooth" });
-        return;
-      }
-      target.scrollIntoView({ behavior: "smooth", block: "start", inline: "nearest" });
+      requestAnimationFrame(() => {
+        const viewport = scrollViewportRef.current;
+        const target =
+          rootRef.current?.querySelector<HTMLElement>(`#${getProductCardDomId(targetId)}`) ??
+          document.getElementById(getProductCardDomId(targetId));
+        if (!target) return;
+        if (viewport && viewport.contains(target)) {
+          const offset = target.offsetTop - viewport.offsetTop;
+          viewport.scrollTo({ top: Math.max(0, offset), behavior: "smooth" });
+          return;
+        }
+        target.scrollIntoView({ behavior: "smooth", block: "start", inline: "nearest" });
+      });
     });
   };
 
-  useEffect(() => {
-    const targetId = pendingScrollProductId;
-    if (!targetId) return;
-    scrollToProductCard(targetId);
+  const scrollToProductGroup = (targetTag: string | null) => {
+    if (!targetTag) return;
+    const targetKey = getProductGroupTagKey(targetTag);
     requestAnimationFrame(() => {
-      setPendingScrollProductId((current) => (current === targetId ? null : current));
+      requestAnimationFrame(() => {
+        const viewport = scrollViewportRef.current;
+        const target =
+          rootRef.current?.querySelector<HTMLElement>(`[data-product-group-key="${targetKey}"]`) ??
+          document.querySelector<HTMLElement>(`[data-product-group-key="${targetKey}"]`);
+        if (!target) return;
+        if (viewport && viewport.contains(target)) {
+          const offset = target.offsetTop - viewport.offsetTop;
+          viewport.scrollTo({ top: Math.max(0, offset), behavior: "smooth" });
+          return;
+        }
+        target.scrollIntoView({ behavior: "smooth", block: "start", inline: "nearest" });
+      });
     });
-  }, [pagedProducts, pendingScrollProductId, selectedTag, tagHideUnselected]);
+  };
 
   const handleSelectTag = (tag: string | null) => {
     setActiveTag(tag);
     if (tag == null) {
       setPageIndex(0);
-      setPendingScrollProductId(null);
       requestAnimationFrame(() => {
         scrollViewportRef.current?.scrollTo({ top: 0, behavior: "smooth" });
       });
@@ -454,18 +471,25 @@ export default function ProductBlock(props: ProductBlockProps) {
     const firstMatchIndex = arrangedProducts.findIndex((item) => item.tag === tag);
     if (firstMatchIndex < 0) {
       setPageIndex(0);
-      setPendingScrollProductId(null);
       return;
     }
     const targetId = arrangedProducts[firstMatchIndex]?.id ?? null;
-    setPendingScrollProductId(targetId);
+    const shouldScrollToGroup = groupedByTag;
     if (containerMode === "paged") {
       setPageIndex(Math.floor(firstMatchIndex / itemsPerPage));
+      if (shouldScrollToGroup) {
+        scrollToProductGroup(tag);
+        return;
+      }
+      scrollToProductCard(targetId);
+      return;
+    }
+    if (shouldScrollToGroup) {
+      scrollToProductGroup(tag);
       return;
     }
     if (targetId) {
       scrollToProductCard(targetId);
-      setPendingScrollProductId(null);
     }
   };
 
@@ -544,7 +568,7 @@ export default function ProductBlock(props: ProductBlockProps) {
     ) : null;
 
   const renderProductGroupHeading = (label: string, key: string) => (
-    <div key={key} className="flex items-center gap-3">
+    <div key={key} data-product-group-key={getProductGroupTagKey(label)} className="flex items-center gap-3">
       <div className="h-px flex-1 bg-slate-200" />
       <div className="shrink-0 text-sm font-semibold tracking-[0.08em] text-slate-700">{label || "未分类"}</div>
       <div className="h-px flex-1 bg-slate-200" />
@@ -723,7 +747,7 @@ export default function ProductBlock(props: ProductBlockProps) {
     ) : null;
 
   return (
-    <section className="mx-auto max-w-6xl px-6 py-6" style={offsetStyle}>
+    <section ref={rootRef} className="mx-auto max-w-6xl px-6 py-6" style={offsetStyle}>
       <div
         className={`overflow-hidden rounded-2xl bg-white p-6 shadow-sm ${borderClass}`}
         style={{ ...cardStyle, ...sizeStyle, ...borderInlineStyle }}
