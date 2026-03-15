@@ -1,7 +1,8 @@
 ﻿"use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import {
   getBlocksSnapshot,
   getPublishedBlocksSnapshot,
@@ -983,6 +984,11 @@ export default function SuperAdminClient() {
   useEffect(() => {
     setPlanTemplateCoverPreviewScale(1);
   }, [planTemplateCoverPreview?.url]);
+
+  function renderTopMostOverlay(content: ReactNode) {
+    if (typeof document === "undefined") return null;
+    return createPortal(content, document.body);
+  }
   const portalDraftBlocks = useSyncExternalStore(
     (onChange) => subscribeBlocksStore(onChange, PLATFORM_EDITOR_SCOPE),
     () => getBlocksSnapshot(EMPTY_BLOCKS, PLATFORM_EDITOR_SCOPE),
@@ -4210,66 +4216,68 @@ export default function SuperAdminClient() {
                         </>
                       ) : null}
 
-                      {planTemplateCoverPreview ? (
-                        <>
-                          <button
-                            type="button"
-                            className="fixed inset-0 z-[126] bg-black/65"
-                            onClick={() => setPlanTemplateCoverPreview(null)}
-                            aria-label="关闭模板封面预览"
-                          />
-                          <div className="fixed inset-0 z-[127] flex items-center justify-center p-4">
-                            <div className="max-h-[92vh] w-full max-w-5xl overflow-hidden rounded-2xl border bg-white shadow-2xl">
-                              <div className="flex items-center justify-between border-b px-5 py-4">
-                                <div className="text-base font-semibold text-slate-900">{planTemplateCoverPreview.name}</div>
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <button
-                                    type="button"
-                                    className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
-                                    onClick={() =>
-                                      setPlanTemplateCoverPreviewScale((current) => Math.max(0.5, Number((current - 0.25).toFixed(2))))
-                                    }
-                                  >
-                                    缩小
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="min-w-[72px] rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
-                                    onClick={() => setPlanTemplateCoverPreviewScale(1)}
-                                  >
-                                    {Math.round(planTemplateCoverPreviewScale * 100)}%
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
-                                    onClick={() =>
-                                      setPlanTemplateCoverPreviewScale((current) => Math.min(3, Number((current + 0.25).toFixed(2))))
-                                    }
-                                  >
-                                    放大
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
-                                    onClick={() => setPlanTemplateCoverPreview(null)}
-                                  >
-                                    关闭
-                                  </button>
+                      {planTemplateCoverPreview
+                        ? renderTopMostOverlay(
+                            <>
+                              <button
+                                type="button"
+                                className="fixed inset-0 z-[2147483600] bg-black/65"
+                                onClick={() => setPlanTemplateCoverPreview(null)}
+                                aria-label="关闭模板封面预览"
+                              />
+                              <div className="fixed inset-0 z-[2147483601] flex items-center justify-center p-4">
+                                <div className="max-h-[92vh] w-full max-w-5xl overflow-hidden rounded-2xl border bg-white shadow-2xl">
+                                  <div className="flex items-center justify-between border-b px-5 py-4">
+                                    <div className="text-base font-semibold text-slate-900">{planTemplateCoverPreview.name}</div>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <button
+                                        type="button"
+                                        className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                                        onClick={() =>
+                                          setPlanTemplateCoverPreviewScale((current) => Math.max(0.5, Number((current - 0.25).toFixed(2))))
+                                        }
+                                      >
+                                        缩小
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="min-w-[72px] rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                                        onClick={() => setPlanTemplateCoverPreviewScale(1)}
+                                      >
+                                        {Math.round(planTemplateCoverPreviewScale * 100)}%
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                                        onClick={() =>
+                                          setPlanTemplateCoverPreviewScale((current) => Math.min(3, Number((current + 0.25).toFixed(2))))
+                                        }
+                                      >
+                                        放大
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                                        onClick={() => setPlanTemplateCoverPreview(null)}
+                                      >
+                                        关闭
+                                      </button>
+                                    </div>
+                                  </div>
+                                  <div className="max-h-[78vh] overflow-auto bg-black p-4">
+                                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                                    <img
+                                      src={planTemplateCoverPreview.url}
+                                      alt={planTemplateCoverPreview.name}
+                                      className="mx-auto h-auto max-w-none rounded-xl object-contain"
+                                      style={{ width: `${Math.round(planTemplateCoverPreviewScale * 100)}%` }}
+                                    />
+                                  </div>
                                 </div>
                               </div>
-                              <div className="max-h-[78vh] overflow-auto bg-black p-4">
-                                {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img
-                                  src={planTemplateCoverPreview.url}
-                                  alt={planTemplateCoverPreview.name}
-                                  className="mx-auto h-auto max-w-none rounded-xl object-contain"
-                                  style={{ width: `${Math.round(planTemplateCoverPreviewScale * 100)}%` }}
-                                />
-                              </div>
-                            </div>
-                          </div>
-                        </>
-                      ) : null}
+                            </>,
+                          )
+                        : null}
                     </>
                   ) : null}
 
