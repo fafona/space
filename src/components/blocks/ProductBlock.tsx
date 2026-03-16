@@ -428,13 +428,6 @@ export default function ProductBlock(props: ProductBlockProps) {
     };
   }, [activeProductId]);
 
-  useEffect(() => {
-    setPageIndex(0);
-    requestAnimationFrame(() => {
-      scrollViewportRef.current?.scrollTo({ top: 0, behavior: "auto" });
-    });
-  }, [searchKeyword]);
-
   const scrollToProductCard = (targetId: string | null) => {
     if (!targetId) return;
     requestAnimationFrame(() => {
@@ -532,6 +525,14 @@ export default function ProductBlock(props: ProductBlockProps) {
       ...extra,
     });
 
+  const handleSearchKeywordChange = (value: string) => {
+    setSearchKeyword(value);
+    setPageIndex(0);
+    requestAnimationFrame(() => {
+      scrollViewportRef.current?.scrollTo({ top: 0, behavior: "auto" });
+    });
+  };
+
   const renderSearchBar = () =>
     productSearchEnabled && products.length > 0 ? (
       <div className="mt-5">
@@ -539,7 +540,7 @@ export default function ProductBlock(props: ProductBlockProps) {
           <input
             type="search"
             value={searchKeyword}
-            onChange={(event) => setSearchKeyword(event.target.value)}
+            onChange={(event) => handleSearchKeywordChange(event.target.value)}
             placeholder={productSearchPlaceholder}
             className="min-w-0 flex-1 rounded-xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-700 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-200 md:text-sm"
           />
@@ -547,7 +548,7 @@ export default function ProductBlock(props: ProductBlockProps) {
             <button
               type="button"
               className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-700 transition hover:bg-slate-50"
-              onClick={() => setSearchKeyword("")}
+              onClick={() => handleSearchKeywordChange("")}
             >
               清空
             </button>
