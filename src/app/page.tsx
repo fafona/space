@@ -1,7 +1,9 @@
+import { headers } from "next/headers";
 import { createClient } from "@supabase/supabase-js";
 import HomePageClient from "./HomePageClient";
 import { homeBlocks, type Block } from "@/data/homeBlocks";
 import { sanitizeBlocksForRuntime } from "@/lib/blocksSanitizer";
+import { isMobileViewportRequest } from "@/lib/deviceViewport";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -111,6 +113,8 @@ async function queryPublishedPlatformHomeBlocks(): Promise<Block[]> {
 }
 
 export default async function Page() {
+  const requestHeaders = await headers();
   const initialBlocks = await queryPublishedPlatformHomeBlocks();
-  return <HomePageClient initialBlocks={initialBlocks} />;
+  const initialIsMobileViewport = isMobileViewportRequest(requestHeaders);
+  return <HomePageClient initialBlocks={initialBlocks} initialIsMobileViewport={initialIsMobileViewport} />;
 }

@@ -9,12 +9,11 @@ import { homeBlocks, type Block } from "@/data/homeBlocks";
 import { loadPlatformState, subscribePlatformState } from "@/data/platformControlStore";
 import { useI18n } from "@/components/I18nProvider";
 import { trackPageView } from "@/lib/analytics";
+import { MOBILE_BREAKPOINT } from "@/lib/deviceViewport";
 import { normalizeDomainPrefix } from "@/lib/merchantIdentity";
 import { cloneBlocks, getPagePlanConfigFromBlocks } from "@/lib/pagePlans";
 import { resolvePublishedSiteByPrefix } from "@/lib/publishedSiteLookup";
 import { extractMerchantPrefixFromHost } from "@/lib/siteRouting";
-
-const MOBILE_BREAKPOINT = 768;
 
 function readViewportWidth() {
   if (typeof window === "undefined") return 0;
@@ -52,10 +51,18 @@ function getEmbeddedMobilePlanConfig(sourceBlocks: Block[]) {
   return getPagePlanConfigFromBlocks(cloned);
 }
 
-export default function HomePageClient({ initialBlocks }: { initialBlocks: Block[] }) {
+type HomePageClientProps = {
+  initialBlocks: Block[];
+  initialIsMobileViewport?: boolean;
+};
+
+export default function HomePageClient({
+  initialBlocks,
+  initialIsMobileViewport = false,
+}: HomePageClientProps) {
   const { t } = useI18n();
   const [platformState, setPlatformState] = useState(() => loadPlatformState());
-  const [isMobileViewport, setIsMobileViewport] = useState(false);
+  const [isMobileViewport, setIsMobileViewport] = useState(initialIsMobileViewport);
   const [remoteHostLookup, setRemoteHostLookup] = useState<{ prefix: string; siteId: string }>({
     prefix: "",
     siteId: "",
@@ -158,11 +165,11 @@ export default function HomePageClient({ initialBlocks }: { initialBlocks: Block
   const backgroundExtendPadding = Math.max(0, maxBlockOffsetY) + 160;
 
   if (hostMatchedSite) {
-    return <SitePageClient forcedSiteId={hostMatchedSite.id} />;
+    return <SitePageClient forcedSiteId={hostMatchedSite.id} initialIsMobileViewport={isMobileViewport} />;
   }
 
   if (resolvedHostSiteId) {
-    return <SitePageClient forcedSiteId={resolvedHostSiteId} />;
+    return <SitePageClient forcedSiteId={resolvedHostSiteId} initialIsMobileViewport={isMobileViewport} />;
   }
 
   return (

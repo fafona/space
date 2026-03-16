@@ -14,6 +14,7 @@ import { type Block } from "@/data/homeBlocks";
 import { loadPlatformState, subscribePlatformState } from "@/data/platformControlStore";
 import { trackPageView } from "@/lib/analytics";
 import { sanitizeBlocksForRuntime } from "@/lib/blocksSanitizer";
+import { MOBILE_BREAKPOINT } from "@/lib/deviceViewport";
 import { cloneBlocks, getPagePlanConfigFromBlocks } from "@/lib/pagePlans";
 import { PUBLISH_SYNC_STORAGE_KEY, subscribePublishSync } from "@/lib/publishSync";
 import { buildMerchantBackendHref, buildPlatformHomeHref, buildSiteStoreScope } from "@/lib/siteRouting";
@@ -26,7 +27,6 @@ import {
 } from "@/lib/supabase";
 import { useHydrated } from "@/lib/useHydrated";
 
-const MOBILE_BREAKPOINT = 768;
 const EMPTY_BLOCKS: Block[] = [];
 const MIN_INITIAL_LOADING_MS = 0;
 const SITE_REMOTE_FETCH_TIMEOUT_MS = 8000;
@@ -207,9 +207,13 @@ async function fetchPublishedSiteBlocksViaApi(siteId: string) {
 
 type SitePageClientProps = {
   forcedSiteId?: string;
+  initialIsMobileViewport?: boolean;
 };
 
-export function SitePageClient({ forcedSiteId }: SitePageClientProps = {}) {
+export function SitePageClient({
+  forcedSiteId,
+  initialIsMobileViewport = false,
+}: SitePageClientProps = {}) {
   const params = useParams<{ siteId?: string }>();
   const routeSiteId = typeof params?.siteId === "string" ? params.siteId : "";
   const siteId = (forcedSiteId ?? routeSiteId).trim();
@@ -217,7 +221,7 @@ export function SitePageClient({ forcedSiteId }: SitePageClientProps = {}) {
 
   const hydrated = useHydrated();
   const [isInitialLoading, setIsInitialLoading] = useState(true);
-  const [isMobileViewport, setIsMobileViewport] = useState(false);
+  const [isMobileViewport, setIsMobileViewport] = useState(initialIsMobileViewport);
   const [platformState, setPlatformState] = useState(() => loadPlatformState());
   const [dbBlocks, setDbBlocks] = useState<Block[] | null>(null);
   const [scopedPublishedBlocksLocal, setScopedPublishedBlocksLocal] = useState<Block[] | null>(null);
