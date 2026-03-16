@@ -12564,19 +12564,25 @@ type GalleryEditorImage = {
 
       if (productTagPosition === "left") {
         return (
-          <div className="mt-4 grid gap-4 lg:grid-cols-[auto_minmax(0,1fr)]">
-            {renderProductTagFilters()}
-            <div className="min-w-0">{content}</div>
-          </div>
+          <>
+            {renderProductSearchBar()}
+            <div className="mt-4 grid gap-4 lg:grid-cols-[auto_minmax(0,1fr)]">
+              {renderProductTagFilters()}
+              <div className="min-w-0">{content}</div>
+            </div>
+          </>
         );
       }
 
       if (productTagPosition === "right") {
         return (
-          <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto]">
-            <div className="min-w-0">{content}</div>
-            {renderProductTagFilters()}
-          </div>
+          <>
+            {renderProductSearchBar()}
+            <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto]">
+              <div className="min-w-0">{content}</div>
+              {renderProductTagFilters()}
+            </div>
+          </>
         );
       }
 

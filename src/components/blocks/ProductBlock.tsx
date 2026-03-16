@@ -716,18 +716,24 @@ export default function ProductBlock(props: ProductBlockProps) {
     );
     if (tagPosition === "left") {
       return (
-        <div className="mt-5 grid gap-4 lg:grid-cols-[auto_minmax(0,1fr)]">
-          {renderTagFilters()}
-          <div className="min-w-0">{content}</div>
-        </div>
+        <>
+          {renderSearchBar()}
+          <div className="mt-5 grid gap-4 lg:grid-cols-[auto_minmax(0,1fr)]">
+            {renderTagFilters()}
+            <div className="min-w-0">{content}</div>
+          </div>
+        </>
       );
     }
     if (tagPosition === "right") {
       return (
-        <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto]">
-          <div className="min-w-0">{content}</div>
-          {renderTagFilters()}
-        </div>
+        <>
+          {renderSearchBar()}
+          <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto]">
+            <div className="min-w-0">{content}</div>
+            {renderTagFilters()}
+          </div>
+        </>
       );
     }
     return (
