@@ -135,6 +135,7 @@ import {
   PRODUCT_TAG_POSITION_OPTIONS,
   createProductItemId,
   defaultProductItemsPerPage,
+  filterProductItemsByKeyword,
   normalizeProductContainerMode,
   normalizeProductImageAspectRatio,
   normalizeProductItems,
@@ -4976,6 +4977,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         props: {
           heading: "产品展示",
           text: "支持产品图片、编号、名称、介绍和价格展示。",
+          productSearchEnabled: true,
+          productSearchPlaceholder: "搜索产品名称/编号/介绍",
           productLayoutPreset: "list",
           productImageAspectRatio: "square",
           productImageSize: 220,
@@ -7397,6 +7400,7 @@ type GalleryEditorImage = {
   const [merchantPreviewPageIndex, setMerchantPreviewPageIndex] = useState(0);
   const [productPreviewPageByBlockId, setProductPreviewPageByBlockId] = useState<Record<string, number>>({});
   const [productPreviewTagByBlockId, setProductPreviewTagByBlockId] = useState<Record<string, string | null>>({});
+  const [productPreviewSearchByBlockId, setProductPreviewSearchByBlockId] = useState<Record<string, string>>({});
   const [productTagOptionsDraftByBlockId, setProductTagOptionsDraftByBlockId] = useState<Record<string, string>>({});
   const [productDetailPreview, setProductDetailPreview] = useState<{ blockId: string; itemId: string } | null>(null);
   const [productSettingsCollapsedByBlockId, setProductSettingsCollapsedByBlockId] = useState<
@@ -12108,6 +12112,9 @@ type GalleryEditorImage = {
     const compactProductEditor = typeof blockWidth === "number" && blockWidth <= 420;
     const hasProductHeading = hasVisibleRichText(block.props.heading);
     const hasProductText = hasVisibleRichText(block.props.text);
+    const productSearchEnabled = block.props.productSearchEnabled !== false;
+    const productSearchPlaceholder = (block.props.productSearchPlaceholder ?? "").trim() || "搜索产品名称/编号/介绍";
+    const productSearchKeyword = productPreviewSearchByBlockId[block.id] ?? "";
     const savedProductTagOptions = normalizeProductTagOptions(block.props.productTagOptions);
     const productTagOptionsText = productTagOptionsDraftByBlockId[block.id] ?? savedProductTagOptions.join("\n");
     const productTagOptions = Array.from(
@@ -12122,8 +12129,13 @@ type GalleryEditorImage = {
     const productSectionCollapsed = productSettingsCollapsedByBlockId[block.id] ?? {};
     const rawActiveProductTag = productPreviewTagByBlockId[block.id] ?? null;
     const activeProductTag = rawActiveProductTag && productTags.includes(rawActiveProductTag) ? rawActiveProductTag : null;
+    const searchMatchedProductItems = productSearchEnabled
+      ? filterProductItemsByKeyword(arrangedProductItems, productSearchKeyword)
+      : arrangedProductItems;
     const filteredProductItems =
-      productTagHideUnselected && activeProductTag ? arrangedProductItems.filter((item) => item.tag === activeProductTag) : arrangedProductItems;
+      productTagHideUnselected && activeProductTag
+        ? searchMatchedProductItems.filter((item) => item.tag === activeProductTag)
+        : searchMatchedProductItems;
     const previewPageCount =
       productContainerMode === "paged" ? Math.max(1, Math.ceil(filteredProductItems.length / productItemsPerPage)) : 1;
     const rawPreviewPageIndex = productPreviewPageByBlockId[block.id] ?? 0;
@@ -12246,7 +12258,8 @@ type GalleryEditorImage = {
         });
         return;
       }
-      const firstMatchIndex = arrangedProductItems.findIndex((item) => item.tag === tag);
+      const sourceItems = searchMatchedProductItems;
+      const firstMatchIndex = sourceItems.findIndex((item) => item.tag === tag);
       if (firstMatchIndex < 0) return;
       if (productContainerMode === "paged") {
         setProductPreviewPageByBlockId((current) => ({
@@ -12266,7 +12279,20 @@ type GalleryEditorImage = {
         scrollToPreviewGroup(tag);
         return;
       }
-      scrollToPreviewItem(arrangedProductItems[firstMatchIndex]?.id ?? null);
+      scrollToPreviewItem(sourceItems[firstMatchIndex]?.id ?? null);
+    };
+    const handleProductPreviewSearchChange = (rawValue: string) => {
+      setProductPreviewSearchByBlockId((current) => ({
+        ...current,
+        [block.id]: rawValue,
+      }));
+      setProductPreviewPageByBlockId((current) => ({
+        ...current,
+        [block.id]: 0,
+      }));
+      requestAnimationFrame(() => {
+        productPreviewScrollViewportRefs.current[block.id]?.scrollTo({ top: 0, behavior: "auto" });
+      });
     };
     const productCodeClampStyle = {
       overflow: "hidden" as const,
@@ -12408,6 +12434,30 @@ type GalleryEditorImage = {
       </div>
     );
 
+    const renderProductSearchBar = () =>
+      productSearchEnabled && productItems.length > 0 ? (
+        <div className="mt-4">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <input
+              type="search"
+              value={productSearchKeyword}
+              onChange={(event) => handleProductPreviewSearchChange(event.target.value)}
+              placeholder={productSearchPlaceholder}
+              className="min-w-0 flex-1 rounded-xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-700 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-200 md:px-3 md:py-2 md:text-sm"
+            />
+            {productSearchKeyword.trim() ? (
+              <button
+                type="button"
+                className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-700 transition hover:bg-slate-50 md:px-3 md:py-2"
+                onClick={() => handleProductPreviewSearchChange("")}
+              >
+                清空
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ) : null;
+
     const renderProductPreviewCollection = (
       items: ProductEditorItem[],
       options: { placeholderPrefix: string; includePlaceholders: boolean },
@@ -12452,7 +12502,11 @@ type GalleryEditorImage = {
       if (filteredProductItems.length === 0) {
         return (
           <div className="mt-4 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-5 text-sm text-slate-500">
-            {activeProductTag ? `当前分类“${activeProductTag}”下暂无产品。` : "暂无产品，请先新增产品或导入数据。"}
+            {productSearchKeyword.trim()
+              ? `未找到与“${productSearchKeyword.trim()}”匹配的产品。`
+              : activeProductTag
+                ? `当前分类“${activeProductTag}”下暂无产品。`
+                : "暂无产品，请先新增产品或导入数据。"}
           </div>
         );
       }
@@ -12528,6 +12582,7 @@ type GalleryEditorImage = {
 
       return (
         <>
+          {renderProductSearchBar()}
           {renderProductTagFilters()}
           {content}
         </>
@@ -13306,8 +13361,25 @@ type GalleryEditorImage = {
                         <option key={item.value} value={item.value}>
                           {item.label}
                         </option>
-                      ))}
-                    </select>
+                        ))}
+                      </select>
+                  </label>
+                  <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={productSearchEnabled}
+                      onChange={(event) => onChange({ productSearchEnabled: event.target.checked })}
+                    />
+                    <span>启用搜索</span>
+                  </label>
+                  <label className="space-y-1 text-sm">
+                    <span className="block text-gray-600">搜索提示词</span>
+                    <input
+                      className="w-full rounded border px-3 py-2"
+                      value={productSearchPlaceholder}
+                      onChange={(event) => onChange({ productSearchPlaceholder: event.target.value })}
+                      placeholder="搜索产品名称/编号/介绍"
+                    />
                   </label>
                   <label className="space-y-1 text-sm">
                     <span className="block text-gray-600">区块模式</span>
@@ -13549,8 +13621,25 @@ type GalleryEditorImage = {
                           <option key={item.value} value={item.value}>
                             {item.label}
                           </option>
-                        ))}
+                          ))}
                       </select>
+                    </label>
+                    <label className="flex items-center gap-2 rounded border border-slate-200 bg-white px-3 py-1.5 text-sm text-gray-700">
+                      <input
+                        type="checkbox"
+                        checked={productSearchEnabled}
+                        onChange={(event) => onChange({ productSearchEnabled: event.target.checked })}
+                      />
+                      <span>启用搜索</span>
+                    </label>
+                    <label className="space-y-1 text-sm md:col-span-2">
+                      <span className="block text-gray-600">搜索提示词</span>
+                      <input
+                        className="w-full rounded border px-3 py-1.5"
+                        value={productSearchPlaceholder}
+                        onChange={(event) => onChange({ productSearchPlaceholder: event.target.value })}
+                        placeholder="搜索产品名称/编号/介绍"
+                      />
                     </label>
                     <label className="space-y-1 text-sm">
                       <span className="block text-gray-600">区块模式</span>

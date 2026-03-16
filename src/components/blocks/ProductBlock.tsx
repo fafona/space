@@ -6,6 +6,7 @@ import Image from "next/image";
 import type { BackgroundEditableProps, BlockBorderStyle, TypographyEditableProps } from "@/data/homeBlocks";
 import {
   arrangeProductItemsByTag,
+  filterProductItemsByKeyword,
   groupArrangedProductItemsByTag,
   isMeaningfulProductItem,
   normalizeProductContainerMode,
@@ -35,6 +36,8 @@ type ProductBlockProps = BackgroundEditableProps &
     heading?: string;
     text?: string;
     products?: ProductItemInput[];
+    productSearchEnabled?: boolean;
+    productSearchPlaceholder?: string;
     productLayoutPreset?: ProductLayoutPreset;
     productImageAspectRatio?: ProductImageAspectRatio;
     productImageSize?: number;
@@ -304,6 +307,8 @@ export default function ProductBlock(props: ProductBlockProps) {
       ? Math.max(40, Math.min(420, Math.round(props.productImageSize)))
       : 220;
   const pricePrefix = (props.productPricePrefix ?? "").trim();
+  const productSearchEnabled = props.productSearchEnabled !== false;
+  const productSearchPlaceholder = (props.productSearchPlaceholder ?? "").trim() || "搜索产品名称/编号/介绍";
   const showCode = props.productShowCode !== false;
   const showDescription = props.productShowDescription !== false;
   const priceAlign = normalizeProductPriceAlign(props.productPriceAlign);
@@ -392,10 +397,13 @@ export default function ProductBlock(props: ProductBlockProps) {
   const [pageIndex, setPageIndex] = useState(0);
   const [activeProductId, setActiveProductId] = useState<string | null>(null);
   const [activeTag, setActiveTag] = useState<string | null>(null);
+  const [searchKeyword, setSearchKeyword] = useState("");
   const rootRef = useRef<HTMLElement | null>(null);
   const scrollViewportRef = useRef<HTMLDivElement | null>(null);
   const selectedTag = activeTag && productTags.includes(activeTag) ? activeTag : null;
-  const filteredProducts = tagHideUnselected && selectedTag ? arrangedProducts.filter((item) => item.tag === selectedTag) : arrangedProducts;
+  const searchMatchedProducts = productSearchEnabled ? filterProductItemsByKeyword(arrangedProducts, searchKeyword) : arrangedProducts;
+  const filteredProducts =
+    tagHideUnselected && selectedTag ? searchMatchedProducts.filter((item) => item.tag === selectedTag) : searchMatchedProducts;
   const totalPages = containerMode === "paged" ? Math.max(1, Math.ceil(filteredProducts.length / itemsPerPage)) : 1;
   const normalizedPageIndex = Math.min(pageIndex, Math.max(0, totalPages - 1));
   const pageStart = normalizedPageIndex * itemsPerPage;
@@ -419,6 +427,13 @@ export default function ProductBlock(props: ProductBlockProps) {
       window.removeEventListener("keydown", onKeyDown);
     };
   }, [activeProductId]);
+
+  useEffect(() => {
+    setPageIndex(0);
+    requestAnimationFrame(() => {
+      scrollViewportRef.current?.scrollTo({ top: 0, behavior: "auto" });
+    });
+  }, [searchKeyword]);
 
   const scrollToProductCard = (targetId: string | null) => {
     if (!targetId) return;
@@ -468,12 +483,13 @@ export default function ProductBlock(props: ProductBlockProps) {
       });
       return;
     }
-    const firstMatchIndex = arrangedProducts.findIndex((item) => item.tag === tag);
+    const sourceItems = searchMatchedProducts;
+    const firstMatchIndex = sourceItems.findIndex((item) => item.tag === tag);
     if (firstMatchIndex < 0) {
       setPageIndex(0);
       return;
     }
-    const targetId = arrangedProducts[firstMatchIndex]?.id ?? null;
+    const targetId = sourceItems[firstMatchIndex]?.id ?? null;
     const shouldScrollToGroup = groupedByTag;
     if (containerMode === "paged") {
       setPageIndex(Math.floor(firstMatchIndex / itemsPerPage));
@@ -515,6 +531,30 @@ export default function ProductBlock(props: ProductBlockProps) {
       onOpen: setActiveProductId,
       ...extra,
     });
+
+  const renderSearchBar = () =>
+    productSearchEnabled && products.length > 0 ? (
+      <div className="mt-5">
+        <div className="flex flex-wrap items-center gap-3">
+          <input
+            type="search"
+            value={searchKeyword}
+            onChange={(event) => setSearchKeyword(event.target.value)}
+            placeholder={productSearchPlaceholder}
+            className="min-w-0 flex-1 rounded-xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-700 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-200 md:text-sm"
+          />
+          {searchKeyword.trim() ? (
+            <button
+              type="button"
+              className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-700 transition hover:bg-slate-50"
+              onClick={() => setSearchKeyword("")}
+            >
+              清空
+            </button>
+          ) : null}
+        </div>
+      </div>
+    ) : null;
 
   const renderTagFilters = () =>
     productTags.length > 0 ? (
@@ -623,7 +663,9 @@ export default function ProductBlock(props: ProductBlockProps) {
       return (
         <>
           <div className="mt-4 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-6 text-sm text-slate-500">
-            暂无产品，请在后台添加产品信息。
+            {searchKeyword.trim()
+              ? `未找到与“${searchKeyword.trim()}”匹配的产品。`
+              : "暂无产品，请在后台添加产品信息。"}
           </div>
           {renderPager()}
         </>
@@ -689,6 +731,7 @@ export default function ProductBlock(props: ProductBlockProps) {
     }
     return (
       <>
+        {renderSearchBar()}
         {renderTagFilters()}
         {content}
       </>

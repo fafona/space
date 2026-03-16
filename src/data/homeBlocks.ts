@@ -269,6 +269,8 @@ type ProductProps = BackgroundEditableProps &
     heading?: string;
     text?: string;
     products?: ProductItemInput[];
+    productSearchEnabled?: boolean;
+    productSearchPlaceholder?: string;
     productLayoutPreset?: ProductLayoutPreset;
     productImageAspectRatio?: ProductImageAspectRatio;
     productImageSize?: number;

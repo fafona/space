@@ -152,6 +152,36 @@ export function normalizeProductCode(value: string) {
     .replace(/[^\p{L}\p{N}]+/gu, "");
 }
 
+function normalizeProductSearchText(value: unknown) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function filterProductItemsByKeyword<
+  T extends {
+    code?: string;
+    name?: string;
+    description?: string;
+    price?: string;
+    tag?: string;
+  },
+>(items: T[], query: string) {
+  const normalizedQuery = normalizeProductSearchText(query);
+  if (!normalizedQuery) return items;
+  const queryParts = normalizedQuery.split(" ").filter(Boolean);
+  if (queryParts.length === 0) return items;
+  return items.filter((item) => {
+    const haystack = normalizeProductSearchText(
+      [item.code, item.name, item.description, item.price, item.tag].filter(Boolean).join(" "),
+    );
+    return queryParts.every((part) => haystack.includes(part));
+  });
+}
+
 export function createProductItemId() {
   return `product-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
