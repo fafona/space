@@ -21,15 +21,17 @@
     "start": "next start",
     "lint": "eslint",
     "test": "npm run test:sanitizer",
-    "test:sanitizer": "tsx --test src/lib/blocksSanitizer.test.ts src/lib/blockStacking.test.ts src/lib/deviceViewport.test.ts src/lib/europeLocationOptions.test.ts src/lib/inlineAssetStats.test.ts src/lib/reverseGeocodeLocation.test.ts src/lib/productImport.test.ts src/lib/productBlock.test.ts src/lib/merchantIndustryTabs.test.ts src/lib/planTemplateRuntime.test.ts src/lib/publishedSiteLookup.test.ts src/app/api/publish/route.test.ts src/app/api/site-resolve/route.test.ts src/app/api/site-published/route.test.ts"
+    "test:sanitizer": "tsx --test src/lib/blocksSanitizer.test.ts src/lib/blockStacking.test.ts src/lib/deviceViewport.test.ts src/lib/europeLocationOptions.test.ts src/lib/inlineAssetStats.test.ts src/lib/reverseGeocodeLocation.test.ts src/lib/productImport.test.ts src/lib/productBlock.test.ts src/lib/merchantBusinessCards.test.ts src/lib/merchantIndustryTabs.test.ts src/lib/planTemplateRuntime.test.ts src/lib/publishedSiteLookup.test.ts src/app/api/publish/route.test.ts src/app/api/site-resolve/route.test.ts src/app/api/site-published/route.test.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@supabase/supabase-js": "^2.93.3",
+    "@types/qrcode": "^1.5.6",
     "html-to-image": "^1.11.13",
     "next": "16.1.6",
+    "qrcode": "^1.5.4",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "xlsx": "^0.18.5"

@@ -6732,7 +6732,24 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           initialContactEmail={editingSite?.contactEmail ?? ""}
           initialLocation={editingSite?.location ?? null}
           initialIndustry={editingSite?.industry ?? null}
+          initialBusinessCards={editingSite?.businessCards ?? []}
           onClose={() => setMerchantProfileDialogOpen(false)}
+          onCardsChange={(cards) => {
+            if (!editingSiteId) return;
+            const platformState = loadPlatformState();
+            savePlatformState({
+              ...platformState,
+              sites: platformState.sites.map((item) =>
+                item.id === editingSiteId
+                  ? {
+                      ...item,
+                      businessCards: cards,
+                      updatedAt: new Date().toISOString(),
+                    }
+                  : item,
+              ),
+            });
+          }}
           onSave={({ merchantName, domainPrefix, contactAddress, contactName, contactPhone, contactEmail, location, industry }) => {
             if (!editingSiteId) {
               showTip("未找到可编辑的商户站点，无法保存");

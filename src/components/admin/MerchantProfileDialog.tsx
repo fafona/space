@@ -1,6 +1,7 @@
 ﻿"use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   MERCHANT_INDUSTRY_OPTIONS,
   type MerchantIndustry,
@@ -12,7 +13,9 @@ import {
   getEuropeCountryOptions,
   getEuropeProvinceOptions,
 } from "@/lib/europeLocationOptions";
+import type { MerchantBusinessCardAsset } from "@/lib/merchantBusinessCards";
 import { buildMerchantDomain, resolveMerchantRootHost } from "@/lib/siteRouting";
+import MerchantBusinessCardManager from "@/components/admin/MerchantBusinessCardManager";
 
 type MerchantProfileDialogProps = {
   open: boolean;
@@ -28,7 +31,9 @@ type MerchantProfileDialogProps = {
   initialContactEmail?: string | null;
   initialLocation?: Partial<SiteLocation> | null;
   initialIndustry?: string | null;
+  initialBusinessCards?: MerchantBusinessCardAsset[] | null;
   onClose: () => void;
+  onCardsChange?: (cards: MerchantBusinessCardAsset[]) => void;
   onSave: (input: {
     merchantName: string;
     domainPrefix: string;
@@ -120,6 +125,11 @@ function formatServiceExpiresAt(iso?: string | null) {
   if (!raw) return "未设置";
   const date = new Date(raw);
   return Number.isFinite(date.getTime()) ? date.toLocaleString("zh-CN", { hour12: false }) : raw;
+}
+
+function renderDialogOverlay(children: ReactNode) {
+  if (typeof document === "undefined") return null;
+  return createPortal(children, document.body);
 }
 
 type MerchantProfileInitialState = {
@@ -217,7 +227,9 @@ export default function MerchantProfileDialog({
   initialContactEmail,
   initialLocation,
   initialIndustry,
+  initialBusinessCards,
   onClose,
+  onCardsChange,
   onSave,
 }: MerchantProfileDialogProps) {
   const countryOptions = useMemo(() => getEuropeCountryOptions(), []);
@@ -267,6 +279,7 @@ export default function MerchantProfileDialog({
   const [customProvinceName, setCustomProvinceName] = useState(initialState.customProvinceName);
   const [customCityName, setCustomCityName] = useState(initialState.customCityName);
   const [industry, setIndustry] = useState<MerchantIndustry>(initialState.industry);
+  const [businessCards, setBusinessCards] = useState<MerchantBusinessCardAsset[]>(() => initialBusinessCards ?? []);
   const [domainSubmitCooldownLeftSec, setDomainSubmitCooldownLeftSec] = useState(0);
   const normalizedTakenPrefixes = useMemo(
     () =>
@@ -385,6 +398,38 @@ export default function MerchantProfileDialog({
     () => provinceSelectOptions.find((item) => item.code === provinceCode)?.name ?? customProvinceName,
     [provinceSelectOptions, provinceCode, customProvinceName],
   );
+  const liveProfile = useMemo(
+    () => ({
+      merchantName: merchantName.trim(),
+      domainPrefix: domainPrefixConfirmed || domainPrefixInput.trim(),
+      contactAddress: contactAddress.trim(),
+      contactName: contactName.trim(),
+      contactPhone: contactPhone.trim(),
+      contactEmail: contactEmail.trim(),
+      industry,
+      location: {
+        country: selectedCountryName || countryInput.trim(),
+        province: (selectedProvinceName || provinceInput).trim(),
+        city: (cityInput || city).trim(),
+      },
+    }),
+    [
+      city,
+      cityInput,
+      contactAddress,
+      contactEmail,
+      contactName,
+      contactPhone,
+      countryInput,
+      domainPrefixConfirmed,
+      domainPrefixInput,
+      industry,
+      merchantName,
+      provinceInput,
+      selectedCountryName,
+      selectedProvinceName,
+    ],
+  );
 
   const countrySearchOptions = useMemo<SearchOption[]>(
     () => countryOptions.map((item) => ({ value: item.code, label: item.name })),
@@ -496,10 +541,13 @@ export default function MerchantProfileDialog({
 
   if (!open) return null;
 
-  return (
-    <div className="fixed inset-0 z-[21000] bg-black/40 flex items-center justify-center p-4" onMouseDown={onClose}>
+  return renderDialogOverlay(
+    <div
+      className="fixed inset-0 z-[2147482500] flex items-start justify-center overflow-y-auto bg-black/40 p-4"
+      onMouseDown={onClose}
+    >
       <div
-        className="w-full max-w-2xl rounded-xl border bg-white p-4 shadow-xl space-y-4"
+        className="my-4 max-h-[calc(100vh-2rem)] w-full max-w-2xl space-y-4 overflow-y-auto rounded-xl border bg-white p-4 shadow-xl"
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div>
@@ -798,6 +846,16 @@ export default function MerchantProfileDialog({
           </div>
         </div>
 
+        <MerchantBusinessCardManager
+          siteBaseDomain={siteBaseDomain}
+          profile={liveProfile}
+          cards={businessCards}
+          onCardsChange={(cards) => {
+            setBusinessCards(cards);
+            onCardsChange?.(cards);
+          }}
+        />
+
         <div className="flex justify-end gap-2">
           <button
             type="button"
@@ -851,7 +909,7 @@ export default function MerchantProfileDialog({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
   );
 }
 

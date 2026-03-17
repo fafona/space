@@ -1,4 +1,5 @@
-﻿import { extractPlanTemplateCoverImage } from "@/lib/planTemplateRuntime";
+﻿import { normalizeMerchantBusinessCards, type MerchantBusinessCardAsset } from "@/lib/merchantBusinessCards";
+import { extractPlanTemplateCoverImage } from "@/lib/planTemplateRuntime";
 
 export type PermissionKey =
   | "dashboard.view"
@@ -142,6 +143,7 @@ export type Site = {
   serviceExpiresAt?: string | null;
   permissionConfig?: MerchantServicePermissionConfig;
   merchantCardImageUrl?: string;
+  businessCards?: MerchantBusinessCardAsset[];
   sortConfig?: MerchantSortConfig;
   configHistory?: MerchantConfigHistoryEntry[];
   createdAt: string;
@@ -787,6 +789,7 @@ function createDefaultState(): PlatformState {
         serviceExpiresAt: null,
         permissionConfig: createDefaultMerchantPermissionConfig(),
         merchantCardImageUrl: "",
+        businessCards: [],
         sortConfig: createDefaultMerchantSortConfig(),
         configHistory: [],
         createdAt: current,
@@ -820,6 +823,7 @@ function createDefaultState(): PlatformState {
         serviceExpiresAt: null,
         permissionConfig: createDefaultMerchantPermissionConfig(),
         merchantCardImageUrl: "",
+        businessCards: [],
         sortConfig: createDefaultMerchantSortConfig(),
         configHistory: [],
         createdAt: current,
@@ -1037,6 +1041,7 @@ function normalizeState(input: PlatformState): PlatformState {
               : null,
           permissionConfig: normalizeMerchantPermissionConfig((site as { permissionConfig?: unknown }).permissionConfig),
           merchantCardImageUrl: normalizeText((site as { merchantCardImageUrl?: unknown }).merchantCardImageUrl),
+          businessCards: normalizeMerchantBusinessCards((site as { businessCards?: unknown }).businessCards),
           sortConfig: normalizeMerchantSortConfig((site as { sortConfig?: unknown }).sortConfig),
           configHistory: normalizeMerchantConfigHistory((site as { configHistory?: unknown }).configHistory),
         }))
@@ -1279,6 +1284,7 @@ export function createSite(input: {
     serviceExpiresAt: null,
     permissionConfig: createDefaultMerchantPermissionConfig(),
     merchantCardImageUrl: "",
+    businessCards: [],
     sortConfig: createDefaultMerchantSortConfig(),
     configHistory: [],
     createdAt: current,

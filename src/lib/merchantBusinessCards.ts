@@ -1,0 +1,362 @@
+import type { TypographyEditableProps } from "@/data/homeBlocks";
+
+export const MERCHANT_BUSINESS_CARD_RATIO_OPTIONS = [
+  { id: "85:54", label: "名片横版", width: 85, height: 54 },
+  { id: "16:9", label: "16:9", width: 16, height: 9 },
+  { id: "3:2", label: "3:2", width: 3, height: 2 },
+  { id: "1:1", label: "1:1", width: 1, height: 1 },
+] as const;
+
+export type MerchantBusinessCardRatioOptionId =
+  | (typeof MERCHANT_BUSINESS_CARD_RATIO_OPTIONS)[number]["id"]
+  | "custom";
+
+export type MerchantBusinessCardFieldKey =
+  | "merchantName"
+  | "title"
+  | "website"
+  | "contactName"
+  | "phone"
+  | "email"
+  | "address"
+  | "wechat"
+  | "whatsapp"
+  | "facebook"
+  | "instagram"
+  | "tiktok"
+  | "xiaohongshu";
+
+export type MerchantBusinessCardTextLayout = Record<
+  MerchantBusinessCardFieldKey,
+  { x: number; y: number }
+>;
+
+export type MerchantBusinessCardTypographyKey = "name" | "title" | "website" | "info";
+
+export type MerchantBusinessCardTypographyMap = Record<
+  MerchantBusinessCardTypographyKey,
+  TypographyEditableProps
+>;
+
+export type MerchantBusinessCardContacts = {
+  contactName: string;
+  phone: string;
+  email: string;
+  address: string;
+  wechat: string;
+  whatsapp: string;
+  facebook: string;
+  instagram: string;
+  tiktok: string;
+  xiaohongshu: string;
+};
+
+export type MerchantBusinessCardDraft = {
+  name: string;
+  backgroundImageUrl: string;
+  backgroundColor: string;
+  width: number;
+  height: number;
+  ratioMode: MerchantBusinessCardRatioOptionId;
+  title: string;
+  websiteLabel: string;
+  contacts: MerchantBusinessCardContacts;
+  textLayout: MerchantBusinessCardTextLayout;
+  qr: {
+    x: number;
+    y: number;
+    size: number;
+  };
+  typography: MerchantBusinessCardTypographyMap;
+};
+
+export type MerchantBusinessCardAsset = MerchantBusinessCardDraft & {
+  id: string;
+  createdAt: string;
+  imageUrl: string;
+};
+
+export type MerchantBusinessCardProfileInput = {
+  merchantName?: string;
+  domainPrefix?: string;
+  contactAddress?: string;
+  contactName?: string;
+  contactPhone?: string;
+  contactEmail?: string;
+  industry?: string;
+  location?:
+    | {
+        country?: string;
+        province?: string;
+        city?: string;
+      }
+    | null;
+};
+
+function normalizeText(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function clampInt(value: unknown, fallback: number, min: number, max: number) {
+  const next = typeof value === "number" && Number.isFinite(value) ? Math.round(value) : fallback;
+  return Math.max(min, Math.min(max, next));
+}
+
+function normalizeTypographyStyle(
+  value: unknown,
+  fallback: TypographyEditableProps,
+): TypographyEditableProps {
+  const source = value && typeof value === "object" ? (value as Partial<TypographyEditableProps>) : {};
+  const normalizedWeight = normalizeText(source.fontWeight);
+  const normalizedStyle = normalizeText(source.fontStyle);
+  const normalizedDecoration = normalizeText(source.textDecoration);
+  return {
+    fontFamily: normalizeText(source.fontFamily),
+    fontSize: clampInt(source.fontSize, fallback.fontSize ?? 16, 10, 80),
+    fontColor: normalizeText(source.fontColor) || normalizeText(fallback.fontColor),
+    fontWeight:
+      normalizedWeight === "bold" || normalizedWeight === "normal"
+        ? normalizedWeight
+        : fallback.fontWeight,
+    fontStyle:
+      normalizedStyle === "italic" || normalizedStyle === "normal"
+        ? normalizedStyle
+        : fallback.fontStyle,
+    textDecoration:
+      normalizedDecoration === "underline" || normalizedDecoration === "none"
+        ? normalizedDecoration
+        : fallback.textDecoration,
+  };
+}
+
+export function buildMerchantBusinessCardAddress(profile: MerchantBusinessCardProfileInput) {
+  const segments = [
+    normalizeText(profile.contactAddress),
+    normalizeText(profile.location?.city),
+    normalizeText(profile.location?.province),
+    normalizeText(profile.location?.country),
+  ].filter(Boolean);
+  return segments.join(" / ");
+}
+
+export function getMerchantBusinessCardRequiredFields(profile: MerchantBusinessCardProfileInput) {
+  const missing: string[] = [];
+  if (!normalizeText(profile.merchantName)) missing.push("商户名称");
+  if (!normalizeText(profile.domainPrefix)) missing.push("域名前缀");
+  if (!normalizeText(profile.contactAddress)) missing.push("地址");
+  if (!normalizeText(profile.contactName)) missing.push("联系人");
+  if (!normalizeText(profile.contactPhone)) missing.push("电话");
+  if (!normalizeText(profile.contactEmail)) missing.push("邮箱");
+  if (!normalizeText(profile.industry)) missing.push("行业");
+  if (!normalizeText(profile.location?.country)) missing.push("国家");
+  if (!normalizeText(profile.location?.province)) missing.push("省份");
+  if (!normalizeText(profile.location?.city)) missing.push("城市");
+  return missing;
+}
+
+export function createDefaultMerchantBusinessCardDraft(
+  profile: MerchantBusinessCardProfileInput,
+): MerchantBusinessCardDraft {
+  return {
+    name: normalizeText(profile.merchantName) || "未命名名片",
+    backgroundImageUrl: "",
+    backgroundColor: "#f8fafc",
+    width: 680,
+    height: 432,
+    ratioMode: "85:54",
+    title: "",
+    websiteLabel: "扫码进入网站",
+    contacts: {
+      contactName: normalizeText(profile.contactName),
+      phone: normalizeText(profile.contactPhone),
+      email: normalizeText(profile.contactEmail),
+      address: buildMerchantBusinessCardAddress(profile),
+      wechat: "",
+      whatsapp: "",
+      facebook: "",
+      instagram: "",
+      tiktok: "",
+      xiaohongshu: "",
+    },
+    textLayout: {
+      merchantName: { x: 36, y: 34 },
+      title: { x: 36, y: 92 },
+      website: { x: 36, y: 136 },
+      contactName: { x: 36, y: 190 },
+      phone: { x: 36, y: 226 },
+      email: { x: 36, y: 262 },
+      address: { x: 36, y: 298 },
+      wechat: { x: 36, y: 334 },
+      whatsapp: { x: 36, y: 370 },
+      facebook: { x: 360, y: 190 },
+      instagram: { x: 360, y: 226 },
+      tiktok: { x: 360, y: 262 },
+      xiaohongshu: { x: 360, y: 298 },
+    },
+    qr: {
+      x: 508,
+      y: 126,
+      size: 136,
+    },
+    typography: {
+      name: {
+        fontFamily: "",
+        fontSize: 36,
+        fontColor: "#0f172a",
+        fontWeight: "bold",
+        fontStyle: "normal",
+        textDecoration: "none",
+      },
+      title: {
+        fontFamily: "",
+        fontSize: 18,
+        fontColor: "#334155",
+        fontWeight: "bold",
+        fontStyle: "normal",
+        textDecoration: "none",
+      },
+      website: {
+        fontFamily: "",
+        fontSize: 14,
+        fontColor: "#475569",
+        fontWeight: "normal",
+        fontStyle: "normal",
+        textDecoration: "none",
+      },
+      info: {
+        fontFamily: "",
+        fontSize: 14,
+        fontColor: "#0f172a",
+        fontWeight: "normal",
+        fontStyle: "normal",
+        textDecoration: "none",
+      },
+    },
+  };
+}
+
+export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusinessCardDraft {
+  const fallback = createDefaultMerchantBusinessCardDraft({});
+  const source = value && typeof value === "object" ? (value as Partial<MerchantBusinessCardDraft>) : {};
+  const ratioMode = normalizeText(source.ratioMode) as MerchantBusinessCardRatioOptionId;
+  const textLayoutSource =
+    source.textLayout && typeof source.textLayout === "object"
+      ? (source.textLayout as Partial<MerchantBusinessCardTextLayout>)
+      : {};
+  const typographySource =
+    source.typography && typeof source.typography === "object"
+      ? (source.typography as Partial<MerchantBusinessCardTypographyMap>)
+      : {};
+
+  return {
+    name: normalizeText(source.name) || fallback.name,
+    backgroundImageUrl: normalizeText(source.backgroundImageUrl),
+    backgroundColor: normalizeText(source.backgroundColor) || fallback.backgroundColor,
+    width: clampInt(source.width, fallback.width, 320, 1600),
+    height: clampInt(source.height, fallback.height, 180, 1600),
+    ratioMode:
+      ratioMode === "custom" || MERCHANT_BUSINESS_CARD_RATIO_OPTIONS.some((item) => item.id === ratioMode)
+        ? ratioMode
+        : fallback.ratioMode,
+    title: normalizeText(source.title),
+    websiteLabel: normalizeText(source.websiteLabel) || fallback.websiteLabel,
+    contacts: {
+      contactName: normalizeText(source.contacts?.contactName),
+      phone: normalizeText(source.contacts?.phone),
+      email: normalizeText(source.contacts?.email),
+      address: normalizeText(source.contacts?.address),
+      wechat: normalizeText(source.contacts?.wechat),
+      whatsapp: normalizeText(source.contacts?.whatsapp),
+      facebook: normalizeText(source.contacts?.facebook),
+      instagram: normalizeText(source.contacts?.instagram),
+      tiktok: normalizeText(source.contacts?.tiktok),
+      xiaohongshu: normalizeText(source.contacts?.xiaohongshu),
+    },
+    textLayout: {
+      merchantName: {
+        x: clampInt(textLayoutSource.merchantName?.x, fallback.textLayout.merchantName.x, 0, 2000),
+        y: clampInt(textLayoutSource.merchantName?.y, fallback.textLayout.merchantName.y, 0, 2000),
+      },
+      title: {
+        x: clampInt(textLayoutSource.title?.x, fallback.textLayout.title.x, 0, 2000),
+        y: clampInt(textLayoutSource.title?.y, fallback.textLayout.title.y, 0, 2000),
+      },
+      website: {
+        x: clampInt(textLayoutSource.website?.x, fallback.textLayout.website.x, 0, 2000),
+        y: clampInt(textLayoutSource.website?.y, fallback.textLayout.website.y, 0, 2000),
+      },
+      contactName: {
+        x: clampInt(textLayoutSource.contactName?.x, fallback.textLayout.contactName.x, 0, 2000),
+        y: clampInt(textLayoutSource.contactName?.y, fallback.textLayout.contactName.y, 0, 2000),
+      },
+      phone: {
+        x: clampInt(textLayoutSource.phone?.x, fallback.textLayout.phone.x, 0, 2000),
+        y: clampInt(textLayoutSource.phone?.y, fallback.textLayout.phone.y, 0, 2000),
+      },
+      email: {
+        x: clampInt(textLayoutSource.email?.x, fallback.textLayout.email.x, 0, 2000),
+        y: clampInt(textLayoutSource.email?.y, fallback.textLayout.email.y, 0, 2000),
+      },
+      address: {
+        x: clampInt(textLayoutSource.address?.x, fallback.textLayout.address.x, 0, 2000),
+        y: clampInt(textLayoutSource.address?.y, fallback.textLayout.address.y, 0, 2000),
+      },
+      wechat: {
+        x: clampInt(textLayoutSource.wechat?.x, fallback.textLayout.wechat.x, 0, 2000),
+        y: clampInt(textLayoutSource.wechat?.y, fallback.textLayout.wechat.y, 0, 2000),
+      },
+      whatsapp: {
+        x: clampInt(textLayoutSource.whatsapp?.x, fallback.textLayout.whatsapp.x, 0, 2000),
+        y: clampInt(textLayoutSource.whatsapp?.y, fallback.textLayout.whatsapp.y, 0, 2000),
+      },
+      facebook: {
+        x: clampInt(textLayoutSource.facebook?.x, fallback.textLayout.facebook.x, 0, 2000),
+        y: clampInt(textLayoutSource.facebook?.y, fallback.textLayout.facebook.y, 0, 2000),
+      },
+      instagram: {
+        x: clampInt(textLayoutSource.instagram?.x, fallback.textLayout.instagram.x, 0, 2000),
+        y: clampInt(textLayoutSource.instagram?.y, fallback.textLayout.instagram.y, 0, 2000),
+      },
+      tiktok: {
+        x: clampInt(textLayoutSource.tiktok?.x, fallback.textLayout.tiktok.x, 0, 2000),
+        y: clampInt(textLayoutSource.tiktok?.y, fallback.textLayout.tiktok.y, 0, 2000),
+      },
+      xiaohongshu: {
+        x: clampInt(textLayoutSource.xiaohongshu?.x, fallback.textLayout.xiaohongshu.x, 0, 2000),
+        y: clampInt(textLayoutSource.xiaohongshu?.y, fallback.textLayout.xiaohongshu.y, 0, 2000),
+      },
+    },
+    qr: {
+      x: clampInt(source.qr?.x, fallback.qr.x, 0, 2000),
+      y: clampInt(source.qr?.y, fallback.qr.y, 0, 2000),
+      size: clampInt(source.qr?.size, fallback.qr.size, 48, 600),
+    },
+    typography: {
+      name: normalizeTypographyStyle(typographySource.name, fallback.typography.name),
+      title: normalizeTypographyStyle(typographySource.title, fallback.typography.title),
+      website: normalizeTypographyStyle(typographySource.website, fallback.typography.website),
+      info: normalizeTypographyStyle(typographySource.info, fallback.typography.info),
+    },
+  };
+}
+
+export function normalizeMerchantBusinessCards(value: unknown): MerchantBusinessCardAsset[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item, index) => {
+      if (!item || typeof item !== "object") return null;
+      const source = item as Partial<MerchantBusinessCardAsset>;
+      const draft = normalizeMerchantBusinessCardDraft(source);
+      const imageUrl = normalizeText(source.imageUrl);
+      const id = normalizeText(source.id) || `business-card-${index + 1}`;
+      const createdAt = normalizeText(source.createdAt) || new Date().toISOString();
+      if (!imageUrl) return null;
+      return {
+        ...draft,
+        id,
+        createdAt,
+        imageUrl,
+      } satisfies MerchantBusinessCardAsset;
+    })
+    .filter((item): item is MerchantBusinessCardAsset => !!item);
+}
