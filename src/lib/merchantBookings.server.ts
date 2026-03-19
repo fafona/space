@@ -6,6 +6,7 @@ import {
   type MerchantBookingActionInput,
   type MerchantBookingCreateInput,
   type MerchantBookingRecord,
+  type MerchantBookingStatus,
   type MerchantBookingStoredRecord,
   validateMerchantBookingInput,
   withoutMerchantBookingToken,
@@ -70,6 +71,25 @@ async function writeMerchantBookingStore(store: MerchantBookingStoreFile) {
 
 function createEditToken() {
   return randomBytes(18).toString("hex");
+}
+
+function sortNewestFirst<T extends { updatedAt?: string; createdAt?: string }>(records: T[]) {
+  return [...records].sort((left, right) => {
+    const leftTime = new Date(left.updatedAt ?? left.createdAt ?? 0).getTime();
+    const rightTime = new Date(right.updatedAt ?? right.createdAt ?? 0).getTime();
+    return (Number.isFinite(rightTime) ? rightTime : 0) - (Number.isFinite(leftTime) ? leftTime : 0);
+  });
+}
+
+export async function listMerchantBookings(siteId: string): Promise<MerchantBookingRecord[]> {
+  const normalizedSiteId = String(siteId ?? "").trim();
+  if (!normalizedSiteId) return [];
+  const store = await readMerchantBookingStore();
+  return sortNewestFirst(
+    store.records
+      .filter((item) => item.siteId === normalizedSiteId)
+      .map((item) => withoutMerchantBookingToken(item)),
+  );
 }
 
 export async function createMerchantBooking(input: MerchantBookingCreateInput): Promise<{
@@ -145,6 +165,38 @@ export async function updateMerchantBooking(input: MerchantBookingActionInput): 
       ...current,
       ...nextEditable,
       status: current.status === "cancelled" ? "active" : current.status,
+      updatedAt: new Date().toISOString(),
+    };
+    store.records[targetIndex] = next;
+    await writeMerchantBookingStore(store);
+    return withoutMerchantBookingToken(next);
+  });
+}
+
+export async function updateMerchantBookingStatusBySite(input: {
+  siteId: string;
+  bookingId: string;
+  status: MerchantBookingStatus;
+}): Promise<MerchantBookingRecord> {
+  const siteId = String(input.siteId ?? "").trim();
+  const bookingId = String(input.bookingId ?? "").trim();
+  if (!siteId || !bookingId) {
+    throw new Error("预约记录参数缺失");
+  }
+
+  return withBookingStoreLock(async () => {
+    const store = await readMerchantBookingStore();
+    const targetIndex = store.records.findIndex((item) => item.id === bookingId && item.siteId === siteId);
+    if (targetIndex < 0) {
+      throw new Error("未找到对应预约记录");
+    }
+    const current = store.records[targetIndex];
+    if (!current) {
+      throw new Error("未找到对应预约记录");
+    }
+    const next: MerchantBookingStoredRecord = {
+      ...current,
+      status: input.status,
       updatedAt: new Date().toISOString(),
     };
     store.records[targetIndex] = next;

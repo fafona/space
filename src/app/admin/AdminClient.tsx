@@ -170,6 +170,7 @@ import { ensureMerchantIdentityForUser, isMerchantNumericId } from "@/lib/mercha
 import { buildMerchantDomain, buildMerchantFrontendHref, buildSiteStoreScope } from "@/lib/siteRouting";
 import BlockRenderer from "@/components/blocks/BlockRenderer";
 import BookingBlock from "@/components/blocks/BookingBlock";
+import MerchantBookingManagerDialog from "@/components/admin/MerchantBookingManagerDialog";
 import MerchantProfileDialog from "@/components/admin/MerchantProfileDialog";
 
 const IMAGE_FILL_VALUES: ImageFillMode[] = [
@@ -2747,6 +2748,7 @@ export default function AdminClient({
   const [publishing, setPublishing] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [merchantProfileDialogOpen, setMerchantProfileDialogOpen] = useState(false);
+  const [merchantBookingManagerOpen, setMerchantBookingManagerOpen] = useState(false);
   const [merchantProfileAttention, setMerchantProfileAttention] = useState(false);
   const merchantProfileButtonRef = useRef<HTMLButtonElement>(null);
   const [topBarCollapsed, setTopBarCollapsed] = useState(false);
@@ -6194,6 +6196,15 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               >
                 {"数据统计"}
               </button>
+              {!isPlatformEditor && canUseBookingBlock ? (
+                <button
+                  className="px-3 py-2 rounded border bg-white hover:bg-gray-50 disabled:opacity-50"
+                  onClick={() => setMerchantBookingManagerOpen(true)}
+                  disabled={!editingSiteId}
+                >
+                  {"预约管理"}
+                </button>
+              ) : null}
               <button
                 className="px-3 py-2 rounded border bg-white hover:bg-gray-50"
                 onClick={async () => {
@@ -6867,6 +6878,15 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               }
             });
           }}
+        />
+      ) : null}
+
+      {merchantBookingManagerOpen && !isPlatformEditor && canUseBookingBlock ? (
+        <MerchantBookingManagerDialog
+          open={merchantBookingManagerOpen}
+          siteId={editingSiteId || ""}
+          siteName={merchantDisplayName}
+          onClose={() => setMerchantBookingManagerOpen(false)}
         />
       ) : null}
 
