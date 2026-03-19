@@ -60,11 +60,7 @@ export default function MerchantEntryPageClient({
   useEffect(() => {
     if (!hydrated || !merchantEntry || !isMerchantNumericId(merchantEntry)) return;
 
-    if (!isSupabaseEnabled) {
-      setNumericAdminAuthenticated(true);
-      setNumericAdminAuthReady(true);
-      return;
-    }
+    if (!isSupabaseEnabled) return;
 
     let mounted = true;
     const redirectToLogin = () => {
@@ -113,6 +109,9 @@ export default function MerchantEntryPageClient({
   }
 
   if (merchantEntry && isMerchantNumericId(merchantEntry)) {
+    if (!isSupabaseEnabled) {
+      return <AdminClient forcedScope={`site-${merchantEntry}`} />;
+    }
     if (!numericAdminAuthReady) {
       return <LoadingProgressScreen message="正在检查登录状态..." />;
     }
