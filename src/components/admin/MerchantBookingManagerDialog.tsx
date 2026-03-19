@@ -3,12 +3,21 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { MerchantBookingRecord, MerchantBookingStatus } from "@/lib/merchantBookings";
-import { getMerchantBookingStatusLabel } from "@/lib/merchantBookings";
+import {
+  buildDefaultBookingItemOptions,
+  buildDefaultBookingStoreOptions,
+  buildDefaultBookingTitleOptions,
+  getMerchantBookingStatusLabel,
+  normalizeBookingOptionList,
+} from "@/lib/merchantBookings";
 
 type MerchantBookingManagerDialogProps = {
   open: boolean;
   siteId: string;
   siteName: string;
+  storeOptions?: string[];
+  itemOptions?: string[];
+  titleOptions?: string[];
   onClose: () => void;
 };
 
@@ -99,6 +108,9 @@ export default function MerchantBookingManagerDialog({
   open,
   siteId,
   siteName,
+  storeOptions = [],
+  itemOptions = [],
+  titleOptions = [],
   onClose,
 }: MerchantBookingManagerDialogProps) {
   const [records, setRecords] = useState<MerchantBookingRecord[]>([]);
@@ -164,6 +176,33 @@ export default function MerchantBookingManagerDialog({
         return matchesSearch(item, query);
       }),
     [records, filter, query],
+  );
+
+  const selectableStoreOptions = useMemo(
+    () =>
+      normalizeBookingOptionList(
+        [...storeOptions, ...records.map((record) => record.store)],
+        buildDefaultBookingStoreOptions(siteName),
+      ),
+    [records, siteName, storeOptions],
+  );
+
+  const selectableItemOptions = useMemo(
+    () =>
+      normalizeBookingOptionList(
+        [...itemOptions, ...records.map((record) => record.item)],
+        buildDefaultBookingItemOptions(),
+      ),
+    [itemOptions, records],
+  );
+
+  const selectableTitleOptions = useMemo(
+    () =>
+      normalizeBookingOptionList(
+        [...titleOptions, ...records.map((record) => record.title)],
+        buildDefaultBookingTitleOptions(),
+      ),
+    [records, titleOptions],
   );
 
   const patchBooking = async (
@@ -356,19 +395,31 @@ export default function MerchantBookingManagerDialog({
                     <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                       <label className="space-y-1 text-sm text-slate-700">
                         <span className="text-xs text-slate-500">店铺</span>
-                        <input
+                        <select
                           className="w-full rounded border px-3 py-2"
                           value={draft.store}
                           onChange={(event) => handleDraftChange(record.id, "store", event.target.value)}
-                        />
+                        >
+                          {selectableStoreOptions.map((option) => (
+                            <option key={option} value={option}>
+                              {option}
+                            </option>
+                          ))}
+                        </select>
                       </label>
                       <label className="space-y-1 text-sm text-slate-700">
                         <span className="text-xs text-slate-500">项目</span>
-                        <input
+                        <select
                           className="w-full rounded border px-3 py-2"
                           value={draft.item}
                           onChange={(event) => handleDraftChange(record.id, "item", event.target.value)}
-                        />
+                        >
+                          {selectableItemOptions.map((option) => (
+                            <option key={option} value={option}>
+                              {option}
+                            </option>
+                          ))}
+                        </select>
                       </label>
                       <label className="space-y-1 text-sm text-slate-700">
                         <span className="text-xs text-slate-500">预约时间</span>
@@ -383,11 +434,17 @@ export default function MerchantBookingManagerDialog({
                       </label>
                       <label className="space-y-1 text-sm text-slate-700">
                         <span className="text-xs text-slate-500">称谓</span>
-                        <input
+                        <select
                           className="w-full rounded border px-3 py-2"
                           value={draft.title}
                           onChange={(event) => handleDraftChange(record.id, "title", event.target.value)}
-                        />
+                        >
+                          {selectableTitleOptions.map((option) => (
+                            <option key={option} value={option}>
+                              {option}
+                            </option>
+                          ))}
+                        </select>
                       </label>
                     </div>
 

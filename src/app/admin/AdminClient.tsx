@@ -238,6 +238,12 @@ type PlanTemplatePreviewOption = {
   planName: string;
 };
 
+type BookingManagerOptionSet = {
+  storeOptions: string[];
+  itemOptions: string[];
+  titleOptions: string[];
+};
+
 function getPlanTemplatePreviewOptions(rawBlocks: unknown): PlanTemplatePreviewOption[] {
   if (!Array.isArray(rawBlocks) || rawBlocks.length === 0) return [];
   try {
@@ -254,6 +260,33 @@ function getPlanTemplatePreviewOptions(rawBlocks: unknown): PlanTemplatePreviewO
   } catch {
     return [];
   }
+}
+
+function collectBookingOptionsFromPlanConfig(config: PagePlanConfig | null | undefined): BookingManagerOptionSet {
+  const collected: BookingManagerOptionSet = {
+    storeOptions: [],
+    itemOptions: [],
+    titleOptions: [],
+  };
+  if (!config) return collected;
+
+  for (const plan of config.plans ?? []) {
+    const pages =
+      Array.isArray(plan.pages) && plan.pages.length > 0
+        ? plan.pages
+        : [{ id: plan.activePageId, name: "", blocks: getBlocksForPage(plan, plan.activePageId) }];
+
+    for (const page of pages) {
+      for (const block of page.blocks ?? []) {
+        if (block.type !== "booking") continue;
+        collected.storeOptions.push(...normalizeBookingOptionList(block.props.bookingStoreOptions));
+        collected.itemOptions.push(...normalizeBookingOptionList(block.props.bookingItemOptions));
+        collected.titleOptions.push(...normalizeBookingOptionList(block.props.bookingTitleOptions));
+      }
+    }
+  }
+
+  return collected;
 }
 
 const MIN_BLOCK_WIDTH = 240;
@@ -2818,7 +2851,7 @@ export default function AdminClient({
           initialMobilePlanConfig.plans.find((plan) => plan.id === initialMobilePlanConfig.activePlanId) ??
             initialMobilePlanConfig.plans[0],
           initialMobilePlanConfig.plans.find((plan) => plan.id === initialMobilePlanConfig.activePlanId)?.activePageId ?? "page-1",
-        )[0]?.id ?? "",
+      )[0]?.id ?? "",
     },
   });
 
@@ -6001,6 +6034,23 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const merchantDisplayName = !isPlatformEditor
     ? ((editingSite?.merchantName ?? "").trim() || "未设置商户名称")
     : "";
+  const otherBookingViewport = previewViewport === "desktop" ? "mobile" : "desktop";
+  const activeBookingOptions = collectBookingOptionsFromPlanConfig(planConfig);
+  const otherBookingOptions = collectBookingOptionsFromPlanConfig(viewportStatesRef.current[otherBookingViewport].planConfig);
+  const merchantBookingManagerOptions = {
+    storeOptions: normalizeBookingOptionList(
+      [...activeBookingOptions.storeOptions, ...otherBookingOptions.storeOptions],
+      buildDefaultBookingStoreOptions(merchantDisplayName),
+    ),
+    itemOptions: normalizeBookingOptionList(
+      [...activeBookingOptions.itemOptions, ...otherBookingOptions.itemOptions],
+      buildDefaultBookingItemOptions(),
+    ),
+    titleOptions: normalizeBookingOptionList(
+      [...activeBookingOptions.titleOptions, ...otherBookingOptions.titleOptions],
+      buildDefaultBookingTitleOptions(),
+    ),
+  };
   const merchantPermissionConfig = !isPlatformEditor
     ? (editingSite?.permissionConfig ?? createDefaultMerchantPermissionConfig())
     : null;
@@ -6886,6 +6936,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           open={merchantBookingManagerOpen}
           siteId={editingSiteId || ""}
           siteName={merchantDisplayName}
+          storeOptions={merchantBookingManagerOptions.storeOptions}
+          itemOptions={merchantBookingManagerOptions.itemOptions}
+          titleOptions={merchantBookingManagerOptions.titleOptions}
           onClose={() => setMerchantBookingManagerOpen(false)}
         />
       ) : null}
