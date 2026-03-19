@@ -155,6 +155,12 @@ import {
   type ProductTagPosition,
 } from "@/lib/productBlock";
 import {
+  buildDefaultBookingItemOptions,
+  buildDefaultBookingStoreOptions,
+  buildDefaultBookingTitleOptions,
+  normalizeBookingOptionList,
+} from "@/lib/merchantBookings";
+import {
   mergeImportedProductImages,
   mergeImportedProductRows,
   parseProductWorkbook,
@@ -163,6 +169,7 @@ import { broadcastPublishSync } from "@/lib/publishSync";
 import { ensureMerchantIdentityForUser, isMerchantNumericId } from "@/lib/merchantIdentity";
 import { buildMerchantDomain, buildMerchantFrontendHref, buildSiteStoreScope } from "@/lib/siteRouting";
 import BlockRenderer from "@/components/blocks/BlockRenderer";
+import BookingBlock from "@/components/blocks/BookingBlock";
 import MerchantProfileDialog from "@/components/admin/MerchantProfileDialog";
 
 const IMAGE_FILL_VALUES: ImageFillMode[] = [
@@ -221,6 +228,7 @@ const BLOCK_TYPE_LABELS: Record<Block["type"], string> = {
   "search-bar": "搜索",
   "merchant-list": "商户列表",
   product: "产品",
+  booking: "预约",
   contact: "联系方式",
 };
 
@@ -5051,6 +5059,29 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       };
     }
 
+    if (type === "booking") {
+      return {
+        id,
+        type,
+        props: {
+          heading: "在线预约",
+          text: "客户可选择店铺、项目、日期时间并填写预约信息。",
+          bookingStoreOptions: buildDefaultBookingStoreOptions(
+            editingSite?.merchantName ?? editingSite?.name ?? merchantDisplayName,
+          ),
+          bookingItemOptions: buildDefaultBookingItemOptions(),
+          bookingTitleOptions: buildDefaultBookingTitleOptions(),
+          bookingSubmitLabel: "提交预约",
+          bookingUpdateLabel: "修改预约",
+          bookingCancelLabel: "取消预约",
+          bookingSuccessTitle: "预约提交成功",
+          bookingSuccessText: "我们已收到您的预约，可在此继续修改或取消。",
+          bookingNamePlaceholder: "请输入称谓或姓名",
+          bookingNotePlaceholder: "可填写备注或需求",
+        },
+      };
+    }
+
     return {
       id,
       type,
@@ -5085,6 +5116,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
     if (!isPlatformEditor && newBlockType === "product" && !canUseProductBlock) {
       showTip("当前权限未开通产品区块");
+      return;
+    }
+    if (!isPlatformEditor && newBlockType === "booking" && !canUseBookingBlock) {
+      showTip("当前权限未开通预约区块");
       return;
     }
     if (newBlockType === "nav") {
@@ -5980,10 +6015,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const canUseGalleryBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowGalleryBlock);
   const canUseMusicBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowMusicBlock);
   const canUseProductBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowProductBlock);
+  const canUseBookingBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowBookingBlock);
   const isCurrentBlockTypeLocked =
     (!canUseGalleryBlock && newBlockType === "gallery") ||
     (!canUseMusicBlock && newBlockType === "music") ||
-    (!canUseProductBlock && newBlockType === "product");
+    (!canUseProductBlock && newBlockType === "product") ||
+    (!canUseBookingBlock && newBlockType === "booking");
   const showAddBlockGuide = !isPlatformEditor && !hasAddedExtraBlock && blocks.length === 1 && blocks[0]?.type === "nav";
   const merchantPublishSizeLimitBytes = !isPlatformEditor
     ? Math.max(1, Math.round(merchantPermissionConfig?.publishSizeLimitMb ?? 1)) * 1024 * 1024
@@ -6395,6 +6432,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                       <option value="nav">{"导航"}</option>
                       <option value="music" disabled={!canUseMusicBlock}>{"音乐"}{!canUseMusicBlock ? "（未开通）" : ""}</option>
                       <option value="product" disabled={!canUseProductBlock}>{"产品"}{!canUseProductBlock ? "（未开通）" : ""}</option>
+                      <option value="booking" disabled={!canUseBookingBlock}>{"预约"}{!canUseBookingBlock ? "（未开通）" : ""}</option>
                       <option value="contact">{"联系方式"}</option>
                       {isPlatformEditor ? <option value="search-bar">{"搜索"}</option> : null}
                       {isPlatformEditor ? <option value="merchant-list">{"商户列表"}</option> : null}
@@ -6466,6 +6504,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                       <BlockRenderer
                         blocks={blocks}
                         currentPageId={editingPageId}
+                        bookingSiteId={editingSiteId || ""}
+                        bookingSiteName={merchantDisplayName}
+                        bookingInteractive={false}
                         onNavigatePage={(pageId) => {
                           if (editingPages.some((page) => page.id === pageId)) switchEditingPage(pageId);
                         }}
@@ -6526,6 +6567,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                               onPersistProductImageFile={persistProductImageFileForEditor}
                               onPersistAudioFile={persistAudioFileForEditor}
                               previewViewport={previewViewport}
+                              runtimeSiteId={editingSiteId || ""}
+                              runtimeSiteName={merchantDisplayName}
                             />
                           </div>
                         );
@@ -6586,6 +6629,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                       onPersistProductImageFile={persistProductImageFileForEditor}
                       onPersistAudioFile={persistAudioFileForEditor}
                       previewViewport={previewViewport}
+                      runtimeSiteId={editingSiteId || ""}
+                      runtimeSiteName={merchantDisplayName}
                     />
                   </div>
                 );
@@ -7279,6 +7324,8 @@ function InlineEditorBlock({
   onPersistProductImageFile,
   onPersistAudioFile,
   previewViewport,
+  runtimeSiteId = "",
+  runtimeSiteName = "",
 }: {
   block: Block;
   draggingBlockId: string | null;
@@ -7307,6 +7354,8 @@ function InlineEditorBlock({
   onPersistProductImageFile: (file: File) => Promise<{ value: string; externalized: boolean }>;
   onPersistAudioFile: (file: File) => Promise<{ value: string; externalized: boolean }>;
   previewViewport: "desktop" | "mobile";
+  runtimeSiteId?: string;
+  runtimeSiteName?: string;
 }) {
   type CommonEditorTextBox = {
     id: string;
@@ -8249,7 +8298,8 @@ type GalleryEditorImage = {
         block.type === "chart" ||
         block.type === "merchant-list" ||
         block.type === "search-bar" ||
-        block.type === "product")
+        block.type === "product" ||
+        block.type === "booking")
     ) {
       return { text: html };
     }
@@ -8265,7 +8315,8 @@ type GalleryEditorImage = {
         block.type === "nav" ||
         block.type === "merchant-list" ||
         block.type === "search-bar" ||
-        block.type === "product")
+        block.type === "product" ||
+        block.type === "booking")
     ) {
       return { heading: html };
     }
@@ -9271,7 +9322,7 @@ type GalleryEditorImage = {
       ? "min(400px, calc(100vw - 2rem))"
       : block.type === "merchant-list" || block.type === "search-bar"
         ? "min(980px, calc(100vw - 2rem))"
-        : block.type === "product"
+        : block.type === "product" || block.type === "booking"
           ? "min(760px, calc(100vw - 2rem))"
           : "min(760px, calc(100vw - 2rem))";
   const selectedEditorPreferredWidth =
@@ -9279,7 +9330,7 @@ type GalleryEditorImage = {
       ? "min(400px, calc(100vw - 2rem))"
       : block.type === "merchant-list" || block.type === "search-bar"
         ? "min(980px, calc(100vw - 2rem))"
-        : block.type === "product"
+        : block.type === "product" || block.type === "booking"
           ? "min(820px, calc(100vw - 2rem))"
           : undefined;
   const blockWidth = draftResize?.width ?? normalizeBlockWidth(block.props.blockWidth);
@@ -16057,6 +16108,174 @@ type GalleryEditorImage = {
               </form>
               <div className="mt-2 text-xs text-slate-500">可点击定位，或手动选择国家/省份/城市。</div>
             </>
+          )}
+          {resizeHandles}
+        </div>
+      </section>
+    );
+  }
+
+  if (block.type === "booking") {
+    const bookingStoreOptionsText = normalizeBookingOptionList(block.props.bookingStoreOptions).join("\n");
+    const bookingItemOptionsText = normalizeBookingOptionList(block.props.bookingItemOptions).join("\n");
+    const bookingTitleOptionsText = normalizeBookingOptionList(block.props.bookingTitleOptions).join("\n");
+    const bookingPreview = (
+      <BookingBlock
+        {...block.props}
+        runtimeSiteId={runtimeSiteId}
+        runtimeSiteName={runtimeSiteName}
+        interactive={false}
+      />
+    );
+
+    return (
+      <section
+        data-block-id={block.id}
+        className={`${shellClass} pointer-events-none`}
+        style={offsetStyle}
+      >
+        <EditorBlockHeader
+          draggingBlockId={draggingBlockId}
+          isSelected={isSelected}
+          onDragHandleMouseDown={onDragHandleMouseDown}
+          onNudge={onNudge}
+          onOpenLayerSettings={openLayerSettings}
+          onEditTypography={editTypography}
+          onInsertText={insertTextBox}
+          onInsertImage={insertImage}
+          onEditImageSettings={editImageSettings}
+          onEditBorderStyle={editBorderSettings}
+          onDelete={onDelete}
+        />
+        <div
+          ref={resizeTargetRef}
+          className={`${cardClass} relative`}
+          onClick={onSelect}
+          style={blockPreviewShellStyle}
+        >
+          {imageDialog}
+          {imageSettingsDialog}
+          {borderSettingsDialog}
+          {layerSettingsDialog}
+          {typographyDialog}
+          {isSelected ? renderSelectedEditor(
+            <div className="space-y-4">
+              <div className="space-y-1 mt-3">
+                <RichTextEditor
+                  field="heading"
+                  className="border p-2 rounded w-full text-xl font-bold"
+                  value={block.props.heading ?? ""}
+                  onChange={handleRichFieldChange}
+                  onActivate={registerActiveEditor}
+                  onSelectionChange={updateSelectionRange}
+                />
+              </div>
+              <div className="space-y-1">
+                <RichTextEditor
+                  field="text"
+                  className="border p-2 rounded w-full min-h-[96px] text-gray-700"
+                  value={block.props.text ?? ""}
+                  onChange={handleRichFieldChange}
+                  onActivate={registerActiveEditor}
+                  onSelectionChange={updateSelectionRange}
+                />
+              </div>
+              <div className="grid gap-4 lg:grid-cols-2">
+                <label className="space-y-1 text-sm text-gray-700">
+                  <span className="block text-gray-600">预约店铺选项</span>
+                  <textarea
+                    className="min-h-[120px] w-full rounded border px-3 py-2"
+                    value={bookingStoreOptionsText}
+                    placeholder={"每行一个店铺，例如：\n主店\n分店 A"}
+                    onChange={(event) => onChange({ bookingStoreOptions: normalizeBookingOptionList(event.target.value) })}
+                  />
+                </label>
+                <label className="space-y-1 text-sm text-gray-700">
+                  <span className="block text-gray-600">预约项目或类型</span>
+                  <textarea
+                    className="min-h-[120px] w-full rounded border px-3 py-2"
+                    value={bookingItemOptionsText}
+                    placeholder={"每行一个项目，例如：\n咨询预约\n到店服务"}
+                    onChange={(event) => onChange({ bookingItemOptions: normalizeBookingOptionList(event.target.value) })}
+                  />
+                </label>
+                <label className="space-y-1 text-sm text-gray-700">
+                  <span className="block text-gray-600">称谓选项</span>
+                  <textarea
+                    className="min-h-[96px] w-full rounded border px-3 py-2"
+                    value={bookingTitleOptionsText}
+                    placeholder={"每行一个称谓，例如：\n先生\n女士"}
+                    onChange={(event) => onChange({ bookingTitleOptions: normalizeBookingOptionList(event.target.value) })}
+                  />
+                </label>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <label className="space-y-1 text-sm text-gray-700">
+                    <span className="block text-gray-600">提交按钮文案</span>
+                    <input
+                      className="w-full rounded border px-3 py-2"
+                      value={block.props.bookingSubmitLabel ?? ""}
+                      onChange={(event) => onChange({ bookingSubmitLabel: event.target.value })}
+                    />
+                  </label>
+                  <label className="space-y-1 text-sm text-gray-700">
+                    <span className="block text-gray-600">修改按钮文案</span>
+                    <input
+                      className="w-full rounded border px-3 py-2"
+                      value={block.props.bookingUpdateLabel ?? ""}
+                      onChange={(event) => onChange({ bookingUpdateLabel: event.target.value })}
+                    />
+                  </label>
+                  <label className="space-y-1 text-sm text-gray-700">
+                    <span className="block text-gray-600">取消按钮文案</span>
+                    <input
+                      className="w-full rounded border px-3 py-2"
+                      value={block.props.bookingCancelLabel ?? ""}
+                      onChange={(event) => onChange({ bookingCancelLabel: event.target.value })}
+                    />
+                  </label>
+                  <label className="space-y-1 text-sm text-gray-700">
+                    <span className="block text-gray-600">姓名占位提示</span>
+                    <input
+                      className="w-full rounded border px-3 py-2"
+                      value={block.props.bookingNamePlaceholder ?? ""}
+                      onChange={(event) => onChange({ bookingNamePlaceholder: event.target.value })}
+                    />
+                  </label>
+                </div>
+              </div>
+              <div className="grid gap-4 lg:grid-cols-2">
+                <label className="space-y-1 text-sm text-gray-700">
+                  <span className="block text-gray-600">提交成功标题</span>
+                  <input
+                    className="w-full rounded border px-3 py-2"
+                    value={block.props.bookingSuccessTitle ?? ""}
+                    onChange={(event) => onChange({ bookingSuccessTitle: event.target.value })}
+                  />
+                </label>
+                <label className="space-y-1 text-sm text-gray-700">
+                  <span className="block text-gray-600">备注占位提示</span>
+                  <input
+                    className="w-full rounded border px-3 py-2"
+                    value={block.props.bookingNotePlaceholder ?? ""}
+                    onChange={(event) => onChange({ bookingNotePlaceholder: event.target.value })}
+                  />
+                </label>
+                <label className="space-y-1 text-sm text-gray-700 lg:col-span-2">
+                  <span className="block text-gray-600">提交成功说明</span>
+                  <textarea
+                    className="min-h-[100px] w-full rounded border px-3 py-2"
+                    value={block.props.bookingSuccessText ?? ""}
+                    onChange={(event) => onChange({ bookingSuccessText: event.target.value })}
+                  />
+                </label>
+              </div>
+              <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div className="text-sm font-medium text-slate-700">预约预览</div>
+                {bookingPreview}
+              </div>
+            </div>,
+          ) : (
+            bookingPreview
           )}
           {resizeHandles}
         </div>

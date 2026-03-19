@@ -758,7 +758,8 @@ function describePermissionValue(
     key === "allowThemeEffects" ||
     key === "allowGalleryBlock" ||
     key === "allowMusicBlock" ||
-    key === "allowProductBlock"
+    key === "allowProductBlock" ||
+    key === "allowBookingBlock"
   ) {
     return value === true ? "是" : "否";
   }
@@ -791,6 +792,7 @@ function buildMerchantConfigDiffLines(current: MerchantConfigSnapshot, target: M
     { key: "allowGalleryBlock", label: "可相册区块" },
     { key: "allowMusicBlock", label: "可音乐区块" },
     { key: "allowProductBlock", label: "可产品区块" },
+    { key: "allowBookingBlock", label: "可预约区块" },
   ];
   permissionFields.forEach(({ key, label }) => {
     const fromValue = current.permissionConfig[key];
@@ -983,6 +985,7 @@ export default function SuperAdminClient() {
   const [configAllowGalleryBlock, setConfigAllowGalleryBlock] = useState(false);
   const [configAllowMusicBlock, setConfigAllowMusicBlock] = useState(false);
   const [configAllowProductBlock, setConfigAllowProductBlock] = useState(false);
+  const [configAllowBookingBlock, setConfigAllowBookingBlock] = useState(false);
   const [configMerchantCardImage, setConfigMerchantCardImage] = useState("");
   const [configRecommendedCountryRank, setConfigRecommendedCountryRank] = useState("");
   const [configRecommendedProvinceRank, setConfigRecommendedProvinceRank] = useState("");
@@ -1692,6 +1695,7 @@ export default function SuperAdminClient() {
     setConfigAllowGalleryBlock(permission.allowGalleryBlock);
     setConfigAllowMusicBlock(permission.allowMusicBlock);
     setConfigAllowProductBlock(permission.allowProductBlock);
+    setConfigAllowBookingBlock(permission.allowBookingBlock);
     setConfigMerchantCardImage((site.merchantCardImageUrl ?? "").trim());
     setConfigRecommendedCountryRank(rankInput(sortConfig.recommendedCountryRank));
     setConfigRecommendedProvinceRank(rankInput(sortConfig.recommendedProvinceRank));
@@ -2546,6 +2550,9 @@ export default function SuperAdminClient() {
     if (prevPermission.allowProductBlock !== configAllowProductBlock) {
       pendingChanges.push(`产品区块：${formatBool(prevPermission.allowProductBlock)} -> ${formatBool(configAllowProductBlock)}`);
     }
+    if (prevPermission.allowBookingBlock !== configAllowBookingBlock) {
+      pendingChanges.push(`预约区块：${formatBool(prevPermission.allowBookingBlock)} -> ${formatBool(configAllowBookingBlock)}`);
+    }
     if (prevMerchantCardImage !== nextMerchantCardImage) {
       pendingChanges.push(`商户框图片：${prevMerchantCardImage ? "已上传" : "默认样式"} -> ${nextMerchantCardImage ? "已上传" : "默认样式"}`);
     }
@@ -2592,6 +2599,7 @@ export default function SuperAdminClient() {
         allowGalleryBlock: configAllowGalleryBlock,
         allowMusicBlock: configAllowMusicBlock,
         allowProductBlock: configAllowProductBlock,
+        allowBookingBlock: configAllowBookingBlock,
       },
       merchantCardImageUrl: nextMerchantCardImage,
       sortConfig,
@@ -4504,6 +4512,10 @@ export default function SuperAdminClient() {
                               <label className="flex items-center gap-2 rounded border px-2 py-1.5">
                                 <input type="checkbox" checked={configAllowProductBlock} onChange={(e) => setConfigAllowProductBlock(e.target.checked)} />
                                 产品区块
+                              </label>
+                              <label className="flex items-center gap-2 rounded border px-2 py-1.5">
+                                <input type="checkbox" checked={configAllowBookingBlock} onChange={(e) => setConfigAllowBookingBlock(e.target.checked)} />
+                                预约区块
                               </label>
                             </div>
                             <div className="rounded border p-2">

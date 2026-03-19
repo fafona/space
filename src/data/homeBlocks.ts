@@ -305,6 +305,21 @@ type ProductProps = BackgroundEditableProps &
     productDescriptionTypography?: TypographyEditableProps;
     productPriceTypography?: TypographyEditableProps;
   };
+export type BookingProps = BackgroundEditableProps &
+  TypographyEditableProps & {
+    heading?: string;
+    text?: string;
+    bookingStoreOptions?: string[];
+    bookingItemOptions?: string[];
+    bookingTitleOptions?: string[];
+    bookingSubmitLabel?: string;
+    bookingUpdateLabel?: string;
+    bookingCancelLabel?: string;
+    bookingSuccessTitle?: string;
+    bookingSuccessText?: string;
+    bookingNamePlaceholder?: string;
+    bookingNotePlaceholder?: string;
+  };
 type NavProps = BackgroundEditableProps &
   TypographyEditableProps & {
     heading?: string;
@@ -337,6 +352,7 @@ export type Block =
   | { id: string; type: "merchant-list"; props: MerchantListProps }
   | { id: string; type: "contact"; props: ContactProps }
   | { id: string; type: "product"; props: ProductProps }
+  | { id: string; type: "booking"; props: BookingProps }
   | { id: string; type: "music"; props: MusicProps };
 
 export const homeBlocks: Block[] = [

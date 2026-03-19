@@ -462,6 +462,9 @@ export function SitePageClient({
       <BlockRenderer
         blocks={activeBlocks}
         currentPageId={activePage?.id}
+        bookingSiteId={site?.id ?? siteId}
+        bookingSiteName={(site?.merchantName ?? site?.name ?? "").trim()}
+        bookingInteractive
         onNavigatePage={(pageId) => {
           if (activePlan?.pages?.some((page) => page.id === pageId)) setCurrentPageId(pageId);
         }}

@@ -14,6 +14,7 @@ import ChartBlock from "./ChartBlock";
 import MusicBlock from "./MusicBlock";
 import NavBlock from "./NavBlock";
 import ProductBlock from "./ProductBlock";
+import BookingBlock from "./BookingBlock";
 import { getBlockRenderStackOrder } from "@/lib/blockStacking";
 
 class BlockRuntimeBoundary extends Component<{ blockId: string; children: ReactNode }, { hasError: boolean }> {
@@ -40,10 +41,16 @@ export default function BlockRenderer({
   blocks,
   currentPageId,
   onNavigatePage,
+  bookingSiteId,
+  bookingSiteName,
+  bookingInteractive = true,
 }: {
   blocks: Block[];
   currentPageId?: string;
   onNavigatePage?: (pageId: string) => void;
+  bookingSiteId?: string;
+  bookingSiteName?: string;
+  bookingInteractive?: boolean;
 }) {
   if (!blocks || blocks.length === 0) return null;
 
@@ -87,6 +94,16 @@ export default function BlockRenderer({
             break;
           case "product":
             content = <ProductBlock {...b.props} />;
+            break;
+          case "booking":
+            content = (
+              <BookingBlock
+                {...b.props}
+                runtimeSiteId={bookingSiteId}
+                runtimeSiteName={bookingSiteName}
+                interactive={bookingInteractive}
+              />
+            );
             break;
           default:
             content = null;

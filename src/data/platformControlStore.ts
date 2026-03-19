@@ -92,6 +92,7 @@ export type MerchantServicePermissionConfig = {
   allowGalleryBlock: boolean;
   allowMusicBlock: boolean;
   allowProductBlock: boolean;
+  allowBookingBlock: boolean;
   publishSizeLimitMb: number;
 };
 
@@ -387,6 +388,7 @@ export function createDefaultMerchantPermissionConfig(): MerchantServicePermissi
     allowGalleryBlock: false,
     allowMusicBlock: false,
     allowProductBlock: false,
+    allowBookingBlock: false,
     publishSizeLimitMb: 5,
   };
 }
@@ -415,6 +417,7 @@ function normalizeMerchantPermissionConfig(value: unknown): MerchantServicePermi
     allowGalleryBlock: typeof source.allowGalleryBlock === "boolean" ? source.allowGalleryBlock : fallback.allowGalleryBlock,
     allowMusicBlock: typeof source.allowMusicBlock === "boolean" ? source.allowMusicBlock : fallback.allowMusicBlock,
     allowProductBlock: typeof source.allowProductBlock === "boolean" ? source.allowProductBlock : fallback.allowProductBlock,
+    allowBookingBlock: typeof source.allowBookingBlock === "boolean" ? source.allowBookingBlock : fallback.allowBookingBlock,
     publishSizeLimitMb: normalizeInt(source.publishSizeLimitMb, fallback.publishSizeLimitMb, 1, 100),
   };
 }

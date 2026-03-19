@@ -188,6 +188,9 @@ export default function HomePageClient({
       <BlockRenderer
         blocks={activeBlocks}
         currentPageId={activePage?.id}
+        bookingSiteId=""
+        bookingSiteName={platformState.sites.find((site) => site.id === "site-main")?.merchantName ?? "总站首页"}
+        bookingInteractive={false}
         onNavigatePage={(pageId) => {
           if (activePlan?.pages?.some((page) => page.id === pageId)) setCurrentPageId(pageId);
         }}
