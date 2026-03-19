@@ -57,7 +57,9 @@ export type MerchantBusinessCardDraft = {
   mode: MerchantBusinessCardMode;
   name: string;
   backgroundImageUrl: string;
+  backgroundImageOpacity: number;
   backgroundColor: string;
+  backgroundColorOpacity: number;
   width: number;
   height: number;
   ratioMode: MerchantBusinessCardRatioOptionId;
@@ -104,6 +106,11 @@ function normalizeText(value: unknown) {
 function clampInt(value: unknown, fallback: number, min: number, max: number) {
   const next = typeof value === "number" && Number.isFinite(value) ? Math.round(value) : fallback;
   return Math.max(min, Math.min(max, next));
+}
+
+function clampOpacity(value: unknown, fallback: number) {
+  const next = typeof value === "number" && Number.isFinite(value) ? value : fallback;
+  return Math.max(0, Math.min(1, Math.round(next * 100) / 100));
 }
 
 function normalizeTypographyStyle(
@@ -165,7 +172,9 @@ export function createDefaultMerchantBusinessCardDraft(
     mode: "image",
     name: normalizeText(profile.merchantName) || "未命名名片",
     backgroundImageUrl: "",
+    backgroundImageOpacity: 1,
     backgroundColor: "#f8fafc",
+    backgroundColorOpacity: 1,
     width: 680,
     height: 432,
     ratioMode: "85:54",
@@ -257,7 +266,9 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
     mode: normalizeText((source as { mode?: unknown }).mode) === "link" ? "link" : "image",
     name: normalizeText(source.name) || fallback.name,
     backgroundImageUrl: normalizeText(source.backgroundImageUrl),
+    backgroundImageOpacity: clampOpacity(source.backgroundImageOpacity, fallback.backgroundImageOpacity),
     backgroundColor: normalizeText(source.backgroundColor) || fallback.backgroundColor,
+    backgroundColorOpacity: clampOpacity(source.backgroundColorOpacity, fallback.backgroundColorOpacity),
     width: clampInt(source.width, fallback.width, 320, 1600),
     height: clampInt(source.height, fallback.height, 180, 1600),
     ratioMode:

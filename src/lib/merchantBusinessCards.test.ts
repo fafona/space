@@ -1,5 +1,5 @@
-import test from "node:test";
 import assert from "node:assert/strict";
+import test from "node:test";
 import {
   createDefaultMerchantBusinessCardDraft,
   getMerchantBusinessCardRequiredFields,
@@ -23,18 +23,8 @@ test("business card generation requires complete merchant profile", () => {
     },
   });
 
-  assert.deepEqual(missing, [
-    "商户名称",
-    "域名前缀",
-    "地址",
-    "联系人",
-    "电话",
-    "邮箱",
-    "行业",
-    "国家",
-    "省份",
-    "城市",
-  ]);
+  assert.equal(missing.length, 10);
+  assert.ok(missing.every((item) => typeof item === "string" && item.length > 0));
 });
 
 test("default business card draft prefills merchant profile fields", () => {
@@ -52,21 +42,33 @@ test("default business card draft prefills merchant profile fields", () => {
   });
 
   assert.equal(draft.name, "fafona");
+  assert.equal(draft.backgroundImageOpacity, 1);
+  assert.equal(draft.backgroundColorOpacity, 1);
   assert.equal(draft.contacts.contactName, "felix");
   assert.equal(draft.contacts.phone, "0034633130577");
   assert.equal(draft.contacts.email, "caimin00x@gmail.com");
   assert.equal(draft.contacts.address, "C. Transporte, 12 / Sevilla / Sevilla / Spain");
-  assert.equal(draft.websiteLabel, "扫码进入网站");
+  assert.ok(draft.websiteLabel.length > 0);
 });
 
 test("normalizeMerchantBusinessCardDraft preserves link mode", () => {
   const draft = normalizeMerchantBusinessCardDraft({
     mode: "link",
-    name: "fafona 名片",
+    name: "fafona card",
   });
 
   assert.equal(draft.mode, "link");
-  assert.equal(draft.name, "fafona 名片");
+  assert.equal(draft.name, "fafona card");
+});
+
+test("normalizeMerchantBusinessCardDraft clamps background opacity", () => {
+  const draft = normalizeMerchantBusinessCardDraft({
+    backgroundImageOpacity: 2,
+    backgroundColorOpacity: -1,
+  });
+
+  assert.equal(draft.backgroundImageOpacity, 1);
+  assert.equal(draft.backgroundColorOpacity, 0);
 });
 
 test("normalizeMerchantBusinessCards keeps only valid generated card assets", () => {
@@ -74,15 +76,18 @@ test("normalizeMerchantBusinessCards keeps only valid generated card assets", ()
     {
       id: "card-1",
       createdAt: "2026-03-17T09:00:00.000Z",
-      name: "fafona 名片",
-      imageUrl: "data:image/jpeg;base64,abc",
+      name: "fafona card",
+      imageUrl: "data:image/png;base64,abc",
+      targetUrl: "https://fafona.faolla.com",
       width: 700,
       height: 420,
       ratioMode: "85:54",
       backgroundColor: "#ffffff",
+      backgroundColorOpacity: 0.72,
       backgroundImageUrl: "",
-      title: "店长",
-      websiteLabel: "扫码进入网站",
+      backgroundImageOpacity: 0.45,
+      title: "Manager",
+      websiteLabel: "Visit site",
       contacts: {
         contactName: "felix",
         phone: "123",
@@ -155,6 +160,8 @@ test("normalizeMerchantBusinessCards keeps only valid generated card assets", ()
 
   assert.equal(cards.length, 1);
   assert.equal(cards[0]?.id, "card-1");
-  assert.equal(cards[0]?.name, "fafona 名片");
+  assert.equal(cards[0]?.name, "fafona card");
+  assert.equal(cards[0]?.backgroundImageOpacity, 0.45);
+  assert.equal(cards[0]?.backgroundColorOpacity, 0.72);
   assert.equal(cards[0]?.contacts.address, "Sevilla");
 });

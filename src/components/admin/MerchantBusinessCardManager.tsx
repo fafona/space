@@ -97,6 +97,10 @@ function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }
 
+function formatOpacityPercent(value: number) {
+  return `${Math.round(clamp(value, 0, 1) * 100)}%`;
+}
+
 function getCardModeLabel(mode: MerchantBusinessCardMode) {
   return mode === "link" ? "链接模式" : "图片模式";
 }
@@ -153,13 +157,25 @@ function CardSurface({
           overflow: "hidden",
           borderRadius: "28px",
           border: "1px solid rgba(15,23,42,.12)",
-          background: draft.backgroundColor || "#f8fafc",
+          background: "transparent",
           boxShadow: "0 24px 60px rgba(15,23,42,.18)",
         }}
       >
+        <div
+          className="absolute inset-0"
+          style={{
+            background: draft.backgroundColor || "#f8fafc",
+            opacity: draft.backgroundColorOpacity,
+          }}
+        />
         {draft.backgroundImageUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={draft.backgroundImageUrl} alt={draft.name} className="absolute inset-0 h-full w-full object-cover" />
+          <img
+            src={draft.backgroundImageUrl}
+            alt={draft.name}
+            className="absolute inset-0 h-full w-full object-cover"
+            style={{ opacity: draft.backgroundImageOpacity }}
+          />
         ) : null}
         <div className="absolute inset-0 bg-white/12" />
         {TEXT_LAYOUT_FIELDS.filter(({ key }) => key === "merchantName" || (key === "title" && draft.title) || key === "website").map(({ key }) => {
@@ -469,9 +485,11 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
                       <label className="block text-xs text-slate-600">宽度<input type="text" inputMode="numeric" className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={getNumberInputValue("card-width", draft.width)} onChange={(event) => handleNumberInputChange("card-width", event.target.value)} onBlur={() => commitNumberInput("card-width", draft.width, 320, 1600, (value) => handleSize(value, "width"))} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} /></label>
                       <label className="block text-xs text-slate-600">高度<input type="text" inputMode="numeric" className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={getNumberInputValue("card-height", draft.height)} onChange={(event) => handleNumberInputChange("card-height", event.target.value)} onBlur={() => commitNumberInput("card-height", draft.height, 180, 1600, (value) => handleSize(value, "height"))} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} /></label>
                     </div>
-                    <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_160px]">
+                    <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_180px]">
                       <label className="block text-xs text-slate-600">背景图<input type="file" accept="image/*" className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" onChange={(event) => void handleBackgroundUpload(event)} /></label>
                       <label className="block text-xs text-slate-600">背景色<input type="color" className="mt-1 h-[42px] w-full rounded border bg-white px-2 py-1" value={draft.backgroundColor} onChange={(event) => applyDraft((current) => ({ ...current, backgroundColor: event.target.value }))} /></label>
+                      <label className="block text-xs text-slate-600">图片透明度<div className="mt-1 flex items-center gap-3 rounded border bg-white px-3 py-2"><input type="range" min="0" max="1" step="0.01" className="min-w-0 flex-1" value={draft.backgroundImageOpacity} onChange={(event) => applyDraft((current) => ({ ...current, backgroundImageOpacity: clamp(Number(event.target.value), 0, 1) }))} /><span className="w-12 shrink-0 text-right text-xs text-slate-500">{formatOpacityPercent(draft.backgroundImageOpacity)}</span></div></label>
+                      <label className="block text-xs text-slate-600">背景色透明度<div className="mt-1 flex items-center gap-3 rounded border bg-white px-3 py-2"><input type="range" min="0" max="1" step="0.01" className="min-w-0 flex-1" value={draft.backgroundColorOpacity} onChange={(event) => applyDraft((current) => ({ ...current, backgroundColorOpacity: clamp(Number(event.target.value), 0, 1) }))} /><span className="w-12 shrink-0 text-right text-xs text-slate-500">{formatOpacityPercent(draft.backgroundColorOpacity)}</span></div></label>
                     </div>
                     <label className="block text-xs text-slate-600">网站说明<input className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.websiteLabel} onFocus={() => setSelectedFieldKey("website")} onChange={(event) => applyDraft((current) => ({ ...current, websiteLabel: event.target.value }))} /></label>
                     <div className="rounded border bg-white px-3 py-2 text-xs text-slate-500">{`当前二维码网址：${websiteUrl || "请先填写域名前缀"}`}</div>
