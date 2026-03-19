@@ -106,6 +106,26 @@ export function sanitizeMerchantBookingEditableInput(
   };
 }
 
+export function splitMerchantBookingDateTime(value: string) {
+  const normalized = normalizeSingleLineText(value);
+  if (!normalized) {
+    return { date: "", time: "" };
+  }
+  const [datePart = "", rawTimePart = ""] = normalized.replace(" ", "T").split("T");
+  const timePart = rawTimePart.slice(0, 5);
+  return {
+    date: /^\d{4}-\d{2}-\d{2}$/.test(datePart) ? datePart : "",
+    time: /^\d{2}:\d{2}$/.test(timePart) ? timePart : "",
+  };
+}
+
+export function joinMerchantBookingDateTime(date: string, time: string) {
+  const normalizedDate = normalizeSingleLineText(date);
+  const normalizedTime = normalizeSingleLineText(time);
+  if (normalizedDate && normalizedTime) return `${normalizedDate}T${normalizedTime}`;
+  return normalizedDate || normalizedTime;
+}
+
 function isValidDateTimeValue(value: string) {
   if (!value) return false;
   const normalized = value.includes("T") ? value : value.replace(" ", "T");

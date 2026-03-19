@@ -8,8 +8,10 @@ import {
   buildDefaultBookingTitleOptions,
   createEmptyMerchantBookingInput,
   formatMerchantBookingDateTime,
+  joinMerchantBookingDateTime,
   normalizeBookingOptionList,
   sanitizeMerchantBookingEditableInput,
+  splitMerchantBookingDateTime,
   type MerchantBookingRecord,
 } from "@/lib/merchantBookings";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
@@ -29,9 +31,6 @@ type SubmittedBookingState = {
 };
 
 const EDIT_TOKEN_STORAGE_KEY = "merchant-space:merchant-booking-tokens:v1";
-const DATE_TIME_INPUT_FONT =
-  'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif';
-
 function readEditTokenMap() {
   if (typeof window === "undefined") return {} as Record<string, string>;
   try {
@@ -105,6 +104,10 @@ export default function BookingBlock({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const isLiveBooking = interactive && isMerchantNumericId(runtimeSiteId);
+  const appointmentParts = useMemo(
+    () => splitMerchantBookingDateTime(draft.appointmentAt),
+    [draft.appointmentAt],
+  );
 
   useEffect(() => {
     setDraft((current) => buildInitialDraft(storeOptions, itemOptions, titleOptions, current));
@@ -322,15 +325,33 @@ export default function BookingBlock({
             </label>
             <label className="space-y-1 text-sm text-slate-700">
               <span>预约日期时间</span>
-              <input
-                type="datetime-local"
-                lang="zh-CN"
-                style={{ fontFamily: DATE_TIME_INPUT_FONT }}
-                className={getFormFieldClass(!isLiveBooking)}
-                value={draft.appointmentAt}
-                disabled={!isLiveBooking}
-                onChange={(event) => handleFieldChange("appointmentAt", event.target.value)}
-              />
+              <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_120px]">
+                <input
+                  type="date"
+                  className={getFormFieldClass(!isLiveBooking)}
+                  value={appointmentParts.date}
+                  disabled={!isLiveBooking}
+                  onChange={(event) =>
+                    handleFieldChange(
+                      "appointmentAt",
+                      joinMerchantBookingDateTime(event.target.value, appointmentParts.time),
+                    )
+                  }
+                />
+                <input
+                  type="time"
+                  step={60}
+                  className={getFormFieldClass(!isLiveBooking)}
+                  value={appointmentParts.time}
+                  disabled={!isLiveBooking}
+                  onChange={(event) =>
+                    handleFieldChange(
+                      "appointmentAt",
+                      joinMerchantBookingDateTime(appointmentParts.date, event.target.value),
+                    )
+                  }
+                />
+              </div>
             </label>
             <label className="space-y-1 text-sm text-slate-700">
               <span>称谓</span>

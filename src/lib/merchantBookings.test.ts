@@ -5,8 +5,10 @@ import {
   buildDefaultBookingStoreOptions,
   formatMerchantBookingIdDate,
   getMerchantBookingStatusLabel,
+  joinMerchantBookingDateTime,
   normalizeBookingOptionList,
   sanitizeMerchantBookingEditableInput,
+  splitMerchantBookingDateTime,
   validateMerchantBookingInput,
 } from "./merchantBookings";
 
@@ -49,6 +51,16 @@ test("sanitizeMerchantBookingEditableInput normalizes email and note", () => {
     phone: "123456",
     note: "第一行\n第二行",
   });
+});
+
+test("split and join merchant booking date time keeps stable values", () => {
+  assert.deepEqual(splitMerchantBookingDateTime("2026-03-19T10:30"), {
+    date: "2026-03-19",
+    time: "10:30",
+  });
+  assert.equal(joinMerchantBookingDateTime("2026-03-19", "10:30"), "2026-03-19T10:30");
+  assert.equal(joinMerchantBookingDateTime("2026-03-19", ""), "2026-03-19");
+  assert.equal(joinMerchantBookingDateTime("", "10:30"), "10:30");
 });
 
 test("validateMerchantBookingInput returns friendly issues", () => {

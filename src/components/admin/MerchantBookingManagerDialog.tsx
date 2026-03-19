@@ -8,7 +8,9 @@ import {
   buildDefaultBookingStoreOptions,
   buildDefaultBookingTitleOptions,
   getMerchantBookingStatusLabel,
+  joinMerchantBookingDateTime,
   normalizeBookingOptionList,
+  splitMerchantBookingDateTime,
 } from "@/lib/merchantBookings";
 
 type MerchantBookingManagerDialogProps = {
@@ -29,9 +31,6 @@ type MerchantBookingAdminDraft = {
   appointmentAt: string;
   title: string;
 };
-
-const DATE_TIME_INPUT_FONT =
-  'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif';
 
 function overlay(children: ReactNode) {
   if (typeof document === "undefined") return null;
@@ -376,6 +375,7 @@ export default function MerchantBookingManagerDialog({
             <div className="space-y-4">
               {filteredRecords.map((record) => {
                 const draft = drafts[record.id] ?? createDraft(record);
+                const appointmentParts = splitMerchantBookingDateTime(draft.appointmentAt);
                 return (
                   <article key={record.id} className="rounded-2xl border bg-slate-50 p-4 shadow-sm">
                     <div className="flex flex-wrap items-start justify-between gap-3">
@@ -423,14 +423,33 @@ export default function MerchantBookingManagerDialog({
                       </label>
                       <label className="space-y-1 text-sm text-slate-700">
                         <span className="text-xs text-slate-500">预约时间</span>
-                        <input
-                          type="datetime-local"
-                          lang="zh-CN"
-                          style={{ fontFamily: DATE_TIME_INPUT_FONT }}
-                          className="w-full rounded border px-3 py-2"
-                          value={draft.appointmentAt}
-                          onChange={(event) => handleDraftChange(record.id, "appointmentAt", event.target.value)}
-                        />
+                        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_120px]">
+                          <input
+                            type="date"
+                            className="w-full rounded border px-3 py-2"
+                            value={appointmentParts.date}
+                            onChange={(event) =>
+                              handleDraftChange(
+                                record.id,
+                                "appointmentAt",
+                                joinMerchantBookingDateTime(event.target.value, appointmentParts.time),
+                              )
+                            }
+                          />
+                          <input
+                            type="time"
+                            step={60}
+                            className="w-full rounded border px-3 py-2"
+                            value={appointmentParts.time}
+                            onChange={(event) =>
+                              handleDraftChange(
+                                record.id,
+                                "appointmentAt",
+                                joinMerchantBookingDateTime(appointmentParts.date, event.target.value),
+                              )
+                            }
+                          />
+                        </div>
                       </label>
                       <label className="space-y-1 text-sm text-slate-700">
                         <span className="text-xs text-slate-500">称谓</span>
