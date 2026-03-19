@@ -1,7 +1,8 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
+  buildMerchantBookingId,
   sanitizeMerchantBookingEditableInput,
   type MerchantBookingActionInput,
   type MerchantBookingCreateInput,
@@ -107,9 +108,18 @@ export async function createMerchantBooking(input: MerchantBookingCreateInput): 
 
   return withBookingStoreLock(async () => {
     const store = await readMerchantBookingStore();
-    const now = new Date().toISOString();
+    const nowDate = new Date();
+    const now = nowDate.toISOString();
+    const nextId = buildMerchantBookingId(
+      input.siteId.trim(),
+      nowDate,
+      store.records.map((item) => item.id),
+    );
+    if (!nextId) {
+      throw new Error("预约编号生成失败");
+    }
     const record: MerchantBookingStoredRecord = {
-      id: randomUUID(),
+      id: nextId,
       siteId: input.siteId.trim(),
       siteName: String(input.siteName ?? "").trim(),
       ...editable,
@@ -197,6 +207,49 @@ export async function updateMerchantBookingStatusBySite(input: {
     const next: MerchantBookingStoredRecord = {
       ...current,
       status: input.status,
+      updatedAt: new Date().toISOString(),
+    };
+    store.records[targetIndex] = next;
+    await writeMerchantBookingStore(store);
+    return withoutMerchantBookingToken(next);
+  });
+}
+
+export async function updateMerchantBookingBySite(input: {
+  siteId: string;
+  bookingId: string;
+  status?: MerchantBookingStatus;
+  updates?: Partial<MerchantBookingCreateInput>;
+}): Promise<MerchantBookingRecord> {
+  const siteId = String(input.siteId ?? "").trim();
+  const bookingId = String(input.bookingId ?? "").trim();
+  if (!siteId || !bookingId) {
+    throw new Error("预约记录参数缺失");
+  }
+
+  return withBookingStoreLock(async () => {
+    const store = await readMerchantBookingStore();
+    const targetIndex = store.records.findIndex((item) => item.id === bookingId && item.siteId === siteId);
+    if (targetIndex < 0) {
+      throw new Error("未找到对应预约记录");
+    }
+    const current = store.records[targetIndex];
+    if (!current) {
+      throw new Error("未找到对应预约记录");
+    }
+
+    const nextEditable = input.updates
+      ? sanitizeMerchantBookingEditableInput(input.updates, current)
+      : sanitizeMerchantBookingEditableInput(current, current);
+    const issues = validateMerchantBookingInput(nextEditable);
+    if (issues.length > 0) {
+      throw new Error(issues[0]);
+    }
+
+    const next: MerchantBookingStoredRecord = {
+      ...current,
+      ...nextEditable,
+      status: input.status ?? current.status,
       updatedAt: new Date().toISOString(),
     };
     store.records[targetIndex] = next;

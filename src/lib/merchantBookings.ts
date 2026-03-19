@@ -1,4 +1,4 @@
-export const MERCHANT_BOOKING_STATUSES = ["active", "cancelled"] as const;
+export const MERCHANT_BOOKING_STATUSES = ["active", "confirmed", "cancelled"] as const;
 
 export type MerchantBookingStatus = (typeof MERCHANT_BOOKING_STATUSES)[number];
 
@@ -135,6 +135,40 @@ export function formatMerchantBookingDateTime(value: string) {
   const normalized = normalizeSingleLineText(value);
   if (!normalized) return "";
   return normalized.replace("T", " ");
+}
+
+function padBookingSequence(value: number) {
+  return String(Math.max(0, Math.trunc(value))).padStart(5, "0");
+}
+
+export function formatMerchantBookingIdDate(value: Date | string) {
+  const source = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(source.getTime())) return "";
+  const year = source.getFullYear();
+  const month = String(source.getMonth() + 1).padStart(2, "0");
+  const day = String(source.getDate()).padStart(2, "0");
+  return `${year}${month}${day}`;
+}
+
+export function buildMerchantBookingId(siteId: string, createdAt: Date | string, existingIds: string[]) {
+  const normalizedSiteId = normalizeSingleLineText(siteId);
+  const datePart = formatMerchantBookingIdDate(createdAt);
+  if (!normalizedSiteId || !datePart) {
+    return "";
+  }
+  const prefix = `${normalizedSiteId}${datePart}`;
+  const maxSequence = existingIds.reduce((highest, currentId) => {
+    if (!currentId.startsWith(prefix)) return highest;
+    const sequence = Number.parseInt(currentId.slice(prefix.length), 10);
+    return Number.isFinite(sequence) ? Math.max(highest, sequence) : highest;
+  }, 0);
+  return `${prefix}${padBookingSequence(maxSequence + 1)}`;
+}
+
+export function getMerchantBookingStatusLabel(status: MerchantBookingStatus) {
+  if (status === "confirmed") return "已确认";
+  if (status === "cancelled") return "已取消";
+  return "待确认";
 }
 
 export function withoutMerchantBookingToken(record: MerchantBookingStoredRecord): MerchantBookingRecord {

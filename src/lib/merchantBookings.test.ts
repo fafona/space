@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildMerchantBookingId,
   buildDefaultBookingStoreOptions,
+  formatMerchantBookingIdDate,
+  getMerchantBookingStatusLabel,
   normalizeBookingOptionList,
   sanitizeMerchantBookingEditableInput,
   validateMerchantBookingInput,
@@ -69,4 +72,23 @@ test("validateMerchantBookingInput returns friendly issues", () => {
     "邮箱格式无效",
     "请填写电话",
   ]);
+});
+
+test("buildMerchantBookingId uses merchant id + date + 5-digit sequence", () => {
+  const createdAt = "2026-03-19T10:30:00.000Z";
+  assert.equal(formatMerchantBookingIdDate(createdAt), "20260319");
+  assert.equal(
+    buildMerchantBookingId("10000000", createdAt, [
+      "100000002026031900001",
+      "100000002026031900002",
+      "100000012026031900001",
+    ]),
+    "100000002026031900003",
+  );
+});
+
+test("getMerchantBookingStatusLabel returns readable labels", () => {
+  assert.equal(getMerchantBookingStatusLabel("active"), "待确认");
+  assert.equal(getMerchantBookingStatusLabel("confirmed"), "已确认");
+  assert.equal(getMerchantBookingStatusLabel("cancelled"), "已取消");
 });

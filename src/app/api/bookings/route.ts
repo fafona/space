@@ -4,7 +4,7 @@ import {
   createMerchantBooking,
   listMerchantBookings,
   updateMerchantBooking,
-  updateMerchantBookingStatusBySite,
+  updateMerchantBookingBySite,
 } from "@/lib/merchantBookings.server";
 import type {
   MerchantBookingActionInput,
@@ -76,12 +76,21 @@ export async function PATCH(request: Request) {
       | null;
 
     const maybeSiteId = String(body?.siteId ?? "").trim();
-    const maybeStatus = body?.status === "cancelled" ? "cancelled" : body?.status === "active" ? "active" : null;
-    if (isMerchantNumericId(maybeSiteId) && maybeStatus) {
-      const booking = await updateMerchantBookingStatusBySite({
+    const maybeStatus =
+      body?.status === "cancelled" ? "cancelled" : body?.status === "active" ? "active" : body?.status === "confirmed" ? "confirmed" : null;
+    if (isMerchantNumericId(maybeSiteId)) {
+      const booking = await updateMerchantBookingBySite({
         siteId: maybeSiteId,
         bookingId: String(body?.bookingId ?? "").trim(),
-        status: maybeStatus,
+        status: maybeStatus ?? undefined,
+        updates: body?.updates
+          ? {
+              store: String(body.updates.store ?? ""),
+              item: String(body.updates.item ?? ""),
+              appointmentAt: String(body.updates.appointmentAt ?? ""),
+              title: String(body.updates.title ?? ""),
+            }
+          : undefined,
       });
       return NextResponse.json({ ok: true, booking });
     }

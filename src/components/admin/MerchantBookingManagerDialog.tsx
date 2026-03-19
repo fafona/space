@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { MerchantBookingRecord, MerchantBookingStatus } from "@/lib/merchantBookings";
+import { getMerchantBookingStatusLabel } from "@/lib/merchantBookings";
 
 type MerchantBookingManagerDialogProps = {
   open: boolean;
@@ -11,7 +12,14 @@ type MerchantBookingManagerDialogProps = {
   onClose: () => void;
 };
 
-type BookingFilter = "all" | "active" | "cancelled";
+type BookingFilter = "all" | MerchantBookingStatus;
+
+type MerchantBookingAdminDraft = {
+  store: string;
+  item: string;
+  appointmentAt: string;
+  title: string;
+};
 
 function overlay(children: ReactNode) {
   if (typeof document === "undefined") return null;
@@ -42,6 +50,21 @@ function matchesSearch(record: MerchantBookingRecord, query: string) {
     .includes(keyword);
 }
 
+function createDraft(record: MerchantBookingRecord): MerchantBookingAdminDraft {
+  return {
+    store: record.store,
+    item: record.item,
+    appointmentAt: record.appointmentAt,
+    title: record.title,
+  };
+}
+
+function getStatusBadgeClass(status: MerchantBookingStatus) {
+  if (status === "cancelled") return "bg-slate-200 text-slate-700";
+  if (status === "confirmed") return "bg-sky-100 text-sky-700";
+  return "bg-amber-100 text-amber-700";
+}
+
 export default function MerchantBookingManagerDialog({
   open,
   siteId,
@@ -49,11 +72,12 @@ export default function MerchantBookingManagerDialog({
   onClose,
 }: MerchantBookingManagerDialogProps) {
   const [records, setRecords] = useState<MerchantBookingRecord[]>([]);
+  const [drafts, setDrafts] = useState<Record<string, MerchantBookingAdminDraft>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<BookingFilter>("all");
-  const [busyId, setBusyId] = useState("");
+  const [busyKey, setBusyKey] = useState("");
 
   useEffect(() => {
     if (!open || !siteId) return;
@@ -73,6 +97,9 @@ export default function MerchantBookingManagerDialog({
         }
         if (!cancelled) {
           setRecords(json.bookings);
+          setDrafts(
+            Object.fromEntries(json.bookings.map((record) => [record.id, createDraft(record)])),
+          );
         }
       } catch (loadError) {
         if (!cancelled) {
@@ -90,10 +117,12 @@ export default function MerchantBookingManagerDialog({
 
   const counts = useMemo(() => {
     const active = records.filter((item) => item.status === "active").length;
+    const confirmed = records.filter((item) => item.status === "confirmed").length;
     const cancelled = records.filter((item) => item.status === "cancelled").length;
     return {
       total: records.length,
       active,
+      confirmed,
       cancelled,
     };
   }, [records]);
@@ -107,8 +136,15 @@ export default function MerchantBookingManagerDialog({
     [records, filter, query],
   );
 
-  const updateStatus = async (bookingId: string, status: MerchantBookingStatus) => {
-    setBusyId(bookingId);
+  const patchBooking = async (
+    bookingId: string,
+    payload: {
+      status?: MerchantBookingStatus;
+      updates?: Partial<MerchantBookingAdminDraft>;
+    },
+    busyLabel: string,
+  ) => {
+    setBusyKey(`${busyLabel}:${bookingId}`);
     setError("");
     try {
       const response = await fetch("/api/bookings", {
@@ -117,23 +153,89 @@ export default function MerchantBookingManagerDialog({
         body: JSON.stringify({
           siteId,
           bookingId,
-          status,
+          ...payload,
         }),
       });
       const json = (await response.json().catch(() => null)) as
         | { ok?: boolean; booking?: MerchantBookingRecord; message?: string }
         | null;
       if (!response.ok || !json?.ok || !json.booking) {
-        throw new Error(json?.message || "预约状态更新失败");
+        throw new Error(json?.message || "预约更新失败");
       }
+      const nextBooking = json.booking;
       setRecords((current) =>
-        current.map((item) => (item.id === json.booking?.id ? json.booking : item)),
+        current.map((item) => (item.id === nextBooking.id ? nextBooking : item)),
       );
+      setDrafts((current) => ({
+        ...current,
+        [nextBooking.id]: createDraft(nextBooking),
+      }));
     } catch (updateError) {
-      setError(updateError instanceof Error ? updateError.message : "预约状态更新失败");
+      setError(updateError instanceof Error ? updateError.message : "预约更新失败");
     } finally {
-      setBusyId("");
+      setBusyKey("");
     }
+  };
+
+  const handleDraftChange = (
+    bookingId: string,
+    key: keyof MerchantBookingAdminDraft,
+    value: string,
+  ) => {
+    setDrafts((current) => ({
+      ...current,
+      [bookingId]: {
+        ...(current[bookingId] ?? { store: "", item: "", appointmentAt: "", title: "" }),
+        [key]: value,
+      },
+    }));
+  };
+
+  const renderStatusActions = (record: MerchantBookingRecord) => {
+    if (record.status === "cancelled") {
+      return (
+        <button
+          type="button"
+          className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+          onClick={() => void patchBooking(record.id, { status: "active" }, "restore")}
+          disabled={busyKey === `restore:${record.id}`}
+        >
+          {busyKey === `restore:${record.id}` ? "处理中..." : "恢复预约"}
+        </button>
+      );
+    }
+
+    return (
+      <>
+        {record.status === "confirmed" ? (
+          <button
+            type="button"
+            className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+            onClick={() => void patchBooking(record.id, { status: "active" }, "unconfirm")}
+            disabled={busyKey === `unconfirm:${record.id}`}
+          >
+            {busyKey === `unconfirm:${record.id}` ? "处理中..." : "取消确认"}
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="rounded border bg-black px-3 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50"
+            onClick={() => void patchBooking(record.id, { status: "confirmed" }, "confirm")}
+            disabled={busyKey === `confirm:${record.id}`}
+          >
+            {busyKey === `confirm:${record.id}` ? "处理中..." : "确认预约"}
+          </button>
+        )}
+        <button
+          type="button"
+          className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+          onClick={() => void patchBooking(record.id, { status: "cancelled" }, "cancel")}
+          disabled={busyKey === `cancel:${record.id}`}
+        >
+          {busyKey === `cancel:${record.id}` ? "处理中..." : "取消预约"}
+        </button>
+      </>
+    );
   };
 
   if (!open) return null;
@@ -174,7 +276,8 @@ export default function MerchantBookingManagerDialog({
             <div className="flex flex-wrap gap-2">
               {[
                 { key: "all" as const, label: `全部 ${counts.total}` },
-                { key: "active" as const, label: `进行中 ${counts.active}` },
+                { key: "active" as const, label: `待确认 ${counts.active}` },
+                { key: "confirmed" as const, label: `已确认 ${counts.confirmed}` },
                 { key: "cancelled" as const, label: `已取消 ${counts.cancelled}` },
               ].map((item) => (
                 <button
@@ -203,52 +306,101 @@ export default function MerchantBookingManagerDialog({
           ) : filteredRecords.length > 0 ? (
             <div className="space-y-4">
               {filteredRecords.map((record) => {
-                const isCancelled = record.status === "cancelled";
+                const draft = drafts[record.id] ?? createDraft(record);
                 return (
                   <article key={record.id} className="rounded-2xl border bg-slate-50 p-4 shadow-sm">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="space-y-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <div className="text-base font-semibold text-slate-900">{record.customerName || "未命名预约"}</div>
-                          <span
-                            className={`rounded-full px-2 py-0.5 text-[11px] ${
-                              isCancelled ? "bg-slate-200 text-slate-700" : "bg-emerald-100 text-emerald-700"
-                            }`}
-                          >
-                            {isCancelled ? "已取消" : "进行中"}
+                          <span className={`rounded-full px-2 py-0.5 text-[11px] ${getStatusBadgeClass(record.status)}`}>
+                            {getMerchantBookingStatusLabel(record.status)}
                           </span>
                         </div>
                         <div className="text-xs text-slate-500">{`预约编号：${record.id}`}</div>
                         <div className="text-xs text-slate-500">{`创建时间：${formatDateTime(record.createdAt)}`}</div>
                       </div>
-                      <div className="flex gap-2">
-                        {isCancelled ? (
-                          <button
-                            type="button"
-                            className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
-                            onClick={() => void updateStatus(record.id, "active")}
-                            disabled={busyId === record.id}
-                          >
-                            {busyId === record.id ? "处理中..." : "恢复预约"}
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
-                            onClick={() => void updateStatus(record.id, "cancelled")}
-                            disabled={busyId === record.id}
-                          >
-                            {busyId === record.id ? "处理中..." : "取消预约"}
-                          </button>
-                        )}
-                      </div>
+                      <div className="flex flex-wrap gap-2">{renderStatusActions(record)}</div>
+                    </div>
+
+                    <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                      <label className="space-y-1 text-sm text-slate-700">
+                        <span className="text-xs text-slate-500">店铺</span>
+                        <input
+                          className="w-full rounded border px-3 py-2"
+                          value={draft.store}
+                          onChange={(event) => handleDraftChange(record.id, "store", event.target.value)}
+                        />
+                      </label>
+                      <label className="space-y-1 text-sm text-slate-700">
+                        <span className="text-xs text-slate-500">项目</span>
+                        <input
+                          className="w-full rounded border px-3 py-2"
+                          value={draft.item}
+                          onChange={(event) => handleDraftChange(record.id, "item", event.target.value)}
+                        />
+                      </label>
+                      <label className="space-y-1 text-sm text-slate-700">
+                        <span className="text-xs text-slate-500">预约时间</span>
+                        <input
+                          type="datetime-local"
+                          className="w-full rounded border px-3 py-2"
+                          value={draft.appointmentAt}
+                          onChange={(event) => handleDraftChange(record.id, "appointmentAt", event.target.value)}
+                        />
+                      </label>
+                      <label className="space-y-1 text-sm text-slate-700">
+                        <span className="text-xs text-slate-500">称谓</span>
+                        <input
+                          className="w-full rounded border px-3 py-2"
+                          value={draft.title}
+                          onChange={(event) => handleDraftChange(record.id, "title", event.target.value)}
+                        />
+                      </label>
+                    </div>
+
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+                        onClick={() =>
+                          void patchBooking(
+                            record.id,
+                            {
+                              updates: {
+                                store: draft.store,
+                                item: draft.item,
+                                appointmentAt: draft.appointmentAt,
+                                title: draft.title,
+                              },
+                            },
+                            "save",
+                          )
+                        }
+                        disabled={busyKey === `save:${record.id}`}
+                      >
+                        {busyKey === `save:${record.id}` ? "保存中..." : "保存修改"}
+                      </button>
+                      {record.email ? (
+                        <a
+                          className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                          href={`mailto:${record.email}`}
+                        >
+                          回复邮箱
+                        </a>
+                      ) : null}
+                      {record.phone ? (
+                        <a
+                          className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                          href={`tel:${record.phone}`}
+                        >
+                          拨打电话
+                        </a>
+                      ) : null}
                     </div>
 
                     <div className="mt-4 grid gap-3 text-sm text-slate-700 md:grid-cols-2 xl:grid-cols-3">
-                      <div>{`店铺：${record.store}`}</div>
-                      <div>{`项目：${record.item}`}</div>
-                      <div>{`预约时间：${formatDateTime(record.appointmentAt)}`}</div>
-                      <div>{`称谓：${record.title}`}</div>
+                      <div>{`姓名：${record.customerName}`}</div>
                       <div>{`邮箱：${record.email}`}</div>
                       <div>{`电话：${record.phone}`}</div>
                       {record.note ? <div className="md:col-span-2 xl:col-span-3">{`备注：${record.note}`}</div> : null}
