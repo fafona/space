@@ -330,6 +330,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
         id: createId("business-card"),
         createdAt: new Date().toISOString(),
         imageUrl,
+        targetUrl: websiteUrl,
       };
       onCardsChange([asset, ...cards]);
       setEditorOpen(false);

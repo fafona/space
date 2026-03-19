@@ -111,6 +111,30 @@ function getMerchantProfileName(site: Pick<Site, "merchantName"> | null | undefi
   return (site?.merchantName ?? "").trim();
 }
 
+type PlanTemplatePreviewOption = {
+  planId: string;
+  planName: string;
+};
+
+function getPlanTemplatePreviewOptions(rawBlocks: unknown): PlanTemplatePreviewOption[] {
+  if (!Array.isArray(rawBlocks) || rawBlocks.length === 0) return [];
+  try {
+    return getPagePlanConfigFromBlocks(rawBlocks as Block[]).plans
+      .map((plan, index) => {
+        const planId = String(plan.id ?? "").trim();
+        if (!planId) return null;
+        const planName = String(plan.name ?? "").trim() || `方案${index + 1}`;
+        return {
+          planId,
+          planName,
+        };
+      })
+      .filter((item): item is PlanTemplatePreviewOption => !!item);
+  } catch {
+    return [];
+  }
+}
+
 function buildBackendOnlySite(account: BackendMerchantAccount): Site {
   const timestamp = account.createdAt ?? nextIsoNow();
   return {
@@ -1278,6 +1302,7 @@ export default function SuperAdminClient() {
       filteredPlanTemplates.map((template) => ({
         template,
         summary: summarizePlanTemplateBlocks(template.blocks),
+        previewPlans: getPlanTemplatePreviewOptions(template.blocks),
       })),
     [filteredPlanTemplates],
   );
@@ -1742,7 +1767,9 @@ export default function SuperAdminClient() {
     if (!previewUrl) return;
     setPlanTemplateCoverPreview({
       url: previewUrl,
-      name: planId ? `${refreshedTemplate.name} · ${planName || "方案"} 预览` : `${refreshedTemplate.name} · 方案预览`,
+      name: planId
+        ? `${refreshedTemplate.name} · ${planName || "方案"} 整套页面预览`
+        : `${refreshedTemplate.name} · 方案预览`,
     });
   }
 
@@ -3804,7 +3831,7 @@ export default function SuperAdminClient() {
                           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
                             {planTemplateCards.length > 0 ? (
                               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                                {planTemplateCards.map(({ template, summary }) => {
+                                {planTemplateCards.map(({ template, summary, previewPlans }) => {
                                   const siteLabel =
                                     planTemplateTargetSite
                                       ? getSiteDisplayName(planTemplateTargetSite) || planTemplateTargetSite.domain || planTemplateTargetSite.id
@@ -3941,6 +3968,24 @@ export default function SuperAdminClient() {
                                             </div>
                                           </div>
 
+                                          {previewPlans.length > 0 ? (
+                                            <div className="space-y-2 rounded-xl border bg-white px-3 py-3">
+                                              <div className="text-xs font-medium text-slate-500">方案预览</div>
+                                              <div className="flex flex-wrap gap-2">
+                                                {previewPlans.map((plan) => (
+                                                  <button
+                                                    key={`${template.id}-${plan.planId}`}
+                                                    type="button"
+                                                    className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                                                    onClick={() => void openPlanTemplatePreview(template, plan.planId, plan.planName)}
+                                                  >
+                                                    {plan.planName}
+                                                  </button>
+                                                ))}
+                                              </div>
+                                            </div>
+                                          ) : null}
+
                                           <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-white px-3 py-3">
                                             <div className="space-y-1 text-xs text-slate-500">
                                               <div>创建于 {new Date(template.createdAt).toLocaleString("zh-CN", { hour12: false })}</div>
@@ -4053,6 +4098,24 @@ export default function SuperAdminClient() {
                                         <div>分类：{planTemplateApplyTemplate.category}</div>
                                       </div>
                                     </div>
+
+                                    {getPlanTemplatePreviewOptions(planTemplateApplyTemplate.blocks).length > 0 ? (
+                                      <div className="rounded-2xl border bg-slate-50 p-4">
+                                        <div className="text-sm font-semibold text-slate-900">方案预览</div>
+                                        <div className="mt-3 flex flex-wrap gap-2">
+                                          {getPlanTemplatePreviewOptions(planTemplateApplyTemplate.blocks).map((plan) => (
+                                            <button
+                                              key={`${planTemplateApplyTemplate.id}-${plan.planId}`}
+                                              type="button"
+                                              className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                                              onClick={() => void openPlanTemplatePreview(planTemplateApplyTemplate, plan.planId, plan.planName)}
+                                            >
+                                              {plan.planName}
+                                            </button>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    ) : null}
 
                                     <div className="rounded-2xl border bg-slate-50 p-4">
                                       <div className="text-sm font-semibold text-slate-900">替换选项</div>

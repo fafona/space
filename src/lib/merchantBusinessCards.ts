@@ -51,7 +51,10 @@ export type MerchantBusinessCardContacts = {
   xiaohongshu: string;
 };
 
+export type MerchantBusinessCardMode = "image" | "link";
+
 export type MerchantBusinessCardDraft = {
+  mode: MerchantBusinessCardMode;
   name: string;
   backgroundImageUrl: string;
   backgroundColor: string;
@@ -74,6 +77,7 @@ export type MerchantBusinessCardAsset = MerchantBusinessCardDraft & {
   id: string;
   createdAt: string;
   imageUrl: string;
+  targetUrl: string;
 };
 
 export type MerchantBusinessCardProfileInput = {
@@ -158,6 +162,7 @@ export function createDefaultMerchantBusinessCardDraft(
   profile: MerchantBusinessCardProfileInput,
 ): MerchantBusinessCardDraft {
   return {
+    mode: "image",
     name: normalizeText(profile.merchantName) || "未命名名片",
     backgroundImageUrl: "",
     backgroundColor: "#f8fafc",
@@ -249,6 +254,7 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
       : {};
 
   return {
+    mode: normalizeText((source as { mode?: unknown }).mode) === "link" ? "link" : "image",
     name: normalizeText(source.name) || fallback.name,
     backgroundImageUrl: normalizeText(source.backgroundImageUrl),
     backgroundColor: normalizeText(source.backgroundColor) || fallback.backgroundColor,
@@ -348,6 +354,7 @@ export function normalizeMerchantBusinessCards(value: unknown): MerchantBusiness
       const source = item as Partial<MerchantBusinessCardAsset>;
       const draft = normalizeMerchantBusinessCardDraft(source);
       const imageUrl = normalizeText(source.imageUrl);
+      const targetUrl = normalizeText(source.targetUrl);
       const id = normalizeText(source.id) || `business-card-${index + 1}`;
       const createdAt = normalizeText(source.createdAt) || new Date().toISOString();
       if (!imageUrl) return null;
@@ -356,6 +363,7 @@ export function normalizeMerchantBusinessCards(value: unknown): MerchantBusiness
         id,
         createdAt,
         imageUrl,
+        targetUrl,
       } satisfies MerchantBusinessCardAsset;
     })
     .filter((item): item is MerchantBusinessCardAsset => !!item);
