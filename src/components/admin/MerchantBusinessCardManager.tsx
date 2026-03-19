@@ -61,13 +61,6 @@ const TEXT_LAYOUT_FIELDS: Array<{ key: MerchantBusinessCardFieldKey; label: stri
   { key: "xiaohongshu", label: "小红书" },
 ];
 
-const TYPOGRAPHY_FIELDS: Array<{ key: MerchantBusinessCardTypographyKey; label: string }> = [
-  { key: "name", label: "名称" },
-  { key: "title", label: "职位" },
-  { key: "website", label: "网站" },
-  { key: "info", label: "联系方式" },
-];
-
 const FONT_FAMILY_OPTIONS = [
   { value: "", label: "默认" },
   { value: "Microsoft YaHei, SimHei, sans-serif", label: "微软雅黑" },
@@ -218,6 +211,8 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
   const [hasPreviewed, setHasPreviewed] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [qrCodeUrl, setQrCodeUrl] = useState("");
+  const [selectedFieldKey, setSelectedFieldKey] = useState<MerchantBusinessCardFieldKey>("merchantName");
+  const [fontStyleEditorOpen, setFontStyleEditorOpen] = useState(false);
   const hiddenPreviewRef = useRef<HTMLDivElement | null>(null);
 
   const missingFields = useMemo(() => getMerchantBusinessCardRequiredFields(profile), [profile]);
@@ -226,6 +221,17 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     () => buildMerchantDomain(siteBaseDomain, normalizeText(profile.domainPrefix), "https"),
     [siteBaseDomain, profile.domainPrefix],
   );
+  const selectedFieldMeta = useMemo(
+    () => TEXT_LAYOUT_FIELDS.find((item) => item.key === selectedFieldKey) ?? TEXT_LAYOUT_FIELDS[0],
+    [selectedFieldKey],
+  );
+  const selectedTypographyKey = useMemo<MerchantBusinessCardTypographyKey>(() => {
+    if (selectedFieldKey === "merchantName") return "name";
+    if (selectedFieldKey === "title") return "title";
+    if (selectedFieldKey === "website") return "website";
+    return "info";
+  }, [selectedFieldKey]);
+  const selectedTypography = draft.typography[selectedTypographyKey];
   const scale = useMemo(() => Math.min(1, 380 / Math.max(1, draft.width)), [draft.width]);
   const fullScale = useMemo(() => Math.min(1, 1000 / Math.max(1, draft.width)), [draft.width]);
 
@@ -351,8 +357,8 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
                 <div className="grid gap-4 xl:grid-cols-2">
                   <section className="space-y-3 rounded-xl border bg-slate-50 p-4">
                     <div className="text-sm font-semibold text-slate-900">基础设置</div>
-                    <label className="block text-xs text-slate-600">名片名称<input className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.name} onChange={(event) => applyDraft((current) => ({ ...current, name: event.target.value }))} /></label>
-                    <label className="block text-xs text-slate-600">职位<input className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.title} onChange={(event) => applyDraft((current) => ({ ...current, title: event.target.value }))} /></label>
+                    <label className="block text-xs text-slate-600">名片名称<input className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.name} onFocus={() => setSelectedFieldKey("merchantName")} onChange={(event) => applyDraft((current) => ({ ...current, name: event.target.value }))} /></label>
+                    <label className="block text-xs text-slate-600">职位<input className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.title} onFocus={() => setSelectedFieldKey("title")} onChange={(event) => applyDraft((current) => ({ ...current, title: event.target.value }))} /></label>
                     <div className="grid gap-3 md:grid-cols-3">
                       <label className="block text-xs text-slate-600">比例<select className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.ratioMode} onChange={(event) => applyDraft((current) => ({ ...current, ratioMode: event.target.value as MerchantBusinessCardDraft["ratioMode"], ...(() => resolveRatioDimensions(event.target.value as MerchantBusinessCardDraft["ratioMode"], current.width, current.height))() }))}>{MERCHANT_BUSINESS_CARD_RATIO_OPTIONS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}<option value="custom">自定义</option></select></label>
                       <label className="block text-xs text-slate-600">宽度<input type="number" min={320} max={1600} className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.width} onChange={(event) => handleSize(event.target.value, "width")} /></label>
@@ -362,7 +368,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
                       <label className="block text-xs text-slate-600">背景图<input type="file" accept="image/*" className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" onChange={(event) => void handleBackgroundUpload(event)} /></label>
                       <label className="block text-xs text-slate-600">背景色<input type="color" className="mt-1 h-[42px] w-full rounded border bg-white px-2 py-1" value={draft.backgroundColor} onChange={(event) => applyDraft((current) => ({ ...current, backgroundColor: event.target.value }))} /></label>
                     </div>
-                    <label className="block text-xs text-slate-600">网站说明<input className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.websiteLabel} onChange={(event) => applyDraft((current) => ({ ...current, websiteLabel: event.target.value }))} /></label>
+                    <label className="block text-xs text-slate-600">网站说明<input className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.websiteLabel} onFocus={() => setSelectedFieldKey("website")} onChange={(event) => applyDraft((current) => ({ ...current, websiteLabel: event.target.value }))} /></label>
                     <div className="rounded border bg-white px-3 py-2 text-xs text-slate-500">{`当前二维码网址：${websiteUrl || "请先填写域名前缀"}`}</div>
                   </section>
                   <section className="space-y-3 rounded-xl border bg-slate-50 p-4">
@@ -374,12 +380,32 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
                   </section>
                   <section className="space-y-3 rounded-xl border bg-slate-50 p-4 xl:col-span-2">
                     <div className="text-sm font-semibold text-slate-900">联系方式</div>
-                    <div className="grid gap-3 md:grid-cols-2">{CONTACT_FIELDS.map(({ key, label }) => <label key={key} className="block text-xs text-slate-600">{label}<input className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.contacts[key]} onChange={(event) => applyDraft((current) => ({ ...current, contacts: { ...current.contacts, [key]: event.target.value } }))} placeholder={`请输入${label}`} /></label>)}</div>
+                    <div className="grid gap-3 md:grid-cols-2">{CONTACT_FIELDS.map(({ key, label }) => <label key={key} className="block text-xs text-slate-600">{label}<input className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.contacts[key]} onFocus={() => setSelectedFieldKey(key)} onChange={(event) => applyDraft((current) => ({ ...current, contacts: { ...current.contacts, [key]: event.target.value } }))} placeholder={`请输入${label}`} /></label>)}</div>
                   </section>
                   <section className="space-y-4 rounded-xl border bg-slate-50 p-4 xl:col-span-2">
-                    <div className="text-sm font-semibold text-slate-900">位置与字体样式</div>
-                    <div className="grid gap-3 lg:grid-cols-2">{TYPOGRAPHY_FIELDS.map(({ key, label }) => <div key={key} className="space-y-3 rounded-xl border bg-white p-4"><div className="text-sm font-medium text-slate-900">{label}</div><div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_120px]"><label className="block text-xs text-slate-600">字体<select className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.typography[key].fontFamily || ""} onChange={(event) => updateTypography(key, { fontFamily: event.target.value })}>{FONT_FAMILY_OPTIONS.map((option) => <option key={option.label} value={option.value}>{option.label}</option>)}</select></label><label className="block text-xs text-slate-600">字号<select className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.typography[key].fontSize} onChange={(event) => updateTypography(key, { fontSize: Number(event.target.value) })}>{FONT_SIZE_OPTIONS.map((size) => <option key={size} value={size}>{size}</option>)}</select></label></div><div className="grid gap-3 md:grid-cols-[120px_repeat(3,minmax(0,1fr))]"><label className="block text-xs text-slate-600">颜色<input type="color" className="mt-1 h-[42px] w-full rounded border bg-white px-2 py-1" value={draft.typography[key].fontColor || "#0f172a"} onChange={(event) => updateTypography(key, { fontColor: event.target.value })} /></label><label className="flex items-center gap-2 rounded border bg-slate-50 px-3 py-2 text-xs text-slate-700"><input type="checkbox" checked={normalizeText(draft.typography[key].fontWeight) === "bold"} onChange={(event) => updateTypography(key, { fontWeight: event.target.checked ? "bold" : "normal" })} />加粗</label><label className="flex items-center gap-2 rounded border bg-slate-50 px-3 py-2 text-xs text-slate-700"><input type="checkbox" checked={normalizeText(draft.typography[key].fontStyle) === "italic"} onChange={(event) => updateTypography(key, { fontStyle: event.target.checked ? "italic" : "normal" })} />斜体</label><label className="flex items-center gap-2 rounded border bg-slate-50 px-3 py-2 text-xs text-slate-700"><input type="checkbox" checked={normalizeText(draft.typography[key].textDecoration) === "underline"} onChange={(event) => updateTypography(key, { textDecoration: event.target.checked ? "underline" : "none" })} />下划线</label></div></div>)}</div>
-                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{TEXT_LAYOUT_FIELDS.map(({ key, label }) => <div key={key} className="rounded-xl border bg-white p-3"><div className="mb-2 text-xs font-medium text-slate-700">{label}</div><div className="grid grid-cols-2 gap-2">{(["x", "y"] as const).map((axis) => <label key={axis} className="block text-xs text-slate-600">{axis.toUpperCase()}<input type="number" className="mt-1 w-full rounded border bg-white px-2 py-2 text-sm" value={draft.textLayout[key][axis]} onChange={(event) => applyDraft((current) => ({ ...current, textLayout: { ...current.textLayout, [key]: { ...current.textLayout[key], [axis]: clamp(Number(event.target.value) || 0, 0, 2000) } } }))} /></label>)}</div></div>)}</div>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold text-slate-900">位置与字体样式</div>
+                        <div className="text-xs text-slate-500">{`当前编辑字段：${selectedFieldMeta.label}`}</div>
+                      </div>
+                      <button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => setFontStyleEditorOpen((current) => !current)}>字体样式</button>
+                    </div>
+                    {fontStyleEditorOpen ? (
+                      <div className="space-y-3 rounded-xl border bg-white p-4">
+                        <div className="text-sm font-medium text-slate-900">{selectedFieldMeta.label}</div>
+                        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_120px]">
+                          <label className="block text-xs text-slate-600">字体<select className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={selectedTypography.fontFamily || ""} onChange={(event) => updateTypography(selectedTypographyKey, { fontFamily: event.target.value })}>{FONT_FAMILY_OPTIONS.map((option) => <option key={option.label} value={option.value}>{option.label}</option>)}</select></label>
+                          <label className="block text-xs text-slate-600">字号<select className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={selectedTypography.fontSize} onChange={(event) => updateTypography(selectedTypographyKey, { fontSize: Number(event.target.value) })}>{FONT_SIZE_OPTIONS.map((size) => <option key={size} value={size}>{size}</option>)}</select></label>
+                        </div>
+                        <div className="grid gap-3 md:grid-cols-[120px_repeat(3,minmax(0,1fr))]">
+                          <label className="block text-xs text-slate-600">颜色<input type="color" className="mt-1 h-[42px] w-full rounded border bg-white px-2 py-1" value={selectedTypography.fontColor || "#0f172a"} onChange={(event) => updateTypography(selectedTypographyKey, { fontColor: event.target.value })} /></label>
+                          <label className="flex items-center gap-2 rounded border bg-slate-50 px-3 py-2 text-xs text-slate-700"><input type="checkbox" checked={normalizeText(selectedTypography.fontWeight) === "bold"} onChange={(event) => updateTypography(selectedTypographyKey, { fontWeight: event.target.checked ? "bold" : "normal" })} />加粗</label>
+                          <label className="flex items-center gap-2 rounded border bg-slate-50 px-3 py-2 text-xs text-slate-700"><input type="checkbox" checked={normalizeText(selectedTypography.fontStyle) === "italic"} onChange={(event) => updateTypography(selectedTypographyKey, { fontStyle: event.target.checked ? "italic" : "normal" })} />斜体</label>
+                          <label className="flex items-center gap-2 rounded border bg-slate-50 px-3 py-2 text-xs text-slate-700"><input type="checkbox" checked={normalizeText(selectedTypography.textDecoration) === "underline"} onChange={(event) => updateTypography(selectedTypographyKey, { textDecoration: event.target.checked ? "underline" : "none" })} />下划线</label>
+                        </div>
+                      </div>
+                    ) : null}
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{TEXT_LAYOUT_FIELDS.map(({ key, label }) => <div key={key} className={`rounded-xl border bg-white p-3 transition ${selectedFieldKey === key ? "border-slate-900 ring-2 ring-slate-200" : "hover:border-slate-300"}`} onClick={() => setSelectedFieldKey(key)}><div className="mb-2 flex items-center justify-between gap-2"><div className="text-xs font-medium text-slate-700">{label}</div>{selectedFieldKey === key ? <span className="rounded-full bg-slate-900 px-2 py-0.5 text-[10px] text-white">当前</span> : null}</div><div className="grid grid-cols-2 gap-2">{(["x", "y"] as const).map((axis) => <label key={axis} className="block text-xs text-slate-600">{axis.toUpperCase()}<input type="number" className="mt-1 w-full rounded border bg-white px-2 py-2 text-sm" value={draft.textLayout[key][axis]} onFocus={() => setSelectedFieldKey(key)} onChange={(event) => applyDraft((current) => ({ ...current, textLayout: { ...current.textLayout, [key]: { ...current.textLayout[key], [axis]: clamp(Number(event.target.value) || 0, 0, 2000) } } }))} /></label>)}</div></div>)}</div>
                   </section>
                 </div>
               </div>
