@@ -21,6 +21,9 @@ type MerchantBookingAdminDraft = {
   title: string;
 };
 
+const DATE_TIME_INPUT_FONT =
+  'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif';
+
 function overlay(children: ReactNode) {
   if (typeof document === "undefined") return null;
   return createPortal(children, document.body);
@@ -344,6 +347,8 @@ export default function MerchantBookingManagerDialog({
                         <span className="text-xs text-slate-500">预约时间</span>
                         <input
                           type="datetime-local"
+                          lang="zh-CN"
+                          style={{ fontFamily: DATE_TIME_INPUT_FONT }}
                           className="w-full rounded border px-3 py-2"
                           value={draft.appointmentAt}
                           onChange={(event) => handleDraftChange(record.id, "appointmentAt", event.target.value)}
