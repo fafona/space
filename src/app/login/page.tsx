@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useI18n } from "@/components/I18nProvider";
 import { ensureMerchantIdentityForUser } from "@/lib/merchantIdentity";
@@ -18,6 +18,11 @@ function LoginPageInner() {
   const [needConfirmEmail, setNeedConfirmEmail] = useState(false);
   const [emailConfirmationRequired, setEmailConfirmationRequired] = useState<boolean | null>(null);
   const [pendingAction, setPendingAction] = useState<"signin" | "signup" | "forgot" | "resend" | null>(null);
+  const requestedRedirectPath = useMemo(() => {
+    const raw = (searchParams.get("redirect") ?? "").trim();
+    if (!raw.startsWith("/") || raw.startsWith("//")) return "";
+    return raw;
+  }, [searchParams]);
 
   useEffect(() => {
     const confirmed = (searchParams.get("confirmed") ?? "").trim();
@@ -45,6 +50,11 @@ function LoginPageInner() {
       url.searchParams.set("justSignedIn", "1");
       return `${url.pathname}${url.search}${url.hash}`;
     };
+
+    if (requestedRedirectPath) {
+      window.location.href = withJustSignedIn(requestedRedirectPath);
+      return;
+    }
 
     try {
       const resolved = await ensureMerchantIdentityForUser(user ?? undefined);

@@ -10,6 +10,7 @@ import { loadPlatformState, subscribePlatformState } from "@/data/platformContro
 import { isMerchantNumericId, normalizeDomainPrefix } from "@/lib/merchantIdentity";
 import { resolvePublishedSiteByPrefix } from "@/lib/publishedSiteLookup";
 import { buildPlatformHomeHref } from "@/lib/siteRouting";
+import { isSupabaseEnabled, supabase } from "@/lib/supabase";
 import { useHydrated } from "@/lib/useHydrated";
 
 type MerchantEntryPageClientProps = {
@@ -28,6 +29,8 @@ export default function MerchantEntryPageClient({
     prefix: "",
     siteId: "",
   });
+  const [numericAdminAuthReady, setNumericAdminAuthReady] = useState(false);
+  const [numericAdminAuthenticated, setNumericAdminAuthenticated] = useState(false);
 
   useEffect(
     () =>
@@ -54,6 +57,54 @@ export default function MerchantEntryPageClient({
     };
   }, [hydrated, merchantEntry, normalizedPrefix]);
 
+  useEffect(() => {
+    if (!hydrated || !merchantEntry || !isMerchantNumericId(merchantEntry)) return;
+
+    if (!isSupabaseEnabled) {
+      setNumericAdminAuthenticated(true);
+      setNumericAdminAuthReady(true);
+      return;
+    }
+
+    let mounted = true;
+    const redirectToLogin = () => {
+      if (!mounted || typeof window === "undefined") return;
+      setNumericAdminAuthenticated(false);
+      setNumericAdminAuthReady(true);
+      window.location.replace(`/login?redirect=${encodeURIComponent(`/${merchantEntry}`)}`);
+    };
+
+    void (async () => {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!mounted) return;
+      if (!session?.user) {
+        redirectToLogin();
+        return;
+      }
+
+      const { data, error } = await supabase.auth.getUser();
+      if (!mounted) return;
+      if (error || !data.user) {
+        await supabase.auth.signOut({ scope: "local" }).catch(() => {
+          // ignore local cleanup failure
+        });
+        redirectToLogin();
+        return;
+      }
+
+      setNumericAdminAuthenticated(true);
+      setNumericAdminAuthReady(true);
+    })().catch(() => {
+      redirectToLogin();
+    });
+
+    return () => {
+      mounted = false;
+    };
+  }, [hydrated, merchantEntry]);
+
   const resolvedSiteId = remoteLookup.prefix === normalizedPrefix ? remoteLookup.siteId : "";
   const remoteResolved = !merchantEntry || isMerchantNumericId(merchantEntry) || remoteLookup.prefix === normalizedPrefix;
 
@@ -62,6 +113,12 @@ export default function MerchantEntryPageClient({
   }
 
   if (merchantEntry && isMerchantNumericId(merchantEntry)) {
+    if (!numericAdminAuthReady) {
+      return <LoadingProgressScreen message="正在检查登录状态..." />;
+    }
+    if (!numericAdminAuthenticated) {
+      return <LoadingProgressScreen message="正在跳转到登录页..." />;
+    }
     return <AdminClient forcedScope={`site-${merchantEntry}`} />;
   }
 
