@@ -70,6 +70,7 @@ const FONT_FAMILY_OPTIONS = [
 ];
 
 const FONT_SIZE_OPTIONS = [12, 14, 16, 18, 20, 24, 28, 32, 36, 42, 48];
+const ALL_TYPOGRAPHY_KEYS: MerchantBusinessCardTypographyKey[] = ["name", "title", "website", "info"];
 
 function normalizeText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
@@ -215,6 +216,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
   const [numberInputDrafts, setNumberInputDrafts] = useState<Record<string, string>>({});
   const [selectedFieldKey, setSelectedFieldKey] = useState<MerchantBusinessCardFieldKey>("merchantName");
   const [fontStyleEditorOpen, setFontStyleEditorOpen] = useState(false);
+  const [applyUnifiedTypography, setApplyUnifiedTypography] = useState(false);
   const hiddenPreviewRef = useRef<HTMLDivElement | null>(null);
 
   const missingFields = useMemo(() => getMerchantBusinessCardRequiredFields(profile), [profile]);
@@ -403,7 +405,19 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
                     </div>
                     {fontStyleEditorOpen ? (
                       <div className="space-y-3 rounded-xl border bg-white p-4">
-                        <div className="text-sm font-medium text-slate-900">{selectedFieldMeta.label}</div>
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div className="text-sm font-medium text-slate-900">
+                            {applyUnifiedTypography ? "统一设置" : selectedFieldMeta.label}
+                          </div>
+                          <label className="flex items-center gap-2 text-xs text-slate-600">
+                            <input
+                              type="checkbox"
+                              checked={applyUnifiedTypography}
+                              onChange={(event) => setApplyUnifiedTypography(event.target.checked)}
+                            />
+                            统一设置
+                          </label>
+                        </div>
                         <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_120px]">
                           <label className="block text-xs text-slate-600">字体<select className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={selectedTypography.fontFamily || ""} onChange={(event) => updateTypography(selectedTypographyKey, { fontFamily: event.target.value })}>{FONT_FAMILY_OPTIONS.map((option) => <option key={option.label} value={option.value}>{option.label}</option>)}</select></label>
                           <label className="block text-xs text-slate-600">字号<select className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={selectedTypography.fontSize} onChange={(event) => updateTypography(selectedTypographyKey, { fontSize: Number(event.target.value) })}>{FONT_SIZE_OPTIONS.map((size) => <option key={size} value={size}>{size}</option>)}</select></label>
@@ -521,10 +535,22 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       ...current,
       typography: {
         ...current.typography,
-        [key]: {
-          ...current.typography[key],
-          ...patch,
-        },
+        ...(applyUnifiedTypography
+          ? Object.fromEntries(
+              ALL_TYPOGRAPHY_KEYS.map((typographyKey) => [
+                typographyKey,
+                {
+                  ...current.typography[typographyKey],
+                  ...patch,
+                },
+              ]),
+            )
+          : {
+              [key]: {
+                ...current.typography[key],
+                ...patch,
+              },
+            }),
       },
     }));
   }
