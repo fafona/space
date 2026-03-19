@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import {
   useEffect,
@@ -430,7 +430,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
                         </div>
                       </div>
                     ) : null}
-                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{TEXT_LAYOUT_FIELDS.map(({ key, label }) => <div key={key} className={`rounded-xl border bg-white p-3 transition ${selectedFieldKey === key ? "border-slate-900 ring-2 ring-slate-200" : "hover:border-slate-300"}`} onClick={() => setSelectedFieldKey(key)}><div className="mb-2 flex items-center justify-between gap-2"><div className="text-xs font-medium text-slate-700">{label}</div>{selectedFieldKey === key ? <span className="rounded-full bg-slate-900 px-2 py-0.5 text-[10px] text-white">当前</span> : null}</div><div className="grid grid-cols-2 gap-2">{(["x", "y"] as const).map((axis) => <label key={axis} className="block text-xs text-slate-600">{axis.toUpperCase()}<input type="text" inputMode="numeric" className="mt-1 w-full rounded border bg-white px-2 py-2 text-sm" value={getNumberInputValue(`layout-${key}-${axis}`, draft.textLayout[key][axis])} onFocus={() => setSelectedFieldKey(key)} onChange={(event) => handleNumberInputChange(`layout-${key}-${axis}`, event.target.value)} onBlur={() => commitNumberInput(`layout-${key}-${axis}`, draft.textLayout[key][axis], 0, 2000, (value) => applyDraft((current) => ({ ...current, textLayout: { ...current.textLayout, [key]: { ...current.textLayout[key], [axis]: value } } })))} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} /></label>)}</div></div>)}</div>
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{TEXT_LAYOUT_FIELDS.map(({ key, label }) => <div key={key} className={`rounded-xl border bg-white p-3 transition ${selectedFieldKey === key ? "border-slate-900 ring-2 ring-slate-200" : "hover:border-slate-300"}`} onClick={() => setSelectedFieldKey(key)}><div className="mb-2 flex items-center justify-between gap-2"><div className="text-xs font-medium text-slate-700">{label}</div>{selectedFieldKey === key ? <span className="rounded-full bg-slate-900 px-2 py-0.5 text-[10px] text-white">当前</span> : null}</div><div className="grid grid-cols-2 gap-2">{(["x", "y"] as const).map((axis) => <label key={axis} className="flex items-center gap-2 text-xs text-slate-600"><span className="w-3 shrink-0 text-center">{axis.toUpperCase()}</span><input type="text" inputMode="numeric" className="min-w-0 flex-1 rounded border bg-white px-2 py-2 text-sm" value={getNumberInputValue(`layout-${key}-${axis}`, draft.textLayout[key][axis])} onFocus={() => setSelectedFieldKey(key)} onChange={(event) => handleNumberInputChange(`layout-${key}-${axis}`, event.target.value)} onBlur={() => commitNumberInput(`layout-${key}-${axis}`, draft.textLayout[key][axis], 0, 2000, (value) => applyDraft((current) => ({ ...current, textLayout: { ...current.textLayout, [key]: { ...current.textLayout[key], [axis]: value } } })))} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} /></label>)}</div></div>)}</div>
                   </section>
                 </div>
               </div>
@@ -604,3 +604,4 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     }
   }
 }
+
