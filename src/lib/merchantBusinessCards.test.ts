@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   createDefaultMerchantBusinessCardDraft,
   getMerchantBusinessCardRequiredFields,
+  normalizeMerchantBusinessCardDraft,
   normalizeMerchantBusinessCards,
 } from "./merchantBusinessCards";
 
@@ -56,6 +57,16 @@ test("default business card draft prefills merchant profile fields", () => {
   assert.equal(draft.contacts.email, "caimin00x@gmail.com");
   assert.equal(draft.contacts.address, "C. Transporte, 12 / Sevilla / Sevilla / Spain");
   assert.equal(draft.websiteLabel, "扫码进入网站");
+});
+
+test("normalizeMerchantBusinessCardDraft preserves link mode", () => {
+  const draft = normalizeMerchantBusinessCardDraft({
+    mode: "link",
+    name: "fafona 名片",
+  });
+
+  assert.equal(draft.mode, "link");
+  assert.equal(draft.name, "fafona 名片");
 });
 
 test("normalizeMerchantBusinessCards keeps only valid generated card assets", () => {
