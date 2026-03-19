@@ -18,6 +18,7 @@ import {
   getMerchantBusinessCardRequiredFields,
   normalizeMerchantBusinessCardDraft,
   type MerchantBusinessCardAsset,
+  type MerchantBusinessCardCustomText,
   type MerchantBusinessCardDraft,
   type MerchantBusinessCardFieldKey,
   type MerchantBusinessCardMode,
@@ -89,6 +90,8 @@ const CARD_MODE_OPTIONS: Array<{
   },
 ];
 
+const CUSTOM_TEXT_PREFIX = "custom:";
+
 function normalizeText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -145,6 +148,10 @@ function CardSurface({
   scale: number;
 }) {
   const contacts = CONTACT_FIELDS.filter(({ key }) => normalizeText(draft.contacts[key]));
+  const websiteText = [draft.websiteLabel, draft.showWebsiteUrl ? websiteUrl.replace(/^https?:\/\//i, "") : ""]
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .join("\n");
   return (
     <div style={{ width: `${draft.width * scale}px`, height: `${draft.height * scale}px` }}>
       <div
@@ -178,16 +185,18 @@ function CardSurface({
           />
         ) : null}
         <div className="absolute inset-0 bg-white/12" />
-        {TEXT_LAYOUT_FIELDS.filter(({ key }) => key === "merchantName" || (key === "title" && draft.title) || key === "website").map(({ key }) => {
+        {TEXT_LAYOUT_FIELDS.filter(
+          ({ key }) =>
+            key === "merchantName" ||
+            (key === "title" && draft.title) ||
+            (key === "website" && websiteText),
+        ).map(({ key }) => {
           const value =
             key === "merchantName"
               ? draft.name
               : key === "title"
                 ? draft.title
-                : [draft.websiteLabel, websiteUrl.replace(/^https?:\/\//i, "")]
-                    .map((item) => item.trim())
-                    .filter(Boolean)
-                    .join("\n");
+                : websiteText;
           const styleKey: MerchantBusinessCardTypographyKey =
             key === "merchantName" ? "name" : key === "title" ? "title" : "website";
           return (
@@ -219,6 +228,22 @@ function CardSurface({
             {key === "contactName" ? draft.contacts[key] : `${label}: ${draft.contacts[key]}`}
           </div>
         ))}
+        {draft.customTexts
+          .filter((item) => normalizeText(item.text))
+          .map((item) => (
+            <div
+              key={item.id}
+              style={{
+                position: "absolute",
+                left: `${item.x}px`,
+                top: `${item.y}px`,
+                maxWidth: `${Math.max(160, draft.width - item.x - 36)}px`,
+                ...typographyStyle(item.typography),
+              }}
+            >
+              {item.text}
+            </div>
+          ))}
         <div
           style={{
             position: "absolute",
@@ -254,7 +279,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
   const [isGenerating, setIsGenerating] = useState(false);
   const [qrCodeUrl, setQrCodeUrl] = useState("");
   const [numberInputDrafts, setNumberInputDrafts] = useState<Record<string, string>>({});
-  const [selectedFieldKey, setSelectedFieldKey] = useState<MerchantBusinessCardFieldKey>("merchantName");
+  const [selectedFieldKey, setSelectedFieldKey] = useState<string>("merchantName");
   const [fontStyleEditorOpen, setFontStyleEditorOpen] = useState(false);
   const [applyUnifiedTypography, setApplyUnifiedTypography] = useState(false);
   const hiddenPreviewRef = useRef<HTMLDivElement | null>(null);
@@ -265,17 +290,54 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     () => buildMerchantDomain(siteBaseDomain, normalizeText(profile.domainPrefix), "https"),
     [siteBaseDomain, profile.domainPrefix],
   );
-  const selectedFieldMeta = useMemo(
-    () => TEXT_LAYOUT_FIELDS.find((item) => item.key === selectedFieldKey) ?? TEXT_LAYOUT_FIELDS[0],
+  const selectedCustomTextId = useMemo(
+    () => getCustomTextIdFromSelectionKey(selectedFieldKey),
     [selectedFieldKey],
   );
-  const selectedTypographyKey = useMemo<MerchantBusinessCardTypographyKey>(() => {
+  const selectedCustomText = useMemo(
+    () => draft.customTexts.find((item) => item.id === selectedCustomTextId) ?? null,
+    [draft.customTexts, selectedCustomTextId],
+  );
+  const selectedFieldMeta = useMemo(() => {
+    const standardField = TEXT_LAYOUT_FIELDS.find((item) => item.key === selectedFieldKey);
+    if (standardField) return { label: standardField.label, kind: "field" as const };
+    if (selectedCustomText) {
+      return {
+        label: getCustomTextLabel(
+          selectedCustomText.text,
+          draft.customTexts.findIndex((item) => item.id === selectedCustomText.id),
+        ),
+        kind: "custom" as const,
+      };
+    }
+    return { label: TEXT_LAYOUT_FIELDS[0]?.label ?? "", kind: "field" as const };
+  }, [draft.customTexts, selectedCustomText, selectedFieldKey]);
+  const selectedTypographyKey = useMemo<MerchantBusinessCardTypographyKey | null>(() => {
+    if (selectedCustomText) return null;
     if (selectedFieldKey === "merchantName") return "name";
     if (selectedFieldKey === "title") return "title";
     if (selectedFieldKey === "website") return "website";
     return "info";
-  }, [selectedFieldKey]);
-  const selectedTypography = draft.typography[selectedTypographyKey];
+  }, [selectedCustomText, selectedFieldKey]);
+  const selectedTypography = selectedCustomText
+    ? selectedCustomText.typography
+    : draft.typography[selectedTypographyKey ?? "info"];
+  const positionEditorItems = useMemo(
+    () => [
+      ...TEXT_LAYOUT_FIELDS.map((item) => ({
+        id: item.key,
+        label: item.label,
+        kind: "field" as const,
+      })),
+      ...draft.customTexts.map((item, index) => ({
+        id: getCustomTextSelectionKey(item.id),
+        label: getCustomTextLabel(item.text, index),
+        kind: "custom" as const,
+        customTextId: item.id,
+      })),
+    ],
+    [draft.customTexts],
+  );
   const scale = useMemo(() => Math.min(1, 380 / Math.max(1, draft.width)), [draft.width]);
   const fullScale = useMemo(() => Math.min(1, 1000 / Math.max(1, draft.width)), [draft.width]);
 
@@ -303,6 +365,12 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     };
   }, [draft.qr.size, websiteUrl]);
 
+  useEffect(() => {
+    if (!selectedCustomTextId) return;
+    if (draft.customTexts.some((item) => item.id === selectedCustomTextId)) return;
+    setSelectedFieldKey("merchantName");
+  }, [draft.customTexts, selectedCustomTextId]);
+
   const applyDraft = (recipe: (current: MerchantBusinessCardDraft) => MerchantBusinessCardDraft) => {
     setDraft((current) => normalizeMerchantBusinessCardDraft(recipe(current)));
     setHasPreviewed(false);
@@ -311,6 +379,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
   const openEditor = () => {
     if (!canCreate) return;
     setDraft(createDefaultMerchantBusinessCardDraft(profile));
+    setSelectedFieldKey("merchantName");
     setEditingCardId(null);
     setHasPreviewed(false);
     setPreviewAsset(null);
@@ -321,6 +390,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
   const openEditorForCard = (card: MerchantBusinessCardAsset) => {
     if (!canCreate) return;
     setDraft(normalizeMerchantBusinessCardDraft(card));
+    setSelectedFieldKey("merchantName");
     setEditingCardId(card.id);
     setHasPreviewed(true);
     setPreviewAsset(null);
@@ -494,7 +564,10 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
                       <label className="block text-xs text-slate-600">图片透明度<div className="mt-1 flex items-center gap-3 rounded border bg-white px-3 py-2"><input type="range" min="0" max="1" step="0.01" className="min-w-0 flex-1" value={draft.backgroundImageOpacity} onChange={(event) => applyDraft((current) => ({ ...current, backgroundImageOpacity: clamp(Number(event.target.value), 0, 1) }))} /><span className="w-12 shrink-0 text-right text-xs text-slate-500">{formatOpacityPercent(draft.backgroundImageOpacity)}</span></div></label>
                       <label className="block text-xs text-slate-600">背景色透明度<div className="mt-1 flex items-center gap-3 rounded border bg-white px-3 py-2"><input type="range" min="0" max="1" step="0.01" className="min-w-0 flex-1" value={draft.backgroundColorOpacity} onChange={(event) => applyDraft((current) => ({ ...current, backgroundColorOpacity: clamp(Number(event.target.value), 0, 1) }))} /><span className="w-12 shrink-0 text-right text-xs text-slate-500">{formatOpacityPercent(draft.backgroundColorOpacity)}</span></div></label>
                     </div>
-                    <label className="block text-xs text-slate-600">网站说明<input className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.websiteLabel} placeholder="扫码进入网站" onFocus={() => setSelectedFieldKey("website")} onChange={(event) => applyDraft((current) => ({ ...current, websiteLabel: event.target.value }))} /></label>
+                    <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_120px]">
+                      <label className="block text-xs text-slate-600">网站说明<input className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.websiteLabel} placeholder="扫码进入网站" onFocus={() => setSelectedFieldKey("website")} onChange={(event) => applyDraft((current) => ({ ...current, websiteLabel: event.target.value }))} /></label>
+                      <label className="flex items-end gap-2 text-xs text-slate-600"><input type="checkbox" className="mb-3" checked={draft.showWebsiteUrl} onChange={(event) => applyDraft((current) => ({ ...current, showWebsiteUrl: event.target.checked }))} />显示域名</label>
+                    </div>
                     <div className="rounded border bg-white px-3 py-2 text-xs text-slate-500">{`当前二维码网址：${websiteUrl || "请先填写域名前缀"}`}</div>
                   </section>
                   <section className="space-y-3 rounded-xl border bg-slate-50 p-4">
@@ -507,6 +580,35 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
                   <section className="space-y-3 rounded-xl border bg-slate-50 p-4 xl:col-span-2">
                     <div className="text-sm font-semibold text-slate-900">联系方式</div>
                     <div className="grid gap-3 md:grid-cols-2">{CONTACT_FIELDS.map(({ key, label }) => <label key={key} className="block text-xs text-slate-600">{label}<input className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.contacts[key]} onFocus={() => setSelectedFieldKey(key)} onChange={(event) => applyDraft((current) => ({ ...current, contacts: { ...current.contacts, [key]: event.target.value } }))} placeholder={`请输入${label}`} /></label>)}</div>
+                  </section>
+                  <section className="space-y-3 rounded-xl border bg-slate-50 p-4 xl:col-span-2">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="text-sm font-semibold text-slate-900">自定义文本</div>
+                      <button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={addCustomText}>新增文本</button>
+                    </div>
+                    {draft.customTexts.length > 0 ? (
+                      <div className="space-y-3">
+                        {draft.customTexts.map((item, index) => (
+                          <div key={item.id} className={`rounded-xl border bg-white p-3 ${selectedFieldKey === getCustomTextSelectionKey(item.id) ? "border-slate-900 ring-2 ring-slate-200" : ""}`}>
+                            <div className="mb-2 flex items-center justify-between gap-3">
+                              <div className="text-xs font-medium text-slate-700">{getCustomTextLabel(item.text, index)}</div>
+                              <button type="button" className="rounded border border-rose-200 bg-white px-2 py-1 text-xs text-rose-600 hover:bg-rose-50" onClick={() => removeCustomText(item.id)}>删除</button>
+                            </div>
+                            <input
+                              className="w-full rounded border bg-white px-3 py-2 text-sm"
+                              value={item.text}
+                              placeholder={`请输入自定义文本 ${index + 1}`}
+                              onFocus={() => setSelectedFieldKey(getCustomTextSelectionKey(item.id))}
+                              onChange={(event) =>
+                                updateCustomText(item.id, (current) => ({ ...current, text: event.target.value }))
+                              }
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="rounded border border-dashed bg-white px-3 py-4 text-xs text-slate-500">还没有自定义文本，点击“新增文本”即可添加。</div>
+                    )}
                   </section>
                   <section className="space-y-4 rounded-xl border bg-slate-50 p-4 xl:col-span-2">
                     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -543,7 +645,73 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
                         </div>
                       </div>
                     ) : null}
-                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{TEXT_LAYOUT_FIELDS.map(({ key, label }) => <div key={key} className={`rounded-xl border bg-white p-3 transition ${selectedFieldKey === key ? "border-slate-900 ring-2 ring-slate-200" : "hover:border-slate-300"}`} onClick={() => setSelectedFieldKey(key)}><div className="mb-2 flex items-center justify-between gap-2"><div className="text-xs font-medium text-slate-700">{label}</div>{selectedFieldKey === key ? <span className="rounded-full bg-slate-900 px-2 py-0.5 text-[10px] text-white">当前</span> : null}</div><div className="grid grid-cols-2 gap-2">{(["x", "y"] as const).map((axis) => <label key={axis} className="flex items-center gap-2 text-xs text-slate-600"><span className="w-3 shrink-0 text-center">{axis.toUpperCase()}</span><input type="number" inputMode="numeric" step={1} min={0} max={2000} className="min-w-0 flex-1 rounded border bg-white px-2 py-2 text-sm" value={getNumberInputValue(`layout-${key}-${axis}`, draft.textLayout[key][axis])} onFocus={() => setSelectedFieldKey(key)} onChange={(event) => handleNumberInputChange(`layout-${key}-${axis}`, event.target.value)} onBlur={() => commitNumberInput(`layout-${key}-${axis}`, draft.textLayout[key][axis], 0, 2000, (value) => applyDraft((current) => ({ ...current, textLayout: { ...current.textLayout, [key]: { ...current.textLayout[key], [axis]: value } } })))} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} /></label>)}</div></div>)}</div>
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                      {positionEditorItems.map((item) => {
+                        const isCurrent = selectedFieldKey === item.id;
+                        const currentPosition =
+                          item.kind === "field"
+                            ? draft.textLayout[item.id as MerchantBusinessCardFieldKey]
+                            : draft.customTexts.find((custom) => custom.id === item.customTextId);
+                        if (!currentPosition) return null;
+                        return (
+                          <div
+                            key={item.id}
+                            className={`rounded-xl border bg-white p-3 transition ${isCurrent ? "border-slate-900 ring-2 ring-slate-200" : "hover:border-slate-300"}`}
+                            onClick={() => setSelectedFieldKey(item.id)}
+                          >
+                            <div className="mb-2 flex items-center justify-between gap-2">
+                              <div className="text-xs font-medium text-slate-700">{item.label}</div>
+                              {isCurrent ? <span className="rounded-full bg-slate-900 px-2 py-0.5 text-[10px] text-white">当前</span> : null}
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                              {(["x", "y"] as const).map((axis) => (
+                                <label key={axis} className="flex items-center gap-2 text-xs text-slate-600">
+                                  <span className="w-3 shrink-0 text-center">{axis.toUpperCase()}</span>
+                                  <input
+                                    type="number"
+                                    inputMode="numeric"
+                                    step={1}
+                                    min={0}
+                                    max={2000}
+                                    className="min-w-0 flex-1 rounded border bg-white px-2 py-2 text-sm"
+                                    value={getNumberInputValue(`layout-${item.id}-${axis}`, currentPosition[axis])}
+                                    onFocus={() => setSelectedFieldKey(item.id)}
+                                    onChange={(event) => handleNumberInputChange(`layout-${item.id}-${axis}`, event.target.value)}
+                                    onBlur={() =>
+                                      commitNumberInput(
+                                        `layout-${item.id}-${axis}`,
+                                        currentPosition[axis],
+                                        0,
+                                        2000,
+                                        (value) =>
+                                          item.kind === "field"
+                                            ? applyDraft((current) => ({
+                                                ...current,
+                                                textLayout: {
+                                                  ...current.textLayout,
+                                                  [item.id]: {
+                                                    ...current.textLayout[item.id as MerchantBusinessCardFieldKey],
+                                                    [axis]: value,
+                                                  },
+                                                },
+                                              }))
+                                            : updateCustomText(item.customTextId, (current) => ({
+                                                ...current,
+                                                [axis]: value,
+                                              })),
+                                      )
+                                    }
+                                    onKeyDown={(event) => {
+                                      if (event.key === "Enter") event.currentTarget.blur();
+                                    }}
+                                  />
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </section>
                 </div>
               </div>
@@ -640,8 +808,46 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     });
   }
 
+  function addCustomText() {
+    const id = createId("custom-text");
+    applyDraft((current) => ({
+      ...current,
+      customTexts: [
+        ...current.customTexts,
+        {
+          id,
+          text: "",
+          x: 36,
+          y: 334 + current.customTexts.length * 36,
+          typography: { ...current.typography.info },
+        },
+      ],
+    }));
+    setSelectedFieldKey(getCustomTextSelectionKey(id));
+  }
+
+  function updateCustomText(
+    id: string,
+    recipe: (current: MerchantBusinessCardCustomText) => MerchantBusinessCardCustomText,
+  ) {
+    applyDraft((current) => ({
+      ...current,
+      customTexts: current.customTexts.map((item) => (item.id === id ? recipe(item) : item)),
+    }));
+  }
+
+  function removeCustomText(id: string) {
+    applyDraft((current) => ({
+      ...current,
+      customTexts: current.customTexts.filter((item) => item.id !== id),
+    }));
+    if (selectedFieldKey === getCustomTextSelectionKey(id)) {
+      setSelectedFieldKey("merchantName");
+    }
+  }
+
   function updateTypography(
-    key: MerchantBusinessCardTypographyKey,
+    key: MerchantBusinessCardTypographyKey | null,
     patch: Partial<MerchantBusinessCardDraft["typography"][MerchantBusinessCardTypographyKey]>,
   ) {
     applyDraft((current) => ({
@@ -659,12 +865,37 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
               ]),
             )
           : {
-              [key]: {
-                ...current.typography[key],
-                ...patch,
-              },
+              ...(key
+                ? {
+                    [key]: {
+                      ...current.typography[key],
+                      ...patch,
+                    },
+                  }
+                : {}),
             }),
       },
+      customTexts: applyUnifiedTypography
+        ? current.customTexts.map((item) => ({
+            ...item,
+            typography: {
+              ...item.typography,
+              ...patch,
+            },
+          }))
+        : key === null && selectedCustomTextId
+          ? current.customTexts.map((item) =>
+              item.id === selectedCustomTextId
+                ? {
+                    ...item,
+                    typography: {
+                      ...item.typography,
+                      ...patch,
+                    },
+                  }
+                : item,
+            )
+          : current.customTexts,
     }));
   }
 
@@ -697,5 +928,18 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     }
   }
 
+}
+
+function getCustomTextSelectionKey(id: string) {
+  return `${CUSTOM_TEXT_PREFIX}${id}`;
+}
+
+function getCustomTextIdFromSelectionKey(value: string) {
+  return value.startsWith(CUSTOM_TEXT_PREFIX) ? value.slice(CUSTOM_TEXT_PREFIX.length) : "";
+}
+
+function getCustomTextLabel(text: string, index: number) {
+  const normalized = normalizeText(text);
+  return normalized ? normalized.slice(0, 12) : `自定义文本 ${index + 1}`;
 }
 

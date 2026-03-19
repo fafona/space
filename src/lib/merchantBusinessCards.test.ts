@@ -44,6 +44,8 @@ test("default business card draft prefills merchant profile fields", () => {
   assert.equal(draft.name, "fafona");
   assert.equal(draft.backgroundImageOpacity, 1);
   assert.equal(draft.backgroundColorOpacity, 1);
+  assert.equal(draft.showWebsiteUrl, true);
+  assert.deepEqual(draft.customTexts, []);
   assert.equal(draft.contacts.contactName, "felix");
   assert.equal(draft.contacts.phone, "0034633130577");
   assert.equal(draft.contacts.email, "caimin00x@gmail.com");
@@ -67,6 +69,35 @@ test("normalizeMerchantBusinessCardDraft allows empty website label", () => {
   });
 
   assert.equal(draft.websiteLabel, "");
+});
+
+test("normalizeMerchantBusinessCardDraft supports hiding website url and custom texts", () => {
+  const draft = normalizeMerchantBusinessCardDraft({
+    showWebsiteUrl: false,
+    customTexts: [
+      {
+        id: "custom-1",
+        text: "VIP only",
+        x: 120,
+        y: 260,
+        typography: {
+          fontFamily: "Arial, Helvetica, sans-serif",
+          fontSize: 18,
+          fontColor: "#ff6600",
+          fontWeight: "bold",
+          fontStyle: "normal",
+          textDecoration: "none",
+        },
+      },
+    ],
+  });
+
+  assert.equal(draft.showWebsiteUrl, false);
+  assert.equal(draft.customTexts.length, 1);
+  assert.equal(draft.customTexts[0]?.text, "VIP only");
+  assert.equal(draft.customTexts[0]?.x, 120);
+  assert.equal(draft.customTexts[0]?.y, 260);
+  assert.equal(draft.customTexts[0]?.typography.fontColor, "#ff6600");
 });
 
 test("normalizeMerchantBusinessCardDraft clamps background opacity", () => {
@@ -96,6 +127,7 @@ test("normalizeMerchantBusinessCards keeps only valid generated card assets", ()
       backgroundImageOpacity: 0.45,
       title: "Manager",
       websiteLabel: "Visit site",
+      showWebsiteUrl: true,
       contacts: {
         contactName: "felix",
         phone: "123",
@@ -108,6 +140,22 @@ test("normalizeMerchantBusinessCards keeps only valid generated card assets", ()
         tiktok: "",
         xiaohongshu: "",
       },
+      customTexts: [
+        {
+          id: "custom-1",
+          text: "VIP only",
+          x: 120,
+          y: 260,
+          typography: {
+            fontFamily: "",
+            fontSize: 18,
+            fontColor: "#ff6600",
+            fontWeight: "bold",
+            fontStyle: "normal",
+            textDecoration: "none",
+          },
+        },
+      ],
       textLayout: {
         merchantName: { x: 36, y: 34 },
         title: { x: 36, y: 92 },
@@ -171,5 +219,7 @@ test("normalizeMerchantBusinessCards keeps only valid generated card assets", ()
   assert.equal(cards[0]?.name, "fafona card");
   assert.equal(cards[0]?.backgroundImageOpacity, 0.45);
   assert.equal(cards[0]?.backgroundColorOpacity, 0.72);
+  assert.equal(cards[0]?.customTexts.length, 1);
+  assert.equal(cards[0]?.customTexts[0]?.text, "VIP only");
   assert.equal(cards[0]?.contacts.address, "Sevilla");
 });

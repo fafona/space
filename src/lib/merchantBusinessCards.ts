@@ -38,6 +38,14 @@ export type MerchantBusinessCardTypographyMap = Record<
   TypographyEditableProps
 >;
 
+export type MerchantBusinessCardCustomText = {
+  id: string;
+  text: string;
+  x: number;
+  y: number;
+  typography: TypographyEditableProps;
+};
+
 export type MerchantBusinessCardContacts = {
   contactName: string;
   phone: string;
@@ -65,7 +73,9 @@ export type MerchantBusinessCardDraft = {
   ratioMode: MerchantBusinessCardRatioOptionId;
   title: string;
   websiteLabel: string;
+  showWebsiteUrl: boolean;
   contacts: MerchantBusinessCardContacts;
+  customTexts: MerchantBusinessCardCustomText[];
   textLayout: MerchantBusinessCardTextLayout;
   qr: {
     x: number;
@@ -111,6 +121,10 @@ function clampInt(value: unknown, fallback: number, min: number, max: number) {
 function clampOpacity(value: unknown, fallback: number) {
   const next = typeof value === "number" && Number.isFinite(value) ? value : fallback;
   return Math.max(0, Math.min(1, Math.round(next * 100) / 100));
+}
+
+function normalizeBoolean(value: unknown, fallback: boolean) {
+  return typeof value === "boolean" ? value : fallback;
 }
 
 function normalizeTypographyStyle(
@@ -180,6 +194,7 @@ export function createDefaultMerchantBusinessCardDraft(
     ratioMode: "85:54",
     title: "",
     websiteLabel: "扫码进入网站",
+    showWebsiteUrl: true,
     contacts: {
       contactName: normalizeText(profile.contactName),
       phone: normalizeText(profile.contactPhone),
@@ -192,6 +207,7 @@ export function createDefaultMerchantBusinessCardDraft(
       tiktok: "",
       xiaohongshu: "",
     },
+    customTexts: [],
     textLayout: {
       merchantName: { x: 36, y: 34 },
       title: { x: 36, y: 92 },
@@ -261,6 +277,21 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
     source.typography && typeof source.typography === "object"
       ? (source.typography as Partial<MerchantBusinessCardTypographyMap>)
       : {};
+  const customTexts = Array.isArray(source.customTexts)
+    ? source.customTexts
+        .map((item, index) => {
+          if (!item || typeof item !== "object") return null;
+          const custom = item as Partial<MerchantBusinessCardCustomText>;
+          return {
+            id: normalizeText(custom.id) || `custom-text-${index + 1}`,
+            text: normalizeText(custom.text),
+            x: clampInt(custom.x, 36, 0, 2000),
+            y: clampInt(custom.y, 334 + index * 36, 0, 2000),
+            typography: normalizeTypographyStyle(custom.typography, fallback.typography.info),
+          } satisfies MerchantBusinessCardCustomText;
+        })
+        .filter((item): item is MerchantBusinessCardCustomText => !!item)
+    : fallback.customTexts;
 
   return {
     mode: normalizeText((source as { mode?: unknown }).mode) === "link" ? "link" : "image",
@@ -277,6 +308,7 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
         : fallback.ratioMode,
     title: normalizeText(source.title),
     websiteLabel: typeof source.websiteLabel === "string" ? source.websiteLabel.trim() : fallback.websiteLabel,
+    showWebsiteUrl: normalizeBoolean(source.showWebsiteUrl, fallback.showWebsiteUrl),
     contacts: {
       contactName: normalizeText(source.contacts?.contactName),
       phone: normalizeText(source.contacts?.phone),
@@ -289,6 +321,7 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
       tiktok: normalizeText(source.contacts?.tiktok),
       xiaohongshu: normalizeText(source.contacts?.xiaohongshu),
     },
+    customTexts,
     textLayout: {
       merchantName: {
         x: clampInt(textLayoutSource.merchantName?.x, fallback.textLayout.merchantName.x, 0, 2000),
