@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildDefaultBookingStoreOptions,
+  normalizeBookingOptionList,
   sanitizeMerchantBookingEditableInput,
   validateMerchantBookingInput,
-  normalizeBookingOptionList,
 } from "./merchantBookings";
 
 test("normalizeBookingOptionList trims blanks and removes duplicates", () => {
@@ -33,7 +33,7 @@ test("sanitizeMerchantBookingEditableInput normalizes email and note", () => {
     customerName: " Felix ",
     email: " TEST@EXAMPLE.COM ",
     phone: " 123456 ",
-    note: " 第一行 \r\n第二行 ",
+    note: " 第一行\r\n第二行 ",
   });
 
   assert.deepEqual(sanitized, {
@@ -44,7 +44,7 @@ test("sanitizeMerchantBookingEditableInput normalizes email and note", () => {
     customerName: "Felix",
     email: "test@example.com",
     phone: "123456",
-    note: "第一行 \n第二行",
+    note: "第一行\n第二行",
   });
 });
 

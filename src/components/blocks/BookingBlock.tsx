@@ -29,6 +29,8 @@ type SubmittedBookingState = {
 };
 
 const EDIT_TOKEN_STORAGE_KEY = "merchant-space:merchant-booking-tokens:v1";
+const DATE_TIME_INPUT_FONT =
+  'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif';
 
 function readEditTokenMap() {
   if (typeof window === "undefined") return {} as Record<string, string>;
@@ -250,14 +252,14 @@ export default function BookingBlock({
             {submittedState.booking.status === "cancelled" ? "您可以继续修改并重新提交预约。" : successText}
           </div>
           <div className="mt-4 grid gap-3 text-sm text-slate-700 md:grid-cols-2">
-            <div>预约编号：{submittedState.booking.id}</div>
-            <div>预约店铺：{submittedState.booking.store}</div>
-            <div>预约项目：{submittedState.booking.item}</div>
-            <div>预约时间：{formatMerchantBookingDateTime(submittedState.booking.appointmentAt)}</div>
-            <div>称谓/姓名：{submittedState.booking.title} {submittedState.booking.customerName}</div>
-            <div>邮箱：{submittedState.booking.email}</div>
-            <div>电话：{submittedState.booking.phone}</div>
-            {submittedState.booking.note ? <div className="md:col-span-2">备注：{submittedState.booking.note}</div> : null}
+            <div>{`预约编号：${submittedState.booking.id}`}</div>
+            <div>{`预约店铺：${submittedState.booking.store}`}</div>
+            <div>{`预约项目：${submittedState.booking.item}`}</div>
+            <div>{`预约时间：${formatMerchantBookingDateTime(submittedState.booking.appointmentAt)}`}</div>
+            <div>{`称谓/姓名：${submittedState.booking.title} ${submittedState.booking.customerName}`}</div>
+            <div>{`邮箱：${submittedState.booking.email}`}</div>
+            <div>{`电话：${submittedState.booking.phone}`}</div>
+            {submittedState.booking.note ? <div className="md:col-span-2">{`备注：${submittedState.booking.note}`}</div> : null}
           </div>
           <div className="mt-5 flex flex-wrap gap-3">
             <button
@@ -322,6 +324,8 @@ export default function BookingBlock({
               <span>预约日期时间</span>
               <input
                 type="datetime-local"
+                lang="zh-CN"
+                style={{ fontFamily: DATE_TIME_INPUT_FONT }}
                 className={getFormFieldClass(!isLiveBooking)}
                 value={draft.appointmentAt}
                 disabled={!isLiveBooking}
