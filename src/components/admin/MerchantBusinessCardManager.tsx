@@ -320,7 +320,11 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       if (typeof document.fonts?.ready?.then === "function") {
         await document.fonts.ready.catch(() => undefined);
       }
-      const imageUrl = await toPng(node, { pixelRatio: 1, cacheBust: true });
+      const imageUrl = await toPng(node, {
+        pixelRatio: 1,
+        cacheBust: true,
+        backgroundColor: "transparent",
+      });
       const asset: MerchantBusinessCardAsset = {
         ...normalizeMerchantBusinessCardDraft(draft),
         id: createId("business-card"),
@@ -444,7 +448,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
         <div className="fixed inset-0 z-[2147483000] bg-black/45 p-4" onMouseDown={() => setFolderOpen(false)}>
           <div className="mx-auto flex h-full max-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
             <div className="flex items-center justify-between border-b px-5 py-4"><div><div className="text-lg font-semibold text-slate-900">名片夹</div><div className="text-sm text-slate-500">{canCopyCardImage ? "查看已生成的名片图片，可预览或复制。" : "查看已生成的名片图片，可预览或保存。"}</div></div><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => setFolderOpen(false)}>关闭</button></div>
-            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">{cards.length > 0 ? <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{cards.map((card) => <article key={card.id} className="overflow-hidden rounded-2xl border bg-slate-50 shadow-sm"><div className="space-y-4 p-4"><div className="overflow-hidden rounded-2xl border bg-slate-100"><img src={card.imageUrl} alt={card.name} className="h-auto w-full object-cover" /></div><div><div className="text-base font-semibold text-slate-900">{card.name}</div><div className="text-xs text-slate-500">{new Date(card.createdAt).toLocaleString("zh-CN", { hour12: false })}</div></div><div className="flex gap-2"><button type="button" className="flex-1 rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => { setPreviewAsset(card); setPreviewOpen(true); }}>预览</button><button type="button" className="flex-1 rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800" onClick={() => void (canCopyCardImage ? copyCard(card) : saveCard(card))}>{canCopyCardImage ? "复制" : "保存"}</button></div></div></article>)}</div> : <div className="flex min-h-[240px] items-center justify-center rounded-2xl border border-dashed bg-slate-50 px-6 text-center text-sm text-slate-500">还没有生成名片。先去点击“生成名片”制作一张。</div>}</div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">{cards.length > 0 ? <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{cards.map((card) => <article key={card.id} className="overflow-hidden rounded-2xl border bg-slate-50 shadow-sm"><div className="space-y-4 p-4"><div className="overflow-hidden rounded-2xl border bg-transparent"><img src={card.imageUrl} alt={card.name} className="block h-auto w-full object-cover bg-transparent" /></div><div><div className="text-base font-semibold text-slate-900">{card.name}</div><div className="text-xs text-slate-500">{new Date(card.createdAt).toLocaleString("zh-CN", { hour12: false })}</div></div><div className="flex gap-2"><button type="button" className="flex-1 rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => { setPreviewAsset(card); setPreviewOpen(true); }}>预览</button><button type="button" className="flex-1 rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800" onClick={() => void (canCopyCardImage ? copyCard(card) : saveCard(card))}>{canCopyCardImage ? "复制" : "保存"}</button></div></div></article>)}</div> : <div className="flex min-h-[240px] items-center justify-center rounded-2xl border border-dashed bg-slate-50 px-6 text-center text-sm text-slate-500">还没有生成名片。先去点击“生成名片”制作一张。</div>}</div>
           </div>
         </div>,
       ) : null}
@@ -453,7 +457,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
         <div className="fixed inset-0 z-[2147483100] bg-black/65 p-4" onMouseDown={() => { setPreviewOpen(false); setPreviewAsset(null); }}>
           <div className="mx-auto flex h-full max-h-[calc(100vh-2rem)] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
             <div className="flex items-center justify-between border-b px-5 py-4"><div className="text-base font-semibold text-slate-900">{previewAsset?.name || draft.name || "名片预览"}</div><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => { setPreviewOpen(false); setPreviewAsset(null); }}>关闭</button></div>
-            <div className="flex-1 overflow-auto bg-black p-4"><div className="mx-auto flex min-h-full items-start justify-center">{previewAsset ? <img src={previewAsset.imageUrl} alt={previewAsset.name} className="h-auto max-w-full rounded-xl object-contain" /> : <CardSurface draft={draft} websiteUrl={websiteUrl} qrCodeUrl={qrCodeUrl} scale={fullScale} />}</div></div>
+            <div className="flex-1 overflow-auto bg-black p-4"><div className="mx-auto flex min-h-full items-start justify-center">{previewAsset ? <img src={previewAsset.imageUrl} alt={previewAsset.name} className="block h-auto max-w-full bg-transparent object-contain" /> : <CardSurface draft={draft} websiteUrl={websiteUrl} qrCodeUrl={qrCodeUrl} scale={fullScale} />}</div></div>
           </div>
         </div>,
       ) : null}
