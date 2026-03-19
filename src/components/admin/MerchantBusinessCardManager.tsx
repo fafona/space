@@ -216,7 +216,7 @@ function CardSurface({
               ...typographyStyle(draft.typography.info),
             }}
           >
-            {`${label}: ${draft.contacts[key]}`}
+            {key === "contactName" ? draft.contacts[key] : `${label}: ${draft.contacts[key]}`}
           </div>
         ))}
         <div
