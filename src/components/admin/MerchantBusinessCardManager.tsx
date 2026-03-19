@@ -229,6 +229,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
   const [folderOpen, setFolderOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewAsset, setPreviewAsset] = useState<MerchantBusinessCardAsset | null>(null);
+  const [editingCardId, setEditingCardId] = useState<string | null>(null);
   const [tip, setTip] = useState("");
   const [hasPreviewed, setHasPreviewed] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -291,9 +292,21 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
   const openEditor = () => {
     if (!canCreate) return;
     setDraft(createDefaultMerchantBusinessCardDraft(profile));
+    setEditingCardId(null);
     setHasPreviewed(false);
     setPreviewAsset(null);
     setPreviewOpen(false);
+    setEditorOpen(true);
+  };
+
+  const openEditorForCard = (card: MerchantBusinessCardAsset) => {
+    if (!canCreate) return;
+    setDraft(normalizeMerchantBusinessCardDraft(card));
+    setEditingCardId(card.id);
+    setHasPreviewed(true);
+    setPreviewAsset(null);
+    setPreviewOpen(false);
+    setFolderOpen(false);
     setEditorOpen(true);
   };
 
@@ -336,23 +349,49 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
         cacheBust: true,
         backgroundColor: "transparent",
       });
+      const nextDraft = normalizeMerchantBusinessCardDraft(draft);
+      const existingCard = editingCardId ? cards.find((card) => card.id === editingCardId) ?? null : null;
       const asset: MerchantBusinessCardAsset = {
-        ...normalizeMerchantBusinessCardDraft(draft),
-        id: createId("business-card"),
-        createdAt: new Date().toISOString(),
+        ...nextDraft,
+        id: existingCard?.id ?? createId("business-card"),
+        createdAt: existingCard?.createdAt ?? new Date().toISOString(),
         imageUrl,
         targetUrl: websiteUrl,
       };
-      onCardsChange([asset, ...cards]);
+      onCardsChange(
+        existingCard
+          ? cards.map((card) => (card.id === existingCard.id ? asset : card))
+          : [asset, ...cards],
+      );
+      setEditingCardId(asset.id);
       setEditorOpen(false);
       setFolderOpen(true);
       setPreviewAsset(asset);
-      setTip("名片已生成并保存到名片夹");
+      setTip(existingCard ? "名片已更新并保存到名片夹" : "名片已生成并保存到名片夹");
     } catch {
       setTip("名片生成失败，请重试");
     } finally {
       setIsGenerating(false);
     }
+  };
+
+  const deleteCard = (card: MerchantBusinessCardAsset) => {
+    if (typeof window !== "undefined" && !window.confirm(`确认删除名片“${card.name}”吗？`)) {
+      return;
+    }
+    const nextCards = cards.filter((item) => item.id !== card.id);
+    onCardsChange(nextCards);
+    if (previewAsset?.id === card.id) {
+      setPreviewAsset(null);
+      setPreviewOpen(false);
+    }
+    if (editingCardId === card.id) {
+      setEditingCardId(null);
+      setEditorOpen(false);
+      setDraft(createDefaultMerchantBusinessCardDraft(profile));
+      setHasPreviewed(false);
+    }
+    setTip("名片已删除");
   };
 
   const openCardTarget = (card: MerchantBusinessCardAsset) => {
@@ -379,14 +418,20 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       <div className="pointer-events-none fixed left-[-20000px] top-0"><div ref={hiddenPreviewRef}><CardSurface draft={draft} websiteUrl={websiteUrl} qrCodeUrl={qrCodeUrl} scale={1} /></div></div>
 
       {editorOpen ? overlay(
-        <div className="fixed inset-0 z-[2147482900] bg-black/45 p-4" onMouseDown={() => setEditorOpen(false)}>
+        <div
+          className="fixed inset-0 z-[2147482900] bg-black/45 p-4"
+          onMouseDown={() => {
+            setEditorOpen(false);
+            setEditingCardId(null);
+          }}
+        >
           <div className="mx-auto flex h-full max-h-[calc(100vh-2rem)] w-full max-w-7xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
             <div className="flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4">
-              <div><div className="text-lg font-semibold text-slate-900">生成名片</div><div className="text-sm text-slate-500">先选择图片模式或链接模式，再调整样式并预览生成。</div></div>
+              <div><div className="text-lg font-semibold text-slate-900">{editingCardId ? "修改名片" : "生成名片"}</div><div className="text-sm text-slate-500">先选择图片模式或链接模式，再调整样式并预览生成。</div></div>
               <div className="flex flex-wrap gap-2">
                 <button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => { setPreviewAsset(null); setHasPreviewed(true); setPreviewOpen(true); }}>预览</button>
-                <button type="button" className="rounded bg-black px-3 py-2 text-sm text-white disabled:opacity-50" onClick={() => { setHasPreviewed(true); void handleGenerate(); }} disabled={!websiteUrl || !qrCodeUrl || isGenerating || !hasPreviewed}>{isGenerating ? "生成中..." : "生成"}</button>
-                <button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => setEditorOpen(false)}>关闭</button>
+                <button type="button" className="rounded bg-black px-3 py-2 text-sm text-white disabled:opacity-50" onClick={() => { setHasPreviewed(true); void handleGenerate(); }} disabled={!websiteUrl || !qrCodeUrl || isGenerating || !hasPreviewed}>{isGenerating ? (editingCardId ? "保存中..." : "生成中...") : (editingCardId ? "保存修改" : "生成")}</button>
+                <button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => { setEditorOpen(false); setEditingCardId(null); }}>关闭</button>
               </div>
             </div>
             <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1.1fr)_minmax(340px,420px)]">
@@ -491,7 +536,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
         <div className="fixed inset-0 z-[2147483000] bg-black/45 p-4" onMouseDown={() => setFolderOpen(false)}>
           <div className="mx-auto flex h-full max-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
             <div className="flex items-center justify-between border-b px-5 py-4"><div><div className="text-lg font-semibold text-slate-900">名片夹</div><div className="text-sm text-slate-500">查看已生成的图片名片或链接名片，可预览并继续操作。</div></div><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => setFolderOpen(false)}>关闭</button></div>
-            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">{cards.length > 0 ? <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{cards.map((card) => <article key={card.id} className="overflow-hidden rounded-2xl border bg-slate-50 shadow-sm"><div className="space-y-4 p-4"><button type="button" className="block w-full overflow-hidden rounded-2xl border bg-transparent text-left" onClick={() => { setPreviewAsset(card); setPreviewOpen(true); }}><img src={card.imageUrl} alt={card.name} className="block h-auto w-full object-cover bg-transparent" /></button><div><div className="flex items-center gap-2"><div className="text-base font-semibold text-slate-900">{card.name}</div><span className="rounded-full bg-slate-900 px-2 py-0.5 text-[10px] text-white">{getCardModeLabel(card.mode)}</span></div><div className="text-xs text-slate-500">{new Date(card.createdAt).toLocaleString("zh-CN", { hour12: false })}</div></div><div className="flex gap-2"><button type="button" className="flex-1 rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => { setPreviewAsset(card); setPreviewOpen(true); }}>预览</button><button type="button" className="flex-1 rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800" onClick={() => void saveCard(card)}>保存</button></div></div></article>)}</div> : <div className="flex min-h-[240px] items-center justify-center rounded-2xl border border-dashed bg-slate-50 px-6 text-center text-sm text-slate-500">还没有生成名片。先去点击“生成名片”制作一张。</div>}</div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">{cards.length > 0 ? <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{cards.map((card) => <article key={card.id} className="overflow-hidden rounded-2xl border bg-slate-50 shadow-sm"><div className="space-y-4 p-4"><button type="button" className="block w-full overflow-hidden rounded-2xl border bg-transparent text-left" onClick={() => { setPreviewAsset(card); setPreviewOpen(true); }}><img src={card.imageUrl} alt={card.name} className="block h-auto w-full object-cover bg-transparent" /></button><div><div className="flex items-center gap-2"><div className="text-base font-semibold text-slate-900">{card.name}</div><span className="rounded-full bg-slate-900 px-2 py-0.5 text-[10px] text-white">{getCardModeLabel(card.mode)}</span></div><div className="text-xs text-slate-500">{new Date(card.createdAt).toLocaleString("zh-CN", { hour12: false })}</div></div><div className="grid grid-cols-2 gap-2"><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => { setPreviewAsset(card); setPreviewOpen(true); }}>预览</button><button type="button" className="rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800" onClick={() => void saveCard(card)}>保存</button><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => openEditorForCard(card)}>修改</button><button type="button" className="rounded border border-rose-200 bg-white px-3 py-2 text-sm text-rose-600 hover:bg-rose-50" onClick={() => deleteCard(card)}>删除</button></div></div></article>)}</div> : <div className="flex min-h-[240px] items-center justify-center rounded-2xl border border-dashed bg-slate-50 px-6 text-center text-sm text-slate-500">还没有生成名片。先去点击“生成名片”制作一张。</div>}</div>
           </div>
         </div>,
       ) : null}
