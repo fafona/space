@@ -211,6 +211,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
   const [hasPreviewed, setHasPreviewed] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [qrCodeUrl, setQrCodeUrl] = useState("");
+  const [numberInputDrafts, setNumberInputDrafts] = useState<Record<string, string>>({});
   const [selectedFieldKey, setSelectedFieldKey] = useState<MerchantBusinessCardFieldKey>("merchantName");
   const [fontStyleEditorOpen, setFontStyleEditorOpen] = useState(false);
   const hiddenPreviewRef = useRef<HTMLDivElement | null>(null);
@@ -361,8 +362,8 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
                     <label className="block text-xs text-slate-600">职位<input className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.title} onFocus={() => setSelectedFieldKey("title")} onChange={(event) => applyDraft((current) => ({ ...current, title: event.target.value }))} /></label>
                     <div className="grid gap-3 md:grid-cols-3">
                       <label className="block text-xs text-slate-600">比例<select className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.ratioMode} onChange={(event) => applyDraft((current) => ({ ...current, ratioMode: event.target.value as MerchantBusinessCardDraft["ratioMode"], ...(() => resolveRatioDimensions(event.target.value as MerchantBusinessCardDraft["ratioMode"], current.width, current.height))() }))}>{MERCHANT_BUSINESS_CARD_RATIO_OPTIONS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}<option value="custom">自定义</option></select></label>
-                      <label className="block text-xs text-slate-600">宽度<input type="number" min={320} max={1600} className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.width} onChange={(event) => handleSize(event.target.value, "width")} /></label>
-                      <label className="block text-xs text-slate-600">高度<input type="number" min={180} max={1600} className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.height} onChange={(event) => handleSize(event.target.value, "height")} /></label>
+                      <label className="block text-xs text-slate-600">宽度<input type="text" inputMode="numeric" className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={getNumberInputValue("card-width", draft.width)} onChange={(event) => handleNumberInputChange("card-width", event.target.value)} onBlur={() => commitNumberInput("card-width", draft.width, 320, 1600, (value) => handleSize(value, "width"))} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} /></label>
+                      <label className="block text-xs text-slate-600">高度<input type="text" inputMode="numeric" className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={getNumberInputValue("card-height", draft.height)} onChange={(event) => handleNumberInputChange("card-height", event.target.value)} onBlur={() => commitNumberInput("card-height", draft.height, 180, 1600, (value) => handleSize(value, "height"))} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} /></label>
                     </div>
                     <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_160px]">
                       <label className="block text-xs text-slate-600">背景图<input type="file" accept="image/*" className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" onChange={(event) => void handleBackgroundUpload(event)} /></label>
@@ -374,7 +375,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
                   <section className="space-y-3 rounded-xl border bg-slate-50 p-4">
                     <div className="text-sm font-semibold text-slate-900">二维码</div>
                     <div className="grid gap-3 md:grid-cols-3">
-                      {(["x", "y", "size"] as const).map((key) => <label key={key} className="block text-xs text-slate-600">{key === "size" ? "大小" : key.toUpperCase()}<input type="number" min={key === "size" ? 48 : 0} max={key === "size" ? 600 : 2000} className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.qr[key]} onChange={(event) => applyDraft((current) => ({ ...current, qr: { ...current.qr, [key]: clamp(Number(event.target.value) || 0, key === "size" ? 48 : 0, key === "size" ? 600 : 2000) } }))} /></label>)}
+                      {(["x", "y", "size"] as const).map((key) => <label key={key} className="block text-xs text-slate-600">{key === "size" ? "大小" : key.toUpperCase()}<input type="text" inputMode="numeric" className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={getNumberInputValue(`qr-${key}`, draft.qr[key])} onChange={(event) => handleNumberInputChange(`qr-${key}`, event.target.value)} onBlur={() => commitNumberInput(`qr-${key}`, draft.qr[key], key === "size" ? 48 : 0, key === "size" ? 600 : 2000, (value) => applyDraft((current) => ({ ...current, qr: { ...current.qr, [key]: value } })))} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} /></label>)}
                     </div>
                     <div className="rounded-xl border bg-white p-4"><div className="mb-3 text-xs font-medium text-slate-500">二维码预览</div><div className="flex h-32 w-32 items-center justify-center rounded-xl border bg-slate-50 p-2">{qrCodeUrl ? <img src={qrCodeUrl} alt="二维码预览" className="h-full w-full object-contain" /> : <span className="text-xs text-slate-400">暂无二维码</span>}</div></div>
                   </section>
@@ -405,7 +406,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
                         </div>
                       </div>
                     ) : null}
-                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{TEXT_LAYOUT_FIELDS.map(({ key, label }) => <div key={key} className={`rounded-xl border bg-white p-3 transition ${selectedFieldKey === key ? "border-slate-900 ring-2 ring-slate-200" : "hover:border-slate-300"}`} onClick={() => setSelectedFieldKey(key)}><div className="mb-2 flex items-center justify-between gap-2"><div className="text-xs font-medium text-slate-700">{label}</div>{selectedFieldKey === key ? <span className="rounded-full bg-slate-900 px-2 py-0.5 text-[10px] text-white">当前</span> : null}</div><div className="grid grid-cols-2 gap-2">{(["x", "y"] as const).map((axis) => <label key={axis} className="block text-xs text-slate-600">{axis.toUpperCase()}<input type="number" className="mt-1 w-full rounded border bg-white px-2 py-2 text-sm" value={draft.textLayout[key][axis]} onFocus={() => setSelectedFieldKey(key)} onChange={(event) => applyDraft((current) => ({ ...current, textLayout: { ...current.textLayout, [key]: { ...current.textLayout[key], [axis]: clamp(Number(event.target.value) || 0, 0, 2000) } } }))} /></label>)}</div></div>)}</div>
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{TEXT_LAYOUT_FIELDS.map(({ key, label }) => <div key={key} className={`rounded-xl border bg-white p-3 transition ${selectedFieldKey === key ? "border-slate-900 ring-2 ring-slate-200" : "hover:border-slate-300"}`} onClick={() => setSelectedFieldKey(key)}><div className="mb-2 flex items-center justify-between gap-2"><div className="text-xs font-medium text-slate-700">{label}</div>{selectedFieldKey === key ? <span className="rounded-full bg-slate-900 px-2 py-0.5 text-[10px] text-white">当前</span> : null}</div><div className="grid grid-cols-2 gap-2">{(["x", "y"] as const).map((axis) => <label key={axis} className="block text-xs text-slate-600">{axis.toUpperCase()}<input type="text" inputMode="numeric" className="mt-1 w-full rounded border bg-white px-2 py-2 text-sm" value={getNumberInputValue(`layout-${key}-${axis}`, draft.textLayout[key][axis])} onFocus={() => setSelectedFieldKey(key)} onChange={(event) => handleNumberInputChange(`layout-${key}-${axis}`, event.target.value)} onBlur={() => commitNumberInput(`layout-${key}-${axis}`, draft.textLayout[key][axis], 0, 2000, (value) => applyDraft((current) => ({ ...current, textLayout: { ...current.textLayout, [key]: { ...current.textLayout[key], [axis]: value } } })))} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} /></label>)}</div></div>)}</div>
                   </section>
                 </div>
               </div>
@@ -448,8 +449,49 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     return { width, height: Math.max(180, Math.round((width * ratio.height) / ratio.width)) };
   }
 
-  function handleSize(raw: string, field: "width" | "height") {
-    const nextValue = clamp(Number(raw) || 0, field === "width" ? 320 : 180, 1600);
+  function getNumberInputValue(key: string, value: number) {
+    return numberInputDrafts[key] ?? String(value);
+  }
+
+  function handleNumberInputChange(key: string, raw: string) {
+    setNumberInputDrafts((current) => ({ ...current, [key]: raw }));
+  }
+
+  function clearNumberInputDraft(key: string) {
+    setNumberInputDrafts((current) => {
+      if (!(key in current)) return current;
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+  }
+
+  function normalizeNumberInput(raw: string, fallback: number, min: number, max: number) {
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) return fallback;
+    return clamp(Math.round(parsed), min, max);
+  }
+
+  function commitNumberInput(
+    key: string,
+    fallback: number,
+    min: number,
+    max: number,
+    onCommit: (value: number) => void,
+  ) {
+    const raw = numberInputDrafts[key];
+    if (typeof raw !== "string") return;
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      clearNumberInputDraft(key);
+      return;
+    }
+    const nextValue = normalizeNumberInput(trimmed, fallback, min, max);
+    onCommit(nextValue);
+    clearNumberInputDraft(key);
+  }
+
+  function handleSize(nextValue: number, field: "width" | "height") {
     applyDraft((current) => {
       if (current.ratioMode === "custom") return { ...current, [field]: nextValue };
       const next = resolveRatioDimensions(
