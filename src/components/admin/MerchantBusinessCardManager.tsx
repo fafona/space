@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import { toJpeg } from "html-to-image";
+import { toPng } from "html-to-image";
 import QRCode from "qrcode";
 import {
   MERCHANT_BUSINESS_CARD_RATIO_OPTIONS,
@@ -301,7 +301,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       if (typeof document.fonts?.ready?.then === "function") {
         await document.fonts.ready.catch(() => undefined);
       }
-      const imageUrl = await toJpeg(node, { quality: 0.92, pixelRatio: 1, cacheBust: true, backgroundColor: "#ffffff" });
+      const imageUrl = await toPng(node, { pixelRatio: 1, cacheBust: true });
       const asset: MerchantBusinessCardAsset = {
         ...normalizeMerchantBusinessCardDraft(draft),
         id: createId("business-card"),
