@@ -61,6 +61,14 @@ test("normalizeMerchantBusinessCardDraft preserves link mode", () => {
   assert.equal(draft.name, "fafona card");
 });
 
+test("normalizeMerchantBusinessCardDraft allows empty website label", () => {
+  const draft = normalizeMerchantBusinessCardDraft({
+    websiteLabel: "   ",
+  });
+
+  assert.equal(draft.websiteLabel, "");
+});
+
 test("normalizeMerchantBusinessCardDraft clamps background opacity", () => {
   const draft = normalizeMerchantBusinessCardDraft({
     backgroundImageOpacity: 2,

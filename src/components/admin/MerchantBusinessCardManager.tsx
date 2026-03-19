@@ -184,7 +184,10 @@ function CardSurface({
               ? draft.name
               : key === "title"
                 ? draft.title
-                : `${draft.websiteLabel || "扫码进入网站"}\n${websiteUrl.replace(/^https?:\/\//i, "")}`;
+                : [draft.websiteLabel, websiteUrl.replace(/^https?:\/\//i, "")]
+                    .map((item) => item.trim())
+                    .filter(Boolean)
+                    .join("\n");
           const styleKey: MerchantBusinessCardTypographyKey =
             key === "merchantName" ? "name" : key === "title" ? "title" : "website";
           return (
@@ -491,7 +494,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
                       <label className="block text-xs text-slate-600">图片透明度<div className="mt-1 flex items-center gap-3 rounded border bg-white px-3 py-2"><input type="range" min="0" max="1" step="0.01" className="min-w-0 flex-1" value={draft.backgroundImageOpacity} onChange={(event) => applyDraft((current) => ({ ...current, backgroundImageOpacity: clamp(Number(event.target.value), 0, 1) }))} /><span className="w-12 shrink-0 text-right text-xs text-slate-500">{formatOpacityPercent(draft.backgroundImageOpacity)}</span></div></label>
                       <label className="block text-xs text-slate-600">背景色透明度<div className="mt-1 flex items-center gap-3 rounded border bg-white px-3 py-2"><input type="range" min="0" max="1" step="0.01" className="min-w-0 flex-1" value={draft.backgroundColorOpacity} onChange={(event) => applyDraft((current) => ({ ...current, backgroundColorOpacity: clamp(Number(event.target.value), 0, 1) }))} /><span className="w-12 shrink-0 text-right text-xs text-slate-500">{formatOpacityPercent(draft.backgroundColorOpacity)}</span></div></label>
                     </div>
-                    <label className="block text-xs text-slate-600">网站说明<input className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.websiteLabel} onFocus={() => setSelectedFieldKey("website")} onChange={(event) => applyDraft((current) => ({ ...current, websiteLabel: event.target.value }))} /></label>
+                    <label className="block text-xs text-slate-600">网站说明<input className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.websiteLabel} placeholder="扫码进入网站" onFocus={() => setSelectedFieldKey("website")} onChange={(event) => applyDraft((current) => ({ ...current, websiteLabel: event.target.value }))} /></label>
                     <div className="rounded border bg-white px-3 py-2 text-xs text-slate-500">{`当前二维码网址：${websiteUrl || "请先填写域名前缀"}`}</div>
                   </section>
                   <section className="space-y-3 rounded-xl border bg-slate-50 p-4">

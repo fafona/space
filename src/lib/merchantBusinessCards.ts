@@ -276,7 +276,7 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
         ? ratioMode
         : fallback.ratioMode,
     title: normalizeText(source.title),
-    websiteLabel: normalizeText(source.websiteLabel) || fallback.websiteLabel,
+    websiteLabel: typeof source.websiteLabel === "string" ? source.websiteLabel.trim() : fallback.websiteLabel,
     contacts: {
       contactName: normalizeText(source.contacts?.contactName),
       phone: normalizeText(source.contacts?.phone),
