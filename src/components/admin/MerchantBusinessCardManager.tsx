@@ -211,6 +211,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
   const [hasPreviewed, setHasPreviewed] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [qrCodeUrl, setQrCodeUrl] = useState("");
+  const [canCopyCardImage, setCanCopyCardImage] = useState(false);
   const [numberInputDrafts, setNumberInputDrafts] = useState<Record<string, string>>({});
   const [selectedFieldKey, setSelectedFieldKey] = useState<MerchantBusinessCardFieldKey>("merchantName");
   const [fontStyleEditorOpen, setFontStyleEditorOpen] = useState(false);
@@ -235,6 +236,15 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
   const selectedTypography = draft.typography[selectedTypographyKey];
   const scale = useMemo(() => Math.min(1, 380 / Math.max(1, draft.width)), [draft.width]);
   const fullScale = useMemo(() => Math.min(1, 1000 / Math.max(1, draft.width)), [draft.width]);
+
+  useEffect(() => {
+    setCanCopyCardImage(
+      typeof navigator !== "undefined" &&
+        !!navigator.clipboard &&
+        typeof navigator.clipboard.write === "function" &&
+        typeof ClipboardItem !== "undefined",
+    );
+  }, []);
 
   useEffect(() => {
     if (!tip) return;
@@ -419,8 +429,8 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       {folderOpen ? overlay(
         <div className="fixed inset-0 z-[2147483000] bg-black/45 p-4" onMouseDown={() => setFolderOpen(false)}>
           <div className="mx-auto flex h-full max-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
-            <div className="flex items-center justify-between border-b px-5 py-4"><div><div className="text-lg font-semibold text-slate-900">名片夹</div><div className="text-sm text-slate-500">查看已生成的名片图片，可预览或复制。</div></div><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => setFolderOpen(false)}>关闭</button></div>
-            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">{cards.length > 0 ? <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{cards.map((card) => <article key={card.id} className="overflow-hidden rounded-2xl border bg-slate-50 shadow-sm"><div className="space-y-4 p-4"><div className="overflow-hidden rounded-2xl border bg-slate-100"><img src={card.imageUrl} alt={card.name} className="h-auto w-full object-cover" /></div><div><div className="text-base font-semibold text-slate-900">{card.name}</div><div className="text-xs text-slate-500">{new Date(card.createdAt).toLocaleString("zh-CN", { hour12: false })}</div></div><div className="flex gap-2"><button type="button" className="flex-1 rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => { setPreviewAsset(card); setPreviewOpen(true); }}>预览</button><button type="button" className="flex-1 rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800" onClick={() => void copyCard(card)}>复制</button></div></div></article>)}</div> : <div className="flex min-h-[240px] items-center justify-center rounded-2xl border border-dashed bg-slate-50 px-6 text-center text-sm text-slate-500">还没有生成名片。先去点击“生成名片”制作一张。</div>}</div>
+            <div className="flex items-center justify-between border-b px-5 py-4"><div><div className="text-lg font-semibold text-slate-900">名片夹</div><div className="text-sm text-slate-500">{canCopyCardImage ? "查看已生成的名片图片，可预览或复制。" : "查看已生成的名片图片，可预览或保存。"}</div></div><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => setFolderOpen(false)}>关闭</button></div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">{cards.length > 0 ? <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{cards.map((card) => <article key={card.id} className="overflow-hidden rounded-2xl border bg-slate-50 shadow-sm"><div className="space-y-4 p-4"><div className="overflow-hidden rounded-2xl border bg-slate-100"><img src={card.imageUrl} alt={card.name} className="h-auto w-full object-cover" /></div><div><div className="text-base font-semibold text-slate-900">{card.name}</div><div className="text-xs text-slate-500">{new Date(card.createdAt).toLocaleString("zh-CN", { hour12: false })}</div></div><div className="flex gap-2"><button type="button" className="flex-1 rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => { setPreviewAsset(card); setPreviewOpen(true); }}>预览</button><button type="button" className="flex-1 rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800" onClick={() => void (canCopyCardImage ? copyCard(card) : saveCard(card))}>{canCopyCardImage ? "复制" : "保存"}</button></div></div></article>)}</div> : <div className="flex min-h-[240px] items-center justify-center rounded-2xl border border-dashed bg-slate-50 px-6 text-center text-sm text-slate-500">还没有生成名片。先去点击“生成名片”制作一张。</div>}</div>
           </div>
         </div>,
       ) : null}
@@ -519,6 +529,35 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     }));
   }
 
+  function buildCardFileName(card: MerchantBusinessCardAsset) {
+    const rawContactName = normalizeText(card.contacts.contactName) || normalizeText(card.name) || "business card";
+    const normalizedContactName = rawContactName
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ");
+    const safeBaseName = normalizedContactName.replace(/[\\/:*?"<>|]+/g, "").trim() || "business card";
+    return `${safeBaseName}'s card.png`;
+  }
+
+  async function saveCard(card: MerchantBusinessCardAsset) {
+    try {
+      const response = await fetch(card.imageUrl);
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = buildCardFileName(card);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      setTip("名片已开始保存");
+    } catch {
+      setTip("保存失败，请重试");
+    }
+  }
+
   async function copyCard(card: MerchantBusinessCardAsset) {
     try {
       const response = await fetch(card.imageUrl);
@@ -533,16 +572,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
         setTip("名片图片已复制到剪贴板");
         return;
       }
-      if (
-        typeof navigator !== "undefined" &&
-        navigator.clipboard &&
-        typeof navigator.clipboard.writeText === "function"
-      ) {
-        await navigator.clipboard.writeText(card.imageUrl);
-        setTip("当前环境不支持复制图片，已复制图片地址");
-        return;
-      }
-      setTip("当前环境不支持复制，请预览后长按保存");
+      await saveCard(card);
     } catch {
       setTip("复制失败，请重试");
     }
