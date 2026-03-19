@@ -68,6 +68,33 @@ function getStatusBadgeClass(status: MerchantBookingStatus) {
   return "bg-amber-100 text-amber-700";
 }
 
+function MailIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
+      <path
+        d="M3 5.5A1.5 1.5 0 0 1 4.5 4h11A1.5 1.5 0 0 1 17 5.5v9A1.5 1.5 0 0 1 15.5 16h-11A1.5 1.5 0 0 1 3 14.5v-9Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      />
+      <path d="m4 6 6 4 6-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function PhoneIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
+      <path
+        d="M6.4 3.7c.3-.4.8-.6 1.2-.4l2 1a1 1 0 0 1 .5 1.2l-.6 2a1 1 0 0 0 .2.9l1.2 1.2a1 1 0 0 0 .9.2l2-.6a1 1 0 0 1 1.2.5l1 2a1.1 1.1 0 0 1-.4 1.3l-1.2.8c-.6.4-1.4.5-2 .2-2-.9-3.9-2.4-5.6-4.1-1.7-1.7-3.2-3.6-4.1-5.6a1.8 1.8 0 0 1 .2-2l.8-1.2Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 export default function MerchantBookingManagerDialog({
   open,
   siteId,
@@ -386,28 +413,36 @@ export default function MerchantBookingManagerDialog({
                       >
                         {busyKey === `save:${record.id}` ? "保存中..." : "保存修改"}
                       </button>
-                      {record.email ? (
-                        <a
-                          className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
-                          href={`mailto:${record.email}`}
-                        >
-                          回复邮箱
-                        </a>
-                      ) : null}
-                      {record.phone ? (
-                        <a
-                          className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
-                          href={`tel:${record.phone}`}
-                        >
-                          拨打电话
-                        </a>
-                      ) : null}
                     </div>
 
                     <div className="mt-4 grid gap-3 text-sm text-slate-700 md:grid-cols-2 xl:grid-cols-3">
                       <div>{`姓名：${record.customerName}`}</div>
-                      <div>{`邮箱：${record.email}`}</div>
-                      <div>{`电话：${record.phone}`}</div>
+                      <div className="flex items-center gap-2">
+                        <span className="min-w-0 truncate">{`邮箱：${record.email}`}</span>
+                        {record.email ? (
+                          <a
+                            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded border bg-white text-slate-700 hover:bg-slate-50"
+                            href={`mailto:${record.email}`}
+                            title="回复邮箱"
+                            aria-label="回复邮箱"
+                          >
+                            <MailIcon />
+                          </a>
+                        ) : null}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="min-w-0 truncate">{`电话：${record.phone}`}</span>
+                        {record.phone ? (
+                          <a
+                            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded border bg-white text-slate-700 hover:bg-slate-50"
+                            href={`tel:${record.phone}`}
+                            title="拨打电话"
+                            aria-label="拨打电话"
+                          >
+                            <PhoneIcon />
+                          </a>
+                        ) : null}
+                      </div>
                       {record.note ? <div className="md:col-span-2 xl:col-span-3">{`备注：${record.note}`}</div> : null}
                     </div>
                   </article>
