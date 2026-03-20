@@ -208,6 +208,23 @@ function badgeClass(value: string) {
   return "border-slate-300 bg-slate-50 text-slate-700";
 }
 
+function describeBackendMerchantAccountsError(message: string) {
+  if (!message) return "";
+  if (message === "merchant_account_timeout") {
+    return "后端注册账号接口超时，当前先显示本地站点用户。";
+  }
+  if (message === "merchant_account_load_failed") {
+    return "后端注册账号接口暂时不可用，当前先显示本地站点用户。";
+  }
+  if (/merchant_account_http_401/i.test(message)) {
+    return "后端注册账号接口未授权，请重新登录超级后台。";
+  }
+  if (/merchant_account_http_5\d{2}/i.test(message)) {
+    return "后端注册账号接口暂时不可用，当前先显示本地站点用户。";
+  }
+  return message;
+}
+
 function publishStatusLabel(status: PublishStatus) {
   if (status === "success") return "发布成功";
   if (status === "failed") return "发布失败";
@@ -1056,11 +1073,14 @@ export default function SuperAdminClient() {
   useEffect(() => {
     if (!hydrated || !authed) return;
     let cancelled = false;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 8000);
     setBackendMerchantAccountsLoading(true);
     setBackendMerchantAccountsError("");
     fetch("/api/super-admin/merchant-accounts", {
       method: "GET",
       cache: "no-store",
+      signal: controller.signal,
     })
       .then(async (response) => {
         if (!response.ok) {
@@ -1073,6 +1093,10 @@ export default function SuperAdminClient() {
       .catch((error) => {
         if (cancelled) return;
         setBackendMerchantAccounts([]);
+        if (error instanceof DOMException && error.name === "AbortError") {
+          setBackendMerchantAccountsError("merchant_account_timeout");
+          return;
+        }
         setBackendMerchantAccountsError(error instanceof Error ? error.message : "merchant_account_load_failed");
       })
       .finally(() => {
@@ -1080,6 +1104,8 @@ export default function SuperAdminClient() {
       });
     return () => {
       cancelled = true;
+      controller.abort();
+      window.clearTimeout(timeout);
     };
   }, [authed, hydrated]);
 
@@ -1202,10 +1228,32 @@ export default function SuperAdminClient() {
         }
       });
 
-    const sorted: MerchantUserRow[] = backendMerchantAccounts.map((account) => {
+    const rowsByKey = new Map<string, MerchantUserRow>();
+    siteContextByEmail.forEach((siteContext, emailKey) => {
+      rowsByKey.set(emailKey, {
+        site: siteContext.site,
+        hasSite: true,
+        backendAccount: null,
+        merchantId: normalizeMerchantIdValue(siteContext.site.id) || "-",
+        userEmail: siteContext.userEmail || "-",
+        merchantName: getMerchantProfileName(siteContext.site),
+        prefix: siteContext.prefix,
+        industry: siteContext.industry,
+        city: siteContext.city,
+        sizeBytes: siteContext.sizeBytes,
+        visits: siteContext.visits,
+        registerAt: siteContext.site.createdAt,
+        expireAt: siteContext.expireAt,
+        expired: siteContext.expired,
+        statusLabel: siteContext.statusLabel,
+        statusKey: siteContext.statusKey,
+      });
+    });
+
+    backendMerchantAccounts.forEach((account) => {
       const siteContext = siteContextByEmail.get(normalizeEmailValue(account.email)) ?? null;
       if (!siteContext) {
-        return {
+        const backendOnlyRow: MerchantUserRow = {
           site: buildBackendOnlySite(account),
           hasSite: false,
           backendAccount: account,
@@ -1223,8 +1271,10 @@ export default function SuperAdminClient() {
           statusLabel: "未建站",
           statusKey: "unlinked",
         };
+        rowsByKey.set(normalizeEmailValue(account.email) || `backend:${account.authUserId || account.merchantId}`, backendOnlyRow);
+        return;
       }
-      return {
+      rowsByKey.set(normalizeEmailValue(account.email) || siteContext.userEmail, {
         site: siteContext.site,
         hasSite: true,
         backendAccount: account,
@@ -1241,8 +1291,10 @@ export default function SuperAdminClient() {
         expired: siteContext.expired,
         statusLabel: siteContext.statusLabel,
         statusKey: siteContext.statusKey,
-      };
+      });
     });
+
+    const sorted: MerchantUserRow[] = [...rowsByKey.values()];
 
     const sortRule = state.homeLayout.merchantDefaultSortRule;
     sorted.sort((a, b) => {
@@ -3745,7 +3797,9 @@ export default function SuperAdminClient() {
                     {backendMerchantAccountsLoading ? (
                       <div className="mt-3 text-xs text-slate-500">正在加载后端注册账号…</div>
                     ) : backendMerchantAccountsError ? (
-                      <div className="mt-3 text-xs text-rose-600">后端注册账号加载失败：{backendMerchantAccountsError}</div>
+                      <div className="mt-3 text-xs text-rose-600">
+                        后端注册账号加载失败：{describeBackendMerchantAccountsError(backendMerchantAccountsError)}
+                      </div>
                     ) : backendAccountsWithoutSite.length === 0 ? (
                       <div className="mt-3 text-xs text-slate-500">当前没有“已注册但未进入站点列表”的账号。</div>
                     ) : (
