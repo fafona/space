@@ -27,9 +27,14 @@ export default function MerchantEntryPageClient({
   const hydrated = useHydrated();
   const normalizedPrefix = useMemo(() => normalizeDomainPrefix(merchantEntry), [merchantEntry]);
   const [platformState, setPlatformState] = useState(() => loadPlatformState());
-  const [remoteLookup, setRemoteLookup] = useState<{ prefix: string; siteId: string }>({
+  const [remoteLookup, setRemoteLookup] = useState<{
+    prefix: string;
+    siteId: string;
+    resolved: boolean;
+  }>({
     prefix: normalizedPrefix,
     siteId: initialResolvedSiteId,
+    resolved: !!initialResolvedSiteId,
   });
   const [numericAdminAuthReady, setNumericAdminAuthReady] = useState(false);
   const [numericAdminAuthenticated, setNumericAdminAuthenticated] = useState(false);
@@ -48,11 +53,13 @@ export default function MerchantEntryPageClient({
 
     let mounted = true;
     const lookupPrefix = normalizedPrefix;
+
     void resolvePublishedSiteByPrefix(lookupPrefix).then((resolved) => {
       if (!mounted) return;
       setRemoteLookup({
         prefix: lookupPrefix,
         siteId: resolved?.siteId ?? "",
+        resolved: true,
       });
     });
 
@@ -106,7 +113,7 @@ export default function MerchantEntryPageClient({
 
   const resolvedSiteId = remoteLookup.prefix === normalizedPrefix ? remoteLookup.siteId : "";
   const remoteResolved =
-    !merchantEntry || isMerchantNumericId(merchantEntry) || remoteLookup.prefix === normalizedPrefix;
+    !merchantEntry || isMerchantNumericId(merchantEntry) || (remoteLookup.prefix === normalizedPrefix && remoteLookup.resolved);
 
   if (!hydrated) {
     return <LoadingProgressScreen message="正在加载站点..." />;

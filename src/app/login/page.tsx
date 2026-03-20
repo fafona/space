@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useI18n } from "@/components/I18nProvider";
 import { ensureMerchantIdentityForUser } from "@/lib/merchantIdentity";
@@ -39,34 +39,37 @@ function LoginPageInner() {
     }
   }, [searchParams]);
 
-  async function redirectToMerchantBackend(user?: {
-    id?: string;
-    email?: string | null;
-    user_metadata?: Record<string, unknown> | null;
-    app_metadata?: Record<string, unknown> | null;
-  } | null) {
-    const withJustSignedIn = (href: string) => {
-      const url = new URL(href, window.location.origin);
-      url.searchParams.set("justSignedIn", "1");
-      return `${url.pathname}${url.search}${url.hash}`;
-    };
+  const redirectToMerchantBackend = useCallback(
+    async (user?: {
+      id?: string;
+      email?: string | null;
+      user_metadata?: Record<string, unknown> | null;
+      app_metadata?: Record<string, unknown> | null;
+    } | null) => {
+      const withJustSignedIn = (href: string) => {
+        const url = new URL(href, window.location.origin);
+        url.searchParams.set("justSignedIn", "1");
+        return `${url.pathname}${url.search}${url.hash}`;
+      };
 
-    if (requestedRedirectPath) {
-      window.location.href = withJustSignedIn(requestedRedirectPath);
-      return;
-    }
-
-    try {
-      const resolved = await ensureMerchantIdentityForUser(user ?? undefined);
-      if (resolved.merchantId) {
-        window.location.href = withJustSignedIn(buildMerchantBackendHref(resolved.merchantId));
+      if (requestedRedirectPath) {
+        window.location.href = withJustSignedIn(requestedRedirectPath);
         return;
       }
-    } catch {
-      // fallback to legacy route
-    }
-    window.location.href = withJustSignedIn("/admin");
-  }
+
+      try {
+        const resolved = await ensureMerchantIdentityForUser(user ?? undefined);
+        if (resolved.merchantId) {
+          window.location.href = withJustSignedIn(buildMerchantBackendHref(resolved.merchantId));
+          return;
+        }
+      } catch {
+        // fallback to legacy route
+      }
+      window.location.href = withJustSignedIn("/admin");
+    },
+    [requestedRedirectPath],
+  );
 
   async function readEmailConfirmationRequired() {
     try {
@@ -136,7 +139,7 @@ function LoginPageInner() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [redirectToMerchantBackend]);
 
   function validateForm(): string | null {
     const trimmedEmail = email.trim();
@@ -210,6 +213,9 @@ function LoginPageInner() {
   }
 
   function normalizeError(message: string) {
+    if (/supabase_unavailable:/i.test(message)) {
+      return t("login.backendUnavailable");
+    }
     if (isEmailNotConfirmed(message)) {
       return t("login.emailNotConfirmed");
     }
@@ -261,11 +267,8 @@ function LoginPageInner() {
 
     const validationError = validateForm();
     if (validationError) return setMsg(validationError);
-    if (!(await canReachSupabaseGateway(4000))) {
-      setGatewayReachable(false);
-      return setMsg(t("login.backendUnavailable"));
-    }
-    setGatewayReachable(true);
+    const gatewayReady = await canReachSupabaseGateway(4000);
+    setGatewayReachable(gatewayReady);
 
     setPendingAction("signup");
     try {
@@ -297,7 +300,7 @@ function LoginPageInner() {
       setMsg(t("login.signupSuccess"));
       setNeedConfirmEmail(true);
     } catch (error) {
-      setMsg(error instanceof Error ? error.message : t("login.requestFailed"));
+      setMsg(error instanceof Error ? normalizeError(error.message) : t("login.requestFailed"));
     } finally {
       setPendingAction(null);
     }
@@ -310,15 +313,8 @@ function LoginPageInner() {
 
     const validationError = validateForm();
     if (validationError) return setMsg(validationError);
-    if (!(await canReachSupabaseGateway(4000))) {
-      setGatewayReachable(false);
-      if (isDevelopment) {
-        window.location.href = "/admin?offline=1";
-        return;
-      }
-      return setMsg(t("login.backendUnavailable"));
-    }
-    setGatewayReachable(true);
+    const gatewayReady = await canReachSupabaseGateway(4000);
+    setGatewayReachable(gatewayReady);
 
     setPendingAction("signin");
     try {
@@ -341,7 +337,12 @@ function LoginPageInner() {
       const sessionUser = persistedUser ?? (await readValidatedSessionUser());
       await redirectToMerchantBackend(sessionUser);
     } catch (error) {
-      setMsg(error instanceof Error ? error.message : t("login.requestFailed"));
+      const normalizedMessage = error instanceof Error ? normalizeError(error.message) : t("login.requestFailed");
+      if (!gatewayReady && normalizedMessage === t("login.backendUnavailable") && isDevelopment) {
+        window.location.href = "/admin?offline=1";
+        return;
+      }
+      setMsg(normalizedMessage);
     } finally {
       setPendingAction(null);
     }
@@ -353,11 +354,8 @@ function LoginPageInner() {
 
     const trimmedEmail = email.trim();
     if (!trimmedEmail) return setMsg(t("login.inputRegisterEmailFirst"));
-    if (!(await canReachSupabaseGateway(4000))) {
-      setGatewayReachable(false);
-      return setMsg(t("login.backendUnavailable"));
-    }
-    setGatewayReachable(true);
+    const gatewayReady = await canReachSupabaseGateway(4000);
+    setGatewayReachable(gatewayReady);
 
     setPendingAction("resend");
     try {
@@ -374,7 +372,7 @@ function LoginPageInner() {
       if (error) return setMsg(normalizeError(error.message));
       setMsg(t("login.resendSuccess"));
     } catch (error) {
-      setMsg(error instanceof Error ? error.message : t("login.requestFailed"));
+      setMsg(error instanceof Error ? normalizeError(error.message) : t("login.requestFailed"));
     } finally {
       setPendingAction(null);
     }
@@ -388,11 +386,8 @@ function LoginPageInner() {
     const trimmedEmail = email.trim();
     if (!trimmedEmail) return setMsg(t("login.inputEmailBeforeForgot"));
     if (!trimmedEmail.includes("@")) return setMsg(t("login.invalidEmail"));
-    if (!(await canReachSupabaseGateway(4000))) {
-      setGatewayReachable(false);
-      return setMsg(t("login.backendUnavailable"));
-    }
-    setGatewayReachable(true);
+    const gatewayReady = await canReachSupabaseGateway(4000);
+    setGatewayReachable(gatewayReady);
 
     setPendingAction("forgot");
     try {
@@ -405,7 +400,7 @@ function LoginPageInner() {
       if (error) return setMsg(normalizeError(error.message));
       setMsg(t("login.forgotSuccess"));
     } catch (error) {
-      setMsg(error instanceof Error ? error.message : t("login.requestFailed"));
+      setMsg(error instanceof Error ? normalizeError(error.message) : t("login.requestFailed"));
     } finally {
       setPendingAction(null);
     }
