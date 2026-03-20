@@ -555,8 +555,48 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
                     <label className="block text-xs text-slate-600">职位<input className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.title} onFocus={() => setSelectedFieldKey("title")} onChange={(event) => applyDraft((current) => ({ ...current, title: event.target.value }))} /></label>
                     <div className="grid gap-3 md:grid-cols-3">
                       <label className="block text-xs text-slate-600">比例<select className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.ratioMode} onChange={(event) => applyDraft((current) => ({ ...current, ratioMode: event.target.value as MerchantBusinessCardDraft["ratioMode"], ...(() => resolveRatioDimensions(event.target.value as MerchantBusinessCardDraft["ratioMode"], current.width, current.height))() }))}>{MERCHANT_BUSINESS_CARD_RATIO_OPTIONS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}<option value="custom">自定义</option></select></label>
-                      <label className="block text-xs text-slate-600">宽度<input type="number" inputMode="numeric" step={1} min={320} max={1600} className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={getNumberInputValue("card-width", draft.width)} onChange={(event) => handleNumberInputChange("card-width", event.target.value)} onBlur={() => commitNumberInput("card-width", draft.width, 320, 1600, (value) => handleSize(value, "width"))} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} /></label>
-                      <label className="block text-xs text-slate-600">高度<input type="number" inputMode="numeric" step={1} min={180} max={1600} className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={getNumberInputValue("card-height", draft.height)} onChange={(event) => handleNumberInputChange("card-height", event.target.value)} onBlur={() => commitNumberInput("card-height", draft.height, 180, 1600, (value) => handleSize(value, "height"))} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} /></label>
+                      <label className="block text-xs text-slate-600">
+                        宽度
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          step={1}
+                          min={320}
+                          max={1600}
+                          className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm"
+                          value={getNumberInputValue("card-width", draft.width)}
+                          onChange={(event) =>
+                            handleNumberInputChange("card-width", event.target.value, draft.width, 320, 1600, (value) =>
+                              handleSize(value, "width"),
+                            )
+                          }
+                          onBlur={() => commitNumberInput("card-width", draft.width, 320, 1600, (value) => handleSize(value, "width"))}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") event.currentTarget.blur();
+                          }}
+                        />
+                      </label>
+                      <label className="block text-xs text-slate-600">
+                        高度
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          step={1}
+                          min={180}
+                          max={1600}
+                          className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm"
+                          value={getNumberInputValue("card-height", draft.height)}
+                          onChange={(event) =>
+                            handleNumberInputChange("card-height", event.target.value, draft.height, 180, 1600, (value) =>
+                              handleSize(value, "height"),
+                            )
+                          }
+                          onBlur={() => commitNumberInput("card-height", draft.height, 180, 1600, (value) => handleSize(value, "height"))}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") event.currentTarget.blur();
+                          }}
+                        />
+                      </label>
                     </div>
                     <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_180px]">
                       <label className="block text-xs text-slate-600">背景图<input type="file" accept="image/*" className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" onChange={(event) => void handleBackgroundUpload(event)} /></label>
@@ -573,7 +613,38 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
                   <section className="space-y-3 rounded-xl border bg-slate-50 p-4">
                     <div className="text-sm font-semibold text-slate-900">二维码</div>
                     <div className="grid gap-3 md:grid-cols-3">
-                      {(["x", "y", "size"] as const).map((key) => <label key={key} className="block text-xs text-slate-600">{key === "size" ? "大小" : key.toUpperCase()}<input type="number" inputMode="numeric" step={1} min={key === "size" ? 48 : 0} max={key === "size" ? 600 : 2000} className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={getNumberInputValue(`qr-${key}`, draft.qr[key])} onChange={(event) => handleNumberInputChange(`qr-${key}`, event.target.value)} onBlur={() => commitNumberInput(`qr-${key}`, draft.qr[key], key === "size" ? 48 : 0, key === "size" ? 600 : 2000, (value) => applyDraft((current) => ({ ...current, qr: { ...current.qr, [key]: value } })))} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} /></label>)}
+                      {(["x", "y", "size"] as const).map((key) => (
+                        <label key={key} className="block text-xs text-slate-600">
+                          {key === "size" ? "大小" : key.toUpperCase()}
+                          <input
+                            type="number"
+                            inputMode="numeric"
+                            step={1}
+                            min={key === "size" ? 48 : 0}
+                            max={key === "size" ? 600 : 2000}
+                            className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm"
+                            value={getNumberInputValue(`qr-${key}`, draft.qr[key])}
+                            onChange={(event) =>
+                              handleNumberInputChange(
+                                `qr-${key}`,
+                                event.target.value,
+                                draft.qr[key],
+                                key === "size" ? 48 : 0,
+                                key === "size" ? 600 : 2000,
+                                (value) => applyDraft((current) => ({ ...current, qr: { ...current.qr, [key]: value } })),
+                              )
+                            }
+                            onBlur={() =>
+                              commitNumberInput(`qr-${key}`, draft.qr[key], key === "size" ? 48 : 0, key === "size" ? 600 : 2000, (value) =>
+                                applyDraft((current) => ({ ...current, qr: { ...current.qr, [key]: value } })),
+                              )
+                            }
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") event.currentTarget.blur();
+                            }}
+                          />
+                        </label>
+                      ))}
                     </div>
                     <div className="rounded-xl border bg-white p-4"><div className="mb-3 text-xs font-medium text-slate-500">二维码预览</div><div className="flex h-32 w-32 items-center justify-center rounded-xl border bg-slate-50 p-2">{qrCodeUrl ? <img src={qrCodeUrl} alt="二维码预览" className="h-full w-full object-contain" /> : <span className="text-xs text-slate-400">暂无二维码</span>}</div></div>
                   </section>
@@ -676,7 +747,31 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
                                     className="min-w-0 flex-1 rounded border bg-white px-2 py-2 text-sm"
                                     value={getNumberInputValue(`layout-${item.id}-${axis}`, currentPosition[axis])}
                                     onFocus={() => setSelectedFieldKey(item.id)}
-                                    onChange={(event) => handleNumberInputChange(`layout-${item.id}-${axis}`, event.target.value)}
+                                    onChange={(event) =>
+                                      handleNumberInputChange(
+                                        `layout-${item.id}-${axis}`,
+                                        event.target.value,
+                                        currentPosition[axis],
+                                        0,
+                                        2000,
+                                        (value) =>
+                                          item.kind === "field"
+                                            ? applyDraft((current) => ({
+                                                ...current,
+                                                textLayout: {
+                                                  ...current.textLayout,
+                                                  [item.id]: {
+                                                    ...current.textLayout[item.id as MerchantBusinessCardFieldKey],
+                                                    [axis]: value,
+                                                  },
+                                                },
+                                              }))
+                                            : updateCustomText(item.customTextId, (current) => ({
+                                                ...current,
+                                                [axis]: value,
+                                              })),
+                                      )
+                                    }
                                     onBlur={() =>
                                       commitNumberInput(
                                         `layout-${item.id}-${axis}`,
@@ -758,8 +853,20 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     return numberInputDrafts[key] ?? String(value);
   }
 
-  function handleNumberInputChange(key: string, raw: string) {
+  function handleNumberInputChange(
+    key: string,
+    raw: string,
+    fallback: number,
+    min: number,
+    max: number,
+    onCommit: (value: number) => void,
+  ) {
     setNumberInputDrafts((current) => ({ ...current, [key]: raw }));
+    const trimmed = raw.trim();
+    if (!trimmed) return;
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed)) return;
+    onCommit(clamp(Math.round(parsed), min, max));
   }
 
   function clearNumberInputDraft(key: string) {
