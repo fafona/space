@@ -27,6 +27,7 @@ import {
   type ProductPriceAlign,
   type ProductTagPosition,
 } from "@/lib/productBlock";
+import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import { getBackgroundStyle } from "./backgroundStyle";
 import { getBlockBorderClass, getBlockBorderInlineStyle } from "./borderStyle";
 import { toRichHtml } from "./richText";
@@ -292,7 +293,12 @@ function renderProductCard(
 }
 
 export default function ProductBlock(props: ProductBlockProps) {
-  const products = normalizeProductItems(props.products).filter((item) => isMeaningfulProductItem(item));
+  const products = normalizeProductItems(props.products)
+    .map((item) => ({
+      ...item,
+      imageUrl: normalizePublicAssetUrl(item.imageUrl),
+    }))
+    .filter((item) => isMeaningfulProductItem(item));
   const productTags = Array.from(
     new Set([...normalizeProductTagOptions(props.productTagOptions), ...products.map((item) => item.tag).filter(Boolean)]),
   );

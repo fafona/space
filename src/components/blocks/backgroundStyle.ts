@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import type { ImageFillMode } from "@/data/homeBlocks";
+import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 
 export type BackgroundStyleInput = {
   imageUrl?: string;
@@ -55,7 +56,7 @@ function linearGradientWithOpacity(gradient: string, opacity: number) {
 }
 
 export function getBackgroundStyle(input: BackgroundStyleInput): CSSProperties {
-  const imageUrl = input.imageUrl?.trim();
+  const imageUrl = normalizePublicAssetUrl(input.imageUrl?.trim() ?? "");
   const fillMode = input.fillMode ?? "cover";
   const position = input.position?.trim() || "center";
   const color = input.color?.trim();

@@ -154,6 +154,7 @@ import {
   type ProductPriceAlign,
   type ProductTagPosition,
 } from "@/lib/productBlock";
+import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import {
   buildDefaultBookingItemOptions,
   buildDefaultBookingStoreOptions,
@@ -12581,7 +12582,7 @@ type GalleryEditorImage = {
           >
             {item.imageUrl ? (
               <NextImage
-                src={item.imageUrl}
+                src={normalizePublicAssetUrl(item.imageUrl)}
                 alt={item.name || item.code || "产品图片"}
                 fill
                 unoptimized
@@ -13073,7 +13074,7 @@ type GalleryEditorImage = {
                     <div className="relative overflow-hidden rounded-[1.25rem] bg-slate-100" style={{ height: "min(88vh, 960px)", minHeight: "min(88vh, 960px)" }}>
                       {detailPreviewProduct.imageUrl ? (
                         <NextImage
-                          src={detailPreviewProduct.imageUrl}
+                          src={normalizePublicAssetUrl(detailPreviewProduct.imageUrl)}
                           alt={detailPreviewProduct.name || detailPreviewProduct.code || "产品图片"}
                           fill
                           unoptimized
@@ -14256,7 +14257,7 @@ type GalleryEditorImage = {
                             style={getProductImageFrameStyle({ list: productLayoutPreset === "list", editor: true })}
                           >
                             {item.imageUrl ? (
-                              <NextImage src={item.imageUrl} alt={item.name || item.code || "产品图片"} fill unoptimized sizes="240px" className="object-cover" />
+                              <NextImage src={normalizePublicAssetUrl(item.imageUrl)} alt={item.name || item.code || "产品图片"} fill unoptimized sizes="240px" className="object-cover" />
                             ) : (
                               <div className="flex h-full items-center justify-center text-sm text-slate-400">{"暂无图片"}</div>
                             )}
