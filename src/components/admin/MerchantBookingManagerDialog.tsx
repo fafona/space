@@ -430,11 +430,13 @@ export default function MerchantBookingManagerDialog({
                         <span className="text-xs text-slate-500">预约时间</span>
                         <div className="flex flex-wrap gap-2">
                           <input
-                            type="date"
+                            type="text"
+                            inputMode="numeric"
                             className="min-w-[180px] flex-1 rounded border px-3 py-2"
                             value={appointmentParts.date}
                             lang="zh-CN"
                             style={DATE_TIME_INPUT_STYLE}
+                            placeholder="YYYY-MM-DD"
                             onChange={(event) =>
                               handleDraftChange(
                                 record.id,
@@ -444,12 +446,13 @@ export default function MerchantBookingManagerDialog({
                             }
                           />
                           <input
-                            type="time"
-                            step={60}
+                            type="text"
+                            inputMode="numeric"
                             className="w-[112px] shrink-0 rounded border px-3 py-2"
                             value={appointmentParts.time}
                             lang="zh-CN"
                             style={DATE_TIME_INPUT_STYLE}
+                            placeholder="09:44"
                             onChange={(event) =>
                               handleDraftChange(
                                 record.id,
