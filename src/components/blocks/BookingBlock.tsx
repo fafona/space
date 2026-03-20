@@ -31,6 +31,7 @@ type SubmittedBookingState = {
 };
 
 const EDIT_TOKEN_STORAGE_KEY = "merchant-space:merchant-booking-tokens:v1";
+
 function readEditTokenMap() {
   if (typeof window === "undefined") return {} as Record<string, string>;
   try {
@@ -79,6 +80,11 @@ function getFormFieldClass(disabled: boolean) {
     disabled ? "cursor-not-allowed bg-slate-100 text-slate-400" : ""
   }`;
 }
+
+const DATE_TIME_INPUT_STYLE = {
+  fontFamily:
+    '"PingFang SC","Hiragino Sans GB","Microsoft YaHei UI","Microsoft YaHei","Noto Sans SC",system-ui,sans-serif',
+};
 
 export default function BookingBlock({
   runtimeSiteId = "",
@@ -330,6 +336,8 @@ export default function BookingBlock({
                   type="date"
                   className={`${getFormFieldClass(!isLiveBooking)} min-w-[180px] flex-1`}
                   value={appointmentParts.date}
+                  lang="zh-CN"
+                  style={DATE_TIME_INPUT_STYLE}
                   disabled={!isLiveBooking}
                   onChange={(event) =>
                     handleFieldChange(
@@ -343,6 +351,8 @@ export default function BookingBlock({
                   step={60}
                   className={`${getFormFieldClass(!isLiveBooking)} w-[112px] shrink-0`}
                   value={appointmentParts.time}
+                  lang="zh-CN"
+                  style={DATE_TIME_INPUT_STYLE}
                   disabled={!isLiveBooking}
                   onChange={(event) =>
                     handleFieldChange(

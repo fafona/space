@@ -129,8 +129,8 @@ export function joinMerchantBookingDateTime(date: string, time: string) {
 function isValidDateTimeValue(value: string) {
   if (!value) return false;
   const normalized = value.includes("T") ? value : value.replace(" ", "T");
-  const time = new Date(normalized).getTime();
-  return Number.isFinite(time);
+  const timestamp = new Date(normalized).getTime();
+  return Number.isFinite(timestamp);
 }
 
 function isValidEmail(value: string) {

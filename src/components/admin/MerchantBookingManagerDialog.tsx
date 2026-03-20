@@ -103,6 +103,11 @@ function PhoneIcon() {
   );
 }
 
+const DATE_TIME_INPUT_STYLE = {
+  fontFamily:
+    '"PingFang SC","Hiragino Sans GB","Microsoft YaHei UI","Microsoft YaHei","Noto Sans SC",system-ui,sans-serif',
+};
+
 export default function MerchantBookingManagerDialog({
   open,
   siteId,
@@ -428,6 +433,8 @@ export default function MerchantBookingManagerDialog({
                             type="date"
                             className="min-w-[180px] flex-1 rounded border px-3 py-2"
                             value={appointmentParts.date}
+                            lang="zh-CN"
+                            style={DATE_TIME_INPUT_STYLE}
                             onChange={(event) =>
                               handleDraftChange(
                                 record.id,
@@ -441,6 +448,8 @@ export default function MerchantBookingManagerDialog({
                             step={60}
                             className="w-[112px] shrink-0 rounded border px-3 py-2"
                             value={appointmentParts.time}
+                            lang="zh-CN"
+                            style={DATE_TIME_INPUT_STYLE}
                             onChange={(event) =>
                               handleDraftChange(
                                 record.id,
