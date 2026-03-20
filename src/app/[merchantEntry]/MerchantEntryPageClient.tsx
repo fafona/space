@@ -15,10 +15,12 @@ import { useHydrated } from "@/lib/useHydrated";
 
 type MerchantEntryPageClientProps = {
   initialIsMobileViewport?: boolean;
+  initialResolvedSiteId?: string;
 };
 
 export default function MerchantEntryPageClient({
   initialIsMobileViewport = false,
+  initialResolvedSiteId = "",
 }: MerchantEntryPageClientProps) {
   const params = useParams<{ merchantEntry: string }>();
   const merchantEntry = String(params?.merchantEntry ?? "").trim();
@@ -26,8 +28,8 @@ export default function MerchantEntryPageClient({
   const normalizedPrefix = useMemo(() => normalizeDomainPrefix(merchantEntry), [merchantEntry]);
   const [platformState, setPlatformState] = useState(() => loadPlatformState());
   const [remoteLookup, setRemoteLookup] = useState<{ prefix: string; siteId: string }>({
-    prefix: "",
-    siteId: "",
+    prefix: normalizedPrefix,
+    siteId: initialResolvedSiteId,
   });
   const [numericAdminAuthReady, setNumericAdminAuthReady] = useState(false);
   const [numericAdminAuthenticated, setNumericAdminAuthenticated] = useState(false);
@@ -42,6 +44,7 @@ export default function MerchantEntryPageClient({
 
   useEffect(() => {
     if (!hydrated || !merchantEntry || isMerchantNumericId(merchantEntry)) return;
+    if (initialResolvedSiteId) return;
 
     let mounted = true;
     const lookupPrefix = normalizedPrefix;
@@ -52,14 +55,14 @@ export default function MerchantEntryPageClient({
         siteId: resolved?.siteId ?? "",
       });
     });
+
     return () => {
       mounted = false;
     };
-  }, [hydrated, merchantEntry, normalizedPrefix]);
+  }, [hydrated, initialResolvedSiteId, merchantEntry, normalizedPrefix]);
 
   useEffect(() => {
     if (!hydrated || !merchantEntry || !isMerchantNumericId(merchantEntry)) return;
-
     if (!isSupabaseEnabled) return;
 
     let mounted = true;
@@ -84,7 +87,7 @@ export default function MerchantEntryPageClient({
       if (!mounted) return;
       if (error || !data.user) {
         await supabase.auth.signOut({ scope: "local" }).catch(() => {
-          // ignore local cleanup failure
+          // Ignore local cleanup failure.
         });
         redirectToLogin();
         return;
@@ -102,7 +105,8 @@ export default function MerchantEntryPageClient({
   }, [hydrated, merchantEntry]);
 
   const resolvedSiteId = remoteLookup.prefix === normalizedPrefix ? remoteLookup.siteId : "";
-  const remoteResolved = !merchantEntry || isMerchantNumericId(merchantEntry) || remoteLookup.prefix === normalizedPrefix;
+  const remoteResolved =
+    !merchantEntry || isMerchantNumericId(merchantEntry) || remoteLookup.prefix === normalizedPrefix;
 
   if (!hydrated) {
     return <LoadingProgressScreen message="正在加载站点..." />;
