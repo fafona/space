@@ -325,10 +325,10 @@ export default function BookingBlock({
             </label>
             <label className="space-y-1 text-sm text-slate-700">
               <span>预约日期时间</span>
-              <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_120px]">
+              <div className="flex flex-wrap gap-2">
                 <input
                   type="date"
-                  className={getFormFieldClass(!isLiveBooking)}
+                  className={`${getFormFieldClass(!isLiveBooking)} min-w-[180px] flex-1`}
                   value={appointmentParts.date}
                   disabled={!isLiveBooking}
                   onChange={(event) =>
@@ -341,7 +341,7 @@ export default function BookingBlock({
                 <input
                   type="time"
                   step={60}
-                  className={getFormFieldClass(!isLiveBooking)}
+                  className={`${getFormFieldClass(!isLiveBooking)} w-[112px] shrink-0`}
                   value={appointmentParts.time}
                   disabled={!isLiveBooking}
                   onChange={(event) =>

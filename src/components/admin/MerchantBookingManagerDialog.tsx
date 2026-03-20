@@ -423,10 +423,10 @@ export default function MerchantBookingManagerDialog({
                       </label>
                       <label className="space-y-1 text-sm text-slate-700">
                         <span className="text-xs text-slate-500">预约时间</span>
-                        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_120px]">
+                        <div className="flex flex-wrap gap-2">
                           <input
                             type="date"
-                            className="w-full rounded border px-3 py-2"
+                            className="min-w-[180px] flex-1 rounded border px-3 py-2"
                             value={appointmentParts.date}
                             onChange={(event) =>
                               handleDraftChange(
@@ -439,7 +439,7 @@ export default function MerchantBookingManagerDialog({
                           <input
                             type="time"
                             step={60}
-                            className="w-full rounded border px-3 py-2"
+                            className="w-[112px] shrink-0 rounded border px-3 py-2"
                             value={appointmentParts.time}
                             onChange={(event) =>
                               handleDraftChange(
