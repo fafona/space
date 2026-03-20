@@ -124,6 +124,8 @@ export default function BookingBlock({
   const submitLabel = (props.bookingSubmitLabel ?? "").trim() || "提交预约";
   const updateLabel = (props.bookingUpdateLabel ?? "").trim() || "修改预约";
   const cancelLabel = (props.bookingCancelLabel ?? "").trim() || "取消预约";
+  const storeLabel = (props.bookingStoreLabel ?? "").trim() || "预约店铺";
+  const itemLabel = (props.bookingItemLabel ?? "").trim() || "项目或类型";
   const successTitle = (props.bookingSuccessTitle ?? "").trim() || "预约提交成功";
   const successText = (props.bookingSuccessText ?? "").trim() || "我们已收到您的预约，可在此继续修改或取消。";
   const namePlaceholder = (props.bookingNamePlaceholder ?? "").trim() || "请输入称谓或姓名";
@@ -262,8 +264,8 @@ export default function BookingBlock({
           </div>
           <div className="mt-4 grid gap-3 text-sm text-slate-700 md:grid-cols-2">
             <div>{`预约编号：${submittedState.booking.id}`}</div>
-            <div>{`预约店铺：${submittedState.booking.store}`}</div>
-            <div>{`预约项目：${submittedState.booking.item}`}</div>
+            <div>{`${storeLabel}：${submittedState.booking.store}`}</div>
+            <div>{`${itemLabel}：${submittedState.booking.item}`}</div>
             <div>{`预约时间：${formatMerchantBookingDateTime(submittedState.booking.appointmentAt)}`}</div>
             <div>{`称谓/姓名：${submittedState.booking.title} ${submittedState.booking.customerName}`}</div>
             <div>{`邮箱：${submittedState.booking.email}`}</div>
@@ -300,7 +302,7 @@ export default function BookingBlock({
         >
           <div className="grid gap-4 md:grid-cols-2">
             <label className="space-y-1 text-sm text-slate-700">
-              <span>预约店铺</span>
+              <span>{storeLabel}</span>
               <select
                 className={getFormFieldClass(!isLiveBooking)}
                 value={draft.store}
@@ -315,7 +317,7 @@ export default function BookingBlock({
               </select>
             </label>
             <label className="space-y-1 text-sm text-slate-700">
-              <span>项目或类型</span>
+              <span>{itemLabel}</span>
               <select
                 className={getFormFieldClass(!isLiveBooking)}
                 value={draft.item}

@@ -309,6 +309,8 @@ export type BookingProps = BackgroundEditableProps &
   TypographyEditableProps & {
     heading?: string;
     text?: string;
+    bookingStoreLabel?: string;
+    bookingItemLabel?: string;
     bookingStoreOptions?: string[];
     bookingItemOptions?: string[];
     bookingTitleOptions?: string[];

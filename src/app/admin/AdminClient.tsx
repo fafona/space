@@ -5101,6 +5101,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         props: {
           heading: "在线预约",
           text: "客户可选择店铺、项目、日期时间并填写预约信息。",
+          bookingStoreLabel: "预约店铺",
+          bookingItemLabel: "项目或类型",
           bookingStoreOptions: buildDefaultBookingStoreOptions(
             editingSite?.merchantName ?? editingSite?.name ?? merchantDisplayName,
           ),
@@ -16254,6 +16256,24 @@ type GalleryEditorImage = {
                 />
               </div>
               <div className="grid gap-4 lg:grid-cols-2">
+                <label className="space-y-1 text-sm text-gray-700">
+                  <span className="block text-gray-600">店铺字段名称</span>
+                  <input
+                    className="w-full rounded border px-3 py-2"
+                    value={block.props.bookingStoreLabel ?? ""}
+                    placeholder="预约店铺"
+                    onChange={(event) => onChange({ bookingStoreLabel: event.target.value })}
+                  />
+                </label>
+                <label className="space-y-1 text-sm text-gray-700">
+                  <span className="block text-gray-600">项目字段名称</span>
+                  <input
+                    className="w-full rounded border px-3 py-2"
+                    value={block.props.bookingItemLabel ?? ""}
+                    placeholder="项目或类型"
+                    onChange={(event) => onChange({ bookingItemLabel: event.target.value })}
+                  />
+                </label>
                 <label className="space-y-1 text-sm text-gray-700">
                   <span className="block text-gray-600">预约店铺选项</span>
                   <textarea
