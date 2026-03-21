@@ -60,6 +60,7 @@ import {
 } from "@/data/platformControlStore";
 import { SUPER_ADMIN_MESSAGES } from "@/constants/messages";
 import { readPageViewDailyStats, readPublishEvents, readRemoteAnalyticsSummary, trackPublishEvent } from "@/lib/analytics";
+import { parseMerchantIdRuleInput, sortMerchantIdRules, type MerchantIdRule } from "@/lib/merchantIdRules";
 import {
   matchPlanTemplateCategory,
   PLAN_TEMPLATE_FILTER_OPTIONS,
@@ -223,6 +224,19 @@ function describeBackendMerchantAccountsError(message: string) {
     return "后端注册账号接口暂时不可用，当前先显示本地站点用户。";
   }
   return message;
+}
+
+function merchantIdRuleTypeLabel(type: MerchantIdRule["type"]) {
+  if (type === "exact") return "单个号码";
+  if (type === "range") return "号段范围";
+  return "前缀通配";
+}
+
+function describeMerchantIdRuleExpression(rule: MerchantIdRule) {
+  if (rule.type !== "pattern") return rule.expression;
+  const prefix = rule.expression.replace(/\*+$/, "");
+  const wildcardLength = rule.expression.length - prefix.length;
+  return `${rule.expression}（${prefix} + 任意 ${wildcardLength} 位）`;
 }
 
 function publishStatusLabel(status: PublishStatus) {
@@ -861,6 +875,7 @@ type MerchantUserRow = {
   hasSite: boolean;
   backendAccount: BackendMerchantAccount | null;
   merchantId: string;
+  loginAccount: string;
   userEmail: string;
   merchantName: string;
   prefix: string;
@@ -893,11 +908,14 @@ type BackendMerchantAccount = {
   merchantId: string;
   merchantName: string;
   email: string;
+  username: string;
+  loginId: string;
   createdAt: string | null;
   authUserId: string | null;
   emailConfirmed: boolean;
   emailConfirmedAt: string | null;
   lastSignInAt: string | null;
+  manualCreated: boolean;
 };
 
 type MerchantTableSortField =
@@ -1020,6 +1038,19 @@ export default function SuperAdminClient() {
   const [backendMerchantAccounts, setBackendMerchantAccounts] = useState<BackendMerchantAccount[]>([]);
   const [backendMerchantAccountsLoading, setBackendMerchantAccountsLoading] = useState(false);
   const [backendMerchantAccountsError, setBackendMerchantAccountsError] = useState("");
+  const [manualUserDialogOpen, setManualUserDialogOpen] = useState(false);
+  const [manualUserId, setManualUserId] = useState("");
+  const [manualUserName, setManualUserName] = useState("");
+  const [manualUserPassword, setManualUserPassword] = useState("");
+  const [manualUserSubmitting, setManualUserSubmitting] = useState(false);
+  const [manualUserError, setManualUserError] = useState("");
+  const [merchantIdRules, setMerchantIdRules] = useState<MerchantIdRule[]>([]);
+  const [merchantIdRulesLoading, setMerchantIdRulesLoading] = useState(false);
+  const [merchantIdRulesError, setMerchantIdRulesError] = useState("");
+  const [merchantIdRuleInput, setMerchantIdRuleInput] = useState("");
+  const [merchantIdRuleNote, setMerchantIdRuleNote] = useState("");
+  const [merchantIdRuleSubmitting, setMerchantIdRuleSubmitting] = useState(false);
+  const [merchantIdRuleDeletingId, setMerchantIdRuleDeletingId] = useState("");
   const checklistStorageKeyRef = useRef(releaseChecklistStorageKeyForToday());
   const [releaseChecklistState, setReleaseChecklistState] = useState<Record<string, boolean>>(() =>
     loadReleaseChecklistStateFromStorage(),
@@ -1068,6 +1099,45 @@ export default function SuperAdminClient() {
       const next = `${window.location.pathname}${window.location.search}`;
       window.location.href = buildSuperAdminLoginHref(next);
     }
+  }, [authed, hydrated]);
+
+  useEffect(() => {
+    if (!hydrated || !authed) return;
+    let cancelled = false;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 8000);
+    setMerchantIdRulesLoading(true);
+    setMerchantIdRulesError("");
+    fetch("/api/super-admin/merchant-id-rules", {
+      method: "GET",
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`merchant_id_rule_http_${response.status}`);
+        }
+        const payload = (await response.json()) as { rules?: MerchantIdRule[] };
+        if (cancelled) return;
+        setMerchantIdRules(Array.isArray(payload.rules) ? sortMerchantIdRules(payload.rules) : []);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setMerchantIdRules([]);
+        if (error instanceof DOMException && error.name === "AbortError") {
+          setMerchantIdRulesError("merchant_id_rule_timeout");
+          return;
+        }
+        setMerchantIdRulesError(error instanceof Error ? error.message : "merchant_id_rule_load_failed");
+      })
+      .finally(() => {
+        if (!cancelled) setMerchantIdRulesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+      controller.abort();
+      window.clearTimeout(timeout);
+    };
   }, [authed, hydrated]);
 
   useEffect(() => {
@@ -1235,6 +1305,7 @@ export default function SuperAdminClient() {
         hasSite: true,
         backendAccount: null,
         merchantId: normalizeMerchantIdValue(siteContext.site.id) || "-",
+        loginAccount: siteContext.userEmail || "-",
         userEmail: siteContext.userEmail || "-",
         merchantName: getMerchantProfileName(siteContext.site),
         prefix: siteContext.prefix,
@@ -1258,8 +1329,9 @@ export default function SuperAdminClient() {
           hasSite: false,
           backendAccount: account,
           merchantId: normalizeMerchantIdValue(account.merchantId) || "-",
+          loginAccount: account.username || account.loginId || account.email || "-",
           userEmail: account.email || "-",
-          merchantName: "",
+          merchantName: account.merchantName || account.username || "",
           prefix: "-",
           industry: "未建站",
           city: "-",
@@ -1279,6 +1351,7 @@ export default function SuperAdminClient() {
         hasSite: true,
         backendAccount: account,
         merchantId: normalizeMerchantIdValue(account.merchantId) || "-",
+        loginAccount: account.username || account.loginId || account.email || siteContext.userEmail || "-",
         userEmail: account.email || siteContext.userEmail || "-",
         merchantName: getMerchantProfileName(siteContext.site),
         prefix: siteContext.prefix,
@@ -1311,7 +1384,7 @@ export default function SuperAdminClient() {
       merchantRows.filter((row) => {
         const q = userKeyword.trim().toLowerCase();
         if (!q) return true;
-        return [row.userEmail, row.merchantId, row.merchantName, row.prefix, row.industry, row.city, row.site.domain]
+        return [row.loginAccount, row.userEmail, row.merchantId, row.merchantName, row.prefix, row.industry, row.city, row.site.domain]
           .join(" ")
           .toLowerCase()
           .includes(q);
@@ -1388,7 +1461,7 @@ export default function SuperAdminClient() {
       let delta = 0;
       switch (merchantTableSortField) {
         case "user":
-          delta = text(left.userEmail).localeCompare(text(right.userEmail), "zh-CN");
+          delta = text(left.loginAccount).localeCompare(text(right.loginAccount), "zh-CN");
           break;
         case "id":
           delta = merchantIdRank(left.merchantId) - merchantIdRank(right.merchantId);
@@ -2450,6 +2523,164 @@ export default function SuperAdminClient() {
 
     setUserName("");
     setUserEmail("");
+  }
+
+  function resetManualUserDialog() {
+    setManualUserId("");
+    setManualUserName("");
+    setManualUserPassword("");
+    setManualUserError("");
+  }
+
+  function openManualUserDialog() {
+    if (!guard("user.manage", "无用户管理权限")) return;
+    resetManualUserDialog();
+    setManualUserDialogOpen(true);
+  }
+
+  function closeManualUserDialog() {
+    if (manualUserSubmitting) return;
+    setManualUserDialogOpen(false);
+    resetManualUserDialog();
+  }
+
+  async function createManualUserAction() {
+    if (!guard("user.manage", "无用户管理权限")) return;
+
+    const merchantId = manualUserId.trim();
+    const username = manualUserName.trim();
+    const passwordValue = manualUserPassword;
+
+    if (!/^\d{8}$/.test(merchantId)) {
+      setManualUserError("ID 必须是 8 位数字");
+      return;
+    }
+    if (!username) {
+      setManualUserError("请输入用户名");
+      return;
+    }
+    if (passwordValue.length < 6) {
+      setManualUserError("密码至少 6 位");
+      return;
+    }
+
+    setManualUserSubmitting(true);
+    setManualUserError("");
+
+    try {
+      const response = await fetch("/api/super-admin/merchant-accounts", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          merchantId,
+          username,
+          password: passwordValue,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { item?: BackendMerchantAccount; message?: string }
+        | null;
+
+      if (!response.ok) {
+        setManualUserError(payload?.message || "新增用户失败，请稍后重试");
+        return;
+      }
+
+      const createdItem = payload?.item;
+      if (createdItem) {
+        setBackendMerchantAccounts((prev) => {
+          const next = prev.filter((item) => item.merchantId !== createdItem.merchantId);
+          return [createdItem, ...next];
+        });
+        setMerchantDetailSiteId(`backend-${createdItem.merchantId || createdItem.email || "merchant"}`);
+      } else {
+        setMerchantDetailSiteId(`backend-${merchantId}`);
+      }
+
+      setUserPanelMode("detail");
+      setMerchantPanelOpen(true);
+      setManualUserDialogOpen(false);
+      resetManualUserDialog();
+      setTip(`已创建用户：${username}（ID ${merchantId}）`);
+    } catch (error) {
+      setManualUserError(error instanceof Error ? error.message : "新增用户失败，请稍后重试");
+    } finally {
+      setManualUserSubmitting(false);
+    }
+  }
+
+  async function createMerchantIdRuleAction() {
+    if (!guard("user.manage", "无用户管理权限")) return;
+
+    const parsed = parseMerchantIdRuleInput(merchantIdRuleInput);
+    if (!parsed.ok) {
+      setMerchantIdRulesError(parsed.message);
+      return;
+    }
+
+    setMerchantIdRuleSubmitting(true);
+    setMerchantIdRulesError("");
+    try {
+      const response = await fetch("/api/super-admin/merchant-id-rules", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          expression: merchantIdRuleInput,
+          note: merchantIdRuleNote,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { rule?: MerchantIdRule; message?: string }
+        | null;
+
+      if (!response.ok) {
+        setMerchantIdRulesError(payload?.message || "禁用 ID 规则保存失败，请稍后重试");
+        return;
+      }
+
+      const createdRule = payload?.rule;
+      if (createdRule) {
+        setMerchantIdRules((prev) => sortMerchantIdRules([createdRule, ...prev.filter((item) => item.id !== createdRule.id)]));
+      }
+      setMerchantIdRuleInput("");
+      setMerchantIdRuleNote("");
+      setTip(`已添加禁用 ID 规则：${parsed.rule.expression}`);
+    } catch (error) {
+      setMerchantIdRulesError(error instanceof Error ? error.message : "禁用 ID 规则保存失败，请稍后重试");
+    } finally {
+      setMerchantIdRuleSubmitting(false);
+    }
+  }
+
+  async function deleteMerchantIdRuleAction(rule: MerchantIdRule) {
+    if (!guard("user.manage", "无用户管理权限")) return;
+
+    setMerchantIdRuleDeletingId(rule.id);
+    setMerchantIdRulesError("");
+    try {
+      const response = await fetch("/api/super-admin/merchant-id-rules", {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ id: rule.id }),
+      });
+      const payload = (await response.json().catch(() => null)) as { message?: string } | null;
+      if (!response.ok) {
+        setMerchantIdRulesError(payload?.message || "禁用 ID 规则删除失败，请稍后重试");
+        return;
+      }
+      setMerchantIdRules((prev) => prev.filter((item) => item.id !== rule.id));
+      setTip(`已移除禁用 ID 规则：${rule.expression}`);
+    } catch (error) {
+      setMerchantIdRulesError(error instanceof Error ? error.message : "禁用 ID 规则删除失败，请稍后重试");
+    } finally {
+      setMerchantIdRuleDeletingId("");
+    }
   }
 
   function toggleMerchantServiceAction(siteId: string) {
@@ -3579,21 +3810,210 @@ export default function SuperAdminClient() {
             {activeMenu === "user_manage" ? (
               <section className="space-y-4">
                 <div className="rounded-lg border bg-white p-4">
-                  <div className="grid gap-2 md:grid-cols-5">
-                    <input
-                      className="rounded border px-3 py-2 text-sm md:col-span-2"
-                      placeholder="搜索用户/ID/名称/前缀/行业/城市/域名"
-                      value={userKeyword}
-                      onChange={(e) => {
-                        setUserKeyword(e.target.value);
-                        setMerchantTablePage(1);
-                      }}
-                    />
-                    <div className="rounded border bg-slate-50 px-3 py-2 text-sm">注册用户：{filteredMerchantRows.length}</div>
-                    <div className="rounded border bg-slate-50 px-3 py-2 text-sm">正常用户：{merchantActiveCount}</div>
-                    <div className="rounded border bg-slate-50 px-3 py-2 text-sm">暂停用户：{merchantPausedCount}</div>
-                    <div className="rounded border bg-slate-50 px-3 py-2 text-sm">未建站：{merchantUnlinkedCount}</div>
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="grid min-w-0 flex-1 gap-2 md:grid-cols-5">
+                      <input
+                        className="rounded border px-3 py-2 text-sm md:col-span-2"
+                        placeholder="搜索账号/邮箱/ID/名称/前缀/行业/城市/域名"
+                        value={userKeyword}
+                        onChange={(e) => {
+                          setUserKeyword(e.target.value);
+                          setMerchantTablePage(1);
+                        }}
+                      />
+                      <div className="rounded border bg-slate-50 px-3 py-2 text-sm">注册用户：{filteredMerchantRows.length}</div>
+                      <div className="rounded border bg-slate-50 px-3 py-2 text-sm">正常用户：{merchantActiveCount}</div>
+                      <div className="rounded border bg-slate-50 px-3 py-2 text-sm">暂停用户：{merchantPausedCount}</div>
+                      <div className="rounded border bg-slate-50 px-3 py-2 text-sm">未建站：{merchantUnlinkedCount}</div>
+                    </div>
+                    <button
+                      type="button"
+                      className="rounded bg-black px-4 py-2 text-sm text-white hover:bg-slate-800"
+                      onClick={openManualUserDialog}
+                    >
+                      新增用户
+                    </button>
                   </div>
+                </div>
+
+                {manualUserDialogOpen
+                  ? renderTopMostOverlay(
+                      <>
+                        <button
+                          type="button"
+                          className="fixed inset-0 z-[2147483400] bg-black/45"
+                          onClick={closeManualUserDialog}
+                          aria-label="关闭新增用户弹窗"
+                        />
+                        <div className="fixed inset-0 z-[2147483401] flex items-center justify-center p-4">
+                          <div className="w-full max-w-md rounded-2xl border bg-white shadow-2xl">
+                            <div className="flex items-start justify-between gap-3 border-b px-5 py-4">
+                              <div>
+                                <div className="text-base font-semibold text-slate-900">新增用户</div>
+                                <div className="mt-1 text-xs text-slate-500">
+                                  直接创建可登录账号，跳过注册。登录时支持用户名或 8 位 ID。
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+                                onClick={closeManualUserDialog}
+                                disabled={manualUserSubmitting}
+                              >
+                                关闭
+                              </button>
+                            </div>
+                            <div className="space-y-3 px-5 py-4">
+                              <label className="space-y-1">
+                                <div className="text-sm text-slate-600">ID</div>
+                                <input
+                                  className="w-full rounded border px-3 py-2 text-sm"
+                                  inputMode="numeric"
+                                  maxLength={8}
+                                  placeholder="8位数字，例如 10000001"
+                                  value={manualUserId}
+                                  onChange={(event) => setManualUserId(event.target.value.replace(/\D+/g, "").slice(0, 8))}
+                                />
+                              </label>
+                              <label className="space-y-1">
+                                <div className="text-sm text-slate-600">用户名</div>
+                                <input
+                                  className="w-full rounded border px-3 py-2 text-sm"
+                                  placeholder="用于登录展示与用户名登录"
+                                  value={manualUserName}
+                                  onChange={(event) => setManualUserName(event.target.value)}
+                                />
+                              </label>
+                              <label className="space-y-1">
+                                <div className="text-sm text-slate-600">密码</div>
+                                <input
+                                  className="w-full rounded border px-3 py-2 text-sm"
+                                  type="password"
+                                  placeholder="至少 6 位"
+                                  value={manualUserPassword}
+                                  onChange={(event) => setManualUserPassword(event.target.value)}
+                                />
+                              </label>
+                              <div className="rounded border border-dashed bg-slate-50 px-3 py-2 text-xs text-slate-500">
+                                系统会自动生成内部邮箱并直接完成验证，创建后可按普通注册用户一样登录后台。
+                              </div>
+                              {manualUserError ? <div className="text-sm text-rose-600">{manualUserError}</div> : null}
+                            </div>
+                            <div className="flex justify-end gap-2 border-t px-5 py-4">
+                              <button
+                                type="button"
+                                className="rounded border bg-white px-4 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+                                onClick={closeManualUserDialog}
+                                disabled={manualUserSubmitting}
+                              >
+                                取消
+                              </button>
+                              <button
+                                type="button"
+                                className="rounded bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50"
+                                onClick={() => void createManualUserAction()}
+                                disabled={manualUserSubmitting}
+                              >
+                                {manualUserSubmitting ? "创建中..." : "确认创建"}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </>,
+                    )
+                  : null}
+
+                <div className="rounded-lg border bg-white p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">禁用 ID 设置</div>
+                      <div className="text-xs text-slate-500">
+                        加入这里的号码不会再被自动注册分配。支持单个 ID、号段范围和前缀通配。
+                      </div>
+                    </div>
+                    <div className="rounded border bg-slate-50 px-3 py-2 text-sm">当前规则：{merchantIdRules.length}</div>
+                  </div>
+
+                  <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)_auto]">
+                    <input
+                      className="rounded border px-3 py-2 text-sm"
+                      placeholder="10000010 / 10000020-10000050 / 100000**"
+                      value={merchantIdRuleInput}
+                      onChange={(event) => setMerchantIdRuleInput(event.target.value)}
+                    />
+                    <input
+                      className="rounded border px-3 py-2 text-sm"
+                      placeholder="备注（可选）"
+                      value={merchantIdRuleNote}
+                      onChange={(event) => setMerchantIdRuleNote(event.target.value)}
+                    />
+                    <button
+                      type="button"
+                      className="rounded bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50"
+                      onClick={() => void createMerchantIdRuleAction()}
+                      disabled={merchantIdRuleSubmitting}
+                    >
+                      {merchantIdRuleSubmitting ? "添加中..." : "添加规则"}
+                    </button>
+                  </div>
+
+                  <div className="mt-2 text-xs text-slate-500">
+                    示例：`10000010` 表示禁用单个号码；`10000020-10000050` 表示禁用整个号段；`100000**` 表示禁用 100000 开头的全部两位尾号。
+                  </div>
+
+                  {merchantIdRulesError ? (
+                    <div className="mt-3 text-sm text-rose-600">
+                      {merchantIdRulesError === "merchant_id_rule_timeout"
+                        ? "禁用 ID 规则加载超时，请稍后重试"
+                        : merchantIdRulesError}
+                    </div>
+                  ) : null}
+
+                  {merchantIdRulesLoading ? (
+                    <div className="mt-3 text-xs text-slate-500">正在加载禁用 ID 规则…</div>
+                  ) : merchantIdRules.length === 0 ? (
+                    <div className="mt-3 rounded border border-dashed px-3 py-4 text-xs text-slate-500">
+                      当前还没有禁用 ID 规则。
+                    </div>
+                  ) : (
+                    <div className="mt-4 overflow-x-auto">
+                      <table className="min-w-full text-left text-sm">
+                        <thead className="bg-slate-50 text-xs text-slate-600">
+                          <tr>
+                            <th className="px-3 py-2">类型</th>
+                            <th className="px-3 py-2">规则</th>
+                            <th className="px-3 py-2">备注</th>
+                            <th className="px-3 py-2">创建时间</th>
+                            <th className="px-3 py-2">操作</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {merchantIdRules.map((rule) => (
+                            <tr key={rule.id} className="border-t">
+                              <td className="px-3 py-2 text-xs">
+                                <span className={`rounded border px-2 py-0.5 ${badgeClass(rule.type === "exact" ? "warning" : rule.type === "range" ? "maintenance" : "disabled")}`}>
+                                  {merchantIdRuleTypeLabel(rule.type)}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2 text-xs">{describeMerchantIdRuleExpression(rule)}</td>
+                              <td className="px-3 py-2 text-xs text-slate-500">{rule.note || "-"}</td>
+                              <td className="px-3 py-2 text-xs text-slate-500">{fmt(rule.createdAt)}</td>
+                              <td className="px-3 py-2 text-xs">
+                                <button
+                                  type="button"
+                                  className="rounded border px-2 py-1 disabled:opacity-50"
+                                  onClick={() => void deleteMerchantIdRuleAction(rule)}
+                                  disabled={merchantIdRuleDeletingId === rule.id}
+                                >
+                                  {merchantIdRuleDeletingId === rule.id ? "删除中..." : "删除"}
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
 
                 <div className="space-y-4">
@@ -3610,7 +4030,7 @@ export default function SuperAdminClient() {
                             </th>
                             <th className="px-3 py-2">
                               <div className="flex items-center justify-between gap-2">
-                                <span>用户</span>
+                                <span>账号</span>
                                 {renderMerchantSortToggle("user")}
                               </div>
                             </th>
@@ -3682,7 +4102,12 @@ export default function SuperAdminClient() {
                             return (
                               <tr key={row.site.id} className={`border-t ${selectedMerchantRow?.site.id === row.site.id ? "bg-blue-50/30" : ""}`}>
                                 <td className="px-3 py-2 text-xs text-slate-500">{seq}</td>
-                                <td className="px-3 py-2 text-xs">{row.userEmail || "-"}</td>
+                                <td className="px-3 py-2 text-xs">
+                                  <div className="font-medium text-slate-900">{row.loginAccount || "-"}</div>
+                                  {row.userEmail && row.userEmail !== row.loginAccount ? (
+                                    <div className="text-[11px] text-slate-400">{row.userEmail}</div>
+                                  ) : null}
+                                </td>
                                 <td className="px-3 py-2 text-xs">{row.merchantId || "-"}</td>
                                 <td className="px-3 py-2 text-xs">{row.merchantName}</td>
                                 <td className="px-3 py-2 text-xs">{row.prefix || "-"}</td>
@@ -3807,6 +4232,7 @@ export default function SuperAdminClient() {
                         <table className="min-w-full text-left text-sm">
                           <thead className="bg-slate-50 text-xs text-slate-600">
                             <tr>
+                              <th className="px-3 py-2">账号</th>
                               <th className="px-3 py-2">邮箱</th>
                               <th className="px-3 py-2">商户ID</th>
                               <th className="px-3 py-2">名称</th>
@@ -3818,9 +4244,10 @@ export default function SuperAdminClient() {
                           <tbody>
                             {backendAccountsWithoutSite.map((account) => (
                               <tr key={`${account.merchantId}-${account.email}`} className="border-t">
+                                <td className="px-3 py-2 text-xs">{account.username || account.loginId || account.email || "-"}</td>
                                 <td className="px-3 py-2 text-xs">{account.email || "-"}</td>
                                 <td className="px-3 py-2 text-xs">{account.merchantId || "-"}</td>
-                                <td className="px-3 py-2 text-xs" />
+                                <td className="px-3 py-2 text-xs">{account.merchantName || account.username || "-"}</td>
                                 <td className="px-3 py-2 text-xs text-slate-500">{fmt(account.createdAt)}</td>
                                 <td className="px-3 py-2 text-xs">
                                   <span className={`rounded border px-2 py-0.5 ${badgeClass(account.emailConfirmed ? "approved" : "pending")}`}>
@@ -4449,8 +4876,11 @@ export default function SuperAdminClient() {
                         {userPanelMode === "detail" ? (
                           <div className="space-y-2 text-xs">
                             <div className="rounded border bg-slate-50 px-3 py-2">
-                              <div className="text-slate-500">用户</div>
-                              <div className="font-medium text-slate-900">{selectedMerchantRow.userEmail || "-"}</div>
+                              <div className="text-slate-500">账号</div>
+                              <div className="font-medium text-slate-900">{selectedMerchantRow.loginAccount || "-"}</div>
+                              {selectedMerchantRow.userEmail && selectedMerchantRow.userEmail !== selectedMerchantRow.loginAccount ? (
+                                <div className="mt-1 text-[11px] text-slate-400">{selectedMerchantRow.userEmail}</div>
+                              ) : null}
                             </div>
                             {!selectedMerchantRow.hasSite ? (
                               <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-amber-800">
@@ -4518,7 +4948,7 @@ export default function SuperAdminClient() {
                           ) : (
                             <div className="space-y-3 text-xs">
                               <div className="rounded border bg-slate-50 px-3 py-2 text-slate-600">
-                                配置对象：{selectedMerchantRow.userEmail || "-"}
+                                配置对象：{selectedMerchantRow.loginAccount || "-"}
                               </div>
                               <div className="grid gap-2 md:grid-cols-2">
                               <label className="space-y-1">

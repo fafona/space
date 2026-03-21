@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
@@ -11,7 +11,7 @@ function LoginPageInner() {
   const { locale, t } = useI18n();
   const searchParams = useSearchParams();
   const isDevelopment = process.env.NODE_ENV === "development";
-  const [email, setEmail] = useState("");
+  const [account, setAccount] = useState("");
   const [password, setPassword] = useState("");
   const [msg, setMsg] = useState<string>("");
   const [gatewayReachable, setGatewayReachable] = useState<boolean | null>(null);
@@ -23,6 +23,35 @@ function LoginPageInner() {
     if (!raw.startsWith("/") || raw.startsWith("//")) return "";
     return raw;
   }, [searchParams]);
+  const normalizedLocale = useMemo(() => locale.trim().toLowerCase(), [locale]);
+  const loginAccountLabel = useMemo(() => {
+    if (normalizedLocale.startsWith("zh-tw")) return "登入帳號";
+    if (normalizedLocale.startsWith("ja")) return "ログインアカウント";
+    if (normalizedLocale.startsWith("ko")) return "로그인 계정";
+    if (normalizedLocale.startsWith("zh")) return "登录账号";
+    return "Login Account";
+  }, [normalizedLocale]);
+  const loginAccountPlaceholder = useMemo(() => {
+    if (normalizedLocale.startsWith("zh-tw")) return "信箱 / 使用者名稱 / 8位ID";
+    if (normalizedLocale.startsWith("ja")) return "メール / ユーザー名 / 8桁ID";
+    if (normalizedLocale.startsWith("ko")) return "이메일 / 사용자명 / 8자리 ID";
+    if (normalizedLocale.startsWith("zh")) return "邮箱 / 用户名 / 8位ID";
+    return "Email / Username / 8-digit ID";
+  }, [normalizedLocale]);
+  const loginAccountRequiredMessage = useMemo(() => {
+    if (normalizedLocale.startsWith("zh-tw")) return "請輸入登入帳號";
+    if (normalizedLocale.startsWith("ja")) return "ログインアカウントを入力してください";
+    if (normalizedLocale.startsWith("ko")) return "로그인 계정을 입력해 주세요";
+    if (normalizedLocale.startsWith("zh")) return "请输入登录账号";
+    return "Please enter login account";
+  }, [normalizedLocale]);
+  const loginAccountTip = useMemo(() => {
+    if (normalizedLocale.startsWith("zh-tw")) return "登入支援信箱、使用者名稱或 8 位 ID；註冊仍需填寫信箱。";
+    if (normalizedLocale.startsWith("ja")) return "ログインはメール、ユーザー名、8桁IDに対応しています。新規登録はメール入力が必要です。";
+    if (normalizedLocale.startsWith("ko")) return "로그인은 이메일, 사용자명, 8자리 ID를 지원합니다. 회원가입은 이메일이 필요합니다.";
+    if (normalizedLocale.startsWith("zh")) return "登录支持邮箱、用户名或 8 位 ID；注册仍需填写邮箱。";
+    return "Sign in supports email, username, or 8-digit ID. Sign up still requires an email.";
+  }, [normalizedLocale]);
 
   useEffect(() => {
     const confirmed = (searchParams.get("confirmed") ?? "").trim();
@@ -141,8 +170,18 @@ function LoginPageInner() {
     };
   }, [redirectToMerchantBackend]);
 
-  function validateForm(): string | null {
-    const trimmedEmail = email.trim();
+  function validateSignInForm(): string | null {
+    const trimmedAccount = account.trim();
+
+    if (!trimmedAccount) return loginAccountRequiredMessage;
+    if (!password) return t("login.requiredPassword");
+    if (password.length < 6) return t("login.passwordTooShort");
+
+    return null;
+  }
+
+  function validateEmailForm(): string | null {
+    const trimmedEmail = account.trim();
 
     if (!trimmedEmail) return t("login.requiredEmail");
     if (!trimmedEmail.includes("@")) return t("login.invalidEmail");
@@ -166,7 +205,6 @@ function LoginPageInner() {
   }
 
   function getRegisteredAccountMessage(confirmed: boolean) {
-    const normalizedLocale = locale.trim().toLowerCase();
     if (normalizedLocale.startsWith("zh-tw")) {
       return confirmed
         ? "此信箱已註冊，請直接登入。"
@@ -210,6 +248,28 @@ function LoginPageInner() {
     } catch {
       return null;
     }
+  }
+
+  async function resolveSignInEmail(accountValue: string) {
+    const trimmedAccount = accountValue.trim();
+    if (!trimmedAccount) return null;
+    if (trimmedAccount.includes("@")) return trimmedAccount.toLowerCase();
+
+    const response = await fetch("/api/auth/account-resolve", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ account: trimmedAccount }),
+    });
+
+    if (!response.ok) {
+      throw new Error(t("login.backendUnavailable"));
+    }
+
+    const payload = (await response.json().catch(() => null)) as { email?: unknown } | null;
+    const resolvedEmail = typeof payload?.email === "string" ? payload.email.trim().toLowerCase() : "";
+    return resolvedEmail || null;
   }
 
   function normalizeError(message: string) {
@@ -265,7 +325,7 @@ function LoginPageInner() {
     setMsg("");
     setNeedConfirmEmail(false);
 
-    const validationError = validateForm();
+    const validationError = validateEmailForm();
     if (validationError) return setMsg(validationError);
     const gatewayReady = await canReachSupabaseGateway(4000);
     setGatewayReachable(gatewayReady);
@@ -274,7 +334,7 @@ function LoginPageInner() {
     try {
       const { data, error } = await withTimeout(
         supabase.auth.signUp({
-          email: email.trim(),
+          email: account.trim(),
           password,
           options: {
             emailRedirectTo: `${window.location.origin}/login`,
@@ -283,7 +343,7 @@ function LoginPageInner() {
       );
       if (error) {
         if (isUserAlreadyRegistered(error.message, (error as { code?: string }).code)) {
-          const status = await readRegistrationStatus(email);
+          const status = await readRegistrationStatus(account);
           const confirmed = status?.exists ? status.confirmed : true;
           setNeedConfirmEmail(!confirmed);
           return setMsg(getRegisteredAccountMessage(confirmed));
@@ -311,16 +371,21 @@ function LoginPageInner() {
     setMsg("");
     setNeedConfirmEmail(false);
 
-    const validationError = validateForm();
+    const validationError = validateSignInForm();
     if (validationError) return setMsg(validationError);
     const gatewayReady = await canReachSupabaseGateway(4000);
     setGatewayReachable(gatewayReady);
 
     setPendingAction("signin");
     try {
+      const resolvedEmail = await resolveSignInEmail(account);
+      if (!resolvedEmail) {
+        return setMsg(t("superLogin.invalid"));
+      }
+
       const { data, error } = await withTimeout(
         supabase.auth.signInWithPassword({
-          email: email.trim(),
+          email: resolvedEmail,
           password,
         }),
       );
@@ -352,8 +417,9 @@ function LoginPageInner() {
     if (pendingAction) return;
     setMsg("");
 
-    const trimmedEmail = email.trim();
+    const trimmedEmail = account.trim();
     if (!trimmedEmail) return setMsg(t("login.inputRegisterEmailFirst"));
+    if (!trimmedEmail.includes("@")) return setMsg(t("login.invalidEmail"));
     const gatewayReady = await canReachSupabaseGateway(4000);
     setGatewayReachable(gatewayReady);
 
@@ -383,7 +449,7 @@ function LoginPageInner() {
     setMsg("");
     setNeedConfirmEmail(false);
 
-    const trimmedEmail = email.trim();
+    const trimmedEmail = account.trim();
     if (!trimmedEmail) return setMsg(t("login.inputEmailBeforeForgot"));
     if (!trimmedEmail.includes("@")) return setMsg(t("login.invalidEmail"));
     const gatewayReady = await canReachSupabaseGateway(4000);
@@ -410,16 +476,17 @@ function LoginPageInner() {
     <main className="flex min-h-screen items-center justify-center bg-gray-100 p-6">
       <div className="w-full max-w-md space-y-4 rounded-xl border bg-white p-6">
         <h1 className="text-xl font-bold">{t("login.title")}</h1>
+        <div className="text-xs text-gray-500">{loginAccountTip}</div>
 
         <div className="space-y-2">
-          <div className="text-sm text-gray-600">{t("login.email")}</div>
+          <div className="text-sm text-gray-600">{loginAccountLabel}</div>
           <input
             className="w-full rounded border p-2"
-            type="email"
-            autoComplete="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="you@example.com"
+            type="text"
+            autoComplete="username"
+            value={account}
+            onChange={(e) => setAccount(e.target.value)}
+            placeholder={loginAccountPlaceholder}
           />
         </div>
 

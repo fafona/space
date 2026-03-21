@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { loadMerchantIdRulesFromStore } from "@/lib/merchantIdRuleStore";
+import { findBlockingMerchantIdRule } from "@/lib/merchantIdRules";
+import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { SUPER_ADMIN_SESSION_COOKIE, SUPER_ADMIN_SESSION_VALUE } from "@/lib/superAdminSession";
 
 export const dynamic = "force-dynamic";
@@ -17,23 +20,30 @@ type MerchantRow = {
   created_at?: string | null;
 };
 
+type AuthMetadata = Record<string, unknown> | null;
+
 type AuthUserSummary = {
   id: string;
   email?: string | null;
   created_at?: string | null;
   email_confirmed_at?: string | null;
   last_sign_in_at?: string | null;
+  user_metadata?: AuthMetadata;
+  app_metadata?: AuthMetadata;
 };
 
 type MerchantAccountItem = {
   merchantId: string;
   merchantName: string;
   email: string;
+  username: string;
+  loginId: string;
   createdAt: string | null;
   authUserId: string | null;
   emailConfirmed: boolean;
   emailConfirmedAt: string | null;
   lastSignInAt: string | null;
+  manualCreated: boolean;
 };
 
 type AdminListUsersClient = {
@@ -67,8 +77,62 @@ function normalizeEmail(...values: Array<string | null | undefined>) {
   return "";
 }
 
+function normalizeAccountValue(value: string | null | undefined) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function readMetadataString(metadata: AuthMetadata, ...keys: string[]) {
+  if (!metadata || typeof metadata !== "object") return "";
+  for (const key of keys) {
+    const value = metadata[key];
+    if (typeof value !== "string") continue;
+    const normalized = value.trim();
+    if (normalized) return normalized;
+  }
+  return "";
+}
+
+function readAccountMetadata(user?: AuthUserSummary | null) {
+  const userMetadata = user?.user_metadata ?? null;
+  const appMetadata = user?.app_metadata ?? null;
+  const username =
+    readMetadataString(userMetadata, "display_name", "username", "name") ||
+    readMetadataString(appMetadata, "display_name", "username", "name");
+  const loginId =
+    readMetadataString(userMetadata, "login_id", "loginId", "merchant_id", "merchantId", "merchantID") ||
+    readMetadataString(appMetadata, "login_id", "loginId", "merchant_id", "merchantId", "merchantID");
+  const merchantId =
+    readMetadataString(userMetadata, "merchant_id", "merchantId", "merchantID", "login_id", "loginId") ||
+    readMetadataString(appMetadata, "merchant_id", "merchantId", "merchantID", "login_id", "loginId");
+  const manualCreated =
+    userMetadata?.manual_user === true ||
+    userMetadata?.manualUser === true ||
+    appMetadata?.manual_user === true ||
+    appMetadata?.manualUser === true;
+
+  return {
+    username,
+    usernameKey: normalizeAccountValue(username),
+    loginId,
+    merchantId,
+    manualCreated,
+  };
+}
+
+function buildManualUserEmail(merchantId: string) {
+  return `merchant-${merchantId}@manual.merchant-space.invalid`;
+}
+
 function isNumericMerchantId(value: string | null | undefined) {
   return /^\d+$/.test(String(value ?? "").trim());
+}
+
+function isDuplicateKeyError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const record = error as { code?: unknown; message?: unknown };
+  if (typeof record.code === "string" && record.code === "23505") return true;
+  const message = typeof record.message === "string" ? record.message : "";
+  return /duplicate key|already exists|unique constraint/i.test(message);
 }
 
 async function listAuthUsers(supabase: AdminListUsersClient) {
@@ -83,6 +147,8 @@ async function listAuthUsers(supabase: AdminListUsersClient) {
       created_at: user.created_at ?? null,
       email_confirmed_at: user.email_confirmed_at,
       last_sign_in_at: user.last_sign_in_at,
+      user_metadata: user.user_metadata ?? null,
+      app_metadata: user.app_metadata ?? null,
     }));
     users.push(...chunk);
     if (chunk.length < 200) break;
@@ -110,30 +176,57 @@ function choosePreferredMerchantAccount(current: MerchantAccountItem | undefined
   return candidateTs > currentTs ? candidate : current;
 }
 
-export async function GET(request: Request) {
-  const cookieHeader = request.headers.get("cookie") ?? "";
-  if (parseCookieValue(cookieHeader, SUPER_ADMIN_SESSION_COOKIE) !== SUPER_ADMIN_SESSION_VALUE) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
-
+function createServerSupabaseClient() {
   const supabaseUrl = readEnv("NEXT_PUBLIC_SUPABASE_URL");
   const serviceRoleKey =
     readEnv("SUPABASE_SERVICE_ROLE_KEY") ||
     readEnv("NEXT_SUPABASE_SERVICE_ROLE_KEY");
 
   if (!supabaseUrl || !serviceRoleKey) {
-    return NextResponse.json({ error: "merchant_account_env_missing" }, { status: 503 });
+    return null;
+  }
+
+  return createClient(supabaseUrl, serviceRoleKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+  });
+}
+
+function unauthorizedJson() {
+  return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+}
+
+function envMissingJson() {
+  return NextResponse.json({ error: "merchant_account_env_missing" }, { status: 503 });
+}
+
+function badRequestJson(error: string, message: string) {
+  return NextResponse.json({ error, message }, { status: 400 });
+}
+
+function conflictJson(error: string, message: string) {
+  return NextResponse.json({ error, message }, { status: 409 });
+}
+
+function ensureAuthorized(request: Request) {
+  const cookieHeader = request.headers.get("cookie") ?? "";
+  return parseCookieValue(cookieHeader, SUPER_ADMIN_SESSION_COOKIE) === SUPER_ADMIN_SESSION_VALUE;
+}
+
+export async function GET(request: Request) {
+  if (!ensureAuthorized(request)) {
+    return unauthorizedJson();
+  }
+
+  const supabase = createServerSupabaseClient();
+  if (!supabase) {
+    return envMissingJson();
   }
 
   try {
-    const supabase = createClient(supabaseUrl, serviceRoleKey, {
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false,
-        detectSessionInUrl: false,
-      },
-    });
-
     const [{ data: merchants, error: merchantError }, authUsers] = await Promise.all([
       supabase
         .from("merchants")
@@ -165,16 +258,21 @@ export async function GET(request: Request) {
         authById.get(String(merchant.user_id ?? "").trim()) ??
         authByEmail.get(email) ??
         null;
+      const metadata = readAccountMetadata(authUser);
+      const merchantName = String(merchant.name ?? "").trim();
 
       return {
         merchantId: String(merchant.id ?? "").trim(),
-        merchantName: String(merchant.name ?? "").trim(),
+        merchantName,
         email,
+        username: metadata.username || merchantName,
+        loginId: metadata.loginId || metadata.merchantId || String(merchant.id ?? "").trim(),
         createdAt: merchant.created_at ?? authUser?.created_at ?? null,
         authUserId: (authUser?.id ?? fallbackAuthUserId) || null,
         emailConfirmed: Boolean(authUser?.email_confirmed_at),
         emailConfirmedAt: authUser?.email_confirmed_at ?? null,
         lastSignInAt: authUser?.last_sign_in_at ?? null,
+        manualCreated: metadata.manualCreated,
       };
     });
 
@@ -192,16 +290,22 @@ export async function GET(request: Request) {
         const email = normalizeEmail(user.email);
         return !linkedAuthKeys.has(`id:${user.id}`) && (!email || !linkedAuthKeys.has(`email:${email}`));
       })
-      .map((user) => ({
-        merchantId: "",
-        merchantName: "",
-        email: normalizeEmail(user.email),
-        createdAt: user.created_at ?? null,
-        authUserId: user.id,
-        emailConfirmed: Boolean(user.email_confirmed_at),
-        emailConfirmedAt: user.email_confirmed_at ?? null,
-        lastSignInAt: user.last_sign_in_at ?? null,
-      }));
+      .map((user) => {
+        const metadata = readAccountMetadata(user);
+        return {
+          merchantId: metadata.merchantId,
+          merchantName: "",
+          email: normalizeEmail(user.email),
+          username: metadata.username,
+          loginId: metadata.loginId || metadata.merchantId,
+          createdAt: user.created_at ?? null,
+          authUserId: user.id,
+          emailConfirmed: Boolean(user.email_confirmed_at),
+          emailConfirmedAt: user.email_confirmed_at ?? null,
+          lastSignInAt: user.last_sign_in_at ?? null,
+          manualCreated: metadata.manualCreated,
+        };
+      });
 
     const dedupedByEmail = new Map<string, MerchantAccountItem>();
     for (const item of [...merchantItems, ...authOnlyItems]) {
@@ -221,6 +325,155 @@ export async function GET(request: Request) {
     return NextResponse.json(
       {
         error: "merchant_account_load_failed",
+        message: error instanceof Error ? error.message : "unknown_error",
+      },
+      { status: 500 },
+    );
+  }
+}
+
+export async function POST(request: Request) {
+  if (!ensureAuthorized(request)) {
+    return unauthorizedJson();
+  }
+
+  const supabase = createServerSupabaseClient();
+  if (!supabase) {
+    return envMissingJson();
+  }
+
+  try {
+    const payload = (await request.json().catch(() => null)) as {
+      merchantId?: unknown;
+      username?: unknown;
+      password?: unknown;
+    } | null;
+    const merchantId = typeof payload?.merchantId === "string" ? payload.merchantId.trim() : "";
+    const username = typeof payload?.username === "string" ? payload.username.trim() : "";
+    const password = typeof payload?.password === "string" ? payload.password : "";
+
+    if (!isMerchantNumericId(merchantId)) {
+      return badRequestJson("invalid_merchant_id", "ID 必须是 8 位数字");
+    }
+    if (!username) {
+      return badRequestJson("invalid_username", "请输入用户名");
+    }
+    if (password.length < 6) {
+      return badRequestJson("invalid_password", "密码至少 6 位");
+    }
+
+    const usernameKey = normalizeAccountValue(username);
+    const manualEmail = buildManualUserEmail(merchantId);
+
+    const [{ rules: blockedRules }, existingMerchantById, existingMerchantByName, authUsers] = await Promise.all([
+      loadMerchantIdRulesFromStore(supabase),
+      supabase.from("merchants").select("id").eq("id", merchantId).limit(1).maybeSingle(),
+      supabase.from("merchants").select("id").eq("name", username).limit(1).maybeSingle(),
+      listAuthUsers(supabase),
+    ]);
+
+    if (existingMerchantById.error) throw existingMerchantById.error;
+    if (existingMerchantByName.error) throw existingMerchantByName.error;
+
+    if (existingMerchantById.data?.id) {
+      return conflictJson("merchant_id_exists", "ID 已存在，请更换后重试");
+    }
+    if (existingMerchantByName.data?.id) {
+      return conflictJson("username_exists", "用户名已存在，请更换后重试");
+    }
+    if (findBlockingMerchantIdRule(merchantId, blockedRules)) {
+      return conflictJson("merchant_id_disabled", "该 ID 已在禁用设置中，不能用于创建用户");
+    }
+
+    const duplicateIdUser = authUsers.find((user) => {
+      const metadata = readAccountMetadata(user);
+      return (
+        metadata.loginId === merchantId ||
+        metadata.merchantId === merchantId ||
+        normalizeEmail(user.email) === manualEmail
+      );
+    });
+    if (duplicateIdUser) {
+      return conflictJson("merchant_id_exists", "ID 已存在，请更换后重试");
+    }
+
+    const duplicateUsernameUser = authUsers.find((user) => readAccountMetadata(user).usernameKey === usernameKey);
+    if (duplicateUsernameUser) {
+      return conflictJson("username_exists", "用户名已存在，请更换后重试");
+    }
+
+    const { data: createdUserData, error: createUserError } = await supabase.auth.admin.createUser({
+      email: manualEmail,
+      password,
+      email_confirm: true,
+      user_metadata: {
+        username: usernameKey,
+        display_name: username,
+        merchant_id: merchantId,
+        login_id: merchantId,
+        manual_user: true,
+      },
+      app_metadata: {
+        merchant_id: merchantId,
+        login_id: merchantId,
+        manual_user: true,
+      },
+    });
+
+    if (createUserError || !createdUserData.user) {
+      if (createUserError && isDuplicateKeyError(createUserError)) {
+        return conflictJson("merchant_id_exists", "ID 已存在，请更换后重试");
+      }
+      throw createUserError ?? new Error("auth_user_create_failed");
+    }
+
+    const authUser = createdUserData.user;
+    const authUserId = String(authUser.id ?? "").trim();
+    const { error: merchantInsertError } = await supabase.from("merchants").insert({
+      id: merchantId,
+      name: username,
+      email: manualEmail,
+      owner_email: manualEmail,
+      contact_email: manualEmail,
+      user_email: manualEmail,
+      user_id: authUserId,
+      auth_user_id: authUserId,
+      owner_user_id: authUserId,
+      owner_id: authUserId,
+      auth_id: authUserId,
+      created_by: authUserId,
+      created_by_user_id: authUserId,
+    });
+
+    if (merchantInsertError) {
+      await supabase.auth.admin.deleteUser(authUserId).catch(() => {
+        // Ignore cleanup failure and surface the original insert error below.
+      });
+      if (isDuplicateKeyError(merchantInsertError)) {
+        return conflictJson("merchant_id_exists", "ID 已存在，请更换后重试");
+      }
+      throw merchantInsertError;
+    }
+
+    const item: MerchantAccountItem = {
+      merchantId,
+      merchantName: username,
+      email: manualEmail,
+      username,
+      loginId: merchantId,
+      createdAt: authUser.created_at ?? new Date().toISOString(),
+      authUserId,
+      emailConfirmed: true,
+      emailConfirmedAt: authUser.email_confirmed_at ?? new Date().toISOString(),
+      lastSignInAt: null,
+      manualCreated: true,
+    };
+
+    return NextResponse.json({ item }, { status: 201 });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error: "merchant_account_create_failed",
         message: error instanceof Error ? error.message : "unknown_error",
       },
       { status: 500 },

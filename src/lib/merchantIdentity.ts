@@ -1,8 +1,12 @@
 import { supabase } from "@/lib/supabase";
-
-const MERCHANT_ID_MIN = 10_000_000;
-const MERCHANT_ID_MAX = 99_999_999;
-const MERCHANT_ID_REGEX = /^\d{8}$/;
+import {
+  findNextAllowedMerchantIdNumber,
+  MERCHANT_ID_MAX,
+  MERCHANT_ID_MIN,
+  MERCHANT_ID_REGEX,
+  normalizeMerchantIdRules,
+  type MerchantIdRule,
+} from "@/lib/merchantIdRules";
 
 type SessionLikeUser = {
   id?: string;
@@ -76,6 +80,21 @@ export function normalizeDomainSuffix(value: string | null | undefined) {
   return normalizeDomainPrefix(value);
 }
 
+async function readBlockedMerchantIdRules(): Promise<MerchantIdRule[]> {
+  if (typeof window === "undefined") return [];
+  try {
+    const response = await fetch("/api/merchant-id-rules", {
+      method: "GET",
+      cache: "no-store",
+    });
+    if (!response.ok) return [];
+    const payload = (await response.json().catch(() => null)) as { rules?: unknown } | null;
+    return normalizeMerchantIdRules(payload?.rules);
+  } catch {
+    return [];
+  }
+}
+
 export async function lookupMerchantIdsForUser(user?: SessionLikeUser): Promise<string[]> {
   const userId = String(user?.id ?? "").trim();
   const email = normalizeEmail(user?.email);
@@ -124,9 +143,13 @@ async function tryAllocateSequentialMerchantId(user: SessionLikeUser): Promise<s
   const userId = String(user.id ?? "").trim();
   if (!userId) return null;
   const email = normalizeEmail(user.email);
+  const blockedRules = await readBlockedMerchantIdRules();
 
   let candidate = MERCHANT_ID_MIN;
   while (candidate <= MERCHANT_ID_MAX) {
+    const nextAllowed = findNextAllowedMerchantIdNumber(candidate, blockedRules);
+    if (!nextAllowed) return null;
+    candidate = nextAllowed;
     const candidateId = String(candidate);
     const { error } = await supabase.from("merchants").insert({
       id: candidateId,
