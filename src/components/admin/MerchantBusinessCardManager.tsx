@@ -96,6 +96,15 @@ function normalizeText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function escapeClipboardHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }
@@ -118,6 +127,86 @@ function createId(prefix: string) {
     return `${prefix}-${crypto.randomUUID()}`;
   }
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function buildLinkCardClipboardHtml(input: {
+  imageUrl: string;
+  targetUrl: string;
+  cardName: string;
+}) {
+  const imageUrl = escapeClipboardHtml(input.imageUrl);
+  const targetUrl = escapeClipboardHtml(input.targetUrl);
+  const alt = escapeClipboardHtml(input.cardName || "商户名片");
+  return `<!DOCTYPE html><html><body><a href="${targetUrl}" target="_blank" rel="noopener noreferrer" style="display:inline-block;text-decoration:none"><img src="${imageUrl}" alt="${alt}" style="display:block;max-width:100%;height:auto;border:0;outline:none;text-decoration:none" /></a></body></html>`;
+}
+
+async function renderCardNodeToImage(node: HTMLElement) {
+  const images = Array.from(node.querySelectorAll("img"));
+  await Promise.all(
+    images.map(
+      (image) =>
+        new Promise<void>((resolve) => {
+          if (image.complete) return resolve();
+          const done = () => resolve();
+          image.addEventListener("load", done, { once: true });
+          image.addEventListener("error", done, { once: true });
+          window.setTimeout(done, 2200);
+        }),
+    ),
+  );
+  if (typeof document.fonts?.ready?.then === "function") {
+    await document.fonts.ready.catch(() => undefined);
+  }
+  return toPng(node, {
+    pixelRatio: 1,
+    cacheBust: true,
+    backgroundColor: "transparent",
+  });
+}
+
+async function writeClipboardRichContent(input: { html: string; text: string }) {
+  if (typeof navigator !== "undefined" && navigator.clipboard && typeof navigator.clipboard.write === "function" && typeof ClipboardItem !== "undefined") {
+    try {
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          "text/html": new Blob([input.html], { type: "text/html" }),
+          "text/plain": new Blob([input.text], { type: "text/plain" }),
+        }),
+      ]);
+      return "rich" as const;
+    } catch {
+      // Fall through to legacy clipboard strategies below.
+    }
+  }
+
+  if (typeof document !== "undefined") {
+    const container = document.createElement("div");
+    container.contentEditable = "true";
+    container.setAttribute("aria-hidden", "true");
+    container.style.position = "fixed";
+    container.style.left = "-99999px";
+    container.style.top = "0";
+    container.style.opacity = "0";
+    container.innerHTML = input.html;
+    document.body.appendChild(container);
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(container);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    container.focus();
+    const copied = document.execCommand("copy");
+    selection?.removeAllRanges();
+    container.remove();
+    if (copied) return "rich" as const;
+  }
+
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(input.text);
+    return "text" as const;
+  }
+
+  throw new Error("clipboard_unavailable");
 }
 
 function typographyStyle(
@@ -422,22 +511,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     if (!node || !websiteUrl || !qrCodeUrl || !hasPreviewed) return;
     setIsGenerating(true);
     try {
-      const images = Array.from(node.querySelectorAll("img"));
-      await Promise.all(images.map((image) => new Promise<void>((resolve) => {
-        if (image.complete) return resolve();
-        const done = () => resolve();
-        image.addEventListener("load", done, { once: true });
-        image.addEventListener("error", done, { once: true });
-        window.setTimeout(done, 2200);
-      })));
-      if (typeof document.fonts?.ready?.then === "function") {
-        await document.fonts.ready.catch(() => undefined);
-      }
-      const imageUrl = await toPng(node, {
-        pixelRatio: 1,
-        cacheBust: true,
-        backgroundColor: "transparent",
-      });
+      const imageUrl = await renderCardNodeToImage(node);
       const nextDraft = normalizeMerchantBusinessCardDraft(draft);
       const existingCard = editingCardId ? cards.find((card) => card.id === editingCardId) ?? null : null;
       const asset: MerchantBusinessCardAsset = {
@@ -1041,22 +1115,28 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       setTip("当前名片没有可复制的网站链接");
       return;
     }
+
     try {
-      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(normalizedUrl);
-        setTip("链接已复制");
+      const node = hiddenPreviewRef.current;
+      if (node) {
+        const imageUrl = await renderCardNodeToImage(node);
+        const copyMode = await writeClipboardRichContent({
+          html: buildLinkCardClipboardHtml({
+            imageUrl,
+            targetUrl: normalizedUrl,
+            cardName: normalizeText(draft.name) || "商户名片",
+          }),
+          text: normalizedUrl,
+        });
+        setTip(copyMode === "rich" ? "链接名片已复制，粘贴后会显示名片图并可点击跳转" : "当前环境不支持名片样式复制，已复制链接");
         return;
       }
-      const textarea = document.createElement("textarea");
-      textarea.value = normalizedUrl;
-      textarea.setAttribute("readonly", "");
-      textarea.style.position = "fixed";
-      textarea.style.opacity = "0";
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand("copy");
-      textarea.remove();
-      setTip("链接已复制");
+
+      const copyMode = await writeClipboardRichContent({
+        html: `<a href="${escapeClipboardHtml(normalizedUrl)}">${escapeClipboardHtml(normalizedUrl)}</a>`,
+        text: normalizedUrl,
+      });
+      setTip(copyMode === "rich" ? "链接已复制" : "链接已复制");
     } catch {
       setTip("复制失败，请重试");
     }
@@ -1068,7 +1148,19 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       setTip("当前名片没有可复制的网站链接");
       return;
     }
-    await copyPreviewLink(shareUrl);
+    try {
+      const copyMode = await writeClipboardRichContent({
+        html: buildLinkCardClipboardHtml({
+          imageUrl: card.imageUrl,
+          targetUrl: shareUrl,
+          cardName: normalizeText(card.name) || "商户名片",
+        }),
+        text: shareUrl,
+      });
+      setTip(copyMode === "rich" ? "链接名片已复制，粘贴后会显示名片图并可点击跳转" : "当前环境不支持名片样式复制，已复制链接");
+    } catch {
+      setTip("复制失败，请重试");
+    }
   }
 
 }
