@@ -335,13 +335,11 @@ export default function BookingBlock({
               <span>预约日期时间</span>
               <div className="flex flex-wrap gap-2">
                 <input
-                  type="text"
-                  inputMode="numeric"
+                  type="date"
                   className={`${getFormFieldClass(!isLiveBooking)} min-w-[180px] flex-1`}
                   value={appointmentParts.date}
                   lang="zh-CN"
                   style={DATE_TIME_INPUT_STYLE}
-                  placeholder="YYYY-MM-DD"
                   disabled={!isLiveBooking}
                   onChange={(event) =>
                     handleFieldChange(
@@ -351,13 +349,12 @@ export default function BookingBlock({
                   }
                 />
                 <input
-                  type="text"
-                  inputMode="numeric"
+                  type="time"
+                  step={60}
                   className={`${getFormFieldClass(!isLiveBooking)} w-[112px] shrink-0`}
                   value={appointmentParts.time}
                   lang="zh-CN"
                   style={DATE_TIME_INPUT_STYLE}
-                  placeholder="09:44"
                   disabled={!isLiveBooking}
                   onChange={(event) =>
                     handleFieldChange(
