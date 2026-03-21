@@ -953,7 +953,7 @@ export default function SuperAdminClient() {
     syncSuperAdminAuthenticatedCookie();
   }, [hydrated]);
   const authed = hydrated && isSuperAdminAuthenticated();
-  const [activeMenu, setActiveMenu] = useState<"site_editor" | "user_manage" | "stats" | "logs">("site_editor");
+  const [activeMenu, setActiveMenu] = useState<"site_editor" | "user_manage" | "merchant_id_rules" | "stats" | "logs">("site_editor");
   const [state, setState] = useState<PlatformState>(() => loadPlatformState());
   const stateRef = useRef<PlatformState>(state);
   const [tip, setTip] = useState("");
@@ -3263,9 +3263,10 @@ export default function SuperAdminClient() {
     );
   }
 
-  const sidebarMenus: Array<{ key: "site_editor" | "user_manage" | "stats" | "logs"; label: string; hint: string }> = [
+  const sidebarMenus: Array<{ key: "site_editor" | "user_manage" | "merchant_id_rules" | "stats" | "logs"; label: string; hint: string }> = [
     { key: "site_editor", label: "网站编辑", hint: "总站页面与站点配置" },
     { key: "user_manage", label: "用户管理", hint: "用户列表与权限服务" },
+    { key: "merchant_id_rules", label: "禁用ID设置", hint: "注册跳号与规则管理" },
     { key: "stats", label: "数据统计", hint: "平台关键指标" },
     { key: "logs", label: "日志", hint: "审计与告警记录" },
   ];
@@ -3920,99 +3921,6 @@ export default function SuperAdminClient() {
                       </>,
                     )
                   : null}
-
-                <div className="rounded-lg border bg-white p-4">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <div className="text-sm font-semibold text-slate-900">禁用 ID 设置</div>
-                      <div className="text-xs text-slate-500">
-                        加入这里的号码不会再被自动注册分配。支持单个 ID、号段范围和任意位置通配。
-                      </div>
-                    </div>
-                    <div className="rounded border bg-slate-50 px-3 py-2 text-sm">当前规则：{merchantIdRules.length}</div>
-                  </div>
-
-                  <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)_auto]">
-                    <input
-                      className="rounded border px-3 py-2 text-sm"
-                      placeholder="10000010 / 10000020-10000050 / ****1111 / 10**0010"
-                      value={merchantIdRuleInput}
-                      onChange={(event) => setMerchantIdRuleInput(event.target.value)}
-                    />
-                    <input
-                      className="rounded border px-3 py-2 text-sm"
-                      placeholder="备注（可选）"
-                      value={merchantIdRuleNote}
-                      onChange={(event) => setMerchantIdRuleNote(event.target.value)}
-                    />
-                    <button
-                      type="button"
-                      className="rounded bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50"
-                      onClick={() => void createMerchantIdRuleAction()}
-                      disabled={merchantIdRuleSubmitting}
-                    >
-                      {merchantIdRuleSubmitting ? "添加中..." : "添加规则"}
-                    </button>
-                  </div>
-
-                  <div className="mt-2 text-xs text-slate-500">
-                    示例：`10000010` 表示禁用单个号码；`10000020-10000050` 表示禁用整个号段；`100000**`、`10**0010`、`****1111` 都表示 8 位中任意位置可用 `*` 通配。
-                  </div>
-
-                  {merchantIdRulesError ? (
-                    <div className="mt-3 text-sm text-rose-600">
-                      {merchantIdRulesError === "merchant_id_rule_timeout"
-                        ? "禁用 ID 规则加载超时，请稍后重试"
-                        : merchantIdRulesError}
-                    </div>
-                  ) : null}
-
-                  {merchantIdRulesLoading ? (
-                    <div className="mt-3 text-xs text-slate-500">正在加载禁用 ID 规则…</div>
-                  ) : merchantIdRules.length === 0 ? (
-                    <div className="mt-3 rounded border border-dashed px-3 py-4 text-xs text-slate-500">
-                      当前还没有禁用 ID 规则。
-                    </div>
-                  ) : (
-                    <div className="mt-4 overflow-x-auto">
-                      <table className="min-w-full text-left text-sm">
-                        <thead className="bg-slate-50 text-xs text-slate-600">
-                          <tr>
-                            <th className="px-3 py-2">类型</th>
-                            <th className="px-3 py-2">规则</th>
-                            <th className="px-3 py-2">备注</th>
-                            <th className="px-3 py-2">创建时间</th>
-                            <th className="px-3 py-2">操作</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {merchantIdRules.map((rule) => (
-                            <tr key={rule.id} className="border-t">
-                              <td className="px-3 py-2 text-xs">
-                                <span className={`rounded border px-2 py-0.5 ${badgeClass(rule.type === "exact" ? "warning" : rule.type === "range" ? "maintenance" : "disabled")}`}>
-                                  {merchantIdRuleTypeLabel(rule.type)}
-                                </span>
-                              </td>
-                              <td className="px-3 py-2 text-xs">{describeMerchantIdRuleExpression(rule)}</td>
-                              <td className="px-3 py-2 text-xs text-slate-500">{rule.note || "-"}</td>
-                              <td className="px-3 py-2 text-xs text-slate-500">{fmt(rule.createdAt)}</td>
-                              <td className="px-3 py-2 text-xs">
-                                <button
-                                  type="button"
-                                  className="rounded border px-2 py-1 disabled:opacity-50"
-                                  onClick={() => void deleteMerchantIdRuleAction(rule)}
-                                  disabled={merchantIdRuleDeletingId === rule.id}
-                                >
-                                  {merchantIdRuleDeletingId === rule.id ? "删除中..." : "删除"}
-                                </button>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
 
                 <div className="space-y-4">
                   <div className="rounded-lg border bg-white p-4">
@@ -5316,6 +5224,105 @@ export default function SuperAdminClient() {
                       </div>
                     </>
                   ) : null}
+                </div>
+              </section>
+            ) : null}
+
+            {activeMenu === "merchant_id_rules" ? (
+              <section className="space-y-4">
+                <div className="rounded-lg border bg-white p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">禁用 ID 设置</div>
+                      <div className="text-xs text-slate-500">
+                        加入这里的号码不会再被自动注册分配。支持单个 ID、号段范围和任意位置通配。
+                      </div>
+                    </div>
+                    <div className="rounded border bg-slate-50 px-3 py-2 text-sm">当前规则：{merchantIdRules.length}</div>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border bg-white p-4">
+                  <div className="grid gap-3 md:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)_auto]">
+                    <input
+                      className="rounded border px-3 py-2 text-sm"
+                      placeholder="10000010 / 10000020-10000050 / ****1111 / 10**0010"
+                      value={merchantIdRuleInput}
+                      onChange={(event) => setMerchantIdRuleInput(event.target.value)}
+                    />
+                    <input
+                      className="rounded border px-3 py-2 text-sm"
+                      placeholder="备注（可选）"
+                      value={merchantIdRuleNote}
+                      onChange={(event) => setMerchantIdRuleNote(event.target.value)}
+                    />
+                    <button
+                      type="button"
+                      className="rounded bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50"
+                      onClick={() => void createMerchantIdRuleAction()}
+                      disabled={merchantIdRuleSubmitting}
+                    >
+                      {merchantIdRuleSubmitting ? "添加中..." : "添加规则"}
+                    </button>
+                  </div>
+
+                  <div className="mt-2 text-xs text-slate-500">
+                    示例：`10000010` 表示禁用单个号码；`10000020-10000050` 表示禁用整个号段；`100000**`、`10**0010`、`****1111` 都表示 8 位中任意位置可用 `*` 通配。
+                  </div>
+
+                  {merchantIdRulesError ? (
+                    <div className="mt-3 text-sm text-rose-600">
+                      {merchantIdRulesError === "merchant_id_rule_timeout"
+                        ? "禁用 ID 规则加载超时，请稍后重试"
+                        : merchantIdRulesError}
+                    </div>
+                  ) : null}
+
+                  {merchantIdRulesLoading ? (
+                    <div className="mt-3 text-xs text-slate-500">正在加载禁用 ID 规则…</div>
+                  ) : merchantIdRules.length === 0 ? (
+                    <div className="mt-3 rounded border border-dashed px-3 py-4 text-xs text-slate-500">
+                      当前还没有禁用 ID 规则。
+                    </div>
+                  ) : (
+                    <div className="mt-4 overflow-x-auto">
+                      <table className="min-w-full text-left text-sm">
+                        <thead className="bg-slate-50 text-xs text-slate-600">
+                          <tr>
+                            <th className="px-3 py-2">类型</th>
+                            <th className="px-3 py-2">规则</th>
+                            <th className="px-3 py-2">备注</th>
+                            <th className="px-3 py-2">创建时间</th>
+                            <th className="px-3 py-2">操作</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {merchantIdRules.map((rule) => (
+                            <tr key={rule.id} className="border-t">
+                              <td className="px-3 py-2 text-xs">
+                                <span className={`rounded border px-2 py-0.5 ${badgeClass(rule.type === "exact" ? "warning" : rule.type === "range" ? "maintenance" : "disabled")}`}>
+                                  {merchantIdRuleTypeLabel(rule.type)}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2 text-xs">{describeMerchantIdRuleExpression(rule)}</td>
+                              <td className="px-3 py-2 text-xs text-slate-500">{rule.note || "-"}</td>
+                              <td className="px-3 py-2 text-xs text-slate-500">{fmt(rule.createdAt)}</td>
+                              <td className="px-3 py-2 text-xs">
+                                <button
+                                  type="button"
+                                  className="rounded border px-2 py-1 disabled:opacity-50"
+                                  onClick={() => void deleteMerchantIdRuleAction(rule)}
+                                  disabled={merchantIdRuleDeletingId === rule.id}
+                                >
+                                  {merchantIdRuleDeletingId === rule.id ? "删除中..." : "删除"}
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
               </section>
             ) : null}
