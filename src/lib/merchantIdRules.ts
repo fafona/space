@@ -23,7 +23,7 @@ type MerchantIdRuleParseResult =
 function normalizeRuleInput(value: string) {
   return value
     .trim()
-    .replace(/[－—–~～]/g, "-")
+    .replace(/[–—－~〜]/g, "-")
     .replace(/\s+/g, "");
 }
 
@@ -36,10 +36,59 @@ function clampMerchantIdInterval(start: number, end: number) {
   };
 }
 
+function intersectMerchantIdInterval(start: number, end: number) {
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  const intervalStart = Math.max(MERCHANT_ID_MIN, Math.round(start));
+  const intervalEnd = Math.min(MERCHANT_ID_MAX, Math.round(end));
+  if (intervalStart > intervalEnd) return null;
+  return {
+    intervalStart,
+    intervalEnd,
+  };
+}
+
+function isMerchantIdPatternExpression(value: string) {
+  return value.length === 8 && /^[\d*]{8}$/.test(value) && value.includes("*");
+}
+
+function buildPatternCoverageInterval(expression: string) {
+  if (!isMerchantIdPatternExpression(expression)) return null;
+  const minValue = Number(expression.replace(/\*/g, "0"));
+  const maxValue = Number(expression.replace(/\*/g, "9"));
+  return intersectMerchantIdInterval(minValue, maxValue);
+}
+
+function matchesMerchantIdPattern(candidate: string, expression: string) {
+  if (!MERCHANT_ID_REGEX.test(candidate) || !isMerchantIdPatternExpression(expression)) return false;
+  for (let index = 0; index < expression.length; index += 1) {
+    const ruleChar = expression[index];
+    if (ruleChar === "*") continue;
+    if (candidate[index] !== ruleChar) return false;
+  }
+  return true;
+}
+
+function countTrailingWildcards(expression: string) {
+  let count = 0;
+  for (let index = expression.length - 1; index >= 0; index -= 1) {
+    if (expression[index] !== "*") break;
+    count += 1;
+  }
+  return count;
+}
+
+function getPatternBlockEnd(candidate: number, expression: string) {
+  const normalizedCandidate = String(Math.round(candidate)).padStart(8, "0");
+  const trailingWildcards = countTrailingWildcards(expression);
+  if (trailingWildcards <= 0) return candidate;
+  const prefix = normalizedCandidate.slice(0, expression.length - trailingWildcards);
+  return Number(prefix + "9".repeat(trailingWildcards));
+}
+
 export function parseMerchantIdRuleInput(value: string): MerchantIdRuleParseResult {
   const normalized = normalizeRuleInput(value);
   if (!normalized) {
-    return { ok: false, message: "请输入要禁用的 ID、号段或通配规则" };
+    return { ok: false, message: "Please enter a blocked ID, range, or wildcard rule" };
   }
 
   if (MERCHANT_ID_REGEX.test(normalized)) {
@@ -59,7 +108,7 @@ export function parseMerchantIdRuleInput(value: string): MerchantIdRuleParseResu
   if (rangeMatch) {
     const interval = clampMerchantIdInterval(Number(rangeMatch[1]), Number(rangeMatch[2]));
     if (!interval) {
-      return { ok: false, message: "号段范围必须是 8 位数字，且起始值不能大于结束值" };
+      return { ok: false, message: "Range rules must be valid 8-digit IDs and the start cannot exceed the end" };
     }
     return {
       ok: true,
@@ -72,20 +121,16 @@ export function parseMerchantIdRuleInput(value: string): MerchantIdRuleParseResu
     };
   }
 
-  const patternMatch = normalized.match(/^(\d{1,7})(\*{1,7})$/);
-  if (patternMatch && normalized.length === 8) {
-    const prefix = patternMatch[1];
-    const wildcardLength = patternMatch[2].length;
-    const base = Number(prefix) * 10 ** wildcardLength;
-    const interval = clampMerchantIdInterval(base, base + 10 ** wildcardLength - 1);
+  if (isMerchantIdPatternExpression(normalized)) {
+    const interval = buildPatternCoverageInterval(normalized);
     if (!interval) {
-      return { ok: false, message: "通配规则必须落在 8 位商户 ID 范围内" };
+      return { ok: false, message: "The wildcard rule must match at least one valid 8-digit merchant ID" };
     }
     return {
       ok: true,
       rule: {
         type: "pattern",
-        expression: `${prefix}${"*".repeat(wildcardLength)}`,
+        expression: normalized,
         intervalStart: interval.intervalStart,
         intervalEnd: interval.intervalEnd,
       },
@@ -94,7 +139,8 @@ export function parseMerchantIdRuleInput(value: string): MerchantIdRuleParseResu
 
   return {
     ok: false,
-    message: "仅支持 8 位单个 ID、8 位号段（如 10000010-10000020）或前缀通配（如 100000**）",
+    message:
+      "Only 8-digit IDs, 8-digit ranges (for example 10000010-10000020), or 8-character wildcard rules (for example 100000**, 10**0010, ****1111) are supported",
   };
 }
 
@@ -129,7 +175,14 @@ export function normalizeMerchantIdRule(input: unknown): MerchantIdRule | null {
   if (!id || !expression || !createdAt) return null;
   if (type !== "exact" && type !== "range" && type !== "pattern") return null;
 
-  const interval = clampMerchantIdInterval(intervalStart, intervalEnd);
+  const parsed = parseMerchantIdRuleInput(expression);
+  const interval =
+    parsed.ok && parsed.rule.type === type
+      ? {
+          intervalStart: parsed.rule.intervalStart,
+          intervalEnd: parsed.rule.intervalEnd,
+        }
+      : clampMerchantIdInterval(intervalStart, intervalEnd);
   if (!interval) return null;
 
   return {
@@ -163,12 +216,21 @@ export function sortMerchantIdRules(rules: MerchantIdRule[]) {
   });
 }
 
+function matchesMerchantIdRuleNumber(candidate: number, rule: MerchantIdRule) {
+  if (!Number.isFinite(candidate)) return false;
+  if (rule.type === "pattern") {
+    return matchesMerchantIdPattern(String(Math.round(candidate)).padStart(8, "0"), rule.expression);
+  }
+  return candidate >= rule.intervalStart && candidate <= rule.intervalEnd;
+}
+
 function findBlockingRuleByNumber(candidate: number, rules: MerchantIdRule[]) {
-  let blocking: MerchantIdRule | null = null;
+  let blocking: { rule: MerchantIdRule; blockEnd: number } | null = null;
   for (const rule of rules) {
-    if (candidate < rule.intervalStart || candidate > rule.intervalEnd) continue;
-    if (!blocking || rule.intervalEnd > blocking.intervalEnd) {
-      blocking = rule;
+    if (!matchesMerchantIdRuleNumber(candidate, rule)) continue;
+    const blockEnd = rule.type === "pattern" ? getPatternBlockEnd(candidate, rule.expression) : rule.intervalEnd;
+    if (!blocking || blockEnd > blocking.blockEnd) {
+      blocking = { rule, blockEnd };
     }
   }
   return blocking;
@@ -176,7 +238,7 @@ function findBlockingRuleByNumber(candidate: number, rules: MerchantIdRule[]) {
 
 export function findBlockingMerchantIdRule(merchantId: string, rules: MerchantIdRule[]) {
   if (!MERCHANT_ID_REGEX.test(merchantId.trim())) return null;
-  return findBlockingRuleByNumber(Number(merchantId), rules);
+  return findBlockingRuleByNumber(Number(merchantId), rules)?.rule ?? null;
 }
 
 export function findNextAllowedMerchantIdNumber(start: number, rules: MerchantIdRule[]) {
@@ -184,7 +246,7 @@ export function findNextAllowedMerchantIdNumber(start: number, rules: MerchantId
   while (candidate <= MERCHANT_ID_MAX) {
     const blocking = findBlockingRuleByNumber(candidate, rules);
     if (!blocking) return candidate;
-    candidate = blocking.intervalEnd + 1;
+    candidate = Math.max(candidate + 1, blocking.blockEnd + 1);
   }
   return null;
 }

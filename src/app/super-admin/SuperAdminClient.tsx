@@ -229,14 +229,12 @@ function describeBackendMerchantAccountsError(message: string) {
 function merchantIdRuleTypeLabel(type: MerchantIdRule["type"]) {
   if (type === "exact") return "单个号码";
   if (type === "range") return "号段范围";
-  return "前缀通配";
+  return "通配规则";
 }
 
 function describeMerchantIdRuleExpression(rule: MerchantIdRule) {
   if (rule.type !== "pattern") return rule.expression;
-  const prefix = rule.expression.replace(/\*+$/, "");
-  const wildcardLength = rule.expression.length - prefix.length;
-  return `${rule.expression}（${prefix} + 任意 ${wildcardLength} 位）`;
+  return `${rule.expression}（* 表示任意单个数字）`;
 }
 
 function publishStatusLabel(status: PublishStatus) {
@@ -3928,7 +3926,7 @@ export default function SuperAdminClient() {
                     <div>
                       <div className="text-sm font-semibold text-slate-900">禁用 ID 设置</div>
                       <div className="text-xs text-slate-500">
-                        加入这里的号码不会再被自动注册分配。支持单个 ID、号段范围和前缀通配。
+                        加入这里的号码不会再被自动注册分配。支持单个 ID、号段范围和任意位置通配。
                       </div>
                     </div>
                     <div className="rounded border bg-slate-50 px-3 py-2 text-sm">当前规则：{merchantIdRules.length}</div>
@@ -3937,7 +3935,7 @@ export default function SuperAdminClient() {
                   <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)_auto]">
                     <input
                       className="rounded border px-3 py-2 text-sm"
-                      placeholder="10000010 / 10000020-10000050 / 100000**"
+                      placeholder="10000010 / 10000020-10000050 / ****1111 / 10**0010"
                       value={merchantIdRuleInput}
                       onChange={(event) => setMerchantIdRuleInput(event.target.value)}
                     />
@@ -3958,7 +3956,7 @@ export default function SuperAdminClient() {
                   </div>
 
                   <div className="mt-2 text-xs text-slate-500">
-                    示例：`10000010` 表示禁用单个号码；`10000020-10000050` 表示禁用整个号段；`100000**` 表示禁用 100000 开头的全部两位尾号。
+                    示例：`10000010` 表示禁用单个号码；`10000020-10000050` 表示禁用整个号段；`100000**`、`10**0010`、`****1111` 都表示 8 位中任意位置可用 `*` 通配。
                   </div>
 
                   {merchantIdRulesError ? (
