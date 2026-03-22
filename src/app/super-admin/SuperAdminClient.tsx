@@ -67,6 +67,7 @@ import {
   summarizePlanTemplateBlocks,
   type PlanTemplateFilterCategory,
 } from "@/lib/planTemplates";
+import { buildMerchantSiteLinker } from "@/lib/merchantSiteLinking";
 import {
   DEFAULT_PLAN_TEMPLATE_REPLACE_OPTIONS,
   applyPlanTemplateToBlocks,
@@ -1198,32 +1199,21 @@ export default function SuperAdminClient() {
   const selectedFeatureSite =
     state.sites.find((item) => item.id === activeFeatureSiteId) ?? null;
   const merchantRows = useMemo(() => {
-    const exactSiteByMerchantId = new Map<string, Site>();
-    state.sites
-      .filter((site) => site.id !== "site-main")
-      .forEach((site) => {
-        const merchantIdKey = normalizeMerchantIdValue(site.id);
-        if (!merchantIdKey) return;
-        const current = exactSiteByMerchantId.get(merchantIdKey);
-        if (!current) {
-          exactSiteByMerchantId.set(merchantIdKey, site);
-          return;
-        }
-        const currentTs = new Date(current.createdAt).getTime();
-        const candidateTs = new Date(site.createdAt).getTime();
-        if (candidateTs > currentTs) {
-          exactSiteByMerchantId.set(merchantIdKey, site);
-        }
-      });
+    const matchMerchantSite = buildMerchantSiteLinker(state.sites, state.users);
 
     const sorted: MerchantUserRow[] = backendMerchantAccounts.map((account) => {
       const merchantId = normalizeMerchantIdValue(account.merchantId) || "-";
-      const matchedSite = exactSiteByMerchantId.get(normalizeMerchantIdValue(account.merchantId)) ?? null;
+      const matchedSite =
+        matchMerchantSite({
+          merchantId: account.merchantId,
+          email: account.email,
+          siteSlug: account.siteSlug,
+        }) ?? null;
       const hasPublishedSite = account.hasPublishedSite === true;
       const publishedPrefix = normalizePublishedSitePrefix(account.siteSlug);
       return {
         site: matchedSite ?? buildBackendOnlySite(account),
-        hasSite: Boolean(matchedSite) && hasPublishedSite,
+        hasSite: Boolean(matchedSite),
         backendAccount: account,
         merchantId,
         loginAccount: account.username || account.loginId || account.email || "-",
@@ -1251,7 +1241,7 @@ export default function SuperAdminClient() {
       return new Date(b.registerAt).getTime() - new Date(a.registerAt).getTime();
     });
     return sorted;
-  }, [backendMerchantAccounts, state.homeLayout.merchantDefaultSortRule, state.sites]);
+  }, [backendMerchantAccounts, state.homeLayout.merchantDefaultSortRule, state.sites, state.users]);
   const filteredMerchantRows = useMemo(
     () =>
       merchantRows.filter((row) => {
