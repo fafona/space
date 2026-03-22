@@ -58,11 +58,11 @@ function buildTargetHostLabel(targetUrl: string) {
 export function resolveMerchantBusinessCardShareOrigin(preferredOrigin?: string | null) {
   const fromPreferred = normalizeOrigin(preferredOrigin);
   if (fromPreferred) return fromPreferred;
-  const fromEnv = normalizeOrigin(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN);
-  if (fromEnv) return fromEnv;
   if (typeof window !== "undefined" && window.location?.origin) {
     return normalizeOrigin(window.location.origin);
   }
+  const fromEnv = normalizeOrigin(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN);
+  if (fromEnv) return fromEnv;
   return "";
 }
 

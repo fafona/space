@@ -255,13 +255,18 @@ function LoginPageInner() {
     if (!trimmedAccount) return null;
     if (trimmedAccount.includes("@")) return trimmedAccount.toLowerCase();
 
-    const response = await fetch("/api/auth/account-resolve", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ account: trimmedAccount }),
-    });
+    let response: Response;
+    try {
+      response = await fetch("/api/auth/account-resolve", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ account: trimmedAccount }),
+      });
+    } catch {
+      throw new Error(t("login.backendUnavailable"));
+    }
 
     if (!response.ok) {
       throw new Error(t("login.backendUnavailable"));
@@ -274,6 +279,9 @@ function LoginPageInner() {
 
   function normalizeError(message: string) {
     if (/supabase_unavailable:/i.test(message)) {
+      return t("login.backendUnavailable");
+    }
+    if (/failed to fetch|fetch failed|networkerror|network request failed|load failed/i.test(message)) {
       return t("login.backendUnavailable");
     }
     if (isEmailNotConfirmed(message)) {

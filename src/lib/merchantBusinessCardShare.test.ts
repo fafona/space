@@ -22,6 +22,39 @@ test("buildMerchantBusinessCardShareUrl creates a share route with encoded param
   );
 });
 
+test("buildMerchantBusinessCardShareUrl prefers runtime origin over stale env when origin is omitted", () => {
+  const previousWindow = globalThis.window;
+  const previousBaseDomain = process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN;
+  process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN = "https://www.fafona.com";
+  Object.assign(globalThis, {
+    window: {
+      location: {
+        origin: "https://faolla.com",
+      },
+    },
+  });
+
+  try {
+    const shareUrl = buildMerchantBusinessCardShareUrl({
+      name: "fafona",
+      imageUrl: "https://faolla.com/storage/v1/object/public/page-assets/card.png",
+      targetUrl: "https://fafona.faolla.com",
+    });
+
+    assert.equal(
+      shareUrl,
+      "https://faolla.com/share/business-card?image=https%3A%2F%2Ffaolla.com%2Fstorage%2Fv1%2Fobject%2Fpublic%2Fpage-assets%2Fcard.png&target=https%3A%2F%2Ffafona.faolla.com%2F&name=fafona",
+    );
+  } finally {
+    process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN = previousBaseDomain;
+    if (typeof previousWindow === "undefined") {
+      Reflect.deleteProperty(globalThis, "window");
+    } else {
+      Object.assign(globalThis, { window: previousWindow });
+    }
+  }
+});
+
 test("parseMerchantBusinessCardShareParams rejects unsupported image urls", () => {
   const payload = parseMerchantBusinessCardShareParams(
     {

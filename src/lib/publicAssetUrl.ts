@@ -32,13 +32,13 @@ function resolvePreferredAssetOrigin(preferredOrigin?: string) {
   const direct = normalizeOrigin(preferredOrigin ?? "");
   if (direct) return direct;
 
-  const fromEnv = toRootOrigin(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "");
-  if (fromEnv) return fromEnv;
-
   if (typeof window !== "undefined" && window.location?.origin) {
     const runtimeRoot = toRootOrigin(window.location.origin);
     return runtimeRoot || trimTrailingSlash(window.location.origin);
   }
+
+  const fromEnv = toRootOrigin(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "");
+  if (fromEnv) return fromEnv;
 
   return "";
 }

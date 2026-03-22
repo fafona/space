@@ -30,6 +30,17 @@ function normalizeHost(value: string | null | undefined) {
     .toLowerCase() ?? "";
 }
 
+export function resolveRuntimePortalBaseDomain(fallback?: string | null) {
+  if (typeof window !== "undefined" && window.location?.host) {
+    const runtimeHost = normalizeHost(window.location.host);
+    const { hostname } = splitHostAndPort(runtimeHost);
+    if (runtimeHost && !isLocalDevelopmentHostname(hostname) && !isIpv4Hostname(hostname)) {
+      return runtimeHost;
+    }
+  }
+  return normalizeHost(fallback ?? "");
+}
+
 function splitHostAndPort(host: string) {
   const normalized = normalizeHost(host);
   if (!normalized) return { hostname: "", port: "" };
@@ -64,6 +75,16 @@ export function resolveMerchantRootHost(baseDomain?: string | null) {
   return port ? `${rootHost}:${port}` : rootHost;
 }
 
+function deriveRootHostFromCurrentHost(currentHost?: string | null) {
+  const { hostname, port } = splitHostAndPort(currentHost ?? "");
+  if (!hostname || isLocalDevelopmentHostname(hostname) || isIpv4Hostname(hostname)) return "";
+  const labels = hostname.split(".").filter(Boolean);
+  if (labels.length < 2) return port ? `${hostname}:${port}` : hostname;
+  const rootLabels = labels.length > 2 ? labels.slice(1) : labels;
+  const rootHost = rootLabels.join(".");
+  return port ? `${rootHost}:${port}` : rootHost;
+}
+
 export function buildMerchantDomain(baseDomain: string | null | undefined, domainPrefix?: string | null, protocol?: string | null) {
   const prefix = normalizeDomainPrefix(domainPrefix);
   if (!prefix) return "";
@@ -78,21 +99,30 @@ export function buildMerchantDomain(baseDomain: string | null | undefined, domai
 
 export function extractMerchantPrefixFromHost(currentHost: string | null | undefined, baseDomain?: string | null) {
   const { hostname } = splitHostAndPort(currentHost ?? "");
-  const { hostname: rootHostname } = splitHostAndPort(resolveMerchantRootHost(baseDomain));
-  if (!hostname || !rootHostname || hostname === rootHostname) return "";
-  if (!hostname.endsWith(`.${rootHostname}`)) return "";
-  const prefix = hostname.slice(0, -(rootHostname.length + 1)).trim().toLowerCase();
-  if (!prefix || prefix.includes(".") || RESERVED_PLATFORM_SUBDOMAINS.has(prefix)) return "";
-  return normalizeDomainPrefix(prefix);
+  if (!hostname) return "";
+
+  const rootHostCandidates = [
+    resolveMerchantRootHost(baseDomain),
+    deriveRootHostFromCurrentHost(currentHost),
+  ]
+    .map((value) => splitHostAndPort(value).hostname)
+    .filter(Boolean);
+
+  for (const rootHostname of rootHostCandidates) {
+    if (!rootHostname || hostname === rootHostname) continue;
+    if (!hostname.endsWith(`.${rootHostname}`)) continue;
+    const prefix = hostname.slice(0, -(rootHostname.length + 1)).trim().toLowerCase();
+    if (!prefix || prefix.includes(".") || RESERVED_PLATFORM_SUBDOMAINS.has(prefix)) continue;
+    return normalizeDomainPrefix(prefix);
+  }
+
+  return "";
 }
 
 export function buildMerchantFrontendHref(siteId: string, domainPrefix?: string | null, baseDomain?: string | null) {
   const prefix = normalizeDomainPrefix(domainPrefix);
   if (prefix) {
-    const resolvedBase =
-      baseDomain ??
-      process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ??
-      (typeof window !== "undefined" ? window.location.host : "");
+    const resolvedBase = resolveRuntimePortalBaseDomain(baseDomain ?? process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "");
     const subdomainHref = buildMerchantDomain(resolvedBase, prefix);
     if (subdomainHref) return subdomainHref;
     return `/${encodeURIComponent(prefix)}`;

@@ -13,7 +13,7 @@ import { MOBILE_BREAKPOINT } from "@/lib/deviceViewport";
 import { normalizeDomainPrefix } from "@/lib/merchantIdentity";
 import { cloneBlocks, getPagePlanConfigFromBlocks } from "@/lib/pagePlans";
 import { resolvePublishedSiteByPrefix } from "@/lib/publishedSiteLookup";
-import { extractMerchantPrefixFromHost } from "@/lib/siteRouting";
+import { extractMerchantPrefixFromHost, resolveRuntimePortalBaseDomain } from "@/lib/siteRouting";
 
 function readViewportWidth() {
   if (typeof window === "undefined") return 0;
@@ -108,9 +108,10 @@ export default function HomePageClient({
   const hostMatchedSite = useMemo(() => {
     if (typeof window === "undefined") return null;
     const mainSite = platformState.sites.find((site) => site.id === "site-main") ?? platformState.sites[0] ?? null;
+    const portalBaseDomain = resolveRuntimePortalBaseDomain(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? mainSite?.domain ?? "");
     const hostPrefix = extractMerchantPrefixFromHost(
       window.location.host,
-      process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? mainSite?.domain ?? "",
+      portalBaseDomain,
     );
     if (!hostPrefix) return null;
     return (
@@ -124,9 +125,10 @@ export default function HomePageClient({
   const hostPrefix = useMemo(() => {
     if (typeof window === "undefined") return "";
     const mainSite = platformState.sites.find((site) => site.id === "site-main") ?? platformState.sites[0] ?? null;
+    const portalBaseDomain = resolveRuntimePortalBaseDomain(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? mainSite?.domain ?? "");
     return extractMerchantPrefixFromHost(
       window.location.host,
-      process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? mainSite?.domain ?? "",
+      portalBaseDomain,
     );
   }, [platformState]);
   useEffect(() => {

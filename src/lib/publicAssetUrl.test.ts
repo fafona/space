@@ -43,6 +43,33 @@ test("rewrites storage urls to portal base domain when no preferred origin is pr
   }
 });
 
+test("prefers runtime origin over stale env when no preferred origin is provided", () => {
+  const previousWindow = globalThis.window;
+  const previousBaseDomain = process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN;
+  process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN = "https://www.fafona.com";
+  Object.assign(globalThis, {
+    window: {
+      location: {
+        origin: "https://faolla.com",
+      },
+    },
+  });
+
+  try {
+    assert.equal(
+      normalizePublicAssetUrl("http://101.44.37.126:8000/storage/v1/object/public/page-assets/a.webp"),
+      "https://faolla.com/storage/v1/object/public/page-assets/a.webp",
+    );
+  } finally {
+    process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN = previousBaseDomain;
+    if (typeof previousWindow === "undefined") {
+      Reflect.deleteProperty(globalThis, "window");
+    } else {
+      Object.assign(globalThis, { window: previousWindow });
+    }
+  }
+});
+
 test("keeps data and blob urls unchanged", () => {
   assert.equal(normalizePublicAssetUrl("data:image/png;base64,abc", "https://faolla.com"), "data:image/png;base64,abc");
   assert.equal(normalizePublicAssetUrl("blob:http://faolla.com/test", "https://faolla.com"), "blob:http://faolla.com/test");

@@ -171,7 +171,12 @@ import {
 import { broadcastPublishSync } from "@/lib/publishSync";
 import { buildButtonLabelPatch, resolveButtonLabel } from "@/lib/buttonBlock";
 import { ensureMerchantIdentityForUser, isMerchantNumericId } from "@/lib/merchantIdentity";
-import { buildMerchantDomain, buildMerchantFrontendHref, buildSiteStoreScope } from "@/lib/siteRouting";
+import {
+  buildMerchantDomain,
+  buildMerchantFrontendHref,
+  buildSiteStoreScope,
+  resolveRuntimePortalBaseDomain,
+} from "@/lib/siteRouting";
 import BlockRenderer from "@/components/blocks/BlockRenderer";
 import BookingBlock from "@/components/blocks/BookingBlock";
 import MerchantBookingManagerDialog from "@/components/admin/MerchantBookingManagerDialog";
@@ -1867,7 +1872,7 @@ function ensureScopedMerchantSite(siteId: string, userEmail?: string | null) {
   const mainSite = state.sites.find((item) => item.id === "site-main") ?? state.sites[0] ?? null;
   const tenantId = mainSite?.tenantId ?? state.tenants[0]?.id ?? "tenant-demo";
   const baseDomain =
-    normalizeBaseDomainForMerchant(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "") ||
+    normalizeBaseDomainForMerchant(resolveRuntimePortalBaseDomain(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "")) ||
     normalizeBaseDomainForMerchant(mainSite?.domain ?? "") ||
     "localhost:3000";
   const nextSite: Site = {
@@ -6883,7 +6888,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           siteId={editingSiteId}
           siteBaseDomain={(() => {
             const platformState = loadPlatformState();
-            const baseFromEnv = (process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "").trim();
+            const baseFromEnv = resolveRuntimePortalBaseDomain(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "");
             const baseFromMainSite = (platformState.sites.find((item) => item.id === "site-main")?.domain ?? "").trim();
             const fallback = (editingSite?.domain ?? "").trim();
             return normalizeBaseDomainForMerchant(baseFromEnv || baseFromMainSite || fallback);
@@ -6928,7 +6933,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             const target = platformState.sites.find((item) => item.id === editingSiteId) ?? null;
             const normalizedDomainPrefix = normalizeDomainPrefixForMerchant(domainPrefix);
             const baseDomain =
-              (process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "").trim() ||
+              resolveRuntimePortalBaseDomain(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "") ||
               (platformState.sites.find((site) => site.id === "site-main")?.domain ?? "").trim() ||
               (target?.domain ?? "");
             savePlatformState({
@@ -10470,7 +10475,7 @@ type GalleryEditorImage = {
             }}
             onMouseDown={(event) => startMerchantCardTypographyPreviewDrag("domain", event)}
           >
-            <span className="truncate">www.fafona.com/abc</span>
+            <span className="truncate">faolla.com/abc</span>
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
