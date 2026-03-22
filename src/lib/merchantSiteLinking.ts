@@ -4,6 +4,8 @@ type MerchantAccountSiteLinkInput = {
   merchantId?: string | null;
   email?: string | null;
   siteSlug?: string | null;
+  merchantName?: string | null;
+  username?: string | null;
 };
 
 function normalizeMerchantIdValue(value: string | null | undefined) {
@@ -19,6 +21,10 @@ function normalizePrefixValue(value: string | null | undefined) {
   const normalized = String(value ?? "").trim().toLowerCase();
   if (!normalized || normalized === "home") return "";
   return normalized;
+}
+
+function normalizeSiteNameValue(value: string | null | undefined) {
+  return String(value ?? "").trim().toLowerCase();
 }
 
 function setUniqueSiteValue(map: Map<string, Site | null>, key: string, site: Site) {
@@ -44,6 +50,7 @@ export function buildMerchantSiteLinker(sites: Site[], users: PlatformUser[]) {
   const exactSiteByMerchantId = new Map<string, Site>();
   const uniqueSiteByEmail = new Map<string, Site | null>();
   const uniqueSiteByPrefix = new Map<string, Site | null>();
+  const uniqueSiteByName = new Map<string, Site | null>();
 
   sites
     .filter((site) => site.id !== "site-main")
@@ -64,11 +71,13 @@ export function buildMerchantSiteLinker(sites: Site[], users: PlatformUser[]) {
 
       const owner = ownerBySiteId.get(site.id);
       const prefix = normalizePrefixValue(site.domainPrefix ?? site.domainSuffix);
+      const names = [normalizeSiteNameValue(site.name), normalizeSiteNameValue(site.merchantName)];
       const emails = [normalizeEmailValue(site.contactEmail), normalizeEmailValue(owner?.email)];
       emails.filter(Boolean).forEach((email) => setUniqueSiteValue(uniqueSiteByEmail, email, site));
       if (prefix) {
         setUniqueSiteValue(uniqueSiteByPrefix, prefix, site);
       }
+      names.filter(Boolean).forEach((name) => setUniqueSiteValue(uniqueSiteByName, name, site));
     });
 
   return (input: MerchantAccountSiteLinkInput) => {
@@ -81,6 +90,12 @@ export function buildMerchantSiteLinker(sites: Site[], users: PlatformUser[]) {
 
     const byPrefix = uniqueSiteByPrefix.get(normalizePrefixValue(input.siteSlug));
     if (byPrefix) candidates.set(byPrefix.id, byPrefix);
+
+    const merchantNames = [normalizeSiteNameValue(input.merchantName), normalizeSiteNameValue(input.username)];
+    merchantNames.forEach((name) => {
+      const byName = uniqueSiteByName.get(name);
+      if (byName) candidates.set(byName.id, byName);
+    });
 
     const matches = [...candidates.values()];
     return matches.length === 1 ? matches[0] : null;

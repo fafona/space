@@ -1208,6 +1208,8 @@ export default function SuperAdminClient() {
           merchantId: account.merchantId,
           email: account.email,
           siteSlug: account.siteSlug,
+          merchantName: account.merchantName,
+          username: account.username,
         }) ?? null;
       const hasPublishedSite = account.hasPublishedSite === true;
       const publishedPrefix = normalizePublishedSitePrefix(account.siteSlug);

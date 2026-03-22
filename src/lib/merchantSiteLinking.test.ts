@@ -78,6 +78,12 @@ test("matches unique prefix when email is absent", () => {
   assert.equal(link({ merchantId: "10000000", email: "", siteSlug: "fafona" })?.id, "site-merchant-a");
 });
 
+test("matches unique site name when prefix is absent", () => {
+  const site = makeSite({ id: "site-merchant-a", name: "20889576" });
+  const link = buildMerchantSiteLinker([site], []);
+  assert.equal(link({ merchantId: "10000001", email: "", siteSlug: "", merchantName: "20889576" })?.id, "site-merchant-a");
+});
+
 test("uses owner email from linked platform user", () => {
   const site = makeSite({ id: "site-merchant-a", domainPrefix: "fafona" });
   const user = makeUser({ id: "u-1", email: "owner@example.com", siteIds: ["site-merchant-a"] });
@@ -90,6 +96,13 @@ test("rejects ambiguous email matches", () => {
   const second = makeSite({ id: "site-b", contactEmail: "dup@example.com", domainPrefix: "b" });
   const link = buildMerchantSiteLinker([first, second], []);
   assert.equal(link({ merchantId: "10000000", email: "dup@example.com", siteSlug: "" }), null);
+});
+
+test("rejects ambiguous site name matches", () => {
+  const first = makeSite({ id: "site-a", name: "shared-name" });
+  const second = makeSite({ id: "site-b", merchantName: "shared-name" });
+  const link = buildMerchantSiteLinker([first, second], []);
+  assert.equal(link({ merchantId: "10000000", email: "", siteSlug: "", merchantName: "shared-name" }), null);
 });
 
 test("ignores site-main for merchant matching", () => {

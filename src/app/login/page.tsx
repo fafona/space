@@ -5,7 +5,13 @@ import { useSearchParams } from "next/navigation";
 import { useI18n } from "@/components/I18nProvider";
 import { ensureMerchantIdentityForUser } from "@/lib/merchantIdentity";
 import { buildMerchantBackendHref } from "@/lib/siteRouting";
-import { canReachSupabaseGateway, resolvedSupabaseAnonKey, resolvedSupabaseUrl, supabase } from "@/lib/supabase";
+import {
+  canReachSupabaseGateway,
+  resolvedSupabaseAnonKey,
+  resolvedSupabaseUrl,
+  supabase,
+  supabaseStorageKeyProjectRef,
+} from "@/lib/supabase";
 
 function LoginPageInner() {
   const { locale, t } = useI18n();
@@ -300,6 +306,96 @@ function LoginPageInner() {
     return message;
   }
 
+  function isBackendUnavailableMessage(message: string) {
+    const normalized = normalizeError(message);
+    return normalized === t("login.backendUnavailable");
+  }
+
+  function persistSessionForRedirect(sessionPayload: Record<string, unknown>) {
+    if (typeof window === "undefined") return;
+    const accessToken = typeof sessionPayload.access_token === "string" ? sessionPayload.access_token.trim() : "";
+    const refreshToken = typeof sessionPayload.refresh_token === "string" ? sessionPayload.refresh_token.trim() : "";
+    if (!accessToken || !refreshToken) return;
+    const storageKey = supabaseStorageKeyProjectRef ? `sb-${supabaseStorageKeyProjectRef}-auth-token` : "";
+    if (!storageKey) return;
+    try {
+      window.localStorage.setItem(
+        storageKey,
+        JSON.stringify({
+          currentSession: sessionPayload,
+        }),
+      );
+    } catch {
+      // Ignore localStorage failures and let downstream recovery handle it.
+    }
+  }
+
+  async function signInViaAuthProxy(email: string, passwordValue: string) {
+    let response: Response;
+    try {
+      response = await fetch(`${resolvedSupabaseUrl}/auth/v1/token?grant_type=password`, {
+        method: "POST",
+        headers: {
+          apikey: resolvedSupabaseAnonKey,
+          Authorization: `Bearer ${resolvedSupabaseAnonKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          email,
+          password: passwordValue,
+        }),
+        cache: "no-store",
+      });
+    } catch {
+      throw new Error(t("login.backendUnavailable"));
+    }
+
+    const payload = (await response.json().catch(() => null)) as
+      | {
+          access_token?: unknown;
+          refresh_token?: unknown;
+          user?: {
+            id?: string;
+            email?: string | null;
+            user_metadata?: Record<string, unknown> | null;
+            app_metadata?: Record<string, unknown> | null;
+          } | null;
+          msg?: unknown;
+          message?: unknown;
+          error?: unknown;
+          error_description?: unknown;
+        }
+      | null;
+
+    if (!response.ok) {
+      const rawMessage =
+        (typeof payload?.msg === "string" && payload.msg) ||
+        (typeof payload?.message === "string" && payload.message) ||
+        (typeof payload?.error_description === "string" && payload.error_description) ||
+        (typeof payload?.error === "string" && payload.error) ||
+        `auth_proxy_http_${response.status}`;
+      throw new Error(normalizeError(rawMessage));
+    }
+
+    const accessToken = typeof payload?.access_token === "string" ? payload.access_token.trim() : "";
+    const refreshToken = typeof payload?.refresh_token === "string" ? payload.refresh_token.trim() : "";
+    if (!accessToken || !refreshToken) {
+      throw new Error(t("login.backendUnavailable"));
+    }
+
+    persistSessionForRedirect(payload as Record<string, unknown>);
+    try {
+      await supabase.auth.setSession({
+        access_token: accessToken,
+        refresh_token: refreshToken,
+      });
+    } catch {
+      // Keep the stored token fallback for the admin page.
+    }
+
+    return payload?.user ?? null;
+  }
+
   async function withTimeout<T>(task: Promise<T>, timeoutMs = 15000): Promise<T> {
     let timer: ReturnType<typeof setTimeout> | null = null;
     let timedOut = false;
@@ -385,17 +481,32 @@ function LoginPageInner() {
         return setMsg(t("superLogin.invalid"));
       }
 
-      const { data, error } = await withTimeout(
-        supabase.auth.signInWithPassword({
-          email: resolvedEmail,
-          password,
-        }),
-      );
-      if (error) {
-        setNeedConfirmEmail(isEmailNotConfirmed(error.message));
-        return setMsg(normalizeError(error.message));
+      try {
+        const { data, error } = await withTimeout(
+          supabase.auth.signInWithPassword({
+            email: resolvedEmail,
+            password,
+          }),
+        );
+        if (!error) {
+          await redirectToMerchantBackend(pickAuthUser(data));
+          return;
+        }
+
+        const normalizedError = normalizeError(error.message);
+        if (!isBackendUnavailableMessage(normalizedError)) {
+          setNeedConfirmEmail(isEmailNotConfirmed(error.message));
+          return setMsg(normalizedError);
+        }
+      } catch (error) {
+        const normalizedError = error instanceof Error ? normalizeError(error.message) : t("login.requestFailed");
+        if (!isBackendUnavailableMessage(normalizedError)) {
+          throw error;
+        }
       }
-      await redirectToMerchantBackend(pickAuthUser(data));
+
+      const proxyUser = await signInViaAuthProxy(resolvedEmail, password);
+      await redirectToMerchantBackend(proxyUser);
     } catch (error) {
       const normalizedMessage = error instanceof Error ? normalizeError(error.message) : t("login.requestFailed");
       if (!gatewayReady && normalizedMessage === t("login.backendUnavailable") && isDevelopment) {
