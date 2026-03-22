@@ -295,8 +295,8 @@ function collectBookingOptionsFromPlanConfig(config: PagePlanConfig | null | und
 
 const MIN_BLOCK_WIDTH = 240;
 const MIN_BLOCK_HEIGHT = 120;
-const BUTTON_BLOCK_MIN_WIDTH = 80;
-const BUTTON_BLOCK_MIN_HEIGHT = 40;
+const BUTTON_BLOCK_MIN_WIDTH = 18;
+const BUTTON_BLOCK_MIN_HEIGHT = 18;
 const NUDGE_STEP = 4;
 const HISTORY_LIMIT = 120;
 const DEFAULT_TIP_DURATION_MS = 2600;
@@ -10647,15 +10647,38 @@ type GalleryEditorImage = {
             <div className="w-full max-w-lg rounded-xl border bg-white p-4 space-y-3">
               <div className="text-sm font-semibold">{"跳转目标"}</div>
               <div className="space-y-1">
-                <div className="text-xs text-gray-600">{"支持区块 ID、锚点、页面或路径"}</div>
+                <div className="text-xs text-gray-600">{"支持区块 ID、锚点、页面 ID、站内路径或完整网址"}</div>
                 <input
                   className="w-full rounded border px-3 py-2 text-sm"
                   value={buttonJumpTargetInput}
                   onChange={(event) => setButtonJumpTargetInput(event.target.value)}
-                  placeholder={"例如：#section-1 / page:page-2 / /site/10000000"}
+                  placeholder={"例如：#区块ID / page:页面ID / /site/10000000 / https://example.com"}
                   autoFocus
                 />
               </div>
+              <div className="rounded-lg border bg-slate-50 p-3 text-xs text-slate-600 space-y-2">
+                <div>{"锚点：滚动到当前页面某个区块。填写 `#区块ID`，也可以直接填区块 ID。"}</div>
+                <div>{"页面：切换到本站其他页面，格式是 `page:页面ID`，这里的页面不是链接地址。"}</div>
+                <div>{"路径：打开站内地址或完整网址。站内路径来源就是浏览器地址栏里域名后面的部分，例如 `/site/10000000`。"}</div>
+              </div>
+              {availablePages.length > 0 ? (
+                <div className="space-y-2">
+                  <div className="text-xs text-gray-600">{"本站页面 ID"}</div>
+                  <div className="flex flex-wrap gap-2">
+                    {availablePages.map((page) => (
+                      <button
+                        key={page.id}
+                        type="button"
+                        className="rounded border bg-white px-2 py-1 text-xs hover:bg-gray-50"
+                        onClick={() => setButtonJumpTargetInput(`page:${page.id}`)}
+                        title={page.id}
+                      >
+                        {`${page.name} (${page.id})`}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               <div className="flex flex-wrap justify-end gap-2">
                 <button
                   className="px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm"
@@ -10708,6 +10731,7 @@ type GalleryEditorImage = {
     return (
       <section data-block-id={block.id} className={`${shellClass} pointer-events-none`} style={offsetStyle}>
         <EditorBlockHeader
+          blockId={block.id}
           draggingBlockId={draggingBlockId}
           isSelected={isSelected}
           onDragHandleMouseDown={onDragHandleMouseDown}
@@ -10726,7 +10750,7 @@ type GalleryEditorImage = {
           style={{
             ...blockPreviewShellStyle,
             overflow: isEditingBlock ? "visible" : "hidden",
-            minHeight: blockHeight ? undefined : `${BUTTON_BLOCK_MIN_HEIGHT}px`,
+            minHeight: blockHeight ? undefined : "44px",
           }}
         >
           {imageDialog}
@@ -10735,7 +10759,7 @@ type GalleryEditorImage = {
           {layerSettingsDialog}
           {typographyDialog}
           {buttonJumpDialog}
-          <div className="flex h-full min-h-[40px] w-full items-center justify-center px-5 py-3 text-center">
+          <div className="box-border flex h-full min-h-0 w-full items-center justify-center px-5 py-3 text-center">
             {isSelected ? (
               <RichTextEditor
                 field="buttonLabel"
@@ -10765,6 +10789,7 @@ type GalleryEditorImage = {
     return (
       <section data-block-id={block.id} className={`${shellClass} pointer-events-none`} style={offsetStyle}>
         <EditorBlockHeader
+          blockId={block.id}
           draggingBlockId={draggingBlockId}
           isSelected={isSelected}
           onDragHandleMouseDown={onDragHandleMouseDown}
@@ -11174,6 +11199,7 @@ type GalleryEditorImage = {
     return (
       <section data-block-id={block.id} className={`${shellClass} pointer-events-none`} style={offsetStyle}>
         <EditorBlockHeader
+          blockId={block.id}
           draggingBlockId={draggingBlockId}
           isSelected={isSelected}
           onDragHandleMouseDown={onDragHandleMouseDown}
@@ -11732,6 +11758,7 @@ type GalleryEditorImage = {
     return (
       <section data-block-id={block.id} className={`${shellClass} pointer-events-none`} style={offsetStyle}>
         <EditorBlockHeader
+          blockId={block.id}
           draggingBlockId={draggingBlockId}
           isSelected={isSelected}
           onDragHandleMouseDown={onDragHandleMouseDown}
@@ -11910,6 +11937,7 @@ type GalleryEditorImage = {
     return (
       <section data-block-id={block.id} className={`${shellClass} pointer-events-none`} style={offsetStyle}>
         <EditorBlockHeader
+          blockId={block.id}
           draggingBlockId={draggingBlockId}
           isSelected={isSelected}
           onDragHandleMouseDown={onDragHandleMouseDown}
@@ -12073,6 +12101,7 @@ type GalleryEditorImage = {
         style={offsetStyle}
       >
         <EditorBlockHeader
+          blockId={block.id}
           draggingBlockId={draggingBlockId}
           isSelected={isSelected}
           onDragHandleMouseDown={onDragHandleMouseDown}
@@ -12192,6 +12221,7 @@ type GalleryEditorImage = {
         style={{ ...blockBackgroundStyle, ...blockSizeStyle, ...offsetStyle, ...borderInlineStyle }}
       >
         <EditorBlockHeader
+          blockId={block.id}
           draggingBlockId={draggingBlockId}
           isSelected={isSelected}
           onDragHandleMouseDown={onDragHandleMouseDown}
@@ -12256,6 +12286,7 @@ type GalleryEditorImage = {
         style={offsetStyle}
       >
         <EditorBlockHeader
+          blockId={block.id}
           draggingBlockId={draggingBlockId}
           isSelected={isSelected}
           onDragHandleMouseDown={onDragHandleMouseDown}
@@ -12329,6 +12360,7 @@ type GalleryEditorImage = {
         style={offsetStyle}
       >
         <EditorBlockHeader
+          blockId={block.id}
           draggingBlockId={draggingBlockId}
           isSelected={isSelected}
           onDragHandleMouseDown={onDragHandleMouseDown}
@@ -13378,6 +13410,7 @@ type GalleryEditorImage = {
     return (
       <section data-block-id={block.id} className={`${shellClass} pointer-events-none`} style={offsetStyle}>
         <EditorBlockHeader
+          blockId={block.id}
           draggingBlockId={draggingBlockId}
           isSelected={isSelected}
           onDragHandleMouseDown={onDragHandleMouseDown}
@@ -15030,6 +15063,7 @@ type GalleryEditorImage = {
         style={offsetStyle}
       >
         <EditorBlockHeader
+          blockId={block.id}
           draggingBlockId={draggingBlockId}
           isSelected={isSelected}
           onDragHandleMouseDown={onDragHandleMouseDown}
@@ -15970,6 +16004,7 @@ type GalleryEditorImage = {
         style={offsetStyle}
       >
         <EditorBlockHeader
+          blockId={block.id}
           draggingBlockId={draggingBlockId}
           isSelected={isSelected}
           onDragHandleMouseDown={onDragHandleMouseDown}
@@ -16415,6 +16450,7 @@ type GalleryEditorImage = {
         style={offsetStyle}
       >
         <EditorBlockHeader
+          blockId={block.id}
           draggingBlockId={draggingBlockId}
           isSelected={isSelected}
           onDragHandleMouseDown={onDragHandleMouseDown}
@@ -16928,6 +16964,7 @@ type GalleryEditorImage = {
         style={offsetStyle}
       >
         <EditorBlockHeader
+          blockId={block.id}
           draggingBlockId={draggingBlockId}
           isSelected={isSelected}
           onDragHandleMouseDown={onDragHandleMouseDown}
@@ -17663,6 +17700,7 @@ function RichTextEditor({
 }
 
 function EditorBlockHeader({
+  blockId,
   draggingBlockId,
   isSelected,
   onDragHandleMouseDown,
@@ -17678,6 +17716,7 @@ function EditorBlockHeader({
   toolbarAnchorClassName,
   toolbarAnchorStyle,
 }: {
+  blockId?: string;
   draggingBlockId: string | null;
   isSelected: boolean;
   onDragHandleMouseDown: (point: { x: number; y: number }) => void;
@@ -17760,6 +17799,11 @@ function EditorBlockHeader({
               </button>
             </div>
           </div>
+          {blockId ? (
+            <div className="z-30 mb-1 rounded border bg-white px-2 py-1 text-[11px] font-mono text-gray-700 whitespace-nowrap">
+              {`ID: ${blockId}`}
+            </div>
+          ) : null}
           <div className="z-30 flex items-center gap-2 flex-nowrap overflow-visible pr-1 pb-1">
             <button
               className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50 shrink-0 whitespace-nowrap"

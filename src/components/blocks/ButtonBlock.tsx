@@ -52,16 +52,16 @@ export default function ButtonBlock(props: ButtonBlockRuntimeProps) {
   });
   const blockWidth =
     typeof props.blockWidth === "number" && Number.isFinite(props.blockWidth)
-      ? Math.max(80, Math.round(props.blockWidth))
+      ? Math.max(18, Math.round(props.blockWidth))
       : undefined;
   const blockHeight =
     typeof props.blockHeight === "number" && Number.isFinite(props.blockHeight)
-      ? Math.max(40, Math.round(props.blockHeight))
+      ? Math.max(18, Math.round(props.blockHeight))
       : undefined;
   const sizeStyle = {
     width: blockWidth ? `${blockWidth}px` : undefined,
     height: blockHeight ? `${blockHeight}px` : undefined,
-    minHeight: blockHeight ? undefined : "56px",
+    minHeight: blockHeight ? undefined : "44px",
   };
   const offsetX =
     typeof props.blockOffsetX === "number" && Number.isFinite(props.blockOffsetX)
@@ -96,7 +96,7 @@ export default function ButtonBlock(props: ButtonBlockRuntimeProps) {
         {isClickable ? (
           <button
             type="button"
-            className="flex h-full min-h-[40px] w-full appearance-none items-center justify-center border-0 bg-transparent px-5 py-3 text-center transition hover:brightness-[0.98]"
+            className="box-border flex h-full min-h-0 w-full appearance-none items-center justify-center border-0 bg-transparent px-5 py-3 text-center transition hover:brightness-[0.98]"
             onClick={() => performJump(jumpTarget, props.onNavigatePage)}
           >
             <div
@@ -106,7 +106,7 @@ export default function ButtonBlock(props: ButtonBlockRuntimeProps) {
             />
           </button>
         ) : (
-          <div className="flex h-full min-h-[40px] w-full items-center justify-center px-5 py-3 text-center">
+          <div className="box-border flex h-full min-h-0 w-full items-center justify-center px-5 py-3 text-center">
             <div
               className="w-full break-words whitespace-pre-wrap"
               style={typographyStyle}
