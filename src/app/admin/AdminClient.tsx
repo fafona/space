@@ -1982,6 +1982,7 @@ type AdminClientProps = {
   frontendHref?: string;
   editorMode?: "merchant" | "platform";
   forceDesktopEditorSidebar?: boolean;
+  initialPublishedBlocks?: Block[];
 };
 
 function estimateUtf8Size(value: string) {
@@ -2771,6 +2772,7 @@ export default function AdminClient({
   frontendHref = "/site/site-main",
   editorMode = "merchant",
   forceDesktopEditorSidebar = false,
+  initialPublishedBlocks,
 }: AdminClientProps = {}) {
   const [storeScope] = useState<string>(() => readBlocksStoreScopeFromLocation(forcedScope));
   const [justSignedIn] = useState<boolean>(() => {
@@ -2782,7 +2784,15 @@ export default function AdminClient({
     }
   });
   const isPlatformEditor = editorMode === "platform";
-  const defaultEditorBlocks = isPlatformEditor ? homeBlocks : MERCHANT_ONBOARDING_BLOCKS;
+  const [platformSeedBlocks] = useState<Block[]>(() =>
+    isPlatformEditor && Array.isArray(initialPublishedBlocks)
+      ? sanitizeBlocksForRuntime(initialPublishedBlocks).blocks
+      : [],
+  );
+  const defaultEditorBlocks =
+    isPlatformEditor
+      ? (platformSeedBlocks.length > 0 ? platformSeedBlocks : homeBlocks)
+      : MERCHANT_ONBOARDING_BLOCKS;
   const initialPlanConfig = getPagePlanConfigFromBlocks(defaultEditorBlocks);
   const initialMobilePlanConfig =
     getEmbeddedMobilePlanConfig(defaultEditorBlocks) ?? adaptPlanConfigForMobile(JSON.parse(JSON.stringify(initialPlanConfig)) as PagePlanConfig);
@@ -3975,6 +3985,9 @@ export default function AdminClient({
       }
     };
     const applyCachedEditorBlocks = () => {
+      if (isPlatformEditor && platformSeedBlocks.length > 0) {
+        savePublishedBlocksToStorage(platformSeedBlocks, storeScope);
+      }
       const candidateScopes =
         storeScope !== "default"
           ? [storeScope]
@@ -3989,7 +4002,7 @@ export default function AdminClient({
         const cachedDraft = loadBlocksFromStorage([], candidateScope);
         const isCachedDraftDefault =
           isSameBlocksSnapshot(cachedDraft, defaultEditorBlocks) ||
-          (!isPlatformEditor && isSameBlocksSnapshot(cachedDraft, homeBlocks));
+          isSameBlocksSnapshot(cachedDraft, homeBlocks);
         if (cachedDraft.length > 0 && !isCachedDraftDefault) {
           applyPersistedBlocksToEditorRef.current(cachedDraft, { resetHistory: true });
           return cachedDraft;
@@ -3997,7 +4010,7 @@ export default function AdminClient({
         const cachedPublished = loadPublishedBlocksFromStorage([], candidateScope);
         const isCachedPublishedDefault =
           isSameBlocksSnapshot(cachedPublished, defaultEditorBlocks) ||
-          (!isPlatformEditor && isSameBlocksSnapshot(cachedPublished, homeBlocks));
+          isSameBlocksSnapshot(cachedPublished, homeBlocks);
         if (cachedPublished.length > 0 && !isCachedPublishedDefault) {
           applyPersistedBlocksToEditorRef.current(cachedPublished, { resetHistory: true });
           return cachedPublished;
@@ -4376,7 +4389,7 @@ export default function AdminClient({
       if (authSubscription) authSubscription.unsubscribe();
       merchantIdsRef.current = [];
     };
-  }, [defaultEditorBlocks, isPlatformEditor, justSignedIn, storeScope]);
+  }, [defaultEditorBlocks, isPlatformEditor, justSignedIn, platformSeedBlocks, storeScope]);
 
   function updateBlockProps(blockId: string, patch: Partial<Block["props"]>) {
     const currentBlocks = blocksRef.current;

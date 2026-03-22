@@ -6,8 +6,13 @@ import { buildPlatformHomeHref, PLATFORM_EDITOR_SCOPE } from "@/lib/siteRouting"
 import { buildSuperAdminLoginHref, isSuperAdminAuthenticated, syncSuperAdminAuthenticatedCookie } from "@/lib/superAdminAuth";
 import { useHydrated } from "@/lib/useHydrated";
 import { SUPER_ADMIN_EDITOR_BUILD_TOKEN } from "./buildToken";
+import type { Block } from "@/data/homeBlocks";
 
-export default function SuperAdminEditorClient() {
+type SuperAdminEditorClientProps = {
+  initialPublishedBlocks?: Block[];
+};
+
+export default function SuperAdminEditorClient({ initialPublishedBlocks }: SuperAdminEditorClientProps) {
   const hydrated = useHydrated();
   useEffect(() => {
     if (!hydrated) return;
@@ -45,6 +50,7 @@ export default function SuperAdminEditorClient() {
         forcedScope={PLATFORM_EDITOR_SCOPE}
         editorTitle={`Portal Visual Editor · ${SUPER_ADMIN_EDITOR_BUILD_TOKEN}`}
         frontendHref={buildPlatformHomeHref()}
+        initialPublishedBlocks={initialPublishedBlocks}
       />
     </>
   );
