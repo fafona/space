@@ -8,6 +8,7 @@ export const revalidate = 0;
 type AuthMetadata = Record<string, unknown> | null | undefined;
 
 type AuthUserSummary = {
+  id?: string | null;
   email?: string | null;
   user_metadata?: AuthMetadata;
   app_metadata?: AuthMetadata;
@@ -139,6 +140,65 @@ async function resolveAccountEmail(supabase: AdminListUsersClient, account: stri
   return normalizeEmail(matchedUser?.email);
 }
 
+function readMerchantIdFromMetadata(...metadatas: AuthMetadata[]) {
+  for (const metadata of metadatas) {
+    const candidate = readMetadataString(metadata, "merchant_id", "merchantId", "merchantID", "login_id", "loginId");
+    if (isMerchantNumericId(candidate)) return candidate;
+  }
+  return "";
+}
+
+async function resolveMerchantId(
+  supabase: AdminListUsersClient,
+  account: string,
+  email: string,
+  user?: AuthUserSummary | null,
+) {
+  const candidates: string[] = [];
+  const push = (value: string | null | undefined) => {
+    const normalized = String(value ?? "").trim();
+    if (!normalized || !isMerchantNumericId(normalized) || candidates.includes(normalized)) return;
+    candidates.push(normalized);
+  };
+
+  push(isMerchantNumericId(account) ? account : "");
+  push(readMerchantIdFromMetadata(user?.user_metadata, user?.app_metadata));
+
+  const userId = String(user?.id ?? "").trim();
+  const lookupTasks: Array<Promise<{
+    data: Record<string, string | null | undefined> | null;
+    error: Error | null;
+  }>> = [];
+
+  if (userId) {
+    [
+      "user_id",
+      "auth_user_id",
+      "owner_user_id",
+      "owner_id",
+      "auth_id",
+      "created_by",
+      "created_by_user_id",
+    ].forEach((column) => {
+      lookupTasks.push(supabase.from("merchants").select("id").eq(column, userId).limit(1).maybeSingle());
+    });
+  }
+
+  if (email) {
+    ["email", "owner_email", "contact_email", "user_email"].forEach((column) => {
+      lookupTasks.push(supabase.from("merchants").select("id").eq(column, email).limit(1).maybeSingle());
+    });
+  }
+
+  const settled = await Promise.allSettled(lookupTasks);
+  settled.forEach((result) => {
+    if (result.status !== "fulfilled" || result.value.error) return;
+    push(result.value.data?.id);
+  });
+
+  return candidates[0] ?? "";
+}
+
 export async function POST(request: Request) {
   try {
     const payload = (await request.json().catch(() => null)) as { account?: unknown; password?: unknown } | null;
@@ -215,10 +275,17 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "merchant_login_failed", message: "session_tokens_missing" }, { status: 503 });
     }
 
+    const authUser =
+      upstreamPayload?.user && typeof upstreamPayload.user === "object"
+        ? (upstreamPayload.user as AuthUserSummary)
+        : null;
+    const merchantId = await resolveMerchantId(supabase, account, email, authUser);
+
     return NextResponse.json({
       email,
+      merchantId: merchantId || null,
       session: upstreamPayload,
-      user: upstreamPayload?.user ?? null,
+      user: authUser,
     });
   } catch {
     return NextResponse.json({ error: "merchant_login_failed" }, { status: 503 });

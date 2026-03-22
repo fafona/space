@@ -80,7 +80,7 @@ function LoginPageInner() {
       email?: string | null;
       user_metadata?: Record<string, unknown> | null;
       app_metadata?: Record<string, unknown> | null;
-    } | null) => {
+    } | null, preferredMerchantId?: string | null) => {
       const withJustSignedIn = (href: string) => {
         const url = new URL(href, window.location.origin);
         url.searchParams.set("justSignedIn", "1");
@@ -89,6 +89,12 @@ function LoginPageInner() {
 
       if (requestedRedirectPath) {
         window.location.href = withJustSignedIn(requestedRedirectPath);
+        return;
+      }
+
+      const directMerchantId = String(preferredMerchantId ?? "").trim();
+      if (directMerchantId) {
+        window.location.href = withJustSignedIn(buildMerchantBackendHref(directMerchantId));
         return;
       }
 
@@ -320,6 +326,7 @@ function LoginPageInner() {
       | {
           error?: unknown;
           message?: unknown;
+          merchantId?: unknown;
           session?: Record<string, unknown> | null;
           user?: {
             id?: string;
@@ -359,7 +366,10 @@ function LoginPageInner() {
       // Keep the stored token fallback for the admin page.
     }
 
-    return payload?.user ?? null;
+    return {
+      merchantId: typeof payload?.merchantId === "string" ? payload.merchantId.trim() : "",
+      user: payload?.user ?? null,
+    };
   }
 
   async function withTimeout<T>(task: Promise<T>, timeoutMs = 15000): Promise<T> {
@@ -442,8 +452,8 @@ function LoginPageInner() {
 
     setPendingAction("signin");
     try {
-      const user = await signInViaServer(account, password);
-      await redirectToMerchantBackend(user);
+      const result = await signInViaServer(account, password);
+      await redirectToMerchantBackend(result.user, result.merchantId);
     } catch (error) {
       const normalizedMessage = error instanceof Error ? normalizeError(error.message) : t("login.requestFailed");
       setNeedConfirmEmail(normalizedMessage === t("login.emailNotConfirmed"));

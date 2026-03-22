@@ -1846,6 +1846,76 @@ export default function SuperAdminClient() {
     setMerchantPanelOpen(true);
   }
 
+  function ensureLocalMerchantSiteFromRow(row: MerchantUserRow) {
+    const localExisting = stateRef.current.sites.find((site) => site.id === row.site.id) ?? null;
+    if (localExisting) return localExisting;
+    if (!row.hasSite) return null;
+    const merchantId = normalizeMerchantIdValue(row.merchantId);
+    if (!merchantId) {
+      setTip("缺少商户 ID，无法初始化本地配置");
+      return null;
+    }
+
+    const existedByMerchantId = stateRef.current.sites.find((site) => site.id === merchantId) ?? null;
+    if (existedByMerchantId) return existedByMerchantId;
+
+    const mainSite = stateRef.current.sites.find((site) => site.id === "site-main") ?? stateRef.current.sites[0] ?? null;
+    const prefix = normalizePublishedSitePrefix(row.prefix !== "-" ? row.prefix : row.backendAccount?.siteSlug);
+    const timestamp = nextIsoNow();
+    const nextSite: Site = {
+      id: merchantId,
+      tenantId: mainSite?.tenantId ?? stateRef.current.tenants[0]?.id ?? "tenant-demo",
+      merchantName: row.merchantName || "",
+      domainPrefix: prefix,
+      domainSuffix: prefix,
+      contactAddress: "",
+      contactName: "",
+      contactPhone: "",
+      contactEmail: row.userEmail || "",
+      name: row.merchantName || `商户 ${merchantId}`,
+      domain: buildMerchantFrontendHref(merchantId, prefix),
+      categoryId: mainSite?.categoryId ?? "",
+      category: mainSite?.category ?? "商户",
+      industry: "",
+      status: row.statusKey === "paused" ? "maintenance" : "online",
+      publishedVersion: row.hasSite ? 1 : 0,
+      lastPublishedAt: null,
+      features: mainSite?.features ?? createFeaturePackage("basic"),
+      location: {
+        countryCode: "",
+        country: "",
+        provinceCode: "",
+        province: "",
+        city: "",
+      },
+      serviceExpiresAt: row.expireAt,
+      permissionConfig: createDefaultMerchantPermissionConfig(),
+      merchantCardImageUrl: "",
+      sortConfig: createDefaultMerchantSortConfig(),
+      configHistory: [],
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+
+    const persisted = commit((prev) =>
+      withAudit(
+        {
+          ...prev,
+          sites: [...prev.sites, nextSite],
+        },
+        "merchant_local_site_init",
+        "site",
+        merchantId,
+        row.loginAccount || merchantId,
+      ),
+    );
+    if (!persisted) {
+      setTip("本地站点配置初始化失败，请重试");
+      return null;
+    }
+    return nextSite;
+  }
+
   function openMerchantConfigPanel(site: Site) {
     setMerchantDetailSiteId(site.id);
     hydrateMerchantConfigDraft(site);
@@ -4079,14 +4149,25 @@ export default function SuperAdminClient() {
                                         >
                                           查看前台
                                         </Link>
-                                        {row.hasLocalSite ? (
+                                        {row.hasLocalSite || !!normalizeMerchantIdValue(row.merchantId) ? (
                                           <>
-                                            <button className="rounded border px-2 py-1" onClick={() => toggleMerchantServiceAction(row.site.id)}>
-                                              {row.site.status === "online" ? "暂停服务" : "开启服务"}
+                                            <button
+                                              className="rounded border px-2 py-1"
+                                              onClick={() => {
+                                                const localSite = ensureLocalMerchantSiteFromRow(row);
+                                                if (!localSite) return;
+                                                toggleMerchantServiceAction(localSite.id);
+                                              }}
+                                            >
+                                              {row.statusKey === "paused" ? "开启服务" : "暂停服务"}
                                             </button>
                                             <button
                                               className="rounded border px-2 py-1"
-                                              onClick={() => openMerchantConfigPanel(row.site)}
+                                              onClick={() => {
+                                                const localSite = ensureLocalMerchantSiteFromRow(row);
+                                                if (!localSite) return;
+                                                openMerchantConfigPanel(localSite);
+                                              }}
                                             >
                                               配置
                                             </button>
