@@ -89,6 +89,7 @@ export type MerchantBusinessCardAsset = MerchantBusinessCardDraft & {
   id: string;
   createdAt: string;
   imageUrl: string;
+  shareImageUrl?: string;
   targetUrl: string;
 };
 
@@ -398,6 +399,7 @@ export function normalizeMerchantBusinessCards(value: unknown): MerchantBusiness
       const source = item as Partial<MerchantBusinessCardAsset>;
       const draft = normalizeMerchantBusinessCardDraft(source);
       const imageUrl = normalizeText(source.imageUrl);
+      const shareImageUrl = normalizeText(source.shareImageUrl);
       const targetUrl = normalizeText(source.targetUrl);
       const id = normalizeText(source.id) || `business-card-${index + 1}`;
       const createdAt = normalizeText(source.createdAt) || new Date().toISOString();
@@ -407,6 +409,7 @@ export function normalizeMerchantBusinessCards(value: unknown): MerchantBusiness
         id,
         createdAt,
         imageUrl,
+        ...(shareImageUrl ? { shareImageUrl } : {}),
         targetUrl,
       } satisfies MerchantBusinessCardAsset;
     })

@@ -25,6 +25,12 @@ import {
   type MerchantBusinessCardProfileInput,
   type MerchantBusinessCardTypographyKey,
 } from "@/lib/merchantBusinessCards";
+import {
+  buildMerchantBusinessCardShareUrl,
+  normalizeMerchantBusinessCardShareImageUrl,
+  resolveMerchantBusinessCardShareOrigin,
+} from "@/lib/merchantBusinessCardShare";
+import { uploadImageDataUrlToPublicStorage } from "@/lib/publicAssetUpload";
 import { buildMerchantDomain } from "@/lib/siteRouting";
 
 type MerchantBusinessCardManagerProps = {
@@ -86,7 +92,7 @@ const CARD_MODE_OPTIONS: Array<{
   {
     value: "link",
     label: "链接模式",
-    description: "生成图片样式卡片，在名片夹和预览里可直接进入网站。",
+    description: "生成图片样式链接，复制后发送会显示名片预览并可点击跳转。",
   },
 ];
 
@@ -94,15 +100,6 @@ const CUSTOM_TEXT_PREFIX = "custom:";
 
 function normalizeText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
-}
-
-function escapeClipboardHtml(value: string) {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -129,17 +126,6 @@ function createId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function buildLinkCardClipboardHtml(input: {
-  imageUrl: string;
-  targetUrl: string;
-  cardName: string;
-}) {
-  const imageUrl = escapeClipboardHtml(input.imageUrl);
-  const targetUrl = escapeClipboardHtml(input.targetUrl);
-  const alt = escapeClipboardHtml(input.cardName || "商户名片");
-  return `<!DOCTYPE html><html><body><a href="${targetUrl}" target="_blank" rel="noopener noreferrer" style="display:inline-block;text-decoration:none"><img src="${imageUrl}" alt="${alt}" style="display:block;max-width:100%;height:auto;border:0;outline:none;text-decoration:none" /></a></body></html>`;
-}
-
 async function renderCardNodeToImage(node: HTMLElement) {
   const images = Array.from(node.querySelectorAll("img"));
   await Promise.all(
@@ -164,49 +150,36 @@ async function renderCardNodeToImage(node: HTMLElement) {
   });
 }
 
-async function writeClipboardRichContent(input: { html: string; text: string }) {
-  if (typeof navigator !== "undefined" && navigator.clipboard && typeof navigator.clipboard.write === "function" && typeof ClipboardItem !== "undefined") {
-    try {
-      await navigator.clipboard.write([
-        new ClipboardItem({
-          "text/html": new Blob([input.html], { type: "text/html" }),
-          "text/plain": new Blob([input.text], { type: "text/plain" }),
-        }),
-      ]);
-      return "rich" as const;
-    } catch {
-      // Fall through to legacy clipboard strategies below.
-    }
-  }
-
-  if (typeof document !== "undefined") {
-    const container = document.createElement("div");
-    container.contentEditable = "true";
-    container.setAttribute("aria-hidden", "true");
-    container.style.position = "fixed";
-    container.style.left = "-99999px";
-    container.style.top = "0";
-    container.style.opacity = "0";
-    container.innerHTML = input.html;
-    document.body.appendChild(container);
-    const selection = window.getSelection();
-    const range = document.createRange();
-    range.selectNodeContents(container);
-    selection?.removeAllRanges();
-    selection?.addRange(range);
-    container.focus();
-    const copied = document.execCommand("copy");
-    selection?.removeAllRanges();
-    container.remove();
-    if (copied) return "rich" as const;
-  }
-
+async function copyTextToClipboard(value: string) {
   if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(input.text);
-    return "text" as const;
+    await navigator.clipboard.writeText(value);
+    return;
   }
+  if (typeof document === "undefined") {
+    throw new Error("clipboard_unavailable");
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-99999px";
+  textarea.style.top = "0";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  const copied = document.execCommand("copy");
+  textarea.remove();
+  if (!copied) {
+    throw new Error("clipboard_unavailable");
+  }
+}
 
-  throw new Error("clipboard_unavailable");
+function sanitizeShareAssetHint(value: string) {
+  return (
+    normalizeText(value)
+      .replace(/[^a-zA-Z0-9_-]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "business-card"
+  );
 }
 
 function typographyStyle(
@@ -570,7 +543,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="text-sm font-semibold text-slate-900">名片</div>
-          <div className="text-xs text-slate-500">完善商户信息后可生成名片，支持图片模式和链接模式，二维码会自动跳转到商户网站。</div>
+          <div className="text-xs text-slate-500">完善商户信息后可生成名片，支持图片模式和链接模式，链接模式复制后会发送成带名片预览的链接。</div>
         </div>
         <div className="flex flex-wrap gap-2">
           <button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50" onClick={openEditor} disabled={!canCreate}>生成名片</button>
@@ -884,7 +857,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
                   </section>
                 </div>
               </div>
-              <aside className="min-h-0 overflow-y-auto border-l bg-slate-50 px-5 py-5"><div className="sticky top-0 space-y-4"><div><div className="text-sm font-semibold text-slate-900">实时预览</div><div className="text-xs text-slate-500">先点击“预览”确认样式，再点击“生成”。</div></div><div className="overflow-hidden rounded-2xl border bg-slate-900/5 p-4"><CardSurface draft={draft} websiteUrl={websiteUrl} qrCodeUrl={qrCodeUrl} scale={scale} /></div><div className="rounded-xl border bg-white px-3 py-2 text-xs text-slate-600">{draft.mode === "link" ? "当前为链接模式：生成后可在名片夹和预览中直接进入商户网站。" : "当前为图片模式：生成后可保存或复制名片图片。"}</div>{!hasPreviewed ? <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">先点击“预览”，再生成名片。</div> : null}</div></aside>
+              <aside className="min-h-0 overflow-y-auto border-l bg-slate-50 px-5 py-5"><div className="sticky top-0 space-y-4"><div><div className="text-sm font-semibold text-slate-900">实时预览</div><div className="text-xs text-slate-500">先点击“预览”确认样式，再点击“生成”。</div></div><div className="overflow-hidden rounded-2xl border bg-slate-900/5 p-4"><CardSurface draft={draft} websiteUrl={websiteUrl} qrCodeUrl={qrCodeUrl} scale={scale} /></div><div className="rounded-xl border bg-white px-3 py-2 text-xs text-slate-600">{draft.mode === "link" ? "当前为链接模式：复制后会生成带名片预览的分享链接。" : "当前为图片模式：生成后可保存或复制名片图片。"}</div>{!hasPreviewed ? <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">先点击“预览”，再生成名片。</div> : null}</div></aside>
             </div>
           </div>
         </div>,
@@ -894,7 +867,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
         <div className="fixed inset-0 z-[2147483000] bg-black/45 p-4" onMouseDown={() => setFolderOpen(false)}>
           <div className="mx-auto flex h-full max-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
             <div className="flex items-center justify-between border-b px-5 py-4"><div><div className="text-lg font-semibold text-slate-900">名片夹</div><div className="text-sm text-slate-500">查看已生成的图片名片或链接名片，可预览并继续操作。</div></div><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => setFolderOpen(false)}>关闭</button></div>
-            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">{cards.length > 0 ? <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{cards.map((card) => <article key={card.id} className="overflow-hidden rounded-2xl border bg-slate-50 shadow-sm"><div className="space-y-4 p-4"><button type="button" className="block w-full overflow-hidden rounded-2xl border bg-transparent text-left" onClick={() => { setPreviewAsset(card); setPreviewOpen(true); }}><img src={card.imageUrl} alt={card.name} className="block h-auto w-full object-cover bg-transparent" /></button><div><div className="flex items-center gap-2"><div className="text-base font-semibold text-slate-900">{card.name}</div><span className="rounded-full bg-slate-900 px-2 py-0.5 text-[10px] text-white">{getCardModeLabel(card.mode)}</span></div><div className="text-xs text-slate-500">{new Date(card.createdAt).toLocaleString("zh-CN", { hour12: false })}</div></div><div className="grid grid-cols-2 gap-2"><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => { setPreviewAsset(card); setPreviewOpen(true); }}>预览</button><button type="button" className="rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800" onClick={() => void (card.mode === "link" ? copyCard(card) : saveCard(card))}>{card.mode === "link" ? "复制" : "保存"}</button><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => openEditorForCard(card)}>修改</button><button type="button" className="rounded border border-rose-200 bg-white px-3 py-2 text-sm text-rose-600 hover:bg-rose-50" onClick={() => deleteCard(card)}>删除</button></div></div></article>)}</div> : <div className="flex min-h-[240px] items-center justify-center rounded-2xl border border-dashed bg-slate-50 px-6 text-center text-sm text-slate-500">还没有生成名片。先去点击“生成名片”制作一张。</div>}</div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">{cards.length > 0 ? <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{cards.map((card) => <article key={card.id} className="overflow-hidden rounded-2xl border bg-slate-50 shadow-sm"><div className="space-y-4 p-4"><button type="button" className="block w-full overflow-hidden rounded-2xl border bg-transparent text-left" onClick={() => { setPreviewAsset(card); setPreviewOpen(true); }}><img src={card.imageUrl} alt={card.name} className="block h-auto w-full object-cover bg-transparent" /></button><div><div className="flex items-center gap-2"><div className="text-base font-semibold text-slate-900">{card.name}</div><span className="rounded-full bg-slate-900 px-2 py-0.5 text-[10px] text-white">{getCardModeLabel(card.mode)}</span></div><div className="text-xs text-slate-500">{new Date(card.createdAt).toLocaleString("zh-CN", { hour12: false })}</div></div><div className="grid grid-cols-2 gap-2"><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => { setPreviewAsset(card); setPreviewOpen(true); }}>预览</button><button type="button" className="rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800" onClick={() => void (card.mode === "link" ? copyCard(card) : saveCard(card))}>{card.mode === "link" ? "复制链接" : "保存"}</button><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => openEditorForCard(card)}>修改</button><button type="button" className="rounded border border-rose-200 bg-white px-3 py-2 text-sm text-rose-600 hover:bg-rose-50" onClick={() => deleteCard(card)}>删除</button></div></div></article>)}</div> : <div className="flex min-h-[240px] items-center justify-center rounded-2xl border border-dashed bg-slate-50 px-6 text-center text-sm text-slate-500">还没有生成名片。先去点击“生成名片”制作一张。</div>}</div>
           </div>
         </div>,
       ) : null}
@@ -902,7 +875,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       {previewOpen ? overlay(
         <div className="fixed inset-0 z-[2147483100] bg-black/65 p-4" onMouseDown={() => { setPreviewOpen(false); setPreviewAsset(null); }}>
           <div className="mx-auto flex h-full max-h-[calc(100vh-2rem)] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
-            <div className="flex items-center justify-between border-b px-5 py-4"><div><div className="text-base font-semibold text-slate-900">{previewAsset?.name || draft.name || "名片预览"}</div><div className="text-xs text-slate-500">{getCardModeLabel(previewAsset?.mode || draft.mode)}</div></div><div className="flex gap-2">{(previewAsset?.mode || draft.mode) === "link" && (previewAsset?.targetUrl || websiteUrl) ? <button type="button" className="rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800" onClick={() => previewAsset ? void copyCard(previewAsset) : copyPreviewLink(websiteUrl)}>复制</button> : null}<button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => { setPreviewOpen(false); setPreviewAsset(null); }}>关闭</button></div></div>
+            <div className="flex items-center justify-between border-b px-5 py-4"><div><div className="text-base font-semibold text-slate-900">{previewAsset?.name || draft.name || "名片预览"}</div><div className="text-xs text-slate-500">{getCardModeLabel(previewAsset?.mode || draft.mode)}</div></div><div className="flex gap-2">{(previewAsset?.mode || draft.mode) === "link" && (previewAsset?.targetUrl || websiteUrl) ? <button type="button" className="rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800" onClick={() => previewAsset ? void copyCard(previewAsset) : copyPreviewLink(websiteUrl)}>复制链接</button> : null}<button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => { setPreviewOpen(false); setPreviewAsset(null); }}>关闭</button></div></div>
             <div className="flex-1 overflow-auto bg-black p-4"><div className="mx-auto flex min-h-full items-center justify-center">{previewAsset ? <button type="button" className="block bg-transparent text-left" onClick={() => previewAsset.mode === "link" ? openCardTarget(previewAsset) : undefined}><img src={previewAsset.imageUrl} alt={previewAsset.name} className="block h-auto max-w-full bg-transparent object-contain" /></button> : <CardSurface draft={draft} websiteUrl={websiteUrl} qrCodeUrl={qrCodeUrl} scale={fullScale} />}</div></div>
           </div>
         </div>,
@@ -1109,6 +1082,89 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     }
   }
 
+  function updateCardShareImageUrl(cardId: string, shareImageUrl: string) {
+    onCardsChange(
+      cards.map((item) =>
+        item.id === cardId
+          ? {
+              ...item,
+              shareImageUrl,
+            }
+          : item,
+      ),
+    );
+  }
+
+  async function resolveShareImageUrl(input: {
+    card?: MerchantBusinessCardAsset | null;
+    renderedImageUrl?: string;
+    cardName?: string;
+  }) {
+    const shareOrigin = resolveMerchantBusinessCardShareOrigin();
+    const existingPublicUrl = normalizeMerchantBusinessCardShareImageUrl(
+      normalizeText(input.card?.shareImageUrl) || normalizeText(input.card?.imageUrl),
+      shareOrigin,
+    );
+    if (existingPublicUrl) {
+      if (input.card && normalizeText(input.card.shareImageUrl) !== existingPublicUrl) {
+        updateCardShareImageUrl(input.card.id, existingPublicUrl);
+      }
+      return existingPublicUrl;
+    }
+
+    const sourceImageUrl =
+      normalizeText(input.renderedImageUrl) ||
+      normalizeText(input.card?.shareImageUrl) ||
+      normalizeText(input.card?.imageUrl);
+    if (!/^data:image\//i.test(sourceImageUrl)) return "";
+
+    const uploadedUrl = await uploadImageDataUrlToPublicStorage(
+      sourceImageUrl,
+      sanitizeShareAssetHint(
+        normalizeText(profile.domainPrefix) ||
+          normalizeText(input.cardName) ||
+          normalizeText(input.card?.name) ||
+          normalizeText(profile.merchantName),
+      ),
+    );
+    const publicUrl = normalizeMerchantBusinessCardShareImageUrl(uploadedUrl, shareOrigin);
+    if (publicUrl && input.card) {
+      updateCardShareImageUrl(input.card.id, publicUrl);
+    }
+    return publicUrl;
+  }
+
+  async function buildShareLink(input: {
+    targetUrl: string;
+    cardName: string;
+    card?: MerchantBusinessCardAsset | null;
+    renderedImageUrl?: string;
+  }) {
+    const targetUrl = normalizeText(input.targetUrl);
+    if (!targetUrl) {
+      throw new Error("missing_target");
+    }
+    const shareOrigin = resolveMerchantBusinessCardShareOrigin();
+    const shareImageUrl = await resolveShareImageUrl({
+      card: input.card,
+      renderedImageUrl: input.renderedImageUrl,
+      cardName: input.cardName,
+    });
+    if (!shareImageUrl) {
+      throw new Error("share_image_unavailable");
+    }
+    const shareUrl = buildMerchantBusinessCardShareUrl({
+      origin: shareOrigin,
+      name: input.cardName,
+      imageUrl: shareImageUrl,
+      targetUrl,
+    });
+    if (!shareUrl) {
+      throw new Error("share_link_unavailable");
+    }
+    return shareUrl;
+  }
+
   async function copyPreviewLink(url: string) {
     const normalizedUrl = normalizeText(url);
     if (!normalizedUrl) {
@@ -1118,46 +1174,37 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
 
     try {
       const node = hiddenPreviewRef.current;
-      if (node) {
-        const imageUrl = await renderCardNodeToImage(node);
-        const copyMode = await writeClipboardRichContent({
-          html: buildLinkCardClipboardHtml({
-            imageUrl,
-            targetUrl: normalizedUrl,
-            cardName: normalizeText(draft.name) || "商户名片",
-          }),
-          text: normalizedUrl,
-        });
-        setTip(copyMode === "rich" ? "链接名片已复制，粘贴后会显示名片图并可点击跳转" : "当前环境不支持名片样式复制，已复制链接");
+      if (!node) {
+        setTip("请先预览名片后再复制链接");
         return;
       }
-
-      const copyMode = await writeClipboardRichContent({
-        html: `<a href="${escapeClipboardHtml(normalizedUrl)}">${escapeClipboardHtml(normalizedUrl)}</a>`,
-        text: normalizedUrl,
+      const renderedImageUrl = await renderCardNodeToImage(node);
+      const shareUrl = await buildShareLink({
+        targetUrl: normalizedUrl,
+        cardName: normalizeText(draft.name) || "商户名片",
+        renderedImageUrl,
       });
-      setTip(copyMode === "rich" ? "链接已复制" : "链接已复制");
+      await copyTextToClipboard(shareUrl);
+      setTip("分享链接已复制，发送后会显示名片样式链接");
     } catch {
       setTip("复制失败，请重试");
     }
   }
 
   async function copyCard(card: MerchantBusinessCardAsset) {
-    const shareUrl = normalizeText(card.targetUrl);
-    if (!shareUrl) {
+    const targetUrl = normalizeText(card.targetUrl);
+    if (!targetUrl) {
       setTip("当前名片没有可复制的网站链接");
       return;
     }
     try {
-      const copyMode = await writeClipboardRichContent({
-        html: buildLinkCardClipboardHtml({
-          imageUrl: card.imageUrl,
-          targetUrl: shareUrl,
-          cardName: normalizeText(card.name) || "商户名片",
-        }),
-        text: shareUrl,
+      const shareUrl = await buildShareLink({
+        targetUrl,
+        cardName: normalizeText(card.name) || "商户名片",
+        card,
       });
-      setTip(copyMode === "rich" ? "链接名片已复制，粘贴后会显示名片图并可点击跳转" : "当前环境不支持名片样式复制，已复制链接");
+      await copyTextToClipboard(shareUrl);
+      setTip("分享链接已复制，发送后会显示名片样式链接");
     } catch {
       setTip("复制失败，请重试");
     }
