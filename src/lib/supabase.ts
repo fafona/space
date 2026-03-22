@@ -26,8 +26,28 @@ if (supabaseMissingEnvNotice && typeof window !== "undefined") {
 
 const fallbackUrl = isSupabaseFallbackMode ? "http://127.0.0.1:54321" : "https://invalid.supabase.local";
 const fallbackAnon = "fallback-anon-key";
-export const resolvedSupabaseUrl = rawUrl || fallbackUrl;
+const browserSupabaseProxyUrl = (() => {
+  if (typeof window === "undefined" || !rawUrl) return "";
+  try {
+    const browserLocation = window.location;
+    const targetUrl = new URL(rawUrl);
+    if (browserLocation.protocol === "https:" && targetUrl.protocol === "http:") {
+      return `${browserLocation.origin}/api/supabase-proxy`;
+    }
+  } catch {
+    return "";
+  }
+  return "";
+})();
+export const resolvedSupabaseUrl = browserSupabaseProxyUrl || rawUrl || fallbackUrl;
 export const resolvedSupabaseAnonKey = rawAnon || fallbackAnon;
+export const supabaseStorageKeyProjectRef = (() => {
+  try {
+    return new URL(rawUrl || fallbackUrl).hostname.split(".")[0]?.trim() ?? "";
+  } catch {
+    return "";
+  }
+})();
 const shouldAutoRefreshSession = process.env.NEXT_PUBLIC_SUPABASE_DISABLE_AUTO_REFRESH !== "1";
 const DEFAULT_FETCH_TIMEOUT_MS = isDevelopment ? 2200 : 9000;
 const DEFAULT_FETCH_COOLDOWN_MS = isDevelopment ? 20_000 : 8_000;

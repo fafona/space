@@ -55,6 +55,7 @@ import {
   resolvedSupabaseAnonKey,
   resolvedSupabaseUrl,
   supabase,
+  supabaseStorageKeyProjectRef,
   supabaseMissingEnvNotice,
 } from "@/lib/supabase";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
@@ -4042,12 +4043,8 @@ export default function AdminClient({
         return null;
       };
       const expectedRef = (() => {
-        try {
-          const hostname = new URL(resolvedSupabaseUrl).hostname;
-          return hostname.split(".")[0]?.trim() ?? "";
-        } catch {
-          return "";
-        }
+        const ref = supabaseStorageKeyProjectRef.trim();
+        return ref || "";
       })();
       const preferredKey = expectedRef ? `sb-${expectedRef}-auth-token` : "";
       if (!preferredKey) return null;
