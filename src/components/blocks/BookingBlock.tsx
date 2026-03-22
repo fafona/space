@@ -81,11 +81,6 @@ function getFormFieldClass(disabled: boolean) {
   }`;
 }
 
-const DATE_TIME_INPUT_STYLE = {
-  fontFamily:
-    '"PingFang SC","Hiragino Sans GB","Microsoft YaHei UI","Microsoft YaHei","Noto Sans SC",system-ui,sans-serif',
-};
-
 export default function BookingBlock({
   runtimeSiteId = "",
   runtimeSiteName = "",
@@ -338,8 +333,6 @@ export default function BookingBlock({
                   type="date"
                   className={`${getFormFieldClass(!isLiveBooking)} min-w-[180px] flex-1`}
                   value={appointmentParts.date}
-                  lang="zh-CN"
-                  style={DATE_TIME_INPUT_STYLE}
                   disabled={!isLiveBooking}
                   onChange={(event) =>
                     handleFieldChange(
@@ -353,8 +346,6 @@ export default function BookingBlock({
                   step={60}
                   className={`${getFormFieldClass(!isLiveBooking)} w-[112px] shrink-0`}
                   value={appointmentParts.time}
-                  lang="zh-CN"
-                  style={DATE_TIME_INPUT_STYLE}
                   disabled={!isLiveBooking}
                   onChange={(event) =>
                     handleFieldChange(
