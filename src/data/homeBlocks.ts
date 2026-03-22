@@ -228,9 +228,16 @@ export type CommonProps = BackgroundEditableProps &
     heading?: string;
     text?: string;
   };
-export type ButtonProps = CommonProps & {
+export type ButtonProps = BackgroundEditableProps &
+  TypographyEditableProps & {
+    buttonLabel?: string;
   buttonJumpTarget?: string;
-};
+    // Legacy fields kept for button blocks created before the dedicated button editor.
+    commonTextBoxes?: CommonProps["commonTextBoxes"];
+    commonItems?: string[];
+    heading?: string;
+    text?: string;
+  };
 type GalleryProps = BackgroundEditableProps &
   TypographyEditableProps & {
     heading: string;

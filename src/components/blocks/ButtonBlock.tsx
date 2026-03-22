@@ -1,58 +1,13 @@
-import type { BackgroundEditableProps } from "@/data/homeBlocks";
+import type { ButtonProps } from "@/data/homeBlocks";
+import { resolveButtonLabel } from "@/lib/buttonBlock";
 import { getBackgroundStyle } from "./backgroundStyle";
 import { getBlockBorderClass, getBlockBorderInlineStyle } from "./borderStyle";
 import { toRichHtml } from "./richText";
+import { getTypographyStyle } from "./typographyStyle";
 
-type ButtonTextBox = {
-  id: string;
-  html: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  rotateDeg?: number;
-};
-
-type ButtonBlockProps = BackgroundEditableProps & {
-  commonTextBoxes?: ButtonTextBox[];
-  commonItems?: string[];
-  heading?: string;
-  text?: string;
-  buttonJumpTarget?: string;
+type ButtonBlockRuntimeProps = ButtonProps & {
   onNavigatePage?: (pageId: string) => void;
 };
-
-function normalizeButtonTextBoxes(props: ButtonBlockProps): ButtonTextBox[] {
-  const fromBoxes = Array.isArray(props.commonTextBoxes) ? props.commonTextBoxes : [];
-  if (fromBoxes.length > 0) {
-    return fromBoxes
-      .filter((item) => item && typeof item.id === "string")
-      .map((item) => ({
-        id: item.id,
-        html: item.html ?? "",
-        x: Number.isFinite(item.x) ? Math.round(item.x) : 0,
-        y: Number.isFinite(item.y) ? Math.round(item.y) : 0,
-        width: Number.isFinite(item.width) ? Math.max(18, Math.round(item.width)) : 140,
-        height: Number.isFinite(item.height) ? Math.max(18, Math.round(item.height)) : 40,
-        rotateDeg: Number.isFinite(item.rotateDeg) ? Number(item.rotateDeg) : 0,
-      }));
-  }
-
-  const itemsFromArray = Array.isArray(props.commonItems) ? props.commonItems.map((item) => item.trim()).filter(Boolean) : [];
-  const fallbackItems =
-    itemsFromArray.length > 0
-      ? itemsFromArray
-      : [props.heading, props.text].map((item) => (item ?? "").trim()).filter(Boolean);
-  return fallbackItems.map((item, idx) => ({
-    id: `legacy-${idx}`,
-    html: item,
-    x: 8,
-    y: idx * 44 + 8,
-    width: 140,
-    height: 36,
-    rotateDeg: 0,
-  }));
-}
 
 function performJump(target: string, onNavigatePage?: (pageId: string) => void) {
   const trimmed = target.trim();
@@ -85,7 +40,7 @@ function performJump(target: string, onNavigatePage?: (pageId: string) => void) 
   window.location.assign(trimmed);
 }
 
-export default function ButtonBlock(props: ButtonBlockProps) {
+export default function ButtonBlock(props: ButtonBlockRuntimeProps) {
   const cardStyle = getBackgroundStyle({
     imageUrl: props.bgImageUrl,
     fillMode: props.bgFillMode,
@@ -97,16 +52,16 @@ export default function ButtonBlock(props: ButtonBlockProps) {
   });
   const blockWidth =
     typeof props.blockWidth === "number" && Number.isFinite(props.blockWidth)
-      ? Math.max(18, Math.round(props.blockWidth))
+      ? Math.max(80, Math.round(props.blockWidth))
       : undefined;
   const blockHeight =
     typeof props.blockHeight === "number" && Number.isFinite(props.blockHeight)
-      ? Math.max(18, Math.round(props.blockHeight))
+      ? Math.max(40, Math.round(props.blockHeight))
       : undefined;
-  const viewportHeight = blockHeight ? Math.max(18, Math.round(blockHeight)) : 56;
   const sizeStyle = {
     width: blockWidth ? `${blockWidth}px` : undefined,
     height: blockHeight ? `${blockHeight}px` : undefined,
+    minHeight: blockHeight ? undefined : "56px",
   };
   const offsetX =
     typeof props.blockOffsetX === "number" && Number.isFinite(props.blockOffsetX)
@@ -127,47 +82,38 @@ export default function ButtonBlock(props: ButtonBlockProps) {
   };
   const borderClass = getBlockBorderClass(props.blockBorderStyle);
   const borderInlineStyle = getBlockBorderInlineStyle(props.blockBorderStyle, props.blockBorderColor);
-  const boxes = normalizeButtonTextBoxes(props);
+  const typographyStyle = getTypographyStyle(props);
   const jumpTarget = (props.buttonJumpTarget ?? "").trim();
   const isClickable = jumpTarget.length > 0;
+  const labelHtml = toRichHtml(resolveButtonLabel(props), "按钮");
 
   return (
     <section className="max-w-6xl mx-auto px-6 py-6" style={offsetStyle}>
       <div
-        className={`bg-white rounded-xl shadow-sm overflow-hidden ${borderClass} ${isClickable ? "cursor-pointer" : ""}`}
+        className={`overflow-hidden rounded-xl shadow-sm ${borderClass}`}
         style={{ ...cardStyle, ...sizeStyle, ...borderInlineStyle }}
-        onClick={() => performJump(jumpTarget, props.onNavigatePage)}
-        role={isClickable ? "button" : undefined}
-        tabIndex={isClickable ? 0 : undefined}
-        onKeyDown={(event) => {
-          if (!isClickable) return;
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            performJump(jumpTarget, props.onNavigatePage);
-          }
-        }}
       >
-        <div className="relative overflow-hidden" style={{ height: `${viewportHeight}px`, minHeight: `${viewportHeight}px` }}>
-          {boxes.map((box) => (
+        {isClickable ? (
+          <button
+            type="button"
+            className="flex h-full min-h-[40px] w-full appearance-none items-center justify-center border-0 bg-transparent px-5 py-3 text-center transition hover:brightness-[0.98]"
+            onClick={() => performJump(jumpTarget, props.onNavigatePage)}
+          >
             <div
-              key={box.id}
-              className="absolute border border-transparent"
-              style={{
-                left: `${box.x}px`,
-                top: `${box.y}px`,
-                width: `${box.width}px`,
-                height: `${box.height}px`,
-                transform: `rotate(${box.rotateDeg ?? 0}deg)`,
-                transformOrigin: "center center",
-              }}
-            >
-              <div
-                className="w-full h-full whitespace-pre-wrap break-words overflow-hidden text-gray-700"
-                dangerouslySetInnerHTML={{ __html: toRichHtml(box.html, "") }}
-              />
-            </div>
-          ))}
-        </div>
+              className="w-full break-words whitespace-pre-wrap"
+              style={typographyStyle}
+              dangerouslySetInnerHTML={{ __html: labelHtml }}
+            />
+          </button>
+        ) : (
+          <div className="flex h-full min-h-[40px] w-full items-center justify-center px-5 py-3 text-center">
+            <div
+              className="w-full break-words whitespace-pre-wrap"
+              style={typographyStyle}
+              dangerouslySetInnerHTML={{ __html: labelHtml }}
+            />
+          </div>
+        )}
       </div>
     </section>
   );

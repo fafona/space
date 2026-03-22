@@ -16,7 +16,6 @@ import {
   type BlockBorderStyle,
   type BackgroundEditableProps,
   type Block,
-  type ButtonProps,
   type CommonProps,
   type ImageFillMode,
   type MerchantCardTextLayoutConfig,
@@ -169,6 +168,7 @@ import {
   parseProductWorkbook,
 } from "@/lib/productImport";
 import { broadcastPublishSync } from "@/lib/publishSync";
+import { buildButtonLabelPatch, resolveButtonLabel } from "@/lib/buttonBlock";
 import { ensureMerchantIdentityForUser, isMerchantNumericId } from "@/lib/merchantIdentity";
 import { buildMerchantDomain, buildMerchantFrontendHref, buildSiteStoreScope } from "@/lib/siteRouting";
 import BlockRenderer from "@/components/blocks/BlockRenderer";
@@ -295,7 +295,8 @@ function collectBookingOptionsFromPlanConfig(config: PagePlanConfig | null | und
 
 const MIN_BLOCK_WIDTH = 240;
 const MIN_BLOCK_HEIGHT = 120;
-const BUTTON_BLOCK_MIN_SIZE = 18;
+const BUTTON_BLOCK_MIN_WIDTH = 80;
+const BUTTON_BLOCK_MIN_HEIGHT = 40;
 const NUDGE_STEP = 4;
 const HISTORY_LIMIT = 120;
 const DEFAULT_TIP_DURATION_MS = 2600;
@@ -1159,16 +1160,16 @@ const MERCHANT_ONBOARDING_BLOCKS: Block[] = (() => {
   ];
 })();
 
-function isCommonCanvasBlockType(type: Block["type"]): type is "common" | "button" {
-  return type === "common" || type === "button";
+function isCommonCanvasBlockType(type: Block["type"]): type is "common" {
+  return type === "common";
 }
 
 function getBlockMinWidth(type: Block["type"]) {
-  return type === "button" ? BUTTON_BLOCK_MIN_SIZE : MIN_BLOCK_WIDTH;
+  return type === "button" ? BUTTON_BLOCK_MIN_WIDTH : MIN_BLOCK_WIDTH;
 }
 
 function getBlockMinHeight(type: Block["type"]) {
-  return type === "button" ? BUTTON_BLOCK_MIN_SIZE : MIN_BLOCK_HEIGHT;
+  return type === "button" ? BUTTON_BLOCK_MIN_HEIGHT : MIN_BLOCK_HEIGHT;
 }
 
 function normalizeBlockWidth(value?: number, type: Block["type"] = "common") {
@@ -4902,17 +4903,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         props: {
           blockWidth: 160,
           blockHeight: 56,
-          commonTextBoxes: [
-            {
-              id: `button-text-${Date.now()}`,
-              html: "按钮",
-              x: 24,
-              y: 14,
-              width: 96,
-              height: 28,
-              rotateDeg: 0,
-            },
-          ],
+          buttonLabel: "按钮",
           buttonJumpTarget: "",
         },
       };
@@ -7547,7 +7538,7 @@ type GalleryEditorImage = {
   const [typoItalic, setTypoItalic] = useState(false);
   const [typoUnderline, setTypoUnderline] = useState(false);
   const [typoRememberLast, setTypoRememberLast] = useState(false);
-  const [typographyTarget, setTypographyTarget] = useState<"editor" | "search-controls" | "merchant-controls">("editor");
+  const [typographyTarget, setTypographyTarget] = useState<"editor" | "button-controls" | "search-controls" | "merchant-controls">("editor");
   const [imageSettingsOpen, setImageSettingsOpen] = useState(false);
   const [borderSettingsOpen, setBorderSettingsOpen] = useState(false);
   const [layerSettingsOpen, setLayerSettingsOpen] = useState(false);
@@ -8035,7 +8026,7 @@ type GalleryEditorImage = {
 
   useEffect(() => {
     if (!isCommonCanvasBlockType(block.type)) return;
-    const commonProps = block.props as CommonProps | ButtonProps;
+    const commonProps = block.props as CommonProps;
 
     const readBoxes = (): CommonEditorTextBox[] => {
       const fromBoxes = Array.isArray(commonProps.commonTextBoxes) ? commonProps.commonTextBoxes : [];
@@ -8412,6 +8403,9 @@ type GalleryEditorImage = {
   }
 
   function getRichFieldPatch(field: RichFieldName, html: string): Partial<Block["props"]> | null {
+    if (field === "buttonLabel" && block.type === "button") {
+      return buildButtonLabelPatch(html);
+    }
     if (field === "title" && block.type === "hero") {
       return { title: html };
     }
@@ -8513,6 +8507,22 @@ type GalleryEditorImage = {
       setTypographyDialogOpen(true);
       return;
     }
+    if (block.type === "button" && !canUseEditor) {
+      setTypoFontFamily((block.props.fontFamily ?? "").trim());
+      setTypoFontSize(
+        typeof block.props.fontSize === "number" && Number.isFinite(block.props.fontSize)
+          ? Math.max(8, Math.min(96, Math.round(block.props.fontSize)))
+          : 16,
+      );
+      setTypoFontColor((block.props.fontColor ?? "").trim() || "#111111");
+      setTypoBold((block.props.fontWeight ?? "normal") === "bold");
+      setTypoItalic((block.props.fontStyle ?? "normal") === "italic");
+      setTypoUnderline((block.props.textDecoration ?? "none") === "underline");
+      setTypoRememberLast(true);
+      setTypographyTarget("button-controls");
+      setTypographyDialogOpen(true);
+      return;
+    }
     if (!editor) {
       onAlert("请先点击要编辑的文本");
       return;
@@ -8558,6 +8568,13 @@ type GalleryEditorImage = {
       return;
     }
     if (typographyTarget === "merchant-controls" && block.type === "merchant-list") {
+      onChange(blockLevelTypographyPatch);
+      onRecordColor(typoFontColor);
+      setTypoRememberLast(true);
+      setTypographyDialogOpen(false);
+      return;
+    }
+    if (typographyTarget === "button-controls" && block.type === "button") {
       onChange(blockLevelTypographyPatch);
       onRecordColor(typoFontColor);
       setTypoRememberLast(true);
@@ -8895,7 +8912,7 @@ type GalleryEditorImage = {
 
   function getCommonTextBoxes(): CommonEditorTextBox[] {
     if (!isCommonCanvasBlockType(block.type)) return [];
-    const commonProps = block.props as CommonProps | ButtonProps;
+    const commonProps = block.props as CommonProps;
     const fromBoxes = Array.isArray(commonProps.commonTextBoxes) ? commonProps.commonTextBoxes : [];
     if (fromBoxes.length > 0) {
       return fromBoxes
@@ -10664,6 +10681,85 @@ type GalleryEditorImage = {
         )
       : null;
 
+  if (block.type === "button") {
+    const buttonLabel = resolveButtonLabel(block.props);
+    const buttonFontColor = (block.props.fontColor ?? "").trim();
+    const buttonLabelStyle: CSSProperties = {
+      fontFamily: block.props.fontFamily?.trim() || undefined,
+      fontSize:
+        typeof block.props.fontSize === "number" && Number.isFinite(block.props.fontSize) && block.props.fontSize > 0
+          ? block.props.fontSize
+          : undefined,
+      fontWeight: block.props.fontWeight,
+      fontStyle: block.props.fontStyle,
+      textDecoration: block.props.textDecoration,
+    };
+    if (buttonFontColor) {
+      if (isGradientToken(buttonFontColor)) {
+        buttonLabelStyle.backgroundImage = buttonFontColor;
+        buttonLabelStyle.backgroundClip = "text";
+        buttonLabelStyle.WebkitBackgroundClip = "text";
+        buttonLabelStyle.color = "transparent";
+      } else {
+        buttonLabelStyle.color = buttonFontColor;
+      }
+    }
+
+    return (
+      <section data-block-id={block.id} className={`${shellClass} pointer-events-none`} style={offsetStyle}>
+        <EditorBlockHeader
+          draggingBlockId={draggingBlockId}
+          isSelected={isSelected}
+          onDragHandleMouseDown={onDragHandleMouseDown}
+          onNudge={onNudge}
+          onOpenLayerSettings={openLayerSettings}
+          onEditTypography={editTypography}
+          onConfigureJump={openButtonJumpDialog}
+          onEditImageSettings={editImageSettings}
+          onEditBorderStyle={editBorderSettings}
+          onDelete={onDelete}
+        />
+        <div
+          ref={resizeTargetRef}
+          className={`relative rounded-xl shadow-sm pointer-events-auto ${isSelected ? "overflow-visible" : "overflow-hidden"} ${borderClass}`}
+          onClick={onSelect}
+          style={{
+            ...blockPreviewShellStyle,
+            overflow: isEditingBlock ? "visible" : "hidden",
+            minHeight: blockHeight ? undefined : `${BUTTON_BLOCK_MIN_HEIGHT}px`,
+          }}
+        >
+          {imageDialog}
+          {imageSettingsDialog}
+          {borderSettingsDialog}
+          {layerSettingsDialog}
+          {typographyDialog}
+          {buttonJumpDialog}
+          <div className="flex h-full min-h-[40px] w-full items-center justify-center px-5 py-3 text-center">
+            {isSelected ? (
+              <RichTextEditor
+                field="buttonLabel"
+                className="w-full min-h-[1.5em] break-words text-center text-gray-700"
+                style={buttonLabelStyle}
+                value={buttonLabel}
+                onChange={handleRichFieldChange}
+                onActivate={registerActiveEditor}
+                onSelectionChange={updateSelectionRange}
+              />
+            ) : (
+              <div
+                className="w-full break-words whitespace-pre-wrap text-center text-gray-700"
+                style={buttonLabelStyle}
+                dangerouslySetInnerHTML={{ __html: toRichHtml(buttonLabel, "按钮") }}
+              />
+            )}
+          </div>
+          {resizeHandles}
+        </div>
+      </section>
+    );
+  }
+
   if (isCommonCanvasBlockType(block.type)) {
     const commonBoxes = getCommonTextBoxes();
     return (
@@ -10677,7 +10773,6 @@ type GalleryEditorImage = {
           onEditTypography={editTypography}
           onInsertText={insertTextBox}
           onInsertImage={insertImage}
-          onConfigureJump={block.type === "button" ? openButtonJumpDialog : undefined}
           onEditImageSettings={editImageSettings}
           onEditBorderStyle={editBorderSettings}
           onDelete={onDelete}
@@ -17223,7 +17318,7 @@ type GalleryEditorImage = {
   return null;
 }
 
-type RichFieldName = "title" | "subtitle" | "heading" | "text" | "phone" | "address";
+type RichFieldName = "title" | "subtitle" | "heading" | "text" | "phone" | "address" | "buttonLabel";
 
 function RecentColorBar({
   colors,
@@ -17502,6 +17597,7 @@ function RichTextEditor({
   dataNavItemId,
   dataCommonBoxId,
   className,
+  style,
   onChange,
   onActivate,
   onSelectionChange,
@@ -17511,6 +17607,7 @@ function RichTextEditor({
   dataNavItemId?: string;
   dataCommonBoxId?: string;
   className: string;
+  style?: CSSProperties;
   onChange: (field: RichFieldName, html: string, editor: HTMLDivElement | null) => void;
   onActivate: (editor: HTMLDivElement | null) => void;
   onSelectionChange: (range: Range | null) => void;
@@ -17554,6 +17651,7 @@ function RichTextEditor({
       data-common-box-id={dataCommonBoxId}
       data-no-translate="1"
       className={`${className} whitespace-pre-wrap break-words focus:outline-none`}
+      style={style}
       contentEditable
       suppressContentEditableWarning
       onFocus={() => onActivate(ref.current)}
@@ -17586,8 +17684,8 @@ function EditorBlockHeader({
   onNudge: (deltaX: number, deltaY: number) => void;
   onOpenLayerSettings: () => void;
   onEditTypography: () => void;
-  onInsertText: () => void;
-  onInsertImage: () => void;
+  onInsertText?: (() => void) | undefined;
+  onInsertImage?: (() => void) | undefined;
   onConfigureJump?: (() => void) | undefined;
   onEditImageSettings: () => void;
   onEditBorderStyle: () => void;
@@ -17672,24 +17770,28 @@ function EditorBlockHeader({
             >
               {"字体样式"}
             </button>
-            <button
-              className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50 shrink-0 whitespace-nowrap"
-              onClick={(e) => {
-                e.stopPropagation();
-                onInsertText();
-              }}
-            >
-              {"插入文字"}
-            </button>
-            <button
-              className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50 shrink-0 whitespace-nowrap"
-              onClick={(e) => {
-                e.stopPropagation();
-                onInsertImage();
-              }}
-            >
-              {"插入图片"}
-            </button>
+            {onInsertText ? (
+              <button
+                className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50 shrink-0 whitespace-nowrap"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onInsertText();
+                }}
+              >
+                {"插入文字"}
+              </button>
+            ) : null}
+            {onInsertImage ? (
+              <button
+                className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50 shrink-0 whitespace-nowrap"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onInsertImage();
+                }}
+              >
+                {"插入图片"}
+              </button>
+            ) : null}
             {onConfigureJump ? (
               <button
                 className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50 shrink-0 whitespace-nowrap"
