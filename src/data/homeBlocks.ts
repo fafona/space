@@ -213,7 +213,7 @@ type ContactProps = BackgroundEditableProps &
       >
     >;
   };
-type CommonProps = BackgroundEditableProps &
+export type CommonProps = BackgroundEditableProps &
   TypographyEditableProps & {
     commonTextBoxes?: Array<{
       id: string;
@@ -228,6 +228,9 @@ type CommonProps = BackgroundEditableProps &
     heading?: string;
     text?: string;
   };
+export type ButtonProps = CommonProps & {
+  buttonJumpTarget?: string;
+};
 type GalleryProps = BackgroundEditableProps &
   TypographyEditableProps & {
     heading: string;
@@ -344,6 +347,7 @@ type NavProps = BackgroundEditableProps &
 
 export type Block =
   | { id: string; type: "common"; props: CommonProps }
+  | { id: string; type: "button"; props: ButtonProps }
   | { id: string; type: "gallery"; props: GalleryProps }
   | { id: string; type: "chart"; props: ChartProps }
   | { id: string; type: "nav"; props: NavProps }

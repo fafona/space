@@ -89,6 +89,7 @@ export type MerchantServicePermissionConfig = {
   pageLimit: number;
   allowInsertBackground: boolean;
   allowThemeEffects: boolean;
+  allowButtonBlock: boolean;
   allowGalleryBlock: boolean;
   allowMusicBlock: boolean;
   allowProductBlock: boolean;
@@ -385,6 +386,7 @@ export function createDefaultMerchantPermissionConfig(): MerchantServicePermissi
     pageLimit: 3,
     allowInsertBackground: false,
     allowThemeEffects: false,
+    allowButtonBlock: false,
     allowGalleryBlock: false,
     allowMusicBlock: false,
     allowProductBlock: false,
@@ -414,6 +416,7 @@ function normalizeMerchantPermissionConfig(value: unknown): MerchantServicePermi
     allowInsertBackground:
       typeof source.allowInsertBackground === "boolean" ? source.allowInsertBackground : fallback.allowInsertBackground,
     allowThemeEffects: typeof source.allowThemeEffects === "boolean" ? source.allowThemeEffects : fallback.allowThemeEffects,
+    allowButtonBlock: typeof source.allowButtonBlock === "boolean" ? source.allowButtonBlock : fallback.allowButtonBlock,
     allowGalleryBlock: typeof source.allowGalleryBlock === "boolean" ? source.allowGalleryBlock : fallback.allowGalleryBlock,
     allowMusicBlock: typeof source.allowMusicBlock === "boolean" ? source.allowMusicBlock : fallback.allowMusicBlock,
     allowProductBlock: typeof source.allowProductBlock === "boolean" ? source.allowProductBlock : fallback.allowProductBlock,

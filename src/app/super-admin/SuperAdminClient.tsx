@@ -785,6 +785,7 @@ function describePermissionValue(
   if (
     key === "allowInsertBackground" ||
     key === "allowThemeEffects" ||
+    key === "allowButtonBlock" ||
     key === "allowGalleryBlock" ||
     key === "allowMusicBlock" ||
     key === "allowProductBlock" ||
@@ -818,6 +819,7 @@ function buildMerchantConfigDiffLines(current: MerchantConfigSnapshot, target: M
     { key: "publishSizeLimitMb", label: "发布体积上限(MB)" },
     { key: "allowInsertBackground", label: "可插入背景" },
     { key: "allowThemeEffects", label: "可主题效果" },
+    { key: "allowButtonBlock", label: "可按钮区块" },
     { key: "allowGalleryBlock", label: "可相册区块" },
     { key: "allowMusicBlock", label: "可音乐区块" },
     { key: "allowProductBlock", label: "可产品区块" },
@@ -1015,6 +1017,7 @@ export default function SuperAdminClient() {
   const [configPublishLimitMb, setConfigPublishLimitMb] = useState("5");
   const [configAllowInsertBackground, setConfigAllowInsertBackground] = useState(false);
   const [configAllowThemeEffects, setConfigAllowThemeEffects] = useState(false);
+  const [configAllowButtonBlock, setConfigAllowButtonBlock] = useState(false);
   const [configAllowGalleryBlock, setConfigAllowGalleryBlock] = useState(false);
   const [configAllowMusicBlock, setConfigAllowMusicBlock] = useState(false);
   const [configAllowProductBlock, setConfigAllowProductBlock] = useState(false);
@@ -1104,45 +1107,6 @@ export default function SuperAdminClient() {
     let cancelled = false;
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 8000);
-    setMerchantIdRulesLoading(true);
-    setMerchantIdRulesError("");
-    fetch("/api/super-admin/merchant-id-rules", {
-      method: "GET",
-      cache: "no-store",
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        if (!response.ok) {
-          throw new Error(`merchant_id_rule_http_${response.status}`);
-        }
-        const payload = (await response.json()) as { rules?: MerchantIdRule[] };
-        if (cancelled) return;
-        setMerchantIdRules(Array.isArray(payload.rules) ? sortMerchantIdRules(payload.rules) : []);
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        setMerchantIdRules([]);
-        if (error instanceof DOMException && error.name === "AbortError") {
-          setMerchantIdRulesError("merchant_id_rule_timeout");
-          return;
-        }
-        setMerchantIdRulesError(error instanceof Error ? error.message : "merchant_id_rule_load_failed");
-      })
-      .finally(() => {
-        if (!cancelled) setMerchantIdRulesLoading(false);
-      });
-    return () => {
-      cancelled = true;
-      controller.abort();
-      window.clearTimeout(timeout);
-    };
-  }, [authed, hydrated]);
-
-  useEffect(() => {
-    if (!hydrated || !authed) return;
-    let cancelled = false;
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 8000);
     setBackendMerchantAccountsLoading(true);
     setBackendMerchantAccountsError("");
     fetch("/api/super-admin/merchant-accounts", {
@@ -1169,6 +1133,45 @@ export default function SuperAdminClient() {
       })
       .finally(() => {
         if (!cancelled) setBackendMerchantAccountsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+      controller.abort();
+      window.clearTimeout(timeout);
+    };
+  }, [authed, hydrated]);
+
+  useEffect(() => {
+    if (!hydrated || !authed) return;
+    let cancelled = false;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 8000);
+    setMerchantIdRulesLoading(true);
+    setMerchantIdRulesError("");
+    fetch("/api/super-admin/merchant-id-rules", {
+      method: "GET",
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`merchant_id_rule_http_${response.status}`);
+        }
+        const payload = (await response.json()) as { rules?: MerchantIdRule[] };
+        if (cancelled) return;
+        setMerchantIdRules(Array.isArray(payload.rules) ? sortMerchantIdRules(payload.rules) : []);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setMerchantIdRules([]);
+        if (error instanceof DOMException && error.name === "AbortError") {
+          setMerchantIdRulesError("merchant_id_rule_timeout");
+          return;
+        }
+        setMerchantIdRulesError(error instanceof Error ? error.message : "merchant_id_rule_load_failed");
+      })
+      .finally(() => {
+        if (!cancelled) setMerchantIdRulesLoading(false);
       });
     return () => {
       cancelled = true;
@@ -1815,6 +1818,7 @@ export default function SuperAdminClient() {
     setConfigPublishLimitMb(`${permission.publishSizeLimitMb}`);
     setConfigAllowInsertBackground(permission.allowInsertBackground);
     setConfigAllowThemeEffects(permission.allowThemeEffects);
+    setConfigAllowButtonBlock(permission.allowButtonBlock);
     setConfigAllowGalleryBlock(permission.allowGalleryBlock);
     setConfigAllowMusicBlock(permission.allowMusicBlock);
     setConfigAllowProductBlock(permission.allowProductBlock);
@@ -2822,6 +2826,9 @@ export default function SuperAdminClient() {
     if (prevPermission.allowThemeEffects !== configAllowThemeEffects) {
       pendingChanges.push(`主题效果：${formatBool(prevPermission.allowThemeEffects)} -> ${formatBool(configAllowThemeEffects)}`);
     }
+    if (prevPermission.allowButtonBlock !== configAllowButtonBlock) {
+      pendingChanges.push(`按钮区块：${formatBool(prevPermission.allowButtonBlock)} -> ${formatBool(configAllowButtonBlock)}`);
+    }
     if (prevPermission.allowGalleryBlock !== configAllowGalleryBlock) {
       pendingChanges.push(`相册区块：${formatBool(prevPermission.allowGalleryBlock)} -> ${formatBool(configAllowGalleryBlock)}`);
     }
@@ -2877,6 +2884,7 @@ export default function SuperAdminClient() {
         publishSizeLimitMb,
         allowInsertBackground: configAllowInsertBackground,
         allowThemeEffects: configAllowThemeEffects,
+        allowButtonBlock: configAllowButtonBlock,
         allowGalleryBlock: configAllowGalleryBlock,
         allowMusicBlock: configAllowMusicBlock,
         allowProductBlock: configAllowProductBlock,
@@ -4795,6 +4803,10 @@ export default function SuperAdminClient() {
                             ) : null}
                             <div className="grid grid-cols-2 gap-2">
                               <div className="rounded border px-3 py-2">
+                                <div className="text-slate-500">ID</div>
+                                <div className="font-medium">{selectedMerchantRow.merchantId || "-"}</div>
+                              </div>
+                              <div className="rounded border px-3 py-2">
                                 <div className="text-slate-500">名称</div>
                                 <div className="font-medium">{selectedMerchantRow.merchantName}</div>
                               </div>
@@ -4890,6 +4902,10 @@ export default function SuperAdminClient() {
                               <label className="flex items-center gap-2 rounded border px-2 py-1.5">
                                 <input type="checkbox" checked={configAllowThemeEffects} onChange={(e) => setConfigAllowThemeEffects(e.target.checked)} />
                                 主题效果
+                              </label>
+                              <label className="flex items-center gap-2 rounded border px-2 py-1.5">
+                                <input type="checkbox" checked={configAllowButtonBlock} onChange={(e) => setConfigAllowButtonBlock(e.target.checked)} />
+                                按钮区块
                               </label>
                               <label className="flex items-center gap-2 rounded border px-2 py-1.5">
                                 <input type="checkbox" checked={configAllowGalleryBlock} onChange={(e) => setConfigAllowGalleryBlock(e.target.checked)} />

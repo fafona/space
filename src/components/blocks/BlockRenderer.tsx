@@ -15,6 +15,7 @@ import MusicBlock from "./MusicBlock";
 import NavBlock from "./NavBlock";
 import ProductBlock from "./ProductBlock";
 import BookingBlock from "./BookingBlock";
+import ButtonBlock from "./ButtonBlock";
 import { getBlockRenderStackOrder } from "@/lib/blockStacking";
 
 class BlockRuntimeBoundary extends Component<{ blockId: string; children: ReactNode }, { hasError: boolean }> {
@@ -61,6 +62,9 @@ export default function BlockRenderer({
         switch (b.type) {
           case "common":
             content = <CommonBlock {...b.props} />;
+            break;
+          case "button":
+            content = <ButtonBlock {...b.props} onNavigatePage={onNavigatePage} />;
             break;
           case "gallery":
             content = <GalleryBlock {...b.props} />;
@@ -114,6 +118,8 @@ export default function BlockRenderer({
           <div
             key={b.id}
             className="relative"
+            id={b.id}
+            data-block-id={b.id}
             style={{ zIndex: getBlockRenderStackOrder(b, index, blocks.length) }}
           >
             <BlockRuntimeBoundary blockId={b.id}>

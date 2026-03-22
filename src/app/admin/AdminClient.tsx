@@ -16,6 +16,8 @@ import {
   type BlockBorderStyle,
   type BackgroundEditableProps,
   type Block,
+  type ButtonProps,
+  type CommonProps,
   type ImageFillMode,
   type MerchantCardTextLayoutConfig,
   type MerchantCardTextRole,
@@ -220,6 +222,7 @@ const FONT_FAMILY_OPTIONS = [
 const FONT_SIZE_OPTIONS = [12, 14, 16, 18, 20, 24, 28, 32, 36, 48];
 const BLOCK_TYPE_LABELS: Record<Block["type"], string> = {
   common: "通用",
+  button: "按钮",
   gallery: "相册",
   chart: "图表",
   nav: "导航",
@@ -292,6 +295,7 @@ function collectBookingOptionsFromPlanConfig(config: PagePlanConfig | null | und
 
 const MIN_BLOCK_WIDTH = 240;
 const MIN_BLOCK_HEIGHT = 120;
+const BUTTON_BLOCK_MIN_SIZE = 18;
 const NUDGE_STEP = 4;
 const HISTORY_LIMIT = 120;
 const DEFAULT_TIP_DURATION_MS = 2600;
@@ -1155,14 +1159,26 @@ const MERCHANT_ONBOARDING_BLOCKS: Block[] = (() => {
   ];
 })();
 
-function normalizeBlockWidth(value?: number) {
-  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
-  return Math.max(MIN_BLOCK_WIDTH, Math.round(value));
+function isCommonCanvasBlockType(type: Block["type"]): type is "common" | "button" {
+  return type === "common" || type === "button";
 }
 
-function normalizeBlockHeight(value?: number) {
+function getBlockMinWidth(type: Block["type"]) {
+  return type === "button" ? BUTTON_BLOCK_MIN_SIZE : MIN_BLOCK_WIDTH;
+}
+
+function getBlockMinHeight(type: Block["type"]) {
+  return type === "button" ? BUTTON_BLOCK_MIN_SIZE : MIN_BLOCK_HEIGHT;
+}
+
+function normalizeBlockWidth(value?: number, type: Block["type"] = "common") {
   if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
-  return Math.max(MIN_BLOCK_HEIGHT, Math.round(value));
+  return Math.max(getBlockMinWidth(type), Math.round(value));
+}
+
+function normalizeBlockHeight(value?: number, type: Block["type"] = "common") {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  return Math.max(getBlockMinHeight(type), Math.round(value));
 }
 
 function getBlockTypeLabel(type: string) {
@@ -4879,6 +4895,29 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       };
     }
 
+    if (type === "button") {
+      return {
+        id,
+        type,
+        props: {
+          blockWidth: 160,
+          blockHeight: 56,
+          commonTextBoxes: [
+            {
+              id: `button-text-${Date.now()}`,
+              html: "按钮",
+              x: 24,
+              y: 14,
+              width: 96,
+              height: 28,
+              rotateDeg: 0,
+            },
+          ],
+          buttonJumpTarget: "",
+        },
+      };
+    }
+
     if (type === "gallery") {
       return {
         id,
@@ -5144,6 +5183,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }
 
   function addBlock() {
+    if (!isPlatformEditor && newBlockType === "button" && !canUseButtonBlock) {
+      showTip("当前权限未开通按钮区块");
+      return;
+    }
     if (!isPlatformEditor && newBlockType === "gallery" && !canUseGalleryBlock) {
       showTip("当前权限未开通相册区块");
       return;
@@ -6071,7 +6114,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const canUseMusicBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowMusicBlock);
   const canUseProductBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowProductBlock);
   const canUseBookingBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowBookingBlock);
+  const canUseButtonBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowButtonBlock);
   const isCurrentBlockTypeLocked =
+    (!canUseButtonBlock && newBlockType === "button") ||
     (!canUseGalleryBlock && newBlockType === "gallery") ||
     (!canUseMusicBlock && newBlockType === "music") ||
     (!canUseProductBlock && newBlockType === "product") ||
@@ -6491,6 +6536,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                       onChange={(e) => setNewBlockType(e.target.value as Block["type"])}
                     >
                       <option value="common">{"通用"}</option>
+                      <option value="button" disabled={!canUseButtonBlock}>{"按钮"}{!canUseButtonBlock ? "（未开通）" : ""}</option>
                       <option value="gallery" disabled={!canUseGalleryBlock}>{"相册"}{!canUseGalleryBlock ? "（未开通）" : ""}</option>
                       <option value="chart">{"图表"}</option>
                       <option value="nav">{"导航"}</option>
@@ -7577,6 +7623,8 @@ type GalleryEditorImage = {
   const [draftResize, setDraftResize] = useState<{ width?: number; height?: number; offsetX?: number; offsetY?: number } | null>(null);
   const [commonInsertMode, setCommonInsertMode] = useState(false);
   const [activeCommonTextBoxId, setActiveCommonTextBoxId] = useState<string | null>(null);
+  const [buttonJumpDialogOpen, setButtonJumpDialogOpen] = useState(false);
+  const [buttonJumpTargetInput, setButtonJumpTargetInput] = useState("");
   const [galleryEditorOpen, setGalleryEditorOpen] = useState(false);
   const [previewNavPageId, setPreviewNavPageId] = useState(currentPageId);
   const [layoutPanelOpen, setLayoutPanelOpen] = useState(false);
@@ -7923,6 +7971,7 @@ type GalleryEditorImage = {
   const hasOverlayOpen =
     imageDialogOpen ||
     typographyDialogOpen ||
+    buttonJumpDialogOpen ||
     imageSettingsOpen ||
     borderSettingsOpen ||
     navItemStyleDialogOpen ||
@@ -7973,6 +8022,7 @@ type GalleryEditorImage = {
     setCustomLayoutDialogOpen(false);
     setCommonInsertMode(false);
     setActiveCommonTextBoxId(null);
+    setButtonJumpDialogOpen(false);
     galleryDragRef.current = null;
     setActiveGalleryImageId(null);
     commonBoxDragRef.current = null;
@@ -7984,10 +8034,11 @@ type GalleryEditorImage = {
   }, [isSelected, onResizePreview]);
 
   useEffect(() => {
-    if (block.type !== "common") return;
+    if (!isCommonCanvasBlockType(block.type)) return;
+    const commonProps = block.props as CommonProps | ButtonProps;
 
     const readBoxes = (): CommonEditorTextBox[] => {
-      const fromBoxes = Array.isArray(block.props.commonTextBoxes) ? block.props.commonTextBoxes : [];
+      const fromBoxes = Array.isArray(commonProps.commonTextBoxes) ? commonProps.commonTextBoxes : [];
       if (fromBoxes.length > 0) {
         return fromBoxes.map((item) => ({
           id: item.id,
@@ -7999,13 +8050,13 @@ type GalleryEditorImage = {
         rotateDeg: Number.isFinite(item.rotateDeg) ? Number(item.rotateDeg) : 0,
       }));
       }
-      const legacyItems = Array.isArray(block.props.commonItems)
-        ? block.props.commonItems.map((item) => item.trim()).filter(Boolean)
+      const legacyItems = Array.isArray(commonProps.commonItems)
+        ? commonProps.commonItems.map((item) => item.trim()).filter(Boolean)
         : [];
       const fallbackItems =
         legacyItems.length > 0
           ? legacyItems
-          : [block.props.heading, block.props.text].map((item) => (item ?? "").trim()).filter(Boolean);
+          : [commonProps.heading, commonProps.text].map((item) => (item ?? "").trim()).filter(Boolean);
       return fallbackItems.map((item, idx) => ({
         id: `legacy-${idx}`,
         html: item,
@@ -8302,20 +8353,20 @@ type GalleryEditorImage = {
       const resizeFromBottom = direction === "bottom";
 
       if (resizeFromLeft) {
-        latestWidth = Math.max(MIN_BLOCK_WIDTH, startWidth - deltaX);
+        latestWidth = Math.max(getBlockMinWidth(block.type), startWidth - deltaX);
         latestOffsetX = Math.round(startOffsetX + (startWidth - latestWidth));
       } else if (resizeFromRight) {
-        latestWidth = Math.max(MIN_BLOCK_WIDTH, startWidth + deltaX);
+        latestWidth = Math.max(getBlockMinWidth(block.type), startWidth + deltaX);
         latestOffsetX = startOffsetX;
       } else {
         latestWidth = startWidth;
       }
 
       if (resizeFromTop) {
-        latestHeight = Math.max(MIN_BLOCK_HEIGHT, startHeight - deltaY);
+        latestHeight = Math.max(getBlockMinHeight(block.type), startHeight - deltaY);
         latestOffsetY = Math.round(startOffsetY + (startHeight - latestHeight));
       } else if (resizeFromBottom) {
-        latestHeight = Math.max(MIN_BLOCK_HEIGHT, startHeight + deltaY);
+        latestHeight = Math.max(getBlockMinHeight(block.type), startHeight + deltaY);
         latestOffsetY = startOffsetY;
       } else {
         latestHeight = startHeight;
@@ -8335,8 +8386,8 @@ type GalleryEditorImage = {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
       const patch: Partial<Block["props"]> = {};
-      const nextWidth = normalizeBlockWidth(Math.round(latestWidth));
-      const nextHeight = normalizeBlockHeight(Math.round(latestHeight));
+      const nextWidth = normalizeBlockWidth(Math.round(latestWidth), block.type);
+      const nextHeight = normalizeBlockHeight(Math.round(latestHeight), block.type);
       if (direction === "left" || direction === "right") {
         patch.blockWidth = nextWidth;
       }
@@ -8579,7 +8630,7 @@ type GalleryEditorImage = {
     const commonBoxId = editor.dataset.commonBoxId?.trim();
     const fieldName = editor.dataset.field as RichFieldName | undefined;
 
-    if (block.type === "common" && commonBoxId) {
+    if (isCommonCanvasBlockType(block.type) && commonBoxId) {
       updateCommonTextBox(commonBoxId, { html: editor.innerHTML });
     } else {
       const contentPatch = fieldName ? getRichFieldPatch(fieldName, editor.innerHTML) : null;
@@ -8843,8 +8894,9 @@ type GalleryEditorImage = {
   }
 
   function getCommonTextBoxes(): CommonEditorTextBox[] {
-    if (block.type !== "common") return [];
-    const fromBoxes = Array.isArray(block.props.commonTextBoxes) ? block.props.commonTextBoxes : [];
+    if (!isCommonCanvasBlockType(block.type)) return [];
+    const commonProps = block.props as CommonProps | ButtonProps;
+    const fromBoxes = Array.isArray(commonProps.commonTextBoxes) ? commonProps.commonTextBoxes : [];
     if (fromBoxes.length > 0) {
       return fromBoxes
         .filter((item) => item && typeof item.id === "string")
@@ -8858,7 +8910,7 @@ type GalleryEditorImage = {
           rotateDeg: Number.isFinite(item.rotateDeg) ? Number(item.rotateDeg) : 0,
         }));
     }
-    const legacyItems = Array.isArray(block.props.commonItems) ? block.props.commonItems.map((item) => item.trim()).filter(Boolean) : [];
+    const legacyItems = Array.isArray(commonProps.commonItems) ? commonProps.commonItems.map((item) => item.trim()).filter(Boolean) : [];
     const fallbackItems = legacyItems;
     return fallbackItems.map((item, idx) => ({
       id: `legacy-${idx}`,
@@ -8872,7 +8924,7 @@ type GalleryEditorImage = {
   }
 
   function commitCommonTextBoxes(nextBoxes: CommonEditorTextBox[]) {
-    if (block.type !== "common") return;
+    if (!isCommonCanvasBlockType(block.type)) return;
     onChange({
       commonTextBoxes: nextBoxes,
       commonItems: undefined,
@@ -8882,13 +8934,13 @@ type GalleryEditorImage = {
   }
 
   function updateCommonTextBox(id: string, patch: Partial<CommonEditorTextBox>) {
-    if (block.type !== "common") return;
+    if (!isCommonCanvasBlockType(block.type)) return;
     const next = getCommonTextBoxes().map((item) => (item.id === id ? { ...item, ...patch } : item));
     commitCommonTextBoxes(next);
   }
 
   function deleteCommonTextBox(id: string) {
-    if (block.type !== "common") return;
+    if (!isCommonCanvasBlockType(block.type)) return;
     const next = getCommonTextBoxes().filter((item) => item.id !== id);
     commitCommonTextBoxes(next);
     if (activeCommonTextBoxId === id) {
@@ -8897,7 +8949,7 @@ type GalleryEditorImage = {
   }
 
   function insertTextBox() {
-    if (block.type === "common") {
+    if (isCommonCanvasBlockType(block.type)) {
       setCommonInsertMode(true);
       setActiveCommonTextBoxId(null);
       return;
@@ -8912,7 +8964,7 @@ type GalleryEditorImage = {
   }
 
   function handleCommonCanvasMouseDown(event: ReactMouseEvent<HTMLDivElement>) {
-    if (block.type !== "common") return;
+    if (!isCommonCanvasBlockType(block.type)) return;
     if (!commonInsertMode) return;
     const target = event.target as HTMLElement | null;
     if (target?.closest("[data-common-box]")) return;
@@ -8939,7 +8991,7 @@ type GalleryEditorImage = {
   }
 
   function startCommonBoxDrag(box: CommonEditorTextBox, event: ReactMouseEvent<HTMLElement>) {
-    if (block.type !== "common") return;
+    if (!isCommonCanvasBlockType(block.type)) return;
     event.preventDefault();
     event.stopPropagation();
     setActiveCommonTextBoxId(box.id);
@@ -8957,7 +9009,7 @@ type GalleryEditorImage = {
     mode: "left" | "right" | "top" | "bottom" | "top-left" | "top-right" | "bottom-left" | "bottom-right",
     event: ReactMouseEvent<HTMLDivElement>,
   ) {
-    if (block.type !== "common") return;
+    if (!isCommonCanvasBlockType(block.type)) return;
     event.preventDefault();
     event.stopPropagation();
     setActiveCommonTextBoxId(box.id);
@@ -8974,7 +9026,7 @@ type GalleryEditorImage = {
   }
 
   function startCommonBoxRotate(box: CommonEditorTextBox, event: ReactMouseEvent<HTMLElement>) {
-    if (block.type !== "common") return;
+    if (!isCommonCanvasBlockType(block.type)) return;
     event.preventDefault();
     event.stopPropagation();
     const canvas = commonCanvasRef.current;
@@ -8990,6 +9042,20 @@ type GalleryEditorImage = {
       startRotateDeg: box.rotateDeg,
     };
     setActiveCommonTextBoxId(box.id);
+  }
+
+  function openButtonJumpDialog() {
+    if (block.type !== "button") return;
+    setButtonJumpTargetInput((block.props.buttonJumpTarget ?? "").trim());
+    setButtonJumpDialogOpen(true);
+  }
+
+  function applyButtonJumpTarget() {
+    if (block.type !== "button") return;
+    onChange({
+      buttonJumpTarget: buttonJumpTargetInput.trim() || undefined,
+    });
+    setButtonJumpDialogOpen(false);
   }
 
   function editBorderSettings() {
@@ -10557,7 +10623,48 @@ type GalleryEditorImage = {
     </div>
   ) : null;
 
-  if (block.type === "common") {
+  const buttonJumpDialog =
+    buttonJumpDialogOpen && block.type === "button"
+      ? renderOverlay(
+          <div data-editor-overlay className="fixed inset-0 z-[12000] bg-black/40 flex items-center justify-center p-4">
+            <div className="w-full max-w-lg rounded-xl border bg-white p-4 space-y-3">
+              <div className="text-sm font-semibold">{"跳转目标"}</div>
+              <div className="space-y-1">
+                <div className="text-xs text-gray-600">{"支持区块 ID、锚点、页面或路径"}</div>
+                <input
+                  className="w-full rounded border px-3 py-2 text-sm"
+                  value={buttonJumpTargetInput}
+                  onChange={(event) => setButtonJumpTargetInput(event.target.value)}
+                  placeholder={"例如：#section-1 / page:page-2 / /site/10000000"}
+                  autoFocus
+                />
+              </div>
+              <div className="flex flex-wrap justify-end gap-2">
+                <button
+                  className="px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm"
+                  onClick={() => setButtonJumpDialogOpen(false)}
+                >
+                  {"取消"}
+                </button>
+                <button
+                  className="px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm"
+                  onClick={() => setButtonJumpTargetInput("")}
+                >
+                  {"清空"}
+                </button>
+                <button
+                  className="px-3 py-2 rounded bg-black text-white text-sm"
+                  onClick={applyButtonJumpTarget}
+                >
+                  {"确认"}
+                </button>
+              </div>
+            </div>
+          </div>,
+        )
+      : null;
+
+  if (isCommonCanvasBlockType(block.type)) {
     const commonBoxes = getCommonTextBoxes();
     return (
       <section data-block-id={block.id} className={`${shellClass} pointer-events-none`} style={offsetStyle}>
@@ -10570,6 +10677,7 @@ type GalleryEditorImage = {
           onEditTypography={editTypography}
           onInsertText={insertTextBox}
           onInsertImage={insertImage}
+          onConfigureJump={block.type === "button" ? openButtonJumpDialog : undefined}
           onEditImageSettings={editImageSettings}
           onEditBorderStyle={editBorderSettings}
           onDelete={onDelete}
@@ -10585,6 +10693,7 @@ type GalleryEditorImage = {
           {borderSettingsDialog}
           {layerSettingsDialog}
           {typographyDialog}
+          {buttonJumpDialog}
           <div
             ref={commonCanvasRef}
             className={`mt-2 relative min-h-[280px] rounded overflow-visible ${isSelected && commonInsertMode ? "cursor-crosshair" : ""}`}
@@ -17464,6 +17573,7 @@ function EditorBlockHeader({
   onEditTypography,
   onInsertText,
   onInsertImage,
+  onConfigureJump,
   onEditImageSettings,
   onEditBorderStyle,
   onDelete,
@@ -17478,6 +17588,7 @@ function EditorBlockHeader({
   onEditTypography: () => void;
   onInsertText: () => void;
   onInsertImage: () => void;
+  onConfigureJump?: (() => void) | undefined;
   onEditImageSettings: () => void;
   onEditBorderStyle: () => void;
   onDelete: () => void;
@@ -17579,6 +17690,17 @@ function EditorBlockHeader({
             >
               {"插入图片"}
             </button>
+            {onConfigureJump ? (
+              <button
+                className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50 shrink-0 whitespace-nowrap"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onConfigureJump();
+                }}
+              >
+                {"跳转"}
+              </button>
+            ) : null}
             <button
               className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50 shrink-0 whitespace-nowrap"
               onClick={(e) => {
