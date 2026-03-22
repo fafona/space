@@ -138,23 +138,25 @@ function getPlanTemplatePreviewOptions(rawBlocks: unknown): PlanTemplatePreviewO
 
 function buildBackendOnlySite(account: BackendMerchantAccount): Site {
   const timestamp = account.createdAt ?? nextIsoNow();
+  const normalizedMerchantId = normalizeMerchantIdValue(account.merchantId);
   const publishedPrefix = normalizePublishedSitePrefix(account.siteSlug);
+  const merchantLabel = account.merchantName || account.username || account.loginId || account.email || account.merchantId || "";
   return {
-    id: `backend-${account.merchantId || account.email || "merchant"}`,
+    id: normalizedMerchantId || `backend-${account.merchantId || account.email || "merchant"}`,
     tenantId: "backend-only",
-    merchantName: "",
+    merchantName: merchantLabel,
     domainPrefix: publishedPrefix,
     domainSuffix: publishedPrefix,
     contactAddress: "",
     contactName: "",
     contactPhone: "",
     contactEmail: account.email,
-    name: "",
-    domain: "",
+    name: merchantLabel,
+    domain: buildMerchantFrontendHref(normalizedMerchantId || account.merchantId, publishedPrefix),
     categoryId: "unlinked",
-    category: "未建站",
+    category: account.hasPublishedSite ? "已建站" : "未建站",
     industry: "",
-    status: "offline",
+    status: account.hasPublishedSite ? "online" : "offline",
     publishedVersion: 0,
     lastPublishedAt: null,
     features: createFeaturePackage("basic"),
@@ -835,6 +837,7 @@ type PortalDraft = {
 type MerchantUserRow = {
   site: Site;
   hasSite: boolean;
+  hasLocalSite: boolean;
   backendAccount: BackendMerchantAccount | null;
   merchantId: string;
   loginAccount: string;
@@ -1215,7 +1218,8 @@ export default function SuperAdminClient() {
       const publishedPrefix = normalizePublishedSitePrefix(account.siteSlug);
       return {
         site: matchedSite ?? buildBackendOnlySite(account),
-        hasSite: Boolean(matchedSite),
+        hasSite: hasPublishedSite,
+        hasLocalSite: Boolean(matchedSite),
         backendAccount: account,
         merchantId,
         loginAccount: account.username || account.loginId || account.email || "-",
@@ -1257,7 +1261,9 @@ export default function SuperAdminClient() {
     [merchantRows, userKeyword],
   );
   const planTemplateTargetSite =
-    state.sites.find((site) => site.id === planTemplateTargetSiteId) ?? null;
+    merchantRows.find((row) => row.site.id === planTemplateTargetSiteId)?.site ??
+    state.sites.find((site) => site.id === planTemplateTargetSiteId) ??
+    null;
   const planTemplateApplyTemplate = planTemplateApplyDialog
     ? state.planTemplates.find((template) => template.id === planTemplateApplyDialog.templateId) ?? null
     : null;
@@ -1376,7 +1382,11 @@ export default function SuperAdminClient() {
   }, [clampedMerchantTablePage, displayMerchantRows]);
   const selectedMerchantRow =
     merchantRows.find((item) => item.site.id === merchantDetailSiteId) ?? filteredMerchantRows[0] ?? merchantRows[0] ?? null;
-  const selectedMerchantSite = selectedMerchantRow?.hasSite ? selectedMerchantRow.site : null;
+  const selectedMerchantDisplaySite = selectedMerchantRow?.site ?? null;
+  const selectedMerchantSite =
+    selectedMerchantRow?.hasLocalSite
+      ? state.sites.find((site) => site.id === selectedMerchantRow.site.id) ?? selectedMerchantRow.site
+      : null;
   const selectedMerchantConfigHistory = selectedMerchantSite?.configHistory ?? [];
   const merchantDefaultSortRule = state.homeLayout.merchantDefaultSortRule;
   const merchantVisit30BySiteId = useMemo(
@@ -3909,22 +3919,26 @@ export default function SuperAdminClient() {
                                     {row.hasSite ? (
                                       <>
                                         <Link
-                                          href={buildMerchantFrontendHref(row.site.id, row.site.domainPrefix ?? row.site.domainSuffix)}
+                                          href={buildMerchantFrontendHref(row.merchantId, row.site.domainPrefix ?? row.site.domainSuffix)}
                                           target="_blank"
                                           rel="noreferrer"
                                           className="rounded border px-2 py-1"
                                         >
                                           查看前台
                                         </Link>
-                                        <button className="rounded border px-2 py-1" onClick={() => toggleMerchantServiceAction(row.site.id)}>
-                                          {row.site.status === "online" ? "暂停服务" : "开启服务"}
-                                        </button>
-                                        <button
-                                          className="rounded border px-2 py-1"
-                                          onClick={() => openMerchantConfigPanel(row.site)}
-                                        >
-                                          配置
-                                        </button>
+                                        {row.hasLocalSite ? (
+                                          <>
+                                            <button className="rounded border px-2 py-1" onClick={() => toggleMerchantServiceAction(row.site.id)}>
+                                              {row.site.status === "online" ? "暂停服务" : "开启服务"}
+                                            </button>
+                                            <button
+                                              className="rounded border px-2 py-1"
+                                              onClick={() => openMerchantConfigPanel(row.site)}
+                                            >
+                                              配置
+                                            </button>
+                                          </>
+                                        ) : null}
                                         <button
                                           className="rounded border px-2 py-1"
                                           onClick={() => openPlanTemplateDialogForSite(row.site)}
@@ -4606,6 +4620,10 @@ export default function SuperAdminClient() {
                               <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-amber-800">
                                 该账号已注册并已进入后端商户数据，但还没有创建站点，所以不会出现在原有站点列表逻辑里。
                               </div>
+                            ) : !selectedMerchantRow.hasLocalSite ? (
+                              <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-amber-800">
+                                该商户已有线上站点，但当前浏览器里没有对应的本地配置记录；可以查看前台、收录方案、应用模板，配置和服务开关会先隐藏。
+                              </div>
                             ) : null}
                             <div className="grid grid-cols-2 gap-2">
                               <div className="rounded border px-3 py-2">
@@ -4618,7 +4636,7 @@ export default function SuperAdminClient() {
                               </div>
                               <div className="rounded border px-3 py-2">
                                 <div className="text-slate-500">域名</div>
-                                <div className="truncate font-medium">{selectedMerchantSite?.domain || "-"}</div>
+                                <div className="truncate font-medium">{selectedMerchantDisplaySite?.domain || "-"}</div>
                               </div>
                               <div className="rounded border px-3 py-2">
                                 <div className="text-slate-500">行业</div>
@@ -4627,24 +4645,24 @@ export default function SuperAdminClient() {
                               <div className="rounded border px-3 py-2">
                                 <div className="text-slate-500">国家 / 省 / 城市</div>
                                 <div>
-                                  {(selectedMerchantSite?.location.country || "-")} / {(selectedMerchantSite?.location.province || "-")} / {(selectedMerchantSite?.location.city || "-")}
+                                  {(selectedMerchantDisplaySite?.location.country || "-")} / {(selectedMerchantDisplaySite?.location.province || "-")} / {(selectedMerchantDisplaySite?.location.city || "-")}
                                 </div>
                               </div>
                               <div className="rounded border px-3 py-2">
                                 <div className="text-slate-500">地址</div>
-                                <div>{selectedMerchantSite?.contactAddress || "-"}</div>
+                                <div>{selectedMerchantDisplaySite?.contactAddress || "-"}</div>
                               </div>
                               <div className="rounded border px-3 py-2">
                                 <div className="text-slate-500">联系人</div>
-                                <div>{selectedMerchantSite?.contactName || "-"}</div>
+                                <div>{selectedMerchantDisplaySite?.contactName || "-"}</div>
                               </div>
                               <div className="rounded border px-3 py-2">
                                 <div className="text-slate-500">电话</div>
-                                <div>{selectedMerchantSite?.contactPhone || "-"}</div>
+                                <div>{selectedMerchantDisplaySite?.contactPhone || "-"}</div>
                               </div>
                               <div className="rounded border px-3 py-2">
                                 <div className="text-slate-500">邮箱</div>
-                                <div>{selectedMerchantSite?.contactEmail || selectedMerchantRow.userEmail || "-"}</div>
+                                <div>{selectedMerchantDisplaySite?.contactEmail || selectedMerchantRow.userEmail || "-"}</div>
                               </div>
                               <div className="rounded border px-3 py-2">
                                 <div className="text-slate-500">体积</div>
