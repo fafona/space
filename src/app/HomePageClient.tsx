@@ -104,6 +104,7 @@ export default function HomePageClient({
     activePlan?.pages?.find((page) => page.id === resolvedPageId) ??
     activePlan?.pages?.find((page) => page.id === activePlan.activePageId) ??
     activePlan?.pages?.[0];
+  const activePageIndex = Math.max(0, activePlan?.pages?.findIndex((page) => page.id === activePage?.id) ?? 0);
   const activeBlocks = cloneBlocks(activePage?.blocks ?? activePlan?.blocks ?? sourceBlocks);
   const hostMatchedSite = useMemo(() => {
     if (typeof window === "undefined") return null;
@@ -190,6 +191,7 @@ export default function HomePageClient({
       <BlockRenderer
         blocks={activeBlocks}
         currentPageId={activePage?.id}
+        currentPageIndex={activePageIndex}
         bookingSiteId=""
         bookingSiteName={platformState.sites.find((site) => site.id === "site-main")?.merchantName ?? "总站首页"}
         bookingInteractive={false}

@@ -17,6 +17,7 @@ import ProductBlock from "./ProductBlock";
 import BookingBlock from "./BookingBlock";
 import ButtonBlock from "./ButtonBlock";
 import { getBlockRenderStackOrder } from "@/lib/blockStacking";
+import { buildPublicBlockId } from "@/lib/blockPublicId";
 
 class BlockRuntimeBoundary extends Component<{ blockId: string; children: ReactNode }, { hasError: boolean }> {
   constructor(props: { blockId: string; children: ReactNode }) {
@@ -41,6 +42,7 @@ class BlockRuntimeBoundary extends Component<{ blockId: string; children: ReactN
 export default function BlockRenderer({
   blocks,
   currentPageId,
+  currentPageIndex = 0,
   onNavigatePage,
   bookingSiteId,
   bookingSiteName,
@@ -48,6 +50,7 @@ export default function BlockRenderer({
 }: {
   blocks: Block[];
   currentPageId?: string;
+  currentPageIndex?: number;
   onNavigatePage?: (pageId: string) => void;
   bookingSiteId?: string;
   bookingSiteName?: string;
@@ -58,6 +61,7 @@ export default function BlockRenderer({
   return (
     <>
       {blocks.map((b, index) => {
+        const publicBlockId = buildPublicBlockId(currentPageIndex, index);
         let content: ReactNode = null;
         switch (b.type) {
           case "common":
@@ -118,8 +122,10 @@ export default function BlockRenderer({
           <div
             key={b.id}
             className="relative"
-            id={b.id}
+            id={publicBlockId}
             data-block-id={b.id}
+            data-jump-target={publicBlockId}
+            data-block-public-id={publicBlockId}
             style={{ zIndex: getBlockRenderStackOrder(b, index, blocks.length) }}
           >
             <BlockRuntimeBoundary blockId={b.id}>

@@ -70,6 +70,7 @@ import {
   type PagePlanConfig,
   type PlanId,
 } from "@/lib/pagePlans";
+import { buildPublicBlockId } from "@/lib/blockPublicId";
 import { countInlineAssets, hasInlineAssets } from "@/lib/inlineAssetStats";
 import {
   PLAN_TEMPLATE_FILTER_OPTIONS,
@@ -6091,6 +6092,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const editingPages = editingPlan?.pages?.length
     ? editingPlan.pages
     : [{ id: "page-1", name: "页面1", blocks: editingPlan?.blocks ?? defaultEditorBlocks }];
+  const editingPageIndex = Math.max(0, editingPages.findIndex((page) => page.id === editingPageId));
   const imageCompressionOptions = getCurrentImageCompressionOptions();
   const selectedBlock = blocks.find((item) => item.id === selectedId) ?? null;
   const selectedBlockLocked = selectedBlock?.props.blockLocked === true;
@@ -6645,6 +6647,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                       <BlockRenderer
                         blocks={blocks}
                         currentPageId={editingPageId}
+                        currentPageIndex={editingPageIndex}
                         bookingSiteId={editingSiteId || ""}
                         bookingSiteName={merchantDisplayName}
                         bookingInteractive={false}
@@ -6680,6 +6683,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                           <div key={block.id} className="relative" style={{ zIndex: wrapperStackOrder }}>
                             <InlineEditorBlock
                               block={block}
+                              publicBlockId={buildPublicBlockId(editingPageIndex, index)}
                               draggingBlockId={draggingBlockId}
                               isSelected={block.id === selectedId}
                               onDragHandleMouseDown={(point) => startDraggingBlock(block.id, point)}
@@ -6742,6 +6746,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                   <div key={block.id} className="relative" style={{ zIndex: wrapperStackOrder }}>
                     <InlineEditorBlock
                       block={block}
+                      publicBlockId={buildPublicBlockId(editingPageIndex, index)}
                       draggingBlockId={draggingBlockId}
                       isSelected={block.id === selectedId}
                       onDragHandleMouseDown={(point) => startDraggingBlock(block.id, point)}
@@ -7451,6 +7456,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
 function InlineEditorBlock({
   block,
+  publicBlockId,
   draggingBlockId,
   isSelected,
   onDragHandleMouseDown,
@@ -7481,6 +7487,7 @@ function InlineEditorBlock({
   runtimeSiteName = "",
 }: {
   block: Block;
+  publicBlockId: string;
   draggingBlockId: string | null;
   isSelected: boolean;
   onDragHandleMouseDown: (point: { x: number; y: number }) => void;
@@ -10692,12 +10699,13 @@ type GalleryEditorImage = {
                   className="w-full rounded border px-3 py-2 text-sm"
                   value={buttonJumpTargetInput}
                   onChange={(event) => setButtonJumpTargetInput(event.target.value)}
-                  placeholder={"例如：#区块ID / page:页面ID / /site/10000000 / https://example.com"}
+                  placeholder={"例如：#0101 / page:页面ID / /site/10000000 / https://example.com"}
                   autoFocus
                 />
               </div>
               <div className="rounded-lg border bg-slate-50 p-3 text-xs text-slate-600 space-y-2">
-                <div>{"锚点：滚动到当前页面某个区块。填写 `#区块ID`，也可以直接填区块 ID。"}</div>
+                <div>{"区块 ID 规则：页面两位 + 区块两位，例如页面1的第1个区块是 `0101`。"}</div>
+                <div>{"锚点：滚动到当前页面某个区块。填写 `#0101`，也可以直接填 `0101`。"}</div>
                 <div>{"页面：切换到本站其他页面，格式是 `page:页面ID`，这里的页面不是链接地址。"}</div>
                 <div>{"路径：打开站内地址或完整网址。站内路径来源就是浏览器地址栏里域名后面的部分，例如 `/site/10000000`。"}</div>
               </div>
@@ -10769,9 +10777,15 @@ type GalleryEditorImage = {
     }
 
     return (
-      <section data-block-id={block.id} className={`${shellClass} pointer-events-none`} style={offsetStyle}>
+      <section
+        data-block-id={block.id}
+        data-jump-target={publicBlockId}
+        data-block-public-id={publicBlockId}
+        className={`${shellClass} pointer-events-none`}
+        style={offsetStyle}
+      >
         <EditorBlockHeader
-          blockId={block.id}
+          blockId={publicBlockId}
           draggingBlockId={draggingBlockId}
           isSelected={isSelected}
           onDragHandleMouseDown={onDragHandleMouseDown}
@@ -10827,9 +10841,15 @@ type GalleryEditorImage = {
   if (isCommonCanvasBlockType(block.type)) {
     const commonBoxes = getCommonTextBoxes();
     return (
-      <section data-block-id={block.id} className={`${shellClass} pointer-events-none`} style={offsetStyle}>
+      <section
+        data-block-id={block.id}
+        data-jump-target={publicBlockId}
+        data-block-public-id={publicBlockId}
+        className={`${shellClass} pointer-events-none`}
+        style={offsetStyle}
+      >
         <EditorBlockHeader
-          blockId={block.id}
+          blockId={publicBlockId}
           draggingBlockId={draggingBlockId}
           isSelected={isSelected}
           onDragHandleMouseDown={onDragHandleMouseDown}
@@ -11237,9 +11257,15 @@ type GalleryEditorImage = {
       </div>
     );
     return (
-      <section data-block-id={block.id} className={`${shellClass} pointer-events-none`} style={offsetStyle}>
+      <section
+        data-block-id={block.id}
+        data-jump-target={publicBlockId}
+        data-block-public-id={publicBlockId}
+        className={`${shellClass} pointer-events-none`}
+        style={offsetStyle}
+      >
         <EditorBlockHeader
-          blockId={block.id}
+          blockId={publicBlockId}
           draggingBlockId={draggingBlockId}
           isSelected={isSelected}
           onDragHandleMouseDown={onDragHandleMouseDown}
@@ -11796,9 +11822,15 @@ type GalleryEditorImage = {
           : { ...blockSizeStyle, width: "max-content", maxWidth: "100%" }
         : blockSizeStyle;
     return (
-      <section data-block-id={block.id} className={`${shellClass} pointer-events-none`} style={offsetStyle}>
+      <section
+        data-block-id={block.id}
+        data-jump-target={publicBlockId}
+        data-block-public-id={publicBlockId}
+        className={`${shellClass} pointer-events-none`}
+        style={offsetStyle}
+      >
         <EditorBlockHeader
-          blockId={block.id}
+          blockId={publicBlockId}
           draggingBlockId={draggingBlockId}
           isSelected={isSelected}
           onDragHandleMouseDown={onDragHandleMouseDown}
@@ -11975,9 +12007,15 @@ type GalleryEditorImage = {
     const chartType = block.props.chartType ?? "bar";
 
     return (
-      <section data-block-id={block.id} className={`${shellClass} pointer-events-none`} style={offsetStyle}>
+      <section
+        data-block-id={block.id}
+        data-jump-target={publicBlockId}
+        data-block-public-id={publicBlockId}
+        className={`${shellClass} pointer-events-none`}
+        style={offsetStyle}
+      >
         <EditorBlockHeader
-          blockId={block.id}
+          blockId={publicBlockId}
           draggingBlockId={draggingBlockId}
           isSelected={isSelected}
           onDragHandleMouseDown={onDragHandleMouseDown}
@@ -12137,11 +12175,13 @@ type GalleryEditorImage = {
     return (
       <section
         data-block-id={block.id}
+        data-jump-target={publicBlockId}
+        data-block-public-id={publicBlockId}
         className={`${shellClass} pointer-events-none`}
         style={offsetStyle}
       >
         <EditorBlockHeader
-          blockId={block.id}
+          blockId={publicBlockId}
           draggingBlockId={draggingBlockId}
           isSelected={isSelected}
           onDragHandleMouseDown={onDragHandleMouseDown}
@@ -12257,11 +12297,13 @@ type GalleryEditorImage = {
       <section
         ref={resizeTargetRef}
         data-block-id={block.id}
+        data-jump-target={publicBlockId}
+        data-block-public-id={publicBlockId}
         className={`${shellClass} pointer-events-none relative rounded-xl overflow-visible ${borderClass}`}
         style={{ ...blockBackgroundStyle, ...blockSizeStyle, ...offsetStyle, ...borderInlineStyle }}
       >
         <EditorBlockHeader
-          blockId={block.id}
+          blockId={publicBlockId}
           draggingBlockId={draggingBlockId}
           isSelected={isSelected}
           onDragHandleMouseDown={onDragHandleMouseDown}
@@ -12322,11 +12364,13 @@ type GalleryEditorImage = {
     return (
       <section
         data-block-id={block.id}
+        data-jump-target={publicBlockId}
+        data-block-public-id={publicBlockId}
         className={`${shellClass} pointer-events-none`}
         style={offsetStyle}
       >
         <EditorBlockHeader
-          blockId={block.id}
+          blockId={publicBlockId}
           draggingBlockId={draggingBlockId}
           isSelected={isSelected}
           onDragHandleMouseDown={onDragHandleMouseDown}
@@ -12396,11 +12440,13 @@ type GalleryEditorImage = {
     return (
       <section
         data-block-id={block.id}
+        data-jump-target={publicBlockId}
+        data-block-public-id={publicBlockId}
         className={`${shellClass} pointer-events-none`}
         style={offsetStyle}
       >
         <EditorBlockHeader
-          blockId={block.id}
+          blockId={publicBlockId}
           draggingBlockId={draggingBlockId}
           isSelected={isSelected}
           onDragHandleMouseDown={onDragHandleMouseDown}
@@ -13448,9 +13494,15 @@ type GalleryEditorImage = {
         : null;
 
     return (
-      <section data-block-id={block.id} className={`${shellClass} pointer-events-none`} style={offsetStyle}>
+      <section
+        data-block-id={block.id}
+        data-jump-target={publicBlockId}
+        data-block-public-id={publicBlockId}
+        className={`${shellClass} pointer-events-none`}
+        style={offsetStyle}
+      >
         <EditorBlockHeader
-          blockId={block.id}
+          blockId={publicBlockId}
           draggingBlockId={draggingBlockId}
           isSelected={isSelected}
           onDragHandleMouseDown={onDragHandleMouseDown}
@@ -15099,11 +15151,13 @@ type GalleryEditorImage = {
     return (
       <section
         data-block-id={block.id}
+        data-jump-target={publicBlockId}
+        data-block-public-id={publicBlockId}
         className={`${shellClass} pointer-events-none`}
         style={offsetStyle}
       >
         <EditorBlockHeader
-          blockId={block.id}
+          blockId={publicBlockId}
           draggingBlockId={draggingBlockId}
           isSelected={isSelected}
           onDragHandleMouseDown={onDragHandleMouseDown}
@@ -16040,11 +16094,13 @@ type GalleryEditorImage = {
     return (
       <section
         data-block-id={block.id}
+        data-jump-target={publicBlockId}
+        data-block-public-id={publicBlockId}
         className={`${shellClass} pointer-events-none`}
         style={offsetStyle}
       >
         <EditorBlockHeader
-          blockId={block.id}
+          blockId={publicBlockId}
           draggingBlockId={draggingBlockId}
           isSelected={isSelected}
           onDragHandleMouseDown={onDragHandleMouseDown}
@@ -16486,11 +16542,13 @@ type GalleryEditorImage = {
     return (
       <section
         data-block-id={block.id}
+        data-jump-target={publicBlockId}
+        data-block-public-id={publicBlockId}
         className={`${shellClass} pointer-events-none`}
         style={offsetStyle}
       >
         <EditorBlockHeader
-          blockId={block.id}
+          blockId={publicBlockId}
           draggingBlockId={draggingBlockId}
           isSelected={isSelected}
           onDragHandleMouseDown={onDragHandleMouseDown}
@@ -17000,11 +17058,13 @@ type GalleryEditorImage = {
     return (
       <section
         data-block-id={block.id}
+        data-jump-target={publicBlockId}
+        data-block-public-id={publicBlockId}
         className={`${shellClass} pointer-events-none`}
         style={offsetStyle}
       >
         <EditorBlockHeader
-          blockId={block.id}
+          blockId={publicBlockId}
           draggingBlockId={draggingBlockId}
           isSelected={isSelected}
           onDragHandleMouseDown={onDragHandleMouseDown}

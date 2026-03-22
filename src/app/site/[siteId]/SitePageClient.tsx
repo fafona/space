@@ -239,6 +239,11 @@ export function SitePageClient({
   const [currentPageId, setCurrentPageId] = useState<string>(activePlan?.activePageId ?? "page-1");
   const resolvedPageId =
     activePlan?.pages?.some((page) => page.id === currentPageId) ? currentPageId : activePlan?.activePageId ?? "page-1";
+  const activePage =
+    activePlan?.pages?.find((page) => page.id === resolvedPageId) ??
+    activePlan?.pages?.find((page) => page.id === activePlan.activePageId) ??
+    activePlan?.pages?.[0];
+  const activePageIndex = Math.max(0, activePlan?.pages?.findIndex((page) => page.id === activePage?.id) ?? 0);
 
   useEffect(() => {
     const syncViewport = () => {
@@ -430,10 +435,6 @@ export function SitePageClient({
     );
   }
 
-  const activePage =
-    activePlan?.pages?.find((page) => page.id === resolvedPageId) ??
-    activePlan?.pages?.find((page) => page.id === activePlan.activePageId) ??
-    activePlan?.pages?.[0];
   const activeBlocks = cloneBlocks(activePage?.blocks ?? activePlan?.blocks ?? sourceBlocks);
   const pageBackgroundSource = activeBlocks[0]?.props;
   const pageBackgroundStyle = getBackgroundStyle({
@@ -462,6 +463,7 @@ export function SitePageClient({
       <BlockRenderer
         blocks={activeBlocks}
         currentPageId={activePage?.id}
+        currentPageIndex={activePageIndex}
         bookingSiteId={site?.id ?? siteId}
         bookingSiteName={(site?.merchantName ?? site?.name ?? "").trim()}
         bookingInteractive
