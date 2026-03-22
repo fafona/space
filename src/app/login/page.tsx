@@ -263,33 +263,6 @@ function LoginPageInner() {
     }
   }
 
-  async function resolveSignInEmail(accountValue: string) {
-    const trimmedAccount = accountValue.trim();
-    if (!trimmedAccount) return null;
-    if (trimmedAccount.includes("@")) return trimmedAccount.toLowerCase();
-
-    let response: Response;
-    try {
-      response = await fetch("/api/auth/account-resolve", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ account: trimmedAccount }),
-      });
-    } catch {
-      throw new Error(t("login.backendUnavailable"));
-    }
-
-    if (!response.ok) {
-      throw new Error(t("login.backendUnavailable"));
-    }
-
-    const payload = (await response.json().catch(() => null)) as { email?: unknown } | null;
-    const resolvedEmail = typeof payload?.email === "string" ? payload.email.trim().toLowerCase() : "";
-    return resolvedEmail || null;
-  }
-
   function normalizeError(message: string) {
     if (/supabase_unavailable:/i.test(message)) {
       return t("login.backendUnavailable");
@@ -304,11 +277,6 @@ function LoginPageInner() {
       return t("superLogin.invalid");
     }
     return message;
-  }
-
-  function isBackendUnavailableMessage(message: string) {
-    const normalized = normalizeError(message);
-    return normalized === t("login.backendUnavailable");
   }
 
   function persistSessionForRedirect(sessionPayload: Record<string, unknown>) {
@@ -330,18 +298,16 @@ function LoginPageInner() {
     }
   }
 
-  async function signInViaAuthProxy(email: string, passwordValue: string) {
+  async function signInViaServer(accountValue: string, passwordValue: string) {
     let response: Response;
     try {
-      response = await fetch(`${resolvedSupabaseUrl}/auth/v1/token?grant_type=password`, {
+      response = await fetch("/api/auth/merchant-login", {
         method: "POST",
         headers: {
-          apikey: resolvedSupabaseAnonKey,
-          Authorization: `Bearer ${resolvedSupabaseAnonKey}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          email,
+          account: accountValue,
           password: passwordValue,
         }),
         cache: "no-store",
@@ -352,38 +318,38 @@ function LoginPageInner() {
 
     const payload = (await response.json().catch(() => null)) as
       | {
-          access_token?: unknown;
-          refresh_token?: unknown;
+          error?: unknown;
+          message?: unknown;
+          session?: Record<string, unknown> | null;
           user?: {
             id?: string;
             email?: string | null;
             user_metadata?: Record<string, unknown> | null;
             app_metadata?: Record<string, unknown> | null;
           } | null;
-          msg?: unknown;
-          message?: unknown;
-          error?: unknown;
-          error_description?: unknown;
         }
       | null;
 
     if (!response.ok) {
-      const rawMessage =
-        (typeof payload?.msg === "string" && payload.msg) ||
-        (typeof payload?.message === "string" && payload.message) ||
-        (typeof payload?.error_description === "string" && payload.error_description) ||
-        (typeof payload?.error === "string" && payload.error) ||
-        `auth_proxy_http_${response.status}`;
-      throw new Error(normalizeError(rawMessage));
+      const errorCode = typeof payload?.error === "string" ? payload.error : "";
+      if (errorCode === "invalid_credentials") {
+        throw new Error(t("superLogin.invalid"));
+      }
+      if (errorCode === "email_not_confirmed") {
+        throw new Error(t("login.emailNotConfirmed"));
+      }
+      const message = typeof payload?.message === "string" ? payload.message : t("login.backendUnavailable");
+      throw new Error(normalizeError(message));
     }
 
-    const accessToken = typeof payload?.access_token === "string" ? payload.access_token.trim() : "";
-    const refreshToken = typeof payload?.refresh_token === "string" ? payload.refresh_token.trim() : "";
+    const sessionPayload = payload?.session;
+    const accessToken = typeof sessionPayload?.access_token === "string" ? sessionPayload.access_token.trim() : "";
+    const refreshToken = typeof sessionPayload?.refresh_token === "string" ? sessionPayload.refresh_token.trim() : "";
     if (!accessToken || !refreshToken) {
       throw new Error(t("login.backendUnavailable"));
     }
 
-    persistSessionForRedirect(payload as Record<string, unknown>);
+    persistSessionForRedirect((sessionPayload ?? {}) as Record<string, unknown>);
     try {
       await supabase.auth.setSession({
         access_token: accessToken,
@@ -476,39 +442,11 @@ function LoginPageInner() {
 
     setPendingAction("signin");
     try {
-      const resolvedEmail = await resolveSignInEmail(account);
-      if (!resolvedEmail) {
-        return setMsg(t("superLogin.invalid"));
-      }
-
-      try {
-        const { data, error } = await withTimeout(
-          supabase.auth.signInWithPassword({
-            email: resolvedEmail,
-            password,
-          }),
-        );
-        if (!error) {
-          await redirectToMerchantBackend(pickAuthUser(data));
-          return;
-        }
-
-        const normalizedError = normalizeError(error.message);
-        if (!isBackendUnavailableMessage(normalizedError)) {
-          setNeedConfirmEmail(isEmailNotConfirmed(error.message));
-          return setMsg(normalizedError);
-        }
-      } catch (error) {
-        const normalizedError = error instanceof Error ? normalizeError(error.message) : t("login.requestFailed");
-        if (!isBackendUnavailableMessage(normalizedError)) {
-          throw error;
-        }
-      }
-
-      const proxyUser = await signInViaAuthProxy(resolvedEmail, password);
-      await redirectToMerchantBackend(proxyUser);
+      const user = await signInViaServer(account, password);
+      await redirectToMerchantBackend(user);
     } catch (error) {
       const normalizedMessage = error instanceof Error ? normalizeError(error.message) : t("login.requestFailed");
+      setNeedConfirmEmail(normalizedMessage === t("login.emailNotConfirmed"));
       if (!gatewayReady && normalizedMessage === t("login.backendUnavailable") && isDevelopment) {
         window.location.href = "/admin?offline=1";
         return;
