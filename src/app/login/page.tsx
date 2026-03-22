@@ -125,6 +125,13 @@ function LoginPageInner() {
     return !(data.session || user?.email_confirmed_at || emailVerified);
   }
 
+  function pickAuthUser(data: {
+    session?: { user?: { id?: string; email?: string | null; user_metadata?: Record<string, unknown> | null } | null } | null;
+    user?: { id?: string; email?: string | null; user_metadata?: Record<string, unknown> | null } | null;
+  }) {
+    return data.session?.user ?? data.user ?? null;
+  }
+
   async function readValidatedSessionUser() {
     const {
       data: { session },
@@ -316,18 +323,6 @@ function LoginPageInner() {
     }
   }
 
-  async function waitForPersistedSessionUser(timeoutMs = 3000) {
-    const deadline = Date.now() + Math.max(400, timeoutMs);
-    while (Date.now() < deadline) {
-      const user = await readValidatedSessionUser();
-      if (user) return user;
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 120);
-      });
-    }
-    return null;
-  }
-
   async function signUp() {
     if (pendingAction) return;
     setMsg("");
@@ -361,8 +356,7 @@ function LoginPageInner() {
       const needsConfirmation = signUpNeedsEmailConfirmation(data);
       setEmailConfirmationRequired(needsConfirmation);
       if (!needsConfirmation) {
-        const persistedUser = await waitForPersistedSessionUser();
-        await redirectToMerchantBackend(persistedUser ?? data.session?.user ?? data.user);
+        await redirectToMerchantBackend(pickAuthUser(data));
         return;
       }
       setMsg(t("login.signupSuccess"));
@@ -401,14 +395,7 @@ function LoginPageInner() {
         setNeedConfirmEmail(isEmailNotConfirmed(error.message));
         return setMsg(normalizeError(error.message));
       }
-      if (data.session?.user) {
-        const persistedUser = await waitForPersistedSessionUser();
-        await redirectToMerchantBackend(persistedUser ?? data.session.user);
-        return;
-      }
-      const persistedUser = await waitForPersistedSessionUser();
-      const sessionUser = persistedUser ?? (await readValidatedSessionUser());
-      await redirectToMerchantBackend(sessionUser);
+      await redirectToMerchantBackend(pickAuthUser(data));
     } catch (error) {
       const normalizedMessage = error instanceof Error ? normalizeError(error.message) : t("login.requestFailed");
       if (!gatewayReady && normalizedMessage === t("login.backendUnavailable") && isDevelopment) {
