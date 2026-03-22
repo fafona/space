@@ -9573,7 +9573,7 @@ type GalleryEditorImage = {
     </>
   );
   const imageDialog = imageDialogOpen ? renderOverlay(
-    <div data-editor-overlay className="fixed inset-0 z-[12000] bg-black/40 flex items-center justify-center p-4">
+    <div data-editor-overlay className="fixed inset-0 z-[2147483600] bg-black/40 flex items-center justify-center p-4">
       <div className="w-full max-w-lg bg-white rounded-xl border p-4 space-y-3">
         <div className="text-sm font-semibold">{"插入图片"}</div>
         <div className="space-y-1">
@@ -9620,7 +9620,7 @@ type GalleryEditorImage = {
     </div>
   ) : null;
   const imageSettingsDialog = imageSettingsOpen ? renderOverlay(
-    <div data-editor-overlay className="fixed inset-0 z-[12000] bg-transparent flex items-center justify-center p-4">
+    <div data-editor-overlay className="fixed inset-0 z-[2147483600] bg-transparent flex items-center justify-center p-4">
       <div className="w-full max-w-lg bg-white rounded-xl border p-4 space-y-3">
         <div className="text-sm font-semibold">{"图片设置"}</div>
         <div className="space-y-1">
@@ -9706,7 +9706,7 @@ type GalleryEditorImage = {
     </div>
   ) : null;
   const borderSettingsDialog = borderSettingsOpen ? renderOverlay(
-    <div data-editor-overlay className="fixed inset-0 z-[12000] bg-black/40 flex items-center justify-center p-4">
+    <div data-editor-overlay className="fixed inset-0 z-[2147483600] bg-black/40 flex items-center justify-center p-4">
       <div className="w-full max-w-md bg-white rounded-xl border p-4 space-y-3">
         <div className="text-sm font-semibold">{"边框样式"}</div>
         <div className="space-y-1">
@@ -9747,7 +9747,7 @@ type GalleryEditorImage = {
     </div>
   ) : null;
   const navItemStyleDialog = navItemStyleDialogOpen ? renderOverlay(
-    <div data-editor-overlay className="fixed inset-0 z-[12000] bg-black/40 flex items-center justify-center p-4">
+    <div data-editor-overlay className="fixed inset-0 z-[2147483600] bg-black/40 flex items-center justify-center p-4">
       <div className="w-full max-w-5xl bg-white rounded-xl border p-4 space-y-3">
         <div className="text-sm font-semibold">栏目样式</div>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -9879,7 +9879,7 @@ type GalleryEditorImage = {
     </div>
   ) : null;
   const searchButtonStyleDialog = searchButtonStyleDialogOpen ? renderOverlay(
-    <div data-editor-overlay className="fixed inset-0 z-[12000] bg-black/40 flex items-center justify-center p-4">
+    <div data-editor-overlay className="fixed inset-0 z-[2147483600] bg-black/40 flex items-center justify-center p-4">
       <div className="w-full max-w-5xl bg-white rounded-xl border p-4 space-y-3">
         <div className="text-sm font-semibold">按钮样式</div>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -10002,7 +10002,7 @@ type GalleryEditorImage = {
     </div>
   ) : null;
   const merchantButtonStyleDialog = merchantButtonStyleDialogOpen ? renderOverlay(
-    <div data-editor-overlay className="fixed inset-0 z-[12000] bg-black/40 flex items-center justify-center p-4">
+    <div data-editor-overlay className="fixed inset-0 z-[2147483600] bg-black/40 flex items-center justify-center p-4">
       <div className="w-full max-w-6xl bg-white rounded-xl border p-4 space-y-3">
         <div className="text-sm font-semibold">按钮样式</div>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -10230,7 +10230,7 @@ type GalleryEditorImage = {
     </div>
   ) : null;
   const merchantCardStyleDialog = merchantCardStyleDialogOpen ? renderOverlay(
-    <div data-editor-overlay className="fixed inset-0 z-[12000] bg-black/40 flex items-center justify-center p-4">
+    <div data-editor-overlay className="fixed inset-0 z-[2147483600] bg-black/40 flex items-center justify-center p-4">
       <div className="w-full max-w-3xl bg-white rounded-xl border p-4 space-y-3">
         <div className="text-sm font-semibold">商户卡片样式</div>
         <div className="grid grid-cols-1 sm:grid-cols-[96px_minmax(0,1fr)] gap-2 items-center">
@@ -10349,7 +10349,7 @@ type GalleryEditorImage = {
     ? "inline-flex w-fit max-w-full rounded border border-slate-300 bg-white/90 px-1.5 py-0.5"
     : "inline-flex w-fit max-w-full";
   const merchantCardTypographyDialog = merchantCardTypographyDialogOpen ? renderOverlay(
-    <div data-editor-overlay className="fixed inset-0 z-[12000] bg-black/40 flex items-center justify-center p-4">
+    <div data-editor-overlay className="fixed inset-0 z-[2147483600] bg-black/40 flex items-center justify-center p-4">
       <div className="w-full max-w-2xl bg-white rounded-xl border p-4 space-y-3">
         <div className="text-sm font-semibold">商户卡片字体</div>
         <div className="grid grid-cols-1 sm:grid-cols-[96px_minmax(0,1fr)] gap-2 items-center">
@@ -10492,7 +10492,7 @@ type GalleryEditorImage = {
     </div>
   ) : null;
   const layerSettingsDialog = layerSettingsOpen ? renderOverlay(
-    <div data-editor-overlay className="fixed inset-0 z-[12000] bg-black/40 flex items-center justify-center p-4">
+    <div data-editor-overlay className="fixed inset-0 z-[2147483600] bg-black/40 flex items-center justify-center p-4">
       <div className="w-full max-w-xs bg-white rounded-xl border p-4 space-y-2">
         <div className="text-sm font-semibold">{"层级"}</div>
         <button
@@ -10543,7 +10543,7 @@ type GalleryEditorImage = {
     </div>
   ) : null;
   const typographyDialog = typographyDialogOpen ? renderOverlay(
-    <div data-editor-overlay className="fixed inset-0 z-[12000] bg-black/40 flex items-center justify-center p-4">
+    <div data-editor-overlay className="fixed inset-0 z-[2147483600] bg-black/40 flex items-center justify-center p-4">
       <div className="w-full max-w-xl bg-white rounded-xl border p-4 space-y-3">
         <div className="text-sm font-semibold">{"字体样式"}</div>
         <div className="grid grid-cols-1 sm:grid-cols-[1fr_140px] gap-2">
@@ -10643,7 +10643,7 @@ type GalleryEditorImage = {
   const buttonJumpDialog =
     buttonJumpDialogOpen && block.type === "button"
       ? renderOverlay(
-          <div data-editor-overlay className="fixed inset-0 z-[12000] bg-black/40 flex items-center justify-center p-4">
+          <div data-editor-overlay className="fixed inset-0 z-[2147483600] bg-black/40 flex items-center justify-center p-4">
             <div className="w-full max-w-lg rounded-xl border bg-white p-4 space-y-3">
               <div className="text-sm font-semibold">{"跳转目标"}</div>
               <div className="space-y-1">
@@ -11304,7 +11304,7 @@ type GalleryEditorImage = {
               </div>
               {galleryEditorOpen
                 ? renderOverlay(
-                    <div data-editor-overlay className="fixed inset-0 z-[12000] bg-black/40 flex items-center justify-center p-4">
+                    <div data-editor-overlay className="fixed inset-0 z-[2147483600] bg-black/40 flex items-center justify-center p-4">
                       <div ref={galleryEditorPanelRef} className="w-full max-w-6xl max-h-[86vh] rounded-xl border bg-white overflow-hidden flex flex-col">
                         <div className="shrink-0 px-4 py-3 bg-white border-b flex items-center justify-between gap-3">
                           <div className="text-sm font-semibold">{"编辑画廊"}</div>
@@ -11426,7 +11426,7 @@ type GalleryEditorImage = {
                           </div>
                         ) : null}
                         {customLayoutDialogOpen ? (
-                          <div className="fixed inset-0 z-[13000] bg-black/40 flex items-center justify-center p-4">
+                          <div className="fixed inset-0 z-[2147483601] bg-black/40 flex items-center justify-center p-4">
                             <div className="w-full max-w-6xl bg-white rounded-xl border shadow-xl overflow-hidden">
                               <div className="px-4 py-3 border-b flex items-center justify-between">
                                 <div className="text-sm font-semibold">{"臮义样"}</div>
@@ -13294,7 +13294,7 @@ type GalleryEditorImage = {
     const productDetailPreviewDialog =
       detailPreviewProduct !== null
         ? renderOverlay(
-            <div data-editor-overlay className="fixed inset-0 z-[12000] bg-black/50 p-4">
+            <div data-editor-overlay className="fixed inset-0 z-[2147483600] bg-black/50 p-4">
               <div className="mx-auto flex h-full max-w-5xl items-center justify-center">
                 <div className="relative max-h-[90vh] w-full overflow-auto rounded-3xl bg-white p-5 shadow-2xl sm:p-6">
                   <button
