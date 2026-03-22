@@ -59,7 +59,7 @@ import {
   type SiteStatus,
 } from "@/data/platformControlStore";
 import { SUPER_ADMIN_MESSAGES } from "@/constants/messages";
-import { readPublishEvents, readRemoteAnalyticsSummary, trackPublishEvent } from "@/lib/analytics";
+import { readPageViewDailyStats, readPublishEvents, readRemoteAnalyticsSummary, trackPublishEvent } from "@/lib/analytics";
 import { parseMerchantIdRuleInput, sortMerchantIdRules, type MerchantIdRule } from "@/lib/merchantIdRules";
 import {
   matchPlanTemplateCategory,
@@ -100,9 +100,17 @@ function fmt(iso: string | null) {
   return Number.isFinite(date.getTime()) ? date.toLocaleString("zh-CN", { hour12: false }) : iso;
 }
 
+function normalizeEmailValue(value: string | null | undefined) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
 function normalizeMerchantIdValue(value: string | null | undefined) {
   const normalized = String(value ?? "").trim();
   return /^\d+$/.test(normalized) ? normalized : "";
+}
+
+function getMerchantProfileName(site: Pick<Site, "merchantName"> | null | undefined) {
+  return (site?.merchantName ?? "").trim();
 }
 
 function normalizePublishedSitePrefix(value: string | null | undefined) {
@@ -174,6 +182,32 @@ function buildBackendOnlySite(account: BackendMerchantAccount): Site {
     configHistory: [],
     createdAt: timestamp,
     updatedAt: timestamp,
+  };
+}
+
+function buildMerchantSiteContext(site: Site, owner: PlatformState["users"][number] | null, nowMs: number): MerchantSiteContext {
+  const userEmail = (site.contactEmail ?? "").trim() || owner?.email || "";
+  const prefix = (site.domainPrefix ?? site.domainSuffix ?? "").trim();
+  const industry = (site.industry ?? "").trim() || "未设置";
+  const city = (site.location?.city ?? "").trim() || "-";
+  const sizeBytes = readMerchantPublishedBytes(site.id);
+  const visits = readMerchantVisits(site.id, nowMs);
+  const expireAt = site.serviceExpiresAt ?? null;
+  const expired = !!expireAt && Number.isFinite(new Date(expireAt).getTime()) && new Date(expireAt).getTime() <= nowMs;
+  const manuallyPaused = site.status !== "online";
+  const statusKey: "active" | "paused" = expired || manuallyPaused ? "paused" : "active";
+  return {
+    site,
+    userEmail,
+    prefix,
+    industry,
+    city,
+    sizeBytes,
+    visits,
+    expireAt,
+    expired,
+    statusKey,
+    statusLabel: statusKey === "active" ? "正常" : "暂停",
   };
 }
 
@@ -273,6 +307,45 @@ function formatBytes(bytes: number) {
 function estimateUtf8Size(text: string) {
   if (typeof TextEncoder !== "undefined") return new TextEncoder().encode(text).length;
   return text.length;
+}
+
+function daysBetweenNow(isoDate: string, nowMs: number) {
+  const at = new Date(isoDate).getTime();
+  if (!Number.isFinite(at)) return Number.POSITIVE_INFINITY;
+  return (nowMs - at) / 86400_000;
+}
+
+function readMerchantPublishedBytes(siteId: string) {
+  if (typeof window === "undefined") return 0;
+  const scopedKey = `merchant-space:homeBlocks:published:v1:${buildSiteStoreScope(siteId)}`;
+  const fallbackKey = "merchant-space:homeBlocks:published:v1";
+  const raw = localStorage.getItem(scopedKey) ?? (siteId === "site-main" ? localStorage.getItem(fallbackKey) : null);
+  if (!raw) return 0;
+  return estimateUtf8Size(raw);
+}
+
+function readMerchantVisits(siteId: string, nowMs: number): MerchantVisits {
+  const all = readPageViewDailyStats();
+  const prefix = `site:${siteId}:`;
+  let today = 0;
+  let day7 = 0;
+  let day30 = 0;
+  let total = 0;
+
+  Object.entries(all).forEach(([bucket, stats]) => {
+    if (!bucket.startsWith(prefix)) return;
+    Object.entries(stats).forEach(([day, value]) => {
+      const count = typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
+      if (count <= 0) return;
+      total += count;
+      const diff = daysBetweenNow(day, nowMs);
+      if (diff < 1) today += count;
+      if (diff < 7) day7 += count;
+      if (diff < 30) day30 += count;
+    });
+  });
+
+  return { today, day7, day30, total };
 }
 
 const MAX_MERCHANT_CARD_IMAGE_DATA_URL_BYTES = 900_000;
@@ -834,6 +907,20 @@ type PortalDraft = {
   sections: HomeLayoutSection[];
 };
 
+type MerchantSiteContext = {
+  site: Site;
+  userEmail: string;
+  prefix: string;
+  industry: string;
+  city: string;
+  sizeBytes: number;
+  visits: MerchantVisits;
+  expireAt: string | null;
+  expired: boolean;
+  statusKey: "active" | "paused";
+  statusLabel: "正常" | "暂停";
+};
+
 type MerchantUserRow = {
   site: Site;
   hasSite: boolean;
@@ -851,8 +938,8 @@ type MerchantUserRow = {
   registerAt: string;
   expireAt: string | null;
   expired: boolean;
-  statusLabel: "已建站" | "未建站";
-  statusKey: "linked" | "unlinked";
+  statusLabel: "正常" | "暂停" | "已建站" | "未建站";
+  statusKey: "active" | "paused" | "linked" | "unlinked";
 };
 
 type BackendMerchantAccount = {
@@ -1201,8 +1288,36 @@ export default function SuperAdminClient() {
     state.sites.find((item) => item.id === activePublishSiteId) ?? null;
   const selectedFeatureSite =
     state.sites.find((item) => item.id === activeFeatureSiteId) ?? null;
+  const merchantOwnerBySiteId = useMemo(() => {
+    const map = new Map<string, PlatformState["users"][number]>();
+    state.users.forEach((user) => {
+      user.siteIds.forEach((siteId) => {
+        if (!map.has(siteId)) map.set(siteId, user);
+      });
+    });
+    return map;
+  }, [state.users]);
   const merchantRows = useMemo(() => {
     const matchMerchantSite = buildMerchantSiteLinker(state.sites, state.users);
+    const legacySiteContextByEmail = new Map<string, MerchantSiteContext>();
+
+    state.sites
+      .filter((site) => site.id !== "site-main")
+      .forEach((site) => {
+        const siteContext = buildMerchantSiteContext(site, merchantOwnerBySiteId.get(site.id) ?? null, nowMs);
+        const emailKey = normalizeEmailValue(siteContext.userEmail);
+        if (!emailKey) return;
+        const current = legacySiteContextByEmail.get(emailKey);
+        if (!current) {
+          legacySiteContextByEmail.set(emailKey, siteContext);
+          return;
+        }
+        const currentTs = new Date(current.site.createdAt).getTime();
+        const candidateTs = new Date(siteContext.site.createdAt).getTime();
+        if (candidateTs > currentTs) {
+          legacySiteContextByEmail.set(emailKey, siteContext);
+        }
+      });
 
     const sorted: MerchantUserRow[] = backendMerchantAccounts.map((account) => {
       const merchantId = normalizeMerchantIdValue(account.merchantId) || "-";
@@ -1214,12 +1329,40 @@ export default function SuperAdminClient() {
           merchantName: account.merchantName,
           username: account.username,
         }) ?? null;
+      const legacySiteContext = legacySiteContextByEmail.get(normalizeEmailValue(account.email)) ?? null;
+      const localSite = matchedSite ?? legacySiteContext?.site ?? null;
+      const localSiteContext = localSite
+        ? buildMerchantSiteContext(localSite, merchantOwnerBySiteId.get(localSite.id) ?? null, nowMs)
+        : legacySiteContext;
       const hasPublishedSite = account.hasPublishedSite === true;
       const publishedPrefix = normalizePublishedSitePrefix(account.siteSlug);
+      if (localSiteContext) {
+        const merchantName = getMerchantProfileName(localSiteContext.site) || account.merchantName || account.username || "";
+        return {
+          site: localSiteContext.site,
+          hasSite: true,
+          hasLocalSite: true,
+          backendAccount: account,
+          merchantId,
+          loginAccount: account.username || account.loginId || account.email || localSiteContext.userEmail || "-",
+          userEmail: account.email || localSiteContext.userEmail || "-",
+          merchantName,
+          prefix: localSiteContext.prefix || publishedPrefix || "-",
+          industry: localSiteContext.industry,
+          city: localSiteContext.city,
+          sizeBytes: localSiteContext.sizeBytes,
+          visits: localSiteContext.visits,
+          registerAt: account.createdAt ?? localSiteContext.site.createdAt,
+          expireAt: localSiteContext.expireAt,
+          expired: localSiteContext.expired,
+          statusLabel: localSiteContext.statusLabel,
+          statusKey: localSiteContext.statusKey,
+        };
+      }
       return {
-        site: matchedSite ?? buildBackendOnlySite(account),
+        site: buildBackendOnlySite(account),
         hasSite: hasPublishedSite,
-        hasLocalSite: Boolean(matchedSite),
+        hasLocalSite: false,
         backendAccount: account,
         merchantId,
         loginAccount: account.username || account.loginId || account.email || "-",
@@ -1247,7 +1390,7 @@ export default function SuperAdminClient() {
       return new Date(b.registerAt).getTime() - new Date(a.registerAt).getTime();
     });
     return sorted;
-  }, [backendMerchantAccounts, state.homeLayout.merchantDefaultSortRule, state.sites, state.users]);
+  }, [backendMerchantAccounts, merchantOwnerBySiteId, nowMs, state.homeLayout.merchantDefaultSortRule, state.sites, state.users]);
   const filteredMerchantRows = useMemo(
     () =>
       merchantRows.filter((row) => {
@@ -1582,7 +1725,8 @@ export default function SuperAdminClient() {
     merchantListPreviewProps.merchantCardTextBoxVisible === true
       ? "inline-flex w-fit max-w-full rounded border border-slate-300 bg-white/90 px-1.5 py-0.5"
       : "inline-flex w-fit max-w-full";
-  const merchantLinkedCount = filteredMerchantRows.filter((item) => item.statusKey === "linked").length;
+  const merchantActiveCount = filteredMerchantRows.filter((item) => item.statusKey === "active" || item.statusKey === "linked").length;
+  const merchantPausedCount = filteredMerchantRows.filter((item) => item.statusKey === "paused").length;
   const merchantUnlinkedCount = filteredMerchantRows.filter((item) => item.statusKey === "unlinked").length;
   const releaseChecklistCheckedCount = RELEASE_REGRESSION_CHECKLIST.filter((item) => releaseChecklistState[item.id]).length;
   const portalSitesByCategory = useMemo(() => {
@@ -3693,7 +3837,8 @@ export default function SuperAdminClient() {
                         }}
                       />
                       <div className="rounded border bg-slate-50 px-3 py-2 text-sm">注册用户：{filteredMerchantRows.length}</div>
-                      <div className="rounded border bg-slate-50 px-3 py-2 text-sm">已建站：{merchantLinkedCount}</div>
+                      <div className="rounded border bg-slate-50 px-3 py-2 text-sm">正常用户：{merchantActiveCount}</div>
+                      <div className="rounded border bg-slate-50 px-3 py-2 text-sm">暂停用户：{merchantPausedCount}</div>
                       <div className="rounded border bg-slate-50 px-3 py-2 text-sm">未建站：{merchantUnlinkedCount}</div>
                     </div>
                     <button
@@ -3710,7 +3855,7 @@ export default function SuperAdminClient() {
                     ) : backendMerchantAccountsError ? (
                       <span className="text-rose-600">后端用户数据加载失败：{describeBackendMerchantAccountsError(backendMerchantAccountsError)}</span>
                     ) : (
-                      <span className="text-slate-500">当前列表只使用线上真实 `auth + merchants + pages` 数据，不再混用本地站点缓存。</span>
+                      <span className="text-slate-500">账号真值仍来自线上 `auth + merchants + pages`；匹配到本地站点配置时，会补回前缀、行业、城市、体积、访问量和配置操作。</span>
                     )}
                   </div>
                 </div>
@@ -3904,7 +4049,15 @@ export default function SuperAdminClient() {
                                 <td className="px-3 py-2 text-xs text-slate-500">{fmt(row.registerAt)}</td>
                                 <td className="px-3 py-2 text-xs text-slate-500">{fmt(row.expireAt)}</td>
                                 <td className="px-3 py-2">
-                                  <span className={`rounded border px-2 py-0.5 text-xs ${badgeClass(row.statusKey === "linked" ? "online" : "offline")}`}>
+                                  <span
+                                    className={`rounded border px-2 py-0.5 text-xs ${badgeClass(
+                                      row.statusKey === "paused"
+                                        ? "maintenance"
+                                        : row.statusKey === "unlinked"
+                                          ? "offline"
+                                          : "online",
+                                    )}`}
+                                  >
                                     {row.statusLabel}
                                   </span>
                                 </td>
