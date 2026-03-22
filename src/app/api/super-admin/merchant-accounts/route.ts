@@ -32,6 +32,12 @@ type AuthUserSummary = {
   app_metadata?: AuthMetadata;
 };
 
+type PageRow = {
+  merchant_id?: string | null;
+  slug?: string | null;
+  updated_at?: string | null;
+};
+
 type MerchantAccountItem = {
   merchantId: string;
   merchantName: string;
@@ -44,6 +50,9 @@ type MerchantAccountItem = {
   emailConfirmedAt: string | null;
   lastSignInAt: string | null;
   manualCreated: boolean;
+  hasPublishedSite: boolean;
+  siteSlug: string;
+  siteUpdatedAt: string | null;
 };
 
 type AdminListUsersClient = {
@@ -165,6 +174,41 @@ function sortByCreatedAtDesc(items: MerchantAccountItem[]) {
   });
 }
 
+function normalizeSlug(value: string | null | undefined) {
+  return String(value ?? "").trim();
+}
+
+function buildPublishedSiteInfoByMerchantId(rows: PageRow[]) {
+  const map = new Map<string, { hasPublishedSite: boolean; siteSlug: string; siteUpdatedAt: string | null }>();
+  rows.forEach((row) => {
+    const merchantId = String(row.merchant_id ?? "").trim();
+    if (!merchantId) return;
+    const slug = normalizeSlug(row.slug);
+    const updatedAt = typeof row.updated_at === "string" ? row.updated_at : null;
+    const current = map.get(merchantId);
+    if (!current) {
+      map.set(merchantId, {
+        hasPublishedSite: true,
+        siteSlug: slug,
+        siteUpdatedAt: updatedAt,
+      });
+      return;
+    }
+    const currentTs = new Date(current.siteUpdatedAt ?? 0).getTime();
+    const nextTs = new Date(updatedAt ?? 0).getTime();
+    const preferSlug = slug && slug.toLowerCase() !== "home";
+    const preferNext = nextTs >= currentTs;
+    if (preferSlug || preferNext) {
+      map.set(merchantId, {
+        hasPublishedSite: true,
+        siteSlug: preferSlug ? slug : current.siteSlug,
+        siteUpdatedAt: preferNext ? updatedAt : current.siteUpdatedAt,
+      });
+    }
+  });
+  return map;
+}
+
 function choosePreferredMerchantAccount(current: MerchantAccountItem | undefined, candidate: MerchantAccountItem) {
   if (!current) return candidate;
   const currentNumeric = isNumericMerchantId(current.merchantId);
@@ -273,6 +317,9 @@ export async function GET(request: Request) {
         emailConfirmedAt: authUser?.email_confirmed_at ?? null,
         lastSignInAt: authUser?.last_sign_in_at ?? null,
         manualCreated: metadata.manualCreated,
+        hasPublishedSite: false,
+        siteSlug: "",
+        siteUpdatedAt: null,
       };
     });
 
@@ -304,6 +351,9 @@ export async function GET(request: Request) {
           emailConfirmedAt: user.email_confirmed_at ?? null,
           lastSignInAt: user.last_sign_in_at ?? null,
           manualCreated: metadata.manualCreated,
+          hasPublishedSite: false,
+          siteSlug: "",
+          siteUpdatedAt: null,
         };
       });
 
@@ -313,11 +363,33 @@ export async function GET(request: Request) {
       dedupedByEmail.set(key, choosePreferredMerchantAccount(dedupedByEmail.get(key), item));
     }
 
+    const normalizedItems = [...dedupedByEmail.values()].map((item) => ({
+      ...item,
+      merchantId: isNumericMerchantId(item.merchantId) ? item.merchantId : "",
+    }));
+    const merchantIds = [...new Set(normalizedItems.map((item) => item.merchantId).filter((item) => isNumericMerchantId(item)))];
+    let publishedSiteInfoByMerchantId = new Map<string, { hasPublishedSite: boolean; siteSlug: string; siteUpdatedAt: string | null }>();
+    if (merchantIds.length > 0) {
+      const { data: pageRows, error: pageError } = await supabase
+        .from("pages")
+        .select("merchant_id,slug,updated_at")
+        .in("merchant_id", merchantIds)
+        .limit(Math.max(merchantIds.length * 4, 100));
+      if (!pageError && Array.isArray(pageRows)) {
+        publishedSiteInfoByMerchantId = buildPublishedSiteInfoByMerchantId(pageRows as PageRow[]);
+      }
+    }
+
     const items = sortByCreatedAtDesc(
-      [...dedupedByEmail.values()].map((item) => ({
-        ...item,
-        merchantId: isNumericMerchantId(item.merchantId) ? item.merchantId : "",
-      })),
+      normalizedItems.map((item) => {
+        const publishedSiteInfo = publishedSiteInfoByMerchantId.get(item.merchantId);
+        return {
+          ...item,
+          hasPublishedSite: publishedSiteInfo?.hasPublishedSite === true,
+          siteSlug: publishedSiteInfo?.siteSlug ?? "",
+          siteUpdatedAt: publishedSiteInfo?.siteUpdatedAt ?? null,
+        };
+      }),
     );
 
     return NextResponse.json({ items });
@@ -467,6 +539,9 @@ export async function POST(request: Request) {
       emailConfirmedAt: authUser.email_confirmed_at ?? new Date().toISOString(),
       lastSignInAt: null,
       manualCreated: true,
+      hasPublishedSite: false,
+      siteSlug: "",
+      siteUpdatedAt: null,
     };
 
     return NextResponse.json({ item }, { status: 201 });
