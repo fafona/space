@@ -99,17 +99,9 @@ function fmt(iso: string | null) {
   return Number.isFinite(date.getTime()) ? date.toLocaleString("zh-CN", { hour12: false }) : iso;
 }
 
-function normalizeEmailValue(value: string | null | undefined) {
-  return String(value ?? "").trim().toLowerCase();
-}
-
 function normalizeMerchantIdValue(value: string | null | undefined) {
   const normalized = String(value ?? "").trim();
   return /^\d+$/.test(normalized) ? normalized : "";
-}
-
-function getMerchantProfileName(site: Pick<Site, "merchantName"> | null | undefined) {
-  return (site?.merchantName ?? "").trim();
 }
 
 type PlanTemplatePreviewOption = {
@@ -1257,14 +1249,14 @@ export default function SuperAdminClient() {
     return map;
   }, [state.users]);
   const merchantRows = useMemo(() => {
-    const siteContextByEmail = new Map<string, MerchantSiteContext>();
+    const siteContextByMerchantId = new Map<string, MerchantSiteContext>();
     state.sites
       .filter((site) => site.id !== "site-main")
       .forEach((site) => {
+        const merchantIdKey = normalizeMerchantIdValue(site.id);
+        if (!merchantIdKey) return;
         const owner = merchantOwnerBySiteId.get(site.id);
         const userEmail = (site.contactEmail ?? "").trim() || owner?.email || "";
-        const emailKey = normalizeEmailValue(userEmail);
-        if (!emailKey) return;
         const prefix = (site.domainPrefix ?? site.domainSuffix ?? "").trim();
         const industry = (site.industry ?? "").trim() || "未设置";
         const city = (site.location?.city ?? "").trim() || "-";
@@ -1287,45 +1279,22 @@ export default function SuperAdminClient() {
           statusKey,
           statusLabel: statusKey === "active" ? "正常" : "暂停",
         };
-        const current = siteContextByEmail.get(emailKey);
+        const current = siteContextByMerchantId.get(merchantIdKey);
         if (!current) {
-          siteContextByEmail.set(emailKey, candidate);
+          siteContextByMerchantId.set(merchantIdKey, candidate);
           return;
         }
         const currentTs = new Date(current.site.createdAt).getTime();
         const candidateTs = new Date(candidate.site.createdAt).getTime();
         if (candidateTs > currentTs) {
-          siteContextByEmail.set(emailKey, candidate);
+          siteContextByMerchantId.set(merchantIdKey, candidate);
         }
       });
 
-    const rowsByKey = new Map<string, MerchantUserRow>();
-    siteContextByEmail.forEach((siteContext, emailKey) => {
-      rowsByKey.set(emailKey, {
-        site: siteContext.site,
-        hasSite: true,
-        backendAccount: null,
-        merchantId: normalizeMerchantIdValue(siteContext.site.id) || "-",
-        loginAccount: siteContext.userEmail || "-",
-        userEmail: siteContext.userEmail || "-",
-        merchantName: getMerchantProfileName(siteContext.site),
-        prefix: siteContext.prefix,
-        industry: siteContext.industry,
-        city: siteContext.city,
-        sizeBytes: siteContext.sizeBytes,
-        visits: siteContext.visits,
-        registerAt: siteContext.site.createdAt,
-        expireAt: siteContext.expireAt,
-        expired: siteContext.expired,
-        statusLabel: siteContext.statusLabel,
-        statusKey: siteContext.statusKey,
-      });
-    });
-
-    backendMerchantAccounts.forEach((account) => {
-      const siteContext = siteContextByEmail.get(normalizeEmailValue(account.email)) ?? null;
+    const sorted: MerchantUserRow[] = backendMerchantAccounts.map((account) => {
+      const siteContext = siteContextByMerchantId.get(normalizeMerchantIdValue(account.merchantId)) ?? null;
       if (!siteContext) {
-        const backendOnlyRow: MerchantUserRow = {
+        return {
           site: buildBackendOnlySite(account),
           hasSite: false,
           backendAccount: account,
@@ -1344,18 +1313,16 @@ export default function SuperAdminClient() {
           statusLabel: "未建站",
           statusKey: "unlinked",
         };
-        rowsByKey.set(normalizeEmailValue(account.email) || `backend:${account.authUserId || account.merchantId}`, backendOnlyRow);
-        return;
       }
-      rowsByKey.set(normalizeEmailValue(account.email) || siteContext.userEmail, {
+      return {
         site: siteContext.site,
         hasSite: true,
         backendAccount: account,
-        merchantId: normalizeMerchantIdValue(account.merchantId) || "-",
-        loginAccount: account.username || account.loginId || account.email || siteContext.userEmail || "-",
+        merchantId: normalizeMerchantIdValue(account.merchantId) || normalizeMerchantIdValue(siteContext.site.id) || "-",
+        loginAccount: account.username || account.loginId || account.email || "-",
         userEmail: account.email || siteContext.userEmail || "-",
-        merchantName: getMerchantProfileName(siteContext.site),
-        prefix: siteContext.prefix,
+        merchantName: account.merchantName || account.username || "",
+        prefix: siteContext.prefix || "-",
         industry: siteContext.industry,
         city: siteContext.city,
         sizeBytes: siteContext.sizeBytes,
@@ -1365,10 +1332,8 @@ export default function SuperAdminClient() {
         expired: siteContext.expired,
         statusLabel: siteContext.statusLabel,
         statusKey: siteContext.statusKey,
-      });
+      };
     });
-
-    const sorted: MerchantUserRow[] = [...rowsByKey.values()];
 
     const sortRule = state.homeLayout.merchantDefaultSortRule;
     sorted.sort((a, b) => {
@@ -1393,13 +1358,13 @@ export default function SuperAdminClient() {
     [merchantRows, userKeyword],
   );
   const backendAccountsWithoutSite = useMemo(() => {
-    const siteEmails = new Set(
+    const linkedMerchantIds = new Set(
       merchantRows
         .filter((row) => row.hasSite)
-        .map((row) => normalizeEmailValue(row.userEmail))
+        .map((row) => normalizeMerchantIdValue(row.merchantId))
         .filter(Boolean),
     );
-    return backendMerchantAccounts.filter((account) => !siteEmails.has(normalizeEmailValue(account.email)));
+    return backendMerchantAccounts.filter((account) => !linkedMerchantIds.has(normalizeMerchantIdValue(account.merchantId)));
   }, [backendMerchantAccounts, merchantRows]);
   const planTemplateTargetSite =
     state.sites.find((site) => site.id === planTemplateTargetSiteId) ?? null;
