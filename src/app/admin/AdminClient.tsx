@@ -2570,6 +2570,27 @@ async function loadPlatformBlocksFromSupabaseFallback() {
   return null;
 }
 
+async function loadPlatformBlocksViaApiFallback() {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12000);
+  try {
+    const response = await fetch("/api/platform-published", {
+      method: "GET",
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    if (!response.ok) return null;
+    const json = (await response.json().catch(() => null)) as { blocks?: unknown } | null;
+    if (!Array.isArray(json?.blocks)) return null;
+    const sanitized = sanitizeBlocksForRuntime(json.blocks as Block[]).blocks;
+    return sanitized.length > 0 ? sanitized : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function loadPlatformBlocksViaRestFallback(accessToken?: string | null) {
   if (!accessToken) return null;
   const baseUrl = (resolvedSupabaseUrl ?? "").trim().replace(/\/+$/, "");
@@ -4270,7 +4291,11 @@ export default function AdminClient({
         const accessToken = session?.access_token ?? null;
         const restLoaded = await withTimeout(
           isPlatformEditor
-            ? loadPlatformBlocksViaRestFallback(accessToken)
+            ? (async () => {
+                const fromApi = await loadPlatformBlocksViaApiFallback();
+                if (fromApi && fromApi.length > 0) return fromApi;
+                return loadPlatformBlocksViaRestFallback(accessToken);
+              })()
             : loadBlocksViaRestFallback(resolvedMerchantIds, accessToken),
           ADMIN_PAGE_LOAD_TIMEOUT_MS,
           "页面内加载超时，已使用朜缓存继续编辑",
