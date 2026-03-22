@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { BookingProps } from "@/data/homeBlocks";
+import BookingDateTimeInput from "@/components/booking/BookingDateTimeInput";
 import {
   buildDefaultBookingItemOptions,
   buildDefaultBookingStoreOptions,
@@ -12,6 +13,7 @@ import {
   normalizeBookingOptionList,
   sanitizeMerchantBookingEditableInput,
   splitMerchantBookingDateTime,
+  type MerchantBookingEditableInput,
   type MerchantBookingRecord,
 } from "@/lib/merchantBookings";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
@@ -64,14 +66,17 @@ function buildInitialDraft(
   storeOptions: string[],
   itemOptions: string[],
   titleOptions: string[],
-  previous?: Partial<ReturnType<typeof createEmptyMerchantBookingInput>>,
+  previous?: Partial<MerchantBookingEditableInput>,
 ) {
   const base = sanitizeMerchantBookingEditableInput(previous, createEmptyMerchantBookingInput());
+  const appointmentParts = splitMerchantBookingDateTime(base.appointmentAt);
   return {
     ...base,
     store: base.store || storeOptions[0] || "",
     item: base.item || itemOptions[0] || "",
     title: base.title || titleOptions[0] || "",
+    appointmentDateInput: appointmentParts.date,
+    appointmentTimeInput: appointmentParts.time,
   };
 }
 
@@ -105,10 +110,6 @@ export default function BookingBlock({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const isLiveBooking = interactive && isMerchantNumericId(runtimeSiteId);
-  const appointmentParts = useMemo(
-    () => splitMerchantBookingDateTime(draft.appointmentAt),
-    [draft.appointmentAt],
-  );
 
   useEffect(() => {
     setDraft((current) => buildInitialDraft(storeOptions, itemOptions, titleOptions, current));
@@ -154,7 +155,10 @@ export default function BookingBlock({
     setSubmitting(true);
     setError("");
     try {
-      const payload = sanitizeMerchantBookingEditableInput(draft);
+      const payload = sanitizeMerchantBookingEditableInput({
+        ...draft,
+        appointmentAt: joinMerchantBookingDateTime(draft.appointmentDateInput, draft.appointmentTimeInput),
+      });
       const response = await fetch("/api/bookings", {
         method: submittedState ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
@@ -328,33 +332,15 @@ export default function BookingBlock({
             </label>
             <label className="space-y-1 text-sm text-slate-700">
               <span>预约日期时间</span>
-              <div className="flex flex-wrap gap-2">
-                <input
-                  type="date"
-                  className={`${getFormFieldClass(!isLiveBooking)} min-w-[180px] flex-1`}
-                  value={appointmentParts.date}
-                  disabled={!isLiveBooking}
-                  onChange={(event) =>
-                    handleFieldChange(
-                      "appointmentAt",
-                      joinMerchantBookingDateTime(event.target.value, appointmentParts.time),
-                    )
-                  }
-                />
-                <input
-                  type="time"
-                  step={60}
-                  className={`${getFormFieldClass(!isLiveBooking)} w-[112px] shrink-0`}
-                  value={appointmentParts.time}
-                  disabled={!isLiveBooking}
-                  onChange={(event) =>
-                    handleFieldChange(
-                      "appointmentAt",
-                      joinMerchantBookingDateTime(appointmentParts.date, event.target.value),
-                    )
-                  }
-                />
-              </div>
+              <BookingDateTimeInput
+                dateValue={draft.appointmentDateInput}
+                timeValue={draft.appointmentTimeInput}
+                disabled={!isLiveBooking}
+                dateInputClassName={`${getFormFieldClass(!isLiveBooking)} min-w-[180px] flex-1`}
+                timeInputClassName={`${getFormFieldClass(!isLiveBooking)} w-[112px] shrink-0`}
+                onDateChange={(value) => handleFieldChange("appointmentDateInput", value)}
+                onTimeChange={(value) => handleFieldChange("appointmentTimeInput", value)}
+              />
             </label>
             <label className="space-y-1 text-sm text-slate-700">
               <span>称谓</span>

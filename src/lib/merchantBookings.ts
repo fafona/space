@@ -129,8 +129,25 @@ export function joinMerchantBookingDateTime(date: string, time: string) {
 function isValidDateTimeValue(value: string) {
   if (!value) return false;
   const normalized = value.includes("T") ? value : value.replace(" ", "T");
-  const timestamp = new Date(normalized).getTime();
-  return Number.isFinite(timestamp);
+  const matched = normalized.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
+  if (!matched) return false;
+  const year = Number.parseInt(matched[1] ?? "", 10);
+  const month = Number.parseInt(matched[2] ?? "", 10);
+  const day = Number.parseInt(matched[3] ?? "", 10);
+  const hour = Number.parseInt(matched[4] ?? "", 10);
+  const minute = Number.parseInt(matched[5] ?? "", 10);
+  if (month < 1 || month > 12 || day < 1 || day > 31 || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    return false;
+  }
+  const timestamp = new Date(normalized);
+  return (
+    Number.isFinite(timestamp.getTime()) &&
+    timestamp.getFullYear() === year &&
+    timestamp.getMonth() + 1 === month &&
+    timestamp.getDate() === day &&
+    timestamp.getHours() === hour &&
+    timestamp.getMinutes() === minute
+  );
 }
 
 function isValidEmail(value: string) {

@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import type { MerchantBookingRecord, MerchantBookingStatus } from "@/lib/merchantBookings";
+import BookingDateTimeInput from "@/components/booking/BookingDateTimeInput";
+import type { MerchantBookingEditableInput, MerchantBookingRecord, MerchantBookingStatus } from "@/lib/merchantBookings";
 import {
   buildDefaultBookingItemOptions,
   buildDefaultBookingStoreOptions,
@@ -28,7 +29,8 @@ type BookingFilter = "all" | MerchantBookingStatus;
 type MerchantBookingAdminDraft = {
   store: string;
   item: string;
-  appointmentAt: string;
+  appointmentDateInput: string;
+  appointmentTimeInput: string;
   title: string;
 };
 
@@ -62,10 +64,12 @@ function matchesSearch(record: MerchantBookingRecord, query: string) {
 }
 
 function createDraft(record: MerchantBookingRecord): MerchantBookingAdminDraft {
+  const appointmentParts = splitMerchantBookingDateTime(record.appointmentAt);
   return {
     store: record.store,
     item: record.item,
-    appointmentAt: record.appointmentAt,
+    appointmentDateInput: appointmentParts.date,
+    appointmentTimeInput: appointmentParts.time,
     title: record.title,
   };
 }
@@ -208,7 +212,7 @@ export default function MerchantBookingManagerDialog({
     bookingId: string,
     payload: {
       status?: MerchantBookingStatus;
-      updates?: Partial<MerchantBookingAdminDraft>;
+      updates?: Partial<MerchantBookingEditableInput>;
     },
     busyLabel: string,
   ) => {
@@ -253,7 +257,13 @@ export default function MerchantBookingManagerDialog({
     setDrafts((current) => ({
       ...current,
       [bookingId]: {
-        ...(current[bookingId] ?? { store: "", item: "", appointmentAt: "", title: "" }),
+        ...(current[bookingId] ?? {
+          store: "",
+          item: "",
+          appointmentDateInput: "",
+          appointmentTimeInput: "",
+          title: "",
+        }),
         [key]: value,
       },
     }));
@@ -375,7 +385,6 @@ export default function MerchantBookingManagerDialog({
             <div className="space-y-4">
               {filteredRecords.map((record) => {
                 const draft = drafts[record.id] ?? createDraft(record);
-                const appointmentParts = splitMerchantBookingDateTime(draft.appointmentAt);
                 return (
                   <article key={record.id} className="rounded-2xl border bg-slate-50 p-4 shadow-sm">
                     <div className="flex flex-wrap items-start justify-between gap-3">
@@ -423,33 +432,14 @@ export default function MerchantBookingManagerDialog({
                       </label>
                       <label className="space-y-1 text-sm text-slate-700">
                         <span className="text-xs text-slate-500">预约时间</span>
-                        <div className="flex flex-wrap gap-2">
-                          <input
-                            type="date"
-                            className="min-w-[180px] flex-1 rounded border px-3 py-2"
-                            value={appointmentParts.date}
-                            onChange={(event) =>
-                              handleDraftChange(
-                                record.id,
-                                "appointmentAt",
-                                joinMerchantBookingDateTime(event.target.value, appointmentParts.time),
-                              )
-                            }
-                          />
-                          <input
-                            type="time"
-                            step={60}
-                            className="w-[112px] shrink-0 rounded border px-3 py-2"
-                            value={appointmentParts.time}
-                            onChange={(event) =>
-                              handleDraftChange(
-                                record.id,
-                                "appointmentAt",
-                                joinMerchantBookingDateTime(appointmentParts.date, event.target.value),
-                              )
-                            }
-                          />
-                        </div>
+                        <BookingDateTimeInput
+                          dateValue={draft.appointmentDateInput}
+                          timeValue={draft.appointmentTimeInput}
+                          dateInputClassName="min-w-[180px] flex-1 rounded border px-3 py-2"
+                          timeInputClassName="w-[112px] shrink-0 rounded border px-3 py-2"
+                          onDateChange={(value) => handleDraftChange(record.id, "appointmentDateInput", value)}
+                          onTimeChange={(value) => handleDraftChange(record.id, "appointmentTimeInput", value)}
+                        />
                       </label>
                       <label className="space-y-1 text-sm text-slate-700">
                         <span className="text-xs text-slate-500">称谓</span>
@@ -478,7 +468,10 @@ export default function MerchantBookingManagerDialog({
                               updates: {
                                 store: draft.store,
                                 item: draft.item,
-                                appointmentAt: draft.appointmentAt,
+                                appointmentAt: joinMerchantBookingDateTime(
+                                  draft.appointmentDateInput,
+                                  draft.appointmentTimeInput,
+                                ),
                                 title: draft.title,
                               },
                             },

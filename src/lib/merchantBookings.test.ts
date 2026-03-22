@@ -86,6 +86,36 @@ test("validateMerchantBookingInput returns friendly issues", () => {
   ]);
 });
 
+test("validateMerchantBookingInput rejects partial appointment values", () => {
+  const issues = validateMerchantBookingInput({
+    store: "Main",
+    item: "Consultation",
+    appointmentAt: "2026-03-07T12",
+    title: "Mr",
+    customerName: "Felix",
+    email: "test@example.com",
+    phone: "123456",
+    note: "",
+  });
+
+  assert.deepEqual(issues, ["预约日期时间格式无效"]);
+});
+
+test("validateMerchantBookingInput rejects impossible calendar dates", () => {
+  const issues = validateMerchantBookingInput({
+    store: "Main",
+    item: "Consultation",
+    appointmentAt: "2026-02-31T10:00",
+    title: "Mr",
+    customerName: "Felix",
+    email: "test@example.com",
+    phone: "123456",
+    note: "",
+  });
+
+  assert.deepEqual(issues, ["预约日期时间格式无效"]);
+});
+
 test("buildMerchantBookingId uses merchant id + date + 5-digit sequence", () => {
   const createdAt = "2026-03-19T10:30:00.000Z";
   assert.equal(formatMerchantBookingIdDate(createdAt), "20260319");
