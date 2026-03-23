@@ -208,9 +208,6 @@ async function copyImageViaLegacyClipboard(blob: Blob) {
     throw new Error("image_clipboard_unavailable");
   }
 
-  const imageFile = new File([blob], "business-card.png", {
-    type: "image/png",
-  });
   const dataUrl = await blobToDataUrl(blob);
 
   await new Promise<void>((resolve, reject) => {
@@ -234,16 +231,6 @@ async function copyImageViaLegacyClipboard(blob: Blob) {
         return;
       }
       event.preventDefault();
-      try {
-        const items = clipboardData.items;
-        if (items && typeof items.add === "function") {
-          items.add(imageFile);
-          succeed();
-          return;
-        }
-      } catch {
-        // Fall through to HTML/image markup fallback.
-      }
       try {
         clipboardData.setData(
           "text/html",
