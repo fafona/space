@@ -4138,8 +4138,10 @@ export default function AdminClient({
       const publishedSnapshot = await loadPublishedSiteSnapshotViaApi(scopedSiteId);
       if (!mounted || !publishedSnapshot) return false;
       merchantIdsRef.current = [scopedSiteId];
+      const localMerchantName =
+        loadPlatformState().sites.find((item) => item.id === scopedSiteId)?.merchantName?.trim() ?? "";
       ensureScopedMerchantSite(scopedSiteId, null, {
-        merchantName: publishedSnapshot.merchantName,
+        merchantName: localMerchantName ? undefined : publishedSnapshot.merchantName,
         domainPrefix: publishedSnapshot.slug,
       });
       setHasEditorContent(true);
