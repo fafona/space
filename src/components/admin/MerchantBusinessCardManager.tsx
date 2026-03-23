@@ -1231,7 +1231,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       headers,
       credentials: "same-origin",
       body: JSON.stringify({
-        key: normalizeText(input.card?.shareKey),
+        key: "",
         name: input.cardName,
         imageUrl: shareImageUrl,
         targetUrl,
