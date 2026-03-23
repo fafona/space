@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import AdminClient from "@/app/admin/AdminClient";
 import SitePageClient from "@/app/site/[siteId]/SitePageClient";
@@ -10,7 +10,7 @@ import { loadPlatformState, subscribePlatformState } from "@/data/platformContro
 import { isMerchantNumericId, normalizeDomainPrefix } from "@/lib/merchantIdentity";
 import { resolvePublishedSiteByPrefix } from "@/lib/publishedSiteLookup";
 import { buildPlatformHomeHref } from "@/lib/siteRouting";
-import { isSupabaseEnabled, supabase } from "@/lib/supabase";
+import { isSupabaseEnabled, supabase, supabaseStorageKeyProjectRef } from "@/lib/supabase";
 import { useHydrated } from "@/lib/useHydrated";
 
 type MerchantEntryPageClientProps = {
@@ -18,13 +18,91 @@ type MerchantEntryPageClientProps = {
   initialResolvedSiteId?: string;
 };
 
+function extractSessionTokens(input: unknown): { access_token: string; refresh_token: string } | null {
+  if (!input || typeof input !== "object") return null;
+  const record = input as Record<string, unknown>;
+  const containers: unknown[] = [record, record.currentSession, record.session];
+  for (const container of containers) {
+    if (!container || typeof container !== "object") continue;
+    const candidate = container as Record<string, unknown>;
+    const access = typeof candidate.access_token === "string" ? candidate.access_token.trim() : "";
+    const refresh = typeof candidate.refresh_token === "string" ? candidate.refresh_token.trim() : "";
+    if (access && refresh) return { access_token: access, refresh_token: refresh };
+  }
+  return null;
+}
+
+function isInvalidRefreshTokenMessage(message: string) {
+  return /invalid refresh token|already used/i.test(String(message ?? ""));
+}
+
+async function pollSession(timeoutMs: number) {
+  const deadline = Date.now() + Math.max(400, timeoutMs);
+  while (Date.now() < deadline) {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (session) return session;
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 220);
+    });
+  }
+  return null;
+}
+
+async function tryRecoverSessionFromStoredToken() {
+  if (typeof window === "undefined") return null;
+  const expectedRef = supabaseStorageKeyProjectRef.trim();
+  const preferredKey = expectedRef ? `sb-${expectedRef}-auth-token` : "";
+  if (!preferredKey) return null;
+
+  try {
+    const raw = window.localStorage.getItem(preferredKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as unknown;
+    const tokens = extractSessionTokens(parsed);
+    if (!tokens) return null;
+    const { data } = await supabase.auth.setSession(tokens);
+    return data.session ?? null;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (isInvalidRefreshTokenMessage(message)) {
+      try {
+        window.localStorage.removeItem(preferredKey);
+      } catch {
+        // Ignore localStorage cleanup failures.
+      }
+    }
+    return null;
+  }
+}
+
+async function recoverMerchantSession(timeoutMs: number) {
+  const direct = await pollSession(timeoutMs);
+  if (direct) return direct;
+
+  const fromStored = await tryRecoverSessionFromStoredToken();
+  if (fromStored) return fromStored;
+
+  try {
+    const { data } = await supabase.auth.refreshSession();
+    if (data.session) return data.session;
+  } catch {
+    // Ignore refresh failures and fall back to one final short poll.
+  }
+
+  return pollSession(1200);
+}
+
 export default function MerchantEntryPageClient({
   initialIsMobileViewport = false,
   initialResolvedSiteId = "",
 }: MerchantEntryPageClientProps) {
   const params = useParams<{ merchantEntry: string }>();
+  const searchParams = useSearchParams();
   const merchantEntry = String(params?.merchantEntry ?? "").trim();
   const hydrated = useHydrated();
+  const justSignedIn = useMemo(() => (searchParams.get("justSignedIn") ?? "").trim() === "1", [searchParams]);
   const normalizedPrefix = useMemo(() => normalizeDomainPrefix(merchantEntry), [merchantEntry]);
   const [platformState, setPlatformState] = useState(() => loadPlatformState());
   const [remoteLookup, setRemoteLookup] = useState<{
@@ -82,22 +160,37 @@ export default function MerchantEntryPageClient({
 
     void (async () => {
       const {
-        data: { session },
+        data: { session: rawSession },
       } = await supabase.auth.getSession();
+      let session = rawSession;
       if (!mounted) return;
+      if (!session?.user && justSignedIn) {
+        session = await recoverMerchantSession(6000);
+        if (!mounted) return;
+      }
       if (!session?.user) {
         redirectToLogin();
         return;
       }
 
-      const { data, error } = await supabase.auth.getUser();
-      if (!mounted) return;
-      if (error || !data.user) {
-        await supabase.auth.signOut({ scope: "local" }).catch(() => {
-          // Ignore local cleanup failure.
-        });
-        redirectToLogin();
-        return;
+      try {
+        const { data, error } = await supabase.auth.getUser();
+        if (!mounted) return;
+        if (error || !data.user) {
+          if (!justSignedIn) {
+            await supabase.auth.signOut({ scope: "local" }).catch(() => {
+              // Ignore local cleanup failure.
+            });
+            redirectToLogin();
+            return;
+          }
+        }
+      } catch {
+        if (!mounted) return;
+        if (!justSignedIn) {
+          redirectToLogin();
+          return;
+        }
       }
 
       setNumericAdminAuthenticated(true);
@@ -109,7 +202,7 @@ export default function MerchantEntryPageClient({
     return () => {
       mounted = false;
     };
-  }, [hydrated, merchantEntry]);
+  }, [hydrated, justSignedIn, merchantEntry]);
 
   const resolvedSiteId = remoteLookup.prefix === normalizedPrefix ? remoteLookup.siteId : "";
   const remoteResolved =
