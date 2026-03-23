@@ -7,10 +7,11 @@ import { ensureMerchantIdentityForUser } from "@/lib/merchantIdentity";
 import { buildMerchantBackendHref } from "@/lib/siteRouting";
 import {
   canReachSupabaseGateway,
+  legacySupabaseAuthStorageKey,
   resolvedSupabaseAnonKey,
+  resolvedSupabaseAuthStorageKey,
   resolvedSupabaseUrl,
   supabase,
-  supabaseStorageKeyProjectRef,
 } from "@/lib/supabase";
 
 function LoginPageInner() {
@@ -290,15 +291,17 @@ function LoginPageInner() {
     const accessToken = typeof sessionPayload.access_token === "string" ? sessionPayload.access_token.trim() : "";
     const refreshToken = typeof sessionPayload.refresh_token === "string" ? sessionPayload.refresh_token.trim() : "";
     if (!accessToken || !refreshToken) return;
-    const storageKey = supabaseStorageKeyProjectRef ? `sb-${supabaseStorageKeyProjectRef}-auth-token` : "";
-    if (!storageKey) return;
+    const storageKeys = [resolvedSupabaseAuthStorageKey, legacySupabaseAuthStorageKey].filter(
+      (value, index, list) => value && list.indexOf(value) === index,
+    );
+    if (storageKeys.length === 0) return;
     try {
-      window.localStorage.setItem(
-        storageKey,
-        JSON.stringify({
-          currentSession: sessionPayload,
-        }),
-      );
+      const serialized = JSON.stringify({
+        currentSession: sessionPayload,
+      });
+      storageKeys.forEach((storageKey) => {
+        window.localStorage.setItem(storageKey, serialized);
+      });
     } catch {
       // Ignore localStorage failures and let downstream recovery handle it.
     }

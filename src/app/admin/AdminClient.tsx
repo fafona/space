@@ -52,10 +52,11 @@ import {
   canReachSupabaseGateway,
   isSupabaseEnabled,
   isSupabaseFallbackMode,
+  legacySupabaseAuthStorageKey,
   resolvedSupabaseAnonKey,
+  resolvedSupabaseAuthStorageKey,
   resolvedSupabaseUrl,
   supabase,
-  supabaseStorageKeyProjectRef,
   supabaseMissingEnvNotice,
 } from "@/lib/supabase";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
@@ -4082,31 +4083,30 @@ export default function AdminClient({
         }
         return null;
       };
-      const expectedRef = (() => {
-        const ref = supabaseStorageKeyProjectRef.trim();
-        return ref || "";
-      })();
-      const preferredKey = expectedRef ? `sb-${expectedRef}-auth-token` : "";
-      if (!preferredKey) return null;
-      try {
-        const raw = window.localStorage.getItem(preferredKey);
-        if (!raw) return null;
-        const parsed = JSON.parse(raw) as unknown;
-        const tokens = extractTokens(parsed);
-        if (!tokens) return null;
-        const { data } = await withTimeout(
-          supabase.auth.setSession(tokens),
-          Math.max(3000, Math.min(8000, AUTH_CHECK_TIMEOUT_MS)),
-          "本地会话恢复超时",
-        );
-        if (data.session) return data.session;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "";
-        if (isInvalidRefreshTokenMessage(message)) {
-          try {
-            window.localStorage.removeItem(preferredKey);
-          } catch {
-            // ignore localStorage failure
+      const storageKeys = [resolvedSupabaseAuthStorageKey, legacySupabaseAuthStorageKey].filter(
+        (value, index, list) => value && list.indexOf(value) === index,
+      );
+      for (const storageKey of storageKeys) {
+        try {
+          const raw = window.localStorage.getItem(storageKey);
+          if (!raw) continue;
+          const parsed = JSON.parse(raw) as unknown;
+          const tokens = extractTokens(parsed);
+          if (!tokens) continue;
+          const { data } = await withTimeout(
+            supabase.auth.setSession(tokens),
+            Math.max(3000, Math.min(8000, AUTH_CHECK_TIMEOUT_MS)),
+            "本地会话恢复超时",
+          );
+          if (data.session) return data.session;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "";
+          if (isInvalidRefreshTokenMessage(message)) {
+            try {
+              window.localStorage.removeItem(storageKey);
+            } catch {
+              // ignore localStorage failure
+            }
           }
         }
       }

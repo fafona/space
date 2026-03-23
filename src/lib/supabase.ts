@@ -41,13 +41,22 @@ const browserSupabaseProxyUrl = (() => {
 })();
 export const resolvedSupabaseUrl = browserSupabaseProxyUrl || rawUrl || fallbackUrl;
 export const resolvedSupabaseAnonKey = rawAnon || fallbackAnon;
-export const supabaseStorageKeyProjectRef = (() => {
+function readStorageProjectRef(value: string) {
   try {
-    return new URL(rawUrl || fallbackUrl).hostname.split(".")[0]?.trim() ?? "";
+    const baseOrigin =
+      typeof window !== "undefined" && window.location?.origin ? window.location.origin : rawUrl || fallbackUrl;
+    return new URL(value, baseOrigin).hostname.split(".")[0]?.trim() ?? "";
   } catch {
     return "";
   }
-})();
+}
+
+export const supabaseStorageKeyProjectRef = readStorageProjectRef(rawUrl || fallbackUrl);
+export const resolvedSupabaseStorageKeyProjectRef = readStorageProjectRef(resolvedSupabaseUrl || rawUrl || fallbackUrl);
+export const legacySupabaseAuthStorageKey = supabaseStorageKeyProjectRef ? `sb-${supabaseStorageKeyProjectRef}-auth-token` : "";
+export const resolvedSupabaseAuthStorageKey = resolvedSupabaseStorageKeyProjectRef
+  ? `sb-${resolvedSupabaseStorageKeyProjectRef}-auth-token`
+  : "";
 const shouldAutoRefreshSession = process.env.NEXT_PUBLIC_SUPABASE_DISABLE_AUTO_REFRESH !== "1";
 const DEFAULT_FETCH_TIMEOUT_MS = isDevelopment ? 2200 : 9000;
 const DEFAULT_FETCH_COOLDOWN_MS = isDevelopment ? 20_000 : 8_000;
