@@ -7,6 +7,7 @@ import AdminClient from "@/app/admin/AdminClient";
 import SitePageClient from "@/app/site/[siteId]/SitePageClient";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
 import { loadPlatformState, subscribePlatformState } from "@/data/platformControlStore";
+import { isTransientAuthValidationError, recoverBrowserSupabaseSession } from "@/lib/authSessionRecovery";
 import { buildMerchantSiteLinker } from "@/lib/merchantSiteLinking";
 import { isMerchantNumericId, normalizeDomainPrefix } from "@/lib/merchantIdentity";
 import { resolvePublishedSiteByPrefix } from "@/lib/publishedSiteLookup";
@@ -104,9 +105,7 @@ export default function MerchantEntryPageClient({
     };
 
     void (async () => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      let session = await recoverBrowserSupabaseSession(4500);
       if (!mounted) return;
       if (!session?.user) {
         redirectToLogin();
@@ -117,15 +116,25 @@ export default function MerchantEntryPageClient({
         const { data, error } = await supabase.auth.getUser();
         if (!mounted) return;
         if (error || !data.user) {
-          await supabase.auth.signOut({ scope: "local" }).catch(() => {
-            // Ignore local cleanup failure.
-          });
-          redirectToLogin();
-          return;
+          if (error && isTransientAuthValidationError(error)) {
+            setNumericAdminAuthenticated(true);
+            setNumericAdminAuthReady(true);
+            return;
+          }
+          session = await recoverBrowserSupabaseSession(2200);
+          if (!mounted) return;
+          if (!session?.user) {
+            await supabase.auth.signOut({ scope: "local" }).catch(() => {
+              // Ignore local cleanup failure.
+            });
+            redirectToLogin();
+            return;
+          }
         }
       } catch {
         if (!mounted) return;
-        redirectToLogin();
+        setNumericAdminAuthenticated(true);
+        setNumericAdminAuthReady(true);
         return;
       }
 
@@ -148,11 +157,11 @@ export default function MerchantEntryPageClient({
       .then(() => {
         if (!mounted) return null;
         setNumericSessionLookupDone(false);
-        return supabase.auth.getSession();
+        return recoverBrowserSupabaseSession(2200);
       })
-      .then((result) => {
+      .then((session) => {
         if (!mounted) return;
-        setNumericSessionEmail(String(result?.data.session?.user?.email ?? "").trim().toLowerCase());
+        setNumericSessionEmail(String(session?.user?.email ?? "").trim().toLowerCase());
       })
       .catch(() => {
         if (!mounted) return;
