@@ -49,7 +49,7 @@ export function normalizePublicAssetUrl(value: string, preferredOrigin?: string)
   if (/^(data|blob):/i.test(trimmed)) return trimmed;
 
   const storagePathMatch =
-    trimmed.match(/^https?:\/\/[^/]+(\/storage\/v1\/object\/public\/.+)$/i) ??
+    trimmed.match(/^https?:\/\/[^?]+?(\/storage\/v1\/object\/public\/.+)$/i) ??
     trimmed.match(/^(\/storage\/v1\/object\/public\/.+)$/i);
 
   if (!storagePathMatch) return trimmed;

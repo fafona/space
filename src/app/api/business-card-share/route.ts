@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import {
   buildMerchantBusinessCardShareManifestObjectPath,
+  resolveMerchantBusinessCardShareOrigin,
   buildMerchantBusinessCardShareUrl,
   normalizeMerchantBusinessCardShareImageUrl,
   normalizeMerchantBusinessCardShareKey,
@@ -79,9 +80,10 @@ export async function POST(request: Request) {
 
   const shareKey = normalizeMerchantBusinessCardShareKey(normalizeText(body?.key)) || createShareKey();
   const name = normalizeText(body?.name).slice(0, 80);
-  const imageUrl = normalizeMerchantBusinessCardShareImageUrl(normalizeText(body?.imageUrl), request.url);
   const targetUrl = normalizeMerchantBusinessCardShareTargetUrl(normalizeText(body?.targetUrl));
-  if (!shareKey || !imageUrl || !targetUrl) {
+  const shareOrigin = resolveMerchantBusinessCardShareOrigin(request.url, targetUrl);
+  const imageUrl = normalizeMerchantBusinessCardShareImageUrl(normalizeText(body?.imageUrl), shareOrigin || request.url);
+  if (!shareKey || !imageUrl || !targetUrl || !shareOrigin) {
     return NextResponse.json({ ok: false, error: "invalid_payload" }, { status: 400 });
   }
 
@@ -113,7 +115,7 @@ export async function POST(request: Request) {
     if (uploaded.error) continue;
 
     const shareUrl = buildMerchantBusinessCardShareUrl({
-      origin: request.url,
+      origin: shareOrigin,
       shareKey,
       imageUrl,
       targetUrl,

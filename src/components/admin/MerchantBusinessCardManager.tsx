@@ -1164,8 +1164,9 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     card?: MerchantBusinessCardAsset | null;
     renderedImageUrl?: string;
     cardName?: string;
+    targetUrl?: string;
   }) {
-    const shareOrigin = resolveMerchantBusinessCardShareOrigin();
+    const shareOrigin = resolveMerchantBusinessCardShareOrigin(undefined, input.targetUrl);
     const existingPublicUrl = normalizeMerchantBusinessCardShareImageUrl(
       normalizeText(input.card?.shareImageUrl) || normalizeText(input.card?.imageUrl),
       shareOrigin,
@@ -1213,6 +1214,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       card: input.card,
       renderedImageUrl: input.renderedImageUrl,
       cardName: input.cardName,
+      targetUrl,
     });
     if (!shareImageUrl) {
       throw new Error("share_image_unavailable");

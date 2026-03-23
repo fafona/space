@@ -16,6 +16,16 @@ test("rewrites absolute storage urls to current origin", () => {
   );
 });
 
+test("rewrites wrapped storage urls with extra path prefixes to current origin", () => {
+  assert.equal(
+    normalizePublicAssetUrl(
+      "http://localhost:3000/api/business-card-share/storage/v1/object/public/page-assets/a.webp",
+      "https://faolla.com",
+    ),
+    "https://faolla.com/storage/v1/object/public/page-assets/a.webp",
+  );
+});
+
 test("rewrites relative storage urls to current origin", () => {
   assert.equal(
     normalizePublicAssetUrl("/storage/v1/object/public/page-assets/a.webp", "https://faolla.com/"),
