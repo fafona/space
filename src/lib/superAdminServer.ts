@@ -65,6 +65,19 @@ export function resolvePublicOrigin(request: Request, requestUrl: URL) {
   return requestUrl.origin;
 }
 
+export function readRequestClientIp(request: Request) {
+  const candidates = [
+    (request.headers.get("cf-connecting-ip") ?? "").trim(),
+    (request.headers.get("x-real-ip") ?? "").trim(),
+    (request.headers.get("true-client-ip") ?? "").trim(),
+    (request.headers.get("fastly-client-ip") ?? "").trim(),
+    (request.headers.get("x-forwarded-for") ?? "")
+      .split(",")[0]
+      ?.trim(),
+  ];
+  return candidates.find((item) => item) ?? "";
+}
+
 export function maskEmailAddress(value: string) {
   const email = String(value ?? "").trim().toLowerCase();
   const [name, domain] = email.split("@");

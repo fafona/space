@@ -19,6 +19,7 @@ function describeSuperAdminLoginError(code: string) {
   if (normalized === "invalid_email_code") return "请输入有效的邮箱验证码。";
   if (normalized === "invalid_or_expired_email_code") return "验证码无效或已过期，请重新获取后再试。";
   if (normalized === "device_mismatch") return "请在刚才登录的同一设备、同一浏览器中完成验证。";
+  if (normalized === "device_limit_reached") return "白名单设备已达到上限，请先移除旧设备后再登录。";
   if (normalized === "invalid_email_proof" || normalized === "invalid_or_expired_challenge") {
     return "本次邮箱验证已失效，请重新登录后再验证。";
   }
@@ -77,10 +78,10 @@ function SuperAdminLoginForm() {
     })
       .then(async (response) => {
         const payload = (await response.json().catch(() => null)) as
-          | { error?: string; nextPath?: string; ok?: boolean }
+          | { error?: string; nextPath?: string; ok?: boolean; message?: string }
           | null;
         if (!response.ok || payload?.ok !== true) {
-          throw new Error(describeSuperAdminLoginError(payload?.error ?? "super_admin_verification_failed"));
+          throw new Error(payload?.message || describeSuperAdminLoginError(payload?.error ?? "super_admin_verification_failed"));
         }
         setSuperAdminAuthenticated();
         window.location.href = typeof payload?.nextPath === "string" && payload.nextPath.startsWith("/")
@@ -124,19 +125,35 @@ function SuperAdminLoginForm() {
         }),
       });
       const payload = (await response.json().catch(() => null)) as
-        | { error?: string; maskedEmail?: string; trustedDevice?: boolean; challenge?: string }
+        | {
+            error?: string;
+            maskedEmail?: string;
+            trustedDevice?: boolean;
+            challenge?: string;
+            message?: string;
+            maxDevices?: number;
+            currentCount?: number;
+            requestIp?: string;
+          }
         | null;
       if (!response.ok) {
-        throw new Error(describeSuperAdminLoginError(payload?.error ?? "verification_send_failed"));
+        throw new Error(payload?.message || describeSuperAdminLoginError(payload?.error ?? "verification_send_failed"));
       }
 
       const maskedEmail = String(payload?.maskedEmail ?? "caimin6669@qq.com").trim();
       const trustedDeviceTip = payload?.trustedDevice
         ? "当前浏览器已在白名单内。"
         : "当前浏览器会在验证成功后加入白名单。";
+      const limitTip =
+        typeof payload?.maxDevices === "number" && Number.isFinite(payload.maxDevices)
+          ? `当前白名单上限 ${payload.maxDevices} 台，已登记 ${payload.currentCount ?? 0} 台。`
+          : "";
+      const requestIpTip = payload?.requestIp ? `本次登录 IP：${payload.requestIp}。` : "";
       setPendingChallenge(typeof payload?.challenge === "string" ? payload.challenge : "");
       setEmailPending(true);
-      setMessage(`验证码邮件已发送到 ${maskedEmail}。你可以直接在当前页面输入验证码，或继续在同一设备、同一浏览器里点击邮件链接完成验证。${trustedDeviceTip}`);
+      setMessage(
+        `验证码邮件已发送到 ${maskedEmail}。你可以直接在当前页面输入验证码，或继续在同一设备、同一浏览器里点击邮件链接完成验证。${trustedDeviceTip}${limitTip}${requestIpTip}`,
+      );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "验证码邮件发送失败，请稍后重试。");
     } finally {
@@ -173,10 +190,10 @@ function SuperAdminLoginForm() {
         }),
       });
       const payload = (await response.json().catch(() => null)) as
-        | { error?: string; nextPath?: string; ok?: boolean }
+        | { error?: string; nextPath?: string; ok?: boolean; message?: string }
         | null;
       if (!response.ok || payload?.ok !== true) {
-        throw new Error(describeSuperAdminLoginError(payload?.error ?? "super_admin_verification_failed"));
+        throw new Error(payload?.message || describeSuperAdminLoginError(payload?.error ?? "super_admin_verification_failed"));
       }
       setSuperAdminAuthenticated();
       window.location.href = typeof payload?.nextPath === "string" && payload.nextPath.startsWith("/")

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createSuperAdminTrustedDeviceToken, type SuperAdminChallengePayload } from "@/lib/superAdminVerification";
 import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import {
+  canRegisterAnotherSuperAdminDevice,
   loadSuperAdminTrustedDevicesFromStore,
   saveSuperAdminTrustedDevicesToStore,
   upsertSuperAdminTrustedDevice,
@@ -12,7 +13,10 @@ import {
   SUPER_ADMIN_TRUSTED_DEVICE_COOKIE,
 } from "@/lib/superAdminSession";
 
-export async function finalizeSuperAdminLogin(challengePayload: SuperAdminChallengePayload) {
+export async function finalizeSuperAdminLogin(
+  challengePayload: SuperAdminChallengePayload,
+  options?: { loginIp?: string | null },
+) {
   const trustedDeviceToken = createSuperAdminTrustedDeviceToken({
     deviceId: challengePayload.deviceId,
     deviceLabel: challengePayload.deviceLabel,
@@ -20,13 +24,27 @@ export async function finalizeSuperAdminLogin(challengePayload: SuperAdminChalle
   const serviceSupabase = createServerSupabaseServiceClient();
   if (serviceSupabase) {
     try {
-      const { rowId, devices } = await loadSuperAdminTrustedDevicesFromStore(serviceSupabase);
+      const { rowId, maxDevices, devices } = await loadSuperAdminTrustedDevicesFromStore(serviceSupabase);
+      if (!canRegisterAnotherSuperAdminDevice(devices, maxDevices, challengePayload.deviceId)) {
+        return NextResponse.json(
+          {
+            error: "device_limit_reached",
+            message: `白名单设备已达到上限（${maxDevices} 台），请先移除旧设备后再登录。`,
+            maxDevices,
+            currentCount: devices.length,
+          },
+          { status: 403 },
+        );
+      }
       await saveSuperAdminTrustedDevicesToStore(
         serviceSupabase,
         rowId,
+        maxDevices,
         upsertSuperAdminTrustedDevice(devices, {
           deviceId: challengePayload.deviceId,
           deviceLabel: challengePayload.deviceLabel,
+          loginIp: options?.loginIp,
+          loginStatus: "success",
         }),
       );
     } catch {

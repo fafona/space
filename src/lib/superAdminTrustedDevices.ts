@@ -1,10 +1,16 @@
 export const SUPER_ADMIN_TRUSTED_DEVICES_PAGE_SLUG = "super-admin-trusted-devices";
+export const DEFAULT_SUPER_ADMIN_MAX_DEVICES = 3;
+
+export type SuperAdminTrustedDeviceLoginStatus = "success";
 
 export type SuperAdminTrustedDeviceRecord = {
   deviceId: string;
   deviceLabel: string;
   addedAt: string;
   lastVerifiedAt: string;
+  firstLoginIp: string;
+  lastLoginIp: string;
+  lastLoginStatus: SuperAdminTrustedDeviceLoginStatus;
 };
 
 type QueryErrorLike = { message?: string } | null;
@@ -41,7 +47,8 @@ type TrustedDevicesStoreClient = {
 };
 
 type TrustedDevicesPagePayload = {
-  version: 1;
+  version: 2;
+  maxDevices: number;
   devices: SuperAdminTrustedDeviceRecord[];
 };
 
@@ -54,6 +61,16 @@ function normalizeIsoDate(value: unknown, fallback: string) {
   if (!normalized) return fallback;
   const timestamp = new Date(normalized).getTime();
   return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : fallback;
+}
+
+function normalizeLoginStatus(value: unknown): SuperAdminTrustedDeviceLoginStatus {
+  return normalizeText(value) === "success" ? "success" : "success";
+}
+
+export function normalizeSuperAdminMaxDevices(value: unknown) {
+  const numeric = typeof value === "number" && Number.isFinite(value) ? Math.round(value) : Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(numeric)) return DEFAULT_SUPER_ADMIN_MAX_DEVICES;
+  return Math.max(1, Math.min(20, numeric));
 }
 
 function sortTrustedDevices(devices: SuperAdminTrustedDeviceRecord[]) {
@@ -73,11 +90,17 @@ function normalizeTrustedDeviceRecord(value: unknown) {
   if (!deviceId) return null;
   const nowIso = new Date().toISOString();
   const addedAt = normalizeIsoDate(source.addedAt, nowIso);
+  const lastVerifiedAt = normalizeIsoDate(source.lastVerifiedAt, addedAt);
+  const firstLoginIp = normalizeText(source.firstLoginIp);
+  const lastLoginIp = normalizeText(source.lastLoginIp) || firstLoginIp;
   return {
     deviceId,
     deviceLabel: normalizeText(source.deviceLabel) || "当前设备",
     addedAt,
-    lastVerifiedAt: normalizeIsoDate(source.lastVerifiedAt, addedAt),
+    lastVerifiedAt,
+    firstLoginIp,
+    lastLoginIp,
+    lastLoginStatus: normalizeLoginStatus(source.lastLoginStatus),
   } satisfies SuperAdminTrustedDeviceRecord;
 }
 
@@ -104,26 +127,48 @@ export function normalizeSuperAdminTrustedDevices(value: unknown) {
   return sortTrustedDevices(Array.from(deduped.values()));
 }
 
-function buildPayload(devices: SuperAdminTrustedDeviceRecord[]): TrustedDevicesPagePayload {
+function buildPayload(maxDevices: number, devices: SuperAdminTrustedDeviceRecord[]): TrustedDevicesPagePayload {
   return {
-    version: 1,
+    version: 2,
+    maxDevices: normalizeSuperAdminMaxDevices(maxDevices),
     devices: sortTrustedDevices(devices),
   };
 }
 
+export function canRegisterAnotherSuperAdminDevice(
+  devices: SuperAdminTrustedDeviceRecord[],
+  maxDevices: number,
+  deviceId: string,
+) {
+  const normalizedDeviceId = normalizeText(deviceId);
+  if (!normalizedDeviceId) return false;
+  if (devices.some((item) => item.deviceId === normalizedDeviceId)) return true;
+  return devices.length < normalizeSuperAdminMaxDevices(maxDevices);
+}
+
 export function upsertSuperAdminTrustedDevice(
   devices: SuperAdminTrustedDeviceRecord[],
-  input: { deviceId: string; deviceLabel: string; verifiedAt?: string | null },
+  input: {
+    deviceId: string;
+    deviceLabel: string;
+    verifiedAt?: string | null;
+    loginIp?: string | null;
+    loginStatus?: SuperAdminTrustedDeviceLoginStatus | null;
+  },
 ) {
   const deviceId = normalizeText(input.deviceId);
   if (!deviceId) return sortTrustedDevices(devices);
   const verifiedAt = normalizeIsoDate(input.verifiedAt, new Date().toISOString());
+  const loginIp = normalizeText(input.loginIp);
   const existing = devices.find((item) => item.deviceId === deviceId);
   const nextRecord: SuperAdminTrustedDeviceRecord = {
     deviceId,
     deviceLabel: normalizeText(input.deviceLabel) || existing?.deviceLabel || "当前设备",
     addedAt: existing?.addedAt || verifiedAt,
     lastVerifiedAt: verifiedAt,
+    firstLoginIp: existing?.firstLoginIp || loginIp,
+    lastLoginIp: loginIp || existing?.lastLoginIp || "",
+    lastLoginStatus: input.loginStatus ?? existing?.lastLoginStatus ?? "success",
   };
   return sortTrustedDevices([
     nextRecord,
@@ -140,13 +185,28 @@ export function removeSuperAdminTrustedDevice(
 }
 
 function readDevicesFromBlocks(blocks: unknown) {
-  if (Array.isArray(blocks)) return normalizeSuperAdminTrustedDevices(blocks);
-  if (!blocks || typeof blocks !== "object") return [];
-  return normalizeSuperAdminTrustedDevices(blocks);
+  if (Array.isArray(blocks)) {
+    return {
+      maxDevices: DEFAULT_SUPER_ADMIN_MAX_DEVICES,
+      devices: normalizeSuperAdminTrustedDevices(blocks),
+    };
+  }
+  if (!blocks || typeof blocks !== "object") {
+    return {
+      maxDevices: DEFAULT_SUPER_ADMIN_MAX_DEVICES,
+      devices: [] as SuperAdminTrustedDeviceRecord[],
+    };
+  }
+  const payload = blocks as { devices?: unknown; maxDevices?: unknown };
+  return {
+    maxDevices: normalizeSuperAdminMaxDevices(payload.maxDevices),
+    devices: normalizeSuperAdminTrustedDevices(payload),
+  };
 }
 
 export async function loadSuperAdminTrustedDevicesFromStore(supabase: unknown): Promise<{
   rowId: string;
+  maxDevices: number;
   devices: SuperAdminTrustedDeviceRecord[];
 }> {
   const client = supabase as TrustedDevicesStoreClient;
@@ -162,19 +222,22 @@ export async function loadSuperAdminTrustedDevicesFromStore(supabase: unknown): 
     throw new Error(error.message || "super_admin_trusted_devices_load_failed");
   }
 
+  const payload = readDevicesFromBlocks(data?.blocks);
   return {
     rowId: normalizeText(data?.id),
-    devices: readDevicesFromBlocks(data?.blocks),
+    maxDevices: payload.maxDevices,
+    devices: payload.devices,
   };
 }
 
 export async function saveSuperAdminTrustedDevicesToStore(
   supabase: unknown,
   rowId: string,
+  maxDevices: number,
   devices: SuperAdminTrustedDeviceRecord[],
 ) {
   const client = supabase as TrustedDevicesStoreClient;
-  const payload = buildPayload(devices);
+  const payload = buildPayload(maxDevices, devices);
 
   if (normalizeText(rowId)) {
     const { error } = await client.from("pages").update({ blocks: payload }).eq("id", rowId);

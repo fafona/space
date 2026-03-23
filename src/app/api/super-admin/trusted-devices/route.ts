@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import {
   loadSuperAdminTrustedDevicesFromStore,
+  normalizeSuperAdminMaxDevices,
   removeSuperAdminTrustedDevice,
   saveSuperAdminTrustedDevicesToStore,
 } from "@/lib/superAdminTrustedDevices";
@@ -39,8 +40,8 @@ export async function GET(request: Request) {
   }
 
   try {
-    const { devices } = await loadSuperAdminTrustedDevicesFromStore(supabase);
-    return NextResponse.json({ items: devices });
+    const { devices, maxDevices } = await loadSuperAdminTrustedDevicesFromStore(supabase);
+    return NextResponse.json({ items: devices, maxDevices });
   } catch (error) {
     return NextResponse.json(
       {
@@ -69,13 +70,13 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ error: "invalid_device_id" }, { status: 400 });
     }
 
-    const { rowId, devices } = await loadSuperAdminTrustedDevicesFromStore(supabase);
+    const { rowId, devices, maxDevices } = await loadSuperAdminTrustedDevicesFromStore(supabase);
     const nextDevices = removeSuperAdminTrustedDevice(devices, deviceId);
     if (nextDevices.length === devices.length) {
       return NextResponse.json({ error: "device_not_found" }, { status: 404 });
     }
 
-    await saveSuperAdminTrustedDevicesToStore(supabase, rowId, nextDevices);
+    await saveSuperAdminTrustedDevicesToStore(supabase, rowId, maxDevices, nextDevices);
 
     const response = NextResponse.json({ ok: true, deviceId });
     const currentDeviceToken = parseCookieValue(request.headers.get("cookie") ?? "", SUPER_ADMIN_TRUSTED_DEVICE_COOKIE);
@@ -94,6 +95,44 @@ export async function DELETE(request: Request) {
     return NextResponse.json(
       {
         error: "super_admin_trusted_devices_delete_failed",
+        message: error instanceof Error ? error.message : "unknown_error",
+      },
+      { status: 500 },
+    );
+  }
+}
+
+export async function PATCH(request: Request) {
+  if (!ensureAuthorized(request)) {
+    return unauthorizedJson();
+  }
+
+  const supabase = createServerSupabaseServiceClient();
+  if (!supabase) {
+    return NextResponse.json({ error: "super_admin_trusted_devices_env_missing" }, { status: 503 });
+  }
+
+  try {
+    const payload = (await request.json().catch(() => null)) as { maxDevices?: unknown } | null;
+    const maxDevices = normalizeSuperAdminMaxDevices(payload?.maxDevices);
+    const { rowId, devices } = await loadSuperAdminTrustedDevicesFromStore(supabase);
+
+    if (devices.length > maxDevices) {
+      return NextResponse.json(
+        {
+          error: "max_devices_lower_than_current_count",
+          message: `当前已有 ${devices.length} 台白名单设备，请先移除多余设备后再把上限调到 ${maxDevices}。`,
+        },
+        { status: 409 },
+      );
+    }
+
+    await saveSuperAdminTrustedDevicesToStore(supabase, rowId, maxDevices, devices);
+    return NextResponse.json({ ok: true, maxDevices });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error: "super_admin_trusted_devices_save_failed",
         message: error instanceof Error ? error.message : "unknown_error",
       },
       { status: 500 },

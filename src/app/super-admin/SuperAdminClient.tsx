@@ -1113,6 +1113,9 @@ export default function SuperAdminClient() {
   const [trustedDevicesLoading, setTrustedDevicesLoading] = useState(false);
   const [trustedDevicesError, setTrustedDevicesError] = useState("");
   const [trustedDeviceDeletingId, setTrustedDeviceDeletingId] = useState("");
+  const [trustedDeviceLimit, setTrustedDeviceLimit] = useState(3);
+  const [trustedDeviceLimitInput, setTrustedDeviceLimitInput] = useState("3");
+  const [trustedDeviceLimitSaving, setTrustedDeviceLimitSaving] = useState(false);
   const [currentSuperAdminDeviceId, setCurrentSuperAdminDeviceId] = useState("");
   const checklistStorageKeyRef = useRef(releaseChecklistStorageKeyForToday());
   const [releaseChecklistState, setReleaseChecklistState] = useState<Record<string, boolean>>(() =>
@@ -1263,13 +1266,19 @@ export default function SuperAdminClient() {
         if (!response.ok) {
           throw new Error(`trusted_devices_http_${response.status}`);
         }
-        const payload = (await response.json()) as { items?: SuperAdminTrustedDeviceRecord[] };
+        const payload = (await response.json()) as { items?: SuperAdminTrustedDeviceRecord[]; maxDevices?: number };
         if (cancelled) return;
         setTrustedDevices(Array.isArray(payload.items) ? payload.items : []);
+        const nextMaxDevices =
+          typeof payload.maxDevices === "number" && Number.isFinite(payload.maxDevices) ? payload.maxDevices : 3;
+        setTrustedDeviceLimit(nextMaxDevices);
+        setTrustedDeviceLimitInput(`${nextMaxDevices}`);
       })
       .catch((error) => {
         if (cancelled) return;
         setTrustedDevices([]);
+        setTrustedDeviceLimit(3);
+        setTrustedDeviceLimitInput("3");
         if (error instanceof DOMException && error.name === "AbortError") {
           setTrustedDevicesError("trusted_devices_timeout");
           return;
@@ -2857,6 +2866,41 @@ export default function SuperAdminClient() {
       setTrustedDevicesError(error instanceof Error ? error.message : "白名单设备移除失败，请稍后重试");
     } finally {
       setTrustedDeviceDeletingId("");
+    }
+  }
+
+  async function saveTrustedDeviceLimitAction() {
+    if (!guard("user.manage", "无用户管理权限")) return;
+
+    const nextLimit = Number.parseInt(trustedDeviceLimitInput.trim(), 10);
+    if (!Number.isFinite(nextLimit) || nextLimit < 1 || nextLimit > 20) {
+      setTrustedDevicesError("白名单上限只能设置为 1 到 20 台。");
+      return;
+    }
+
+    setTrustedDeviceLimitSaving(true);
+    setTrustedDevicesError("");
+    try {
+      const response = await fetch("/api/super-admin/trusted-devices", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ maxDevices: nextLimit }),
+      });
+      const payload = (await response.json().catch(() => null)) as { maxDevices?: number; message?: string } | null;
+      if (!response.ok) {
+        setTrustedDevicesError(payload?.message || "白名单设备上限保存失败，请稍后重试");
+        return;
+      }
+      const savedLimit = typeof payload?.maxDevices === "number" ? payload.maxDevices : nextLimit;
+      setTrustedDeviceLimit(savedLimit);
+      setTrustedDeviceLimitInput(`${savedLimit}`);
+      setTip(`白名单设备上限已更新为 ${savedLimit} 台`);
+    } catch (error) {
+      setTrustedDevicesError(error instanceof Error ? error.message : "白名单设备上限保存失败，请稍后重试");
+    } finally {
+      setTrustedDeviceLimitSaving(false);
     }
   }
 
@@ -5510,16 +5554,39 @@ export default function SuperAdminClient() {
                     <div>
                       <div className="text-sm font-semibold text-slate-900">白名单设备管理</div>
                       <div className="text-xs text-slate-500">
-                        超级后台每次登录都需要邮箱验证。验证成功的浏览器设备会自动登记到这里，方便你查看和移除。
+                        超级后台每次登录都需要邮箱验证。这里会记录设备名称、设备编号、登录 IP 和最近登录状态，并可限制白名单设备总数。
                       </div>
                     </div>
-                    <div className="rounded border bg-slate-50 px-3 py-2 text-sm">当前设备数：{trustedDevices.length}</div>
+                    <div className="rounded border bg-slate-50 px-3 py-2 text-sm">{`当前设备数：${trustedDevices.length} / ${trustedDeviceLimit}`}</div>
                   </div>
                 </div>
 
                 <div className="rounded-lg border bg-white p-4">
-                  <div className="rounded border bg-slate-50 px-3 py-3 text-xs text-slate-600">
-                    新设备在完成 `caimin6669@qq.com` 邮箱验证后会自动加入白名单；移除后，下次要重新验证才会再次登记。
+                  <div className="grid gap-3 md:grid-cols-[minmax(0,220px)_auto_1fr] md:items-end">
+                    <label className="block text-xs text-slate-600">
+                      白名单设备上限
+                      <input
+                        className="mt-1 w-full rounded border px-3 py-2 text-sm"
+                        value={trustedDeviceLimitInput}
+                        onChange={(event) => setTrustedDeviceLimitInput(event.target.value)}
+                        inputMode="numeric"
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      className="rounded bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50"
+                      onClick={() => void saveTrustedDeviceLimitAction()}
+                      disabled={trustedDeviceLimitSaving}
+                    >
+                      {trustedDeviceLimitSaving ? "保存中..." : "保存上限"}
+                    </button>
+                    <div className="rounded border bg-slate-50 px-3 py-3 text-xs text-slate-600">
+                      新设备在完成 `caimin6669@qq.com` 邮箱验证后会自动加入白名单；当设备数达到上限后，新设备即使拿到验证码也不允许登录，必须先移除旧设备。
+                    </div>
+                  </div>
+
+                  <div className="mt-3 rounded border bg-slate-50 px-3 py-3 text-xs text-slate-600">
+                    当前设备会标记为“当前设备”；其他已登记设备会显示最近登录 IP 和最近状态，方便你排查异常登录来源。
                   </div>
 
                   {trustedDevicesError ? (
@@ -5548,12 +5615,20 @@ export default function SuperAdminClient() {
                                   <div className="text-sm font-medium text-slate-900">{device.deviceLabel}</div>
                                   {isCurrent ? (
                                     <span className="rounded-full bg-slate-900 px-2 py-0.5 text-[10px] text-white">当前设备</span>
-                                  ) : null}
+                                  ) : (
+                                    <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] text-slate-700">已登记</span>
+                                  )}
+                                  <span className={`rounded-full px-2 py-0.5 text-[10px] ${device.lastLoginStatus === "success" ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-700"}`}>
+                                    {device.lastLoginStatus === "success" ? "最近登录成功" : device.lastLoginStatus}
+                                  </span>
                                 </div>
-                                <div className="text-xs text-slate-500">{device.deviceId}</div>
                                 <div className="grid gap-2 text-xs text-slate-600 md:grid-cols-2">
-                                  <div>{`首次登记：${fmt(device.addedAt)}`}</div>
+                                  <div>{`设备编号：${device.deviceId}`}</div>
+                                  <div>{`最近登录 IP：${device.lastLoginIp || "-"}`}</div>
+                                  <div>{`首次记录 IP：${device.firstLoginIp || "-"}`}</div>
                                   <div>{`最近验证：${fmt(device.lastVerifiedAt)}`}</div>
+                                  <div>{`首次登记：${fmt(device.addedAt)}`}</div>
+                                  <div>{`登录状态：${isCurrent ? "当前设备" : "允许登录"}`}</div>
                                 </div>
                               </div>
                               <button

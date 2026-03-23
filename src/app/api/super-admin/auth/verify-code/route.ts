@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createServerSupabaseAuthClient, readSuperAdminVerificationEmail } from "@/lib/superAdminServer";
+import { createServerSupabaseAuthClient, readRequestClientIp, readSuperAdminVerificationEmail } from "@/lib/superAdminServer";
 import { finalizeSuperAdminLogin } from "@/lib/superAdminLoginCompletion";
 import { readSuperAdminChallengeToken } from "@/lib/superAdminVerification";
 
@@ -54,7 +54,9 @@ export async function POST(request: Request) {
       );
     }
 
-    return finalizeSuperAdminLogin(challengePayload);
+    return finalizeSuperAdminLogin(challengePayload, {
+      loginIp: readRequestClientIp(request),
+    });
   } catch {
     return NextResponse.json({ error: "super_admin_verification_failed" }, { status: 503 });
   }

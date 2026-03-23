@@ -4,12 +4,13 @@ import {
   createServerSupabaseAuthClient,
   createServerSupabaseServiceClient,
   maskEmailAddress,
+  readRequestClientIp,
   readSuperAdminVerificationEmail,
   resolvePublicOrigin,
   validateSuperAdminCredentials,
 } from "@/lib/superAdminServer";
 import { SUPER_ADMIN_TRUSTED_DEVICE_COOKIE } from "@/lib/superAdminSession";
-import { loadSuperAdminTrustedDevicesFromStore } from "@/lib/superAdminTrustedDevices";
+import { canRegisterAnotherSuperAdminDevice, loadSuperAdminTrustedDevicesFromStore } from "@/lib/superAdminTrustedDevices";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -73,11 +74,28 @@ export async function POST(request: Request) {
     const trustedDeviceToken = parseCookieValue(request.headers.get("cookie") ?? "", SUPER_ADMIN_TRUSTED_DEVICE_COOKIE);
     const trustedDevice = readSuperAdminTrustedDeviceToken(trustedDeviceToken);
     let currentDeviceTrusted = trustedDevice?.deviceId === deviceId;
+    let maxDevices: number | null = null;
+    let currentCount = 0;
     const serviceSupabase = createServerSupabaseServiceClient();
     if (serviceSupabase) {
       try {
-        const { devices } = await loadSuperAdminTrustedDevicesFromStore(serviceSupabase);
+        const { devices, maxDevices: storedMaxDevices } = await loadSuperAdminTrustedDevicesFromStore(serviceSupabase);
         currentDeviceTrusted = devices.some((item) => item.deviceId === deviceId);
+        maxDevices = storedMaxDevices;
+        currentCount = devices.length;
+        if (!canRegisterAnotherSuperAdminDevice(devices, storedMaxDevices, deviceId)) {
+          return NextResponse.json(
+            {
+              error: "device_limit_reached",
+              message: `白名单设备已达到上限（${storedMaxDevices} 台），请先移除旧设备后再登录。`,
+              maxDevices: storedMaxDevices,
+              currentCount: devices.length,
+              trustedDevice: currentDeviceTrusted,
+              requestIp: readRequestClientIp(request),
+            },
+            { status: 403 },
+          );
+        }
       } catch {
         // Keep the cookie-based fallback if the device whitelist store is temporarily unavailable.
       }
@@ -107,6 +125,9 @@ export async function POST(request: Request) {
       maskedEmail: maskEmailAddress(verificationEmail),
       trustedDevice: currentDeviceTrusted,
       challenge: challengeToken,
+      maxDevices,
+      currentCount,
+      requestIp: readRequestClientIp(request),
     });
   } catch {
     return NextResponse.json({ error: "verification_send_failed" }, { status: 503 });

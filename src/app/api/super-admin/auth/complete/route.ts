@@ -4,6 +4,7 @@ import {
   verifySuperAdminEmailProofToken,
 } from "@/lib/superAdminVerification";
 import { finalizeSuperAdminLogin } from "@/lib/superAdminLoginCompletion";
+import { readRequestClientIp } from "@/lib/superAdminServer";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -32,7 +33,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "invalid_email_proof" }, { status: 401 });
     }
 
-    return finalizeSuperAdminLogin(challengePayload);
+    return finalizeSuperAdminLogin(challengePayload, {
+      loginIp: readRequestClientIp(request),
+    });
   } catch {
     return NextResponse.json({ error: "super_admin_verification_failed" }, { status: 503 });
   }
