@@ -78,6 +78,10 @@ export async function generateMetadata({ searchParams }: ShareBusinessCardPagePr
         {
           url: payload.imageUrl,
           alt: title,
+          secureUrl: payload.imageUrl,
+          width: payload.imageWidth,
+          height: payload.imageHeight,
+          type: "image/png",
         },
       ],
     },

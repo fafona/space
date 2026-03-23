@@ -17,6 +17,8 @@ type BusinessCardShareRequestBody = {
   name?: unknown;
   imageUrl?: unknown;
   targetUrl?: unknown;
+  imageWidth?: unknown;
+  imageHeight?: unknown;
 };
 
 function parseCookieValue(cookieHeader: string, key: string) {
@@ -29,6 +31,11 @@ function parseCookieValue(cookieHeader: string, key: string) {
 
 function normalizeText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeImageDimension(value: unknown) {
+  const normalized = typeof value === "number" && Number.isFinite(value) ? Math.round(value) : 0;
+  return normalized >= 120 && normalized <= 4096 ? normalized : 0;
 }
 
 function createShareKey() {
@@ -83,6 +90,8 @@ export async function POST(request: Request) {
   const targetUrl = normalizeMerchantBusinessCardShareTargetUrl(normalizeText(body?.targetUrl));
   const shareOrigin = resolveMerchantBusinessCardShareOrigin(request.url, targetUrl);
   const imageUrl = normalizeMerchantBusinessCardShareImageUrl(normalizeText(body?.imageUrl), shareOrigin || request.url);
+  const imageWidth = normalizeImageDimension(body?.imageWidth);
+  const imageHeight = normalizeImageDimension(body?.imageHeight);
   if (!shareKey || !imageUrl || !targetUrl || !shareOrigin) {
     return NextResponse.json({ ok: false, error: "invalid_payload" }, { status: 400 });
   }
@@ -91,6 +100,8 @@ export async function POST(request: Request) {
     name,
     imageUrl,
     targetUrl,
+    ...(imageWidth ? { imageWidth } : {}),
+    ...(imageHeight ? { imageHeight } : {}),
   });
   const objectPath = buildMerchantBusinessCardShareManifestObjectPath(shareKey);
   if (!objectPath) {

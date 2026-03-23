@@ -93,6 +93,8 @@ test("parseMerchantBusinessCardShareParams normalizes storage image urls with pr
       image: "/storage/v1/object/public/page-assets/card.png",
       target: "https://fafona.faolla.com",
       name: "fafona",
+      imageWidth: "680",
+      imageHeight: "432",
     },
     "https://faolla.com",
   );
@@ -101,6 +103,8 @@ test("parseMerchantBusinessCardShareParams normalizes storage image urls with pr
     imageUrl: "https://faolla.com/storage/v1/object/public/page-assets/card.png",
     targetUrl: "https://fafona.faolla.com/",
     name: "fafona",
+    imageWidth: 680,
+    imageHeight: 432,
   });
 });
 

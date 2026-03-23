@@ -13,10 +13,17 @@ export type MerchantBusinessCardSharePayload = {
   name: string;
   imageUrl: string;
   targetUrl: string;
+  imageWidth?: number;
+  imageHeight?: number;
 };
 
 function normalizeText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function clampImageDimension(value: unknown) {
+  const normalized = typeof value === "number" && Number.isFinite(value) ? Math.round(value) : 0;
+  return normalized >= 120 && normalized <= 4096 ? normalized : 0;
 }
 
 function isLocalHost(hostname: string) {
@@ -146,16 +153,22 @@ function normalizeSharePayload(
     name?: string | null;
     imageUrl?: string | null;
     targetUrl?: string | null;
+    imageWidth?: number | null;
+    imageHeight?: number | null;
   },
   preferredOrigin?: string | null,
 ): MerchantBusinessCardSharePayload | null {
   const targetUrl = normalizeMerchantBusinessCardShareTargetUrl(input.targetUrl);
   const imageUrl = normalizeMerchantBusinessCardShareImageUrl(input.imageUrl, preferredOrigin);
   if (!targetUrl || !imageUrl) return null;
+  const imageWidth = clampImageDimension(input.imageWidth);
+  const imageHeight = clampImageDimension(input.imageHeight);
   return {
     name: normalizeText(input.name).slice(0, 80),
     imageUrl,
     targetUrl,
+    ...(imageWidth ? { imageWidth } : {}),
+    ...(imageHeight ? { imageHeight } : {}),
   };
 }
 
@@ -218,6 +231,8 @@ export function parseMerchantBusinessCardShareParams(
       name: readSearchParam(searchParams, "name"),
       imageUrl: readSearchParam(searchParams, "image"),
       targetUrl: readSearchParam(searchParams, "target"),
+      imageWidth: Number(readSearchParam(searchParams, "imageWidth")),
+      imageHeight: Number(readSearchParam(searchParams, "imageHeight")),
     },
     preferredOrigin,
   );

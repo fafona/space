@@ -1205,6 +1205,8 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     cardName: string;
     card?: MerchantBusinessCardAsset | null;
     renderedImageUrl?: string;
+    imageWidth?: number;
+    imageHeight?: number;
   }) {
     const targetUrl = normalizeText(input.targetUrl);
     if (!targetUrl) {
@@ -1235,6 +1237,8 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
         name: input.cardName,
         imageUrl: shareImageUrl,
         targetUrl,
+        imageWidth: typeof input.imageWidth === "number" ? Math.round(input.imageWidth) : undefined,
+        imageHeight: typeof input.imageHeight === "number" ? Math.round(input.imageHeight) : undefined,
       }),
     });
     const payload = (await response.json().catch(() => null)) as {
@@ -1274,6 +1278,8 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
         targetUrl: normalizedUrl,
         cardName: normalizeText(draft.name) || "商户名片",
         renderedImageUrl,
+        imageWidth: draft.width,
+        imageHeight: draft.height,
       });
       await copyTextToClipboard(shareUrl);
       setTip("分享链接已复制，发送后会显示名片预览");
@@ -1293,6 +1299,8 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
         targetUrl,
         cardName: normalizeText(card.name) || "商户名片",
         card,
+        imageWidth: card.width,
+        imageHeight: card.height,
       });
       await copyTextToClipboard(shareUrl);
       setTip("分享链接已复制，发送后会显示名片预览");
