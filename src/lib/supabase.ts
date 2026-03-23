@@ -59,7 +59,10 @@ function readStorageProjectRef(value: string) {
 }
 
 export const supabaseStorageKeyProjectRef = readStorageProjectRef(rawUrl || fallbackUrl);
-export const resolvedSupabaseStorageKeyProjectRef = readStorageProjectRef(getResolvedSupabaseUrl() || rawUrl || fallbackUrl);
+// Keep the auth storage key tied to the real Supabase project host.
+// Browser requests may proxy through the current origin, but session storage
+// still needs to match the client instance's project ref.
+export const resolvedSupabaseStorageKeyProjectRef = supabaseStorageKeyProjectRef;
 export const legacySupabaseAuthStorageKey = supabaseStorageKeyProjectRef ? `sb-${supabaseStorageKeyProjectRef}-auth-token` : "";
 export const resolvedSupabaseAuthStorageKey = resolvedSupabaseStorageKeyProjectRef
   ? `sb-${resolvedSupabaseStorageKeyProjectRef}-auth-token`
@@ -249,6 +252,7 @@ export const supabase = createClient(resolvedSupabaseUrl, resolvedSupabaseAnonKe
     fetch: safeSupabaseFetch,
   },
   auth: {
+    storageKey: legacySupabaseAuthStorageKey || undefined,
     persistSession: true,
     detectSessionInUrl: true,
     autoRefreshToken: shouldAutoRefreshSession,

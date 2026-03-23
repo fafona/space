@@ -179,6 +179,7 @@ import {
   buildSiteStoreScope,
   resolveRuntimePortalBaseDomain,
 } from "@/lib/siteRouting";
+import { buildMerchantSiteLinker } from "@/lib/merchantSiteLinking";
 import BlockRenderer from "@/components/blocks/BlockRenderer";
 import BookingBlock from "@/components/blocks/BookingBlock";
 import MerchantBookingManagerDialog from "@/components/admin/MerchantBookingManagerDialog";
@@ -1867,6 +1868,11 @@ function ensureScopedMerchantSite(siteId: string, userEmail?: string | null) {
   const normalizedSiteId = String(siteId ?? "").trim();
   if (!normalizedSiteId) return null;
   const state = loadPlatformState();
+  const matchedSite = buildMerchantSiteLinker(state.sites, state.users)({
+    merchantId: normalizedSiteId,
+    email: userEmail,
+  });
+  if (matchedSite) return matchedSite;
   const existed = state.sites.find((item) => item.id === normalizedSiteId) ?? null;
   if (existed) return existed;
 

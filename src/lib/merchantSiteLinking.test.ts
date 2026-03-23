@@ -66,6 +66,19 @@ test("matches exact merchant id first", () => {
   assert.equal(link({ merchantId: "10000000", email: "other@example.com", siteSlug: "other" })?.id, "10000000");
 });
 
+test("prefers richer unique email match over exact merchant shell site", () => {
+  const shell = makeSite({ id: "10000000", name: "商户 10000000", contactEmail: "" });
+  const configured = makeSite({
+    id: "site-merchant-a",
+    merchantName: "caimin00x",
+    domainPrefix: "fafona",
+    contactEmail: "caimin00x@gmail.com",
+    serviceExpiresAt: "2077-07-07T00:00:00.000Z",
+  });
+  const link = buildMerchantSiteLinker([shell, configured], []);
+  assert.equal(link({ merchantId: "10000000", email: "caimin00x@gmail.com", siteSlug: "" })?.id, "site-merchant-a");
+});
+
 test("matches unique email when exact merchant id site is absent", () => {
   const site = makeSite({ id: "site-merchant-a", contactEmail: "caimin00x@gmail.com", domainPrefix: "fafona" });
   const link = buildMerchantSiteLinker([site], []);

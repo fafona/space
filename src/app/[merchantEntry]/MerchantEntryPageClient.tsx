@@ -7,6 +7,7 @@ import AdminClient from "@/app/admin/AdminClient";
 import SitePageClient from "@/app/site/[siteId]/SitePageClient";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
 import { loadPlatformState, subscribePlatformState } from "@/data/platformControlStore";
+import { buildMerchantSiteLinker } from "@/lib/merchantSiteLinking";
 import { isMerchantNumericId, normalizeDomainPrefix } from "@/lib/merchantIdentity";
 import { resolvePublishedSiteByPrefix } from "@/lib/publishedSiteLookup";
 import { buildPlatformHomeHref } from "@/lib/siteRouting";
@@ -40,6 +41,20 @@ export default function MerchantEntryPageClient({
   });
   const [numericAdminAuthReady, setNumericAdminAuthReady] = useState(() => justSignedIn);
   const [numericAdminAuthenticated, setNumericAdminAuthenticated] = useState(() => justSignedIn);
+  const [numericSessionEmail, setNumericSessionEmail] = useState("");
+  const [numericSessionLookupDone, setNumericSessionLookupDone] = useState(() => !isMerchantNumericId(merchantEntry) || !isSupabaseEnabled);
+  const matchMerchantSite = useMemo(
+    () => buildMerchantSiteLinker(platformState.sites, platformState.users),
+    [platformState.sites, platformState.users],
+  );
+  const numericScopedSiteId = useMemo(() => {
+    if (!merchantEntry || !isMerchantNumericId(merchantEntry)) return "";
+    const matched = matchMerchantSite({
+      merchantId: merchantEntry,
+      email: numericSessionEmail,
+    });
+    return matched?.id || merchantEntry;
+  }, [matchMerchantSite, merchantEntry, numericSessionEmail]);
 
   useEffect(
     () =>
@@ -125,6 +140,34 @@ export default function MerchantEntryPageClient({
     };
   }, [hydrated, justSignedIn, merchantEntry]);
 
+  useEffect(() => {
+    if (!hydrated || !merchantEntry || !isMerchantNumericId(merchantEntry) || !isSupabaseEnabled) return;
+
+    let mounted = true;
+    void Promise.resolve()
+      .then(() => {
+        if (!mounted) return null;
+        setNumericSessionLookupDone(false);
+        return supabase.auth.getSession();
+      })
+      .then((result) => {
+        if (!mounted) return;
+        setNumericSessionEmail(String(result?.data.session?.user?.email ?? "").trim().toLowerCase());
+      })
+      .catch(() => {
+        if (!mounted) return;
+        setNumericSessionEmail("");
+      })
+      .finally(() => {
+        if (!mounted) return;
+        setNumericSessionLookupDone(true);
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, [hydrated, merchantEntry]);
+
   const resolvedSiteId = remoteLookup.prefix === normalizedPrefix ? remoteLookup.siteId : "";
   const remoteResolved =
     !merchantEntry || isMerchantNumericId(merchantEntry) || (remoteLookup.prefix === normalizedPrefix && remoteLookup.resolved);
@@ -135,10 +178,13 @@ export default function MerchantEntryPageClient({
 
   if (merchantEntry && isMerchantNumericId(merchantEntry)) {
     if (!isSupabaseEnabled) {
-      return <AdminClient forcedScope={`site-${merchantEntry}`} />;
+      return <AdminClient forcedScope={`site-${numericScopedSiteId || merchantEntry}`} />;
+    }
+    if (!numericSessionLookupDone) {
+      return <LoadingProgressScreen message="正在定位商户站点..." />;
     }
     if (justSignedIn) {
-      return <AdminClient forcedScope={`site-${merchantEntry}`} />;
+      return <AdminClient forcedScope={`site-${numericScopedSiteId || merchantEntry}`} />;
     }
     if (!numericAdminAuthReady) {
       return <LoadingProgressScreen message="正在检查登录状态..." />;
@@ -146,7 +192,7 @@ export default function MerchantEntryPageClient({
     if (!numericAdminAuthenticated) {
       return <LoadingProgressScreen message="正在跳转到登录页..." />;
     }
-    return <AdminClient forcedScope={`site-${merchantEntry}`} />;
+    return <AdminClient forcedScope={`site-${numericScopedSiteId || merchantEntry}`} />;
   }
 
   const byPrefix = merchantEntry
