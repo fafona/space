@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { normalizeDomainPrefix } from "@/lib/merchantIdentity";
+import { normalizeMerchantProfileBindingPayload } from "@/lib/merchantProfileBinding";
 import { SUPER_ADMIN_SESSION_COOKIE, SUPER_ADMIN_SESSION_VALUE } from "@/lib/superAdminSession";
 
 export const dynamic = "force-dynamic";
@@ -35,6 +35,7 @@ type MerchantRow = {
 type DomainBindingBody = {
   merchantId?: unknown;
   domainPrefix?: unknown;
+  merchantName?: unknown;
 };
 
 function readEnv(name: string) {
@@ -178,6 +179,44 @@ async function updateMerchantSlug(
   return { ok: false, status: 409, message: withUpdatedAtMessage };
 }
 
+async function updateMerchantName(
+  supabase: LooseSupabaseClient,
+  merchantId: string,
+  merchantName: string,
+) {
+  if (!merchantName) {
+    return { ok: true as const, updated: false };
+  }
+
+  const { data: existing, error: existingError } = await supabase
+    .from("merchants")
+    .select("id,name")
+    .eq("id", merchantId)
+    .limit(1)
+    .maybeSingle();
+
+  if (existingError) {
+    return { ok: false as const, status: 409, message: existingError.message };
+  }
+
+  const existingRow = (existing ?? null) as { id?: string | number | null; name?: string | null } | null;
+  const rowId = String(existingRow?.id ?? "").trim();
+  if (!rowId) {
+    return { ok: true as const, updated: false };
+  }
+
+  if (String(existingRow?.name ?? "").trim() === merchantName) {
+    return { ok: true as const, updated: false };
+  }
+
+  const updated = await supabase.from("merchants").update({ name: merchantName } as never).eq("id", rowId);
+  if (updated.error) {
+    return { ok: false as const, status: 409, message: String(updated.error.message ?? "merchant_name_update_failed") };
+  }
+
+  return { ok: true as const, updated: true };
+}
+
 export async function POST(request: Request) {
   const supabaseUrl = readEnv("NEXT_PUBLIC_SUPABASE_URL");
   const serviceRoleKey = readEnv("SUPABASE_SERVICE_ROLE_KEY") || readEnv("NEXT_SUPABASE_SERVICE_ROLE_KEY");
@@ -192,11 +231,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "invalid_json" }, { status: 400 });
   }
 
-  const merchantId = String(body?.merchantId ?? "").trim();
-  const domainPrefix = normalizeDomainPrefix(String(body?.domainPrefix ?? ""));
-  if (!merchantId || !domainPrefix) {
+  const normalizedPayload = normalizeMerchantProfileBindingPayload(body);
+  if (!normalizedPayload) {
     return NextResponse.json({ error: "invalid_payload" }, { status: 400 });
   }
+  const { merchantId, domainPrefix, merchantName } = normalizedPayload;
 
   try {
     const supabase = createClient(supabaseUrl, serviceRoleKey, {
@@ -212,14 +251,25 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
 
-    const result = await updateMerchantSlug(supabase, merchantId, domainPrefix);
-    if (!result.ok) {
+    const slugResult = await updateMerchantSlug(supabase, merchantId, domainPrefix);
+    if (!slugResult.ok) {
       return NextResponse.json(
         {
           error: "merchant_domain_binding_failed",
-          message: result.message,
+          message: slugResult.message,
         },
-        { status: result.status },
+        { status: slugResult.status },
+      );
+    }
+
+    const merchantNameResult = await updateMerchantName(supabase, merchantId, merchantName);
+    if (!merchantNameResult.ok) {
+      return NextResponse.json(
+        {
+          error: "merchant_domain_binding_failed",
+          message: merchantNameResult.message,
+        },
+        { status: merchantNameResult.status },
       );
     }
 
@@ -227,7 +277,10 @@ export async function POST(request: Request) {
       ok: true,
       merchantId,
       slug: domainPrefix,
-      updated: result.updated,
+      merchantName,
+      updated: slugResult.updated || merchantNameResult.updated,
+      slugUpdated: slugResult.updated,
+      merchantNameUpdated: merchantNameResult.updated,
     });
   } catch (error) {
     return NextResponse.json(

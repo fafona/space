@@ -60,6 +60,7 @@ import {
   supabaseMissingEnvNotice,
 } from "@/lib/supabase";
 import { clearMerchantSignInBridge } from "@/lib/merchantSignInBridge";
+import { buildPublishedMerchantProfilePatch } from "@/lib/merchantProfileBinding";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
 import { BLOCK_BORDER_STYLE_OPTIONS, getBlockBorderClass, getBlockBorderInlineStyle } from "@/components/blocks/borderStyle";
 import { toRichHtml } from "@/components/blocks/richText";
@@ -4138,12 +4139,18 @@ export default function AdminClient({
       const publishedSnapshot = await loadPublishedSiteSnapshotViaApi(scopedSiteId);
       if (!mounted || !publishedSnapshot) return false;
       merchantIdsRef.current = [scopedSiteId];
-      const localMerchantName =
-        loadPlatformState().sites.find((item) => item.id === scopedSiteId)?.merchantName?.trim() ?? "";
-      ensureScopedMerchantSite(scopedSiteId, null, {
-        merchantName: localMerchantName ? undefined : publishedSnapshot.merchantName,
-        domainPrefix: publishedSnapshot.slug,
-      });
+      const localSite = loadPlatformState().sites.find((item) => item.id === scopedSiteId) ?? null;
+      ensureScopedMerchantSite(
+        scopedSiteId,
+        null,
+        buildPublishedMerchantProfilePatch(
+          {
+            merchantName: localSite?.merchantName,
+            domainPrefix: localSite?.domainPrefix ?? localSite?.domainSuffix,
+          },
+          publishedSnapshot,
+        ),
+      );
       setHasEditorContent(true);
       setRemoteContentVerified(true);
       applyPersistedBlocksToEditorRef.current(publishedSnapshot.blocks);
@@ -5611,9 +5618,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
   }
 
-  async function syncMerchantDomainBinding(merchantId: string, domainPrefix: string) {
+  async function syncMerchantProfileBinding(merchantId: string, domainPrefix: string, merchantName: string) {
     const normalizedMerchantId = String(merchantId ?? "").trim();
     const normalizedPrefix = normalizeDomainPrefixForMerchant(domainPrefix);
+    const normalizedMerchantName = String(merchantName ?? "").trim();
     if (!normalizedMerchantId || !normalizedPrefix || !isSupabaseEnabled) {
       return { ok: false as const, updated: false };
     }
@@ -5644,10 +5652,16 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       body: JSON.stringify({
         merchantId: normalizedMerchantId,
         domainPrefix: normalizedPrefix,
+        merchantName: normalizedMerchantName,
       }),
     });
 
-    const data = (await response.json().catch(() => null)) as { updated?: unknown; message?: unknown } | null;
+    const data = (await response.json().catch(() => null)) as {
+      updated?: unknown;
+      slugUpdated?: unknown;
+      merchantNameUpdated?: unknown;
+      message?: unknown;
+    } | null;
     if (!response.ok) {
       return {
         ok: false as const,
@@ -5659,6 +5673,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     return {
       ok: true as const,
       updated: data?.updated === true,
+      slugUpdated: data?.slugUpdated === true,
+      merchantNameUpdated: data?.merchantNameUpdated === true,
     };
   }
 
@@ -7139,12 +7155,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             setMerchantProfileDialogOpen(false);
             setMerchantProfileAttention(false);
             showTip("商户信息已保存");
-            void syncMerchantDomainBinding(editingSiteId, normalizedDomainPrefix).then((result) => {
+            void syncMerchantProfileBinding(editingSiteId, normalizedDomainPrefix, merchantName).then((result) => {
               if (!result.ok) {
-                showTip("商户信息已保存；线上前缀映射同步失败，重新发布后会自动修复");
+                showTip("商户信息已保存；线上商户资料同步失败，稍后重新保存或重新发布后会自动修复");
                 return;
               }
-              if (!result.updated) {
+              if (!result.slugUpdated) {
                 showTip("商户信息已保存；当前还没有线上页面记录，首次发布后前台地址才会生效");
               }
             });
