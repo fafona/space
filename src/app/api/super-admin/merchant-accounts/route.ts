@@ -36,6 +36,14 @@ type PageRow = {
   merchant_id?: string | null;
   slug?: string | null;
   updated_at?: string | null;
+  blocks?: unknown;
+};
+
+type MerchantVisitSummary = {
+  today: number;
+  day7: number;
+  day30: number;
+  total: number;
 };
 
 type MerchantAccountItem = {
@@ -53,6 +61,10 @@ type MerchantAccountItem = {
   hasPublishedSite: boolean;
   siteSlug: string;
   siteUpdatedAt: string | null;
+  publishedBytes: number;
+  publishedBytesKnown: boolean;
+  visits: MerchantVisitSummary;
+  visitsKnown: boolean;
 };
 
 type AdminListUsersClient = {
@@ -178,19 +190,39 @@ function normalizeSlug(value: string | null | undefined) {
   return String(value ?? "").trim();
 }
 
+function estimateUtf8Size(text: string) {
+  if (typeof TextEncoder !== "undefined") return new TextEncoder().encode(text).length;
+  return Buffer.byteLength(text, "utf8");
+}
+
+function countBlocksBytes(blocks: unknown) {
+  if (typeof blocks === "undefined") return { bytes: 0, known: false };
+  try {
+    return { bytes: estimateUtf8Size(JSON.stringify(blocks ?? null)), known: true };
+  } catch {
+    return { bytes: 0, known: false };
+  }
+}
+
 function buildPublishedSiteInfoByMerchantId(rows: PageRow[]) {
-  const map = new Map<string, { hasPublishedSite: boolean; siteSlug: string; siteUpdatedAt: string | null }>();
+  const map = new Map<
+    string,
+    { hasPublishedSite: boolean; siteSlug: string; siteUpdatedAt: string | null; publishedBytes: number; publishedBytesKnown: boolean }
+  >();
   rows.forEach((row) => {
     const merchantId = String(row.merchant_id ?? "").trim();
     if (!merchantId) return;
     const slug = normalizeSlug(row.slug);
     const updatedAt = typeof row.updated_at === "string" ? row.updated_at : null;
+    const bytes = countBlocksBytes(row.blocks);
     const current = map.get(merchantId);
     if (!current) {
       map.set(merchantId, {
         hasPublishedSite: true,
         siteSlug: slug,
         siteUpdatedAt: updatedAt,
+        publishedBytes: bytes.bytes,
+        publishedBytesKnown: bytes.known,
       });
       return;
     }
@@ -203,10 +235,61 @@ function buildPublishedSiteInfoByMerchantId(rows: PageRow[]) {
         hasPublishedSite: true,
         siteSlug: preferSlug ? slug : current.siteSlug,
         siteUpdatedAt: preferNext ? updatedAt : current.siteUpdatedAt,
+        publishedBytes: current.publishedBytes + bytes.bytes,
+        publishedBytesKnown: current.publishedBytesKnown || bytes.known,
       });
+      return;
     }
+    map.set(merchantId, {
+      ...current,
+      publishedBytes: current.publishedBytes + bytes.bytes,
+      publishedBytesKnown: current.publishedBytesKnown || bytes.known,
+    });
   });
   return map;
+}
+
+function normalizeEventString(record: Record<string, unknown>, ...keys: string[]) {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value !== "string") continue;
+    const normalized = value.trim();
+    if (normalized) return normalized;
+  }
+  return "";
+}
+
+function daysBetweenNow(isoDate: string, nowMs: number) {
+  const at = new Date(isoDate).getTime();
+  if (!Number.isFinite(at)) return Number.POSITIVE_INFINITY;
+  return (nowMs - at) / 86400_000;
+}
+
+function buildMerchantVisitsByMerchantId(rows: unknown[], nowMs: number) {
+  const map = new Map<string, MerchantVisitSummary>();
+  rows.forEach((item) => {
+    if (!item || typeof item !== "object") return;
+    const record = item as Record<string, unknown>;
+    const eventType = normalizeEventString(record, "event_type", "type", "event").toLowerCase();
+    if (eventType !== "page_view") return;
+    const channel = normalizeEventString(record, "channel", "page_path").toLowerCase();
+    const merchantId = channel.match(/^site:(\d+):/i)?.[1] ?? "";
+    if (!merchantId) return;
+    const at = normalizeEventString(record, "created_at", "at", "timestamp");
+    if (!at) return;
+    const current = map.get(merchantId) ?? { today: 0, day7: 0, day30: 0, total: 0 };
+    current.total += 1;
+    const diff = daysBetweenNow(at, nowMs);
+    if (diff < 1) current.today += 1;
+    if (diff < 7) current.day7 += 1;
+    if (diff < 30) current.day30 += 1;
+    map.set(merchantId, current);
+  });
+  return map;
+}
+
+function isMissingRelationError(message: string) {
+  return /relation .* does not exist/i.test(message) || /table .* does not exist/i.test(message);
 }
 
 function choosePreferredMerchantAccount(current: MerchantAccountItem | undefined, candidate: MerchantAccountItem) {
@@ -320,6 +403,10 @@ export async function GET(request: Request) {
         hasPublishedSite: false,
         siteSlug: "",
         siteUpdatedAt: null,
+        publishedBytes: 0,
+        publishedBytesKnown: false,
+        visits: { today: 0, day7: 0, day30: 0, total: 0 },
+        visitsKnown: false,
       };
     });
 
@@ -354,6 +441,10 @@ export async function GET(request: Request) {
           hasPublishedSite: false,
           siteSlug: "",
           siteUpdatedAt: null,
+          publishedBytes: 0,
+          publishedBytesKnown: false,
+          visits: { today: 0, day7: 0, day30: 0, total: 0 },
+          visitsKnown: false,
         };
       });
 
@@ -368,15 +459,34 @@ export async function GET(request: Request) {
       merchantId: isNumericMerchantId(item.merchantId) ? item.merchantId : "",
     }));
     const merchantIds = [...new Set(normalizedItems.map((item) => item.merchantId).filter((item) => isNumericMerchantId(item)))];
-    let publishedSiteInfoByMerchantId = new Map<string, { hasPublishedSite: boolean; siteSlug: string; siteUpdatedAt: string | null }>();
+    let publishedSiteInfoByMerchantId = new Map<
+      string,
+      { hasPublishedSite: boolean; siteSlug: string; siteUpdatedAt: string | null; publishedBytes: number; publishedBytesKnown: boolean }
+    >();
     if (merchantIds.length > 0) {
       const { data: pageRows, error: pageError } = await supabase
         .from("pages")
-        .select("merchant_id,slug,updated_at")
+        .select("merchant_id,slug,updated_at,blocks")
         .in("merchant_id", merchantIds)
         .limit(Math.max(merchantIds.length * 4, 100));
       if (!pageError && Array.isArray(pageRows)) {
         publishedSiteInfoByMerchantId = buildPublishedSiteInfoByMerchantId(pageRows as PageRow[]);
+      }
+    }
+
+    let visitsByMerchantId = new Map<string, MerchantVisitSummary>();
+    let visitsKnown = false;
+    if (merchantIds.length > 0) {
+      const { data: pageEvents, error: pageEventsError } = await supabase
+        .from("page_events")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(5000);
+      if (!pageEventsError && Array.isArray(pageEvents)) {
+        visitsByMerchantId = buildMerchantVisitsByMerchantId(pageEvents, Date.now());
+        visitsKnown = true;
+      } else if (pageEventsError && isMissingRelationError(pageEventsError.message)) {
+        visitsKnown = false;
       }
     }
 
@@ -388,6 +498,10 @@ export async function GET(request: Request) {
           hasPublishedSite: publishedSiteInfo?.hasPublishedSite === true,
           siteSlug: publishedSiteInfo?.siteSlug ?? "",
           siteUpdatedAt: publishedSiteInfo?.siteUpdatedAt ?? null,
+          publishedBytes: publishedSiteInfo?.publishedBytes ?? 0,
+          publishedBytesKnown: publishedSiteInfo?.publishedBytesKnown === true,
+          visits: visitsByMerchantId.get(item.merchantId) ?? { today: 0, day7: 0, day30: 0, total: 0 },
+          visitsKnown,
         };
       }),
     );
@@ -542,6 +656,10 @@ export async function POST(request: Request) {
       hasPublishedSite: false,
       siteSlug: "",
       siteUpdatedAt: null,
+      publishedBytes: 0,
+      publishedBytesKnown: false,
+      visits: { today: 0, day7: 0, day30: 0, total: 0 },
+      visitsKnown: false,
     };
 
     return NextResponse.json({ item }, { status: 201 });

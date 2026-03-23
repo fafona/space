@@ -304,6 +304,14 @@ function formatBytes(bytes: number) {
   return `${Math.round(bytes)} B`;
 }
 
+function formatOptionalBytes(bytes: number, known: boolean) {
+  return known ? formatBytes(bytes) : "-";
+}
+
+function formatOptionalCount(value: number, known: boolean) {
+  return known ? `${value}` : "-";
+}
+
 function estimateUtf8Size(text: string) {
   if (typeof TextEncoder !== "undefined") return new TextEncoder().encode(text).length;
   return text.length;
@@ -934,7 +942,9 @@ type MerchantUserRow = {
   industry: string;
   city: string;
   sizeBytes: number;
+  sizeKnown: boolean;
   visits: MerchantVisits;
+  visitsKnown: boolean;
   registerAt: string;
   expireAt: string | null;
   expired: boolean;
@@ -957,6 +967,10 @@ type BackendMerchantAccount = {
   hasPublishedSite: boolean;
   siteSlug: string;
   siteUpdatedAt: string | null;
+  publishedBytes: number;
+  publishedBytesKnown: boolean;
+  visits: MerchantVisits;
+  visitsKnown: boolean;
 };
 
 type MerchantTableSortField =
@@ -1337,21 +1351,24 @@ export default function SuperAdminClient() {
       const hasPublishedSite = account.hasPublishedSite === true;
       const publishedPrefix = normalizePublishedSitePrefix(account.siteSlug);
       if (localSiteContext) {
-        const merchantName = getMerchantProfileName(localSiteContext.site) || account.merchantName || account.username || "";
+        const merchantName = getMerchantProfileName(localSiteContext.site);
+        const accountEmail = account.email || localSiteContext.userEmail || "-";
         return {
           site: localSiteContext.site,
           hasSite: true,
           hasLocalSite: true,
           backendAccount: account,
           merchantId,
-          loginAccount: account.username || account.loginId || account.email || localSiteContext.userEmail || "-",
-          userEmail: account.email || localSiteContext.userEmail || "-",
+          loginAccount: accountEmail,
+          userEmail: accountEmail,
           merchantName,
           prefix: localSiteContext.prefix || publishedPrefix || "-",
           industry: localSiteContext.industry,
           city: localSiteContext.city,
-          sizeBytes: localSiteContext.sizeBytes,
-          visits: localSiteContext.visits,
+          sizeBytes: account.publishedBytes,
+          sizeKnown: account.publishedBytesKnown,
+          visits: account.visits,
+          visitsKnown: account.visitsKnown,
           registerAt: account.createdAt ?? localSiteContext.site.createdAt,
           expireAt: localSiteContext.expireAt,
           expired: localSiteContext.expired,
@@ -1365,14 +1382,16 @@ export default function SuperAdminClient() {
         hasLocalSite: false,
         backendAccount: account,
         merchantId,
-        loginAccount: account.username || account.loginId || account.email || "-",
+        loginAccount: account.email || "-",
         userEmail: account.email || "-",
-        merchantName: account.merchantName || account.username || "",
+        merchantName: "",
         prefix: publishedPrefix || "-",
         industry: "-",
         city: "-",
-        sizeBytes: 0,
-        visits: { today: 0, day7: 0, day30: 0, total: 0 },
+        sizeBytes: account.publishedBytes,
+        sizeKnown: account.publishedBytesKnown,
+        visits: account.visits,
+        visitsKnown: account.visitsKnown,
         registerAt: account.createdAt ?? nextIsoNow(),
         expireAt: null,
         expired: false,
@@ -3925,7 +3944,7 @@ export default function SuperAdminClient() {
                     ) : backendMerchantAccountsError ? (
                       <span className="text-rose-600">后端用户数据加载失败：{describeBackendMerchantAccountsError(backendMerchantAccountsError)}</span>
                     ) : (
-                      <span className="text-slate-500">账号真值仍来自线上 `auth + merchants + pages`；匹配到本地站点配置时，会补回前缀、行业、城市、体积、访问量和配置操作。</span>
+                      <span className="text-slate-500">账号使用后端邮箱；名称只取商户信息；体积和访问量只显示可从线上 `pages / page_events` 核实的值。</span>
                     )}
                   </div>
                 </div>
@@ -4114,8 +4133,8 @@ export default function SuperAdminClient() {
                                 <td className="px-3 py-2 text-xs">{row.prefix || "-"}</td>
                                 <td className="px-3 py-2 text-xs">{row.industry || "-"}</td>
                                 <td className="px-3 py-2 text-xs">{row.city || "-"}</td>
-                                <td className="px-3 py-2 text-xs">{formatBytes(row.sizeBytes)}</td>
-                                <td className="px-3 py-2 text-xs">{row.visits.day30}</td>
+                                <td className="px-3 py-2 text-xs">{formatOptionalBytes(row.sizeBytes, row.sizeKnown)}</td>
+                                <td className="px-3 py-2 text-xs">{formatOptionalCount(row.visits.day30, row.visitsKnown)}</td>
                                 <td className="px-3 py-2 text-xs text-slate-500">{fmt(row.registerAt)}</td>
                                 <td className="px-3 py-2 text-xs text-slate-500">{fmt(row.expireAt)}</td>
                                 <td className="px-3 py-2">
@@ -4900,11 +4919,15 @@ export default function SuperAdminClient() {
                               </div>
                               <div className="rounded border px-3 py-2">
                                 <div className="text-slate-500">体积</div>
-                                <div>{formatBytes(selectedMerchantRow.sizeBytes)}</div>
+                                <div>{formatOptionalBytes(selectedMerchantRow.sizeBytes, selectedMerchantRow.sizeKnown)}</div>
                               </div>
                               <div className="rounded border px-3 py-2">
                                 <div className="text-slate-500">访问量</div>
-                                <div>今日 {selectedMerchantRow.visits.today} / 7日 {selectedMerchantRow.visits.day7} / 30日 {selectedMerchantRow.visits.day30} / 总 {selectedMerchantRow.visits.total}</div>
+                                <div>
+                                  {selectedMerchantRow.visitsKnown
+                                    ? `今日 ${selectedMerchantRow.visits.today} / 7日 ${selectedMerchantRow.visits.day7} / 30日 ${selectedMerchantRow.visits.day30} / 总 ${selectedMerchantRow.visits.total}`
+                                    : "-"}
+                                </div>
                               </div>
                               <div className="rounded border px-3 py-2">
                                 <div className="text-slate-500">注册时间</div>
