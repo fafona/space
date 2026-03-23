@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient, type EmailOtpType } from "@supabase/supabase-js";
+import { createSuperAdminEmailProofToken } from "@/lib/superAdminVerification";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -23,9 +24,7 @@ function resolvePublicOrigin(request: Request, requestUrl: URL) {
   const host = (request.headers.get("host") ?? "").trim();
   const publicHost = forwardedHost || host;
   const protocol = forwardedProto || requestUrl.protocol.replace(/:$/, "") || "http";
-  if (publicHost) {
-    return `${protocol}://${publicHost}`;
-  }
+  if (publicHost) return `${protocol}://${publicHost}`;
   return requestUrl.origin;
 }
 
@@ -53,6 +52,16 @@ function appendResultParams(url: URL, confirmed: boolean, message?: string) {
   return url;
 }
 
+function appendSuperAdminProofParams(url: URL, confirmed: boolean) {
+  const challenge = (url.searchParams.get("superAdminChallenge") ?? "").trim();
+  if (!challenge || !confirmed) return url;
+  const proof = createSuperAdminEmailProofToken(challenge);
+  if (!proof) return url;
+  url.searchParams.set("superAdminVerified", "1");
+  url.searchParams.set("superAdminProof", proof);
+  return url;
+}
+
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url);
   const tokenHash = (requestUrl.searchParams.get("token_hash") ?? requestUrl.searchParams.get("token") ?? "").trim();
@@ -71,10 +80,9 @@ export async function GET(request: Request) {
   const anonKey = readEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY");
 
   if (!supabaseUrl || !anonKey) {
-    return NextResponse.redirect(
-      appendResultParams(redirectTo, false, "验证服务暂时不可用，请稍后重试。"),
-      { status: 303 },
-    );
+    return NextResponse.redirect(appendResultParams(redirectTo, false, "验证服务暂时不可用，请稍后重试。"), {
+      status: 303,
+    });
   }
 
   const supabase = createClient(supabaseUrl, anonKey, {
@@ -97,8 +105,7 @@ export async function GET(request: Request) {
     );
   }
 
-  return NextResponse.redirect(
-    appendResultParams(redirectTo, true, rawType === "recovery" ? "验证成功，请继续重置密码。" : "邮箱验证成功，请直接登录。"),
-    { status: 303 },
-  );
+  const successMessage = rawType === "recovery" ? "验证成功，请继续重置密码。" : "邮箱验证成功，请继续登录。";
+  const successRedirect = appendResultParams(redirectTo, true, successMessage);
+  return NextResponse.redirect(appendSuperAdminProofParams(successRedirect, true), { status: 303 });
 }
