@@ -50,12 +50,12 @@ import {
 import {
   BACKEND_UNAVAILABLE_NOTICE,
   canReachSupabaseGateway,
+  getResolvedSupabaseUrl,
   isSupabaseEnabled,
   isSupabaseFallbackMode,
   legacySupabaseAuthStorageKey,
   resolvedSupabaseAnonKey,
   resolvedSupabaseAuthStorageKey,
-  resolvedSupabaseUrl,
   supabase,
   supabaseMissingEnvNotice,
 } from "@/lib/supabase";
@@ -2512,7 +2512,7 @@ async function loadBlocksFromSupabaseFallback(merchantIds: string[]) {
 
 async function loadBlocksViaRestFallback(merchantIds: string[], accessToken?: string | null) {
   if (!accessToken) return null;
-  const baseUrl = (resolvedSupabaseUrl ?? "").trim().replace(/\/+$/, "");
+  const baseUrl = getResolvedSupabaseUrl().trim().replace(/\/+$/, "");
   if (!baseUrl) return null;
   const uniqueMerchantIds = [...new Set(merchantIds.map((item) => item.trim()).filter(Boolean))].slice(0, 8);
   if (uniqueMerchantIds.length > 0) {
@@ -2596,7 +2596,7 @@ async function loadPlatformBlocksViaApiFallback() {
 
 async function loadPlatformBlocksViaRestFallback(accessToken?: string | null) {
   if (!accessToken) return null;
-  const baseUrl = (resolvedSupabaseUrl ?? "").trim().replace(/\/+$/, "");
+  const baseUrl = getResolvedSupabaseUrl().trim().replace(/\/+$/, "");
   if (!baseUrl) return null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 12000);

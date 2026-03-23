@@ -26,7 +26,9 @@ if (supabaseMissingEnvNotice && typeof window !== "undefined") {
 
 const fallbackUrl = isSupabaseFallbackMode ? "http://127.0.0.1:54321" : "https://invalid.supabase.local";
 const fallbackAnon = "fallback-anon-key";
-const browserSupabaseProxyUrl = (() => {
+const configuredSupabaseUrl = rawUrl || fallbackUrl;
+
+function getBrowserSupabaseProxyUrl() {
   if (typeof window === "undefined" || !rawUrl) return "";
   try {
     const browserLocation = window.location;
@@ -38,8 +40,13 @@ const browserSupabaseProxyUrl = (() => {
     return "";
   }
   return "";
-})();
-export const resolvedSupabaseUrl = browserSupabaseProxyUrl || rawUrl || fallbackUrl;
+}
+
+export function getResolvedSupabaseUrl() {
+  return getBrowserSupabaseProxyUrl() || configuredSupabaseUrl;
+}
+
+export const resolvedSupabaseUrl = configuredSupabaseUrl;
 export const resolvedSupabaseAnonKey = rawAnon || fallbackAnon;
 function readStorageProjectRef(value: string) {
   try {
@@ -52,7 +59,7 @@ function readStorageProjectRef(value: string) {
 }
 
 export const supabaseStorageKeyProjectRef = readStorageProjectRef(rawUrl || fallbackUrl);
-export const resolvedSupabaseStorageKeyProjectRef = readStorageProjectRef(resolvedSupabaseUrl || rawUrl || fallbackUrl);
+export const resolvedSupabaseStorageKeyProjectRef = readStorageProjectRef(getResolvedSupabaseUrl() || rawUrl || fallbackUrl);
 export const legacySupabaseAuthStorageKey = supabaseStorageKeyProjectRef ? `sb-${supabaseStorageKeyProjectRef}-auth-token` : "";
 export const resolvedSupabaseAuthStorageKey = resolvedSupabaseStorageKeyProjectRef
   ? `sb-${resolvedSupabaseStorageKeyProjectRef}-auth-token`
@@ -162,6 +169,28 @@ function makeSupabaseUnavailableResponse(
 }
 
 const nativeFetch = typeof fetch === "function" ? fetch.bind(globalThis) : null;
+
+function rewriteSupabaseRequestTarget(input: RequestInfo | URL) {
+  const proxyBase = getBrowserSupabaseProxyUrl().replace(/\/+$/, "");
+  const upstreamBase = (rawUrl || "").trim().replace(/\/+$/, "");
+  if (!proxyBase || !upstreamBase) return input;
+
+  try {
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input instanceof Request
+            ? input.url
+            : "";
+    if (!url || !url.startsWith(upstreamBase)) return input;
+    return `${proxyBase}${url.slice(upstreamBase.length)}`;
+  } catch {
+    return input;
+  }
+}
+
 const safeSupabaseFetch: typeof fetch = async (input, init) => {
   if (!nativeFetch) {
     return makeSupabaseUnavailableResponse("fetch_unavailable");
@@ -179,7 +208,7 @@ const safeSupabaseFetch: typeof fetch = async (input, init) => {
   }
   const { signal, cleanup } = mergeAbortSignals(init?.signal ?? null, requestTimeoutMs);
   try {
-    const response = await nativeFetch(input, {
+    const response = await nativeFetch(rewriteSupabaseRequestTarget(input), {
       ...init,
       signal,
       cache: "no-store",
@@ -237,7 +266,7 @@ async function probeSupabaseEndpoint(
   }, Math.max(200, timeoutMs));
 
   try {
-    const response = await fetch(`${resolvedSupabaseUrl}${path}`, {
+    const response = await fetch(`${getResolvedSupabaseUrl()}${path}`, {
       method: "GET",
       headers,
       cache: "no-store",

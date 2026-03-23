@@ -7,8 +7,8 @@ import { ensureMerchantIdentityForUser, isMerchantNumericId } from "@/lib/mercha
 import { buildMerchantBackendHref } from "@/lib/siteRouting";
 import {
   canReachSupabaseGateway,
+  getResolvedSupabaseUrl,
   resolvedSupabaseAnonKey,
-  resolvedSupabaseUrl,
   supabase,
 } from "@/lib/supabase";
 
@@ -113,7 +113,7 @@ function LoginPageInner() {
 
   async function readEmailConfirmationRequired() {
     try {
-      const response = await fetch(`${resolvedSupabaseUrl}/auth/v1/settings`, {
+      const response = await fetch(`${getResolvedSupabaseUrl()}/auth/v1/settings`, {
         headers: { apikey: resolvedSupabaseAnonKey },
         cache: "no-store",
       });

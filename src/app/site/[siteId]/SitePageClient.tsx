@@ -20,9 +20,9 @@ import { PUBLISH_SYNC_STORAGE_KEY, subscribePublishSync } from "@/lib/publishSyn
 import { buildMerchantBackendHref, buildPlatformHomeHref, buildSiteStoreScope } from "@/lib/siteRouting";
 import {
   canReachSupabaseGateway,
+  getResolvedSupabaseUrl,
   isSupabaseEnabled,
   resolvedSupabaseAnonKey,
-  resolvedSupabaseUrl,
   supabase,
 } from "@/lib/supabase";
 import { useHydrated } from "@/lib/useHydrated";
@@ -139,7 +139,7 @@ async function getAccessTokenQuickly(timeoutMs = 1200) {
 }
 
 async function fetchPublishedSiteBlocksViaRest(siteId: string, bearerToken?: string) {
-  const base = (resolvedSupabaseUrl ?? "").trim().replace(/\/+$/, "");
+  const base = getResolvedSupabaseUrl().trim().replace(/\/+$/, "");
   if (!base || !siteId) return null;
   const queryOne = async (slug?: string) => {
     const query = new URLSearchParams({
