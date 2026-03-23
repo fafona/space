@@ -30,6 +30,11 @@ type LoginAuthSession = {
   user?: LoginAuthUser | null;
 };
 
+type ServerSignInResult = {
+  user: LoginAuthUser | null;
+  merchantId: string;
+};
+
 function LoginPageInner() {
   const { locale, t } = useI18n();
   const searchParams = useSearchParams();
@@ -228,11 +233,11 @@ function LoginPageInner() {
   }
 
   function isEmailNotConfirmed(message: string) {
-    return /Email not confirmed/i.test(message);
+    return /email not confirmed|email_not_confirmed/i.test(message);
   }
 
   function isInvalidCredentials(message: string) {
-    return /invalid (authentication|login) credentials|invalid_grant/i.test(message);
+    return /invalid_credentials|invalid (authentication|login) credentials|invalid_grant/i.test(message);
   }
 
   function isUserAlreadyRegistered(message: string, code?: string) {
@@ -290,6 +295,9 @@ function LoginPageInner() {
     if (/supabase_unavailable:/i.test(message)) {
       return t("login.backendUnavailable");
     }
+    if (/merchant_login_|auth_signin_|account_resolve_/i.test(message)) {
+      return t("login.backendUnavailable");
+    }
     if (/failed to fetch|fetch failed|networkerror|network request failed|load failed/i.test(message)) {
       return t("login.backendUnavailable");
     }
@@ -300,41 +308,6 @@ function LoginPageInner() {
       return t("superLogin.invalid");
     }
     return message;
-  }
-
-  async function resolveSignInEmail(accountValue: string) {
-    const normalizedAccount = accountValue.trim();
-    if (!normalizedAccount) return "";
-    if (normalizedAccount.includes("@")) return normalizedAccount;
-
-    let response: Response;
-    try {
-      response = await fetch("/api/auth/account-resolve", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ account: normalizedAccount }),
-        cache: "no-store",
-      });
-    } catch {
-      throw new Error(t("login.backendUnavailable"));
-    }
-
-    const payload = (await response.json().catch(() => null)) as
-      | {
-          email?: unknown;
-          error?: unknown;
-        }
-      | null;
-
-    if (!response.ok) {
-      const errorCode = typeof payload?.error === "string" ? payload.error : "";
-      if (errorCode === "invalid_account") return "";
-      throw new Error(t("login.backendUnavailable"));
-    }
-
-    return typeof payload?.email === "string" ? payload.email.trim() : "";
   }
 
   async function withTimeout<T>(task: Promise<T>, timeoutMs = 15000): Promise<T> {
@@ -360,15 +333,6 @@ function LoginPageInner() {
     }
   }
 
-  function shouldAttemptServerSignInFallback(message: string) {
-    const normalizedMessage = normalizeError(message);
-    return (
-      normalizedMessage === t("login.backendUnavailable") ||
-      normalizedMessage === t("login.timeout") ||
-      normalizedMessage === t("login.requestFailed")
-    );
-  }
-
   function persistSessionSnapshot(session: LoginAuthSession) {
     if (typeof window === "undefined") return;
     const storageKeys = [legacySupabaseAuthStorageKey, resolvedSupabaseAuthStorageKey].filter(
@@ -388,16 +352,16 @@ function LoginPageInner() {
     }
   }
 
-  async function signInViaServer(emailValue: string, passwordValue: string): Promise<LoginAuthUser | null> {
+  async function signInViaServer(accountValue: string, passwordValue: string): Promise<ServerSignInResult> {
     const response = await withTimeout(
-      fetch("/api/auth/signin", {
+      fetch("/api/auth/merchant-login", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         cache: "no-store",
         body: JSON.stringify({
-          email: emailValue.trim(),
+          account: accountValue.trim(),
           password: passwordValue,
         }),
       }),
@@ -410,6 +374,7 @@ function LoginPageInner() {
           message?: unknown;
           user?: LoginAuthUser | null;
           session?: LoginAuthSession | null;
+          merchantId?: unknown;
         }
       | null;
 
@@ -444,7 +409,10 @@ function LoginPageInner() {
       // Keep the locally persisted session snapshot and let the admin page recover it on load.
     }
 
-    return (payload?.user ?? session?.user ?? null) as LoginAuthUser | null;
+    return {
+      user: (payload?.user ?? session?.user ?? null) as LoginAuthUser | null,
+      merchantId: typeof payload?.merchantId === "string" ? payload.merchantId.trim() : "",
+    };
   }
 
   async function signUp() {
@@ -503,54 +471,13 @@ function LoginPageInner() {
     setGatewayReachable(gatewayReady);
 
     setPendingAction("signin");
-    let preferredMerchantId = "";
-    let resolvedEmail = "";
-    let serverFallbackAttempted = false;
     try {
-      preferredMerchantId = isMerchantNumericId(account.trim()) ? account.trim() : "";
-      resolvedEmail = await resolveSignInEmail(account);
-      if (!resolvedEmail) {
-        setNeedConfirmEmail(false);
-        setMsg(t("superLogin.invalid"));
-        return;
-      }
-
-      const { data, error } = await withTimeout(
-        supabase.auth.signInWithPassword({
-          email: resolvedEmail,
-          password,
-        }),
-      );
-
-      if (error) {
-        if (shouldAttemptServerSignInFallback(error.message)) {
-          serverFallbackAttempted = true;
-          const fallbackUser = await signInViaServer(resolvedEmail, password);
-          await redirectToMerchantBackend(fallbackUser, preferredMerchantId);
-          return;
-        }
-        setNeedConfirmEmail(isEmailNotConfirmed(error.message));
-        return setMsg(normalizeError(error.message));
-      }
-
-      await redirectToMerchantBackend(pickAuthUser(data), preferredMerchantId);
+      const preferredMerchantId = isMerchantNumericId(account.trim()) ? account.trim() : "";
+      const result = await signInViaServer(account, password);
+      const resolvedMerchantId = preferredMerchantId || result.merchantId;
+      await redirectToMerchantBackend(result.user, resolvedMerchantId);
     } catch (error) {
-      let normalizedMessage = error instanceof Error ? normalizeError(error.message) : t("login.requestFailed");
-      if (
-        error instanceof Error &&
-        !serverFallbackAttempted &&
-        resolvedEmail &&
-        shouldAttemptServerSignInFallback(error.message)
-      ) {
-        try {
-          const fallbackUser = await signInViaServer(resolvedEmail, password);
-          await redirectToMerchantBackend(fallbackUser, preferredMerchantId);
-          return;
-        } catch (fallbackError) {
-          normalizedMessage =
-            fallbackError instanceof Error ? normalizeError(fallbackError.message) : t("login.requestFailed");
-        }
-      }
+      const normalizedMessage = error instanceof Error ? normalizeError(error.message) : t("login.requestFailed");
       setNeedConfirmEmail(normalizedMessage === t("login.emailNotConfirmed"));
       if (!gatewayReady && normalizedMessage === t("login.backendUnavailable") && isDevelopment) {
         window.location.href = "/admin?offline=1";
