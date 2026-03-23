@@ -4149,7 +4149,6 @@ export default function AdminClient({
       const combinedLoaded = buildCombinedPersistedBlocks(desktopLoaded, mobileLoaded);
       savePublishedBlocksToStorage(combinedLoaded, storeScope);
       savePublishedBlocksToStorage(combinedLoaded, buildSiteStoreScope(scopedSiteId));
-      clearJustSignedInFlagFromUrl();
       releaseCheckingScreen({ notice: "登录状态同步稍慢，已载入当前商户的远端内容。" });
       return true;
     };
