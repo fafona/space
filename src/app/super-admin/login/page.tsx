@@ -16,12 +16,14 @@ function describeSuperAdminLoginError(code: string) {
   if (!normalized) return "登录失败，请重试。";
   if (normalized === "invalid_credentials") return "账号或密码错误。";
   if (normalized === "invalid_device") return "当前浏览器设备信息无效，请刷新后重试。";
-  if (normalized === "device_mismatch") return "请在刚才登录的同一设备、同一浏览器中打开验证邮件。";
+  if (normalized === "invalid_email_code") return "请输入有效的邮箱验证码。";
+  if (normalized === "invalid_or_expired_email_code") return "验证码无效或已过期，请重新获取后再试。";
+  if (normalized === "device_mismatch") return "请在刚才登录的同一设备、同一浏览器中完成验证。";
   if (normalized === "invalid_email_proof" || normalized === "invalid_or_expired_challenge") {
     return "本次邮箱验证已失效，请重新登录后再验证。";
   }
   if (normalized === "verification_env_missing") return "邮箱验证服务未配置完成，请稍后再试。";
-  if (normalized === "verification_send_failed") return "验证邮件发送失败，请稍后重试。";
+  if (normalized === "verification_send_failed") return "验证码邮件发送失败，请稍后重试。";
   return normalized;
 }
 
@@ -39,10 +41,13 @@ function SuperAdminLoginForm() {
 
   const [account, setAccount] = useState("");
   const [password, setPassword] = useState("");
+  const [emailCode, setEmailCode] = useState("");
   const [message, setMessage] = useState("");
-  const [pendingAction, setPendingAction] = useState<"request" | "complete" | null>(null);
+  const [pendingAction, setPendingAction] = useState<"request" | "complete" | "verify_code" | null>(null);
   const [emailPending, setEmailPending] = useState(false);
+  const [pendingChallenge, setPendingChallenge] = useState("");
   const completedChallengeRef = useRef("");
+  const activeChallenge = challengeFromUrl || pendingChallenge;
 
   useEffect(() => {
     if (!verifiedFromEmail || !challengeFromUrl || !proofFromUrl) return;
@@ -55,6 +60,7 @@ function SuperAdminLoginForm() {
     }
 
     completedChallengeRef.current = challengeFromUrl;
+    setPendingChallenge(challengeFromUrl);
     setPendingAction("complete");
     setMessage("邮箱已验证，正在完成超级后台登录...");
 
@@ -94,6 +100,7 @@ function SuperAdminLoginForm() {
     if (pendingAction) return;
     setMessage("");
     setEmailPending(false);
+    setPendingChallenge("");
 
     const deviceId = getOrCreateSuperAdminDeviceId();
     if (!deviceId) {
@@ -117,18 +124,67 @@ function SuperAdminLoginForm() {
         }),
       });
       const payload = (await response.json().catch(() => null)) as
-        | { error?: string; maskedEmail?: string; trustedDevice?: boolean }
+        | { error?: string; maskedEmail?: string; trustedDevice?: boolean; challenge?: string }
         | null;
       if (!response.ok) {
         throw new Error(describeSuperAdminLoginError(payload?.error ?? "verification_send_failed"));
       }
 
       const maskedEmail = String(payload?.maskedEmail ?? "caimin6669@qq.com").trim();
-      const trustedDeviceTip = payload?.trustedDevice ? "当前浏览器已在白名单内。" : "当前浏览器会在验证成功后加入白名单。";
+      const trustedDeviceTip = payload?.trustedDevice
+        ? "当前浏览器已在白名单内。"
+        : "当前浏览器会在验证成功后加入白名单。";
+      setPendingChallenge(typeof payload?.challenge === "string" ? payload.challenge : "");
       setEmailPending(true);
-      setMessage(`验证邮件已发送到 ${maskedEmail}。请在刚才登录的同一设备、同一浏览器中打开邮件完成验证。${trustedDeviceTip}`);
+      setMessage(`验证码邮件已发送到 ${maskedEmail}。你可以直接在当前页面输入验证码，或继续在同一设备、同一浏览器里点击邮件链接完成验证。${trustedDeviceTip}`);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "验证邮件发送失败，请稍后重试。");
+      setMessage(error instanceof Error ? error.message : "验证码邮件发送失败，请稍后重试。");
+    } finally {
+      setPendingAction(null);
+    }
+  }
+
+  async function verifyEmailCode() {
+    if (pendingAction) return;
+    if (!activeChallenge) {
+      setEmailPending(false);
+      setMessage("请先登录并发送验证码邮件。");
+      return;
+    }
+
+    const deviceId = getOrCreateSuperAdminDeviceId();
+    if (!deviceId) {
+      setEmailPending(false);
+      setMessage("当前浏览器无法建立受信设备标识，请更换浏览器或关闭无痕模式后重试。");
+      return;
+    }
+
+    setPendingAction("verify_code");
+    try {
+      const response = await fetch("/api/super-admin/auth/verify-code", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          challenge: activeChallenge,
+          deviceId,
+          code: emailCode,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { error?: string; nextPath?: string; ok?: boolean }
+        | null;
+      if (!response.ok || payload?.ok !== true) {
+        throw new Error(describeSuperAdminLoginError(payload?.error ?? "super_admin_verification_failed"));
+      }
+      setSuperAdminAuthenticated();
+      window.location.href = typeof payload?.nextPath === "string" && payload.nextPath.startsWith("/")
+        ? payload.nextPath
+        : nextHref;
+    } catch (error) {
+      setEmailPending(false);
+      setMessage(error instanceof Error ? error.message : "验证码验证失败，请重新获取后再试。");
     } finally {
       setPendingAction(null);
     }
@@ -139,7 +195,7 @@ function SuperAdminLoginForm() {
       <div className="w-full max-w-md space-y-4 rounded-xl border bg-white p-6">
         <h1 className="text-xl font-bold">{t("superLogin.title")}</h1>
         <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
-          超级后台启用白名单设备。每次登录都需要发送邮件到 `caimin6669@qq.com` 完成验证。
+          超级后台启用白名单设备。每次登录都需要发送邮件到 `caimin6669@qq.com` 完成验证，收到验证码后也可以直接在这里输入。
         </div>
         <div className="space-y-2">
           <div className="text-sm text-gray-600">{t("superLogin.account")}</div>
@@ -162,6 +218,28 @@ function SuperAdminLoginForm() {
             autoComplete="current-password"
           />
         </div>
+        <div className="space-y-2">
+          <div className="flex items-center justify-between text-sm text-gray-600">
+            <span>邮箱验证码</span>
+            {activeChallenge ? <span className="text-xs text-slate-400">已发送验证码，可直接输入</span> : null}
+          </div>
+          <input
+            className="w-full rounded border p-2"
+            value={emailCode}
+            onChange={(event) => setEmailCode(event.target.value)}
+            placeholder="输入邮件里的验证码"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+          />
+          <button
+            type="button"
+            className="w-full rounded border px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-50"
+            onClick={() => void verifyEmailCode()}
+            disabled={pendingAction !== null || !activeChallenge || !emailCode.trim()}
+          >
+            {pendingAction === "verify_code" ? "验证验证码中..." : "提交验证码"}
+          </button>
+        </div>
         {message ? (
           <div className={`text-sm ${emailPending ? "text-amber-700" : "text-rose-600"}`}>{message}</div>
         ) : null}
@@ -172,13 +250,13 @@ function SuperAdminLoginForm() {
           disabled={pendingAction !== null}
         >
           {pendingAction === "request"
-            ? "发送验证邮件中..."
-            : pendingAction === "complete"
+            ? "发送验证码邮件中..."
+            : pendingAction === "complete" || pendingAction === "verify_code"
               ? "验证中..."
               : t("superLogin.signIn")}
         </button>
         <div className="text-xs text-slate-500">
-          如果邮件已经发出但未自动跳转，请回到这台设备上的同一浏览器，重新打开邮件里的验证链接。
+          邮件发出后，你可以直接输入验证码，也可以回到这台设备上的同一浏览器里继续点击邮件验证链接。
         </div>
         <Link href="/login" className="block rounded border px-3 py-2 text-center text-sm hover:bg-gray-50">
           {t("superLogin.backMerchant")}

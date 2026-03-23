@@ -106,6 +106,7 @@ export async function POST(request: Request) {
       nextPath,
       maskedEmail: maskEmailAddress(verificationEmail),
       trustedDevice: currentDeviceTrusted,
+      challenge: challengeToken,
     });
   } catch {
     return NextResponse.json({ error: "verification_send_failed" }, { status: 503 });
