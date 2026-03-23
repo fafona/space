@@ -12,6 +12,10 @@ export type PublishedPageRow = {
   created_at?: string | null;
 };
 
+type MerchantProfileRow = {
+  name?: string | null;
+};
+
 function readEnv(name: string) {
   return (process.env[name] ?? "").trim();
 }
@@ -98,10 +102,19 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "site_published_not_found" }, { status: 404 });
     }
 
+    const { data: merchantProfile } = await supabase
+      .from("merchants")
+      .select("name")
+      .eq("id", siteId)
+      .limit(1)
+      .maybeSingle();
+    const merchantName = String((merchantProfile as MerchantProfileRow | null)?.name ?? "").trim();
+
     return NextResponse.json({
       ok: true,
       siteId,
       slug: String(chosen.slug ?? "").trim(),
+      merchantName,
       blocks: chosen.blocks,
     });
   } catch (error) {

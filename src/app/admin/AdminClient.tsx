@@ -1864,18 +1864,17 @@ function buildMerchantDomainFromBase(baseDomain: string, prefix: string) {
   return `${normalizedBase}/${normalizedPrefix}`;
 }
 
-function ensureScopedMerchantSite(siteId: string, userEmail?: string | null) {
+type ScopedMerchantSitePatch = {
+  merchantName?: string | null;
+  domainPrefix?: string | null;
+  contactEmail?: string | null;
+  name?: string | null;
+};
+
+function ensureScopedMerchantSite(siteId: string, userEmail?: string | null, patch?: ScopedMerchantSitePatch) {
   const normalizedSiteId = String(siteId ?? "").trim();
   if (!normalizedSiteId) return null;
   const state = loadPlatformState();
-  const matchedSite = buildMerchantSiteLinker(state.sites, state.users)({
-    merchantId: normalizedSiteId,
-    email: userEmail,
-  });
-  if (matchedSite) return matchedSite;
-  const existed = state.sites.find((item) => item.id === normalizedSiteId) ?? null;
-  if (existed) return existed;
-
   const current = new Date().toISOString();
   const mainSite = state.sites.find((item) => item.id === "site-main") ?? state.sites[0] ?? null;
   const tenantId = mainSite?.tenantId ?? state.tenants[0]?.id ?? "tenant-demo";
@@ -1883,18 +1882,72 @@ function ensureScopedMerchantSite(siteId: string, userEmail?: string | null) {
     normalizeBaseDomainForMerchant(resolveRuntimePortalBaseDomain(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "")) ||
     normalizeBaseDomainForMerchant(mainSite?.domain ?? "") ||
     "localhost:3000";
+  const normalizedMerchantName = String(patch?.merchantName ?? "").trim();
+  const normalizedDomainPrefix = normalizeDomainPrefixForMerchant(patch?.domainPrefix ?? "");
+  const normalizedContactEmail =
+    String(patch?.contactEmail ?? userEmail ?? "")
+      .trim()
+      .toLowerCase();
+  const normalizedName = String(patch?.name ?? "").trim();
+  const applyPatch = (site: Site): Site => {
+    const nextMerchantName = normalizedMerchantName || String(site.merchantName ?? "").trim();
+    const nextDomainPrefix = normalizedDomainPrefix || normalizeDomainPrefixForMerchant(site.domainPrefix ?? site.domainSuffix ?? "");
+    const nextContactEmail = normalizedContactEmail || String(site.contactEmail ?? "").trim().toLowerCase();
+    const nextName = normalizedName || nextMerchantName || String(site.name ?? "").trim() || `商户 ${normalizedSiteId}`;
+    const nextDomain =
+      nextDomainPrefix
+        ? buildMerchantDomainFromBase(baseDomain, nextDomainPrefix)
+        : String(site.domain ?? "").trim() || buildMerchantDomainFromBase(baseDomain, normalizedSiteId);
+    const changed =
+      nextMerchantName !== String(site.merchantName ?? "").trim() ||
+      nextDomainPrefix !== normalizeDomainPrefixForMerchant(site.domainPrefix ?? site.domainSuffix ?? "") ||
+      nextContactEmail !== String(site.contactEmail ?? "").trim().toLowerCase() ||
+      nextName !== String(site.name ?? "").trim() ||
+      nextDomain !== String(site.domain ?? "").trim();
+    return {
+      ...site,
+      merchantName: nextMerchantName,
+      domainPrefix: nextDomainPrefix,
+      domainSuffix: nextDomainPrefix,
+      contactEmail: nextContactEmail,
+      name: nextName,
+      domain: nextDomain,
+      updatedAt: changed ? current : site.updatedAt,
+    };
+  };
+  const exactIndex = state.sites.findIndex((item) => item.id === normalizedSiteId);
+  if (exactIndex >= 0) {
+    const existed = state.sites[exactIndex];
+    const nextSite = applyPatch(existed);
+    if (JSON.stringify(nextSite) !== JSON.stringify(existed)) {
+      const nextSites = [...state.sites];
+      nextSites[exactIndex] = nextSite;
+      savePlatformState({
+        ...state,
+        sites: nextSites,
+      });
+    }
+    return nextSite;
+  }
+  const matchedSite = buildMerchantSiteLinker(state.sites, state.users)({
+    merchantId: normalizedSiteId,
+    email: userEmail,
+  });
+  if (matchedSite && matchedSite.id === normalizedSiteId) {
+    return applyPatch(matchedSite);
+  }
   const nextSite: Site = {
     id: normalizedSiteId,
     tenantId,
-    merchantName: "",
-    domainPrefix: "",
-    domainSuffix: "",
+    merchantName: normalizedMerchantName,
+    domainPrefix: normalizedDomainPrefix,
+    domainSuffix: normalizedDomainPrefix,
     contactAddress: "",
     contactName: "",
     contactPhone: "",
-    contactEmail: userEmail ? String(userEmail).trim().toLowerCase() : "",
-    name: `商户 ${normalizedSiteId}`,
-    domain: buildMerchantDomainFromBase(baseDomain, normalizedSiteId),
+    contactEmail: normalizedContactEmail,
+    name: normalizedName || normalizedMerchantName || `商户 ${normalizedSiteId}`,
+    domain: buildMerchantDomainFromBase(baseDomain, normalizedDomainPrefix || normalizedSiteId),
     categoryId: mainSite?.categoryId ?? "",
     category: mainSite?.category ?? "商户",
     industry: "",
@@ -2593,6 +2646,46 @@ async function loadPlatformBlocksViaApiFallback() {
     if (!Array.isArray(json?.blocks)) return null;
     const sanitized = sanitizeBlocksForRuntime(json.blocks as Block[]).blocks;
     return sanitized.length > 0 ? sanitized : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+type PublishedSiteSnapshot = {
+  blocks: Block[];
+  slug: string;
+  merchantName: string;
+};
+
+async function loadPublishedSiteSnapshotViaApi(siteId: string): Promise<PublishedSiteSnapshot | null> {
+  const normalizedSiteId = String(siteId ?? "").trim();
+  if (!normalizedSiteId) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12000);
+  try {
+    const response = await fetch(`/api/site-published?siteId=${encodeURIComponent(normalizedSiteId)}`, {
+      method: "GET",
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    if (!response.ok) return null;
+    const json = (await response.json().catch(() => null)) as
+      | {
+          blocks?: unknown;
+          slug?: unknown;
+          merchantName?: unknown;
+        }
+      | null;
+    if (!Array.isArray(json?.blocks)) return null;
+    const sanitized = sanitizeBlocksForRuntime(json.blocks as Block[]).blocks;
+    if (sanitized.length === 0) return null;
+    return {
+      blocks: sanitized,
+      slug: typeof json?.slug === "string" ? json.slug.trim() : "",
+      merchantName: typeof json?.merchantName === "string" ? json.merchantName.trim() : "",
+    };
   } catch {
     return null;
   } finally {
@@ -3982,6 +4075,17 @@ export default function AdminClient({
   useEffect(() => {
     let mounted = true;
     let uiReleased = false;
+    const clearJustSignedInFlagFromUrl = () => {
+      if (typeof window === "undefined") return;
+      try {
+        const url = new URL(window.location.href);
+        if (!url.searchParams.has("justSignedIn")) return;
+        url.searchParams.delete("justSignedIn");
+        window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+      } catch {
+        // ignore URL cleanup failure
+      }
+    };
     const releaseCheckingScreen = (options?: { notice?: string | null }) => {
       if (!mounted) return;
       if (Object.prototype.hasOwnProperty.call(options ?? {}, "notice")) {
@@ -4025,6 +4129,29 @@ export default function AdminClient({
         }
       }
       return [];
+    };
+    const tryLoadJustSignedInPublishedContent = async () => {
+      if (isPlatformEditor || !justSignedIn) return false;
+      const scopedSiteId = getSiteIdFromStoreScope(storeScope).trim();
+      if (!scopedSiteId) return false;
+      const publishedSnapshot = await loadPublishedSiteSnapshotViaApi(scopedSiteId);
+      if (!mounted || !publishedSnapshot) return false;
+      merchantIdsRef.current = [scopedSiteId];
+      ensureScopedMerchantSite(scopedSiteId, null, {
+        merchantName: publishedSnapshot.merchantName,
+        domainPrefix: publishedSnapshot.slug,
+      });
+      setHasEditorContent(true);
+      setRemoteContentVerified(true);
+      applyPersistedBlocksToEditorRef.current(publishedSnapshot.blocks);
+      const desktopLoaded = viewportStatesRef.current.desktop.planConfig;
+      const mobileLoaded = viewportStatesRef.current.mobile.planConfig;
+      const combinedLoaded = buildCombinedPersistedBlocks(desktopLoaded, mobileLoaded);
+      savePublishedBlocksToStorage(combinedLoaded, storeScope);
+      savePublishedBlocksToStorage(combinedLoaded, buildSiteStoreScope(scopedSiteId));
+      clearJustSignedInFlagFromUrl();
+      releaseCheckingScreen({ notice: "登录状态同步稍慢，已载入当前商户的远端内容。" });
+      return true;
     };
     if (!isSupabaseEnabled || isSupabaseFallbackMode) {
       applyCachedEditorBlocks();
@@ -4230,13 +4357,16 @@ export default function AdminClient({
               setHasEditorContent(true);
               releaseCheckingScreen({ notice: null });
             }
-          } else
-          if (justSignedIn) {
-            setRemoteContentVerified(false);
-            setHasEditorContent(true);
-            releaseCheckingScreen({ notice: "登录状态同步延迟，已进入后台草稿模式。请稍后再试发布；若仍失败请重新登录。" });
-            return;
           } else {
+            if (justSignedIn) {
+              const restored = await tryLoadJustSignedInPublishedContent();
+              if (!mounted) return;
+              if (restored) return;
+              setRemoteContentVerified(false);
+              setHasEditorContent(true);
+              releaseCheckingScreen({ notice: "登录状态同步延迟，已进入后台草稿模式。请稍后再试发布；若仍失败请重新登录。" });
+              return;
+            }
             setRemoteContentVerified(false);
             setHasEditorContent(true);
             releaseCheckingScreen({ notice: "未检测到登录会话，已进入后台草稿模式。请重新登录后再发布。" });
@@ -4247,15 +4377,7 @@ export default function AdminClient({
           attachAuthListener();
         }
         if (session && justSignedIn && typeof window !== "undefined") {
-          try {
-            const url = new URL(window.location.href);
-            if (url.searchParams.has("justSignedIn")) {
-              url.searchParams.delete("justSignedIn");
-              window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
-            }
-          } catch {
-            // ignore URL cleanup failure
-          }
+          clearJustSignedInFlagFromUrl();
         }
         if (!isPlatformEditor || session) {
           setBackendNotice(null);
