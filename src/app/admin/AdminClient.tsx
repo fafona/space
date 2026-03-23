@@ -4149,7 +4149,7 @@ export default function AdminClient({
       const combinedLoaded = buildCombinedPersistedBlocks(desktopLoaded, mobileLoaded);
       savePublishedBlocksToStorage(combinedLoaded, storeScope);
       savePublishedBlocksToStorage(combinedLoaded, buildSiteStoreScope(scopedSiteId));
-      releaseCheckingScreen({ notice: "登录状态同步稍慢，已载入当前商户的远端内容。" });
+      releaseCheckingScreen({ notice: null });
       return true;
     };
     if (!isSupabaseEnabled || isSupabaseFallbackMode) {
@@ -4286,13 +4286,13 @@ export default function AdminClient({
           if (justSignedIn) {
             setRemoteContentVerified(false);
             setHasEditorContent(true);
-            setBackendNotice("登录状态同步延迟，已保留当前编辑页。请稍后再试；若仍失败可点重新登录。");
+            setBackendNotice("登录已断开，请重新登录后继续。");
             return;
           }
           setRemoteContentVerified(false);
           setHasEditorContent(true);
-          setBackendNotice("未检测到登录会话，已保留当前编辑页。请重新登录后再发布。");
-          releaseCheckingScreen({ notice: "未检测到登录会话，已进入后台草稿模式。请重新登录后再发布。" });
+          setBackendNotice("当前未登录，请重新登录后继续。");
+          releaseCheckingScreen({ notice: "当前未登录，请重新登录后继续。" });
         })().catch(() => {
           // Ignore listener network failures; keep current editor session.
         });
@@ -4305,7 +4305,7 @@ export default function AdminClient({
         const gatewayReady = await canReachSupabaseGateway(Math.min(3000, AUTH_CHECK_TIMEOUT_MS));
         if (!mounted) return;
         if (!gatewayReady) {
-          setBackendNotice("后端连接不稳定，正在尝试直接获取远端内容...");
+          setBackendNotice(isPlatformEditor ? "后端连接不稳定，正在尝试直接获取远端内容..." : null);
         }
 
         const {
@@ -4363,12 +4363,12 @@ export default function AdminClient({
               if (restored) return;
               setRemoteContentVerified(false);
               setHasEditorContent(true);
-              releaseCheckingScreen({ notice: "登录状态同步延迟，已进入后台草稿模式。请稍后再试发布；若仍失败请重新登录。" });
+              releaseCheckingScreen({ notice: "登录未完成，请重新登录后继续。" });
               return;
             }
             setRemoteContentVerified(false);
             setHasEditorContent(true);
-            releaseCheckingScreen({ notice: "未检测到登录会话，已进入后台草稿模式。请重新登录后再发布。" });
+            releaseCheckingScreen({ notice: "当前未登录，请重新登录后继续。" });
             return;
           }
         }
@@ -4487,7 +4487,7 @@ export default function AdminClient({
             ? null
             : (isPlatformEditor
                 ? "远端连接不稳定，当前仅展示本地缓存。超级后台发布将走服务端通道。"
-                : "远连接不稳定，当前仅展示本地缓存，已临时锁定发布以防盖线上内容"),
+                : "当前内容加载不完整，请刷新页面或重新登录后重试。"),
         });
       } catch (error) {
         if (!mounted) return;
@@ -4500,14 +4500,16 @@ export default function AdminClient({
           releaseCheckingScreen({
             notice: isPlatformEditor
               ? "远端加载超时，当前仅展示本地缓存。超级后台发布将走服务端通道。"
-              : "远端加载超时，当前仅展示本地缓存，已临时锁定发布以防覆盖线上内容。",
+              : "当前内容加载超时，请刷新页面或重新登录后重试。",
           });
           return;
         }
         applyCachedEditorBlocks();
         setHasEditorContent(true);
         setRemoteContentVerified(false);
-        releaseCheckingScreen({ notice: BACKEND_UNAVAILABLE_NOTICE });
+        releaseCheckingScreen({
+          notice: isPlatformEditor ? BACKEND_UNAVAILABLE_NOTICE : "当前内容加载失败，请重新登录后重试。",
+        });
       }
     })();
 

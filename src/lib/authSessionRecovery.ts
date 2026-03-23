@@ -6,6 +6,8 @@ type SessionTokens = {
   refresh_token: string;
 };
 
+export type BrowserSessionTokens = SessionTokens;
+
 async function withTimeout<T>(task: Promise<T>, timeoutMs: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | null = null;
   const timeoutTask = new Promise<never>((_, reject) => {
@@ -84,6 +86,30 @@ async function tryRecoverSessionFromStoredToken(timeoutMs: number): Promise<Sess
     }
   }
   return null;
+}
+
+export async function establishBrowserSupabaseSession(
+  tokens: BrowserSessionTokens,
+  timeoutMs = 6000,
+): Promise<Session | null> {
+  const accessToken = String(tokens.access_token ?? "").trim();
+  const refreshToken = String(tokens.refresh_token ?? "").trim();
+  if (!accessToken || !refreshToken) return null;
+
+  try {
+    const { data, error } = await withTimeout(
+      supabase.auth.setSession({
+        access_token: accessToken,
+        refresh_token: refreshToken,
+      }),
+      Math.max(3000, timeoutMs),
+    );
+    if (!error && data.session) return data.session;
+  } catch {
+    // Fall through to storage and poll-based recovery.
+  }
+
+  return recoverBrowserSupabaseSession(Math.max(2200, timeoutMs - 1200));
 }
 
 export function hasStoredBrowserSupabaseSessionTokens(): boolean {

@@ -3,6 +3,12 @@
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useI18n } from "@/components/I18nProvider";
+import {
+  establishBrowserSupabaseSession,
+  hasStoredBrowserSupabaseSessionTokens,
+  isTransientAuthValidationError,
+  recoverBrowserSupabaseSession,
+} from "@/lib/authSessionRecovery";
 import { ensureMerchantIdentityForUser, isMerchantNumericId } from "@/lib/merchantIdentity";
 import { buildMerchantBackendHref } from "@/lib/siteRouting";
 import {
@@ -33,6 +39,7 @@ type LoginAuthSession = {
 type ServerSignInResult = {
   user: LoginAuthUser | null;
   merchantId: string;
+  needsJustSignedInBridge: boolean;
 };
 
 function LoginPageInner() {
@@ -97,39 +104,47 @@ function LoginPageInner() {
   }, [searchParams]);
 
   const redirectToMerchantBackend = useCallback(
-    async (user?: {
-      id?: string;
-      email?: string | null;
-      user_metadata?: Record<string, unknown> | null;
-      app_metadata?: Record<string, unknown> | null;
-    } | null, preferredMerchantId?: string | null) => {
-      const withJustSignedIn = (href: string) => {
+    async (
+      user?: {
+        id?: string;
+        email?: string | null;
+        user_metadata?: Record<string, unknown> | null;
+        app_metadata?: Record<string, unknown> | null;
+      } | null,
+      preferredMerchantId?: string | null,
+      options?: { withSignInBridge?: boolean },
+    ) => {
+      const decorateMerchantHref = (href: string) => {
         const url = new URL(href, window.location.origin);
-        url.searchParams.set("justSignedIn", "1");
+        if (options?.withSignInBridge) {
+          url.searchParams.set("justSignedIn", "1");
+        } else {
+          url.searchParams.delete("justSignedIn");
+        }
         return `${url.pathname}${url.search}${url.hash}`;
       };
 
       if (requestedRedirectPath) {
-        window.location.href = withJustSignedIn(requestedRedirectPath);
+        window.location.href = decorateMerchantHref(requestedRedirectPath);
         return;
       }
 
       const directMerchantId = String(preferredMerchantId ?? "").trim();
       if (directMerchantId) {
-        window.location.href = withJustSignedIn(buildMerchantBackendHref(directMerchantId));
+        window.location.href = decorateMerchantHref(buildMerchantBackendHref(directMerchantId));
         return;
       }
 
       try {
         const resolved = await ensureMerchantIdentityForUser(user ?? undefined);
         if (resolved.merchantId) {
-          window.location.href = withJustSignedIn(buildMerchantBackendHref(resolved.merchantId));
+          window.location.href = decorateMerchantHref(buildMerchantBackendHref(resolved.merchantId));
           return;
         }
       } catch {
         // fallback to legacy route
       }
-      window.location.href = withJustSignedIn("/admin");
+      window.location.href = decorateMerchantHref("/admin");
     },
     [requestedRedirectPath],
   );
@@ -167,19 +182,26 @@ function LoginPageInner() {
   }
 
   async function readValidatedSessionUser() {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
+    const session = await recoverBrowserSupabaseSession(3000);
     if (!session?.user) return null;
 
-    const { data, error } = await supabase.auth.getUser();
-    if (error || !data.user) {
-      await supabase.auth.signOut({ scope: "local" }).catch(() => {
-        // ignore local cleanup failure
-      });
-      return null;
+    try {
+      const { data, error } = await supabase.auth.getUser();
+      if (error || !data.user) {
+        if (error && isTransientAuthValidationError(error)) {
+          return session.user;
+        }
+        const recovered = await recoverBrowserSupabaseSession(2200);
+        if (recovered?.user) return recovered.user;
+        await supabase.auth.signOut({ scope: "local" }).catch(() => {
+          // ignore local cleanup failure
+        });
+        return null;
+      }
+      return data.user;
+    } catch {
+      return session.user;
     }
-    return data.user;
   }
 
   useEffect(() => {
@@ -295,6 +317,9 @@ function LoginPageInner() {
     if (/supabase_unavailable:/i.test(message)) {
       return t("login.backendUnavailable");
     }
+    if (/browser_session_not_ready/i.test(message)) {
+      return t("login.requestFailed");
+    }
     if (/merchant_login_|auth_signin_|account_resolve_/i.test(message)) {
       return t("login.backendUnavailable");
     }
@@ -352,6 +377,26 @@ function LoginPageInner() {
     }
   }
 
+  async function stabilizeBrowserSession(session: LoginAuthSession) {
+    const accessToken = String(session.access_token ?? "").trim();
+    const refreshToken = String(session.refresh_token ?? "").trim();
+    if (!accessToken || !refreshToken) return false;
+
+    persistSessionSnapshot(session);
+
+    const establishedSession = await establishBrowserSupabaseSession(
+      {
+        access_token: accessToken,
+        refresh_token: refreshToken,
+      },
+      6500,
+    ).catch(() => null);
+    if (establishedSession?.user) return true;
+
+    const recoveredSession = await recoverBrowserSupabaseSession(2600).catch(() => null);
+    return Boolean(recoveredSession?.user);
+  }
+
   async function signInViaServer(accountValue: string, passwordValue: string): Promise<ServerSignInResult> {
     const response = await withTimeout(
       fetch("/api/auth/merchant-login", {
@@ -395,23 +440,16 @@ function LoginPageInner() {
       throw new Error(t("login.requestFailed"));
     }
 
-    persistSessionSnapshot(session);
-
-    try {
-      await withTimeout(
-        supabase.auth.setSession({
-          access_token: accessToken,
-          refresh_token: refreshToken,
-        }),
-        6000,
-      );
-    } catch {
-      // Keep the locally persisted session snapshot and let the admin page recover it on load.
+    const browserSessionReady = await stabilizeBrowserSession(session).catch(() => false);
+    const hasStoredTokens = hasStoredBrowserSupabaseSessionTokens();
+    if (!browserSessionReady && !hasStoredTokens) {
+      throw new Error("browser_session_not_ready");
     }
 
     return {
       user: (payload?.user ?? session?.user ?? null) as LoginAuthUser | null,
       merchantId: typeof payload?.merchantId === "string" ? payload.merchantId.trim() : "",
+      needsJustSignedInBridge: !browserSessionReady,
     };
   }
 
@@ -448,7 +486,7 @@ function LoginPageInner() {
       const needsConfirmation = signUpNeedsEmailConfirmation(data);
       setEmailConfirmationRequired(needsConfirmation);
       if (!needsConfirmation) {
-        await redirectToMerchantBackend(pickAuthUser(data));
+        await redirectToMerchantBackend(pickAuthUser(data), undefined, { withSignInBridge: false });
         return;
       }
       setMsg(t("login.signupSuccess"));
@@ -475,7 +513,9 @@ function LoginPageInner() {
       const preferredMerchantId = isMerchantNumericId(account.trim()) ? account.trim() : "";
       const result = await signInViaServer(account, password);
       const resolvedMerchantId = preferredMerchantId || result.merchantId;
-      await redirectToMerchantBackend(result.user, resolvedMerchantId);
+      await redirectToMerchantBackend(result.user, resolvedMerchantId, {
+        withSignInBridge: result.needsJustSignedInBridge,
+      });
     } catch (error) {
       const normalizedMessage = error instanceof Error ? normalizeError(error.message) : t("login.requestFailed");
       setNeedConfirmEmail(normalizedMessage === t("login.emailNotConfirmed"));
