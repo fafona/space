@@ -98,7 +98,7 @@ const CARD_MODE_OPTIONS: Array<{
   {
     value: "link",
     label: "链接模式",
-    description: "生成图片样式链接，复制后发送会显示名片预览并可点击跳转。",
+    description: "生成可直接发送的电子名片，复制时优先复制名片图片，必要时再回退为链接。",
   },
 ];
 
@@ -178,6 +178,36 @@ async function copyTextToClipboard(value: string) {
   if (!copied) {
     throw new Error("clipboard_unavailable");
   }
+}
+
+async function copyImageToClipboard(sourceImageUrl: string) {
+  if (
+    typeof window === "undefined" ||
+    typeof navigator === "undefined" ||
+    !navigator.clipboard?.write ||
+    typeof window.ClipboardItem !== "function"
+  ) {
+    throw new Error("image_clipboard_unavailable");
+  }
+
+  const response = await fetch(sourceImageUrl);
+  if (!response.ok) {
+    throw new Error("image_clipboard_unavailable");
+  }
+
+  const sourceBlob = await response.blob();
+  const blob =
+    sourceBlob.type === "image/png"
+      ? sourceBlob
+      : new Blob([await sourceBlob.arrayBuffer()], {
+          type: "image/png",
+        });
+
+  await navigator.clipboard.write([
+    new window.ClipboardItem({
+      "image/png": blob,
+    }),
+  ]);
 }
 
 function sanitizeShareAssetHint(value: string) {
@@ -571,7 +601,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="text-sm font-semibold text-slate-900">名片</div>
-          <div className="text-xs text-slate-500">完善商户信息后可生成名片，支持图片模式和链接模式，链接模式复制后会发送成带名片预览的链接。</div>
+          <div className="text-xs text-slate-500">完善商户信息后可生成名片，支持图片模式和链接模式；链接模式会优先复制可直接发送的名片图片。</div>
         </div>
         <div className="flex flex-wrap gap-2">
           <button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50" onClick={openEditor} disabled={!canCreate}>生成名片</button>
@@ -891,7 +921,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
                   </section>
                 </div>
               </div>
-              <aside className="min-h-0 overflow-y-auto border-l bg-slate-50 px-5 py-5"><div className="sticky top-0 space-y-4"><div><div className="text-sm font-semibold text-slate-900">实时预览</div><div className="text-xs text-slate-500">先点击“预览”确认样式，再点击“生成”。</div></div><div className="overflow-hidden rounded-2xl border bg-slate-900/5 p-4"><CardSurface draft={draft} websiteUrl={websiteUrl} qrCodeUrl={qrCodeUrl} scale={scale} /></div><div className="rounded-xl border bg-white px-3 py-2 text-xs text-slate-600">{draft.mode === "link" ? "当前为链接模式：复制后会生成带名片预览的分享链接。" : "当前为图片模式：生成后可保存或复制名片图片。"}</div>{!hasPreviewed ? <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">先点击“预览”，再生成名片。</div> : null}</div></aside>
+              <aside className="min-h-0 overflow-y-auto border-l bg-slate-50 px-5 py-5"><div className="sticky top-0 space-y-4"><div><div className="text-sm font-semibold text-slate-900">实时预览</div><div className="text-xs text-slate-500">先点击“预览”确认样式，再点击“生成”。</div></div><div className="overflow-hidden rounded-2xl border bg-slate-900/5 p-4"><CardSurface draft={draft} websiteUrl={websiteUrl} qrCodeUrl={qrCodeUrl} scale={scale} /></div><div className="rounded-xl border bg-white px-3 py-2 text-xs text-slate-600">{draft.mode === "link" ? "当前为链接模式：复制时会优先复制名片图片，发出去直接看到名片；仅在浏览器不支持时才回退为链接。" : "当前为图片模式：生成后可保存或复制名片图片。"}</div>{!hasPreviewed ? <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">先点击“预览”，再生成名片。</div> : null}</div></aside>
             </div>
           </div>
         </div>,
@@ -901,7 +931,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
         <div className="fixed inset-0 z-[2147483000] bg-black/45 p-4" onMouseDown={() => setFolderOpen(false)}>
           <div className="mx-auto flex h-full max-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
             <div className="flex items-center justify-between border-b px-5 py-4"><div><div className="text-lg font-semibold text-slate-900">名片夹</div><div className="text-sm text-slate-500">查看已生成的图片名片或链接名片，可预览并继续操作。</div></div><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => setFolderOpen(false)}>关闭</button></div>
-            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">{cards.length > 0 ? <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{cards.map((card) => <article key={card.id} className="overflow-hidden rounded-2xl border bg-slate-50 shadow-sm"><div className="space-y-4 p-4"><button type="button" className="block w-full overflow-hidden rounded-2xl border bg-transparent text-left" onClick={() => { setPreviewAsset(card); setPreviewOpen(true); }}><img src={card.imageUrl} alt={card.name} className="block h-auto w-full object-cover bg-transparent" /></button><div><div className="flex items-center gap-2"><div className="text-base font-semibold text-slate-900">{card.name}</div><span className="rounded-full bg-slate-900 px-2 py-0.5 text-[10px] text-white">{getCardModeLabel(card.mode)}</span></div><div className="text-xs text-slate-500">{new Date(card.createdAt).toLocaleString("zh-CN", { hour12: false })}</div></div><div className="grid grid-cols-2 gap-2"><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => { setPreviewAsset(card); setPreviewOpen(true); }}>预览</button><button type="button" className="rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800" onClick={() => void (card.mode === "link" ? copyCard(card) : saveCard(card))}>{card.mode === "link" ? "复制链接" : "保存"}</button><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => openEditorForCard(card)}>修改</button><button type="button" className="rounded border border-rose-200 bg-white px-3 py-2 text-sm text-rose-600 hover:bg-rose-50" onClick={() => deleteCard(card)}>删除</button></div></div></article>)}</div> : <div className="flex min-h-[240px] items-center justify-center rounded-2xl border border-dashed bg-slate-50 px-6 text-center text-sm text-slate-500">还没有生成名片。先去点击“生成名片”制作一张。</div>}</div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">{cards.length > 0 ? <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{cards.map((card) => <article key={card.id} className="overflow-hidden rounded-2xl border bg-slate-50 shadow-sm"><div className="space-y-4 p-4"><button type="button" className="block w-full overflow-hidden rounded-2xl border bg-transparent text-left" onClick={() => { setPreviewAsset(card); setPreviewOpen(true); }}><img src={card.imageUrl} alt={card.name} className="block h-auto w-full object-cover bg-transparent" /></button><div><div className="flex items-center gap-2"><div className="text-base font-semibold text-slate-900">{card.name}</div><span className="rounded-full bg-slate-900 px-2 py-0.5 text-[10px] text-white">{getCardModeLabel(card.mode)}</span></div><div className="text-xs text-slate-500">{new Date(card.createdAt).toLocaleString("zh-CN", { hour12: false })}</div></div><div className="grid grid-cols-2 gap-2"><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => { setPreviewAsset(card); setPreviewOpen(true); }}>预览</button><button type="button" className="rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800" onClick={() => void (card.mode === "link" ? copyCard(card) : saveCard(card))}>{card.mode === "link" ? "复制名片" : "保存"}</button><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => openEditorForCard(card)}>修改</button><button type="button" className="rounded border border-rose-200 bg-white px-3 py-2 text-sm text-rose-600 hover:bg-rose-50" onClick={() => deleteCard(card)}>删除</button></div></div></article>)}</div> : <div className="flex min-h-[240px] items-center justify-center rounded-2xl border border-dashed bg-slate-50 px-6 text-center text-sm text-slate-500">还没有生成名片。先去点击“生成名片”制作一张。</div>}</div>
           </div>
         </div>,
       ) : null}
@@ -909,7 +939,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       {previewOpen ? overlay(
         <div className="fixed inset-0 z-[2147483100] bg-black/65 p-4" onMouseDown={() => { setPreviewOpen(false); setPreviewAsset(null); }}>
           <div className="mx-auto flex h-full max-h-[calc(100vh-2rem)] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
-            <div className="flex items-center justify-between border-b px-5 py-4"><div><div className="text-base font-semibold text-slate-900">{previewAsset?.name || draft.name || "名片预览"}</div><div className="text-xs text-slate-500">{getCardModeLabel(previewAsset?.mode || draft.mode)}</div></div><div className="flex gap-2">{(previewAsset?.mode || draft.mode) === "link" && (previewAsset?.targetUrl || websiteUrl) ? <button type="button" className="rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800" onClick={() => previewAsset ? void copyCard(previewAsset) : copyPreviewLink(websiteUrl)}>复制链接</button> : null}<button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => { setPreviewOpen(false); setPreviewAsset(null); }}>关闭</button></div></div>
+            <div className="flex items-center justify-between border-b px-5 py-4"><div><div className="text-base font-semibold text-slate-900">{previewAsset?.name || draft.name || "名片预览"}</div><div className="text-xs text-slate-500">{getCardModeLabel(previewAsset?.mode || draft.mode)}</div></div><div className="flex gap-2">{(previewAsset?.mode || draft.mode) === "link" && (previewAsset?.targetUrl || websiteUrl) ? <button type="button" className="rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800" onClick={() => previewAsset ? void copyCard(previewAsset) : copyPreviewLink(websiteUrl)}>复制名片</button> : null}<button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => { setPreviewOpen(false); setPreviewAsset(null); }}>关闭</button></div></div>
             <div className="flex-1 overflow-auto bg-black p-4"><div className="mx-auto flex min-h-full items-center justify-center">{previewAsset ? <button type="button" className="block bg-transparent text-left" onClick={() => previewAsset.mode === "link" ? openCardTarget(previewAsset) : undefined}><img src={previewAsset.imageUrl} alt={previewAsset.name} className="block h-auto max-w-full bg-transparent object-contain" /></button> : <CardSurface draft={draft} websiteUrl={websiteUrl} qrCodeUrl={qrCodeUrl} scale={fullScale} />}</div></div>
           </div>
         </div>,
@@ -1270,19 +1300,25 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     try {
       const node = hiddenPreviewRef.current;
       if (!node) {
-        setTip("请先预览名片后再复制链接");
+        setTip("请先预览名片后再复制");
         return;
       }
       const renderedImageUrl = await renderCardNodeToImage(node);
-      const shareUrl = await buildShareLink({
-        targetUrl: normalizedUrl,
-        cardName: normalizeText(draft.name) || "商户名片",
-        renderedImageUrl,
-        imageWidth: draft.width,
-        imageHeight: draft.height,
-      });
-      await copyTextToClipboard(shareUrl);
-      setTip("分享链接已复制，发送后会显示名片预览");
+      try {
+        await copyImageToClipboard(renderedImageUrl);
+        setTip("名片已复制，可直接发送");
+        return;
+      } catch {
+        const shareUrl = await buildShareLink({
+          targetUrl: normalizedUrl,
+          cardName: normalizeText(draft.name) || "商户名片",
+          renderedImageUrl,
+          imageWidth: draft.width,
+          imageHeight: draft.height,
+        });
+        await copyTextToClipboard(shareUrl);
+        setTip("当前浏览器不支持复制图片，已改为复制链接");
+      }
     } catch {
       setTip("复制失败，请重试");
     }
@@ -1295,15 +1331,21 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       return;
     }
     try {
-      const shareUrl = await buildShareLink({
-        targetUrl,
-        cardName: normalizeText(card.name) || "商户名片",
-        card,
-        imageWidth: card.width,
-        imageHeight: card.height,
-      });
-      await copyTextToClipboard(shareUrl);
-      setTip("分享链接已复制，发送后会显示名片预览");
+      try {
+        await copyImageToClipboard(normalizeText(card.imageUrl) || normalizeText(card.shareImageUrl));
+        setTip("名片已复制，可直接发送");
+        return;
+      } catch {
+        const shareUrl = await buildShareLink({
+          targetUrl,
+          cardName: normalizeText(card.name) || "商户名片",
+          card,
+          imageWidth: card.width,
+          imageHeight: card.height,
+        });
+        await copyTextToClipboard(shareUrl);
+        setTip("当前浏览器不支持复制图片，已改为复制链接");
+      }
     } catch {
       setTip("复制失败，请重试");
     }
