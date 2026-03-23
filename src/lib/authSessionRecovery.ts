@@ -86,6 +86,24 @@ async function tryRecoverSessionFromStoredToken(timeoutMs: number): Promise<Sess
   return null;
 }
 
+export function hasStoredBrowserSupabaseSessionTokens(): boolean {
+  if (typeof window === "undefined") return false;
+  const storageKeys = [resolvedSupabaseAuthStorageKey, legacySupabaseAuthStorageKey].filter(
+    (value, index, list) => value && list.indexOf(value) === index,
+  );
+  for (const storageKey of storageKeys) {
+    try {
+      const raw = window.localStorage.getItem(storageKey);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw) as unknown;
+      if (extractStoredSessionTokens(parsed)) return true;
+    } catch {
+      // ignore malformed storage entries
+    }
+  }
+  return false;
+}
+
 export async function recoverBrowserSupabaseSession(timeoutMs = 4500): Promise<Session | null> {
   const direct = await pollSession(timeoutMs);
   if (direct) return direct;

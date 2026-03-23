@@ -7,7 +7,11 @@ import AdminClient from "@/app/admin/AdminClient";
 import SitePageClient from "@/app/site/[siteId]/SitePageClient";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
 import { loadPlatformState, subscribePlatformState } from "@/data/platformControlStore";
-import { isTransientAuthValidationError, recoverBrowserSupabaseSession } from "@/lib/authSessionRecovery";
+import {
+  hasStoredBrowserSupabaseSessionTokens,
+  isTransientAuthValidationError,
+  recoverBrowserSupabaseSession,
+} from "@/lib/authSessionRecovery";
 import { buildMerchantSiteLinker } from "@/lib/merchantSiteLinking";
 import { isMerchantNumericId, normalizeDomainPrefix } from "@/lib/merchantIdentity";
 import { resolvePublishedSiteByPrefix } from "@/lib/publishedSiteLookup";
@@ -108,6 +112,11 @@ export default function MerchantEntryPageClient({
       let session = await recoverBrowserSupabaseSession(4500);
       if (!mounted) return;
       if (!session?.user) {
+        if (hasStoredBrowserSupabaseSessionTokens()) {
+          setNumericAdminAuthenticated(true);
+          setNumericAdminAuthReady(true);
+          return;
+        }
         redirectToLogin();
         return;
       }
@@ -124,6 +133,11 @@ export default function MerchantEntryPageClient({
           session = await recoverBrowserSupabaseSession(2200);
           if (!mounted) return;
           if (!session?.user) {
+            if (hasStoredBrowserSupabaseSessionTokens()) {
+              setNumericAdminAuthenticated(true);
+              setNumericAdminAuthReady(true);
+              return;
+            }
             await supabase.auth.signOut({ scope: "local" }).catch(() => {
               // Ignore local cleanup failure.
             });
