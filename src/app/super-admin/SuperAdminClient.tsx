@@ -88,9 +88,11 @@ import { getPagePlanConfigFromBlocks } from "@/lib/pagePlans";
 import {
   buildSuperAdminLoginHref,
   clearSuperAdminAuthenticated,
+  getOrCreateSuperAdminDeviceId,
   isSuperAdminAuthenticated,
   syncSuperAdminAuthenticatedCookie,
 } from "@/lib/superAdminAuth";
+import { type SuperAdminTrustedDeviceRecord } from "@/lib/superAdminTrustedDevices";
 import { supabase } from "@/lib/supabase";
 import { useHydrated } from "@/lib/useHydrated";
 
@@ -1010,7 +1012,7 @@ export default function SuperAdminClient() {
     syncSuperAdminAuthenticatedCookie();
   }, [hydrated]);
   const authed = hydrated && isSuperAdminAuthenticated();
-  const [activeMenu, setActiveMenu] = useState<"site_editor" | "user_manage" | "merchant_id_rules" | "stats" | "logs">("site_editor");
+  const [activeMenu, setActiveMenu] = useState<"site_editor" | "user_manage" | "merchant_id_rules" | "trusted_devices" | "stats" | "logs">("site_editor");
   const [state, setState] = useState<PlatformState>(() => loadPlatformState());
   const stateRef = useRef<PlatformState>(state);
   const [tip, setTip] = useState("");
@@ -1107,6 +1109,11 @@ export default function SuperAdminClient() {
   const [merchantIdRuleNote, setMerchantIdRuleNote] = useState("");
   const [merchantIdRuleSubmitting, setMerchantIdRuleSubmitting] = useState(false);
   const [merchantIdRuleDeletingId, setMerchantIdRuleDeletingId] = useState("");
+  const [trustedDevices, setTrustedDevices] = useState<SuperAdminTrustedDeviceRecord[]>([]);
+  const [trustedDevicesLoading, setTrustedDevicesLoading] = useState(false);
+  const [trustedDevicesError, setTrustedDevicesError] = useState("");
+  const [trustedDeviceDeletingId, setTrustedDeviceDeletingId] = useState("");
+  const [currentSuperAdminDeviceId, setCurrentSuperAdminDeviceId] = useState("");
   const checklistStorageKeyRef = useRef(releaseChecklistStorageKeyForToday());
   const [releaseChecklistState, setReleaseChecklistState] = useState<Record<string, boolean>>(() =>
     loadReleaseChecklistStateFromStorage(),
@@ -1155,6 +1162,11 @@ export default function SuperAdminClient() {
       const next = `${window.location.pathname}${window.location.search}`;
       window.location.href = buildSuperAdminLoginHref(next);
     }
+  }, [authed, hydrated]);
+
+  useEffect(() => {
+    if (!hydrated || !authed) return;
+    setCurrentSuperAdminDeviceId(getOrCreateSuperAdminDeviceId());
   }, [authed, hydrated]);
 
   useEffect(() => {
@@ -1227,6 +1239,45 @@ export default function SuperAdminClient() {
       })
       .finally(() => {
         if (!cancelled) setMerchantIdRulesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+      controller.abort();
+      window.clearTimeout(timeout);
+    };
+  }, [authed, hydrated]);
+
+  useEffect(() => {
+    if (!hydrated || !authed) return;
+    let cancelled = false;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 8000);
+    setTrustedDevicesLoading(true);
+    setTrustedDevicesError("");
+    fetch("/api/super-admin/trusted-devices", {
+      method: "GET",
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`trusted_devices_http_${response.status}`);
+        }
+        const payload = (await response.json()) as { items?: SuperAdminTrustedDeviceRecord[] };
+        if (cancelled) return;
+        setTrustedDevices(Array.isArray(payload.items) ? payload.items : []);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setTrustedDevices([]);
+        if (error instanceof DOMException && error.name === "AbortError") {
+          setTrustedDevicesError("trusted_devices_timeout");
+          return;
+        }
+        setTrustedDevicesError(error instanceof Error ? error.message : "trusted_devices_load_failed");
+      })
+      .finally(() => {
+        if (!cancelled) setTrustedDevicesLoading(false);
       });
     return () => {
       cancelled = true;
@@ -2782,6 +2833,33 @@ export default function SuperAdminClient() {
     }
   }
 
+  async function deleteTrustedDeviceAction(device: SuperAdminTrustedDeviceRecord) {
+    if (!guard("user.manage", "无用户管理权限")) return;
+
+    setTrustedDeviceDeletingId(device.deviceId);
+    setTrustedDevicesError("");
+    try {
+      const response = await fetch("/api/super-admin/trusted-devices", {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ deviceId: device.deviceId }),
+      });
+      const payload = (await response.json().catch(() => null)) as { message?: string } | null;
+      if (!response.ok) {
+        setTrustedDevicesError(payload?.message || "白名单设备移除失败，请稍后重试");
+        return;
+      }
+      setTrustedDevices((prev) => prev.filter((item) => item.deviceId !== device.deviceId));
+      setTip(`已移出白名单设备：${device.deviceLabel}`);
+    } catch (error) {
+      setTrustedDevicesError(error instanceof Error ? error.message : "白名单设备移除失败，请稍后重试");
+    } finally {
+      setTrustedDeviceDeletingId("");
+    }
+  }
+
   function toggleMerchantServiceAction(siteId: string) {
     if (!guard("user.manage", "无用户管理权限")) return;
     const target = state.sites.find((item) => item.id === siteId);
@@ -3368,10 +3446,11 @@ export default function SuperAdminClient() {
     );
   }
 
-  const sidebarMenus: Array<{ key: "site_editor" | "user_manage" | "merchant_id_rules" | "stats" | "logs"; label: string; hint: string }> = [
+  const sidebarMenus: Array<{ key: "site_editor" | "user_manage" | "merchant_id_rules" | "trusted_devices" | "stats" | "logs"; label: string; hint: string }> = [
     { key: "site_editor", label: "网站编辑", hint: "总站页面与站点配置" },
     { key: "user_manage", label: "用户管理", hint: "用户列表与权限服务" },
     { key: "merchant_id_rules", label: "禁用ID设置", hint: "注册跳号与规则管理" },
+    { key: "trusted_devices", label: "白名单设备", hint: "超级后台登录设备管理" },
     { key: "stats", label: "数据统计", hint: "平台关键指标" },
     { key: "logs", label: "日志", hint: "审计与告警记录" },
   ];
@@ -5418,6 +5497,77 @@ export default function SuperAdminClient() {
                           ))}
                         </tbody>
                       </table>
+                    </div>
+                  )}
+                </div>
+              </section>
+            ) : null}
+
+            {activeMenu === "trusted_devices" ? (
+              <section className="space-y-4">
+                <div className="rounded-lg border bg-white p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">白名单设备管理</div>
+                      <div className="text-xs text-slate-500">
+                        超级后台每次登录都需要邮箱验证。验证成功的浏览器设备会自动登记到这里，方便你查看和移除。
+                      </div>
+                    </div>
+                    <div className="rounded border bg-slate-50 px-3 py-2 text-sm">当前设备数：{trustedDevices.length}</div>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border bg-white p-4">
+                  <div className="rounded border bg-slate-50 px-3 py-3 text-xs text-slate-600">
+                    新设备在完成 `caimin6669@qq.com` 邮箱验证后会自动加入白名单；移除后，下次要重新验证才会再次登记。
+                  </div>
+
+                  {trustedDevicesError ? (
+                    <div className="mt-3 text-sm text-rose-600">
+                      {trustedDevicesError === "trusted_devices_timeout"
+                        ? "白名单设备加载超时，请稍后重试"
+                        : trustedDevicesError}
+                    </div>
+                  ) : null}
+
+                  {trustedDevicesLoading ? (
+                    <div className="mt-3 text-xs text-slate-500">正在加载白名单设备…</div>
+                  ) : trustedDevices.length === 0 ? (
+                    <div className="mt-3 rounded border border-dashed px-3 py-4 text-xs text-slate-500">
+                      当前还没有白名单设备。下次完成超级后台邮箱验证后会自动出现。
+                    </div>
+                  ) : (
+                    <div className="mt-4 grid gap-3">
+                      {trustedDevices.map((device) => {
+                        const isCurrent = currentSuperAdminDeviceId === device.deviceId;
+                        return (
+                          <div key={device.deviceId} className="rounded-xl border bg-slate-50/60 px-4 py-4">
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div className="space-y-2">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <div className="text-sm font-medium text-slate-900">{device.deviceLabel}</div>
+                                  {isCurrent ? (
+                                    <span className="rounded-full bg-slate-900 px-2 py-0.5 text-[10px] text-white">当前设备</span>
+                                  ) : null}
+                                </div>
+                                <div className="text-xs text-slate-500">{device.deviceId}</div>
+                                <div className="grid gap-2 text-xs text-slate-600 md:grid-cols-2">
+                                  <div>{`首次登记：${fmt(device.addedAt)}`}</div>
+                                  <div>{`最近验证：${fmt(device.lastVerifiedAt)}`}</div>
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                className="rounded border border-rose-200 bg-white px-3 py-2 text-sm text-rose-600 hover:bg-rose-50 disabled:opacity-50"
+                                onClick={() => void deleteTrustedDeviceAction(device)}
+                                disabled={trustedDeviceDeletingId === device.deviceId}
+                              >
+                                {trustedDeviceDeletingId === device.deviceId ? "移除中..." : "移出白名单"}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </div>

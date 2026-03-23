@@ -4,11 +4,17 @@ import {
   readSuperAdminChallengeToken,
   verifySuperAdminEmailProofToken,
 } from "@/lib/superAdminVerification";
+import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import {
   SUPER_ADMIN_SESSION_COOKIE,
   SUPER_ADMIN_SESSION_VALUE,
   SUPER_ADMIN_TRUSTED_DEVICE_COOKIE,
 } from "@/lib/superAdminSession";
+import {
+  loadSuperAdminTrustedDevicesFromStore,
+  saveSuperAdminTrustedDevicesToStore,
+  upsertSuperAdminTrustedDevice,
+} from "@/lib/superAdminTrustedDevices";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -41,6 +47,22 @@ export async function POST(request: Request) {
       deviceId: challengePayload.deviceId,
       deviceLabel: challengePayload.deviceLabel,
     });
+    const serviceSupabase = createServerSupabaseServiceClient();
+    if (serviceSupabase) {
+      try {
+        const { rowId, devices } = await loadSuperAdminTrustedDevicesFromStore(serviceSupabase);
+        await saveSuperAdminTrustedDevicesToStore(
+          serviceSupabase,
+          rowId,
+          upsertSuperAdminTrustedDevice(devices, {
+            deviceId: challengePayload.deviceId,
+            deviceLabel: challengePayload.deviceLabel,
+          }),
+        );
+      } catch {
+        // Keep login available even if the whitelist store is temporarily unavailable.
+      }
+    }
 
     const response = NextResponse.json({
       ok: true,

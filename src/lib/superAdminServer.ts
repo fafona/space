@@ -41,6 +41,20 @@ export function createServerSupabaseAuthClient() {
   });
 }
 
+export function createServerSupabaseServiceClient() {
+  const supabaseUrl = readEnv("NEXT_PUBLIC_SUPABASE_URL");
+  const serviceRoleKey = readEnv("SUPABASE_SERVICE_ROLE_KEY") || readEnv("NEXT_SUPABASE_SERVICE_ROLE_KEY");
+  if (!supabaseUrl || !serviceRoleKey) return null;
+
+  return createClient(supabaseUrl, serviceRoleKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+  });
+}
+
 export function resolvePublicOrigin(request: Request, requestUrl: URL) {
   const forwardedProto = (request.headers.get("x-forwarded-proto") ?? "").split(",")[0]?.trim();
   const forwardedHost = (request.headers.get("x-forwarded-host") ?? "").split(",")[0]?.trim();

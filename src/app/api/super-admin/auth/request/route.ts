@@ -2,12 +2,14 @@ import { NextResponse } from "next/server";
 import { readSuperAdminTrustedDeviceToken, createSuperAdminChallengeToken, normalizeSuperAdminNextPath } from "@/lib/superAdminVerification";
 import {
   createServerSupabaseAuthClient,
+  createServerSupabaseServiceClient,
   maskEmailAddress,
   readSuperAdminVerificationEmail,
   resolvePublicOrigin,
   validateSuperAdminCredentials,
 } from "@/lib/superAdminServer";
 import { SUPER_ADMIN_TRUSTED_DEVICE_COOKIE } from "@/lib/superAdminSession";
+import { loadSuperAdminTrustedDevicesFromStore } from "@/lib/superAdminTrustedDevices";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -70,7 +72,16 @@ export async function POST(request: Request) {
     const verificationEmail = readSuperAdminVerificationEmail();
     const trustedDeviceToken = parseCookieValue(request.headers.get("cookie") ?? "", SUPER_ADMIN_TRUSTED_DEVICE_COOKIE);
     const trustedDevice = readSuperAdminTrustedDeviceToken(trustedDeviceToken);
-    const currentDeviceTrusted = trustedDevice?.deviceId === deviceId;
+    let currentDeviceTrusted = trustedDevice?.deviceId === deviceId;
+    const serviceSupabase = createServerSupabaseServiceClient();
+    if (serviceSupabase) {
+      try {
+        const { devices } = await loadSuperAdminTrustedDevicesFromStore(serviceSupabase);
+        currentDeviceTrusted = devices.some((item) => item.deviceId === deviceId);
+      } catch {
+        // Keep the cookie-based fallback if the device whitelist store is temporarily unavailable.
+      }
+    }
 
     const { error } = await supabase.auth.signInWithOtp({
       email: verificationEmail,
