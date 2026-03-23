@@ -357,14 +357,6 @@ function LoginPageInner() {
     }
 
     persistSessionForRedirect((sessionPayload ?? {}) as Record<string, unknown>);
-    try {
-      await supabase.auth.setSession({
-        access_token: accessToken,
-        refresh_token: refreshToken,
-      });
-    } catch {
-      // Keep the stored token fallback for the admin page.
-    }
 
     return {
       merchantId: typeof payload?.merchantId === "string" ? payload.merchantId.trim() : "",
