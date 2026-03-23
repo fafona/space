@@ -189,7 +189,7 @@ function LoginPageInner() {
   }
 
   async function readValidatedSessionUser() {
-    const session = await recoverBrowserSupabaseSession(3000);
+    const session = await recoverBrowserSupabaseSession(1800);
     if (!session?.user) return null;
 
     try {
@@ -198,7 +198,7 @@ function LoginPageInner() {
         if (error && isTransientAuthValidationError(error)) {
           return session.user;
         }
-        const recovered = await recoverBrowserSupabaseSession(2200);
+        const recovered = await recoverBrowserSupabaseSession(1200);
         if (recovered?.user) return recovered.user;
         await supabase.auth.signOut({ scope: "local" }).catch(() => {
           // ignore local cleanup failure
@@ -213,28 +213,38 @@ function LoginPageInner() {
 
   useEffect(() => {
     let mounted = true;
-    (async () => {
-      const gatewayReady = await canReachSupabaseGateway(4000);
-      if (!mounted) return;
-      setGatewayReachable(gatewayReady);
-      if (!gatewayReady) return;
-      const nextEmailConfirmationRequired = await readEmailConfirmationRequired();
-      if (mounted && nextEmailConfirmationRequired !== null) {
-        setEmailConfirmationRequired(nextEmailConfirmationRequired);
-      }
-      await readValidatedSessionUser()
-        .then((user) => {
-          if (!mounted) return;
-          if (user) {
-            void redirectToMerchantBackend(user);
+    const gatewayProbe = canReachSupabaseGateway(2200)
+      .then((gatewayReady) => {
+        if (!mounted) return gatewayReady;
+        setGatewayReachable(gatewayReady);
+        return gatewayReady;
+      })
+      .catch(() => null as boolean | null);
+
+    void gatewayProbe.then((gatewayReady) => {
+      if (!mounted || gatewayReady !== true) return;
+      void readEmailConfirmationRequired()
+        .then((nextEmailConfirmationRequired) => {
+          if (mounted && nextEmailConfirmationRequired !== null) {
+            setEmailConfirmationRequired(nextEmailConfirmationRequired);
           }
         })
         .catch(() => {
-          // Ignore transient auth bootstrap errors to avoid runtime abort overlay.
+          // Ignore non-critical settings read failures.
         });
-    })().catch(() => {
-      // ignore bootstrap failure
     });
+
+    void readValidatedSessionUser()
+      .then((user) => {
+        if (!mounted) return;
+        if (user) {
+          void redirectToMerchantBackend(user);
+        }
+      })
+      .catch(() => {
+        // Ignore transient auth bootstrap errors to avoid runtime abort overlay.
+      });
+
     return () => {
       mounted = false;
     };
@@ -384,11 +394,11 @@ function LoginPageInner() {
         access_token: accessToken,
         refresh_token: refreshToken,
       },
-      6500,
+      2200,
     ).catch(() => null);
     if (establishedSession?.user) return true;
 
-    const recoveredSession = await recoverBrowserSupabaseSession(2600).catch(() => null);
+    const recoveredSession = await recoverBrowserSupabaseSession(900).catch(() => null);
     return Boolean(recoveredSession?.user);
   }
 
@@ -500,8 +510,12 @@ function LoginPageInner() {
 
     const validationError = validateSignInForm();
     if (validationError) return setMsg(validationError);
-    const gatewayReady = await canReachSupabaseGateway(4000);
-    setGatewayReachable(gatewayReady);
+    const gatewayProbe = canReachSupabaseGateway(2200)
+      .then((reachable) => {
+        setGatewayReachable(reachable);
+        return reachable;
+      })
+      .catch(() => null as boolean | null);
 
     setPendingAction("signin");
     try {
@@ -514,7 +528,11 @@ function LoginPageInner() {
     } catch (error) {
       const normalizedMessage = error instanceof Error ? normalizeError(error.message) : t("login.requestFailed");
       setNeedConfirmEmail(normalizedMessage === t("login.emailNotConfirmed"));
-      if (!gatewayReady && normalizedMessage === t("login.backendUnavailable") && isDevelopment) {
+      const gatewayReady = await Promise.race([
+        gatewayProbe,
+        Promise.resolve(gatewayReachable),
+      ]);
+      if (gatewayReady === false && normalizedMessage === t("login.backendUnavailable") && isDevelopment) {
         window.location.href = "/admin?offline=1";
         return;
       }

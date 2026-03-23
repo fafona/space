@@ -37,6 +37,14 @@ type AdminListUsersClient = {
   };
 };
 
+const AUTH_USERS_CACHE_TTL_MS = 60_000;
+let authUsersCache:
+  | {
+      expiresAt: number;
+      users: AuthUserSummary[];
+    }
+  | null = null;
+
 function readEnv(name: string) {
   return (process.env[name] ?? "").trim();
 }
@@ -96,6 +104,9 @@ function createServerSupabaseClient(): AdminListUsersClient | null {
 }
 
 async function listAuthUsers(supabase: AdminListUsersClient) {
+  if (authUsersCache && authUsersCache.expiresAt > Date.now()) {
+    return authUsersCache.users;
+  }
   const users: AuthUserSummary[] = [];
   let page = 1;
   while (true) {
@@ -110,6 +121,10 @@ async function listAuthUsers(supabase: AdminListUsersClient) {
     if (chunk.length < 200) break;
     page += 1;
   }
+  authUsersCache = {
+    expiresAt: Date.now() + AUTH_USERS_CACHE_TTL_MS,
+    users,
+  };
   return users;
 }
 
@@ -121,7 +136,7 @@ async function resolveAccountEmail(supabase: AdminListUsersClient, account: stri
   if (isMerchantNumericId(normalizedAccount)) {
     const { data: merchant, error } = await supabase
       .from("merchants")
-      .select("id,email,owner_email,contact_email,user_email")
+      .select("id,name,email,owner_email,contact_email,user_email")
       .eq("id", normalizedAccount)
       .limit(1)
       .maybeSingle();
@@ -131,6 +146,24 @@ async function resolveAccountEmail(supabase: AdminListUsersClient, account: stri
       merchant?.email,
       merchant?.owner_email,
       merchant?.contact_email,
+    );
+    if (email) return email;
+  }
+
+  for (const merchantName of [account.trim(), normalizedAccount]) {
+    if (!merchantName) continue;
+    const { data: merchantByName, error } = await supabase
+      .from("merchants")
+      .select("id,name,email,owner_email,contact_email,user_email")
+      .eq("name", merchantName)
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    const email = normalizeEmail(
+      merchantByName?.user_email,
+      merchantByName?.email,
+      merchantByName?.owner_email,
+      merchantByName?.contact_email,
     );
     if (email) return email;
   }
@@ -163,6 +196,9 @@ async function resolveMerchantId(
 
   push(isMerchantNumericId(account) ? account : "");
   push(readMerchantIdFromMetadata(user?.user_metadata, user?.app_metadata));
+  if (candidates[0]) {
+    return candidates[0];
+  }
 
   const userId = String(user?.id ?? "").trim();
   const lookupTasks: Array<Promise<{
