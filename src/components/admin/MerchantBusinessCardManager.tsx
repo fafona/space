@@ -180,34 +180,117 @@ async function copyTextToClipboard(value: string) {
   }
 }
 
-async function copyImageToClipboard(sourceImageUrl: string) {
-  if (
-    typeof window === "undefined" ||
-    typeof navigator === "undefined" ||
-    !navigator.clipboard?.write ||
-    typeof window.ClipboardItem !== "function"
-  ) {
-    throw new Error("image_clipboard_unavailable");
-  }
-
+async function normalizeClipboardImageBlob(sourceImageUrl: string) {
   const response = await fetch(sourceImageUrl);
   if (!response.ok) {
     throw new Error("image_clipboard_unavailable");
   }
-
   const sourceBlob = await response.blob();
-  const blob =
-    sourceBlob.type === "image/png"
-      ? sourceBlob
-      : new Blob([await sourceBlob.arrayBuffer()], {
-          type: "image/png",
-        });
+  if (sourceBlob.type === "image/png") {
+    return sourceBlob;
+  }
+  return new Blob([await sourceBlob.arrayBuffer()], {
+    type: "image/png",
+  });
+}
 
-  await navigator.clipboard.write([
-    new window.ClipboardItem({
-      "image/png": blob,
-    }),
-  ]);
+async function blobToDataUrl(blob: Blob) {
+  return await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+    reader.onerror = () => reject(new Error("image_clipboard_unavailable"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function copyImageViaLegacyClipboard(blob: Blob) {
+  if (typeof document === "undefined") {
+    throw new Error("image_clipboard_unavailable");
+  }
+
+  const imageFile = new File([blob], "business-card.png", {
+    type: "image/png",
+  });
+  const dataUrl = await blobToDataUrl(blob);
+
+  await new Promise<void>((resolve, reject) => {
+    let handled = false;
+    const cleanup = () => {
+      document.removeEventListener("copy", handleCopy, true);
+    };
+    const fail = () => {
+      cleanup();
+      reject(new Error("image_clipboard_unavailable"));
+    };
+    const succeed = () => {
+      handled = true;
+      cleanup();
+      resolve();
+    };
+    const handleCopy = (event: ClipboardEvent) => {
+      const clipboardData = event.clipboardData;
+      if (!clipboardData) {
+        fail();
+        return;
+      }
+      event.preventDefault();
+      try {
+        const items = clipboardData.items;
+        if (items && typeof items.add === "function") {
+          items.add(imageFile);
+          succeed();
+          return;
+        }
+      } catch {
+        // Fall through to HTML/image markup fallback.
+      }
+      try {
+        clipboardData.setData(
+          "text/html",
+          `<img src="${dataUrl}" alt="business card" style="display:block;max-width:100%;" />`,
+        );
+        clipboardData.setData("text/plain", "");
+        succeed();
+      } catch {
+        fail();
+      }
+    };
+
+    document.addEventListener("copy", handleCopy, true);
+    const copied = document.execCommand("copy");
+    if (!copied && !handled) {
+      fail();
+      return;
+    }
+    window.setTimeout(() => {
+      if (!handled) {
+        fail();
+      }
+    }, 50);
+  });
+}
+
+async function copyImageToClipboard(sourceImageUrl: string) {
+  const blob = await normalizeClipboardImageBlob(sourceImageUrl);
+  if (
+    typeof window !== "undefined" &&
+    typeof navigator !== "undefined" &&
+    navigator.clipboard?.write &&
+    typeof window.ClipboardItem === "function"
+  ) {
+    try {
+      await navigator.clipboard.write([
+        new window.ClipboardItem({
+          "image/png": blob,
+        }),
+      ]);
+      return;
+    } catch {
+      // Fall back to the legacy copy event path below.
+    }
+  }
+
+  await copyImageViaLegacyClipboard(blob);
 }
 
 function sanitizeShareAssetHint(value: string) {
