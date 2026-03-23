@@ -142,6 +142,7 @@ test("normalizeMerchantBusinessCards keeps only valid generated card assets", ()
       name: "fafona card",
       imageUrl: "data:image/png;base64,abc",
       shareImageUrl: "https://faolla.com/storage/v1/object/public/page-assets/card.png",
+      shareKey: "card-share-abc123",
       targetUrl: "https://fafona.faolla.com",
       width: 700,
       height: 420,
@@ -244,6 +245,7 @@ test("normalizeMerchantBusinessCards keeps only valid generated card assets", ()
   assert.equal(cards[0]?.name, "fafona card");
   assert.equal(cards[0]?.backgroundImageOpacity, 0.45);
   assert.equal(cards[0]?.shareImageUrl, "https://faolla.com/storage/v1/object/public/page-assets/card.png");
+  assert.equal(cards[0]?.shareKey, "card-share-abc123");
   assert.equal(cards[0]?.backgroundColorOpacity, 0.72);
   assert.equal(cards[0]?.customTexts.length, 1);
   assert.equal(cards[0]?.customTexts[0]?.text, "VIP only");

@@ -26,12 +26,12 @@ import {
   type MerchantBusinessCardProfileInput,
 } from "@/lib/merchantBusinessCards";
 import {
-  buildMerchantBusinessCardShareUrl,
   normalizeMerchantBusinessCardShareImageUrl,
   resolveMerchantBusinessCardShareOrigin,
 } from "@/lib/merchantBusinessCardShare";
 import { uploadImageDataUrlToPublicStorage } from "@/lib/publicAssetUpload";
 import { buildMerchantDomain } from "@/lib/siteRouting";
+import { supabase } from "@/lib/supabase";
 
 type MerchantBusinessCardManagerProps = {
   siteBaseDomain: string;
@@ -518,6 +518,8 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
         id: existingCard?.id ?? createId("business-card"),
         createdAt: existingCard?.createdAt ?? new Date().toISOString(),
         imageUrl,
+        ...(existingCard?.shareImageUrl ? { shareImageUrl: existingCard.shareImageUrl } : {}),
+        ...(existingCard?.shareKey ? { shareKey: existingCard.shareKey } : {}),
         targetUrl: websiteUrl,
       };
       onCardsChange(
@@ -1132,13 +1134,26 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     }
   }
 
-  function updateCardShareImageUrl(cardId: string, shareImageUrl: string) {
+  async function getShareAccessToken(timeoutMs = 900) {
+    try {
+      const sessionTask = supabase.auth.getSession();
+      const timeoutTask = new Promise<null>((resolve) => {
+        setTimeout(() => resolve(null), Math.max(200, timeoutMs));
+      });
+      const result = (await Promise.race([sessionTask, timeoutTask])) as Awaited<typeof sessionTask> | null;
+      return String(result?.data.session?.access_token ?? "").trim();
+    } catch {
+      return "";
+    }
+  }
+
+  function updateCardShareMeta(cardId: string, patch: Partial<Pick<MerchantBusinessCardAsset, "shareImageUrl" | "shareKey">>) {
     onCardsChange(
       cards.map((item) =>
         item.id === cardId
           ? {
               ...item,
-              shareImageUrl,
+              ...patch,
             }
           : item,
       ),
@@ -1157,7 +1172,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     );
     if (existingPublicUrl) {
       if (input.card && normalizeText(input.card.shareImageUrl) !== existingPublicUrl) {
-        updateCardShareImageUrl(input.card.id, existingPublicUrl);
+        updateCardShareMeta(input.card.id, { shareImageUrl: existingPublicUrl });
       }
       return existingPublicUrl;
     }
@@ -1179,7 +1194,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     );
     const publicUrl = normalizeMerchantBusinessCardShareImageUrl(uploadedUrl, shareOrigin);
     if (publicUrl && input.card) {
-      updateCardShareImageUrl(input.card.id, publicUrl);
+      updateCardShareMeta(input.card.id, { shareImageUrl: publicUrl });
     }
     return publicUrl;
   }
@@ -1194,7 +1209,6 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     if (!targetUrl) {
       throw new Error("missing_target");
     }
-    const shareOrigin = resolveMerchantBusinessCardShareOrigin();
     const shareImageUrl = await resolveShareImageUrl({
       card: input.card,
       renderedImageUrl: input.renderedImageUrl,
@@ -1203,14 +1217,39 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     if (!shareImageUrl) {
       throw new Error("share_image_unavailable");
     }
-    const shareUrl = buildMerchantBusinessCardShareUrl({
-      origin: shareOrigin,
-      name: input.cardName,
-      imageUrl: shareImageUrl,
-      targetUrl,
+    const accessToken = await getShareAccessToken();
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+    };
+    if (accessToken) {
+      headers.Authorization = `Bearer ${accessToken}`;
+    }
+    const response = await fetch("/api/business-card-share", {
+      method: "POST",
+      headers,
+      credentials: "same-origin",
+      body: JSON.stringify({
+        key: normalizeText(input.card?.shareKey),
+        name: input.cardName,
+        imageUrl: shareImageUrl,
+        targetUrl,
+      }),
     });
-    if (!shareUrl) {
+    const payload = (await response.json().catch(() => null)) as {
+      ok?: unknown;
+      shareKey?: unknown;
+      shareUrl?: unknown;
+    } | null;
+    const shareUrl = typeof payload?.shareUrl === "string" ? payload.shareUrl.trim() : "";
+    const shareKey = typeof payload?.shareKey === "string" ? payload.shareKey.trim() : "";
+    if (!response.ok || !shareUrl) {
       throw new Error("share_link_unavailable");
+    }
+    if (input.card && (shareKey || shareImageUrl)) {
+      updateCardShareMeta(input.card.id, {
+        ...(shareImageUrl ? { shareImageUrl } : {}),
+        ...(shareKey ? { shareKey } : {}),
+      });
     }
     return shareUrl;
   }
@@ -1235,7 +1274,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
         renderedImageUrl,
       });
       await copyTextToClipboard(shareUrl);
-      setTip("分享链接已复制，发送后会显示名片样式链接");
+      setTip("分享链接已复制，发送后会显示名片预览");
     } catch {
       setTip("复制失败，请重试");
     }
@@ -1254,7 +1293,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
         card,
       });
       await copyTextToClipboard(shareUrl);
-      setTip("分享链接已复制，发送后会显示名片样式链接");
+      setTip("分享链接已复制，发送后会显示名片预览");
     } catch {
       setTip("复制失败，请重试");
     }

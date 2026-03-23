@@ -5,7 +5,7 @@ import {
   buildMerchantBusinessCardShareDescription,
   buildMerchantBusinessCardShareTitle,
   buildMerchantBusinessCardShareUrl,
-  parseMerchantBusinessCardShareParams,
+  resolveMerchantBusinessCardSharePayload,
 } from "@/lib/merchantBusinessCardShare";
 
 type ShareBusinessCardPageProps = {
@@ -27,14 +27,14 @@ function resolveRequestOrigin(requestHeaders: Headers) {
 export async function generateMetadata({ searchParams }: ShareBusinessCardPageProps): Promise<Metadata> {
   const requestHeaders = await headers();
   const origin = resolveRequestOrigin(requestHeaders);
-  const payload = parseMerchantBusinessCardShareParams(await searchParams, origin);
+  const payload = await resolveMerchantBusinessCardSharePayload(await searchParams, origin);
   const metadataBase = origin ? new URL(origin) : undefined;
 
   if (!payload) {
     return {
       metadataBase,
       title: "商户名片",
-      description: "链接参数无效",
+      description: "名片链接无效",
       robots: {
         index: false,
         follow: false,
@@ -46,9 +46,9 @@ export async function generateMetadata({ searchParams }: ShareBusinessCardPagePr
   const description = buildMerchantBusinessCardShareDescription(payload.name, payload.targetUrl);
   const shareUrl = buildMerchantBusinessCardShareUrl({
     origin,
-    name: payload.name,
     imageUrl: payload.imageUrl,
     targetUrl: payload.targetUrl,
+    name: payload.name,
   });
 
   return {
@@ -87,7 +87,7 @@ export async function generateMetadata({ searchParams }: ShareBusinessCardPagePr
 
 export default async function ShareBusinessCardPage({ searchParams }: ShareBusinessCardPageProps) {
   const requestHeaders = await headers();
-  const payload = parseMerchantBusinessCardShareParams(await searchParams, resolveRequestOrigin(requestHeaders));
+  const payload = await resolveMerchantBusinessCardSharePayload(await searchParams, resolveRequestOrigin(requestHeaders));
 
   if (!payload) {
     return (
