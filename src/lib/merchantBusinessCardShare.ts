@@ -21,7 +21,11 @@ function normalizeText(value: unknown) {
 
 function isLocalHost(hostname: string) {
   const normalized = normalizeText(hostname).toLowerCase();
-  return normalized === "localhost" || normalized === "127.0.0.1";
+  return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "[::1]" || normalized.endsWith(".localhost");
+}
+
+function isIpv4Host(hostname: string) {
+  return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(normalizeText(hostname));
 }
 
 function normalizeOrigin(value: string | null | undefined) {
@@ -55,6 +59,34 @@ export function normalizeMerchantBusinessCardShareTargetUrl(value: string | null
   }
 }
 
+function isPublicOrigin(origin: string) {
+  const normalized = normalizeOrigin(origin);
+  if (!normalized) return false;
+  try {
+    const parsed = new URL(normalized);
+    return !isLocalHost(parsed.hostname) && !isIpv4Host(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function deriveShareOriginFromTargetUrl(targetUrl: string | null | undefined) {
+  const normalizedTargetUrl = normalizeMerchantBusinessCardShareTargetUrl(targetUrl);
+  if (!normalizedTargetUrl) return "";
+  try {
+    const parsed = new URL(normalizedTargetUrl);
+    const hostname = normalizeText(parsed.hostname).toLowerCase();
+    if (!hostname || isLocalHost(hostname) || isIpv4Host(hostname)) return "";
+    const labels = hostname.split(".").filter(Boolean);
+    if (labels.length < 2) return "";
+    const rootHostname = labels.length > 2 ? labels.slice(1).join(".") : labels.join(".");
+    const port = parsed.port ? `:${parsed.port}` : "";
+    return normalizeOrigin(`https://${rootHostname}${port}`);
+  } catch {
+    return "";
+  }
+}
+
 function readSearchParam(searchParams: SearchParamsLike, key: string) {
   if (searchParams instanceof URLSearchParams) {
     return normalizeText(searchParams.get(key));
@@ -74,14 +106,21 @@ function buildTargetHostLabel(targetUrl: string) {
   }
 }
 
-export function resolveMerchantBusinessCardShareOrigin(preferredOrigin?: string | null) {
+export function resolveMerchantBusinessCardShareOrigin(preferredOrigin?: string | null, targetUrl?: string | null) {
   const fromPreferred = normalizeOrigin(preferredOrigin);
+  if (fromPreferred && isPublicOrigin(fromPreferred)) return fromPreferred;
+  const fromTarget = deriveShareOriginFromTargetUrl(targetUrl);
+  if (fromTarget) return fromTarget;
+  const fromEnv = normalizeOrigin(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN);
+  if (fromEnv && isPublicOrigin(fromEnv)) return fromEnv;
+  if (typeof window !== "undefined" && window.location?.origin) {
+    const fromWindow = normalizeOrigin(window.location.origin);
+    if (fromWindow && isPublicOrigin(fromWindow)) return fromWindow;
+  }
   if (fromPreferred) return fromPreferred;
   if (typeof window !== "undefined" && window.location?.origin) {
     return normalizeOrigin(window.location.origin);
   }
-  const fromEnv = normalizeOrigin(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN);
-  if (fromEnv) return fromEnv;
   return "";
 }
 
@@ -136,7 +175,7 @@ export function buildMerchantBusinessCardShareUrl(input: {
   imageUrl: string;
   targetUrl: string;
 }) {
-  const origin = resolveMerchantBusinessCardShareOrigin(input.origin);
+  const origin = resolveMerchantBusinessCardShareOrigin(input.origin, input.targetUrl);
   if (!origin) return "";
 
   const shareUrl = new URL(MERCHANT_BUSINESS_CARD_SHARE_PATH, `${origin}/`);

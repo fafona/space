@@ -15,14 +15,14 @@ import {
 
 test("buildMerchantBusinessCardShareUrl creates a short share route when share key exists", () => {
   const shareUrl = buildMerchantBusinessCardShareUrl({
-    origin: "http://www.faolla.com",
+    origin: "http://localhost:3000",
     shareKey: "card-abc123",
     name: "fafona",
     imageUrl: "https://faolla.com/storage/v1/object/public/page-assets/card.png",
     targetUrl: "https://fafona.faolla.com",
   });
 
-  assert.equal(shareUrl, `https://www.faolla.com/share/business-card?${MERCHANT_BUSINESS_CARD_SHARE_KEY_PARAM}=card-abc123`);
+  assert.equal(shareUrl, `https://faolla.com/share/business-card?${MERCHANT_BUSINESS_CARD_SHARE_KEY_PARAM}=card-abc123`);
 });
 
 test("buildMerchantBusinessCardShareUrl falls back to legacy encoded params when share key is absent", () => {
@@ -39,9 +39,19 @@ test("buildMerchantBusinessCardShareUrl falls back to legacy encoded params when
   );
 });
 
-test("resolveMerchantBusinessCardShareOrigin upgrades insecure production origins to https", () => {
+test("resolveMerchantBusinessCardShareOrigin prefers target root domain over localhost", () => {
+  assert.equal(
+    resolveMerchantBusinessCardShareOrigin("http://localhost:3000", "https://fafona.faolla.com"),
+    "https://faolla.com",
+  );
   assert.equal(resolveMerchantBusinessCardShareOrigin("http://www.faolla.com"), "https://www.faolla.com");
-  assert.equal(resolveMerchantBusinessCardShareOrigin("http://localhost:3000"), "http://localhost:3000");
+  const previousBaseDomain = process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN;
+  process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN = "www.fafona.com";
+  try {
+    assert.equal(resolveMerchantBusinessCardShareOrigin("http://localhost:3000"), "https://www.fafona.com");
+  } finally {
+    process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN = previousBaseDomain;
+  }
 });
 
 test("share manifest helpers build stable public paths", () => {
