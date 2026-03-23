@@ -3,13 +3,11 @@
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useI18n } from "@/components/I18nProvider";
-import { ensureMerchantIdentityForUser } from "@/lib/merchantIdentity";
+import { ensureMerchantIdentityForUser, isMerchantNumericId } from "@/lib/merchantIdentity";
 import { buildMerchantBackendHref } from "@/lib/siteRouting";
 import {
   canReachSupabaseGateway,
-  legacySupabaseAuthStorageKey,
   resolvedSupabaseAnonKey,
-  resolvedSupabaseAuthStorageKey,
   resolvedSupabaseUrl,
   supabase,
 } from "@/lib/supabase";
@@ -286,39 +284,19 @@ function LoginPageInner() {
     return message;
   }
 
-  function persistSessionForRedirect(sessionPayload: Record<string, unknown>) {
-    if (typeof window === "undefined") return;
-    const accessToken = typeof sessionPayload.access_token === "string" ? sessionPayload.access_token.trim() : "";
-    const refreshToken = typeof sessionPayload.refresh_token === "string" ? sessionPayload.refresh_token.trim() : "";
-    if (!accessToken || !refreshToken) return;
-    const storageKeys = [resolvedSupabaseAuthStorageKey, legacySupabaseAuthStorageKey].filter(
-      (value, index, list) => value && list.indexOf(value) === index,
-    );
-    if (storageKeys.length === 0) return;
-    try {
-      const serialized = JSON.stringify({
-        currentSession: sessionPayload,
-      });
-      storageKeys.forEach((storageKey) => {
-        window.localStorage.setItem(storageKey, serialized);
-      });
-    } catch {
-      // Ignore localStorage failures and let downstream recovery handle it.
-    }
-  }
+  async function resolveSignInEmail(accountValue: string) {
+    const normalizedAccount = accountValue.trim();
+    if (!normalizedAccount) return "";
+    if (normalizedAccount.includes("@")) return normalizedAccount;
 
-  async function signInViaServer(accountValue: string, passwordValue: string) {
     let response: Response;
     try {
-      response = await fetch("/api/auth/merchant-login", {
+      response = await fetch("/api/auth/account-resolve", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          account: accountValue,
-          password: passwordValue,
-        }),
+        body: JSON.stringify({ account: normalizedAccount }),
         cache: "no-store",
       });
     } catch {
@@ -327,44 +305,18 @@ function LoginPageInner() {
 
     const payload = (await response.json().catch(() => null)) as
       | {
+          email?: unknown;
           error?: unknown;
-          message?: unknown;
-          merchantId?: unknown;
-          session?: Record<string, unknown> | null;
-          user?: {
-            id?: string;
-            email?: string | null;
-            user_metadata?: Record<string, unknown> | null;
-            app_metadata?: Record<string, unknown> | null;
-          } | null;
         }
       | null;
 
     if (!response.ok) {
       const errorCode = typeof payload?.error === "string" ? payload.error : "";
-      if (errorCode === "invalid_credentials") {
-        throw new Error(t("superLogin.invalid"));
-      }
-      if (errorCode === "email_not_confirmed") {
-        throw new Error(t("login.emailNotConfirmed"));
-      }
-      const message = typeof payload?.message === "string" ? payload.message : t("login.backendUnavailable");
-      throw new Error(normalizeError(message));
-    }
-
-    const sessionPayload = payload?.session;
-    const accessToken = typeof sessionPayload?.access_token === "string" ? sessionPayload.access_token.trim() : "";
-    const refreshToken = typeof sessionPayload?.refresh_token === "string" ? sessionPayload.refresh_token.trim() : "";
-    if (!accessToken || !refreshToken) {
+      if (errorCode === "invalid_account") return "";
       throw new Error(t("login.backendUnavailable"));
     }
 
-    persistSessionForRedirect((sessionPayload ?? {}) as Record<string, unknown>);
-
-    return {
-      merchantId: typeof payload?.merchantId === "string" ? payload.merchantId.trim() : "",
-      user: payload?.user ?? null,
-    };
+    return typeof payload?.email === "string" ? payload.email.trim() : "";
   }
 
   async function withTimeout<T>(task: Promise<T>, timeoutMs = 15000): Promise<T> {
@@ -447,8 +399,27 @@ function LoginPageInner() {
 
     setPendingAction("signin");
     try {
-      const result = await signInViaServer(account, password);
-      await redirectToMerchantBackend(result.user, result.merchantId);
+      const preferredMerchantId = isMerchantNumericId(account.trim()) ? account.trim() : "";
+      const resolvedEmail = await resolveSignInEmail(account);
+      if (!resolvedEmail) {
+        setNeedConfirmEmail(false);
+        setMsg(t("superLogin.invalid"));
+        return;
+      }
+
+      const { data, error } = await withTimeout(
+        supabase.auth.signInWithPassword({
+          email: resolvedEmail,
+          password,
+        }),
+      );
+
+      if (error) {
+        setNeedConfirmEmail(isEmailNotConfirmed(error.message));
+        return setMsg(normalizeError(error.message));
+      }
+
+      await redirectToMerchantBackend(pickAuthUser(data), preferredMerchantId);
     } catch (error) {
       const normalizedMessage = error instanceof Error ? normalizeError(error.message) : t("login.requestFailed");
       setNeedConfirmEmail(normalizedMessage === t("login.emailNotConfirmed"));
