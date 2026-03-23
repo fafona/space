@@ -50,6 +50,8 @@ test("default business card draft prefills merchant profile fields", () => {
   assert.equal(draft.contacts.phone, "0034633130577");
   assert.equal(draft.contacts.email, "caimin00x@gmail.com");
   assert.equal(draft.contacts.address, "C. Transporte, 12 / Sevilla / Sevilla / Spain");
+  assert.equal(draft.fieldTypography.merchantName.fontSize, 36);
+  assert.equal(draft.fieldTypography.contactName.fontSize, 14);
   assert.ok(draft.websiteLabel.length > 0);
 });
 
@@ -108,6 +110,28 @@ test("normalizeMerchantBusinessCardDraft clamps background opacity", () => {
 
   assert.equal(draft.backgroundImageOpacity, 1);
   assert.equal(draft.backgroundColorOpacity, 0);
+});
+
+test("normalizeMerchantBusinessCardDraft migrates legacy info typography to field-level styles", () => {
+  const draft = normalizeMerchantBusinessCardDraft({
+    typography: {
+      info: {
+        fontFamily: "Arial, Helvetica, sans-serif",
+        fontSize: 22,
+        fontColor: "#336699",
+        fontWeight: "bold",
+        fontStyle: "italic",
+        textDecoration: "underline",
+      },
+    },
+  });
+
+  assert.equal(draft.fieldTypography.contactName.fontFamily, "Arial, Helvetica, sans-serif");
+  assert.equal(draft.fieldTypography.contactName.fontSize, 22);
+  assert.equal(draft.fieldTypography.phone.fontColor, "#336699");
+  assert.equal(draft.fieldTypography.email.fontWeight, "bold");
+  assert.equal(draft.fieldTypography.address.fontStyle, "italic");
+  assert.equal(draft.fieldTypography.wechat.textDecoration, "underline");
 });
 
 test("normalizeMerchantBusinessCards keeps only valid generated card assets", () => {

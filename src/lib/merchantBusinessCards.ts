@@ -38,6 +38,11 @@ export type MerchantBusinessCardTypographyMap = Record<
   TypographyEditableProps
 >;
 
+export type MerchantBusinessCardFieldTypographyMap = Record<
+  MerchantBusinessCardFieldKey,
+  TypographyEditableProps
+>;
+
 export type MerchantBusinessCardCustomText = {
   id: string;
   text: string;
@@ -83,6 +88,7 @@ export type MerchantBusinessCardDraft = {
     size: number;
   };
   typography: MerchantBusinessCardTypographyMap;
+  fieldTypography: MerchantBusinessCardFieldTypographyMap;
 };
 
 export type MerchantBusinessCardAsset = MerchantBusinessCardDraft & {
@@ -137,7 +143,7 @@ function normalizeTypographyStyle(
   const normalizedStyle = normalizeText(source.fontStyle);
   const normalizedDecoration = normalizeText(source.textDecoration);
   return {
-    fontFamily: normalizeText(source.fontFamily),
+    fontFamily: normalizeText(source.fontFamily) || normalizeText(fallback.fontFamily),
     fontSize: clampInt(source.fontSize, fallback.fontSize ?? 16, 10, 80),
     fontColor: normalizeText(source.fontColor) || normalizeText(fallback.fontColor),
     fontWeight:
@@ -183,6 +189,41 @@ export function getMerchantBusinessCardRequiredFields(profile: MerchantBusinessC
 export function createDefaultMerchantBusinessCardDraft(
   profile: MerchantBusinessCardProfileInput,
 ): MerchantBusinessCardDraft {
+  const typography: MerchantBusinessCardTypographyMap = {
+    name: {
+      fontFamily: "",
+      fontSize: 36,
+      fontColor: "#0f172a",
+      fontWeight: "bold",
+      fontStyle: "normal",
+      textDecoration: "none",
+    },
+    title: {
+      fontFamily: "",
+      fontSize: 18,
+      fontColor: "#334155",
+      fontWeight: "bold",
+      fontStyle: "normal",
+      textDecoration: "none",
+    },
+    website: {
+      fontFamily: "",
+      fontSize: 14,
+      fontColor: "#475569",
+      fontWeight: "normal",
+      fontStyle: "normal",
+      textDecoration: "none",
+    },
+    info: {
+      fontFamily: "",
+      fontSize: 14,
+      fontColor: "#0f172a",
+      fontWeight: "normal",
+      fontStyle: "normal",
+      textDecoration: "none",
+    },
+  };
+
   return {
     mode: "image",
     name: normalizeText(profile.merchantName) || "未命名名片",
@@ -229,39 +270,21 @@ export function createDefaultMerchantBusinessCardDraft(
       y: 126,
       size: 136,
     },
-    typography: {
-      name: {
-        fontFamily: "",
-        fontSize: 36,
-        fontColor: "#0f172a",
-        fontWeight: "bold",
-        fontStyle: "normal",
-        textDecoration: "none",
-      },
-      title: {
-        fontFamily: "",
-        fontSize: 18,
-        fontColor: "#334155",
-        fontWeight: "bold",
-        fontStyle: "normal",
-        textDecoration: "none",
-      },
-      website: {
-        fontFamily: "",
-        fontSize: 14,
-        fontColor: "#475569",
-        fontWeight: "normal",
-        fontStyle: "normal",
-        textDecoration: "none",
-      },
-      info: {
-        fontFamily: "",
-        fontSize: 14,
-        fontColor: "#0f172a",
-        fontWeight: "normal",
-        fontStyle: "normal",
-        textDecoration: "none",
-      },
+    typography,
+    fieldTypography: {
+      merchantName: { ...typography.name },
+      title: { ...typography.title },
+      website: { ...typography.website },
+      contactName: { ...typography.info },
+      phone: { ...typography.info },
+      email: { ...typography.info },
+      address: { ...typography.info },
+      wechat: { ...typography.info },
+      whatsapp: { ...typography.info },
+      facebook: { ...typography.info },
+      instagram: { ...typography.info },
+      tiktok: { ...typography.info },
+      xiaohongshu: { ...typography.info },
     },
   };
 }
@@ -277,6 +300,10 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
   const typographySource =
     source.typography && typeof source.typography === "object"
       ? (source.typography as Partial<MerchantBusinessCardTypographyMap>)
+      : {};
+  const fieldTypographySource =
+    source.fieldTypography && typeof source.fieldTypography === "object"
+      ? (source.fieldTypography as Partial<MerchantBusinessCardFieldTypographyMap>)
       : {};
   const customTexts = Array.isArray(source.customTexts)
     ? source.customTexts
@@ -387,6 +414,60 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
       title: normalizeTypographyStyle(typographySource.title, fallback.typography.title),
       website: normalizeTypographyStyle(typographySource.website, fallback.typography.website),
       info: normalizeTypographyStyle(typographySource.info, fallback.typography.info),
+    },
+    fieldTypography: {
+      merchantName: normalizeTypographyStyle(
+        fieldTypographySource.merchantName,
+        typographySource.name ? normalizeTypographyStyle(typographySource.name, fallback.typography.name) : fallback.fieldTypography.merchantName,
+      ),
+      title: normalizeTypographyStyle(
+        fieldTypographySource.title,
+        typographySource.title ? normalizeTypographyStyle(typographySource.title, fallback.typography.title) : fallback.fieldTypography.title,
+      ),
+      website: normalizeTypographyStyle(
+        fieldTypographySource.website,
+        typographySource.website ? normalizeTypographyStyle(typographySource.website, fallback.typography.website) : fallback.fieldTypography.website,
+      ),
+      contactName: normalizeTypographyStyle(
+        fieldTypographySource.contactName,
+        typographySource.info ? normalizeTypographyStyle(typographySource.info, fallback.typography.info) : fallback.fieldTypography.contactName,
+      ),
+      phone: normalizeTypographyStyle(
+        fieldTypographySource.phone,
+        typographySource.info ? normalizeTypographyStyle(typographySource.info, fallback.typography.info) : fallback.fieldTypography.phone,
+      ),
+      email: normalizeTypographyStyle(
+        fieldTypographySource.email,
+        typographySource.info ? normalizeTypographyStyle(typographySource.info, fallback.typography.info) : fallback.fieldTypography.email,
+      ),
+      address: normalizeTypographyStyle(
+        fieldTypographySource.address,
+        typographySource.info ? normalizeTypographyStyle(typographySource.info, fallback.typography.info) : fallback.fieldTypography.address,
+      ),
+      wechat: normalizeTypographyStyle(
+        fieldTypographySource.wechat,
+        typographySource.info ? normalizeTypographyStyle(typographySource.info, fallback.typography.info) : fallback.fieldTypography.wechat,
+      ),
+      whatsapp: normalizeTypographyStyle(
+        fieldTypographySource.whatsapp,
+        typographySource.info ? normalizeTypographyStyle(typographySource.info, fallback.typography.info) : fallback.fieldTypography.whatsapp,
+      ),
+      facebook: normalizeTypographyStyle(
+        fieldTypographySource.facebook,
+        typographySource.info ? normalizeTypographyStyle(typographySource.info, fallback.typography.info) : fallback.fieldTypography.facebook,
+      ),
+      instagram: normalizeTypographyStyle(
+        fieldTypographySource.instagram,
+        typographySource.info ? normalizeTypographyStyle(typographySource.info, fallback.typography.info) : fallback.fieldTypography.instagram,
+      ),
+      tiktok: normalizeTypographyStyle(
+        fieldTypographySource.tiktok,
+        typographySource.info ? normalizeTypographyStyle(typographySource.info, fallback.typography.info) : fallback.fieldTypography.tiktok,
+      ),
+      xiaohongshu: normalizeTypographyStyle(
+        fieldTypographySource.xiaohongshu,
+        typographySource.info ? normalizeTypographyStyle(typographySource.info, fallback.typography.info) : fallback.fieldTypography.xiaohongshu,
+      ),
     },
   };
 }
