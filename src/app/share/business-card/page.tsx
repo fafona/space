@@ -5,6 +5,7 @@ import {
   buildMerchantBusinessCardShareDescription,
   buildMerchantBusinessCardShareTitle,
   buildMerchantBusinessCardShareUrl,
+  readMerchantBusinessCardShareKey,
   resolveMerchantBusinessCardSharePayload,
 } from "@/lib/merchantBusinessCardShare";
 
@@ -27,7 +28,8 @@ function resolveRequestOrigin(requestHeaders: Headers) {
 export async function generateMetadata({ searchParams }: ShareBusinessCardPageProps): Promise<Metadata> {
   const requestHeaders = await headers();
   const origin = resolveRequestOrigin(requestHeaders);
-  const payload = await resolveMerchantBusinessCardSharePayload(await searchParams, origin);
+  const resolvedSearchParams = await searchParams;
+  const payload = await resolveMerchantBusinessCardSharePayload(resolvedSearchParams, origin);
   const metadataBase = origin ? new URL(origin) : undefined;
 
   if (!payload) {
@@ -44,8 +46,10 @@ export async function generateMetadata({ searchParams }: ShareBusinessCardPagePr
 
   const title = buildMerchantBusinessCardShareTitle(payload.name);
   const description = buildMerchantBusinessCardShareDescription(payload.name, payload.targetUrl);
+  const shareKey = readMerchantBusinessCardShareKey(resolvedSearchParams);
   const shareUrl = buildMerchantBusinessCardShareUrl({
     origin,
+    shareKey,
     imageUrl: payload.imageUrl,
     targetUrl: payload.targetUrl,
     name: payload.name,
@@ -66,6 +70,7 @@ export async function generateMetadata({ searchParams }: ShareBusinessCardPagePr
     },
     openGraph: {
       type: "website",
+      siteName: "Faolla",
       title,
       description,
       url: shareUrl || undefined,

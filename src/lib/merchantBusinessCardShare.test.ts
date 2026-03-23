@@ -10,6 +10,7 @@ import {
   normalizeMerchantBusinessCardShareImageUrl,
   normalizeMerchantBusinessCardShareKey,
   parseMerchantBusinessCardShareParams,
+  readMerchantBusinessCardShareKey,
   resolveMerchantBusinessCardShareOrigin,
 } from "./merchantBusinessCardShare";
 
@@ -23,6 +24,15 @@ test("buildMerchantBusinessCardShareUrl creates a short share route when share k
   });
 
   assert.equal(shareUrl, `https://faolla.com/share/business-card?${MERCHANT_BUSINESS_CARD_SHARE_KEY_PARAM}=card-abc123`);
+});
+
+test("readMerchantBusinessCardShareKey normalizes the short share key from search params", () => {
+  assert.equal(
+    readMerchantBusinessCardShareKey({
+      [MERCHANT_BUSINESS_CARD_SHARE_KEY_PARAM]: "Card-Abc123",
+    }),
+    "card-abc123",
+  );
 });
 
 test("buildMerchantBusinessCardShareUrl falls back to legacy encoded params when share key is absent", () => {

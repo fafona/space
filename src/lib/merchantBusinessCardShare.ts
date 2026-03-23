@@ -135,6 +135,12 @@ export function normalizeMerchantBusinessCardShareKey(value: string | null | und
   return normalized;
 }
 
+export function readMerchantBusinessCardShareKey(searchParams: SearchParamsLike) {
+  return normalizeMerchantBusinessCardShareKey(
+    readSearchParam(searchParams, MERCHANT_BUSINESS_CARD_SHARE_KEY_PARAM),
+  );
+}
+
 function normalizeSharePayload(
   input: {
     name?: string | null;
@@ -246,9 +252,7 @@ export async function resolveMerchantBusinessCardSharePayload(
   searchParams: SearchParamsLike,
   preferredOrigin?: string | null,
 ) {
-  const shareKey = normalizeMerchantBusinessCardShareKey(
-    readSearchParam(searchParams, MERCHANT_BUSINESS_CARD_SHARE_KEY_PARAM),
-  );
+  const shareKey = readMerchantBusinessCardShareKey(searchParams);
   if (shareKey) {
     const payload = await loadMerchantBusinessCardSharePayloadByKey(shareKey, preferredOrigin);
     if (payload) return payload;
