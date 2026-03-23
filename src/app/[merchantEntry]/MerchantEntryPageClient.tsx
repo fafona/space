@@ -14,6 +14,7 @@ import {
 } from "@/lib/authSessionRecovery";
 import { buildMerchantSiteLinker } from "@/lib/merchantSiteLinking";
 import { isMerchantNumericId, normalizeDomainPrefix } from "@/lib/merchantIdentity";
+import { clearMerchantSignInBridge, hasMerchantSignInBridge } from "@/lib/merchantSignInBridge";
 import { resolvePublishedSiteByPrefix } from "@/lib/publishedSiteLookup";
 import { buildPlatformHomeHref } from "@/lib/siteRouting";
 import { isSupabaseEnabled, supabase } from "@/lib/supabase";
@@ -33,6 +34,10 @@ export default function MerchantEntryPageClient({
   const merchantEntry = String(params?.merchantEntry ?? "").trim();
   const hydrated = useHydrated();
   const justSignedIn = useMemo(() => (searchParams.get("justSignedIn") ?? "").trim() === "1", [searchParams]);
+  const recentSignInBridgeActive = useMemo(
+    () => hydrated && justSignedIn && isMerchantNumericId(merchantEntry) && hasMerchantSignInBridge(merchantEntry),
+    [hydrated, justSignedIn, merchantEntry],
+  );
   const normalizedPrefix = useMemo(() => normalizeDomainPrefix(merchantEntry), [merchantEntry]);
   const [platformState, setPlatformState] = useState(() => loadPlatformState());
   const [remoteLookup, setRemoteLookup] = useState<{
@@ -44,8 +49,8 @@ export default function MerchantEntryPageClient({
     siteId: initialResolvedSiteId,
     resolved: !!initialResolvedSiteId,
   });
-  const [numericAdminAuthReady, setNumericAdminAuthReady] = useState(() => justSignedIn);
-  const [numericAdminAuthenticated, setNumericAdminAuthenticated] = useState(() => justSignedIn);
+  const [numericAdminAuthReady, setNumericAdminAuthReady] = useState(() => recentSignInBridgeActive);
+  const [numericAdminAuthenticated, setNumericAdminAuthenticated] = useState(() => recentSignInBridgeActive);
   const [numericSessionEmail, setNumericSessionEmail] = useState("");
   const [numericSessionLookupDone, setNumericSessionLookupDone] = useState(() => !isMerchantNumericId(merchantEntry) || !isSupabaseEnabled);
   const matchMerchantSite = useMemo(
@@ -95,7 +100,7 @@ export default function MerchantEntryPageClient({
     if (!isSupabaseEnabled) return;
 
     let mounted = true;
-    if (justSignedIn) {
+    if (recentSignInBridgeActive) {
       return () => {
         mounted = false;
       };
@@ -161,7 +166,7 @@ export default function MerchantEntryPageClient({
     return () => {
       mounted = false;
     };
-  }, [hydrated, justSignedIn, merchantEntry]);
+  }, [hydrated, merchantEntry, recentSignInBridgeActive]);
 
   useEffect(() => {
     if (!hydrated || !merchantEntry || !isMerchantNumericId(merchantEntry) || !isSupabaseEnabled) return;
@@ -191,6 +196,24 @@ export default function MerchantEntryPageClient({
     };
   }, [hydrated, merchantEntry]);
 
+  useEffect(() => {
+    if (!recentSignInBridgeActive) return;
+
+    let mounted = true;
+    void recoverBrowserSupabaseSession(3200)
+      .then((session) => {
+        if (!mounted || !session?.user) return;
+        clearMerchantSignInBridge(merchantEntry);
+      })
+      .catch(() => {
+        // Keep bridge available during transient recovery failures.
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, [merchantEntry, recentSignInBridgeActive]);
+
   const resolvedSiteId = remoteLookup.prefix === normalizedPrefix ? remoteLookup.siteId : "";
   const remoteResolved =
     !merchantEntry || isMerchantNumericId(merchantEntry) || (remoteLookup.prefix === normalizedPrefix && remoteLookup.resolved);
@@ -206,7 +229,7 @@ export default function MerchantEntryPageClient({
     if (!numericSessionLookupDone) {
       return <LoadingProgressScreen message="正在定位商户站点..." />;
     }
-    if (justSignedIn) {
+    if (recentSignInBridgeActive) {
       return <AdminClient forcedScope={`site-${numericScopedSiteId || merchantEntry}`} />;
     }
     if (!numericAdminAuthReady) {

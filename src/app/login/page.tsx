@@ -7,16 +7,16 @@ import {
   establishBrowserSupabaseSession,
   hasStoredBrowserSupabaseSessionTokens,
   isTransientAuthValidationError,
+  persistBrowserSupabaseSessionSnapshot,
   recoverBrowserSupabaseSession,
 } from "@/lib/authSessionRecovery";
 import { ensureMerchantIdentityForUser, isMerchantNumericId } from "@/lib/merchantIdentity";
+import { clearMerchantSignInBridge, setMerchantSignInBridge } from "@/lib/merchantSignInBridge";
 import { buildMerchantBackendHref } from "@/lib/siteRouting";
 import {
   canReachSupabaseGateway,
   getResolvedSupabaseUrl,
-  legacySupabaseAuthStorageKey,
   resolvedSupabaseAnonKey,
-  resolvedSupabaseAuthStorageKey,
   supabase,
 } from "@/lib/supabase";
 
@@ -116,10 +116,17 @@ function LoginPageInner() {
     ) => {
       const decorateMerchantHref = (href: string) => {
         const url = new URL(href, window.location.origin);
+        const targetMerchantId = url.pathname.replace(/^\/+/, "").split("/")[0]?.trim() ?? "";
         if (options?.withSignInBridge) {
           url.searchParams.set("justSignedIn", "1");
+          if (isMerchantNumericId(targetMerchantId)) {
+            setMerchantSignInBridge(targetMerchantId);
+          }
         } else {
           url.searchParams.delete("justSignedIn");
+          if (isMerchantNumericId(targetMerchantId)) {
+            clearMerchantSignInBridge(targetMerchantId);
+          }
         }
         return `${url.pathname}${url.search}${url.hash}`;
       };
@@ -359,22 +366,10 @@ function LoginPageInner() {
   }
 
   function persistSessionSnapshot(session: LoginAuthSession) {
-    if (typeof window === "undefined") return;
-    const storageKeys = [legacySupabaseAuthStorageKey, resolvedSupabaseAuthStorageKey].filter(
-      (value, index, list) => value && list.indexOf(value) === index,
-    );
-    if (storageKeys.length === 0) return;
-    const snapshot = JSON.stringify({
+    persistBrowserSupabaseSessionSnapshot({
       currentSession: session,
       session,
     });
-    for (const storageKey of storageKeys) {
-      try {
-        window.localStorage.setItem(storageKey, snapshot);
-      } catch {
-        // ignore localStorage write failure
-      }
-    }
   }
 
   async function stabilizeBrowserSession(session: LoginAuthSession) {

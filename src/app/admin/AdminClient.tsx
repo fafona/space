@@ -59,6 +59,7 @@ import {
   supabase,
   supabaseMissingEnvNotice,
 } from "@/lib/supabase";
+import { clearMerchantSignInBridge } from "@/lib/merchantSignInBridge";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
 import { BLOCK_BORDER_STYLE_OPTIONS, getBlockBorderClass, getBlockBorderInlineStyle } from "@/components/blocks/borderStyle";
 import { toRichHtml } from "@/components/blocks/richText";
@@ -4376,6 +4377,10 @@ export default function AdminClient({
           attachAuthListener();
         }
         if (session && justSignedIn && typeof window !== "undefined") {
+          const scopedMerchantId = getSiteIdFromStoreScope(storeScope).trim();
+          if (scopedMerchantId) {
+            clearMerchantSignInBridge(scopedMerchantId);
+          }
           clearJustSignedInFlagFromUrl();
         }
         if (!isPlatformEditor || session) {

@@ -8,6 +8,27 @@ type SessionTokens = {
 
 export type BrowserSessionTokens = SessionTokens;
 
+type BrowserSessionSnapshot = {
+  currentSession: unknown;
+  session: unknown;
+};
+
+function getBrowserStorages(): Storage[] {
+  if (typeof window === "undefined") return [];
+  const storages: Storage[] = [];
+  for (const candidate of [window.localStorage, window.sessionStorage]) {
+    try {
+      const probeKey = "__merchant_storage_probe__";
+      candidate.setItem(probeKey, "1");
+      candidate.removeItem(probeKey);
+      storages.push(candidate);
+    } catch {
+      // Ignore unavailable browser storage.
+    }
+  }
+  return storages;
+}
+
 async function withTimeout<T>(task: Promise<T>, timeoutMs: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | null = null;
   const timeoutTask = new Promise<never>((_, reject) => {
@@ -61,31 +82,55 @@ function extractStoredSessionTokens(input: unknown): SessionTokens | null {
 }
 
 async function tryRecoverSessionFromStoredToken(timeoutMs: number): Promise<Session | null> {
-  if (typeof window === "undefined") return null;
   const storageKeys = [resolvedSupabaseAuthStorageKey, legacySupabaseAuthStorageKey].filter(
     (value, index, list) => value && list.indexOf(value) === index,
   );
-  for (const storageKey of storageKeys) {
-    try {
-      const raw = window.localStorage.getItem(storageKey);
-      if (!raw) continue;
-      const parsed = JSON.parse(raw) as unknown;
-      const tokens = extractStoredSessionTokens(parsed);
-      if (!tokens) continue;
-      const { data } = await withTimeout(supabase.auth.setSession(tokens), Math.max(3000, timeoutMs));
-      if (data.session) return data.session;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "";
-      if (isInvalidRefreshTokenMessage(message)) {
-        try {
-          window.localStorage.removeItem(storageKey);
-        } catch {
-          // ignore localStorage cleanup failures
+  for (const storage of getBrowserStorages()) {
+    for (const storageKey of storageKeys) {
+      try {
+        const raw = storage.getItem(storageKey);
+        if (!raw) continue;
+        const parsed = JSON.parse(raw) as unknown;
+        const tokens = extractStoredSessionTokens(parsed);
+        if (!tokens) continue;
+        const { data } = await withTimeout(supabase.auth.setSession(tokens), Math.max(3000, timeoutMs));
+        if (data.session) return data.session;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "";
+        if (isInvalidRefreshTokenMessage(message)) {
+          try {
+            storage.removeItem(storageKey);
+          } catch {
+            // ignore browser storage cleanup failures
+          }
         }
       }
     }
   }
   return null;
+}
+
+export function persistBrowserSupabaseSessionSnapshot(session: BrowserSessionSnapshot) {
+  const storageKeys = [resolvedSupabaseAuthStorageKey, legacySupabaseAuthStorageKey].filter(
+    (value, index, list) => value && list.indexOf(value) === index,
+  );
+  if (storageKeys.length === 0) return false;
+  const storages = getBrowserStorages();
+  if (storages.length === 0) return false;
+
+  const snapshot = JSON.stringify(session);
+  let stored = false;
+  for (const storage of storages) {
+    for (const storageKey of storageKeys) {
+      try {
+        storage.setItem(storageKey, snapshot);
+        stored = true;
+      } catch {
+        // Ignore browser storage write failures and keep trying others.
+      }
+    }
+  }
+  return stored;
 }
 
 export async function establishBrowserSupabaseSession(
@@ -113,18 +158,19 @@ export async function establishBrowserSupabaseSession(
 }
 
 export function hasStoredBrowserSupabaseSessionTokens(): boolean {
-  if (typeof window === "undefined") return false;
   const storageKeys = [resolvedSupabaseAuthStorageKey, legacySupabaseAuthStorageKey].filter(
     (value, index, list) => value && list.indexOf(value) === index,
   );
-  for (const storageKey of storageKeys) {
-    try {
-      const raw = window.localStorage.getItem(storageKey);
-      if (!raw) continue;
-      const parsed = JSON.parse(raw) as unknown;
-      if (extractStoredSessionTokens(parsed)) return true;
-    } catch {
-      // ignore malformed storage entries
+  for (const storage of getBrowserStorages()) {
+    for (const storageKey of storageKeys) {
+      try {
+        const raw = storage.getItem(storageKey);
+        if (!raw) continue;
+        const parsed = JSON.parse(raw) as unknown;
+        if (extractStoredSessionTokens(parsed)) return true;
+      } catch {
+        // ignore malformed storage entries
+      }
     }
   }
   return false;
