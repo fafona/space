@@ -6,6 +6,7 @@ import {
   loadMerchantBusinessCardSharePayloadByKey,
   normalizeMerchantBusinessCardShareKey,
   normalizeMerchantBusinessCardShareImageUrl,
+  resolveMerchantBusinessCardShareOrigin,
 } from "@/lib/merchantBusinessCardShare";
 
 function escapeHtml(value: string) {
@@ -135,7 +136,7 @@ export async function GET(
   const { card } = await params;
   const shareKey = normalizeMerchantBusinessCardShareKey(card);
   const requestUrl = new URL(request.url);
-  const origin = requestUrl.origin;
+  const requestOrigin = requestUrl.origin;
   if (!shareKey) {
     return new NextResponse("Invalid business card link", {
       status: 404,
@@ -146,7 +147,7 @@ export async function GET(
     });
   }
 
-  const payload = await loadMerchantBusinessCardSharePayloadByKey(shareKey, origin);
+  const payload = await loadMerchantBusinessCardSharePayloadByKey(shareKey, requestOrigin);
   if (!payload) {
     return new NextResponse("Business card not found", {
       status: 404,
@@ -159,13 +160,14 @@ export async function GET(
 
   const title = buildMerchantBusinessCardShareTitle(payload.name);
   const description = buildMerchantBusinessCardShareDescription(payload.name, payload.targetUrl);
+  const publicOrigin = resolveMerchantBusinessCardShareOrigin(request.url, payload.targetUrl) || requestOrigin;
   const imageUrl =
     forcePublicStorageImageUrl(
-      normalizeMerchantBusinessCardShareImageUrl(payload.imageUrl, origin) || payload.imageUrl,
-      origin,
+      normalizeMerchantBusinessCardShareImageUrl(payload.imageUrl, publicOrigin) || payload.imageUrl,
+      publicOrigin,
     ) || payload.imageUrl;
   const shareUrl = buildMerchantBusinessCardShareUrl({
-    origin,
+    origin: publicOrigin,
     shareKey,
     imageUrl,
     targetUrl: payload.targetUrl,
