@@ -116,6 +116,18 @@ function buildShareCardHtml(input: {
 </html>`;
 }
 
+function forcePublicStorageImageUrl(value: string, origin: string) {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) return "";
+  const normalizedOrigin = String(origin ?? "").trim().replace(/\/+$/g, "");
+  if (!normalizedOrigin) return trimmed;
+  const localhostMatch = trimmed.match(/^https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(\/storage\/v1\/object\/public\/.+)$/i);
+  if (localhostMatch?.[1]) {
+    return `${normalizedOrigin}${localhostMatch[1]}`;
+  }
+  return trimmed;
+}
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ card: string }> },
@@ -147,7 +159,11 @@ export async function GET(
 
   const title = buildMerchantBusinessCardShareTitle(payload.name);
   const description = buildMerchantBusinessCardShareDescription(payload.name, payload.targetUrl);
-  const imageUrl = normalizeMerchantBusinessCardShareImageUrl(payload.imageUrl, origin) || payload.imageUrl;
+  const imageUrl =
+    forcePublicStorageImageUrl(
+      normalizeMerchantBusinessCardShareImageUrl(payload.imageUrl, origin) || payload.imageUrl,
+      origin,
+    ) || payload.imageUrl;
   const shareUrl = buildMerchantBusinessCardShareUrl({
     origin,
     shareKey,
