@@ -5,6 +5,7 @@ import {
   buildMerchantBusinessCardShareUrl,
   loadMerchantBusinessCardSharePayloadByKey,
   normalizeMerchantBusinessCardShareKey,
+  normalizeMerchantBusinessCardShareImageUrl,
 } from "@/lib/merchantBusinessCardShare";
 
 function escapeHtml(value: string) {
@@ -146,10 +147,11 @@ export async function GET(
 
   const title = buildMerchantBusinessCardShareTitle(payload.name);
   const description = buildMerchantBusinessCardShareDescription(payload.name, payload.targetUrl);
+  const imageUrl = normalizeMerchantBusinessCardShareImageUrl(payload.imageUrl, origin) || payload.imageUrl;
   const shareUrl = buildMerchantBusinessCardShareUrl({
     origin,
     shareKey,
-    imageUrl: payload.imageUrl,
+    imageUrl,
     targetUrl: payload.targetUrl,
     name: payload.name,
   });
@@ -158,7 +160,7 @@ export async function GET(
     buildShareCardHtml({
       title,
       description,
-      imageUrl: payload.imageUrl,
+      imageUrl,
       targetUrl: payload.targetUrl,
       shareUrl,
     }),
