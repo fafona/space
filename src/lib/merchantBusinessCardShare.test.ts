@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  MERCHANT_BUSINESS_CARD_SHARE_CARD_PATH,
   MERCHANT_BUSINESS_CARD_SHARE_KEY_PARAM,
   buildMerchantBusinessCardShareDescription,
   buildMerchantBusinessCardShareManifestObjectPath,
@@ -23,7 +24,7 @@ test("buildMerchantBusinessCardShareUrl creates a short share route when share k
     targetUrl: "https://fafona.faolla.com",
   });
 
-  assert.equal(shareUrl, `https://faolla.com/share/business-card?${MERCHANT_BUSINESS_CARD_SHARE_KEY_PARAM}=card-abc123`);
+  assert.equal(shareUrl, `https://faolla.com${MERCHANT_BUSINESS_CARD_SHARE_CARD_PATH}/card-abc123`);
 });
 
 test("readMerchantBusinessCardShareKey normalizes the short share key from search params", () => {

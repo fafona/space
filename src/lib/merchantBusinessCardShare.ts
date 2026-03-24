@@ -3,6 +3,7 @@ import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 export const MERCHANT_BUSINESS_CARD_SHARE_PATH = "/share/business-card";
 export const MERCHANT_BUSINESS_CARD_SHARE_KEY_PARAM = "card";
 export const MERCHANT_BUSINESS_CARD_SHARE_FOLDER = "merchant-shares";
+export const MERCHANT_BUSINESS_CARD_SHARE_CARD_PATH = "/card";
 
 const PUBLIC_STORAGE_BUCKET_CANDIDATES = ["page-assets", "assets", "uploads", "public"] as const;
 
@@ -200,7 +201,8 @@ export function buildMerchantBusinessCardShareUrl(input: {
   const shareUrl = new URL(MERCHANT_BUSINESS_CARD_SHARE_PATH, `${origin}/`);
   const shareKey = normalizeMerchantBusinessCardShareKey(input.shareKey);
   if (shareKey) {
-    shareUrl.searchParams.set(MERCHANT_BUSINESS_CARD_SHARE_KEY_PARAM, shareKey);
+    shareUrl.pathname = `${MERCHANT_BUSINESS_CARD_SHARE_CARD_PATH}/${shareKey}`;
+    shareUrl.search = "";
     return shareUrl.toString();
   }
 
