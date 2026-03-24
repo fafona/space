@@ -1,13 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildMerchantBusinessCardContactDownloadUrl,
   MERCHANT_BUSINESS_CARD_SHARE_CARD_PATH,
   MERCHANT_BUSINESS_CARD_SHARE_KEY_PARAM,
+  buildMerchantBusinessCardVCard,
+  buildMerchantBusinessCardVCardFileName,
   buildMerchantBusinessCardShareDescription,
   buildMerchantBusinessCardShareManifestObjectPath,
   buildMerchantBusinessCardShareManifestPublicUrls,
   buildMerchantBusinessCardShareTitle,
   buildMerchantBusinessCardShareUrl,
+  normalizeMerchantBusinessCardShareContact,
   normalizeMerchantBusinessCardShareImageUrl,
   normalizeMerchantBusinessCardShareKey,
   parseMerchantBusinessCardShareParams,
@@ -109,6 +113,27 @@ test("parseMerchantBusinessCardShareParams normalizes storage image urls with pr
   });
 });
 
+test("normalizeMerchantBusinessCardShareContact keeps useful contact fields and target url", () => {
+  assert.deepEqual(
+    normalizeMerchantBusinessCardShareContact(
+      {
+        displayName: " Felix ",
+        organization: " fafona ",
+        phone: " 633130577 ",
+        note: " WeChat: felix ",
+      },
+      "https://fafona.faolla.com",
+    ),
+    {
+      displayName: "Felix",
+      organization: "fafona",
+      phone: "633130577",
+      websiteUrl: "https://fafona.faolla.com/",
+      note: "WeChat: felix",
+    },
+  );
+});
+
 test("normalizeMerchantBusinessCardShareImageUrl rewrites localhost storage urls to preferred public origin", () => {
   assert.equal(
     normalizeMerchantBusinessCardShareImageUrl(
@@ -127,4 +152,38 @@ test("share metadata helpers build readable defaults", () => {
   );
   assert.equal(normalizeMerchantBusinessCardShareImageUrl("https://example.com/card.png", "https://faolla.com"), "https://example.com/card.png");
   assert.equal(normalizeMerchantBusinessCardShareKey("Card-Abc123"), "card-abc123");
+});
+
+test("business card contact helpers build downloadable vcard links and content", () => {
+  const payload = {
+    name: "fafona",
+    imageUrl: "https://faolla.com/storage/v1/object/public/page-assets/card.png",
+    targetUrl: "https://fafona.faolla.com/",
+    contact: {
+      displayName: "Felix",
+      organization: "fafona",
+      title: "Manager",
+      phone: "633130577",
+      email: "caimin00x@gmail.com",
+      address: "C. Transporte, 12 / Sevilla / Spain",
+      websiteUrl: "https://fafona.faolla.com/",
+      note: "WhatsApp: felix",
+    },
+  } as const;
+
+  assert.equal(
+    buildMerchantBusinessCardContactDownloadUrl({
+      origin: "http://localhost:3000",
+      shareKey: "card-abc123",
+      targetUrl: payload.targetUrl,
+    }),
+    "https://faolla.com/card/card-abc123/contact",
+  );
+  const vcard = buildMerchantBusinessCardVCard(payload);
+  assert.equal(buildMerchantBusinessCardVCardFileName(payload), "felix.vcf");
+  assert.ok(vcard.includes("BEGIN:VCARD"));
+  assert.ok(vcard.includes("FN:Felix"));
+  assert.ok(vcard.includes("ORG:fafona"));
+  assert.ok(vcard.includes("URL:https://fafona.faolla.com/"));
+  assert.ok(vcard.includes("NOTE:WhatsApp: felix"));
 });

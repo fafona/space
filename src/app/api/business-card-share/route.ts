@@ -4,6 +4,7 @@ import {
   buildMerchantBusinessCardShareManifestObjectPath,
   resolveMerchantBusinessCardShareOrigin,
   buildMerchantBusinessCardShareUrl,
+  normalizeMerchantBusinessCardShareContact,
   normalizeMerchantBusinessCardShareImageUrl,
   normalizeMerchantBusinessCardShareKey,
   normalizeMerchantBusinessCardShareTargetUrl,
@@ -19,6 +20,7 @@ type BusinessCardShareRequestBody = {
   targetUrl?: unknown;
   imageWidth?: unknown;
   imageHeight?: unknown;
+  contact?: unknown;
 };
 
 function parseCookieValue(cookieHeader: string, key: string) {
@@ -92,6 +94,10 @@ export async function POST(request: Request) {
   const imageUrl = normalizeMerchantBusinessCardShareImageUrl(normalizeText(body?.imageUrl), shareOrigin || request.url);
   const imageWidth = normalizeImageDimension(body?.imageWidth);
   const imageHeight = normalizeImageDimension(body?.imageHeight);
+  const contact = normalizeMerchantBusinessCardShareContact(
+    body?.contact && typeof body.contact === "object" ? (body.contact as Record<string, unknown>) : undefined,
+    targetUrl,
+  );
   if (!shareKey || !imageUrl || !targetUrl || !shareOrigin) {
     return NextResponse.json({ ok: false, error: "invalid_payload" }, { status: 400 });
   }
@@ -102,6 +108,7 @@ export async function POST(request: Request) {
     targetUrl,
     ...(imageWidth ? { imageWidth } : {}),
     ...(imageHeight ? { imageHeight } : {}),
+    ...(contact ? { contact } : {}),
   });
   const objectPath = buildMerchantBusinessCardShareManifestObjectPath(shareKey);
   if (!objectPath) {

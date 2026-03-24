@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+  buildMerchantBusinessCardContactDownloadUrl,
   buildMerchantBusinessCardShareDescription,
   buildMerchantBusinessCardShareTitle,
   buildMerchantBusinessCardShareUrl,
@@ -26,6 +27,7 @@ function buildShareCardHtml(input: {
   imageHeight?: number;
   targetUrl: string;
   shareUrl: string;
+  contactUrl?: string;
 }) {
   const title = escapeHtml(input.title);
   const description = escapeHtml(input.description);
@@ -57,11 +59,6 @@ function buildShareCardHtml(input: {
     <meta name="twitter:image" content="${imageUrl}" />
     <meta name="twitter:image:alt" content="${title}" />
     <link rel="canonical" href="${shareUrl}" />
-    <script>
-      window.setTimeout(function () {
-        window.location.replace(${JSON.stringify(input.targetUrl)});
-      }, 120);
-    </script>
     <style>
       body {
         margin: 0;
@@ -96,14 +93,24 @@ function buildShareCardHtml(input: {
         width: 100%;
         height: auto;
       }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 16px;
+      }
       a.button {
         display: inline-block;
-        margin-top: 16px;
         padding: 10px 16px;
         border-radius: 999px;
         background: #0f172a;
         color: #fff;
         text-decoration: none;
+      }
+      a.button.secondary {
+        background: #fff;
+        color: #0f172a;
+        border: 1px solid rgba(15,23,42,.12);
       }
       p {
         line-height: 1.6;
@@ -118,7 +125,10 @@ function buildShareCardHtml(input: {
         <a class="card" href="${targetUrl}">
           <img src="${imageUrl}" alt="${title}" />
         </a>
-        <a class="button" href="${targetUrl}">Open Website</a>
+        <div class="actions">
+          <a class="button" href="${targetUrl}">Open Website</a>
+          ${input.contactUrl ? `<a class="button secondary" href="${escapeHtml(input.contactUrl)}">Save Contact</a>` : ""}
+        </div>
       </article>
     </main>
   </body>
@@ -182,6 +192,12 @@ export async function GET(
       publicOrigin,
     ) || payload.imageUrl;
   const previewImageUrl = buildCardImageRouteUrl(publicOrigin, shareKey) || imageUrl;
+  const contactUrl =
+    buildMerchantBusinessCardContactDownloadUrl({
+      origin: publicOrigin,
+      shareKey,
+      targetUrl: payload.targetUrl,
+    }) || undefined;
   const shareUrl = buildMerchantBusinessCardShareUrl({
     origin: publicOrigin,
     shareKey,
@@ -199,6 +215,7 @@ export async function GET(
       imageHeight: payload.imageHeight,
       targetUrl: payload.targetUrl,
       shareUrl,
+      contactUrl,
     }),
     {
       status: 200,

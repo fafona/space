@@ -1302,6 +1302,16 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     renderedImageUrl?: string;
     imageWidth?: number;
     imageHeight?: number;
+    contact?: {
+      displayName?: string;
+      organization?: string;
+      title?: string;
+      phone?: string;
+      email?: string;
+      address?: string;
+      websiteUrl?: string;
+      note?: string;
+    };
   }) {
     const targetUrl = normalizeText(input.targetUrl);
     if (!targetUrl) {
@@ -1334,6 +1344,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
         targetUrl,
         imageWidth: typeof input.imageWidth === "number" ? Math.round(input.imageWidth) : undefined,
         imageHeight: typeof input.imageHeight === "number" ? Math.round(input.imageHeight) : undefined,
+        contact: input.contact,
       }),
     });
     const payload = (await response.json().catch(() => null)) as {
@@ -1399,6 +1410,12 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
         renderedImageUrl,
         imageWidth: draft.width,
         imageHeight: draft.height,
+        contact: buildShareContactPayload({
+          name: draft.name,
+          title: draft.title,
+          contacts: draft.contacts,
+          targetUrl: normalizedUrl,
+        }),
       });
       await copyTextToClipboard(shareUrl);
       setTip("名片链接已复制，发送后可点击打开网页");
@@ -1420,12 +1437,50 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
         card,
         imageWidth: card.width,
         imageHeight: card.height,
+        contact: buildShareContactPayload({
+          name: card.name,
+          title: card.title,
+          contacts: card.contacts,
+          targetUrl,
+        }),
       });
       await copyTextToClipboard(shareUrl);
       setTip("名片链接已复制，发送后可点击打开网页");
     } catch {
       setTip("复制失败，请重试");
     }
+  }
+
+  function buildShareContactPayload(input: {
+    name: string;
+    title: string;
+    contacts: MerchantBusinessCardDraft["contacts"];
+    targetUrl: string;
+  }) {
+    const socialLines = [
+      ["微信", input.contacts.wechat],
+      ["WhatsApp", input.contacts.whatsapp],
+      ["Facebook", input.contacts.facebook],
+      ["Instagram", input.contacts.instagram],
+      ["TikTok", input.contacts.tiktok],
+      ["小红书", input.contacts.xiaohongshu],
+    ]
+      .map(([label, value]) => {
+        const normalizedValue = normalizeText(value);
+        return normalizedValue ? `${label}: ${normalizedValue}` : "";
+      })
+      .filter(Boolean);
+
+    return {
+      displayName: normalizeText(input.contacts.contactName) || normalizeText(input.name),
+      organization: normalizeText(input.name),
+      title: normalizeText(input.title),
+      phone: normalizeText(input.contacts.phone),
+      email: normalizeText(input.contacts.email),
+      address: normalizeText(input.contacts.address),
+      websiteUrl: normalizeText(input.targetUrl),
+      note: socialLines.join("\n"),
+    };
   }
 
 }

@@ -16,6 +16,18 @@ export type MerchantBusinessCardSharePayload = {
   targetUrl: string;
   imageWidth?: number;
   imageHeight?: number;
+  contact?: MerchantBusinessCardShareContact;
+};
+
+export type MerchantBusinessCardShareContact = {
+  displayName?: string;
+  organization?: string;
+  title?: string;
+  phone?: string;
+  email?: string;
+  address?: string;
+  websiteUrl?: string;
+  note?: string;
 };
 
 function normalizeText(value: unknown) {
@@ -25,6 +37,10 @@ function normalizeText(value: unknown) {
 function clampImageDimension(value: unknown) {
   const normalized = typeof value === "number" && Number.isFinite(value) ? Math.round(value) : 0;
   return normalized >= 120 && normalized <= 4096 ? normalized : 0;
+}
+
+function clampContactText(value: unknown, maxLength: number) {
+  return normalizeText(value).slice(0, maxLength);
 }
 
 function isLocalHost(hostname: string) {
@@ -172,6 +188,7 @@ function normalizeSharePayload(
     targetUrl?: string | null;
     imageWidth?: number | null;
     imageHeight?: number | null;
+    contact?: MerchantBusinessCardShareContact | null;
   },
   preferredOrigin?: string | null,
 ): MerchantBusinessCardSharePayload | null {
@@ -186,7 +203,51 @@ function normalizeSharePayload(
     targetUrl,
     ...(imageWidth ? { imageWidth } : {}),
     ...(imageHeight ? { imageHeight } : {}),
+    ...(normalizeMerchantBusinessCardShareContact(input.contact, targetUrl)
+      ? { contact: normalizeMerchantBusinessCardShareContact(input.contact, targetUrl) }
+      : {}),
   };
+}
+
+export function normalizeMerchantBusinessCardShareContact(
+  input: MerchantBusinessCardShareContact | null | undefined,
+  targetUrl?: string | null,
+) {
+  if (!input || typeof input !== "object") {
+    return undefined;
+  }
+  const source = input;
+  const websiteUrl =
+    normalizeMerchantBusinessCardShareTargetUrl(source.websiteUrl) ||
+    normalizeMerchantBusinessCardShareTargetUrl(targetUrl);
+  const contact = {
+    ...(clampContactText(source.displayName, 120)
+      ? { displayName: clampContactText(source.displayName, 120) }
+      : {}),
+    ...(clampContactText(source.organization, 120)
+      ? { organization: clampContactText(source.organization, 120) }
+      : {}),
+    ...(clampContactText(source.title, 120)
+      ? { title: clampContactText(source.title, 120) }
+      : {}),
+    ...(clampContactText(source.phone, 80)
+      ? { phone: clampContactText(source.phone, 80) }
+      : {}),
+    ...(clampContactText(source.email, 160)
+      ? { email: clampContactText(source.email, 160) }
+      : {}),
+    ...(clampContactText(source.address, 240)
+      ? { address: clampContactText(source.address, 240) }
+      : {}),
+    ...(websiteUrl ? { websiteUrl } : {}),
+    ...(clampContactText(source.note, 600)
+      ? { note: clampContactText(source.note, 600) }
+      : {}),
+  } satisfies MerchantBusinessCardShareContact;
+  if (!Object.values(contact).some(Boolean)) {
+    return undefined;
+  }
+  return contact;
 }
 
 export function buildMerchantBusinessCardShareManifestObjectPath(key: string) {
@@ -254,6 +315,80 @@ export function parseMerchantBusinessCardShareParams(
     },
     preferredOrigin,
   );
+}
+
+function escapeVCardValue(value: string) {
+  return value
+    .replace(/\\/g, "\\\\")
+    .replace(/\r\n|\r|\n/g, "\\n")
+    .replace(/;/g, "\\;")
+    .replace(/,/g, "\\,");
+}
+
+export function buildMerchantBusinessCardContactDownloadPath(key: string) {
+  const normalizedKey = normalizeMerchantBusinessCardShareKey(key);
+  if (!normalizedKey) return "";
+  return `${MERCHANT_BUSINESS_CARD_SHARE_CARD_PATH}/${normalizedKey}/contact`;
+}
+
+export function buildMerchantBusinessCardContactDownloadUrl(input: {
+  origin?: string | null;
+  shareKey?: string | null;
+  targetUrl?: string | null;
+}) {
+  const shareKey = normalizeMerchantBusinessCardShareKey(input.shareKey);
+  if (!shareKey) return "";
+  const origin = resolveMerchantBusinessCardShareOrigin(input.origin, input.targetUrl);
+  if (!origin) return "";
+  return new URL(buildMerchantBusinessCardContactDownloadPath(shareKey), `${origin}/`).toString();
+}
+
+export function buildMerchantBusinessCardVCard(payload: MerchantBusinessCardSharePayload) {
+  const contact = normalizeMerchantBusinessCardShareContact(payload.contact, payload.targetUrl);
+  const displayName = contact?.displayName || normalizeText(payload.name) || "Business Card";
+  const organization = contact?.organization || normalizeText(payload.name);
+  const lines = [
+    "BEGIN:VCARD",
+    "VERSION:3.0",
+    `FN:${escapeVCardValue(displayName)}`,
+    `N:;${escapeVCardValue(displayName)};;;`,
+  ];
+
+  if (organization) {
+    lines.push(`ORG:${escapeVCardValue(organization)}`);
+  }
+  if (contact?.title) {
+    lines.push(`TITLE:${escapeVCardValue(contact.title)}`);
+  }
+  if (contact?.phone) {
+    lines.push(`TEL;TYPE=CELL:${escapeVCardValue(contact.phone)}`);
+  }
+  if (contact?.email) {
+    lines.push(`EMAIL;TYPE=INTERNET:${escapeVCardValue(contact.email)}`);
+  }
+  if (contact?.address) {
+    lines.push(`ADR;TYPE=WORK:;;${escapeVCardValue(contact.address)};;;;`);
+  }
+  if (contact?.websiteUrl) {
+    lines.push(`URL:${escapeVCardValue(contact.websiteUrl)}`);
+  }
+  if (contact?.note) {
+    lines.push(`NOTE:${escapeVCardValue(contact.note)}`);
+  }
+
+  lines.push("END:VCARD");
+  return lines.join("\r\n");
+}
+
+export function buildMerchantBusinessCardVCardFileName(payload: MerchantBusinessCardSharePayload) {
+  const contact = normalizeMerchantBusinessCardShareContact(payload.contact, payload.targetUrl);
+  const baseName = contact?.displayName || contact?.organization || normalizeText(payload.name) || "business-card";
+  const sanitized = baseName
+    .replace(/[\\/:*?"<>|]+/g, "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .toLowerCase();
+  return `${sanitized || "business-card"}.vcf`;
 }
 
 export async function loadMerchantBusinessCardSharePayloadByKey(
