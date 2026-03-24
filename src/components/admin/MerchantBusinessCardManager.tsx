@@ -203,12 +203,27 @@ async function blobToDataUrl(blob: Blob) {
   });
 }
 
-async function copyImageViaLegacyClipboard(blob: Blob) {
+function escapeHtmlAttribute(value: string) {
+  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function buildClipboardLinkedImageHtml(dataUrl: string, targetUrl: string, altText: string) {
+  const escapedDataUrl = escapeHtmlAttribute(dataUrl);
+  const escapedTargetUrl = escapeHtmlAttribute(targetUrl);
+  const escapedAltText = escapeHtmlAttribute(altText || "business card");
+  return `<a href="${escapedTargetUrl}" target="_blank" rel="noopener noreferrer"><img src="${escapedDataUrl}" alt="${escapedAltText}" style="display:block;max-width:100%;border:0;" /></a>`;
+}
+
+async function copyImageViaLegacyClipboard(blob: Blob, options?: { targetUrl?: string; altText?: string }) {
   if (typeof document === "undefined") {
     throw new Error("image_clipboard_unavailable");
   }
 
   const dataUrl = await blobToDataUrl(blob);
+  const targetUrl = normalizeText(options?.targetUrl);
+  const clipboardHtml = targetUrl
+    ? buildClipboardLinkedImageHtml(dataUrl, targetUrl, normalizeText(options?.altText) || "business card")
+    : `<img src="${escapeHtmlAttribute(dataUrl)}" alt="${escapeHtmlAttribute(normalizeText(options?.altText) || "business card")}" style="display:block;max-width:100%;" />`;
 
   await new Promise<void>((resolve, reject) => {
     let handled = false;
@@ -232,11 +247,8 @@ async function copyImageViaLegacyClipboard(blob: Blob) {
       }
       event.preventDefault();
       try {
-        clipboardData.setData(
-          "text/html",
-          `<img src="${dataUrl}" alt="business card" style="display:block;max-width:100%;" />`,
-        );
-        clipboardData.setData("text/plain", "");
+        clipboardData.setData("text/html", clipboardHtml);
+        clipboardData.setData("text/plain", targetUrl || "");
         succeed();
       } catch {
         fail();
@@ -257,8 +269,10 @@ async function copyImageViaLegacyClipboard(blob: Blob) {
   });
 }
 
-async function copyImageToClipboard(sourceImageUrl: string) {
+async function copyImageToClipboard(sourceImageUrl: string, options?: { targetUrl?: string; altText?: string }) {
   const blob = await normalizeClipboardImageBlob(sourceImageUrl);
+  const targetUrl = normalizeText(options?.targetUrl);
+  const altText = normalizeText(options?.altText) || "business card";
   if (
     typeof window !== "undefined" &&
     typeof navigator !== "undefined" &&
@@ -266,10 +280,20 @@ async function copyImageToClipboard(sourceImageUrl: string) {
     typeof window.ClipboardItem === "function"
   ) {
     try {
+      const clipboardItemData: Record<string, Blob> = {
+        "image/png": blob,
+      };
+      if (targetUrl) {
+        const dataUrl = await blobToDataUrl(blob);
+        clipboardItemData["text/html"] = new Blob([buildClipboardLinkedImageHtml(dataUrl, targetUrl, altText)], {
+          type: "text/html",
+        });
+        clipboardItemData["text/plain"] = new Blob([targetUrl], {
+          type: "text/plain",
+        });
+      }
       await navigator.clipboard.write([
-        new window.ClipboardItem({
-          "image/png": blob,
-        }),
+        new window.ClipboardItem(clipboardItemData),
       ]);
       return;
     } catch {
@@ -277,7 +301,7 @@ async function copyImageToClipboard(sourceImageUrl: string) {
     }
   }
 
-  await copyImageViaLegacyClipboard(blob);
+  await copyImageViaLegacyClipboard(blob, { targetUrl, altText });
 }
 
 function sanitizeShareAssetHint(value: string) {
@@ -1375,7 +1399,10 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       }
       const renderedImageUrl = await renderCardNodeToImage(node);
       try {
-        await copyImageToClipboard(renderedImageUrl);
+        await copyImageToClipboard(renderedImageUrl, {
+          targetUrl: normalizedUrl,
+          altText: normalizeText(draft.name) || "商户名片",
+        });
         setTip("名片已复制，可直接发送");
         return;
       } catch {
@@ -1402,7 +1429,10 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     }
     try {
       try {
-        await copyImageToClipboard(normalizeText(card.imageUrl) || normalizeText(card.shareImageUrl));
+        await copyImageToClipboard(normalizeText(card.imageUrl) || normalizeText(card.shareImageUrl), {
+          targetUrl,
+          altText: normalizeText(card.name) || "商户名片",
+        });
         setTip("名片已复制，可直接发送");
         return;
       } catch {
