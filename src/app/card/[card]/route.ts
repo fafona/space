@@ -125,6 +125,13 @@ function buildShareCardHtml(input: {
 </html>`;
 }
 
+function buildCardImageRouteUrl(origin: string, shareKey: string) {
+  const normalizedOrigin = String(origin ?? "").trim().replace(/\/+$/g, "");
+  const normalizedKey = String(shareKey ?? "").trim();
+  if (!normalizedOrigin || !normalizedKey) return "";
+  return `${normalizedOrigin}/card/${normalizedKey}/image`;
+}
+
 function forcePublicStorageImageUrl(value: string, origin: string) {
   const trimmed = String(value ?? "").trim();
   if (!trimmed) return "";
@@ -174,10 +181,11 @@ export async function GET(
       normalizeMerchantBusinessCardShareImageUrl(payload.imageUrl, publicOrigin) || payload.imageUrl,
       publicOrigin,
     ) || payload.imageUrl;
+  const previewImageUrl = buildCardImageRouteUrl(publicOrigin, shareKey) || imageUrl;
   const shareUrl = buildMerchantBusinessCardShareUrl({
     origin: publicOrigin,
     shareKey,
-    imageUrl,
+    imageUrl: previewImageUrl,
     targetUrl: payload.targetUrl,
     name: payload.name,
   });
@@ -186,7 +194,7 @@ export async function GET(
     buildShareCardHtml({
       title,
       description,
-      imageUrl,
+      imageUrl: previewImageUrl,
       imageWidth: payload.imageWidth,
       imageHeight: payload.imageHeight,
       targetUrl: payload.targetUrl,
