@@ -126,8 +126,8 @@ function buildShareCardHtml(input: {
           <img src="${imageUrl}" alt="${title}" />
         </a>
         <div class="actions">
-          <a class="button" href="${targetUrl}">Open Website</a>
-          ${input.contactUrl ? `<a class="button secondary" href="${escapeHtml(input.contactUrl)}">Save Contact</a>` : ""}
+          <a class="button" href="${targetUrl}">打开网页</a>
+          ${input.contactUrl ? `<a class="button secondary" href="${escapeHtml(input.contactUrl)}">保存到通讯录</a>` : ""}
         </div>
       </article>
     </main>
