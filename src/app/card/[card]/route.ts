@@ -22,6 +22,8 @@ function buildShareCardHtml(input: {
   title: string;
   description: string;
   imageUrl: string;
+  imageWidth?: number;
+  imageHeight?: number;
   targetUrl: string;
   shareUrl: string;
 }) {
@@ -42,12 +44,18 @@ function buildShareCardHtml(input: {
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Faolla" />
     <meta property="og:url" content="${shareUrl}" />
+    <meta property="og:image:url" content="${imageUrl}" />
     <meta property="og:image" content="${imageUrl}" />
     <meta property="og:image:secure_url" content="${imageUrl}" />
+    <meta property="og:image:alt" content="${title}" />
+    <meta property="og:image:type" content="image/png" />
+    ${input.imageWidth ? `<meta property="og:image:width" content="${input.imageWidth}" />` : ""}
+    ${input.imageHeight ? `<meta property="og:image:height" content="${input.imageHeight}" />` : ""}
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="${title}" />
     <meta name="twitter:description" content="${description}" />
     <meta name="twitter:image" content="${imageUrl}" />
+    <meta name="twitter:image:alt" content="${title}" />
     <link rel="canonical" href="${shareUrl}" />
     <script>
       window.setTimeout(function () {
@@ -179,6 +187,8 @@ export async function GET(
       title,
       description,
       imageUrl,
+      imageWidth: payload.imageWidth,
+      imageHeight: payload.imageHeight,
       targetUrl: payload.targetUrl,
       shareUrl,
     }),
