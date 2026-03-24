@@ -11,17 +11,49 @@ type BookingDateTimeInputProps = {
   containerClassName?: string;
 };
 
-function normalizeDateText(value: string) {
-  const digits = value.replace(/\D/g, "").slice(0, 8);
-  if (digits.length <= 4) return digits;
-  if (digits.length <= 6) return `${digits.slice(0, 4)}-${digits.slice(4)}`;
-  return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6)}`;
+function clampNumber(value: number, min: number, max: number) {
+  if (!Number.isFinite(value)) return min;
+  return Math.max(min, Math.min(max, value));
 }
 
-function normalizeTimeText(value: string) {
+function padSegment(value: number) {
+  return String(value).padStart(2, "0");
+}
+
+function getMonthMaxDay(yearText: string, monthText: string) {
+  const year = Number(yearText);
+  const month = clampNumber(Number(monthText), 1, 12);
+  if (!Number.isFinite(year) || String(yearText).length !== 4) {
+    return month === 2 ? 29 : new Date(2000, month, 0).getDate();
+  }
+  return new Date(year, month, 0).getDate();
+}
+
+export function normalizeDateText(value: string) {
+  const digits = value.replace(/\D/g, "").slice(0, 8);
+  if (digits.length <= 4) return digits;
+  const year = digits.slice(0, 4);
+  const monthDigits = digits.slice(4, 6);
+  const normalizedMonth =
+    monthDigits.length === 2 ? padSegment(clampNumber(Number(monthDigits), 1, 12)) : monthDigits;
+  if (digits.length <= 6) return `${year}-${normalizedMonth}`;
+  const dayDigits = digits.slice(6, 8);
+  const normalizedDay =
+    dayDigits.length === 2
+      ? padSegment(clampNumber(Number(dayDigits), 1, getMonthMaxDay(year, normalizedMonth || monthDigits || "1")))
+      : dayDigits;
+  return `${year}-${normalizedMonth}-${normalizedDay}`;
+}
+
+export function normalizeTimeText(value: string) {
   const digits = value.replace(/\D/g, "").slice(0, 4);
   if (digits.length <= 2) return digits;
-  return `${digits.slice(0, 2)}:${digits.slice(2)}`;
+  const hourDigits = digits.slice(0, 2);
+  const minuteDigits = digits.slice(2, 4);
+  const normalizedHour = hourDigits.length === 2 ? padSegment(clampNumber(Number(hourDigits), 0, 23)) : hourDigits;
+  const normalizedMinute =
+    minuteDigits.length === 2 ? padSegment(clampNumber(Number(minuteDigits), 0, 59)) : minuteDigits;
+  return `${normalizedHour}:${normalizedMinute}`;
 }
 
 function CalendarIcon() {
