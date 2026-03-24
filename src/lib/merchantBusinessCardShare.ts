@@ -55,6 +55,21 @@ function normalizeOrigin(value: string | null | undefined) {
   }
 }
 
+function rewriteStorageUrlToOrigin(value: string, preferredOrigin: string) {
+  const normalizedOrigin = normalizeOrigin(preferredOrigin);
+  if (!normalizedOrigin) return "";
+  const trimmed = normalizeText(value);
+  if (!trimmed) return "";
+  try {
+    const parsed = new URL(trimmed);
+    if (!parsed.pathname.startsWith("/storage/v1/object/public/")) return "";
+    return new URL(parsed.pathname, `${normalizedOrigin}/`).toString();
+  } catch {
+    if (!trimmed.startsWith("/storage/v1/object/public/")) return "";
+    return new URL(trimmed, `${normalizedOrigin}/`).toString();
+  }
+}
+
 export function normalizeMerchantBusinessCardShareTargetUrl(value: string | null | undefined) {
   const trimmed = normalizeText(value);
   if (!trimmed) return "";
@@ -133,7 +148,8 @@ export function resolveMerchantBusinessCardShareOrigin(preferredOrigin?: string 
 }
 
 export function normalizeMerchantBusinessCardShareImageUrl(value: string | null | undefined, preferredOrigin?: string | null) {
-  const rewritten = normalizePublicAssetUrl(normalizeText(value), preferredOrigin ?? undefined);
+  const forcedPublicUrl = rewriteStorageUrlToOrigin(normalizeText(value), preferredOrigin ?? "");
+  const rewritten = forcedPublicUrl || normalizePublicAssetUrl(normalizeText(value), preferredOrigin ?? undefined);
   return normalizeMerchantBusinessCardShareTargetUrl(rewritten);
 }
 

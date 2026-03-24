@@ -109,6 +109,16 @@ test("parseMerchantBusinessCardShareParams normalizes storage image urls with pr
   });
 });
 
+test("normalizeMerchantBusinessCardShareImageUrl rewrites localhost storage urls to preferred public origin", () => {
+  assert.equal(
+    normalizeMerchantBusinessCardShareImageUrl(
+      "https://localhost:3000/storage/v1/object/public/page-assets/merchant-assets/fafona/card.png",
+      "https://faolla.com",
+    ),
+    "https://faolla.com/storage/v1/object/public/page-assets/merchant-assets/fafona/card.png",
+  );
+});
+
 test("share metadata helpers build readable defaults", () => {
   assert.equal(buildMerchantBusinessCardShareTitle("fafona"), "fafona 名片");
   assert.equal(
