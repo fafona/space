@@ -234,16 +234,18 @@ function LoginPageInner() {
         });
     });
 
-    void readValidatedSessionUser()
-      .then((user) => {
-        if (!mounted) return;
-        if (user) {
-          void redirectToMerchantBackend(user);
-        }
-      })
-      .catch(() => {
-        // Ignore transient auth bootstrap errors to avoid runtime abort overlay.
-      });
+    if (hasStoredBrowserSupabaseSessionTokens()) {
+      void readValidatedSessionUser()
+        .then((user) => {
+          if (!mounted) return;
+          if (user) {
+            void redirectToMerchantBackend(user);
+          }
+        })
+        .catch(() => {
+          // Ignore transient auth bootstrap errors to avoid runtime abort overlay.
+        });
+    }
 
     return () => {
       mounted = false;
@@ -376,7 +378,7 @@ function LoginPageInner() {
   }
 
   function persistSessionSnapshot(session: LoginAuthSession) {
-    persistBrowserSupabaseSessionSnapshot({
+    return persistBrowserSupabaseSessionSnapshot({
       currentSession: session,
       session,
     });
@@ -385,21 +387,48 @@ function LoginPageInner() {
   async function stabilizeBrowserSession(session: LoginAuthSession) {
     const accessToken = String(session.access_token ?? "").trim();
     const refreshToken = String(session.refresh_token ?? "").trim();
-    if (!accessToken || !refreshToken) return false;
+    if (!accessToken || !refreshToken) {
+      return {
+        browserSessionReady: false,
+        snapshotStored: false,
+      };
+    }
 
-    persistSessionSnapshot(session);
+    const snapshotStored = persistSessionSnapshot(session);
 
     const establishedSession = await establishBrowserSupabaseSession(
       {
         access_token: accessToken,
         refresh_token: refreshToken,
       },
-      2200,
+      900,
     ).catch(() => null);
-    if (establishedSession?.user) return true;
+    if (establishedSession?.user) {
+      return {
+        browserSessionReady: true,
+        snapshotStored,
+      };
+    }
+
+    if (snapshotStored) {
+      void establishBrowserSupabaseSession(
+        {
+          access_token: accessToken,
+          refresh_token: refreshToken,
+        },
+        2600,
+      ).catch(() => null);
+      return {
+        browserSessionReady: false,
+        snapshotStored,
+      };
+    }
 
     const recoveredSession = await recoverBrowserSupabaseSession(900).catch(() => null);
-    return Boolean(recoveredSession?.user);
+    return {
+      browserSessionReady: Boolean(recoveredSession?.user),
+      snapshotStored,
+    };
   }
 
   async function signInViaServer(accountValue: string, passwordValue: string): Promise<ServerSignInResult> {
@@ -445,16 +474,19 @@ function LoginPageInner() {
       throw new Error(t("login.requestFailed"));
     }
 
-    const browserSessionReady = await stabilizeBrowserSession(session).catch(() => false);
-    const hasStoredTokens = hasStoredBrowserSupabaseSessionTokens();
-    if (!browserSessionReady && !hasStoredTokens) {
+    const stabilization = await stabilizeBrowserSession(session).catch(() => ({
+      browserSessionReady: false,
+      snapshotStored: false,
+    }));
+    const hasStoredTokens = stabilization.snapshotStored || hasStoredBrowserSupabaseSessionTokens();
+    if (!stabilization.browserSessionReady && !hasStoredTokens) {
       throw new Error("browser_session_not_ready");
     }
 
     return {
       user: (payload?.user ?? session?.user ?? null) as LoginAuthUser | null,
       merchantId: typeof payload?.merchantId === "string" ? payload.merchantId.trim() : "",
-      needsJustSignedInBridge: !browserSessionReady,
+      needsJustSignedInBridge: !stabilization.browserSessionReady,
     };
   }
 
