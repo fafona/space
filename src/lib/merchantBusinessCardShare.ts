@@ -28,6 +28,17 @@ export type MerchantBusinessCardShareContact = {
   phones?: string[];
   email?: string;
   address?: string;
+  wechat?: string;
+  whatsapp?: string;
+  twitter?: string;
+  weibo?: string;
+  telegram?: string;
+  linkedin?: string;
+  discord?: string;
+  facebook?: string;
+  instagram?: string;
+  tiktok?: string;
+  xiaohongshu?: string;
   websiteUrl?: string;
   note?: string;
 };
@@ -253,6 +264,39 @@ export function normalizeMerchantBusinessCardShareContact(
     ...(clampContactText(source.address, 240)
       ? { address: clampContactText(source.address, 240) }
       : {}),
+    ...(clampContactText(source.wechat, 120)
+      ? { wechat: clampContactText(source.wechat, 120) }
+      : {}),
+    ...(clampContactText(source.whatsapp, 120)
+      ? { whatsapp: clampContactText(source.whatsapp, 120) }
+      : {}),
+    ...(clampContactText(source.twitter, 120)
+      ? { twitter: clampContactText(source.twitter, 120) }
+      : {}),
+    ...(clampContactText(source.weibo, 120)
+      ? { weibo: clampContactText(source.weibo, 120) }
+      : {}),
+    ...(clampContactText(source.telegram, 120)
+      ? { telegram: clampContactText(source.telegram, 120) }
+      : {}),
+    ...(clampContactText(source.linkedin, 120)
+      ? { linkedin: clampContactText(source.linkedin, 120) }
+      : {}),
+    ...(clampContactText(source.discord, 120)
+      ? { discord: clampContactText(source.discord, 120) }
+      : {}),
+    ...(clampContactText(source.facebook, 120)
+      ? { facebook: clampContactText(source.facebook, 120) }
+      : {}),
+    ...(clampContactText(source.instagram, 120)
+      ? { instagram: clampContactText(source.instagram, 120) }
+      : {}),
+    ...(clampContactText(source.tiktok, 120)
+      ? { tiktok: clampContactText(source.tiktok, 120) }
+      : {}),
+    ...(clampContactText(source.xiaohongshu, 120)
+      ? { xiaohongshu: clampContactText(source.xiaohongshu, 120) }
+      : {}),
     ...(websiteUrl ? { websiteUrl } : {}),
     ...(clampContactText(source.note, 600)
       ? { note: clampContactText(source.note, 600) }
@@ -339,6 +383,39 @@ export function buildMerchantBusinessCardShareUrl(input: {
   if (payload.contact?.address) {
     shareUrl.searchParams.set("address", payload.contact.address);
   }
+  if (payload.contact?.wechat) {
+    shareUrl.searchParams.set("wechat", payload.contact.wechat);
+  }
+  if (payload.contact?.whatsapp) {
+    shareUrl.searchParams.set("whatsapp", payload.contact.whatsapp);
+  }
+  if (payload.contact?.twitter) {
+    shareUrl.searchParams.set("twitter", payload.contact.twitter);
+  }
+  if (payload.contact?.weibo) {
+    shareUrl.searchParams.set("weibo", payload.contact.weibo);
+  }
+  if (payload.contact?.telegram) {
+    shareUrl.searchParams.set("telegram", payload.contact.telegram);
+  }
+  if (payload.contact?.linkedin) {
+    shareUrl.searchParams.set("linkedin", payload.contact.linkedin);
+  }
+  if (payload.contact?.discord) {
+    shareUrl.searchParams.set("discord", payload.contact.discord);
+  }
+  if (payload.contact?.facebook) {
+    shareUrl.searchParams.set("facebook", payload.contact.facebook);
+  }
+  if (payload.contact?.instagram) {
+    shareUrl.searchParams.set("instagram", payload.contact.instagram);
+  }
+  if (payload.contact?.tiktok) {
+    shareUrl.searchParams.set("tiktok", payload.contact.tiktok);
+  }
+  if (payload.contact?.xiaohongshu) {
+    shareUrl.searchParams.set("xiaohongshu", payload.contact.xiaohongshu);
+  }
   if (payload.contact?.websiteUrl) {
     shareUrl.searchParams.set("website", payload.contact.websiteUrl);
   }
@@ -367,6 +444,17 @@ export function parseMerchantBusinessCardShareParams(
         phone: readSearchParam(searchParams, "phone"),
         email: readSearchParam(searchParams, "email"),
         address: readSearchParam(searchParams, "address"),
+        wechat: readSearchParam(searchParams, "wechat"),
+        whatsapp: readSearchParam(searchParams, "whatsapp"),
+        twitter: readSearchParam(searchParams, "twitter"),
+        weibo: readSearchParam(searchParams, "weibo"),
+        telegram: readSearchParam(searchParams, "telegram"),
+        linkedin: readSearchParam(searchParams, "linkedin"),
+        discord: readSearchParam(searchParams, "discord"),
+        facebook: readSearchParam(searchParams, "facebook"),
+        instagram: readSearchParam(searchParams, "instagram"),
+        tiktok: readSearchParam(searchParams, "tiktok"),
+        xiaohongshu: readSearchParam(searchParams, "xiaohongshu"),
         websiteUrl: readSearchParam(searchParams, "website"),
         note: readSearchParam(searchParams, "note"),
       },
@@ -507,6 +595,17 @@ export function buildMerchantBusinessCardLegacyContactDownloadUrl(input: {
   if (payload.contact?.phone) url.searchParams.set("phone", payload.contact.phone);
   if (payload.contact?.email) url.searchParams.set("email", payload.contact.email);
   if (payload.contact?.address) url.searchParams.set("address", payload.contact.address);
+  if (payload.contact?.wechat) url.searchParams.set("wechat", payload.contact.wechat);
+  if (payload.contact?.whatsapp) url.searchParams.set("whatsapp", payload.contact.whatsapp);
+  if (payload.contact?.twitter) url.searchParams.set("twitter", payload.contact.twitter);
+  if (payload.contact?.weibo) url.searchParams.set("weibo", payload.contact.weibo);
+  if (payload.contact?.telegram) url.searchParams.set("telegram", payload.contact.telegram);
+  if (payload.contact?.linkedin) url.searchParams.set("linkedin", payload.contact.linkedin);
+  if (payload.contact?.discord) url.searchParams.set("discord", payload.contact.discord);
+  if (payload.contact?.facebook) url.searchParams.set("facebook", payload.contact.facebook);
+  if (payload.contact?.instagram) url.searchParams.set("instagram", payload.contact.instagram);
+  if (payload.contact?.tiktok) url.searchParams.set("tiktok", payload.contact.tiktok);
+  if (payload.contact?.xiaohongshu) url.searchParams.set("xiaohongshu", payload.contact.xiaohongshu);
   if (payload.contact?.websiteUrl) url.searchParams.set("website", payload.contact.websiteUrl);
   if (payload.contact?.note) url.searchParams.set("note", payload.contact.note);
   return url.toString();
