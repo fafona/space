@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
+import QRCode from "qrcode";
 import ContactAutoLaunch from "@/app/share/business-card/ContactAutoLaunch";
 import {
   buildMerchantBusinessCardLegacyContactDownloadUrl,
@@ -24,6 +25,36 @@ function resolveRequestOrigin(requestHeaders: Headers) {
     requestHeaders.get("x-forwarded-proto")?.trim() ||
     (host.startsWith("localhost") || host.startsWith("127.0.0.1") ? "http" : "https");
   return `${protocol}://${host}`.replace(/\/+$/g, "");
+}
+
+function looksLikeMobileRequest(requestHeaders: Headers) {
+  const userAgent = requestHeaders.get("user-agent")?.trim() || "";
+  return /android|iphone|ipad|ipod|mobile|micromessenger|wechat/i.test(userAgent);
+}
+
+function renderContactSummary(payload: NonNullable<Awaited<ReturnType<typeof resolveMerchantBusinessCardSharePayload>>>) {
+  const rows = [
+    payload.contact?.displayName ? { label: "联系人", value: payload.contact.displayName } : null,
+    payload.contact?.phone ? { label: "电话", value: payload.contact.phone } : null,
+    payload.contact?.email ? { label: "邮箱", value: payload.contact.email } : null,
+    payload.contact?.address ? { label: "地址", value: payload.contact.address } : null,
+  ].filter(Boolean) as Array<{ label: string; value: string }>;
+
+  if (rows.length === 0) return null;
+
+  return (
+    <div className="mt-5 rounded-[28px] border border-slate-200 bg-slate-50 p-5 shadow-[0_16px_42px_rgba(15,23,42,.08)]">
+      <div className="text-base font-semibold text-slate-900">联系人信息</div>
+      <div className="mt-4 space-y-3 text-sm text-slate-700">
+        {rows.map((row) => (
+          <div key={row.label}>
+            <span className="font-medium text-slate-900">{row.label}：</span>
+            <span>{row.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 export async function generateMetadata({ searchParams }: ShareBusinessCardPageProps): Promise<Metadata> {
@@ -100,39 +131,12 @@ export async function generateMetadata({ searchParams }: ShareBusinessCardPagePr
   };
 }
 
-function renderContactSummary(payload: NonNullable<Awaited<ReturnType<typeof resolveMerchantBusinessCardSharePayload>>>) {
-  const rows = [
-    payload.contact?.displayName
-      ? { label: "联系人", value: payload.contact.displayName }
-      : null,
-    payload.contact?.phone ? { label: "电话", value: payload.contact.phone } : null,
-    payload.contact?.email ? { label: "邮箱", value: payload.contact.email } : null,
-    payload.contact?.address ? { label: "地址", value: payload.contact.address } : null,
-  ].filter(Boolean) as Array<{ label: string; value: string }>;
-
-  if (rows.length === 0) {
-    return null;
-  }
-
-  return (
-    <div className="mt-5 rounded-[28px] border border-slate-200 bg-slate-50 p-5 shadow-[0_16px_42px_rgba(15,23,42,.08)]">
-      <div className="text-base font-semibold text-slate-900">联系人信息</div>
-      <div className="mt-4 space-y-3 text-sm text-slate-700">
-        {rows.map((row) => (
-          <div key={row.label}>
-            <span className="font-medium text-slate-900">{row.label}：</span>
-            <span>{row.value}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 export default async function ShareBusinessCardPage({ searchParams }: ShareBusinessCardPageProps) {
   const requestHeaders = await headers();
   const origin = resolveRequestOrigin(requestHeaders);
-  const payload = await resolveMerchantBusinessCardSharePayload(await searchParams, origin);
+  const resolvedSearchParams = await searchParams;
+  const payload = await resolveMerchantBusinessCardSharePayload(resolvedSearchParams, origin);
+  const isMobileRequest = looksLikeMobileRequest(requestHeaders);
 
   if (!payload) {
     return (
@@ -147,6 +151,15 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
 
   const title = buildMerchantBusinessCardShareTitle(payload.name);
   const description = buildMerchantBusinessCardShareDescription(payload.name, payload.targetUrl);
+  const shareKey = readMerchantBusinessCardShareKey(resolvedSearchParams);
+  const shareUrl = buildMerchantBusinessCardShareUrl({
+    origin,
+    shareKey,
+    imageUrl: payload.imageUrl,
+    targetUrl: payload.targetUrl,
+    name: payload.name,
+    contact: payload.contact,
+  });
   const contactUrl = buildMerchantBusinessCardLegacyContactDownloadUrl({
     origin,
     name: payload.name,
@@ -155,10 +168,18 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
     contact: payload.contact,
   });
   const hostLabel = payload.targetUrl.replace(/^https?:\/\//i, "").replace(/\/+$/g, "");
+  const desktopQrCodeUrl =
+    !isMobileRequest && shareUrl
+      ? await QRCode.toDataURL(shareUrl, {
+          width: 280,
+          margin: 1,
+          errorCorrectionLevel: "M",
+        }).catch(() => "")
+      : "";
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(255,255,255,.96),_rgba(247,239,227,1)_58%,_rgba(229,218,200,1))] px-5 py-8 text-slate-900 sm:px-6 sm:py-10">
-      {contactUrl ? <ContactAutoLaunch contactUrl={contactUrl} /> : null}
+      {isMobileRequest && contactUrl ? <ContactAutoLaunch contactUrl={contactUrl} /> : null}
       <section className="mx-auto w-full max-w-xl rounded-[32px] border border-white/70 bg-white/90 p-5 shadow-[0_28px_90px_rgba(15,23,42,.12)] backdrop-blur sm:p-6">
         <div className="mb-4">
           <div className="text-xs font-medium uppercase tracking-[0.24em] text-slate-400">Business Card</div>
@@ -176,26 +197,64 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
 
         {renderContactSummary(payload)}
 
-        <div className="mt-5 rounded-[28px] border border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-6 text-slate-700">
-          手机打开后会自动尝试拉起“保存联系人”。如果没有自动弹出，再点下面这个按钮。
-        </div>
+        {isMobileRequest ? (
+          <>
+            <div className="mt-5 rounded-[28px] border border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-6 text-slate-700">
+              手机打开后会自动尝试拉起保存联系人。如果系统没有自动弹出，再点下面这个按钮。
+            </div>
 
-        <div className="mt-5 flex flex-col gap-3 sm:flex-row">
-          {contactUrl ? (
-            <a
-              href={contactUrl}
-              className="flex-1 rounded-full bg-slate-900 px-5 py-3 text-center text-base font-semibold text-white transition hover:bg-slate-700"
-            >
-              一键保存到通讯录
-            </a>
-          ) : null}
-          <a
-            href={payload.targetUrl}
-            className="rounded-full border border-slate-300 bg-white px-5 py-3 text-center text-base font-medium text-slate-900 transition hover:bg-slate-50"
-          >
-            打开网页
-          </a>
-        </div>
+            <div className="mt-5 flex flex-col gap-3 sm:flex-row">
+              {contactUrl ? (
+                <a
+                  href={contactUrl}
+                  className="flex-1 rounded-full bg-slate-900 px-5 py-3 text-center text-base font-semibold text-white transition hover:bg-slate-700"
+                >
+                  一键保存到通讯录
+                </a>
+              ) : null}
+              <a
+                href={payload.targetUrl}
+                className="rounded-full border border-slate-300 bg-white px-5 py-3 text-center text-base font-medium text-slate-900 transition hover:bg-slate-50"
+              >
+                打开网页
+              </a>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="mt-5 rounded-[28px] border border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-6 text-slate-700">
+              电脑端通常会交给 Outlook 或其他程序处理，不够直接。最简单的方式是用手机扫码打开，再保存到通讯录。
+            </div>
+
+            {desktopQrCodeUrl ? (
+              <div className="mt-5 rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_16px_42px_rgba(15,23,42,.08)]">
+                <div className="text-base font-semibold text-slate-900">手机扫码保存联系人</div>
+                <div className="mt-2 text-sm leading-6 text-slate-600">扫码后会在手机里打开这张联系卡，并自动尝试拉起保存联系人。</div>
+                <div className="mt-4 flex justify-center">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={desktopQrCodeUrl} alt="联系卡二维码" className="h-56 w-56 rounded-2xl border border-slate-200 bg-white p-3" />
+                </div>
+              </div>
+            ) : null}
+
+            <div className="mt-5 flex flex-col gap-3 sm:flex-row">
+              <a
+                href={payload.targetUrl}
+                className="rounded-full bg-slate-900 px-5 py-3 text-center text-base font-semibold text-white transition hover:bg-slate-700"
+              >
+                打开网页
+              </a>
+              {shareUrl ? (
+                <a
+                  href={shareUrl}
+                  className="rounded-full border border-slate-300 bg-white px-5 py-3 text-center text-base font-medium text-slate-900 transition hover:bg-slate-50"
+                >
+                  复制到手机后打开
+                </a>
+              ) : null}
+            </div>
+          </>
+        )}
       </section>
     </main>
   );
