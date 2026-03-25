@@ -383,6 +383,23 @@ function escapeVCardValue(value: string) {
     .replace(/,/g, "\\,");
 }
 
+function buildStableContactCode(payload: MerchantBusinessCardSharePayload) {
+  const contact = normalizeMerchantBusinessCardShareContact(payload.contact, payload.targetUrl);
+  const seed = [
+    contact?.displayName || "",
+    contact?.organization || "",
+    contact?.phone || "",
+    contact?.email || "",
+    payload.targetUrl || "",
+  ].join("|");
+  let hash = 0;
+  for (const char of seed) {
+    hash = (hash * 131 + char.charCodeAt(0)) % 100000;
+  }
+  const value = ((hash % 99999) + 1).toString().padStart(5, "0");
+  return value;
+}
+
 export function buildMerchantBusinessCardContactDownloadPath(key: string) {
   const normalizedKey = normalizeMerchantBusinessCardShareKey(key);
   if (!normalizedKey) return "";
@@ -494,7 +511,7 @@ export function buildMerchantBusinessCardVCardFileName(payload: MerchantBusiness
     .trim()
     .replace(/\s+/g, "-")
     .toLowerCase();
-  return `${sanitized || "business-card"}.vcf`;
+  return `${sanitized || "business-card"}-card${buildStableContactCode(payload)}.vcf`;
 }
 
 export async function loadMerchantBusinessCardSharePayloadByKey(

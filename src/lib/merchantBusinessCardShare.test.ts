@@ -231,7 +231,7 @@ test("business card contact helpers build downloadable vcard links and content",
     "https://faolla.com/share/business-card/contact?image=https%3A%2F%2Ffaolla.com%2Fstorage%2Fv1%2Fobject%2Fpublic%2Fpage-assets%2Fcard.png&detailImage=https%3A%2F%2Ffaolla.com%2Fstorage%2Fv1%2Fobject%2Fpublic%2Fpage-assets%2Fcontact.png&target=https%3A%2F%2Ffafona.faolla.com%2F&name=fafona&contactName=Felix&organization=fafona&title=Manager&phone=633130577&email=caimin00x%40gmail.com&address=C.+Transporte%2C+12+%2F+Sevilla+%2F+Spain&website=https%3A%2F%2Ffafona.faolla.com%2F&note=WhatsApp%3A+felix",
   );
   const vcard = buildMerchantBusinessCardVCard(payload);
-  assert.equal(buildMerchantBusinessCardVCardFileName(payload), "felix.vcf");
+  assert.match(buildMerchantBusinessCardVCardFileName(payload), /^felix-card\d{5}\.vcf$/);
   assert.ok(vcard.includes("BEGIN:VCARD"));
   assert.ok(vcard.includes("FN:Felix"));
   assert.ok(vcard.includes("ORG:fafona"));

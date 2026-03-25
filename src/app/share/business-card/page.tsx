@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { headers } from "next/headers";
 import QRCode from "qrcode";
 import {
+  buildMerchantBusinessCardContactDownloadUrl,
   buildMerchantBusinessCardLegacyContactDownloadUrl,
   buildMerchantBusinessCardShareDescription,
   buildMerchantBusinessCardShareTitle,
@@ -161,14 +162,22 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
     name: payload.name,
     contact: payload.contact,
   });
-  const contactUrl = buildMerchantBusinessCardLegacyContactDownloadUrl({
-    origin,
-    name: payload.name,
-    imageUrl: payload.imageUrl,
-    detailImageUrl: payload.detailImageUrl,
-    targetUrl: payload.targetUrl,
-    contact: payload.contact,
-  });
+  const contactUrl =
+    (shareKey
+      ? buildMerchantBusinessCardContactDownloadUrl({
+          origin,
+          shareKey,
+          targetUrl: payload.targetUrl,
+        })
+      : "") ||
+    buildMerchantBusinessCardLegacyContactDownloadUrl({
+      origin,
+      name: payload.name,
+      imageUrl: payload.imageUrl,
+      detailImageUrl: payload.detailImageUrl,
+      targetUrl: payload.targetUrl,
+      contact: payload.contact,
+    });
   const hostLabel = payload.targetUrl.replace(/^https?:\/\//i, "").replace(/\/+$/g, "");
   const desktopQrCodeUrl =
     !isMobileRequest && shareUrl
@@ -219,6 +228,9 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
               >
                 打开网页
               </a>
+            </div>
+            <div className="mt-3 text-xs leading-6 text-slate-500">
+              如果微信提示无法直接打开，请选择“用其他应用打开”，再优先使用通讯录或联系人应用处理。
             </div>
           </>
         ) : (
