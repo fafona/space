@@ -21,6 +21,11 @@ export type MerchantBusinessCardFieldKey =
   | "address"
   | "wechat"
   | "whatsapp"
+  | "twitter"
+  | "weibo"
+  | "telegram"
+  | "linkedin"
+  | "discord"
   | "facebook"
   | "instagram"
   | "tiktok"
@@ -58,6 +63,11 @@ export type MerchantBusinessCardContacts = {
   address: string;
   wechat: string;
   whatsapp: string;
+  twitter: string;
+  weibo: string;
+  telegram: string;
+  linkedin: string;
+  discord: string;
   facebook: string;
   instagram: string;
   tiktok: string;
@@ -248,6 +258,11 @@ export function createDefaultMerchantBusinessCardDraft(
       address: buildMerchantBusinessCardAddress(profile),
       wechat: "",
       whatsapp: "",
+      twitter: "",
+      weibo: "",
+      telegram: "",
+      linkedin: "",
+      discord: "",
       facebook: "",
       instagram: "",
       tiktok: "",
@@ -264,6 +279,11 @@ export function createDefaultMerchantBusinessCardDraft(
       address: { x: 36, y: 298 },
       wechat: { x: 36, y: 334 },
       whatsapp: { x: 36, y: 370 },
+      twitter: { x: 36, y: 406 },
+      weibo: { x: 36, y: 442 },
+      telegram: { x: 360, y: 334 },
+      linkedin: { x: 360, y: 370 },
+      discord: { x: 360, y: 406 },
       facebook: { x: 360, y: 190 },
       instagram: { x: 360, y: 226 },
       tiktok: { x: 360, y: 262 },
@@ -285,6 +305,11 @@ export function createDefaultMerchantBusinessCardDraft(
       address: { ...typography.info },
       wechat: { ...typography.info },
       whatsapp: { ...typography.info },
+      twitter: { ...typography.info },
+      weibo: { ...typography.info },
+      telegram: { ...typography.info },
+      linkedin: { ...typography.info },
+      discord: { ...typography.info },
       facebook: { ...typography.info },
       instagram: { ...typography.info },
       tiktok: { ...typography.info },
@@ -349,6 +374,11 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
       address: normalizeText(source.contacts?.address),
       wechat: normalizeText(source.contacts?.wechat),
       whatsapp: normalizeText(source.contacts?.whatsapp),
+      twitter: normalizeText((source.contacts as { twitter?: unknown } | undefined)?.twitter),
+      weibo: normalizeText((source.contacts as { weibo?: unknown } | undefined)?.weibo),
+      telegram: normalizeText((source.contacts as { telegram?: unknown } | undefined)?.telegram),
+      linkedin: normalizeText((source.contacts as { linkedin?: unknown } | undefined)?.linkedin),
+      discord: normalizeText((source.contacts as { discord?: unknown } | undefined)?.discord),
       facebook: normalizeText(source.contacts?.facebook),
       instagram: normalizeText(source.contacts?.instagram),
       tiktok: normalizeText(source.contacts?.tiktok),
@@ -391,6 +421,26 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
       whatsapp: {
         x: clampInt(textLayoutSource.whatsapp?.x, fallback.textLayout.whatsapp.x, 0, 2000),
         y: clampInt(textLayoutSource.whatsapp?.y, fallback.textLayout.whatsapp.y, 0, 2000),
+      },
+      twitter: {
+        x: clampInt((textLayoutSource as Partial<MerchantBusinessCardTextLayout>).twitter?.x, fallback.textLayout.twitter.x, 0, 2000),
+        y: clampInt((textLayoutSource as Partial<MerchantBusinessCardTextLayout>).twitter?.y, fallback.textLayout.twitter.y, 0, 2000),
+      },
+      weibo: {
+        x: clampInt((textLayoutSource as Partial<MerchantBusinessCardTextLayout>).weibo?.x, fallback.textLayout.weibo.x, 0, 2000),
+        y: clampInt((textLayoutSource as Partial<MerchantBusinessCardTextLayout>).weibo?.y, fallback.textLayout.weibo.y, 0, 2000),
+      },
+      telegram: {
+        x: clampInt((textLayoutSource as Partial<MerchantBusinessCardTextLayout>).telegram?.x, fallback.textLayout.telegram.x, 0, 2000),
+        y: clampInt((textLayoutSource as Partial<MerchantBusinessCardTextLayout>).telegram?.y, fallback.textLayout.telegram.y, 0, 2000),
+      },
+      linkedin: {
+        x: clampInt((textLayoutSource as Partial<MerchantBusinessCardTextLayout>).linkedin?.x, fallback.textLayout.linkedin.x, 0, 2000),
+        y: clampInt((textLayoutSource as Partial<MerchantBusinessCardTextLayout>).linkedin?.y, fallback.textLayout.linkedin.y, 0, 2000),
+      },
+      discord: {
+        x: clampInt((textLayoutSource as Partial<MerchantBusinessCardTextLayout>).discord?.x, fallback.textLayout.discord.x, 0, 2000),
+        y: clampInt((textLayoutSource as Partial<MerchantBusinessCardTextLayout>).discord?.y, fallback.textLayout.discord.y, 0, 2000),
       },
       facebook: {
         x: clampInt(textLayoutSource.facebook?.x, fallback.textLayout.facebook.x, 0, 2000),
@@ -456,6 +506,26 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
       whatsapp: normalizeTypographyStyle(
         fieldTypographySource.whatsapp,
         typographySource.info ? normalizeTypographyStyle(typographySource.info, fallback.typography.info) : fallback.fieldTypography.whatsapp,
+      ),
+      twitter: normalizeTypographyStyle(
+        (fieldTypographySource as Partial<MerchantBusinessCardFieldTypographyMap>).twitter,
+        typographySource.info ? normalizeTypographyStyle(typographySource.info, fallback.typography.info) : fallback.fieldTypography.twitter,
+      ),
+      weibo: normalizeTypographyStyle(
+        (fieldTypographySource as Partial<MerchantBusinessCardFieldTypographyMap>).weibo,
+        typographySource.info ? normalizeTypographyStyle(typographySource.info, fallback.typography.info) : fallback.fieldTypography.weibo,
+      ),
+      telegram: normalizeTypographyStyle(
+        (fieldTypographySource as Partial<MerchantBusinessCardFieldTypographyMap>).telegram,
+        typographySource.info ? normalizeTypographyStyle(typographySource.info, fallback.typography.info) : fallback.fieldTypography.telegram,
+      ),
+      linkedin: normalizeTypographyStyle(
+        (fieldTypographySource as Partial<MerchantBusinessCardFieldTypographyMap>).linkedin,
+        typographySource.info ? normalizeTypographyStyle(typographySource.info, fallback.typography.info) : fallback.fieldTypography.linkedin,
+      ),
+      discord: normalizeTypographyStyle(
+        (fieldTypographySource as Partial<MerchantBusinessCardFieldTypographyMap>).discord,
+        typographySource.info ? normalizeTypographyStyle(typographySource.info, fallback.typography.info) : fallback.fieldTypography.discord,
       ),
       facebook: normalizeTypographyStyle(
         fieldTypographySource.facebook,

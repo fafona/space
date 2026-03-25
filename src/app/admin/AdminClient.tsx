@@ -2176,6 +2176,12 @@ function runPublishPreflight(blocks: Block[], payloadBytes: number): PublishPref
       if (instagram && /\s/.test(instagram)) maybeBrokenLinkCount += 1;
       const tiktok = (block.props.tiktok ?? "").trim();
       if (tiktok && /\s/.test(tiktok)) maybeBrokenLinkCount += 1;
+      const twitter = (block.props.twitter ?? "").trim();
+      if (twitter && /\s/.test(twitter)) maybeBrokenLinkCount += 1;
+      const telegram = (block.props.telegram ?? "").trim();
+      if (telegram && /\s/.test(telegram)) maybeBrokenLinkCount += 1;
+      const linkedin = (block.props.linkedin ?? "").trim();
+      if (linkedin && /\s/.test(linkedin)) maybeBrokenLinkCount += 1;
     }
   });
 
@@ -5348,6 +5354,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         email: "",
         whatsapp: "",
         wechat: "",
+        twitter: "",
+        weibo: "",
+        telegram: "",
+        linkedin: "",
+        discord: "",
         tiktok: "",
         xiaohongshu: "",
         facebook: "",
@@ -7823,7 +7834,21 @@ type GalleryEditorImage = {
   const [selectedCustomRowIndex, setSelectedCustomRowIndex] = useState(0);
   const [activeGalleryImageId, setActiveGalleryImageId] = useState<string | null>(null);
   const [activeContactEntryKeys, setActiveContactEntryKeys] = useState<
-    Array<"phone" | "email" | "whatsapp" | "wechat" | "tiktok" | "xiaohongshu" | "facebook" | "instagram">
+    Array<
+      | "phone"
+      | "email"
+      | "whatsapp"
+      | "wechat"
+      | "twitter"
+      | "weibo"
+      | "telegram"
+      | "linkedin"
+      | "discord"
+      | "tiktok"
+      | "xiaohongshu"
+      | "facebook"
+      | "instagram"
+    >
   >([]);
   const [contactSnapEnabled, setContactSnapEnabled] = useState(true);
   const [contactSnapStep, setContactSnapStep] = useState(8);
@@ -16868,7 +16893,20 @@ type GalleryEditorImage = {
   }
 
   if (block.type === "contact") {
-    type ContactEntryKey = "phone" | "email" | "whatsapp" | "wechat" | "tiktok" | "xiaohongshu" | "facebook" | "instagram";
+    type ContactEntryKey =
+      | "phone"
+      | "email"
+      | "whatsapp"
+      | "wechat"
+      | "twitter"
+      | "weibo"
+      | "telegram"
+      | "linkedin"
+      | "discord"
+      | "tiktok"
+      | "xiaohongshu"
+      | "facebook"
+      | "instagram";
     const contactLayout = block.props.contactLayout ?? {};
     const contactAddressEditorValues = (() => {
       const fromArray = Array.isArray(block.props.addresses)
@@ -16884,6 +16922,11 @@ type GalleryEditorImage = {
       { key: "email", label: "Email", value: (block.props.email ?? "").trim(), platformLabel: "Email" },
       { key: "whatsapp", label: "WhatsApp", value: (block.props.whatsapp ?? "").trim(), platformLabel: "WhatsApp" },
       { key: "wechat", label: "WeChat", value: (block.props.wechat ?? "").trim(), platformLabel: "WeChat" },
+      { key: "twitter", label: "Twitter", value: (block.props.twitter ?? "").trim(), platformLabel: "Twitter" },
+      { key: "weibo", label: "微博", value: (block.props.weibo ?? "").trim(), platformLabel: "微博" },
+      { key: "telegram", label: "Telegram", value: (block.props.telegram ?? "").trim(), platformLabel: "Telegram" },
+      { key: "linkedin", label: "LinkedIn", value: (block.props.linkedin ?? "").trim(), platformLabel: "LinkedIn" },
+      { key: "discord", label: "Discord", value: (block.props.discord ?? "").trim(), platformLabel: "Discord" },
       { key: "tiktok", label: "TikTok", value: (block.props.tiktok ?? "").trim(), platformLabel: "TikTok" },
       { key: "xiaohongshu", label: "小红书", value: (block.props.xiaohongshu ?? "").trim(), platformLabel: "小红书" },
       { key: "facebook", label: "Facebook", value: (block.props.facebook ?? "").trim(), platformLabel: "Facebook" },
@@ -16908,6 +16951,11 @@ type GalleryEditorImage = {
       if (label === "Email") return "/social-icons/maildotru.svg";
       if (label === "WhatsApp") return "/social-icons/whatsapp.svg";
       if (label === "WeChat") return "/social-icons/wechat.svg";
+      if (label === "Twitter") return "/social-icons/twitter.svg";
+      if (label === "微博") return "/social-icons/weibo.svg";
+      if (label === "Telegram") return "/social-icons/telegram.svg";
+      if (label === "LinkedIn") return "/social-icons/linkedin.svg";
+      if (label === "Discord") return "/social-icons/discord.svg";
       if (label === "TikTok") return "/social-icons/tiktok.svg";
       if (label === "小红书") return "/social-icons/xiaohongshu.svg";
       if (label === "Facebook") return "/social-icons/facebook.svg";
@@ -16920,6 +16968,11 @@ type GalleryEditorImage = {
       if (label === "Email") return `${base} bg-[#0A84FF]`;
       if (label === "WhatsApp") return `${base} bg-[#25D366]`;
       if (label === "WeChat") return `${base} bg-[#07C160]`;
+      if (label === "Twitter") return `${base} bg-[#111827]`;
+      if (label === "微博") return `${base} bg-[#E6162D]`;
+      if (label === "Telegram") return `${base} bg-[#229ED9]`;
+      if (label === "LinkedIn") return `${base} bg-[#0A66C2]`;
+      if (label === "Discord") return `${base} bg-[#5865F2]`;
       if (label === "TikTok") return `${base} bg-black`;
       if (label === "小红书") return `${base} bg-[#FF2442]`;
       if (label === "Facebook") return `${base} bg-[#1877F2]`;
@@ -17363,6 +17416,36 @@ type GalleryEditorImage = {
                   placeholder="WeChat"
                   value={block.props.wechat ?? ""}
                   onChange={(e) => onChange({ wechat: e.target.value })}
+                />
+                <input
+                  className="border p-2 rounded text-sm"
+                  placeholder="Twitter"
+                  value={block.props.twitter ?? ""}
+                  onChange={(e) => onChange({ twitter: e.target.value })}
+                />
+                <input
+                  className="border p-2 rounded text-sm"
+                  placeholder="微博"
+                  value={block.props.weibo ?? ""}
+                  onChange={(e) => onChange({ weibo: e.target.value })}
+                />
+                <input
+                  className="border p-2 rounded text-sm"
+                  placeholder="Telegram"
+                  value={block.props.telegram ?? ""}
+                  onChange={(e) => onChange({ telegram: e.target.value })}
+                />
+                <input
+                  className="border p-2 rounded text-sm"
+                  placeholder="LinkedIn"
+                  value={block.props.linkedin ?? ""}
+                  onChange={(e) => onChange({ linkedin: e.target.value })}
+                />
+                <input
+                  className="border p-2 rounded text-sm"
+                  placeholder="Discord"
+                  value={block.props.discord ?? ""}
+                  onChange={(e) => onChange({ discord: e.target.value })}
                 />
                 <input
                   className="border p-2 rounded text-sm"

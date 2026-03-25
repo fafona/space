@@ -197,13 +197,30 @@ type ContactProps = BackgroundEditableProps &
     email?: string;
     whatsapp?: string;
     wechat?: string;
+    twitter?: string;
+    weibo?: string;
+    telegram?: string;
+    linkedin?: string;
+    discord?: string;
     tiktok?: string;
     xiaohongshu?: string;
     facebook?: string;
     instagram?: string;
     contactLayout?: Partial<
       Record<
-        "phone" | "email" | "whatsapp" | "wechat" | "tiktok" | "xiaohongshu" | "facebook" | "instagram",
+        | "phone"
+        | "email"
+        | "whatsapp"
+        | "wechat"
+        | "twitter"
+        | "weibo"
+        | "telegram"
+        | "linkedin"
+        | "discord"
+        | "tiktok"
+        | "xiaohongshu"
+        | "facebook"
+        | "instagram",
         {
           x?: number;
           y?: number;

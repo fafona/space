@@ -14,6 +14,11 @@ type ContactLayoutKey =
   | "email"
   | "whatsapp"
   | "wechat"
+  | "twitter"
+  | "weibo"
+  | "telegram"
+  | "linkedin"
+  | "discord"
   | "tiktok"
   | "xiaohongshu"
   | "facebook"
@@ -31,6 +36,11 @@ type ContactBlockProps = BackgroundEditableProps &
   email?: string;
   whatsapp?: string;
   wechat?: string;
+  twitter?: string;
+  weibo?: string;
+  telegram?: string;
+  linkedin?: string;
+  discord?: string;
   tiktok?: string;
   xiaohongshu?: string;
   facebook?: string;
@@ -88,6 +98,16 @@ function buildSocialHref(label: string, rawValue?: string) {
     const digits = value.replace(/[^\d]/g, "");
     return digits ? `https://wa.me/${digits}` : null;
   }
+  if (label === "Twitter") return `https://x.com/${value.replace(/^@+/, "")}`;
+  if (label === "微博") return `https://weibo.com/n/${encodeURIComponent(value.replace(/^@+/, ""))}`;
+  if (label === "Telegram") return `https://t.me/${value.replace(/^@+/, "")}`;
+  if (label === "LinkedIn") return `https://www.linkedin.com/in/${value.replace(/^@+/, "")}`;
+  if (label === "Discord") {
+    const normalized = value.replace(/^@+/, "").trim();
+    if (/^\d{5,}$/.test(normalized)) return `https://discord.com/users/${normalized}`;
+    if (/^[A-Za-z0-9-]+$/.test(normalized)) return `https://discord.gg/${normalized}`;
+    return null;
+  }
   if (label === "TikTok") return `https://www.tiktok.com/@${value.replace(/^@+/, "")}`;
   if (label === "Instagram") return `https://www.instagram.com/${value.replace(/^@+/, "")}`;
   if (label === "Facebook") return `https://www.facebook.com/${value.replace(/^@+/, "")}`;
@@ -99,6 +119,11 @@ function getSocialIconUrl(label: string) {
   if (label === "Email") return "/social-icons/maildotru.svg";
   if (label === "WhatsApp") return "/social-icons/whatsapp.svg";
   if (label === "WeChat") return "/social-icons/wechat.svg";
+  if (label === "Twitter") return "/social-icons/twitter.svg";
+  if (label === "微博") return "/social-icons/weibo.svg";
+  if (label === "Telegram") return "/social-icons/telegram.svg";
+  if (label === "LinkedIn") return "/social-icons/linkedin.svg";
+  if (label === "Discord") return "/social-icons/discord.svg";
   if (label === "TikTok") return "/social-icons/tiktok.svg";
   if (label === "小红书") return "/social-icons/xiaohongshu.svg";
   if (label === "Facebook") return "/social-icons/facebook.svg";
@@ -111,6 +136,11 @@ function getSocialButtonClass(label: string) {
   if (label === "Email") return `${base} bg-[#0A84FF]`;
   if (label === "WhatsApp") return `${base} bg-[#25D366]`;
   if (label === "WeChat") return `${base} bg-[#07C160]`;
+  if (label === "Twitter") return `${base} bg-[#111827]`;
+  if (label === "微博") return `${base} bg-[#E6162D]`;
+  if (label === "Telegram") return `${base} bg-[#229ED9]`;
+  if (label === "LinkedIn") return `${base} bg-[#0A66C2]`;
+  if (label === "Discord") return `${base} bg-[#5865F2]`;
   if (label === "TikTok") return `${base} bg-black`;
   if (label === "小红书") return `${base} bg-[#FF2442]`;
   if (label === "Facebook") return `${base} bg-[#1877F2]`;
@@ -264,6 +294,46 @@ export default function ContactBlock(props: ContactBlockProps) {
       href: buildSocialHref("WeChat", props.wechat),
       iconUrl: getSocialIconUrl("WeChat"),
       buttonClass: getSocialButtonClass("WeChat"),
+    },
+    {
+      key: "twitter" as ContactLayoutKey,
+      label: "Twitter",
+      value: (props.twitter ?? "").trim(),
+      href: buildSocialHref("Twitter", props.twitter),
+      iconUrl: getSocialIconUrl("Twitter"),
+      buttonClass: getSocialButtonClass("Twitter"),
+    },
+    {
+      key: "weibo" as ContactLayoutKey,
+      label: "微博",
+      value: (props.weibo ?? "").trim(),
+      href: buildSocialHref("微博", props.weibo),
+      iconUrl: getSocialIconUrl("微博"),
+      buttonClass: getSocialButtonClass("微博"),
+    },
+    {
+      key: "telegram" as ContactLayoutKey,
+      label: "Telegram",
+      value: (props.telegram ?? "").trim(),
+      href: buildSocialHref("Telegram", props.telegram),
+      iconUrl: getSocialIconUrl("Telegram"),
+      buttonClass: getSocialButtonClass("Telegram"),
+    },
+    {
+      key: "linkedin" as ContactLayoutKey,
+      label: "LinkedIn",
+      value: (props.linkedin ?? "").trim(),
+      href: buildSocialHref("LinkedIn", props.linkedin),
+      iconUrl: getSocialIconUrl("LinkedIn"),
+      buttonClass: getSocialButtonClass("LinkedIn"),
+    },
+    {
+      key: "discord" as ContactLayoutKey,
+      label: "Discord",
+      value: (props.discord ?? "").trim(),
+      href: buildSocialHref("Discord", props.discord),
+      iconUrl: getSocialIconUrl("Discord"),
+      buttonClass: getSocialButtonClass("Discord"),
     },
     {
       key: "tiktok" as ContactLayoutKey,
