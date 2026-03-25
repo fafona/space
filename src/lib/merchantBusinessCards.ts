@@ -69,6 +69,7 @@ export type MerchantBusinessCardMode = "image" | "link";
 export type MerchantBusinessCardDraft = {
   mode: MerchantBusinessCardMode;
   name: string;
+  contactPageImageUrl: string;
   backgroundImageUrl: string;
   backgroundImageOpacity: number;
   backgroundColor: string;
@@ -96,6 +97,7 @@ export type MerchantBusinessCardAsset = MerchantBusinessCardDraft & {
   createdAt: string;
   imageUrl: string;
   shareImageUrl?: string;
+  contactPagePublicImageUrl?: string;
   shareKey?: string;
   targetUrl: string;
 };
@@ -228,6 +230,7 @@ export function createDefaultMerchantBusinessCardDraft(
   return {
     mode: "image",
     name: normalizeText(profile.merchantName) || "未命名名片",
+    contactPageImageUrl: "",
     backgroundImageUrl: "",
     backgroundImageOpacity: 1,
     backgroundColor: "#f8fafc",
@@ -325,6 +328,7 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
   return {
     mode: normalizeText((source as { mode?: unknown }).mode) === "link" ? "link" : "image",
     name: normalizeText(source.name) || fallback.name,
+    contactPageImageUrl: normalizeText((source as { contactPageImageUrl?: unknown }).contactPageImageUrl),
     backgroundImageUrl: normalizeText(source.backgroundImageUrl),
     backgroundImageOpacity: clampOpacity(source.backgroundImageOpacity, fallback.backgroundImageOpacity),
     backgroundColor: normalizeText(source.backgroundColor) || fallback.backgroundColor,
@@ -482,6 +486,7 @@ export function normalizeMerchantBusinessCards(value: unknown): MerchantBusiness
       const draft = normalizeMerchantBusinessCardDraft(source);
       const imageUrl = normalizeText(source.imageUrl);
       const shareImageUrl = normalizeText(source.shareImageUrl);
+      const contactPagePublicImageUrl = normalizeText((source as { contactPagePublicImageUrl?: unknown }).contactPagePublicImageUrl);
       const shareKey = normalizeText(source.shareKey);
       const targetUrl = normalizeText(source.targetUrl);
       const id = normalizeText(source.id) || `business-card-${index + 1}`;
@@ -493,6 +498,7 @@ export function normalizeMerchantBusinessCards(value: unknown): MerchantBusiness
         createdAt,
         imageUrl,
         ...(shareImageUrl ? { shareImageUrl } : {}),
+        ...(contactPagePublicImageUrl ? { contactPagePublicImageUrl } : {}),
         ...(shareKey ? { shareKey } : {}),
         targetUrl,
       } satisfies MerchantBusinessCardAsset;

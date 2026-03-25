@@ -13,6 +13,7 @@ type SearchParamsLike = URLSearchParams | Record<string, SearchParamValue>;
 export type MerchantBusinessCardSharePayload = {
   name: string;
   imageUrl?: string;
+  detailImageUrl?: string;
   targetUrl: string;
   imageWidth?: number;
   imageHeight?: number;
@@ -185,6 +186,7 @@ function normalizeSharePayload(
   input: {
     name?: string | null;
     imageUrl?: string | null;
+    detailImageUrl?: string | null;
     targetUrl?: string | null;
     imageWidth?: number | null;
     imageHeight?: number | null;
@@ -194,12 +196,14 @@ function normalizeSharePayload(
 ): MerchantBusinessCardSharePayload | null {
   const targetUrl = normalizeMerchantBusinessCardShareTargetUrl(input.targetUrl);
   const imageUrl = normalizeMerchantBusinessCardShareImageUrl(input.imageUrl, preferredOrigin);
+  const detailImageUrl = normalizeMerchantBusinessCardShareImageUrl(input.detailImageUrl, preferredOrigin);
   if (!targetUrl) return null;
   const imageWidth = clampImageDimension(input.imageWidth);
   const imageHeight = clampImageDimension(input.imageHeight);
   return {
     name: normalizeText(input.name).slice(0, 80),
     ...(imageUrl ? { imageUrl } : {}),
+    ...(detailImageUrl ? { detailImageUrl } : {}),
     targetUrl,
     ...(imageUrl && imageWidth ? { imageWidth } : {}),
     ...(imageUrl && imageHeight ? { imageHeight } : {}),
@@ -270,6 +274,7 @@ export function buildMerchantBusinessCardShareUrl(input: {
   shareKey?: string | null;
   name?: string | null;
   imageUrl?: string | null;
+  detailImageUrl?: string | null;
   targetUrl: string;
   contact?: MerchantBusinessCardShareContact | null;
 }) {
@@ -288,6 +293,7 @@ export function buildMerchantBusinessCardShareUrl(input: {
     {
       name: input.name,
       imageUrl: input.imageUrl,
+      detailImageUrl: input.detailImageUrl,
       targetUrl: input.targetUrl,
       contact: input.contact,
     },
@@ -297,6 +303,9 @@ export function buildMerchantBusinessCardShareUrl(input: {
 
   if (payload.imageUrl) {
     shareUrl.searchParams.set("image", payload.imageUrl);
+  }
+  if (payload.detailImageUrl) {
+    shareUrl.searchParams.set("detailImage", payload.detailImageUrl);
   }
   shareUrl.searchParams.set("target", payload.targetUrl);
   if (payload.name) {
@@ -337,6 +346,7 @@ export function parseMerchantBusinessCardShareParams(
     {
       name: readSearchParam(searchParams, "name"),
       imageUrl: readSearchParam(searchParams, "image"),
+      detailImageUrl: readSearchParam(searchParams, "detailImage"),
       targetUrl: readSearchParam(searchParams, "target"),
       imageWidth: Number(readSearchParam(searchParams, "imageWidth")),
       imageHeight: Number(readSearchParam(searchParams, "imageHeight")),
@@ -385,6 +395,7 @@ export function buildMerchantBusinessCardLegacyContactDownloadUrl(input: {
   origin?: string | null;
   name?: string | null;
   imageUrl?: string | null;
+  detailImageUrl?: string | null;
   targetUrl: string;
   contact?: MerchantBusinessCardShareContact | null;
 }) {
@@ -395,6 +406,7 @@ export function buildMerchantBusinessCardLegacyContactDownloadUrl(input: {
     {
       name: input.name,
       imageUrl: input.imageUrl,
+      detailImageUrl: input.detailImageUrl,
       targetUrl: input.targetUrl,
       contact: input.contact,
     },
@@ -403,6 +415,9 @@ export function buildMerchantBusinessCardLegacyContactDownloadUrl(input: {
   if (!payload) return "";
   if (payload.imageUrl) {
     url.searchParams.set("image", payload.imageUrl);
+  }
+  if (payload.detailImageUrl) {
+    url.searchParams.set("detailImage", payload.detailImageUrl);
   }
   url.searchParams.set("target", payload.targetUrl);
   if (payload.name) url.searchParams.set("name", payload.name);

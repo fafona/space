@@ -38,10 +38,40 @@ function forcePublicStorageImageUrl(value: string, origin: string) {
   return trimmed;
 }
 
+function buildContactSummaryHtml(input: {
+  name: string;
+  contact?: {
+    displayName?: string;
+    phone?: string;
+    email?: string;
+    address?: string;
+  };
+}) {
+  const rows = [
+    input.contact?.displayName ? ["联系人", input.contact.displayName] : null,
+    input.contact?.phone ? ["电话", input.contact.phone] : null,
+    input.contact?.email ? ["邮箱", input.contact.email] : null,
+    input.contact?.address ? ["地址", input.contact.address] : null,
+  ].filter(Boolean) as Array<[string, string]>;
+
+  if (rows.length === 0) {
+    return `<div class="summary-line">${escapeHtml(input.name || "电子名片")}</div>`;
+  }
+
+  return rows
+    .map(
+      ([label, value]) =>
+        `<div class="summary-line"><strong>${escapeHtml(label)}：</strong>${escapeHtml(value)}</div>`,
+    )
+    .join("");
+}
+
 function buildShareCardHtml(input: {
   title: string;
   description: string;
-  imageUrl?: string;
+  previewImageUrl?: string;
+  contentImageUrl?: string;
+  summaryHtml: string;
   imageWidth?: number;
   imageHeight?: number;
   targetUrl: string;
@@ -50,7 +80,8 @@ function buildShareCardHtml(input: {
 }) {
   const title = escapeHtml(input.title);
   const description = escapeHtml(input.description);
-  const imageUrl = input.imageUrl ? escapeHtml(input.imageUrl) : "";
+  const previewImageUrl = input.previewImageUrl ? escapeHtml(input.previewImageUrl) : "";
+  const contentImageUrl = input.contentImageUrl ? escapeHtml(input.contentImageUrl) : "";
   const targetUrl = escapeHtml(input.targetUrl);
   const shareUrl = escapeHtml(input.shareUrl);
 
@@ -66,18 +97,18 @@ function buildShareCardHtml(input: {
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Faolla" />
     <meta property="og:url" content="${shareUrl}" />
-    ${imageUrl ? `<meta property="og:image:url" content="${imageUrl}" />` : ""}
-    ${imageUrl ? `<meta property="og:image" content="${imageUrl}" />` : ""}
-    ${imageUrl ? `<meta property="og:image:secure_url" content="${imageUrl}" />` : ""}
-    ${imageUrl ? `<meta property="og:image:alt" content="${title}" />` : ""}
-    ${imageUrl ? `<meta property="og:image:type" content="image/png" />` : ""}
-    ${imageUrl && input.imageWidth ? `<meta property="og:image:width" content="${input.imageWidth}" />` : ""}
-    ${imageUrl && input.imageHeight ? `<meta property="og:image:height" content="${input.imageHeight}" />` : ""}
-    <meta name="twitter:card" content="${imageUrl ? "summary_large_image" : "summary"}" />
+    ${previewImageUrl ? `<meta property="og:image:url" content="${previewImageUrl}" />` : ""}
+    ${previewImageUrl ? `<meta property="og:image" content="${previewImageUrl}" />` : ""}
+    ${previewImageUrl ? `<meta property="og:image:secure_url" content="${previewImageUrl}" />` : ""}
+    ${previewImageUrl ? `<meta property="og:image:alt" content="${title}" />` : ""}
+    ${previewImageUrl ? `<meta property="og:image:type" content="image/png" />` : ""}
+    ${previewImageUrl && input.imageWidth ? `<meta property="og:image:width" content="${input.imageWidth}" />` : ""}
+    ${previewImageUrl && input.imageHeight ? `<meta property="og:image:height" content="${input.imageHeight}" />` : ""}
+    <meta name="twitter:card" content="${previewImageUrl ? "summary_large_image" : "summary"}" />
     <meta name="twitter:title" content="${title}" />
     <meta name="twitter:description" content="${description}" />
-    ${imageUrl ? `<meta name="twitter:image" content="${imageUrl}" />` : ""}
-    ${imageUrl ? `<meta name="twitter:image:alt" content="${title}" />` : ""}
+    ${previewImageUrl ? `<meta name="twitter:image" content="${previewImageUrl}" />` : ""}
+    ${previewImageUrl ? `<meta name="twitter:image:alt" content="${title}" />` : ""}
     <link rel="canonical" href="${shareUrl}" />
     <style>
       body {
@@ -118,6 +149,9 @@ function buildShareCardHtml(input: {
         padding: 18px;
         line-height: 1.7;
       }
+      .summary-line + .summary-line {
+        margin-top: 10px;
+      }
       .actions {
         display: flex;
         flex-wrap: wrap;
@@ -148,11 +182,11 @@ function buildShareCardHtml(input: {
         <h1>${title}</h1>
         <p>${description}</p>
         ${
-          imageUrl
+          contentImageUrl
             ? `<a class="card" href="${targetUrl}">
-          <img src="${imageUrl}" alt="${title}" />
+          <img src="${contentImageUrl}" alt="${title}" />
         </a>`
-            : `<div class="summary">打开这张电子名片后，可以保存联系人，也可以继续访问网站。</div>`
+            : `<div class="summary">${input.summaryHtml}</div>`
         }
         <div class="actions">
           ${
@@ -205,6 +239,12 @@ export async function GET(
     : "";
   const imageUrl = normalizedShareImageUrl ? forcePublicStorageImageUrl(normalizedShareImageUrl, publicOrigin) : "";
   const previewImageUrl = imageUrl ? buildCardImageRouteUrl(publicOrigin, shareKey) || imageUrl : "";
+  const detailImageUrl = payload.detailImageUrl
+    ? forcePublicStorageImageUrl(
+        normalizeMerchantBusinessCardShareImageUrl(payload.detailImageUrl, publicOrigin) || payload.detailImageUrl,
+        publicOrigin,
+      )
+    : "";
   const contactUrl =
     buildMerchantBusinessCardContactDownloadUrl({
       origin: publicOrigin,
@@ -215,6 +255,7 @@ export async function GET(
     origin: publicOrigin,
     shareKey,
     imageUrl: previewImageUrl,
+    detailImageUrl,
     targetUrl: payload.targetUrl,
     name: payload.name,
   });
@@ -223,7 +264,12 @@ export async function GET(
     buildShareCardHtml({
       title,
       description,
-      imageUrl: previewImageUrl || undefined,
+      previewImageUrl: previewImageUrl || undefined,
+      contentImageUrl: detailImageUrl || undefined,
+      summaryHtml: buildContactSummaryHtml({
+        name: payload.name,
+        contact: payload.contact,
+      }),
       imageWidth: payload.imageWidth,
       imageHeight: payload.imageHeight,
       targetUrl: payload.targetUrl,

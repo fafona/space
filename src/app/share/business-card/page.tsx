@@ -83,6 +83,7 @@ export async function generateMetadata({ searchParams }: ShareBusinessCardPagePr
     origin,
     shareKey,
     imageUrl: payload.imageUrl,
+    detailImageUrl: payload.detailImageUrl,
     targetUrl: payload.targetUrl,
     name: payload.name,
     contact: payload.contact,
@@ -156,6 +157,7 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
     origin,
     shareKey,
     imageUrl: payload.imageUrl,
+    detailImageUrl: payload.detailImageUrl,
     targetUrl: payload.targetUrl,
     name: payload.name,
     contact: payload.contact,
@@ -164,6 +166,7 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
     origin,
     name: payload.name,
     imageUrl: payload.imageUrl,
+    detailImageUrl: payload.detailImageUrl,
     targetUrl: payload.targetUrl,
     contact: payload.contact,
   });
@@ -188,14 +191,14 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
           <div className="mt-2 text-base text-slate-700">{hostLabel}</div>
         </div>
 
-        {payload.imageUrl ? (
+        {payload.detailImageUrl ? (
           <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-slate-50 shadow-[0_16px_42px_rgba(15,23,42,.08)]">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={payload.imageUrl} alt={title} className="block h-auto w-full object-cover" />
+            <img src={payload.detailImageUrl} alt={title} className="block h-auto w-full object-cover" />
           </div>
-        ) : null}
-
-        {renderContactSummary(payload)}
+        ) : (
+          renderContactSummary(payload)
+        )}
 
         {isMobileRequest ? (
           <>

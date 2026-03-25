@@ -17,6 +17,7 @@ type BusinessCardShareRequestBody = {
   key?: unknown;
   name?: unknown;
   imageUrl?: unknown;
+  detailImageUrl?: unknown;
   targetUrl?: unknown;
   imageWidth?: unknown;
   imageHeight?: unknown;
@@ -92,6 +93,10 @@ export async function POST(request: Request) {
   const targetUrl = normalizeMerchantBusinessCardShareTargetUrl(normalizeText(body?.targetUrl));
   const shareOrigin = resolveMerchantBusinessCardShareOrigin(request.url, targetUrl);
   const imageUrl = normalizeMerchantBusinessCardShareImageUrl(normalizeText(body?.imageUrl), shareOrigin || request.url);
+  const detailImageUrl = normalizeMerchantBusinessCardShareImageUrl(
+    normalizeText(body?.detailImageUrl),
+    shareOrigin || request.url,
+  );
   const imageWidth = normalizeImageDimension(body?.imageWidth);
   const imageHeight = normalizeImageDimension(body?.imageHeight);
   const contact = normalizeMerchantBusinessCardShareContact(
@@ -105,6 +110,7 @@ export async function POST(request: Request) {
   const payload = JSON.stringify({
     name,
     imageUrl,
+    ...(detailImageUrl ? { detailImageUrl } : {}),
     targetUrl,
     ...(imageWidth ? { imageWidth } : {}),
     ...(imageHeight ? { imageHeight } : {}),

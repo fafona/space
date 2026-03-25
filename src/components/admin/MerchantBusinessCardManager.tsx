@@ -644,6 +644,9 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
         createdAt: existingCard?.createdAt ?? new Date().toISOString(),
         imageUrl,
         ...(nextDraft.mode === "link" && existingCard?.shareImageUrl ? { shareImageUrl: existingCard.shareImageUrl } : {}),
+        ...(nextDraft.mode === "link" && nextDraft.contactPageImageUrl && existingCard?.contactPagePublicImageUrl
+          ? { contactPagePublicImageUrl: existingCard.contactPagePublicImageUrl }
+          : {}),
         ...(nextDraft.mode === "link" && resolvedShareKey ? { shareKey: resolvedShareKey } : {}),
         targetUrl: websiteUrl,
       };
@@ -661,6 +664,24 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       setTip("名片生成失败，请重试");
     } finally {
       setIsGenerating(false);
+    }
+  };
+
+  const handleContactPageImageUpload = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const reader = new FileReader();
+      const imageUrl = await new Promise<string>((resolve, reject) => {
+        reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+        reader.onerror = () => reject(reader.error ?? new Error("读取图片失败"));
+        reader.readAsDataURL(file);
+      });
+      applyDraft((current) => ({ ...current, contactPageImageUrl: imageUrl }));
+    } catch {
+      setTip("联系卡图片上传失败，请重试");
+    } finally {
+      event.target.value = "";
     }
   };
 
@@ -804,6 +825,32 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
                       <label className="block text-xs text-slate-600">图片透明度<div className="mt-1 flex items-center gap-3 rounded border bg-white px-3 py-2"><input type="range" min="0" max="1" step="0.01" className="min-w-0 flex-1" value={draft.backgroundImageOpacity} onChange={(event) => applyDraft((current) => ({ ...current, backgroundImageOpacity: clamp(Number(event.target.value), 0, 1) }))} /><span className="w-12 shrink-0 text-right text-xs text-slate-500">{formatOpacityPercent(draft.backgroundImageOpacity)}</span></div></label>
                       <label className="block text-xs text-slate-600">背景色透明度<div className="mt-1 flex items-center gap-3 rounded border bg-white px-3 py-2"><input type="range" min="0" max="1" step="0.01" className="min-w-0 flex-1" value={draft.backgroundColorOpacity} onChange={(event) => applyDraft((current) => ({ ...current, backgroundColorOpacity: clamp(Number(event.target.value), 0, 1) }))} /><span className="w-12 shrink-0 text-right text-xs text-slate-500">{formatOpacityPercent(draft.backgroundColorOpacity)}</span></div></label>
                     </div>
+                    {draft.mode === "link" ? (
+                      <div className="rounded-xl border bg-white px-3 py-3">
+                        <div className="text-xs font-semibold text-slate-700">联系卡中间展示图</div>
+                        <div className="mt-1 text-xs leading-5 text-slate-500">这里可以单独上传一张图片给收到名片的人看。不上传时，联系卡页面会默认展示姓名、电话、邮箱这些名片信息。</div>
+                        <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_120px]">
+                          <label className="block text-xs text-slate-600">
+                            上传图片
+                            <input type="file" accept="image/*" className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" onChange={(event) => void handleContactPageImageUpload(event)} />
+                          </label>
+                          <button
+                            type="button"
+                            className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+                            onClick={() => applyDraft((current) => ({ ...current, contactPageImageUrl: "" }))}
+                            disabled={!normalizeText(draft.contactPageImageUrl)}
+                          >
+                            恢复默认
+                          </button>
+                        </div>
+                        {normalizeText(draft.contactPageImageUrl) ? (
+                          <div className="mt-3 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 p-2">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={draft.contactPageImageUrl} alt="联系卡展示图预览" className="block h-40 w-full rounded-xl object-cover" />
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
                     <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_120px]">
                       <label className="block text-xs text-slate-600">网站说明<input className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.websiteLabel} placeholder="扫码进入网站" onFocus={() => setSingleSelectedField("website")} onChange={(event) => applyDraft((current) => ({ ...current, websiteLabel: event.target.value }))} /></label>
                       <label className="flex items-end gap-2 text-xs text-slate-600"><input type="checkbox" className="mb-3" checked={draft.showWebsiteUrl} onChange={(event) => applyDraft((current) => ({ ...current, showWebsiteUrl: event.target.checked }))} />显示域名</label>
@@ -1272,7 +1319,10 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     }
   }
 
-  function updateCardShareMeta(cardId: string, patch: Partial<Pick<MerchantBusinessCardAsset, "shareImageUrl" | "shareKey">>) {
+  function updateCardShareMeta(
+    cardId: string,
+    patch: Partial<Pick<MerchantBusinessCardAsset, "shareImageUrl" | "shareKey" | "contactPagePublicImageUrl">>,
+  ) {
     onCardsChange(
       cards.map((item) =>
         item.id === cardId
@@ -1325,12 +1375,47 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     return publicUrl;
   }
 
+  async function resolveContactPageImageUrl(input: {
+    card?: MerchantBusinessCardAsset | null;
+    imageUrl?: string;
+    cardName?: string;
+    targetUrl?: string;
+  }) {
+    const shareOrigin = resolveMerchantBusinessCardShareOrigin(undefined, input.targetUrl);
+    const existingPublicUrl = normalizeMerchantBusinessCardShareImageUrl(
+      normalizeText(input.card?.contactPagePublicImageUrl) || normalizeText(input.imageUrl) || normalizeText(input.card?.contactPageImageUrl),
+      shareOrigin,
+    );
+    if (existingPublicUrl) {
+      if (input.card && normalizeText(input.card.contactPagePublicImageUrl) !== existingPublicUrl) {
+        updateCardShareMeta(input.card.id, { contactPagePublicImageUrl: existingPublicUrl });
+      }
+      return existingPublicUrl;
+    }
+
+    const sourceImageUrl = normalizeText(input.imageUrl) || normalizeText(input.card?.contactPageImageUrl);
+    if (!/^data:image\//i.test(sourceImageUrl)) return "";
+
+    const uploadedUrl = await uploadImageDataUrlToPublicStorage(
+      sourceImageUrl,
+      sanitizeShareAssetHint(
+        `${normalizeText(profile.domainPrefix) || normalizeText(input.cardName) || normalizeText(input.card?.name) || normalizeText(profile.merchantName)}-contact`,
+      ),
+    );
+    const publicUrl = normalizeMerchantBusinessCardShareImageUrl(uploadedUrl, shareOrigin);
+    if (publicUrl && input.card) {
+      updateCardShareMeta(input.card.id, { contactPagePublicImageUrl: publicUrl });
+    }
+    return publicUrl;
+  }
+
   async function buildShareBundle(input: {
     targetUrl: string;
     cardName: string;
     shareKey?: string;
     card?: MerchantBusinessCardAsset | null;
     renderedImageUrl?: string;
+    contactPageImageUrl?: string;
     imageWidth?: number;
     imageHeight?: number;
     contact?: {
@@ -1354,9 +1439,16 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       cardName: input.cardName,
       targetUrl,
     });
+    const detailImageUrl = await resolveContactPageImageUrl({
+      card: input.card,
+      imageUrl: input.contactPageImageUrl,
+      cardName: input.cardName,
+      targetUrl,
+    });
     const fallbackShareUrl = buildMerchantBusinessCardShareUrl({
       origin: resolveMerchantBusinessCardShareOrigin(undefined, targetUrl),
       imageUrl: shareImageUrl,
+      detailImageUrl,
       targetUrl,
       name: input.cardName,
       contact: input.contact,
@@ -1364,6 +1456,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     const fallbackContactUrl = buildMerchantBusinessCardLegacyContactDownloadUrl({
       origin: resolveMerchantBusinessCardShareOrigin(undefined, targetUrl),
       imageUrl: shareImageUrl,
+      detailImageUrl,
       targetUrl,
       name: input.cardName,
       contact: input.contact,
@@ -1392,6 +1485,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
         key: normalizeText(input.shareKey),
         name: input.cardName,
         imageUrl: shareImageUrl,
+        detailImageUrl,
         targetUrl,
         imageWidth: typeof input.imageWidth === "number" ? Math.round(input.imageWidth) : undefined,
         imageHeight: typeof input.imageHeight === "number" ? Math.round(input.imageHeight) : undefined,
@@ -1473,6 +1567,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
         cardName: normalizeText(draft.name) || "商户名片",
         shareKey: draftShareKey,
         renderedImageUrl,
+        contactPageImageUrl: normalizeText(draft.contactPageImageUrl),
         imageWidth: draft.width,
         imageHeight: draft.height,
         contact: buildShareContactPayload({
@@ -1501,6 +1596,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
         cardName: normalizeText(card.name) || "商户名片",
         shareKey: normalizeText(card.shareKey),
         card,
+        contactPageImageUrl: normalizeText(card.contactPageImageUrl),
         imageWidth: card.width,
         imageHeight: card.height,
         contact: buildShareContactPayload({
@@ -1535,6 +1631,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
         cardName: normalizeText(draft.name) || "商户名片",
         shareKey: draftShareKey,
         renderedImageUrl,
+        contactPageImageUrl: normalizeText(draft.contactPageImageUrl),
         imageWidth: draft.width,
         imageHeight: draft.height,
         contact: buildShareContactPayload({
@@ -1567,6 +1664,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
         cardName: normalizeText(card.name) || "商户名片",
         shareKey: normalizeText(card.shareKey),
         card,
+        contactPageImageUrl: normalizeText(card.contactPageImageUrl),
         imageWidth: card.width,
         imageHeight: card.height,
         contact: buildShareContactPayload({
