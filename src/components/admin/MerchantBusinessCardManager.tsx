@@ -28,6 +28,7 @@ import {
 import {
   buildMerchantBusinessCardShareUrl,
   buildMerchantBusinessCardContactDownloadUrl,
+  buildMerchantBusinessCardLegacyContactDownloadUrl,
   normalizeMerchantBusinessCardShareImageUrl,
   resolveMerchantBusinessCardShareOrigin,
 } from "@/lib/merchantBusinessCardShare";
@@ -510,12 +511,17 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     if (draft.mode !== "link" || !websiteUrl) return "";
     return buildMerchantBusinessCardShareUrl({
       origin: resolveMerchantBusinessCardShareOrigin(undefined, websiteUrl),
-      shareKey: draftShareKey,
       imageUrl: websiteUrl,
       targetUrl: websiteUrl,
       name: normalizeText(draft.name) || "商户名片",
+      contact: buildShareContactPayload({
+        name: draft.name,
+        title: draft.title,
+        contacts: draft.contacts,
+        targetUrl: websiteUrl,
+      }),
     });
-  }, [draft.mode, draft.name, draftShareKey, websiteUrl]);
+  }, [draft.contacts, draft.mode, draft.name, draft.title, websiteUrl]);
   const qrTargetUrl = draft.mode === "link" ? draftLinkUrl || websiteUrl : websiteUrl;
 
   useEffect(() => {
@@ -1351,6 +1357,20 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     if (!shareImageUrl) {
       throw new Error("share_image_unavailable");
     }
+    const fallbackShareUrl = buildMerchantBusinessCardShareUrl({
+      origin: resolveMerchantBusinessCardShareOrigin(undefined, targetUrl),
+      imageUrl: shareImageUrl,
+      targetUrl,
+      name: input.cardName,
+      contact: input.contact,
+    });
+    const fallbackContactUrl = buildMerchantBusinessCardLegacyContactDownloadUrl({
+      origin: resolveMerchantBusinessCardShareOrigin(undefined, targetUrl),
+      imageUrl: shareImageUrl,
+      targetUrl,
+      name: input.cardName,
+      contact: input.contact,
+    });
     const accessToken = await getShareAccessToken();
     const headers: Record<string, string> = {
       "content-type": "application/json",
@@ -1380,6 +1400,12 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     const shareUrl = typeof payload?.shareUrl === "string" ? payload.shareUrl.trim() : "";
     const shareKey = typeof payload?.shareKey === "string" ? payload.shareKey.trim() : "";
     if (!response.ok || !shareUrl) {
+      if (fallbackShareUrl) {
+        return {
+          shareUrl: fallbackShareUrl,
+          contactUrl: fallbackContactUrl,
+        };
+      }
       throw new Error("share_link_unavailable");
     }
     if (input.card && (shareKey || shareImageUrl)) {
@@ -1394,7 +1420,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
         buildMerchantBusinessCardContactDownloadUrl({
           shareKey,
           targetUrl,
-        }) || "",
+        }) || fallbackContactUrl,
     };
   }
 

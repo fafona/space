@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
-import ShareBusinessCardRedirect from "./ShareBusinessCardRedirect";
 import {
+  buildMerchantBusinessCardLegacyContactDownloadUrl,
   buildMerchantBusinessCardShareDescription,
   buildMerchantBusinessCardShareTitle,
   buildMerchantBusinessCardShareUrl,
@@ -53,6 +53,7 @@ export async function generateMetadata({ searchParams }: ShareBusinessCardPagePr
     imageUrl: payload.imageUrl,
     targetUrl: payload.targetUrl,
     name: payload.name,
+    contact: payload.contact,
   });
 
   return {
@@ -96,14 +97,15 @@ export async function generateMetadata({ searchParams }: ShareBusinessCardPagePr
 
 export default async function ShareBusinessCardPage({ searchParams }: ShareBusinessCardPageProps) {
   const requestHeaders = await headers();
-  const payload = await resolveMerchantBusinessCardSharePayload(await searchParams, resolveRequestOrigin(requestHeaders));
+  const origin = resolveRequestOrigin(requestHeaders);
+  const payload = await resolveMerchantBusinessCardSharePayload(await searchParams, origin);
 
   if (!payload) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#f7efe3] px-6 py-12 text-slate-900">
         <section className="w-full max-w-lg rounded-[28px] border border-slate-200 bg-white px-8 py-10 shadow-[0_20px_60px_rgba(15,23,42,.08)]">
           <div className="text-lg font-semibold">链接无效</div>
-          <p className="mt-3 text-sm leading-6 text-slate-600">这张名片链接缺少有效参数，暂时无法打开对应网站。</p>
+          <p className="mt-3 text-sm leading-6 text-slate-600">这张联系卡缺少有效参数，暂时无法打开。</p>
         </section>
       </main>
     );
@@ -111,10 +113,16 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
 
   const title = buildMerchantBusinessCardShareTitle(payload.name);
   const description = buildMerchantBusinessCardShareDescription(payload.name, payload.targetUrl);
+  const contactUrl = buildMerchantBusinessCardLegacyContactDownloadUrl({
+    origin,
+    name: payload.name,
+    imageUrl: payload.imageUrl,
+    targetUrl: payload.targetUrl,
+    contact: payload.contact,
+  });
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(255,255,255,.96),_rgba(247,239,227,1)_58%,_rgba(229,218,200,1))] px-6 py-10 text-slate-900">
-      <ShareBusinessCardRedirect targetUrl={payload.targetUrl} />
       <section className="mx-auto w-full max-w-xl rounded-[32px] border border-white/70 bg-white/90 p-5 shadow-[0_28px_90px_rgba(15,23,42,.12)] backdrop-blur">
         <div className="mb-4 flex items-center justify-between gap-4">
           <div>
@@ -126,7 +134,7 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
             href={payload.targetUrl}
             className="shrink-0 rounded-full bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700"
           >
-            继续打开
+            打开网页
           </a>
         </div>
         <a
@@ -136,8 +144,24 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={payload.imageUrl} alt={title} className="block h-auto w-full object-cover" />
         </a>
+        <div className="mt-4 flex flex-wrap gap-3">
+          {contactUrl ? (
+            <a
+              href={contactUrl}
+              className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-900 transition hover:bg-slate-50"
+            >
+              保存到通讯录
+            </a>
+          ) : null}
+          <a
+            href={payload.targetUrl}
+            className="rounded-full bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700"
+          >
+            继续访问网站
+          </a>
+        </div>
         <div className="mt-4 rounded-2xl bg-slate-900 px-4 py-3 text-sm text-white/88">
-          正在跳转到商户网站。如果没有自动打开，请点击上方名片或“继续打开”。
+          收到名片的人在手机上打开后，可以直接点“保存到通讯录”，把姓名、电话、邮箱等信息导入手机通讯录。
         </div>
       </section>
     </main>

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildMerchantBusinessCardContactDownloadUrl,
+  buildMerchantBusinessCardLegacyContactDownloadUrl,
   MERCHANT_BUSINESS_CARD_SHARE_CARD_PATH,
   MERCHANT_BUSINESS_CARD_SHARE_KEY_PARAM,
   buildMerchantBusinessCardVCard,
@@ -46,11 +47,16 @@ test("buildMerchantBusinessCardShareUrl falls back to legacy encoded params when
     name: "fafona",
     imageUrl: "https://faolla.com/storage/v1/object/public/page-assets/card.png",
     targetUrl: "https://fafona.faolla.com",
+    contact: {
+      displayName: "Felix",
+      phone: "633130577",
+      email: "caimin00x@gmail.com",
+    },
   });
 
   assert.equal(
     shareUrl,
-    "https://faolla.com/share/business-card?image=https%3A%2F%2Ffaolla.com%2Fstorage%2Fv1%2Fobject%2Fpublic%2Fpage-assets%2Fcard.png&target=https%3A%2F%2Ffafona.faolla.com%2F&name=fafona",
+    "https://faolla.com/share/business-card?image=https%3A%2F%2Ffaolla.com%2Fstorage%2Fv1%2Fobject%2Fpublic%2Fpage-assets%2Fcard.png&target=https%3A%2F%2Ffafona.faolla.com%2F&name=fafona&contactName=Felix&phone=633130577&email=caimin00x%40gmail.com&website=https%3A%2F%2Ffafona.faolla.com%2F",
   );
 });
 
@@ -110,6 +116,9 @@ test("parseMerchantBusinessCardShareParams normalizes storage image urls with pr
     name: "fafona",
     imageWidth: 680,
     imageHeight: 432,
+    contact: {
+      websiteUrl: "https://fafona.faolla.com/",
+    },
   });
 });
 
@@ -178,6 +187,16 @@ test("business card contact helpers build downloadable vcard links and content",
       targetUrl: payload.targetUrl,
     }),
     "https://faolla.com/card/card-abc123/contact",
+  );
+  assert.equal(
+    buildMerchantBusinessCardLegacyContactDownloadUrl({
+      origin: "http://localhost:3000",
+      name: payload.name,
+      imageUrl: payload.imageUrl,
+      targetUrl: payload.targetUrl,
+      contact: payload.contact,
+    }),
+    "https://faolla.com/share/business-card/contact?image=https%3A%2F%2Ffaolla.com%2Fstorage%2Fv1%2Fobject%2Fpublic%2Fpage-assets%2Fcard.png&target=https%3A%2F%2Ffafona.faolla.com%2F&name=fafona&contactName=Felix&organization=fafona&title=Manager&phone=633130577&email=caimin00x%40gmail.com&address=C.+Transporte%2C+12+%2F+Sevilla+%2F+Spain&website=https%3A%2F%2Ffafona.faolla.com%2F&note=WhatsApp%3A+felix",
   );
   const vcard = buildMerchantBusinessCardVCard(payload);
   assert.equal(buildMerchantBusinessCardVCardFileName(payload), "felix.vcf");

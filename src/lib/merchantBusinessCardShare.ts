@@ -271,6 +271,7 @@ export function buildMerchantBusinessCardShareUrl(input: {
   name?: string | null;
   imageUrl: string;
   targetUrl: string;
+  contact?: MerchantBusinessCardShareContact | null;
 }) {
   const origin = resolveMerchantBusinessCardShareOrigin(input.origin, input.targetUrl);
   if (!origin) return "";
@@ -288,6 +289,7 @@ export function buildMerchantBusinessCardShareUrl(input: {
       name: input.name,
       imageUrl: input.imageUrl,
       targetUrl: input.targetUrl,
+      contact: input.contact,
     },
     origin,
   );
@@ -297,6 +299,30 @@ export function buildMerchantBusinessCardShareUrl(input: {
   shareUrl.searchParams.set("target", payload.targetUrl);
   if (payload.name) {
     shareUrl.searchParams.set("name", payload.name);
+  }
+  if (payload.contact?.displayName) {
+    shareUrl.searchParams.set("contactName", payload.contact.displayName);
+  }
+  if (payload.contact?.organization) {
+    shareUrl.searchParams.set("organization", payload.contact.organization);
+  }
+  if (payload.contact?.title) {
+    shareUrl.searchParams.set("title", payload.contact.title);
+  }
+  if (payload.contact?.phone) {
+    shareUrl.searchParams.set("phone", payload.contact.phone);
+  }
+  if (payload.contact?.email) {
+    shareUrl.searchParams.set("email", payload.contact.email);
+  }
+  if (payload.contact?.address) {
+    shareUrl.searchParams.set("address", payload.contact.address);
+  }
+  if (payload.contact?.websiteUrl) {
+    shareUrl.searchParams.set("website", payload.contact.websiteUrl);
+  }
+  if (payload.contact?.note) {
+    shareUrl.searchParams.set("note", payload.contact.note);
   }
   return shareUrl.toString();
 }
@@ -312,6 +338,16 @@ export function parseMerchantBusinessCardShareParams(
       targetUrl: readSearchParam(searchParams, "target"),
       imageWidth: Number(readSearchParam(searchParams, "imageWidth")),
       imageHeight: Number(readSearchParam(searchParams, "imageHeight")),
+      contact: {
+        displayName: readSearchParam(searchParams, "contactName"),
+        organization: readSearchParam(searchParams, "organization"),
+        title: readSearchParam(searchParams, "title"),
+        phone: readSearchParam(searchParams, "phone"),
+        email: readSearchParam(searchParams, "email"),
+        address: readSearchParam(searchParams, "address"),
+        websiteUrl: readSearchParam(searchParams, "website"),
+        note: readSearchParam(searchParams, "note"),
+      },
     },
     preferredOrigin,
   );
@@ -341,6 +377,40 @@ export function buildMerchantBusinessCardContactDownloadUrl(input: {
   const origin = resolveMerchantBusinessCardShareOrigin(input.origin, input.targetUrl);
   if (!origin) return "";
   return new URL(buildMerchantBusinessCardContactDownloadPath(shareKey), `${origin}/`).toString();
+}
+
+export function buildMerchantBusinessCardLegacyContactDownloadUrl(input: {
+  origin?: string | null;
+  name?: string | null;
+  imageUrl: string;
+  targetUrl: string;
+  contact?: MerchantBusinessCardShareContact | null;
+}) {
+  const origin = resolveMerchantBusinessCardShareOrigin(input.origin, input.targetUrl);
+  if (!origin) return "";
+  const url = new URL(`${MERCHANT_BUSINESS_CARD_SHARE_PATH}/contact`, `${origin}/`);
+  const payload = normalizeSharePayload(
+    {
+      name: input.name,
+      imageUrl: input.imageUrl,
+      targetUrl: input.targetUrl,
+      contact: input.contact,
+    },
+    origin,
+  );
+  if (!payload) return "";
+  url.searchParams.set("image", payload.imageUrl);
+  url.searchParams.set("target", payload.targetUrl);
+  if (payload.name) url.searchParams.set("name", payload.name);
+  if (payload.contact?.displayName) url.searchParams.set("contactName", payload.contact.displayName);
+  if (payload.contact?.organization) url.searchParams.set("organization", payload.contact.organization);
+  if (payload.contact?.title) url.searchParams.set("title", payload.contact.title);
+  if (payload.contact?.phone) url.searchParams.set("phone", payload.contact.phone);
+  if (payload.contact?.email) url.searchParams.set("email", payload.contact.email);
+  if (payload.contact?.address) url.searchParams.set("address", payload.contact.address);
+  if (payload.contact?.websiteUrl) url.searchParams.set("website", payload.contact.websiteUrl);
+  if (payload.contact?.note) url.searchParams.set("note", payload.contact.note);
+  return url.toString();
 }
 
 export function buildMerchantBusinessCardVCard(payload: MerchantBusinessCardSharePayload) {
