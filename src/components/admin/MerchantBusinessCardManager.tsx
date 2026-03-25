@@ -567,11 +567,16 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
   const fullScale = useMemo(() => Math.min(1, 1000 / Math.max(1, draft.width)), [draft.width]);
   const requiresPreviewBeforeSave = !editingCardId && !hasPreviewed;
   const qrMayBeUnreadable = draft.qr.size < QR_MIN_READABLE_SIZE;
+  const activeLinkShareKey = useMemo(() => {
+    if (draft.mode !== "link") return "";
+    const existingCard = editingCardId ? cards.find((card) => card.id === editingCardId) ?? null : null;
+    return normalizeText(existingCard?.shareKey) || normalizeText(draftShareKey) || "";
+  }, [cards, draft.mode, draftShareKey, editingCardId]);
   const draftLinkUrl = useMemo(() => {
     if (draft.mode !== "link" || !websiteUrl) return "";
     return buildMerchantBusinessCardShareUrl({
       origin: resolveMerchantBusinessCardShareOrigin(undefined, websiteUrl),
-      imageUrl: websiteUrl,
+      shareKey: activeLinkShareKey,
       targetUrl: websiteUrl,
       name: normalizeText(draft.name) || "商户名片",
       contact: buildShareContactPayload({
@@ -581,7 +586,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
         targetUrl: websiteUrl,
       }),
     });
-  }, [draft.contacts, draft.mode, draft.name, draft.title, websiteUrl]);
+  }, [activeLinkShareKey, draft.contacts, draft.mode, draft.name, draft.title, websiteUrl]);
   const qrTargetUrl = draft.mode === "link" ? draftLinkUrl || websiteUrl : websiteUrl;
 
   useEffect(() => {
@@ -698,14 +703,39 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
         nextDraft.mode === "link"
           ? normalizeText(existingCard?.shareKey) || normalizeText(draftShareKey) || createShareKey()
           : "";
+      const shareContactPayload =
+        nextDraft.mode === "link"
+          ? buildShareContactPayload({
+              name: nextDraft.name,
+              title: nextDraft.title,
+              contacts: nextDraft.contacts,
+              targetUrl: websiteUrl,
+            })
+          : undefined;
+      const shareBundle =
+        nextDraft.mode === "link"
+          ? await buildShareBundle({
+              targetUrl: websiteUrl,
+              cardName: normalizeText(nextDraft.name) || "商户名片",
+              shareKey: resolvedShareKey,
+              card: existingCard,
+              renderedImageUrl: imageUrl,
+              contactPageImageUrl: normalizeText(nextDraft.contactPageImageUrl),
+              imageWidth: nextDraft.width,
+              imageHeight: nextDraft.height,
+              contact: shareContactPayload,
+            })
+          : null;
       const asset: MerchantBusinessCardAsset = {
         ...nextDraft,
         id: existingCard?.id ?? createId("business-card"),
         createdAt: existingCard?.createdAt ?? new Date().toISOString(),
         imageUrl,
-        ...(nextDraft.mode === "link" && existingCard?.shareImageUrl ? { shareImageUrl: existingCard.shareImageUrl } : {}),
-        ...(nextDraft.mode === "link" && nextDraft.contactPageImageUrl && existingCard?.contactPagePublicImageUrl
-          ? { contactPagePublicImageUrl: existingCard.contactPagePublicImageUrl }
+        ...(nextDraft.mode === "link" && (shareBundle?.shareImageUrl || existingCard?.shareImageUrl)
+          ? { shareImageUrl: shareBundle?.shareImageUrl || existingCard?.shareImageUrl }
+          : {}),
+        ...(nextDraft.mode === "link" && (shareBundle?.detailImageUrl || existingCard?.contactPagePublicImageUrl)
+          ? { contactPagePublicImageUrl: shareBundle?.detailImageUrl || existingCard?.contactPagePublicImageUrl }
           : {}),
         ...(nextDraft.mode === "link" && resolvedShareKey ? { shareKey: resolvedShareKey } : {}),
         targetUrl: websiteUrl,
@@ -1598,6 +1628,9 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
         return {
           shareUrl: fallbackShareUrl,
           contactUrl: fallbackContactUrl,
+          shareImageUrl: "",
+          detailImageUrl,
+          shareKey: normalizeText(input.shareKey),
         };
       }
       throw new Error("share_image_unavailable");
@@ -1636,14 +1669,18 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
         return {
           shareUrl: fallbackShareUrl,
           contactUrl: fallbackContactUrl,
+          shareImageUrl,
+          detailImageUrl,
+          shareKey: normalizeText(input.shareKey),
         };
       }
       throw new Error("share_link_unavailable");
     }
-    if (input.card && (shareKey || shareImageUrl)) {
+    if (input.card && (shareKey || shareImageUrl || detailImageUrl)) {
       updateCardShareMeta(input.card.id, {
         ...(shareImageUrl ? { shareImageUrl } : {}),
         ...(shareKey ? { shareKey } : {}),
+        ...(detailImageUrl ? { contactPagePublicImageUrl: detailImageUrl } : {}),
       });
     }
     return {
@@ -1653,6 +1690,9 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
           shareKey,
           targetUrl,
         }) || fallbackContactUrl,
+      shareImageUrl,
+      detailImageUrl,
+      shareKey,
     };
   }
 
