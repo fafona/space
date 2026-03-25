@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 import QRCode from "qrcode";
-import ContactAutoLaunch from "@/app/share/business-card/ContactAutoLaunch";
 import {
   buildMerchantBusinessCardLegacyContactDownloadUrl,
   buildMerchantBusinessCardShareDescription,
@@ -182,7 +181,6 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(255,255,255,.96),_rgba(247,239,227,1)_58%,_rgba(229,218,200,1))] px-5 py-8 text-slate-900 sm:px-6 sm:py-10">
-      {isMobileRequest && contactUrl ? <ContactAutoLaunch contactUrl={contactUrl} /> : null}
       <section className="mx-auto w-full max-w-xl rounded-[32px] border border-white/70 bg-white/90 p-5 shadow-[0_28px_90px_rgba(15,23,42,.12)] backdrop-blur sm:p-6">
         <div className="mb-4">
           <div className="text-xs font-medium uppercase tracking-[0.24em] text-slate-400">Business Card</div>
@@ -203,7 +201,7 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
         {isMobileRequest ? (
           <>
             <div className="mt-5 rounded-[28px] border border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-6 text-slate-700">
-              手机打开后会自动尝试拉起保存联系人。如果系统没有自动弹出，再点下面这个按钮。
+              手机打开后不会自动跳转。需要保存联系人时，再点击下面的“一键保存到通讯录”。
             </div>
 
             <div className="mt-5 flex flex-col gap-3 sm:flex-row">
@@ -226,13 +224,13 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
         ) : (
           <>
             <div className="mt-5 rounded-[28px] border border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-6 text-slate-700">
-              电脑端通常会交给 Outlook 或其他程序处理，不够直接。最简单的方式是用手机扫码打开，再保存到通讯录。
+              电脑端通常会交给 Outlook 或其他程序处理，不够直接。最简单的方式是用手机扫码打开，再点击保存到通讯录。
             </div>
 
             {desktopQrCodeUrl ? (
               <div className="mt-5 rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_16px_42px_rgba(15,23,42,.08)]">
                 <div className="text-base font-semibold text-slate-900">手机扫码保存联系人</div>
-                <div className="mt-2 text-sm leading-6 text-slate-600">扫码后会在手机里打开这张联系卡，并自动尝试拉起保存联系人。</div>
+                <div className="mt-2 text-sm leading-6 text-slate-600">扫码后会在手机里打开这张联系卡，再由对方手动点击“保存到通讯录”。</div>
                 <div className="mt-4 flex justify-center">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={desktopQrCodeUrl} alt="联系卡二维码" className="h-56 w-56 rounded-2xl border border-slate-200 bg-white p-3" />
