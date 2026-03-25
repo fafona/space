@@ -5,8 +5,8 @@ import {
   buildMerchantBusinessCardShareTitle,
   buildMerchantBusinessCardShareUrl,
   loadMerchantBusinessCardSharePayloadByKey,
-  normalizeMerchantBusinessCardShareKey,
   normalizeMerchantBusinessCardShareImageUrl,
+  normalizeMerchantBusinessCardShareKey,
   resolveMerchantBusinessCardShareOrigin,
 } from "@/lib/merchantBusinessCardShare";
 
@@ -19,10 +19,29 @@ function escapeHtml(value: string) {
     .replace(/'/g, "&#39;");
 }
 
+function buildCardImageRouteUrl(origin: string, shareKey: string) {
+  const normalizedOrigin = String(origin ?? "").trim().replace(/\/+$/g, "");
+  const normalizedKey = String(shareKey ?? "").trim();
+  if (!normalizedOrigin || !normalizedKey) return "";
+  return `${normalizedOrigin}/card/${normalizedKey}/image`;
+}
+
+function forcePublicStorageImageUrl(value: string, origin: string) {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) return "";
+  const normalizedOrigin = String(origin ?? "").trim().replace(/\/+$/g, "");
+  if (!normalizedOrigin) return trimmed;
+  const localhostMatch = trimmed.match(/^https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(\/storage\/v1\/object\/public\/.+)$/i);
+  if (localhostMatch?.[1]) {
+    return `${normalizedOrigin}${localhostMatch[1]}`;
+  }
+  return trimmed;
+}
+
 function buildShareCardHtml(input: {
   title: string;
   description: string;
-  imageUrl: string;
+  imageUrl?: string;
   imageWidth?: number;
   imageHeight?: number;
   targetUrl: string;
@@ -31,9 +50,10 @@ function buildShareCardHtml(input: {
 }) {
   const title = escapeHtml(input.title);
   const description = escapeHtml(input.description);
-  const imageUrl = escapeHtml(input.imageUrl);
+  const imageUrl = input.imageUrl ? escapeHtml(input.imageUrl) : "";
   const targetUrl = escapeHtml(input.targetUrl);
   const shareUrl = escapeHtml(input.shareUrl);
+
   return `<!DOCTYPE html>
 <html lang="zh-CN">
   <head>
@@ -46,18 +66,18 @@ function buildShareCardHtml(input: {
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Faolla" />
     <meta property="og:url" content="${shareUrl}" />
-    <meta property="og:image:url" content="${imageUrl}" />
-    <meta property="og:image" content="${imageUrl}" />
-    <meta property="og:image:secure_url" content="${imageUrl}" />
-    <meta property="og:image:alt" content="${title}" />
-    <meta property="og:image:type" content="image/png" />
-    ${input.imageWidth ? `<meta property="og:image:width" content="${input.imageWidth}" />` : ""}
-    ${input.imageHeight ? `<meta property="og:image:height" content="${input.imageHeight}" />` : ""}
-    <meta name="twitter:card" content="summary_large_image" />
+    ${imageUrl ? `<meta property="og:image:url" content="${imageUrl}" />` : ""}
+    ${imageUrl ? `<meta property="og:image" content="${imageUrl}" />` : ""}
+    ${imageUrl ? `<meta property="og:image:secure_url" content="${imageUrl}" />` : ""}
+    ${imageUrl ? `<meta property="og:image:alt" content="${title}" />` : ""}
+    ${imageUrl ? `<meta property="og:image:type" content="image/png" />` : ""}
+    ${imageUrl && input.imageWidth ? `<meta property="og:image:width" content="${input.imageWidth}" />` : ""}
+    ${imageUrl && input.imageHeight ? `<meta property="og:image:height" content="${input.imageHeight}" />` : ""}
+    <meta name="twitter:card" content="${imageUrl ? "summary_large_image" : "summary"}" />
     <meta name="twitter:title" content="${title}" />
     <meta name="twitter:description" content="${description}" />
-    <meta name="twitter:image" content="${imageUrl}" />
-    <meta name="twitter:image:alt" content="${title}" />
+    ${imageUrl ? `<meta name="twitter:image" content="${imageUrl}" />` : ""}
+    ${imageUrl ? `<meta name="twitter:image:alt" content="${title}" />` : ""}
     <link rel="canonical" href="${shareUrl}" />
     <style>
       body {
@@ -81,17 +101,22 @@ function buildShareCardHtml(input: {
         padding: 20px;
         box-shadow: 0 24px 80px rgba(15,23,42,.12);
       }
-      a.card {
+      .card,
+      .summary {
         display: block;
         overflow: hidden;
         border-radius: 22px;
         border: 1px solid rgba(15,23,42,.08);
         background: #fff;
       }
-      a.card img {
+      .card img {
         display: block;
         width: 100%;
         height: auto;
+      }
+      .summary {
+        padding: 18px;
+        line-height: 1.7;
       }
       .actions {
         display: flex;
@@ -122,36 +147,25 @@ function buildShareCardHtml(input: {
       <article>
         <h1>${title}</h1>
         <p>${description}</p>
-        <a class="card" href="${targetUrl}">
+        ${
+          imageUrl
+            ? `<a class="card" href="${targetUrl}">
           <img src="${imageUrl}" alt="${title}" />
-        </a>
+        </a>`
+            : `<div class="summary">打开这张电子名片后，可以保存联系人，也可以继续访问网站。</div>`
+        }
         <div class="actions">
-          <a class="button" href="${targetUrl}">打开网页</a>
-          ${input.contactUrl ? `<a class="button secondary" href="${escapeHtml(input.contactUrl)}">保存到通讯录</a>` : ""}
+          ${
+            input.contactUrl
+              ? `<a class="button" href="${escapeHtml(input.contactUrl)}">保存到通讯录</a>`
+              : ""
+          }
+          <a class="button secondary" href="${targetUrl}">打开网页</a>
         </div>
       </article>
     </main>
   </body>
 </html>`;
-}
-
-function buildCardImageRouteUrl(origin: string, shareKey: string) {
-  const normalizedOrigin = String(origin ?? "").trim().replace(/\/+$/g, "");
-  const normalizedKey = String(shareKey ?? "").trim();
-  if (!normalizedOrigin || !normalizedKey) return "";
-  return `${normalizedOrigin}/card/${normalizedKey}/image`;
-}
-
-function forcePublicStorageImageUrl(value: string, origin: string) {
-  const trimmed = String(value ?? "").trim();
-  if (!trimmed) return "";
-  const normalizedOrigin = String(origin ?? "").trim().replace(/\/+$/g, "");
-  if (!normalizedOrigin) return trimmed;
-  const localhostMatch = trimmed.match(/^https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(\/storage\/v1\/object\/public\/.+)$/i);
-  if (localhostMatch?.[1]) {
-    return `${normalizedOrigin}${localhostMatch[1]}`;
-  }
-  return trimmed;
 }
 
 export async function GET(
@@ -186,12 +200,11 @@ export async function GET(
   const title = buildMerchantBusinessCardShareTitle(payload.name);
   const description = buildMerchantBusinessCardShareDescription(payload.name, payload.targetUrl);
   const publicOrigin = resolveMerchantBusinessCardShareOrigin(request.url, payload.targetUrl) || requestOrigin;
-  const imageUrl =
-    forcePublicStorageImageUrl(
-      normalizeMerchantBusinessCardShareImageUrl(payload.imageUrl, publicOrigin) || payload.imageUrl,
-      publicOrigin,
-    ) || payload.imageUrl;
-  const previewImageUrl = buildCardImageRouteUrl(publicOrigin, shareKey) || imageUrl;
+  const normalizedShareImageUrl = payload.imageUrl
+    ? normalizeMerchantBusinessCardShareImageUrl(payload.imageUrl, publicOrigin) || payload.imageUrl
+    : "";
+  const imageUrl = normalizedShareImageUrl ? forcePublicStorageImageUrl(normalizedShareImageUrl, publicOrigin) : "";
+  const previewImageUrl = imageUrl ? buildCardImageRouteUrl(publicOrigin, shareKey) || imageUrl : "";
   const contactUrl =
     buildMerchantBusinessCardContactDownloadUrl({
       origin: publicOrigin,
@@ -210,7 +223,7 @@ export async function GET(
     buildShareCardHtml({
       title,
       description,
-      imageUrl: previewImageUrl,
+      imageUrl: previewImageUrl || undefined,
       imageWidth: payload.imageWidth,
       imageHeight: payload.imageHeight,
       targetUrl: payload.targetUrl,

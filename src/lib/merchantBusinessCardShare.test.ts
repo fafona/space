@@ -85,7 +85,7 @@ test("share manifest helpers build stable public paths", () => {
   ]);
 });
 
-test("parseMerchantBusinessCardShareParams rejects unsupported image urls", () => {
+test("parseMerchantBusinessCardShareParams ignores unsupported image urls but keeps usable contact data", () => {
   const payload = parseMerchantBusinessCardShareParams(
     {
       image: "data:image/png;base64,abc",
@@ -95,7 +95,31 @@ test("parseMerchantBusinessCardShareParams rejects unsupported image urls", () =
     "https://faolla.com",
   );
 
-  assert.equal(payload, null);
+  assert.deepEqual(payload, {
+    name: "fafona",
+    targetUrl: "https://fafona.faolla.com/",
+    contact: {
+      websiteUrl: "https://fafona.faolla.com/",
+    },
+  });
+});
+
+test("buildMerchantBusinessCardShareUrl still works without a share image", () => {
+  const shareUrl = buildMerchantBusinessCardShareUrl({
+    origin: "https://faolla.com",
+    name: "fafona",
+    targetUrl: "https://fafona.faolla.com",
+    contact: {
+      displayName: "Felix",
+      phone: "633130577",
+      email: "caimin00x@gmail.com",
+    },
+  });
+
+  assert.equal(
+    shareUrl,
+    "https://faolla.com/share/business-card?target=https%3A%2F%2Ffafona.faolla.com%2F&name=fafona&contactName=Felix&phone=633130577&email=caimin00x%40gmail.com&website=https%3A%2F%2Ffafona.faolla.com%2F",
+  );
 });
 
 test("parseMerchantBusinessCardShareParams normalizes storage image urls with preferred origin", () => {

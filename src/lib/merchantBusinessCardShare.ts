@@ -12,7 +12,7 @@ type SearchParamsLike = URLSearchParams | Record<string, SearchParamValue>;
 
 export type MerchantBusinessCardSharePayload = {
   name: string;
-  imageUrl: string;
+  imageUrl?: string;
   targetUrl: string;
   imageWidth?: number;
   imageHeight?: number;
@@ -194,15 +194,15 @@ function normalizeSharePayload(
 ): MerchantBusinessCardSharePayload | null {
   const targetUrl = normalizeMerchantBusinessCardShareTargetUrl(input.targetUrl);
   const imageUrl = normalizeMerchantBusinessCardShareImageUrl(input.imageUrl, preferredOrigin);
-  if (!targetUrl || !imageUrl) return null;
+  if (!targetUrl) return null;
   const imageWidth = clampImageDimension(input.imageWidth);
   const imageHeight = clampImageDimension(input.imageHeight);
   return {
     name: normalizeText(input.name).slice(0, 80),
-    imageUrl,
+    ...(imageUrl ? { imageUrl } : {}),
     targetUrl,
-    ...(imageWidth ? { imageWidth } : {}),
-    ...(imageHeight ? { imageHeight } : {}),
+    ...(imageUrl && imageWidth ? { imageWidth } : {}),
+    ...(imageUrl && imageHeight ? { imageHeight } : {}),
     ...(normalizeMerchantBusinessCardShareContact(input.contact, targetUrl)
       ? { contact: normalizeMerchantBusinessCardShareContact(input.contact, targetUrl) }
       : {}),
@@ -269,7 +269,7 @@ export function buildMerchantBusinessCardShareUrl(input: {
   origin?: string | null;
   shareKey?: string | null;
   name?: string | null;
-  imageUrl: string;
+  imageUrl?: string | null;
   targetUrl: string;
   contact?: MerchantBusinessCardShareContact | null;
 }) {
@@ -295,7 +295,9 @@ export function buildMerchantBusinessCardShareUrl(input: {
   );
   if (!payload) return "";
 
-  shareUrl.searchParams.set("image", payload.imageUrl);
+  if (payload.imageUrl) {
+    shareUrl.searchParams.set("image", payload.imageUrl);
+  }
   shareUrl.searchParams.set("target", payload.targetUrl);
   if (payload.name) {
     shareUrl.searchParams.set("name", payload.name);
@@ -382,7 +384,7 @@ export function buildMerchantBusinessCardContactDownloadUrl(input: {
 export function buildMerchantBusinessCardLegacyContactDownloadUrl(input: {
   origin?: string | null;
   name?: string | null;
-  imageUrl: string;
+  imageUrl?: string | null;
   targetUrl: string;
   contact?: MerchantBusinessCardShareContact | null;
 }) {
@@ -399,7 +401,9 @@ export function buildMerchantBusinessCardLegacyContactDownloadUrl(input: {
     origin,
   );
   if (!payload) return "";
-  url.searchParams.set("image", payload.imageUrl);
+  if (payload.imageUrl) {
+    url.searchParams.set("image", payload.imageUrl);
+  }
   url.searchParams.set("target", payload.targetUrl);
   if (payload.name) url.searchParams.set("name", payload.name);
   if (payload.contact?.displayName) url.searchParams.set("contactName", payload.contact.displayName);

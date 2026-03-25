@@ -9,7 +9,7 @@ import {
 function buildContentDisposition(filename: string) {
   const safeAscii = filename.replace(/[^\x20-\x7E]+/g, "-").replace(/"/g, "");
   const encoded = encodeURIComponent(filename);
-  return `attachment; filename="${safeAscii}"; filename*=UTF-8''${encoded}`;
+  return `inline; filename="${safeAscii}"; filename*=UTF-8''${encoded}`;
 }
 
 export function GET(request: Request) {

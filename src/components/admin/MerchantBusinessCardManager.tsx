@@ -1354,9 +1354,6 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       cardName: input.cardName,
       targetUrl,
     });
-    if (!shareImageUrl) {
-      throw new Error("share_image_unavailable");
-    }
     const fallbackShareUrl = buildMerchantBusinessCardShareUrl({
       origin: resolveMerchantBusinessCardShareOrigin(undefined, targetUrl),
       imageUrl: shareImageUrl,
@@ -1371,6 +1368,15 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       name: input.cardName,
       contact: input.contact,
     });
+    if (!shareImageUrl) {
+      if (fallbackShareUrl) {
+        return {
+          shareUrl: fallbackShareUrl,
+          contactUrl: fallbackContactUrl,
+        };
+      }
+      throw new Error("share_image_unavailable");
+    }
     const accessToken = await getShareAccessToken();
     const headers: Record<string, string> = {
       "content-type": "application/json",
