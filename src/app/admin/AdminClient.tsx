@@ -9763,7 +9763,7 @@ type GalleryEditorImage = {
     return (
       <div
         data-editor-panel
-        className={`relative max-w-[calc(100vw-2rem)] rounded-xl border border-white/70 bg-white/72 p-3 shadow-[0_12px_32px_rgba(15,23,42,0.14)] backdrop-blur-md ${selectedEditorPreferredWidth ? "w-full" : "w-max"}`}
+        className={`relative pointer-events-auto max-w-[calc(100vw-2rem)] rounded-xl border border-white/70 bg-white/72 p-3 shadow-[0_12px_32px_rgba(15,23,42,0.14)] backdrop-blur-md ${selectedEditorPreferredWidth ? "w-full" : "w-max"}`}
         style={{
           minWidth: selectedEditorMinWidth,
           width: selectedEditorPreferredWidth,
