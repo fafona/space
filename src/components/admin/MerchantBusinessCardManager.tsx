@@ -564,6 +564,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     [draft.height, draft.width],
   );
   const fullScale = useMemo(() => Math.min(1, 1000 / Math.max(1, draft.width)), [draft.width]);
+  const requiresPreviewBeforeSave = !editingCardId && !hasPreviewed;
   const draftLinkUrl = useMemo(() => {
     if (draft.mode !== "link" || !websiteUrl) return "";
     return buildMerchantBusinessCardShareUrl({
@@ -685,7 +686,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
 
   const handleGenerate = async () => {
     const node = hiddenPreviewRef.current;
-    if (!node || !websiteUrl || !qrCodeUrl || !hasPreviewed) return;
+    if (!node || !websiteUrl || !qrCodeUrl || requiresPreviewBeforeSave) return;
     setIsGenerating(true);
     try {
       const imageUrl = await renderCardNodeToImage(node);
@@ -809,7 +810,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
               <div><div className="text-lg font-semibold text-slate-900">{editingCardId ? "修改名片" : "生成名片"}</div><div className="text-sm text-slate-500">先选择图片模式或链接模式，再调整样式并预览生成。</div></div>
               <div className="flex flex-wrap gap-2">
                 <button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => { setPreviewAsset(null); setHasPreviewed(true); setPreviewOpen(true); }}>预览</button>
-                <button type="button" className="rounded bg-black px-3 py-2 text-sm text-white disabled:opacity-50" onClick={() => { setHasPreviewed(true); void handleGenerate(); }} disabled={!websiteUrl || !qrCodeUrl || isGenerating || !hasPreviewed}>{isGenerating ? (editingCardId ? "保存中..." : "生成中...") : (editingCardId ? "保存修改" : "生成")}</button>
+                <button type="button" className="rounded bg-black px-3 py-2 text-sm text-white disabled:opacity-50" onClick={() => { setHasPreviewed(true); void handleGenerate(); }} disabled={!websiteUrl || !qrCodeUrl || isGenerating || requiresPreviewBeforeSave}>{isGenerating ? (editingCardId ? "保存中..." : "生成中...") : (editingCardId ? "保存修改" : "生成")}</button>
                 <button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => { setEditorOpen(false); setEditingCardId(null); }}>关闭</button>
               </div>
             </div>
@@ -1187,7 +1188,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
                   </section>
                 </div>
               </div>
-              <aside className="min-h-0 overflow-y-auto border-l bg-slate-50 px-4 py-4"><div className="sticky top-0 space-y-3"><div><div className="text-sm font-semibold text-slate-900">实时预览</div><div className="text-xs text-slate-500">先点击“预览”确认样式，再点击“生成”。</div></div><div className="overflow-hidden rounded-2xl border bg-slate-900/5 p-3"><div className="flex justify-center"><CardSurface draft={draft} websiteUrl={websiteUrl} qrCodeUrl={qrCodeUrl} scale={scale} /></div></div><div className="rounded-xl border bg-white px-3 py-2 text-xs text-slate-600">{draft.mode === "link" ? "当前为链接模式：二维码和链接都会进入联系卡，对方手机打开后可保存到通讯录。" : "当前为图片模式：生成后可保存或复制名片图片。"}</div>{!hasPreviewed ? <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">先点击“预览”，再生成名片。</div> : null}</div></aside>
+              <aside className="min-h-0 overflow-y-auto border-l bg-slate-50 px-4 py-4"><div className="sticky top-0 space-y-3"><div><div className="text-sm font-semibold text-slate-900">实时预览</div><div className="text-xs text-slate-500">先点击“预览”确认样式，再点击“生成”。</div></div><div className="overflow-hidden rounded-2xl border bg-slate-900/5 p-3"><div className="flex justify-center"><CardSurface draft={draft} websiteUrl={websiteUrl} qrCodeUrl={qrCodeUrl} scale={scale} /></div></div><div className="rounded-xl border bg-white px-3 py-2 text-xs text-slate-600">{draft.mode === "link" ? "当前为链接模式：二维码和链接都会进入联系卡，对方手机打开后可保存到通讯录。" : "当前为图片模式：生成后可保存或复制名片图片。"}</div>{requiresPreviewBeforeSave ? <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">先点击“预览”，再生成名片。</div> : null}</div></aside>
             </div>
           </div>
         </div>,
