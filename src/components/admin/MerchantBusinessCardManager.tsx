@@ -359,12 +359,15 @@ function CardSurface({
   websiteUrl,
   qrCodeUrl,
   scale,
+  renderMode = "preview",
 }: {
   draft: MerchantBusinessCardDraft;
   websiteUrl: string;
   qrCodeUrl: string;
   scale: number;
+  renderMode?: "preview" | "export";
 }) {
+  const isExport = renderMode === "export";
   const contacts = CONTACT_FIELDS.filter(({ key }) => normalizeText(draft.contacts[key]));
   const websiteText = [draft.websiteLabel, draft.showWebsiteUrl ? websiteUrl.replace(/^https?:\/\//i, "") : ""]
     .map((item) => item.trim())
@@ -381,9 +384,9 @@ function CardSurface({
           transformOrigin: "top left",
           overflow: "hidden",
           borderRadius: "28px",
-          border: "1px solid rgba(15,23,42,.12)",
+          border: isExport ? "none" : "1px solid rgba(15,23,42,.12)",
           background: "transparent",
-          boxShadow: "0 24px 60px rgba(15,23,42,.18)",
+          boxShadow: isExport ? "none" : "0 24px 60px rgba(15,23,42,.18)",
         }}
       >
         <div
@@ -788,7 +791,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
         </div>
       </div>
       {!canCreate ? <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">{`需先完善以下商户信息后才能生成名片：${missingFields.join(" / ")}`}</div> : null}
-      <div className="pointer-events-none fixed left-[-20000px] top-0"><div ref={hiddenPreviewRef}><CardSurface draft={draft} websiteUrl={websiteUrl} qrCodeUrl={qrCodeUrl} scale={1} /></div></div>
+      <div className="pointer-events-none fixed left-[-20000px] top-0"><div ref={hiddenPreviewRef}><CardSurface draft={draft} websiteUrl={websiteUrl} qrCodeUrl={qrCodeUrl} scale={1} renderMode="export" /></div></div>
 
       {editorOpen ? overlay(
         <div
