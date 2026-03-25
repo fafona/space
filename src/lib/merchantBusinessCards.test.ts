@@ -48,6 +48,7 @@ test("default business card draft prefills merchant profile fields", () => {
   assert.deepEqual(draft.customTexts, []);
   assert.equal(draft.contacts.contactName, "felix");
   assert.equal(draft.contacts.phone, "0034633130577");
+  assert.deepEqual(draft.contacts.phones, ["0034633130577"]);
   assert.equal(draft.contacts.email, "caimin00x@gmail.com");
   assert.equal(draft.contacts.address, "C. Transporte, 12 / Sevilla / Sevilla / Spain");
   assert.equal(draft.fieldTypography.merchantName.fontSize, 36);
@@ -59,10 +60,16 @@ test("normalizeMerchantBusinessCardDraft preserves link mode", () => {
   const draft = normalizeMerchantBusinessCardDraft({
     mode: "link",
     name: "fafona card",
+    contacts: {
+      phone: "111",
+      phones: ["111", "222"],
+    },
   });
 
   assert.equal(draft.mode, "link");
   assert.equal(draft.name, "fafona card");
+  assert.equal(draft.contacts.phone, "111");
+  assert.deepEqual(draft.contacts.phones, ["111", "222"]);
 });
 
 test("normalizeMerchantBusinessCardDraft allows empty website label", () => {
@@ -157,6 +164,7 @@ test("normalizeMerchantBusinessCards keeps only valid generated card assets", ()
       contacts: {
         contactName: "felix",
         phone: "123",
+        phones: ["123", "456"],
         email: "a@example.com",
         address: "Sevilla",
         wechat: "",
@@ -260,4 +268,5 @@ test("normalizeMerchantBusinessCards keeps only valid generated card assets", ()
   assert.equal(cards[0]?.customTexts.length, 1);
   assert.equal(cards[0]?.customTexts[0]?.text, "VIP only");
   assert.equal(cards[0]?.contacts.address, "Sevilla");
+  assert.deepEqual(cards[0]?.contacts.phones, ["123", "456"]);
 });

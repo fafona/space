@@ -43,7 +43,9 @@ type MerchantBusinessCardManagerProps = {
   onCardsChange: (cards: MerchantBusinessCardAsset[]) => void;
 };
 
-const CONTACT_FIELDS: Array<{ key: keyof MerchantBusinessCardDraft["contacts"]; label: string }> = [
+type MerchantBusinessCardEditableContactFieldKey = Exclude<keyof MerchantBusinessCardDraft["contacts"], "phones">;
+
+const CONTACT_FIELDS: Array<{ key: MerchantBusinessCardEditableContactFieldKey; label: string }> = [
   { key: "contactName", label: "联系人" },
   { key: "phone", label: "电话" },
   { key: "email", label: "邮箱" },
@@ -321,6 +323,21 @@ function sanitizeShareAssetHint(value: string) {
   );
 }
 
+function normalizePhoneList(values: string[]) {
+  return values.map((item) => normalizeText(item)).filter(Boolean);
+}
+
+function resolveDraftPhoneValues(contacts: MerchantBusinessCardDraft["contacts"]) {
+  const fromArray = normalizePhoneList(Array.isArray(contacts.phones) ? contacts.phones : []);
+  if (fromArray.length > 0) return fromArray;
+  const fallback = normalizeText(contacts.phone);
+  return fallback ? [fallback] : [""];
+}
+
+function buildPhoneContactValue(contacts: MerchantBusinessCardDraft["contacts"]) {
+  return normalizePhoneList(resolveDraftPhoneValues(contacts)).join(" / ");
+}
+
 function typographyStyle(
   style: MerchantBusinessCardDraft["fieldTypography"][MerchantBusinessCardFieldKey],
 ): CSSProperties {
@@ -424,7 +441,9 @@ function CardSurface({
               ...typographyStyle(draft.fieldTypography[key]),
             }}
           >
-            {key === "contactName" ? draft.contacts[key] : `${label}: ${draft.contacts[key]}`}
+            {key === "contactName"
+              ? draft.contacts[key]
+              : `${label}: ${key === "phone" ? buildPhoneContactValue(draft.contacts) : draft.contacts[key]}`}
           </div>
         ))}
         {draft.customTexts
@@ -520,6 +539,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
   const selectedTypography = selectedCustomText
     ? selectedCustomText.typography
     : draft.fieldTypography[primarySelectedFieldKey as MerchantBusinessCardFieldKey];
+  const contactPhoneEditorValues = useMemo(() => resolveDraftPhoneValues(draft.contacts), [draft.contacts]);
   const positionEditorItems = useMemo(
     () => [
       ...TEXT_LAYOUT_FIELDS.map((item) => ({
@@ -714,6 +734,18 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     } finally {
       event.target.value = "";
     }
+  };
+
+  const updateDraftPhones = (nextPhones: string[]) => {
+    const normalizedPhones = normalizePhoneList(nextPhones);
+    applyDraft((current) => ({
+      ...current,
+      contacts: {
+        ...current.contacts,
+        phone: normalizedPhones[0] ?? "",
+        phones: normalizedPhones,
+      },
+    }));
   };
 
   const deleteCard = (card: MerchantBusinessCardAsset) => {
@@ -928,7 +960,62 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
                   </section>
                   <section className="space-y-3 rounded-xl border bg-slate-50 p-4 xl:col-span-2">
                     <div className="text-sm font-semibold text-slate-900">联系方式</div>
-                    <div className="grid gap-3 md:grid-cols-2">{CONTACT_FIELDS.map(({ key, label }) => <label key={key} className="block text-xs text-slate-600">{label}<input className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.contacts[key]} onFocus={() => setSingleSelectedField(key)} onChange={(event) => applyDraft((current) => ({ ...current, contacts: { ...current.contacts, [key]: event.target.value } }))} placeholder={`请输入${label}`} /></label>)}</div>
+                    <div className="rounded-xl border bg-white p-3">
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <div className="text-xs font-medium text-slate-700">电话（可增加）</div>
+                        <button
+                          type="button"
+                          className="rounded border bg-white px-2 py-1 text-xs hover:bg-slate-50"
+                          onClick={() => updateDraftPhones([...contactPhoneEditorValues, ""])}
+                        >
+                          增加电话
+                        </button>
+                      </div>
+                      <div className="space-y-2">
+                        {contactPhoneEditorValues.map((phone, index) => (
+                          <div key={`phone-${index}`} className="flex items-center gap-2">
+                            <input
+                              className="w-full rounded border bg-white px-3 py-2 text-sm"
+                              value={phone}
+                              onFocus={() => setSingleSelectedField("phone")}
+                              onChange={(event) => {
+                                const next = [...contactPhoneEditorValues];
+                                next[index] = event.target.value;
+                                updateDraftPhones(next);
+                              }}
+                              placeholder={`请输入电话${contactPhoneEditorValues.length > 1 ? index + 1 : ""}`}
+                            />
+                            <button
+                              type="button"
+                              className="rounded border bg-white px-2 py-2 text-xs hover:bg-slate-50 disabled:opacity-50"
+                              onClick={() => {
+                                const next = contactPhoneEditorValues.filter((_, removeIndex) => removeIndex !== index);
+                                updateDraftPhones(next.length > 0 ? next : [""]);
+                              }}
+                              disabled={contactPhoneEditorValues.length <= 1}
+                            >
+                              删除
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      {CONTACT_FIELDS.filter(({ key }) => key !== "phone").map(({ key, label }) => (
+                        <label key={key} className="block text-xs text-slate-600">
+                          {label}
+                          <input
+                            className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm"
+                            value={draft.contacts[key]}
+                            onFocus={() => setSingleSelectedField(key)}
+                            onChange={(event) =>
+                              applyDraft((current) => ({ ...current, contacts: { ...current.contacts, [key]: event.target.value } }))
+                            }
+                            placeholder={`请输入${label}`}
+                          />
+                        </label>
+                      ))}
+                    </div>
                   </section>
                   <section className="space-y-3 rounded-xl border bg-slate-50 p-4 xl:col-span-2">
                     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1754,6 +1841,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     contacts: MerchantBusinessCardDraft["contacts"];
     targetUrl: string;
   }) {
+    const extraPhoneLines = normalizePhoneList(input.contacts.phones ?? []).slice(1).map((value, index) => `电话${index + 2}: ${value}`);
     const socialLines = [
       ["微信", input.contacts.wechat],
       ["WhatsApp", input.contacts.whatsapp],
@@ -1772,16 +1860,19 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
         return normalizedValue ? `${label}: ${normalizedValue}` : "";
       })
       .filter(Boolean);
+    const primaryPhone =
+      normalizePhoneList(input.contacts.phones ?? [input.contacts.phone])[0] || normalizeText(input.contacts.phone);
 
     return {
       displayName: normalizeText(input.contacts.contactName) || normalizeText(input.name),
       organization: normalizeText(input.name),
       title: normalizeText(input.title),
-      phone: normalizeText(input.contacts.phone),
+      phone: primaryPhone,
+      phones: normalizePhoneList(input.contacts.phones ?? []),
       email: normalizeText(input.contacts.email),
       address: normalizeText(input.contacts.address),
       websiteUrl: normalizeText(input.targetUrl),
-      note: socialLines.join("\n"),
+      note: [...extraPhoneLines, ...socialLines].join("\n"),
     };
   }
 

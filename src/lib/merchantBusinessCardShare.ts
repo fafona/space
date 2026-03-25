@@ -25,6 +25,7 @@ export type MerchantBusinessCardShareContact = {
   organization?: string;
   title?: string;
   phone?: string;
+  phones?: string[];
   email?: string;
   address?: string;
   websiteUrl?: string;
@@ -42,6 +43,12 @@ function clampImageDimension(value: unknown) {
 
 function clampContactText(value: unknown, maxLength: number) {
   return normalizeText(value).slice(0, maxLength);
+}
+
+function normalizeContactPhoneList(value: unknown) {
+  return Array.isArray(value)
+    ? value.map((item) => clampContactText(item, 80)).filter(Boolean)
+    : [];
 }
 
 function isLocalHost(hostname: string) {
@@ -236,6 +243,9 @@ export function normalizeMerchantBusinessCardShareContact(
       : {}),
     ...(clampContactText(source.phone, 80)
       ? { phone: clampContactText(source.phone, 80) }
+      : {}),
+    ...(normalizeContactPhoneList(source.phones).length > 0
+      ? { phones: normalizeContactPhoneList(source.phones) }
       : {}),
     ...(clampContactText(source.email, 160)
       ? { email: clampContactText(source.email, 160) }
@@ -451,6 +461,13 @@ export function buildMerchantBusinessCardVCard(payload: MerchantBusinessCardShar
   }
   if (contact?.phone) {
     lines.push(`TEL;TYPE=CELL:${escapeVCardValue(contact.phone)}`);
+  }
+  if (contact?.phones?.length) {
+    contact.phones
+      .filter((value) => value && value !== contact.phone)
+      .forEach((value) => {
+        lines.push(`TEL;TYPE=WORK:${escapeVCardValue(value)}`);
+      });
   }
   if (contact?.email) {
     lines.push(`EMAIL;TYPE=INTERNET:${escapeVCardValue(contact.email)}`);

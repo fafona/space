@@ -189,6 +189,7 @@ type ContactProps = BackgroundEditableProps &
   TypographyEditableProps & {
     heading: string;
     phone: string;
+    phones?: string[];
     address: string;
     addresses?: string[];
     mapZoom?: number;

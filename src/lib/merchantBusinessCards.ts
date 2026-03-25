@@ -59,6 +59,7 @@ export type MerchantBusinessCardCustomText = {
 export type MerchantBusinessCardContacts = {
   contactName: string;
   phone: string;
+  phones: string[];
   email: string;
   address: string;
   wechat: string;
@@ -254,6 +255,7 @@ export function createDefaultMerchantBusinessCardDraft(
     contacts: {
       contactName: normalizeText(profile.contactName),
       phone: normalizeText(profile.contactPhone),
+      phones: normalizeText(profile.contactPhone) ? [normalizeText(profile.contactPhone)] : [],
       email: normalizeText(profile.contactEmail),
       address: buildMerchantBusinessCardAddress(profile),
       wechat: "",
@@ -369,7 +371,18 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
     showWebsiteUrl: normalizeBoolean(source.showWebsiteUrl, fallback.showWebsiteUrl),
     contacts: {
       contactName: normalizeText(source.contacts?.contactName),
-      phone: normalizeText(source.contacts?.phone),
+      phone:
+        (Array.isArray((source.contacts as { phones?: unknown } | undefined)?.phones)
+          ? ((source.contacts as { phones?: unknown[] } | undefined)?.phones ?? [])
+              .map((item) => normalizeText(item))
+              .find(Boolean)
+          : "") || normalizeText(source.contacts?.phone),
+      phones:
+        (Array.isArray((source.contacts as { phones?: unknown } | undefined)?.phones)
+          ? ((source.contacts as { phones?: unknown[] } | undefined)?.phones ?? [])
+              .map((item) => normalizeText(item))
+              .filter(Boolean)
+          : []) || [],
       email: normalizeText(source.contacts?.email),
       address: normalizeText(source.contacts?.address),
       wechat: normalizeText(source.contacts?.wechat),

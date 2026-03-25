@@ -5346,6 +5346,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       props: {
         heading: "联系方式",
         phone: "",
+        phones: [],
         address: "",
         addresses: [],
         mapZoom: 5,
@@ -16908,6 +16909,15 @@ type GalleryEditorImage = {
       | "facebook"
       | "instagram";
     const contactLayout = block.props.contactLayout ?? {};
+    const contactPhoneEditorValues = (() => {
+      const fromArray = Array.isArray(block.props.phones)
+        ? block.props.phones.map((item) => toPlainText(String(item ?? ""), ""))
+        : [];
+      if (fromArray.length > 0) return fromArray;
+      const fallback = toPlainText(block.props.phone, "").trim();
+      return fallback ? [fallback] : [""];
+    })();
+    const contactPhones = contactPhoneEditorValues.map((item) => item.trim()).filter(Boolean);
     const contactAddressEditorValues = (() => {
       const fromArray = Array.isArray(block.props.addresses)
         ? block.props.addresses.map((item) => toPlainText(String(item ?? ""), ""))
@@ -16918,7 +16928,7 @@ type GalleryEditorImage = {
     })();
     const contactAddresses = contactAddressEditorValues.map((item) => item.trim()).filter(Boolean);
     const contactEntries = [
-      { key: "phone", label: "电话", value: toPlainText(block.props.phone, ""), platformLabel: "Phone" },
+      { key: "phone", label: "电话", value: contactPhones.join(" / "), platformLabel: "Phone" },
       { key: "email", label: "Email", value: (block.props.email ?? "").trim(), platformLabel: "Email" },
       { key: "whatsapp", label: "WhatsApp", value: (block.props.whatsapp ?? "").trim(), platformLabel: "WhatsApp" },
       { key: "wechat", label: "WeChat", value: (block.props.wechat ?? "").trim(), platformLabel: "WeChat" },
@@ -17260,6 +17270,14 @@ type GalleryEditorImage = {
         addresses: normalized.length > 0 ? normalized : [""],
       });
     };
+    const updateContactPhones = (nextRawPhones: string[]) => {
+      const normalized = nextRawPhones.map((item) => item.replace(/\r?\n/g, " ").trim());
+      const filtered = normalized.filter(Boolean);
+      onChange({
+        phone: filtered[0] ?? "",
+        phones: normalized.length > 0 ? normalized : [""],
+      });
+    };
     return (
       <section
         data-block-id={block.id}
@@ -17306,12 +17324,46 @@ type GalleryEditorImage = {
                 />
               </div>
               <div className="space-y-1 mt-3">
-                <input
-                  className="border p-2 rounded w-full text-gray-700"
-                  value={toPlainText(block.props.phone ?? "", "")}
-                  placeholder="电话号码"
-                  onChange={(event) => onChange({ phone: event.target.value })}
-                />
+                <div className="border rounded p-2 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-sm text-gray-700">电话列表（可增加）</div>
+                    <button
+                      type="button"
+                      className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50"
+                      onClick={() => updateContactPhones([...contactPhoneEditorValues, ""])}
+                    >
+                      添加电话
+                    </button>
+                  </div>
+                  {contactPhoneEditorValues.length > 0 ? (
+                    contactPhoneEditorValues.map((phone, idx) => (
+                      <div key={`contact-phone-${idx}`} className="flex items-center gap-2">
+                        <input
+                          className="border p-2 rounded text-sm flex-1"
+                          value={phone}
+                          placeholder={`电话${idx + 1}`}
+                          onChange={(e) => {
+                            const next = [...contactPhoneEditorValues];
+                            next[idx] = e.target.value;
+                            updateContactPhones(next);
+                          }}
+                        />
+                        <button
+                          type="button"
+                          className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50"
+                          onClick={() => {
+                            const next = contactPhoneEditorValues.filter((_, removeIdx) => removeIdx !== idx);
+                            updateContactPhones(next.length > 0 ? next : [""]);
+                          }}
+                        >
+                          删除
+                        </button>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-xs text-gray-500">暂无电话，点击“添加电话”</div>
+                  )}
+                </div>
               </div>
               <div className="space-y-1 mt-3">
                 <div className="border rounded p-2 space-y-2">

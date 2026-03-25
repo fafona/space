@@ -28,6 +28,7 @@ type ContactBlockProps = BackgroundEditableProps &
   TypographyEditableProps & {
   heading?: string;
   phone?: string;
+  phones?: string[];
   address?: string;
   addresses?: string[];
   mapZoom?: number;
@@ -72,6 +73,10 @@ function htmlToPlainText(value: string) {
     .replace(/&quot;/gi, '"')
     .replace(/&#39;/gi, "'")
     .trim();
+}
+
+function normalizeContactList(values?: string[]) {
+  return Array.isArray(values) ? values.map((item) => htmlToPlainText(String(item ?? ""))).filter(Boolean) : [];
 }
 
 function buildPhoneHref(rawPhone?: string) {
@@ -261,13 +266,18 @@ export default function ContactBlock(props: ContactBlockProps) {
   const mapEmbedUrl = addressText
     ? `https://www.google.com/maps?output=embed&hl=zh-CN&z=${mapZoom}&t=${mapType}&q=${encodeURIComponent(mapQuery)}`
     : null;
+  const phoneList = normalizeContactList(props.phones);
+  const fallbackPhone = htmlToPlainText(props.phone ?? "");
+  const resolvedPhoneList = phoneList.length > 0 ? phoneList : fallbackPhone ? [fallbackPhone] : [];
+  const phoneText = resolvedPhoneList.join(" / ");
+  const primaryPhone = resolvedPhoneList[0] ?? "";
 
   const entries: ContactEntry[] = [
     {
       key: "phone" as ContactLayoutKey,
       label: "电话",
-      value: htmlToPlainText(props.phone ?? ""),
-      href: buildPhoneHref(props.phone),
+      value: phoneText,
+      href: buildPhoneHref(primaryPhone),
       iconUrl: "",
       buttonClass: "inline-flex h-8 w-8 items-center justify-center rounded-full bg-[#007AFF] text-white shadow-sm hover:bg-[#0066D6]",
     },

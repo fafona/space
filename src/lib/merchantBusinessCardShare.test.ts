@@ -156,6 +156,7 @@ test("normalizeMerchantBusinessCardShareContact keeps useful contact fields and 
         displayName: " Felix ",
         organization: " fafona ",
         phone: " 633130577 ",
+        phones: [" 633130577 ", " 666888999 "],
         note: " WeChat: felix ",
       },
       "https://fafona.faolla.com",
@@ -164,6 +165,7 @@ test("normalizeMerchantBusinessCardShareContact keeps useful contact fields and 
       displayName: "Felix",
       organization: "fafona",
       phone: "633130577",
+      phones: ["633130577", "666888999"],
       websiteUrl: "https://fafona.faolla.com/",
       note: "WeChat: felix",
     },
@@ -201,6 +203,7 @@ test("business card contact helpers build downloadable vcard links and content",
       organization: "fafona",
       title: "Manager",
       phone: "633130577",
+      phones: ["633130577", "666888999"],
       email: "caimin00x@gmail.com",
       address: "C. Transporte, 12 / Sevilla / Spain",
       websiteUrl: "https://fafona.faolla.com/",
@@ -232,6 +235,7 @@ test("business card contact helpers build downloadable vcard links and content",
   assert.ok(vcard.includes("BEGIN:VCARD"));
   assert.ok(vcard.includes("FN:Felix"));
   assert.ok(vcard.includes("ORG:fafona"));
+  assert.ok(vcard.includes("TEL;TYPE=WORK:666888999"));
   assert.ok(vcard.includes("URL:https://fafona.faolla.com/"));
   assert.ok(vcard.includes("NOTE:WhatsApp: felix"));
 });
