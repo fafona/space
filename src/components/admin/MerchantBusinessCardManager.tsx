@@ -282,6 +282,27 @@ async function copyImageToClipboard(sourceImageUrl: string) {
   await copyImageViaLegacyClipboard(blob);
 }
 
+function looksLikeMobileBrowser() {
+  if (typeof navigator === "undefined") return false;
+  return /android|iphone|ipad|ipod|mobile|micromessenger|wechat/i.test(navigator.userAgent);
+}
+
+function parseDownloadFileName(contentDisposition: string | null, fallback: string) {
+  const utf8Match = contentDisposition?.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch {
+      return fallback;
+    }
+  }
+  const asciiMatch = contentDisposition?.match(/filename="([^"]+)"/i);
+  if (asciiMatch?.[1]) {
+    return asciiMatch[1];
+  }
+  return fallback;
+}
+
 function sanitizeShareAssetHint(value: string) {
   return (
     normalizeText(value)
@@ -1645,7 +1666,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
         setTip("联系人下载地址生成失败，请重试");
         return;
       }
-      openContactDownload(contactUrl);
+      await openContactDownload(contactUrl, normalizeText(draft.contacts.contactName) || normalizeText(draft.name));
       setTip("联系人已开始下载");
     } catch {
       setTip("下载失败，请重试");
@@ -1678,21 +1699,43 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
         setTip("联系人下载地址生成失败，请重试");
         return;
       }
-      openContactDownload(contactUrl);
+      await openContactDownload(contactUrl, normalizeText(card.contacts.contactName) || normalizeText(card.name));
       setTip("联系人已开始下载");
     } catch {
       setTip("下载失败，请重试");
     }
   }
 
-  function openContactDownload(url: string) {
+  async function openContactDownload(url: string, fallbackName: string) {
+    if (looksLikeMobileBrowser()) {
+      const link = document.createElement("a");
+      link.href = url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      return;
+    }
+
+    const response = await fetch(url, {
+      credentials: "same-origin",
+    });
+    if (!response.ok) {
+      throw new Error("contact_download_failed");
+    }
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
     const link = document.createElement("a");
-    link.href = url;
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
+    link.href = objectUrl;
+    link.download = parseDownloadFileName(
+      response.headers.get("content-disposition"),
+      `${(fallbackName || "contact").replace(/[\\/:*?\"<>|]+/g, "").trim() || "contact"}.vcf`,
+    );
     document.body.appendChild(link);
     link.click();
     link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
   }
 
   function buildShareContactPayload(input: {
