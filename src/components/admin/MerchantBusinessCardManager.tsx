@@ -693,64 +693,18 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
   };
 
   const handleGenerate = async () => {
-    const node = hiddenPreviewRef.current;
-    if (!node || !websiteUrl || !qrCodeUrl || requiresPreviewBeforeSave) return;
+    if (!websiteUrl || !qrCodeUrl || requiresPreviewBeforeSave) return;
     setIsGenerating(true);
     try {
-      const imageUrl = await renderCardNodeToImage(node);
-      const nextDraft = normalizeMerchantBusinessCardDraft(draft);
-      const existingCard = editingCardId ? cards.find((card) => card.id === editingCardId) ?? null : null;
-      const resolvedShareKey =
-        nextDraft.mode === "link"
-          ? normalizeText(existingCard?.shareKey) || normalizeText(draftShareKey) || createShareKey()
-          : "";
-      const shareContactPayload =
-        nextDraft.mode === "link"
-          ? buildShareContactPayload({
-              name: nextDraft.name,
-              title: nextDraft.title,
-              contacts: nextDraft.contacts,
-              targetUrl: websiteUrl,
-            })
-          : undefined;
-      const shareBundle =
-        nextDraft.mode === "link"
-          ? await buildShareBundle({
-              targetUrl: websiteUrl,
-              cardName: normalizeText(nextDraft.name) || "商户名片",
-              shareKey: resolvedShareKey,
-              card: existingCard,
-              renderedImageUrl: imageUrl,
-              contactPageImageUrl: normalizeText(nextDraft.contactPageImageUrl),
-              imageWidth: nextDraft.width,
-              imageHeight: nextDraft.height,
-              contact: shareContactPayload,
-            })
-          : null;
-      const asset: MerchantBusinessCardAsset = {
-        ...nextDraft,
-        id: existingCard?.id ?? createId("business-card"),
-        createdAt: existingCard?.createdAt ?? new Date().toISOString(),
-        imageUrl,
-        ...(nextDraft.mode === "link" && (shareBundle?.shareImageUrl || existingCard?.shareImageUrl)
-          ? { shareImageUrl: shareBundle?.shareImageUrl || existingCard?.shareImageUrl }
-          : {}),
-        ...(nextDraft.mode === "link" && (shareBundle?.detailImageUrl || existingCard?.contactPagePublicImageUrl)
-          ? { contactPagePublicImageUrl: shareBundle?.detailImageUrl || existingCard?.contactPagePublicImageUrl }
-          : {}),
-        ...(nextDraft.mode === "link" && resolvedShareKey ? { shareKey: resolvedShareKey } : {}),
-        targetUrl: websiteUrl,
-      };
-      onCardsChange(
-        existingCard
-          ? cards.map((card) => (card.id === existingCard.id ? asset : card))
-          : [asset, ...cards],
-      );
-      setEditingCardId(asset.id);
+      const asset = await saveCurrentDraftToFolder();
+      if (!asset) {
+        setTip("名片生成失败，请重试");
+        return;
+      }
       setEditorOpen(false);
       setFolderOpen(true);
       setPreviewAsset(asset);
-      setTip(existingCard ? "名片已更新并保存到名片夹" : "名片已生成并保存到名片夹");
+      setTip(editingCardId ? "名片已更新并保存到名片夹" : "名片已生成并保存到名片夹");
     } catch {
       setTip("名片生成失败，请重试");
     } finally {
@@ -1697,16 +1651,73 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     };
   }
 
+  async function saveCurrentDraftToFolder() {
+    const node = hiddenPreviewRef.current;
+    if (!node || !websiteUrl || !qrCodeUrl) return null;
+
+    const imageUrl = await renderCardNodeToImage(node);
+    const nextDraft = normalizeMerchantBusinessCardDraft(draft);
+    const existingCard = editingCardId ? cards.find((card) => card.id === editingCardId) ?? null : null;
+    const resolvedShareKey =
+      nextDraft.mode === "link"
+        ? normalizeText(existingCard?.shareKey) || normalizeText(draftShareKey) || createShareKey()
+        : "";
+    const shareContactPayload =
+      nextDraft.mode === "link"
+        ? buildShareContactPayload({
+            name: nextDraft.name,
+            title: nextDraft.title,
+            contacts: nextDraft.contacts,
+            targetUrl: websiteUrl,
+          })
+        : undefined;
+    const shareBundle =
+      nextDraft.mode === "link"
+        ? await buildShareBundle({
+            targetUrl: websiteUrl,
+            cardName: normalizeText(nextDraft.name) || "商户名片",
+            shareKey: resolvedShareKey,
+            card: existingCard,
+            renderedImageUrl: imageUrl,
+            contactPageImageUrl: normalizeText(nextDraft.contactPageImageUrl),
+            imageWidth: nextDraft.width,
+            imageHeight: nextDraft.height,
+            contact: shareContactPayload,
+          })
+        : null;
+    const asset: MerchantBusinessCardAsset = {
+      ...nextDraft,
+      id: existingCard?.id ?? createId("business-card"),
+      createdAt: existingCard?.createdAt ?? new Date().toISOString(),
+      imageUrl,
+      ...(nextDraft.mode === "link" && (shareBundle?.shareImageUrl || existingCard?.shareImageUrl)
+        ? { shareImageUrl: shareBundle?.shareImageUrl || existingCard?.shareImageUrl }
+        : {}),
+      ...(nextDraft.mode === "link" && (shareBundle?.detailImageUrl || existingCard?.contactPagePublicImageUrl)
+        ? { contactPagePublicImageUrl: shareBundle?.detailImageUrl || existingCard?.contactPagePublicImageUrl }
+        : {}),
+      ...(nextDraft.mode === "link" && resolvedShareKey ? { shareKey: resolvedShareKey } : {}),
+      targetUrl: websiteUrl,
+    };
+
+    onCardsChange(
+      existingCard
+        ? cards.map((card) => (card.id === existingCard.id ? asset : card))
+        : [asset, ...cards],
+    );
+    setEditingCardId(asset.id);
+    return asset;
+  }
+
   async function copyPreviewImage() {
     try {
-      const node = hiddenPreviewRef.current;
-      if (!node) {
+      const asset = await saveCurrentDraftToFolder();
+      if (!asset) {
         setTip("请先预览名片后再复制");
         return;
       }
-      const renderedImageUrl = await renderCardNodeToImage(node);
-      await copyImageToClipboard(renderedImageUrl);
-      setTip("名片图片已复制，可直接发送");
+      await copyImageToClipboard(asset.imageUrl);
+      setTip("名片图片已复制，并已保存到名片夹");
     } catch {
       setTip("复制失败，请重试");
     }
@@ -1729,29 +1740,28 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     }
 
     try {
-      const node = hiddenPreviewRef.current;
-      if (!node) {
+      const asset = await saveCurrentDraftToFolder();
+      if (!asset) {
         setTip("请先预览名片后再复制");
         return;
       }
-      const renderedImageUrl = await renderCardNodeToImage(node);
       const { shareUrl } = await buildShareBundle({
         targetUrl: normalizedUrl,
-        cardName: normalizeText(draft.name) || "商户名片",
-        shareKey: draftShareKey,
-        renderedImageUrl,
-        contactPageImageUrl: normalizeText(draft.contactPageImageUrl),
-        imageWidth: draft.width,
-        imageHeight: draft.height,
+        cardName: normalizeText(asset.name) || "商户名片",
+        shareKey: normalizeText(asset.shareKey),
+        card: asset,
+        contactPageImageUrl: normalizeText(asset.contactPageImageUrl),
+        imageWidth: asset.width,
+        imageHeight: asset.height,
         contact: buildShareContactPayload({
-          name: draft.name,
-          title: draft.title,
-          contacts: draft.contacts,
+          name: asset.name,
+          title: asset.title,
+          contacts: asset.contacts,
           targetUrl: normalizedUrl,
         }),
       });
       await copyTextToClipboard(shareUrl);
-      setTip("联系卡链接已复制，手机打开后可保存联系人");
+      setTip("联系卡链接已复制，并已保存到名片夹");
     } catch {
       setTip("复制失败，请重试");
     }
@@ -1793,24 +1803,23 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       return;
     }
     try {
-      const node = hiddenPreviewRef.current;
-      if (!node) {
+      const asset = await saveCurrentDraftToFolder();
+      if (!asset) {
         setTip("请先预览名片后再下载联系人");
         return;
       }
-      const renderedImageUrl = await renderCardNodeToImage(node);
       const { contactUrl } = await buildShareBundle({
         targetUrl: normalizedUrl,
-        cardName: normalizeText(draft.name) || "商户名片",
-        shareKey: draftShareKey,
-        renderedImageUrl,
-        contactPageImageUrl: normalizeText(draft.contactPageImageUrl),
-        imageWidth: draft.width,
-        imageHeight: draft.height,
+        cardName: normalizeText(asset.name) || "商户名片",
+        shareKey: normalizeText(asset.shareKey),
+        card: asset,
+        contactPageImageUrl: normalizeText(asset.contactPageImageUrl),
+        imageWidth: asset.width,
+        imageHeight: asset.height,
         contact: buildShareContactPayload({
-          name: draft.name,
-          title: draft.title,
-          contacts: draft.contacts,
+          name: asset.name,
+          title: asset.title,
+          contacts: asset.contacts,
           targetUrl: normalizedUrl,
         }),
       });
@@ -1818,8 +1827,8 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
         setTip("联系人下载地址生成失败，请重试");
         return;
       }
-      await openContactDownload(contactUrl, normalizeText(draft.contacts.contactName) || normalizeText(draft.name));
-      setTip("联系人已开始下载");
+      await openContactDownload(contactUrl, normalizeText(asset.contacts.contactName) || normalizeText(asset.name));
+      setTip("联系人已开始下载，并已保存到名片夹");
     } catch {
       setTip("下载失败，请重试");
     }
