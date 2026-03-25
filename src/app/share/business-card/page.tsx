@@ -33,25 +33,40 @@ function looksLikeMobileRequest(requestHeaders: Headers) {
 }
 
 function renderContactSummary(payload: NonNullable<Awaited<ReturnType<typeof resolveMerchantBusinessCardSharePayload>>>) {
-  const rows = [
-    payload.contact?.displayName ? { label: "联系人", value: payload.contact.displayName } : null,
-    payload.contact?.phone ? { label: "电话", value: payload.contact.phone } : null,
-    payload.contact?.email ? { label: "邮箱", value: payload.contact.email } : null,
-    payload.contact?.address ? { label: "地址", value: payload.contact.address } : null,
-  ].filter(Boolean) as Array<{ label: string; value: string }>;
+  const primaryRows = [
+    payload.contact?.title || "",
+    payload.contact?.displayName || "",
+    payload.contact?.phone || "",
+    payload.contact?.phones?.filter(Boolean).join(" / ") || "",
+    payload.contact?.email || "",
+    payload.contact?.address || "",
+  ].filter(Boolean);
+  const extraRows = (payload.contact?.note || "")
+    .split("\n")
+    .map((row) => row.trim())
+    .filter(Boolean);
 
-  if (rows.length === 0) return null;
+  if (primaryRows.length === 0 && extraRows.length === 0) return null;
 
   return (
-    <div className="mt-5 rounded-[28px] border border-slate-200 bg-slate-50 p-5 shadow-[0_16px_42px_rgba(15,23,42,.08)]">
-      <div className="text-base font-semibold text-slate-900">联系人信息</div>
-      <div className="mt-4 space-y-3 text-sm text-slate-700">
-        {rows.map((row) => (
-          <div key={row.label}>
-            <span className="font-medium text-slate-900">{row.label}：</span>
-            <span>{row.value}</span>
+    <div className="mt-5 rounded-[28px] border border-slate-200 bg-slate-50 p-6 shadow-[0_16px_42px_rgba(15,23,42,.08)]">
+      <div className="space-y-4 text-slate-800">
+        {primaryRows.map((row, index) => (
+          <div
+            key={`${index}-${row}`}
+            className={index < 2 ? "text-[15px] font-medium leading-7 text-slate-900" : "text-sm leading-7 text-slate-700"}
+          >
+            {row}
           </div>
         ))}
+
+        {extraRows.length > 0 ? (
+          <div className="grid gap-x-6 gap-y-2 pt-1 text-sm leading-7 text-slate-700 sm:grid-cols-2">
+            {extraRows.map((row) => (
+              <div key={row}>{row}</div>
+            ))}
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -178,7 +193,6 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
       targetUrl: payload.targetUrl,
       contact: payload.contact,
     });
-  const hostLabel = payload.targetUrl.replace(/^https?:\/\//i, "").replace(/\/+$/g, "");
   const desktopQrCodeUrl =
     !isMobileRequest && shareUrl
       ? await QRCode.toDataURL(shareUrl, {
@@ -192,10 +206,8 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
     <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(255,255,255,.96),_rgba(247,239,227,1)_58%,_rgba(229,218,200,1))] px-5 py-8 text-slate-900 sm:px-6 sm:py-10">
       <section className="mx-auto w-full max-w-xl rounded-[32px] border border-white/70 bg-white/90 p-5 shadow-[0_28px_90px_rgba(15,23,42,.12)] backdrop-blur sm:p-6">
         <div className="mb-4">
-          <div className="text-xs font-medium uppercase tracking-[0.24em] text-slate-400">Business Card</div>
-          <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">{title}</h1>
-          <p className="mt-2 text-sm leading-6 text-slate-600">{description}</p>
-          <div className="mt-2 text-base text-slate-700">{hostLabel}</div>
+          <div className="text-xs font-medium uppercase tracking-[0.24em] text-slate-400">FAOLLA CARD</div>
+          <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">{payload.name || title}</h1>
         </div>
 
         {payload.detailImageUrl ? (
@@ -209,10 +221,6 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
 
         {isMobileRequest ? (
           <>
-            <div className="mt-5 rounded-[28px] border border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-6 text-slate-700">
-              手机打开后不会自动跳转。需要保存联系人时，再点击下面的“一键保存到通讯录”。
-            </div>
-
             <div className="mt-5 flex flex-col gap-3 sm:flex-row">
               {contactUrl ? (
                 <a

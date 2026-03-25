@@ -553,14 +553,13 @@ export async function resolveMerchantBusinessCardSharePayload(
 
 export function buildMerchantBusinessCardShareTitle(name: string) {
   const normalized = normalizeText(name);
-  return normalized ? `${normalized} 名片` : "商户名片";
+  return normalized || "FAOLLA CARD";
 }
 
 export function buildMerchantBusinessCardShareDescription(name: string, targetUrl: string) {
   const normalizedName = normalizeText(name);
   const hostLabel = buildTargetHostLabel(targetUrl);
-  if (normalizedName && hostLabel) return `点击打开 ${normalizedName} 的网站 ${hostLabel}`;
-  if (normalizedName) return `点击打开 ${normalizedName} 的网站`;
-  if (hostLabel) return `点击打开网站 ${hostLabel}`;
-  return "点击打开商户网站";
+  if (normalizedName) return `${normalizedName} | FAOLLA CARD`;
+  if (hostLabel) return `${hostLabel} | FAOLLA CARD`;
+  return "FAOLLA CARD";
 }

@@ -183,10 +183,10 @@ test("normalizeMerchantBusinessCardShareImageUrl rewrites localhost storage urls
 });
 
 test("share metadata helpers build readable defaults", () => {
-  assert.equal(buildMerchantBusinessCardShareTitle("fafona"), "fafona 名片");
+  assert.equal(buildMerchantBusinessCardShareTitle("fafona"), "fafona");
   assert.equal(
     buildMerchantBusinessCardShareDescription("fafona", "https://fafona.faolla.com"),
-    "点击打开 fafona 的网站 fafona.faolla.com",
+    "fafona | FAOLLA CARD",
   );
   assert.equal(normalizeMerchantBusinessCardShareImageUrl("https://example.com/card.png", "https://faolla.com"), "https://example.com/card.png");
   assert.equal(normalizeMerchantBusinessCardShareKey("Card-Abc123"), "card-abc123");
