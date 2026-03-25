@@ -62,6 +62,13 @@ function buildAddressHref(rawAddress?: string) {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
 }
 
+function buildInlineSvgIcon(kind: "phone" | "map") {
+  if (kind === "phone") {
+    return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.62 10.79a15.53 15.53 0 0 0 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1C10.4 21 3 13.6 3 4c0-.55.45-1 1-1h3.49c.55 0 1 .45 1 1 0 1.24.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.19 2.2z"/></svg>`;
+  }
+  return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a7 7 0 0 0-7 7c0 4.74 6.14 11.84 6.4 12.14a.8.8 0 0 0 1.2 0C12.86 20.84 19 13.74 19 9a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5z"/></svg>`;
+}
+
 function buildSocialHref(label: string, rawValue?: string) {
   const value = normalizeText(rawValue);
   if (!value) return "";
@@ -93,100 +100,243 @@ function buildSocialHref(label: string, rawValue?: string) {
   return "";
 }
 
+function buildActionButtonHtml(input: {
+  href: string;
+  label: string;
+  iconUrl?: string;
+  iconSvg?: string;
+  bgColor: string;
+}) {
+  const href = normalizeText(input.href);
+  if (!href) return "";
+  return `<a class="inline-action" href="${escapeHtml(href)}" aria-label="${escapeHtml(input.label)}" title="${escapeHtml(input.label)}" style="background:${escapeHtml(input.bgColor)}">
+    ${
+      input.iconUrl
+        ? `<img src="${escapeHtml(input.iconUrl)}" alt="" />`
+        : input.iconSvg || ""
+    }
+  </a>`;
+}
+
 function buildContactSummaryHtml(input: {
   name: string;
   contact?: MerchantBusinessCardShareContact;
 }) {
+  const secondaryPhone = input.contact?.phones?.find((value) => normalizeText(value) && value !== input.contact?.phone) || "";
   const rows = [
-    input.contact?.title ? ["职位", input.contact.title] : null,
-    input.contact?.displayName ? ["联系人", input.contact.displayName] : null,
-    input.contact?.phone ? ["电话", input.contact.phone] : null,
-    input.contact?.phones?.length ? ["其他电话", input.contact.phones.filter(Boolean).join(" / ")] : null,
-    input.contact?.email ? ["邮箱", input.contact.email] : null,
-    input.contact?.address ? ["地址", input.contact.address] : null,
-  ].filter(Boolean) as Array<[string, string]>;
+    input.contact?.title
+      ? { label: "职位", value: input.contact.title, actionHtml: "" }
+      : null,
+    input.contact?.displayName
+      ? { label: "联系人", value: input.contact.displayName, actionHtml: "" }
+      : null,
+    input.contact?.phone
+      ? {
+          label: "电话",
+          value: input.contact.phone,
+          actionHtml: buildActionButtonHtml({
+            href: buildPhoneHref(input.contact.phone),
+            label: "拨号",
+            iconSvg: buildInlineSvgIcon("phone"),
+            bgColor: "#007AFF",
+          }),
+        }
+      : null,
+    secondaryPhone
+      ? {
+          label: "其他电话",
+          value: secondaryPhone,
+          actionHtml: buildActionButtonHtml({
+            href: buildPhoneHref(secondaryPhone),
+            label: "拨打其他电话",
+            iconSvg: buildInlineSvgIcon("phone"),
+            bgColor: "#007AFF",
+          }),
+        }
+      : null,
+    input.contact?.email
+      ? {
+          label: "邮箱",
+          value: input.contact.email,
+          actionHtml: buildActionButtonHtml({
+            href: buildSocialHref("邮箱", input.contact.email),
+            label: "发送邮件",
+            iconUrl: "/social-icons/maildotru.svg",
+            bgColor: "#0A84FF",
+          }),
+        }
+      : null,
+    input.contact?.address
+      ? {
+          label: "地址",
+          value: input.contact.address,
+          actionHtml: buildActionButtonHtml({
+            href: buildAddressHref(input.contact.address),
+            label: "导航",
+            iconSvg: buildInlineSvgIcon("map"),
+            bgColor: "#EA4335",
+          }),
+        }
+      : null,
+    input.contact?.wechat
+      ? {
+          label: "微信",
+          value: input.contact.wechat,
+          actionHtml: buildActionButtonHtml({
+            href: buildSocialHref("微信", input.contact.wechat),
+            label: "打开微信",
+            iconUrl: "/social-icons/wechat.svg",
+            bgColor: "#07C160",
+          }),
+        }
+      : null,
+    input.contact?.whatsapp
+      ? {
+          label: "WhatsApp",
+          value: input.contact.whatsapp,
+          actionHtml: buildActionButtonHtml({
+            href: buildSocialHref("WhatsApp", input.contact.whatsapp),
+            label: "打开 WhatsApp",
+            iconUrl: "/social-icons/whatsapp.svg",
+            bgColor: "#25D366",
+          }),
+        }
+      : null,
+    input.contact?.twitter
+      ? {
+          label: "Twitter",
+          value: input.contact.twitter,
+          actionHtml: buildActionButtonHtml({
+            href: buildSocialHref("Twitter", input.contact.twitter),
+            label: "打开 Twitter",
+            iconUrl: "/social-icons/twitter.svg",
+            bgColor: "#111827",
+          }),
+        }
+      : null,
+    input.contact?.weibo
+      ? {
+          label: "微博",
+          value: input.contact.weibo,
+          actionHtml: buildActionButtonHtml({
+            href: buildSocialHref("微博", input.contact.weibo),
+            label: "打开微博",
+            iconUrl: "/social-icons/weibo.svg",
+            bgColor: "#E6162D",
+          }),
+        }
+      : null,
+    input.contact?.telegram
+      ? {
+          label: "Telegram",
+          value: input.contact.telegram,
+          actionHtml: buildActionButtonHtml({
+            href: buildSocialHref("Telegram", input.contact.telegram),
+            label: "打开 Telegram",
+            iconUrl: "/social-icons/telegram.svg",
+            bgColor: "#229ED9",
+          }),
+        }
+      : null,
+    input.contact?.linkedin
+      ? {
+          label: "LinkedIn",
+          value: input.contact.linkedin,
+          actionHtml: buildActionButtonHtml({
+            href: buildSocialHref("LinkedIn", input.contact.linkedin),
+            label: "打开 LinkedIn",
+            iconUrl: "/social-icons/linkedin.svg",
+            bgColor: "#0A66C2",
+          }),
+        }
+      : null,
+    input.contact?.discord
+      ? {
+          label: "Discord",
+          value: input.contact.discord,
+          actionHtml: buildActionButtonHtml({
+            href: buildSocialHref("Discord", input.contact.discord),
+            label: "打开 Discord",
+            iconUrl: "/social-icons/discord.svg",
+            bgColor: "#5865F2",
+          }),
+        }
+      : null,
+    input.contact?.facebook
+      ? {
+          label: "Facebook",
+          value: input.contact.facebook,
+          actionHtml: buildActionButtonHtml({
+            href: buildSocialHref("Facebook", input.contact.facebook),
+            label: "打开 Facebook",
+            iconUrl: "/social-icons/facebook.svg",
+            bgColor: "#1877F2",
+          }),
+        }
+      : null,
+    input.contact?.instagram
+      ? {
+          label: "Instagram",
+          value: input.contact.instagram,
+          actionHtml: buildActionButtonHtml({
+            href: buildSocialHref("Instagram", input.contact.instagram),
+            label: "打开 Instagram",
+            iconUrl: "/social-icons/instagram.svg",
+            bgColor: "#E4405F",
+          }),
+        }
+      : null,
+    input.contact?.tiktok
+      ? {
+          label: "TikTok",
+          value: input.contact.tiktok,
+          actionHtml: buildActionButtonHtml({
+            href: buildSocialHref("TikTok", input.contact.tiktok),
+            label: "打开 TikTok",
+            iconUrl: "/social-icons/tiktok.svg",
+            bgColor: "#111827",
+          }),
+        }
+      : null,
+    input.contact?.xiaohongshu
+      ? {
+          label: "小红书",
+          value: input.contact.xiaohongshu,
+          actionHtml: buildActionButtonHtml({
+            href: buildSocialHref("小红书", input.contact.xiaohongshu),
+            label: "打开小红书",
+            iconUrl: "/social-icons/xiaohongshu.svg",
+            bgColor: "#FF2442",
+          }),
+        }
+      : null,
+  ].filter(Boolean) as Array<{ label: string; value: string; actionHtml: string }>;
 
-  const socialRows = [
-    input.contact?.wechat ? ["微信", input.contact.wechat] : null,
-    input.contact?.whatsapp ? ["WhatsApp", input.contact.whatsapp] : null,
-    input.contact?.twitter ? ["Twitter", input.contact.twitter] : null,
-    input.contact?.weibo ? ["微博", input.contact.weibo] : null,
-    input.contact?.telegram ? ["Telegram", input.contact.telegram] : null,
-    input.contact?.linkedin ? ["LinkedIn", input.contact.linkedin] : null,
-    input.contact?.discord ? ["Discord", input.contact.discord] : null,
-    input.contact?.facebook ? ["Facebook", input.contact.facebook] : null,
-    input.contact?.instagram ? ["Instagram", input.contact.instagram] : null,
-    input.contact?.tiktok ? ["TikTok", input.contact.tiktok] : null,
-    input.contact?.xiaohongshu ? ["小红书", input.contact.xiaohongshu] : null,
-  ].filter(Boolean) as Array<[string, string]>;
-
-  if (rows.length === 0 && socialRows.length === 0) {
-    return `<div class="summary-line">${escapeHtml(normalizeText(input.name) || "电子名片")}</div>`;
+  if (rows.length === 0) {
+    return `<div class="summary-row"><span class="summary-value">${escapeHtml(normalizeText(input.name) || "电子名片")}</span></div>`;
   }
 
-  return `
-    <div class="summary-group">
-      ${rows
-        .map(
-          ([label, value]) =>
-            `<div class="summary-line"><strong>${escapeHtml(label)}：</strong>${escapeHtml(value)}</div>`,
-        )
-        .join("")}
-    </div>
-    ${
-      socialRows.length > 0
-        ? `<div class="summary-social-grid">
-      ${socialRows
-        .map(
-          ([label, value]) =>
-            `<div class="summary-social-item"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`,
-        )
-        .join("")}
-    </div>`
-        : ""
-    }
-  `;
-}
-
-function buildContactActionHtml(contact?: MerchantBusinessCardShareContact) {
-  const items = [
-    { label: "拨号", href: buildPhoneHref(contact?.phone) },
-    { label: "邮件", href: buildSocialHref("邮箱", contact?.email) },
-    { label: "导航", href: buildAddressHref(contact?.address) },
-    { label: "微信", href: buildSocialHref("微信", contact?.wechat) },
-    { label: "WhatsApp", href: buildSocialHref("WhatsApp", contact?.whatsapp) },
-    { label: "Twitter", href: buildSocialHref("Twitter", contact?.twitter) },
-    { label: "微博", href: buildSocialHref("微博", contact?.weibo) },
-    { label: "Telegram", href: buildSocialHref("Telegram", contact?.telegram) },
-    { label: "LinkedIn", href: buildSocialHref("LinkedIn", contact?.linkedin) },
-    { label: "Discord", href: buildSocialHref("Discord", contact?.discord) },
-    { label: "Facebook", href: buildSocialHref("Facebook", contact?.facebook) },
-    { label: "Instagram", href: buildSocialHref("Instagram", contact?.instagram) },
-    { label: "TikTok", href: buildSocialHref("TikTok", contact?.tiktok) },
-    { label: "小红书", href: buildSocialHref("小红书", contact?.xiaohongshu) },
-  ].filter((item) => item.href);
-
-  if (items.length === 0) return "";
-
-  return `
-    <div class="contact-actions">
-      ${items
-        .map(
-          (item) =>
-            `<a class="chip" href="${escapeHtml(item.href)}">${escapeHtml(item.label)}</a>`,
-        )
-        .join("")}
-    </div>
-  `;
+  return rows
+    .map(
+      (row) => `
+        <div class="summary-row">
+          <div class="summary-copy">
+            <strong class="summary-label">${escapeHtml(row.label)}：</strong>
+            <span class="summary-value">${escapeHtml(row.value)}</span>
+          </div>
+          ${row.actionHtml ? `<div class="summary-action">${row.actionHtml}</div>` : ""}
+        </div>`,
+    )
+    .join("");
 }
 
 function buildShareCardHtml(input: {
   title: string;
   description: string;
+  merchantName: string;
   previewImageUrl?: string;
   contentImageUrl?: string;
   summaryHtml: string;
-  actionHtml: string;
   imageWidth?: number;
   imageHeight?: number;
   targetUrl: string;
@@ -195,6 +345,7 @@ function buildShareCardHtml(input: {
 }) {
   const title = escapeHtml(input.title);
   const description = escapeHtml(input.description);
+  const merchantName = escapeHtml(input.merchantName);
   const previewImageUrl = input.previewImageUrl ? escapeHtml(input.previewImageUrl) : "";
   const contentImageUrl = input.contentImageUrl ? escapeHtml(input.contentImageUrl) : "";
   const targetUrl = escapeHtml(input.targetUrl);
@@ -247,9 +398,18 @@ function buildShareCardHtml(input: {
         padding: 20px;
         box-shadow: 0 24px 80px rgba(15,23,42,.12);
       }
-      h1 {
+      .brandline {
         margin: 0;
+        text-align: center;
+        font-size: 13px;
+        letter-spacing: .28em;
+        color: #64748b;
+        text-transform: uppercase;
+      }
+      h1 {
+        margin: 10px 0 0;
         font-size: 28px;
+        text-align: center;
       }
       p {
         line-height: 1.6;
@@ -272,42 +432,59 @@ function buildShareCardHtml(input: {
         padding: 18px;
         line-height: 1.7;
       }
-      .summary-line + .summary-line {
-        margin-top: 10px;
+      .summary-row + .summary-row {
+        margin-top: 12px;
       }
-      .summary-group + .summary-social-grid {
-        margin-top: 16px;
+      .summary-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
       }
-      .summary-social-grid {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 10px 12px;
+      .summary-copy {
+        min-width: 0;
+        display: flex;
+        align-items: flex-start;
+        gap: 4px;
+        flex-wrap: wrap;
       }
-      .summary-social-item {
-        border-radius: 14px;
-        background: #f8fafc;
-        padding: 10px 12px;
+      .summary-label {
+        color: #0f172a;
       }
-      .summary-social-item span {
-        display: block;
-        font-size: 12px;
-        color: #64748b;
-      }
-      .summary-social-item strong {
-        display: block;
-        margin-top: 4px;
-        font-size: 14px;
+      .summary-value {
+        color: #334155;
         word-break: break-word;
       }
-      .actions,
-      .contact-actions {
+      .summary-action {
+        flex-shrink: 0;
+      }
+      .inline-action {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 34px;
+        height: 34px;
+        border-radius: 999px;
+        box-shadow: 0 8px 20px rgba(15,23,42,.14);
+      }
+      .inline-action img,
+      .inline-action svg {
+        width: 18px;
+        height: 18px;
+      }
+      .inline-action img {
+        object-fit: contain;
+      }
+      .inline-action svg {
+        fill: #fff;
+      }
+      .actions {
         display: flex;
         flex-wrap: wrap;
         gap: 12px;
         margin-top: 16px;
       }
-      a.button,
-      a.chip {
+      a.button {
         display: inline-block;
         padding: 10px 16px;
         border-radius: 999px;
@@ -321,11 +498,6 @@ function buildShareCardHtml(input: {
         background: #fff;
         color: #0f172a;
         border: 1px solid rgba(15,23,42,.12);
-      }
-      a.chip {
-        background: #f8fafc;
-        color: #0f172a;
-        border: 1px solid rgba(15,23,42,.08);
       }
       .footer {
         margin-top: 20px;
@@ -347,8 +519,8 @@ function buildShareCardHtml(input: {
         article {
           padding: 16px;
         }
-        .summary-social-grid {
-          grid-template-columns: 1fr;
+        .summary-row {
+          align-items: flex-start;
         }
       }
     </style>
@@ -356,8 +528,8 @@ function buildShareCardHtml(input: {
   <body>
     <main>
       <article>
-        <h1>${title}</h1>
-        <p>${description}</p>
+        <div class="brandline">FAOLLA CARD</div>
+        ${merchantName ? `<h1>${merchantName}</h1>` : ""}
         ${
           contentImageUrl
             ? `<a class="card" href="${targetUrl}">
@@ -374,7 +546,6 @@ function buildShareCardHtml(input: {
           }
           <a class="button secondary" href="${targetUrl}">打开网页</a>
         </div>
-        ${input.actionHtml}
         <div class="footer">
           名片服务由 <a href="https://www.faolla.com" target="_blank" rel="noopener noreferrer">www.faolla.com</a> 提供
         </div>
@@ -447,13 +618,13 @@ export async function GET(
     buildShareCardHtml({
       title,
       description,
+      merchantName: payload.name,
       previewImageUrl: previewImageUrl || undefined,
       contentImageUrl: detailImageUrl || undefined,
       summaryHtml: buildContactSummaryHtml({
         name: payload.name,
         contact: payload.contact,
       }),
-      actionHtml: buildContactActionHtml(payload.contact),
       imageWidth: payload.imageWidth,
       imageHeight: payload.imageHeight,
       targetUrl: payload.targetUrl,
