@@ -374,6 +374,7 @@ function CardSurface({
     .map((item) => item.trim())
     .filter(Boolean)
     .join("\n");
+  const exportHasBackgroundImage = isExport && !!normalizeText(draft.backgroundImageUrl);
   return (
     <div style={{ width: `${draft.width * scale}px`, height: `${draft.height * scale}px` }}>
       <div
@@ -394,7 +395,7 @@ function CardSurface({
           className="absolute inset-0"
           style={{
             background: draft.backgroundColor || "#f8fafc",
-            opacity: draft.backgroundColorOpacity,
+            opacity: exportHasBackgroundImage ? 0 : draft.backgroundColorOpacity,
           }}
         />
         {draft.backgroundImageUrl ? (
@@ -406,7 +407,7 @@ function CardSurface({
             style={{ opacity: draft.backgroundImageOpacity }}
           />
         ) : null}
-        <div className="absolute inset-0 bg-white/12" />
+        {isExport ? null : <div className="absolute inset-0 bg-white/12" />}
         {TEXT_LAYOUT_FIELDS.filter(
           ({ key }) =>
             key === "merchantName" ||
