@@ -26,6 +26,7 @@ import {
   type MerchantBusinessCardProfileInput,
 } from "@/lib/merchantBusinessCards";
 import {
+  buildMerchantBusinessCardShareUrl,
   buildMerchantBusinessCardContactDownloadUrl,
   normalizeMerchantBusinessCardShareImageUrl,
   resolveMerchantBusinessCardShareOrigin,
@@ -131,6 +132,10 @@ function createId(prefix: string) {
     return `${prefix}-${crypto.randomUUID()}`;
   }
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function createShareKey() {
+  return createId("card").toLowerCase();
 }
 
 async function renderCardNodeToImage(node: HTMLElement) {
@@ -431,6 +436,7 @@ function CardSurface({
 
 export default function MerchantBusinessCardManager({ siteBaseDomain, profile, cards, onCardsChange }: MerchantBusinessCardManagerProps) {
   const [draft, setDraft] = useState(() => createDefaultMerchantBusinessCardDraft(profile));
+  const [draftShareKey, setDraftShareKey] = useState(() => createShareKey());
   const [editorOpen, setEditorOpen] = useState(false);
   const [folderOpen, setFolderOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -500,6 +506,17 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
   );
   const scale = useMemo(() => Math.min(1, 380 / Math.max(1, draft.width)), [draft.width]);
   const fullScale = useMemo(() => Math.min(1, 1000 / Math.max(1, draft.width)), [draft.width]);
+  const draftLinkUrl = useMemo(() => {
+    if (draft.mode !== "link" || !websiteUrl) return "";
+    return buildMerchantBusinessCardShareUrl({
+      origin: resolveMerchantBusinessCardShareOrigin(undefined, websiteUrl),
+      shareKey: draftShareKey,
+      imageUrl: websiteUrl,
+      targetUrl: websiteUrl,
+      name: normalizeText(draft.name) || "商户名片",
+    });
+  }, [draft.mode, draft.name, draftShareKey, websiteUrl]);
+  const qrTargetUrl = draft.mode === "link" ? draftLinkUrl || websiteUrl : websiteUrl;
 
   useEffect(() => {
     if (!tip) return;
@@ -509,11 +526,11 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
 
   useEffect(() => {
     let cancelled = false;
-    if (!websiteUrl) {
+    if (!qrTargetUrl) {
       setQrCodeUrl("");
       return;
     }
-    void QRCode.toDataURL(websiteUrl, { width: clamp(draft.qr.size * 2, 96, 1200), margin: 1, errorCorrectionLevel: "M" })
+    void QRCode.toDataURL(qrTargetUrl, { width: clamp(draft.qr.size * 2, 96, 1200), margin: 1, errorCorrectionLevel: "M" })
       .then((url) => {
         if (!cancelled) setQrCodeUrl(url);
       })
@@ -523,7 +540,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     return () => {
       cancelled = true;
     };
-  }, [draft.qr.size, websiteUrl]);
+  }, [draft.qr.size, qrTargetUrl]);
 
   useEffect(() => {
     const validSelectionKeys = new Set<string>([
@@ -563,6 +580,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
   const openEditor = () => {
     if (!canCreate) return;
     setDraft(createDefaultMerchantBusinessCardDraft(profile));
+    setDraftShareKey(createShareKey());
     setSelectedFieldKeys(["merchantName"]);
     setEditingCardId(null);
     setHasPreviewed(false);
@@ -574,6 +592,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
   const openEditorForCard = (card: MerchantBusinessCardAsset) => {
     if (!canCreate) return;
     setDraft(normalizeMerchantBusinessCardDraft(card));
+    setDraftShareKey(normalizeText(card.shareKey) || createShareKey());
     setSelectedFieldKeys(["merchantName"]);
     setEditingCardId(card.id);
     setHasPreviewed(true);
@@ -609,13 +628,17 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       const imageUrl = await renderCardNodeToImage(node);
       const nextDraft = normalizeMerchantBusinessCardDraft(draft);
       const existingCard = editingCardId ? cards.find((card) => card.id === editingCardId) ?? null : null;
+      const resolvedShareKey =
+        nextDraft.mode === "link"
+          ? normalizeText(existingCard?.shareKey) || normalizeText(draftShareKey) || createShareKey()
+          : "";
       const asset: MerchantBusinessCardAsset = {
         ...nextDraft,
         id: existingCard?.id ?? createId("business-card"),
         createdAt: existingCard?.createdAt ?? new Date().toISOString(),
         imageUrl,
-        ...(existingCard?.shareImageUrl ? { shareImageUrl: existingCard.shareImageUrl } : {}),
-        ...(existingCard?.shareKey ? { shareKey: existingCard.shareKey } : {}),
+        ...(nextDraft.mode === "link" && existingCard?.shareImageUrl ? { shareImageUrl: existingCard.shareImageUrl } : {}),
+        ...(nextDraft.mode === "link" && resolvedShareKey ? { shareKey: resolvedShareKey } : {}),
         targetUrl: websiteUrl,
       };
       onCardsChange(
@@ -987,7 +1010,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
                   </section>
                 </div>
               </div>
-              <aside className="min-h-0 overflow-y-auto border-l bg-slate-50 px-5 py-5"><div className="sticky top-0 space-y-4"><div><div className="text-sm font-semibold text-slate-900">实时预览</div><div className="text-xs text-slate-500">先点击“预览”确认样式，再点击“生成”。</div></div><div className="overflow-hidden rounded-2xl border bg-slate-900/5 p-4"><CardSurface draft={draft} websiteUrl={websiteUrl} qrCodeUrl={qrCodeUrl} scale={scale} /></div><div className="rounded-xl border bg-white px-3 py-2 text-xs text-slate-600">{draft.mode === "link" ? "当前为链接模式：主动作是联系卡链接，对方手机打开后可保存到通讯录。" : "当前为图片模式：生成后可保存或复制名片图片。"}</div>{!hasPreviewed ? <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">先点击“预览”，再生成名片。</div> : null}</div></aside>
+              <aside className="min-h-0 overflow-y-auto border-l bg-slate-50 px-5 py-5"><div className="sticky top-0 space-y-4"><div><div className="text-sm font-semibold text-slate-900">实时预览</div><div className="text-xs text-slate-500">先点击“预览”确认样式，再点击“生成”。</div></div><div className="overflow-hidden rounded-2xl border bg-slate-900/5 p-4"><CardSurface draft={draft} websiteUrl={websiteUrl} qrCodeUrl={qrCodeUrl} scale={scale} /></div><div className="rounded-xl border bg-white px-3 py-2 text-xs text-slate-600">{draft.mode === "link" ? "当前为链接模式：二维码和链接都会进入联系卡，对方手机打开后可保存到通讯录。" : "当前为图片模式：生成后可保存或复制名片图片。"}</div>{!hasPreviewed ? <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">先点击“预览”，再生成名片。</div> : null}</div></aside>
             </div>
           </div>
         </div>,
@@ -1299,6 +1322,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
   async function buildShareBundle(input: {
     targetUrl: string;
     cardName: string;
+    shareKey?: string;
     card?: MerchantBusinessCardAsset | null;
     renderedImageUrl?: string;
     imageWidth?: number;
@@ -1339,7 +1363,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       headers,
       credentials: "same-origin",
       body: JSON.stringify({
-        key: "",
+        key: normalizeText(input.shareKey),
         name: input.cardName,
         imageUrl: shareImageUrl,
         targetUrl,
@@ -1415,6 +1439,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       const { shareUrl } = await buildShareBundle({
         targetUrl: normalizedUrl,
         cardName: normalizeText(draft.name) || "商户名片",
+        shareKey: draftShareKey,
         renderedImageUrl,
         imageWidth: draft.width,
         imageHeight: draft.height,
@@ -1442,6 +1467,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       const { shareUrl } = await buildShareBundle({
         targetUrl,
         cardName: normalizeText(card.name) || "商户名片",
+        shareKey: normalizeText(card.shareKey),
         card,
         imageWidth: card.width,
         imageHeight: card.height,
@@ -1475,6 +1501,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       const { contactUrl } = await buildShareBundle({
         targetUrl: normalizedUrl,
         cardName: normalizeText(draft.name) || "商户名片",
+        shareKey: draftShareKey,
         renderedImageUrl,
         imageWidth: draft.width,
         imageHeight: draft.height,
@@ -1506,6 +1533,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       const { contactUrl } = await buildShareBundle({
         targetUrl,
         cardName: normalizeText(card.name) || "商户名片",
+        shareKey: normalizeText(card.shareKey),
         card,
         imageWidth: card.width,
         imageHeight: card.height,
