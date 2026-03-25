@@ -205,7 +205,7 @@ test("business card contact helpers build downloadable vcard links and content",
       phone: "633130577",
       phones: ["633130577", "666888999"],
       email: "caimin00x@gmail.com",
-      address: "C. Transporte, 12 / Sevilla / Spain",
+      address: "C. Transporte, 12 / 41007 / Sevilla / Sevilla / Spain",
       websiteUrl: "https://fafona.faolla.com/",
       note: "WhatsApp: felix",
     },
@@ -228,7 +228,7 @@ test("business card contact helpers build downloadable vcard links and content",
       targetUrl: payload.targetUrl,
       contact: payload.contact,
     }),
-    "https://faolla.com/share/business-card/contact?image=https%3A%2F%2Ffaolla.com%2Fstorage%2Fv1%2Fobject%2Fpublic%2Fpage-assets%2Fcard.png&detailImage=https%3A%2F%2Ffaolla.com%2Fstorage%2Fv1%2Fobject%2Fpublic%2Fpage-assets%2Fcontact.png&target=https%3A%2F%2Ffafona.faolla.com%2F&name=fafona&contactName=Felix&organization=fafona&title=Manager&phone=633130577&email=caimin00x%40gmail.com&address=C.+Transporte%2C+12+%2F+Sevilla+%2F+Spain&website=https%3A%2F%2Ffafona.faolla.com%2F&note=WhatsApp%3A+felix",
+    "https://faolla.com/share/business-card/contact?image=https%3A%2F%2Ffaolla.com%2Fstorage%2Fv1%2Fobject%2Fpublic%2Fpage-assets%2Fcard.png&detailImage=https%3A%2F%2Ffaolla.com%2Fstorage%2Fv1%2Fobject%2Fpublic%2Fpage-assets%2Fcontact.png&target=https%3A%2F%2Ffafona.faolla.com%2F&name=fafona&contactName=Felix&organization=fafona&title=Manager&phone=633130577&email=caimin00x%40gmail.com&address=C.+Transporte%2C+12+%2F+41007+%2F+Sevilla+%2F+Sevilla+%2F+Spain&website=https%3A%2F%2Ffafona.faolla.com%2F&note=WhatsApp%3A+felix",
   );
   const vcard = buildMerchantBusinessCardVCard(payload);
   assert.match(buildMerchantBusinessCardVCardFileName(payload), /^felix-card\d{5}\.vcf$/);
@@ -236,6 +236,7 @@ test("business card contact helpers build downloadable vcard links and content",
   assert.ok(vcard.includes("FN:Felix"));
   assert.ok(vcard.includes("ORG:fafona"));
   assert.ok(vcard.includes("TEL;TYPE=WORK:666888999"));
+  assert.ok(vcard.includes("ADR;TYPE=WORK:;;C. Transporte\\, 12;Sevilla;Sevilla;41007;Spain"));
   assert.ok(vcard.includes("URL:https://fafona.faolla.com/"));
   assert.ok(vcard.includes("NOTE:WhatsApp: felix"));
 });

@@ -383,6 +383,59 @@ function escapeVCardValue(value: string) {
     .replace(/,/g, "\\,");
 }
 
+function parseStructuredAddress(address: string) {
+  const normalized = normalizeText(address);
+  if (!normalized) {
+    return {
+      street: "",
+      city: "",
+      region: "",
+      postalCode: "",
+      country: "",
+    };
+  }
+
+  const segments = normalized
+    .split(/\s*\/\s*|\r?\n+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (segments.length === 0) {
+    return {
+      street: "",
+      city: "",
+      region: "",
+      postalCode: "",
+      country: "",
+    };
+  }
+
+  let postalCode = "";
+  const cleanedSegments = segments.map((segment) => {
+    const match = segment.match(/\b\d{4,10}\b/);
+    if (!postalCode && match?.[0]) {
+      postalCode = match[0];
+      return segment.replace(match[0], "").replace(/\s{2,}/g, " ").replace(/[,\-\/]\s*$/, "").trim();
+    }
+    return segment;
+  });
+
+  const street = cleanedSegments[0] || "";
+  const tailSegments = cleanedSegments.slice(1).filter(Boolean);
+  const country = tailSegments.length >= 3 ? tailSegments.at(-1) || "" : "";
+  const middleSegments = country ? tailSegments.slice(0, -1) : tailSegments;
+  const city = middleSegments[0] || "";
+  const region = middleSegments[1] || "";
+
+  return {
+    street,
+    city,
+    region,
+    postalCode,
+    country,
+  };
+}
+
 function buildStableContactCode(payload: MerchantBusinessCardSharePayload) {
   const contact = normalizeMerchantBusinessCardShareContact(payload.contact, payload.targetUrl);
   const seed = [
@@ -463,6 +516,7 @@ export function buildMerchantBusinessCardVCard(payload: MerchantBusinessCardShar
   const contact = normalizeMerchantBusinessCardShareContact(payload.contact, payload.targetUrl);
   const displayName = contact?.displayName || normalizeText(payload.name) || "Business Card";
   const organization = contact?.organization || normalizeText(payload.name);
+  const structuredAddress = parseStructuredAddress(contact?.address || "");
   const lines = [
     "BEGIN:VCARD",
     "VERSION:3.0",
@@ -490,7 +544,9 @@ export function buildMerchantBusinessCardVCard(payload: MerchantBusinessCardShar
     lines.push(`EMAIL;TYPE=INTERNET:${escapeVCardValue(contact.email)}`);
   }
   if (contact?.address) {
-    lines.push(`ADR;TYPE=WORK:;;${escapeVCardValue(contact.address)};;;;`);
+    lines.push(
+      `ADR;TYPE=WORK:;;${escapeVCardValue(structuredAddress.street)};${escapeVCardValue(structuredAddress.city)};${escapeVCardValue(structuredAddress.region)};${escapeVCardValue(structuredAddress.postalCode)};${escapeVCardValue(structuredAddress.country)}`,
+    );
   }
   if (contact?.websiteUrl) {
     lines.push(`URL:${escapeVCardValue(contact.websiteUrl)}`);
