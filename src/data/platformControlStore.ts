@@ -87,6 +87,7 @@ export type MerchantSortRule = (typeof MERCHANT_SORT_RULES)[number];
 export type MerchantServicePermissionConfig = {
   planLimit: number;
   pageLimit: number;
+  businessCardLimit: number;
   allowInsertBackground: boolean;
   allowThemeEffects: boolean;
   allowButtonBlock: boolean;
@@ -384,6 +385,7 @@ export function createDefaultMerchantPermissionConfig(): MerchantServicePermissi
   return {
     planLimit: 1,
     pageLimit: 3,
+    businessCardLimit: 1,
     allowInsertBackground: false,
     allowThemeEffects: false,
     allowButtonBlock: false,
@@ -413,6 +415,7 @@ function normalizeMerchantPermissionConfig(value: unknown): MerchantServicePermi
   return {
     planLimit: normalizeInt(source.planLimit, fallback.planLimit, 1, 200),
     pageLimit: normalizeInt(source.pageLimit, fallback.pageLimit, 1, 500),
+    businessCardLimit: normalizeInt(source.businessCardLimit, fallback.businessCardLimit, 1, 100),
     allowInsertBackground:
       typeof source.allowInsertBackground === "boolean" ? source.allowInsertBackground : fallback.allowInsertBackground,
     allowThemeEffects: typeof source.allowThemeEffects === "boolean" ? source.allowThemeEffects : fallback.allowThemeEffects,

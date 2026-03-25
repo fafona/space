@@ -863,6 +863,7 @@ function buildMerchantConfigDiffLines(current: MerchantConfigSnapshot, target: M
   }> = [
     { key: "planLimit", label: "方案上限" },
     { key: "pageLimit", label: "页面上限" },
+    { key: "businessCardLimit", label: "名片夹上限" },
     { key: "publishSizeLimitMb", label: "发布体积上限(MB)" },
     { key: "allowInsertBackground", label: "可插入背景" },
     { key: "allowThemeEffects", label: "可主题效果" },
@@ -1071,6 +1072,7 @@ export default function SuperAdminClient() {
   const [configExpireDate, setConfigExpireDate] = useState("");
   const [configPlanLimit, setConfigPlanLimit] = useState("1");
   const [configPageLimit, setConfigPageLimit] = useState("3");
+  const [configBusinessCardLimit, setConfigBusinessCardLimit] = useState("1");
   const [configPublishLimitMb, setConfigPublishLimitMb] = useState("5");
   const [configAllowInsertBackground, setConfigAllowInsertBackground] = useState(false);
   const [configAllowThemeEffects, setConfigAllowThemeEffects] = useState(false);
@@ -1902,6 +1904,7 @@ export default function SuperAdminClient() {
     setConfigExpireDate(isoToDateInput(site.serviceExpiresAt ?? null));
     setConfigPlanLimit(`${permission.planLimit}`);
     setConfigPageLimit(`${permission.pageLimit}`);
+    setConfigBusinessCardLimit(`${permission.businessCardLimit}`);
     setConfigPublishLimitMb(`${permission.publishSizeLimitMb}`);
     setConfigAllowInsertBackground(permission.allowInsertBackground);
     setConfigAllowThemeEffects(permission.allowThemeEffects);
@@ -2991,6 +2994,7 @@ export default function SuperAdminClient() {
     }
     const planLimit = Math.max(1, Math.min(200, Math.round(Number(configPlanLimit) || 1)));
     const pageLimit = Math.max(1, Math.min(500, Math.round(Number(configPageLimit) || 1)));
+    const businessCardLimit = Math.max(1, Math.min(100, Math.round(Number(configBusinessCardLimit) || 1)));
     const publishSizeLimitMb = Math.max(1, Math.min(100, Math.round(Number(configPublishLimitMb) || 1)));
     const serviceExpiresAt = parseDateInputToIso(configExpireDate);
     if (configExpireDate.trim() && !serviceExpiresAt) {
@@ -3035,6 +3039,9 @@ export default function SuperAdminClient() {
     }
     if (prevPermission.pageLimit !== pageLimit) {
       pendingChanges.push(`页面上限数量：${prevPermission.pageLimit} -> ${pageLimit}`);
+    }
+    if (prevPermission.businessCardLimit !== businessCardLimit) {
+      pendingChanges.push(`名片夹数量上限：${prevPermission.businessCardLimit} -> ${businessCardLimit}`);
     }
     if (prevPermission.publishSizeLimitMb !== publishSizeLimitMb) {
       pendingChanges.push(`发布体积限制：${prevPermission.publishSizeLimitMb}MB -> ${publishSizeLimitMb}MB`);
@@ -3100,6 +3107,7 @@ export default function SuperAdminClient() {
       permissionConfig: {
         planLimit,
         pageLimit,
+        businessCardLimit,
         publishSizeLimitMb,
         allowInsertBackground: configAllowInsertBackground,
         allowThemeEffects: configAllowThemeEffects,
@@ -5096,6 +5104,10 @@ export default function SuperAdminClient() {
                               <label className="space-y-1">
                                 <div className="text-slate-500">页面上限数量</div>
                                 <input className="w-full rounded border px-2 py-1.5" value={configPageLimit} onChange={(e) => setConfigPageLimit(e.target.value)} />
+                              </label>
+                              <label className="space-y-1">
+                                <div className="text-slate-500">名片夹数量上限</div>
+                                <input className="w-full rounded border px-2 py-1.5" value={configBusinessCardLimit} onChange={(e) => setConfigBusinessCardLimit(e.target.value)} />
                               </label>
                             </div>
                             <div className="grid grid-cols-2 gap-2">

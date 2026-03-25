@@ -7113,6 +7113,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           initialLocation={editingSite?.location ?? null}
           initialIndustry={editingSite?.industry ?? null}
           initialBusinessCards={editingSite?.businessCards ?? []}
+          businessCardLimit={editingSite?.permissionConfig?.businessCardLimit ?? createDefaultMerchantPermissionConfig().businessCardLimit}
           onClose={() => setMerchantProfileDialogOpen(false)}
           onCardsChange={(cards) => {
             if (!editingSiteId) return;

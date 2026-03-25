@@ -40,6 +40,7 @@ type MerchantBusinessCardManagerProps = {
   siteBaseDomain: string;
   profile: MerchantBusinessCardProfileInput;
   cards: MerchantBusinessCardAsset[];
+  cardLimit?: number;
   onCardsChange: (cards: MerchantBusinessCardAsset[]) => void;
 };
 
@@ -490,7 +491,7 @@ function CardSurface({
   );
 }
 
-export default function MerchantBusinessCardManager({ siteBaseDomain, profile, cards, onCardsChange }: MerchantBusinessCardManagerProps) {
+export default function MerchantBusinessCardManager({ siteBaseDomain, profile, cards, cardLimit = 1, onCardsChange }: MerchantBusinessCardManagerProps) {
   const [draft, setDraft] = useState(() => createDefaultMerchantBusinessCardDraft(profile));
   const [draftShareKey, setDraftShareKey] = useState(() => createShareKey());
   const [editorOpen, setEditorOpen] = useState(false);
@@ -565,9 +566,12 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     () => Math.min(1, 520 / Math.max(1, draft.width), 460 / Math.max(1, draft.height)),
     [draft.height, draft.width],
   );
+  const normalizedCardLimit = useMemo(() => Math.max(1, Math.min(100, Math.round(Number(cardLimit) || 1))), [cardLimit]);
   const fullScale = useMemo(() => Math.min(1, 1000 / Math.max(1, draft.width)), [draft.width]);
   const requiresPreviewBeforeSave = !editingCardId && !hasPreviewed;
   const qrMayBeUnreadable = draft.qr.size < QR_MIN_READABLE_SIZE;
+  const cardLimitReached = !editingCardId && cards.length >= normalizedCardLimit;
+  const canOpenCreateEditor = canCreate && !cardLimitReached;
   const activeLinkShareKey = useMemo(() => {
     if (draft.mode !== "link") return "";
     const existingCard = editingCardId ? cards.find((card) => card.id === editingCardId) ?? null : null;
@@ -651,6 +655,10 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
 
   const openEditor = () => {
     if (!canCreate) return;
+    if (cardLimitReached) {
+      setTip(`名片夹已达到上限（${normalizedCardLimit} 张），请先删除旧名片或到超级后台调整数量限制`);
+      return;
+    }
     setDraft(createDefaultMerchantBusinessCardDraft(profile));
     setDraftShareKey(createShareKey());
     setSelectedFieldKeys(["merchantName"]);
@@ -705,8 +713,8 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       setFolderOpen(true);
       setPreviewAsset(asset);
       setTip(editingCardId ? "名片已更新并保存到名片夹" : "名片已生成并保存到名片夹");
-    } catch {
-      setTip("名片生成失败，请重试");
+    } catch (error) {
+      setTip(error instanceof Error && error.message === "business_card_limit_reached" ? `名片夹已达到上限（${normalizedCardLimit} 张），请先删除旧名片或到超级后台调整数量限制` : "名片生成失败，请重试");
     } finally {
       setIsGenerating(false);
     }
@@ -777,11 +785,12 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
           <div className="text-xs text-slate-500">完善商户信息后可生成名片。链接模式会生成联系卡链接，对方手机打开后可保存联系人。</div>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50" onClick={openEditor} disabled={!canCreate}>生成名片</button>
-          <button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50" onClick={() => setFolderOpen(true)} disabled={cards.length === 0}>{`名片夹 (${cards.length})`}</button>
+          <button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50" onClick={openEditor} disabled={!canOpenCreateEditor}>生成名片</button>
+          <button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50" onClick={() => setFolderOpen(true)} disabled={cards.length === 0}>{`名片夹 (${cards.length}/${normalizedCardLimit})`}</button>
         </div>
       </div>
       {!canCreate ? <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">{`需先完善以下商户信息后才能生成名片：${missingFields.join(" / ")}`}</div> : null}
+      {canCreate && cardLimitReached ? <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">{`名片夹已达到上限（${normalizedCardLimit} 张），请先删除旧名片，或到超级后台调整名片夹数量限制。`}</div> : null}
       <div className="pointer-events-none fixed left-[-20000px] top-0"><div ref={hiddenPreviewRef}><CardSurface draft={draft} websiteUrl={websiteUrl} qrCodeUrl={qrCodeUrl} scale={1} renderMode="export" /></div></div>
 
       {editorOpen ? overlay(
@@ -1654,6 +1663,9 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
   async function saveCurrentDraftToFolder() {
     const node = hiddenPreviewRef.current;
     if (!node || !websiteUrl || !qrCodeUrl) return null;
+    if (!editingCardId && cards.length >= normalizedCardLimit) {
+      throw new Error("business_card_limit_reached");
+    }
 
     const imageUrl = await renderCardNodeToImage(node);
     const nextDraft = normalizeMerchantBusinessCardDraft(draft);
@@ -1718,8 +1730,8 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       }
       await copyImageToClipboard(asset.imageUrl);
       setTip("名片图片已复制，并已保存到名片夹");
-    } catch {
-      setTip("复制失败，请重试");
+    } catch (error) {
+      setTip(error instanceof Error && error.message === "business_card_limit_reached" ? `名片夹已达到上限（${normalizedCardLimit} 张），请先删除旧名片或到超级后台调整数量限制` : "复制失败，请重试");
     }
   }
 
@@ -1762,8 +1774,8 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       });
       await copyTextToClipboard(shareUrl);
       setTip("联系卡链接已复制，并已保存到名片夹");
-    } catch {
-      setTip("复制失败，请重试");
+    } catch (error) {
+      setTip(error instanceof Error && error.message === "business_card_limit_reached" ? `名片夹已达到上限（${normalizedCardLimit} 张），请先删除旧名片或到超级后台调整数量限制` : "复制失败，请重试");
     }
   }
 
@@ -1829,8 +1841,8 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       }
       await openContactDownload(contactUrl, normalizeText(asset.contacts.contactName) || normalizeText(asset.name));
       setTip("联系人已开始下载，并已保存到名片夹");
-    } catch {
-      setTip("下载失败，请重试");
+    } catch (error) {
+      setTip(error instanceof Error && error.message === "business_card_limit_reached" ? `名片夹已达到上限（${normalizedCardLimit} 张），请先删除旧名片或到超级后台调整数量限制` : "下载失败，请重试");
     }
   }
 

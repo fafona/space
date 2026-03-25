@@ -32,6 +32,7 @@ type MerchantProfileDialogProps = {
   initialLocation?: Partial<SiteLocation> | null;
   initialIndustry?: string | null;
   initialBusinessCards?: MerchantBusinessCardAsset[] | null;
+  businessCardLimit?: number;
   onClose: () => void;
   onCardsChange?: (cards: MerchantBusinessCardAsset[]) => void;
   onSave: (input: {
@@ -228,6 +229,7 @@ export default function MerchantProfileDialog({
   initialLocation,
   initialIndustry,
   initialBusinessCards,
+  businessCardLimit = 1,
   onClose,
   onCardsChange,
   onSave,
@@ -850,6 +852,7 @@ export default function MerchantProfileDialog({
           siteBaseDomain={siteBaseDomain}
           profile={liveProfile}
           cards={businessCards}
+          cardLimit={businessCardLimit}
           onCardsChange={(cards) => {
             setBusinessCards(cards);
             onCardsChange?.(cards);
