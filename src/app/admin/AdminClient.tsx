@@ -17333,7 +17333,15 @@ type GalleryEditorImage = {
                     <button
                       type="button"
                       className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50"
-                      onClick={() => updateContactPhones([...contactPhoneEditorValues, ""])}
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                      }}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        updateContactPhones([...contactPhoneEditorValues, ""]);
+                      }}
                     >
                       添加电话
                     </button>
@@ -17354,7 +17362,13 @@ type GalleryEditorImage = {
                         <button
                           type="button"
                           className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50"
-                          onClick={() => {
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                          }}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
                             const next = contactPhoneEditorValues.filter((_, removeIdx) => removeIdx !== idx);
                             updateContactPhones(next.length > 0 ? next : [""]);
                           }}
@@ -17375,12 +17389,18 @@ type GalleryEditorImage = {
                     <button
                       type="button"
                       className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50"
-                      onClick={() =>
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                      }}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
                         updateContactAddresses([
                           ...contactAddressEditorValues,
                           `地址${contactAddressEditorValues.length + 1}`,
-                        ])
-                      }
+                        ]);
+                      }}
                     >
                       添加地址
                     </button>
@@ -17401,7 +17421,13 @@ type GalleryEditorImage = {
                         <button
                           type="button"
                           className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50"
-                          onClick={() => {
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                          }}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
                             const next = contactAddressEditorValues.filter((_, removeIdx) => removeIdx !== idx);
                             updateContactAddresses(next.length > 0 ? next : [""]);
                           }}
