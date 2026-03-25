@@ -93,6 +93,7 @@ const FONT_FAMILY_OPTIONS = [
 ];
 
 const FONT_SIZE_OPTIONS = [12, 14, 16, 18, 20, 24, 28, 32, 36, 42, 48];
+const QR_MIN_READABLE_SIZE = 96;
 const ALL_TYPOGRAPHY_KEYS: Array<keyof MerchantBusinessCardDraft["typography"]> = [
   "name",
   "title",
@@ -565,6 +566,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
   );
   const fullScale = useMemo(() => Math.min(1, 1000 / Math.max(1, draft.width)), [draft.width]);
   const requiresPreviewBeforeSave = !editingCardId && !hasPreviewed;
+  const qrMayBeUnreadable = draft.qr.size < QR_MIN_READABLE_SIZE;
   const draftLinkUrl = useMemo(() => {
     if (draft.mode !== "link" || !websiteUrl) return "";
     return buildMerchantBusinessCardShareUrl({
@@ -963,6 +965,11 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
                         </label>
                       ))}
                     </div>
+                    {qrMayBeUnreadable ? (
+                      <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                        当前二维码尺寸偏小，可能无法识别，建议至少保持在 {QR_MIN_READABLE_SIZE}px。
+                      </div>
+                    ) : null}
                     <div className="rounded-xl border bg-white p-4"><div className="mb-3 text-xs font-medium text-slate-500">二维码预览</div><div className="flex h-32 w-32 items-center justify-center rounded-xl border bg-slate-50 p-2">{qrCodeUrl ? <img src={qrCodeUrl} alt="二维码预览" className="h-full w-full object-contain" /> : <span className="text-xs text-slate-400">暂无二维码</span>}</div></div>
                   </section>
                   <section className="space-y-2.5 rounded-xl border bg-slate-50 p-3 xl:col-span-2">
