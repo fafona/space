@@ -556,7 +556,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     ],
     [draft.customTexts],
   );
-  const scale = useMemo(() => Math.min(1, 380 / Math.max(1, draft.width)), [draft.width]);
+  const scale = useMemo(() => Math.min(1, 440 / Math.max(1, draft.width)), [draft.width]);
   const fullScale = useMemo(() => Math.min(1, 1000 / Math.max(1, draft.width)), [draft.width]);
   const draftLinkUrl = useMemo(() => {
     if (draft.mode !== "link" || !websiteUrl) return "";
@@ -807,7 +807,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
                 <button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => { setEditorOpen(false); setEditingCardId(null); }}>关闭</button>
               </div>
             </div>
-            <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1.1fr)_minmax(340px,420px)]">
+            <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1.05fr)_minmax(380px,500px)]">
               <div className="min-h-0 overflow-y-auto px-5 py-5">
                 <div className="grid gap-4 xl:grid-cols-2">
                   <section className="space-y-3 rounded-xl border bg-slate-50 p-4">
@@ -1181,7 +1181,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
                   </section>
                 </div>
               </div>
-              <aside className="min-h-0 overflow-y-auto border-l bg-slate-50 px-5 py-5"><div className="sticky top-0 space-y-4"><div><div className="text-sm font-semibold text-slate-900">实时预览</div><div className="text-xs text-slate-500">先点击“预览”确认样式，再点击“生成”。</div></div><div className="overflow-hidden rounded-2xl border bg-slate-900/5 p-4"><CardSurface draft={draft} websiteUrl={websiteUrl} qrCodeUrl={qrCodeUrl} scale={scale} /></div><div className="rounded-xl border bg-white px-3 py-2 text-xs text-slate-600">{draft.mode === "link" ? "当前为链接模式：二维码和链接都会进入联系卡，对方手机打开后可保存到通讯录。" : "当前为图片模式：生成后可保存或复制名片图片。"}</div>{!hasPreviewed ? <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">先点击“预览”，再生成名片。</div> : null}</div></aside>
+              <aside className="min-h-0 overflow-y-auto border-l bg-slate-50 px-5 py-5"><div className="sticky top-0 space-y-4"><div><div className="text-sm font-semibold text-slate-900">实时预览</div><div className="text-xs text-slate-500">先点击“预览”确认样式，再点击“生成”。</div></div><div className="overflow-auto rounded-2xl border bg-slate-900/5 p-4"><CardSurface draft={draft} websiteUrl={websiteUrl} qrCodeUrl={qrCodeUrl} scale={scale} /></div><div className="rounded-xl border bg-white px-3 py-2 text-xs text-slate-600">{draft.mode === "link" ? "当前为链接模式：二维码和链接都会进入联系卡，对方手机打开后可保存到通讯录。" : "当前为图片模式：生成后可保存或复制名片图片。"}</div>{!hasPreviewed ? <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">先点击“预览”，再生成名片。</div> : null}</div></aside>
             </div>
           </div>
         </div>,
