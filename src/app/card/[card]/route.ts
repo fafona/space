@@ -4,6 +4,7 @@ import {
   buildMerchantBusinessCardShareDescription,
   buildMerchantBusinessCardShareTitle,
   buildMerchantBusinessCardShareUrl,
+  isMerchantBusinessCardShareRevoked,
   loadMerchantBusinessCardSharePayloadByKey,
   normalizeMerchantBusinessCardShareImageUrl,
   normalizeMerchantBusinessCardShareKey,
@@ -565,6 +566,21 @@ export async function GET(
   const requestOrigin = requestUrl.origin;
   if (!shareKey) {
     return new NextResponse("Invalid business card link", {
+      status: 404,
+      headers: {
+        "content-type": "text/plain; charset=utf-8",
+        "cache-control": "no-store, max-age=0",
+      },
+    });
+  }
+
+  if (
+    await isMerchantBusinessCardShareRevoked({
+      shareKey,
+      preferredOrigin: requestOrigin,
+    })
+  ) {
+    return new NextResponse("Business card not found", {
       status: 404,
       headers: {
         "content-type": "text/plain; charset=utf-8",

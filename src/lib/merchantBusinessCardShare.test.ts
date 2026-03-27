@@ -2,9 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildMerchantBusinessCardContactDownloadUrl,
+  buildMerchantBusinessCardShareLegacyFingerprint,
   buildMerchantBusinessCardLegacyContactDownloadUrl,
   MERCHANT_BUSINESS_CARD_SHARE_CARD_PATH,
   MERCHANT_BUSINESS_CARD_SHARE_KEY_PARAM,
+  buildMerchantBusinessCardShareRevocationByKeyObjectPath,
+  buildMerchantBusinessCardShareRevocationByLegacyPayloadObjectPath,
   buildMerchantBusinessCardVCard,
   buildMerchantBusinessCardVCardFileName,
   buildMerchantBusinessCardShareDescription,
@@ -84,6 +87,45 @@ test("share manifest helpers build stable public paths", () => {
     "https://faolla.com/storage/v1/object/public/uploads/merchant-shares/card-abc123.json",
     "https://faolla.com/storage/v1/object/public/public/merchant-shares/card-abc123.json",
   ]);
+});
+
+test("share revocation helpers build stable key and legacy payload paths", () => {
+  const payload = {
+    name: " fafona ",
+    targetUrl: "https://fafona.faolla.com",
+    imageUrl: "/storage/v1/object/public/page-assets/card.png",
+    detailImageUrl: "/storage/v1/object/public/page-assets/contact.png",
+    contact: {
+      displayName: " Felix ",
+      phone: " 633130577 ",
+      email: "caimin00x@gmail.com",
+    },
+  };
+
+  const firstFingerprint = buildMerchantBusinessCardShareLegacyFingerprint(payload, "https://faolla.com");
+  const secondFingerprint = buildMerchantBusinessCardShareLegacyFingerprint(
+    {
+      ...payload,
+      name: "fafona",
+      contact: {
+        ...payload.contact,
+        displayName: "Felix",
+        phone: "633130577",
+      },
+    },
+    "https://faolla.com",
+  );
+
+  assert.equal(firstFingerprint, secondFingerprint);
+  assert.match(firstFingerprint, /^legacy-[0-9a-f]{16}$/);
+  assert.equal(
+    buildMerchantBusinessCardShareRevocationByKeyObjectPath("Card-Abc123"),
+    "merchant-share-revocations/key/card-abc123.json",
+  );
+  assert.equal(
+    buildMerchantBusinessCardShareRevocationByLegacyPayloadObjectPath(payload, "https://faolla.com"),
+    `merchant-share-revocations/legacy/${firstFingerprint}.json`,
+  );
 });
 
 test("parseMerchantBusinessCardShareParams ignores unsupported image urls but keeps usable contact data", () => {

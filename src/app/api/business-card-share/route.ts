@@ -2,8 +2,11 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import {
   buildMerchantBusinessCardShareManifestObjectPath,
+  buildMerchantBusinessCardShareRevocationByKeyObjectPath,
+  buildMerchantBusinessCardShareRevocationByLegacyPayloadObjectPath,
   resolveMerchantBusinessCardShareOrigin,
   buildMerchantBusinessCardShareUrl,
+  normalizeMerchantBusinessCardSharePayload,
   normalizeMerchantBusinessCardShareContact,
   normalizeMerchantBusinessCardShareImageUrl,
   normalizeMerchantBusinessCardShareKey,
@@ -27,6 +30,30 @@ type BusinessCardShareRequestBody = {
 
 type BusinessCardShareDeleteRequestBody = {
   key?: unknown;
+  legacyPayload?: unknown;
+};
+
+type StorageOperationError = {
+  message?: string | null;
+} | null;
+
+type PublicStorageBucketClient = {
+  upload: (
+    objectPath: string,
+    body: Blob,
+    options: {
+      contentType: string;
+      cacheControl: string;
+      upsert: boolean;
+    },
+  ) => Promise<{ error: StorageOperationError }>;
+  remove: (paths: string[]) => Promise<{ error: StorageOperationError }>;
+};
+
+type PublicStorageClient = {
+  storage: {
+    from: (bucket: string) => PublicStorageBucketClient;
+  };
 };
 
 function normalizeText(value: unknown) {
@@ -42,10 +69,81 @@ function createShareKey() {
   return `card-${crypto.randomUUID().replace(/-/g, "").slice(0, 20)}`;
 }
 
+function createJsonBlob(value: unknown) {
+  return new Blob([JSON.stringify(value)], { type: "application/json; charset=utf-8" });
+}
+
 export function isStorageObjectMissingError(message: string) {
   return /not found|does not exist|no such object|status code 404|resource was not found/i.test(
     normalizeText(message),
   );
+}
+
+async function uploadPublicJsonObject(
+  supabase: PublicStorageClient,
+  objectPath: string,
+  payload: unknown,
+) {
+  const blob = createJsonBlob(payload);
+  const failedBuckets: Array<{ bucket: string; message: string }> = [];
+
+  for (const bucket of BUCKET_CANDIDATES) {
+    const uploaded = await supabase.storage.from(bucket).upload(objectPath, blob, {
+      contentType: "application/json; charset=utf-8",
+      cacheControl: "31536000",
+      upsert: true,
+    });
+    if (!uploaded.error) {
+      return {
+        ok: true as const,
+        bucket,
+      };
+    }
+
+    failedBuckets.push({
+      bucket,
+      message: normalizeText(uploaded.error.message) || "share_revocation_upload_failed",
+    });
+  }
+
+  return {
+    ok: false as const,
+    failedBuckets,
+  };
+}
+
+async function removePublicObject(
+  supabase: PublicStorageClient,
+  objectPath: string,
+) {
+  const deletedBuckets: string[] = [];
+  const missingBuckets: string[] = [];
+  const failedBuckets: Array<{ bucket: string; message: string }> = [];
+
+  for (const bucket of BUCKET_CANDIDATES) {
+    const removed = await supabase.storage.from(bucket).remove([objectPath]);
+    if (!removed.error) {
+      deletedBuckets.push(bucket);
+      continue;
+    }
+
+    const message = normalizeText(removed.error.message);
+    if (isStorageObjectMissingError(message)) {
+      missingBuckets.push(bucket);
+      continue;
+    }
+
+    failedBuckets.push({
+      bucket,
+      message: message || "share_manifest_delete_failed",
+    });
+  }
+
+  return {
+    deletedBuckets,
+    missingBuckets,
+    failedBuckets,
+  };
 }
 
 async function isAuthorized(request: Request, supabaseUrl: string, serviceRoleKey: string) {
@@ -113,7 +211,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "invalid_payload" }, { status: 400 });
   }
 
-  const payload = JSON.stringify({
+  const payload = {
     name,
     imageUrl,
     ...(detailImageUrl ? { detailImageUrl } : {}),
@@ -121,7 +219,7 @@ export async function POST(request: Request) {
     ...(imageWidth ? { imageWidth } : {}),
     ...(imageHeight ? { imageHeight } : {}),
     ...(contact ? { contact } : {}),
-  });
+  };
   const objectPath = buildMerchantBusinessCardShareManifestObjectPath(shareKey);
   if (!objectPath) {
     return NextResponse.json({ ok: false, error: "invalid_payload" }, { status: 400 });
@@ -134,7 +232,13 @@ export async function POST(request: Request) {
       detectSessionInUrl: false,
     },
   });
-  const blob = new Blob([payload], { type: "application/json; charset=utf-8" });
+  const blob = createJsonBlob(payload);
+  const revocationKeyObjectPath = buildMerchantBusinessCardShareRevocationByKeyObjectPath(shareKey);
+  if (revocationKeyObjectPath) {
+    for (const bucket of BUCKET_CANDIDATES) {
+      await supabase.storage.from(bucket).remove([revocationKeyObjectPath]);
+    }
+  }
 
   for (const bucket of BUCKET_CANDIDATES) {
     const uploaded = await supabase.storage.from(bucket).upload(objectPath, blob, {
@@ -187,8 +291,19 @@ export async function DELETE(request: Request) {
   }
 
   const shareKey = normalizeMerchantBusinessCardShareKey(normalizeText(body?.key));
+  const legacyPayload = normalizeMerchantBusinessCardSharePayload(
+    body?.legacyPayload && typeof body.legacyPayload === "object"
+      ? (body.legacyPayload as Record<string, unknown>)
+      : {},
+    request.url,
+  );
   const objectPath = buildMerchantBusinessCardShareManifestObjectPath(shareKey);
-  if (!shareKey || !objectPath) {
+  const keyRevocationObjectPath = buildMerchantBusinessCardShareRevocationByKeyObjectPath(shareKey);
+  const legacyRevocationObjectPath = buildMerchantBusinessCardShareRevocationByLegacyPayloadObjectPath(
+    legacyPayload,
+    request.url,
+  );
+  if (!objectPath && !legacyRevocationObjectPath) {
     return NextResponse.json({ ok: false, error: "invalid_payload" }, { status: 400 });
   }
 
@@ -200,36 +315,53 @@ export async function DELETE(request: Request) {
     },
   });
 
-  const deletedBuckets: string[] = [];
-  const missingBuckets: string[] = [];
-  const failedBuckets: Array<{ bucket: string; message: string }> = [];
-
-  for (const bucket of BUCKET_CANDIDATES) {
-    const removed = await supabase.storage.from(bucket).remove([objectPath]);
-    if (!removed.error) {
-      deletedBuckets.push(bucket);
-      continue;
-    }
-
-    const message = normalizeText(removed.error.message);
-    if (isStorageObjectMissingError(message)) {
-      missingBuckets.push(bucket);
-      continue;
-    }
-
-    failedBuckets.push({
-      bucket,
-      message: message || "share_manifest_delete_failed",
-    });
+  const keyRevocation =
+    keyRevocationObjectPath
+      ? await uploadPublicJsonObject(supabase, keyRevocationObjectPath, {
+          revokedAt: new Date().toISOString(),
+          type: "share_key",
+          shareKey,
+        })
+      : null;
+  if (keyRevocation && !keyRevocation.ok) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "share_revocation_upload_failed",
+        shareKey,
+        failedBuckets: keyRevocation.failedBuckets,
+      },
+      { status: 409 },
+    );
   }
 
-  if (failedBuckets.length > 0) {
+  const legacyRevocation =
+    legacyRevocationObjectPath
+      ? await uploadPublicJsonObject(supabase, legacyRevocationObjectPath, {
+          revokedAt: new Date().toISOString(),
+          type: "legacy_payload",
+        })
+      : null;
+  if (legacyRevocation && !legacyRevocation.ok) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "share_revocation_upload_failed",
+        shareKey,
+        failedBuckets: legacyRevocation.failedBuckets,
+      },
+      { status: 409 },
+    );
+  }
+
+  const manifestRemoval = objectPath ? await removePublicObject(supabase, objectPath) : null;
+  if (manifestRemoval && manifestRemoval.failedBuckets.length > 0) {
     return NextResponse.json(
       {
         ok: false,
         error: "share_manifest_delete_failed",
         shareKey,
-        failedBuckets,
+        failedBuckets: manifestRemoval.failedBuckets,
       },
       { status: 409 },
     );
@@ -238,7 +370,11 @@ export async function DELETE(request: Request) {
   return NextResponse.json({
     ok: true,
     shareKey,
-    deletedBuckets,
-    missingBuckets,
+    deletedBuckets: manifestRemoval?.deletedBuckets ?? [],
+    missingBuckets: manifestRemoval?.missingBuckets ?? [],
+    revocationBuckets: [
+      ...(keyRevocation?.ok ? [keyRevocation.bucket] : []),
+      ...(legacyRevocation?.ok ? [legacyRevocation.bucket] : []),
+    ],
   });
 }

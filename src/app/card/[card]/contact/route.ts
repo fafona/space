@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import {
   buildMerchantBusinessCardVCard,
   buildMerchantBusinessCardVCardFileName,
+  isMerchantBusinessCardShareRevoked,
   loadMerchantBusinessCardSharePayloadByKey,
   normalizeMerchantBusinessCardShareKey,
   resolveMerchantBusinessCardShareOrigin,
@@ -39,6 +40,20 @@ export async function GET(
   }
 
   const requestOrigin = resolveRequestOrigin(request);
+  if (
+    await isMerchantBusinessCardShareRevoked({
+      shareKey,
+      preferredOrigin: requestOrigin,
+    })
+  ) {
+    return new NextResponse("Business card contact not found", {
+      status: 404,
+      headers: {
+        "content-type": "text/plain; charset=utf-8",
+        "cache-control": "no-store, max-age=0",
+      },
+    });
+  }
   const payload = await loadMerchantBusinessCardSharePayloadByKey(
     shareKey,
     resolveMerchantBusinessCardShareOrigin(requestOrigin, requestOrigin) || requestOrigin,

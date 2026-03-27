@@ -786,10 +786,36 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     }));
   };
 
+  function buildLegacySharePayload(card: MerchantBusinessCardAsset) {
+    const targetUrl = normalizeText(card.targetUrl);
+    if (card.mode !== "link" || !targetUrl) {
+      return null;
+    }
+
+    return {
+      name: normalizeText(card.name),
+      imageUrl: normalizeText(card.shareImageUrl),
+      detailImageUrl: normalizeText(card.contactPagePublicImageUrl),
+      targetUrl,
+      imageWidth: card.width,
+      imageHeight: card.height,
+      contact: buildShareContactPayload({
+        name: card.name,
+        title: card.title,
+        contacts: card.contacts,
+        targetUrl,
+      }),
+    };
+  }
+
   async function deleteCardShare(card: MerchantBusinessCardAsset) {
     const shareKey = normalizeText(card.shareKey);
-    if (card.mode !== "link" || !shareKey) {
+    const legacyPayload = buildLegacySharePayload(card);
+    if (card.mode !== "link") {
       return;
+    }
+    if (!shareKey && !legacyPayload) {
+      throw new Error("share_delete_failed");
     }
 
     const initialAccessToken = await getShareAccessToken();
@@ -812,7 +838,8 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
             headers,
             credentials: "same-origin",
             body: JSON.stringify({
-              key: shareKey,
+              ...(shareKey ? { key: shareKey } : {}),
+              ...(legacyPayload ? { legacyPayload } : {}),
             }),
           },
           attempt === 0 ? 12_000 : 16_000,
