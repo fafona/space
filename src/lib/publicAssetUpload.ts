@@ -43,6 +43,12 @@ function sanitizeMerchantHint(input: string) {
   return normalized || "public";
 }
 
+function delay(ms: number) {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 async function getAssetUploadAccessToken(timeoutMs = 4500) {
   try {
     const {
@@ -63,30 +69,44 @@ async function getAssetUploadAccessToken(timeoutMs = 4500) {
 }
 
 async function uploadDataUrlViaServerApi(dataUrl: string, merchantHint: string, folder: string): Promise<string | null> {
-  try {
-    const accessToken = await getAssetUploadAccessToken();
-    const headers: Record<string, string> = {
-      "content-type": "application/json",
-    };
-    if (accessToken) {
-      headers.Authorization = `Bearer ${accessToken}`;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const accessToken = await getAssetUploadAccessToken(attempt === 0 ? 4500 : 9000);
+      const headers: Record<string, string> = {
+        "content-type": "application/json",
+      };
+      if (accessToken) {
+        headers.Authorization = `Bearer ${accessToken}`;
+      }
+      const response = await fetch("/api/assets/upload", {
+        method: "POST",
+        headers,
+        credentials: "same-origin",
+        body: JSON.stringify({
+          dataUrl,
+          merchantHint,
+          folder,
+        }),
+      });
+      if (response.ok) {
+        const payload = (await response.json().catch(() => null)) as { url?: unknown } | null;
+        return typeof payload?.url === "string" && payload.url.trim() ? payload.url.trim() : null;
+      }
+      if (attempt === 0 && response.status === 401) {
+        await recoverBrowserSupabaseSession(9000).catch(() => null);
+        await delay(500);
+        continue;
+      }
+    } catch {
+      if (attempt === 0) {
+        await recoverBrowserSupabaseSession(9000).catch(() => null);
+        await delay(500);
+        continue;
+      }
+      return null;
     }
-    const response = await fetch("/api/assets/upload", {
-      method: "POST",
-      headers,
-      credentials: "same-origin",
-      body: JSON.stringify({
-        dataUrl,
-        merchantHint,
-        folder,
-      }),
-    });
-    if (!response.ok) return null;
-    const payload = (await response.json().catch(() => null)) as { url?: unknown } | null;
-    return typeof payload?.url === "string" && payload.url.trim() ? payload.url.trim() : null;
-  } catch {
-    return null;
   }
+  return null;
 }
 
 export async function uploadDataUrlToPublicStorage(

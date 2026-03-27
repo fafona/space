@@ -130,6 +130,12 @@ function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }
 
+function delay(ms: number) {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 function formatOpacityPercent(value: number) {
   return `${Math.round(clamp(value, 0, 1) * 100)}%`;
 }
@@ -715,7 +721,13 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       setPreviewAsset(asset);
       setTip(editingCardId ? "名片已更新并保存到名片夹" : "名片已生成并保存到名片夹");
     } catch (error) {
-      setTip(error instanceof Error && error.message === "business_card_limit_reached" ? `名片夹已达到上限（${normalizedCardLimit} 张），请先删除旧名片或到超级后台调整数量限制` : "名片生成失败，请重试");
+      if (error instanceof Error && error.message === "business_card_limit_reached") {
+        setTip(`名片夹已达到上限（${normalizedCardLimit} 张），请先删除旧名片或到超级后台调整数量限制`);
+      } else if (error instanceof Error && error.message === "share_auth_unavailable") {
+        setTip("登录状态还没准备好，请刷新后台后再试一次");
+      } else {
+        setTip("名片生成失败，请重试");
+      }
     } finally {
       setIsGenerating(false);
     }
@@ -1606,36 +1618,59 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       }
       throw new Error("share_image_unavailable");
     }
-    const accessToken = await getShareAccessToken();
-    const headers: Record<string, string> = {
-      "content-type": "application/json",
-    };
-    if (accessToken) {
-      headers.Authorization = `Bearer ${accessToken}`;
+    const initialAccessToken = await getShareAccessToken();
+    let shareUrl = "";
+    let shareKey = "";
+    let lastErrorCode = "";
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const accessToken = attempt === 0 ? initialAccessToken : await getShareAccessToken(9000);
+      const headers: Record<string, string> = {
+        "content-type": "application/json",
+      };
+      if (accessToken) {
+        headers.Authorization = `Bearer ${accessToken}`;
+      }
+      const response = await fetch("/api/business-card-share", {
+        method: "POST",
+        headers,
+        credentials: "same-origin",
+        body: JSON.stringify({
+          key: normalizeText(input.shareKey),
+          name: input.cardName,
+          imageUrl: shareImageUrl,
+          detailImageUrl,
+          targetUrl,
+          imageWidth: typeof input.imageWidth === "number" ? Math.round(input.imageWidth) : undefined,
+          imageHeight: typeof input.imageHeight === "number" ? Math.round(input.imageHeight) : undefined,
+          contact: input.contact,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as {
+        ok?: unknown;
+        error?: unknown;
+        shareKey?: unknown;
+        shareUrl?: unknown;
+      } | null;
+      shareUrl = typeof payload?.shareUrl === "string" ? payload.shareUrl.trim() : "";
+      shareKey = typeof payload?.shareKey === "string" ? payload.shareKey.trim() : "";
+      lastErrorCode = typeof payload?.error === "string" ? payload.error.trim() : "";
+      if (response.ok && shareUrl && shareKey) {
+        break;
+      }
+      if (attempt === 0 && (response.status === 401 || lastErrorCode === "unauthorized")) {
+        await recoverBrowserSupabaseSession(9000).catch(() => null);
+        await delay(500);
+        continue;
+      }
+      if (attempt === 0 && response.status >= 500) {
+        await delay(400);
+        continue;
+      }
+      shareUrl = "";
+      shareKey = "";
+      break;
     }
-    const response = await fetch("/api/business-card-share", {
-      method: "POST",
-      headers,
-      credentials: "same-origin",
-      body: JSON.stringify({
-        key: normalizeText(input.shareKey),
-        name: input.cardName,
-        imageUrl: shareImageUrl,
-        detailImageUrl,
-        targetUrl,
-        imageWidth: typeof input.imageWidth === "number" ? Math.round(input.imageWidth) : undefined,
-        imageHeight: typeof input.imageHeight === "number" ? Math.round(input.imageHeight) : undefined,
-        contact: input.contact,
-      }),
-    });
-    const payload = (await response.json().catch(() => null)) as {
-      ok?: unknown;
-      shareKey?: unknown;
-      shareUrl?: unknown;
-    } | null;
-    const shareUrl = typeof payload?.shareUrl === "string" ? payload.shareUrl.trim() : "";
-    const shareKey = typeof payload?.shareKey === "string" ? payload.shareKey.trim() : "";
-    if (!response.ok || !shareUrl || !shareKey) {
+    if (!shareUrl || !shareKey) {
       if (fallbackShareUrl) {
         return {
           shareUrl: fallbackShareUrl,
@@ -1645,7 +1680,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
           shareKey: "",
         };
       }
-      throw new Error("share_link_unavailable");
+      throw new Error(lastErrorCode === "unauthorized" ? "share_auth_unavailable" : "share_link_unavailable");
     }
     if (input.card && (shareKey || shareImageUrl || detailImageUrl)) {
       updateCardShareMeta(input.card.id, {
