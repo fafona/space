@@ -32,6 +32,7 @@ import {
   normalizeMerchantBusinessCardShareImageUrl,
   resolveMerchantBusinessCardShareOrigin,
 } from "@/lib/merchantBusinessCardShare";
+import { recoverBrowserSupabaseSession } from "@/lib/authSessionRecovery";
 import { uploadImageDataUrlToPublicStorage } from "@/lib/publicAssetUpload";
 import { buildMerchantDomain } from "@/lib/siteRouting";
 import { supabase } from "@/lib/supabase";
@@ -1432,14 +1433,20 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     }
   }
 
-  async function getShareAccessToken(timeoutMs = 900) {
+  async function getShareAccessToken(timeoutMs = 4500) {
     try {
-      const sessionTask = supabase.auth.getSession();
-      const timeoutTask = new Promise<null>((resolve) => {
-        setTimeout(() => resolve(null), Math.max(200, timeoutMs));
-      });
-      const result = (await Promise.race([sessionTask, timeoutTask])) as Awaited<typeof sessionTask> | null;
-      return String(result?.data.session?.access_token ?? "").trim();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const directToken = String(session?.access_token ?? "").trim();
+      if (directToken) return directToken;
+    } catch {
+      // Fall through to browser session recovery.
+    }
+
+    try {
+      const recoveredSession = await recoverBrowserSupabaseSession(Math.max(2200, timeoutMs));
+      return String(recoveredSession?.access_token ?? "").trim();
     } catch {
       return "";
     }
@@ -1594,7 +1601,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
           contactUrl: fallbackContactUrl,
           shareImageUrl: "",
           detailImageUrl,
-          shareKey: normalizeText(input.shareKey),
+          shareKey: "",
         };
       }
       throw new Error("share_image_unavailable");
@@ -1628,14 +1635,14 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     } | null;
     const shareUrl = typeof payload?.shareUrl === "string" ? payload.shareUrl.trim() : "";
     const shareKey = typeof payload?.shareKey === "string" ? payload.shareKey.trim() : "";
-    if (!response.ok || !shareUrl) {
+    if (!response.ok || !shareUrl || !shareKey) {
       if (fallbackShareUrl) {
         return {
           shareUrl: fallbackShareUrl,
           contactUrl: fallbackContactUrl,
           shareImageUrl,
           detailImageUrl,
-          shareKey: normalizeText(input.shareKey),
+          shareKey: "",
         };
       }
       throw new Error("share_link_unavailable");
@@ -1697,6 +1704,9 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
             contact: shareContactPayload,
           })
         : null;
+    if (nextDraft.mode === "link" && !normalizeText(shareBundle?.shareKey)) {
+      throw new Error("share_link_unavailable");
+    }
     const asset: MerchantBusinessCardAsset = {
       ...nextDraft,
       id: existingCard?.id ?? createId("business-card"),
@@ -1708,7 +1718,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       ...(nextDraft.mode === "link" && (shareBundle?.detailImageUrl || existingCard?.contactPagePublicImageUrl)
         ? { contactPagePublicImageUrl: shareBundle?.detailImageUrl || existingCard?.contactPagePublicImageUrl }
         : {}),
-      ...(nextDraft.mode === "link" && resolvedShareKey ? { shareKey: resolvedShareKey } : {}),
+      ...(nextDraft.mode === "link" && normalizeText(shareBundle?.shareKey) ? { shareKey: normalizeText(shareBundle?.shareKey) } : {}),
       targetUrl: websiteUrl,
     };
 

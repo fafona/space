@@ -1,3 +1,4 @@
+import { recoverBrowserSupabaseSession } from "@/lib/authSessionRecovery";
 import { supabase } from "@/lib/supabase";
 
 const BUCKET_CANDIDATES = ["page-assets", "assets", "uploads", "public"] as const;
@@ -42,15 +43,20 @@ function sanitizeMerchantHint(input: string) {
   return normalized || "public";
 }
 
-async function getAssetUploadAccessToken(timeoutMs = 900) {
+async function getAssetUploadAccessToken(timeoutMs = 4500) {
   try {
-    const sessionTask = supabase.auth.getSession();
-    const timeoutTask = new Promise<null>((resolve) => {
-      setTimeout(() => resolve(null), Math.max(200, timeoutMs));
-    });
-    const result = (await Promise.race([sessionTask, timeoutTask])) as Awaited<typeof sessionTask> | null;
-    const token = result?.data?.session?.access_token ?? "";
-    return token.trim() || "";
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    const directToken = String(session?.access_token ?? "").trim();
+    if (directToken) return directToken;
+  } catch {
+    // Fall through to browser session recovery.
+  }
+
+  try {
+    const recoveredSession = await recoverBrowserSupabaseSession(Math.max(2200, timeoutMs));
+    return String(recoveredSession?.access_token ?? "").trim();
   } catch {
     return "";
   }
