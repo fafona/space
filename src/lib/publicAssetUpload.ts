@@ -49,6 +49,21 @@ function delay(ms: number) {
   });
 }
 
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, timeoutMs: number) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort();
+  }, Math.max(500, timeoutMs));
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function getAssetUploadAccessToken(timeoutMs = 4500) {
   try {
     const {
@@ -78,7 +93,7 @@ async function uploadDataUrlViaServerApi(dataUrl: string, merchantHint: string, 
       if (accessToken) {
         headers.Authorization = `Bearer ${accessToken}`;
       }
-      const response = await fetch("/api/assets/upload", {
+      const response = await fetchWithTimeout("/api/assets/upload", {
         method: "POST",
         headers,
         credentials: "same-origin",
@@ -87,7 +102,7 @@ async function uploadDataUrlViaServerApi(dataUrl: string, merchantHint: string, 
           merchantHint,
           folder,
         }),
-      });
+      }, attempt === 0 ? 15_000 : 20_000);
       if (response.ok) {
         const payload = (await response.json().catch(() => null)) as { url?: unknown } | null;
         return typeof payload?.url === "string" && payload.url.trim() ? payload.url.trim() : null;
