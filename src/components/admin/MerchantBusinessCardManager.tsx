@@ -25,6 +25,7 @@ import {
   type MerchantBusinessCardMode,
   type MerchantBusinessCardProfileInput,
 } from "@/lib/merchantBusinessCards";
+import { ColorOrGradientPicker, ColorSwatchPalette } from "@/components/admin/ColorOrGradientPicker";
 import {
   buildMerchantBusinessCardShareUrl,
   buildMerchantBusinessCardContactDownloadUrl,
@@ -119,6 +120,23 @@ const CARD_MODE_OPTIONS: Array<{
     description: "生成电子联系卡链接，手机打开后可保存联系人，也可单独复制名片图片。",
   },
 ];
+
+const CARD_BACKGROUND_COLOR_PRESETS = [
+  "#ffffff",
+  "#f8fafc",
+  "#e2e8f0",
+  "#dbeafe",
+  "#fef3c7",
+  "#dcfce7",
+  "#fee2e2",
+  "#111827",
+  "linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)",
+  "linear-gradient(135deg, #ffffff 0%, #fff1f2 52%, #ffedd5 100%)",
+  "linear-gradient(135deg, #dbeafe 0%, #fce7f3 45%, #fff7cc 100%)",
+  "linear-gradient(180deg, #fffdf8 0%, #f6efe4 100%)",
+  "linear-gradient(135deg, #082f49 0%, #0f172a 55%, #164e63 100%)",
+  "linear-gradient(180deg, #0f172a 0%, #111827 100%)",
+] as const;
 
 const CUSTOM_TEXT_PREFIX = "custom:";
 
@@ -1035,11 +1053,25 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
                         />
                       </label>
                     </div>
-                    <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_180px]">
-                      <label className="block text-xs text-slate-600">背景图<input type="file" accept="image/*" className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" onChange={(event) => void handleBackgroundUpload(event)} /></label>
-                      <label className="block text-xs text-slate-600">背景色<input type="color" className="mt-1 h-[42px] w-full rounded border bg-white px-2 py-1" value={draft.backgroundColor} onChange={(event) => applyDraft((current) => ({ ...current, backgroundColor: event.target.value }))} /></label>
-                      <label className="block text-xs text-slate-600">图片透明度<div className="mt-1 flex items-center gap-3 rounded border bg-white px-3 py-2"><input type="range" min="0" max="1" step="0.01" className="min-w-0 flex-1" value={draft.backgroundImageOpacity} onChange={(event) => applyDraft((current) => ({ ...current, backgroundImageOpacity: clamp(Number(event.target.value), 0, 1) }))} /><span className="w-12 shrink-0 text-right text-xs text-slate-500">{formatOpacityPercent(draft.backgroundImageOpacity)}</span></div></label>
-                      <label className="block text-xs text-slate-600">背景色透明度<div className="mt-1 flex items-center gap-3 rounded border bg-white px-3 py-2"><input type="range" min="0" max="1" step="0.01" className="min-w-0 flex-1" value={draft.backgroundColorOpacity} onChange={(event) => applyDraft((current) => ({ ...current, backgroundColorOpacity: clamp(Number(event.target.value), 0, 1) }))} /><span className="w-12 shrink-0 text-right text-xs text-slate-500">{formatOpacityPercent(draft.backgroundColorOpacity)}</span></div></label>
+                    <div className="space-y-3 rounded-xl border bg-white px-3 py-3">
+                      <div className="text-xs font-semibold text-slate-700">背景图与背景色</div>
+                      <div className="grid gap-3 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+                        <div className="space-y-3">
+                          <label className="block text-xs text-slate-600">背景图<input type="file" accept="image/*" className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" onChange={(event) => void handleBackgroundUpload(event)} /></label>
+                          <label className="block text-xs text-slate-600">图片透明度<div className="mt-1 flex items-center gap-3 rounded border bg-white px-3 py-2"><input type="range" min="0" max="1" step="0.01" className="min-w-0 flex-1" value={draft.backgroundImageOpacity} onChange={(event) => applyDraft((current) => ({ ...current, backgroundImageOpacity: clamp(Number(event.target.value), 0, 1) }))} /><span className="w-12 shrink-0 text-right text-xs text-slate-500">{formatOpacityPercent(draft.backgroundImageOpacity)}</span></div></label>
+                        </div>
+                        <div className="space-y-3">
+                          <div className="space-y-1">
+                            <div className="text-xs text-slate-600">背景色板</div>
+                            <ColorOrGradientPicker value={draft.backgroundColor} onChange={(value) => applyDraft((current) => ({ ...current, backgroundColor: value }))} />
+                          </div>
+                          <div className="space-y-1">
+                            <div className="text-xs text-slate-600">常用色板</div>
+                            <ColorSwatchPalette colors={[...CARD_BACKGROUND_COLOR_PRESETS]} selectedValue={draft.backgroundColor} onPick={(value) => applyDraft((current) => ({ ...current, backgroundColor: value }))} />
+                          </div>
+                          <label className="block text-xs text-slate-600">背景色透明度<div className="mt-1 flex items-center gap-3 rounded border bg-white px-3 py-2"><input type="range" min="0" max="1" step="0.01" className="min-w-0 flex-1" value={draft.backgroundColorOpacity} onChange={(event) => applyDraft((current) => ({ ...current, backgroundColorOpacity: clamp(Number(event.target.value), 0, 1) }))} /><span className="w-12 shrink-0 text-right text-xs text-slate-500">{formatOpacityPercent(draft.backgroundColorOpacity)}</span></div></label>
+                        </div>
+                      </div>
                     </div>
                     {draft.mode === "link" ? (
                       <div className="rounded-xl border bg-white px-3 py-3">

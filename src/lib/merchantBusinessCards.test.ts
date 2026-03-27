@@ -122,6 +122,14 @@ test("normalizeMerchantBusinessCardDraft clamps background opacity", () => {
   assert.equal(draft.backgroundColorOpacity, 0);
 });
 
+test("normalizeMerchantBusinessCardDraft keeps gradient background colors", () => {
+  const draft = normalizeMerchantBusinessCardDraft({
+    backgroundColor: "linear-gradient(135deg, #082f49 0%, #0f172a 55%, #164e63 100%)",
+  });
+
+  assert.equal(draft.backgroundColor, "linear-gradient(135deg, #082f49 0%, #0f172a 55%, #164e63 100%)");
+});
+
 test("normalizeMerchantBusinessCardDraft migrates legacy info typography to field-level styles", () => {
   const draft = normalizeMerchantBusinessCardDraft({
     typography: {
