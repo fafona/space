@@ -2,10 +2,6 @@ import type { NextResponse } from "next/server";
 
 export const MERCHANT_AUTH_COOKIE = "merchant-space-merchant-auth";
 
-function isSecureCookieEnabled() {
-  return process.env.NODE_ENV === "production";
-}
-
 function normalizeMaxAge(value: unknown) {
   const parsed = typeof value === "number" ? value : Number.parseInt(String(value ?? ""), 10);
   if (!Number.isFinite(parsed)) return 60 * 60;
@@ -49,7 +45,9 @@ export function setMerchantAuthCookie(response: NextResponse, accessToken: strin
   response.cookies.set(MERCHANT_AUTH_COOKIE, normalizedToken, {
     httpOnly: true,
     sameSite: "lax",
-    secure: isSecureCookieEnabled(),
+    // The merchant backend is still accessed over both http:// and https:// in production.
+    // Keeping this cookie non-secure avoids dropping the session on the http admin entry.
+    secure: false,
     path: "/",
     maxAge: normalizeMaxAge(maxAgeSeconds),
   });
@@ -59,7 +57,7 @@ export function clearMerchantAuthCookie(response: NextResponse) {
   response.cookies.set(MERCHANT_AUTH_COOKIE, "", {
     httpOnly: true,
     sameSite: "lax",
-    secure: isSecureCookieEnabled(),
+    secure: false,
     path: "/",
     maxAge: 0,
   });
