@@ -568,7 +568,7 @@ export async function GET(
       status: 404,
       headers: {
         "content-type": "text/plain; charset=utf-8",
-        "cache-control": "public, max-age=60, s-maxage=60",
+        "cache-control": "no-store, max-age=0",
       },
     });
   }
@@ -579,7 +579,7 @@ export async function GET(
       status: 404,
       headers: {
         "content-type": "text/plain; charset=utf-8",
-        "cache-control": "public, max-age=60, s-maxage=60",
+        "cache-control": "no-store, max-age=0",
       },
     });
   }
@@ -635,7 +635,7 @@ export async function GET(
       status: 200,
       headers: {
         "content-type": "text/html; charset=utf-8",
-        "cache-control": "public, max-age=300, s-maxage=300",
+        "cache-control": "no-store, max-age=0",
       },
     },
   );

@@ -521,6 +521,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewAsset, setPreviewAsset] = useState<MerchantBusinessCardAsset | null>(null);
   const [editingCardId, setEditingCardId] = useState<string | null>(null);
+  const [deletingCardId, setDeletingCardId] = useState<string | null>(null);
   const [tip, setTip] = useState("");
   const [hasPreviewed, setHasPreviewed] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -780,23 +781,109 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     }));
   };
 
-  const deleteCard = (card: MerchantBusinessCardAsset) => {
+  async function deleteCardShare(card: MerchantBusinessCardAsset) {
+    const shareKey = normalizeText(card.shareKey);
+    if (card.mode !== "link" || !shareKey) {
+      return;
+    }
+
+    const initialAccessToken = await getShareAccessToken();
+    let lastErrorCode = "";
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const accessToken = attempt === 0 ? initialAccessToken : await getShareAccessToken();
+        const headers: Record<string, string> = {
+          "content-type": "application/json",
+        };
+        if (accessToken) {
+          headers.Authorization = `Bearer ${accessToken}`;
+        }
+
+        const response = await fetchWithTimeout(
+          "/api/business-card-share",
+          {
+            method: "DELETE",
+            headers,
+            credentials: "same-origin",
+            body: JSON.stringify({
+              key: shareKey,
+            }),
+          },
+          attempt === 0 ? 12_000 : 16_000,
+        );
+        const payload = (await response.json().catch(() => null)) as {
+          ok?: unknown;
+          error?: unknown;
+        } | null;
+        lastErrorCode = typeof payload?.error === "string" ? payload.error.trim() : "";
+        if (response.ok) {
+          return;
+        }
+        if (attempt === 0 && (response.status === 401 || lastErrorCode === "unauthorized")) {
+          await recoverBrowserSupabaseSession(9000).catch(() => null);
+          await delay(500);
+          continue;
+        }
+        if (attempt === 0 && response.status >= 500) {
+          await delay(400);
+          continue;
+        }
+      } catch (error) {
+        lastErrorCode = error instanceof Error && error.name === "AbortError" ? "share_delete_timeout" : "share_delete_failed";
+        if (attempt === 0) {
+          await delay(400);
+          continue;
+        }
+      }
+      break;
+    }
+
+    throw new Error(
+      lastErrorCode === "unauthorized"
+        ? "share_delete_unauthorized"
+        : lastErrorCode === "share_delete_timeout"
+          ? "share_delete_timeout"
+          : "share_delete_failed",
+    );
+  }
+
+  const deleteCard = async (card: MerchantBusinessCardAsset) => {
+    if (deletingCardId === card.id) return;
     if (typeof window !== "undefined" && !window.confirm(`确认删除名片“${card.name}”吗？`)) {
       return;
     }
-    const nextCards = cards.filter((item) => item.id !== card.id);
-    onCardsChange(nextCards);
-    if (previewAsset?.id === card.id) {
-      setPreviewAsset(null);
-      setPreviewOpen(false);
+
+    setDeletingCardId(card.id);
+    try {
+      await deleteCardShare(card);
+
+      const nextCards = cards.filter((item) => item.id !== card.id);
+      onCardsChange(nextCards);
+      if (previewAsset?.id === card.id) {
+        setPreviewAsset(null);
+        setPreviewOpen(false);
+      }
+      if (editingCardId === card.id) {
+        setEditingCardId(null);
+        setEditorOpen(false);
+        setDraft(createDefaultMerchantBusinessCardDraft(profile));
+        setHasPreviewed(false);
+      }
+      setTip(card.mode === "link" ? "名片已删除，二维码和联系卡链接已失效" : "名片已删除");
+    } catch (error) {
+      if (error instanceof Error && error.message === "share_delete_unauthorized") {
+        setTip("登录状态失效，联系卡链接未删除，请重新登录后重试");
+      } else if (error instanceof Error && error.message === "share_delete_timeout") {
+        setTip("删除超时，二维码和联系卡链接暂未失效，请稍后重试");
+      } else if (card.mode === "link") {
+        setTip("删除失败，二维码和联系卡链接未失效，请重试");
+      } else {
+        setTip("删除失败，请重试");
+      }
+    } finally {
+      setDeletingCardId((current) => (current === card.id ? null : current));
     }
-    if (editingCardId === card.id) {
-      setEditingCardId(null);
-      setEditorOpen(false);
-      setDraft(createDefaultMerchantBusinessCardDraft(profile));
-      setHasPreviewed(false);
-    }
-    setTip("名片已删除");
   };
 
   const openCardTarget = (card: MerchantBusinessCardAsset) => {
@@ -1229,7 +1316,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
         <div className="fixed inset-0 z-[2147483000] bg-black/45 p-4" onMouseDown={() => setFolderOpen(false)}>
           <div className="mx-auto flex h-full max-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
             <div className="flex items-center justify-between border-b px-5 py-4"><div><div className="text-lg font-semibold text-slate-900">名片夹</div><div className="text-sm text-slate-500">查看已生成的图片名片或链接名片，可预览并继续操作。</div></div><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => setFolderOpen(false)}>关闭</button></div>
-            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">{cards.length > 0 ? <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{cards.map((card) => <article key={card.id} className="overflow-hidden rounded-2xl border bg-slate-50 shadow-sm"><div className="space-y-4 p-4"><button type="button" className="block w-full overflow-hidden rounded-2xl border bg-transparent text-left" onClick={() => { setPreviewAsset(card); setPreviewOpen(true); }}><img src={card.imageUrl} alt={card.name} className="block h-auto w-full object-cover bg-transparent" /></button><div><div className="flex items-center gap-2"><div className="text-base font-semibold text-slate-900">{card.name}</div><span className="rounded-full bg-slate-900 px-2 py-0.5 text-[10px] text-white">{getCardModeLabel(card.mode)}</span></div><div className="text-xs text-slate-500">{new Date(card.createdAt).toLocaleString("zh-CN", { hour12: false })}</div>{card.mode === "link" ? <div className="mt-1 text-xs text-slate-500">手机打开联系卡链接后可直接保存联系人。</div> : null}</div>{card.mode === "link" ? <div className="space-y-2"><div className="grid grid-cols-2 gap-2"><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => { setPreviewAsset(card); setPreviewOpen(true); }}>预览</button><button type="button" className="rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800" onClick={() => void copyCardLink(card)}>复制联系卡链接</button></div><div className="grid grid-cols-2 gap-2"><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => void downloadCardContact(card)}>下载联系人</button><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => void copyCardImage(card)}>复制名片图片</button></div><div className="grid grid-cols-2 gap-2"><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => openEditorForCard(card)}>修改</button><button type="button" className="rounded border border-rose-200 bg-white px-3 py-2 text-sm text-rose-600 hover:bg-rose-50" onClick={() => deleteCard(card)}>删除</button></div></div> : <div className="grid grid-cols-2 gap-2"><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => { setPreviewAsset(card); setPreviewOpen(true); }}>预览</button><button type="button" className="rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800" onClick={() => void saveCard(card)}>保存</button><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => openEditorForCard(card)}>修改</button><button type="button" className="rounded border border-rose-200 bg-white px-3 py-2 text-sm text-rose-600 hover:bg-rose-50" onClick={() => deleteCard(card)}>删除</button></div>}</div></article>)}</div> : <div className="flex min-h-[240px] items-center justify-center rounded-2xl border border-dashed bg-slate-50 px-6 text-center text-sm text-slate-500">还没有生成名片。先去点击“生成名片”制作一张。</div>}</div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">{cards.length > 0 ? <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{cards.map((card) => <article key={card.id} className="overflow-hidden rounded-2xl border bg-slate-50 shadow-sm"><div className="space-y-4 p-4"><button type="button" className="block w-full overflow-hidden rounded-2xl border bg-transparent text-left" onClick={() => { setPreviewAsset(card); setPreviewOpen(true); }}><img src={card.imageUrl} alt={card.name} className="block h-auto w-full object-cover bg-transparent" /></button><div><div className="flex items-center gap-2"><div className="text-base font-semibold text-slate-900">{card.name}</div><span className="rounded-full bg-slate-900 px-2 py-0.5 text-[10px] text-white">{getCardModeLabel(card.mode)}</span></div><div className="text-xs text-slate-500">{new Date(card.createdAt).toLocaleString("zh-CN", { hour12: false })}</div>{card.mode === "link" ? <div className="mt-1 text-xs text-slate-500">手机打开联系卡链接后可直接保存联系人。</div> : null}</div>{card.mode === "link" ? <div className="space-y-2"><div className="grid grid-cols-2 gap-2"><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => { setPreviewAsset(card); setPreviewOpen(true); }}>预览</button><button type="button" className="rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800" onClick={() => void copyCardLink(card)}>复制联系卡链接</button></div><div className="grid grid-cols-2 gap-2"><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => void downloadCardContact(card)}>下载联系人</button><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => void copyCardImage(card)}>复制名片图片</button></div><div className="grid grid-cols-2 gap-2"><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => openEditorForCard(card)}>修改</button><button type="button" className="rounded border border-rose-200 bg-white px-3 py-2 text-sm text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50" onClick={() => void deleteCard(card)} disabled={deletingCardId === card.id}>{deletingCardId === card.id ? "删除中..." : "删除"}</button></div></div> : <div className="grid grid-cols-2 gap-2"><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => { setPreviewAsset(card); setPreviewOpen(true); }}>预览</button><button type="button" className="rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800" onClick={() => void saveCard(card)}>保存</button><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => openEditorForCard(card)}>修改</button><button type="button" className="rounded border border-rose-200 bg-white px-3 py-2 text-sm text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50" onClick={() => void deleteCard(card)} disabled={deletingCardId === card.id}>{deletingCardId === card.id ? "删除中..." : "删除"}</button></div>}</div></article>)}</div> : <div className="flex min-h-[240px] items-center justify-center rounded-2xl border border-dashed bg-slate-50 px-6 text-center text-sm text-slate-500">还没有生成名片。先去点击“生成名片”制作一张。</div>}</div>
           </div>
         </div>,
       ) : null}

@@ -33,7 +33,7 @@ export async function GET(
       status: 404,
       headers: {
         "content-type": "text/plain; charset=utf-8",
-        "cache-control": "public, max-age=60, s-maxage=60",
+        "cache-control": "no-store, max-age=0",
       },
     });
   }
@@ -48,7 +48,7 @@ export async function GET(
       status: 404,
       headers: {
         "content-type": "text/plain; charset=utf-8",
-        "cache-control": "public, max-age=60, s-maxage=60",
+        "cache-control": "no-store, max-age=0",
       },
     });
   }
@@ -60,7 +60,7 @@ export async function GET(
     headers: {
       "content-type": "text/vcard; charset=utf-8",
       "content-disposition": buildContentDisposition(fileName),
-      "cache-control": "public, max-age=3600, s-maxage=3600",
+      "cache-control": "no-store, max-age=0",
     },
   });
 }

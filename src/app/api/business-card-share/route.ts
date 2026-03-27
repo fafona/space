@@ -25,6 +25,10 @@ type BusinessCardShareRequestBody = {
   contact?: unknown;
 };
 
+type BusinessCardShareDeleteRequestBody = {
+  key?: unknown;
+};
+
 function normalizeText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -36,6 +40,12 @@ function normalizeImageDimension(value: unknown) {
 
 function createShareKey() {
   return `card-${crypto.randomUUID().replace(/-/g, "").slice(0, 20)}`;
+}
+
+export function isStorageObjectMissingError(message: string) {
+  return /not found|does not exist|no such object|status code 404|resource was not found/i.test(
+    normalizeText(message),
+  );
 }
 
 async function isAuthorized(request: Request, supabaseUrl: string, serviceRoleKey: string) {
@@ -153,4 +163,82 @@ export async function POST(request: Request) {
   }
 
   return NextResponse.json({ ok: false, error: "share_manifest_upload_failed" }, { status: 409 });
+}
+
+export async function DELETE(request: Request) {
+  const supabaseUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").trim();
+  const serviceRoleKey =
+    (process.env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim() ||
+    (process.env.NEXT_SUPABASE_SERVICE_ROLE_KEY ?? "").trim();
+
+  if (!supabaseUrl || !serviceRoleKey) {
+    return NextResponse.json({ ok: false, error: "share_service_unavailable" }, { status: 503 });
+  }
+
+  if (!(await isAuthorized(request, supabaseUrl, serviceRoleKey))) {
+    return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+  }
+
+  let body: BusinessCardShareDeleteRequestBody | null = null;
+  try {
+    body = (await request.json()) as BusinessCardShareDeleteRequestBody;
+  } catch {
+    return NextResponse.json({ ok: false, error: "invalid_json" }, { status: 400 });
+  }
+
+  const shareKey = normalizeMerchantBusinessCardShareKey(normalizeText(body?.key));
+  const objectPath = buildMerchantBusinessCardShareManifestObjectPath(shareKey);
+  if (!shareKey || !objectPath) {
+    return NextResponse.json({ ok: false, error: "invalid_payload" }, { status: 400 });
+  }
+
+  const supabase = createClient(supabaseUrl, serviceRoleKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+  });
+
+  const deletedBuckets: string[] = [];
+  const missingBuckets: string[] = [];
+  const failedBuckets: Array<{ bucket: string; message: string }> = [];
+
+  for (const bucket of BUCKET_CANDIDATES) {
+    const removed = await supabase.storage.from(bucket).remove([objectPath]);
+    if (!removed.error) {
+      deletedBuckets.push(bucket);
+      continue;
+    }
+
+    const message = normalizeText(removed.error.message);
+    if (isStorageObjectMissingError(message)) {
+      missingBuckets.push(bucket);
+      continue;
+    }
+
+    failedBuckets.push({
+      bucket,
+      message: message || "share_manifest_delete_failed",
+    });
+  }
+
+  if (failedBuckets.length > 0) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "share_manifest_delete_failed",
+        shareKey,
+        failedBuckets,
+      },
+      { status: 409 },
+    );
+  }
+
+  return NextResponse.json({
+    ok: true,
+    shareKey,
+    deletedBuckets,
+    missingBuckets,
+  });
 }
