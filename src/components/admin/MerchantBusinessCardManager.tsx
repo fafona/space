@@ -397,6 +397,7 @@ function CardSurface({
     .map((item) => item.trim())
     .filter(Boolean)
     .join("\n");
+  const shouldShowQr = draft.showQr && !!qrCodeUrl;
   const exportHasBackgroundImage = isExport && !!normalizeText(draft.backgroundImageUrl);
   return (
     <div style={{ width: `${draft.width * scale}px`, height: `${draft.height * scale}px` }}>
@@ -490,24 +491,24 @@ function CardSurface({
               {item.text}
             </div>
           ))}
-        <div
-          style={{
-            position: "absolute",
-            left: `${draft.qr.x}px`,
-            top: `${draft.qr.y}px`,
-            width: `${draft.qr.size}px`,
-            height: `${draft.qr.size}px`,
-            padding: "10px",
-            borderRadius: "18px",
-            background: "#fff",
-            boxShadow: "0 16px 36px rgba(15,23,42,.18)",
-          }}
-        >
-          {qrCodeUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
+        {shouldShowQr ? (
+          <div
+            style={{
+              position: "absolute",
+              left: `${draft.qr.x}px`,
+              top: `${draft.qr.y}px`,
+              width: `${draft.qr.size}px`,
+              height: `${draft.qr.size}px`,
+              padding: "10px",
+              borderRadius: "18px",
+              background: "#fff",
+              boxShadow: "0 16px 36px rgba(15,23,42,.18)",
+            }}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={qrCodeUrl} alt="商户网站二维码" className="h-full w-full object-contain" />
-          ) : null}
-        </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -593,6 +594,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
   const fullScale = useMemo(() => Math.min(1, 1000 / Math.max(1, draft.width)), [draft.width]);
   const requiresPreviewBeforeSave = !editingCardId && !hasPreviewed;
   const qrMayBeUnreadable = draft.qr.size < QR_MIN_READABLE_SIZE;
+  const qrReadyForCurrentDraft = !draft.showQr || !!qrCodeUrl;
   const cardLimitReached = !editingCardId && cards.length >= normalizedCardLimit;
   const canOpenCreateEditor = canCreate && !cardLimitReached;
   const activeLinkShareKey = useMemo(() => {
@@ -729,7 +731,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
   };
 
   const handleGenerate = async () => {
-    if (!websiteUrl || !qrCodeUrl || requiresPreviewBeforeSave) return;
+    if (!websiteUrl || !qrReadyForCurrentDraft || requiresPreviewBeforeSave) return;
     setIsGenerating(true);
     try {
       const asset = await saveCurrentDraftToFolder();
@@ -954,14 +956,14 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
               <div><div className="text-lg font-semibold text-slate-900">{editingCardId ? "修改名片" : "生成名片"}</div><div className="text-sm text-slate-500">先选择图片模式或链接模式，再调整样式并预览生成。</div></div>
               <div className="flex flex-wrap gap-2">
                 <button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => { setPreviewAsset(null); setHasPreviewed(true); setPreviewOpen(true); }}>预览</button>
-                <button type="button" className="rounded bg-black px-3 py-2 text-sm text-white disabled:opacity-50" onClick={() => { setHasPreviewed(true); void handleGenerate(); }} disabled={!websiteUrl || !qrCodeUrl || isGenerating || requiresPreviewBeforeSave}>{isGenerating ? (editingCardId ? "保存中..." : "生成中...") : (editingCardId ? "保存修改" : "生成")}</button>
+                <button type="button" className="rounded bg-black px-3 py-2 text-sm text-white disabled:opacity-50" onClick={() => { setHasPreviewed(true); void handleGenerate(); }} disabled={!websiteUrl || !qrReadyForCurrentDraft || isGenerating || requiresPreviewBeforeSave}>{isGenerating ? (editingCardId ? "保存中..." : "生成中...") : (editingCardId ? "保存修改" : "生成")}</button>
                 <button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => { setEditorOpen(false); setEditingCardId(null); }}>关闭</button>
               </div>
             </div>
             <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_minmax(520px,680px)]">
               <div className="min-h-0 overflow-y-auto px-4 py-4">
-                <div className="grid gap-3 xl:grid-cols-2">
-                  <section className="space-y-2.5 rounded-xl border bg-slate-50 p-3">
+                <div className="grid gap-3 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
+                  <section className="space-y-2.5 rounded-xl border bg-slate-50 p-3 xl:col-span-2">
                     <div className="text-sm font-semibold text-slate-900">基础设置</div>
                     <div className="space-y-2">
                       <div className="text-xs text-slate-600">名片模式</div>
@@ -1065,54 +1067,63 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
                         ) : null}
                       </div>
                     ) : null}
-                    <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_120px]">
-                      <label className="block text-xs text-slate-600">网站说明<input className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.websiteLabel} placeholder="扫码进入网站" onFocus={() => setSingleSelectedField("website")} onChange={(event) => applyDraft((current) => ({ ...current, websiteLabel: event.target.value }))} /></label>
-                      <label className="flex items-end gap-2 text-xs text-slate-600"><input type="checkbox" className="mb-3" checked={draft.showWebsiteUrl} onChange={(event) => applyDraft((current) => ({ ...current, showWebsiteUrl: event.target.checked }))} />显示域名</label>
-                    </div>
-                    <div className="rounded border bg-white px-3 py-2 text-xs text-slate-500">{`当前二维码网址：${websiteUrl || "请先填写域名前缀"}`}</div>
-                  </section>
-                  <section className="space-y-2.5 rounded-xl border bg-slate-50 p-3">
-                    <div className="text-sm font-semibold text-slate-900">二维码</div>
-                    <div className="grid gap-3 md:grid-cols-3">
-                      {(["x", "y", "size"] as const).map((key) => (
-                        <label key={key} className="block text-xs text-slate-600">
-                          {key === "size" ? "大小" : key.toUpperCase()}
-                          <input
-                            type="number"
-                            inputMode="numeric"
-                            step={1}
-                            min={key === "size" ? 48 : 0}
-                            max={key === "size" ? 600 : 2000}
-                            className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm"
-                            value={getNumberInputValue(`qr-${key}`, draft.qr[key])}
-                            onChange={(event) =>
-                              handleNumberInputChange(
-                                `qr-${key}`,
-                                event.target.value,
-                                draft.qr[key],
-                                key === "size" ? 48 : 0,
-                                key === "size" ? 600 : 2000,
-                                (value) => applyDraft((current) => ({ ...current, qr: { ...current.qr, [key]: value } })),
-                              )
-                            }
-                            onBlur={() =>
-                              commitNumberInput(`qr-${key}`, draft.qr[key], key === "size" ? 48 : 0, key === "size" ? 600 : 2000, (value) =>
-                                applyDraft((current) => ({ ...current, qr: { ...current.qr, [key]: value } })),
-                              )
-                            }
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter") event.currentTarget.blur();
-                            }}
-                          />
-                        </label>
-                      ))}
-                    </div>
-                    {qrMayBeUnreadable ? (
-                      <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-                        当前二维码尺寸偏小，可能无法识别，建议至少保持在 {QR_MIN_READABLE_SIZE}px。
+                    <div className="rounded-xl border bg-white px-3 py-3">
+                      <div className="text-xs font-semibold text-slate-700">网址与二维码</div>
+                      <div className="mt-1 text-xs leading-5 text-slate-500">网站说明、网址显示和二维码都在右侧实时预览中查看，这里只保留设置，不再重复预览。</div>
+                      <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
+                        <div className="space-y-3">
+                          <label className="block text-xs text-slate-600">网站说明<input className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.websiteLabel} placeholder="扫码进入网站" onFocus={() => setSingleSelectedField("website")} onChange={(event) => applyDraft((current) => ({ ...current, websiteLabel: event.target.value }))} /></label>
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <label className="flex items-center gap-2 rounded border bg-slate-50 px-3 py-2 text-xs text-slate-700"><input type="checkbox" checked={draft.showWebsiteUrl} onChange={(event) => applyDraft((current) => ({ ...current, showWebsiteUrl: event.target.checked }))} />显示域名</label>
+                            <label className="flex items-center gap-2 rounded border bg-slate-50 px-3 py-2 text-xs text-slate-700"><input type="checkbox" checked={draft.showQr} onChange={(event) => applyDraft((current) => ({ ...current, showQr: event.target.checked }))} />显示二维码</label>
+                          </div>
+                          <div className="rounded border bg-slate-50 px-3 py-2 text-xs text-slate-500 break-all">{`当前网址：${websiteUrl || "请先填写域名前缀"}`}</div>
+                        </div>
+                        <div className="space-y-3">
+                          <div className="grid gap-3 sm:grid-cols-3">
+                            {(["x", "y", "size"] as const).map((key) => (
+                              <label key={key} className="block text-xs text-slate-600">
+                                {key === "size" ? "大小" : key.toUpperCase()}
+                                <input
+                                  type="number"
+                                  inputMode="numeric"
+                                  step={1}
+                                  min={key === "size" ? 48 : 0}
+                                  max={key === "size" ? 600 : 2000}
+                                  className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm"
+                                  value={getNumberInputValue(`qr-${key}`, draft.qr[key])}
+                                  onChange={(event) =>
+                                    handleNumberInputChange(
+                                      `qr-${key}`,
+                                      event.target.value,
+                                      draft.qr[key],
+                                      key === "size" ? 48 : 0,
+                                      key === "size" ? 600 : 2000,
+                                      (value) => applyDraft((current) => ({ ...current, qr: { ...current.qr, [key]: value } })),
+                                    )
+                                  }
+                                  onBlur={() =>
+                                    commitNumberInput(`qr-${key}`, draft.qr[key], key === "size" ? 48 : 0, key === "size" ? 600 : 2000, (value) =>
+                                      applyDraft((current) => ({ ...current, qr: { ...current.qr, [key]: value } })),
+                                    )
+                                  }
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter") event.currentTarget.blur();
+                                  }}
+                                />
+                              </label>
+                            ))}
+                          </div>
+                          <div className={`rounded border px-3 py-2 text-xs ${draft.showQr && qrMayBeUnreadable ? "border-amber-200 bg-amber-50 text-amber-700" : "border-slate-200 bg-slate-50 text-slate-500"}`}>
+                            {draft.showQr
+                              ? qrMayBeUnreadable
+                                ? `当前二维码尺寸偏小，可能无法识别，建议至少保持在 ${QR_MIN_READABLE_SIZE}px。`
+                                : "二维码只在右侧实时预览里显示，左侧不再重复占位置。"
+                              : "已隐藏二维码；生成和预览都会同步隐藏。"}
+                          </div>
+                        </div>
                       </div>
-                    ) : null}
-                    <div className="rounded-xl border bg-white p-4"><div className="mb-3 text-xs font-medium text-slate-500">二维码预览</div><div className="flex h-32 w-32 items-center justify-center rounded-xl border bg-slate-50 p-2">{qrCodeUrl ? <img src={qrCodeUrl} alt="二维码预览" className="h-full w-full object-contain" /> : <span className="text-xs text-slate-400">暂无二维码</span>}</div></div>
+                    </div>
                   </section>
                   <section className="space-y-2.5 rounded-xl border bg-slate-50 p-3 xl:col-span-2">
                     <div className="text-sm font-semibold text-slate-900">联系方式</div>
@@ -1847,7 +1858,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
 
   async function saveCurrentDraftToFolder() {
     const node = hiddenPreviewRef.current;
-    if (!node || !websiteUrl || !qrCodeUrl) return null;
+    if (!node || !websiteUrl || !qrReadyForCurrentDraft) return null;
     if (!editingCardId && cards.length >= normalizedCardLimit) {
       throw new Error("business_card_limit_reached");
     }

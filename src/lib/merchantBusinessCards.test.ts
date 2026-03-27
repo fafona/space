@@ -45,6 +45,7 @@ test("default business card draft prefills merchant profile fields", () => {
   assert.equal(draft.backgroundImageOpacity, 1);
   assert.equal(draft.backgroundColorOpacity, 1);
   assert.equal(draft.showWebsiteUrl, true);
+  assert.equal(draft.showQr, true);
   assert.deepEqual(draft.customTexts, []);
   assert.equal(draft.contacts.contactName, "felix");
   assert.equal(draft.contacts.phone, "0034633130577");
@@ -83,6 +84,7 @@ test("normalizeMerchantBusinessCardDraft allows empty website label", () => {
 test("normalizeMerchantBusinessCardDraft supports hiding website url and custom texts", () => {
   const draft = normalizeMerchantBusinessCardDraft({
     showWebsiteUrl: false,
+    showQr: false,
     customTexts: [
       {
         id: "custom-1",
@@ -102,6 +104,7 @@ test("normalizeMerchantBusinessCardDraft supports hiding website url and custom 
   });
 
   assert.equal(draft.showWebsiteUrl, false);
+  assert.equal(draft.showQr, false);
   assert.equal(draft.customTexts.length, 1);
   assert.equal(draft.customTexts[0]?.text, "VIP only");
   assert.equal(draft.customTexts[0]?.x, 120);

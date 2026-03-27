@@ -91,6 +91,7 @@ export type MerchantBusinessCardDraft = {
   title: string;
   websiteLabel: string;
   showWebsiteUrl: boolean;
+  showQr: boolean;
   contacts: MerchantBusinessCardContacts;
   customTexts: MerchantBusinessCardCustomText[];
   textLayout: MerchantBusinessCardTextLayout;
@@ -252,6 +253,7 @@ export function createDefaultMerchantBusinessCardDraft(
     title: "",
     websiteLabel: "扫码进入网站",
     showWebsiteUrl: true,
+    showQr: true,
     contacts: {
       contactName: normalizeText(profile.contactName),
       phone: normalizeText(profile.contactPhone),
@@ -369,6 +371,7 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
     title: normalizeText(source.title),
     websiteLabel: typeof source.websiteLabel === "string" ? source.websiteLabel.trim() : fallback.websiteLabel,
     showWebsiteUrl: normalizeBoolean(source.showWebsiteUrl, fallback.showWebsiteUrl),
+    showQr: normalizeBoolean((source as { showQr?: unknown }).showQr, fallback.showQr),
     contacts: {
       contactName: normalizeText(source.contacts?.contactName),
       phone:
