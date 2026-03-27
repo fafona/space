@@ -6178,6 +6178,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
     setLoggingOut(true);
     try {
+      await fetch("/api/auth/merchant-logout", {
+        method: "POST",
+        credentials: "same-origin",
+      }).catch(() => null);
       const { error } = await withTimeout(
         supabase.auth.signOut(),
         AUTH_CHECK_TIMEOUT_MS,

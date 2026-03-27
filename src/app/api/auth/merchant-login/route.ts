@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
+import { setMerchantAuthCookie } from "@/lib/merchantAuthSession";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -278,6 +279,7 @@ export async function POST(request: Request) {
       | {
           access_token?: unknown;
           refresh_token?: unknown;
+          expires_in?: unknown;
           user?: unknown;
           msg?: unknown;
           message?: unknown;
@@ -317,12 +319,14 @@ export async function POST(request: Request) {
         : null;
     const merchantId = await resolveMerchantId(supabase, account, email, authUser);
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       email,
       merchantId: merchantId || null,
       session: upstreamPayload,
       user: authUser,
     });
+    setMerchantAuthCookie(response, accessToken, upstreamPayload?.expires_in);
+    return response;
   } catch {
     return NextResponse.json({ error: "merchant_login_failed" }, { status: 503 });
   }

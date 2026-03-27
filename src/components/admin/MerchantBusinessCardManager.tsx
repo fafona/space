@@ -1462,7 +1462,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     }
   }
 
-  async function getShareAccessToken(timeoutMs = 4500) {
+  async function getShareAccessToken() {
     try {
       const {
         data: { session },
@@ -1470,15 +1470,9 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       const directToken = String(session?.access_token ?? "").trim();
       if (directToken) return directToken;
     } catch {
-      // Fall through to browser session recovery.
+      // Fall through to cookie-backed server auth.
     }
-
-    try {
-      const recoveredSession = await recoverBrowserSupabaseSession(Math.max(2200, timeoutMs));
-      return String(recoveredSession?.access_token ?? "").trim();
-    } catch {
-      return "";
-    }
+    return "";
   }
 
   function updateCardShareMeta(
@@ -1641,7 +1635,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     let lastErrorCode = "";
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
-        const accessToken = attempt === 0 ? initialAccessToken : await getShareAccessToken(9000);
+        const accessToken = attempt === 0 ? initialAccessToken : await getShareAccessToken();
         const headers: Record<string, string> = {
           "content-type": "application/json",
         };

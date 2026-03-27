@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { parseCookieValue, readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
 import { normalizeMerchantProfileBindingPayload } from "@/lib/merchantProfileBinding";
 import { SUPER_ADMIN_SESSION_COOKIE, SUPER_ADMIN_SESSION_VALUE } from "@/lib/superAdminSession";
 
@@ -40,14 +41,6 @@ type DomainBindingBody = {
 
 function readEnv(name: string) {
   return (process.env[name] ?? "").trim();
-}
-
-function parseCookieValue(cookieHeader: string, key: string) {
-  return cookieHeader
-    .split(";")
-    .map((part) => part.trim())
-    .find((part) => part.startsWith(`${key}=`))
-    ?.slice(key.length + 1) ?? "";
 }
 
 function normalizeEmail(value: string | null | undefined) {
@@ -113,20 +106,22 @@ async function isAuthorizedForMerchant(
     return true;
   }
 
-  const authHeader = request.headers.get("authorization") ?? "";
-  const tokenMatch = authHeader.match(/^Bearer\s+(.+)$/i);
-  const accessToken = tokenMatch?.[1]?.trim() ?? "";
-  if (!accessToken) return false;
+  const accessTokens = readMerchantRequestAccessTokens(request);
+  for (const accessToken of accessTokens) {
+    const authResult = await supabase.auth.getUser(accessToken);
+    if (authResult.error || !authResult.data.user) continue;
 
-  const authResult = await supabase.auth.getUser(accessToken);
-  if (authResult.error || !authResult.data.user) return false;
+    const authorizedMerchantIds = await getAuthorizedMerchantIds(
+      supabase,
+      String(authResult.data.user.id ?? "").trim(),
+      normalizeEmail(authResult.data.user.email),
+    );
+    if (authorizedMerchantIds.includes(merchantId)) {
+      return true;
+    }
+  }
 
-  const authorizedMerchantIds = await getAuthorizedMerchantIds(
-    supabase,
-    String(authResult.data.user.id ?? "").trim(),
-    normalizeEmail(authResult.data.user.email),
-  );
-  return authorizedMerchantIds.includes(merchantId);
+  return false;
 }
 
 async function updateMerchantSlug(

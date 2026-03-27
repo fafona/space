@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { parseCookieValue, readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
 import { SUPER_ADMIN_SESSION_COOKIE, SUPER_ADMIN_SESSION_VALUE } from "@/lib/superAdminSession";
 
 const BUCKET_CANDIDATES = ["page-assets", "assets", "uploads", "public"] as const;
@@ -10,14 +11,6 @@ type AssetUploadRequestBody = {
   merchantHint?: string;
   folder?: string;
 };
-
-function parseCookieValue(cookieHeader: string, key: string) {
-  return cookieHeader
-    .split(";")
-    .map((part) => part.trim())
-    .find((part) => part.startsWith(`${key}=`))
-    ?.slice(key.length + 1) ?? "";
-}
 
 function parseDataUrlMeta(dataUrl: string) {
   const matched = dataUrl.match(/^data:((?:image|audio)\/[a-zA-Z0-9.+-]+);base64,/i);
@@ -60,10 +53,8 @@ async function isAuthorized(request: Request, supabaseUrl: string, serviceRoleKe
     return true;
   }
 
-  const authHeader = request.headers.get("authorization") ?? "";
-  const tokenMatch = authHeader.match(/^Bearer\s+(.+)$/i);
-  const accessToken = tokenMatch?.[1]?.trim() ?? "";
-  if (!accessToken) return false;
+  const accessTokens = readMerchantRequestAccessTokens(request);
+  if (accessTokens.length === 0) return false;
 
   const authClient = createClient(supabaseUrl, serviceRoleKey, {
     auth: {
@@ -72,8 +63,13 @@ async function isAuthorized(request: Request, supabaseUrl: string, serviceRoleKe
       detectSessionInUrl: false,
     },
   });
-  const { data, error } = await authClient.auth.getUser(accessToken);
-  return !error && !!data.user;
+  for (const accessToken of accessTokens) {
+    const { data, error } = await authClient.auth.getUser(accessToken);
+    if (!error && data.user) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export async function POST(request: Request) {

@@ -64,7 +64,7 @@ async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, tim
   }
 }
 
-async function getAssetUploadAccessToken(timeoutMs = 4500) {
+async function getAssetUploadAccessToken() {
   try {
     const {
       data: { session },
@@ -72,21 +72,15 @@ async function getAssetUploadAccessToken(timeoutMs = 4500) {
     const directToken = String(session?.access_token ?? "").trim();
     if (directToken) return directToken;
   } catch {
-    // Fall through to browser session recovery.
+    // Fall through to cookie-backed server auth.
   }
-
-  try {
-    const recoveredSession = await recoverBrowserSupabaseSession(Math.max(2200, timeoutMs));
-    return String(recoveredSession?.access_token ?? "").trim();
-  } catch {
-    return "";
-  }
+  return "";
 }
 
 async function uploadDataUrlViaServerApi(dataUrl: string, merchantHint: string, folder: string): Promise<string | null> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      const accessToken = await getAssetUploadAccessToken(attempt === 0 ? 4500 : 9000);
+      const accessToken = await getAssetUploadAccessToken();
       const headers: Record<string, string> = {
         "content-type": "application/json",
       };
