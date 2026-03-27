@@ -33,7 +33,7 @@ echo "[deploy] branch: $APP_BRANCH"
 
 git fetch origin "$APP_BRANCH" --prune
 git checkout "$APP_BRANCH"
-git pull --ff-only origin "$APP_BRANCH"
+git reset --hard "origin/$APP_BRANCH"
 
 npm ci
 npm run build
