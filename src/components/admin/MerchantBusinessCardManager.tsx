@@ -1121,35 +1121,34 @@ export default function MerchantBusinessCardManager({
 
   return (
     <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <div className="text-sm font-semibold text-slate-900">名片</div>
-          <div className="text-xs text-slate-500">完善商户信息后可生成名片。链接模式会生成联系卡链接，对方手机打开后可保存联系人。</div>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            className="group mt-1 inline-flex items-center gap-3 rounded-2xl border-2 border-slate-800 bg-[linear-gradient(180deg,#ffffff_0%,#f3f4f6_100%)] px-3.5 py-2.5 text-left text-slate-900 shadow-[0_10px_24px_rgba(15,23,42,0.14)] transition hover:-translate-y-px hover:bg-[linear-gradient(180deg,#ffffff_0%,#e9edf3_100%)]"
-            onClick={() => setFolderOpen(true)}
+      <div className="flex">
+        <button
+          type="button"
+          className="group inline-flex w-full max-w-[460px] items-center gap-4 rounded-2xl border-2 border-slate-800 bg-[linear-gradient(180deg,#ffffff_0%,#f3f4f6_100%)] px-4 py-3 text-left text-slate-900 shadow-[0_10px_24px_rgba(15,23,42,0.14)] transition hover:-translate-y-px hover:bg-[linear-gradient(180deg,#ffffff_0%,#e9edf3_100%)]"
+          onClick={() => setFolderOpen(true)}
+        >
+          <svg
+            aria-hidden="true"
+            viewBox="0 0 72 56"
+            className="h-12 w-16 shrink-0 text-slate-900 transition group-hover:scale-[1.03]"
+            fill="none"
           >
-            <svg
-              aria-hidden="true"
-              viewBox="0 0 72 56"
-              className="h-11 w-14 shrink-0 text-slate-900 transition group-hover:scale-[1.03]"
-              fill="none"
-            >
-              <rect x="18" y="5" width="38" height="24" rx="5" stroke="currentColor" strokeWidth="3" />
-              <path d="M25 13h21" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-              <path d="M25 20h16" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-              <path d="M11 22h50a6 6 0 0 1 6 6v15a6 6 0 0 1-6 6H11a6 6 0 0 1-6-6V28a6 6 0 0 1 6-6Z" stroke="currentColor" strokeWidth="3" />
-              <path d="M7 27 29 40a10 10 0 0 0 10 0l22-13" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            <span className="flex flex-col leading-tight">
-              <span className="text-sm font-semibold tracking-[0.02em]">名片夹</span>
-              <span className="text-[11px] text-slate-500">{`${cards.length}/${normalizedCardLimit}`}</span>
+            <rect x="18" y="5" width="38" height="24" rx="5" stroke="currentColor" strokeWidth="3" />
+            <path d="M25 13h21" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+            <path d="M25 20h16" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+            <path d="M11 22h50a6 6 0 0 1 6 6v15a6 6 0 0 1-6 6H11a6 6 0 0 1-6-6V28a6 6 0 0 1 6-6Z" stroke="currentColor" strokeWidth="3" />
+            <path d="M7 27 29 40a10 10 0 0 0 10 0l22-13" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          <span className="min-w-0 flex-1">
+            <span className="flex items-baseline gap-2 leading-none">
+              <span className="text-base font-semibold tracking-[0.02em]">名片夹</span>
+              <span className="text-sm font-medium text-slate-500">{`${cards.length}/${normalizedCardLimit}`}</span>
             </span>
-          </button>
-        </div>
+            <span className="mt-1.5 block text-xs leading-5 text-slate-500">
+              完善商户信息后可生成名片。链接模式会生成联系卡链接，对方手机打开后可保存联系人。
+            </span>
+          </span>
+        </button>
       </div>
       {!canCreate ? <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">{`需先完善以下商户信息后才能生成名片：${missingFields.join(" / ")}`}</div> : null}
       {canCreate && cardLimitReached ? <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">{`名片夹已达到上限（${normalizedCardLimit} 张），请先删除旧名片，或到超级后台调整名片夹数量限制。`}</div> : null}
