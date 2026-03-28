@@ -1102,6 +1102,8 @@ export default function SuperAdminClient() {
   const [merchantTableSortOrder, setMerchantTableSortOrder] = useState<"asc" | "desc">("asc");
   const [merchantTablePage, setMerchantTablePage] = useState(1);
   const [merchantPanelOpen, setMerchantPanelOpen] = useState(false);
+  const merchantConfigHistorySectionRef = useRef<HTMLDivElement | null>(null);
+  const [scrollToMerchantConfigHistory, setScrollToMerchantConfigHistory] = useState(false);
   const [backendMerchantAccounts, setBackendMerchantAccounts] = useState<BackendMerchantAccount[]>([]);
   const [backendMerchantAccountsLoading, setBackendMerchantAccountsLoading] = useState(false);
   const [backendMerchantAccountsError, setBackendMerchantAccountsError] = useState("");
@@ -1134,6 +1136,16 @@ export default function SuperAdminClient() {
   useEffect(() => {
     setPlanTemplateCoverPreviewScale(1);
   }, [planTemplateCoverPreview?.url]);
+
+  useEffect(() => {
+    if (!scrollToMerchantConfigHistory || !merchantPanelOpen || userPanelMode !== "config") return;
+    const section = merchantConfigHistorySectionRef.current;
+    if (!section) return;
+    requestAnimationFrame(() => {
+      section.scrollIntoView({ behavior: "smooth", block: "start" });
+      setScrollToMerchantConfigHistory(false);
+    });
+  }, [merchantPanelOpen, scrollToMerchantConfigHistory, userPanelMode]);
 
   function renderTopMostOverlay(content: ReactNode) {
     if (typeof document === "undefined") return null;
@@ -5017,6 +5029,18 @@ export default function SuperAdminClient() {
                           配置
                         </button>
                         <button
+                          className={`rounded border px-2 py-1 ${selectedMerchantSite ? "bg-white hover:bg-slate-50" : "bg-white opacity-40"}`}
+                          onClick={() => {
+                            if (!selectedMerchantSite) return;
+                            hydrateMerchantConfigDraft(selectedMerchantSite);
+                            setUserPanelMode("config");
+                            setScrollToMerchantConfigHistory(true);
+                          }}
+                          disabled={!selectedMerchantSite}
+                        >
+                          配置历史
+                        </button>
+                        <button
                           className="rounded border px-2 py-1"
                           onClick={() => setMerchantPanelOpen(false)}
                         >
@@ -5479,7 +5503,7 @@ export default function SuperAdminClient() {
                             <button className="w-full rounded border bg-black px-3 py-2 text-sm text-white" onClick={saveMerchantConfigAction}>
                               保存配置
                             </button>
-                            <div className="rounded border p-2">
+                            <div ref={merchantConfigHistorySectionRef} className="rounded border p-2">
                               <div className="mb-2 flex items-center justify-between text-slate-600">
                                 <span className="font-medium">配置变更历史</span>
                                 <span className="text-[11px]">{selectedMerchantConfigHistory.length} 条</span>
