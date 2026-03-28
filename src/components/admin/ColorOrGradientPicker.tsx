@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 export type GradientDirection =
   | "to right"
@@ -22,6 +23,12 @@ const GRADIENT_DIRECTION_OPTIONS: Array<{ value: GradientDirection; label: strin
   { value: "to top right", label: "右上" },
   { value: "to top left", label: "左上" },
 ];
+
+const PANEL_MARGIN = 16;
+const PANEL_GAP = 8;
+const PANEL_MIN_WIDTH = 320;
+const PANEL_MAX_WIDTH = 560;
+const PANEL_FALLBACK_HEIGHT = 280;
 
 function normalizeHexColor(value: string) {
   const trimmed = value.trim();
@@ -97,7 +104,9 @@ export function ColorSwatchPalette({
             key={color}
             type="button"
             aria-pressed={isSelected}
-            className={`h-8 w-8 rounded-full border transition ${isSelected ? "border-slate-900 ring-2 ring-sky-500/70" : "border-slate-300 hover:border-slate-400"}`}
+            className={`h-8 w-8 rounded-full border transition ${
+              isSelected ? "border-slate-900 ring-2 ring-sky-500/70" : "border-slate-300 hover:border-slate-400"
+            }`}
             style={isGradientToken(color) ? { backgroundImage: color } : { backgroundColor: color }}
             title={color}
             onClick={() => onPick(color)}
@@ -117,7 +126,14 @@ export function ColorOrGradientPicker({
   onChange: (next: string) => void;
   allowGradient?: boolean;
 }) {
-  return <ColorOrGradientPickerInner key={`${allowGradient ? "g" : "s"}:${value}`} value={value} onChange={onChange} allowGradient={allowGradient} />;
+  return (
+    <ColorOrGradientPickerInner
+      key={`${allowGradient ? "g" : "s"}:${value}`}
+      value={value}
+      onChange={onChange}
+      allowGradient={allowGradient}
+    />
+  );
 }
 
 function ColorOrGradientPickerInner({
@@ -136,7 +152,16 @@ function ColorOrGradientPickerInner({
   const [endColor, setEndColor] = useState(parsed.endColor);
   const [direction, setDirection] = useState<GradientDirection>(parsed.direction);
   const [open, setOpen] = useState(false);
-  const pickerRef = useRef<HTMLDivElement | null>(null);
+  const [panelStyle, setPanelStyle] = useState<{
+    top: number;
+    left: number;
+    width: number;
+    maxHeight: number;
+    transformOrigin: string;
+  } | null>(null);
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
 
   const resetDraftFromValue = () => {
     const nextParsed = parseGradientValue(value);
@@ -145,6 +170,11 @@ function ColorOrGradientPickerInner({
     setStartColor(nextParsed.startColor);
     setEndColor(nextParsed.endColor);
     setDirection(nextParsed.direction);
+  };
+
+  const closeWithoutCommit = () => {
+    resetDraftFromValue();
+    setOpen(false);
   };
 
   const commitDraft = () => {
@@ -157,9 +187,38 @@ function ColorOrGradientPickerInner({
     setOpen(false);
   };
 
-  const cancelDraft = () => {
-    resetDraftFromValue();
-    setOpen(false);
+  const updatePanelPosition = () => {
+    if (!triggerRef.current || typeof window === "undefined") return;
+
+    const triggerRect = triggerRef.current.getBoundingClientRect();
+    const width = Math.min(
+      PANEL_MAX_WIDTH,
+      Math.max(PANEL_MIN_WIDTH, window.innerWidth - PANEL_MARGIN * 2),
+    );
+    const panelHeight = panelRef.current?.offsetHeight ?? PANEL_FALLBACK_HEIGHT;
+    const roomBelow = window.innerHeight - triggerRect.bottom - PANEL_MARGIN;
+    const roomAbove = triggerRect.top - PANEL_MARGIN;
+    const shouldOpenAbove = roomBelow < panelHeight && roomAbove > roomBelow;
+
+    const left = Math.max(
+      PANEL_MARGIN,
+      Math.min(triggerRect.left, window.innerWidth - width - PANEL_MARGIN),
+    );
+    const desiredTop = shouldOpenAbove
+      ? triggerRect.top - panelHeight - PANEL_GAP
+      : triggerRect.bottom + PANEL_GAP;
+    const top = Math.max(
+      PANEL_MARGIN,
+      Math.min(desiredTop, window.innerHeight - panelHeight - PANEL_MARGIN),
+    );
+
+    setPanelStyle({
+      top,
+      left,
+      width,
+      maxHeight: Math.max(220, window.innerHeight - PANEL_MARGIN * 2),
+      transformOrigin: shouldOpenAbove ? "bottom left" : "top left",
+    });
   };
 
   useEffect(() => {
@@ -167,18 +226,30 @@ function ColorOrGradientPickerInner({
     const handlePointerDown = (event: MouseEvent) => {
       const target = event.target;
       if (!target || !(target instanceof Node)) return;
-      if (pickerRef.current?.contains(target)) return;
-      const nextParsed = parseGradientValue(value);
-      setMode(allowGradient ? nextParsed.mode : "solid");
-      setSolidColor(nextParsed.solidColor);
-      setStartColor(nextParsed.startColor);
-      setEndColor(nextParsed.endColor);
-      setDirection(nextParsed.direction);
-      setOpen(false);
+      if (wrapperRef.current?.contains(target)) return;
+      if (panelRef.current?.contains(target)) return;
+      closeWithoutCommit();
     };
     document.addEventListener("mousedown", handlePointerDown);
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, [open, value, allowGradient]);
+
+  useLayoutEffect(() => {
+    if (!open || typeof window === "undefined") return;
+
+    updatePanelPosition();
+    const frameId = window.requestAnimationFrame(updatePanelPosition);
+    const handleViewportChange = () => updatePanelPosition();
+
+    window.addEventListener("resize", handleViewportChange);
+    window.addEventListener("scroll", handleViewportChange, true);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      window.removeEventListener("resize", handleViewportChange);
+      window.removeEventListener("scroll", handleViewportChange, true);
+    };
+  }, [open, mode]);
 
   const committedPreview = isGradientToken(value)
     ? { backgroundImage: value }
@@ -186,13 +257,14 @@ function ColorOrGradientPickerInner({
   const draftGradientPreview = buildLinearGradient(direction, startColor, endColor);
 
   return (
-    <div ref={pickerRef} className="relative space-y-2">
+    <div ref={wrapperRef} className="space-y-2">
       <button
+        ref={triggerRef}
         type="button"
         className="w-full rounded border bg-white px-3 py-2 text-left text-sm hover:bg-slate-50"
         onClick={() => {
           if (open) {
-            cancelDraft();
+            closeWithoutCommit();
             return;
           }
           resetDraftFromValue();
@@ -208,83 +280,122 @@ function ColorOrGradientPickerInner({
         </span>
       </button>
 
-      {open ? (
-        <div className="absolute left-0 top-full z-[14000] mt-1 w-[min(560px,calc(100vw-2rem))] space-y-3 rounded-xl border bg-white p-3 shadow-xl">
-          <div className="flex gap-2">
-            <button
-              type="button"
-              className={`rounded border px-2 py-1 text-xs ${mode === "solid" ? "border-black bg-black text-white" : "bg-white"}`}
-              onClick={() => setMode("solid")}
+      {open && panelStyle
+        ? createPortal(
+            <div
+              ref={panelRef}
+              className="fixed z-[2147483250] space-y-3 overflow-y-auto rounded-xl border bg-white p-3 shadow-2xl"
+              style={{
+                top: panelStyle.top,
+                left: panelStyle.left,
+                width: panelStyle.width,
+                maxHeight: panelStyle.maxHeight,
+                transformOrigin: panelStyle.transformOrigin,
+              }}
             >
-              纯色
-            </button>
-            {allowGradient ? (
-              <button
-                type="button"
-                className={`rounded border px-2 py-1 text-xs ${mode === "gradient" ? "border-black bg-black text-white" : "bg-white"}`}
-                onClick={() => setMode("gradient")}
-              >
-                渐变
-              </button>
-            ) : null}
-          </div>
-          {mode === "solid" || !allowGradient ? (
-            <div className="grid items-end gap-2 sm:grid-cols-[120px_1fr]">
-              <input
-                className="h-10 w-full rounded border p-1"
-                type="color"
-                value={normalizeHexColor(solidColor) ?? "#ffffff"}
-                onChange={(event) => setSolidColor(event.target.value)}
-              />
-              <input
-                className="w-full rounded border p-2 text-sm"
-                value={solidColor}
-                placeholder="#ffffff"
-                onChange={(event) => setSolidColor(event.target.value)}
-              />
-            </div>
-          ) : (
-            <div className="space-y-2">
-              <div className="grid gap-2 sm:grid-cols-2">
-                <div className="grid grid-cols-[44px_1fr] gap-2">
-                  <input
-                    className="h-10 w-11 rounded border p-1"
-                    type="color"
-                    value={normalizeHexColor(startColor) ?? "#ffffff"}
-                    onChange={(event) => setStartColor(event.target.value)}
-                  />
-                  <input className="w-full rounded border p-2 text-sm" value={startColor} onChange={(event) => setStartColor(event.target.value)} />
-                </div>
-                <div className="grid grid-cols-[44px_1fr] gap-2">
-                  <input
-                    className="h-10 w-11 rounded border p-1"
-                    type="color"
-                    value={normalizeHexColor(endColor) ?? "#000000"}
-                    onChange={(event) => setEndColor(event.target.value)}
-                  />
-                  <input className="w-full rounded border p-2 text-sm" value={endColor} onChange={(event) => setEndColor(event.target.value)} />
-                </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  className={`rounded border px-2 py-1 text-xs ${
+                    mode === "solid" ? "border-black bg-black text-white" : "bg-white"
+                  }`}
+                  onClick={() => setMode("solid")}
+                >
+                  纯色
+                </button>
+                {allowGradient ? (
+                  <button
+                    type="button"
+                    className={`rounded border px-2 py-1 text-xs ${
+                      mode === "gradient" ? "border-black bg-black text-white" : "bg-white"
+                    }`}
+                    onClick={() => setMode("gradient")}
+                  >
+                    渐变
+                  </button>
+                ) : null}
               </div>
-              <select className="w-full rounded border p-2 text-sm" value={direction} onChange={(event) => setDirection(event.target.value as GradientDirection)}>
-                {GRADIENT_DIRECTION_OPTIONS.map((item) => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-              <div className="h-9 rounded border" style={{ backgroundImage: draftGradientPreview }} />
-            </div>
-          )}
-          <div className="flex items-center justify-end gap-2 pt-1">
-            <button type="button" className="rounded border bg-white px-3 py-1.5 text-xs hover:bg-slate-50" onClick={cancelDraft}>
-              取消
-            </button>
-            <button type="button" className="rounded bg-black px-3 py-1.5 text-xs text-white" onClick={commitDraft}>
-              确认
-            </button>
-          </div>
-        </div>
-      ) : null}
+
+              {mode === "solid" || !allowGradient ? (
+                <div className="grid items-end gap-2 sm:grid-cols-[120px_1fr]">
+                  <input
+                    className="h-10 w-full rounded border p-1"
+                    type="color"
+                    value={normalizeHexColor(solidColor) ?? "#ffffff"}
+                    onChange={(event) => setSolidColor(event.target.value)}
+                  />
+                  <input
+                    className="w-full rounded border p-2 text-sm"
+                    value={solidColor}
+                    placeholder="#ffffff"
+                    onChange={(event) => setSolidColor(event.target.value)}
+                  />
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <div className="grid grid-cols-[44px_1fr] gap-2">
+                      <input
+                        className="h-10 w-11 rounded border p-1"
+                        type="color"
+                        value={normalizeHexColor(startColor) ?? "#ffffff"}
+                        onChange={(event) => setStartColor(event.target.value)}
+                      />
+                      <input
+                        className="w-full rounded border p-2 text-sm"
+                        value={startColor}
+                        onChange={(event) => setStartColor(event.target.value)}
+                      />
+                    </div>
+                    <div className="grid grid-cols-[44px_1fr] gap-2">
+                      <input
+                        className="h-10 w-11 rounded border p-1"
+                        type="color"
+                        value={normalizeHexColor(endColor) ?? "#000000"}
+                        onChange={(event) => setEndColor(event.target.value)}
+                      />
+                      <input
+                        className="w-full rounded border p-2 text-sm"
+                        value={endColor}
+                        onChange={(event) => setEndColor(event.target.value)}
+                      />
+                    </div>
+                  </div>
+                  <select
+                    className="w-full rounded border p-2 text-sm"
+                    value={direction}
+                    onChange={(event) => setDirection(event.target.value as GradientDirection)}
+                  >
+                    {GRADIENT_DIRECTION_OPTIONS.map((item) => (
+                      <option key={item.value} value={item.value}>
+                        {item.label}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="h-9 rounded border" style={{ backgroundImage: draftGradientPreview }} />
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  className="rounded border bg-white px-3 py-1.5 text-xs hover:bg-slate-50"
+                  onClick={closeWithoutCommit}
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  className="rounded bg-black px-3 py-1.5 text-xs text-white"
+                  onClick={commitDraft}
+                >
+                  确认
+                </button>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

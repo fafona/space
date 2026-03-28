@@ -124,18 +124,15 @@ const CARD_MODE_OPTIONS: Array<{
 const CARD_BACKGROUND_COLOR_PRESETS = [
   "#ffffff",
   "#f8fafc",
-  "#e2e8f0",
   "#dbeafe",
   "#fef3c7",
-  "#dcfce7",
   "#fee2e2",
   "#111827",
   "linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)",
   "linear-gradient(135deg, #ffffff 0%, #fff1f2 52%, #ffedd5 100%)",
   "linear-gradient(135deg, #dbeafe 0%, #fce7f3 45%, #fff7cc 100%)",
-  "linear-gradient(180deg, #fffdf8 0%, #f6efe4 100%)",
   "linear-gradient(135deg, #082f49 0%, #0f172a 55%, #164e63 100%)",
-  "linear-gradient(180deg, #0f172a 0%, #111827 100%)",
+  "linear-gradient(180deg, #fffdf8 0%, #f6efe4 100%)",
 ] as const;
 
 const CUSTOM_TEXT_PREFIX = "custom:";
