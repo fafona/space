@@ -49,7 +49,10 @@ function renderContactSummary(payload: NonNullable<Awaited<ReturnType<typeof res
   if (primaryRows.length === 0 && extraRows.length === 0) return null;
 
   return (
-    <div className="mt-5 rounded-[28px] border border-slate-200 bg-slate-50 p-6 shadow-[0_16px_42px_rgba(15,23,42,.08)]">
+    <div
+      className="mt-5 rounded-[28px] border border-slate-200 bg-slate-50 p-6 shadow-[0_16px_42px_rgba(15,23,42,.08)]"
+      data-no-translate="1"
+    >
       <div className="space-y-4 text-slate-800">
         {primaryRows.map((row, index) => (
           <div
@@ -207,7 +210,9 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
       <section className="mx-auto w-full max-w-xl rounded-[32px] border border-white/70 bg-white/90 p-5 shadow-[0_28px_90px_rgba(15,23,42,.12)] backdrop-blur sm:p-6">
         <div className="mb-4">
           <div className="text-xs font-medium uppercase tracking-[0.24em] text-slate-400">FAOLLA CARD</div>
-          <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">{payload.name || title}</h1>
+          <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900" data-no-translate="1">
+            {payload.name || title}
+          </h1>
         </div>
 
         {payload.detailImageUrl ? (

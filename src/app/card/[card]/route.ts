@@ -11,6 +11,7 @@ import {
   resolveMerchantBusinessCardShareOrigin,
   type MerchantBusinessCardShareContact,
 } from "@/lib/merchantBusinessCardShare";
+import { DEFAULT_LOCALE, I18N_STORAGE_KEY, LANGUAGE_OPTIONS } from "@/lib/i18n";
 
 function escapeHtml(value: string) {
   return value
@@ -19,6 +20,13 @@ function escapeHtml(value: string) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+function serializeInlineScriptValue(value: unknown) {
+  return JSON.stringify(value)
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/&/g, "\\u0026");
 }
 
 function normalizeText(value: string | null | undefined) {
@@ -117,6 +125,393 @@ function buildActionButtonHtml(input: {
         : input.iconSvg || ""
     }
   </a>`;
+}
+
+function buildLanguageSwitcherHtml() {
+  const asiaOptions = LANGUAGE_OPTIONS.filter((item) => item.region === "asia");
+  const europeOptions = LANGUAGE_OPTIONS.filter((item) => item.region === "europe");
+  const renderGroup = (label: string, options: typeof LANGUAGE_OPTIONS) =>
+    `<optgroup label="${escapeHtml(label)}">
+      ${options
+        .map(
+          (item) =>
+            `<option value="${escapeHtml(item.code)}"${item.code === DEFAULT_LOCALE ? " selected" : ""}>${escapeHtml(item.label)}</option>`,
+        )
+        .join("")}
+    </optgroup>`;
+
+  const defaultOption = LANGUAGE_OPTIONS.find((item) => item.code === DEFAULT_LOCALE) ?? LANGUAGE_OPTIONS[0];
+  const defaultFlag = defaultOption ? `https://flagcdn.com/24x18/${defaultOption.countryCode.toLowerCase()}.png` : "";
+
+  return `<div class="lang-switcher" data-no-translate="1">
+    <div class="lang-current">
+      ${defaultFlag ? `<img data-language-flag src="${escapeHtml(defaultFlag)}" alt="${escapeHtml(defaultOption?.label ?? DEFAULT_LOCALE)}" />` : ""}
+      <span data-language-label>${escapeHtml(defaultOption?.label ?? DEFAULT_LOCALE)}</span>
+    </div>
+    <select id="contact-card-language" aria-label="Select language">
+      ${renderGroup("Asia", asiaOptions)}
+      ${renderGroup("Europe", europeOptions)}
+    </select>
+  </div>`;
+}
+
+function buildInlineI18nScript() {
+  const languageOptions = LANGUAGE_OPTIONS.map(({ code, label, countryCode }) => ({
+    code,
+    label,
+    countryCode,
+  }));
+
+  return `(() => {
+    if (typeof window === "undefined" || typeof document === "undefined") return;
+    const STORAGE_KEY = ${serializeInlineScriptValue(I18N_STORAGE_KEY)};
+    const CACHE_PREFIX = "merchant-space:dom-i18n-cache:v3:";
+    const DEFAULT_LOCALE = ${serializeInlineScriptValue(DEFAULT_LOCALE)};
+    const LANGUAGE_OPTIONS = ${serializeInlineScriptValue(languageOptions)};
+    const TRANSLATABLE_ATTRS = ["placeholder", "title", "aria-label"];
+    const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT"]);
+    const localeCacheStore = new Map();
+    const reverseLocaleCacheStore = new Map();
+    const loadedLocaleCache = new Set();
+    const inFlightByLocale = new Map();
+    let persistTimer = null;
+
+    function resolveLocale(input) {
+      const normalized = String(input || "").trim();
+      if (!normalized) return DEFAULT_LOCALE;
+      if (LANGUAGE_OPTIONS.some((item) => item.code === normalized)) return normalized;
+      const language = normalized.toLowerCase().split("-")[0] || "";
+      const matched = LANGUAGE_OPTIONS.find((item) => item.code.toLowerCase().startsWith(language + "-"));
+      return matched ? matched.code : DEFAULT_LOCALE;
+    }
+
+    function toApiTarget(locale) {
+      const normalized = resolveLocale(locale).toLowerCase();
+      if (normalized === "zh-cn") return "zh-CN";
+      if (normalized === "zh-tw") return "zh-TW";
+      return normalized.split("-")[0] || "en";
+    }
+
+    function splitOuterWhitespace(input) {
+      const match = String(input || "").match(/^(\\s*)([\\s\\S]*?)(\\s*)$/);
+      if (!match) return { leading: "", core: String(input || ""), trailing: "" };
+      return { leading: match[1] || "", core: match[2] || "", trailing: match[3] || "" };
+    }
+
+    function hasLetterLikeContent(input) {
+      return /[A-Za-z\\u00C0-\\u024F\\u0370-\\u03FF\\u0400-\\u04FF\\u3040-\\u30FF\\uAC00-\\uD7AF\\u3400-\\u9FFF]/.test(input);
+    }
+
+    function isLikelyCodeOrToken(input) {
+      if (/^(https?:\\/\\/|www\\.)/i.test(input)) return true;
+      if (/\\S+@\\S+/.test(input)) return true;
+      if (/^[\\w-./:@#%?=&]+$/.test(input) && !input.includes(" ")) return true;
+      return false;
+    }
+
+    function shouldTranslateCoreText(input, locale) {
+      if (toApiTarget(locale) === "zh-CN") return false;
+      const trimmed = String(input || "").trim();
+      if (!trimmed || trimmed.length > 320) return false;
+      if (!hasLetterLikeContent(trimmed)) return false;
+      if (isLikelyCodeOrToken(trimmed)) return false;
+      if (/^[0-9\\s.,:;!?%+\\-_/()[\\]{}|]+$/.test(trimmed)) return false;
+      return true;
+    }
+
+    function getLocaleCache(locale) {
+      const normalized = resolveLocale(locale);
+      let map = localeCacheStore.get(normalized);
+      if (!map) {
+        map = new Map();
+        localeCacheStore.set(normalized, map);
+      }
+      if (!loadedLocaleCache.has(normalized)) {
+        loadedLocaleCache.add(normalized);
+        try {
+          const raw = window.localStorage.getItem(CACHE_PREFIX + normalized);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            Object.entries(parsed || {}).forEach(([source, translated]) => {
+              if (!source || typeof source !== "string") return;
+              if (!translated || typeof translated !== "string") return;
+              map.set(source, translated);
+            });
+          }
+        } catch {}
+      }
+      return map;
+    }
+
+    function getReverseLocaleCache(locale) {
+      const normalized = resolveLocale(locale);
+      const cache = getLocaleCache(normalized);
+      const existing = reverseLocaleCacheStore.get(normalized);
+      if (existing && existing.size >= cache.size) return existing;
+      const reverse = new Map();
+      cache.forEach((translated, source) => {
+        if (!reverse.has(translated)) reverse.set(translated, source);
+      });
+      reverseLocaleCacheStore.set(normalized, reverse);
+      return reverse;
+    }
+
+    function schedulePersist() {
+      if (persistTimer !== null) return;
+      persistTimer = window.setTimeout(() => {
+        persistTimer = null;
+        localeCacheStore.forEach((cache, locale) => {
+          try {
+            window.localStorage.setItem(CACHE_PREFIX + locale, JSON.stringify(Object.fromEntries(cache.entries())));
+          } catch {}
+        });
+      }, 320);
+    }
+
+    function setCachedTranslation(locale, source, translated) {
+      const normalized = resolveLocale(locale);
+      const cache = getLocaleCache(normalized);
+      cache.set(source, translated);
+      const reverse = getReverseLocaleCache(normalized);
+      if (!reverse.has(translated)) reverse.set(translated, source);
+      schedulePersist();
+    }
+
+    function translateDomText(input, locale) {
+      const normalized = resolveLocale(locale);
+      if (toApiTarget(normalized) === "zh-CN") return input;
+      const parts = splitOuterWhitespace(input);
+      if (!shouldTranslateCoreText(parts.core, normalized)) return input;
+      const translated = getLocaleCache(normalized).get(parts.core);
+      return translated ? parts.leading + translated + parts.trailing : input;
+    }
+
+    function reverseTranslateDomText(input, locale) {
+      const normalized = resolveLocale(locale);
+      if (toApiTarget(normalized) === "zh-CN") return input;
+      const parts = splitOuterWhitespace(input);
+      if (!parts.core) return null;
+      const source = getReverseLocaleCache(normalized).get(parts.core);
+      return source ? parts.leading + source + parts.trailing : null;
+    }
+
+    async function requestTranslation(source, locale) {
+      const target = toApiTarget(locale);
+      if (target === "zh-CN") return source;
+      const query = new URLSearchParams({ client: "gtx", sl: "auto", tl: target, dt: "t", q: source });
+      const controller = new AbortController();
+      const timer = window.setTimeout(() => controller.abort(), 10000);
+      try {
+        const response = await fetch("https://translate.googleapis.com/translate_a/single?" + query.toString(), {
+          method: "GET",
+          signal: controller.signal,
+          cache: "no-store",
+          headers: { Accept: "application/json" },
+        });
+        if (!response.ok) return source;
+        const json = await response.json();
+        if (!Array.isArray(json) || !Array.isArray(json[0])) return source;
+        const translated = json[0]
+          .map((segment) => Array.isArray(segment) ? segment[0] : "")
+          .filter((item) => typeof item === "string")
+          .join("")
+          .trim();
+        return translated || source;
+      } catch {
+        return source;
+      } finally {
+        window.clearTimeout(timer);
+      }
+    }
+
+    async function getOrRequestTranslation(source, locale) {
+      const normalized = resolveLocale(locale);
+      const cache = getLocaleCache(normalized);
+      const cached = cache.get(source);
+      if (cached) return cached;
+      let localeInflight = inFlightByLocale.get(normalized);
+      if (!localeInflight) {
+        localeInflight = new Map();
+        inFlightByLocale.set(normalized, localeInflight);
+      }
+      const inflight = localeInflight.get(source);
+      if (inflight) return inflight;
+      const promise = requestTranslation(source, normalized)
+        .then((translated) => {
+          const value = translated || source;
+          setCachedTranslation(normalized, source, value);
+          return value;
+        })
+        .finally(() => {
+          localeInflight.delete(source);
+        });
+      localeInflight.set(source, promise);
+      return promise;
+    }
+
+    async function ensureDomTranslations(texts, locale) {
+      const normalized = resolveLocale(locale);
+      if (toApiTarget(normalized) === "zh-CN") return;
+      const queue = [];
+      const seen = new Set();
+      texts.forEach((text) => {
+        const core = splitOuterWhitespace(text).core;
+        if (!core || !shouldTranslateCoreText(core, normalized)) return;
+        if (getLocaleCache(normalized).has(core) || seen.has(core)) return;
+        seen.add(core);
+        queue.push(core);
+      });
+      const workers = Array.from({ length: Math.max(1, Math.min(6, queue.length)) }).map(async () => {
+        while (queue.length > 0) {
+          const next = queue.shift();
+          if (!next) break;
+          await getOrRequestTranslation(next, normalized);
+        }
+      });
+      await Promise.all(workers);
+    }
+
+    function isEditableElement(element) {
+      if (!element) return false;
+      if (element instanceof HTMLInputElement) {
+        return !["button", "submit", "reset", "checkbox", "radio", "file", "color", "range"].includes(element.type);
+      }
+      if (element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement) return true;
+      return element instanceof HTMLElement && element.isContentEditable;
+    }
+
+    function ensureElementSources(element) {
+      if (!element.__merchantSourceAttrs) element.__merchantSourceAttrs = {};
+      return element.__merchantSourceAttrs;
+    }
+
+    function getTextSource(node) {
+      if (typeof node.__merchantSourceText === "string") return node.__merchantSourceText;
+      const initial = node.nodeValue || "";
+      node.__merchantSourceText = initial;
+      return initial;
+    }
+
+    function applyTextNode(node, locale, missing, sourceRecoveryLocale) {
+      let source = getTextSource(node);
+      if (locale === "zh-CN") {
+        if (sourceRecoveryLocale && source === (node.nodeValue || "")) {
+          const recovered = reverseTranslateDomText(source, sourceRecoveryLocale);
+          if (recovered && recovered !== source) {
+            source = recovered;
+            node.__merchantSourceText = recovered;
+          }
+        }
+        if ((node.nodeValue || "") !== source) node.nodeValue = source;
+        return;
+      }
+      const translated = translateDomText(source, locale);
+      if (translated !== source) {
+        if ((node.nodeValue || "") !== translated) node.nodeValue = translated;
+        return;
+      }
+      const core = splitOuterWhitespace(source).core;
+      if (shouldTranslateCoreText(core, locale) && !getLocaleCache(locale).has(core)) {
+        missing.add(source);
+      }
+    }
+
+    function applyAttrs(element, locale, missing, sourceRecoveryLocale) {
+      const sources = ensureElementSources(element);
+      TRANSLATABLE_ATTRS.forEach((attr) => {
+        const current = element.getAttribute(attr);
+        if (typeof sources[attr] !== "string") sources[attr] = current || "";
+        let source = sources[attr] || "";
+        if (!source) return;
+        if (locale === "zh-CN") {
+          if (sourceRecoveryLocale && source === (current || "")) {
+            const recovered = reverseTranslateDomText(source, sourceRecoveryLocale);
+            if (recovered && recovered !== source) {
+              source = recovered;
+              sources[attr] = recovered;
+            }
+          }
+          if ((current || "") !== source) element.setAttribute(attr, source);
+          return;
+        }
+        const translated = translateDomText(source, locale);
+        if (translated !== source) {
+          if ((current || "") !== translated) element.setAttribute(attr, translated);
+          return;
+        }
+        const core = splitOuterWhitespace(source).core;
+        if (shouldTranslateCoreText(core, locale) && !getLocaleCache(locale).has(core)) {
+          missing.add(source);
+        }
+      });
+    }
+
+    function traverse(root, locale, missing, skipSubtree, sourceRecoveryLocale) {
+      if (!root) return;
+      if (root.nodeType === Node.TEXT_NODE) {
+        const parentElement = root.parentElement;
+        const shouldSkip = skipSubtree || !!parentElement?.closest("[data-no-translate='1']") || isEditableElement(parentElement);
+        if (!shouldSkip) applyTextNode(root, locale, missing, sourceRecoveryLocale);
+        return;
+      }
+      if (root.nodeType !== Node.ELEMENT_NODE) return;
+      const element = root;
+      const nextSkip =
+        skipSubtree ||
+        !!element.closest("[data-no-translate='1']") ||
+        element.getAttribute("data-no-translate") === "1" ||
+        SKIP_TAGS.has(element.tagName.toUpperCase()) ||
+        isEditableElement(element);
+      if (!nextSkip) applyAttrs(element, locale, missing, sourceRecoveryLocale);
+      Array.from(element.childNodes).forEach((child) => traverse(child, locale, missing, nextSkip, sourceRecoveryLocale));
+    }
+
+    function updateLanguageUi(locale) {
+      const normalized = resolveLocale(locale);
+      const selected = LANGUAGE_OPTIONS.find((item) => item.code === normalized) || LANGUAGE_OPTIONS[0];
+      const labelEl = document.querySelector("[data-language-label]");
+      const flagEl = document.querySelector("[data-language-flag]");
+      const selectEl = document.getElementById("contact-card-language");
+      if (labelEl && selected) labelEl.textContent = selected.label;
+      if (flagEl && selected) {
+        flagEl.setAttribute("src", "https://flagcdn.com/24x18/" + selected.countryCode.toLowerCase() + ".png");
+        flagEl.setAttribute("alt", selected.label);
+      }
+      if (selectEl && selectEl.value !== normalized) selectEl.value = normalized;
+    }
+
+    async function applyLocale(locale) {
+      const normalized = resolveLocale(locale);
+      const previousLocale = document.documentElement.getAttribute("data-ui-locale") || "zh-CN";
+      document.documentElement.lang = normalized;
+      document.documentElement.setAttribute("data-ui-locale", normalized);
+      updateLanguageUi(normalized);
+      try {
+        window.localStorage.setItem(STORAGE_KEY, normalized);
+      } catch {}
+      const sourceRecoveryLocale = normalized === "zh-CN" && previousLocale.toLowerCase() !== "zh-cn" ? previousLocale : null;
+      const missing = new Set();
+      traverse(document.body, normalized, missing, false, sourceRecoveryLocale);
+      if (normalized === "zh-CN" || missing.size === 0) return;
+      await ensureDomTranslations(missing, normalized);
+      traverse(document.body, normalized, new Set(), false, sourceRecoveryLocale);
+    }
+
+    const selectEl = document.getElementById("contact-card-language");
+    if (selectEl) {
+      selectEl.addEventListener("change", (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLSelectElement)) return;
+        void applyLocale(target.value);
+      });
+    }
+
+    let initialLocale = DEFAULT_LOCALE;
+    try {
+      initialLocale = resolveLocale(window.localStorage.getItem(STORAGE_KEY));
+    } catch {}
+    void applyLocale(initialLocale);
+  })();`.replace(/<\/script/gi, "<\\/script");
 }
 
 function buildContactSummaryHtml(input: {
@@ -314,7 +709,7 @@ function buildContactSummaryHtml(input: {
   ].filter(Boolean) as Array<{ label: string; value: string; actionHtml: string }>;
 
   if (rows.length === 0) {
-    return `<div class="summary-row"><span class="summary-value">${escapeHtml(normalizeText(input.name) || "电子名片")}</span></div>`;
+    return `<div class="summary-row"><span class="summary-value" data-no-translate="1">${escapeHtml(normalizeText(input.name) || "电子名片")}</span></div>`;
   }
 
   return rows
@@ -323,7 +718,7 @@ function buildContactSummaryHtml(input: {
         <div class="summary-row">
           <div class="summary-copy">
             <strong class="summary-label">${escapeHtml(row.label)}：</strong>
-            <span class="summary-value">${escapeHtml(row.value)}</span>
+            <span class="summary-value" data-no-translate="1">${escapeHtml(row.value)}</span>
           </div>
           ${row.actionHtml ? `<div class="summary-action">${row.actionHtml}</div>` : ""}
         </div>`,
@@ -353,6 +748,8 @@ function buildShareCardHtml(input: {
   const contentImageHeight = input.contentImageHeight ?? 0;
   const targetUrl = escapeHtml(input.targetUrl);
   const shareUrl = escapeHtml(input.shareUrl);
+  const inlineI18nScript = buildInlineI18nScript();
+  const languageSwitcherHtml = buildLanguageSwitcherHtml();
 
   return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -379,6 +776,7 @@ function buildShareCardHtml(input: {
     ${previewImageUrl ? `<meta name="twitter:image" content="${previewImageUrl}" />` : ""}
     ${previewImageUrl ? `<meta name="twitter:image:alt" content="${title}" />` : ""}
     <link rel="canonical" href="${shareUrl}" />
+    <meta name="google" content="notranslate" />
     <style>
       body {
         margin: 0;
@@ -391,7 +789,50 @@ function buildShareCardHtml(input: {
         display: flex;
         align-items: center;
         justify-content: center;
-        padding: 24px;
+        padding: 72px 24px 24px;
+      }
+      .lang-switcher {
+        position: fixed;
+        top: 16px;
+        right: 16px;
+        z-index: 20;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 12px;
+        border-radius: 16px;
+        border: 1px solid rgba(15,23,42,.12);
+        background: rgba(255,255,255,.94);
+        box-shadow: 0 18px 40px rgba(15,23,42,.12);
+        backdrop-filter: blur(10px);
+      }
+      .lang-current {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+        font-size: 13px;
+        color: #0f172a;
+      }
+      .lang-current img {
+        width: 18px;
+        height: 14px;
+        border-radius: 3px;
+        border: 1px solid rgba(15,23,42,.08);
+        object-fit: cover;
+        flex-shrink: 0;
+      }
+      .lang-current span {
+        white-space: nowrap;
+      }
+      #contact-card-language {
+        min-width: 124px;
+        border: 1px solid rgba(15,23,42,.12);
+        border-radius: 10px;
+        background: #fff;
+        padding: 8px 10px;
+        font-size: 13px;
+        color: #0f172a;
       }
       article {
         width: min(100%, 560px);
@@ -517,10 +958,23 @@ function buildShareCardHtml(input: {
       }
       @media (max-width: 520px) {
         main {
-          padding: 12px;
+          padding: 78px 12px 12px;
         }
         article {
           padding: 16px;
+        }
+        .lang-switcher {
+          left: 12px;
+          right: 12px;
+          gap: 8px;
+          padding: 10px;
+        }
+        .lang-current {
+          flex: 1;
+        }
+        #contact-card-language {
+          min-width: 110px;
+          max-width: 45vw;
         }
         .summary-row {
           align-items: flex-start;
@@ -529,10 +983,11 @@ function buildShareCardHtml(input: {
     </style>
   </head>
   <body>
+    ${languageSwitcherHtml}
     <main>
       <article>
-        <div class="brandline">FAOLLA CARD</div>
-        ${merchantName ? `<h1>${merchantName}</h1>` : ""}
+        <div class="brandline" data-no-translate="1">FAOLLA CARD</div>
+        ${merchantName ? `<h1 data-no-translate="1">${merchantName}</h1>` : ""}
         ${
           contentImageUrl
             ? `<a class="card" href="${targetUrl}">
@@ -550,10 +1005,11 @@ function buildShareCardHtml(input: {
           <a class="button secondary" href="${targetUrl}">打开网页</a>
         </div>
         <div class="footer">
-          名片服务由 <a href="https://www.faolla.com" target="_blank" rel="noopener noreferrer">www.faolla.com</a> 提供
+          名片服务由 <a href="https://www.faolla.com" target="_blank" rel="noopener noreferrer" data-no-translate="1">www.faolla.com</a> 提供
         </div>
       </article>
     </main>
+    <script>${inlineI18nScript}</script>
   </body>
 </html>`;
 }
