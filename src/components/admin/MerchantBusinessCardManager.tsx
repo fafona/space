@@ -1104,7 +1104,17 @@ export default function MerchantBusinessCardManager({
           <div className="text-xs text-slate-500">完善商户信息后可生成名片。链接模式会生成联系卡链接，对方手机打开后可保存联系人。</div>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => setFolderOpen(true)}>{`名片夹 (${cards.length}/${normalizedCardLimit})`}</button>
+          <button
+            type="button"
+            className="group relative mt-2 inline-flex min-h-[42px] items-end overflow-visible rounded-b-xl rounded-tr-xl border border-slate-400 bg-gradient-to-b from-white to-slate-100 px-4 pb-2 pt-3 text-sm font-medium text-slate-800 shadow-[0_1px_0_rgba(255,255,255,0.9)_inset] transition hover:-translate-y-px hover:border-slate-500 hover:from-slate-50 hover:to-slate-200"
+            onClick={() => setFolderOpen(true)}
+          >
+            <span
+              aria-hidden="true"
+              className="absolute left-3 top-[-9px] h-3.5 w-16 rounded-t-xl border border-b-0 border-slate-400 bg-gradient-to-b from-white to-slate-100 transition group-hover:border-slate-500 group-hover:from-slate-50 group-hover:to-slate-200"
+            />
+            <span className="relative">{`名片夹 (${cards.length}/${normalizedCardLimit})`}</span>
+          </button>
         </div>
       </div>
       {!canCreate ? <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">{`需先完善以下商户信息后才能生成名片：${missingFields.join(" / ")}`}</div> : null}
