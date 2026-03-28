@@ -6934,6 +6934,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               <div className="rounded-[36px] border-8 border-gray-900 bg-black p-2 shadow-2xl">
                 <div
                   ref={backgroundLayerRef}
+                  data-no-translate="1"
                   className="relative rounded-[28px] overflow-visible"
                   style={{ minHeight: `${Math.max(backgroundLayerMinHeight, 780)}px` }}
                 >
@@ -6998,6 +6999,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       ) : (
         <div
           ref={backgroundLayerRef}
+          data-no-translate="1"
           className="min-h-screen"
           style={{ ...pageBackgroundStyle, minHeight: `${Math.max(backgroundLayerMinHeight, 0)}px` }}
         >
