@@ -81,6 +81,7 @@ export type MerchantBusinessCardDraft = {
   mode: MerchantBusinessCardMode;
   name: string;
   contactPageImageUrl: string;
+  contactPageImageHeight: number;
   backgroundImageUrl: string;
   backgroundImageOpacity: number;
   backgroundColor: string;
@@ -243,6 +244,7 @@ export function createDefaultMerchantBusinessCardDraft(
     mode: "image",
     name: normalizeText(profile.merchantName) || "未命名名片",
     contactPageImageUrl: "",
+    contactPageImageHeight: 346,
     backgroundImageUrl: "",
     backgroundImageOpacity: 1,
     backgroundColor: "#f8fafc",
@@ -358,6 +360,12 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
     mode: normalizeText((source as { mode?: unknown }).mode) === "link" ? "link" : "image",
     name: normalizeText(source.name) || fallback.name,
     contactPageImageUrl: normalizeText((source as { contactPageImageUrl?: unknown }).contactPageImageUrl),
+    contactPageImageHeight: clampInt(
+      (source as { contactPageImageHeight?: unknown }).contactPageImageHeight,
+      fallback.contactPageImageHeight,
+      120,
+      1200,
+    ),
     backgroundImageUrl: normalizeText(source.backgroundImageUrl),
     backgroundImageOpacity: clampOpacity(source.backgroundImageOpacity, fallback.backgroundImageOpacity),
     backgroundColor: normalizeText(source.backgroundColor) || fallback.backgroundColor,

@@ -22,6 +22,7 @@ type BusinessCardShareRequestBody = {
   name?: unknown;
   imageUrl?: unknown;
   detailImageUrl?: unknown;
+  detailImageHeight?: unknown;
   targetUrl?: unknown;
   imageWidth?: unknown;
   imageHeight?: unknown;
@@ -201,6 +202,7 @@ export async function POST(request: Request) {
     normalizeText(body?.detailImageUrl),
     shareOrigin || request.url,
   );
+  const detailImageHeight = normalizeImageDimension(body?.detailImageHeight);
   const imageWidth = normalizeImageDimension(body?.imageWidth);
   const imageHeight = normalizeImageDimension(body?.imageHeight);
   const contact = normalizeMerchantBusinessCardShareContact(
@@ -215,6 +217,7 @@ export async function POST(request: Request) {
     name,
     imageUrl,
     ...(detailImageUrl ? { detailImageUrl } : {}),
+    ...(detailImageUrl && detailImageHeight ? { detailImageHeight } : {}),
     targetUrl,
     ...(imageWidth ? { imageWidth } : {}),
     ...(imageHeight ? { imageHeight } : {}),

@@ -211,9 +211,16 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
         </div>
 
         {payload.detailImageUrl ? (
-          <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-slate-50 shadow-[0_16px_42px_rgba(15,23,42,.08)]">
+          <div
+            className="overflow-hidden rounded-[28px] border border-slate-200 bg-slate-50 shadow-[0_16px_42px_rgba(15,23,42,.08)]"
+            style={payload.detailImageHeight ? { height: `${payload.detailImageHeight}px` } : undefined}
+          >
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={payload.detailImageUrl} alt={title} className="block h-auto w-full object-cover" />
+            <img
+              src={payload.detailImageUrl}
+              alt={title}
+              className={`block w-full object-cover ${payload.detailImageHeight ? "h-full" : "h-auto"}`}
+            />
           </div>
         ) : (
           renderContactSummary(payload)

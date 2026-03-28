@@ -337,6 +337,7 @@ function buildShareCardHtml(input: {
   merchantName: string;
   previewImageUrl?: string;
   contentImageUrl?: string;
+  contentImageHeight?: number;
   summaryHtml: string;
   imageWidth?: number;
   imageHeight?: number;
@@ -349,6 +350,7 @@ function buildShareCardHtml(input: {
   const merchantName = escapeHtml(input.merchantName);
   const previewImageUrl = input.previewImageUrl ? escapeHtml(input.previewImageUrl) : "";
   const contentImageUrl = input.contentImageUrl ? escapeHtml(input.contentImageUrl) : "";
+  const contentImageHeight = input.contentImageHeight ?? 0;
   const targetUrl = escapeHtml(input.targetUrl);
   const shareUrl = escapeHtml(input.shareUrl);
 
@@ -534,7 +536,7 @@ function buildShareCardHtml(input: {
         ${
           contentImageUrl
             ? `<a class="card" href="${targetUrl}">
-          <img src="${contentImageUrl}" alt="${title}" />
+          <img src="${contentImageUrl}" alt="${title}"${contentImageHeight ? ` style="height:${contentImageHeight}px;object-fit:cover;"` : ""} />
         </a>`
             : ""
         }
@@ -637,6 +639,7 @@ export async function GET(
       merchantName: payload.name,
       previewImageUrl: previewImageUrl || undefined,
       contentImageUrl: detailImageUrl || undefined,
+      contentImageHeight: payload.detailImageHeight,
       summaryHtml: buildContactSummaryHtml({
         name: payload.name,
         contact: payload.contact,

@@ -820,6 +820,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       name: normalizeText(card.name),
       imageUrl: normalizeText(card.shareImageUrl),
       detailImageUrl: normalizeText(card.contactPagePublicImageUrl),
+      detailImageHeight: card.contactPageImageHeight,
       targetUrl,
       imageWidth: card.width,
       imageHeight: card.height,
@@ -1080,8 +1081,8 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
                     {draft.mode === "link" ? (
                       <div className="rounded-xl border bg-white px-3 py-3">
                         <div className="text-xs font-semibold text-slate-700">联系卡中间展示图</div>
-                        <div className="mt-1 text-xs leading-5 text-slate-500">这里可以单独上传一张图片给收到名片的人看。不上传时，联系卡页面会默认展示姓名、电话、邮箱这些名片信息。</div>
-                        <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_120px]">
+                        <div className="mt-1 text-xs leading-5 text-slate-500">这里可以单独上传一张图片给收到名片的人看。不上传时，联系卡页面会默认展示姓名、电话、邮箱这些名片信息。右侧名片预览下方会同步显示联系卡图片预览。</div>
+                        <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_120px_140px]">
                           <label className="block text-xs text-slate-600">
                             上传图片
                             <input type="file" accept="image/*" className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" onChange={(event) => void handleContactPageImageUpload(event)} />
@@ -1094,13 +1095,41 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
                           >
                             恢复默认
                           </button>
+                          <label className="block text-xs text-slate-600">
+                            图片高度
+                            <input
+                              type="number"
+                              inputMode="numeric"
+                              step={1}
+                              min={120}
+                              max={1200}
+                              className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm"
+                              value={getNumberInputValue("contact-page-image-height", draft.contactPageImageHeight)}
+                              onChange={(event) =>
+                                handleNumberInputChange(
+                                  "contact-page-image-height",
+                                  event.target.value,
+                                  draft.contactPageImageHeight,
+                                  120,
+                                  1200,
+                                  (value) => applyDraft((current) => ({ ...current, contactPageImageHeight: value })),
+                                )
+                              }
+                              onBlur={() =>
+                                commitNumberInput(
+                                  "contact-page-image-height",
+                                  draft.contactPageImageHeight,
+                                  120,
+                                  1200,
+                                  (value) => applyDraft((current) => ({ ...current, contactPageImageHeight: value })),
+                                )
+                              }
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") event.currentTarget.blur();
+                              }}
+                            />
+                          </label>
                         </div>
-                        {normalizeText(draft.contactPageImageUrl) ? (
-                          <div className="mt-3 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 p-2">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={draft.contactPageImageUrl} alt="联系卡展示图预览" className="block h-40 w-full rounded-xl object-cover" />
-                          </div>
-                        ) : null}
                       </div>
                     ) : null}
                     <div className="rounded-xl border bg-white px-3 py-3">
@@ -1384,7 +1413,54 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
                   </section>
                 </div>
               </div>
-              <aside className="min-h-0 overflow-y-auto border-l bg-slate-50 px-4 py-4"><div className="sticky top-0 space-y-3"><div><div className="text-sm font-semibold text-slate-900">实时预览</div><div className="text-xs text-slate-500">先点击“预览”确认样式，再点击“生成”。</div></div><div className="overflow-hidden rounded-2xl border bg-slate-900/5 p-3"><div className="flex justify-center"><CardSurface draft={draft} websiteUrl={websiteUrl} qrCodeUrl={qrCodeUrl} scale={scale} /></div></div><div className="rounded-xl border bg-white px-3 py-2 text-xs text-slate-600">{draft.mode === "link" ? "当前为链接模式：二维码和链接都会进入联系卡，对方手机打开后可保存到通讯录。" : "当前为图片模式：生成后可保存或复制名片图片。"}</div>{requiresPreviewBeforeSave ? <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">先点击“预览”，再生成名片。</div> : null}</div></aside>
+              <aside className="min-h-0 overflow-y-auto border-l bg-slate-50 px-4 py-4">
+                <div className="sticky top-0 space-y-3">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-900">实时预览</div>
+                    <div className="text-xs text-slate-500">先点击“预览”确认样式，再点击“生成”。</div>
+                  </div>
+                  <div className="overflow-hidden rounded-2xl border bg-slate-900/5 p-3">
+                    <div className="flex justify-center">
+                      <CardSurface draft={draft} websiteUrl={websiteUrl} qrCodeUrl={qrCodeUrl} scale={scale} />
+                    </div>
+                  </div>
+                  {draft.mode === "link" ? (
+                    <div className="overflow-hidden rounded-2xl border bg-white p-3">
+                      <div className="mb-2 text-xs font-semibold text-slate-700">联系卡图片预览</div>
+                      {normalizeText(draft.contactPageImageUrl) ? (
+                        <div
+                          className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50"
+                          style={{ height: `${draft.contactPageImageHeight}px` }}
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={draft.contactPageImageUrl}
+                            alt="联系卡展示图预览"
+                            className="block h-full w-full object-cover"
+                          />
+                        </div>
+                      ) : (
+                        <div
+                          className="flex items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 text-center text-xs text-slate-500"
+                          style={{ height: `${draft.contactPageImageHeight}px` }}
+                        >
+                          未上传联系卡图片时，这里会回退显示联系方式摘要。
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
+                  <div className="rounded-xl border bg-white px-3 py-2 text-xs text-slate-600">
+                    {draft.mode === "link"
+                      ? "当前为链接模式：二维码和链接都会进入联系卡，对方手机打开后可保存到通讯录。"
+                      : "当前为图片模式：生成后可保存或复制名片图片。"}
+                  </div>
+                  {requiresPreviewBeforeSave ? (
+                    <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                      先点击“预览”，再生成名片。
+                    </div>
+                  ) : null}
+                </div>
+              </aside>
             </div>
           </div>
         </div>,
@@ -1737,6 +1813,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     card?: MerchantBusinessCardAsset | null;
     renderedImageUrl?: string;
     contactPageImageUrl?: string;
+    contactPageImageHeight?: number;
     imageWidth?: number;
     imageHeight?: number;
     contact?: {
@@ -1770,6 +1847,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       origin: resolveMerchantBusinessCardShareOrigin(undefined, targetUrl),
       imageUrl: shareImageUrl,
       detailImageUrl,
+      detailImageHeight: input.contactPageImageHeight,
       targetUrl,
       name: input.cardName,
       contact: input.contact,
@@ -1778,6 +1856,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       origin: resolveMerchantBusinessCardShareOrigin(undefined, targetUrl),
       imageUrl: shareImageUrl,
       detailImageUrl,
+      detailImageHeight: input.contactPageImageHeight,
       targetUrl,
       name: input.cardName,
       contact: input.contact,
@@ -1816,6 +1895,10 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
             name: input.cardName,
             imageUrl: shareImageUrl,
             detailImageUrl,
+            detailImageHeight:
+              typeof input.contactPageImageHeight === "number"
+                ? Math.round(input.contactPageImageHeight)
+                : undefined,
             targetUrl,
             imageWidth: typeof input.imageWidth === "number" ? Math.round(input.imageWidth) : undefined,
             imageHeight: typeof input.imageHeight === "number" ? Math.round(input.imageHeight) : undefined,
@@ -1924,6 +2007,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
             card: existingCard,
             renderedImageUrl: imageUrl,
             contactPageImageUrl: normalizeText(nextDraft.contactPageImageUrl),
+            contactPageImageHeight: nextDraft.contactPageImageHeight,
             imageWidth: nextDraft.width,
             imageHeight: nextDraft.height,
             contact: shareContactPayload,
