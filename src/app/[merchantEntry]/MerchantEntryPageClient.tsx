@@ -32,11 +32,16 @@ export default function MerchantEntryPageClient({
   const params = useParams<{ merchantEntry: string }>();
   const searchParams = useSearchParams();
   const merchantEntry = String(params?.merchantEntry ?? "").trim();
+  const isNumericMerchantEntry = isMerchantNumericId(merchantEntry);
   const hydrated = useHydrated();
   const justSignedIn = useMemo(() => (searchParams.get("justSignedIn") ?? "").trim() === "1", [searchParams]);
+  const skipEntrySessionCheck = useMemo(
+    () => hydrated && justSignedIn && isNumericMerchantEntry,
+    [hydrated, isNumericMerchantEntry, justSignedIn],
+  );
   const recentSignInBridgeActive = useMemo(
-    () => hydrated && justSignedIn && isMerchantNumericId(merchantEntry) && hasMerchantSignInBridge(merchantEntry),
-    [hydrated, justSignedIn, merchantEntry],
+    () => hydrated && justSignedIn && isNumericMerchantEntry && hasMerchantSignInBridge(merchantEntry),
+    [hydrated, isNumericMerchantEntry, justSignedIn, merchantEntry],
   );
   const normalizedPrefix = useMemo(() => normalizeDomainPrefix(merchantEntry), [merchantEntry]);
   const [platformState, setPlatformState] = useState(() => loadPlatformState());
@@ -52,19 +57,19 @@ export default function MerchantEntryPageClient({
   const [numericAdminAuthReady, setNumericAdminAuthReady] = useState(() => recentSignInBridgeActive);
   const [numericAdminAuthenticated, setNumericAdminAuthenticated] = useState(() => recentSignInBridgeActive);
   const [numericSessionEmail, setNumericSessionEmail] = useState("");
-  const [numericSessionLookupDone, setNumericSessionLookupDone] = useState(() => !isMerchantNumericId(merchantEntry) || !isSupabaseEnabled);
+  const [numericSessionLookupDone, setNumericSessionLookupDone] = useState(() => !isNumericMerchantEntry || !isSupabaseEnabled);
   const matchMerchantSite = useMemo(
     () => buildMerchantSiteLinker(platformState.sites, platformState.users),
     [platformState.sites, platformState.users],
   );
   const numericScopedSiteId = useMemo(() => {
-    if (!merchantEntry || !isMerchantNumericId(merchantEntry)) return "";
+    if (!merchantEntry || !isNumericMerchantEntry) return "";
     const matched = matchMerchantSite({
       merchantId: merchantEntry,
       email: numericSessionEmail,
     });
     return matched?.id || merchantEntry;
-  }, [matchMerchantSite, merchantEntry, numericSessionEmail]);
+  }, [isNumericMerchantEntry, matchMerchantSite, merchantEntry, numericSessionEmail]);
 
   useEffect(
     () =>
@@ -96,10 +101,17 @@ export default function MerchantEntryPageClient({
   }, [hydrated, initialResolvedSiteId, merchantEntry, normalizedPrefix]);
 
   useEffect(() => {
-    if (!hydrated || !merchantEntry || !isMerchantNumericId(merchantEntry)) return;
+    if (!hydrated || !merchantEntry || !isNumericMerchantEntry) return;
     if (!isSupabaseEnabled) return;
 
     let mounted = true;
+    if (skipEntrySessionCheck) {
+      setNumericAdminAuthenticated(true);
+      setNumericAdminAuthReady(true);
+      return () => {
+        mounted = false;
+      };
+    }
     if (recentSignInBridgeActive) {
       return () => {
         mounted = false;
@@ -166,12 +178,18 @@ export default function MerchantEntryPageClient({
     return () => {
       mounted = false;
     };
-  }, [hydrated, merchantEntry, recentSignInBridgeActive]);
+  }, [hydrated, isNumericMerchantEntry, merchantEntry, recentSignInBridgeActive, skipEntrySessionCheck]);
 
   useEffect(() => {
-    if (!hydrated || !merchantEntry || !isMerchantNumericId(merchantEntry) || !isSupabaseEnabled) return;
+    if (!hydrated || !merchantEntry || !isNumericMerchantEntry || !isSupabaseEnabled) return;
 
     let mounted = true;
+    if (skipEntrySessionCheck) {
+      setNumericSessionLookupDone(true);
+      return () => {
+        mounted = false;
+      };
+    }
     void Promise.resolve()
       .then(() => {
         if (!mounted) return null;
@@ -194,7 +212,7 @@ export default function MerchantEntryPageClient({
     return () => {
       mounted = false;
     };
-  }, [hydrated, merchantEntry]);
+  }, [hydrated, isNumericMerchantEntry, merchantEntry, skipEntrySessionCheck]);
 
   useEffect(() => {
     if (!recentSignInBridgeActive) return;
@@ -216,14 +234,17 @@ export default function MerchantEntryPageClient({
 
   const resolvedSiteId = remoteLookup.prefix === normalizedPrefix ? remoteLookup.siteId : "";
   const remoteResolved =
-    !merchantEntry || isMerchantNumericId(merchantEntry) || (remoteLookup.prefix === normalizedPrefix && remoteLookup.resolved);
+    !merchantEntry || isNumericMerchantEntry || (remoteLookup.prefix === normalizedPrefix && remoteLookup.resolved);
 
   if (!hydrated) {
     return <LoadingProgressScreen message="正在加载站点..." />;
   }
 
-  if (merchantEntry && isMerchantNumericId(merchantEntry)) {
+  if (merchantEntry && isNumericMerchantEntry) {
     if (!isSupabaseEnabled) {
+      return <AdminClient forcedScope={`site-${numericScopedSiteId || merchantEntry}`} />;
+    }
+    if (skipEntrySessionCheck) {
       return <AdminClient forcedScope={`site-${numericScopedSiteId || merchantEntry}`} />;
     }
     if (!numericSessionLookupDone) {
