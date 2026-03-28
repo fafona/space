@@ -59,6 +59,7 @@ import {
   supabase,
   supabaseMissingEnvNotice,
 } from "@/lib/supabase";
+import { isTransientAuthValidationError } from "@/lib/authSessionRecovery";
 import { clearMerchantSignInBridge } from "@/lib/merchantSignInBridge";
 import { buildPublishedMerchantProfilePatch } from "@/lib/merchantProfileBinding";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
@@ -4433,7 +4434,9 @@ export default function AdminClient({
               Math.max(2500, Math.min(6000, AUTH_CHECK_TIMEOUT_MS)),
               "登录校验超时，已回退到重新登录",
             );
-            if (error || !data.user) {
+            if (error && isTransientAuthValidationError(error)) {
+              // Keep the recovered session during short auth validation hiccups on refresh.
+            } else if (error || !data.user) {
               await supabase.auth.signOut({ scope: "local" }).catch(() => {
                 // ignore local session cleanup failure
               });
