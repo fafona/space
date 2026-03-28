@@ -132,6 +132,8 @@ export type MerchantBusinessCardProfileInput = {
     | null;
 };
 
+export const DEFAULT_MERCHANT_BUSINESS_CARD_WEBSITE_LABEL = "扫码进入网站";
+
 function normalizeText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -253,7 +255,7 @@ export function createDefaultMerchantBusinessCardDraft(
     height: 432,
     ratioMode: "85:54",
     title: "",
-    websiteLabel: "扫码进入网站",
+    websiteLabel: "",
     showWebsiteUrl: true,
     showQr: true,
     contacts: {
@@ -377,7 +379,12 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
         ? ratioMode
         : fallback.ratioMode,
     title: normalizeText(source.title),
-    websiteLabel: typeof source.websiteLabel === "string" ? source.websiteLabel.trim() : fallback.websiteLabel,
+    websiteLabel:
+      typeof source.websiteLabel === "string" &&
+      source.websiteLabel.trim() &&
+      source.websiteLabel.trim() !== DEFAULT_MERCHANT_BUSINESS_CARD_WEBSITE_LABEL
+        ? source.websiteLabel.trim()
+        : fallback.websiteLabel,
     showWebsiteUrl: normalizeBoolean(source.showWebsiteUrl, fallback.showWebsiteUrl),
     showQr: normalizeBoolean((source as { showQr?: unknown }).showQr, fallback.showQr),
     contacts: {

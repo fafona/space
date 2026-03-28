@@ -25,6 +25,10 @@ function isEditableElement(element: Element | null) {
   return false;
 }
 
+function isTranslatableOptionElement(element: Element | null) {
+  return element instanceof HTMLOptionElement;
+}
+
 type MerchantTextNode = Text & {
   __merchantSourceText?: string;
 };
@@ -191,7 +195,7 @@ function traverseAndApply(
     const shouldSkip =
       skipSubtree ||
       Boolean(parentElement?.closest("[data-no-translate='1']")) ||
-      isEditableElement(parentElement);
+      (isEditableElement(parentElement) && !isTranslatableOptionElement(parentElement));
     if (!shouldSkip) {
       collectMissingAndApplyText(root as MerchantTextNode, locale, missing, guard, sourceRecoveryLocale);
     }
@@ -201,20 +205,22 @@ function traverseAndApply(
   if (root.nodeType !== Node.ELEMENT_NODE) return;
 
   const element = root as MerchantElement;
-  const nextSkip =
+  const shouldSkipElement =
     skipSubtree ||
     Boolean(element.closest("[data-no-translate='1']")) ||
     element.getAttribute("data-no-translate") === "1" ||
-    SKIP_TAGS.has(element.tagName.toUpperCase()) ||
-    isEditableElement(element);
+    SKIP_TAGS.has(element.tagName.toUpperCase());
+  const shouldSkipChildren =
+    shouldSkipElement ||
+    (isEditableElement(element) && !(element instanceof HTMLSelectElement));
 
-  if (!nextSkip) {
+  if (!shouldSkipElement) {
     collectMissingAndApplyAttrs(element, locale, missing, guard, sourceRecoveryLocale);
   }
 
   const children = Array.from(element.childNodes);
   children.forEach((child) => {
-    traverseAndApply(child, locale, missing, nextSkip, guard, sourceRecoveryLocale);
+    traverseAndApply(child, locale, missing, shouldSkipChildren, guard, sourceRecoveryLocale);
   });
 }
 

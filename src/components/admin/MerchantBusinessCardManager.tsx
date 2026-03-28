@@ -14,6 +14,7 @@ import { createPortal } from "react-dom";
 import { toPng } from "html-to-image";
 import QRCode from "qrcode";
 import {
+  DEFAULT_MERCHANT_BUSINESS_CARD_WEBSITE_LABEL,
   MERCHANT_BUSINESS_CARD_RATIO_OPTIONS,
   createDefaultMerchantBusinessCardDraft,
   getMerchantBusinessCardRequiredFields,
@@ -408,7 +409,10 @@ function CardSurface({
 }) {
   const isExport = renderMode === "export";
   const contacts = CONTACT_FIELDS.filter(({ key }) => normalizeText(draft.contacts[key]));
-  const websiteText = [draft.websiteLabel, draft.showWebsiteUrl ? websiteUrl.replace(/^https?:\/\//i, "") : ""]
+  const websiteText = [
+    normalizeText(draft.websiteLabel) || DEFAULT_MERCHANT_BUSINESS_CARD_WEBSITE_LABEL,
+    draft.showWebsiteUrl ? websiteUrl.replace(/^https?:\/\//i, "") : "",
+  ]
     .map((item) => item.trim())
     .filter(Boolean)
     .join("\n");
