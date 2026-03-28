@@ -529,6 +529,110 @@ function CardSurface({
   );
 }
 
+function buildContactPreviewRows(
+  name: string,
+  contacts: MerchantBusinessCardDraft["contacts"],
+) {
+  const phoneValues = normalizePhoneList(Array.isArray(contacts.phones) ? contacts.phones : []);
+  const primaryPhone = phoneValues[0] || normalizeText(contacts.phone);
+  const secondaryPhoneRows = phoneValues
+    .slice(primaryPhone ? 1 : 0)
+    .map((value, index) => ({ label: `电话${index + 2}`, value }));
+
+  return [
+    normalizeText(contacts.contactName)
+      ? { label: "联系人", value: normalizeText(contacts.contactName) }
+      : normalizeText(name)
+        ? { label: "联系人", value: normalizeText(name) }
+        : null,
+    primaryPhone ? { label: "电话", value: primaryPhone } : null,
+    ...secondaryPhoneRows,
+    normalizeText(contacts.email) ? { label: "邮箱", value: normalizeText(contacts.email) } : null,
+    normalizeText(contacts.address) ? { label: "地址", value: normalizeText(contacts.address) } : null,
+    normalizeText(contacts.wechat) ? { label: "微信", value: normalizeText(contacts.wechat) } : null,
+    normalizeText(contacts.whatsapp) ? { label: "WhatsApp", value: normalizeText(contacts.whatsapp) } : null,
+    normalizeText(contacts.twitter) ? { label: "Twitter", value: normalizeText(contacts.twitter) } : null,
+    normalizeText(contacts.weibo) ? { label: "微博", value: normalizeText(contacts.weibo) } : null,
+    normalizeText(contacts.telegram) ? { label: "Telegram", value: normalizeText(contacts.telegram) } : null,
+    normalizeText(contacts.linkedin) ? { label: "LinkedIn", value: normalizeText(contacts.linkedin) } : null,
+    normalizeText(contacts.discord) ? { label: "Discord", value: normalizeText(contacts.discord) } : null,
+    normalizeText(contacts.facebook) ? { label: "Facebook", value: normalizeText(contacts.facebook) } : null,
+    normalizeText(contacts.instagram) ? { label: "Instagram", value: normalizeText(contacts.instagram) } : null,
+    normalizeText(contacts.tiktok) ? { label: "TikTok", value: normalizeText(contacts.tiktok) } : null,
+    normalizeText(contacts.xiaohongshu) ? { label: "小红书", value: normalizeText(contacts.xiaohongshu) } : null,
+  ].filter((item): item is { label: string; value: string } => !!item);
+}
+
+function ContactCardSurface({
+  name,
+  targetUrl,
+  contacts,
+  imageUrl,
+  imageHeight,
+}: {
+  name: string;
+  targetUrl: string;
+  contacts: MerchantBusinessCardDraft["contacts"];
+  imageUrl?: string;
+  imageHeight: number;
+}) {
+  const rows = buildContactPreviewRows(name, contacts);
+  const displayName = normalizeText(name) || "未命名名片";
+  const hasImage = Boolean(normalizeText(imageUrl));
+  const domainLabel = normalizeText(targetUrl).replace(/^https?:\/\//i, "");
+
+  return (
+    <div className="mx-auto w-full max-w-[430px] rounded-[32px] border border-white/70 bg-white/95 p-5 shadow-[0_28px_90px_rgba(15,23,42,.12)]">
+      <div className="mb-4 text-center">
+        <div className="text-[11px] font-medium uppercase tracking-[0.24em] text-slate-400">FAOLLA CARD</div>
+        <div className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">{displayName}</div>
+      </div>
+
+      {hasImage ? (
+        <div
+          className="overflow-hidden rounded-[28px] border border-slate-200 bg-slate-50 shadow-[0_16px_42px_rgba(15,23,42,.08)]"
+          style={{ height: `${imageHeight}px` }}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={imageUrl} alt={displayName} className="block h-full w-full object-cover" />
+        </div>
+      ) : null}
+
+      {rows.length > 0 ? (
+        <div className={`rounded-[28px] border border-slate-200 bg-slate-50 p-5 shadow-[0_16px_42px_rgba(15,23,42,.08)] ${hasImage ? "mt-5" : ""}`}>
+          <div className="space-y-4 text-slate-800">
+            {rows.map((row) => (
+              <div key={`${row.label}-${row.value}`} className="text-sm leading-7 text-slate-700">
+                <span className="font-semibold text-slate-900">{row.label}：</span>
+                <span className="break-words">{row.value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      <div className="mt-5 flex gap-3">
+        <button
+          type="button"
+          className="flex-1 cursor-default rounded-full bg-slate-900 px-5 py-3 text-base font-semibold text-white"
+        >
+          一键保存到通讯录
+        </button>
+        <button
+          type="button"
+          className="rounded-full border border-slate-300 bg-white px-5 py-3 text-base font-medium text-slate-900"
+        >
+          打开网页
+        </button>
+      </div>
+
+      <div className="mt-5 border-t border-slate-200 pt-4 text-center text-xs text-slate-500">
+        名片服务由 <span className="font-semibold text-slate-900">{domainLabel || "www.faolla.com"}</span> 提供
+      </div>
+    </div>
+  );
+}
+
 export default function MerchantBusinessCardManager({ siteBaseDomain, profile, cards, cardLimit = 1, onCardsChange }: MerchantBusinessCardManagerProps) {
   const [draft, setDraft] = useState(() => createDefaultMerchantBusinessCardDraft(profile));
   const [draftShareKey, setDraftShareKey] = useState(() => createShareKey());
@@ -760,6 +864,8 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
         setTip("名片生成失败，请重试");
         return;
       }
+      setPreviewOpen(false);
+      setPreviewAsset(null);
       setEditorOpen(false);
       setFolderOpen(true);
       setPreviewAsset(asset);
@@ -951,6 +1057,18 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
     window.open(card.targetUrl, "_blank", "noopener,noreferrer");
   };
 
+  const previewMode = previewAsset?.mode || draft.mode;
+  const previewTargetUrl = normalizeText(previewAsset?.targetUrl) || websiteUrl;
+  const previewName = normalizeText(previewAsset?.name) || normalizeText(draft.name) || "名片预览";
+  const previewTitle = normalizeText(previewAsset?.title) || normalizeText(draft.title);
+  const previewContacts = previewAsset?.contacts || draft.contacts;
+  const previewContactImageUrl =
+    normalizeText(previewAsset?.contactPagePublicImageUrl) ||
+    normalizeText(previewAsset?.contactPageImageUrl) ||
+    normalizeText(draft.contactPageImageUrl);
+  const previewContactImageHeight = previewAsset?.contactPageImageHeight || draft.contactPageImageHeight;
+  const showPreviewGenerateButton = !previewAsset;
+
   return (
     <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -979,7 +1097,6 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
               <div><div className="text-lg font-semibold text-slate-900">{editingCardId ? "修改名片" : "生成名片"}</div><div className="text-sm text-slate-500">先选择图片模式或链接模式，再调整样式并预览生成。</div></div>
               <div className="flex flex-wrap gap-2">
                 <button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => { setPreviewAsset(null); setHasPreviewed(true); setPreviewOpen(true); }}>预览</button>
-                <button type="button" className="rounded bg-black px-3 py-2 text-sm text-white disabled:opacity-50" onClick={() => { setHasPreviewed(true); void handleGenerate(); }} disabled={!websiteUrl || !qrReadyForCurrentDraft || isGenerating || requiresPreviewBeforeSave}>{isGenerating ? (editingCardId ? "保存中..." : "生成中...") : (editingCardId ? "保存修改" : "生成")}</button>
                 <button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => { setEditorOpen(false); setEditingCardId(null); }}>关闭</button>
               </div>
             </div>
@@ -1480,8 +1597,79 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       {previewOpen ? overlay(
         <div className="fixed inset-0 z-[2147483100] bg-black/65 p-4" onMouseDown={() => { setPreviewOpen(false); setPreviewAsset(null); }}>
           <div className="mx-auto flex h-full max-h-[calc(100vh-2rem)] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
-            <div className="flex items-center justify-between border-b px-5 py-4"><div><div className="text-base font-semibold text-slate-900">{previewAsset?.name || draft.name || "名片预览"}</div><div className="text-xs text-slate-500">{getCardModeLabel(previewAsset?.mode || draft.mode)}</div></div><div className="flex gap-2">{(previewAsset?.mode || draft.mode) === "link" && (previewAsset?.targetUrl || websiteUrl) ? <><button type="button" className="rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800" onClick={() => previewAsset ? void copyCardLink(previewAsset) : copyPreviewLink(websiteUrl)}>复制联系卡链接</button><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => previewAsset ? void downloadCardContact(previewAsset) : void downloadPreviewContact(websiteUrl)}>下载联系人</button><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => previewAsset ? void copyCardImage(previewAsset) : void copyPreviewImage()}>复制名片图片</button></> : null}<button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => { setPreviewOpen(false); setPreviewAsset(null); }}>关闭</button></div></div>
-            <div className="flex-1 overflow-auto bg-black p-4"><div className="mx-auto flex min-h-full items-center justify-center">{previewAsset ? <button type="button" className="block bg-transparent text-left" onClick={() => previewAsset.mode === "link" ? openCardTarget(previewAsset) : undefined}><img src={previewAsset.imageUrl} alt={previewAsset.name} className="block h-auto max-w-full bg-transparent object-contain" /></button> : <CardSurface draft={draft} websiteUrl={websiteUrl} qrCodeUrl={qrCodeUrl} scale={fullScale} />}</div></div>
+            <div className="flex items-center justify-between border-b px-5 py-4">
+              <div>
+                <div className="text-base font-semibold text-slate-900">{previewName}</div>
+                <div className="text-xs text-slate-500">
+                  {getCardModeLabel(previewMode)}
+                  {previewTitle ? ` · ${previewTitle}` : ""}
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => { setPreviewOpen(false); setPreviewAsset(null); }}>
+                  关闭
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-auto bg-black p-4">
+              {previewMode === "link" ? (
+                <div className="mx-auto grid min-h-full max-w-[1400px] items-start gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(380px,430px)]">
+                  <div className="flex min-h-full items-center justify-center rounded-3xl border border-white/10 bg-white/5 p-4">
+                    {previewAsset ? (
+                      <img src={previewAsset.imageUrl} alt={previewAsset.name} className="block h-auto max-w-full bg-transparent object-contain" />
+                    ) : (
+                      <CardSurface draft={draft} websiteUrl={websiteUrl} qrCodeUrl={qrCodeUrl} scale={fullScale} />
+                    )}
+                  </div>
+                  <div className="flex min-h-full items-start justify-center rounded-3xl border border-white/10 bg-white/5 p-4">
+                    <ContactCardSurface
+                      name={previewName}
+                      targetUrl={previewTargetUrl}
+                      contacts={previewContacts}
+                      imageUrl={previewContactImageUrl}
+                      imageHeight={previewContactImageHeight}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="mx-auto flex min-h-full items-center justify-center">
+                  {previewAsset ? (
+                    <img src={previewAsset.imageUrl} alt={previewAsset.name} className="block h-auto max-w-full bg-transparent object-contain" />
+                  ) : (
+                    <CardSurface draft={draft} websiteUrl={websiteUrl} qrCodeUrl={qrCodeUrl} scale={fullScale} />
+                  )}
+                </div>
+              )}
+            </div>
+            {showPreviewGenerateButton ? (
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t bg-slate-50 px-5 py-4">
+                <div className="text-sm text-slate-500">
+                  {previewMode === "link"
+                    ? "链接模式下会同时生成名片和联系卡。"
+                    : "确认预览无误后即可生成名片。"}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                    onClick={() => {
+                      setPreviewOpen(false);
+                      setPreviewAsset(null);
+                    }}
+                  >
+                    返回编辑
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded bg-black px-3 py-2 text-sm text-white disabled:opacity-50"
+                    onClick={() => void handleGenerate()}
+                    disabled={!websiteUrl || !qrReadyForCurrentDraft || isGenerating || requiresPreviewBeforeSave}
+                  >
+                    {isGenerating ? (editingCardId ? "保存中..." : "生成中...") : (editingCardId ? "保存修改" : "生成")}
+                  </button>
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>,
       ) : null}
