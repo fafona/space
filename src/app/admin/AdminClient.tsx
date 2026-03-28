@@ -7208,6 +7208,14 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             editingSite?.permissionConfig?.allowBusinessCardLinkMode ??
             createDefaultMerchantPermissionConfig().allowBusinessCardLinkMode
           }
+          businessCardContactImageLimitKb={
+            editingSite?.permissionConfig?.businessCardContactImageLimitKb ??
+            createDefaultMerchantPermissionConfig().businessCardContactImageLimitKb
+          }
+          businessCardExportImageLimitKb={
+            editingSite?.permissionConfig?.businessCardExportImageLimitKb ??
+            createDefaultMerchantPermissionConfig().businessCardExportImageLimitKb
+          }
           onClose={() => setMerchantProfileDialogOpen(false)}
           onCardsChange={(cards) => {
             if (!editingSiteId) return;

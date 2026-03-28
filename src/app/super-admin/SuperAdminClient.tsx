@@ -866,6 +866,8 @@ function buildMerchantConfigDiffLines(current: MerchantConfigSnapshot, target: M
     { key: "pageLimit", label: "页面上限" },
     { key: "businessCardLimit", label: "名片夹上限" },
     { key: "allowBusinessCardLinkMode", label: "可链接模式名片" },
+    { key: "businessCardContactImageLimitKb", label: "联系卡展示图上限(KB)" },
+    { key: "businessCardExportImageLimitKb", label: "导出名片图片上限(KB)" },
     { key: "publishSizeLimitMb", label: "发布体积上限(MB)" },
     { key: "allowInsertBackground", label: "可插入背景" },
     { key: "allowThemeEffects", label: "可主题效果" },
@@ -1076,6 +1078,8 @@ export default function SuperAdminClient() {
   const [configPageLimit, setConfigPageLimit] = useState("3");
   const [configBusinessCardLimit, setConfigBusinessCardLimit] = useState("1");
   const [configAllowBusinessCardLinkMode, setConfigAllowBusinessCardLinkMode] = useState(false);
+  const [configBusinessCardContactImageLimitKb, setConfigBusinessCardContactImageLimitKb] = useState("300");
+  const [configBusinessCardExportImageLimitKb, setConfigBusinessCardExportImageLimitKb] = useState("400");
   const [configPublishLimitMb, setConfigPublishLimitMb] = useState("5");
   const [configAllowInsertBackground, setConfigAllowInsertBackground] = useState(false);
   const [configAllowThemeEffects, setConfigAllowThemeEffects] = useState(false);
@@ -1909,6 +1913,8 @@ export default function SuperAdminClient() {
     setConfigPageLimit(`${permission.pageLimit}`);
     setConfigBusinessCardLimit(`${permission.businessCardLimit}`);
     setConfigAllowBusinessCardLinkMode(permission.allowBusinessCardLinkMode);
+    setConfigBusinessCardContactImageLimitKb(`${permission.businessCardContactImageLimitKb}`);
+    setConfigBusinessCardExportImageLimitKb(`${permission.businessCardExportImageLimitKb}`);
     setConfigPublishLimitMb(`${permission.publishSizeLimitMb}`);
     setConfigAllowInsertBackground(permission.allowInsertBackground);
     setConfigAllowThemeEffects(permission.allowThemeEffects);
@@ -2999,6 +3005,14 @@ export default function SuperAdminClient() {
     const planLimit = Math.max(1, Math.min(200, Math.round(Number(configPlanLimit) || 1)));
     const pageLimit = Math.max(1, Math.min(500, Math.round(Number(configPageLimit) || 1)));
     const businessCardLimit = Math.max(1, Math.min(100, Math.round(Number(configBusinessCardLimit) || 1)));
+    const businessCardContactImageLimitKb = Math.max(
+      50,
+      Math.min(5000, Math.round(Number(configBusinessCardContactImageLimitKb) || 300)),
+    );
+    const businessCardExportImageLimitKb = Math.max(
+      50,
+      Math.min(5000, Math.round(Number(configBusinessCardExportImageLimitKb) || 400)),
+    );
     const publishSizeLimitMb = Math.max(1, Math.min(100, Math.round(Number(configPublishLimitMb) || 1)));
     const serviceExpiresAt = parseDateInputToIso(configExpireDate);
     if (configExpireDate.trim() && !serviceExpiresAt) {
@@ -3050,6 +3064,16 @@ export default function SuperAdminClient() {
     if (prevPermission.allowBusinessCardLinkMode !== configAllowBusinessCardLinkMode) {
       pendingChanges.push(
         `链接模式名片：${formatBool(prevPermission.allowBusinessCardLinkMode)} -> ${formatBool(configAllowBusinessCardLinkMode)}`,
+      );
+    }
+    if (prevPermission.businessCardContactImageLimitKb !== businessCardContactImageLimitKb) {
+      pendingChanges.push(
+        `联系卡展示图上限：${prevPermission.businessCardContactImageLimitKb}KB -> ${businessCardContactImageLimitKb}KB`,
+      );
+    }
+    if (prevPermission.businessCardExportImageLimitKb !== businessCardExportImageLimitKb) {
+      pendingChanges.push(
+        `导出名片图片上限：${prevPermission.businessCardExportImageLimitKb}KB -> ${businessCardExportImageLimitKb}KB`,
       );
     }
     if (prevPermission.publishSizeLimitMb !== publishSizeLimitMb) {
@@ -3118,6 +3142,8 @@ export default function SuperAdminClient() {
         pageLimit,
         businessCardLimit,
         allowBusinessCardLinkMode: configAllowBusinessCardLinkMode,
+        businessCardContactImageLimitKb,
+        businessCardExportImageLimitKb,
         publishSizeLimitMb,
         allowInsertBackground: configAllowInsertBackground,
         allowThemeEffects: configAllowThemeEffects,
@@ -5117,10 +5143,7 @@ export default function SuperAdminClient() {
                               </label>
                             </div>
                             <div className="rounded-xl border border-slate-300 bg-slate-50 px-3 py-3">
-                              <div className="mb-3">
-                                <div className="text-sm font-semibold text-slate-900">名片权限</div>
-                                <div className="mt-1 text-xs text-slate-500">这里单独控制名片夹数量和是否允许商户创建链接模式名片。</div>
-                              </div>
+                              <div className="mb-3 text-sm font-semibold text-slate-900">名片权限</div>
                               <div className="grid gap-3 md:grid-cols-2">
                                 <label className="space-y-1">
                                   <div className="text-slate-500">名片夹数量上限</div>
@@ -5134,8 +5157,23 @@ export default function SuperAdminClient() {
                                   />
                                   链接模式名片
                                 </label>
+                                <label className="space-y-1">
+                                  <div className="text-slate-500">联系卡展示图上限(KB)</div>
+                                  <input
+                                    className="w-full rounded border bg-white px-2 py-1.5"
+                                    value={configBusinessCardContactImageLimitKb}
+                                    onChange={(e) => setConfigBusinessCardContactImageLimitKb(e.target.value)}
+                                  />
+                                </label>
+                                <label className="space-y-1">
+                                  <div className="text-slate-500">导出名片图片上限(KB)</div>
+                                  <input
+                                    className="w-full rounded border bg-white px-2 py-1.5"
+                                    value={configBusinessCardExportImageLimitKb}
+                                    onChange={(e) => setConfigBusinessCardExportImageLimitKb(e.target.value)}
+                                  />
+                                </label>
                               </div>
-                              <div className="mt-2 text-xs text-slate-500">新用户默认关闭；关闭后商户后台只能新建图片模式名片，已存在的链接模式名片不受影响。</div>
                             </div>
                             <div className="grid grid-cols-2 gap-2">
                               <label className="flex items-center gap-2 rounded border px-2 py-1.5">

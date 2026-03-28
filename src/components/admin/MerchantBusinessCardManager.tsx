@@ -45,6 +45,8 @@ type MerchantBusinessCardManagerProps = {
   cards: MerchantBusinessCardAsset[];
   cardLimit?: number;
   allowLinkMode?: boolean;
+  contactPageImageLimitKb?: number;
+  exportImageLimitKb?: number;
   onCardsChange: (cards: MerchantBusinessCardAsset[]) => void;
 };
 
@@ -261,6 +263,14 @@ async function blobToDataUrl(blob: Blob) {
     reader.onerror = () => reject(new Error("image_clipboard_unavailable"));
     reader.readAsDataURL(blob);
   });
+}
+
+function estimateDataUrlBytes(dataUrl: string) {
+  const base64 = dataUrl.split(",")[1] ?? "";
+  if (!base64) {
+    return typeof TextEncoder !== "undefined" ? new TextEncoder().encode(dataUrl).length : dataUrl.length;
+  }
+  return Math.max(0, Math.floor((base64.length * 3) / 4));
 }
 
 async function copyImageViaLegacyClipboard(blob: Blob) {
@@ -644,6 +654,8 @@ export default function MerchantBusinessCardManager({
   cards,
   cardLimit = 1,
   allowLinkMode = true,
+  contactPageImageLimitKb = 300,
+  exportImageLimitKb = 400,
   onCardsChange,
 }: MerchantBusinessCardManagerProps) {
   const [draft, setDraft] = useState(() => createDefaultMerchantBusinessCardDraft(profile));
@@ -730,6 +742,14 @@ export default function MerchantBusinessCardManager({
   const qrReadyForCurrentDraft = !draft.showQr || !!qrCodeUrl;
   const cardLimitReached = !editingCardId && cards.length >= normalizedCardLimit;
   const canOpenCreateEditor = canCreate && !cardLimitReached;
+  const normalizedContactPageImageLimitKb = useMemo(
+    () => Math.max(50, Math.min(5000, Math.round(Number(contactPageImageLimitKb) || 300))),
+    [contactPageImageLimitKb],
+  );
+  const normalizedExportImageLimitKb = useMemo(
+    () => Math.max(50, Math.min(5000, Math.round(Number(exportImageLimitKb) || 400))),
+    [exportImageLimitKb],
+  );
   const editingCard = useMemo(
     () => (editingCardId ? cards.find((card) => card.id === editingCardId) ?? null : null),
     [cards, editingCardId],
@@ -900,6 +920,8 @@ export default function MerchantBusinessCardManager({
     } catch (error) {
       if (error instanceof Error && error.message === "business_card_limit_reached") {
         setTip(`名片夹已达到上限（${normalizedCardLimit} 张），请先删除旧名片或到超级后台调整数量限制`);
+      } else if (error instanceof Error && error.message === "export_image_limit_exceeded") {
+        setTip(`导出名片图片不能超过 ${normalizedExportImageLimitKb} KB，请调整内容或背景后再试`);
       } else if (error instanceof Error && error.message === "share_auth_unavailable") {
         setTip("登录状态还没准备好，请刷新后台后再试一次");
       } else if (error instanceof Error && error.message === "share_request_timeout") {
@@ -915,6 +937,11 @@ export default function MerchantBusinessCardManager({
   const handleContactPageImageUpload = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    if (file.size > normalizedContactPageImageLimitKb * 1024) {
+      setTip(`联系卡展示图不能超过 ${normalizedContactPageImageLimitKb} KB`);
+      event.target.value = "";
+      return;
+    }
     try {
       const reader = new FileReader();
       const imageUrl = await new Promise<string>((resolve, reject) => {
@@ -2224,6 +2251,9 @@ export default function MerchantBusinessCardManager({
     }
 
     const imageUrl = await renderCardNodeToImage(node);
+    if (estimateDataUrlBytes(imageUrl) > normalizedExportImageLimitKb * 1024) {
+      throw new Error("export_image_limit_exceeded");
+    }
     const nextDraft = normalizeMerchantBusinessCardDraft(draft);
     const existingCard = editingCardId ? cards.find((card) => card.id === editingCardId) ?? null : null;
     const resolvedShareKey =
@@ -2291,7 +2321,13 @@ export default function MerchantBusinessCardManager({
       await copyImageToClipboard(asset.imageUrl);
       setTip("名片图片已复制，并已保存到名片夹");
     } catch (error) {
-      setTip(error instanceof Error && error.message === "business_card_limit_reached" ? `名片夹已达到上限（${normalizedCardLimit} 张），请先删除旧名片或到超级后台调整数量限制` : "复制失败，请重试");
+      setTip(
+        error instanceof Error && error.message === "business_card_limit_reached"
+          ? `名片夹已达到上限（${normalizedCardLimit} 张），请先删除旧名片或到超级后台调整数量限制`
+          : error instanceof Error && error.message === "export_image_limit_exceeded"
+            ? `导出名片图片不能超过 ${normalizedExportImageLimitKb} KB，请调整内容或背景后再试`
+            : "复制失败，请重试",
+      );
     }
   }
 
@@ -2335,7 +2371,13 @@ export default function MerchantBusinessCardManager({
       await copyTextToClipboard(shareUrl);
       setTip("联系卡链接已复制，并已保存到名片夹");
     } catch (error) {
-      setTip(error instanceof Error && error.message === "business_card_limit_reached" ? `名片夹已达到上限（${normalizedCardLimit} 张），请先删除旧名片或到超级后台调整数量限制` : "复制失败，请重试");
+      setTip(
+        error instanceof Error && error.message === "business_card_limit_reached"
+          ? `名片夹已达到上限（${normalizedCardLimit} 张），请先删除旧名片或到超级后台调整数量限制`
+          : error instanceof Error && error.message === "export_image_limit_exceeded"
+            ? `导出名片图片不能超过 ${normalizedExportImageLimitKb} KB，请调整内容或背景后再试`
+            : "复制失败，请重试",
+      );
     }
   }
 
@@ -2402,7 +2444,13 @@ export default function MerchantBusinessCardManager({
       await openContactDownload(contactUrl, normalizeText(asset.contacts.contactName) || normalizeText(asset.name));
       setTip("联系人已开始下载，并已保存到名片夹");
     } catch (error) {
-      setTip(error instanceof Error && error.message === "business_card_limit_reached" ? `名片夹已达到上限（${normalizedCardLimit} 张），请先删除旧名片或到超级后台调整数量限制` : "下载失败，请重试");
+      setTip(
+        error instanceof Error && error.message === "business_card_limit_reached"
+          ? `名片夹已达到上限（${normalizedCardLimit} 张），请先删除旧名片或到超级后台调整数量限制`
+          : error instanceof Error && error.message === "export_image_limit_exceeded"
+            ? `导出名片图片不能超过 ${normalizedExportImageLimitKb} KB，请调整内容或背景后再试`
+            : "下载失败，请重试",
+      );
     }
   }
 
