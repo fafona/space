@@ -254,16 +254,16 @@ export default function MerchantEntryPageClient({
 
   if (merchantEntry && isNumericMerchantEntry) {
     if (!isSupabaseEnabled) {
-      return <AdminClient forcedScope={`site-${numericScopedSiteId || merchantEntry}`} />;
+      return <AdminClient forcedScope={`site-${numericScopedSiteId || merchantEntry}`} initialJustSignedIn={justSignedIn} />;
     }
     if (skipEntrySessionCheck) {
-      return <AdminClient forcedScope={`site-${numericScopedSiteId || merchantEntry}`} />;
+      return <AdminClient forcedScope={`site-${numericScopedSiteId || merchantEntry}`} initialJustSignedIn={justSignedIn} />;
     }
     if (!numericSessionLookupDone) {
       return <LoadingProgressScreen message="正在定位商户站点..." />;
     }
     if (recentSignInBridgeActive) {
-      return <AdminClient forcedScope={`site-${numericScopedSiteId || merchantEntry}`} />;
+      return <AdminClient forcedScope={`site-${numericScopedSiteId || merchantEntry}`} initialJustSignedIn={justSignedIn} />;
     }
     if (!numericAdminAuthReady) {
       return <LoadingProgressScreen message="正在检查登录状态..." />;
@@ -271,7 +271,7 @@ export default function MerchantEntryPageClient({
     if (!numericAdminAuthenticated) {
       return <LoadingProgressScreen message="正在跳转到登录页..." />;
     }
-    return <AdminClient forcedScope={`site-${numericScopedSiteId || merchantEntry}`} />;
+    return <AdminClient forcedScope={`site-${numericScopedSiteId || merchantEntry}`} initialJustSignedIn={justSignedIn} />;
   }
 
   const byPrefix = merchantEntry

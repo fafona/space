@@ -2058,6 +2058,7 @@ type AdminClientProps = {
   editorMode?: "merchant" | "platform";
   forceDesktopEditorSidebar?: boolean;
   initialPublishedBlocks?: Block[];
+  initialJustSignedIn?: boolean;
 };
 
 function estimateUtf8Size(value: string) {
@@ -2894,10 +2895,12 @@ export default function AdminClient({
   editorMode = "merchant",
   forceDesktopEditorSidebar = false,
   initialPublishedBlocks,
+  initialJustSignedIn = false,
 }: AdminClientProps = {}) {
   const { locale } = useI18n();
   const [storeScope] = useState<string>(() => readBlocksStoreScopeFromLocation(forcedScope));
   const [justSignedIn] = useState<boolean>(() => {
+    if (initialJustSignedIn) return true;
     if (typeof window === "undefined") return false;
     try {
       return new URLSearchParams(window.location.search).get("justSignedIn") === "1";
