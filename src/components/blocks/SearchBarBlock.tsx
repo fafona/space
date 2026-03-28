@@ -11,6 +11,8 @@ import {
   getEuropeProvinceOptions,
 } from "@/lib/europeLocationOptions";
 import { resolveReverseGeocodeLocation, type ReverseGeocodeResponse } from "@/lib/reverseGeocodeLocation";
+import { useI18n } from "@/components/I18nProvider";
+import { resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
 import { getBackgroundStyle } from "./backgroundStyle";
 import { getBlockBorderClass, getBlockBorderInlineStyle } from "./borderStyle";
 import { toRichHtml } from "./richText";
@@ -178,6 +180,7 @@ function logLocateDebug(label: string, detail: Record<string, unknown>) {
 }
 
 export default function SearchBarBlock(props: SearchBarBlockProps) {
+  const { locale } = useI18n();
   const countryOptions = useMemo(() => getEuropeCountryOptions(), []);
   const normalizedText = useMemo(() => {
     const raw = typeof props.text === "string" ? props.text.trim() : "";
@@ -233,10 +236,10 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
   const provinceDropdownRef = useRef<HTMLDivElement | null>(null);
   const cityDropdownRef = useRef<HTMLDivElement | null>(null);
 
-  const locateLabel = (props.locateLabel ?? "").trim() || "定位";
-  const actionLabel = (props.actionLabel ?? "").trim() || "搜索";
-  const cityPlaceholder = (props.cityPlaceholder ?? "").trim() || "选择城市";
-  const searchPlaceholder = (props.searchPlaceholder ?? "").trim() || "请输入关键词";
+  const locateLabel = resolveLocalizedSystemDefaultText(props.locateLabel, "定位", locale);
+  const actionLabel = resolveLocalizedSystemDefaultText(props.actionLabel, "搜索", locale);
+  const cityPlaceholder = resolveLocalizedSystemDefaultText(props.cityPlaceholder, "选择城市", locale);
+  const searchPlaceholder = resolveLocalizedSystemDefaultText(props.searchPlaceholder, "请输入关键词", locale);
 
   const provinceOptions = useMemo(() => getEuropeProvinceOptions(countryCode), [countryCode]);
   const cityOptions = useMemo(

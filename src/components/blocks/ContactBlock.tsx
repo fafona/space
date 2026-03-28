@@ -5,6 +5,8 @@ import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import type { BackgroundEditableProps, TypographyEditableProps } from "@/data/homeBlocks";
 import { trackContactClick } from "@/lib/analytics";
+import { useI18n } from "@/components/I18nProvider";
+import { resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
 import { getBackgroundStyle } from "./backgroundStyle";
 import { getBlockBorderClass, getBlockBorderInlineStyle } from "./borderStyle";
 import { toRichHtml } from "./richText";
@@ -205,6 +207,7 @@ function buildContactTypographyStyle(props: TypographyEditableProps): CSSPropert
 }
 
 export default function ContactBlock(props: ContactBlockProps) {
+  const { locale } = useI18n();
   const [showMap, setShowMap] = useState(false);
   const [activeAddressIndex, setActiveAddressIndex] = useState(0);
   const [contactNotice, setContactNotice] = useState("");
@@ -420,7 +423,9 @@ export default function ContactBlock(props: ContactBlockProps) {
       >
         <h2
           className="text-xl font-bold whitespace-pre-wrap break-words"
-          dangerouslySetInnerHTML={{ __html: toRichHtml(props.heading, "联系方式") }}
+          dangerouslySetInnerHTML={{
+            __html: toRichHtml(props.heading, resolveLocalizedSystemDefaultText(props.heading, "联系方式", locale)),
+          }}
         />
         <div className="mt-2 space-y-2">
           {addressList.length > 0 ? (

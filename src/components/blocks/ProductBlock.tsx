@@ -31,6 +31,8 @@ import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import { getBackgroundStyle } from "./backgroundStyle";
 import { getBlockBorderClass, getBlockBorderInlineStyle } from "./borderStyle";
 import { toRichHtml } from "./richText";
+import { useI18n } from "@/components/I18nProvider";
+import { resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
 
 type ProductBlockProps = BackgroundEditableProps &
   TypographyEditableProps & {
@@ -293,6 +295,7 @@ function renderProductCard(
 }
 
 export default function ProductBlock(props: ProductBlockProps) {
+  const { locale } = useI18n();
   const products = normalizeProductItems(props.products)
     .map((item) => ({
       ...item,
@@ -314,7 +317,11 @@ export default function ProductBlock(props: ProductBlockProps) {
       : 220;
   const pricePrefix = (props.productPricePrefix ?? "").trim();
   const productSearchEnabled = props.productSearchEnabled !== false;
-  const productSearchPlaceholder = (props.productSearchPlaceholder ?? "").trim() || "搜索产品名称/编号/介绍";
+  const productSearchPlaceholder = resolveLocalizedSystemDefaultText(
+    props.productSearchPlaceholder,
+    "搜索产品名称/编号/介绍",
+    locale,
+  );
   const showCode = props.productShowCode !== false;
   const showDescription = props.productShowDescription !== false;
   const priceAlign = normalizeProductPriceAlign(props.productPriceAlign);
@@ -809,7 +816,10 @@ export default function ProductBlock(props: ProductBlockProps) {
         style={{ ...cardStyle, ...sizeStyle, ...borderInlineStyle }}
       >
         {hasHeading ? (
-          <h2 className="break-words whitespace-pre-wrap text-2xl font-bold" dangerouslySetInnerHTML={{ __html: toRichHtml(props.heading, "产品展示") }} />
+          <h2
+            className="break-words whitespace-pre-wrap text-2xl font-bold"
+            dangerouslySetInnerHTML={{ __html: toRichHtml(props.heading, resolveLocalizedSystemDefaultText(props.heading, "产品展示", locale)) }}
+          />
         ) : null}
         {hasText ? (
           <div className="mt-2 break-words whitespace-pre-wrap text-sm leading-6 text-slate-600" dangerouslySetInnerHTML={{ __html: toRichHtml(props.text, "") }} />

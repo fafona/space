@@ -27,6 +27,8 @@ import {
   type MerchantIndustryTabInput,
 } from "@/lib/merchantIndustryTabs";
 import { buildMerchantFrontendHref } from "@/lib/siteRouting";
+import { useI18n } from "@/components/I18nProvider";
+import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
 import { getBackgroundStyle } from "./backgroundStyle";
 import { getBlockBorderClass, getBlockBorderInlineStyle } from "./borderStyle";
 import { toRichHtml } from "./richText";
@@ -397,6 +399,7 @@ function compareByDefaultRule(
 }
 
 export default function MerchantListBlock(props: MerchantListBlockProps) {
+  const { locale } = useI18n();
   const [platformState, setPlatformState] = useState<PlatformState>(() => loadPlatformState());
   const [searchFilter, setSearchFilter] = useState<SearchFilter>(EMPTY_SEARCH_FILTER);
   const [activeTabId, setActiveTabId] = useState("tab-recommended");
@@ -434,8 +437,15 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
     typeof props.maxItems === "number" && Number.isFinite(props.maxItems)
       ? Math.max(1, Math.min(24, Math.round(props.maxItems)))
       : 6;
-  const emptyText = (props.emptyText ?? "").trim() || "暂无商户";
-  const industryTabs = useMemo(() => normalizeMerchantIndustryTabs(props.industryTabs), [props.industryTabs]);
+  const emptyText = resolveLocalizedSystemDefaultText(props.emptyText, "暂无商户", locale);
+  const industryTabs = useMemo(
+    () =>
+      normalizeMerchantIndustryTabs(props.industryTabs).map((item) => ({
+        ...item,
+        label: localizeSystemDefaultText(item.label, locale),
+      })),
+    [locale, props.industryTabs],
+  );
   const activeTab = industryTabs.find((item) => item.id === activeTabId) ?? industryTabs[0];
   const activeIndustry = activeTab?.industry ?? "all";
   const hasPublishedMerchantSnapshot = Array.isArray(props.publishedMerchantSnapshot);
@@ -645,7 +655,9 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
       >
         <h2
           className="text-xl font-bold whitespace-pre-wrap break-words"
-          dangerouslySetInnerHTML={{ __html: toRichHtml(props.heading, "商户列表") }}
+          dangerouslySetInnerHTML={{
+            __html: toRichHtml(props.heading, resolveLocalizedSystemDefaultText(props.heading, "商户列表", locale)),
+          }}
         />
         {props.text ? (
           <div

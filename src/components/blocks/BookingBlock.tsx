@@ -17,6 +17,8 @@ import {
   type MerchantBookingRecord,
 } from "@/lib/merchantBookings";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
+import { useI18n } from "@/components/I18nProvider";
+import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
 import { getBackgroundStyle } from "./backgroundStyle";
 import { getBlockBorderClass, getBlockBorderInlineStyle } from "./borderStyle";
 import { toRichHtml } from "./richText";
@@ -92,17 +94,21 @@ export default function BookingBlock({
   interactive = true,
   ...props
 }: BookingBlockComponentProps) {
+  const { locale } = useI18n();
   const storeOptions = useMemo(
-    () => normalizeBookingOptionList(props.bookingStoreOptions, buildDefaultBookingStoreOptions(runtimeSiteName)),
-    [props.bookingStoreOptions, runtimeSiteName],
+    () =>
+      normalizeBookingOptionList(props.bookingStoreOptions, buildDefaultBookingStoreOptions(runtimeSiteName)).map((item) =>
+        localizeSystemDefaultText(item, locale),
+      ),
+    [locale, props.bookingStoreOptions, runtimeSiteName],
   );
   const itemOptions = useMemo(
-    () => normalizeBookingOptionList(props.bookingItemOptions, buildDefaultBookingItemOptions()),
-    [props.bookingItemOptions],
+    () => normalizeBookingOptionList(props.bookingItemOptions, buildDefaultBookingItemOptions()).map((item) => localizeSystemDefaultText(item, locale)),
+    [locale, props.bookingItemOptions],
   );
   const titleOptions = useMemo(
-    () => normalizeBookingOptionList(props.bookingTitleOptions, buildDefaultBookingTitleOptions()),
-    [props.bookingTitleOptions],
+    () => normalizeBookingOptionList(props.bookingTitleOptions, buildDefaultBookingTitleOptions()).map((item) => localizeSystemDefaultText(item, locale)),
+    [locale, props.bookingTitleOptions],
   );
   const [draft, setDraft] = useState(() => buildInitialDraft(storeOptions, itemOptions, titleOptions));
   const [submittedState, setSubmittedState] = useState<SubmittedBookingState | null>(null);
@@ -115,17 +121,24 @@ export default function BookingBlock({
     setDraft((current) => buildInitialDraft(storeOptions, itemOptions, titleOptions, current));
   }, [storeOptions, itemOptions, titleOptions]);
 
-  const headingHtml = toRichHtml(props.heading, "在线预约");
-  const textHtml = toRichHtml(props.text, "客户可选择店铺、项目、日期时间并填写预约信息。");
-  const submitLabel = (props.bookingSubmitLabel ?? "").trim() || "提交预约";
-  const updateLabel = (props.bookingUpdateLabel ?? "").trim() || "修改预约";
-  const cancelLabel = (props.bookingCancelLabel ?? "").trim() || "取消预约";
-  const storeLabel = (props.bookingStoreLabel ?? "").trim() || "预约店铺";
-  const itemLabel = (props.bookingItemLabel ?? "").trim() || "项目或类型";
-  const successTitle = (props.bookingSuccessTitle ?? "").trim() || "预约提交成功";
-  const successText = (props.bookingSuccessText ?? "").trim() || "我们已收到您的预约，可在此继续修改或取消。";
-  const namePlaceholder = (props.bookingNamePlaceholder ?? "").trim() || "请输入称谓或姓名";
-  const notePlaceholder = (props.bookingNotePlaceholder ?? "").trim() || "可填写备注或需求";
+  const headingHtml = toRichHtml(props.heading, resolveLocalizedSystemDefaultText(props.heading, "在线预约", locale));
+  const textHtml = toRichHtml(
+    props.text,
+    resolveLocalizedSystemDefaultText(props.text, "客户可选择店铺、项目、日期时间并填写预约信息。", locale),
+  );
+  const submitLabel = resolveLocalizedSystemDefaultText(props.bookingSubmitLabel, "提交预约", locale);
+  const updateLabel = resolveLocalizedSystemDefaultText(props.bookingUpdateLabel, "修改预约", locale);
+  const cancelLabel = resolveLocalizedSystemDefaultText(props.bookingCancelLabel, "取消预约", locale);
+  const storeLabel = resolveLocalizedSystemDefaultText(props.bookingStoreLabel, "预约店铺", locale);
+  const itemLabel = resolveLocalizedSystemDefaultText(props.bookingItemLabel, "项目或类型", locale);
+  const successTitle = resolveLocalizedSystemDefaultText(props.bookingSuccessTitle, "预约提交成功", locale);
+  const successText = resolveLocalizedSystemDefaultText(
+    props.bookingSuccessText,
+    "我们已收到您的预约，可在此继续修改或取消。",
+    locale,
+  );
+  const namePlaceholder = resolveLocalizedSystemDefaultText(props.bookingNamePlaceholder, "请输入称谓或姓名", locale);
+  const notePlaceholder = resolveLocalizedSystemDefaultText(props.bookingNotePlaceholder, "可填写备注或需求", locale);
   const cardStyle = getBackgroundStyle({
     imageUrl: props.bgImageUrl,
     fillMode: props.bgFillMode,

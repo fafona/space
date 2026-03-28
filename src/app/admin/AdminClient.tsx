@@ -186,6 +186,14 @@ import BlockRenderer from "@/components/blocks/BlockRenderer";
 import BookingBlock from "@/components/blocks/BookingBlock";
 import MerchantBookingManagerDialog from "@/components/admin/MerchantBookingManagerDialog";
 import MerchantProfileDialog from "@/components/admin/MerchantProfileDialog";
+import { useI18n } from "@/components/I18nProvider";
+import {
+  localizeEditorBlocksSystemDefaults,
+  localizePagePlanConfigSystemDefaults,
+  localizeSystemDefaultText,
+  prepareEditorSystemDefaultTranslations,
+  resolveLocalizedSystemDefaultText,
+} from "@/lib/editorSystemDefaults";
 
 const IMAGE_FILL_VALUES: ImageFillMode[] = [
   "cover",
@@ -1170,6 +1178,10 @@ const MERCHANT_ONBOARDING_BLOCKS: Block[] = (() => {
     },
   ];
 })();
+
+function getLocalizedSystemDefaultPageName(locale: string, index: number) {
+  return localizeSystemDefaultText(`页面${index + 1}`, locale);
+}
 
 function isCommonCanvasBlockType(type: Block["type"]): type is "common" {
   return type === "common";
@@ -2883,6 +2895,7 @@ export default function AdminClient({
   forceDesktopEditorSidebar = false,
   initialPublishedBlocks,
 }: AdminClientProps = {}) {
+  const { locale } = useI18n();
   const [storeScope] = useState<string>(() => readBlocksStoreScopeFromLocation(forcedScope));
   const [justSignedIn] = useState<boolean>(() => {
     if (typeof window === "undefined") return false;
@@ -2898,10 +2911,11 @@ export default function AdminClient({
       ? sanitizeBlocksForRuntime(initialPublishedBlocks).blocks
       : [],
   );
-  const defaultEditorBlocks =
+  const rawDefaultEditorBlocks =
     isPlatformEditor
       ? (platformSeedBlocks.length > 0 ? platformSeedBlocks : homeBlocks)
       : MERCHANT_ONBOARDING_BLOCKS;
+  const defaultEditorBlocks = localizeEditorBlocksSystemDefaults(rawDefaultEditorBlocks, locale);
   const initialPlanConfig = getPagePlanConfigFromBlocks(defaultEditorBlocks);
   const initialMobilePlanConfig =
     getEmbeddedMobilePlanConfig(defaultEditorBlocks) ?? adaptPlanConfigForMobile(JSON.parse(JSON.stringify(initialPlanConfig)) as PagePlanConfig);
@@ -2973,6 +2987,7 @@ export default function AdminClient({
   const [resizePreview, setResizePreview] = useState<{ blockId: string; heightDelta: number } | null>(null);
   const selectedIdRef = useRef(selectedId);
   const planConfigRef = useRef(planConfig);
+  const applyEditorSystemDefaultLocaleRef = useRef<(targetLocale?: string) => Promise<void>>(async () => {});
 
   useEffect(() => {
     setPlanTemplateCoverPreviewScale(1);
@@ -3118,6 +3133,55 @@ export default function AdminClient({
     return JSON.parse(JSON.stringify(source)) as PagePlanConfig;
   }
 
+  function buildLocalizedViewportState(state: ViewportEditorState, targetLocale: string): ViewportEditorState {
+    return {
+      ...state,
+      planConfig: clonePlanConfig(localizePagePlanConfigSystemDefaults(state.planConfig, targetLocale)),
+      blocks: cloneBlocks(localizeEditorBlocksSystemDefaults(state.blocks, targetLocale)),
+    };
+  }
+
+  async function applyEditorSystemDefaultLocale(targetLocale = locale) {
+    await prepareEditorSystemDefaultTranslations(targetLocale);
+
+    const nextStates = cloneViewportStates(viewportStatesRef.current);
+    const activeState = nextStates[previewViewport];
+    activeState.planConfig = mergePlanConfigWithEditingBlocks(
+      activeState.planConfig,
+      editingPlanIdRef.current,
+      editingPageIdRef.current,
+      blocksRef.current,
+      { syncNavPages: false },
+    );
+    activeState.editingPlanId = editingPlanIdRef.current;
+    activeState.editingPageId = editingPageIdRef.current;
+    activeState.blocks = cloneBlocks(blocksRef.current);
+    activeState.selectedId = selectedIdRef.current;
+
+    const localizedStates = {
+      desktop: buildLocalizedViewportState(nextStates.desktop, targetLocale),
+      mobile: buildLocalizedViewportState(nextStates.mobile, targetLocale),
+    };
+
+    if (JSON.stringify(localizedStates) === JSON.stringify(nextStates)) {
+      return;
+    }
+
+    viewportStatesRef.current = localizedStates;
+    const targetState = localizedStates[previewViewport];
+    planConfigRef.current = clonePlanConfig(targetState.planConfig);
+    blocksRef.current = cloneBlocks(targetState.blocks);
+    setPlanConfig(clonePlanConfig(targetState.planConfig));
+    setEditingPlanId(targetState.editingPlanId);
+    setEditingPageId(targetState.editingPageId);
+    setBlocks(cloneBlocks(targetState.blocks));
+    setSelectedId(targetState.selectedId || targetState.blocks[0]?.id || "");
+    themeBaseBlocksByPageRef.current.clear();
+    saveBlocksToStorage(buildCombinedPersistedBlocks(localizedStates.desktop.planConfig, localizedStates.mobile.planConfig), storeScope);
+  }
+
+  applyEditorSystemDefaultLocaleRef.current = applyEditorSystemDefaultLocale;
+
   function buildCombinedPersistedBlocks(desktopConfig: PagePlanConfig, mobileConfig: PagePlanConfig) {
     const desktopBlocks = buildPersistedBlocksFromPlanConfig(desktopConfig);
     const mobileBlocks = buildPersistedBlocksFromPlanConfig(mobileConfig);
@@ -3225,20 +3289,25 @@ export default function AdminClient({
   }
 
   function applyPersistedBlocksToEditor(loaded: Block[], options?: { resetHistory?: boolean }) {
-    const loadedPlanConfig = getPagePlanConfigFromBlocks(loaded);
-    const loadedMobilePlanConfig = getEmbeddedMobilePlanConfig(loaded) ?? adaptPlanConfigForMobile(clonePlanConfig(loadedPlanConfig));
+    const loadedPlanConfig = localizePagePlanConfigSystemDefaults(getPagePlanConfigFromBlocks(loaded), locale);
+    const loadedMobilePlanConfig = localizePagePlanConfigSystemDefaults(
+      getEmbeddedMobilePlanConfig(loaded) ?? adaptPlanConfigForMobile(clonePlanConfig(loadedPlanConfig)),
+      locale,
+    );
 
     const loadedEditingPlanId = loadedPlanConfig.activePlanId;
     const loadedEditingPageId = loadedPlanConfig.plans.find((plan) => plan.id === loadedEditingPlanId)?.activePageId ?? "page-1";
-    const desktopBlocks = cloneBlocks(
+    const desktopBlocks = cloneBlocks(localizeEditorBlocksSystemDefaults(
       getBlocksForPage(loadedPlanConfig.plans.find((plan) => plan.id === loadedEditingPlanId) ?? loadedPlanConfig.plans[0], loadedEditingPageId),
-    );
+      locale,
+    ));
 
     const mobilePlanId = loadedMobilePlanConfig.activePlanId;
     const mobilePageId = loadedMobilePlanConfig.plans.find((plan) => plan.id === mobilePlanId)?.activePageId ?? "page-1";
-    const mobileBlocks = cloneBlocks(
+    const mobileBlocks = cloneBlocks(localizeEditorBlocksSystemDefaults(
       getBlocksForPage(loadedMobilePlanConfig.plans.find((plan) => plan.id === mobilePlanId) ?? loadedMobilePlanConfig.plans[0], mobilePageId),
-    );
+      locale,
+    ));
 
     viewportStatesRef.current.desktop = {
       planConfig: clonePlanConfig(loadedPlanConfig),
@@ -3270,6 +3339,7 @@ export default function AdminClient({
       redoStackRef.current = [];
       syncHistoryFlags();
     }
+    void applyEditorSystemDefaultLocaleRef.current(locale);
   }
 
   function toggleSelectedBlockLock() {
@@ -3705,7 +3775,10 @@ export default function AdminClient({
           const desiredPages = navItems
             .map((item, idx) => ({
               pageId: typeof item?.pageId === "string" ? item.pageId.trim() : "",
-              label: typeof item?.label === "string" ? toPlainText(item.label, `页面${idx + 1}`) : `页面${idx + 1}`,
+              label:
+                typeof item?.label === "string"
+                  ? toPlainText(localizeSystemDefaultText(item.label, locale), getLocalizedSystemDefaultPageName(locale, idx))
+                  : getLocalizedSystemDefaultPageName(locale, idx),
             }))
             .filter((item) => !!item.pageId);
           if (desiredPages.length > 0) {
@@ -3724,7 +3797,9 @@ export default function AdminClient({
               }
               return {
                 id: desired.pageId,
-                name: desired.label || toPlainText(existing?.name, `页面${idx + 1}`),
+                name:
+                  desired.label ||
+                  toPlainText(localizeSystemDefaultText(existing?.name ?? "", locale), getLocalizedSystemDefaultPageName(locale, idx)),
                 blocks: rebuiltBlocks,
               };
             });
@@ -4581,7 +4656,9 @@ export default function AdminClient({
       const safePlanIndex = planIndex >= 0 ? planIndex : 0;
       const sourcePlan = state.planConfig.plans[safePlanIndex] ?? null;
       if (!sourcePlan) return state;
-      const sourcePages = sourcePlan.pages.length > 0 ? sourcePlan.pages : [{ id: state.editingPageId, name: "页面1", blocks: state.blocks }];
+      const sourcePages = sourcePlan.pages.length > 0
+        ? sourcePlan.pages
+        : [{ id: state.editingPageId, name: getLocalizedSystemDefaultPageName(locale, 0), blocks: state.blocks }];
       const syncedPages = sourcePages.map((page) => ({
         ...page,
         blocks: buildViewportBlocksWithCanonicalNav(page.blocks),
@@ -4744,6 +4821,10 @@ export default function AdminClient({
       selectedId,
     };
   }, [blocks, editingPageId, editingPlanId, planConfig, previewViewport, selectedId]);
+
+  useEffect(() => {
+    void applyEditorSystemDefaultLocaleRef.current(locale);
+  }, [locale]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -5076,18 +5157,22 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     };
   }, [draggingBlockId]);
 
+  function localizeDefaultBlock(block: Block) {
+    return localizeEditorBlocksSystemDefaults([block], locale)[0] ?? block;
+  }
+
   function makeDefaultBlock(type: Block["type"]): Block {
     const id = `${type}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     if (type === "common") {
-      return {
+      return localizeDefaultBlock({
         id,
         type,
         props: { commonTextBoxes: [] },
-      };
+      });
     }
 
     if (type === "button") {
-      return {
+      return localizeDefaultBlock({
         id,
         type,
         props: {
@@ -5096,19 +5181,19 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           buttonLabel: "按钮",
           buttonJumpTarget: "",
         },
-      };
+      });
     }
 
     if (type === "gallery") {
-      return {
+      return localizeDefaultBlock({
         id,
         type,
         props: { heading: "新的画廊区块", images: [], autoplayMs: 3000, galleryFrameHeight: 260, galleryLayoutPreset: "three-wide" },
-      };
+      });
     }
 
     if (type === "chart") {
-      return {
+      return localizeDefaultBlock({
         id,
         type,
         props: {
@@ -5118,11 +5203,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           labels: ["A", "B", "C"],
           values: [10, 20, 15],
         },
-      };
+      });
     }
 
     if (type === "nav") {
-      return {
+      return localizeDefaultBlock({
         id,
         type,
         props: {
@@ -5132,11 +5217,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             { id: `nav-item-${Date.now()}-1`, label: "页面1", pageId: "page-1" },
           ],
         },
-      };
+      });
     }
 
     if (type === "music") {
-      return {
+      return localizeDefaultBlock({
         id,
         type,
         props: {
@@ -5144,35 +5229,35 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           audioUrl: "",
           musicPlayerStyle: "classic",
         },
-      };
+      });
     }
 
     if (type === "hero") {
-      return {
+      return localizeDefaultBlock({
         id,
         type,
         props: { title: "新的视觉横幅", subtitle: "在这里编写副标题说明文案" },
-      };
+      });
     }
 
     if (type === "text") {
-      return {
+      return localizeDefaultBlock({
         id,
         type,
         props: { heading: "新的文本区块", text: "在这里输入文本内容。" },
-      };
+      });
     }
 
     if (type === "list") {
-      return {
+      return localizeDefaultBlock({
         id,
         type,
         props: { heading: "新的列表区块", items: ["列表1", "列表2"] },
-      };
+      });
     }
 
     if (type === "search-bar") {
-      return {
+      return localizeDefaultBlock({
         id,
         type,
         props: {
@@ -5194,11 +5279,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             action: { x: 680, y: 52, width: 72, height: 40 },
           },
         },
-      };
+      });
     }
 
     if (type === "merchant-list") {
-      return {
+      return localizeDefaultBlock({
         id,
         type,
         props: {
@@ -5255,11 +5340,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             card3: { x: 668, y: 52, width: 320, height: 190 },
           },
         },
-      };
+      });
     }
 
     if (type === "product") {
-      return {
+      return localizeDefaultBlock({
         id,
         type,
         props: {
@@ -5312,11 +5397,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             },
           ],
         },
-      };
+      });
     }
 
     if (type === "booking") {
-      return {
+      return localizeDefaultBlock({
         id,
         type,
         props: {
@@ -5337,10 +5422,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           bookingNamePlaceholder: "请输入称谓或姓名",
           bookingNotePlaceholder: "可填写备注或需求",
         },
-      };
+      });
     }
 
-    return {
+    return localizeDefaultBlock({
       id,
       type,
       props: {
@@ -5366,10 +5451,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         instagram: "",
         contactLayout: {},
       },
-    };
+    });
   }
 
-  function addBlock() {
+  async function addBlock() {
     if (!isPlatformEditor && newBlockType === "button" && !canUseButtonBlock) {
       showTip("当前权限未开通按钮区块");
       return;
@@ -5406,6 +5491,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         return;
       }
     }
+    await prepareEditorSystemDefaultTranslations(locale);
     const nextBlock = makeDefaultBlock(newBlockType);
     const next = [...blocks, nextBlock];
     applyBlocks(next, { selectedId: nextBlock.id });
@@ -6259,7 +6345,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const editingPlan = planConfig.plans.find((plan) => plan.id === editingPlanId) ?? planConfig.plans[0];
   const editingPages = editingPlan?.pages?.length
     ? editingPlan.pages
-    : [{ id: "page-1", name: "页面1", blocks: editingPlan?.blocks ?? defaultEditorBlocks }];
+    : [{ id: "page-1", name: getLocalizedSystemDefaultPageName(locale, 0), blocks: editingPlan?.blocks ?? defaultEditorBlocks }];
   const editingPageIndex = Math.max(0, editingPages.findIndex((page) => page.id === editingPageId));
   const imageCompressionOptions = getCurrentImageCompressionOptions();
   const selectedBlock = blocks.find((item) => item.id === selectedId) ?? null;
@@ -7686,6 +7772,7 @@ function InlineEditorBlock({
   runtimeSiteId?: string;
   runtimeSiteName?: string;
 }) {
+  const { locale } = useI18n();
   type CommonEditorTextBox = {
     id: string;
     html: string;
@@ -8124,7 +8211,7 @@ type GalleryEditorImage = {
     if (block.type !== "nav") return [];
     const source = Array.isArray(block.props.navItems) ? block.props.navItems : [];
     const fallbackPages = availablePages.length > 0 ? availablePages : [
-      { id: "page-1", name: "页面1" },
+      { id: "page-1", name: getLocalizedSystemDefaultPageName(locale, 0) },
     ];
     const normalized = source
       .map((item, idx) => {
@@ -8132,7 +8219,7 @@ type GalleryEditorImage = {
         const pageId = rawPageId || fallbackPages[idx % fallbackPages.length].id;
         return {
           id: item?.id?.trim() || `nav-item-${idx}`,
-          label: (item?.label ?? "") || `页面${idx + 1}`,
+          label: localizeSystemDefaultText((item?.label ?? "") || `页面${idx + 1}`, locale),
           pageId,
         };
       })
@@ -8156,16 +8243,17 @@ type GalleryEditorImage = {
     commitNavItems(next);
   }
 
-  function addNavItem() {
+  async function addNavItem() {
     if (block.type !== "nav") return;
     const current = getNavItems();
     if (current.length >= effectiveMaxNavItems) return;
+    await prepareEditorSystemDefaultTranslations(locale);
     const nextPageId = `page-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     commitNavItems([
       ...current,
       {
         id: `nav-item-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        label: `页面${current.length + 1}`,
+        label: localizeSystemDefaultText(`页面${current.length + 1}`, locale),
         pageId: nextPageId,
       },
     ]);
@@ -12149,7 +12237,10 @@ type GalleryEditorImage = {
           ) : (
             <div className="space-y-2">
               {block.props.heading ? (
-                <div className="text-sm font-semibold whitespace-pre-wrap break-words" dangerouslySetInnerHTML={{ __html: toRichHtml(block.props.heading, "页面导航") }} />
+                <div
+                  className="text-sm font-semibold whitespace-pre-wrap break-words"
+                  dangerouslySetInnerHTML={{ __html: toRichHtml(block.props.heading, resolveLocalizedSystemDefaultText(block.props.heading, "页面导航", locale)) }}
+                />
               ) : null}
               <div className={orientation === "vertical" ? "flex flex-col items-start gap-2" : "flex flex-wrap gap-2"}>
                 {navItems.map((item) => (
@@ -12820,7 +12911,11 @@ type GalleryEditorImage = {
     const hasProductHeading = hasVisibleRichText(block.props.heading);
     const hasProductText = hasVisibleRichText(block.props.text);
     const productSearchEnabled = block.props.productSearchEnabled !== false;
-    const productSearchPlaceholder = (block.props.productSearchPlaceholder ?? "").trim() || "搜索产品名称/编号/介绍";
+    const productSearchPlaceholder = resolveLocalizedSystemDefaultText(
+      block.props.productSearchPlaceholder,
+      "搜索产品名称/编号/介绍",
+      locale,
+    );
     const productSearchKeyword = productPreviewSearchByBlockId[block.id] ?? "";
     const savedProductTagOptions = normalizeProductTagOptions(block.props.productTagOptions);
     const productTagOptionsText = productTagOptionsDraftByBlockId[block.id] ?? savedProductTagOptions.join("\n");
@@ -14853,7 +14948,9 @@ type GalleryEditorImage = {
               {hasProductHeading ? (
                 <h2
                   className="text-xl font-bold whitespace-pre-wrap break-words"
-                  dangerouslySetInnerHTML={{ __html: toRichHtml(block.props.heading, "产品展示") }}
+                  dangerouslySetInnerHTML={{
+                    __html: toRichHtml(block.props.heading, resolveLocalizedSystemDefaultText(block.props.heading, "产品展示", locale)),
+                  }}
                 />
               ) : null}
               {hasProductText ? (
@@ -14876,7 +14973,7 @@ type GalleryEditorImage = {
       typeof block.props.maxItems === "number" && Number.isFinite(block.props.maxItems)
         ? Math.max(1, Math.min(24, Math.round(block.props.maxItems)))
         : 6;
-    const emptyText = (block.props.emptyText ?? "").trim() || "暂无商户";
+    const emptyText = resolveLocalizedSystemDefaultText(block.props.emptyText, "暂无商户", locale);
     const merchantTabs = normalizeMerchantIndustryTabs(block.props.industryTabs);
     const activeMerchantTab = merchantTabs.find((item) => item.id === activeMerchantIndustryTabId) ?? merchantTabs[0];
     const activeIndustry = activeMerchantTab?.industry ?? "all";
@@ -15651,7 +15748,9 @@ type GalleryEditorImage = {
               {hasMerchantHeading ? (
                 <h2
                   className="text-xl font-bold whitespace-pre-wrap break-words"
-                  dangerouslySetInnerHTML={{ __html: toRichHtml(block.props.heading, "商户列表") }}
+                  dangerouslySetInnerHTML={{
+                    __html: toRichHtml(block.props.heading, resolveLocalizedSystemDefaultText(block.props.heading, "商户列表", locale)),
+                  }}
                 />
               ) : null}
               {hasMerchantText ? (
@@ -15820,10 +15919,10 @@ type GalleryEditorImage = {
 
   if (block.type === "search-bar") {
     type SearchLayoutKey = "locate" | "country" | "province" | "city" | "keyword" | "action";
-    const locateLabel = (block.props.locateLabel ?? "").trim() || "定位";
-    const actionLabel = (block.props.actionLabel ?? "").trim() || "搜索";
-    const cityPlaceholder = (block.props.cityPlaceholder ?? "").trim() || "选择城市";
-    const searchPlaceholder = (block.props.searchPlaceholder ?? "").trim() || "请输入关键词";
+    const locateLabel = resolveLocalizedSystemDefaultText(block.props.locateLabel, "定位", locale);
+    const actionLabel = resolveLocalizedSystemDefaultText(block.props.actionLabel, "搜索", locale);
+    const cityPlaceholder = resolveLocalizedSystemDefaultText(block.props.cityPlaceholder, "选择城市", locale);
+    const searchPlaceholder = resolveLocalizedSystemDefaultText(block.props.searchPlaceholder, "请输入关键词", locale);
     const countryOptions = getEuropeCountryOptions();
     const resolvedCountryCode = (() => {
       const fromProps = (block.props.defaultCountryCode ?? "").toUpperCase();
