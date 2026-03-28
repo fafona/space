@@ -1106,14 +1106,25 @@ export default function MerchantBusinessCardManager({
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
-            className="group relative mt-2 inline-flex min-h-[42px] items-end overflow-visible rounded-b-xl rounded-tr-xl border border-slate-400 bg-gradient-to-b from-white to-slate-100 px-4 pb-2 pt-3 text-sm font-medium text-slate-800 shadow-[0_1px_0_rgba(255,255,255,0.9)_inset] transition hover:-translate-y-px hover:border-slate-500 hover:from-slate-50 hover:to-slate-200"
+            className="group mt-1 inline-flex items-center gap-3 rounded-2xl border-2 border-slate-800 bg-[linear-gradient(180deg,#ffffff_0%,#f3f4f6_100%)] px-3.5 py-2.5 text-left text-slate-900 shadow-[0_10px_24px_rgba(15,23,42,0.14)] transition hover:-translate-y-px hover:bg-[linear-gradient(180deg,#ffffff_0%,#e9edf3_100%)]"
             onClick={() => setFolderOpen(true)}
           >
-            <span
+            <svg
               aria-hidden="true"
-              className="absolute left-3 top-[-9px] h-3.5 w-16 rounded-t-xl border border-b-0 border-slate-400 bg-gradient-to-b from-white to-slate-100 transition group-hover:border-slate-500 group-hover:from-slate-50 group-hover:to-slate-200"
-            />
-            <span className="relative">{`名片夹 (${cards.length}/${normalizedCardLimit})`}</span>
+              viewBox="0 0 72 56"
+              className="h-11 w-14 shrink-0 text-slate-900 transition group-hover:scale-[1.03]"
+              fill="none"
+            >
+              <rect x="18" y="5" width="38" height="24" rx="5" stroke="currentColor" strokeWidth="3" />
+              <path d="M25 13h21" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+              <path d="M25 20h16" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+              <path d="M11 22h50a6 6 0 0 1 6 6v15a6 6 0 0 1-6 6H11a6 6 0 0 1-6-6V28a6 6 0 0 1 6-6Z" stroke="currentColor" strokeWidth="3" />
+              <path d="M7 27 29 40a10 10 0 0 0 10 0l22-13" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <span className="flex flex-col leading-tight">
+              <span className="text-sm font-semibold tracking-[0.02em]">名片夹</span>
+              <span className="text-[11px] text-slate-500">{`${cards.length}/${normalizedCardLimit}`}</span>
+            </span>
           </button>
         </div>
       </div>
