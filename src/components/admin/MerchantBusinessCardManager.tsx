@@ -546,6 +546,9 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
   const [selectedFieldKeys, setSelectedFieldKeys] = useState<string[]>(["merchantName"]);
   const [fontStyleEditorOpen, setFontStyleEditorOpen] = useState(false);
   const [applyUnifiedTypography, setApplyUnifiedTypography] = useState(false);
+  const [contactPhoneEditorValues, setContactPhoneEditorValues] = useState<string[]>(() =>
+    resolveDraftPhoneValues(createDefaultMerchantBusinessCardDraft(profile).contacts),
+  );
   const hiddenPreviewRef = useRef<HTMLDivElement | null>(null);
 
   const missingFields = useMemo(() => getMerchantBusinessCardRequiredFields(profile), [profile]);
@@ -584,7 +587,6 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
   const selectedTypography = selectedCustomText
     ? selectedCustomText.typography
     : draft.fieldTypography[primarySelectedFieldKey as MerchantBusinessCardFieldKey];
-  const contactPhoneEditorValues = useMemo(() => resolveDraftPhoneValues(draft.contacts), [draft.contacts]);
   const positionEditorItems = useMemo(
     () => [
       ...TEXT_LAYOUT_FIELDS.map((item) => ({
@@ -699,7 +701,9 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       setTip(`名片夹已达到上限（${normalizedCardLimit} 张），请先删除旧名片或到超级后台调整数量限制`);
       return;
     }
-    setDraft(createDefaultMerchantBusinessCardDraft(profile));
+    const nextDraft = createDefaultMerchantBusinessCardDraft(profile);
+    setDraft(nextDraft);
+    setContactPhoneEditorValues(resolveDraftPhoneValues(nextDraft.contacts));
     setDraftShareKey(createShareKey());
     setSelectedFieldKeys(["merchantName"]);
     setEditingCardId(null);
@@ -711,7 +715,9 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
 
   const openEditorForCard = (card: MerchantBusinessCardAsset) => {
     if (!canCreate) return;
-    setDraft(normalizeMerchantBusinessCardDraft(card));
+    const nextDraft = normalizeMerchantBusinessCardDraft(card);
+    setDraft(nextDraft);
+    setContactPhoneEditorValues(resolveDraftPhoneValues(nextDraft.contacts));
     setDraftShareKey(normalizeText(card.shareKey) || createShareKey());
     setSelectedFieldKeys(["merchantName"]);
     setEditingCardId(card.id);
@@ -792,6 +798,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
   };
 
   const updateDraftPhones = (nextPhones: string[]) => {
+    setContactPhoneEditorValues(nextPhones.length > 0 ? nextPhones : [""]);
     const normalizedPhones = normalizePhoneList(nextPhones);
     applyDraft((current) => ({
       ...current,
