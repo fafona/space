@@ -1,17 +1,21 @@
 <svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <mask id="faolla-mark-cutout">
-      <rect width="256" height="256" fill="white" />
+    <mask id="faolla-mark-mask">
+      <rect width="256" height="256" fill="black" />
       <path
-        d="M0 79L95 131C108 138 115 151 115 166V256H77V176C77 166 71 158 62 153L0 117V79Z"
+        d="M48 18H208C226 18 238 30 238 48V96C238 106 233 114 225 119L165 154C154 160 148 171 148 183V222C148 235 139 244 126 244H48C30 244 18 232 18 214V84C18 74 23 64 31 59L48 18Z"
+        fill="white"
+      />
+      <path
+        d="M18 88L97 132C108 138 114 148 114 160V244H95V167C95 157 90 149 82 145L18 108V88Z"
         fill="black"
       />
-      <rect x="124" y="126" width="12" height="130" rx="6" fill="black" />
+      <rect x="123" y="126" width="10" height="118" rx="5" fill="black" />
       <path
-        d="M256 67L156 126C143 134 136 147 136 162V256H98V156C98 137 108 121 125 111L256 35V67Z"
+        d="M238 70L160 120C149 127 143 138 143 150V244H124V143C124 130 130 118 141 111L238 54V70Z"
         fill="black"
       />
     </mask>
   </defs>
-  <rect x="14" y="10" width="228" height="228" rx="28" fill="#2F5B8F" mask="url(#faolla-mark-cutout)" />
+  <rect width="256" height="256" fill="#2F5B8F" mask="url(#faolla-mark-mask)" />
 </svg>
