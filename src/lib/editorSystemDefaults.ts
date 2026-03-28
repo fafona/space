@@ -105,6 +105,17 @@ function toCanonicalSystemDefaultText(value: string) {
   return null;
 }
 
+export function resolveCanonicalSystemDefaultText(
+  value: string | null | undefined,
+  fallbackCanonical = "",
+) {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  const canonical = normalized ? toCanonicalSystemDefaultText(normalized) : null;
+  if (canonical) return canonical;
+  if (normalized) return normalized;
+  return fallbackCanonical;
+}
+
 function localizeSystemDefaultValue<T>(value: T, locale: string): T {
   if (typeof value === "string") {
     const canonical = toCanonicalSystemDefaultText(value);
