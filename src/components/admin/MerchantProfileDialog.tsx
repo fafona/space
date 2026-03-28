@@ -33,6 +33,7 @@ type MerchantProfileDialogProps = {
   initialIndustry?: string | null;
   initialBusinessCards?: MerchantBusinessCardAsset[] | null;
   businessCardLimit?: number;
+  allowBusinessCardLinkMode?: boolean;
   onClose: () => void;
   onCardsChange?: (cards: MerchantBusinessCardAsset[]) => void;
   onSave: (input: {
@@ -230,6 +231,7 @@ export default function MerchantProfileDialog({
   initialIndustry,
   initialBusinessCards,
   businessCardLimit = 1,
+  allowBusinessCardLinkMode = true,
   onClose,
   onCardsChange,
   onSave,
@@ -853,6 +855,7 @@ export default function MerchantProfileDialog({
           profile={liveProfile}
           cards={businessCards}
           cardLimit={businessCardLimit}
+          allowLinkMode={allowBusinessCardLinkMode}
           onCardsChange={(cards) => {
             setBusinessCards(cards);
             onCardsChange?.(cards);

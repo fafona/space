@@ -44,6 +44,7 @@ type MerchantBusinessCardManagerProps = {
   profile: MerchantBusinessCardProfileInput;
   cards: MerchantBusinessCardAsset[];
   cardLimit?: number;
+  allowLinkMode?: boolean;
   onCardsChange: (cards: MerchantBusinessCardAsset[]) => void;
 };
 
@@ -637,7 +638,14 @@ function ContactCardSurface({
   );
 }
 
-export default function MerchantBusinessCardManager({ siteBaseDomain, profile, cards, cardLimit = 1, onCardsChange }: MerchantBusinessCardManagerProps) {
+export default function MerchantBusinessCardManager({
+  siteBaseDomain,
+  profile,
+  cards,
+  cardLimit = 1,
+  allowLinkMode = true,
+  onCardsChange,
+}: MerchantBusinessCardManagerProps) {
   const [draft, setDraft] = useState(() => createDefaultMerchantBusinessCardDraft(profile));
   const [draftShareKey, setDraftShareKey] = useState(() => createShareKey());
   const [editorOpen, setEditorOpen] = useState(false);
@@ -722,11 +730,19 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
   const qrReadyForCurrentDraft = !draft.showQr || !!qrCodeUrl;
   const cardLimitReached = !editingCardId && cards.length >= normalizedCardLimit;
   const canOpenCreateEditor = canCreate && !cardLimitReached;
+  const editingCard = useMemo(
+    () => (editingCardId ? cards.find((card) => card.id === editingCardId) ?? null : null),
+    [cards, editingCardId],
+  );
+  const canUseDraftLinkMode = allowLinkMode || editingCard?.mode === "link";
+  const availableCardModeOptions = useMemo(
+    () => (canUseDraftLinkMode ? CARD_MODE_OPTIONS : CARD_MODE_OPTIONS.filter((option) => option.value !== "link")),
+    [canUseDraftLinkMode],
+  );
   const activeLinkShareKey = useMemo(() => {
     if (draft.mode !== "link") return "";
-    const existingCard = editingCardId ? cards.find((card) => card.id === editingCardId) ?? null : null;
-    return normalizeText(existingCard?.shareKey) || normalizeText(draftShareKey) || "";
-  }, [cards, draft.mode, draftShareKey, editingCardId]);
+    return normalizeText(editingCard?.shareKey) || normalizeText(draftShareKey) || "";
+  }, [draft.mode, draftShareKey, editingCard]);
   const draftLinkUrl = useMemo(() => {
     if (draft.mode !== "link" || !websiteUrl) return "";
     return buildMerchantBusinessCardShareUrl({
@@ -778,6 +794,13 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
       return next.length > 0 ? next : ["merchantName"];
     });
   }, [draft.customTexts]);
+
+  useEffect(() => {
+    if (canUseDraftLinkMode || draft.mode !== "link") return;
+    setDraft((current) => normalizeMerchantBusinessCardDraft({ ...current, mode: "image" }));
+    setHasPreviewed(false);
+    setPreviewAsset(null);
+  }, [canUseDraftLinkMode, draft.mode]);
 
   const applyDraft = (recipe: (current: MerchantBusinessCardDraft) => MerchantBusinessCardDraft) => {
     setDraft((current) => normalizeMerchantBusinessCardDraft(recipe(current)));
@@ -1112,7 +1135,7 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
                     <div className="space-y-2">
                       <div className="text-xs text-slate-600">名片模式</div>
                       <div className="grid gap-2 md:grid-cols-2">
-                        {CARD_MODE_OPTIONS.map((option) => {
+                        {availableCardModeOptions.map((option) => {
                           const active = draft.mode === option.value;
                           return (
                             <button
@@ -1131,6 +1154,9 @@ export default function MerchantBusinessCardManager({ siteBaseDomain, profile, c
                           );
                         })}
                       </div>
+                      {!allowLinkMode && !canUseDraftLinkMode ? (
+                        <div className="text-xs text-slate-500">链接模式权限当前未开启，新建名片默认只支持图片模式。</div>
+                      ) : null}
                     </div>
                     <div className="grid gap-3 md:grid-cols-2">
                       <label className="block text-xs text-slate-600">名片名称<input className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.name} onFocus={() => setSingleSelectedField("merchantName")} onChange={(event) => applyDraft((current) => ({ ...current, name: event.target.value }))} /></label>

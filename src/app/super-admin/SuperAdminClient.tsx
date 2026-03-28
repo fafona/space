@@ -830,6 +830,7 @@ function describePermissionValue(
   value: MerchantConfigSnapshot["permissionConfig"][keyof MerchantConfigSnapshot["permissionConfig"]],
 ) {
   if (
+    key === "allowBusinessCardLinkMode" ||
     key === "allowInsertBackground" ||
     key === "allowThemeEffects" ||
     key === "allowButtonBlock" ||
@@ -864,6 +865,7 @@ function buildMerchantConfigDiffLines(current: MerchantConfigSnapshot, target: M
     { key: "planLimit", label: "方案上限" },
     { key: "pageLimit", label: "页面上限" },
     { key: "businessCardLimit", label: "名片夹上限" },
+    { key: "allowBusinessCardLinkMode", label: "可链接模式名片" },
     { key: "publishSizeLimitMb", label: "发布体积上限(MB)" },
     { key: "allowInsertBackground", label: "可插入背景" },
     { key: "allowThemeEffects", label: "可主题效果" },
@@ -1073,6 +1075,7 @@ export default function SuperAdminClient() {
   const [configPlanLimit, setConfigPlanLimit] = useState("1");
   const [configPageLimit, setConfigPageLimit] = useState("3");
   const [configBusinessCardLimit, setConfigBusinessCardLimit] = useState("1");
+  const [configAllowBusinessCardLinkMode, setConfigAllowBusinessCardLinkMode] = useState(false);
   const [configPublishLimitMb, setConfigPublishLimitMb] = useState("5");
   const [configAllowInsertBackground, setConfigAllowInsertBackground] = useState(false);
   const [configAllowThemeEffects, setConfigAllowThemeEffects] = useState(false);
@@ -1905,6 +1908,7 @@ export default function SuperAdminClient() {
     setConfigPlanLimit(`${permission.planLimit}`);
     setConfigPageLimit(`${permission.pageLimit}`);
     setConfigBusinessCardLimit(`${permission.businessCardLimit}`);
+    setConfigAllowBusinessCardLinkMode(permission.allowBusinessCardLinkMode);
     setConfigPublishLimitMb(`${permission.publishSizeLimitMb}`);
     setConfigAllowInsertBackground(permission.allowInsertBackground);
     setConfigAllowThemeEffects(permission.allowThemeEffects);
@@ -3043,6 +3047,11 @@ export default function SuperAdminClient() {
     if (prevPermission.businessCardLimit !== businessCardLimit) {
       pendingChanges.push(`名片夹数量上限：${prevPermission.businessCardLimit} -> ${businessCardLimit}`);
     }
+    if (prevPermission.allowBusinessCardLinkMode !== configAllowBusinessCardLinkMode) {
+      pendingChanges.push(
+        `链接模式名片：${formatBool(prevPermission.allowBusinessCardLinkMode)} -> ${formatBool(configAllowBusinessCardLinkMode)}`,
+      );
+    }
     if (prevPermission.publishSizeLimitMb !== publishSizeLimitMb) {
       pendingChanges.push(`发布体积限制：${prevPermission.publishSizeLimitMb}MB -> ${publishSizeLimitMb}MB`);
     }
@@ -3108,6 +3117,7 @@ export default function SuperAdminClient() {
         planLimit,
         pageLimit,
         businessCardLimit,
+        allowBusinessCardLinkMode: configAllowBusinessCardLinkMode,
         publishSizeLimitMb,
         allowInsertBackground: configAllowInsertBackground,
         allowThemeEffects: configAllowThemeEffects,
@@ -5105,10 +5115,27 @@ export default function SuperAdminClient() {
                                 <div className="text-slate-500">页面上限数量</div>
                                 <input className="w-full rounded border px-2 py-1.5" value={configPageLimit} onChange={(e) => setConfigPageLimit(e.target.value)} />
                               </label>
-                              <label className="space-y-1">
-                                <div className="text-slate-500">名片夹数量上限</div>
-                                <input className="w-full rounded border px-2 py-1.5" value={configBusinessCardLimit} onChange={(e) => setConfigBusinessCardLimit(e.target.value)} />
-                              </label>
+                            </div>
+                            <div className="rounded-xl border border-slate-300 bg-slate-50 px-3 py-3">
+                              <div className="mb-3">
+                                <div className="text-sm font-semibold text-slate-900">名片权限</div>
+                                <div className="mt-1 text-xs text-slate-500">这里单独控制名片夹数量和是否允许商户创建链接模式名片。</div>
+                              </div>
+                              <div className="grid gap-3 md:grid-cols-2">
+                                <label className="space-y-1">
+                                  <div className="text-slate-500">名片夹数量上限</div>
+                                  <input className="w-full rounded border bg-white px-2 py-1.5" value={configBusinessCardLimit} onChange={(e) => setConfigBusinessCardLimit(e.target.value)} />
+                                </label>
+                                <label className="flex items-center gap-2 rounded border bg-white px-3 py-2">
+                                  <input
+                                    type="checkbox"
+                                    checked={configAllowBusinessCardLinkMode}
+                                    onChange={(e) => setConfigAllowBusinessCardLinkMode(e.target.checked)}
+                                  />
+                                  链接模式名片
+                                </label>
+                              </div>
+                              <div className="mt-2 text-xs text-slate-500">新用户默认关闭；关闭后商户后台只能新建图片模式名片，已存在的链接模式名片不受影响。</div>
                             </div>
                             <div className="grid grid-cols-2 gap-2">
                               <label className="flex items-center gap-2 rounded border px-2 py-1.5">

@@ -88,6 +88,7 @@ export type MerchantServicePermissionConfig = {
   planLimit: number;
   pageLimit: number;
   businessCardLimit: number;
+  allowBusinessCardLinkMode: boolean;
   allowInsertBackground: boolean;
   allowThemeEffects: boolean;
   allowButtonBlock: boolean;
@@ -386,6 +387,7 @@ export function createDefaultMerchantPermissionConfig(): MerchantServicePermissi
     planLimit: 1,
     pageLimit: 3,
     businessCardLimit: 1,
+    allowBusinessCardLinkMode: false,
     allowInsertBackground: false,
     allowThemeEffects: false,
     allowButtonBlock: false,
@@ -416,6 +418,8 @@ function normalizeMerchantPermissionConfig(value: unknown): MerchantServicePermi
     planLimit: normalizeInt(source.planLimit, fallback.planLimit, 1, 200),
     pageLimit: normalizeInt(source.pageLimit, fallback.pageLimit, 1, 500),
     businessCardLimit: normalizeInt(source.businessCardLimit, fallback.businessCardLimit, 1, 100),
+    allowBusinessCardLinkMode:
+      typeof source.allowBusinessCardLinkMode === "boolean" ? source.allowBusinessCardLinkMode : true,
     allowInsertBackground:
       typeof source.allowInsertBackground === "boolean" ? source.allowInsertBackground : fallback.allowInsertBackground,
     allowThemeEffects: typeof source.allowThemeEffects === "boolean" ? source.allowThemeEffects : fallback.allowThemeEffects,
