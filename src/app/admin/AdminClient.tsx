@@ -4263,6 +4263,10 @@ export default function AdminClient({
       };
     }
 
+    if (justSignedIn) {
+      clearJustSignedInFlagFromUrl();
+    }
+
     setRemoteContentVerified(false);
     const initialCached = applyCachedEditorBlocks();
     if (initialCached.length > 0) {

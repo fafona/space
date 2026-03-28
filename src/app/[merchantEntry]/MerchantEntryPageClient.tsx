@@ -80,18 +80,6 @@ export default function MerchantEntryPageClient({
   );
 
   useEffect(() => {
-    if (!hydrated || !justSignedIn || typeof window === "undefined") return;
-    try {
-      const url = new URL(window.location.href);
-      if (!url.searchParams.has("justSignedIn")) return;
-      url.searchParams.delete("justSignedIn");
-      window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
-    } catch {
-      // Ignore URL cleanup failures and keep the bridge state in memory.
-    }
-  }, [hydrated, justSignedIn]);
-
-  useEffect(() => {
     if (!hydrated || !merchantEntry || isMerchantNumericId(merchantEntry)) return;
     if (initialResolvedSiteId) return;
 
