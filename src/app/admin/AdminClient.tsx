@@ -59,7 +59,7 @@ import {
   supabase,
   supabaseMissingEnvNotice,
 } from "@/lib/supabase";
-import { isTransientAuthValidationError } from "@/lib/authSessionRecovery";
+import { hasStoredBrowserSupabaseSessionTokens, isTransientAuthValidationError } from "@/lib/authSessionRecovery";
 import { clearMerchantSignInBridge } from "@/lib/merchantSignInBridge";
 import { buildPublishedMerchantProfilePatch } from "@/lib/merchantProfileBinding";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
@@ -4458,6 +4458,12 @@ export default function AdminClient({
               releaseCheckingScreen({ notice: null });
             }
           } else {
+            if (hasStoredBrowserSupabaseSessionTokens()) {
+              setRemoteContentVerified(false);
+              setHasEditorContent(true);
+              releaseCheckingScreen({ notice: null });
+              return;
+            }
             if (justSignedIn) {
               const restored = await tryLoadJustSignedInPublishedContent();
               if (!mounted) return;
