@@ -1072,7 +1072,7 @@ export default function SuperAdminClient() {
   const [approvalFilter, setApprovalFilter] = useState<ApprovalStatus | "all">("pending");
   const [userKeyword, setUserKeyword] = useState("");
   const [merchantDetailSiteId, setMerchantDetailSiteId] = useState("");
-  const [userPanelMode, setUserPanelMode] = useState<"detail" | "config">("detail");
+  const [userPanelMode, setUserPanelMode] = useState<"detail" | "config" | "history">("detail");
   const [configExpireDate, setConfigExpireDate] = useState("");
   const [configPlanLimit, setConfigPlanLimit] = useState("1");
   const [configPageLimit, setConfigPageLimit] = useState("3");
@@ -1102,8 +1102,6 @@ export default function SuperAdminClient() {
   const [merchantTableSortOrder, setMerchantTableSortOrder] = useState<"asc" | "desc">("asc");
   const [merchantTablePage, setMerchantTablePage] = useState(1);
   const [merchantPanelOpen, setMerchantPanelOpen] = useState(false);
-  const merchantConfigHistorySectionRef = useRef<HTMLDivElement | null>(null);
-  const [scrollToMerchantConfigHistory, setScrollToMerchantConfigHistory] = useState(false);
   const [backendMerchantAccounts, setBackendMerchantAccounts] = useState<BackendMerchantAccount[]>([]);
   const [backendMerchantAccountsLoading, setBackendMerchantAccountsLoading] = useState(false);
   const [backendMerchantAccountsError, setBackendMerchantAccountsError] = useState("");
@@ -1136,16 +1134,6 @@ export default function SuperAdminClient() {
   useEffect(() => {
     setPlanTemplateCoverPreviewScale(1);
   }, [planTemplateCoverPreview?.url]);
-
-  useEffect(() => {
-    if (!scrollToMerchantConfigHistory || !merchantPanelOpen || userPanelMode !== "config") return;
-    const section = merchantConfigHistorySectionRef.current;
-    if (!section) return;
-    requestAnimationFrame(() => {
-      section.scrollIntoView({ behavior: "smooth", block: "start" });
-      setScrollToMerchantConfigHistory(false);
-    });
-  }, [merchantPanelOpen, scrollToMerchantConfigHistory, userPanelMode]);
 
   function renderTopMostOverlay(content: ReactNode) {
     if (typeof document === "undefined") return null;
@@ -1631,6 +1619,44 @@ export default function SuperAdminClient() {
       ? state.sites.find((site) => site.id === selectedMerchantRow.site.id) ?? selectedMerchantRow.site
       : null;
   const selectedMerchantConfigHistory = selectedMerchantSite?.configHistory ?? [];
+  const merchantConfigHistoryContent = (
+    <div className="space-y-3 text-xs">
+      <div className="rounded border bg-slate-50 px-3 py-2 text-slate-600">
+        配置对象：{selectedMerchantRow?.loginAccount || "-"}
+      </div>
+      <div className="rounded border p-2">
+        <div className="mb-2 flex items-center justify-between text-slate-600">
+          <span className="font-medium">配置变更历史</span>
+          <span className="text-[11px]">{selectedMerchantConfigHistory.length} 条</span>
+        </div>
+        <div className="space-y-1">
+          {selectedMerchantConfigHistory.length > 0 ? (
+            selectedMerchantConfigHistory.slice(0, 12).map((history) => (
+              <div key={history.id} className="rounded border px-2 py-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate text-slate-700">{history.summary || "配置更新"}</span>
+                  <button
+                    type="button"
+                    className="rounded border px-2 py-0.5 text-[11px] hover:bg-slate-50"
+                    onClick={() => rollbackMerchantConfigByHistoryAction(history.id)}
+                  >
+                    回滚到此版本
+                  </button>
+                </div>
+                <div className="mt-1 text-[11px] text-slate-500">
+                  {fmt(history.at)} | {history.operator || "-"}
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="rounded border border-dashed px-2 py-2 text-[11px] text-slate-400">
+              暂无配置变更历史
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
   const merchantDefaultSortRule = state.homeLayout.merchantDefaultSortRule;
   const merchantVisit30BySiteId = useMemo(
     () =>
@@ -5029,12 +5055,10 @@ export default function SuperAdminClient() {
                           配置
                         </button>
                         <button
-                          className={`rounded border px-2 py-1 ${selectedMerchantSite ? "bg-white hover:bg-slate-50" : "bg-white opacity-40"}`}
+                          className={`rounded border px-2 py-1 ${userPanelMode === "history" ? "bg-black text-white" : "bg-white"} ${selectedMerchantSite ? "" : "opacity-40"}`}
                           onClick={() => {
                             if (!selectedMerchantSite) return;
-                            hydrateMerchantConfigDraft(selectedMerchantSite);
-                            setUserPanelMode("config");
-                            setScrollToMerchantConfigHistory(true);
+                            setUserPanelMode("history");
                           }}
                           disabled={!selectedMerchantSite}
                         >
@@ -5130,13 +5154,14 @@ export default function SuperAdminClient() {
                               </div>
                             </div>
                           </div>
+                        ) : !selectedMerchantSite ? (
+                          <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                            该账号尚未创建站点，当前没有可配置的站点参数。先为它建站后，才能配置前台、域名、服务状态和发布内容。
+                          </div>
+                        ) : userPanelMode === "history" ? (
+                          merchantConfigHistoryContent
                         ) : (
-                          !selectedMerchantSite ? (
-                            <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                              该账号尚未创建站点，当前没有可配置的站点参数。先为它建站后，才能配置前台、域名、服务状态和发布内容。
-                            </div>
-                          ) : (
-                            <div className="space-y-3 text-xs">
+                          <div className="space-y-3 text-xs">
                               <div className="rounded border bg-slate-50 px-3 py-2 text-slate-600">
                                 配置对象：{selectedMerchantRow.loginAccount || "-"}
                               </div>
@@ -5503,39 +5528,8 @@ export default function SuperAdminClient() {
                             <button className="w-full rounded border bg-black px-3 py-2 text-sm text-white" onClick={saveMerchantConfigAction}>
                               保存配置
                             </button>
-                            <div ref={merchantConfigHistorySectionRef} className="rounded border p-2">
-                              <div className="mb-2 flex items-center justify-between text-slate-600">
-                                <span className="font-medium">配置变更历史</span>
-                                <span className="text-[11px]">{selectedMerchantConfigHistory.length} 条</span>
-                              </div>
-                              <div className="space-y-1">
-                                {selectedMerchantConfigHistory.length > 0 ? (
-                                  selectedMerchantConfigHistory.slice(0, 12).map((history) => (
-                                    <div key={history.id} className="rounded border px-2 py-1.5">
-                                      <div className="flex items-center justify-between gap-2">
-                                        <span className="truncate text-slate-700">{history.summary || "配置更新"}</span>
-                                        <button
-                                          type="button"
-                                          className="rounded border px-2 py-0.5 text-[11px] hover:bg-slate-50"
-                                          onClick={() => rollbackMerchantConfigByHistoryAction(history.id)}
-                                        >
-                                          回滚到此版本
-                                        </button>
-                                      </div>
-                                      <div className="mt-1 text-[11px] text-slate-500">
-                                        {fmt(history.at)} | {history.operator || "-"}
-                                      </div>
-                                    </div>
-                                  ))
-                                ) : (
-                                  <div className="rounded border border-dashed px-2 py-2 text-[11px] text-slate-400">
-                                    暂无配置变更历史
-                                  </div>
-                                )}
-                              </div>
-                            </div>
                           </div>
-                        ))}
+                        )}
                       </>
                     ) : (
                       <div className="text-sm text-slate-500">暂无用户</div>
