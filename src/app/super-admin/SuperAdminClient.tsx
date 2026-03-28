@@ -4386,7 +4386,7 @@ export default function SuperAdminClient() {
                                               {row.statusKey === "paused" ? "开启服务" : "暂停服务"}
                                             </button>
                                             <button
-                                              className="rounded border px-2 py-1"
+                                              className="rounded border bg-black px-2 py-1 text-white hover:bg-slate-800"
                                               onClick={() => {
                                                 const localSite = ensureLocalMerchantSiteFromRow(row);
                                                 if (!localSite) return;
