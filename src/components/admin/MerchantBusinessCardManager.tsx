@@ -755,10 +755,6 @@ export default function MerchantBusinessCardManager({
     [cards, editingCardId],
   );
   const canUseDraftLinkMode = allowLinkMode || editingCard?.mode === "link";
-  const availableCardModeOptions = useMemo(
-    () => (canUseDraftLinkMode ? CARD_MODE_OPTIONS : CARD_MODE_OPTIONS.filter((option) => option.value !== "link")),
-    [canUseDraftLinkMode],
-  );
   const activeLinkShareKey = useMemo(() => {
     if (draft.mode !== "link") return "";
     return normalizeText(editingCard?.shareKey) || normalizeText(draftShareKey) || "";
@@ -1183,28 +1179,41 @@ export default function MerchantBusinessCardManager({
                     <div className="space-y-2">
                       <div className="text-xs text-slate-600">名片模式</div>
                       <div className="grid gap-2 md:grid-cols-2">
-                        {availableCardModeOptions.map((option) => {
+                        {CARD_MODE_OPTIONS.map((option) => {
                           const active = draft.mode === option.value;
+                          const locked = option.value === "link" && !canUseDraftLinkMode;
                           return (
                             <button
                               key={option.value}
                               type="button"
+                              disabled={locked}
                               className={`rounded-xl border px-3 py-3 text-left transition ${
                                 active
                                   ? "border-slate-900 bg-slate-900 text-white"
-                                  : "border-slate-300 bg-white text-slate-900 hover:border-slate-400"
+                                  : locked
+                                    ? "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
+                                    : "border-slate-300 bg-white text-slate-900 hover:border-slate-400"
                               }`}
-                              onClick={() => applyDraft((current) => ({ ...current, mode: option.value }))}
+                              onClick={() => {
+                                if (locked) return;
+                                applyDraft((current) => ({ ...current, mode: option.value }));
+                              }}
                             >
-                              <div className="text-sm font-semibold">{option.label}</div>
-                              <div className={`mt-1 text-xs ${active ? "text-slate-200" : "text-slate-500"}`}>{option.description}</div>
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="text-sm font-semibold">{option.label}</div>
+                                {locked ? (
+                                  <span className="rounded-full border border-slate-300 bg-white px-2 py-0.5 text-[10px] font-medium text-slate-500">
+                                    未开通
+                                  </span>
+                                ) : null}
+                              </div>
+                              <div className={`mt-1 text-xs ${active ? "text-slate-200" : locked ? "text-slate-400" : "text-slate-500"}`}>
+                                {option.description}
+                              </div>
                             </button>
                           );
                         })}
                       </div>
-                      {!allowLinkMode && !canUseDraftLinkMode ? (
-                        <div className="text-xs text-slate-500">链接模式权限当前未开启，新建名片默认只支持图片模式。</div>
-                      ) : null}
                     </div>
                     <div className="grid gap-3 md:grid-cols-2">
                       <label className="block text-xs text-slate-600">名片名称<input className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={draft.name} onFocus={() => setSingleSelectedField("merchantName")} onChange={(event) => applyDraft((current) => ({ ...current, name: event.target.value }))} /></label>
