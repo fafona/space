@@ -96,6 +96,38 @@ export function resolveButtonJumpPageId(target: string, pages: ButtonJumpPage[])
   return pages[ordinalIndex - 1]?.id ?? null;
 }
 
+export function resolveButtonContentPadding(width?: number, height?: number) {
+  const safeWidth =
+    typeof width === "number" && Number.isFinite(width)
+      ? Math.max(18, Math.round(width))
+      : undefined;
+  const safeHeight =
+    typeof height === "number" && Number.isFinite(height)
+      ? Math.max(18, Math.round(height))
+      : undefined;
+
+  const horizontal =
+    safeWidth == null ? 20 :
+    safeWidth <= 32 ? 2 :
+    safeWidth <= 48 ? 4 :
+    safeWidth <= 72 ? 8 :
+    safeWidth <= 108 ? 12 :
+    20;
+
+  const vertical =
+    safeHeight == null ? 12 :
+    safeHeight <= 24 ? 1 :
+    safeHeight <= 32 ? 2 :
+    safeHeight <= 44 ? 4 :
+    safeHeight <= 60 ? 8 :
+    12;
+
+  return {
+    paddingInline: horizontal,
+    paddingBlock: vertical,
+  };
+}
+
 export function buildButtonLabelPatch(buttonLabel: string): Partial<ButtonProps> {
   return {
     buttonLabel,

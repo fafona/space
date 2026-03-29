@@ -1,5 +1,10 @@
 import type { ButtonProps } from "@/data/homeBlocks";
-import { resolveButtonJumpPageId, resolveButtonLabel, type ButtonJumpPage } from "@/lib/buttonBlock";
+import {
+  resolveButtonContentPadding,
+  resolveButtonJumpPageId,
+  resolveButtonLabel,
+  type ButtonJumpPage,
+} from "@/lib/buttonBlock";
 import { getBackgroundStyle } from "./backgroundStyle";
 import { getBlockBorderClass, getBlockBorderInlineStyle } from "./borderStyle";
 import { toRichHtml } from "./richText";
@@ -98,19 +103,23 @@ export default function ButtonBlock(props: ButtonBlockRuntimeProps) {
         {isClickable ? (
           <button
             type="button"
-            className="box-border flex h-full min-h-0 w-full appearance-none items-center justify-center border-0 bg-transparent px-5 py-3 text-center transition hover:brightness-[0.98]"
+            className="box-border flex h-full min-h-0 w-full appearance-none items-center justify-center border-0 bg-transparent text-center transition hover:brightness-[0.98]"
+            style={resolveButtonContentPadding(blockWidth, blockHeight)}
             onClick={() => performJump(jumpTarget, props.onNavigatePage, props.availablePages)}
           >
             <div
-              className="w-full break-words whitespace-pre-wrap"
+              className="min-h-0 w-full overflow-hidden break-words whitespace-pre-wrap"
               style={typographyStyle}
               dangerouslySetInnerHTML={{ __html: labelHtml }}
             />
           </button>
         ) : (
-          <div className="box-border flex h-full min-h-0 w-full items-center justify-center px-5 py-3 text-center">
+          <div
+            className="box-border flex h-full min-h-0 w-full items-center justify-center text-center"
+            style={resolveButtonContentPadding(blockWidth, blockHeight)}
+          >
             <div
-              className="w-full break-words whitespace-pre-wrap"
+              className="min-h-0 w-full overflow-hidden break-words whitespace-pre-wrap"
               style={typographyStyle}
               dangerouslySetInnerHTML={{ __html: labelHtml }}
             />

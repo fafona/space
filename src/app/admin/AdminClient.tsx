@@ -173,7 +173,7 @@ import {
   parseProductWorkbook,
 } from "@/lib/productImport";
 import { broadcastPublishSync } from "@/lib/publishSync";
-import { buildButtonLabelPatch, resolveButtonLabel } from "@/lib/buttonBlock";
+import { buildButtonLabelPatch, resolveButtonContentPadding, resolveButtonLabel } from "@/lib/buttonBlock";
 import { ensureMerchantIdentityForUser, isMerchantNumericId } from "@/lib/merchantIdentity";
 import {
   buildMerchantDomain,
@@ -11007,11 +11007,14 @@ type GalleryEditorImage = {
           {layerSettingsDialog}
           {typographyDialog}
           {buttonJumpDialog}
-          <div className="box-border flex h-full min-h-0 w-full items-center justify-center px-5 py-3 text-center">
+          <div
+            className="box-border flex h-full min-h-0 w-full items-center justify-center text-center"
+            style={resolveButtonContentPadding(blockWidth, blockHeight)}
+          >
             {isSelected ? (
               <RichTextEditor
                 field="buttonLabel"
-                className="w-full min-h-[1.5em] break-words text-center text-gray-700"
+                className="h-full min-h-0 w-full overflow-hidden break-words text-center text-gray-700"
                 style={buttonLabelStyle}
                 value={buttonLabel}
                 onChange={handleRichFieldChange}
@@ -11020,7 +11023,7 @@ type GalleryEditorImage = {
               />
             ) : (
               <div
-                className="w-full break-words whitespace-pre-wrap text-center text-gray-700"
+                className="h-full min-h-0 w-full overflow-hidden break-words whitespace-pre-wrap text-center text-gray-700"
                 style={buttonLabelStyle}
                 dangerouslySetInnerHTML={{ __html: toRichHtml(buttonLabel, "按钮") }}
               />
