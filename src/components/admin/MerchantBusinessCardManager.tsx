@@ -93,10 +93,26 @@ const TEXT_LAYOUT_FIELDS: Array<{ key: MerchantBusinessCardFieldKey; label: stri
 
 const FONT_FAMILY_OPTIONS = [
   { value: "", label: "默认" },
+  { value: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", label: "系统默认" },
   { value: "Microsoft YaHei, SimHei, sans-serif", label: "微软雅黑" },
+  { value: "SimHei, 'Heiti SC', sans-serif", label: "黑体" },
+  { value: "SimSun, Songti SC, serif", label: "宋体" },
+  { value: "FangSong, STFangsong, serif", label: "仿宋" },
+  { value: "KaiTi, STKaiti, serif", label: "楷体" },
+  { value: "'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif", label: "苹方" },
+  { value: "'Noto Sans SC', 'Source Han Sans SC', 'Microsoft YaHei', sans-serif", label: "思源黑体" },
+  { value: "'Noto Serif SC', 'Source Han Serif SC', SimSun, serif", label: "思源宋体" },
+  { value: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif", label: "Segoe UI" },
   { value: "Arial, Helvetica, sans-serif", label: "Arial" },
+  { value: "Helvetica, Arial, sans-serif", label: "Helvetica" },
+  { value: "Verdana, Geneva, sans-serif", label: "Verdana" },
+  { value: "Tahoma, Geneva, sans-serif", label: "Tahoma" },
+  { value: "'Trebuchet MS', Helvetica, sans-serif", label: "Trebuchet MS" },
   { value: "Georgia, serif", label: "Georgia" },
   { value: "Times New Roman, Times, serif", label: "Times New Roman" },
+  { value: "'Palatino Linotype', 'Book Antiqua', Palatino, serif", label: "Palatino" },
+  { value: "Garamond, 'Times New Roman', serif", label: "Garamond" },
+  { value: "'Courier New', Courier, monospace", label: "Courier New" },
 ];
 
 const MIN_TYPOGRAPHY_FONT_SIZE = 10;
