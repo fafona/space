@@ -4227,6 +4227,17 @@ export default function AdminClient({
       setHasEditorContent(true);
     }
 
+    if (isPlatformEditor && platformSeedBlocks.length > 0) {
+      setBackendNotice(null);
+      setHasEditorContent(true);
+      setRemoteContentVerified(true);
+      releaseCheckingScreen({ notice: null });
+      return () => {
+        mounted = false;
+        merchantIdsRef.current = [];
+      };
+    }
+
     const safetyTimeoutId = setTimeout(() => {
       applyCachedEditorBlocks();
       setHasEditorContent(true);
