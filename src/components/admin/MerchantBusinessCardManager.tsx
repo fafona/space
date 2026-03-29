@@ -2895,7 +2895,9 @@ export default function MerchantBusinessCardManager({
     contacts: MerchantBusinessCardDraft["contacts"];
     targetUrl: string;
   }) {
-    const extraPhoneLines = normalizePhoneList(input.contacts.phones ?? []).slice(1).map((value, index) => `电话${index + 2}: ${value}`);
+    const extraPhoneLines = normalizePhoneList(input.contacts.phones ?? [])
+      .slice(1)
+      .map((value, index) => `${index === 0 ? "工作" : `工作${index + 1}`}: ${value}`);
     const socialLines = [
       ["微信", input.contacts.wechat],
       ["WhatsApp", input.contacts.whatsapp],

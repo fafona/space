@@ -128,9 +128,28 @@ function buildActionButtonHtml(input: {
   </a>`;
 }
 
+function buildWeChatActionHtml(rawValue?: string) {
+  const wechatId = normalizeText(rawValue).replace(/^@+/, "").trim();
+  if (!wechatId) return "";
+  const primaryHref = `weixin://contacts/profile/${encodeURIComponent(wechatId)}`;
+  const secondaryHref = `weixin://dl/chat?username=${encodeURIComponent(wechatId)}`;
+  const tertiaryHref = `weixin://dl/chat?${encodeURIComponent(wechatId)}`;
+  return `<button class="inline-action inline-action-button" type="button" aria-label="打开微信联系人" title="打开微信联系人" style="background:#07C160" data-wechat-primary="${escapeHtml(primaryHref)}" data-wechat-secondary="${escapeHtml(secondaryHref)}" data-wechat-tertiary="${escapeHtml(tertiaryHref)}" data-wechat-id="${escapeHtml(wechatId)}">
+    <img src="/social-icons/wechat.svg" alt="" />
+  </button>`;
+}
+
 function buildLanguageSwitcherHtml() {
   const asiaOptions = LANGUAGE_OPTIONS.filter((item) => item.region === "asia");
-  const europeOptions = LANGUAGE_OPTIONS.filter((item) => item.region === "europe");
+  const preferredCodes = ["en-GB", "es-ES"];
+  const europeOptions = (() => {
+    const europe = LANGUAGE_OPTIONS.filter((item) => item.region === "europe");
+    const preferred = preferredCodes
+      .map((code) => europe.find((item) => item.code === code))
+      .filter((item): item is (typeof LANGUAGE_OPTIONS)[number] => Boolean(item));
+    const rest = europe.filter((item) => !preferredCodes.includes(item.code));
+    return [...preferred, ...rest];
+  })();
   const renderGroup = (label: string, options: typeof LANGUAGE_OPTIONS) =>
     `<optgroup label="${escapeHtml(label)}">
       ${options
@@ -144,16 +163,14 @@ function buildLanguageSwitcherHtml() {
   const defaultOption = LANGUAGE_OPTIONS.find((item) => item.code === DEFAULT_LOCALE) ?? LANGUAGE_OPTIONS[0];
   const defaultFlag = defaultOption ? `https://flagcdn.com/24x18/${defaultOption.countryCode.toLowerCase()}.png` : "";
 
-  return `<div class="lang-switcher" data-no-translate="1">
-    <div class="lang-current">
-      ${defaultFlag ? `<img data-language-flag src="${escapeHtml(defaultFlag)}" alt="${escapeHtml(defaultOption?.label ?? DEFAULT_LOCALE)}" />` : ""}
-      <span data-language-label>${escapeHtml(defaultOption?.label ?? DEFAULT_LOCALE)}</span>
-    </div>
+  return `<label class="lang-switcher" data-no-translate="1" title="${escapeHtml(defaultOption?.label ?? DEFAULT_LOCALE)}" aria-label="Select language">
+    ${defaultFlag ? `<img data-language-flag src="${escapeHtml(defaultFlag)}" alt="${escapeHtml(defaultOption?.label ?? DEFAULT_LOCALE)}" />` : ""}
+    <span class="lang-switcher-sr" data-language-label>${escapeHtml(defaultOption?.label ?? DEFAULT_LOCALE)}</span>
     <select id="contact-card-language" aria-label="Select language">
       ${renderGroup("Asia", asiaOptions)}
       ${renderGroup("Europe", europeOptions)}
     </select>
-  </div>`;
+  </label>`;
 }
 
 function buildInlineI18nScript() {
@@ -473,10 +490,15 @@ function buildInlineI18nScript() {
       const labelEl = document.querySelector("[data-language-label]");
       const flagEl = document.querySelector("[data-language-flag]");
       const selectEl = document.getElementById("contact-card-language");
+      const switcherEl = document.querySelector(".lang-switcher");
       if (labelEl && selected) labelEl.textContent = selected.label;
       if (flagEl && selected) {
         flagEl.setAttribute("src", "https://flagcdn.com/24x18/" + selected.countryCode.toLowerCase() + ".png");
         flagEl.setAttribute("alt", selected.label);
+      }
+      if (switcherEl && selected) {
+        switcherEl.setAttribute("title", selected.label);
+        switcherEl.setAttribute("aria-label", selected.label);
       }
       if (selectEl && selectEl.value !== normalized) selectEl.value = normalized;
     }
@@ -506,6 +528,36 @@ function buildInlineI18nScript() {
         void applyLocale(target.value);
       });
     }
+
+    const wechatButtons = Array.from(document.querySelectorAll("[data-wechat-primary]"));
+    wechatButtons.forEach((button) => {
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        const target = event.currentTarget;
+        if (!(target instanceof HTMLElement)) return;
+        const attempts = [
+          target.dataset.wechatPrimary || "",
+          target.dataset.wechatSecondary || "",
+          target.dataset.wechatTertiary || "",
+        ].map((value) => String(value || "").trim()).filter(Boolean);
+        if (attempts.length === 0) return;
+        window.location.href = attempts[0];
+        if (attempts.length > 1) {
+          window.setTimeout(() => {
+            if (document.visibilityState === "visible") {
+              window.location.href = attempts[1];
+            }
+          }, 420);
+        }
+        if (attempts.length > 2) {
+          window.setTimeout(() => {
+            if (document.visibilityState === "visible") {
+              window.location.href = attempts[2];
+            }
+          }, 900);
+        }
+      });
+    });
 
     let initialLocale = DEFAULT_LOCALE;
     try {
@@ -541,11 +593,11 @@ function buildContactSummaryHtml(input: {
       : null,
     secondaryPhone
       ? {
-          label: "其他电话",
+          label: "工作",
           value: secondaryPhone,
           actionHtml: buildActionButtonHtml({
             href: buildPhoneHref(secondaryPhone),
-            label: "拨打其他电话",
+            label: "拨打工作电话",
             iconSvg: buildInlineSvgIcon("phone"),
             bgColor: "#007AFF",
           }),
@@ -579,12 +631,7 @@ function buildContactSummaryHtml(input: {
       ? {
           label: "微信",
           value: input.contact.wechat,
-          actionHtml: buildActionButtonHtml({
-            href: buildSocialHref("微信", input.contact.wechat),
-            label: "打开微信",
-            iconUrl: "/social-icons/wechat.svg",
-            bgColor: "#07C160",
-          }),
+          actionHtml: buildWeChatActionHtml(input.contact.wechat),
         }
       : null,
     input.contact?.whatsapp
@@ -809,43 +856,44 @@ function buildShareCardHtml(input: {
         top: 16px;
         right: 16px;
         z-index: 20;
-        display: flex;
+        display: inline-flex;
         align-items: center;
-        gap: 10px;
-        padding: 10px 12px;
-        border-radius: 16px;
+        justify-content: center;
+        width: 42px;
+        height: 42px;
+        border-radius: 999px;
         border: 1px solid rgba(15,23,42,.12);
         background: rgba(255,255,255,.94);
         box-shadow: 0 18px 40px rgba(15,23,42,.12);
         backdrop-filter: blur(10px);
+        overflow: hidden;
+        cursor: pointer;
       }
-      .lang-current {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        min-width: 0;
-        font-size: 13px;
-        color: #0f172a;
-      }
-      .lang-current img {
-        width: 18px;
-        height: 14px;
+      .lang-switcher img {
+        width: 20px;
+        height: 15px;
         border-radius: 3px;
         border: 1px solid rgba(15,23,42,.08);
         object-fit: cover;
-        flex-shrink: 0;
       }
-      .lang-current span {
+      .lang-switcher-sr {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
         white-space: nowrap;
+        border: 0;
       }
       #contact-card-language {
-        min-width: 124px;
-        border: 1px solid rgba(15,23,42,.12);
-        border-radius: 10px;
-        background: #fff;
-        padding: 8px 10px;
-        font-size: 13px;
-        color: #0f172a;
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        opacity: 0;
+        cursor: pointer;
       }
       article {
         width: min(100%, 560px);
@@ -924,6 +972,11 @@ function buildShareCardHtml(input: {
         border-radius: 999px;
         box-shadow: 0 8px 20px rgba(15,23,42,.14);
       }
+      .inline-action-button {
+        border: 0;
+        padding: 0;
+        cursor: pointer;
+      }
       .inline-action img,
       .inline-action svg {
         width: 18px;
@@ -971,23 +1024,16 @@ function buildShareCardHtml(input: {
       }
       @media (max-width: 520px) {
         main {
-          padding: 78px 12px 12px;
+          padding: 70px 12px 12px;
         }
         article {
           padding: 16px;
         }
         .lang-switcher {
-          left: 12px;
+          top: 12px;
           right: 12px;
-          gap: 8px;
-          padding: 10px;
-        }
-        .lang-current {
-          flex: 1;
-        }
-        #contact-card-language {
-          min-width: 110px;
-          max-width: 45vw;
+          width: 40px;
+          height: 40px;
         }
         .summary-row {
           align-items: flex-start;
