@@ -866,6 +866,7 @@ function buildMerchantConfigDiffLines(current: MerchantConfigSnapshot, target: M
     { key: "pageLimit", label: "页面上限" },
     { key: "businessCardLimit", label: "名片夹上限" },
     { key: "allowBusinessCardLinkMode", label: "可链接模式名片" },
+    { key: "businessCardBackgroundImageLimitKb", label: "名片背景图上限(KB)" },
     { key: "businessCardContactImageLimitKb", label: "联系卡展示图上限(KB)" },
     { key: "businessCardExportImageLimitKb", label: "导出名片图片上限(KB)" },
     { key: "publishSizeLimitMb", label: "发布体积上限(MB)" },
@@ -1078,6 +1079,7 @@ export default function SuperAdminClient() {
   const [configPageLimit, setConfigPageLimit] = useState("3");
   const [configBusinessCardLimit, setConfigBusinessCardLimit] = useState("1");
   const [configAllowBusinessCardLinkMode, setConfigAllowBusinessCardLinkMode] = useState(false);
+  const [configBusinessCardBackgroundImageLimitKb, setConfigBusinessCardBackgroundImageLimitKb] = useState("300");
   const [configBusinessCardContactImageLimitKb, setConfigBusinessCardContactImageLimitKb] = useState("300");
   const [configBusinessCardExportImageLimitKb, setConfigBusinessCardExportImageLimitKb] = useState("400");
   const [configPublishLimitMb, setConfigPublishLimitMb] = useState("5");
@@ -1951,6 +1953,7 @@ export default function SuperAdminClient() {
     setConfigPageLimit(`${permission.pageLimit}`);
     setConfigBusinessCardLimit(`${permission.businessCardLimit}`);
     setConfigAllowBusinessCardLinkMode(permission.allowBusinessCardLinkMode);
+    setConfigBusinessCardBackgroundImageLimitKb(`${permission.businessCardBackgroundImageLimitKb}`);
     setConfigBusinessCardContactImageLimitKb(`${permission.businessCardContactImageLimitKb}`);
     setConfigBusinessCardExportImageLimitKb(`${permission.businessCardExportImageLimitKb}`);
     setConfigPublishLimitMb(`${permission.publishSizeLimitMb}`);
@@ -3043,6 +3046,10 @@ export default function SuperAdminClient() {
     const planLimit = Math.max(1, Math.min(200, Math.round(Number(configPlanLimit) || 1)));
     const pageLimit = Math.max(1, Math.min(500, Math.round(Number(configPageLimit) || 1)));
     const businessCardLimit = Math.max(1, Math.min(100, Math.round(Number(configBusinessCardLimit) || 1)));
+    const businessCardBackgroundImageLimitKb = Math.max(
+      50,
+      Math.min(5000, Math.round(Number(configBusinessCardBackgroundImageLimitKb) || 300)),
+    );
     const businessCardContactImageLimitKb = Math.max(
       50,
       Math.min(5000, Math.round(Number(configBusinessCardContactImageLimitKb) || 300)),
@@ -3102,6 +3109,11 @@ export default function SuperAdminClient() {
     if (prevPermission.allowBusinessCardLinkMode !== configAllowBusinessCardLinkMode) {
       pendingChanges.push(
         `链接模式名片：${formatBool(prevPermission.allowBusinessCardLinkMode)} -> ${formatBool(configAllowBusinessCardLinkMode)}`,
+      );
+    }
+    if (prevPermission.businessCardBackgroundImageLimitKb !== businessCardBackgroundImageLimitKb) {
+      pendingChanges.push(
+        `名片背景图上限：${prevPermission.businessCardBackgroundImageLimitKb}KB -> ${businessCardBackgroundImageLimitKb}KB`,
       );
     }
     if (prevPermission.businessCardContactImageLimitKb !== businessCardContactImageLimitKb) {
@@ -3180,6 +3192,7 @@ export default function SuperAdminClient() {
         pageLimit,
         businessCardLimit,
         allowBusinessCardLinkMode: configAllowBusinessCardLinkMode,
+        businessCardBackgroundImageLimitKb,
         businessCardContactImageLimitKb,
         businessCardExportImageLimitKb,
         publishSizeLimitMb,
@@ -5205,6 +5218,14 @@ export default function SuperAdminClient() {
                                     onChange={(e) => setConfigAllowBusinessCardLinkMode(e.target.checked)}
                                   />
                                   链接模式名片
+                                </label>
+                                <label className="space-y-1">
+                                  <div className="text-slate-500">名片背景图上限(KB)</div>
+                                  <input
+                                    className="w-full rounded border bg-white px-2 py-1.5"
+                                    value={configBusinessCardBackgroundImageLimitKb}
+                                    onChange={(e) => setConfigBusinessCardBackgroundImageLimitKb(e.target.value)}
+                                  />
                                 </label>
                                 <label className="space-y-1">
                                   <div className="text-slate-500">联系卡展示图上限(KB)</div>

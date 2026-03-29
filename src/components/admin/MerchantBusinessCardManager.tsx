@@ -44,6 +44,7 @@ type MerchantBusinessCardManagerProps = {
   cards: MerchantBusinessCardAsset[];
   cardLimit?: number;
   allowLinkMode?: boolean;
+  backgroundImageLimitKb?: number;
   contactPageImageLimitKb?: number;
   exportImageLimitKb?: number;
   onCardsChange: (cards: MerchantBusinessCardAsset[]) => void;
@@ -715,6 +716,7 @@ export default function MerchantBusinessCardManager({
   cards,
   cardLimit = 1,
   allowLinkMode = true,
+  backgroundImageLimitKb = 300,
   contactPageImageLimitKb = 300,
   exportImageLimitKb = 400,
   onCardsChange,
@@ -803,6 +805,10 @@ export default function MerchantBusinessCardManager({
   const qrReadyForCurrentDraft = !draft.showQr || !!qrCodeUrl;
   const cardLimitReached = !editingCardId && cards.length >= normalizedCardLimit;
   const canOpenCreateEditor = canCreate && !cardLimitReached;
+  const normalizedBackgroundImageLimitKb = useMemo(
+    () => Math.max(50, Math.min(5000, Math.round(Number(backgroundImageLimitKb) || 300))),
+    [backgroundImageLimitKb],
+  );
   const normalizedContactPageImageLimitKb = useMemo(
     () => Math.max(50, Math.min(5000, Math.round(Number(contactPageImageLimitKb) || 300))),
     [contactPageImageLimitKb],
@@ -945,13 +951,16 @@ export default function MerchantBusinessCardManager({
     const file = event.target.files?.[0];
     if (!file) return;
     try {
-      const reader = new FileReader();
-      const imageUrl = await new Promise<string>((resolve, reject) => {
-        reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
-        reader.onerror = () => reject(reader.error ?? new Error("读取图片失败"));
-        reader.readAsDataURL(file);
-      });
-      applyDraft((current) => ({ ...current, backgroundImageUrl: imageUrl }));
+      const originalImageUrl = await readImageFileAsDataUrl(file);
+      const optimized = await compressImageDataUrlWithinLimit(
+        originalImageUrl,
+        normalizedBackgroundImageLimitKb * 1024,
+      );
+      if (optimized.bytes > normalizedBackgroundImageLimitKb * 1024) {
+        setTip(`名片背景图不能超过 ${normalizedBackgroundImageLimitKb} KB`);
+        return;
+      }
+      applyDraft((current) => ({ ...current, backgroundImageUrl: optimized.dataUrl }));
     } catch {
       setTip("背景图上传失败，请重试");
     } finally {
@@ -1327,7 +1336,11 @@ export default function MerchantBusinessCardManager({
                       <div className="text-xs font-semibold text-slate-700">背景图与背景色</div>
                       <div className="grid gap-3 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
                         <div className="space-y-3">
-                          <label className="block text-xs text-slate-600">背景图<input type="file" accept="image/*" className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" onChange={(event) => void handleBackgroundUpload(event)} /></label>
+                          <label className="block text-xs text-slate-600">
+                            背景图
+                            <input type="file" accept="image/*" className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" onChange={(event) => void handleBackgroundUpload(event)} />
+                            <div className="mt-1 text-[11px] text-slate-400">默认上限 {normalizedBackgroundImageLimitKb} KB，上传时会先自动压缩。</div>
+                          </label>
                           <label className="block text-xs text-slate-600">图片透明度<div className="mt-1 flex items-center gap-3 rounded border bg-white px-3 py-2"><input type="range" min="0" max="1" step="0.01" className="min-w-0 flex-1" value={draft.backgroundImageOpacity} onChange={(event) => applyDraft((current) => ({ ...current, backgroundImageOpacity: clamp(Number(event.target.value), 0, 1) }))} /><span className="w-12 shrink-0 text-right text-xs text-slate-500">{formatOpacityPercent(draft.backgroundImageOpacity)}</span></div></label>
                         </div>
                         <div className="space-y-3">
