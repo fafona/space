@@ -176,6 +176,21 @@ export function hasStoredBrowserSupabaseSessionTokens(): boolean {
   return false;
 }
 
+export function clearStoredBrowserSupabaseSessionTokens() {
+  const storageKeys = [resolvedSupabaseAuthStorageKey, legacySupabaseAuthStorageKey].filter(
+    (value, index, list) => value && list.indexOf(value) === index,
+  );
+  for (const storage of getBrowserStorages()) {
+    for (const storageKey of storageKeys) {
+      try {
+        storage.removeItem(storageKey);
+      } catch {
+        // ignore browser storage cleanup failures
+      }
+    }
+  }
+}
+
 export async function recoverBrowserSupabaseSession(timeoutMs = 4500): Promise<Session | null> {
   const direct = await pollSession(timeoutMs);
   if (direct) return direct;

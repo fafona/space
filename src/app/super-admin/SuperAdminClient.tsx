@@ -3671,7 +3671,7 @@ export default function SuperAdminClient() {
                 className="rounded border px-3 py-2"
                 onClick={() => {
                   clearSuperAdminAuthenticated();
-                  window.location.href = buildSuperAdminLoginHref("/super-admin");
+                  window.location.href = `${buildSuperAdminLoginHref("/super-admin")}&loggedOut=1`;
                 }}
               >
                 退出超级后台登录

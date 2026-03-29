@@ -39,9 +39,12 @@ function SuperAdminLoginForm() {
   const challengeFromUrl = useMemo(() => (searchParams.get("superAdminChallenge") ?? "").trim(), [searchParams]);
   const proofFromUrl = useMemo(() => (searchParams.get("superAdminProof") ?? "").trim(), [searchParams]);
   const verifiedFromEmail = useMemo(() => (searchParams.get("superAdminVerified") ?? "").trim() === "1", [searchParams]);
+  const loggedOut = useMemo(() => (searchParams.get("loggedOut") ?? "").trim() === "1", [searchParams]);
 
   const [account, setAccount] = useState("");
   const [password, setPassword] = useState("");
+  const accountInputRef = useRef<HTMLInputElement>(null);
+  const passwordInputRef = useRef<HTMLInputElement>(null);
   const [emailCode, setEmailCode] = useState("");
   const [message, setMessage] = useState("");
   const [pendingAction, setPendingAction] = useState<"request" | "complete" | "verify_code" | null>(null);
@@ -49,6 +52,29 @@ function SuperAdminLoginForm() {
   const [pendingChallenge, setPendingChallenge] = useState("");
   const completedChallengeRef = useRef("");
   const activeChallenge = challengeFromUrl || pendingChallenge;
+
+  useEffect(() => {
+    if (!loggedOut) return;
+    setAccount("");
+    setPassword("");
+    setEmailCode("");
+    setMessage("");
+
+    const scrub = () => {
+      if (accountInputRef.current) {
+        accountInputRef.current.value = "";
+      }
+      if (passwordInputRef.current) {
+        passwordInputRef.current.value = "";
+      }
+    };
+
+    scrub();
+    const timers = [80, 260, 700].map((delay) => window.setTimeout(scrub, delay));
+    return () => {
+      timers.forEach((timer) => window.clearTimeout(timer));
+    };
+  }, [loggedOut]);
 
   useEffect(() => {
     if (!verifiedFromEmail || !challengeFromUrl || !proofFromUrl) return;
@@ -215,24 +241,37 @@ function SuperAdminLoginForm() {
           超级后台启用白名单设备。每次登录都需要发送邮件到 `caimin6669@qq.com` 完成验证，收到验证码后也可以直接在这里输入。
         </div>
         <div className="space-y-2">
+          <div className="hidden" aria-hidden="true">
+            <input type="text" tabIndex={-1} autoComplete="username" />
+            <input type="password" tabIndex={-1} autoComplete="current-password" />
+          </div>
           <div className="text-sm text-gray-600">{t("superLogin.account")}</div>
           <input
+            ref={accountInputRef}
             className="w-full rounded border p-2"
             value={account}
             onChange={(event) => setAccount(event.target.value)}
             placeholder={t("superLogin.accountPlaceholder")}
-            autoComplete="username"
+            name="super-admin-login-account"
+            autoComplete="off"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            data-lpignore="true"
           />
         </div>
         <div className="space-y-2">
           <div className="text-sm text-gray-600">{t("superLogin.password")}</div>
           <input
+            ref={passwordInputRef}
             type="password"
             className="w-full rounded border p-2"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
             placeholder={t("superLogin.passwordPlaceholder")}
-            autoComplete="current-password"
+            name="super-admin-login-password"
+            autoComplete="new-password"
+            data-lpignore="true"
           />
         </div>
         <div className="space-y-2">

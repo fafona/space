@@ -1,9 +1,10 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useI18n } from "@/components/I18nProvider";
 import {
+  clearStoredBrowserSupabaseSessionTokens,
   establishBrowserSupabaseSession,
   hasStoredBrowserSupabaseSessionTokens,
   isTransientAuthValidationError,
@@ -48,6 +49,8 @@ function LoginPageInner() {
   const isDevelopment = process.env.NODE_ENV === "development";
   const [account, setAccount] = useState("");
   const [password, setPassword] = useState("");
+  const accountInputRef = useRef<HTMLInputElement>(null);
+  const passwordInputRef = useRef<HTMLInputElement>(null);
   const [msg, setMsg] = useState<string>("");
   const [gatewayReachable, setGatewayReachable] = useState<boolean | null>(null);
   const [needConfirmEmail, setNeedConfirmEmail] = useState(false);
@@ -58,6 +61,7 @@ function LoginPageInner() {
     if (!raw.startsWith("/") || raw.startsWith("//")) return "";
     return raw;
   }, [searchParams]);
+  const loggedOut = useMemo(() => (searchParams.get("loggedOut") ?? "").trim() === "1", [searchParams]);
   const normalizedLocale = useMemo(() => locale.trim().toLowerCase(), [locale]);
   const loginAccountLabel = useMemo(() => {
     if (normalizedLocale.startsWith("zh-tw")) return "登入帳號";
@@ -102,6 +106,30 @@ function LoginPageInner() {
       setMsg(message || "邮箱验证失败，请重新发送验证邮件。");
     }
   }, [searchParams]);
+
+  useEffect(() => {
+    if (!loggedOut) return;
+    clearStoredBrowserSupabaseSessionTokens();
+    clearMerchantSignInBridge();
+    setAccount("");
+    setPassword("");
+    setMsg("");
+
+    const scrub = () => {
+      if (accountInputRef.current) {
+        accountInputRef.current.value = "";
+      }
+      if (passwordInputRef.current) {
+        passwordInputRef.current.value = "";
+      }
+    };
+
+    scrub();
+    const timers = [80, 260, 700].map((delay) => window.setTimeout(scrub, delay));
+    return () => {
+      timers.forEach((timer) => window.clearTimeout(timer));
+    };
+  }, [loggedOut]);
 
   const redirectToMerchantBackend = useCallback(
     async (
@@ -640,11 +668,21 @@ function LoginPageInner() {
         <div className="text-xs text-gray-500">{loginAccountTip}</div>
 
         <div className="space-y-2">
+          <div className="hidden" aria-hidden="true">
+            <input type="text" tabIndex={-1} autoComplete="username" />
+            <input type="password" tabIndex={-1} autoComplete="current-password" />
+          </div>
           <div className="text-sm text-gray-600">{loginAccountLabel}</div>
           <input
+            ref={accountInputRef}
             className="w-full rounded border p-2"
             type="text"
-            autoComplete="username"
+            name="merchant-login-account"
+            autoComplete="off"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            data-lpignore="true"
             value={account}
             onChange={(e) => setAccount(e.target.value)}
             placeholder={loginAccountPlaceholder}
@@ -654,9 +692,12 @@ function LoginPageInner() {
         <div className="space-y-2">
           <div className="text-sm text-gray-600">{t("login.password")}</div>
           <input
+            ref={passwordInputRef}
             className="w-full rounded border p-2"
             type="password"
-            autoComplete="current-password"
+            name="merchant-login-password"
+            autoComplete="new-password"
+            data-lpignore="true"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             placeholder={t("login.passwordMin6")}

@@ -59,6 +59,7 @@ import {
   supabase,
   supabaseMissingEnvNotice,
 } from "@/lib/supabase";
+import { clearStoredBrowserSupabaseSessionTokens } from "@/lib/authSessionRecovery";
 import { clearMerchantSignInBridge } from "@/lib/merchantSignInBridge";
 import { buildPublishedMerchantProfilePatch } from "@/lib/merchantProfileBinding";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
@@ -6208,7 +6209,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   async function logout() {
     if (loggingOut) return;
     if (!isSupabaseEnabled) {
-      window.location.href = "/login";
+      clearStoredBrowserSupabaseSessionTokens();
+      clearMerchantSignInBridge();
+      window.location.href = "/login?loggedOut=1";
       return;
     }
     setLoggingOut(true);
@@ -6226,7 +6229,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         setTip(`退出失败：${error.message}`);
         return;
       }
-      window.location.href = "/login";
+      clearStoredBrowserSupabaseSessionTokens();
+      clearMerchantSignInBridge();
+      window.location.href = "/login?loggedOut=1";
     } catch (error) {
       setTip(error instanceof Error ? error.message : "出失败，请稍后重");
     } finally {
