@@ -4972,11 +4972,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }
 
   function handleEditorMouseDownCapture(event: ReactMouseEvent<HTMLElement>) {
-    const target = event.target as HTMLElement | null;
-    if (!target) return;
+    const target = event.target;
+    if (!(target instanceof Element)) return;
     if (target.closest("[data-editor-toolbar]")) return;
     if (target.closest("[data-editor-overlay]")) return;
     if (target.closest("[data-block-id]")) return;
+    if (!target.closest("[data-editor-clear-selection='1']")) return;
     if (selectedIdRef.current) {
       setSelectedId("");
     }
@@ -6886,11 +6887,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                 <div
                   ref={backgroundLayerRef}
                   data-no-translate="1"
+                  data-editor-clear-selection="1"
                   className="relative rounded-[28px] overflow-visible"
                   style={{ minHeight: `${Math.max(backgroundLayerMinHeight, 780)}px` }}
                 >
                   <div className="absolute inset-0 rounded-[28px] overflow-hidden pointer-events-none" style={pageBackgroundStyle} />
-                  <div className="relative z-10 w-full py-4">
+                  <div className="relative z-10 w-full py-4" data-editor-clear-selection="1">
                     <div className="space-y-0">
                       {blocks.map((block, index) => {
                         const sourceIndex = resizePreview ? blocks.findIndex((item) => item.id === resizePreview.blockId) : -1;
@@ -6951,10 +6953,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         <div
           ref={backgroundLayerRef}
           data-no-translate="1"
+          data-editor-clear-selection="1"
           className="min-h-screen"
           style={{ ...pageBackgroundStyle, minHeight: `${Math.max(backgroundLayerMinHeight, 0)}px` }}
         >
-          <div className="max-w-6xl mx-auto px-6 py-6">
+          <div className="max-w-6xl mx-auto px-6 py-6" data-editor-clear-selection="1">
             <div className="space-y-0">
               {blocks.map((block, index) => {
                 const sourceIndex = resizePreview ? blocks.findIndex((item) => item.id === resizePreview.blockId) : -1;
