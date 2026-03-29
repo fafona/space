@@ -2995,6 +2995,7 @@ export default function AdminClient({
   const selectedIdRef = useRef(selectedId);
   const previousSelectedIdRef = useRef(selectedId);
   const lastManualSelectionAtRef = useRef(0);
+  const lastExplicitClearAtRef = useRef(0);
   const selectionKeepAliveUntilRef = useRef(0);
   const lastSelectionReasonRef = useRef("init");
   const planConfigRef = useRef(planConfig);
@@ -3155,6 +3156,7 @@ export default function AdminClient({
 
   function clearSelectedBlock(reason: string) {
     if (!selectedIdRef.current) return;
+    lastExplicitClearAtRef.current = Date.now();
     lastSelectionReasonRef.current = reason;
     updateSelectionDebug(`clear via ${reason}`);
     setSelectedId("");
@@ -4818,14 +4820,27 @@ export default function AdminClient({
   useEffect(() => {
     const previous = previousSelectedIdRef.current;
     if (previous === selectedId) return;
-    previousSelectedIdRef.current = selectedId;
-    if (!isPlatformEditor) return;
-    const previousLabel = previous || "(none)";
-    const nextLabel = selectedId || "(none)";
-    if (!selectedId && previous && Date.now() - lastManualSelectionAtRef.current < 1500) {
-      updateSelectionDebug(`state ${previousLabel} -> ${nextLabel}; external clear after ${lastSelectionReasonRef.current}`);
+    if (!isPlatformEditor) {
+      previousSelectedIdRef.current = selectedId;
       return;
     }
+    const now = Date.now();
+    const previousLabel = previous || "(none)";
+    const nextLabel = selectedId || "(none)";
+    const clearedSoonAfterManualSelect =
+      !selectedId &&
+      previous &&
+      now - lastManualSelectionAtRef.current < 1500 &&
+      now - lastExplicitClearAtRef.current > 800;
+    if (clearedSoonAfterManualSelect) {
+      updateSelectionDebug(`state ${previousLabel} -> ${nextLabel}; external clear after ${lastSelectionReasonRef.current}`);
+      selectionKeepAliveUntilRef.current = now + 1200;
+      lastSelectionReasonRef.current = "auto-restore-after-external-clear";
+      selectedIdRef.current = previous;
+      setSelectedId(previous);
+      return;
+    }
+    previousSelectedIdRef.current = selectedId;
     updateSelectionDebug(`state ${previousLabel} -> ${nextLabel}; reason ${lastSelectionReasonRef.current}`);
   }, [isPlatformEditor, selectedId]);
 
@@ -4979,7 +4994,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       startOffsets[id] = { x: startOffsetX, y: startOffsetY };
     });
 
-    setSelectedId(blockId);
+    selectBlock(blockId, "drag-start");
     dragStartRef.current = {
       blockId,
       blockIds,
