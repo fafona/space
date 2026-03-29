@@ -4983,6 +4983,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }
 
   function handleEditorMouseDownCapture(event: ReactMouseEvent<HTMLElement>) {
+    if (isPlatformEditor) return;
     const target = event.target;
     if (!(target instanceof Element)) return;
     const composedPath =
