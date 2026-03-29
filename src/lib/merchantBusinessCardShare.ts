@@ -42,6 +42,7 @@ export type MerchantBusinessCardShareContact = {
   facebook?: string;
   instagram?: string;
   tiktok?: string;
+  douyin?: string;
   xiaohongshu?: string;
   websiteUrl?: string;
   note?: string;
@@ -317,6 +318,9 @@ export function normalizeMerchantBusinessCardShareContact(
     ...(clampContactText(source.tiktok, 120)
       ? { tiktok: clampContactText(source.tiktok, 120) }
       : {}),
+    ...(clampContactText(source.douyin, 120)
+      ? { douyin: clampContactText(source.douyin, 120) }
+      : {}),
     ...(clampContactText(source.xiaohongshu, 120)
       ? { xiaohongshu: clampContactText(source.xiaohongshu, 120) }
       : {}),
@@ -411,6 +415,7 @@ export function buildMerchantBusinessCardShareLegacyFingerprint(
     contact.facebook ?? "",
     contact.instagram ?? "",
     contact.tiktok ?? "",
+    contact.douyin ?? "",
     contact.xiaohongshu ?? "",
     contact.websiteUrl ?? "",
     contact.note ?? "",
@@ -570,6 +575,9 @@ export function buildMerchantBusinessCardShareUrl(input: {
   if (payload.contact?.tiktok) {
     shareUrl.searchParams.set("tiktok", payload.contact.tiktok);
   }
+  if (payload.contact?.douyin) {
+    shareUrl.searchParams.set("douyin", payload.contact.douyin);
+  }
   if (payload.contact?.xiaohongshu) {
     shareUrl.searchParams.set("xiaohongshu", payload.contact.xiaohongshu);
   }
@@ -612,6 +620,7 @@ export function parseMerchantBusinessCardShareParams(
         facebook: readSearchParam(searchParams, "facebook"),
         instagram: readSearchParam(searchParams, "instagram"),
         tiktok: readSearchParam(searchParams, "tiktok"),
+        douyin: readSearchParam(searchParams, "douyin"),
         xiaohongshu: readSearchParam(searchParams, "xiaohongshu"),
         websiteUrl: readSearchParam(searchParams, "website"),
         note: readSearchParam(searchParams, "note"),
@@ -768,6 +777,7 @@ export function buildMerchantBusinessCardLegacyContactDownloadUrl(input: {
   if (payload.contact?.facebook) url.searchParams.set("facebook", payload.contact.facebook);
   if (payload.contact?.instagram) url.searchParams.set("instagram", payload.contact.instagram);
   if (payload.contact?.tiktok) url.searchParams.set("tiktok", payload.contact.tiktok);
+  if (payload.contact?.douyin) url.searchParams.set("douyin", payload.contact.douyin);
   if (payload.contact?.xiaohongshu) url.searchParams.set("xiaohongshu", payload.contact.xiaohongshu);
   if (payload.contact?.websiteUrl) url.searchParams.set("website", payload.contact.websiteUrl);
   if (payload.contact?.note) url.searchParams.set("note", payload.contact.note);

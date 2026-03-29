@@ -52,6 +52,9 @@ test("default business card draft prefills merchant profile fields", () => {
   assert.deepEqual(draft.contacts.phones, ["0034633130577"]);
   assert.equal(draft.contacts.email, "caimin00x@gmail.com");
   assert.equal(draft.contacts.address, "C. Transporte, 12 / Sevilla / Sevilla / Spain");
+  assert.equal(draft.contacts.douyin, "");
+  assert.equal(draft.contactOnlyFields.phone, false);
+  assert.equal(draft.contactOnlyFields.douyin, false);
   assert.equal(draft.fieldTypography.merchantName.fontSize, 36);
   assert.equal(draft.fieldTypography.contactName.fontSize, 14);
   assert.equal(draft.websiteLabel, "");
@@ -79,6 +82,25 @@ test("normalizeMerchantBusinessCardDraft allows empty website label", () => {
   });
 
   assert.equal(draft.websiteLabel, "");
+});
+
+test("normalizeMerchantBusinessCardDraft preserves douyin and contact-only settings", () => {
+  const draft = normalizeMerchantBusinessCardDraft({
+    contacts: {
+      douyin: "fafona_douyin",
+      tiktok: "fafona_tiktok",
+    },
+    contactOnlyFields: {
+      phone: true,
+      douyin: true,
+    },
+  });
+
+  assert.equal(draft.contacts.douyin, "fafona_douyin");
+  assert.equal(draft.contacts.tiktok, "fafona_tiktok");
+  assert.equal(draft.contactOnlyFields.phone, true);
+  assert.equal(draft.contactOnlyFields.douyin, true);
+  assert.equal(draft.contactOnlyFields.tiktok, false);
 });
 
 test("normalizeMerchantBusinessCardDraft supports hiding website url and custom texts", () => {

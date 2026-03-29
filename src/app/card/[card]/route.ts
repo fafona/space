@@ -103,6 +103,7 @@ function buildSocialHref(label: string, rawValue?: string) {
     return "";
   }
   if (label === "TikTok") return `https://www.tiktok.com/@${value.replace(/^@+/, "")}`;
+  if (label === "抖音") return `https://www.douyin.com/search/${encodeURIComponent(value.replace(/^@+/, ""))}`;
   if (label === "Instagram") return `https://www.instagram.com/${value.replace(/^@+/, "")}`;
   if (label === "Facebook") return `https://www.facebook.com/${value.replace(/^@+/, "")}`;
   if (label === "小红书") return `https://www.xiaohongshu.com/search_result?keyword=${encodeURIComponent(value)}`;
@@ -691,6 +692,18 @@ function buildContactSummaryHtml(input: {
             label: "打开 TikTok",
             iconUrl: "/social-icons/tiktok.svg",
             bgColor: "#111827",
+          }),
+        }
+      : null,
+    input.contact?.douyin
+      ? {
+          label: "抖音",
+          value: input.contact.douyin,
+          actionHtml: buildActionButtonHtml({
+            href: buildSocialHref("抖音", input.contact.douyin),
+            label: "打开抖音",
+            iconUrl: "/social-icons/tiktok.svg",
+            bgColor: "#161823",
           }),
         }
       : null,

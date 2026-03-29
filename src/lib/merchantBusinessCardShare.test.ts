@@ -199,6 +199,7 @@ test("normalizeMerchantBusinessCardShareContact keeps useful contact fields and 
         organization: " fafona ",
         phone: " 633130577 ",
         phones: [" 633130577 ", " 666888999 "],
+        douyin: " fafona_douyin ",
         note: " WeChat: felix ",
       },
       "https://fafona.faolla.com",
@@ -208,10 +209,28 @@ test("normalizeMerchantBusinessCardShareContact keeps useful contact fields and 
       organization: "fafona",
       phone: "633130577",
       phones: ["633130577", "666888999"],
+      douyin: "fafona_douyin",
       websiteUrl: "https://fafona.faolla.com/",
       note: "WeChat: felix",
     },
   );
+});
+
+test("share helpers preserve douyin contact params", () => {
+  const shareUrl = buildMerchantBusinessCardShareUrl({
+    origin: "https://faolla.com",
+    name: "fafona",
+    targetUrl: "https://fafona.faolla.com",
+    contact: {
+      displayName: "Felix",
+      douyin: "fafona_douyin",
+    },
+  });
+
+  assert.match(shareUrl, /douyin=fafona_douyin/);
+
+  const parsed = parseMerchantBusinessCardShareParams(new URL(shareUrl).searchParams, "https://faolla.com");
+  assert.equal(parsed?.contact?.douyin, "fafona_douyin");
 });
 
 test("normalizeMerchantBusinessCardShareImageUrl rewrites localhost storage urls to preferred public origin", () => {

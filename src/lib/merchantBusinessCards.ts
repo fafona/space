@@ -29,6 +29,7 @@ export type MerchantBusinessCardFieldKey =
   | "facebook"
   | "instagram"
   | "tiktok"
+  | "douyin"
   | "xiaohongshu";
 
 export type MerchantBusinessCardTextLayout = Record<
@@ -72,8 +73,16 @@ export type MerchantBusinessCardContacts = {
   facebook: string;
   instagram: string;
   tiktok: string;
+  douyin: string;
   xiaohongshu: string;
 };
+
+export type MerchantBusinessCardContactDisplayKey = Exclude<keyof MerchantBusinessCardContacts, "phones">;
+
+export type MerchantBusinessCardContactOnlyFields = Record<
+  MerchantBusinessCardContactDisplayKey,
+  boolean
+>;
 
 export type MerchantBusinessCardMode = "image" | "link";
 
@@ -94,6 +103,7 @@ export type MerchantBusinessCardDraft = {
   showWebsiteUrl: boolean;
   showQr: boolean;
   contacts: MerchantBusinessCardContacts;
+  contactOnlyFields: MerchantBusinessCardContactOnlyFields;
   customTexts: MerchantBusinessCardCustomText[];
   textLayout: MerchantBusinessCardTextLayout;
   qr: {
@@ -150,6 +160,27 @@ function clampOpacity(value: unknown, fallback: number) {
 
 function normalizeBoolean(value: unknown, fallback: boolean) {
   return typeof value === "boolean" ? value : fallback;
+}
+
+function createDefaultContactOnlyFields(): MerchantBusinessCardContactOnlyFields {
+  return {
+    contactName: false,
+    phone: false,
+    email: false,
+    address: false,
+    wechat: false,
+    whatsapp: false,
+    twitter: false,
+    weibo: false,
+    telegram: false,
+    linkedin: false,
+    discord: false,
+    facebook: false,
+    instagram: false,
+    tiktok: false,
+    douyin: false,
+    xiaohongshu: false,
+  };
 }
 
 function normalizeTypographyStyle(
@@ -274,8 +305,10 @@ export function createDefaultMerchantBusinessCardDraft(
       facebook: "",
       instagram: "",
       tiktok: "",
+      douyin: "",
       xiaohongshu: "",
     },
+    contactOnlyFields: createDefaultContactOnlyFields(),
     customTexts: [],
     textLayout: {
       merchantName: { x: 36, y: 34 },
@@ -295,6 +328,7 @@ export function createDefaultMerchantBusinessCardDraft(
       facebook: { x: 360, y: 190 },
       instagram: { x: 360, y: 226 },
       tiktok: { x: 360, y: 262 },
+      douyin: { x: 360, y: 442 },
       xiaohongshu: { x: 360, y: 298 },
     },
     qr: {
@@ -321,6 +355,7 @@ export function createDefaultMerchantBusinessCardDraft(
       facebook: { ...typography.info },
       instagram: { ...typography.info },
       tiktok: { ...typography.info },
+      douyin: { ...typography.info },
       xiaohongshu: { ...typography.info },
     },
   };
@@ -341,6 +376,10 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
   const fieldTypographySource =
     source.fieldTypography && typeof source.fieldTypography === "object"
       ? (source.fieldTypography as Partial<MerchantBusinessCardFieldTypographyMap>)
+      : {};
+  const contactOnlyFieldsSource =
+    source.contactOnlyFields && typeof source.contactOnlyFields === "object"
+      ? (source.contactOnlyFields as Partial<MerchantBusinessCardContactOnlyFields>)
       : {};
   const customTexts = Array.isArray(source.customTexts)
     ? source.customTexts
@@ -413,7 +452,26 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
       facebook: normalizeText(source.contacts?.facebook),
       instagram: normalizeText(source.contacts?.instagram),
       tiktok: normalizeText(source.contacts?.tiktok),
+      douyin: normalizeText((source.contacts as { douyin?: unknown } | undefined)?.douyin),
       xiaohongshu: normalizeText(source.contacts?.xiaohongshu),
+    },
+    contactOnlyFields: {
+      contactName: normalizeBoolean(contactOnlyFieldsSource.contactName, fallback.contactOnlyFields.contactName),
+      phone: normalizeBoolean(contactOnlyFieldsSource.phone, fallback.contactOnlyFields.phone),
+      email: normalizeBoolean(contactOnlyFieldsSource.email, fallback.contactOnlyFields.email),
+      address: normalizeBoolean(contactOnlyFieldsSource.address, fallback.contactOnlyFields.address),
+      wechat: normalizeBoolean(contactOnlyFieldsSource.wechat, fallback.contactOnlyFields.wechat),
+      whatsapp: normalizeBoolean(contactOnlyFieldsSource.whatsapp, fallback.contactOnlyFields.whatsapp),
+      twitter: normalizeBoolean(contactOnlyFieldsSource.twitter, fallback.contactOnlyFields.twitter),
+      weibo: normalizeBoolean(contactOnlyFieldsSource.weibo, fallback.contactOnlyFields.weibo),
+      telegram: normalizeBoolean(contactOnlyFieldsSource.telegram, fallback.contactOnlyFields.telegram),
+      linkedin: normalizeBoolean(contactOnlyFieldsSource.linkedin, fallback.contactOnlyFields.linkedin),
+      discord: normalizeBoolean(contactOnlyFieldsSource.discord, fallback.contactOnlyFields.discord),
+      facebook: normalizeBoolean(contactOnlyFieldsSource.facebook, fallback.contactOnlyFields.facebook),
+      instagram: normalizeBoolean(contactOnlyFieldsSource.instagram, fallback.contactOnlyFields.instagram),
+      tiktok: normalizeBoolean(contactOnlyFieldsSource.tiktok, fallback.contactOnlyFields.tiktok),
+      douyin: normalizeBoolean(contactOnlyFieldsSource.douyin, fallback.contactOnlyFields.douyin),
+      xiaohongshu: normalizeBoolean(contactOnlyFieldsSource.xiaohongshu, fallback.contactOnlyFields.xiaohongshu),
     },
     customTexts,
     textLayout: {
@@ -484,6 +542,10 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
       tiktok: {
         x: clampInt(textLayoutSource.tiktok?.x, fallback.textLayout.tiktok.x, 0, 2000),
         y: clampInt(textLayoutSource.tiktok?.y, fallback.textLayout.tiktok.y, 0, 2000),
+      },
+      douyin: {
+        x: clampInt((textLayoutSource as Partial<MerchantBusinessCardTextLayout>).douyin?.x, fallback.textLayout.douyin.x, 0, 2000),
+        y: clampInt((textLayoutSource as Partial<MerchantBusinessCardTextLayout>).douyin?.y, fallback.textLayout.douyin.y, 0, 2000),
       },
       xiaohongshu: {
         x: clampInt(textLayoutSource.xiaohongshu?.x, fallback.textLayout.xiaohongshu.x, 0, 2000),
@@ -569,6 +631,10 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
       tiktok: normalizeTypographyStyle(
         fieldTypographySource.tiktok,
         typographySource.info ? normalizeTypographyStyle(typographySource.info, fallback.typography.info) : fallback.fieldTypography.tiktok,
+      ),
+      douyin: normalizeTypographyStyle(
+        (fieldTypographySource as Partial<MerchantBusinessCardFieldTypographyMap>).douyin,
+        typographySource.info ? normalizeTypographyStyle(typographySource.info, fallback.typography.info) : fallback.fieldTypography.douyin,
       ),
       xiaohongshu: normalizeTypographyStyle(
         fieldTypographySource.xiaohongshu,

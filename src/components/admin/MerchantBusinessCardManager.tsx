@@ -67,6 +67,7 @@ const CONTACT_FIELDS: Array<{ key: MerchantBusinessCardEditableContactFieldKey; 
   { key: "facebook", label: "Facebook" },
   { key: "instagram", label: "Instagram" },
   { key: "tiktok", label: "TikTok" },
+  { key: "douyin", label: "抖音" },
   { key: "xiaohongshu", label: "小红书" },
 ];
 
@@ -88,6 +89,7 @@ const TEXT_LAYOUT_FIELDS: Array<{ key: MerchantBusinessCardFieldKey; label: stri
   { key: "facebook", label: "Facebook" },
   { key: "instagram", label: "Instagram" },
   { key: "tiktok", label: "TikTok" },
+  { key: "douyin", label: "抖音" },
   { key: "xiaohongshu", label: "小红书" },
 ];
 
@@ -502,6 +504,13 @@ function buildPhoneContactValue(contacts: MerchantBusinessCardDraft["contacts"])
   return normalizePhoneList(resolveDraftPhoneValues(contacts)).join(" / ");
 }
 
+function resolveContactDisplayValue(
+  contacts: MerchantBusinessCardDraft["contacts"],
+  key: MerchantBusinessCardEditableContactFieldKey,
+) {
+  return key === "phone" ? buildPhoneContactValue(contacts) : normalizeText(contacts[key]);
+}
+
 function typographyStyle(
   style: MerchantBusinessCardDraft["fieldTypography"][MerchantBusinessCardFieldKey],
 ): CSSProperties {
@@ -532,7 +541,11 @@ function CardSurface({
   renderMode?: "preview" | "export";
 }) {
   const isExport = renderMode === "export";
-  const contacts = CONTACT_FIELDS.filter(({ key }) => normalizeText(draft.contacts[key]));
+  const contacts = CONTACT_FIELDS.map(({ key, label }) => {
+    const value = resolveContactDisplayValue(draft.contacts, key);
+    if (!value || draft.contactOnlyFields[key]) return null;
+    return { key, label, value };
+  }).filter((item): item is { key: MerchantBusinessCardEditableContactFieldKey; label: string; value: string } => !!item);
   const websiteText = [
     normalizeText(draft.websiteLabel),
     draft.showWebsiteUrl ? websiteUrl.replace(/^https?:\/\//i, "") : "",
@@ -602,7 +615,7 @@ function CardSurface({
             </div>
           );
         })}
-        {contacts.map(({ key, label }) => (
+        {contacts.map(({ key, label, value }) => (
           <div
             key={key}
             style={{
@@ -613,9 +626,7 @@ function CardSurface({
               ...typographyStyle(draft.fieldTypography[key]),
             }}
           >
-            {key === "contactName"
-              ? draft.contacts[key]
-              : `${label}: ${key === "phone" ? buildPhoneContactValue(draft.contacts) : draft.contacts[key]}`}
+            {key === "contactName" ? value : `${label}: ${value}`}
           </div>
         ))}
         {draft.customTexts
@@ -687,6 +698,7 @@ function buildContactPreviewRows(
     normalizeText(contacts.facebook) ? { label: "Facebook", value: normalizeText(contacts.facebook) } : null,
     normalizeText(contacts.instagram) ? { label: "Instagram", value: normalizeText(contacts.instagram) } : null,
     normalizeText(contacts.tiktok) ? { label: "TikTok", value: normalizeText(contacts.tiktok) } : null,
+    normalizeText(contacts.douyin) ? { label: "抖音", value: normalizeText(contacts.douyin) } : null,
     normalizeText(contacts.xiaohongshu) ? { label: "小红书", value: normalizeText(contacts.xiaohongshu) } : null,
   ].filter((item): item is { label: string; value: string } => !!item);
 }
@@ -1197,6 +1209,19 @@ export default function MerchantBusinessCardManager({
     }));
   };
 
+  const updateContactOnlyField = (
+    key: keyof MerchantBusinessCardDraft["contactOnlyFields"],
+    checked: boolean,
+  ) => {
+    applyDraft((current) => ({
+      ...current,
+      contactOnlyFields: {
+        ...current.contactOnlyFields,
+        [key]: checked,
+      },
+    }));
+  };
+
   function buildLegacySharePayload(card: MerchantBusinessCardAsset) {
     const targetUrl = normalizeText(card.targetUrl);
     if (card.mode !== "link" || !targetUrl) {
@@ -1660,13 +1685,23 @@ export default function MerchantBusinessCardManager({
                     <div className="rounded-xl border bg-white p-3">
                       <div className="mb-2 flex items-center justify-between gap-2">
                         <div className="text-xs font-medium text-slate-700">电话（可增加）</div>
-                        <button
-                          type="button"
-                          className="rounded border bg-white px-2 py-1 text-xs hover:bg-slate-50"
-                          onClick={() => updateDraftPhones([...contactPhoneEditorValues, ""])}
-                        >
-                          增加电话
-                        </button>
+                        <div className="flex flex-wrap items-center justify-end gap-2">
+                          <label className="flex items-center gap-2 rounded border bg-slate-50 px-3 py-1.5 text-[11px] text-slate-700">
+                            <input
+                              type="checkbox"
+                              checked={draft.contactOnlyFields.phone}
+                              onChange={(event) => updateContactOnlyField("phone", event.target.checked)}
+                            />
+                            仅联系卡展示
+                          </label>
+                          <button
+                            type="button"
+                            className="rounded border bg-white px-2 py-1 text-xs hover:bg-slate-50"
+                            onClick={() => updateDraftPhones([...contactPhoneEditorValues, ""])}
+                          >
+                            增加电话
+                          </button>
+                        </div>
                       </div>
                       <div className="space-y-2">
                         {contactPhoneEditorValues.map((phone, index) => (
@@ -1699,18 +1734,28 @@ export default function MerchantBusinessCardManager({
                     </div>
                     <div className="grid gap-3 md:grid-cols-2">
                       {CONTACT_FIELDS.filter(({ key }) => key !== "phone").map(({ key, label }) => (
-                        <label key={key} className="block text-xs text-slate-600">
-                          {label}
-                          <input
-                            className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm"
-                            value={draft.contacts[key]}
-                            onFocus={() => setSingleSelectedField(key)}
-                            onChange={(event) =>
-                              applyDraft((current) => ({ ...current, contacts: { ...current.contacts, [key]: event.target.value } }))
-                            }
-                            placeholder={`请输入${label}`}
-                          />
-                        </label>
+                        <div key={key} className="block text-xs text-slate-600">
+                          <div>{label}</div>
+                          <div className="mt-1 grid gap-2 md:grid-cols-[minmax(0,1fr)_140px]">
+                            <input
+                              className="w-full rounded border bg-white px-3 py-2 text-sm"
+                              value={draft.contacts[key]}
+                              onFocus={() => setSingleSelectedField(key)}
+                              onChange={(event) =>
+                                applyDraft((current) => ({ ...current, contacts: { ...current.contacts, [key]: event.target.value } }))
+                              }
+                              placeholder={`请输入${label}`}
+                            />
+                            <label className="flex items-center gap-2 rounded border bg-slate-50 px-3 py-2 text-[11px] text-slate-700">
+                              <input
+                                type="checkbox"
+                                checked={draft.contactOnlyFields[key]}
+                                onChange={(event) => updateContactOnlyField(key, event.target.checked)}
+                              />
+                              仅联系卡展示
+                            </label>
+                          </div>
+                        </div>
                       ))}
                     </div>
                   </section>
@@ -2856,6 +2901,7 @@ export default function MerchantBusinessCardManager({
       ["Facebook", input.contacts.facebook],
       ["Instagram", input.contacts.instagram],
       ["TikTok", input.contacts.tiktok],
+      ["抖音", input.contacts.douyin],
       ["小红书", input.contacts.xiaohongshu],
     ]
       .map(([label, value]) => {
@@ -2884,6 +2930,7 @@ export default function MerchantBusinessCardManager({
       facebook: normalizeText(input.contacts.facebook),
       instagram: normalizeText(input.contacts.instagram),
       tiktok: normalizeText(input.contacts.tiktok),
+      douyin: normalizeText(input.contacts.douyin),
       xiaohongshu: normalizeText(input.contacts.xiaohongshu),
       websiteUrl: normalizeText(input.targetUrl),
       note: [...extraPhoneLines, ...socialLines].join("\n"),
