@@ -9856,6 +9856,7 @@ type GalleryEditorImage = {
     ...blockSizeStyle,
     ...blockPreviewOverflowStyle,
     ...borderInlineStyle,
+    pointerEvents: isSelected || hasOverlayOpen ? "auto" : "none",
   };
   function handleBlockShellMouseDownCapture(event: ReactMouseEvent<HTMLElement>) {
     if (isSelected) return;

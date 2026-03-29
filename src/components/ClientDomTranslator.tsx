@@ -19,6 +19,7 @@ function shouldSkipDomTranslatorForPath(pathname: string) {
   const normalized = pathname.trim();
   if (!normalized) return false;
   if (normalized === "/admin" || normalized.startsWith("/admin/")) return true;
+  if (normalized.startsWith("/super-admin/editor")) return true;
   return /^\/\d{8}\/?$/.test(normalized);
 }
 
