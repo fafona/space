@@ -192,7 +192,6 @@ import {
   canonicalizeEditorBlocksSystemDefaults,
   canonicalizePagePlanConfigSystemDefaults,
   canonicalizeSystemDefaultText,
-  prepareEditorSystemDefaultTranslations,
   resolveLocalizedSystemDefaultText,
 } from "@/lib/editorSystemDefaults";
 
@@ -2990,32 +2989,8 @@ export default function AdminClient({
   const [pageSettingsColorOpacity, setPageSettingsColorOpacity] = useState(1);
   const [recentColors, setRecentColors] = useState<string[]>([]);
   const [resizePreview, setResizePreview] = useState<{ blockId: string; heightDelta: number } | null>(null);
-  const [, setEditorDefaultTranslationVersion] = useState(0);
-  const [selectionDebugMessage, setSelectionDebugMessage] = useState("");
   const selectedIdRef = useRef(selectedId);
-  const previousSelectedIdRef = useRef(selectedId);
-  const lastManualSelectionAtRef = useRef(0);
-  const lastExplicitClearAtRef = useRef(0);
-  const selectionKeepAliveUntilRef = useRef(0);
-  const lastSelectionReasonRef = useRef("init");
   const planConfigRef = useRef(planConfig);
-
-  useEffect(() => {
-    let cancelled = false;
-    if (locale === "zh-CN") {
-      return () => {
-        cancelled = true;
-      };
-    }
-    void prepareEditorSystemDefaultTranslations(locale).then(() => {
-      if (!cancelled) {
-        setEditorDefaultTranslationVersion((version) => version + 1);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [locale]);
 
   useEffect(() => {
     setPlanTemplateCoverPreviewScale(1);
@@ -3121,45 +3096,6 @@ export default function AdminClient({
       durationMs: null,
       dismissOnPointer: true,
     });
-  }
-
-  function updateSelectionDebug(reason: string) {
-    if (!isPlatformEditor) return;
-    const time = new Date().toLocaleTimeString("en-GB", { hour12: false });
-    setSelectionDebugMessage(`${time} ${reason}`);
-  }
-
-  function resolvePreferredSelectedId(nextBlocks: Block[], requestedId?: string) {
-    const normalizedRequestedId = (requestedId ?? "").trim();
-    if (normalizedRequestedId && nextBlocks.some((item) => item.id === normalizedRequestedId)) {
-      return normalizedRequestedId;
-    }
-    const currentSelectedId = (selectedIdRef.current ?? "").trim();
-    if (
-      currentSelectedId &&
-      Date.now() < selectionKeepAliveUntilRef.current &&
-      nextBlocks.some((item) => item.id === currentSelectedId)
-    ) {
-      updateSelectionDebug(`keep selected ${currentSelectedId} during state sync`);
-      return currentSelectedId;
-    }
-    return getDefaultSelectedBlockId(nextBlocks);
-  }
-
-  function selectBlock(blockId: string, reason: string) {
-    lastManualSelectionAtRef.current = Date.now();
-    selectionKeepAliveUntilRef.current = Date.now() + 1200;
-    lastSelectionReasonRef.current = reason;
-    updateSelectionDebug(`select ${blockId} via ${reason}`);
-    setSelectedId(blockId);
-  }
-
-  function clearSelectedBlock(reason: string) {
-    if (!selectedIdRef.current) return;
-    lastExplicitClearAtRef.current = Date.now();
-    lastSelectionReasonRef.current = reason;
-    updateSelectionDebug(`clear via ${reason}`);
-    setSelectedId("");
   }
 
   function triggerMerchantProfileAttention() {
@@ -3347,7 +3283,7 @@ export default function AdminClient({
     setEditingPlanId(target.editingPlanId);
     setEditingPageId(target.editingPageId);
     setBlocks(cloneBlocks(target.blocks));
-    setSelectedId(resolvePreferredSelectedId(target.blocks, target.selectedId));
+    setSelectedId(target.selectedId || getDefaultSelectedBlockId(target.blocks));
 
     const combinedLoaded = buildCombinedPersistedBlocks(loadedPlanConfig, loadedMobilePlanConfig);
     saveBlocksToStorage(combinedLoaded, storeScope);
@@ -3701,7 +3637,7 @@ export default function AdminClient({
     setEditingPlanId(target.editingPlanId);
     setEditingPageId(target.editingPageId);
     setBlocks(cloneBlocks(target.blocks));
-    setSelectedId(resolvePreferredSelectedId(target.blocks, target.selectedId));
+    setSelectedId(target.selectedId || getDefaultSelectedBlockId(target.blocks));
   }
 
   async function readDesktopIntoMobile() {
@@ -3904,7 +3840,7 @@ export default function AdminClient({
     setEditingPlanId(target.editingPlanId);
     setEditingPageId(target.editingPageId);
     setBlocks(cloneBlocks(target.blocks));
-    setSelectedId(resolvePreferredSelectedId(target.blocks, target.selectedId));
+    setSelectedId(target.selectedId || getDefaultSelectedBlockId(target.blocks));
     saveBlocksToStorage(buildCombinedPersistedBlocks(clonedStates.desktop.planConfig, clonedStates.mobile.planConfig), storeScope);
   }
 
@@ -4818,33 +4754,6 @@ export default function AdminClient({
   }, [selectedId]);
 
   useEffect(() => {
-    const previous = previousSelectedIdRef.current;
-    if (previous === selectedId) return;
-    if (!isPlatformEditor) {
-      previousSelectedIdRef.current = selectedId;
-      return;
-    }
-    const now = Date.now();
-    const previousLabel = previous || "(none)";
-    const nextLabel = selectedId || "(none)";
-    const clearedSoonAfterManualSelect =
-      !selectedId &&
-      previous &&
-      now - lastManualSelectionAtRef.current < 1500 &&
-      now - lastExplicitClearAtRef.current > 800;
-    if (clearedSoonAfterManualSelect) {
-      updateSelectionDebug(`state ${previousLabel} -> ${nextLabel}; external clear after ${lastSelectionReasonRef.current}`);
-      selectionKeepAliveUntilRef.current = now + 1200;
-      lastSelectionReasonRef.current = "auto-restore-after-external-clear";
-      selectedIdRef.current = previous;
-      setSelectedId(previous);
-      return;
-    }
-    previousSelectedIdRef.current = selectedId;
-    updateSelectionDebug(`state ${previousLabel} -> ${nextLabel}; reason ${lastSelectionReasonRef.current}`);
-  }, [isPlatformEditor, selectedId]);
-
-  useEffect(() => {
     setRecentColors(loadRecentColors());
   }, []);
 
@@ -4994,7 +4903,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       startOffsets[id] = { x: startOffsetX, y: startOffsetY };
     });
 
-    selectBlock(blockId, "drag-start");
+    setSelectedId(blockId);
     dragStartRef.current = {
       blockId,
       blockIds,
@@ -5076,6 +4985,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }
 
   function handleEditorMouseDownCapture(event: ReactMouseEvent<HTMLElement>) {
+    if (isPlatformEditor) return;
     const target = event.target;
     if (!(target instanceof Element)) return;
     const composedPath =
@@ -5089,12 +4999,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     if (matchesPath("[data-editor-overlay]") || target.closest("[data-editor-overlay]")) return;
     if (matchesPath("[data-block-id]") || target.closest("[data-block-id]")) return;
     if (!matchesPath("[data-editor-clear-selection='1']") && !target.closest("[data-editor-clear-selection='1']")) return;
-    if (Date.now() < selectionKeepAliveUntilRef.current) {
-      updateSelectionDebug("skip clear during keep-alive window");
-      return;
-    }
     if (selectedIdRef.current) {
-      clearSelectedBlock("editor-root-mousedown");
+      setSelectedId("");
     }
   }
 
@@ -7031,7 +6937,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                               onLayerUp={() => moveBlockLayerByOne(block.id, "up")}
                               onLayerDown={() => moveBlockLayerByOne(block.id, "down")}
                               onLayerToBack={() => moveBlockToLayerEdge(block.id, "back")}
-                              onSelect={() => selectBlock(block.id, "block-click")}
+                              onSelect={() => setSelectedId(block.id)}
                               onChange={(patch) => updateBlockProps(block.id, patch)}
                               onResizePreview={(heightDelta) => previewResizeWithoutAffectingOthers(block.id, heightDelta)}
                               onResizeCommit={(patch, heightDelta) => resizeBlockWithoutAffectingOthers(block.id, patch, heightDelta)}
@@ -7097,7 +7003,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                       onLayerUp={() => moveBlockLayerByOne(block.id, "up")}
                       onLayerDown={() => moveBlockLayerByOne(block.id, "down")}
                       onLayerToBack={() => moveBlockToLayerEdge(block.id, "back")}
-                      onSelect={() => selectBlock(block.id, "block-click")}
+                      onSelect={() => setSelectedId(block.id)}
                       onChange={(patch) => updateBlockProps(block.id, patch)}
                       onResizePreview={(heightDelta) => previewResizeWithoutAffectingOthers(block.id, heightDelta)}
                       onResizeCommit={(patch, heightDelta) => resizeBlockWithoutAffectingOthers(block.id, patch, heightDelta)}
@@ -7804,11 +7710,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       {tip ? (
         <div className="fixed inset-0 z-[2147483500] pointer-events-none flex items-center justify-center p-4">
           <div className="px-4 py-2 rounded-lg bg-black/85 text-white text-sm shadow-lg">{tip}</div>
-        </div>
-      ) : null}
-      {isPlatformEditor && selectionDebugMessage ? (
-        <div className="fixed bottom-3 right-3 z-[2147483400] max-w-[420px] rounded-lg border bg-black/85 px-3 py-2 text-xs text-white shadow-lg">
-          {selectionDebugMessage}
         </div>
       ) : null}
     </main>
@@ -9885,7 +9786,7 @@ type GalleryEditorImage = {
   }
 
   const shellClass =
-    block.type === "hero" ? "bg-white mx-auto relative" : "max-w-6xl mx-auto px-6 py-6 relative";
+    block.type === "hero" ? "bg-white mx-auto" : "max-w-6xl mx-auto px-6 py-6";
   const borderClass = getBlockBorderClass(block.props.blockBorderStyle);
   const borderInlineStyle = getBlockBorderInlineStyle(block.props.blockBorderStyle, block.props.blockBorderColor);
   const cardClass =
@@ -9960,33 +9861,9 @@ type GalleryEditorImage = {
     ...blockPreviewOverflowStyle,
     ...borderInlineStyle,
   };
-  const blockShellMouseDownCapture = handleBlockShellMouseDownCapture;
-  const blockShellMouseUpCapture = handleBlockShellMouseUpCapture;
-  const blockShellClickCapture = handleBlockShellClickCapture;
-  function handleBlockSelectionOverlayMouseDown(event: ReactMouseEvent<HTMLElement>) {
-    event.preventDefault();
-    event.stopPropagation();
-    if (!isSelected) {
-      onSelect();
-    }
-  }
-  function handleBlockSelectionOverlayClick(event: ReactMouseEvent<HTMLElement>) {
-    event.preventDefault();
-    event.stopPropagation();
-    if (!isSelected) {
-      onSelect();
-    }
-  }
-  const blockSelectionOverlay =
-    !isSelected && isPlatformEditor ? (
-      <button
-        type="button"
-        aria-label="选中区块"
-        className="absolute inset-0 z-[70] cursor-pointer bg-transparent"
-        onMouseDown={handleBlockSelectionOverlayMouseDown}
-        onClick={handleBlockSelectionOverlayClick}
-      />
-    ) : null;
+  const blockShellMouseDownCapture = isPlatformEditor ? undefined : handleBlockShellMouseDownCapture;
+  const blockShellMouseUpCapture = isPlatformEditor ? undefined : handleBlockShellMouseUpCapture;
+  const blockShellClickCapture = isPlatformEditor ? undefined : handleBlockShellClickCapture;
   function handleBlockShellMouseDownCapture(event: ReactMouseEvent<HTMLElement>) {
     if (isSelected) return;
     const target = event.target;
@@ -11237,7 +11114,6 @@ type GalleryEditorImage = {
           onEditBorderStyle={editBorderSettings}
           onDelete={onDelete}
         />
-        {blockSelectionOverlay}
         <div
           ref={resizeTargetRef}
           className={`relative rounded-xl shadow-sm pointer-events-auto ${isSelected ? "overflow-visible" : "overflow-hidden"} ${borderClass}`}
@@ -11306,7 +11182,6 @@ type GalleryEditorImage = {
           onEditBorderStyle={editBorderSettings}
           onDelete={onDelete}
         />
-        {blockSelectionOverlay}
         <div
           ref={resizeTargetRef}
           className={`${cardClass} relative !overflow-visible`}
@@ -11726,7 +11601,6 @@ type GalleryEditorImage = {
           onEditBorderStyle={editBorderSettings}
           onDelete={onDelete}
         />
-        {blockSelectionOverlay}
         <div
           ref={resizeTargetRef}
           className={`${cardClass} relative`}
@@ -12295,7 +12169,6 @@ type GalleryEditorImage = {
           onEditBorderStyle={editBorderSettings}
           onDelete={onDelete}
         />
-        {blockSelectionOverlay}
         <div
           ref={resizeTargetRef}
           className={`${navCardClass} ${isSelected ? "!overflow-visible" : ""}`}
@@ -12487,7 +12360,6 @@ type GalleryEditorImage = {
           onEditBorderStyle={editBorderSettings}
           onDelete={onDelete}
         />
-        {blockSelectionOverlay}
         <div
           ref={resizeTargetRef}
           className={`${cardClass} relative`}
@@ -12657,7 +12529,6 @@ type GalleryEditorImage = {
           onEditBorderStyle={editBorderSettings}
           onDelete={onDelete}
         />
-        {blockSelectionOverlay}
         <div
           ref={resizeTargetRef}
           className={`${cardClass} relative`}
@@ -12783,7 +12654,6 @@ type GalleryEditorImage = {
           onEditBorderStyle={editBorderSettings}
           onDelete={onDelete}
         />
-        {blockSelectionOverlay}
         <div className={cardClass} onClick={onSelect}>
           {imageDialog}
           {imageSettingsDialog}
@@ -12854,7 +12724,6 @@ type GalleryEditorImage = {
           onEditBorderStyle={editBorderSettings}
           onDelete={onDelete}
         />
-        {blockSelectionOverlay}
         <div
           ref={resizeTargetRef}
           className={`${cardClass} relative`}
@@ -12934,7 +12803,6 @@ type GalleryEditorImage = {
           onEditBorderStyle={editBorderSettings}
           onDelete={onDelete}
         />
-        {blockSelectionOverlay}
         <div
           ref={resizeTargetRef}
           className={`${cardClass} relative`}
@@ -13998,7 +13866,6 @@ type GalleryEditorImage = {
           onEditBorderStyle={editBorderSettings}
           onDelete={onDelete}
         />
-        {blockSelectionOverlay}
         <div
           ref={resizeTargetRef}
           className={`${cardClass} relative`}
@@ -15177,8 +15044,6 @@ type GalleryEditorImage = {
         ? Math.max(1, Math.min(24, Math.round(block.props.maxItems)))
         : 6;
     const emptyText = resolveLocalizedSystemDefaultText(block.props.emptyText, "暂无商户", locale);
-    const previousPageLabel = resolveLocalizedSystemDefaultText(undefined, "上一页", locale);
-    const nextPageLabel = resolveLocalizedSystemDefaultText(undefined, "下一页", locale);
     const merchantTabs = normalizeMerchantIndustryTabs(block.props.industryTabs);
     const activeMerchantTab = merchantTabs.find((item) => item.id === activeMerchantIndustryTabId) ?? merchantTabs[0];
     const activeIndustry = activeMerchantTab?.industry ?? "all";
@@ -15661,7 +15526,6 @@ type GalleryEditorImage = {
           onEditBorderStyle={editBorderSettings}
           onDelete={onDelete}
         />
-        {blockSelectionOverlay}
         <div
           ref={resizeTargetRef}
           className={`${cardClass} relative`}
@@ -16090,7 +15954,7 @@ type GalleryEditorImage = {
                       disabled={safeMerchantPreviewPageIndex <= 0}
                       onClick={() => setMerchantPreviewPageIndex((prev) => Math.max(0, prev - 1))}
                     >
-                      <span style={merchantButtonLabelStyle}>{previousPageLabel}</span>
+                      <span style={merchantButtonLabelStyle}>上一页</span>
                     </button>
                   ) : null}
                   {merchantNextLayout ? (
@@ -16113,7 +15977,7 @@ type GalleryEditorImage = {
                       disabled={safeMerchantPreviewPageIndex >= merchantTotalPages - 1}
                       onClick={() => setMerchantPreviewPageIndex((prev) => Math.min(merchantTotalPages - 1, prev + 1))}
                     >
-                      <span style={merchantButtonLabelStyle}>{nextPageLabel}</span>
+                      <span style={merchantButtonLabelStyle}>下一页</span>
                     </button>
                   ) : null}
                 </div>
@@ -16130,8 +15994,6 @@ type GalleryEditorImage = {
     type SearchLayoutKey = "locate" | "country" | "province" | "city" | "keyword" | "action";
     const locateLabel = resolveLocalizedSystemDefaultText(block.props.locateLabel, "定位", locale);
     const actionLabel = resolveLocalizedSystemDefaultText(block.props.actionLabel, "搜索", locale);
-    const countryLabel = resolveLocalizedSystemDefaultText(undefined, "国家", locale);
-    const provinceLabel = resolveLocalizedSystemDefaultText(undefined, "省份", locale);
     const cityPlaceholder = resolveLocalizedSystemDefaultText(block.props.cityPlaceholder, "选择城市", locale);
     const searchPlaceholder = resolveLocalizedSystemDefaultText(block.props.searchPlaceholder, "请输入关键词", locale);
     const countryOptions = getEuropeCountryOptions();
@@ -16152,9 +16014,9 @@ type GalleryEditorImage = {
       if (cityOptions.includes(fromProps)) return fromProps;
       return "";
     })();
-    const resolvedCountryName = countryOptions.find((item) => item.code === resolvedCountryCode)?.name ?? countryLabel;
+    const resolvedCountryName = countryOptions.find((item) => item.code === resolvedCountryCode)?.name ?? "国家";
     const resolvedProvinceName =
-      provinceOptions.find((item) => item.code === resolvedProvinceCode)?.name ?? provinceLabel;
+      provinceOptions.find((item) => item.code === resolvedProvinceCode)?.name ?? "省份";
     const hasSearchHeading = hasVisibleRichText(block.props.heading);
     const hasSearchText = hasVisibleRichText(block.props.text);
     const searchButtonBgColor = (block.props.searchButtonBgColor ?? "#ffffff").trim() || "#ffffff";
@@ -16612,7 +16474,6 @@ type GalleryEditorImage = {
           onEditBorderStyle={editBorderSettings}
           onDelete={onDelete}
         />
-        {blockSelectionOverlay}
         <div
           ref={resizeTargetRef}
           className={`${cardClass} relative`}
@@ -16671,7 +16532,7 @@ type GalleryEditorImage = {
                         </option>
                       ))
                     ) : (
-                      <option value="">{countryLabel}</option>
+                      <option value="">国家</option>
                     )}
                   </select>
                 </label>
@@ -16697,7 +16558,7 @@ type GalleryEditorImage = {
                         </option>
                       ))
                     ) : (
-                      <option value="">{provinceLabel}</option>
+                      <option value="">省份</option>
                     )}
                   </select>
                 </label>
@@ -17064,7 +16925,6 @@ type GalleryEditorImage = {
           onEditBorderStyle={editBorderSettings}
           onDelete={onDelete}
         />
-        {blockSelectionOverlay}
         <div
           ref={resizeTargetRef}
           className={`${cardClass} relative`}
@@ -17629,7 +17489,6 @@ type GalleryEditorImage = {
           onEditBorderStyle={editBorderSettings}
           onDelete={onDelete}
         />
-        {blockSelectionOverlay}
         <div
           ref={resizeTargetRef}
           className={`${cardClass} relative`}
