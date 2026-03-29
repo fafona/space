@@ -53,6 +53,7 @@ test("default business card draft prefills merchant profile fields", () => {
   assert.equal(draft.contacts.email, "caimin00x@gmail.com");
   assert.equal(draft.contacts.address, "C. Transporte, 12 / Sevilla / Sevilla / Spain");
   assert.equal(draft.contacts.douyin, "");
+  assert.deepEqual(draft.textLayout.douyin, { x: 360, y: 310 });
   assert.equal(draft.contactOnlyFields.phone, false);
   assert.equal(draft.contactOnlyFields.douyin, false);
   assert.equal(draft.fieldTypography.merchantName.fontSize, 36);
@@ -86,6 +87,20 @@ test("normalizeMerchantBusinessCardDraft keeps at most two phones", () => {
 
   assert.equal(draft.contacts.phone, "111");
   assert.deepEqual(draft.contacts.phones, ["111", "222"]);
+});
+
+test("normalizeMerchantBusinessCardDraft migrates legacy social layout into visible area", () => {
+  const draft = normalizeMerchantBusinessCardDraft({
+    textLayout: {
+      douyin: { x: 360, y: 442 },
+      weibo: { x: 36, y: 442 },
+      discord: { x: 360, y: 406 },
+    },
+  });
+
+  assert.deepEqual(draft.textLayout.douyin, { x: 360, y: 310 });
+  assert.deepEqual(draft.textLayout.weibo, { x: 36, y: 400 });
+  assert.deepEqual(draft.textLayout.discord, { x: 360, y: 400 });
 });
 
 test("normalizeMerchantBusinessCardDraft allows empty website label", () => {

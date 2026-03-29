@@ -231,6 +231,66 @@ export function buildMerchantBusinessCardAddress(profile: MerchantBusinessCardPr
   return segments.join(" / ");
 }
 
+function createDefaultMerchantBusinessCardTextLayout(): MerchantBusinessCardTextLayout {
+  return {
+    merchantName: { x: 36, y: 34 },
+    title: { x: 36, y: 92 },
+    website: { x: 36, y: 136 },
+    contactName: { x: 36, y: 190 },
+    phone: { x: 36, y: 220 },
+    email: { x: 36, y: 250 },
+    address: { x: 36, y: 280 },
+    wechat: { x: 36, y: 310 },
+    whatsapp: { x: 36, y: 340 },
+    twitter: { x: 36, y: 370 },
+    weibo: { x: 36, y: 400 },
+    facebook: { x: 360, y: 190 },
+    instagram: { x: 360, y: 220 },
+    tiktok: { x: 360, y: 250 },
+    xiaohongshu: { x: 360, y: 280 },
+    douyin: { x: 360, y: 310 },
+    telegram: { x: 360, y: 340 },
+    linkedin: { x: 360, y: 370 },
+    discord: { x: 360, y: 400 },
+  };
+}
+
+const LEGACY_MERCHANT_BUSINESS_CARD_TEXT_LAYOUT: MerchantBusinessCardTextLayout = {
+  merchantName: { x: 36, y: 34 },
+  title: { x: 36, y: 92 },
+  website: { x: 36, y: 136 },
+  contactName: { x: 36, y: 190 },
+  phone: { x: 36, y: 226 },
+  email: { x: 36, y: 262 },
+  address: { x: 36, y: 298 },
+  wechat: { x: 36, y: 334 },
+  whatsapp: { x: 36, y: 370 },
+  twitter: { x: 36, y: 406 },
+  weibo: { x: 36, y: 442 },
+  telegram: { x: 360, y: 334 },
+  linkedin: { x: 360, y: 370 },
+  discord: { x: 360, y: 406 },
+  facebook: { x: 360, y: 190 },
+  instagram: { x: 360, y: 226 },
+  tiktok: { x: 360, y: 262 },
+  douyin: { x: 360, y: 442 },
+  xiaohongshu: { x: 360, y: 298 },
+};
+
+function resolveTextLayoutEntry(
+  key: MerchantBusinessCardFieldKey,
+  source: Partial<MerchantBusinessCardTextLayout>,
+  fallback: MerchantBusinessCardTextLayout,
+) {
+  const rawEntry = source[key];
+  const next = {
+    x: clampInt(rawEntry?.x, fallback[key].x, 0, 2000),
+    y: clampInt(rawEntry?.y, fallback[key].y, 0, 2000),
+  };
+  const legacy = LEGACY_MERCHANT_BUSINESS_CARD_TEXT_LAYOUT[key];
+  return next.x === legacy.x && next.y === legacy.y ? { ...fallback[key] } : next;
+}
+
 export function getMerchantBusinessCardRequiredFields(profile: MerchantBusinessCardProfileInput) {
   const missing: string[] = [];
   if (!normalizeText(profile.merchantName)) missing.push("商户名称");
@@ -249,6 +309,7 @@ export function getMerchantBusinessCardRequiredFields(profile: MerchantBusinessC
 export function createDefaultMerchantBusinessCardDraft(
   profile: MerchantBusinessCardProfileInput,
 ): MerchantBusinessCardDraft {
+  const textLayout = createDefaultMerchantBusinessCardTextLayout();
   const typography: MerchantBusinessCardTypographyMap = {
     name: {
       fontFamily: "",
@@ -321,27 +382,7 @@ export function createDefaultMerchantBusinessCardDraft(
     },
     contactOnlyFields: createDefaultContactOnlyFields(),
     customTexts: [],
-    textLayout: {
-      merchantName: { x: 36, y: 34 },
-      title: { x: 36, y: 92 },
-      website: { x: 36, y: 136 },
-      contactName: { x: 36, y: 190 },
-      phone: { x: 36, y: 226 },
-      email: { x: 36, y: 262 },
-      address: { x: 36, y: 298 },
-      wechat: { x: 36, y: 334 },
-      whatsapp: { x: 36, y: 370 },
-      twitter: { x: 36, y: 406 },
-      weibo: { x: 36, y: 442 },
-      telegram: { x: 360, y: 334 },
-      linkedin: { x: 360, y: 370 },
-      discord: { x: 360, y: 406 },
-      facebook: { x: 360, y: 190 },
-      instagram: { x: 360, y: 226 },
-      tiktok: { x: 360, y: 262 },
-      douyin: { x: 360, y: 442 },
-      xiaohongshu: { x: 360, y: 298 },
-    },
+    textLayout,
     qr: {
       x: 508,
       y: 126,
@@ -477,82 +518,25 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
     },
     customTexts,
     textLayout: {
-      merchantName: {
-        x: clampInt(textLayoutSource.merchantName?.x, fallback.textLayout.merchantName.x, 0, 2000),
-        y: clampInt(textLayoutSource.merchantName?.y, fallback.textLayout.merchantName.y, 0, 2000),
-      },
-      title: {
-        x: clampInt(textLayoutSource.title?.x, fallback.textLayout.title.x, 0, 2000),
-        y: clampInt(textLayoutSource.title?.y, fallback.textLayout.title.y, 0, 2000),
-      },
-      website: {
-        x: clampInt(textLayoutSource.website?.x, fallback.textLayout.website.x, 0, 2000),
-        y: clampInt(textLayoutSource.website?.y, fallback.textLayout.website.y, 0, 2000),
-      },
-      contactName: {
-        x: clampInt(textLayoutSource.contactName?.x, fallback.textLayout.contactName.x, 0, 2000),
-        y: clampInt(textLayoutSource.contactName?.y, fallback.textLayout.contactName.y, 0, 2000),
-      },
-      phone: {
-        x: clampInt(textLayoutSource.phone?.x, fallback.textLayout.phone.x, 0, 2000),
-        y: clampInt(textLayoutSource.phone?.y, fallback.textLayout.phone.y, 0, 2000),
-      },
-      email: {
-        x: clampInt(textLayoutSource.email?.x, fallback.textLayout.email.x, 0, 2000),
-        y: clampInt(textLayoutSource.email?.y, fallback.textLayout.email.y, 0, 2000),
-      },
-      address: {
-        x: clampInt(textLayoutSource.address?.x, fallback.textLayout.address.x, 0, 2000),
-        y: clampInt(textLayoutSource.address?.y, fallback.textLayout.address.y, 0, 2000),
-      },
-      wechat: {
-        x: clampInt(textLayoutSource.wechat?.x, fallback.textLayout.wechat.x, 0, 2000),
-        y: clampInt(textLayoutSource.wechat?.y, fallback.textLayout.wechat.y, 0, 2000),
-      },
-      whatsapp: {
-        x: clampInt(textLayoutSource.whatsapp?.x, fallback.textLayout.whatsapp.x, 0, 2000),
-        y: clampInt(textLayoutSource.whatsapp?.y, fallback.textLayout.whatsapp.y, 0, 2000),
-      },
-      twitter: {
-        x: clampInt((textLayoutSource as Partial<MerchantBusinessCardTextLayout>).twitter?.x, fallback.textLayout.twitter.x, 0, 2000),
-        y: clampInt((textLayoutSource as Partial<MerchantBusinessCardTextLayout>).twitter?.y, fallback.textLayout.twitter.y, 0, 2000),
-      },
-      weibo: {
-        x: clampInt((textLayoutSource as Partial<MerchantBusinessCardTextLayout>).weibo?.x, fallback.textLayout.weibo.x, 0, 2000),
-        y: clampInt((textLayoutSource as Partial<MerchantBusinessCardTextLayout>).weibo?.y, fallback.textLayout.weibo.y, 0, 2000),
-      },
-      telegram: {
-        x: clampInt((textLayoutSource as Partial<MerchantBusinessCardTextLayout>).telegram?.x, fallback.textLayout.telegram.x, 0, 2000),
-        y: clampInt((textLayoutSource as Partial<MerchantBusinessCardTextLayout>).telegram?.y, fallback.textLayout.telegram.y, 0, 2000),
-      },
-      linkedin: {
-        x: clampInt((textLayoutSource as Partial<MerchantBusinessCardTextLayout>).linkedin?.x, fallback.textLayout.linkedin.x, 0, 2000),
-        y: clampInt((textLayoutSource as Partial<MerchantBusinessCardTextLayout>).linkedin?.y, fallback.textLayout.linkedin.y, 0, 2000),
-      },
-      discord: {
-        x: clampInt((textLayoutSource as Partial<MerchantBusinessCardTextLayout>).discord?.x, fallback.textLayout.discord.x, 0, 2000),
-        y: clampInt((textLayoutSource as Partial<MerchantBusinessCardTextLayout>).discord?.y, fallback.textLayout.discord.y, 0, 2000),
-      },
-      facebook: {
-        x: clampInt(textLayoutSource.facebook?.x, fallback.textLayout.facebook.x, 0, 2000),
-        y: clampInt(textLayoutSource.facebook?.y, fallback.textLayout.facebook.y, 0, 2000),
-      },
-      instagram: {
-        x: clampInt(textLayoutSource.instagram?.x, fallback.textLayout.instagram.x, 0, 2000),
-        y: clampInt(textLayoutSource.instagram?.y, fallback.textLayout.instagram.y, 0, 2000),
-      },
-      tiktok: {
-        x: clampInt(textLayoutSource.tiktok?.x, fallback.textLayout.tiktok.x, 0, 2000),
-        y: clampInt(textLayoutSource.tiktok?.y, fallback.textLayout.tiktok.y, 0, 2000),
-      },
-      douyin: {
-        x: clampInt((textLayoutSource as Partial<MerchantBusinessCardTextLayout>).douyin?.x, fallback.textLayout.douyin.x, 0, 2000),
-        y: clampInt((textLayoutSource as Partial<MerchantBusinessCardTextLayout>).douyin?.y, fallback.textLayout.douyin.y, 0, 2000),
-      },
-      xiaohongshu: {
-        x: clampInt(textLayoutSource.xiaohongshu?.x, fallback.textLayout.xiaohongshu.x, 0, 2000),
-        y: clampInt(textLayoutSource.xiaohongshu?.y, fallback.textLayout.xiaohongshu.y, 0, 2000),
-      },
+      merchantName: resolveTextLayoutEntry("merchantName", textLayoutSource, fallback.textLayout),
+      title: resolveTextLayoutEntry("title", textLayoutSource, fallback.textLayout),
+      website: resolveTextLayoutEntry("website", textLayoutSource, fallback.textLayout),
+      contactName: resolveTextLayoutEntry("contactName", textLayoutSource, fallback.textLayout),
+      phone: resolveTextLayoutEntry("phone", textLayoutSource, fallback.textLayout),
+      email: resolveTextLayoutEntry("email", textLayoutSource, fallback.textLayout),
+      address: resolveTextLayoutEntry("address", textLayoutSource, fallback.textLayout),
+      wechat: resolveTextLayoutEntry("wechat", textLayoutSource, fallback.textLayout),
+      whatsapp: resolveTextLayoutEntry("whatsapp", textLayoutSource, fallback.textLayout),
+      twitter: resolveTextLayoutEntry("twitter", textLayoutSource, fallback.textLayout),
+      weibo: resolveTextLayoutEntry("weibo", textLayoutSource, fallback.textLayout),
+      telegram: resolveTextLayoutEntry("telegram", textLayoutSource, fallback.textLayout),
+      linkedin: resolveTextLayoutEntry("linkedin", textLayoutSource, fallback.textLayout),
+      discord: resolveTextLayoutEntry("discord", textLayoutSource, fallback.textLayout),
+      facebook: resolveTextLayoutEntry("facebook", textLayoutSource, fallback.textLayout),
+      instagram: resolveTextLayoutEntry("instagram", textLayoutSource, fallback.textLayout),
+      tiktok: resolveTextLayoutEntry("tiktok", textLayoutSource, fallback.textLayout),
+      douyin: resolveTextLayoutEntry("douyin", textLayoutSource, fallback.textLayout),
+      xiaohongshu: resolveTextLayoutEntry("xiaohongshu", textLayoutSource, fallback.textLayout),
     },
     qr: {
       x: clampInt(source.qr?.x, fallback.qr.x, 0, 2000),
