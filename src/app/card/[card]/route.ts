@@ -11,6 +11,10 @@ import {
   resolveMerchantBusinessCardShareOrigin,
   type MerchantBusinessCardShareContact,
 } from "@/lib/merchantBusinessCardShare";
+import {
+  normalizeMerchantBusinessCardContactFieldOrder,
+  type MerchantBusinessCardContactDisplayKey,
+} from "@/lib/merchantBusinessCards";
 import { DEFAULT_LOCALE, I18N_STORAGE_KEY, LANGUAGE_OPTIONS } from "@/lib/i18n";
 
 function escapeHtml(value: string) {
@@ -567,7 +571,7 @@ function buildInlineI18nScript() {
   })();`.replace(/<\/script/gi, "<\\/script");
 }
 
-function buildContactSummaryHtml(input: {
+function buildContactSummaryHtmlLegacy(input: {
   name: string;
   contact?: MerchantBusinessCardShareContact;
 }) {
@@ -767,6 +771,312 @@ function buildContactSummaryHtml(input: {
         }
       : null,
   ].filter(Boolean) as Array<{ label: string; value: string; actionHtml: string }>;
+
+  if (rows.length === 0) {
+    return `<div class="summary-row"><span class="summary-value" data-no-translate="1">${escapeHtml(normalizeText(input.name) || "电子名片")}</span></div>`;
+  }
+
+  return rows
+    .map(
+      (row) => `
+        <div class="summary-row">
+          <div class="summary-copy">
+            <strong class="summary-label">${escapeHtml(row.label)}：</strong>
+            <span class="summary-value" data-no-translate="1">${escapeHtml(row.value)}</span>
+          </div>
+          ${row.actionHtml ? `<div class="summary-action">${row.actionHtml}</div>` : ""}
+        </div>`,
+    )
+    .join("");
+}
+
+function buildContactSummaryHtml(input: {
+  name: string;
+  contact?: MerchantBusinessCardShareContact;
+}) {
+  return buildOrderedContactSummaryHtml(input) || buildContactSummaryHtmlLegacy(input);
+}
+
+function buildOrderedContactSummaryHtml(input: {
+  name: string;
+  contact?: MerchantBusinessCardShareContact;
+}) {
+  type SummaryRow = { label: string; value: string; actionHtml: string };
+
+  const contact = input.contact;
+  if (!contact) return "";
+
+  const primaryPhone = normalizeText(contact.phone);
+  const secondaryPhone =
+    contact.phones?.find((value) => {
+      const normalized = normalizeText(value);
+      return normalized && normalized !== primaryPhone;
+    }) || "";
+  const orderedKeys = normalizeMerchantBusinessCardContactFieldOrder(contact.contactFieldOrder);
+  const rowsByKey: Partial<Record<MerchantBusinessCardContactDisplayKey, SummaryRow[]>> = {};
+
+  const pushRow = (key: MerchantBusinessCardContactDisplayKey, row: SummaryRow | null) => {
+    if (!row) return;
+    rowsByKey[key] = [...(rowsByKey[key] ?? []), row];
+  };
+
+  pushRow(
+    "contactName",
+    contact.displayName
+      ? {
+          label: "联系人",
+          value: contact.displayName,
+          actionHtml: "",
+        }
+      : null,
+  );
+  pushRow(
+    "phone",
+    primaryPhone
+      ? {
+          label: "电话",
+          value: primaryPhone,
+          actionHtml: buildActionButtonHtml({
+            href: buildPhoneHref(primaryPhone),
+            label: "拨号",
+            iconSvg: buildInlineSvgIcon("phone"),
+            bgColor: "#007AFF",
+          }),
+        }
+      : null,
+  );
+  pushRow(
+    "phone",
+    secondaryPhone
+      ? {
+          label: "工作",
+          value: secondaryPhone,
+          actionHtml: buildActionButtonHtml({
+            href: buildPhoneHref(secondaryPhone),
+            label: "拨打工作电话",
+            iconSvg: buildInlineSvgIcon("phone"),
+            bgColor: "#007AFF",
+          }),
+        }
+      : null,
+  );
+  pushRow(
+    "email",
+    contact.email
+      ? {
+          label: "邮箱",
+          value: contact.email,
+          actionHtml: buildActionButtonHtml({
+            href: `mailto:${contact.email}`,
+            label: "发送邮件",
+            iconUrl: "/social-icons/maildotru.svg",
+            bgColor: "#0A84FF",
+          }),
+        }
+      : null,
+  );
+  pushRow(
+    "address",
+    contact.address
+      ? {
+          label: "地址",
+          value: contact.address,
+          actionHtml: buildActionButtonHtml({
+            href: buildAddressHref(contact.address),
+            label: "导航",
+            iconSvg: buildInlineSvgIcon("map"),
+            bgColor: "#EA4335",
+          }),
+        }
+      : null,
+  );
+  pushRow(
+    "wechat",
+    contact.wechat
+      ? {
+          label: "微信",
+          value: contact.wechat,
+          actionHtml: buildWeChatActionHtml(contact.wechat),
+        }
+      : null,
+  );
+  pushRow(
+    "whatsapp",
+    contact.whatsapp
+      ? {
+          label: "WhatsApp",
+          value: contact.whatsapp,
+          actionHtml: buildActionButtonHtml({
+            href: buildSocialHref("WhatsApp", contact.whatsapp),
+            label: "打开 WhatsApp",
+            iconUrl: "/social-icons/whatsapp.svg",
+            bgColor: "#25D366",
+          }),
+        }
+      : null,
+  );
+  pushRow(
+    "twitter",
+    contact.twitter
+      ? {
+          label: "Twitter",
+          value: contact.twitter,
+          actionHtml: buildActionButtonHtml({
+            href: buildSocialHref("Twitter", contact.twitter),
+            label: "打开 Twitter",
+            iconUrl: "/social-icons/twitter.svg",
+            bgColor: "#111827",
+          }),
+        }
+      : null,
+  );
+  pushRow(
+    "weibo",
+    contact.weibo
+      ? {
+          label: "微博",
+          value: contact.weibo,
+          actionHtml: buildActionButtonHtml({
+            href: `https://weibo.com/n/${encodeURIComponent(contact.weibo.replace(/^@+/, ""))}`,
+            label: "打开微博",
+            iconUrl: "/social-icons/weibo.svg",
+            bgColor: "#E6162D",
+          }),
+        }
+      : null,
+  );
+  pushRow(
+    "telegram",
+    contact.telegram
+      ? {
+          label: "Telegram",
+          value: contact.telegram,
+          actionHtml: buildActionButtonHtml({
+            href: buildSocialHref("Telegram", contact.telegram),
+            label: "打开 Telegram",
+            iconUrl: "/social-icons/telegram.svg",
+            bgColor: "#229ED9",
+          }),
+        }
+      : null,
+  );
+  pushRow(
+    "linkedin",
+    contact.linkedin
+      ? {
+          label: "LinkedIn",
+          value: contact.linkedin,
+          actionHtml: buildActionButtonHtml({
+            href: buildSocialHref("LinkedIn", contact.linkedin),
+            label: "打开 LinkedIn",
+            iconUrl: "/social-icons/linkedin.svg",
+            bgColor: "#0A66C2",
+          }),
+        }
+      : null,
+  );
+  pushRow(
+    "discord",
+    contact.discord
+      ? {
+          label: "Discord",
+          value: contact.discord,
+          actionHtml: buildActionButtonHtml({
+            href: buildSocialHref("Discord", contact.discord),
+            label: "打开 Discord",
+            iconUrl: "/social-icons/discord.svg",
+            bgColor: "#5865F2",
+          }),
+        }
+      : null,
+  );
+  pushRow(
+    "facebook",
+    contact.facebook
+      ? {
+          label: "Facebook",
+          value: contact.facebook,
+          actionHtml: buildActionButtonHtml({
+            href: buildSocialHref("Facebook", contact.facebook),
+            label: "打开 Facebook",
+            iconUrl: "/social-icons/facebook.svg",
+            bgColor: "#1877F2",
+          }),
+        }
+      : null,
+  );
+  pushRow(
+    "instagram",
+    contact.instagram
+      ? {
+          label: "Instagram",
+          value: contact.instagram,
+          actionHtml: buildActionButtonHtml({
+            href: buildSocialHref("Instagram", contact.instagram),
+            label: "打开 Instagram",
+            iconUrl: "/social-icons/instagram.svg",
+            bgColor: "#E4405F",
+          }),
+        }
+      : null,
+  );
+  pushRow(
+    "tiktok",
+    contact.tiktok
+      ? {
+          label: "TikTok",
+          value: contact.tiktok,
+          actionHtml: buildActionButtonHtml({
+            href: buildSocialHref("TikTok", contact.tiktok),
+            label: "打开 TikTok",
+            iconUrl: "/social-icons/tiktok.svg",
+            bgColor: "#111827",
+          }),
+        }
+      : null,
+  );
+  pushRow(
+    "douyin",
+    contact.douyin
+      ? {
+          label: "抖音",
+          value: contact.douyin,
+          actionHtml: buildActionButtonHtml({
+            href: `https://www.douyin.com/search/${encodeURIComponent(contact.douyin.replace(/^@+/, ""))}`,
+            label: "打开抖音",
+            iconUrl: "/social-icons/tiktok.svg",
+            bgColor: "#161823",
+          }),
+        }
+      : null,
+  );
+  pushRow(
+    "xiaohongshu",
+    contact.xiaohongshu
+      ? {
+          label: "小红书",
+          value: contact.xiaohongshu,
+          actionHtml: buildActionButtonHtml({
+            href: `https://www.xiaohongshu.com/search_result?keyword=${encodeURIComponent(contact.xiaohongshu)}`,
+            label: "打开小红书",
+            iconUrl: "/social-icons/xiaohongshu.svg",
+            bgColor: "#FF2442",
+          }),
+        }
+      : null,
+  );
+
+  const rows: SummaryRow[] = [];
+  if (contact.title) {
+    rows.push({
+      label: "职位",
+      value: contact.title,
+      actionHtml: "",
+    });
+  }
+  for (const key of orderedKeys) {
+    rows.push(...(rowsByKey[key] ?? []));
+  }
 
   if (rows.length === 0) {
     return `<div class="summary-row"><span class="summary-value" data-no-translate="1">${escapeHtml(normalizeText(input.name) || "电子名片")}</span></div>`;

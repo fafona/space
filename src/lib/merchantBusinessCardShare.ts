@@ -1,5 +1,9 @@
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
-import { MERCHANT_BUSINESS_CARD_PHONE_LIMIT } from "./merchantBusinessCards";
+import {
+  MERCHANT_BUSINESS_CARD_PHONE_LIMIT,
+  normalizeMerchantBusinessCardContactFieldOrder,
+  type MerchantBusinessCardContactDisplayKey,
+} from "./merchantBusinessCards";
 
 export const MERCHANT_BUSINESS_CARD_SHARE_PATH = "/share/business-card";
 export const MERCHANT_BUSINESS_CARD_SHARE_KEY_PARAM = "card";
@@ -31,6 +35,7 @@ export type MerchantBusinessCardShareContact = {
   title?: string;
   phone?: string;
   phones?: string[];
+  contactFieldOrder?: MerchantBusinessCardContactDisplayKey[];
   email?: string;
   address?: string;
   wechat?: string;
@@ -267,6 +272,10 @@ export function normalizeMerchantBusinessCardShareContact(
   const websiteUrl =
     normalizeMerchantBusinessCardShareTargetUrl(source.websiteUrl) ||
     normalizeMerchantBusinessCardShareTargetUrl(targetUrl);
+  const hasExplicitContactFieldOrder = Array.isArray(source.contactFieldOrder) && source.contactFieldOrder.length > 0;
+  const contactFieldOrder = hasExplicitContactFieldOrder
+    ? normalizeMerchantBusinessCardContactFieldOrder(source.contactFieldOrder)
+    : undefined;
   const contact = {
     ...(clampContactText(source.displayName, 120)
       ? { displayName: clampContactText(source.displayName, 120) }
@@ -333,7 +342,7 @@ export function normalizeMerchantBusinessCardShareContact(
   if (!Object.values(contact).some(Boolean)) {
     return undefined;
   }
-  return contact;
+  return contactFieldOrder ? { ...contact, contactFieldOrder } : contact;
 }
 
 export function buildMerchantBusinessCardShareManifestObjectPath(key: string) {
@@ -404,6 +413,7 @@ export function buildMerchantBusinessCardShareLegacyFingerprint(
     contact.title ?? "",
     contact.phone ?? "",
     (contact.phones ?? []).join("|"),
+    (contact.contactFieldOrder ?? []).join("|"),
     contact.email ?? "",
     contact.address ?? "",
     contact.wechat ?? "",
@@ -540,6 +550,12 @@ export function buildMerchantBusinessCardShareUrl(input: {
   if (payload.contact?.phone) {
     shareUrl.searchParams.set("phone", payload.contact.phone);
   }
+  if (payload.contact?.phones?.length) {
+    shareUrl.searchParams.set("phones", payload.contact.phones.join(","));
+  }
+  if (payload.contact?.contactFieldOrder?.length) {
+    shareUrl.searchParams.set("contactOrder", payload.contact.contactFieldOrder.join(","));
+  }
   if (payload.contact?.email) {
     shareUrl.searchParams.set("email", payload.contact.email);
   }
@@ -609,6 +625,14 @@ export function parseMerchantBusinessCardShareParams(
         organization: readSearchParam(searchParams, "organization"),
         title: readSearchParam(searchParams, "title"),
         phone: readSearchParam(searchParams, "phone"),
+        phones: readSearchParam(searchParams, "phones")
+          ?.split(",")
+          .map((item) => item.trim())
+          .filter(Boolean),
+        contactFieldOrder: readSearchParam(searchParams, "contactOrder")
+          ?.split(",")
+          .map((item) => item.trim())
+          .filter(Boolean) as MerchantBusinessCardContactDisplayKey[] | undefined,
         email: readSearchParam(searchParams, "email"),
         address: readSearchParam(searchParams, "address"),
         wechat: readSearchParam(searchParams, "wechat"),
@@ -766,6 +790,10 @@ export function buildMerchantBusinessCardLegacyContactDownloadUrl(input: {
   if (payload.contact?.organization) url.searchParams.set("organization", payload.contact.organization);
   if (payload.contact?.title) url.searchParams.set("title", payload.contact.title);
   if (payload.contact?.phone) url.searchParams.set("phone", payload.contact.phone);
+  if (payload.contact?.phones?.length) url.searchParams.set("phones", payload.contact.phones.join(","));
+  if (payload.contact?.contactFieldOrder?.length) {
+    url.searchParams.set("contactOrder", payload.contact.contactFieldOrder.join(","));
+  }
   if (payload.contact?.email) url.searchParams.set("email", payload.contact.email);
   if (payload.contact?.address) url.searchParams.set("address", payload.contact.address);
   if (payload.contact?.wechat) url.searchParams.set("wechat", payload.contact.wechat);

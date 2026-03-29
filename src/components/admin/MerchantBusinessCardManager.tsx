@@ -16,10 +16,13 @@ import QRCode from "qrcode";
 import {
   MERCHANT_BUSINESS_CARD_RATIO_OPTIONS,
   MERCHANT_BUSINESS_CARD_PHONE_LIMIT,
+  applyMerchantBusinessCardContactFieldOrderToTextLayout,
   createDefaultMerchantBusinessCardDraft,
   getMerchantBusinessCardRequiredFields,
   normalizeMerchantBusinessCardDraft,
+  normalizeMerchantBusinessCardContactFieldOrder,
   type MerchantBusinessCardAsset,
+  type MerchantBusinessCardContactDisplayKey,
   type MerchantBusinessCardCustomText,
   type MerchantBusinessCardDraft,
   type MerchantBusinessCardFieldKey,
@@ -51,7 +54,7 @@ type MerchantBusinessCardManagerProps = {
   onCardsChange: (cards: MerchantBusinessCardAsset[]) => void;
 };
 
-type MerchantBusinessCardEditableContactFieldKey = Exclude<keyof MerchantBusinessCardDraft["contacts"], "phones">;
+type MerchantBusinessCardEditableContactFieldKey = MerchantBusinessCardContactDisplayKey;
 
 const CONTACT_FIELDS: Array<{ key: MerchantBusinessCardEditableContactFieldKey; label: string }> = [
   { key: "contactName", label: "联系人" },
@@ -72,26 +75,16 @@ const CONTACT_FIELDS: Array<{ key: MerchantBusinessCardEditableContactFieldKey; 
   { key: "xiaohongshu", label: "小红书" },
 ];
 
+const CONTACT_FIELD_LABELS = Object.fromEntries(CONTACT_FIELDS.map((item) => [item.key, item.label])) as Record<
+  MerchantBusinessCardEditableContactFieldKey,
+  string
+>;
+
 const TEXT_LAYOUT_FIELDS: Array<{ key: MerchantBusinessCardFieldKey; label: string }> = [
   { key: "merchantName", label: "商户名称" },
   { key: "title", label: "职位" },
   { key: "website", label: "网站说明" },
-  { key: "contactName", label: "联系人" },
-  { key: "phone", label: "电话" },
-  { key: "email", label: "邮箱" },
-  { key: "address", label: "地址" },
-  { key: "wechat", label: "微信" },
-  { key: "whatsapp", label: "WhatsApp" },
-  { key: "twitter", label: "Twitter" },
-  { key: "weibo", label: "微博" },
-  { key: "telegram", label: "Telegram" },
-  { key: "linkedin", label: "LinkedIn" },
-  { key: "discord", label: "Discord" },
-  { key: "facebook", label: "Facebook" },
-  { key: "instagram", label: "Instagram" },
-  { key: "tiktok", label: "TikTok" },
-  { key: "douyin", label: "抖音" },
-  { key: "xiaohongshu", label: "小红书" },
+  ...CONTACT_FIELDS,
 ];
 
 const FONT_FAMILY_OPTIONS = [
@@ -497,6 +490,13 @@ function normalizePhoneList(values: string[]) {
     .slice(0, MERCHANT_BUSINESS_CARD_PHONE_LIMIT);
 }
 
+function getOrderedContactFields(order: MerchantBusinessCardDraft["contactFieldOrder"]) {
+  return normalizeMerchantBusinessCardContactFieldOrder(order).map((key) => ({
+    key,
+    label: CONTACT_FIELD_LABELS[key],
+  }));
+}
+
 function resolveDraftPhoneValues(contacts: MerchantBusinessCardDraft["contacts"]) {
   const fromArray = normalizePhoneList(Array.isArray(contacts.phones) ? contacts.phones : []);
   if (fromArray.length > 0) return fromArray;
@@ -545,7 +545,8 @@ function CardSurface({
   renderMode?: "preview" | "export";
 }) {
   const isExport = renderMode === "export";
-  const contacts = CONTACT_FIELDS.map(({ key, label }) => {
+  const orderedContactFields = getOrderedContactFields(draft.contactFieldOrder);
+  const contacts = orderedContactFields.map(({ key, label }) => {
     const value = resolveContactDisplayValue(draft.contacts, key);
     if (!value || draft.contactOnlyFields[key]) return null;
     return { key, label, value };
@@ -675,52 +676,45 @@ function CardSurface({
 function buildContactPreviewRows(
   name: string,
   contacts: MerchantBusinessCardDraft["contacts"],
+  contactFieldOrder: MerchantBusinessCardDraft["contactFieldOrder"],
 ) {
   const phoneValues = normalizePhoneList(Array.isArray(contacts.phones) ? contacts.phones : []);
   const primaryPhone = phoneValues[0] || normalizeText(contacts.phone);
-  const secondaryPhoneRows = phoneValues
-    .slice(primaryPhone ? 1 : 0)
-    .map((value, index) => ({ label: `电话${index + 2}`, value }));
+  return getOrderedContactFields(contactFieldOrder)
+    .flatMap(({ key, label }) => {
+      if (key === "phone") {
+        return [
+          primaryPhone ? { label: "电话", value: primaryPhone } : null,
+          ...phoneValues
+            .slice(primaryPhone ? 1 : 0)
+            .map((value, index) => ({ label: index === 0 ? "工作" : `工作${index + 1}`, value })),
+        ].filter((item): item is { label: string; value: string } => !!item);
+      }
 
-  return [
-    normalizeText(contacts.contactName)
-      ? { label: "联系人", value: normalizeText(contacts.contactName) }
-      : normalizeText(name)
-        ? { label: "联系人", value: normalizeText(name) }
-        : null,
-    primaryPhone ? { label: "电话", value: primaryPhone } : null,
-    ...secondaryPhoneRows,
-    normalizeText(contacts.email) ? { label: "邮箱", value: normalizeText(contacts.email) } : null,
-    normalizeText(contacts.address) ? { label: "地址", value: normalizeText(contacts.address) } : null,
-    normalizeText(contacts.wechat) ? { label: "微信", value: normalizeText(contacts.wechat) } : null,
-    normalizeText(contacts.whatsapp) ? { label: "WhatsApp", value: normalizeText(contacts.whatsapp) } : null,
-    normalizeText(contacts.twitter) ? { label: "Twitter", value: normalizeText(contacts.twitter) } : null,
-    normalizeText(contacts.weibo) ? { label: "微博", value: normalizeText(contacts.weibo) } : null,
-    normalizeText(contacts.telegram) ? { label: "Telegram", value: normalizeText(contacts.telegram) } : null,
-    normalizeText(contacts.linkedin) ? { label: "LinkedIn", value: normalizeText(contacts.linkedin) } : null,
-    normalizeText(contacts.discord) ? { label: "Discord", value: normalizeText(contacts.discord) } : null,
-    normalizeText(contacts.facebook) ? { label: "Facebook", value: normalizeText(contacts.facebook) } : null,
-    normalizeText(contacts.instagram) ? { label: "Instagram", value: normalizeText(contacts.instagram) } : null,
-    normalizeText(contacts.tiktok) ? { label: "TikTok", value: normalizeText(contacts.tiktok) } : null,
-    normalizeText(contacts.douyin) ? { label: "抖音", value: normalizeText(contacts.douyin) } : null,
-    normalizeText(contacts.xiaohongshu) ? { label: "小红书", value: normalizeText(contacts.xiaohongshu) } : null,
-  ].filter((item): item is { label: string; value: string } => !!item);
+      const value =
+        key === "contactName"
+          ? normalizeText(contacts.contactName) || normalizeText(name)
+          : normalizeText(contacts[key]);
+      return value ? [{ label, value }] : [];
+    });
 }
 
 function ContactCardSurface({
   name,
   targetUrl,
   contacts,
+  contactFieldOrder,
   imageUrl,
   imageHeight,
 }: {
   name: string;
   targetUrl: string;
   contacts: MerchantBusinessCardDraft["contacts"];
+  contactFieldOrder: MerchantBusinessCardDraft["contactFieldOrder"];
   imageUrl?: string;
   imageHeight: number;
 }) {
-  const rows = buildContactPreviewRows(name, contacts);
+  const rows = buildContactPreviewRows(name, contacts, contactFieldOrder);
   const displayName = normalizeText(name) || "未命名名片";
   const hasImage = Boolean(normalizeText(imageUrl));
   const domainLabel = normalizeText(targetUrl).replace(/^https?:\/\//i, "");
@@ -908,6 +902,7 @@ export default function MerchantBusinessCardManager({
     TYPOGRAPHY_FONT_SIZE_INPUT_KEY,
     selectedTypographyFontSize,
   );
+  const orderedContactFields = useMemo(() => getOrderedContactFields(draft.contactFieldOrder), [draft.contactFieldOrder]);
   const selectedTypographyFontSizeOptionValue = useMemo(() => {
     const parsed = Number(selectedTypographyFontSizeInput.trim());
     if (!Number.isFinite(parsed)) return "";
@@ -916,7 +911,17 @@ export default function MerchantBusinessCardManager({
   }, [selectedTypographyFontSizeInput]);
   const positionEditorItems = useMemo(
     () => [
-      ...TEXT_LAYOUT_FIELDS.map((item) => ({
+      ...TEXT_LAYOUT_FIELDS.filter(
+        (item) =>
+          item.key === "merchantName" ||
+          item.key === "title" ||
+          item.key === "website",
+      ).map((item) => ({
+        id: item.key,
+        label: item.label,
+        kind: "field" as const,
+      })),
+      ...orderedContactFields.map((item) => ({
         id: item.key,
         label: item.label,
         kind: "field" as const,
@@ -928,7 +933,7 @@ export default function MerchantBusinessCardManager({
         customTextId: item.id,
       })),
     ],
-    [draft.customTexts],
+    [draft.customTexts, orderedContactFields],
   );
   const scale = useMemo(
     () => Math.min(1, 520 / Math.max(1, draft.width), 460 / Math.max(1, draft.height)),
@@ -973,10 +978,11 @@ export default function MerchantBusinessCardManager({
         name: draft.name,
         title: draft.title,
         contacts: draft.contacts,
+        contactFieldOrder: draft.contactFieldOrder,
         targetUrl: websiteUrl,
       }),
     });
-  }, [activeLinkShareKey, draft.contacts, draft.mode, draft.name, draft.title, websiteUrl]);
+  }, [activeLinkShareKey, draft.contactFieldOrder, draft.contacts, draft.mode, draft.name, draft.title, websiteUrl]);
   const qrTargetUrl = draft.mode === "link" ? draftLinkUrl || websiteUrl : websiteUrl;
 
   useEffect(() => {
@@ -1214,6 +1220,24 @@ export default function MerchantBusinessCardManager({
     }));
   };
 
+  const moveContactField = (key: MerchantBusinessCardEditableContactFieldKey, direction: "up" | "down") => {
+    applyDraft((current) => {
+      const currentOrder = normalizeMerchantBusinessCardContactFieldOrder(current.contactFieldOrder);
+      const currentIndex = currentOrder.indexOf(key);
+      if (currentIndex < 0) return current;
+      const nextIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+      if (nextIndex < 0 || nextIndex >= currentOrder.length) return current;
+      const nextOrder = [...currentOrder];
+      [nextOrder[currentIndex], nextOrder[nextIndex]] = [nextOrder[nextIndex], nextOrder[currentIndex]];
+      return {
+        ...current,
+        contactFieldOrder: nextOrder,
+        textLayout: applyMerchantBusinessCardContactFieldOrderToTextLayout(current.textLayout, nextOrder),
+      };
+    });
+    setSingleSelectedField(key);
+  };
+
   const updateContactOnlyField = (
     key: keyof MerchantBusinessCardDraft["contactOnlyFields"],
     checked: boolean,
@@ -1245,6 +1269,7 @@ export default function MerchantBusinessCardManager({
         name: card.name,
         title: card.title,
         contacts: card.contacts,
+        contactFieldOrder: card.contactFieldOrder,
         targetUrl,
       }),
     };
@@ -1373,6 +1398,7 @@ export default function MerchantBusinessCardManager({
   const previewName = normalizeText(previewAsset?.name) || normalizeText(draft.name) || "名片预览";
   const previewTitle = normalizeText(previewAsset?.title) || normalizeText(draft.title);
   const previewContacts = previewAsset?.contacts || draft.contacts;
+  const previewContactFieldOrder = previewAsset?.contactFieldOrder || draft.contactFieldOrder;
   const previewContactImageUrl =
     normalizeText(previewAsset?.contactPagePublicImageUrl) ||
     normalizeText(previewAsset?.contactPageImageUrl) ||
@@ -1688,82 +1714,96 @@ export default function MerchantBusinessCardManager({
                   </section>
                   <section className="space-y-2.5 rounded-xl border bg-slate-50 p-3 xl:col-span-2">
                     <div className="text-sm font-semibold text-slate-900">联系方式</div>
-                    <div className="rounded-xl border bg-white p-3">
-                      <div className="mb-2 flex items-center justify-between gap-2">
-                        <div className="text-xs font-medium text-slate-700">{`电话（最多 ${MERCHANT_BUSINESS_CARD_PHONE_LIMIT} 个）`}</div>
-                        <div className="flex flex-wrap items-center justify-end gap-2">
-                          <label className="flex items-center gap-2 rounded border bg-slate-50 px-3 py-1.5 text-[11px] text-slate-700">
-                            <input
-                              type="checkbox"
-                              checked={draft.contactOnlyFields.phone}
-                              onChange={(event) => updateContactOnlyField("phone", event.target.checked)}
-                            />
-                            仅联系卡展示
-                          </label>
-                          <button
-                            type="button"
-                            className="rounded border bg-white px-2 py-1 text-xs hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                            onClick={() => updateDraftPhones([...contactPhoneEditorValues, ""])}
-                            disabled={!canAddPhone}
-                          >
-                            增加电话
-                          </button>
-                        </div>
-                      </div>
-                      <div className="space-y-2">
-                        {contactPhoneEditorValues.map((phone, index) => (
-                          <div key={`phone-${index}`} className="flex items-center gap-2">
-                            <input
-                              className="w-full rounded border bg-white px-3 py-2 text-sm"
-                              value={phone}
-                              onFocus={() => setSingleSelectedField("phone")}
-                              onChange={(event) => {
-                                const next = [...contactPhoneEditorValues];
-                                next[index] = event.target.value;
-                                updateDraftPhones(next);
-                              }}
-                              placeholder={`请输入电话${contactPhoneEditorValues.length > 1 ? index + 1 : ""}`}
-                            />
-                            <button
-                              type="button"
-                              className="rounded border bg-white px-2 py-2 text-xs hover:bg-slate-50 disabled:opacity-50"
-                              onClick={() => {
-                                const next = contactPhoneEditorValues.filter((_, removeIndex) => removeIndex !== index);
-                                updateDraftPhones(next.length > 0 ? next : [""]);
-                              }}
-                              disabled={contactPhoneEditorValues.length <= 1}
-                            >
-                              删除
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="grid gap-3 md:grid-cols-2">
-                      {CONTACT_FIELDS.filter(({ key }) => key !== "phone").map(({ key, label }) => (
-                        <div key={key} className="block text-xs text-slate-600">
-                          <div>{label}</div>
-                          <div className="mt-1 grid gap-2 md:grid-cols-[minmax(0,1fr)_140px]">
-                            <input
-                              className="w-full rounded border bg-white px-3 py-2 text-sm"
-                              value={draft.contacts[key]}
-                              onFocus={() => setSingleSelectedField(key)}
-                              onChange={(event) =>
-                                applyDraft((current) => ({ ...current, contacts: { ...current.contacts, [key]: event.target.value } }))
-                              }
-                              placeholder={`请输入${label}`}
-                            />
-                            <label className="flex items-center gap-2 rounded border bg-slate-50 px-3 py-2 text-[11px] text-slate-700">
+                    <div className="space-y-3">
+                      {orderedContactFields.map(({ key, label }, index) => {
+                        const canMoveUp = index > 0;
+                        const canMoveDown = index < orderedContactFields.length - 1;
+                        return (
+                          <div key={key} className="rounded-xl border bg-white p-3 text-xs text-slate-600">
+                            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                              <div className="text-xs font-medium text-slate-700">
+                                {key === "phone" ? `电话（最多 ${MERCHANT_BUSINESS_CARD_PHONE_LIMIT} 个）` : label}
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <button
+                                  type="button"
+                                  className="rounded border bg-white px-2 py-1 text-[11px] hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                  onClick={() => moveContactField(key, "up")}
+                                  disabled={!canMoveUp}
+                                >
+                                  上移
+                                </button>
+                                <button
+                                  type="button"
+                                  className="rounded border bg-white px-2 py-1 text-[11px] hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                  onClick={() => moveContactField(key, "down")}
+                                  disabled={!canMoveDown}
+                                >
+                                  下移
+                                </button>
+                                <label className="flex items-center gap-2 rounded border bg-slate-50 px-3 py-1.5 text-[11px] text-slate-700">
+                                  <input
+                                    type="checkbox"
+                                    checked={draft.contactOnlyFields[key]}
+                                    onChange={(event) => updateContactOnlyField(key, event.target.checked)}
+                                  />
+                                  仅联系卡展示
+                                </label>
+                                {key === "phone" ? (
+                                  <button
+                                    type="button"
+                                    className="rounded border bg-white px-2 py-1 text-[11px] hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                    onClick={() => updateDraftPhones([...contactPhoneEditorValues, ""])}
+                                    disabled={!canAddPhone}
+                                  >
+                                    增加电话
+                                  </button>
+                                ) : null}
+                              </div>
+                            </div>
+                            {key === "phone" ? (
+                              <div className="space-y-2">
+                                {contactPhoneEditorValues.map((phone, phoneIndex) => (
+                                  <div key={`phone-${phoneIndex}`} className="flex items-center gap-2">
+                                    <input
+                                      className="w-full rounded border bg-white px-3 py-2 text-sm"
+                                      value={phone}
+                                      onFocus={() => setSingleSelectedField("phone")}
+                                      onChange={(event) => {
+                                        const next = [...contactPhoneEditorValues];
+                                        next[phoneIndex] = event.target.value;
+                                        updateDraftPhones(next);
+                                      }}
+                                      placeholder={`请输入电话${contactPhoneEditorValues.length > 1 ? phoneIndex + 1 : ""}`}
+                                    />
+                                    <button
+                                      type="button"
+                                      className="rounded border bg-white px-2 py-2 text-xs hover:bg-slate-50 disabled:opacity-50"
+                                      onClick={() => {
+                                        const next = contactPhoneEditorValues.filter((_, removeIndex) => removeIndex !== phoneIndex);
+                                        updateDraftPhones(next.length > 0 ? next : [""]);
+                                      }}
+                                      disabled={contactPhoneEditorValues.length <= 1}
+                                    >
+                                      删除
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
                               <input
-                                type="checkbox"
-                                checked={draft.contactOnlyFields[key]}
-                                onChange={(event) => updateContactOnlyField(key, event.target.checked)}
+                                className="w-full rounded border bg-white px-3 py-2 text-sm"
+                                value={draft.contacts[key]}
+                                onFocus={() => setSingleSelectedField(key)}
+                                onChange={(event) =>
+                                  applyDraft((current) => ({ ...current, contacts: { ...current.contacts, [key]: event.target.value } }))
+                                }
+                                placeholder={`请输入${label}`}
                               />
-                              仅联系卡展示
-                            </label>
+                            )}
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </section>
                   <section className="space-y-2.5 rounded-xl border bg-slate-50 p-3 xl:col-span-2">
@@ -2081,6 +2121,7 @@ export default function MerchantBusinessCardManager({
                       name={previewName}
                       targetUrl={previewTargetUrl}
                       contacts={previewContacts}
+                      contactFieldOrder={previewContactFieldOrder}
                       imageUrl={previewContactImageUrl}
                       imageHeight={previewContactImageHeight}
                     />
@@ -2643,6 +2684,7 @@ export default function MerchantBusinessCardManager({
             name: nextDraft.name,
             title: nextDraft.title,
             contacts: nextDraft.contacts,
+            contactFieldOrder: nextDraft.contactFieldOrder,
             targetUrl: websiteUrl,
           })
         : undefined;
@@ -2742,6 +2784,7 @@ export default function MerchantBusinessCardManager({
           name: asset.name,
           title: asset.title,
           contacts: asset.contacts,
+          contactFieldOrder: asset.contactFieldOrder,
           targetUrl: normalizedUrl,
         }),
       });
@@ -2777,6 +2820,7 @@ export default function MerchantBusinessCardManager({
           name: card.name,
           title: card.title,
           contacts: card.contacts,
+          contactFieldOrder: card.contactFieldOrder,
           targetUrl,
         }),
       });
@@ -2811,6 +2855,7 @@ export default function MerchantBusinessCardManager({
           name: asset.name,
           title: asset.title,
           contacts: asset.contacts,
+          contactFieldOrder: asset.contactFieldOrder,
           targetUrl: normalizedUrl,
         }),
       });
@@ -2850,6 +2895,7 @@ export default function MerchantBusinessCardManager({
           name: card.name,
           title: card.title,
           contacts: card.contacts,
+          contactFieldOrder: card.contactFieldOrder,
           targetUrl,
         }),
       });
@@ -2900,28 +2946,18 @@ export default function MerchantBusinessCardManager({
     name: string;
     title: string;
     contacts: MerchantBusinessCardDraft["contacts"];
+    contactFieldOrder: MerchantBusinessCardDraft["contactFieldOrder"];
     targetUrl: string;
   }) {
+    const orderedKeys = normalizeMerchantBusinessCardContactFieldOrder(input.contactFieldOrder);
     const extraPhoneLines = normalizePhoneList(input.contacts.phones ?? [])
       .slice(1)
       .map((value, index) => `${index === 0 ? "工作" : `工作${index + 1}`}: ${value}`);
-    const socialLines = [
-      ["微信", input.contacts.wechat],
-      ["WhatsApp", input.contacts.whatsapp],
-      ["Twitter", input.contacts.twitter],
-      ["微博", input.contacts.weibo],
-      ["Telegram", input.contacts.telegram],
-      ["LinkedIn", input.contacts.linkedin],
-      ["Discord", input.contacts.discord],
-      ["Facebook", input.contacts.facebook],
-      ["Instagram", input.contacts.instagram],
-      ["TikTok", input.contacts.tiktok],
-      ["抖音", input.contacts.douyin],
-      ["小红书", input.contacts.xiaohongshu],
-    ]
-      .map(([label, value]) => {
-        const normalizedValue = normalizeText(value);
-        return normalizedValue ? `${label}: ${normalizedValue}` : "";
+    const socialLines = orderedKeys
+      .filter((key) => key !== "contactName" && key !== "phone" && key !== "email" && key !== "address")
+      .map((key) => {
+        const normalizedValue = normalizeText(input.contacts[key]);
+        return normalizedValue ? `${CONTACT_FIELD_LABELS[key]}: ${normalizedValue}` : "";
       })
       .filter(Boolean);
     const primaryPhone =
@@ -2947,6 +2983,7 @@ export default function MerchantBusinessCardManager({
       tiktok: normalizeText(input.contacts.tiktok),
       douyin: normalizeText(input.contacts.douyin),
       xiaohongshu: normalizeText(input.contacts.xiaohongshu),
+      contactFieldOrder: orderedKeys,
       websiteUrl: normalizeText(input.targetUrl),
       note: [...extraPhoneLines, ...socialLines].join("\n"),
     };

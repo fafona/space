@@ -81,6 +81,25 @@ export type MerchantBusinessCardContacts = {
 
 export type MerchantBusinessCardContactDisplayKey = Exclude<keyof MerchantBusinessCardContacts, "phones">;
 
+export const MERCHANT_BUSINESS_CARD_CONTACT_FIELD_KEYS = [
+  "contactName",
+  "phone",
+  "email",
+  "address",
+  "wechat",
+  "whatsapp",
+  "twitter",
+  "weibo",
+  "facebook",
+  "instagram",
+  "tiktok",
+  "xiaohongshu",
+  "douyin",
+  "telegram",
+  "linkedin",
+  "discord",
+] as const satisfies readonly MerchantBusinessCardContactDisplayKey[];
+
 export type MerchantBusinessCardContactOnlyFields = Record<
   MerchantBusinessCardContactDisplayKey,
   boolean
@@ -105,6 +124,7 @@ export type MerchantBusinessCardDraft = {
   showWebsiteUrl: boolean;
   showQr: boolean;
   contacts: MerchantBusinessCardContacts;
+  contactFieldOrder: MerchantBusinessCardContactDisplayKey[];
   contactOnlyFields: MerchantBusinessCardContactOnlyFields;
   customTexts: MerchantBusinessCardCustomText[];
   textLayout: MerchantBusinessCardTextLayout;
@@ -173,6 +193,30 @@ function normalizePhoneList(value: unknown) {
     : [];
 }
 
+export function normalizeMerchantBusinessCardContactFieldOrder(value: unknown): MerchantBusinessCardContactDisplayKey[] {
+  const seen = new Set<MerchantBusinessCardContactDisplayKey>();
+  const normalized = Array.isArray(value)
+    ? value.filter(
+        (item): item is MerchantBusinessCardContactDisplayKey =>
+          typeof item === "string" &&
+          (MERCHANT_BUSINESS_CARD_CONTACT_FIELD_KEYS as readonly string[]).includes(item),
+      )
+    : [];
+
+  const ordered: MerchantBusinessCardContactDisplayKey[] = [];
+  for (const key of normalized) {
+    if (seen.has(key)) continue;
+    seen.add(key);
+    ordered.push(key);
+  }
+  for (const key of MERCHANT_BUSINESS_CARD_CONTACT_FIELD_KEYS) {
+    if (seen.has(key)) continue;
+    seen.add(key);
+    ordered.push(key);
+  }
+  return ordered;
+}
+
 function createDefaultContactOnlyFields(): MerchantBusinessCardContactOnlyFields {
   return {
     contactName: false,
@@ -232,26 +276,12 @@ export function buildMerchantBusinessCardAddress(profile: MerchantBusinessCardPr
 }
 
 function createDefaultMerchantBusinessCardTextLayout(): MerchantBusinessCardTextLayout {
+  const contactLayout = buildOrderedMerchantBusinessCardContactTextLayout(MERCHANT_BUSINESS_CARD_CONTACT_FIELD_KEYS);
   return {
     merchantName: { x: 36, y: 34 },
     title: { x: 36, y: 92 },
     website: { x: 36, y: 136 },
-    contactName: { x: 36, y: 190 },
-    phone: { x: 36, y: 220 },
-    email: { x: 36, y: 250 },
-    address: { x: 36, y: 280 },
-    wechat: { x: 36, y: 310 },
-    whatsapp: { x: 36, y: 340 },
-    twitter: { x: 36, y: 370 },
-    weibo: { x: 36, y: 400 },
-    facebook: { x: 360, y: 190 },
-    instagram: { x: 360, y: 220 },
-    tiktok: { x: 360, y: 250 },
-    xiaohongshu: { x: 360, y: 280 },
-    douyin: { x: 360, y: 310 },
-    telegram: { x: 360, y: 340 },
-    linkedin: { x: 360, y: 370 },
-    discord: { x: 360, y: 400 },
+    ...contactLayout,
   };
 }
 
@@ -276,6 +306,49 @@ const LEGACY_MERCHANT_BUSINESS_CARD_TEXT_LAYOUT: MerchantBusinessCardTextLayout 
   douyin: { x: 360, y: 442 },
   xiaohongshu: { x: 360, y: 298 },
 };
+
+const MERCHANT_BUSINESS_CARD_CONTACT_LAYOUT_SLOTS = [
+  { x: 36, y: 190 },
+  { x: 36, y: 220 },
+  { x: 36, y: 250 },
+  { x: 36, y: 280 },
+  { x: 36, y: 310 },
+  { x: 36, y: 340 },
+  { x: 36, y: 370 },
+  { x: 36, y: 400 },
+  { x: 360, y: 190 },
+  { x: 360, y: 220 },
+  { x: 360, y: 250 },
+  { x: 360, y: 280 },
+  { x: 360, y: 310 },
+  { x: 360, y: 340 },
+  { x: 360, y: 370 },
+  { x: 360, y: 400 },
+] as const;
+
+export function buildOrderedMerchantBusinessCardContactTextLayout(
+  order: readonly MerchantBusinessCardContactDisplayKey[],
+): Record<MerchantBusinessCardContactDisplayKey, { x: number; y: number }> {
+  const normalizedOrder = normalizeMerchantBusinessCardContactFieldOrder(order);
+  return Object.fromEntries(
+    normalizedOrder.map((key, index) => {
+      const slot =
+        MERCHANT_BUSINESS_CARD_CONTACT_LAYOUT_SLOTS[index] ??
+        MERCHANT_BUSINESS_CARD_CONTACT_LAYOUT_SLOTS[MERCHANT_BUSINESS_CARD_CONTACT_LAYOUT_SLOTS.length - 1];
+      return [key, { x: slot.x, y: slot.y }];
+    }),
+  ) as Record<MerchantBusinessCardContactDisplayKey, { x: number; y: number }>;
+}
+
+export function applyMerchantBusinessCardContactFieldOrderToTextLayout(
+  textLayout: MerchantBusinessCardTextLayout,
+  order: readonly MerchantBusinessCardContactDisplayKey[],
+): MerchantBusinessCardTextLayout {
+  return {
+    ...textLayout,
+    ...buildOrderedMerchantBusinessCardContactTextLayout(order),
+  };
+}
 
 function resolveTextLayoutEntry(
   key: MerchantBusinessCardFieldKey,
@@ -309,6 +382,7 @@ export function getMerchantBusinessCardRequiredFields(profile: MerchantBusinessC
 export function createDefaultMerchantBusinessCardDraft(
   profile: MerchantBusinessCardProfileInput,
 ): MerchantBusinessCardDraft {
+  const contactFieldOrder = normalizeMerchantBusinessCardContactFieldOrder(MERCHANT_BUSINESS_CARD_CONTACT_FIELD_KEYS);
   const textLayout = createDefaultMerchantBusinessCardTextLayout();
   const typography: MerchantBusinessCardTypographyMap = {
     name: {
@@ -380,6 +454,7 @@ export function createDefaultMerchantBusinessCardDraft(
       douyin: "",
       xiaohongshu: "",
     },
+    contactFieldOrder,
     contactOnlyFields: createDefaultContactOnlyFields(),
     customTexts: [],
     textLayout,
@@ -417,6 +492,13 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
   const fallback = createDefaultMerchantBusinessCardDraft({});
   const source = value && typeof value === "object" ? (value as Partial<MerchantBusinessCardDraft>) : {};
   const normalizedPhoneList = normalizePhoneList((source.contacts as { phones?: unknown } | undefined)?.phones);
+  const contactFieldOrder = normalizeMerchantBusinessCardContactFieldOrder(
+    (source as { contactFieldOrder?: unknown }).contactFieldOrder,
+  );
+  const textLayoutFallback = {
+    ...fallback.textLayout,
+    ...buildOrderedMerchantBusinessCardContactTextLayout(contactFieldOrder),
+  };
   const ratioMode = normalizeText(source.ratioMode) as MerchantBusinessCardRatioOptionId;
   const textLayoutSource =
     source.textLayout && typeof source.textLayout === "object"
@@ -498,6 +580,7 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
       douyin: normalizeText((source.contacts as { douyin?: unknown } | undefined)?.douyin),
       xiaohongshu: normalizeText(source.contacts?.xiaohongshu),
     },
+    contactFieldOrder,
     contactOnlyFields: {
       contactName: normalizeBoolean(contactOnlyFieldsSource.contactName, fallback.contactOnlyFields.contactName),
       phone: normalizeBoolean(contactOnlyFieldsSource.phone, fallback.contactOnlyFields.phone),
@@ -518,25 +601,25 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
     },
     customTexts,
     textLayout: {
-      merchantName: resolveTextLayoutEntry("merchantName", textLayoutSource, fallback.textLayout),
-      title: resolveTextLayoutEntry("title", textLayoutSource, fallback.textLayout),
-      website: resolveTextLayoutEntry("website", textLayoutSource, fallback.textLayout),
-      contactName: resolveTextLayoutEntry("contactName", textLayoutSource, fallback.textLayout),
-      phone: resolveTextLayoutEntry("phone", textLayoutSource, fallback.textLayout),
-      email: resolveTextLayoutEntry("email", textLayoutSource, fallback.textLayout),
-      address: resolveTextLayoutEntry("address", textLayoutSource, fallback.textLayout),
-      wechat: resolveTextLayoutEntry("wechat", textLayoutSource, fallback.textLayout),
-      whatsapp: resolveTextLayoutEntry("whatsapp", textLayoutSource, fallback.textLayout),
-      twitter: resolveTextLayoutEntry("twitter", textLayoutSource, fallback.textLayout),
-      weibo: resolveTextLayoutEntry("weibo", textLayoutSource, fallback.textLayout),
-      telegram: resolveTextLayoutEntry("telegram", textLayoutSource, fallback.textLayout),
-      linkedin: resolveTextLayoutEntry("linkedin", textLayoutSource, fallback.textLayout),
-      discord: resolveTextLayoutEntry("discord", textLayoutSource, fallback.textLayout),
-      facebook: resolveTextLayoutEntry("facebook", textLayoutSource, fallback.textLayout),
-      instagram: resolveTextLayoutEntry("instagram", textLayoutSource, fallback.textLayout),
-      tiktok: resolveTextLayoutEntry("tiktok", textLayoutSource, fallback.textLayout),
-      douyin: resolveTextLayoutEntry("douyin", textLayoutSource, fallback.textLayout),
-      xiaohongshu: resolveTextLayoutEntry("xiaohongshu", textLayoutSource, fallback.textLayout),
+      merchantName: resolveTextLayoutEntry("merchantName", textLayoutSource, textLayoutFallback),
+      title: resolveTextLayoutEntry("title", textLayoutSource, textLayoutFallback),
+      website: resolveTextLayoutEntry("website", textLayoutSource, textLayoutFallback),
+      contactName: resolveTextLayoutEntry("contactName", textLayoutSource, textLayoutFallback),
+      phone: resolveTextLayoutEntry("phone", textLayoutSource, textLayoutFallback),
+      email: resolveTextLayoutEntry("email", textLayoutSource, textLayoutFallback),
+      address: resolveTextLayoutEntry("address", textLayoutSource, textLayoutFallback),
+      wechat: resolveTextLayoutEntry("wechat", textLayoutSource, textLayoutFallback),
+      whatsapp: resolveTextLayoutEntry("whatsapp", textLayoutSource, textLayoutFallback),
+      twitter: resolveTextLayoutEntry("twitter", textLayoutSource, textLayoutFallback),
+      weibo: resolveTextLayoutEntry("weibo", textLayoutSource, textLayoutFallback),
+      telegram: resolveTextLayoutEntry("telegram", textLayoutSource, textLayoutFallback),
+      linkedin: resolveTextLayoutEntry("linkedin", textLayoutSource, textLayoutFallback),
+      discord: resolveTextLayoutEntry("discord", textLayoutSource, textLayoutFallback),
+      facebook: resolveTextLayoutEntry("facebook", textLayoutSource, textLayoutFallback),
+      instagram: resolveTextLayoutEntry("instagram", textLayoutSource, textLayoutFallback),
+      tiktok: resolveTextLayoutEntry("tiktok", textLayoutSource, textLayoutFallback),
+      douyin: resolveTextLayoutEntry("douyin", textLayoutSource, textLayoutFallback),
+      xiaohongshu: resolveTextLayoutEntry("xiaohongshu", textLayoutSource, textLayoutFallback),
     },
     qr: {
       x: clampInt(source.qr?.x, fallback.qr.x, 0, 2000),

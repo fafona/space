@@ -233,6 +233,24 @@ test("share helpers preserve douyin contact params", () => {
   assert.equal(parsed?.contact?.douyin, "fafona_douyin");
 });
 
+test("share helpers preserve explicit contact field order", () => {
+  const shareUrl = buildMerchantBusinessCardShareUrl({
+    origin: "https://faolla.com",
+    name: "fafona",
+    targetUrl: "https://fafona.faolla.com",
+    contact: {
+      displayName: "Felix",
+      phone: "633130577",
+      wechat: "KD66769",
+      douyin: "fafona_douyin",
+      contactFieldOrder: ["wechat", "phone", "douyin"],
+    },
+  });
+
+  const parsed = parseMerchantBusinessCardShareParams(new URL(shareUrl).searchParams, "https://faolla.com");
+  assert.deepEqual(parsed?.contact?.contactFieldOrder?.slice(0, 4), ["wechat", "phone", "douyin", "contactName"]);
+});
+
 test("normalizeMerchantBusinessCardShareImageUrl rewrites localhost storage urls to preferred public origin", () => {
   assert.equal(
     normalizeMerchantBusinessCardShareImageUrl(
@@ -289,7 +307,7 @@ test("business card contact helpers build downloadable vcard links and content",
       targetUrl: payload.targetUrl,
       contact: payload.contact,
     }),
-    "https://faolla.com/share/business-card/contact?image=https%3A%2F%2Ffaolla.com%2Fstorage%2Fv1%2Fobject%2Fpublic%2Fpage-assets%2Fcard.png&detailImage=https%3A%2F%2Ffaolla.com%2Fstorage%2Fv1%2Fobject%2Fpublic%2Fpage-assets%2Fcontact.png&target=https%3A%2F%2Ffafona.faolla.com%2F&name=fafona&contactName=Felix&organization=fafona&title=Manager&phone=633130577&email=caimin00x%40gmail.com&address=C.+Transporte%2C+12+%2F+41007+%2F+Sevilla+%2F+Sevilla+%2F+Spain&website=https%3A%2F%2Ffafona.faolla.com%2F&note=WhatsApp%3A+felix",
+    "https://faolla.com/share/business-card/contact?image=https%3A%2F%2Ffaolla.com%2Fstorage%2Fv1%2Fobject%2Fpublic%2Fpage-assets%2Fcard.png&detailImage=https%3A%2F%2Ffaolla.com%2Fstorage%2Fv1%2Fobject%2Fpublic%2Fpage-assets%2Fcontact.png&target=https%3A%2F%2Ffafona.faolla.com%2F&name=fafona&contactName=Felix&organization=fafona&title=Manager&phone=633130577&phones=633130577%2C666888999&email=caimin00x%40gmail.com&address=C.+Transporte%2C+12+%2F+41007+%2F+Sevilla+%2F+Sevilla+%2F+Spain&website=https%3A%2F%2Ffafona.faolla.com%2F&note=WhatsApp%3A+felix",
   );
   const vcard = buildMerchantBusinessCardVCard(payload);
   assert.match(buildMerchantBusinessCardVCardFileName(payload), /^felix-card\d{5}\.vcf$/);

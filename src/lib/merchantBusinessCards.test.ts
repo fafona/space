@@ -53,6 +53,7 @@ test("default business card draft prefills merchant profile fields", () => {
   assert.equal(draft.contacts.email, "caimin00x@gmail.com");
   assert.equal(draft.contacts.address, "C. Transporte, 12 / Sevilla / Sevilla / Spain");
   assert.equal(draft.contacts.douyin, "");
+  assert.deepEqual(draft.contactFieldOrder.slice(0, 4), ["contactName", "phone", "email", "address"]);
   assert.deepEqual(draft.textLayout.douyin, { x: 360, y: 310 });
   assert.equal(draft.contactOnlyFields.phone, false);
   assert.equal(draft.contactOnlyFields.douyin, false);
@@ -87,6 +88,18 @@ test("normalizeMerchantBusinessCardDraft keeps at most two phones", () => {
 
   assert.equal(draft.contacts.phone, "111");
   assert.deepEqual(draft.contacts.phones, ["111", "222"]);
+});
+
+test("normalizeMerchantBusinessCardDraft reorders contact fields and text layout together", () => {
+  const draft = normalizeMerchantBusinessCardDraft({
+    contactFieldOrder: ["wechat", "phone", "contactName", "douyin"],
+  });
+
+  assert.deepEqual(draft.contactFieldOrder.slice(0, 4), ["wechat", "phone", "contactName", "douyin"]);
+  assert.deepEqual(draft.textLayout.wechat, { x: 36, y: 190 });
+  assert.deepEqual(draft.textLayout.phone, { x: 36, y: 220 });
+  assert.deepEqual(draft.textLayout.contactName, { x: 36, y: 250 });
+  assert.deepEqual(draft.textLayout.douyin, { x: 36, y: 280 });
 });
 
 test("normalizeMerchantBusinessCardDraft migrates legacy social layout into visible area", () => {
