@@ -4238,26 +4238,39 @@ export default function AdminClient({
       const storageKeys = [resolvedSupabaseAuthStorageKey, legacySupabaseAuthStorageKey].filter(
         (value, index, list) => value && list.indexOf(value) === index,
       );
-      for (const storageKey of storageKeys) {
+      const storages: Storage[] = [];
+      for (const candidate of [window.localStorage, window.sessionStorage]) {
         try {
-          const raw = window.localStorage.getItem(storageKey);
-          if (!raw) continue;
-          const parsed = JSON.parse(raw) as unknown;
-          const tokens = extractTokens(parsed);
-          if (!tokens) continue;
-          const { data } = await withTimeout(
-            supabase.auth.setSession(tokens),
-            Math.max(3000, Math.min(8000, AUTH_CHECK_TIMEOUT_MS)),
-            "本地会话恢复超时",
-          );
-          if (data.session) return data.session;
-        } catch (error) {
-          const message = error instanceof Error ? error.message : "";
-          if (isInvalidRefreshTokenMessage(message)) {
-            try {
-              window.localStorage.removeItem(storageKey);
-            } catch {
-              // ignore localStorage failure
+          const probeKey = "__merchant_auth_probe__";
+          candidate.setItem(probeKey, "1");
+          candidate.removeItem(probeKey);
+          storages.push(candidate);
+        } catch {
+          // Ignore unavailable browser storage.
+        }
+      }
+      for (const storage of storages) {
+        for (const storageKey of storageKeys) {
+          try {
+            const raw = storage.getItem(storageKey);
+            if (!raw) continue;
+            const parsed = JSON.parse(raw) as unknown;
+            const tokens = extractTokens(parsed);
+            if (!tokens) continue;
+            const { data } = await withTimeout(
+              supabase.auth.setSession(tokens),
+              Math.max(3000, Math.min(8000, AUTH_CHECK_TIMEOUT_MS)),
+              "本地会话恢复超时",
+            );
+            if (data.session) return data.session;
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "";
+            if (isInvalidRefreshTokenMessage(message)) {
+              try {
+                storage.removeItem(storageKey);
+              } catch {
+                // ignore storage cleanup failure
+              }
             }
           }
         }
@@ -4356,10 +4369,16 @@ export default function AdminClient({
               "登录校验超时，已回退到重新登录",
             );
             if (error || !data.user) {
-              await supabase.auth.signOut({ scope: "local" }).catch(() => {
-                // ignore local session cleanup failure
-              });
-              session = null;
+              const recoveredSession = await recoverSession(Math.max(2200, Math.min(6000, AUTH_CHECK_TIMEOUT_MS)));
+              if (!mounted) return;
+              if (!recoveredSession?.user) {
+                await supabase.auth.signOut({ scope: "local" }).catch(() => {
+                  // ignore local session cleanup failure
+                });
+                session = null;
+              } else {
+                session = recoveredSession;
+              }
             } else {
               session = { ...session, user: data.user };
             }
