@@ -54,7 +54,7 @@ test("default business card draft prefills merchant profile fields", () => {
   assert.equal(draft.contacts.address, "C. Transporte, 12 / Sevilla / Sevilla / Spain");
   assert.equal(draft.fieldTypography.merchantName.fontSize, 36);
   assert.equal(draft.fieldTypography.contactName.fontSize, 14);
-  assert.ok(draft.websiteLabel.length > 0);
+  assert.equal(draft.websiteLabel, "");
 });
 
 test("normalizeMerchantBusinessCardDraft preserves link mode", () => {
