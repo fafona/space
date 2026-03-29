@@ -193,7 +193,6 @@ import {
   localizePagePlanConfigSystemDefaults,
   localizeSystemDefaultText,
   prepareEditorSystemDefaultTranslations,
-  resolveCanonicalSystemDefaultText,
   resolveLocalizedSystemDefaultText,
 } from "@/lib/editorSystemDefaults";
 
@@ -1183,10 +1182,6 @@ const MERCHANT_ONBOARDING_BLOCKS: Block[] = (() => {
 
 function getLocalizedSystemDefaultPageName(locale: string, index: number) {
   return localizeSystemDefaultText(`页面${index + 1}`, locale);
-}
-
-function getCanonicalSystemDefaultPageName(index: number) {
-  return `页面${index + 1}`;
 }
 
 function isCommonCanvasBlockType(type: Block["type"]): type is "common" {
@@ -3786,11 +3781,8 @@ export default function AdminClient({
               pageId: typeof item?.pageId === "string" ? item.pageId.trim() : "",
               label:
                 typeof item?.label === "string"
-                  ? toPlainText(
-                      resolveCanonicalSystemDefaultText(item.label, getCanonicalSystemDefaultPageName(idx)),
-                      getCanonicalSystemDefaultPageName(idx),
-                    )
-                  : getCanonicalSystemDefaultPageName(idx),
+                  ? toPlainText(localizeSystemDefaultText(item.label, locale), getLocalizedSystemDefaultPageName(locale, idx))
+                  : getLocalizedSystemDefaultPageName(locale, idx),
             }))
             .filter((item) => !!item.pageId);
           if (desiredPages.length > 0) {
@@ -3811,10 +3803,7 @@ export default function AdminClient({
                 id: desired.pageId,
                 name:
                   desired.label ||
-                  toPlainText(
-                    resolveCanonicalSystemDefaultText(existing?.name ?? "", getCanonicalSystemDefaultPageName(idx)),
-                    getCanonicalSystemDefaultPageName(idx),
-                  ),
+                  toPlainText(localizeSystemDefaultText(existing?.name ?? "", locale), getLocalizedSystemDefaultPageName(locale, idx)),
                 blocks: rebuiltBlocks,
               };
             });
@@ -8275,12 +8264,7 @@ type GalleryEditorImage = {
 
   function commitNavItems(nextItems: NavEditorItem[]) {
     if (block.type !== "nav") return;
-    onChange({
-      navItems: nextItems.map((item, idx) => ({
-        ...item,
-        label: resolveCanonicalSystemDefaultText(item.label, getCanonicalSystemDefaultPageName(idx)),
-      })),
-    });
+    onChange({ navItems: nextItems });
   }
 
   function updateNavItem(id: string, patch: Partial<NavEditorItem>) {
@@ -8299,7 +8283,7 @@ type GalleryEditorImage = {
       ...current,
       {
         id: `nav-item-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        label: getCanonicalSystemDefaultPageName(current.length),
+        label: localizeSystemDefaultText(`页面${current.length + 1}`, locale),
         pageId: nextPageId,
       },
     ]);
