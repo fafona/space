@@ -7835,6 +7835,7 @@ type GalleryEditorImage = {
     startRotateDeg: number;
   } | null>(null);
   const activeEditorRef = useRef<HTMLDivElement | null>(null);
+  const suppressNextBlockClickRef = useRef(false);
   const selectedRangeRef = useRef<Range | null>(null);
   const [imageDialogOpen, setImageDialogOpen] = useState(false);
   const [imageUrlInput, setImageUrlInput] = useState("");
@@ -9860,6 +9861,7 @@ type GalleryEditorImage = {
     if (isSelected) return;
     const target = event.target;
     if (!(target instanceof Element)) {
+      suppressNextBlockClickRef.current = true;
       onSelect();
       event.preventDefault();
       event.stopPropagation();
@@ -9867,7 +9869,19 @@ type GalleryEditorImage = {
     }
     if (target.closest("[data-editor-toolbar]")) return;
     if (target.closest("[data-editor-overlay]")) return;
+    suppressNextBlockClickRef.current = true;
     onSelect();
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  function handleBlockShellMouseUpCapture(event: ReactMouseEvent<HTMLElement>) {
+    if (!suppressNextBlockClickRef.current) return;
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  function handleBlockShellClickCapture(event: ReactMouseEvent<HTMLElement>) {
+    if (!suppressNextBlockClickRef.current) return;
+    suppressNextBlockClickRef.current = false;
     event.preventDefault();
     event.stopPropagation();
   }
@@ -11072,6 +11086,8 @@ type GalleryEditorImage = {
     return (
       <section
         onMouseDownCapture={handleBlockShellMouseDownCapture}
+        onMouseUpCapture={handleBlockShellMouseUpCapture}
+        onClickCapture={handleBlockShellClickCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -11137,6 +11153,8 @@ type GalleryEditorImage = {
     return (
       <section
         onMouseDownCapture={handleBlockShellMouseDownCapture}
+        onMouseUpCapture={handleBlockShellMouseUpCapture}
+        onClickCapture={handleBlockShellClickCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -11554,6 +11572,8 @@ type GalleryEditorImage = {
     return (
       <section
         onMouseDownCapture={handleBlockShellMouseDownCapture}
+        onMouseUpCapture={handleBlockShellMouseUpCapture}
+        onClickCapture={handleBlockShellClickCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -12120,6 +12140,8 @@ type GalleryEditorImage = {
     return (
       <section
         onMouseDownCapture={handleBlockShellMouseDownCapture}
+        onMouseUpCapture={handleBlockShellMouseUpCapture}
+        onClickCapture={handleBlockShellClickCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -12309,6 +12331,8 @@ type GalleryEditorImage = {
     return (
       <section
         onMouseDownCapture={handleBlockShellMouseDownCapture}
+        onMouseUpCapture={handleBlockShellMouseUpCapture}
+        onClickCapture={handleBlockShellClickCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -12476,6 +12500,8 @@ type GalleryEditorImage = {
     return (
       <section
         onMouseDownCapture={handleBlockShellMouseDownCapture}
+        onMouseUpCapture={handleBlockShellMouseUpCapture}
+        onClickCapture={handleBlockShellClickCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -12599,6 +12625,8 @@ type GalleryEditorImage = {
       <section
         ref={resizeTargetRef}
         onMouseDownCapture={handleBlockShellMouseDownCapture}
+        onMouseUpCapture={handleBlockShellMouseUpCapture}
+        onClickCapture={handleBlockShellClickCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -12667,6 +12695,8 @@ type GalleryEditorImage = {
     return (
       <section
         onMouseDownCapture={handleBlockShellMouseDownCapture}
+        onMouseUpCapture={handleBlockShellMouseUpCapture}
+        onClickCapture={handleBlockShellClickCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -12744,6 +12774,8 @@ type GalleryEditorImage = {
     return (
       <section
         onMouseDownCapture={handleBlockShellMouseDownCapture}
+        onMouseUpCapture={handleBlockShellMouseUpCapture}
+        onClickCapture={handleBlockShellClickCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -13805,6 +13837,8 @@ type GalleryEditorImage = {
     return (
       <section
         onMouseDownCapture={handleBlockShellMouseDownCapture}
+        onMouseUpCapture={handleBlockShellMouseUpCapture}
+        onClickCapture={handleBlockShellClickCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -15463,6 +15497,8 @@ type GalleryEditorImage = {
     return (
       <section
         onMouseDownCapture={handleBlockShellMouseDownCapture}
+        onMouseUpCapture={handleBlockShellMouseUpCapture}
+        onClickCapture={handleBlockShellClickCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -16409,6 +16445,8 @@ type GalleryEditorImage = {
     return (
       <section
         onMouseDownCapture={handleBlockShellMouseDownCapture}
+        onMouseUpCapture={handleBlockShellMouseUpCapture}
+        onClickCapture={handleBlockShellClickCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -16858,6 +16896,8 @@ type GalleryEditorImage = {
     return (
       <section
         onMouseDownCapture={handleBlockShellMouseDownCapture}
+        onMouseUpCapture={handleBlockShellMouseUpCapture}
+        onClickCapture={handleBlockShellClickCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -17420,6 +17460,8 @@ type GalleryEditorImage = {
     return (
       <section
         onMouseDownCapture={handleBlockShellMouseDownCapture}
+        onMouseUpCapture={handleBlockShellMouseUpCapture}
+        onClickCapture={handleBlockShellClickCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
