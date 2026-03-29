@@ -264,6 +264,68 @@ async function blobToDataUrl(blob: Blob) {
   });
 }
 
+async function readImageFileAsDataUrl(file: Blob) {
+  return await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+    reader.onerror = () => reject(reader.error ?? new Error("读取图片失败"));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function loadImageElement(dataUrl: string) {
+  return await new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("读取图片失败"));
+    image.decoding = "async";
+    image.src = dataUrl;
+  });
+}
+
+async function compressImageDataUrlWithinLimit(dataUrl: string, limitBytes: number) {
+  const originalBytes = estimateDataUrlBytes(dataUrl);
+  if (originalBytes <= limitBytes) {
+    return { dataUrl, compressed: false, bytes: originalBytes };
+  }
+
+  const image = await loadImageElement(dataUrl);
+  const qualitySteps = [0.9, 0.84, 0.78, 0.72, 0.66, 0.6, 0.54, 0.48, 0.42];
+  const scaleSteps = [1, 0.92, 0.84, 0.76, 0.68, 0.6, 0.52, 0.44, 0.36, 0.28];
+  let bestDataUrl = dataUrl;
+  let bestBytes = originalBytes;
+
+  for (const scale of scaleSteps) {
+    const targetWidth = Math.max(1, Math.round(image.naturalWidth * scale));
+    const targetHeight = Math.max(1, Math.round(image.naturalHeight * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+    const context = canvas.getContext("2d");
+    if (!context) break;
+    context.clearRect(0, 0, targetWidth, targetHeight);
+    context.drawImage(image, 0, 0, targetWidth, targetHeight);
+
+    for (const quality of qualitySteps) {
+      const candidateDataUrl = canvas.toDataURL("image/webp", quality);
+      const candidateBytes = estimateDataUrlBytes(candidateDataUrl);
+      if (candidateBytes < bestBytes) {
+        bestDataUrl = candidateDataUrl;
+        bestBytes = candidateBytes;
+      }
+      if (candidateBytes <= limitBytes) {
+        return { dataUrl: candidateDataUrl, compressed: true, bytes: candidateBytes };
+      }
+    }
+  }
+
+  return {
+    dataUrl: bestDataUrl,
+    compressed: bestDataUrl !== dataUrl,
+    bytes: bestBytes,
+  };
+}
+
 function estimateDataUrlBytes(dataUrl: string) {
   const base64 = dataUrl.split(",")[1] ?? "";
   if (!base64) {
@@ -932,18 +994,17 @@ export default function MerchantBusinessCardManager({
   const handleContactPageImageUpload = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    if (file.size > normalizedContactPageImageLimitKb * 1024) {
-      setTip(`联系卡展示图不能超过 ${normalizedContactPageImageLimitKb} KB`);
-      event.target.value = "";
-      return;
-    }
     try {
-      const reader = new FileReader();
-      const imageUrl = await new Promise<string>((resolve, reject) => {
-        reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
-        reader.onerror = () => reject(reader.error ?? new Error("读取图片失败"));
-        reader.readAsDataURL(file);
-      });
+      const originalImageUrl = await readImageFileAsDataUrl(file);
+      const optimized = await compressImageDataUrlWithinLimit(
+        originalImageUrl,
+        normalizedContactPageImageLimitKb * 1024,
+      );
+      if (optimized.bytes > normalizedContactPageImageLimitKb * 1024) {
+        setTip(`联系卡展示图不能超过 ${normalizedContactPageImageLimitKb} KB`);
+        return;
+      }
+      const imageUrl = optimized.dataUrl;
       applyDraft((current) => ({ ...current, contactPageImageUrl: imageUrl }));
     } catch {
       setTip("联系卡图片上传失败，请重试");
