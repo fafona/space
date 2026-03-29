@@ -1,4 +1,5 @@
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
+import { MERCHANT_BUSINESS_CARD_PHONE_LIMIT } from "./merchantBusinessCards";
 
 export const MERCHANT_BUSINESS_CARD_SHARE_PATH = "/share/business-card";
 export const MERCHANT_BUSINESS_CARD_SHARE_KEY_PARAM = "card";
@@ -63,7 +64,7 @@ function clampContactText(value: unknown, maxLength: number) {
 
 function normalizeContactPhoneList(value: unknown) {
   return Array.isArray(value)
-    ? value.map((item) => clampContactText(item, 80)).filter(Boolean)
+    ? value.map((item) => clampContactText(item, 80)).filter(Boolean).slice(0, MERCHANT_BUSINESS_CARD_PHONE_LIMIT)
     : [];
 }
 

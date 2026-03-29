@@ -198,7 +198,7 @@ test("normalizeMerchantBusinessCardShareContact keeps useful contact fields and 
         displayName: " Felix ",
         organization: " fafona ",
         phone: " 633130577 ",
-        phones: [" 633130577 ", " 666888999 "],
+        phones: [" 633130577 ", " 666888999 ", " 777000111 "],
         douyin: " fafona_douyin ",
         note: " WeChat: felix ",
       },

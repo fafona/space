@@ -7,6 +7,8 @@ export const MERCHANT_BUSINESS_CARD_RATIO_OPTIONS = [
   { id: "1:1", label: "1:1", width: 1, height: 1 },
 ] as const;
 
+export const MERCHANT_BUSINESS_CARD_PHONE_LIMIT = 2;
+
 export type MerchantBusinessCardRatioOptionId =
   | (typeof MERCHANT_BUSINESS_CARD_RATIO_OPTIONS)[number]["id"]
   | "custom";
@@ -160,6 +162,15 @@ function clampOpacity(value: unknown, fallback: number) {
 
 function normalizeBoolean(value: unknown, fallback: boolean) {
   return typeof value === "boolean" ? value : fallback;
+}
+
+function normalizePhoneList(value: unknown) {
+  return Array.isArray(value)
+    ? value
+        .map((item) => normalizeText(item))
+        .filter(Boolean)
+        .slice(0, MERCHANT_BUSINESS_CARD_PHONE_LIMIT)
+    : [];
 }
 
 function createDefaultContactOnlyFields(): MerchantBusinessCardContactOnlyFields {
@@ -364,6 +375,7 @@ export function createDefaultMerchantBusinessCardDraft(
 export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusinessCardDraft {
   const fallback = createDefaultMerchantBusinessCardDraft({});
   const source = value && typeof value === "object" ? (value as Partial<MerchantBusinessCardDraft>) : {};
+  const normalizedPhoneList = normalizePhoneList((source.contacts as { phones?: unknown } | undefined)?.phones);
   const ratioMode = normalizeText(source.ratioMode) as MerchantBusinessCardRatioOptionId;
   const textLayoutSource =
     source.textLayout && typeof source.textLayout === "object"
@@ -428,18 +440,8 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
     showQr: normalizeBoolean((source as { showQr?: unknown }).showQr, fallback.showQr),
     contacts: {
       contactName: normalizeText(source.contacts?.contactName),
-      phone:
-        (Array.isArray((source.contacts as { phones?: unknown } | undefined)?.phones)
-          ? ((source.contacts as { phones?: unknown[] } | undefined)?.phones ?? [])
-              .map((item) => normalizeText(item))
-              .find(Boolean)
-          : "") || normalizeText(source.contacts?.phone),
-      phones:
-        (Array.isArray((source.contacts as { phones?: unknown } | undefined)?.phones)
-          ? ((source.contacts as { phones?: unknown[] } | undefined)?.phones ?? [])
-              .map((item) => normalizeText(item))
-              .filter(Boolean)
-          : []) || [],
+      phone: normalizedPhoneList[0] || normalizeText(source.contacts?.phone),
+      phones: normalizedPhoneList,
       email: normalizeText(source.contacts?.email),
       address: normalizeText(source.contacts?.address),
       wechat: normalizeText(source.contacts?.wechat),

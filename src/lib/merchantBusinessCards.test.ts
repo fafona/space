@@ -76,6 +76,18 @@ test("normalizeMerchantBusinessCardDraft preserves link mode", () => {
   assert.deepEqual(draft.contacts.phones, ["111", "222"]);
 });
 
+test("normalizeMerchantBusinessCardDraft keeps at most two phones", () => {
+  const draft = normalizeMerchantBusinessCardDraft({
+    contacts: {
+      phone: "111",
+      phones: ["111", "222", "333"],
+    },
+  });
+
+  assert.equal(draft.contacts.phone, "111");
+  assert.deepEqual(draft.contacts.phones, ["111", "222"]);
+});
+
 test("normalizeMerchantBusinessCardDraft allows empty website label", () => {
   const draft = normalizeMerchantBusinessCardDraft({
     websiteLabel: "   ",

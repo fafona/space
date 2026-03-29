@@ -15,6 +15,7 @@ import { toPng } from "html-to-image";
 import QRCode from "qrcode";
 import {
   MERCHANT_BUSINESS_CARD_RATIO_OPTIONS,
+  MERCHANT_BUSINESS_CARD_PHONE_LIMIT,
   createDefaultMerchantBusinessCardDraft,
   getMerchantBusinessCardRequiredFields,
   normalizeMerchantBusinessCardDraft,
@@ -490,7 +491,10 @@ function sanitizeShareAssetHint(value: string) {
 }
 
 function normalizePhoneList(values: string[]) {
-  return values.map((item) => normalizeText(item)).filter(Boolean);
+  return values
+    .map((item) => normalizeText(item))
+    .filter(Boolean)
+    .slice(0, MERCHANT_BUSINESS_CARD_PHONE_LIMIT);
 }
 
 function resolveDraftPhoneValues(contacts: MerchantBusinessCardDraft["contacts"]) {
@@ -1197,8 +1201,9 @@ export default function MerchantBusinessCardManager({
   };
 
   const updateDraftPhones = (nextPhones: string[]) => {
-    setContactPhoneEditorValues(nextPhones.length > 0 ? nextPhones : [""]);
-    const normalizedPhones = normalizePhoneList(nextPhones);
+    const cappedPhoneInputs = nextPhones.slice(0, MERCHANT_BUSINESS_CARD_PHONE_LIMIT);
+    setContactPhoneEditorValues(cappedPhoneInputs.length > 0 ? cappedPhoneInputs : [""]);
+    const normalizedPhones = normalizePhoneList(cappedPhoneInputs);
     applyDraft((current) => ({
       ...current,
       contacts: {
@@ -1380,6 +1385,7 @@ export default function MerchantBusinessCardManager({
     "已上传背景图，可重新选择",
   );
   const backgroundImagePickerDetail = isBackgroundImageProcessing ? "压缩中..." : backgroundImageFileDetail;
+  const canAddPhone = contactPhoneEditorValues.length < MERCHANT_BUSINESS_CARD_PHONE_LIMIT;
   const contactPageImagePickerStatus = resolveFilePickerStatus(
     contactPageImageFileName,
     normalizeText(draft.contactPageImageUrl),
@@ -1684,7 +1690,7 @@ export default function MerchantBusinessCardManager({
                     <div className="text-sm font-semibold text-slate-900">联系方式</div>
                     <div className="rounded-xl border bg-white p-3">
                       <div className="mb-2 flex items-center justify-between gap-2">
-                        <div className="text-xs font-medium text-slate-700">电话（可增加）</div>
+                        <div className="text-xs font-medium text-slate-700">{`电话（最多 ${MERCHANT_BUSINESS_CARD_PHONE_LIMIT} 个）`}</div>
                         <div className="flex flex-wrap items-center justify-end gap-2">
                           <label className="flex items-center gap-2 rounded border bg-slate-50 px-3 py-1.5 text-[11px] text-slate-700">
                             <input
@@ -1696,8 +1702,9 @@ export default function MerchantBusinessCardManager({
                           </label>
                           <button
                             type="button"
-                            className="rounded border bg-white px-2 py-1 text-xs hover:bg-slate-50"
+                            className="rounded border bg-white px-2 py-1 text-xs hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                             onClick={() => updateDraftPhones([...contactPhoneEditorValues, ""])}
+                            disabled={!canAddPhone}
                           >
                             增加电话
                           </button>
