@@ -2909,6 +2909,7 @@ export default function AdminClient({
     }
   });
   const isPlatformEditor = editorMode === "platform";
+  const getDefaultSelectedBlockId = (sourceBlocks: Block[]) => (isPlatformEditor ? "" : (sourceBlocks[0]?.id ?? ""));
   const [platformSeedBlocks] = useState<Block[]>(() =>
     isPlatformEditor && Array.isArray(initialPublishedBlocks)
       ? sanitizeBlocksForRuntime(initialPublishedBlocks).blocks
@@ -2938,7 +2939,7 @@ export default function AdminClient({
   const [hasAddedExtraBlock, setHasAddedExtraBlock] = useState(
     () => initialBlocks.length > 1 || initialBlocks.some((item) => item.type !== "nav"),
   );
-  const [selectedId, setSelectedId] = useState<string>(initialBlocks[0]?.id ?? "");
+  const [selectedId, setSelectedId] = useState<string>(getDefaultSelectedBlockId(initialBlocks));
   const [draggingBlockId, setDraggingBlockId] = useState<string | null>(null);
   const dragStartRef = useRef<{
     blockId: string;
@@ -3013,7 +3014,7 @@ export default function AdminClient({
       editingPlanId: initialEditingPlanId,
       editingPageId: initialEditingPageId,
       blocks: cloneBlocks(initialBlocks),
-      selectedId: initialBlocks[0]?.id ?? "",
+      selectedId: getDefaultSelectedBlockId(initialBlocks),
     },
     mobile: {
       planConfig: JSON.parse(JSON.stringify(initialMobilePlanConfig)) as PagePlanConfig,
@@ -3027,12 +3028,13 @@ export default function AdminClient({
           initialMobilePlanConfig.plans.find((plan) => plan.id === initialMobilePlanConfig.activePlanId)?.activePageId ?? "page-1",
         ),
       ),
-      selectedId:
+      selectedId: getDefaultSelectedBlockId(
         getBlocksForPage(
           initialMobilePlanConfig.plans.find((plan) => plan.id === initialMobilePlanConfig.activePlanId) ??
             initialMobilePlanConfig.plans[0],
           initialMobilePlanConfig.plans.find((plan) => plan.id === initialMobilePlanConfig.activePlanId)?.activePageId ?? "page-1",
-      )[0]?.id ?? "",
+        ),
+      ),
     },
   });
 
@@ -3266,14 +3268,14 @@ export default function AdminClient({
       editingPlanId: loadedEditingPlanId,
       editingPageId: loadedEditingPageId,
       blocks: cloneBlocks(desktopBlocks),
-      selectedId: desktopBlocks[0]?.id ?? "",
+      selectedId: getDefaultSelectedBlockId(desktopBlocks),
     };
     viewportStatesRef.current.mobile = {
       planConfig: clonePlanConfig(loadedMobilePlanConfig),
       editingPlanId: mobilePlanId,
       editingPageId: mobilePageId,
       blocks: cloneBlocks(mobileBlocks),
-      selectedId: mobileBlocks[0]?.id ?? "",
+      selectedId: getDefaultSelectedBlockId(mobileBlocks),
     };
 
     const target = previewViewport === "desktop" ? viewportStatesRef.current.desktop : viewportStatesRef.current.mobile;
@@ -3281,7 +3283,7 @@ export default function AdminClient({
     setEditingPlanId(target.editingPlanId);
     setEditingPageId(target.editingPageId);
     setBlocks(cloneBlocks(target.blocks));
-    setSelectedId(target.selectedId || target.blocks[0]?.id || "");
+    setSelectedId(target.selectedId || getDefaultSelectedBlockId(target.blocks));
 
     const combinedLoaded = buildCombinedPersistedBlocks(loadedPlanConfig, loadedMobilePlanConfig);
     saveBlocksToStorage(combinedLoaded, storeScope);
@@ -3635,7 +3637,7 @@ export default function AdminClient({
     setEditingPlanId(target.editingPlanId);
     setEditingPageId(target.editingPageId);
     setBlocks(cloneBlocks(target.blocks));
-    setSelectedId(target.selectedId || target.blocks[0]?.id || "");
+    setSelectedId(target.selectedId || getDefaultSelectedBlockId(target.blocks));
   }
 
   async function readDesktopIntoMobile() {
@@ -3657,14 +3659,14 @@ export default function AdminClient({
       editingPlanId: mobilePlanId,
       editingPageId: mobilePageId,
       blocks: cloneBlocks(mobileBlocks),
-      selectedId: mobileBlocks[0]?.id ?? "",
+      selectedId: getDefaultSelectedBlockId(mobileBlocks),
     };
     if (previewViewport === "mobile") {
       setPlanConfig(clonePlanConfig(mobileConfig));
       setEditingPlanId(mobilePlanId);
       setEditingPageId(mobilePageId);
       setBlocks(cloneBlocks(mobileBlocks));
-      setSelectedId(mobileBlocks[0]?.id ?? "");
+      setSelectedId(getDefaultSelectedBlockId(mobileBlocks));
     }
     persistDraftForConfigs(mobileConfig);
     setTip("已读取PC配置到手机端");
@@ -3838,7 +3840,7 @@ export default function AdminClient({
     setEditingPlanId(target.editingPlanId);
     setEditingPageId(target.editingPageId);
     setBlocks(cloneBlocks(target.blocks));
-    setSelectedId(target.selectedId || target.blocks[0]?.id || "");
+    setSelectedId(target.selectedId || getDefaultSelectedBlockId(target.blocks));
     saveBlocksToStorage(buildCombinedPersistedBlocks(clonedStates.desktop.planConfig, clonedStates.mobile.planConfig), storeScope);
   }
 
@@ -5509,7 +5511,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     setEditingPlanId(planId);
     setEditingPageId(targetPageId);
     setBlocks(targetBlocks);
-    setSelectedId(targetBlocks[0]?.id ?? "");
+    setSelectedId(getDefaultSelectedBlockId(targetBlocks));
     persistDraftForConfigs(nextConfig);
   }
 
@@ -5544,7 +5546,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     setPlanConfig(nextConfig);
     setEditingPageId(pageId);
     setBlocks(targetBlocks);
-    setSelectedId(targetBlocks[0]?.id ?? "");
+    setSelectedId(getDefaultSelectedBlockId(targetBlocks));
     persistDraftForConfigs(nextConfig);
   }
 
@@ -5593,7 +5595,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       pushUndoSnapshot(createSnapshot());
       setPlanConfig(nextConfig);
       setBlocks(activeBlocks);
-      setSelectedId(nextSelected?.id ?? activeBlocks[0]?.id ?? "");
+      setSelectedId(nextSelected?.id ?? getDefaultSelectedBlockId(activeBlocks));
       persistDraftForConfigs(nextConfig);
     } else {
       applyBlocks(next, { selectedId: nextSelected?.id ?? "" });
