@@ -265,6 +265,22 @@ async function blobToDataUrl(blob: Blob) {
   });
 }
 
+async function yieldToBrowser() {
+  await new Promise<void>((resolve) => {
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => resolve());
+      return;
+    }
+    setTimeout(resolve, 0);
+  });
+}
+
+async function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality: number) {
+  return await new Promise<Blob | null>((resolve) => {
+    canvas.toBlob((blob) => resolve(blob), type, quality);
+  });
+}
+
 async function readImageFileAsDataUrl(file: Blob) {
   return await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -295,8 +311,10 @@ async function compressImageDataUrlWithinLimit(dataUrl: string, limitBytes: numb
   const scaleSteps = [1, 0.92, 0.84, 0.76, 0.68, 0.6, 0.52, 0.44, 0.36, 0.28];
   let bestDataUrl = dataUrl;
   let bestBytes = originalBytes;
+  let bestBlob: Blob | null = null;
 
   for (const scale of scaleSteps) {
+    await yieldToBrowser();
     const targetWidth = Math.max(1, Math.round(image.naturalWidth * scale));
     const targetHeight = Math.max(1, Math.round(image.naturalHeight * scale));
     const canvas = document.createElement("canvas");
@@ -308,16 +326,26 @@ async function compressImageDataUrlWithinLimit(dataUrl: string, limitBytes: numb
     context.drawImage(image, 0, 0, targetWidth, targetHeight);
 
     for (const quality of qualitySteps) {
-      const candidateDataUrl = canvas.toDataURL("image/webp", quality);
-      const candidateBytes = estimateDataUrlBytes(candidateDataUrl);
+      const candidateBlob = await canvasToBlob(canvas, "image/webp", quality);
+      const candidateDataUrl = candidateBlob ? "" : canvas.toDataURL("image/webp", quality);
+      const candidateBytes = candidateBlob ? candidateBlob.size : estimateDataUrlBytes(candidateDataUrl);
       if (candidateBytes < bestBytes) {
         bestDataUrl = candidateDataUrl;
         bestBytes = candidateBytes;
+        bestBlob = candidateBlob;
       }
       if (candidateBytes <= limitBytes) {
-        return { dataUrl: candidateDataUrl, compressed: true, bytes: candidateBytes };
+        return {
+          dataUrl: candidateBlob ? await blobToDataUrl(candidateBlob) : candidateDataUrl,
+          compressed: true,
+          bytes: candidateBytes,
+        };
       }
     }
+  }
+
+  if (bestBlob) {
+    bestDataUrl = await blobToDataUrl(bestBlob);
   }
 
   return {
