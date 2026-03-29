@@ -199,6 +199,72 @@ function canonicalizeSystemDefaultValue<T>(value: T): T {
   return value;
 }
 
+const EDITOR_DEFAULT_PAGE_NAME_PATTERN =
+  /^(?:page|pagina|página|seite|strona|\u0441\u0442\u0440\u0430\u043d\u0438\u0446\u0430|\u0441\u0442\u043e\u0440\u0456\u043d\u043a\u0430|\u9801\u9762|\u9875\u9762|\u30da\u30fc\u30b8|\ud398\uc774\uc9c0)\s*([0-9]{1,2})$/iu;
+const EDITOR_DEFAULT_PLAN_NAME_PATTERN =
+  /^(?:(?:edit|\u7f16\u8f91)\s*)?(?:plan|variant|variante|\u0432\u0430\u0440\u0438\u0430\u043d\u0442|\u65b9\u6848)\s*([123\u4e00\u4e8c\u4e09])$/iu;
+const CANONICAL_PLAN_NAMES = ["\u65b9\u6848\u4e00", "\u65b9\u6848\u4e8c", "\u65b9\u6848\u4e09"] as const;
+const CANONICAL_PAGE_PREFIX = "\u9875\u9762";
+
+function canonicalizeEditorPageOrPlanName(value: string) {
+  const normalized = value.trim().replace(/\s+/g, " ");
+  if (!normalized) return value;
+
+  const pageMatch = normalized.match(EDITOR_DEFAULT_PAGE_NAME_PATTERN);
+  if (pageMatch) {
+    const index = Number(pageMatch[1]);
+    if (Number.isFinite(index) && index >= 1 && index <= SYSTEM_DEFAULT_PAGE_NAME_COUNT) {
+      return `${CANONICAL_PAGE_PREFIX}${index}`;
+    }
+  }
+
+  const planMatch = normalized.match(EDITOR_DEFAULT_PLAN_NAME_PATTERN);
+  if (planMatch) {
+    const raw = (planMatch[1] ?? "").trim();
+    const index =
+      raw === "\u4e00" ? 1 :
+      raw === "\u4e8c" ? 2 :
+      raw === "\u4e09" ? 3 :
+      Number(raw);
+    if (Number.isFinite(index) && index >= 1 && index <= CANONICAL_PLAN_NAMES.length) {
+      return CANONICAL_PLAN_NAMES[index - 1];
+    }
+  }
+
+  return value;
+}
+
+function deepCanonicalizeEditorDefaults<T>(value: T): T {
+  if (typeof value === "string") {
+    const pageOrPlanName = canonicalizeEditorPageOrPlanName(value);
+    const canonical = toCanonicalSystemDefaultText(pageOrPlanName);
+    return (canonical ?? pageOrPlanName) as T;
+  }
+
+  if (Array.isArray(value)) {
+    let changed = false;
+    const next = value.map((item) => {
+      const canonicalized = deepCanonicalizeEditorDefaults(item);
+      if (canonicalized !== item) changed = true;
+      return canonicalized;
+    });
+    return (changed ? next : value) as T;
+  }
+
+  if (value && typeof value === "object") {
+    const source = value as Record<string, unknown>;
+    let changed = false;
+    const nextEntries = Object.entries(source).map(([key, nestedValue]) => {
+      const canonicalized = deepCanonicalizeEditorDefaults(nestedValue);
+      if (canonicalized !== nestedValue) changed = true;
+      return [key, canonicalized] as const;
+    });
+    return (changed ? Object.fromEntries(nextEntries) : value) as T;
+  }
+
+  return value;
+}
+
 export async function prepareEditorSystemDefaultTranslations(locale: string) {
   const normalizedLocale = normalizeDomLocale(locale);
   if (normalizedLocale === "zh-CN") return;
@@ -206,7 +272,8 @@ export async function prepareEditorSystemDefaultTranslations(locale: string) {
 }
 
 export function localizeSystemDefaultText(value: string, locale: string) {
-  return localizeSystemDefaultValue(value, locale);
+  const canonical = canonicalizeEditorPageOrPlanName(value);
+  return localizeSystemDefaultValue(canonical, locale);
 }
 
 export function resolveLocalizedSystemDefaultText(
@@ -228,13 +295,13 @@ export function localizePagePlanConfigSystemDefaults(config: PagePlanConfig, loc
 }
 
 export function canonicalizeSystemDefaultText(value: string) {
-  return toCanonicalSystemDefaultText(value) ?? value;
+  return deepCanonicalizeEditorDefaults(value);
 }
 
 export function canonicalizeEditorBlocksSystemDefaults(blocks: Block[]) {
-  return canonicalizeSystemDefaultValue(blocks) as Block[];
+  return deepCanonicalizeEditorDefaults(blocks) as Block[];
 }
 
 export function canonicalizePagePlanConfigSystemDefaults(config: PagePlanConfig) {
-  return canonicalizeSystemDefaultValue(config) as PagePlanConfig;
+  return deepCanonicalizeEditorDefaults(config) as PagePlanConfig;
 }
