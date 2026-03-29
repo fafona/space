@@ -59,7 +59,6 @@ import {
   supabase,
   supabaseMissingEnvNotice,
 } from "@/lib/supabase";
-import { hasStoredBrowserSupabaseSessionTokens, isTransientAuthValidationError } from "@/lib/authSessionRecovery";
 import { clearMerchantSignInBridge } from "@/lib/merchantSignInBridge";
 import { buildPublishedMerchantProfilePatch } from "@/lib/merchantProfileBinding";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
@@ -187,13 +186,6 @@ import BlockRenderer from "@/components/blocks/BlockRenderer";
 import BookingBlock from "@/components/blocks/BookingBlock";
 import MerchantBookingManagerDialog from "@/components/admin/MerchantBookingManagerDialog";
 import MerchantProfileDialog from "@/components/admin/MerchantProfileDialog";
-import { useI18n } from "@/components/I18nProvider";
-import {
-  canonicalizeEditorBlocksSystemDefaults,
-  canonicalizePagePlanConfigSystemDefaults,
-  canonicalizeSystemDefaultText,
-  resolveLocalizedSystemDefaultText,
-} from "@/lib/editorSystemDefaults";
 
 const IMAGE_FILL_VALUES: ImageFillMode[] = [
   "cover",
@@ -1178,10 +1170,6 @@ const MERCHANT_ONBOARDING_BLOCKS: Block[] = (() => {
     },
   ];
 })();
-
-function getLocalizedSystemDefaultPageName(_locale: string, index: number) {
-  return canonicalizeSystemDefaultText(`页面${index + 1}`);
-}
 
 function isCommonCanvasBlockType(type: Block["type"]): type is "common" {
   return type === "common";
@@ -2897,29 +2885,25 @@ export default function AdminClient({
   initialPublishedBlocks,
   initialJustSignedIn = false,
 }: AdminClientProps = {}) {
-  const { locale } = useI18n();
   const [storeScope] = useState<string>(() => readBlocksStoreScopeFromLocation(forcedScope));
   const [justSignedIn] = useState<boolean>(() => {
-    if (initialJustSignedIn) return true;
-    if (typeof window === "undefined") return false;
+    if (typeof window === "undefined") return initialJustSignedIn;
     try {
-      return new URLSearchParams(window.location.search).get("justSignedIn") === "1";
+      return new URLSearchParams(window.location.search).get("justSignedIn") === "1" || initialJustSignedIn;
     } catch {
-      return false;
+      return initialJustSignedIn;
     }
   });
   const isPlatformEditor = editorMode === "platform";
-  const getDefaultSelectedBlockId = (sourceBlocks: Block[]) => (isPlatformEditor ? "" : (sourceBlocks[0]?.id ?? ""));
   const [platformSeedBlocks] = useState<Block[]>(() =>
     isPlatformEditor && Array.isArray(initialPublishedBlocks)
       ? sanitizeBlocksForRuntime(initialPublishedBlocks).blocks
       : [],
   );
-  const rawDefaultEditorBlocks =
+  const defaultEditorBlocks =
     isPlatformEditor
       ? (platformSeedBlocks.length > 0 ? platformSeedBlocks : homeBlocks)
       : MERCHANT_ONBOARDING_BLOCKS;
-  const defaultEditorBlocks = canonicalizeEditorBlocksSystemDefaults(rawDefaultEditorBlocks);
   const initialPlanConfig = getPagePlanConfigFromBlocks(defaultEditorBlocks);
   const initialMobilePlanConfig =
     getEmbeddedMobilePlanConfig(defaultEditorBlocks) ?? adaptPlanConfigForMobile(JSON.parse(JSON.stringify(initialPlanConfig)) as PagePlanConfig);
@@ -2939,7 +2923,7 @@ export default function AdminClient({
   const [hasAddedExtraBlock, setHasAddedExtraBlock] = useState(
     () => initialBlocks.length > 1 || initialBlocks.some((item) => item.type !== "nav"),
   );
-  const [selectedId, setSelectedId] = useState<string>(getDefaultSelectedBlockId(initialBlocks));
+  const [selectedId, setSelectedId] = useState<string>(initialBlocks[0]?.id ?? "");
   const [draggingBlockId, setDraggingBlockId] = useState<string | null>(null);
   const dragStartRef = useRef<{
     blockId: string;
@@ -3014,7 +2998,7 @@ export default function AdminClient({
       editingPlanId: initialEditingPlanId,
       editingPageId: initialEditingPageId,
       blocks: cloneBlocks(initialBlocks),
-      selectedId: getDefaultSelectedBlockId(initialBlocks),
+      selectedId: initialBlocks[0]?.id ?? "",
     },
     mobile: {
       planConfig: JSON.parse(JSON.stringify(initialMobilePlanConfig)) as PagePlanConfig,
@@ -3028,13 +3012,12 @@ export default function AdminClient({
           initialMobilePlanConfig.plans.find((plan) => plan.id === initialMobilePlanConfig.activePlanId)?.activePageId ?? "page-1",
         ),
       ),
-      selectedId: getDefaultSelectedBlockId(
+      selectedId:
         getBlocksForPage(
           initialMobilePlanConfig.plans.find((plan) => plan.id === initialMobilePlanConfig.activePlanId) ??
             initialMobilePlanConfig.plans[0],
           initialMobilePlanConfig.plans.find((plan) => plan.id === initialMobilePlanConfig.activePlanId)?.activePageId ?? "page-1",
-        ),
-      ),
+      )[0]?.id ?? "",
     },
   });
 
@@ -3138,10 +3121,8 @@ export default function AdminClient({
   }
 
   function buildCombinedPersistedBlocks(desktopConfig: PagePlanConfig, mobileConfig: PagePlanConfig) {
-    const canonicalDesktopConfig = canonicalizePagePlanConfigSystemDefaults(desktopConfig);
-    const canonicalMobileConfig = canonicalizePagePlanConfigSystemDefaults(mobileConfig);
-    const desktopBlocks = buildPersistedBlocksFromPlanConfig(canonicalDesktopConfig);
-    const mobileBlocks = buildPersistedBlocksFromPlanConfig(canonicalMobileConfig);
+    const desktopBlocks = buildPersistedBlocksFromPlanConfig(desktopConfig);
+    const mobileBlocks = buildPersistedBlocksFromPlanConfig(mobileConfig);
     const mobileRaw = (mobileBlocks[0]?.props as { pagePlanConfig?: unknown } | undefined)?.pagePlanConfig;
     if (desktopBlocks[0] && mobileRaw) {
       desktopBlocks[0] = {
@@ -3246,10 +3227,8 @@ export default function AdminClient({
   }
 
   function applyPersistedBlocksToEditor(loaded: Block[], options?: { resetHistory?: boolean }) {
-    const loadedPlanConfig = canonicalizePagePlanConfigSystemDefaults(getPagePlanConfigFromBlocks(loaded));
-    const loadedMobilePlanConfig = canonicalizePagePlanConfigSystemDefaults(
-      getEmbeddedMobilePlanConfig(loaded) ?? adaptPlanConfigForMobile(clonePlanConfig(loadedPlanConfig)),
-    );
+    const loadedPlanConfig = getPagePlanConfigFromBlocks(loaded);
+    const loadedMobilePlanConfig = getEmbeddedMobilePlanConfig(loaded) ?? adaptPlanConfigForMobile(clonePlanConfig(loadedPlanConfig));
 
     const loadedEditingPlanId = loadedPlanConfig.activePlanId;
     const loadedEditingPageId = loadedPlanConfig.plans.find((plan) => plan.id === loadedEditingPlanId)?.activePageId ?? "page-1";
@@ -3268,14 +3247,14 @@ export default function AdminClient({
       editingPlanId: loadedEditingPlanId,
       editingPageId: loadedEditingPageId,
       blocks: cloneBlocks(desktopBlocks),
-      selectedId: getDefaultSelectedBlockId(desktopBlocks),
+      selectedId: desktopBlocks[0]?.id ?? "",
     };
     viewportStatesRef.current.mobile = {
       planConfig: clonePlanConfig(loadedMobilePlanConfig),
       editingPlanId: mobilePlanId,
       editingPageId: mobilePageId,
       blocks: cloneBlocks(mobileBlocks),
-      selectedId: getDefaultSelectedBlockId(mobileBlocks),
+      selectedId: mobileBlocks[0]?.id ?? "",
     };
 
     const target = previewViewport === "desktop" ? viewportStatesRef.current.desktop : viewportStatesRef.current.mobile;
@@ -3283,7 +3262,7 @@ export default function AdminClient({
     setEditingPlanId(target.editingPlanId);
     setEditingPageId(target.editingPageId);
     setBlocks(cloneBlocks(target.blocks));
-    setSelectedId(target.selectedId || getDefaultSelectedBlockId(target.blocks));
+    setSelectedId(target.selectedId || target.blocks[0]?.id || "");
 
     const combinedLoaded = buildCombinedPersistedBlocks(loadedPlanConfig, loadedMobilePlanConfig);
     saveBlocksToStorage(combinedLoaded, storeScope);
@@ -3637,7 +3616,7 @@ export default function AdminClient({
     setEditingPlanId(target.editingPlanId);
     setEditingPageId(target.editingPageId);
     setBlocks(cloneBlocks(target.blocks));
-    setSelectedId(target.selectedId || getDefaultSelectedBlockId(target.blocks));
+    setSelectedId(target.selectedId || target.blocks[0]?.id || "");
   }
 
   async function readDesktopIntoMobile() {
@@ -3659,14 +3638,14 @@ export default function AdminClient({
       editingPlanId: mobilePlanId,
       editingPageId: mobilePageId,
       blocks: cloneBlocks(mobileBlocks),
-      selectedId: getDefaultSelectedBlockId(mobileBlocks),
+      selectedId: mobileBlocks[0]?.id ?? "",
     };
     if (previewViewport === "mobile") {
       setPlanConfig(clonePlanConfig(mobileConfig));
       setEditingPlanId(mobilePlanId);
       setEditingPageId(mobilePageId);
       setBlocks(cloneBlocks(mobileBlocks));
-      setSelectedId(getDefaultSelectedBlockId(mobileBlocks));
+      setSelectedId(mobileBlocks[0]?.id ?? "");
     }
     persistDraftForConfigs(mobileConfig);
     setTip("已读取PC配置到手机端");
@@ -3728,10 +3707,7 @@ export default function AdminClient({
           const desiredPages = navItems
             .map((item, idx) => ({
               pageId: typeof item?.pageId === "string" ? item.pageId.trim() : "",
-              label:
-                typeof item?.label === "string"
-                  ? toPlainText(canonicalizeSystemDefaultText(item.label), getLocalizedSystemDefaultPageName(locale, idx))
-                  : getLocalizedSystemDefaultPageName(locale, idx),
+              label: typeof item?.label === "string" ? toPlainText(item.label, `页面${idx + 1}`) : `页面${idx + 1}`,
             }))
             .filter((item) => !!item.pageId);
           if (desiredPages.length > 0) {
@@ -3750,9 +3726,7 @@ export default function AdminClient({
               }
               return {
                 id: desired.pageId,
-                name:
-                  desired.label ||
-                  toPlainText(canonicalizeSystemDefaultText(existing?.name ?? ""), getLocalizedSystemDefaultPageName(locale, idx)),
+                name: desired.label || toPlainText(existing?.name, `页面${idx + 1}`),
                 blocks: rebuiltBlocks,
               };
             });
@@ -3840,7 +3814,7 @@ export default function AdminClient({
     setEditingPlanId(target.editingPlanId);
     setEditingPageId(target.editingPageId);
     setBlocks(cloneBlocks(target.blocks));
-    setSelectedId(target.selectedId || getDefaultSelectedBlockId(target.blocks));
+    setSelectedId(target.selectedId || target.blocks[0]?.id || "");
     saveBlocksToStorage(buildCombinedPersistedBlocks(clonedStates.desktop.planConfig, clonedStates.mobile.planConfig), storeScope);
   }
 
@@ -4166,8 +4140,8 @@ export default function AdminClient({
       }
       return [];
     };
-    const tryLoadPublishedSiteSnapshotFallback = async () => {
-      if (isPlatformEditor) return false;
+    const tryLoadJustSignedInPublishedContent = async () => {
+      if (isPlatformEditor || !justSignedIn) return false;
       const scopedSiteId = getSiteIdFromStoreScope(storeScope).trim();
       if (!scopedSiteId) return false;
       const publishedSnapshot = await loadPublishedSiteSnapshotViaApi(scopedSiteId);
@@ -4196,10 +4170,6 @@ export default function AdminClient({
       releaseCheckingScreen({ notice: null });
       return true;
     };
-    const tryLoadJustSignedInPublishedContent = async () => {
-      if (!justSignedIn) return false;
-      return tryLoadPublishedSiteSnapshotFallback();
-    };
     if (!isSupabaseEnabled || isSupabaseFallbackMode) {
       applyCachedEditorBlocks();
       setHasEditorContent(true);
@@ -4217,27 +4187,12 @@ export default function AdminClient({
       };
     }
 
-    if (justSignedIn) {
-      clearJustSignedInFlagFromUrl();
-    }
-
     setRemoteContentVerified(false);
     const initialCached = applyCachedEditorBlocks();
     if (initialCached.length > 0) {
       releaseCheckingScreen();
     } else {
       setHasEditorContent(true);
-    }
-
-    if (isPlatformEditor && platformSeedBlocks.length > 0) {
-      setBackendNotice(null);
-      setHasEditorContent(true);
-      setRemoteContentVerified(true);
-      releaseCheckingScreen({ notice: null });
-      return () => {
-        mounted = false;
-        merchantIdsRef.current = [];
-      };
     }
 
     const safetyTimeoutId = setTimeout(() => {
@@ -4398,9 +4353,7 @@ export default function AdminClient({
               Math.max(2500, Math.min(6000, AUTH_CHECK_TIMEOUT_MS)),
               "登录校验超时，已回退到重新登录",
             );
-            if (error && isTransientAuthValidationError(error)) {
-              // Keep the recovered session during short auth validation hiccups on refresh.
-            } else if (error || !data.user) {
+            if (error || !data.user) {
               await supabase.auth.signOut({ scope: "local" }).catch(() => {
                 // ignore local session cleanup failure
               });
@@ -4422,12 +4375,6 @@ export default function AdminClient({
               releaseCheckingScreen({ notice: null });
             }
           } else {
-            if (hasStoredBrowserSupabaseSessionTokens()) {
-              setRemoteContentVerified(false);
-              setHasEditorContent(true);
-              releaseCheckingScreen({ notice: null });
-              return;
-            }
             if (justSignedIn) {
               const restored = await tryLoadJustSignedInPublishedContent();
               if (!mounted) return;
@@ -4555,11 +4502,6 @@ export default function AdminClient({
           releaseCheckingScreen({ notice: null });
           return;
         }
-        if (!isPlatformEditor && initialCached.length === 0) {
-          const restoredPublished = await tryLoadPublishedSiteSnapshotFallback();
-          if (!mounted) return;
-          if (restoredPublished) return;
-        }
         setHasEditorContent(true);
         setRemoteContentVerified(gatewayReady);
         releaseCheckingScreen({
@@ -4641,9 +4583,7 @@ export default function AdminClient({
       const safePlanIndex = planIndex >= 0 ? planIndex : 0;
       const sourcePlan = state.planConfig.plans[safePlanIndex] ?? null;
       if (!sourcePlan) return state;
-      const sourcePages = sourcePlan.pages.length > 0
-        ? sourcePlan.pages
-        : [{ id: state.editingPageId, name: getLocalizedSystemDefaultPageName(locale, 0), blocks: state.blocks }];
+      const sourcePages = sourcePlan.pages.length > 0 ? sourcePlan.pages : [{ id: state.editingPageId, name: "页面1", blocks: state.blocks }];
       const syncedPages = sourcePages.map((page) => ({
         ...page,
         blocks: buildViewportBlocksWithCanonicalNav(page.blocks),
@@ -4985,20 +4925,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }
 
   function handleEditorMouseDownCapture(event: ReactMouseEvent<HTMLElement>) {
-    if (isPlatformEditor) return;
-    const target = event.target;
-    if (!(target instanceof Element)) return;
-    const composedPath =
-      typeof event.nativeEvent.composedPath === "function"
-        ? event.nativeEvent.composedPath()
-        : [];
-    const pathElements = composedPath.filter((entry): entry is Element => entry instanceof Element);
-    const matchesPath = (selector: string) =>
-      pathElements.some((entry) => entry.matches(selector));
-    if (matchesPath("[data-editor-toolbar]") || target.closest("[data-editor-toolbar]")) return;
-    if (matchesPath("[data-editor-overlay]") || target.closest("[data-editor-overlay]")) return;
-    if (matchesPath("[data-block-id]") || target.closest("[data-block-id]")) return;
-    if (!matchesPath("[data-editor-clear-selection='1']") && !target.closest("[data-editor-clear-selection='1']")) return;
+    const target = event.target as HTMLElement | null;
+    if (!target) return;
+    if (target.closest("[data-editor-toolbar]")) return;
+    if (target.closest("[data-editor-overlay]")) return;
+    if (target.closest("[data-block-id]")) return;
     if (selectedIdRef.current) {
       setSelectedId("");
     }
@@ -5147,22 +5078,18 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     };
   }, [draggingBlockId]);
 
-  function canonicalizeDefaultBlock(block: Block) {
-    return canonicalizeEditorBlocksSystemDefaults([block])[0] ?? block;
-  }
-
   function makeDefaultBlock(type: Block["type"]): Block {
     const id = `${type}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     if (type === "common") {
-      return canonicalizeDefaultBlock({
+      return {
         id,
         type,
         props: { commonTextBoxes: [] },
-      });
+      };
     }
 
     if (type === "button") {
-      return canonicalizeDefaultBlock({
+      return {
         id,
         type,
         props: {
@@ -5171,19 +5098,19 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           buttonLabel: "按钮",
           buttonJumpTarget: "",
         },
-      });
+      };
     }
 
     if (type === "gallery") {
-      return canonicalizeDefaultBlock({
+      return {
         id,
         type,
         props: { heading: "新的画廊区块", images: [], autoplayMs: 3000, galleryFrameHeight: 260, galleryLayoutPreset: "three-wide" },
-      });
+      };
     }
 
     if (type === "chart") {
-      return canonicalizeDefaultBlock({
+      return {
         id,
         type,
         props: {
@@ -5193,11 +5120,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           labels: ["A", "B", "C"],
           values: [10, 20, 15],
         },
-      });
+      };
     }
 
     if (type === "nav") {
-      return canonicalizeDefaultBlock({
+      return {
         id,
         type,
         props: {
@@ -5207,11 +5134,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             { id: `nav-item-${Date.now()}-1`, label: "页面1", pageId: "page-1" },
           ],
         },
-      });
+      };
     }
 
     if (type === "music") {
-      return canonicalizeDefaultBlock({
+      return {
         id,
         type,
         props: {
@@ -5219,35 +5146,35 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           audioUrl: "",
           musicPlayerStyle: "classic",
         },
-      });
+      };
     }
 
     if (type === "hero") {
-      return canonicalizeDefaultBlock({
+      return {
         id,
         type,
         props: { title: "新的视觉横幅", subtitle: "在这里编写副标题说明文案" },
-      });
+      };
     }
 
     if (type === "text") {
-      return canonicalizeDefaultBlock({
+      return {
         id,
         type,
         props: { heading: "新的文本区块", text: "在这里输入文本内容。" },
-      });
+      };
     }
 
     if (type === "list") {
-      return canonicalizeDefaultBlock({
+      return {
         id,
         type,
         props: { heading: "新的列表区块", items: ["列表1", "列表2"] },
-      });
+      };
     }
 
     if (type === "search-bar") {
-      return canonicalizeDefaultBlock({
+      return {
         id,
         type,
         props: {
@@ -5269,11 +5196,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             action: { x: 680, y: 52, width: 72, height: 40 },
           },
         },
-      });
+      };
     }
 
     if (type === "merchant-list") {
-      return canonicalizeDefaultBlock({
+      return {
         id,
         type,
         props: {
@@ -5330,11 +5257,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             card3: { x: 668, y: 52, width: 320, height: 190 },
           },
         },
-      });
+      };
     }
 
     if (type === "product") {
-      return canonicalizeDefaultBlock({
+      return {
         id,
         type,
         props: {
@@ -5387,11 +5314,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             },
           ],
         },
-      });
+      };
     }
 
     if (type === "booking") {
-      return canonicalizeDefaultBlock({
+      return {
         id,
         type,
         props: {
@@ -5412,10 +5339,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           bookingNamePlaceholder: "请输入称谓或姓名",
           bookingNotePlaceholder: "可填写备注或需求",
         },
-      });
+      };
     }
 
-    return canonicalizeDefaultBlock({
+    return {
       id,
       type,
       props: {
@@ -5441,7 +5368,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         instagram: "",
         contactLayout: {},
       },
-    });
+    };
   }
 
   function addBlock() {
@@ -5511,7 +5438,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     setEditingPlanId(planId);
     setEditingPageId(targetPageId);
     setBlocks(targetBlocks);
-    setSelectedId(getDefaultSelectedBlockId(targetBlocks));
+    setSelectedId(targetBlocks[0]?.id ?? "");
     persistDraftForConfigs(nextConfig);
   }
 
@@ -5546,7 +5473,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     setPlanConfig(nextConfig);
     setEditingPageId(pageId);
     setBlocks(targetBlocks);
-    setSelectedId(getDefaultSelectedBlockId(targetBlocks));
+    setSelectedId(targetBlocks[0]?.id ?? "");
     persistDraftForConfigs(nextConfig);
   }
 
@@ -5595,7 +5522,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       pushUndoSnapshot(createSnapshot());
       setPlanConfig(nextConfig);
       setBlocks(activeBlocks);
-      setSelectedId(nextSelected?.id ?? getDefaultSelectedBlockId(activeBlocks));
+      setSelectedId(nextSelected?.id ?? activeBlocks[0]?.id ?? "");
       persistDraftForConfigs(nextConfig);
     } else {
       applyBlocks(next, { selectedId: nextSelected?.id ?? "" });
@@ -6334,7 +6261,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const editingPlan = planConfig.plans.find((plan) => plan.id === editingPlanId) ?? planConfig.plans[0];
   const editingPages = editingPlan?.pages?.length
     ? editingPlan.pages
-    : [{ id: "page-1", name: getLocalizedSystemDefaultPageName(locale, 0), blocks: editingPlan?.blocks ?? defaultEditorBlocks }];
+    : [{ id: "page-1", name: "页面1", blocks: editingPlan?.blocks ?? defaultEditorBlocks }];
   const editingPageIndex = Math.max(0, editingPages.findIndex((page) => page.id === editingPageId));
   const imageCompressionOptions = getCurrentImageCompressionOptions();
   const selectedBlock = blocks.find((item) => item.id === selectedId) ?? null;
@@ -6907,13 +6834,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               <div className="rounded-[36px] border-8 border-gray-900 bg-black p-2 shadow-2xl">
                 <div
                   ref={backgroundLayerRef}
-                  data-no-translate="1"
-                  data-editor-clear-selection="1"
                   className="relative rounded-[28px] overflow-visible"
                   style={{ minHeight: `${Math.max(backgroundLayerMinHeight, 780)}px` }}
                 >
                   <div className="absolute inset-0 rounded-[28px] overflow-hidden pointer-events-none" style={pageBackgroundStyle} />
-                  <div className="relative z-10 w-full py-4" data-editor-clear-selection="1">
+                  <div className="relative z-10 w-full py-4">
                     <div className="space-y-0">
                       {blocks.map((block, index) => {
                         const sourceIndex = resizePreview ? blocks.findIndex((item) => item.id === resizePreview.blockId) : -1;
@@ -6973,12 +6898,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       ) : (
         <div
           ref={backgroundLayerRef}
-          data-no-translate="1"
-          data-editor-clear-selection="1"
           className="min-h-screen"
           style={{ ...pageBackgroundStyle, minHeight: `${Math.max(backgroundLayerMinHeight, 0)}px` }}
         >
-          <div className="max-w-6xl mx-auto px-6 py-6" data-editor-clear-selection="1">
+          <div className="max-w-6xl mx-auto px-6 py-6">
             <div className="space-y-0">
               {blocks.map((block, index) => {
                 const sourceIndex = resizePreview ? blocks.findIndex((item) => item.id === resizePreview.blockId) : -1;
@@ -7197,18 +7120,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           initialIndustry={editingSite?.industry ?? null}
           initialBusinessCards={editingSite?.businessCards ?? []}
           businessCardLimit={editingSite?.permissionConfig?.businessCardLimit ?? createDefaultMerchantPermissionConfig().businessCardLimit}
-          allowBusinessCardLinkMode={
-            editingSite?.permissionConfig?.allowBusinessCardLinkMode ??
-            createDefaultMerchantPermissionConfig().allowBusinessCardLinkMode
-          }
-          businessCardContactImageLimitKb={
-            editingSite?.permissionConfig?.businessCardContactImageLimitKb ??
-            createDefaultMerchantPermissionConfig().businessCardContactImageLimitKb
-          }
-          businessCardExportImageLimitKb={
-            editingSite?.permissionConfig?.businessCardExportImageLimitKb ??
-            createDefaultMerchantPermissionConfig().businessCardExportImageLimitKb
-          }
           onClose={() => setMerchantProfileDialogOpen(false)}
           onCardsChange={(cards) => {
             if (!editingSiteId) return;
@@ -7777,7 +7688,6 @@ function InlineEditorBlock({
   runtimeSiteId?: string;
   runtimeSiteName?: string;
 }) {
-  const { locale } = useI18n();
   type CommonEditorTextBox = {
     id: string;
     html: string;
@@ -8216,7 +8126,7 @@ type GalleryEditorImage = {
     if (block.type !== "nav") return [];
     const source = Array.isArray(block.props.navItems) ? block.props.navItems : [];
     const fallbackPages = availablePages.length > 0 ? availablePages : [
-      { id: "page-1", name: getLocalizedSystemDefaultPageName(locale, 0) },
+      { id: "page-1", name: "页面1" },
     ];
     const normalized = source
       .map((item, idx) => {
@@ -8224,7 +8134,7 @@ type GalleryEditorImage = {
         const pageId = rawPageId || fallbackPages[idx % fallbackPages.length].id;
         return {
           id: item?.id?.trim() || `nav-item-${idx}`,
-          label: canonicalizeSystemDefaultText((item?.label ?? "") || `页面${idx + 1}`),
+          label: (item?.label ?? "") || `页面${idx + 1}`,
           pageId,
         };
       })
@@ -8257,7 +8167,7 @@ type GalleryEditorImage = {
       ...current,
       {
         id: `nav-item-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        label: canonicalizeSystemDefaultText(`页面${current.length + 1}`),
+        label: `页面${current.length + 1}`,
         pageId: nextPageId,
       },
     ]);
@@ -9856,21 +9766,6 @@ type GalleryEditorImage = {
     ...blockPreviewOverflowStyle,
     ...borderInlineStyle,
   };
-  function handleBlockShellMouseDownCapture(event: ReactMouseEvent<HTMLElement>) {
-    if (isSelected) return;
-    const target = event.target;
-    if (!(target instanceof Element)) {
-      onSelect();
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
-    if (target.closest("[data-editor-toolbar]")) return;
-    if (target.closest("[data-editor-overlay]")) return;
-    onSelect();
-    event.preventDefault();
-    event.stopPropagation();
-  }
   function renderSelectedEditor(content: ReactNode) {
     return (
       <div
@@ -11071,7 +10966,6 @@ type GalleryEditorImage = {
 
     return (
       <section
-        onMouseDownCapture={handleBlockShellMouseDownCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -11136,7 +11030,6 @@ type GalleryEditorImage = {
     const commonBoxes = getCommonTextBoxes();
     return (
       <section
-        onMouseDownCapture={handleBlockShellMouseDownCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -11553,7 +11446,6 @@ type GalleryEditorImage = {
     );
     return (
       <section
-        onMouseDownCapture={handleBlockShellMouseDownCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -12119,7 +12011,6 @@ type GalleryEditorImage = {
         : blockSizeStyle;
     return (
       <section
-        onMouseDownCapture={handleBlockShellMouseDownCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -12260,10 +12151,7 @@ type GalleryEditorImage = {
           ) : (
             <div className="space-y-2">
               {block.props.heading ? (
-                <div
-                  className="text-sm font-semibold whitespace-pre-wrap break-words"
-                  dangerouslySetInnerHTML={{ __html: toRichHtml(block.props.heading, resolveLocalizedSystemDefaultText(block.props.heading, "页面导航", locale)) }}
-                />
+                <div className="text-sm font-semibold whitespace-pre-wrap break-words" dangerouslySetInnerHTML={{ __html: toRichHtml(block.props.heading, "页面导航") }} />
               ) : null}
               <div className={orientation === "vertical" ? "flex flex-col items-start gap-2" : "flex flex-wrap gap-2"}>
                 {navItems.map((item) => (
@@ -12308,7 +12196,6 @@ type GalleryEditorImage = {
 
     return (
       <section
-        onMouseDownCapture={handleBlockShellMouseDownCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -12475,7 +12362,6 @@ type GalleryEditorImage = {
 
     return (
       <section
-        onMouseDownCapture={handleBlockShellMouseDownCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -12598,7 +12484,6 @@ type GalleryEditorImage = {
     return (
       <section
         ref={resizeTargetRef}
-        onMouseDownCapture={handleBlockShellMouseDownCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -12666,7 +12551,6 @@ type GalleryEditorImage = {
   if (block.type === "text") {
     return (
       <section
-        onMouseDownCapture={handleBlockShellMouseDownCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -12743,7 +12627,6 @@ type GalleryEditorImage = {
     const items = block.props.items ?? [];
     return (
       <section
-        onMouseDownCapture={handleBlockShellMouseDownCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -12939,11 +12822,7 @@ type GalleryEditorImage = {
     const hasProductHeading = hasVisibleRichText(block.props.heading);
     const hasProductText = hasVisibleRichText(block.props.text);
     const productSearchEnabled = block.props.productSearchEnabled !== false;
-    const productSearchPlaceholder = resolveLocalizedSystemDefaultText(
-      block.props.productSearchPlaceholder,
-      "搜索产品名称/编号/介绍",
-      locale,
-    );
+    const productSearchPlaceholder = (block.props.productSearchPlaceholder ?? "").trim() || "搜索产品名称/编号/介绍";
     const productSearchKeyword = productPreviewSearchByBlockId[block.id] ?? "";
     const savedProductTagOptions = normalizeProductTagOptions(block.props.productTagOptions);
     const productTagOptionsText = productTagOptionsDraftByBlockId[block.id] ?? savedProductTagOptions.join("\n");
@@ -13804,7 +13683,6 @@ type GalleryEditorImage = {
 
     return (
       <section
-        onMouseDownCapture={handleBlockShellMouseDownCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -14977,9 +14855,7 @@ type GalleryEditorImage = {
               {hasProductHeading ? (
                 <h2
                   className="text-xl font-bold whitespace-pre-wrap break-words"
-                  dangerouslySetInnerHTML={{
-                    __html: toRichHtml(block.props.heading, resolveLocalizedSystemDefaultText(block.props.heading, "产品展示", locale)),
-                  }}
+                  dangerouslySetInnerHTML={{ __html: toRichHtml(block.props.heading, "产品展示") }}
                 />
               ) : null}
               {hasProductText ? (
@@ -15002,7 +14878,7 @@ type GalleryEditorImage = {
       typeof block.props.maxItems === "number" && Number.isFinite(block.props.maxItems)
         ? Math.max(1, Math.min(24, Math.round(block.props.maxItems)))
         : 6;
-    const emptyText = resolveLocalizedSystemDefaultText(block.props.emptyText, "暂无商户", locale);
+    const emptyText = (block.props.emptyText ?? "").trim() || "暂无商户";
     const merchantTabs = normalizeMerchantIndustryTabs(block.props.industryTabs);
     const activeMerchantTab = merchantTabs.find((item) => item.id === activeMerchantIndustryTabId) ?? merchantTabs[0];
     const activeIndustry = activeMerchantTab?.industry ?? "all";
@@ -15462,7 +15338,6 @@ type GalleryEditorImage = {
 
     return (
       <section
-        onMouseDownCapture={handleBlockShellMouseDownCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -15778,9 +15653,7 @@ type GalleryEditorImage = {
               {hasMerchantHeading ? (
                 <h2
                   className="text-xl font-bold whitespace-pre-wrap break-words"
-                  dangerouslySetInnerHTML={{
-                    __html: toRichHtml(block.props.heading, resolveLocalizedSystemDefaultText(block.props.heading, "商户列表", locale)),
-                  }}
+                  dangerouslySetInnerHTML={{ __html: toRichHtml(block.props.heading, "商户列表") }}
                 />
               ) : null}
               {hasMerchantText ? (
@@ -15949,10 +15822,10 @@ type GalleryEditorImage = {
 
   if (block.type === "search-bar") {
     type SearchLayoutKey = "locate" | "country" | "province" | "city" | "keyword" | "action";
-    const locateLabel = resolveLocalizedSystemDefaultText(block.props.locateLabel, "定位", locale);
-    const actionLabel = resolveLocalizedSystemDefaultText(block.props.actionLabel, "搜索", locale);
-    const cityPlaceholder = resolveLocalizedSystemDefaultText(block.props.cityPlaceholder, "选择城市", locale);
-    const searchPlaceholder = resolveLocalizedSystemDefaultText(block.props.searchPlaceholder, "请输入关键词", locale);
+    const locateLabel = (block.props.locateLabel ?? "").trim() || "定位";
+    const actionLabel = (block.props.actionLabel ?? "").trim() || "搜索";
+    const cityPlaceholder = (block.props.cityPlaceholder ?? "").trim() || "选择城市";
+    const searchPlaceholder = (block.props.searchPlaceholder ?? "").trim() || "请输入关键词";
     const countryOptions = getEuropeCountryOptions();
     const resolvedCountryCode = (() => {
       const fromProps = (block.props.defaultCountryCode ?? "").toUpperCase();
@@ -16408,7 +16281,6 @@ type GalleryEditorImage = {
 
     return (
       <section
-        onMouseDownCapture={handleBlockShellMouseDownCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -16857,7 +16729,6 @@ type GalleryEditorImage = {
 
     return (
       <section
-        onMouseDownCapture={handleBlockShellMouseDownCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -17419,7 +17290,6 @@ type GalleryEditorImage = {
     };
     return (
       <section
-        onMouseDownCapture={handleBlockShellMouseDownCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
