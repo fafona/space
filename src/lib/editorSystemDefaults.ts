@@ -85,10 +85,42 @@ const SYSTEM_DEFAULT_TEXTS = (() => {
 })();
 
 const SYSTEM_DEFAULT_TEXT_SET = new Set(SYSTEM_DEFAULT_TEXTS);
+const PAGE_NAME_PATTERN =
+  /^(?:page|pagina|página|seite|strona|страница|сторінка|頁面|页面|ページ|페이지)\s*([0-9]{1,2})$/iu;
+const PLAN_NAME_PATTERN =
+  /^(?:edit\s*)?(?:plan|variant|variante|вариант|方案)\s*([123一二三])$/iu;
+const PLAN_NAME_BY_INDEX = ["方案一", "方案二", "方案三"] as const;
+
+function resolveCanonicalDefaultPageName(value: string) {
+  const match = value.match(PAGE_NAME_PATTERN);
+  if (!match) return null;
+  const rawIndex = Number(match[1]);
+  if (!Number.isFinite(rawIndex) || rawIndex < 1 || rawIndex > SYSTEM_DEFAULT_PAGE_NAME_COUNT) return null;
+  return `页面${rawIndex}`;
+}
+
+function resolveCanonicalDefaultPlanName(value: string) {
+  const match = value.match(PLAN_NAME_PATTERN);
+  if (!match) return null;
+  const raw = (match[1] ?? "").trim();
+  const index =
+    raw === "一" ? 1 :
+    raw === "二" ? 2 :
+    raw === "三" ? 3 :
+    Number(raw);
+  if (!Number.isFinite(index) || index < 1 || index > PLAN_NAME_BY_INDEX.length) return null;
+  return PLAN_NAME_BY_INDEX[index - 1];
+}
 
 function toCanonicalSystemDefaultText(value: string) {
   const trimmed = value.trim();
   if (!trimmed) return null;
+
+  const canonicalPageName = resolveCanonicalDefaultPageName(trimmed);
+  if (canonicalPageName) return canonicalPageName;
+
+  const canonicalPlanName = resolveCanonicalDefaultPlanName(trimmed);
+  if (canonicalPlanName) return canonicalPlanName;
 
   const aliased = SYSTEM_DEFAULT_ALIASES[trimmed];
   if (aliased) return aliased;
