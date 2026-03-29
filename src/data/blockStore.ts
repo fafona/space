@@ -1,5 +1,6 @@
 import type { Block } from "./homeBlocks";
 import { sanitizeBlocksForRuntime } from "@/lib/blocksSanitizer";
+import { canonicalizeEditorBlocksSystemDefaults } from "@/lib/editorSystemDefaults";
 
 const DRAFT_KEY = "merchant-space:homeBlocks:draft:v2";
 const PUBLISHED_KEY = "merchant-space:homeBlocks:published:v1";
@@ -60,14 +61,17 @@ function loadBlocksByKey(key: string, fallback: Block[]): Block[] {
     if (!Array.isArray(parsed)) return fallback;
     if (parsed.length > 0 && !parsed[0]?.id) return fallback;
     const sanitized = sanitizeBlocksForRuntime(parsed as Block[]);
-    if (sanitized.removed > 0) {
+    const canonicalized = canonicalizeEditorBlocksSystemDefaults(sanitized.blocks);
+    const shouldRewrite =
+      sanitized.removed > 0 || JSON.stringify(canonicalized) !== JSON.stringify(sanitized.blocks);
+    if (shouldRewrite) {
       try {
-        localStorage.setItem(key, JSON.stringify(sanitized.blocks));
+        localStorage.setItem(key, JSON.stringify(canonicalized));
       } catch {
         // ignore cache rewrite errors
       }
     }
-    return sanitized.blocks;
+    return canonicalized;
   } catch {
     return fallback;
   }
@@ -77,7 +81,8 @@ function saveBlocksByKey(key: string, eventName: string, blocks: Block[]) {
   if (typeof window === "undefined") return;
   try {
     const sanitized = sanitizeBlocksForRuntime(blocks);
-    const raw = JSON.stringify(sanitized.blocks);
+    const canonicalized = canonicalizeEditorBlocksSystemDefaults(sanitized.blocks);
+    const raw = JSON.stringify(canonicalized);
     localStorage.setItem(key, raw);
     window.dispatchEvent(new Event(eventName));
   } catch {
@@ -110,7 +115,7 @@ export function saveBlocksToStorage(blocks: Block[], scope?: BlocksStoreScope) {
   saveBlocksByKey(key, scopedEvent(DRAFT_STORE_EVENT, scope), blocks);
   draftCacheByKey.set(key, {
     raw: typeof window === "undefined" ? null : localStorage.getItem(key),
-    parsed: sanitizeBlocksForRuntime(blocks).blocks,
+    parsed: canonicalizeEditorBlocksSystemDefaults(sanitizeBlocksForRuntime(blocks).blocks),
   });
 }
 
@@ -123,7 +128,7 @@ export function savePublishedBlocksToStorage(blocks: Block[], scope?: BlocksStor
   saveBlocksByKey(key, scopedEvent(PUBLISHED_STORE_EVENT, scope), blocks);
   publishedCacheByKey.set(key, {
     raw: typeof window === "undefined" ? null : localStorage.getItem(key),
-    parsed: sanitizeBlocksForRuntime(blocks).blocks,
+    parsed: canonicalizeEditorBlocksSystemDefaults(sanitizeBlocksForRuntime(blocks).blocks),
   });
 }
 
