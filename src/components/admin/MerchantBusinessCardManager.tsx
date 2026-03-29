@@ -744,25 +744,43 @@ function resolveFilePickerStatus(selectedFileName: string, assetUrl: string, upl
   return normalizeText(assetUrl) ? uploadedLabel : "未选择任何文件";
 }
 
+function formatImageResultSize(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "";
+  const kb = bytes / 1024;
+  if (kb >= 1024) {
+    return `${(kb / 1024).toFixed(1)} MB`;
+  }
+  return `${Math.max(1, Math.round(kb))} KB`;
+}
+
 function ImageFilePicker({
   label,
   statusText,
+  detailText,
+  disabled = false,
   onChange,
 }: {
   label: string;
   statusText: string;
+  detailText?: string;
+  disabled?: boolean;
   onChange: (event: ChangeEvent<HTMLInputElement>) => void;
 }) {
   return (
     <label className="block text-xs text-slate-600">
       {label}
       <span className="mt-1 block">
-        <span className="flex w-full cursor-pointer items-center gap-3 rounded border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-slate-700 transition hover:bg-sky-100 focus-within:border-sky-300 focus-within:ring-2 focus-within:ring-sky-100">
-          <input type="file" accept="image/*" className="sr-only" onChange={onChange} />
+        <span
+          className={`flex w-full items-center gap-3 rounded border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-slate-700 transition focus-within:border-sky-300 focus-within:ring-2 focus-within:ring-sky-100 ${
+            disabled ? "cursor-wait opacity-80" : "cursor-pointer hover:bg-sky-100"
+          }`}
+        >
+          <input type="file" accept="image/*" className="sr-only" onChange={onChange} disabled={disabled} />
           <span className="shrink-0 rounded border border-sky-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700">
             选择文件
           </span>
           <span className="min-w-0 flex-1 truncate text-slate-500">{statusText}</span>
+          {detailText ? <span className="shrink-0 text-[11px] font-medium text-sky-700">{detailText}</span> : null}
         </span>
       </span>
     </label>
@@ -800,7 +818,11 @@ export default function MerchantBusinessCardManager({
     resolveDraftPhoneValues(createDefaultMerchantBusinessCardDraft(profile).contacts),
   );
   const [backgroundImageFileName, setBackgroundImageFileName] = useState("");
+  const [backgroundImageFileDetail, setBackgroundImageFileDetail] = useState("");
+  const [isBackgroundImageProcessing, setIsBackgroundImageProcessing] = useState(false);
   const [contactPageImageFileName, setContactPageImageFileName] = useState("");
+  const [contactPageImageFileDetail, setContactPageImageFileDetail] = useState("");
+  const [isContactPageImageProcessing, setIsContactPageImageProcessing] = useState(false);
   const hiddenPreviewRef = useRef<HTMLDivElement | null>(null);
 
   const missingFields = useMemo(() => getMerchantBusinessCardRequiredFields(profile), [profile]);
@@ -980,7 +1002,11 @@ export default function MerchantBusinessCardManager({
     setDraft(nextDraft);
     setContactPhoneEditorValues(resolveDraftPhoneValues(nextDraft.contacts));
     setBackgroundImageFileName("");
+    setBackgroundImageFileDetail("");
+    setIsBackgroundImageProcessing(false);
     setContactPageImageFileName("");
+    setContactPageImageFileDetail("");
+    setIsContactPageImageProcessing(false);
     setDraftShareKey(createShareKey());
     setSelectedFieldKeys(["merchantName"]);
     setEditingCardId(null);
@@ -996,7 +1022,11 @@ export default function MerchantBusinessCardManager({
     setDraft(nextDraft);
     setContactPhoneEditorValues(resolveDraftPhoneValues(nextDraft.contacts));
     setBackgroundImageFileName("");
+    setBackgroundImageFileDetail("");
+    setIsBackgroundImageProcessing(false);
     setContactPageImageFileName("");
+    setContactPageImageFileDetail("");
+    setIsContactPageImageProcessing(false);
     setDraftShareKey(normalizeText(card.shareKey) || createShareKey());
     setSelectedFieldKeys(["merchantName"]);
     setEditingCardId(card.id);
@@ -1015,22 +1045,33 @@ export default function MerchantBusinessCardManager({
   const handleBackgroundUpload = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    const previousFileName = backgroundImageFileName;
+    const previousFileDetail = backgroundImageFileDetail;
     try {
       const fileName = normalizeText(file.name);
+      setBackgroundImageFileName(fileName || "背景图");
+      setBackgroundImageFileDetail("");
+      setIsBackgroundImageProcessing(true);
       const originalImageUrl = await readImageFileAsDataUrl(file);
       const optimized = await compressImageDataUrlWithinLimit(
         originalImageUrl,
         normalizedBackgroundImageLimitKb * 1024,
       );
       if (optimized.bytes > normalizedBackgroundImageLimitKb * 1024) {
+        setBackgroundImageFileName(previousFileName);
+        setBackgroundImageFileDetail(previousFileDetail);
         setTip(`名片背景图不能超过 ${normalizedBackgroundImageLimitKb} KB`);
         return;
       }
       applyDraft((current) => ({ ...current, backgroundImageUrl: optimized.dataUrl }));
       setBackgroundImageFileName(fileName || "已上传背景图");
+      setBackgroundImageFileDetail(`${optimized.compressed ? "压缩后" : "大小"} ${formatImageResultSize(optimized.bytes)}`);
     } catch {
+      setBackgroundImageFileName(previousFileName);
+      setBackgroundImageFileDetail(previousFileDetail);
       setTip("背景图上传失败，请重试");
     } finally {
+      setIsBackgroundImageProcessing(false);
       event.target.value = "";
     }
   };
@@ -1070,23 +1111,34 @@ export default function MerchantBusinessCardManager({
   const handleContactPageImageUpload = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    const previousFileName = contactPageImageFileName;
+    const previousFileDetail = contactPageImageFileDetail;
     try {
       const fileName = normalizeText(file.name);
+      setContactPageImageFileName(fileName || "联系卡图片");
+      setContactPageImageFileDetail("");
+      setIsContactPageImageProcessing(true);
       const originalImageUrl = await readImageFileAsDataUrl(file);
       const optimized = await compressImageDataUrlWithinLimit(
         originalImageUrl,
         normalizedContactPageImageLimitKb * 1024,
       );
       if (optimized.bytes > normalizedContactPageImageLimitKb * 1024) {
+        setContactPageImageFileName(previousFileName);
+        setContactPageImageFileDetail(previousFileDetail);
         setTip(`联系卡展示图不能超过 ${normalizedContactPageImageLimitKb} KB`);
         return;
       }
       const imageUrl = optimized.dataUrl;
       applyDraft((current) => ({ ...current, contactPageImageUrl: imageUrl }));
       setContactPageImageFileName(fileName || "已上传联系卡图片");
+      setContactPageImageFileDetail(`${optimized.compressed ? "压缩后" : "大小"} ${formatImageResultSize(optimized.bytes)}`);
     } catch {
+      setContactPageImageFileName(previousFileName);
+      setContactPageImageFileDetail(previousFileDetail);
       setTip("联系卡图片上传失败，请重试");
     } finally {
+      setIsContactPageImageProcessing(false);
       event.target.value = "";
     }
   };
@@ -1261,11 +1313,13 @@ export default function MerchantBusinessCardManager({
     normalizeText(draft.backgroundImageUrl),
     "已上传背景图，可重新选择",
   );
+  const backgroundImagePickerDetail = isBackgroundImageProcessing ? "压缩中..." : backgroundImageFileDetail;
   const contactPageImagePickerStatus = resolveFilePickerStatus(
     contactPageImageFileName,
     normalizeText(draft.contactPageImageUrl),
     "已上传联系卡图片，可重新选择",
   );
+  const contactPageImagePickerDetail = isContactPageImageProcessing ? "压缩中..." : contactPageImageFileDetail;
 
   return (
     <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
@@ -1419,6 +1473,8 @@ export default function MerchantBusinessCardManager({
                             <ImageFilePicker
                               label="背景图"
                               statusText={backgroundImagePickerStatus}
+                              detailText={backgroundImagePickerDetail}
+                              disabled={isBackgroundImageProcessing}
                               onChange={(event) => void handleBackgroundUpload(event)}
                             />
                             <div className="mt-1 text-[11px] text-slate-400">默认上限 {normalizedBackgroundImageLimitKb} KB，上传时会先自动压缩。</div>
@@ -1446,6 +1502,8 @@ export default function MerchantBusinessCardManager({
                           <ImageFilePicker
                             label="上传图片"
                             statusText={contactPageImagePickerStatus}
+                            detailText={contactPageImagePickerDetail}
+                            disabled={isContactPageImageProcessing}
                             onChange={(event) => void handleContactPageImageUpload(event)}
                           />
                           <button
@@ -1453,6 +1511,8 @@ export default function MerchantBusinessCardManager({
                             className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
                             onClick={() => {
                               setContactPageImageFileName("");
+                              setContactPageImageFileDetail("");
+                              setIsContactPageImageProcessing(false);
                               applyDraft((current) => ({ ...current, contactPageImageUrl: "" }));
                             }}
                             disabled={!normalizeText(draft.contactPageImageUrl)}
