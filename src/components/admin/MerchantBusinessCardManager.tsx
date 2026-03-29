@@ -99,7 +99,10 @@ const FONT_FAMILY_OPTIONS = [
   { value: "Times New Roman, Times, serif", label: "Times New Roman" },
 ];
 
-const FONT_SIZE_OPTIONS = [12, 14, 16, 18, 20, 24, 28, 32, 36, 42, 48];
+const MIN_TYPOGRAPHY_FONT_SIZE = 10;
+const MAX_TYPOGRAPHY_FONT_SIZE = 80;
+const FONT_SIZE_OPTIONS = [12, 14, 16, 18, 20, 24, 28, 32, 36, 42, 48, 56, 64, 72, 80];
+const TYPOGRAPHY_FONT_SIZE_INPUT_KEY = "merchant-business-card-typography-font-size";
 const QR_MIN_READABLE_SIZE = 96;
 const ALL_TYPOGRAPHY_KEYS: Array<keyof MerchantBusinessCardDraft["typography"]> = [
   "name",
@@ -147,6 +150,10 @@ function normalizeText(value: unknown) {
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
+}
+
+function normalizeTypographyFontSize(value: number) {
+  return clamp(Math.round(value), MIN_TYPOGRAPHY_FONT_SIZE, MAX_TYPOGRAPHY_FONT_SIZE);
 }
 
 function delay(ms: number) {
@@ -861,6 +868,20 @@ export default function MerchantBusinessCardManager({
   const selectedTypography = selectedCustomText
     ? selectedCustomText.typography
     : draft.fieldTypography[primarySelectedFieldKey as MerchantBusinessCardFieldKey];
+  const selectedTypographyFontSize =
+    typeof selectedTypography.fontSize === "number" && Number.isFinite(selectedTypography.fontSize)
+      ? normalizeTypographyFontSize(selectedTypography.fontSize)
+      : 16;
+  const selectedTypographyFontSizeInput = getNumberInputValue(
+    TYPOGRAPHY_FONT_SIZE_INPUT_KEY,
+    selectedTypographyFontSize,
+  );
+  const selectedTypographyFontSizeOptionValue = useMemo(() => {
+    const parsed = Number(selectedTypographyFontSizeInput.trim());
+    if (!Number.isFinite(parsed)) return "";
+    const normalized = normalizeTypographyFontSize(parsed);
+    return FONT_SIZE_OPTIONS.includes(normalized) ? String(normalized) : "";
+  }, [selectedTypographyFontSizeInput]);
   const positionEditorItems = useMemo(
     () => [
       ...TEXT_LAYOUT_FIELDS.map((item) => ({
@@ -925,6 +946,10 @@ export default function MerchantBusinessCardManager({
     });
   }, [activeLinkShareKey, draft.contacts, draft.mode, draft.name, draft.title, websiteUrl]);
   const qrTargetUrl = draft.mode === "link" ? draftLinkUrl || websiteUrl : websiteUrl;
+
+  useEffect(() => {
+    clearNumberInputDraft(TYPOGRAPHY_FONT_SIZE_INPUT_KEY);
+  }, [primarySelectedFieldKey, selectedTypographyFontSize]);
 
   useEffect(() => {
     if (!tip) return;
@@ -1730,9 +1755,60 @@ export default function MerchantBusinessCardManager({
                             统一设置
                           </label>
                         </div>
-                        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_120px]">
+                        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,220px)]">
                           <label className="block text-xs text-slate-600">字体<select className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={selectedTypography.fontFamily || ""} onChange={(event) => updateTypography({ fontFamily: event.target.value })}>{FONT_FAMILY_OPTIONS.map((option) => <option key={option.label} value={option.value}>{option.label}</option>)}</select></label>
-                          <label className="block text-xs text-slate-600">字号<select className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" value={selectedTypography.fontSize} onChange={(event) => updateTypography({ fontSize: Number(event.target.value) })}>{FONT_SIZE_OPTIONS.map((size) => <option key={size} value={size}>{size}</option>)}</select></label>
+                          <label className="block text-xs text-slate-600">
+                            字号
+                            <div className="mt-1 grid gap-2 md:grid-cols-[minmax(0,1fr)_96px]">
+                              <input
+                                type="number"
+                                inputMode="numeric"
+                                min={MIN_TYPOGRAPHY_FONT_SIZE}
+                                max={MAX_TYPOGRAPHY_FONT_SIZE}
+                                step={1}
+                                className="w-full rounded border bg-white px-3 py-2 text-sm"
+                                value={selectedTypographyFontSizeInput}
+                                onChange={(event) =>
+                                  setNumberInputDrafts((current) => ({
+                                    ...current,
+                                    [TYPOGRAPHY_FONT_SIZE_INPUT_KEY]: event.target.value,
+                                  }))
+                                }
+                                onBlur={() =>
+                                  commitNumberInput(
+                                    TYPOGRAPHY_FONT_SIZE_INPUT_KEY,
+                                    selectedTypographyFontSize,
+                                    MIN_TYPOGRAPHY_FONT_SIZE,
+                                    MAX_TYPOGRAPHY_FONT_SIZE,
+                                    (value) => updateTypography({ fontSize: value }),
+                                  )
+                                }
+                                onKeyDown={(event) => {
+                                  if (event.key !== "Enter") return;
+                                  event.preventDefault();
+                                  event.currentTarget.blur();
+                                }}
+                              />
+                              <select
+                                className="w-full rounded border bg-white px-3 py-2 text-sm"
+                                value={selectedTypographyFontSizeOptionValue}
+                                onChange={(event) => {
+                                  const nextSize = Number(event.target.value);
+                                  if (!Number.isFinite(nextSize)) return;
+                                  clearNumberInputDraft(TYPOGRAPHY_FONT_SIZE_INPUT_KEY);
+                                  updateTypography({ fontSize: normalizeTypographyFontSize(nextSize) });
+                                }}
+                              >
+                                <option value="">常用值</option>
+                                {FONT_SIZE_OPTIONS.map((size) => (
+                                  <option key={size} value={size}>
+                                    {size}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <div className="mt-1 text-[11px] text-slate-400">可直接输入，范围 10 到 80。</div>
+                          </label>
                         </div>
                         <div className="grid gap-3 md:grid-cols-[120px_repeat(3,minmax(0,1fr))]">
                           <label className="block text-xs text-slate-600">颜色<input type="color" className="mt-1 h-[42px] w-full rounded border bg-white px-2 py-1" value={selectedTypography.fontColor || "#0f172a"} onChange={(event) => updateTypography({ fontColor: event.target.value })} /></label>

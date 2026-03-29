@@ -152,6 +152,38 @@ test("normalizeMerchantBusinessCardDraft migrates legacy info typography to fiel
   assert.equal(draft.fieldTypography.wechat.textDecoration, "underline");
 });
 
+test("normalizeMerchantBusinessCardDraft clamps business card font size to 80", () => {
+  const draft = normalizeMerchantBusinessCardDraft({
+    typography: {
+      name: {
+        fontSize: 120,
+      },
+      info: {
+        fontSize: 96,
+      },
+    },
+    fieldTypography: {
+      title: {
+        fontSize: 88,
+      },
+    },
+    customTexts: [
+      {
+        id: "custom-1",
+        text: "VIP only",
+        typography: {
+          fontSize: 200,
+        },
+      },
+    ],
+  });
+
+  assert.equal(draft.typography.name.fontSize, 80);
+  assert.equal(draft.fieldTypography.title.fontSize, 80);
+  assert.equal(draft.fieldTypography.contactName.fontSize, 80);
+  assert.equal(draft.customTexts[0]?.typography.fontSize, 80);
+});
+
 test("normalizeMerchantBusinessCards keeps only valid generated card assets", () => {
   const cards = normalizeMerchantBusinessCards([
     {
