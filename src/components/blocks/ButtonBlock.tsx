@@ -1,5 +1,7 @@
 import type { ButtonProps } from "@/data/homeBlocks";
 import {
+  BUTTON_BLOCK_MIN_HEIGHT,
+  BUTTON_BLOCK_MIN_WIDTH,
   resolveButtonContentPadding,
   resolveButtonJumpPageId,
   resolveButtonLabel,
@@ -59,11 +61,11 @@ export default function ButtonBlock(props: ButtonBlockRuntimeProps) {
   });
   const blockWidth =
     typeof props.blockWidth === "number" && Number.isFinite(props.blockWidth)
-      ? Math.max(18, Math.round(props.blockWidth))
+      ? Math.max(BUTTON_BLOCK_MIN_WIDTH, Math.round(props.blockWidth))
       : undefined;
   const blockHeight =
     typeof props.blockHeight === "number" && Number.isFinite(props.blockHeight)
-      ? Math.max(18, Math.round(props.blockHeight))
+      ? Math.max(BUTTON_BLOCK_MIN_HEIGHT, Math.round(props.blockHeight))
       : undefined;
   const sizeStyle = {
     width: blockWidth ? `${blockWidth}px` : undefined,

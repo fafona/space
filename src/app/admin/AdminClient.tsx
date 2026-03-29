@@ -175,7 +175,13 @@ import {
   parseProductWorkbook,
 } from "@/lib/productImport";
 import { broadcastPublishSync } from "@/lib/publishSync";
-import { buildButtonLabelPatch, resolveButtonContentPadding, resolveButtonLabel } from "@/lib/buttonBlock";
+import {
+  BUTTON_BLOCK_MIN_HEIGHT,
+  BUTTON_BLOCK_MIN_WIDTH,
+  buildButtonLabelPatch,
+  resolveButtonContentPadding,
+  resolveButtonLabel,
+} from "@/lib/buttonBlock";
 import { ensureMerchantIdentityForUser, isMerchantNumericId } from "@/lib/merchantIdentity";
 import {
   buildMerchantDomain,
@@ -310,8 +316,6 @@ function collectBookingOptionsFromPlanConfig(config: PagePlanConfig | null | und
 
 const MIN_BLOCK_WIDTH = 240;
 const MIN_BLOCK_HEIGHT = 120;
-const BUTTON_BLOCK_MIN_WIDTH = 18;
-const BUTTON_BLOCK_MIN_HEIGHT = 18;
 const NUDGE_STEP = 4;
 const HISTORY_LIMIT = 120;
 const DEFAULT_TIP_DURATION_MS = 2600;
@@ -9782,8 +9786,8 @@ type GalleryEditorImage = {
         : block.type === "product" || block.type === "booking"
           ? "min(820px, calc(100vw - 2rem))"
           : undefined;
-  const blockWidth = draftResize?.width ?? normalizeBlockWidth(block.props.blockWidth);
-  const blockHeight = draftResize?.height ?? normalizeBlockHeight(block.props.blockHeight);
+  const blockWidth = draftResize?.width ?? normalizeBlockWidth(block.props.blockWidth, block.type);
+  const blockHeight = draftResize?.height ?? normalizeBlockHeight(block.props.blockHeight, block.type);
   const isDraggingSource = draggingBlockId === block.id;
   const isBlockLocked = block.props.blockLocked === true;
   const offsetX =

@@ -6,6 +6,8 @@ export type ButtonJumpPage = {
   id: string;
   name?: string;
 };
+export const BUTTON_BLOCK_MIN_WIDTH = 18;
+export const BUTTON_BLOCK_MIN_HEIGHT = 18;
 
 export const DEFAULT_BUTTON_LABEL = "按钮";
 
@@ -99,11 +101,11 @@ export function resolveButtonJumpPageId(target: string, pages: ButtonJumpPage[])
 export function resolveButtonContentPadding(width?: number, height?: number) {
   const safeWidth =
     typeof width === "number" && Number.isFinite(width)
-      ? Math.max(18, Math.round(width))
+      ? Math.max(BUTTON_BLOCK_MIN_WIDTH, Math.round(width))
       : undefined;
   const safeHeight =
     typeof height === "number" && Number.isFinite(height)
-      ? Math.max(18, Math.round(height))
+      ? Math.max(BUTTON_BLOCK_MIN_HEIGHT, Math.round(height))
       : undefined;
 
   const horizontal =
