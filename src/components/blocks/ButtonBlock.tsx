@@ -97,32 +97,32 @@ export default function ButtonBlock(props: ButtonBlockRuntimeProps) {
   return (
     <section className="max-w-6xl mx-auto px-6 py-6" style={offsetStyle}>
       <div
-        className={`overflow-hidden rounded-xl shadow-sm ${borderClass}`}
+        className={`relative overflow-hidden rounded-xl shadow-sm ${borderClass}`}
         style={{ ...cardStyle, ...sizeStyle, ...borderInlineStyle }}
       >
         {isClickable ? (
           <button
             type="button"
-            className="box-border flex h-full min-h-0 w-full appearance-none items-center justify-center border-0 bg-transparent text-center transition hover:brightness-[0.98]"
-            style={resolveButtonContentPadding(blockWidth, blockHeight)}
+            className="relative h-full min-h-0 w-full appearance-none border-0 bg-transparent p-0 text-center transition hover:brightness-[0.98]"
             onClick={() => performJump(jumpTarget, props.onNavigatePage, props.availablePages)}
           >
-            <div
-              className="min-h-0 w-full overflow-hidden break-words whitespace-pre-wrap"
-              style={typographyStyle}
-              dangerouslySetInnerHTML={{ __html: labelHtml }}
-            />
+            <div className="absolute inset-0 box-border flex min-h-0 min-w-0 items-center justify-center overflow-hidden text-center" style={resolveButtonContentPadding(blockWidth, blockHeight)}>
+              <div
+                className="min-h-0 min-w-0 w-full overflow-hidden break-words whitespace-pre-wrap"
+                style={typographyStyle}
+                dangerouslySetInnerHTML={{ __html: labelHtml }}
+              />
+            </div>
           </button>
         ) : (
-          <div
-            className="box-border flex h-full min-h-0 w-full items-center justify-center text-center"
-            style={resolveButtonContentPadding(blockWidth, blockHeight)}
-          >
-            <div
-              className="min-h-0 w-full overflow-hidden break-words whitespace-pre-wrap"
-              style={typographyStyle}
-              dangerouslySetInnerHTML={{ __html: labelHtml }}
-            />
+          <div className="relative h-full min-h-0 w-full">
+            <div className="absolute inset-0 box-border flex min-h-0 min-w-0 items-center justify-center overflow-hidden text-center" style={resolveButtonContentPadding(blockWidth, blockHeight)}>
+              <div
+                className="min-h-0 min-w-0 w-full overflow-hidden break-words whitespace-pre-wrap"
+                style={typographyStyle}
+                dangerouslySetInnerHTML={{ __html: labelHtml }}
+              />
+            </div>
           </div>
         )}
       </div>

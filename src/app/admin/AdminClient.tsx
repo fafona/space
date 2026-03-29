@@ -11008,13 +11008,13 @@ type GalleryEditorImage = {
           {typographyDialog}
           {buttonJumpDialog}
           <div
-            className="box-border flex h-full min-h-0 w-full items-center justify-center text-center"
+            className="absolute inset-0 box-border flex min-h-0 min-w-0 items-center justify-center overflow-hidden text-center"
             style={resolveButtonContentPadding(blockWidth, blockHeight)}
           >
             {isSelected ? (
               <RichTextEditor
                 field="buttonLabel"
-                className="h-full min-h-0 w-full overflow-hidden break-words text-center text-gray-700"
+                className="block min-h-0 min-w-0 w-full overflow-hidden break-words text-center text-gray-700"
                 style={buttonLabelStyle}
                 value={buttonLabel}
                 onChange={handleRichFieldChange}
@@ -11023,7 +11023,7 @@ type GalleryEditorImage = {
               />
             ) : (
               <div
-                className="h-full min-h-0 w-full overflow-hidden break-words whitespace-pre-wrap text-center text-gray-700"
+                className="block min-h-0 min-w-0 w-full overflow-hidden break-words whitespace-pre-wrap text-center text-gray-700"
                 style={buttonLabelStyle}
                 dangerouslySetInnerHTML={{ __html: toRichHtml(buttonLabel, "按钮") }}
               />
