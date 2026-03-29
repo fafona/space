@@ -192,6 +192,7 @@ import {
   canonicalizeEditorBlocksSystemDefaults,
   canonicalizePagePlanConfigSystemDefaults,
   canonicalizeSystemDefaultText,
+  prepareEditorSystemDefaultTranslations,
   resolveLocalizedSystemDefaultText,
 } from "@/lib/editorSystemDefaults";
 
@@ -2989,8 +2990,26 @@ export default function AdminClient({
   const [pageSettingsColorOpacity, setPageSettingsColorOpacity] = useState(1);
   const [recentColors, setRecentColors] = useState<string[]>([]);
   const [resizePreview, setResizePreview] = useState<{ blockId: string; heightDelta: number } | null>(null);
+  const [, setEditorDefaultTranslationVersion] = useState(0);
   const selectedIdRef = useRef(selectedId);
   const planConfigRef = useRef(planConfig);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (locale === "zh-CN") {
+      return () => {
+        cancelled = true;
+      };
+    }
+    void prepareEditorSystemDefaultTranslations(locale).then(() => {
+      if (!cancelled) {
+        setEditorDefaultTranslationVersion((version) => version + 1);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [locale]);
 
   useEffect(() => {
     setPlanTemplateCoverPreviewScale(1);
@@ -4985,7 +5004,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }
 
   function handleEditorMouseDownCapture(event: ReactMouseEvent<HTMLElement>) {
-    if (isPlatformEditor) return;
     const target = event.target;
     if (!(target instanceof Element)) return;
     const composedPath =
@@ -6959,7 +6977,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                               previewViewport={previewViewport}
                               runtimeSiteId={editingSiteId || ""}
                               runtimeSiteName={merchantDisplayName}
-                              isPlatformEditor={isPlatformEditor}
                             />
                           </div>
                         );
@@ -7025,7 +7042,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                       previewViewport={previewViewport}
                       runtimeSiteId={editingSiteId || ""}
                       runtimeSiteName={merchantDisplayName}
-                      isPlatformEditor={isPlatformEditor}
                     />
                   </div>
                 );
@@ -7747,7 +7763,6 @@ function InlineEditorBlock({
   previewViewport,
   runtimeSiteId = "",
   runtimeSiteName = "",
-  isPlatformEditor = false,
 }: {
   block: Block;
   publicBlockId: string;
@@ -7779,7 +7794,6 @@ function InlineEditorBlock({
   previewViewport: "desktop" | "mobile";
   runtimeSiteId?: string;
   runtimeSiteName?: string;
-  isPlatformEditor?: boolean;
 }) {
   const { locale } = useI18n();
   type CommonEditorTextBox = {
@@ -9861,9 +9875,9 @@ type GalleryEditorImage = {
     ...blockPreviewOverflowStyle,
     ...borderInlineStyle,
   };
-  const blockShellMouseDownCapture = isPlatformEditor ? undefined : handleBlockShellMouseDownCapture;
-  const blockShellMouseUpCapture = isPlatformEditor ? undefined : handleBlockShellMouseUpCapture;
-  const blockShellClickCapture = isPlatformEditor ? undefined : handleBlockShellClickCapture;
+  const blockShellMouseDownCapture = handleBlockShellMouseDownCapture;
+  const blockShellMouseUpCapture = handleBlockShellMouseUpCapture;
+  const blockShellClickCapture = handleBlockShellClickCapture;
   function handleBlockShellMouseDownCapture(event: ReactMouseEvent<HTMLElement>) {
     if (isSelected) return;
     const target = event.target;
@@ -15044,6 +15058,8 @@ type GalleryEditorImage = {
         ? Math.max(1, Math.min(24, Math.round(block.props.maxItems)))
         : 6;
     const emptyText = resolveLocalizedSystemDefaultText(block.props.emptyText, "暂无商户", locale);
+    const previousPageLabel = resolveLocalizedSystemDefaultText(undefined, "上一页", locale);
+    const nextPageLabel = resolveLocalizedSystemDefaultText(undefined, "下一页", locale);
     const merchantTabs = normalizeMerchantIndustryTabs(block.props.industryTabs);
     const activeMerchantTab = merchantTabs.find((item) => item.id === activeMerchantIndustryTabId) ?? merchantTabs[0];
     const activeIndustry = activeMerchantTab?.industry ?? "all";
@@ -15954,7 +15970,7 @@ type GalleryEditorImage = {
                       disabled={safeMerchantPreviewPageIndex <= 0}
                       onClick={() => setMerchantPreviewPageIndex((prev) => Math.max(0, prev - 1))}
                     >
-                      <span style={merchantButtonLabelStyle}>上一页</span>
+                      <span style={merchantButtonLabelStyle}>{previousPageLabel}</span>
                     </button>
                   ) : null}
                   {merchantNextLayout ? (
@@ -15977,7 +15993,7 @@ type GalleryEditorImage = {
                       disabled={safeMerchantPreviewPageIndex >= merchantTotalPages - 1}
                       onClick={() => setMerchantPreviewPageIndex((prev) => Math.min(merchantTotalPages - 1, prev + 1))}
                     >
-                      <span style={merchantButtonLabelStyle}>下一页</span>
+                      <span style={merchantButtonLabelStyle}>{nextPageLabel}</span>
                     </button>
                   ) : null}
                 </div>
@@ -15994,6 +16010,8 @@ type GalleryEditorImage = {
     type SearchLayoutKey = "locate" | "country" | "province" | "city" | "keyword" | "action";
     const locateLabel = resolveLocalizedSystemDefaultText(block.props.locateLabel, "定位", locale);
     const actionLabel = resolveLocalizedSystemDefaultText(block.props.actionLabel, "搜索", locale);
+    const countryLabel = resolveLocalizedSystemDefaultText(undefined, "国家", locale);
+    const provinceLabel = resolveLocalizedSystemDefaultText(undefined, "省份", locale);
     const cityPlaceholder = resolveLocalizedSystemDefaultText(block.props.cityPlaceholder, "选择城市", locale);
     const searchPlaceholder = resolveLocalizedSystemDefaultText(block.props.searchPlaceholder, "请输入关键词", locale);
     const countryOptions = getEuropeCountryOptions();
@@ -16014,9 +16032,9 @@ type GalleryEditorImage = {
       if (cityOptions.includes(fromProps)) return fromProps;
       return "";
     })();
-    const resolvedCountryName = countryOptions.find((item) => item.code === resolvedCountryCode)?.name ?? "国家";
+    const resolvedCountryName = countryOptions.find((item) => item.code === resolvedCountryCode)?.name ?? countryLabel;
     const resolvedProvinceName =
-      provinceOptions.find((item) => item.code === resolvedProvinceCode)?.name ?? "省份";
+      provinceOptions.find((item) => item.code === resolvedProvinceCode)?.name ?? provinceLabel;
     const hasSearchHeading = hasVisibleRichText(block.props.heading);
     const hasSearchText = hasVisibleRichText(block.props.text);
     const searchButtonBgColor = (block.props.searchButtonBgColor ?? "#ffffff").trim() || "#ffffff";
@@ -16532,7 +16550,7 @@ type GalleryEditorImage = {
                         </option>
                       ))
                     ) : (
-                      <option value="">国家</option>
+                      <option value="">{countryLabel}</option>
                     )}
                   </select>
                 </label>
@@ -16558,7 +16576,7 @@ type GalleryEditorImage = {
                         </option>
                       ))
                     ) : (
-                      <option value="">省份</option>
+                      <option value="">{provinceLabel}</option>
                     )}
                   </select>
                 </label>

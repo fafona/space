@@ -9,6 +9,10 @@ test("canonicalizeSystemDefaultText normalizes translated default page and plan 
   assert.equal(editorSystemDefaults.canonicalizeSystemDefaultText("\u0421\u0442\u0440\u0430\u043d\u0438\u0446\u0430 2"), "\u9875\u97622");
   assert.equal(editorSystemDefaults.canonicalizeSystemDefaultText("\u0412\u0430\u0440\u0438\u0430\u043d\u0442 1"), "\u65b9\u6848\u4e00");
   assert.equal(editorSystemDefaults.canonicalizeSystemDefaultText("\u7f16\u8f91\u0412\u0430\u0440\u0438\u0430\u043d\u0442 1"), "\u65b9\u6848\u4e00");
+  assert.equal(editorSystemDefaults.canonicalizeSystemDefaultText("\u56fd\u5bb6"), "\u56fd\u5bb6");
+  assert.equal(editorSystemDefaults.canonicalizeSystemDefaultText("\u7701\u4efd"), "\u7701\u4efd");
+  assert.equal(editorSystemDefaults.canonicalizeSystemDefaultText("\u4e0a\u4e00\u9875"), "\u4e0a\u4e00\u9875");
+  assert.equal(editorSystemDefaults.canonicalizeSystemDefaultText("\u4e0b\u4e00\u9875"), "\u4e0b\u4e00\u9875");
 });
 
 test("canonicalizePagePlanConfigSystemDefaults repairs translated page and plan names inside plan config", () => {
