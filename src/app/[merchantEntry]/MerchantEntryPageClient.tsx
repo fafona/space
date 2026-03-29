@@ -122,8 +122,6 @@ export default function MerchantEntryPageClient({
 
     let mounted = true;
     if (skipEntrySessionCheck) {
-      setNumericAdminAuthenticated(true);
-      setNumericAdminAuthReady(true);
       return () => {
         mounted = false;
       };
@@ -201,7 +199,6 @@ export default function MerchantEntryPageClient({
 
     let mounted = true;
     if (skipEntrySessionCheck) {
-      setNumericSessionLookupDone(true);
       return () => {
         mounted = false;
       };
