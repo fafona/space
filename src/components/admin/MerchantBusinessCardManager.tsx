@@ -1366,7 +1366,12 @@ export default function MerchantBusinessCardManager({
                         <div className="space-y-3">
                           <label className="block text-xs text-slate-600">
                             背景图
-                            <input type="file" accept="image/*" className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" onChange={(event) => void handleBackgroundUpload(event)} />
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="mt-1 w-full rounded border border-sky-200 bg-sky-50 px-3 py-2 text-sm"
+                              onChange={(event) => void handleBackgroundUpload(event)}
+                            />
                             <div className="mt-1 text-[11px] text-slate-400">默认上限 {normalizedBackgroundImageLimitKb} KB，上传时会先自动压缩。</div>
                           </label>
                           <label className="block text-xs text-slate-600">图片透明度<div className="mt-1 flex items-center gap-3 rounded border bg-white px-3 py-2"><input type="range" min="0" max="1" step="0.01" className="min-w-0 flex-1" value={draft.backgroundImageOpacity} onChange={(event) => applyDraft((current) => ({ ...current, backgroundImageOpacity: clamp(Number(event.target.value), 0, 1) }))} /><span className="w-12 shrink-0 text-right text-xs text-slate-500">{formatOpacityPercent(draft.backgroundImageOpacity)}</span></div></label>
@@ -1391,7 +1396,12 @@ export default function MerchantBusinessCardManager({
                         <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_120px_140px]">
                           <label className="block text-xs text-slate-600">
                             上传图片
-                            <input type="file" accept="image/*" className="mt-1 w-full rounded border bg-white px-3 py-2 text-sm" onChange={(event) => void handleContactPageImageUpload(event)} />
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="mt-1 w-full rounded border border-sky-200 bg-sky-50 px-3 py-2 text-sm"
+                              onChange={(event) => void handleContactPageImageUpload(event)}
+                            />
                           </label>
                           <button
                             type="button"
