@@ -137,6 +137,36 @@ function localizeSystemDefaultValue<T>(value: T, locale: string): T {
   return value;
 }
 
+function canonicalizeSystemDefaultValue<T>(value: T): T {
+  if (typeof value === "string") {
+    const canonical = toCanonicalSystemDefaultText(value);
+    return (canonical ?? value) as T;
+  }
+
+  if (Array.isArray(value)) {
+    let changed = false;
+    const next = value.map((item) => {
+      const canonicalized = canonicalizeSystemDefaultValue(item);
+      if (canonicalized !== item) changed = true;
+      return canonicalized;
+    });
+    return (changed ? next : value) as T;
+  }
+
+  if (value && typeof value === "object") {
+    const source = value as Record<string, unknown>;
+    let changed = false;
+    const nextEntries = Object.entries(source).map(([key, nestedValue]) => {
+      const canonicalized = canonicalizeSystemDefaultValue(nestedValue);
+      if (canonicalized !== nestedValue) changed = true;
+      return [key, canonicalized] as const;
+    });
+    return (changed ? Object.fromEntries(nextEntries) : value) as T;
+  }
+
+  return value;
+}
+
 export async function prepareEditorSystemDefaultTranslations(locale: string) {
   const normalizedLocale = normalizeDomLocale(locale);
   if (normalizedLocale === "zh-CN") return;
@@ -163,4 +193,16 @@ export function localizeEditorBlocksSystemDefaults(blocks: Block[], locale: stri
 
 export function localizePagePlanConfigSystemDefaults(config: PagePlanConfig, locale: string) {
   return localizeSystemDefaultValue(config, locale) as PagePlanConfig;
+}
+
+export function canonicalizeSystemDefaultText(value: string) {
+  return toCanonicalSystemDefaultText(value) ?? value;
+}
+
+export function canonicalizeEditorBlocksSystemDefaults(blocks: Block[]) {
+  return canonicalizeSystemDefaultValue(blocks) as Block[];
+}
+
+export function canonicalizePagePlanConfigSystemDefaults(config: PagePlanConfig) {
+  return canonicalizeSystemDefaultValue(config) as PagePlanConfig;
 }

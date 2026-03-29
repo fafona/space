@@ -189,10 +189,9 @@ import MerchantBookingManagerDialog from "@/components/admin/MerchantBookingMana
 import MerchantProfileDialog from "@/components/admin/MerchantProfileDialog";
 import { useI18n } from "@/components/I18nProvider";
 import {
-  localizeEditorBlocksSystemDefaults,
-  localizePagePlanConfigSystemDefaults,
-  localizeSystemDefaultText,
-  prepareEditorSystemDefaultTranslations,
+  canonicalizeEditorBlocksSystemDefaults,
+  canonicalizePagePlanConfigSystemDefaults,
+  canonicalizeSystemDefaultText,
   resolveLocalizedSystemDefaultText,
 } from "@/lib/editorSystemDefaults";
 
@@ -1180,8 +1179,8 @@ const MERCHANT_ONBOARDING_BLOCKS: Block[] = (() => {
   ];
 })();
 
-function getLocalizedSystemDefaultPageName(locale: string, index: number) {
-  return localizeSystemDefaultText(`页面${index + 1}`, locale);
+function getLocalizedSystemDefaultPageName(_locale: string, index: number) {
+  return canonicalizeSystemDefaultText(`页面${index + 1}`);
 }
 
 function isCommonCanvasBlockType(type: Block["type"]): type is "common" {
@@ -2919,7 +2918,7 @@ export default function AdminClient({
     isPlatformEditor
       ? (platformSeedBlocks.length > 0 ? platformSeedBlocks : homeBlocks)
       : MERCHANT_ONBOARDING_BLOCKS;
-  const defaultEditorBlocks = localizeEditorBlocksSystemDefaults(rawDefaultEditorBlocks, locale);
+  const defaultEditorBlocks = canonicalizeEditorBlocksSystemDefaults(rawDefaultEditorBlocks);
   const initialPlanConfig = getPagePlanConfigFromBlocks(defaultEditorBlocks);
   const initialMobilePlanConfig =
     getEmbeddedMobilePlanConfig(defaultEditorBlocks) ?? adaptPlanConfigForMobile(JSON.parse(JSON.stringify(initialPlanConfig)) as PagePlanConfig);
@@ -2991,7 +2990,6 @@ export default function AdminClient({
   const [resizePreview, setResizePreview] = useState<{ blockId: string; heightDelta: number } | null>(null);
   const selectedIdRef = useRef(selectedId);
   const planConfigRef = useRef(planConfig);
-  const applyEditorSystemDefaultLocaleRef = useRef<(targetLocale?: string) => Promise<void>>(async () => {});
 
   useEffect(() => {
     setPlanTemplateCoverPreviewScale(1);
@@ -3137,58 +3135,11 @@ export default function AdminClient({
     return JSON.parse(JSON.stringify(source)) as PagePlanConfig;
   }
 
-  function buildLocalizedViewportState(state: ViewportEditorState, targetLocale: string): ViewportEditorState {
-    return {
-      ...state,
-      planConfig: clonePlanConfig(localizePagePlanConfigSystemDefaults(state.planConfig, targetLocale)),
-      blocks: cloneBlocks(localizeEditorBlocksSystemDefaults(state.blocks, targetLocale)),
-    };
-  }
-
-  async function applyEditorSystemDefaultLocale(targetLocale = locale) {
-    await prepareEditorSystemDefaultTranslations(targetLocale);
-
-    const nextStates = cloneViewportStates(viewportStatesRef.current);
-    const activeState = nextStates[previewViewport];
-    activeState.planConfig = mergePlanConfigWithEditingBlocks(
-      activeState.planConfig,
-      editingPlanIdRef.current,
-      editingPageIdRef.current,
-      blocksRef.current,
-      { syncNavPages: false },
-    );
-    activeState.editingPlanId = editingPlanIdRef.current;
-    activeState.editingPageId = editingPageIdRef.current;
-    activeState.blocks = cloneBlocks(blocksRef.current);
-    activeState.selectedId = selectedIdRef.current;
-
-    const localizedStates = {
-      desktop: buildLocalizedViewportState(nextStates.desktop, targetLocale),
-      mobile: buildLocalizedViewportState(nextStates.mobile, targetLocale),
-    };
-
-    if (JSON.stringify(localizedStates) === JSON.stringify(nextStates)) {
-      return;
-    }
-
-    viewportStatesRef.current = localizedStates;
-    const targetState = localizedStates[previewViewport];
-    planConfigRef.current = clonePlanConfig(targetState.planConfig);
-    blocksRef.current = cloneBlocks(targetState.blocks);
-    setPlanConfig(clonePlanConfig(targetState.planConfig));
-    setEditingPlanId(targetState.editingPlanId);
-    setEditingPageId(targetState.editingPageId);
-    setBlocks(cloneBlocks(targetState.blocks));
-    setSelectedId(targetState.selectedId || targetState.blocks[0]?.id || "");
-    themeBaseBlocksByPageRef.current.clear();
-    saveBlocksToStorage(buildCombinedPersistedBlocks(localizedStates.desktop.planConfig, localizedStates.mobile.planConfig), storeScope);
-  }
-
-  applyEditorSystemDefaultLocaleRef.current = applyEditorSystemDefaultLocale;
-
   function buildCombinedPersistedBlocks(desktopConfig: PagePlanConfig, mobileConfig: PagePlanConfig) {
-    const desktopBlocks = buildPersistedBlocksFromPlanConfig(desktopConfig);
-    const mobileBlocks = buildPersistedBlocksFromPlanConfig(mobileConfig);
+    const canonicalDesktopConfig = canonicalizePagePlanConfigSystemDefaults(desktopConfig);
+    const canonicalMobileConfig = canonicalizePagePlanConfigSystemDefaults(mobileConfig);
+    const desktopBlocks = buildPersistedBlocksFromPlanConfig(canonicalDesktopConfig);
+    const mobileBlocks = buildPersistedBlocksFromPlanConfig(canonicalMobileConfig);
     const mobileRaw = (mobileBlocks[0]?.props as { pagePlanConfig?: unknown } | undefined)?.pagePlanConfig;
     if (desktopBlocks[0] && mobileRaw) {
       desktopBlocks[0] = {
@@ -3293,25 +3244,22 @@ export default function AdminClient({
   }
 
   function applyPersistedBlocksToEditor(loaded: Block[], options?: { resetHistory?: boolean }) {
-    const loadedPlanConfig = localizePagePlanConfigSystemDefaults(getPagePlanConfigFromBlocks(loaded), locale);
-    const loadedMobilePlanConfig = localizePagePlanConfigSystemDefaults(
+    const loadedPlanConfig = canonicalizePagePlanConfigSystemDefaults(getPagePlanConfigFromBlocks(loaded));
+    const loadedMobilePlanConfig = canonicalizePagePlanConfigSystemDefaults(
       getEmbeddedMobilePlanConfig(loaded) ?? adaptPlanConfigForMobile(clonePlanConfig(loadedPlanConfig)),
-      locale,
     );
 
     const loadedEditingPlanId = loadedPlanConfig.activePlanId;
     const loadedEditingPageId = loadedPlanConfig.plans.find((plan) => plan.id === loadedEditingPlanId)?.activePageId ?? "page-1";
-    const desktopBlocks = cloneBlocks(localizeEditorBlocksSystemDefaults(
+    const desktopBlocks = cloneBlocks(
       getBlocksForPage(loadedPlanConfig.plans.find((plan) => plan.id === loadedEditingPlanId) ?? loadedPlanConfig.plans[0], loadedEditingPageId),
-      locale,
-    ));
+    );
 
     const mobilePlanId = loadedMobilePlanConfig.activePlanId;
     const mobilePageId = loadedMobilePlanConfig.plans.find((plan) => plan.id === mobilePlanId)?.activePageId ?? "page-1";
-    const mobileBlocks = cloneBlocks(localizeEditorBlocksSystemDefaults(
+    const mobileBlocks = cloneBlocks(
       getBlocksForPage(loadedMobilePlanConfig.plans.find((plan) => plan.id === mobilePlanId) ?? loadedMobilePlanConfig.plans[0], mobilePageId),
-      locale,
-    ));
+    );
 
     viewportStatesRef.current.desktop = {
       planConfig: clonePlanConfig(loadedPlanConfig),
@@ -3343,7 +3291,6 @@ export default function AdminClient({
       redoStackRef.current = [];
       syncHistoryFlags();
     }
-    void applyEditorSystemDefaultLocaleRef.current(locale);
   }
 
   function toggleSelectedBlockLock() {
@@ -3781,7 +3728,7 @@ export default function AdminClient({
               pageId: typeof item?.pageId === "string" ? item.pageId.trim() : "",
               label:
                 typeof item?.label === "string"
-                  ? toPlainText(localizeSystemDefaultText(item.label, locale), getLocalizedSystemDefaultPageName(locale, idx))
+                  ? toPlainText(canonicalizeSystemDefaultText(item.label), getLocalizedSystemDefaultPageName(locale, idx))
                   : getLocalizedSystemDefaultPageName(locale, idx),
             }))
             .filter((item) => !!item.pageId);
@@ -3803,7 +3750,7 @@ export default function AdminClient({
                 id: desired.pageId,
                 name:
                   desired.label ||
-                  toPlainText(localizeSystemDefaultText(existing?.name ?? "", locale), getLocalizedSystemDefaultPageName(locale, idx)),
+                  toPlainText(canonicalizeSystemDefaultText(existing?.name ?? ""), getLocalizedSystemDefaultPageName(locale, idx)),
                 blocks: rebuiltBlocks,
               };
             });
@@ -4839,10 +4786,6 @@ export default function AdminClient({
   }, [blocks, editingPageId, editingPlanId, planConfig, previewViewport, selectedId]);
 
   useEffect(() => {
-    void applyEditorSystemDefaultLocaleRef.current(locale);
-  }, [locale]);
-
-  useEffect(() => {
     if (typeof window === "undefined") return;
     const media = window.matchMedia("(min-width: 1024px)");
     const updateLayoutMode = () => setIsDesktopEditorSidebar(media.matches);
@@ -5173,14 +5116,14 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     };
   }, [draggingBlockId]);
 
-  function localizeDefaultBlock(block: Block) {
-    return localizeEditorBlocksSystemDefaults([block], locale)[0] ?? block;
+  function canonicalizeDefaultBlock(block: Block) {
+    return canonicalizeEditorBlocksSystemDefaults([block])[0] ?? block;
   }
 
   function makeDefaultBlock(type: Block["type"]): Block {
     const id = `${type}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     if (type === "common") {
-      return localizeDefaultBlock({
+      return canonicalizeDefaultBlock({
         id,
         type,
         props: { commonTextBoxes: [] },
@@ -5188,7 +5131,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
 
     if (type === "button") {
-      return localizeDefaultBlock({
+      return canonicalizeDefaultBlock({
         id,
         type,
         props: {
@@ -5201,7 +5144,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
 
     if (type === "gallery") {
-      return localizeDefaultBlock({
+      return canonicalizeDefaultBlock({
         id,
         type,
         props: { heading: "新的画廊区块", images: [], autoplayMs: 3000, galleryFrameHeight: 260, galleryLayoutPreset: "three-wide" },
@@ -5209,7 +5152,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
 
     if (type === "chart") {
-      return localizeDefaultBlock({
+      return canonicalizeDefaultBlock({
         id,
         type,
         props: {
@@ -5223,7 +5166,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
 
     if (type === "nav") {
-      return localizeDefaultBlock({
+      return canonicalizeDefaultBlock({
         id,
         type,
         props: {
@@ -5237,7 +5180,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
 
     if (type === "music") {
-      return localizeDefaultBlock({
+      return canonicalizeDefaultBlock({
         id,
         type,
         props: {
@@ -5249,7 +5192,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
 
     if (type === "hero") {
-      return localizeDefaultBlock({
+      return canonicalizeDefaultBlock({
         id,
         type,
         props: { title: "新的视觉横幅", subtitle: "在这里编写副标题说明文案" },
@@ -5257,7 +5200,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
 
     if (type === "text") {
-      return localizeDefaultBlock({
+      return canonicalizeDefaultBlock({
         id,
         type,
         props: { heading: "新的文本区块", text: "在这里输入文本内容。" },
@@ -5265,7 +5208,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
 
     if (type === "list") {
-      return localizeDefaultBlock({
+      return canonicalizeDefaultBlock({
         id,
         type,
         props: { heading: "新的列表区块", items: ["列表1", "列表2"] },
@@ -5273,7 +5216,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
 
     if (type === "search-bar") {
-      return localizeDefaultBlock({
+      return canonicalizeDefaultBlock({
         id,
         type,
         props: {
@@ -5299,7 +5242,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
 
     if (type === "merchant-list") {
-      return localizeDefaultBlock({
+      return canonicalizeDefaultBlock({
         id,
         type,
         props: {
@@ -5360,7 +5303,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
 
     if (type === "product") {
-      return localizeDefaultBlock({
+      return canonicalizeDefaultBlock({
         id,
         type,
         props: {
@@ -5417,7 +5360,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
 
     if (type === "booking") {
-      return localizeDefaultBlock({
+      return canonicalizeDefaultBlock({
         id,
         type,
         props: {
@@ -5441,7 +5384,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       });
     }
 
-    return localizeDefaultBlock({
+    return canonicalizeDefaultBlock({
       id,
       type,
       props: {
@@ -5470,7 +5413,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     });
   }
 
-  async function addBlock() {
+  function addBlock() {
     if (!isPlatformEditor && newBlockType === "button" && !canUseButtonBlock) {
       showTip("当前权限未开通按钮区块");
       return;
@@ -5507,7 +5450,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         return;
       }
     }
-    await prepareEditorSystemDefaultTranslations(locale);
     const nextBlock = makeDefaultBlock(newBlockType);
     const next = [...blocks, nextBlock];
     applyBlocks(next, { selectedId: nextBlock.id });
@@ -8249,7 +8191,7 @@ type GalleryEditorImage = {
         const pageId = rawPageId || fallbackPages[idx % fallbackPages.length].id;
         return {
           id: item?.id?.trim() || `nav-item-${idx}`,
-          label: localizeSystemDefaultText((item?.label ?? "") || `页面${idx + 1}`, locale),
+          label: canonicalizeSystemDefaultText((item?.label ?? "") || `页面${idx + 1}`),
           pageId,
         };
       })
@@ -8273,17 +8215,16 @@ type GalleryEditorImage = {
     commitNavItems(next);
   }
 
-  async function addNavItem() {
+  function addNavItem() {
     if (block.type !== "nav") return;
     const current = getNavItems();
     if (current.length >= effectiveMaxNavItems) return;
-    await prepareEditorSystemDefaultTranslations(locale);
     const nextPageId = `page-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     commitNavItems([
       ...current,
       {
         id: `nav-item-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        label: localizeSystemDefaultText(`页面${current.length + 1}`, locale),
+        label: canonicalizeSystemDefaultText(`页面${current.length + 1}`),
         pageId: nextPageId,
       },
     ]);

@@ -1,5 +1,6 @@
 ﻿"use client";
 
+import { usePathname } from "next/navigation";
 import { useLayoutEffect, useRef } from "react";
 import { useI18n } from "@/components/I18nProvider";
 import {
@@ -13,6 +14,14 @@ import {
 
 const TRANSLATABLE_ATTRS = ["placeholder", "title", "aria-label"] as const;
 const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT"]);
+
+function shouldSkipDomTranslatorForPath(pathname: string) {
+  const normalized = pathname.trim();
+  if (!normalized) return false;
+  if (normalized === "/admin" || normalized.startsWith("/admin/")) return true;
+  if (normalized.startsWith("/super-admin/editor")) return true;
+  return /^\/\d{8}\/?$/.test(normalized);
+}
 
 function isEditableElement(element: Element | null) {
   if (!element) return false;
@@ -242,6 +251,7 @@ function refreshMutationSource(mutation: MutationRecord) {
 
 export default function ClientDomTranslator() {
   const { locale } = useI18n();
+  const pathname = usePathname();
   const applyVersionRef = useRef(0);
   const mutationGuardRef = useRef<TranslatorMutationGuard | null>(null);
   const previousLocaleRef = useRef<string>("zh-CN");
@@ -276,6 +286,10 @@ export default function ClientDomTranslator() {
 
   useLayoutEffect(() => {
     if (typeof document === "undefined") return;
+    if (shouldSkipDomTranslatorForPath(pathname)) {
+      document.documentElement.removeAttribute("data-i18n-pending");
+      return;
+    }
 
     const normalizedLocale = normalizeDomLocale(locale);
     const isZhCn = normalizedLocale.toLowerCase() === "zh-cn";
@@ -425,7 +439,7 @@ export default function ClientDomTranslator() {
       disposed = true;
       observer.disconnect();
     };
-  }, [locale]);
+  }, [locale, pathname]);
 
   return null;
 }

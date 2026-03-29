@@ -35,9 +35,13 @@ export default function MerchantEntryPageClient({
   const isNumericMerchantEntry = isMerchantNumericId(merchantEntry);
   const hydrated = useHydrated();
   const [justSignedIn] = useState(() => (searchParams.get("justSignedIn") ?? "").trim() === "1");
+  const [hasStoredSessionTokens] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return hasStoredBrowserSupabaseSessionTokens();
+  });
   const skipEntrySessionCheck = useMemo(
-    () => hydrated && justSignedIn && isNumericMerchantEntry,
-    [hydrated, isNumericMerchantEntry, justSignedIn],
+    () => hydrated && isNumericMerchantEntry && (justSignedIn || hasStoredSessionTokens),
+    [hasStoredSessionTokens, hydrated, isNumericMerchantEntry, justSignedIn],
   );
   const recentSignInBridgeActive = useMemo(
     () => hydrated && justSignedIn && isNumericMerchantEntry && hasMerchantSignInBridge(merchantEntry),
