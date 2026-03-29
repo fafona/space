@@ -319,58 +319,130 @@ async function loadImageElement(dataUrl: string) {
   });
 }
 
-async function compressImageDataUrlWithinLimit(dataUrl: string, limitBytes: number) {
-  const originalBytes = estimateDataUrlBytes(dataUrl);
-  if (originalBytes <= limitBytes) {
-    return { dataUrl, compressed: false, bytes: originalBytes };
+async function loadImageElementFromBlob(blob: Blob) {
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    return await loadImageElement(objectUrl);
+  } finally {
+    URL.revokeObjectURL(objectUrl);
   }
+}
 
-  const image = await loadImageElement(dataUrl);
-  const qualitySteps = [0.9, 0.84, 0.78, 0.72, 0.66, 0.6, 0.54, 0.48, 0.42];
-  const scaleSteps = [1, 0.92, 0.84, 0.76, 0.68, 0.6, 0.52, 0.44, 0.36, 0.28];
-  let bestDataUrl = dataUrl;
-  let bestBytes = originalBytes;
-  let bestBlob: Blob | null = null;
-
-  for (const scale of scaleSteps) {
-    await yieldToBrowser();
-    const targetWidth = Math.max(1, Math.round(image.naturalWidth * scale));
-    const targetHeight = Math.max(1, Math.round(image.naturalHeight * scale));
-    const canvas = document.createElement("canvas");
-    canvas.width = targetWidth;
-    canvas.height = targetHeight;
-    const context = canvas.getContext("2d");
-    if (!context) break;
-    context.clearRect(0, 0, targetWidth, targetHeight);
-    context.drawImage(image, 0, 0, targetWidth, targetHeight);
-
-    for (const quality of qualitySteps) {
-      const candidateBlob = await canvasToBlob(canvas, "image/webp", quality);
-      const candidateDataUrl = candidateBlob ? "" : canvas.toDataURL("image/webp", quality);
-      const candidateBytes = candidateBlob ? candidateBlob.size : estimateDataUrlBytes(candidateDataUrl);
-      if (candidateBytes < bestBytes) {
-        bestDataUrl = candidateDataUrl;
-        bestBytes = candidateBytes;
-        bestBlob = candidateBlob;
-      }
-      if (candidateBytes <= limitBytes) {
-        return {
-          dataUrl: candidateBlob ? await blobToDataUrl(candidateBlob) : candidateDataUrl,
-          compressed: true,
-          bytes: candidateBytes,
-        };
-      }
-    }
+function buildInitialImageCompressionPlan(sourceBytes: number, limitBytes: number) {
+  const ratio = clamp(limitBytes / Math.max(sourceBytes, 1), 0.05, 1);
+  if (ratio >= 0.72) {
+    return {
+      scale: 1,
+      quality: clamp(ratio * 0.96, 0.68, 0.92),
+    };
   }
-
-  if (bestBlob) {
-    bestDataUrl = await blobToDataUrl(bestBlob);
-  }
-
   return {
-    dataUrl: bestDataUrl,
-    compressed: bestDataUrl !== dataUrl,
-    bytes: bestBytes,
+    scale: clamp(Math.sqrt(ratio / 0.84) * 0.99, 0.16, 1),
+    quality: 0.84,
+  };
+}
+
+function refineImageCompressionPlan(
+  previous: { scale: number; quality: number },
+  candidateBytes: number,
+  limitBytes: number,
+) {
+  const ratio = clamp(limitBytes / Math.max(candidateBytes, 1), 0.05, 1);
+  return {
+    scale: clamp(previous.scale * Math.sqrt(ratio) * 0.98, 0.12, 1),
+    quality: clamp(Math.min(previous.quality * ratio * 1.04, previous.quality), 0.42, 0.92),
+  };
+}
+
+async function renderCompressedImageCandidate(
+  image: HTMLImageElement,
+  scale: number,
+  quality: number,
+) {
+  const targetWidth = Math.max(1, Math.round(image.naturalWidth * scale));
+  const targetHeight = Math.max(1, Math.round(image.naturalHeight * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+  const context = canvas.getContext("2d");
+  if (!context) {
+    throw new Error("读取图片失败");
+  }
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
+  context.clearRect(0, 0, targetWidth, targetHeight);
+  context.drawImage(image, 0, 0, targetWidth, targetHeight);
+
+  const blob = await canvasToBlob(canvas, "image/webp", quality);
+  if (blob) {
+    return { blob, dataUrl: "", bytes: blob.size };
+  }
+  const dataUrl = canvas.toDataURL("image/webp", quality);
+  return { blob: null, dataUrl, bytes: estimateDataUrlBytes(dataUrl) };
+}
+
+async function finalizeCompressedImageCandidate(candidate: {
+  blob: Blob | null;
+  dataUrl: string;
+  bytes: number;
+}) {
+  return {
+    dataUrl: candidate.blob ? await blobToDataUrl(candidate.blob) : candidate.dataUrl,
+    bytes: candidate.bytes,
+  };
+}
+
+async function compressImageFileWithinLimit(file: Blob, limitBytes: number) {
+  const originalBytes = file.size || 0;
+  if (originalBytes > 0 && originalBytes <= limitBytes) {
+    return {
+      dataUrl: await readImageFileAsDataUrl(file),
+      compressed: false,
+      bytes: originalBytes,
+    };
+  }
+
+  const image = await loadImageElementFromBlob(file);
+  let plan = buildInitialImageCompressionPlan(originalBytes || limitBytes + 1, limitBytes);
+  let bestCandidate:
+    | {
+        blob: Blob | null;
+        dataUrl: string;
+        bytes: number;
+      }
+    | null = null;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await yieldToBrowser();
+    const candidate = await renderCompressedImageCandidate(image, plan.scale, plan.quality);
+    if (!bestCandidate || candidate.bytes < bestCandidate.bytes) {
+      bestCandidate = candidate;
+    }
+    if (candidate.bytes <= limitBytes) {
+      const finalized = await finalizeCompressedImageCandidate(candidate);
+      return {
+        dataUrl: finalized.dataUrl,
+        compressed: true,
+        bytes: finalized.bytes,
+      };
+    }
+    plan = refineImageCompressionPlan(plan, candidate.bytes, limitBytes);
+  }
+
+  if (bestCandidate) {
+    const finalized = await finalizeCompressedImageCandidate(bestCandidate);
+    return {
+      dataUrl: finalized.dataUrl,
+      compressed: true,
+      bytes: finalized.bytes,
+    };
+  }
+
+  const originalDataUrl = await readImageFileAsDataUrl(file);
+  return {
+    dataUrl: originalDataUrl,
+    compressed: false,
+    bytes: originalBytes || estimateDataUrlBytes(originalDataUrl),
   };
 }
 
@@ -1115,11 +1187,7 @@ export default function MerchantBusinessCardManager({
       setBackgroundImageFileName(fileName || "背景图");
       setBackgroundImageFileDetail("");
       setIsBackgroundImageProcessing(true);
-      const originalImageUrl = await readImageFileAsDataUrl(file);
-      const optimized = await compressImageDataUrlWithinLimit(
-        originalImageUrl,
-        normalizedBackgroundImageLimitKb * 1024,
-      );
+      const optimized = await compressImageFileWithinLimit(file, normalizedBackgroundImageLimitKb * 1024);
       if (optimized.bytes > normalizedBackgroundImageLimitKb * 1024) {
         setBackgroundImageFileName(previousFileName);
         setBackgroundImageFileDetail(previousFileDetail);
@@ -1181,11 +1249,7 @@ export default function MerchantBusinessCardManager({
       setContactPageImageFileName(fileName || "联系卡图片");
       setContactPageImageFileDetail("");
       setIsContactPageImageProcessing(true);
-      const originalImageUrl = await readImageFileAsDataUrl(file);
-      const optimized = await compressImageDataUrlWithinLimit(
-        originalImageUrl,
-        normalizedContactPageImageLimitKb * 1024,
-      );
+      const optimized = await compressImageFileWithinLimit(file, normalizedContactPageImageLimitKb * 1024);
       if (optimized.bytes > normalizedContactPageImageLimitKb * 1024) {
         setContactPageImageFileName(previousFileName);
         setContactPageImageFileDetail(previousFileDetail);
@@ -1575,7 +1639,7 @@ export default function MerchantBusinessCardManager({
                               disabled={isBackgroundImageProcessing}
                               onChange={(event) => void handleBackgroundUpload(event)}
                             />
-                            <div className="mt-1 text-[11px] text-slate-400">默认上限 {normalizedBackgroundImageLimitKb} KB，上传时会先自动压缩。</div>
+                            <div className="mt-1 text-[11px] text-slate-400">默认上限 {normalizedBackgroundImageLimitKb} KB，超过上限时会自动压缩到限制内。</div>
                           </div>
                           <label className="block text-xs text-slate-600">图片透明度<div className="mt-1 flex items-center gap-3 rounded border bg-white px-3 py-2"><input type="range" min="0" max="1" step="0.01" className="min-w-0 flex-1" value={draft.backgroundImageOpacity} onChange={(event) => applyDraft((current) => ({ ...current, backgroundImageOpacity: clamp(Number(event.target.value), 0, 1) }))} /><span className="w-12 shrink-0 text-right text-xs text-slate-500">{formatOpacityPercent(draft.backgroundImageOpacity)}</span></div></label>
                         </div>
