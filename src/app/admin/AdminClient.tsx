@@ -4974,10 +4974,17 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   function handleEditorMouseDownCapture(event: ReactMouseEvent<HTMLElement>) {
     const target = event.target;
     if (!(target instanceof Element)) return;
-    if (target.closest("[data-editor-toolbar]")) return;
-    if (target.closest("[data-editor-overlay]")) return;
-    if (target.closest("[data-block-id]")) return;
-    if (!target.closest("[data-editor-clear-selection='1']")) return;
+    const composedPath =
+      typeof event.nativeEvent.composedPath === "function"
+        ? event.nativeEvent.composedPath()
+        : [];
+    const pathElements = composedPath.filter((entry): entry is Element => entry instanceof Element);
+    const matchesPath = (selector: string) =>
+      pathElements.some((entry) => entry.matches(selector));
+    if (matchesPath("[data-editor-toolbar]") || target.closest("[data-editor-toolbar]")) return;
+    if (matchesPath("[data-editor-overlay]") || target.closest("[data-editor-overlay]")) return;
+    if (matchesPath("[data-block-id]") || target.closest("[data-block-id]")) return;
+    if (!matchesPath("[data-editor-clear-selection='1']") && !target.closest("[data-editor-clear-selection='1']")) return;
     if (selectedIdRef.current) {
       setSelectedId("");
     }
