@@ -2,6 +2,11 @@ import type { ButtonProps } from "@/data/homeBlocks";
 
 type LegacyButtonTextBox = NonNullable<ButtonProps["commonTextBoxes"]>[number];
 
+export type ButtonJumpPage = {
+  id: string;
+  name?: string;
+};
+
 export const DEFAULT_BUTTON_LABEL = "按钮";
 
 function hasVisibleContent(value: string | undefined) {
@@ -28,11 +33,67 @@ function findLegacyButtonLabel(props: ButtonProps) {
   return "";
 }
 
+function stripButtonJumpText(value: string | undefined) {
+  if (typeof value !== "string") return "";
+  return value
+    .replace(/<br\s*\/?>/gi, " ")
+    .replace(/<\/?[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizePageMatchValue(value: string | undefined) {
+  return stripButtonJumpText(value).replace(/\s+/g, "").toLowerCase();
+}
+
+function resolveOrdinalPageIndex(target: string) {
+  const normalized = target.trim().toLowerCase();
+  if (!normalized) return null;
+  if (
+    normalized === "frontpage" ||
+    normalized === "front-page" ||
+    normalized === "front page" ||
+    normalized === "homepage" ||
+    normalized === "home-page" ||
+    normalized === "home page"
+  ) {
+    return 1;
+  }
+
+  const match = normalized.match(/^page[-\s]*([0-9]{1,2})$/i) ?? normalized.match(/^p([0-9]{1,2})$/i);
+  if (!match) return null;
+  const index = Number(match[1]);
+  if (!Number.isFinite(index) || index < 1) return null;
+  return index;
+}
+
 export function resolveButtonLabel(props: ButtonProps) {
   if (hasVisibleContent(props.buttonLabel)) {
     return props.buttonLabel ?? DEFAULT_BUTTON_LABEL;
   }
   return findLegacyButtonLabel(props) || DEFAULT_BUTTON_LABEL;
+}
+
+export function resolveButtonJumpPageId(target: string, pages: ButtonJumpPage[]) {
+  const trimmed = target.trim();
+  if (!trimmed || !Array.isArray(pages) || pages.length === 0) return null;
+
+  const candidate = trimmed.replace(/^page:/i, "").trim();
+  if (!candidate) return null;
+
+  const byId = pages.find((page) => page.id.trim().toLowerCase() === candidate.toLowerCase());
+  if (byId) return byId.id;
+
+  const normalizedCandidate = normalizePageMatchValue(candidate);
+  if (normalizedCandidate) {
+    const byName = pages.find((page) => normalizePageMatchValue(page.name) === normalizedCandidate);
+    if (byName) return byName.id;
+  }
+
+  const ordinalIndex = resolveOrdinalPageIndex(candidate);
+  if (!ordinalIndex || ordinalIndex > pages.length) return null;
+  return pages[ordinalIndex - 1]?.id ?? null;
 }
 
 export function buildButtonLabelPatch(buttonLabel: string): Partial<ButtonProps> {

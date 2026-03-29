@@ -43,6 +43,7 @@ export default function BlockRenderer({
   blocks,
   currentPageId,
   currentPageIndex = 0,
+  availablePages,
   onNavigatePage,
   bookingSiteId,
   bookingSiteName,
@@ -51,6 +52,7 @@ export default function BlockRenderer({
   blocks: Block[];
   currentPageId?: string;
   currentPageIndex?: number;
+  availablePages?: Array<{ id: string; name?: string }>;
   onNavigatePage?: (pageId: string) => void;
   bookingSiteId?: string;
   bookingSiteName?: string;
@@ -68,7 +70,7 @@ export default function BlockRenderer({
             content = <CommonBlock {...b.props} />;
             break;
           case "button":
-            content = <ButtonBlock {...b.props} onNavigatePage={onNavigatePage} />;
+            content = <ButtonBlock {...b.props} availablePages={availablePages} onNavigatePage={onNavigatePage} />;
             break;
           case "gallery":
             content = <GalleryBlock {...b.props} />;

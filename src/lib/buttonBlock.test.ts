@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ButtonProps } from "../data/homeBlocks";
-import { buildButtonLabelPatch, resolveButtonLabel } from "./buttonBlock";
+import { buildButtonLabelPatch, resolveButtonJumpPageId, resolveButtonLabel } from "./buttonBlock";
 
 function makeButtonProps(props: Partial<ButtonProps> = {}): ButtonProps {
   return {
@@ -12,6 +12,26 @@ function makeButtonProps(props: Partial<ButtonProps> = {}): ButtonProps {
 
 test("resolveButtonLabel prefers dedicated button label", () => {
   assert.equal(resolveButtonLabel(makeButtonProps({ buttonLabel: "立即预约" })), "立即预约");
+});
+
+test("resolveButtonJumpPageId accepts shorthand page numbers", () => {
+  assert.equal(
+    resolveButtonJumpPageId("page2", [
+      { id: "page-1", name: "front page" },
+      { id: "page-177", name: "Page 2" },
+      { id: "page-288", name: "Page 3" },
+    ]),
+    "page-177",
+  );
+});
+
+test("resolveButtonJumpPageId matches page names and front page aliases", () => {
+  const pages = [
+    { id: "page-1", name: "Home" },
+    { id: "page-177", name: "Offers" },
+  ];
+  assert.equal(resolveButtonJumpPageId("front page", pages), "page-1");
+  assert.equal(resolveButtonJumpPageId("page:Offers", pages), "page-177");
 });
 
 test("resolveButtonLabel falls back to legacy button text boxes", () => {

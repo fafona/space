@@ -192,6 +192,7 @@ export default function HomePageClient({
         blocks={activeBlocks}
         currentPageId={activePage?.id}
         currentPageIndex={activePageIndex}
+        availablePages={activePlan?.pages?.map((page) => ({ id: page.id, name: page.name })) ?? []}
         bookingSiteId=""
         bookingSiteName={platformState.sites.find((site) => site.id === "site-main")?.merchantName ?? "总站首页"}
         bookingInteractive={false}

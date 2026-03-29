@@ -1,5 +1,5 @@
 import type { ButtonProps } from "@/data/homeBlocks";
-import { resolveButtonLabel } from "@/lib/buttonBlock";
+import { resolveButtonJumpPageId, resolveButtonLabel, type ButtonJumpPage } from "@/lib/buttonBlock";
 import { getBackgroundStyle } from "./backgroundStyle";
 import { getBlockBorderClass, getBlockBorderInlineStyle } from "./borderStyle";
 import { toRichHtml } from "./richText";
@@ -7,19 +7,21 @@ import { getTypographyStyle } from "./typographyStyle";
 
 type ButtonBlockRuntimeProps = ButtonProps & {
   onNavigatePage?: (pageId: string) => void;
+  availablePages?: ButtonJumpPage[];
 };
 
-function performJump(target: string, onNavigatePage?: (pageId: string) => void) {
+function performJump(
+  target: string,
+  onNavigatePage?: (pageId: string) => void,
+  availablePages: ButtonJumpPage[] = [],
+) {
   const trimmed = target.trim();
   if (!trimmed || typeof window === "undefined") return;
 
-  const pageMatch = trimmed.match(/^page:(.+)$/i);
-  if (pageMatch) {
-    const pageId = pageMatch[1]?.trim();
-    if (pageId && onNavigatePage) {
-      onNavigatePage(pageId);
-      return;
-    }
+  const pageId = resolveButtonJumpPageId(trimmed, availablePages);
+  if (pageId && onNavigatePage) {
+    onNavigatePage(pageId);
+    return;
   }
 
   const anchorId = trimmed.startsWith("#") ? trimmed.slice(1).trim() : trimmed;
@@ -97,7 +99,7 @@ export default function ButtonBlock(props: ButtonBlockRuntimeProps) {
           <button
             type="button"
             className="box-border flex h-full min-h-0 w-full appearance-none items-center justify-center border-0 bg-transparent px-5 py-3 text-center transition hover:brightness-[0.98]"
-            onClick={() => performJump(jumpTarget, props.onNavigatePage)}
+            onClick={() => performJump(jumpTarget, props.onNavigatePage, props.availablePages)}
           >
             <div
               className="w-full break-words whitespace-pre-wrap"

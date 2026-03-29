@@ -464,6 +464,7 @@ export function SitePageClient({
         blocks={activeBlocks}
         currentPageId={activePage?.id}
         currentPageIndex={activePageIndex}
+        availablePages={activePlan?.pages?.map((page) => ({ id: page.id, name: page.name })) ?? []}
         bookingSiteId={site?.id ?? siteId}
         bookingSiteName={(site?.merchantName ?? site?.name ?? "").trim()}
         bookingInteractive
