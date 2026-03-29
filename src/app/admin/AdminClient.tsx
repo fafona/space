@@ -6907,7 +6907,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               <div className="rounded-[36px] border-8 border-gray-900 bg-black p-2 shadow-2xl">
                 <div
                   ref={backgroundLayerRef}
-                  data-no-translate="1"
+                  data-no-translate={isPlatformEditor ? undefined : "1"}
                   data-editor-clear-selection="1"
                   className="relative rounded-[28px] overflow-visible"
                   style={{ minHeight: `${Math.max(backgroundLayerMinHeight, 780)}px` }}
@@ -6959,6 +6959,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                               previewViewport={previewViewport}
                               runtimeSiteId={editingSiteId || ""}
                               runtimeSiteName={merchantDisplayName}
+                              isPlatformEditor={isPlatformEditor}
                             />
                           </div>
                         );
@@ -6973,7 +6974,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       ) : (
         <div
           ref={backgroundLayerRef}
-          data-no-translate="1"
+          data-no-translate={isPlatformEditor ? undefined : "1"}
           data-editor-clear-selection="1"
           className="min-h-screen"
           style={{ ...pageBackgroundStyle, minHeight: `${Math.max(backgroundLayerMinHeight, 0)}px` }}
@@ -7024,6 +7025,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                       previewViewport={previewViewport}
                       runtimeSiteId={editingSiteId || ""}
                       runtimeSiteName={merchantDisplayName}
+                      isPlatformEditor={isPlatformEditor}
                     />
                   </div>
                 );
@@ -7745,6 +7747,7 @@ function InlineEditorBlock({
   previewViewport,
   runtimeSiteId = "",
   runtimeSiteName = "",
+  isPlatformEditor = false,
 }: {
   block: Block;
   publicBlockId: string;
@@ -7776,6 +7779,7 @@ function InlineEditorBlock({
   previewViewport: "desktop" | "mobile";
   runtimeSiteId?: string;
   runtimeSiteName?: string;
+  isPlatformEditor?: boolean;
 }) {
   const { locale } = useI18n();
   type CommonEditorTextBox = {
@@ -9857,6 +9861,9 @@ type GalleryEditorImage = {
     ...blockPreviewOverflowStyle,
     ...borderInlineStyle,
   };
+  const blockShellMouseDownCapture = isPlatformEditor ? undefined : handleBlockShellMouseDownCapture;
+  const blockShellMouseUpCapture = isPlatformEditor ? undefined : handleBlockShellMouseUpCapture;
+  const blockShellClickCapture = isPlatformEditor ? undefined : handleBlockShellClickCapture;
   function handleBlockShellMouseDownCapture(event: ReactMouseEvent<HTMLElement>) {
     if (isSelected) return;
     const target = event.target;
@@ -11085,9 +11092,9 @@ type GalleryEditorImage = {
 
     return (
       <section
-        onMouseDownCapture={handleBlockShellMouseDownCapture}
-        onMouseUpCapture={handleBlockShellMouseUpCapture}
-        onClickCapture={handleBlockShellClickCapture}
+        onMouseDownCapture={blockShellMouseDownCapture}
+        onMouseUpCapture={blockShellMouseUpCapture}
+        onClickCapture={blockShellClickCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -11152,9 +11159,9 @@ type GalleryEditorImage = {
     const commonBoxes = getCommonTextBoxes();
     return (
       <section
-        onMouseDownCapture={handleBlockShellMouseDownCapture}
-        onMouseUpCapture={handleBlockShellMouseUpCapture}
-        onClickCapture={handleBlockShellClickCapture}
+        onMouseDownCapture={blockShellMouseDownCapture}
+        onMouseUpCapture={blockShellMouseUpCapture}
+        onClickCapture={blockShellClickCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -11571,9 +11578,9 @@ type GalleryEditorImage = {
     );
     return (
       <section
-        onMouseDownCapture={handleBlockShellMouseDownCapture}
-        onMouseUpCapture={handleBlockShellMouseUpCapture}
-        onClickCapture={handleBlockShellClickCapture}
+        onMouseDownCapture={blockShellMouseDownCapture}
+        onMouseUpCapture={blockShellMouseUpCapture}
+        onClickCapture={blockShellClickCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -12139,9 +12146,9 @@ type GalleryEditorImage = {
         : blockSizeStyle;
     return (
       <section
-        onMouseDownCapture={handleBlockShellMouseDownCapture}
-        onMouseUpCapture={handleBlockShellMouseUpCapture}
-        onClickCapture={handleBlockShellClickCapture}
+        onMouseDownCapture={blockShellMouseDownCapture}
+        onMouseUpCapture={blockShellMouseUpCapture}
+        onClickCapture={blockShellClickCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -12330,9 +12337,9 @@ type GalleryEditorImage = {
 
     return (
       <section
-        onMouseDownCapture={handleBlockShellMouseDownCapture}
-        onMouseUpCapture={handleBlockShellMouseUpCapture}
-        onClickCapture={handleBlockShellClickCapture}
+        onMouseDownCapture={blockShellMouseDownCapture}
+        onMouseUpCapture={blockShellMouseUpCapture}
+        onClickCapture={blockShellClickCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -12499,9 +12506,9 @@ type GalleryEditorImage = {
 
     return (
       <section
-        onMouseDownCapture={handleBlockShellMouseDownCapture}
-        onMouseUpCapture={handleBlockShellMouseUpCapture}
-        onClickCapture={handleBlockShellClickCapture}
+        onMouseDownCapture={blockShellMouseDownCapture}
+        onMouseUpCapture={blockShellMouseUpCapture}
+        onClickCapture={blockShellClickCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -12624,9 +12631,9 @@ type GalleryEditorImage = {
     return (
       <section
         ref={resizeTargetRef}
-        onMouseDownCapture={handleBlockShellMouseDownCapture}
-        onMouseUpCapture={handleBlockShellMouseUpCapture}
-        onClickCapture={handleBlockShellClickCapture}
+        onMouseDownCapture={blockShellMouseDownCapture}
+        onMouseUpCapture={blockShellMouseUpCapture}
+        onClickCapture={blockShellClickCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -12694,9 +12701,9 @@ type GalleryEditorImage = {
   if (block.type === "text") {
     return (
       <section
-        onMouseDownCapture={handleBlockShellMouseDownCapture}
-        onMouseUpCapture={handleBlockShellMouseUpCapture}
-        onClickCapture={handleBlockShellClickCapture}
+        onMouseDownCapture={blockShellMouseDownCapture}
+        onMouseUpCapture={blockShellMouseUpCapture}
+        onClickCapture={blockShellClickCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -12773,9 +12780,9 @@ type GalleryEditorImage = {
     const items = block.props.items ?? [];
     return (
       <section
-        onMouseDownCapture={handleBlockShellMouseDownCapture}
-        onMouseUpCapture={handleBlockShellMouseUpCapture}
-        onClickCapture={handleBlockShellClickCapture}
+        onMouseDownCapture={blockShellMouseDownCapture}
+        onMouseUpCapture={blockShellMouseUpCapture}
+        onClickCapture={blockShellClickCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -13836,9 +13843,9 @@ type GalleryEditorImage = {
 
     return (
       <section
-        onMouseDownCapture={handleBlockShellMouseDownCapture}
-        onMouseUpCapture={handleBlockShellMouseUpCapture}
-        onClickCapture={handleBlockShellClickCapture}
+        onMouseDownCapture={blockShellMouseDownCapture}
+        onMouseUpCapture={blockShellMouseUpCapture}
+        onClickCapture={blockShellClickCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -15496,9 +15503,9 @@ type GalleryEditorImage = {
 
     return (
       <section
-        onMouseDownCapture={handleBlockShellMouseDownCapture}
-        onMouseUpCapture={handleBlockShellMouseUpCapture}
-        onClickCapture={handleBlockShellClickCapture}
+        onMouseDownCapture={blockShellMouseDownCapture}
+        onMouseUpCapture={blockShellMouseUpCapture}
+        onClickCapture={blockShellClickCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -16444,9 +16451,9 @@ type GalleryEditorImage = {
 
     return (
       <section
-        onMouseDownCapture={handleBlockShellMouseDownCapture}
-        onMouseUpCapture={handleBlockShellMouseUpCapture}
-        onClickCapture={handleBlockShellClickCapture}
+        onMouseDownCapture={blockShellMouseDownCapture}
+        onMouseUpCapture={blockShellMouseUpCapture}
+        onClickCapture={blockShellClickCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -16895,9 +16902,9 @@ type GalleryEditorImage = {
 
     return (
       <section
-        onMouseDownCapture={handleBlockShellMouseDownCapture}
-        onMouseUpCapture={handleBlockShellMouseUpCapture}
-        onClickCapture={handleBlockShellClickCapture}
+        onMouseDownCapture={blockShellMouseDownCapture}
+        onMouseUpCapture={blockShellMouseUpCapture}
+        onClickCapture={blockShellClickCapture}
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
