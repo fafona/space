@@ -11049,6 +11049,7 @@ type GalleryEditorImage = {
           onNudge={onNudge}
           onOpenLayerSettings={openLayerSettings}
           onEditTypography={editTypography}
+          onInsertImage={insertImage}
           onConfigureJump={openButtonJumpDialog}
           onEditImageSettings={editImageSettings}
           onEditBorderStyle={editBorderSettings}
