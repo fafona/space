@@ -1891,12 +1891,18 @@ export default function MerchantBusinessCardManager({
                         return (
                           <div
                             key={item.id}
-                            className={`rounded-xl border bg-white p-3 transition ${isSelected ? "border-slate-900 ring-2 ring-slate-200" : "hover:border-slate-300"}`}
+                            className={`rounded-xl border p-3 transition ${
+                              isCurrent
+                                ? "border-sky-200 bg-sky-50 ring-2 ring-sky-100"
+                                : isSelected
+                                  ? "border-slate-900 bg-white ring-2 ring-slate-200"
+                                  : "bg-white hover:border-slate-300"
+                            }`}
                             onClick={(event) => handleSelectedFieldClick(item.id, event)}
                           >
                             <div className="mb-2 flex items-center justify-between gap-2">
                               <div className="text-xs font-medium text-slate-700">{item.label}</div>
-                              {isCurrent ? <span className="rounded-full bg-slate-900 px-2 py-0.5 text-[10px] text-white">当前</span> : isSelected ? <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] text-slate-700">已选</span> : null}
+                              {isCurrent ? <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] text-sky-700">当前</span> : isSelected ? <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] text-slate-700">已选</span> : null}
                             </div>
                             <div className="grid grid-cols-2 gap-2">
                               {(["x", "y"] as const).map((axis) => (
