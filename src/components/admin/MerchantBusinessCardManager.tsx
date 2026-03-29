@@ -1778,59 +1778,28 @@ export default function MerchantBusinessCardManager({
                   </section>
                   <section className="space-y-2.5 rounded-xl border bg-slate-50 p-3 xl:col-span-2">
                     <div className="text-sm font-semibold text-slate-900">联系方式</div>
-                    <div className="space-y-3">
+                    <div className="space-y-2">
                       {orderedContactFields.map(({ key, label }, index) => {
                         const canMoveUp = index > 0;
                         const canMoveDown = index < orderedContactFields.length - 1;
                         return (
-                          <div key={key} className="rounded-xl border bg-white p-3 text-xs text-slate-600">
-                            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                              <div className="text-xs font-medium text-slate-700">
-                                {key === "phone" ? `电话（最多 ${MERCHANT_BUSINESS_CARD_PHONE_LIMIT} 个）` : label}
-                              </div>
-                              <div className="flex flex-wrap items-center gap-2">
-                                <button
-                                  type="button"
-                                  className="rounded border bg-white px-2 py-1 text-[11px] hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                                  onClick={() => moveContactField(key, "up")}
-                                  disabled={!canMoveUp}
-                                >
-                                  上移
-                                </button>
-                                <button
-                                  type="button"
-                                  className="rounded border bg-white px-2 py-1 text-[11px] hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                                  onClick={() => moveContactField(key, "down")}
-                                  disabled={!canMoveDown}
-                                >
-                                  下移
-                                </button>
-                                <label className="flex items-center gap-2 rounded border bg-slate-50 px-3 py-1.5 text-[11px] text-slate-700">
-                                  <input
-                                    type="checkbox"
-                                    checked={draft.contactOnlyFields[key]}
-                                    onChange={(event) => updateContactOnlyField(key, event.target.checked)}
-                                  />
-                                  仅联系卡展示
-                                </label>
-                                {key === "phone" ? (
-                                  <button
-                                    type="button"
-                                    className="rounded border bg-white px-2 py-1 text-[11px] hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                                    onClick={() => updateDraftPhones([...contactPhoneEditorValues, ""])}
-                                    disabled={!canAddPhone}
-                                  >
-                                    增加电话
-                                  </button>
-                                ) : null}
-                              </div>
-                            </div>
+                          <div key={key} className="rounded-xl border bg-white px-3 py-2.5 text-xs text-slate-600">
                             {key === "phone" ? (
-                              <div className="space-y-2">
+                              <div className="space-y-1.5">
                                 {contactPhoneEditorValues.map((phone, phoneIndex) => (
-                                  <div key={`phone-${phoneIndex}`} className="flex items-center gap-2">
+                                  <div
+                                    key={`phone-${phoneIndex}`}
+                                    className="flex flex-col gap-2 md:grid md:grid-cols-[140px_minmax(0,1fr)_auto_auto_auto_auto_auto] md:items-center"
+                                  >
+                                    <div className="text-xs font-medium text-slate-700">
+                                      {phoneIndex === 0
+                                        ? `电话（最多 ${MERCHANT_BUSINESS_CARD_PHONE_LIMIT} 个）`
+                                        : phoneIndex === 1
+                                          ? "工作电话"
+                                          : `电话${phoneIndex + 1}`}
+                                    </div>
                                     <input
-                                      className="w-full rounded border bg-white px-3 py-2 text-sm"
+                                      className="min-w-0 rounded border bg-white px-3 py-2 text-sm"
                                       value={phone}
                                       onFocus={() => setSingleSelectedField("phone")}
                                       onChange={(event) => {
@@ -1840,9 +1809,57 @@ export default function MerchantBusinessCardManager({
                                       }}
                                       placeholder={`请输入电话${contactPhoneEditorValues.length > 1 ? phoneIndex + 1 : ""}`}
                                     />
+                                    {phoneIndex === 0 ? (
+                                      <button
+                                        type="button"
+                                        className="rounded border bg-white px-2 py-1 text-[11px] whitespace-nowrap hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                        onClick={() => updateDraftPhones([...contactPhoneEditorValues, ""])}
+                                        disabled={!canAddPhone}
+                                      >
+                                        增加
+                                      </button>
+                                    ) : (
+                                      <div className="hidden md:block" />
+                                    )}
+                                    {phoneIndex === 0 ? (
+                                      <button
+                                        type="button"
+                                        className="rounded border bg-white px-2 py-1 text-[11px] whitespace-nowrap hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                        onClick={() => moveContactField(key, "up")}
+                                        disabled={!canMoveUp}
+                                      >
+                                        上移
+                                      </button>
+                                    ) : (
+                                      <div className="hidden md:block" />
+                                    )}
+                                    {phoneIndex === 0 ? (
+                                      <button
+                                        type="button"
+                                        className="rounded border bg-white px-2 py-1 text-[11px] whitespace-nowrap hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                        onClick={() => moveContactField(key, "down")}
+                                        disabled={!canMoveDown}
+                                      >
+                                        下移
+                                      </button>
+                                    ) : (
+                                      <div className="hidden md:block" />
+                                    )}
+                                    {phoneIndex === 0 ? (
+                                      <label className="flex items-center gap-1.5 whitespace-nowrap rounded border bg-slate-50 px-2.5 py-1.5 text-[11px] text-slate-700">
+                                        <input
+                                          type="checkbox"
+                                          checked={draft.contactOnlyFields[key]}
+                                          onChange={(event) => updateContactOnlyField(key, event.target.checked)}
+                                        />
+                                        仅联系卡展示
+                                      </label>
+                                    ) : (
+                                      <div className="hidden md:block" />
+                                    )}
                                     <button
                                       type="button"
-                                      className="rounded border bg-white px-2 py-2 text-xs hover:bg-slate-50 disabled:opacity-50"
+                                      className="rounded border bg-white px-2 py-1 text-[11px] whitespace-nowrap hover:bg-slate-50 disabled:opacity-50"
                                       onClick={() => {
                                         const next = contactPhoneEditorValues.filter((_, removeIndex) => removeIndex !== phoneIndex);
                                         updateDraftPhones(next.length > 0 ? next : [""]);
@@ -1855,15 +1872,42 @@ export default function MerchantBusinessCardManager({
                                 ))}
                               </div>
                             ) : (
-                              <input
-                                className="w-full rounded border bg-white px-3 py-2 text-sm"
-                                value={draft.contacts[key]}
-                                onFocus={() => setSingleSelectedField(key)}
-                                onChange={(event) =>
-                                  applyDraft((current) => ({ ...current, contacts: { ...current.contacts, [key]: event.target.value } }))
-                                }
-                                placeholder={`请输入${label}`}
-                              />
+                              <div className="flex flex-col gap-2 md:grid md:grid-cols-[88px_minmax(0,1fr)_auto_auto_auto] md:items-center">
+                                <div className="text-xs font-medium text-slate-700">{label}</div>
+                                <input
+                                  className="min-w-0 rounded border bg-white px-3 py-2 text-sm"
+                                  value={draft.contacts[key]}
+                                  onFocus={() => setSingleSelectedField(key)}
+                                  onChange={(event) =>
+                                    applyDraft((current) => ({ ...current, contacts: { ...current.contacts, [key]: event.target.value } }))
+                                  }
+                                  placeholder={`请输入${label}`}
+                                />
+                                <button
+                                  type="button"
+                                  className="rounded border bg-white px-2 py-1 text-[11px] whitespace-nowrap hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                  onClick={() => moveContactField(key, "up")}
+                                  disabled={!canMoveUp}
+                                >
+                                  上移
+                                </button>
+                                <button
+                                  type="button"
+                                  className="rounded border bg-white px-2 py-1 text-[11px] whitespace-nowrap hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                  onClick={() => moveContactField(key, "down")}
+                                  disabled={!canMoveDown}
+                                >
+                                  下移
+                                </button>
+                                <label className="flex items-center gap-1.5 whitespace-nowrap rounded border bg-slate-50 px-2.5 py-1.5 text-[11px] text-slate-700">
+                                  <input
+                                    type="checkbox"
+                                    checked={draft.contactOnlyFields[key]}
+                                    onChange={(event) => updateContactOnlyField(key, event.target.checked)}
+                                  />
+                                  仅联系卡展示
+                                </label>
+                              </div>
                             )}
                           </div>
                         );
