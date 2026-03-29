@@ -130,6 +130,7 @@ import {
   type MerchantIndustryTabIndustry,
   type MerchantIndustryTab,
 } from "@/lib/merchantIndustryTabs";
+import { buildPlatformMerchantSnapshotPayloadFromState } from "@/lib/platformMerchantSnapshot";
 import {
   arrangeProductItemsByTag,
   groupArrangedProductItemsByTag,
@@ -3022,6 +3023,7 @@ export default function AdminClient({
       )[0]?.id ?? "",
     },
   });
+  const syncPlatformMerchantSnapshotToServerRef = useRef<() => Promise<boolean>>(async () => false);
 
   useEffect(() => {
     if (hasAddedExtraBlock) return;
@@ -3037,6 +3039,16 @@ export default function AdminClient({
       }),
     [],
   );
+
+  useEffect(() => {
+    if (!isPlatformEditor) return;
+    const timer = window.setTimeout(() => {
+      void syncPlatformMerchantSnapshotToServerRef.current();
+    }, 250);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [isPlatformEditor]);
 
   useEffect(() => {
     if (!planTemplateDialogOpen || typeof document === "undefined") return () => {};
@@ -3142,34 +3154,31 @@ export default function AdminClient({
     sites: MerchantListPublishedSite[];
     defaultSortRule: MerchantSortRule;
   } {
-    const state = loadPlatformState();
-    const sites = state.sites
-      .filter((site) => /^\d{8}$/.test(String(site.id ?? "").trim()))
-      .map<MerchantListPublishedSite>((site) => ({
-        id: String(site.id ?? "").trim(),
-        merchantName: (site.merchantName ?? "").trim(),
-        domainPrefix: (site.domainPrefix ?? "").trim(),
-        domainSuffix: (site.domainSuffix ?? "").trim(),
-        name: (site.name ?? "").trim(),
-        domain: (site.domain ?? "").trim(),
-        category: (site.category ?? "").trim(),
-        industry: site.industry ?? "",
-        location: {
-          countryCode: (site.location?.countryCode ?? "").trim(),
-          country: (site.location?.country ?? "").trim(),
-          provinceCode: (site.location?.provinceCode ?? "").trim(),
-          province: (site.location?.province ?? "").trim(),
-          city: (site.location?.city ?? "").trim(),
-        },
-        merchantCardImageUrl: (site.merchantCardImageUrl ?? "").trim(),
-        sortConfig: site.sortConfig ?? createDefaultMerchantSortConfig(),
-        createdAt: (site.createdAt ?? "").trim(),
-      }));
+    const payload = buildPlatformMerchantSnapshotPayloadFromState(loadPlatformState());
     return {
-      sites,
-      defaultSortRule: state.homeLayout.merchantDefaultSortRule,
+      sites: payload.snapshot,
+      defaultSortRule: payload.defaultSortRule,
     };
   }
+
+  syncPlatformMerchantSnapshotToServerRef.current = async () => {
+    if (!isPlatformEditor) return false;
+    const payload = buildPlatformMerchantSnapshotPayloadFromState(loadPlatformState());
+    if (payload.snapshot.length === 0) return false;
+    try {
+      const response = await fetch("/api/super-admin/platform-merchant-snapshot", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        cache: "no-store",
+        body: JSON.stringify(payload),
+      });
+      return response.ok;
+    } catch {
+      return false;
+    }
+  };
 
   function injectPublishedMerchantSnapshot(sourceBlocks: Block[]): Block[] {
     const { sites, defaultSortRule } = buildPublishedMerchantSnapshot();
@@ -5912,6 +5921,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     const desktopConfig = previewViewport === "desktop" ? mergedConfig : viewportStatesRef.current.desktop.planConfig;
     const mobileConfig = previewViewport === "mobile" ? mergedConfig : viewportStatesRef.current.mobile.planConfig;
     let combinedBlocks = injectPublishedMerchantSnapshot(buildCombinedPersistedBlocks(desktopConfig, mobileConfig));
+    if (isPlatformEditor) {
+      await syncPlatformMerchantSnapshotToServerRef.current();
+    }
 
     if (isSupabaseFallbackMode) {
       const notice =

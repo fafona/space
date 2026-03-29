@@ -2,6 +2,10 @@ import { createClient } from "@supabase/supabase-js";
 import type { Block, MerchantListPublishedSite } from "@/data/homeBlocks";
 import { createDefaultMerchantSortConfig, type MerchantSortRule } from "@/data/platformControlStore";
 import { sanitizeBlocksForRuntime } from "@/lib/blocksSanitizer";
+import {
+  PLATFORM_MERCHANT_SNAPSHOT_SLUG,
+  readPlatformMerchantSnapshotFromBlocks,
+} from "@/lib/platformMerchantSnapshot";
 
 type QueryErrorLike = { message?: string } | null;
 type QueryResult<T> = { data: T | null; error: QueryErrorLike };
@@ -19,6 +23,12 @@ type LooseSupabaseClient = {
 export type PublishedPlatformBlocksResult = {
   blocks: Block[] | null;
   error: string | null;
+};
+
+type PublishedMerchantSnapshotLoadResult = {
+  snapshot: MerchantListPublishedSite[];
+  defaultSortRule: MerchantSortRule;
+  replaceExistingSnapshot: boolean;
 };
 
 type PublishedMerchantPageRow = {
@@ -174,6 +184,20 @@ function blocksNeedPublishedMerchantSnapshotInPlanConfig(input: unknown): boolea
   });
 }
 
+function blocksContainMerchantListInPlanConfig(input: unknown): boolean {
+  if (!input || typeof input !== "object") return false;
+  const plans = (input as { plans?: unknown }).plans;
+  if (!Array.isArray(plans)) return false;
+  return plans.some((plan) => {
+    const planBlocks = Array.isArray((plan as { blocks?: unknown }).blocks) ? ((plan as { blocks?: Block[] }).blocks ?? []) : [];
+    const pages = Array.isArray((plan as { pages?: unknown }).pages) ? ((plan as { pages?: Array<{ blocks?: Block[] }> }).pages ?? []) : [];
+    return (
+      blocksContainMerchantList(planBlocks) ||
+      pages.some((page) => blocksContainMerchantList(Array.isArray(page.blocks) ? page.blocks : []))
+    );
+  });
+}
+
 export function blocksNeedPublishedMerchantSnapshot(blocks: Block[]): boolean {
   return blocks.some((block) => {
     const props = (block.props ?? {}) as Record<string, unknown>;
@@ -187,10 +211,21 @@ export function blocksNeedPublishedMerchantSnapshot(blocks: Block[]): boolean {
   });
 }
 
+function blocksContainMerchantList(blocks: Block[]): boolean {
+  return blocks.some((block) => {
+    const props = (block.props ?? {}) as Record<string, unknown>;
+    if (block.type === "merchant-list") return true;
+    if (blocksContainMerchantListInPlanConfig(props.pagePlanConfig)) return true;
+    if (blocksContainMerchantListInPlanConfig(props.pagePlanConfigMobile)) return true;
+    return false;
+  });
+}
+
 function injectPublishedMerchantSnapshotIntoPlanConfig(
   input: unknown,
   snapshot: MerchantListPublishedSite[],
   defaultSortRule: MerchantSortRule,
+  options?: { forceReplace?: boolean },
 ) {
   if (!input || typeof input !== "object") return input;
   const plans = (input as { plans?: unknown }).plans;
@@ -200,13 +235,18 @@ function injectPublishedMerchantSnapshotIntoPlanConfig(
     plans: plans.map((plan) => ({
       ...(plan as Record<string, unknown>),
       blocks: Array.isArray((plan as { blocks?: unknown }).blocks)
-        ? injectPublishedMerchantSnapshotIntoBlocks(((plan as { blocks?: Block[] }).blocks ?? []), snapshot, defaultSortRule)
+        ? injectPublishedMerchantSnapshotIntoBlocks(
+            ((plan as { blocks?: Block[] }).blocks ?? []),
+            snapshot,
+            defaultSortRule,
+            options,
+          )
         : (plan as { blocks?: unknown }).blocks,
       pages: Array.isArray((plan as { pages?: unknown }).pages)
         ? ((plan as { pages?: Array<{ blocks?: Block[] }> }).pages ?? []).map((page) => ({
             ...page,
             blocks: Array.isArray(page.blocks)
-              ? injectPublishedMerchantSnapshotIntoBlocks(page.blocks, snapshot, defaultSortRule)
+              ? injectPublishedMerchantSnapshotIntoBlocks(page.blocks, snapshot, defaultSortRule, options)
               : page.blocks,
           }))
         : (plan as { pages?: unknown }).pages,
@@ -218,15 +258,17 @@ export function injectPublishedMerchantSnapshotIntoBlocks(
   blocks: Block[],
   snapshot: MerchantListPublishedSite[],
   defaultSortRule: MerchantSortRule = "created_desc",
+  options?: { forceReplace?: boolean },
 ): Block[] {
   return blocks.map((block) => {
     const nextProps = { ...(block.props ?? {}) } as Record<string, unknown>;
     let changed = false;
     if (block.type === "merchant-list") {
       const existingSnapshot = nextProps.publishedMerchantSnapshot;
-      if (!Array.isArray(existingSnapshot) || existingSnapshot.length === 0) {
+      if (options?.forceReplace || !Array.isArray(existingSnapshot) || existingSnapshot.length === 0) {
         nextProps.publishedMerchantSnapshot = snapshot;
         if (
+          options?.forceReplace ||
           typeof nextProps.publishedMerchantDefaultSortRule !== "string" ||
           !String(nextProps.publishedMerchantDefaultSortRule).trim()
         ) {
@@ -236,14 +278,24 @@ export function injectPublishedMerchantSnapshotIntoBlocks(
       }
     }
     if ("pagePlanConfig" in nextProps) {
-      const patched = injectPublishedMerchantSnapshotIntoPlanConfig(nextProps.pagePlanConfig, snapshot, defaultSortRule);
+      const patched = injectPublishedMerchantSnapshotIntoPlanConfig(
+        nextProps.pagePlanConfig,
+        snapshot,
+        defaultSortRule,
+        options,
+      );
       if (patched !== nextProps.pagePlanConfig) {
         nextProps.pagePlanConfig = patched;
         changed = true;
       }
     }
     if ("pagePlanConfigMobile" in nextProps) {
-      const patched = injectPublishedMerchantSnapshotIntoPlanConfig(nextProps.pagePlanConfigMobile, snapshot, defaultSortRule);
+      const patched = injectPublishedMerchantSnapshotIntoPlanConfig(
+        nextProps.pagePlanConfigMobile,
+        snapshot,
+        defaultSortRule,
+        options,
+      );
       if (patched !== nextProps.pagePlanConfigMobile) {
         nextProps.pagePlanConfigMobile = patched;
         changed = true;
@@ -258,9 +310,54 @@ export function injectPublishedMerchantSnapshotIntoBlocks(
   });
 }
 
+async function loadStoredPlatformMerchantSnapshot(
+  supabase: LooseSupabaseClient,
+): Promise<PublishedMerchantSnapshotLoadResult | null> {
+  const initialQuery = await supabase
+    .from("pages")
+    .select("blocks")
+    .is("merchant_id", null)
+    .eq("slug", PLATFORM_MERCHANT_SNAPSHOT_SLUG)
+    .limit(1)
+    .maybeSingle();
+
+  let data = initialQuery.data as { blocks?: unknown } | null;
+  let error = initialQuery.error;
+
+  if (error) {
+    const message = toErrorMessage(error);
+    if (isMissingPlatformMerchantIdColumn(message)) {
+      const bySlug = await supabase
+        .from("pages")
+        .select("blocks")
+        .eq("slug", PLATFORM_MERCHANT_SNAPSHOT_SLUG)
+        .limit(1)
+        .maybeSingle();
+      data = bySlug.data as { blocks?: unknown } | null;
+      error = bySlug.error;
+    } else if (isMissingPlatformSlugColumn(message)) {
+      return null;
+    } else {
+      return null;
+    }
+  }
+
+  if (error) return null;
+  const payload = readPlatformMerchantSnapshotFromBlocks(data?.blocks);
+  if (!payload || payload.snapshot.length === 0) return null;
+  return {
+    snapshot: payload.snapshot,
+    defaultSortRule: payload.defaultSortRule,
+    replaceExistingSnapshot: true,
+  };
+}
+
 async function loadPublishedMerchantSnapshot(
   supabase: LooseSupabaseClient,
-): Promise<MerchantListPublishedSite[]> {
+): Promise<PublishedMerchantSnapshotLoadResult> {
+  const stored = await loadStoredPlatformMerchantSnapshot(supabase);
+  if (stored) return stored;
+
   const [pageRowsResult, merchantRowsResult] = await Promise.all([
     (await supabase
       .from<PublishedMerchantPageRow>("pages")
@@ -273,20 +370,41 @@ async function loadPublishedMerchantSnapshot(
   ]);
 
   if (pageRowsResult.error || merchantRowsResult.error) {
-    return [];
+    return {
+      snapshot: [],
+      defaultSortRule: "created_desc",
+      replaceExistingSnapshot: false,
+    };
   }
 
-  return buildPublishedMerchantSnapshotFromRows(pageRowsResult.data ?? [], merchantRowsResult.data ?? []);
+  return {
+    snapshot: buildPublishedMerchantSnapshotFromRows(pageRowsResult.data ?? [], merchantRowsResult.data ?? []),
+    defaultSortRule: "created_desc",
+    replaceExistingSnapshot: false,
+  };
 }
 
 async function hydratePublishedMerchantSnapshotIfNeeded(
   supabase: LooseSupabaseClient,
   blocks: Block[],
 ): Promise<Block[]> {
+  if (!blocksContainMerchantList(blocks)) return blocks;
+  const snapshotResult = await loadPublishedMerchantSnapshot(supabase);
+  if (snapshotResult.snapshot.length === 0) return blocks;
+  if (snapshotResult.replaceExistingSnapshot) {
+    return injectPublishedMerchantSnapshotIntoBlocks(
+      blocks,
+      snapshotResult.snapshot,
+      snapshotResult.defaultSortRule,
+      { forceReplace: true },
+    );
+  }
   if (!blocksNeedPublishedMerchantSnapshot(blocks)) return blocks;
-  const snapshot = await loadPublishedMerchantSnapshot(supabase);
-  if (snapshot.length === 0) return blocks;
-  return injectPublishedMerchantSnapshotIntoBlocks(blocks, snapshot);
+  return injectPublishedMerchantSnapshotIntoBlocks(
+    blocks,
+    snapshotResult.snapshot,
+    snapshotResult.defaultSortRule,
+  );
 }
 
 export function isMissingPlatformSlugColumn(message: string) {

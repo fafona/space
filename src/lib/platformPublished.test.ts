@@ -149,3 +149,89 @@ test("injectPublishedMerchantSnapshotIntoBlocks patches empty merchant snapshots
   assert.equal(nestedProps.publishedMerchantSnapshot?.[0]?.id, "10000000");
   assert.equal(blocksNeedPublishedMerchantSnapshot(next), false);
 });
+
+test("injectPublishedMerchantSnapshotIntoBlocks can replace stale merchant snapshots when forced", () => {
+  const blocks: Block[] = [
+    {
+      id: "merchant-root",
+      type: "merchant-list",
+      props: {
+        heading: "鍟嗘埛鍒楄〃",
+        publishedMerchantSnapshot: [
+          {
+            id: "10000000",
+            merchantName: "fafona",
+            domainPrefix: "fafona",
+            domainSuffix: "",
+            name: "fafona",
+            domain: "fafona",
+            category: "",
+            industry: "",
+            location: {
+              countryCode: "",
+              country: "",
+              provinceCode: "",
+              province: "",
+              city: "",
+            },
+            merchantCardImageUrl: "",
+            sortConfig: {
+              recommendedCountryRank: null,
+              recommendedProvinceRank: null,
+              recommendedCityRank: null,
+              industryCountryRank: null,
+              industryProvinceRank: null,
+              industryCityRank: null,
+            },
+            createdAt: "2026-03-29T17:36:59.114Z",
+          },
+        ],
+        publishedMerchantDefaultSortRule: "name_asc",
+      } as never,
+    },
+  ];
+
+  const next = injectPublishedMerchantSnapshotIntoBlocks(
+    blocks,
+    [
+      {
+        id: "10000000",
+        merchantName: "fafona",
+        domainPrefix: "fafona",
+        domainSuffix: "",
+        name: "fafona",
+        domain: "fafona",
+        category: "品牌官网",
+        industry: "娱乐",
+        location: {
+          countryCode: "ES",
+          country: "Spain",
+          provinceCode: "AN",
+          province: "Sevilla",
+          city: "Sevilla",
+        },
+        merchantCardImageUrl: "https://example.com/card.webp",
+        sortConfig: {
+          recommendedCountryRank: null,
+          recommendedProvinceRank: null,
+          recommendedCityRank: null,
+          industryCountryRank: 1,
+          industryProvinceRank: null,
+          industryCityRank: null,
+        },
+        createdAt: "2026-03-29T17:36:59.114Z",
+      },
+    ],
+    "monthly_views_desc",
+    { forceReplace: true },
+  );
+
+  const rootProps = next[0].props as {
+    publishedMerchantSnapshot?: Array<{ industry?: string; location?: { city?: string }; merchantCardImageUrl?: string }>;
+    publishedMerchantDefaultSortRule?: string;
+  };
+  assert.equal(rootProps.publishedMerchantSnapshot?.[0]?.industry, "娱乐");
+  assert.equal(rootProps.publishedMerchantSnapshot?.[0]?.location?.city, "Sevilla");
+  assert.equal(rootProps.publishedMerchantSnapshot?.[0]?.merchantCardImageUrl, "https://example.com/card.webp");
+  assert.equal(rootProps.publishedMerchantDefaultSortRule, "monthly_views_desc");
+});

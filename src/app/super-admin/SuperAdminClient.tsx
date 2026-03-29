@@ -82,6 +82,7 @@ import {
   capturePlanTemplatePreviewAssets,
   PLAN_TEMPLATE_PREVIEW_VARIANT,
 } from "@/lib/planTemplatePreviewCapture";
+import { buildPlatformMerchantSnapshotPayloadFromSites } from "@/lib/platformMerchantSnapshot";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
 import { buildMerchantFrontendHref, buildPlatformHomeHref, buildSiteStoreScope, PLATFORM_EDITOR_SCOPE } from "@/lib/siteRouting";
 import { getPagePlanConfigFromBlocks } from "@/lib/pagePlans";
@@ -1132,6 +1133,14 @@ export default function SuperAdminClient() {
   const [releaseChecklistState, setReleaseChecklistState] = useState<Record<string, boolean>>(() =>
     loadReleaseChecklistStateFromStorage(),
   );
+  const platformMerchantSnapshotPayload = useMemo(
+    () => buildPlatformMerchantSnapshotPayloadFromSites(state.sites, state.homeLayout.merchantDefaultSortRule),
+    [state.sites, state.homeLayout.merchantDefaultSortRule],
+  );
+  const platformMerchantSnapshotPayloadKey = useMemo(
+    () => JSON.stringify(platformMerchantSnapshotPayload),
+    [platformMerchantSnapshotPayload],
+  );
 
   useEffect(() => {
     setPlanTemplateCoverPreviewScale(1);
@@ -1169,6 +1178,29 @@ export default function SuperAdminClient() {
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
+
+  useEffect(() => {
+    if (!hydrated || !authed) return;
+    if (platformMerchantSnapshotPayload.snapshot.length === 0) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      fetch("/api/super-admin/platform-merchant-snapshot", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        cache: "no-store",
+        signal: controller.signal,
+        body: platformMerchantSnapshotPayloadKey,
+      }).catch(() => {
+        // Keep the super-admin screen responsive even if background sync fails.
+      });
+    }, 250);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [authed, hydrated, platformMerchantSnapshotPayload.snapshot.length, platformMerchantSnapshotPayloadKey]);
 
   useEffect(() => {
     if (!hydrated) return;
