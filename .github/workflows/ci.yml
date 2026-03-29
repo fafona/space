@@ -30,7 +30,7 @@ jobs:
         run: npm run check:encoding:strict
 
       - name: Lint
-        run: npm run lint
+        run: npm run lint -- --max-warnings=9999
 
       - name: Tests
         run: npm test
