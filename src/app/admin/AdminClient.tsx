@@ -2991,7 +2991,12 @@ export default function AdminClient({
   const [recentColors, setRecentColors] = useState<string[]>([]);
   const [resizePreview, setResizePreview] = useState<{ blockId: string; heightDelta: number } | null>(null);
   const [, setEditorDefaultTranslationVersion] = useState(0);
+  const [selectionDebugMessage, setSelectionDebugMessage] = useState("");
   const selectedIdRef = useRef(selectedId);
+  const previousSelectedIdRef = useRef(selectedId);
+  const lastManualSelectionAtRef = useRef(0);
+  const selectionKeepAliveUntilRef = useRef(0);
+  const lastSelectionReasonRef = useRef("init");
   const planConfigRef = useRef(planConfig);
 
   useEffect(() => {
@@ -3115,6 +3120,44 @@ export default function AdminClient({
       durationMs: null,
       dismissOnPointer: true,
     });
+  }
+
+  function updateSelectionDebug(reason: string) {
+    if (!isPlatformEditor) return;
+    const time = new Date().toLocaleTimeString("en-GB", { hour12: false });
+    setSelectionDebugMessage(`${time} ${reason}`);
+  }
+
+  function resolvePreferredSelectedId(nextBlocks: Block[], requestedId?: string) {
+    const normalizedRequestedId = (requestedId ?? "").trim();
+    if (normalizedRequestedId && nextBlocks.some((item) => item.id === normalizedRequestedId)) {
+      return normalizedRequestedId;
+    }
+    const currentSelectedId = (selectedIdRef.current ?? "").trim();
+    if (
+      currentSelectedId &&
+      Date.now() < selectionKeepAliveUntilRef.current &&
+      nextBlocks.some((item) => item.id === currentSelectedId)
+    ) {
+      updateSelectionDebug(`keep selected ${currentSelectedId} during state sync`);
+      return currentSelectedId;
+    }
+    return getDefaultSelectedBlockId(nextBlocks);
+  }
+
+  function selectBlock(blockId: string, reason: string) {
+    lastManualSelectionAtRef.current = Date.now();
+    selectionKeepAliveUntilRef.current = Date.now() + 1200;
+    lastSelectionReasonRef.current = reason;
+    updateSelectionDebug(`select ${blockId} via ${reason}`);
+    setSelectedId(blockId);
+  }
+
+  function clearSelectedBlock(reason: string) {
+    if (!selectedIdRef.current) return;
+    lastSelectionReasonRef.current = reason;
+    updateSelectionDebug(`clear via ${reason}`);
+    setSelectedId("");
   }
 
   function triggerMerchantProfileAttention() {
@@ -3302,7 +3345,7 @@ export default function AdminClient({
     setEditingPlanId(target.editingPlanId);
     setEditingPageId(target.editingPageId);
     setBlocks(cloneBlocks(target.blocks));
-    setSelectedId(target.selectedId || getDefaultSelectedBlockId(target.blocks));
+    setSelectedId(resolvePreferredSelectedId(target.blocks, target.selectedId));
 
     const combinedLoaded = buildCombinedPersistedBlocks(loadedPlanConfig, loadedMobilePlanConfig);
     saveBlocksToStorage(combinedLoaded, storeScope);
@@ -3656,7 +3699,7 @@ export default function AdminClient({
     setEditingPlanId(target.editingPlanId);
     setEditingPageId(target.editingPageId);
     setBlocks(cloneBlocks(target.blocks));
-    setSelectedId(target.selectedId || getDefaultSelectedBlockId(target.blocks));
+    setSelectedId(resolvePreferredSelectedId(target.blocks, target.selectedId));
   }
 
   async function readDesktopIntoMobile() {
@@ -3859,7 +3902,7 @@ export default function AdminClient({
     setEditingPlanId(target.editingPlanId);
     setEditingPageId(target.editingPageId);
     setBlocks(cloneBlocks(target.blocks));
-    setSelectedId(target.selectedId || getDefaultSelectedBlockId(target.blocks));
+    setSelectedId(resolvePreferredSelectedId(target.blocks, target.selectedId));
     saveBlocksToStorage(buildCombinedPersistedBlocks(clonedStates.desktop.planConfig, clonedStates.mobile.planConfig), storeScope);
   }
 
@@ -4773,6 +4816,20 @@ export default function AdminClient({
   }, [selectedId]);
 
   useEffect(() => {
+    const previous = previousSelectedIdRef.current;
+    if (previous === selectedId) return;
+    previousSelectedIdRef.current = selectedId;
+    if (!isPlatformEditor) return;
+    const previousLabel = previous || "(none)";
+    const nextLabel = selectedId || "(none)";
+    if (!selectedId && previous && Date.now() - lastManualSelectionAtRef.current < 1500) {
+      updateSelectionDebug(`state ${previousLabel} -> ${nextLabel}; external clear after ${lastSelectionReasonRef.current}`);
+      return;
+    }
+    updateSelectionDebug(`state ${previousLabel} -> ${nextLabel}; reason ${lastSelectionReasonRef.current}`);
+  }, [isPlatformEditor, selectedId]);
+
+  useEffect(() => {
     setRecentColors(loadRecentColors());
   }, []);
 
@@ -5017,8 +5074,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     if (matchesPath("[data-editor-overlay]") || target.closest("[data-editor-overlay]")) return;
     if (matchesPath("[data-block-id]") || target.closest("[data-block-id]")) return;
     if (!matchesPath("[data-editor-clear-selection='1']") && !target.closest("[data-editor-clear-selection='1']")) return;
+    if (Date.now() < selectionKeepAliveUntilRef.current) {
+      updateSelectionDebug("skip clear during keep-alive window");
+      return;
+    }
     if (selectedIdRef.current) {
-      setSelectedId("");
+      clearSelectedBlock("editor-root-mousedown");
     }
   }
 
@@ -6955,7 +7016,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                               onLayerUp={() => moveBlockLayerByOne(block.id, "up")}
                               onLayerDown={() => moveBlockLayerByOne(block.id, "down")}
                               onLayerToBack={() => moveBlockToLayerEdge(block.id, "back")}
-                              onSelect={() => setSelectedId(block.id)}
+                              onSelect={() => selectBlock(block.id, "block-click")}
                               onChange={(patch) => updateBlockProps(block.id, patch)}
                               onResizePreview={(heightDelta) => previewResizeWithoutAffectingOthers(block.id, heightDelta)}
                               onResizeCommit={(patch, heightDelta) => resizeBlockWithoutAffectingOthers(block.id, patch, heightDelta)}
@@ -7021,7 +7082,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                       onLayerUp={() => moveBlockLayerByOne(block.id, "up")}
                       onLayerDown={() => moveBlockLayerByOne(block.id, "down")}
                       onLayerToBack={() => moveBlockToLayerEdge(block.id, "back")}
-                      onSelect={() => setSelectedId(block.id)}
+                      onSelect={() => selectBlock(block.id, "block-click")}
                       onChange={(patch) => updateBlockProps(block.id, patch)}
                       onResizePreview={(heightDelta) => previewResizeWithoutAffectingOthers(block.id, heightDelta)}
                       onResizeCommit={(patch, heightDelta) => resizeBlockWithoutAffectingOthers(block.id, patch, heightDelta)}
@@ -7728,6 +7789,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       {tip ? (
         <div className="fixed inset-0 z-[2147483500] pointer-events-none flex items-center justify-center p-4">
           <div className="px-4 py-2 rounded-lg bg-black/85 text-white text-sm shadow-lg">{tip}</div>
+        </div>
+      ) : null}
+      {isPlatformEditor && selectionDebugMessage ? (
+        <div className="fixed bottom-3 right-3 z-[2147483400] max-w-[420px] rounded-lg border bg-black/85 px-3 py-2 text-xs text-white shadow-lg">
+          {selectionDebugMessage}
         </div>
       ) : null}
     </main>
