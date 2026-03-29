@@ -738,6 +738,37 @@ function ContactCardSurface({
   );
 }
 
+function resolveFilePickerStatus(selectedFileName: string, assetUrl: string, uploadedLabel: string) {
+  const selectedName = normalizeText(selectedFileName);
+  if (selectedName) return selectedName;
+  return normalizeText(assetUrl) ? uploadedLabel : "未选择任何文件";
+}
+
+function ImageFilePicker({
+  label,
+  statusText,
+  onChange,
+}: {
+  label: string;
+  statusText: string;
+  onChange: (event: ChangeEvent<HTMLInputElement>) => void;
+}) {
+  return (
+    <label className="block text-xs text-slate-600">
+      {label}
+      <span className="mt-1 block">
+        <span className="flex w-full cursor-pointer items-center gap-3 rounded border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-slate-700 transition hover:bg-sky-100 focus-within:border-sky-300 focus-within:ring-2 focus-within:ring-sky-100">
+          <input type="file" accept="image/*" className="sr-only" onChange={onChange} />
+          <span className="shrink-0 rounded border border-sky-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700">
+            选择文件
+          </span>
+          <span className="min-w-0 flex-1 truncate text-slate-500">{statusText}</span>
+        </span>
+      </span>
+    </label>
+  );
+}
+
 export default function MerchantBusinessCardManager({
   siteBaseDomain,
   profile,
@@ -768,6 +799,8 @@ export default function MerchantBusinessCardManager({
   const [contactPhoneEditorValues, setContactPhoneEditorValues] = useState<string[]>(() =>
     resolveDraftPhoneValues(createDefaultMerchantBusinessCardDraft(profile).contacts),
   );
+  const [backgroundImageFileName, setBackgroundImageFileName] = useState("");
+  const [contactPageImageFileName, setContactPageImageFileName] = useState("");
   const hiddenPreviewRef = useRef<HTMLDivElement | null>(null);
 
   const missingFields = useMemo(() => getMerchantBusinessCardRequiredFields(profile), [profile]);
@@ -946,6 +979,8 @@ export default function MerchantBusinessCardManager({
     const nextDraft = createDefaultMerchantBusinessCardDraft(profile);
     setDraft(nextDraft);
     setContactPhoneEditorValues(resolveDraftPhoneValues(nextDraft.contacts));
+    setBackgroundImageFileName("");
+    setContactPageImageFileName("");
     setDraftShareKey(createShareKey());
     setSelectedFieldKeys(["merchantName"]);
     setEditingCardId(null);
@@ -960,6 +995,8 @@ export default function MerchantBusinessCardManager({
     const nextDraft = normalizeMerchantBusinessCardDraft(card);
     setDraft(nextDraft);
     setContactPhoneEditorValues(resolveDraftPhoneValues(nextDraft.contacts));
+    setBackgroundImageFileName("");
+    setContactPageImageFileName("");
     setDraftShareKey(normalizeText(card.shareKey) || createShareKey());
     setSelectedFieldKeys(["merchantName"]);
     setEditingCardId(card.id);
@@ -979,6 +1016,7 @@ export default function MerchantBusinessCardManager({
     const file = event.target.files?.[0];
     if (!file) return;
     try {
+      const fileName = normalizeText(file.name);
       const originalImageUrl = await readImageFileAsDataUrl(file);
       const optimized = await compressImageDataUrlWithinLimit(
         originalImageUrl,
@@ -989,6 +1027,7 @@ export default function MerchantBusinessCardManager({
         return;
       }
       applyDraft((current) => ({ ...current, backgroundImageUrl: optimized.dataUrl }));
+      setBackgroundImageFileName(fileName || "已上传背景图");
     } catch {
       setTip("背景图上传失败，请重试");
     } finally {
@@ -1032,6 +1071,7 @@ export default function MerchantBusinessCardManager({
     const file = event.target.files?.[0];
     if (!file) return;
     try {
+      const fileName = normalizeText(file.name);
       const originalImageUrl = await readImageFileAsDataUrl(file);
       const optimized = await compressImageDataUrlWithinLimit(
         originalImageUrl,
@@ -1043,6 +1083,7 @@ export default function MerchantBusinessCardManager({
       }
       const imageUrl = optimized.dataUrl;
       applyDraft((current) => ({ ...current, contactPageImageUrl: imageUrl }));
+      setContactPageImageFileName(fileName || "已上传联系卡图片");
     } catch {
       setTip("联系卡图片上传失败，请重试");
     } finally {
@@ -1215,6 +1256,16 @@ export default function MerchantBusinessCardManager({
     normalizeText(draft.contactPageImageUrl);
   const previewContactImageHeight = previewAsset?.contactPageImageHeight || draft.contactPageImageHeight;
   const showPreviewGenerateButton = !previewAsset;
+  const backgroundImagePickerStatus = resolveFilePickerStatus(
+    backgroundImageFileName,
+    normalizeText(draft.backgroundImageUrl),
+    "已上传背景图，可重新选择",
+  );
+  const contactPageImagePickerStatus = resolveFilePickerStatus(
+    contactPageImageFileName,
+    normalizeText(draft.contactPageImageUrl),
+    "已上传联系卡图片，可重新选择",
+  );
 
   return (
     <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
@@ -1364,16 +1415,14 @@ export default function MerchantBusinessCardManager({
                       <div className="text-xs font-semibold text-slate-700">背景图与背景色</div>
                       <div className="grid gap-3 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
                         <div className="space-y-3">
-                          <label className="block text-xs text-slate-600">
-                            背景图
-                            <input
-                              type="file"
-                              accept="image/*"
-                              className="mt-1 w-full rounded border border-sky-200 bg-sky-50 px-3 py-2 text-sm"
+                          <div>
+                            <ImageFilePicker
+                              label="背景图"
+                              statusText={backgroundImagePickerStatus}
                               onChange={(event) => void handleBackgroundUpload(event)}
                             />
                             <div className="mt-1 text-[11px] text-slate-400">默认上限 {normalizedBackgroundImageLimitKb} KB，上传时会先自动压缩。</div>
-                          </label>
+                          </div>
                           <label className="block text-xs text-slate-600">图片透明度<div className="mt-1 flex items-center gap-3 rounded border bg-white px-3 py-2"><input type="range" min="0" max="1" step="0.01" className="min-w-0 flex-1" value={draft.backgroundImageOpacity} onChange={(event) => applyDraft((current) => ({ ...current, backgroundImageOpacity: clamp(Number(event.target.value), 0, 1) }))} /><span className="w-12 shrink-0 text-right text-xs text-slate-500">{formatOpacityPercent(draft.backgroundImageOpacity)}</span></div></label>
                         </div>
                         <div className="space-y-3">
@@ -1394,19 +1443,18 @@ export default function MerchantBusinessCardManager({
                         <div className="text-xs font-semibold text-slate-700">联系卡中间展示图</div>
                         <div className="mt-1 text-xs leading-5 text-slate-500">这里可以单独上传一张图片给收到名片的人看。不上传时，联系卡页面会默认展示姓名、电话、邮箱这些名片信息。右侧名片预览下方会同步显示联系卡图片预览。</div>
                         <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_120px_140px]">
-                          <label className="block text-xs text-slate-600">
-                            上传图片
-                            <input
-                              type="file"
-                              accept="image/*"
-                              className="mt-1 w-full rounded border border-sky-200 bg-sky-50 px-3 py-2 text-sm"
-                              onChange={(event) => void handleContactPageImageUpload(event)}
-                            />
-                          </label>
+                          <ImageFilePicker
+                            label="上传图片"
+                            statusText={contactPageImagePickerStatus}
+                            onChange={(event) => void handleContactPageImageUpload(event)}
+                          />
                           <button
                             type="button"
                             className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
-                            onClick={() => applyDraft((current) => ({ ...current, contactPageImageUrl: "" }))}
+                            onClick={() => {
+                              setContactPageImageFileName("");
+                              applyDraft((current) => ({ ...current, contactPageImageUrl: "" }));
+                            }}
                             disabled={!normalizeText(draft.contactPageImageUrl)}
                           >
                             恢复默认
