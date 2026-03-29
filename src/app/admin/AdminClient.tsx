@@ -186,6 +186,8 @@ import BlockRenderer from "@/components/blocks/BlockRenderer";
 import BookingBlock from "@/components/blocks/BookingBlock";
 import MerchantBookingManagerDialog from "@/components/admin/MerchantBookingManagerDialog";
 import MerchantProfileDialog from "@/components/admin/MerchantProfileDialog";
+import { useI18n } from "@/components/I18nProvider";
+import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
 
 const IMAGE_FILL_VALUES: ImageFillMode[] = [
   "cover",
@@ -6834,6 +6836,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               <div className="rounded-[36px] border-8 border-gray-900 bg-black p-2 shadow-2xl">
                 <div
                   ref={backgroundLayerRef}
+                  data-no-translate="1"
                   className="relative rounded-[28px] overflow-visible"
                   style={{ minHeight: `${Math.max(backgroundLayerMinHeight, 780)}px` }}
                 >
@@ -6898,6 +6901,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       ) : (
         <div
           ref={backgroundLayerRef}
+          data-no-translate="1"
           className="min-h-screen"
           style={{ ...pageBackgroundStyle, minHeight: `${Math.max(backgroundLayerMinHeight, 0)}px` }}
         >
@@ -7688,6 +7692,7 @@ function InlineEditorBlock({
   runtimeSiteId?: string;
   runtimeSiteName?: string;
 }) {
+  const { locale } = useI18n();
   type CommonEditorTextBox = {
     id: string;
     html: string;
@@ -11970,6 +11975,11 @@ type GalleryEditorImage = {
 
   if (block.type === "nav") {
     const navItems = getNavItems();
+    const localizedNavItems = navItems.map((item) => ({
+      ...item,
+      label: localizeSystemDefaultText(item.label ?? "", locale),
+    }));
+    const localizedNavHeading = resolveLocalizedSystemDefaultText(block.props.heading, "页面导航", locale);
     const selectedNavPageId = previewNavPageId || currentPageId;
     const orientation = block.props.navOrientation === "vertical" ? "vertical" : "horizontal";
     const navItemBgColor = (block.props.navItemBgColor ?? "#ffffff").trim() || "#ffffff";
@@ -12127,7 +12137,7 @@ type GalleryEditorImage = {
                 ))}
               </div>
               <div className={orientation === "vertical" ? "flex flex-col items-start gap-2 pt-1" : "flex flex-wrap gap-2 pt-1"}>
-                {navItems.map((item) => (
+                {localizedNavItems.map((item) => (
                   <button
                     key={`preview-${item.id}`}
                     type="button"
@@ -12151,10 +12161,13 @@ type GalleryEditorImage = {
           ) : (
             <div className="space-y-2">
               {block.props.heading ? (
-                <div className="text-sm font-semibold whitespace-pre-wrap break-words" dangerouslySetInnerHTML={{ __html: toRichHtml(block.props.heading, "页面导航") }} />
+                <div
+                  className="text-sm font-semibold whitespace-pre-wrap break-words"
+                  dangerouslySetInnerHTML={{ __html: toRichHtml(block.props.heading, localizedNavHeading) }}
+                />
               ) : null}
               <div className={orientation === "vertical" ? "flex flex-col items-start gap-2" : "flex flex-wrap gap-2"}>
-                {navItems.map((item) => (
+                {localizedNavItems.map((item) => (
                   <button
                     key={item.id}
                     type="button"
@@ -14878,8 +14891,11 @@ type GalleryEditorImage = {
       typeof block.props.maxItems === "number" && Number.isFinite(block.props.maxItems)
         ? Math.max(1, Math.min(24, Math.round(block.props.maxItems)))
         : 6;
-    const emptyText = (block.props.emptyText ?? "").trim() || "暂无商户";
-    const merchantTabs = normalizeMerchantIndustryTabs(block.props.industryTabs);
+    const emptyText = resolveLocalizedSystemDefaultText(block.props.emptyText, "暂无商户", locale);
+    const merchantTabs = normalizeMerchantIndustryTabs(block.props.industryTabs).map((item) => ({
+      ...item,
+      label: localizeSystemDefaultText(item.label, locale),
+    }));
     const activeMerchantTab = merchantTabs.find((item) => item.id === activeMerchantIndustryTabId) ?? merchantTabs[0];
     const activeIndustry = activeMerchantTab?.industry ?? "all";
     const filteredMerchantSites = [...loadPlatformState().sites]
@@ -14894,6 +14910,10 @@ type GalleryEditorImage = {
     );
     const hasMerchantHeading = hasVisibleRichText(block.props.heading);
     const hasMerchantText = hasVisibleRichText(block.props.text);
+    const localizedMerchantHeading = resolveLocalizedSystemDefaultText(block.props.heading, "商户列表", locale);
+    const localizedMerchantText = resolveLocalizedSystemDefaultText(block.props.text, "展示平台注册商户的前台入口", locale);
+    const prevPageLabel = resolveLocalizedSystemDefaultText(undefined, "上一页", locale);
+    const nextPageLabel = resolveLocalizedSystemDefaultText(undefined, "下一页", locale);
     const merchantTabButtonBgColor = (block.props.merchantTabButtonBgColor ?? "#ffffff").trim() || "#ffffff";
     const merchantTabButtonBgOpacity =
       typeof block.props.merchantTabButtonBgOpacity === "number" && Number.isFinite(block.props.merchantTabButtonBgOpacity)
@@ -15653,13 +15673,13 @@ type GalleryEditorImage = {
               {hasMerchantHeading ? (
                 <h2
                   className="text-xl font-bold whitespace-pre-wrap break-words"
-                  dangerouslySetInnerHTML={{ __html: toRichHtml(block.props.heading, "商户列表") }}
+                  dangerouslySetInnerHTML={{ __html: toRichHtml(block.props.heading, localizedMerchantHeading) }}
                 />
               ) : null}
               {hasMerchantText ? (
                 <div
                   className="mt-2 text-sm text-gray-600 whitespace-pre-wrap break-words"
-                  dangerouslySetInnerHTML={{ __html: toRichHtml(block.props.text, "") }}
+                  dangerouslySetInnerHTML={{ __html: toRichHtml(block.props.text, localizedMerchantText) }}
                 />
               ) : null}
               <div className="mt-4 max-w-full overflow-x-auto pb-1">
@@ -15784,7 +15804,7 @@ type GalleryEditorImage = {
                       disabled={safeMerchantPreviewPageIndex <= 0}
                       onClick={() => setMerchantPreviewPageIndex((prev) => Math.max(0, prev - 1))}
                     >
-                      <span style={merchantButtonLabelStyle}>上一页</span>
+                      <span style={merchantButtonLabelStyle}>{prevPageLabel}</span>
                     </button>
                   ) : null}
                   {merchantNextLayout ? (
@@ -15807,7 +15827,7 @@ type GalleryEditorImage = {
                       disabled={safeMerchantPreviewPageIndex >= merchantTotalPages - 1}
                       onClick={() => setMerchantPreviewPageIndex((prev) => Math.min(merchantTotalPages - 1, prev + 1))}
                     >
-                      <span style={merchantButtonLabelStyle}>下一页</span>
+                      <span style={merchantButtonLabelStyle}>{nextPageLabel}</span>
                     </button>
                   ) : null}
                 </div>
@@ -15822,10 +15842,13 @@ type GalleryEditorImage = {
 
   if (block.type === "search-bar") {
     type SearchLayoutKey = "locate" | "country" | "province" | "city" | "keyword" | "action";
-    const locateLabel = (block.props.locateLabel ?? "").trim() || "定位";
-    const actionLabel = (block.props.actionLabel ?? "").trim() || "搜索";
-    const cityPlaceholder = (block.props.cityPlaceholder ?? "").trim() || "选择城市";
-    const searchPlaceholder = (block.props.searchPlaceholder ?? "").trim() || "请输入关键词";
+    const locateLabel = resolveLocalizedSystemDefaultText(block.props.locateLabel, "定位", locale);
+    const actionLabel = resolveLocalizedSystemDefaultText(block.props.actionLabel, "搜索", locale);
+    const cityPlaceholder = resolveLocalizedSystemDefaultText(block.props.cityPlaceholder, "选择城市", locale);
+    const searchPlaceholder = resolveLocalizedSystemDefaultText(block.props.searchPlaceholder, "请输入关键词", locale);
+    const countryLabel = resolveLocalizedSystemDefaultText(undefined, "国家", locale);
+    const provinceLabel = resolveLocalizedSystemDefaultText(undefined, "省份", locale);
+    const searchHintLabel = resolveLocalizedSystemDefaultText(undefined, "可点击定位，或手动选择国家/省份/城市。", locale);
     const countryOptions = getEuropeCountryOptions();
     const resolvedCountryCode = (() => {
       const fromProps = (block.props.defaultCountryCode ?? "").toUpperCase();
@@ -15844,11 +15867,13 @@ type GalleryEditorImage = {
       if (cityOptions.includes(fromProps)) return fromProps;
       return "";
     })();
-    const resolvedCountryName = countryOptions.find((item) => item.code === resolvedCountryCode)?.name ?? "国家";
+    const resolvedCountryName = countryOptions.find((item) => item.code === resolvedCountryCode)?.name ?? countryLabel;
     const resolvedProvinceName =
-      provinceOptions.find((item) => item.code === resolvedProvinceCode)?.name ?? "省份";
+      provinceOptions.find((item) => item.code === resolvedProvinceCode)?.name ?? provinceLabel;
     const hasSearchHeading = hasVisibleRichText(block.props.heading);
     const hasSearchText = hasVisibleRichText(block.props.text);
+    const localizedSearchHeading = resolveLocalizedSystemDefaultText(block.props.heading, "搜索", locale);
+    const localizedSearchText = resolveLocalizedSystemDefaultText(block.props.text, "城市定位与内容搜索", locale);
     const searchButtonBgColor = (block.props.searchButtonBgColor ?? "#ffffff").trim() || "#ffffff";
     const searchButtonBgOpacity =
       typeof block.props.searchButtonBgOpacity === "number" && Number.isFinite(block.props.searchButtonBgOpacity)
@@ -16359,7 +16384,7 @@ type GalleryEditorImage = {
                         </option>
                       ))
                     ) : (
-                      <option value="">国家</option>
+                      <option value="">{countryLabel}</option>
                     )}
                   </select>
                 </label>
@@ -16385,7 +16410,7 @@ type GalleryEditorImage = {
                         </option>
                       ))
                     ) : (
-                      <option value="">省份</option>
+                      <option value="">{provinceLabel}</option>
                     )}
                   </select>
                 </label>
@@ -16588,13 +16613,13 @@ type GalleryEditorImage = {
               {hasSearchHeading ? (
                 <h2
                   className="text-xl font-bold whitespace-pre-wrap break-words"
-                  dangerouslySetInnerHTML={{ __html: toRichHtml(block.props.heading, "") }}
+                  dangerouslySetInnerHTML={{ __html: toRichHtml(block.props.heading, localizedSearchHeading) }}
                 />
               ) : null}
               {hasSearchText ? (
                 <div
                   className="mt-2 text-gray-600 whitespace-pre-wrap break-words"
-                  dangerouslySetInnerHTML={{ __html: toRichHtml(block.props.text, "") }}
+                  dangerouslySetInnerHTML={{ __html: toRichHtml(block.props.text, localizedSearchText) }}
                 />
               ) : null}
               <form onSubmit={(event) => event.preventDefault()} className={`${hasSearchHeading || hasSearchText ? "mt-4 " : ""}space-y-3`}>
@@ -16633,7 +16658,7 @@ type GalleryEditorImage = {
                       className="h-full w-full rounded border bg-white px-2 text-sm text-slate-600 outline-none placeholder:text-current"
                       style={searchInputTextStyle}
                       value={resolvedCountryName}
-                      aria-label="国家"
+                      aria-label={countryLabel}
                     />
                   </div>
                   <div
@@ -16650,7 +16675,7 @@ type GalleryEditorImage = {
                       className="h-full w-full rounded border bg-white px-2 text-sm text-slate-600 outline-none placeholder:text-current"
                       style={searchInputTextStyle}
                       value={resolvedProvinceName}
-                      aria-label="省份"
+                      aria-label={provinceLabel}
                     />
                   </div>
                   <div
@@ -16705,7 +16730,7 @@ type GalleryEditorImage = {
                   </div>
                 </div>
               </form>
-              <div className="mt-2 text-xs text-slate-500">可点击定位，或手动选择国家/省份/城市。</div>
+              <div className="mt-2 text-xs text-slate-500">{searchHintLabel}</div>
             </>
           )}
           {resizeHandles}

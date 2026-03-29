@@ -8,6 +8,102 @@ const SYSTEM_DEFAULT_PAGE_NAME_COUNT = 24;
 const SYSTEM_DEFAULT_ALIASES: Record<string, string> = {
   "臊展示平台注册商户的前台入口": "展示平台注册商户的前台入口",
   "攌城市定位与内容搜": "城市定位与内容搜索",
+  "front page": "首页",
+  "Front page": "首页",
+  "Page navigation": "页面导航",
+  "Search": "搜索",
+  "search": "搜索",
+  "position": "定位",
+  "Position": "定位",
+  "Country": "国家",
+  "Province": "省份",
+  "Select city": "选择城市",
+  "Please enter the merchant name keywords": "请输入商户名称关键词",
+  "City positioning and content search": "城市定位与内容搜索",
+  "Merchant list": "商户列表",
+  "The front entrance of registered merchants on the Xi display platform": "展示平台注册商户的前台入口",
+  "recommend": "推荐",
+  "Recommend": "推荐",
+  "FOOD": "餐饮",
+  "entertainment": "娱乐",
+  "retail": "零售",
+  "serve": "服务",
+  "Serve": "服务",
+  "organize": "组织",
+  "Organize": "组织",
+  "previous page": "上一页",
+  "Previous page": "上一页",
+  "next page": "下一页",
+  "Next page": "下一页",
+};
+
+const MANUAL_SYSTEM_DEFAULT_TRANSLATIONS: Record<string, Partial<Record<string, string>>> = {
+  "首页": {
+    en: "front page",
+  },
+  "页面导航": {
+    en: "Page navigation",
+  },
+  "搜索": {
+    en: "search",
+  },
+  "城市定位与内容搜索": {
+    en: "City positioning and content search",
+  },
+  "国家": {
+    en: "Country",
+  },
+  "省份": {
+    en: "Province",
+  },
+  "选择城市": {
+    en: "Select city",
+  },
+  "请输入商户名称关键词": {
+    en: "Please enter the merchant name keywords",
+  },
+  "请输入关键词": {
+    en: "Please enter keywords",
+  },
+  "定位": {
+    en: "position",
+  },
+  "定位中...": {
+    en: "Locating...",
+  },
+  "可点击定位，或手动选择国家/省份/城市。": {
+    en: "You can click to locate, or manually select the country/province/city.",
+  },
+  "商户列表": {
+    en: "Merchant list",
+  },
+  "展示平台注册商户的前台入口": {
+    en: "The front entrance of registered merchants on the Xi display platform",
+  },
+  "推荐": {
+    en: "recommend",
+  },
+  "餐饮": {
+    en: "FOOD",
+  },
+  "娱乐": {
+    en: "entertainment",
+  },
+  "零售": {
+    en: "retail",
+  },
+  "服务": {
+    en: "Serve",
+  },
+  "组织": {
+    en: "organize",
+  },
+  "上一页": {
+    en: "Previous page",
+  },
+  "下一页": {
+    en: "Next page",
+  },
 };
 
 const SYSTEM_DEFAULT_TEXTS = (() => {
@@ -17,6 +113,7 @@ const SYSTEM_DEFAULT_TEXTS = (() => {
     "新的图表区块",
     "图表说明文本",
     "页面导航",
+    "首页",
     "新的音乐区块",
     "新的视觉横幅",
     "在这里编写副标题说明文案",
@@ -27,13 +124,19 @@ const SYSTEM_DEFAULT_TEXTS = (() => {
     "列表2",
     "搜索",
     "城市定位与内容搜索",
+    "国家",
+    "省份",
     "选择城市",
     "请输入商户名称关键词",
     "请输入关键词",
     "定位",
+    "定位中...",
+    "可点击定位，或手动选择国家/省份/城市。",
     "商户列表",
     "展示平台注册商户的前台入口",
     "暂无商户",
+    "上一页",
+    "下一页",
     "推荐",
     "推荐（全部）",
     "全部商户",
@@ -141,8 +244,14 @@ function localizeSystemDefaultValue<T>(value: T, locale: string): T {
   if (typeof value === "string") {
     const canonical = toCanonicalSystemDefaultText(value);
     if (!canonical) return value;
-    const translated = translateDomText(canonical, normalizeDomLocale(locale));
-    return (translated === canonical && normalizeDomLocale(locale) !== "zh-CN" ? value : translated) as T;
+    const normalizedLocale = normalizeDomLocale(locale);
+    const translated = translateDomText(canonical, normalizedLocale);
+    if (translated !== canonical) return translated as T;
+    const manual =
+      MANUAL_SYSTEM_DEFAULT_TRANSLATIONS[canonical]?.[normalizedLocale] ??
+      MANUAL_SYSTEM_DEFAULT_TRANSLATIONS[canonical]?.[normalizedLocale.split("-")[0] ?? normalizedLocale];
+    if (manual) return manual as T;
+    return (normalizedLocale !== "zh-CN" ? value : canonical) as T;
   }
 
   if (Array.isArray(value)) {

@@ -1,6 +1,8 @@
 ﻿"use client";
 
 import type { BackgroundEditableProps, BlockBorderStyle } from "@/data/homeBlocks";
+import { useI18n } from "@/components/I18nProvider";
+import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
 import { getBackgroundStyle } from "./backgroundStyle";
 import { getBlockBorderClass, getBlockBorderInlineStyle } from "./borderStyle";
 import { toRichHtml } from "./richText";
@@ -93,6 +95,7 @@ function buildLabelColorStyle(color: string) {
 }
 
 export default function NavBlock(props: NavBlockProps) {
+  const { locale } = useI18n();
   const orientation = props.navOrientation === "vertical" ? "vertical" : "horizontal";
   const navItems =
     Array.isArray(props.navItems) && props.navItems.length > 0
@@ -108,6 +111,11 @@ export default function NavBlock(props: NavBlockProps) {
           { id: "nav-page-2", label: "页面 2", pageId: "page-2" },
           { id: "nav-page-3", label: "页面 3", pageId: "page-3" },
         ];
+  const localizedHeading = resolveLocalizedSystemDefaultText(props.heading, "页面导航", locale);
+  const localizedNavItems = navItems.map((item) => ({
+    ...item,
+    label: localizeSystemDefaultText(item.label ?? "", locale),
+  }));
 
   const cardStyle = getBackgroundStyle({
     imageUrl: props.bgImageUrl,
@@ -196,11 +204,11 @@ export default function NavBlock(props: NavBlockProps) {
         {props.heading ? (
           <div
             className="text-sm font-semibold text-gray-700 mb-2 whitespace-pre-wrap break-words"
-            dangerouslySetInnerHTML={{ __html: toRichHtml(props.heading, "") }}
+            dangerouslySetInnerHTML={{ __html: toRichHtml(props.heading, localizedHeading) }}
           />
         ) : null}
         <nav className={orientation === "vertical" ? "flex flex-col items-start gap-2" : "flex flex-wrap items-center gap-2"}>
-          {navItems.map((item) => {
+          {localizedNavItems.map((item) => {
             const isActive = props.currentPageId === item.pageId;
             return (
               <button

@@ -438,6 +438,8 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
       ? Math.max(1, Math.min(24, Math.round(props.maxItems)))
       : 6;
   const emptyText = resolveLocalizedSystemDefaultText(props.emptyText, "暂无商户", locale);
+  const prevPageLabel = resolveLocalizedSystemDefaultText(undefined, "上一页", locale);
+  const nextPageLabel = resolveLocalizedSystemDefaultText(undefined, "下一页", locale);
   const industryTabs = useMemo(
     () =>
       normalizeMerchantIndustryTabs(props.industryTabs).map((item) => ({
@@ -662,7 +664,12 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
         {props.text ? (
           <div
             className="mt-2 text-sm text-gray-600 whitespace-pre-wrap break-words"
-            dangerouslySetInnerHTML={{ __html: toRichHtml(props.text, "") }}
+            dangerouslySetInnerHTML={{
+              __html: toRichHtml(
+                props.text,
+                resolveLocalizedSystemDefaultText(props.text, "展示平台注册商户的前台入口", locale),
+              ),
+            }}
           />
         ) : null}
 
@@ -792,7 +799,7 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
                 disabled={safePageIndex <= 0}
                 onClick={() => setPageIndex((prev) => Math.max(0, prev - 1))}
               >
-                <span style={merchantButtonLabelStyle}>上一页</span>
+                <span style={merchantButtonLabelStyle}>{prevPageLabel}</span>
               </button>
             ) : null}
             {nextLayout ? (
@@ -811,7 +818,7 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
                 disabled={safePageIndex >= totalPages - 1}
                 onClick={() => setPageIndex((prev) => Math.min(totalPages - 1, prev + 1))}
               >
-                <span style={merchantButtonLabelStyle}>下一页</span>
+                <span style={merchantButtonLabelStyle}>{nextPageLabel}</span>
               </button>
             ) : null}
           </div>

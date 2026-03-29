@@ -35,3 +35,10 @@ test("canonicalizePagePlanConfigSystemDefaults repairs translated page and plan 
     ["\u9875\u97621", "\u9875\u97622", "\u9875\u97623"],
   );
 });
+
+test("localizeSystemDefaultText restores translated editor defaults back to Chinese", () => {
+  assert.equal(editorSystemDefaults.localizeSystemDefaultText("front page", "zh-CN"), "\u9996\u9875");
+  assert.equal(editorSystemDefaults.localizeSystemDefaultText("Page navigation", "zh-CN"), "\u9875\u9762\u5bfc\u822a");
+  assert.equal(editorSystemDefaults.resolveLocalizedSystemDefaultText(undefined, "\u56fd\u5bb6", "en"), "Country");
+  assert.equal(editorSystemDefaults.resolveLocalizedSystemDefaultText(undefined, "\u4e0a\u4e00\u9875", "en"), "Previous page");
+});

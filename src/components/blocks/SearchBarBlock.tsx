@@ -240,6 +240,10 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
   const actionLabel = resolveLocalizedSystemDefaultText(props.actionLabel, "搜索", locale);
   const cityPlaceholder = resolveLocalizedSystemDefaultText(props.cityPlaceholder, "选择城市", locale);
   const searchPlaceholder = resolveLocalizedSystemDefaultText(props.searchPlaceholder, "请输入关键词", locale);
+  const countryLabel = resolveLocalizedSystemDefaultText(undefined, "国家", locale);
+  const provinceLabel = resolveLocalizedSystemDefaultText(undefined, "省份", locale);
+  const locationHintDefault = resolveLocalizedSystemDefaultText(undefined, "可点击定位，或手动选择国家/省份/城市。", locale);
+  const locatingLabel = resolveLocalizedSystemDefaultText(undefined, "定位中...", locale);
 
   const provinceOptions = useMemo(() => getEuropeProvinceOptions(countryCode), [countryCode]);
   const cityOptions = useMemo(
@@ -912,13 +916,20 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
         {hasHeading ? (
           <h2
             className="text-xl font-bold whitespace-pre-wrap break-words"
-            dangerouslySetInnerHTML={{ __html: toRichHtml(props.heading, "") }}
+            dangerouslySetInnerHTML={{
+              __html: toRichHtml(props.heading, resolveLocalizedSystemDefaultText(props.heading, "搜索", locale)),
+            }}
           />
         ) : null}
         {hasText ? (
           <div
             className="mt-2 text-sm text-gray-600 whitespace-pre-wrap break-words"
-            dangerouslySetInnerHTML={{ __html: toRichHtml(normalizedText, "") }}
+            dangerouslySetInnerHTML={{
+              __html: toRichHtml(
+                normalizedText,
+                resolveLocalizedSystemDefaultText(normalizedText, "城市定位与内容搜索", locale),
+              ),
+            }}
           />
         ) : null}
         <form onSubmit={onSearch} className={`${hasHeading || hasText ? "mt-4 " : ""}space-y-3`}>
@@ -939,7 +950,7 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
                 onClick={onLocate}
                 disabled={locating}
               >
-                <span style={searchButtonLabelStyle}>{locating ? "定位中..." : locateLabel}</span>
+                <span style={searchButtonLabelStyle}>{locating ? locatingLabel : locateLabel}</span>
               </button>
             </div>
 
@@ -955,7 +966,7 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
               <div className="relative h-full">
                 <input
                   value={countryInput}
-                  placeholder="国家"
+                  placeholder={countryLabel}
                   onChange={(event) => {
                     const next = event.target.value;
                     setCountryInput(next);
@@ -1035,7 +1046,7 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
                 <input
                   ref={provinceInputRef}
                   value={provinceInput}
-                  placeholder="省份"
+                  placeholder={provinceLabel}
                   onChange={(event) => {
                     const next = event.target.value;
                     setProvinceInput(next);
@@ -1216,7 +1227,7 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
             </div>
           </div>
         </form>
-        <div className={`mt-2 text-xs ${locationHintClass}`}>{locationHint || "可点击定位，或手动选择国家/省份/城市。"}</div>
+        <div className={`mt-2 text-xs ${locationHintClass}`}>{locationHint || locationHintDefault}</div>
       </div>
     </section>
   );
