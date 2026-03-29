@@ -132,13 +132,24 @@ function buildActionButtonHtml(input: {
   </a>`;
 }
 
-function buildWeChatActionHtml(rawValue?: string) {
+function buildWeChatActionHtmlLegacy(rawValue?: string) {
   const wechatId = normalizeText(rawValue).replace(/^@+/, "").trim();
   if (!wechatId) return "";
   const primaryHref = `weixin://contacts/profile/${encodeURIComponent(wechatId)}`;
   const secondaryHref = `weixin://dl/chat?username=${encodeURIComponent(wechatId)}`;
   const tertiaryHref = `weixin://dl/chat?${encodeURIComponent(wechatId)}`;
   return `<button class="inline-action inline-action-button" type="button" aria-label="打开微信联系人" title="打开微信联系人" style="background:#07C160" data-wechat-primary="${escapeHtml(primaryHref)}" data-wechat-secondary="${escapeHtml(secondaryHref)}" data-wechat-tertiary="${escapeHtml(tertiaryHref)}" data-wechat-id="${escapeHtml(wechatId)}">
+    <img src="/social-icons/wechat.svg" alt="" />
+  </button>`;
+}
+
+function buildWeChatActionHtml(rawValue?: string) {
+  const wechatId = normalizeText(rawValue).replace(/^@+/, "").trim();
+  if (!wechatId) return buildWeChatActionHtmlLegacy(rawValue);
+  const primaryHref = `weixin://contacts/profile/${encodeURIComponent(wechatId)}`;
+  const secondaryHref = `weixin://dl/chat?username=${encodeURIComponent(wechatId)}`;
+  const tertiaryHref = "weixin://";
+  return `<button class="inline-action inline-action-button" type="button" aria-label="\u6253\u5f00\u5fae\u4fe1\u8054\u7cfb\u4eba" title="\u6253\u5f00\u5fae\u4fe1\u8054\u7cfb\u4eba" style="background:#07C160" data-wechat-primary="${escapeHtml(primaryHref)}" data-wechat-secondary="${escapeHtml(secondaryHref)}" data-wechat-tertiary="${escapeHtml(tertiaryHref)}" data-wechat-id="${escapeHtml(wechatId)}">
     <img src="/social-icons/wechat.svg" alt="" />
   </button>`;
 }
@@ -533,6 +544,83 @@ function buildInlineI18nScript() {
       });
     }
 
+    let wechatToastTimer = null;
+
+    function showWechatToast(message) {
+      let toast = document.getElementById("wechat-open-toast");
+      if (!toast) {
+        toast = document.createElement("div");
+        toast.id = "wechat-open-toast";
+        toast.setAttribute("data-no-translate", "1");
+        toast.style.position = "fixed";
+        toast.style.left = "50%";
+        toast.style.bottom = "24px";
+        toast.style.transform = "translateX(-50%)";
+        toast.style.maxWidth = "min(calc(100vw - 32px), 420px)";
+        toast.style.padding = "10px 14px";
+        toast.style.borderRadius = "14px";
+        toast.style.background = "rgba(15,23,42,.92)";
+        toast.style.color = "#fff";
+        toast.style.fontSize = "13px";
+        toast.style.lineHeight = "1.5";
+        toast.style.boxShadow = "0 18px 40px rgba(15,23,42,.24)";
+        toast.style.zIndex = "40";
+        toast.style.opacity = "0";
+        toast.style.pointerEvents = "none";
+        toast.style.transition = "opacity .18s ease";
+        document.body.appendChild(toast);
+      }
+      toast.textContent = String(message || "").trim();
+      toast.style.opacity = "1";
+      if (wechatToastTimer !== null) window.clearTimeout(wechatToastTimer);
+      wechatToastTimer = window.setTimeout(() => {
+        toast.style.opacity = "0";
+      }, 2400);
+    }
+
+    async function copyWechatId(value) {
+      const normalized = String(value || "").trim();
+      if (!normalized) return false;
+      try {
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+          await navigator.clipboard.writeText(normalized);
+          return true;
+        }
+      } catch {}
+      try {
+        const textarea = document.createElement("textarea");
+        textarea.value = normalized;
+        textarea.setAttribute("readonly", "true");
+        textarea.style.position = "fixed";
+        textarea.style.left = "-99999px";
+        textarea.style.top = "0";
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        const copied = document.execCommand("copy");
+        textarea.remove();
+        return copied;
+      } catch {
+        return false;
+      }
+    }
+
+    function launchWechatScheme(url) {
+      const href = String(url || "").trim();
+      if (!href) return;
+      const anchor = document.createElement("a");
+      anchor.href = href;
+      anchor.style.display = "none";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => {
+        if (document.visibilityState === "visible") {
+          window.location.href = href;
+        }
+      }, 12);
+    }
+
     const wechatButtons = Array.from(document.querySelectorAll("[data-wechat-primary]"));
     wechatButtons.forEach((button) => {
       button.addEventListener("click", (event) => {
@@ -543,23 +631,35 @@ function buildInlineI18nScript() {
           target.dataset.wechatPrimary || "",
           target.dataset.wechatSecondary || "",
           target.dataset.wechatTertiary || "",
-        ].map((value) => String(value || "").trim()).filter(Boolean);
+        ]
+          .map((value) => String(value || "").trim())
+          .filter(Boolean);
+        const wechatId = String(target.dataset.wechatId || "").trim();
         if (attempts.length === 0) return;
-        window.location.href = attempts[0];
+        launchWechatScheme(attempts[0]);
         if (attempts.length > 1) {
           window.setTimeout(() => {
             if (document.visibilityState === "visible") {
-              window.location.href = attempts[1];
+              launchWechatScheme(attempts[1]);
             }
-          }, 420);
+          }, 260);
         }
         if (attempts.length > 2) {
           window.setTimeout(() => {
             if (document.visibilityState === "visible") {
-              window.location.href = attempts[2];
+              launchWechatScheme(attempts[2]);
             }
-          }, 900);
+          }, 620);
         }
+        window.setTimeout(async () => {
+          if (document.visibilityState !== "visible" || !wechatId) return;
+          const copied = await copyWechatId(wechatId);
+          showWechatToast(
+            copied
+              ? "\u672a\u80fd\u76f4\u63a5\u6253\u5f00\u5bf9\u5e94\u5fae\u4fe1\u8054\u7cfb\u4eba\uff0c\u5df2\u590d\u5236\u5fae\u4fe1\u53f7\uff1a" + wechatId
+              : "\u672a\u80fd\u76f4\u63a5\u6253\u5f00\u5bf9\u5e94\u5fae\u4fe1\u8054\u7cfb\u4eba\uff0c\u8bf7\u5728\u5fae\u4fe1\u4e2d\u641c\u7d22\uff1a" + wechatId,
+          );
+        }, 1080);
       });
     });
 
