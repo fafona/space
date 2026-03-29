@@ -1,10 +1,11 @@
 import { createClient } from "@supabase/supabase-js";
-import type { Block } from "@/data/homeBlocks";
+import type { Block, MerchantListPublishedSite } from "@/data/homeBlocks";
+import { createDefaultMerchantSortConfig, type MerchantSortRule } from "@/data/platformControlStore";
 import { sanitizeBlocksForRuntime } from "@/lib/blocksSanitizer";
 
 type QueryErrorLike = { message?: string } | null;
 type QueryResult<T> = { data: T | null; error: QueryErrorLike };
-type QueryBuilder<T> = {
+type QueryBuilder<T> = PromiseLike<QueryResult<T[]>> & {
   select: (columns: string) => QueryBuilder<T>;
   is: (column: string, value: unknown) => QueryBuilder<T>;
   eq: (column: string, value: unknown) => QueryBuilder<T>;
@@ -12,12 +13,26 @@ type QueryBuilder<T> = {
   maybeSingle: () => Promise<QueryResult<T>>;
 };
 type LooseSupabaseClient = {
-  from: (table: string) => QueryBuilder<{ blocks?: unknown }>;
+  from: <T = Record<string, unknown>>(table: string) => QueryBuilder<T>;
 };
 
 export type PublishedPlatformBlocksResult = {
   blocks: Block[] | null;
   error: string | null;
+};
+
+type PublishedMerchantPageRow = {
+  merchant_id?: string | null;
+  slug?: string | null;
+  updated_at?: string | null;
+  created_at?: string | null;
+};
+
+type PublishedMerchantProfileRow = {
+  id?: string | null;
+  name?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 };
 
 function readEnv(key: string) {
@@ -49,6 +64,231 @@ function toErrorMessage(input: unknown) {
   return typeof message === "string" ? message.trim() : "";
 }
 
+function toTimestamp(value: string | null | undefined) {
+  const time = new Date(String(value ?? "")).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function isNumericMerchantId(value: string | null | undefined) {
+  return /^\d{8}$/.test(String(value ?? "").trim());
+}
+
+function choosePreferredPublishedMerchantPageRow(
+  current: PublishedMerchantPageRow | null,
+  candidate: PublishedMerchantPageRow,
+) {
+  if (!current) return candidate;
+  const currentUpdatedAt = Math.max(toTimestamp(current.updated_at), toTimestamp(current.created_at));
+  const candidateUpdatedAt = Math.max(toTimestamp(candidate.updated_at), toTimestamp(candidate.created_at));
+  if (candidateUpdatedAt !== currentUpdatedAt) {
+    return candidateUpdatedAt > currentUpdatedAt ? candidate : current;
+  }
+
+  const currentSlug = String(current.slug ?? "").trim().toLowerCase();
+  const candidateSlug = String(candidate.slug ?? "").trim().toLowerCase();
+  const currentHasCustomSlug = currentSlug.length > 0 && currentSlug !== "home";
+  const candidateHasCustomSlug = candidateSlug.length > 0 && candidateSlug !== "home";
+  if (candidateHasCustomSlug !== currentHasCustomSlug) {
+    return candidateHasCustomSlug ? candidate : current;
+  }
+  return current;
+}
+
+function normalizePublishedMerchantSlug(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized || normalized.toLowerCase() === "home") return "";
+  return normalized;
+}
+
+export function buildPublishedMerchantSnapshotFromRows(
+  pageRows: PublishedMerchantPageRow[],
+  merchantRows: PublishedMerchantProfileRow[],
+): MerchantListPublishedSite[] {
+  const pageByMerchantId = new Map<string, PublishedMerchantPageRow>();
+  pageRows.forEach((row) => {
+    const merchantId = String(row.merchant_id ?? "").trim();
+    if (!isNumericMerchantId(merchantId)) return;
+    pageByMerchantId.set(
+      merchantId,
+      choosePreferredPublishedMerchantPageRow(pageByMerchantId.get(merchantId) ?? null, row),
+    );
+  });
+
+  const merchantById = new Map(
+    merchantRows
+      .map((row) => {
+        const merchantId = String(row.id ?? "").trim();
+        return isNumericMerchantId(merchantId) ? ([merchantId, row] as const) : null;
+      })
+      .filter((item): item is readonly [string, PublishedMerchantProfileRow] => item !== null),
+  );
+
+  return [...pageByMerchantId.entries()]
+    .map(([merchantId, pageRow]) => {
+      const merchant = merchantById.get(merchantId);
+      const merchantName = String(merchant?.name ?? "").trim();
+      const domainPrefix = normalizePublishedMerchantSlug(pageRow.slug);
+      const createdAt =
+        String(merchant?.created_at ?? "").trim() ||
+        String(pageRow.updated_at ?? "").trim() ||
+        String(pageRow.created_at ?? "").trim();
+      return {
+        id: merchantId,
+        merchantName,
+        domainPrefix,
+        domainSuffix: "",
+        name: merchantName || merchantId,
+        domain: domainPrefix || merchantId,
+        category: "",
+        industry: "",
+        location: {
+          countryCode: "",
+          country: "",
+          provinceCode: "",
+          province: "",
+          city: "",
+        },
+        merchantCardImageUrl: "",
+        sortConfig: createDefaultMerchantSortConfig(),
+        createdAt,
+      } satisfies MerchantListPublishedSite;
+    })
+    .sort((left, right) => {
+      const delta = toTimestamp(right.createdAt) - toTimestamp(left.createdAt);
+      if (delta !== 0) return delta;
+      return left.id.localeCompare(right.id, "zh-CN");
+    });
+}
+
+function blocksNeedPublishedMerchantSnapshotInPlanConfig(input: unknown): boolean {
+  if (!input || typeof input !== "object") return false;
+  const plans = (input as { plans?: unknown }).plans;
+  if (!Array.isArray(plans)) return false;
+  return plans.some((plan) => {
+    const planBlocks = Array.isArray((plan as { blocks?: unknown }).blocks) ? ((plan as { blocks?: Block[] }).blocks ?? []) : [];
+    const pages = Array.isArray((plan as { pages?: unknown }).pages) ? ((plan as { pages?: Array<{ blocks?: Block[] }> }).pages ?? []) : [];
+    return (
+      blocksNeedPublishedMerchantSnapshot(planBlocks) ||
+      pages.some((page) => blocksNeedPublishedMerchantSnapshot(Array.isArray(page.blocks) ? page.blocks : []))
+    );
+  });
+}
+
+export function blocksNeedPublishedMerchantSnapshot(blocks: Block[]): boolean {
+  return blocks.some((block) => {
+    const props = (block.props ?? {}) as Record<string, unknown>;
+    if (block.type === "merchant-list") {
+      const snapshot = props.publishedMerchantSnapshot;
+      if (!Array.isArray(snapshot) || snapshot.length === 0) return true;
+    }
+    if (blocksNeedPublishedMerchantSnapshotInPlanConfig(props.pagePlanConfig)) return true;
+    if (blocksNeedPublishedMerchantSnapshotInPlanConfig(props.pagePlanConfigMobile)) return true;
+    return false;
+  });
+}
+
+function injectPublishedMerchantSnapshotIntoPlanConfig(
+  input: unknown,
+  snapshot: MerchantListPublishedSite[],
+  defaultSortRule: MerchantSortRule,
+) {
+  if (!input || typeof input !== "object") return input;
+  const plans = (input as { plans?: unknown }).plans;
+  if (!Array.isArray(plans)) return input;
+  return {
+    ...(input as Record<string, unknown>),
+    plans: plans.map((plan) => ({
+      ...(plan as Record<string, unknown>),
+      blocks: Array.isArray((plan as { blocks?: unknown }).blocks)
+        ? injectPublishedMerchantSnapshotIntoBlocks(((plan as { blocks?: Block[] }).blocks ?? []), snapshot, defaultSortRule)
+        : (plan as { blocks?: unknown }).blocks,
+      pages: Array.isArray((plan as { pages?: unknown }).pages)
+        ? ((plan as { pages?: Array<{ blocks?: Block[] }> }).pages ?? []).map((page) => ({
+            ...page,
+            blocks: Array.isArray(page.blocks)
+              ? injectPublishedMerchantSnapshotIntoBlocks(page.blocks, snapshot, defaultSortRule)
+              : page.blocks,
+          }))
+        : (plan as { pages?: unknown }).pages,
+    })),
+  };
+}
+
+export function injectPublishedMerchantSnapshotIntoBlocks(
+  blocks: Block[],
+  snapshot: MerchantListPublishedSite[],
+  defaultSortRule: MerchantSortRule = "created_desc",
+): Block[] {
+  return blocks.map((block) => {
+    const nextProps = { ...(block.props ?? {}) } as Record<string, unknown>;
+    let changed = false;
+    if (block.type === "merchant-list") {
+      const existingSnapshot = nextProps.publishedMerchantSnapshot;
+      if (!Array.isArray(existingSnapshot) || existingSnapshot.length === 0) {
+        nextProps.publishedMerchantSnapshot = snapshot;
+        if (
+          typeof nextProps.publishedMerchantDefaultSortRule !== "string" ||
+          !String(nextProps.publishedMerchantDefaultSortRule).trim()
+        ) {
+          nextProps.publishedMerchantDefaultSortRule = defaultSortRule;
+        }
+        changed = true;
+      }
+    }
+    if ("pagePlanConfig" in nextProps) {
+      const patched = injectPublishedMerchantSnapshotIntoPlanConfig(nextProps.pagePlanConfig, snapshot, defaultSortRule);
+      if (patched !== nextProps.pagePlanConfig) {
+        nextProps.pagePlanConfig = patched;
+        changed = true;
+      }
+    }
+    if ("pagePlanConfigMobile" in nextProps) {
+      const patched = injectPublishedMerchantSnapshotIntoPlanConfig(nextProps.pagePlanConfigMobile, snapshot, defaultSortRule);
+      if (patched !== nextProps.pagePlanConfigMobile) {
+        nextProps.pagePlanConfigMobile = patched;
+        changed = true;
+      }
+    }
+    return changed
+      ? ({
+          ...block,
+          props: nextProps as never,
+        } as Block)
+      : block;
+  });
+}
+
+async function loadPublishedMerchantSnapshot(
+  supabase: LooseSupabaseClient,
+): Promise<MerchantListPublishedSite[]> {
+  const [pageRowsResult, merchantRowsResult] = await Promise.all([
+    (await supabase
+      .from<PublishedMerchantPageRow>("pages")
+      .select("merchant_id,slug,updated_at,created_at")
+      .limit(2000)) as QueryResult<PublishedMerchantPageRow[]>,
+    (await supabase
+      .from<PublishedMerchantProfileRow>("merchants")
+      .select("id,name,created_at,updated_at")
+      .limit(2000)) as QueryResult<PublishedMerchantProfileRow[]>,
+  ]);
+
+  if (pageRowsResult.error || merchantRowsResult.error) {
+    return [];
+  }
+
+  return buildPublishedMerchantSnapshotFromRows(pageRowsResult.data ?? [], merchantRowsResult.data ?? []);
+}
+
+async function hydratePublishedMerchantSnapshotIfNeeded(
+  supabase: LooseSupabaseClient,
+  blocks: Block[],
+): Promise<Block[]> {
+  if (!blocksNeedPublishedMerchantSnapshot(blocks)) return blocks;
+  const snapshot = await loadPublishedMerchantSnapshot(supabase);
+  if (snapshot.length === 0) return blocks;
+  return injectPublishedMerchantSnapshotIntoBlocks(blocks, snapshot);
+}
+
 export function isMissingPlatformSlugColumn(message: string) {
   return (
     /column\s+pages\.slug\s+does\s+not\s+exist/i.test(message) ||
@@ -78,8 +318,9 @@ export async function loadPublishedPlatformHomeBlocks(): Promise<PublishedPlatfo
     .maybeSingle();
 
   if (!scoped.error && Array.isArray(scoped.data?.blocks)) {
+    const blocks = sanitizeBlocksForRuntime(scoped.data.blocks as Block[]).blocks;
     return {
-      blocks: sanitizeBlocksForRuntime(scoped.data.blocks as Block[]).blocks,
+      blocks: await hydratePublishedMerchantSnapshotIfNeeded(supabase, blocks),
       error: null,
     };
   }
@@ -96,8 +337,9 @@ export async function loadPublishedPlatformHomeBlocks(): Promise<PublishedPlatfo
       .limit(1)
       .maybeSingle();
     if (!bySlug.error && Array.isArray(bySlug.data?.blocks)) {
+      const blocks = sanitizeBlocksForRuntime(bySlug.data.blocks as Block[]).blocks;
       return {
-        blocks: sanitizeBlocksForRuntime(bySlug.data.blocks as Block[]).blocks,
+        blocks: await hydratePublishedMerchantSnapshotIfNeeded(supabase, blocks),
         error: null,
       };
     }
@@ -111,8 +353,9 @@ export async function loadPublishedPlatformHomeBlocks(): Promise<PublishedPlatfo
       .limit(1)
       .maybeSingle();
     if (!byMerchantOnly.error && Array.isArray(byMerchantOnly.data?.blocks)) {
+      const blocks = sanitizeBlocksForRuntime(byMerchantOnly.data.blocks as Block[]).blocks;
       return {
-        blocks: sanitizeBlocksForRuntime(byMerchantOnly.data.blocks as Block[]).blocks,
+        blocks: await hydratePublishedMerchantSnapshotIfNeeded(supabase, blocks),
         error: null,
       };
     }

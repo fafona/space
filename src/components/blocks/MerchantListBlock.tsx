@@ -450,10 +450,15 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
   );
   const activeTab = industryTabs.find((item) => item.id === activeTabId) ?? industryTabs[0];
   const activeIndustry = activeTab?.industry ?? "all";
-  const hasPublishedMerchantSnapshot = Array.isArray(props.publishedMerchantSnapshot);
-  const merchantSitesSource: MerchantListRuntimeSite[] = hasPublishedMerchantSnapshot
-    ? [...(props.publishedMerchantSnapshot ?? [])]
-    : [...platformState.sites];
+  const hasPublishedMerchantSnapshot =
+    Array.isArray(props.publishedMerchantSnapshot) && props.publishedMerchantSnapshot.length > 0;
+  const merchantSitesSource = useMemo<MerchantListRuntimeSite[]>(
+    () =>
+      hasPublishedMerchantSnapshot
+        ? [...(props.publishedMerchantSnapshot ?? [])]
+        : [...platformState.sites],
+    [hasPublishedMerchantSnapshot, platformState.sites, props.publishedMerchantSnapshot],
+  );
   const merchantDefaultSortRule = hasPublishedMerchantSnapshot
     ? props.publishedMerchantDefaultSortRule ?? "created_desc"
     : platformState.homeLayout.merchantDefaultSortRule;
