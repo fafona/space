@@ -59,7 +59,10 @@ import {
   supabase,
   supabaseMissingEnvNotice,
 } from "@/lib/supabase";
-import { clearStoredBrowserSupabaseSessionTokens } from "@/lib/authSessionRecovery";
+import {
+  clearStoredBrowserSupabaseSessionTokens,
+  recoverBrowserSupabaseSessionViaMerchantCookies,
+} from "@/lib/authSessionRecovery";
 import { clearMerchantSignInBridge } from "@/lib/merchantSignInBridge";
 import { buildPublishedMerchantProfilePatch } from "@/lib/merchantProfileBinding";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
@@ -4299,6 +4302,10 @@ export default function AdminClient({
         if (direct) return direct;
         const fromStored = await tryRecoverSessionFromStoredToken();
         if (fromStored) return fromStored;
+        const fromMerchantCookies = await recoverBrowserSupabaseSessionViaMerchantCookies(
+          Math.max(2200, Math.min(9000, timeoutMs + 1200)),
+        );
+        if (fromMerchantCookies) return fromMerchantCookies;
         try {
           const { data } = await withTimeout(
             supabase.auth.refreshSession(),

@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MERCHANT_AUTH_COOKIE, parseCookieValue, readMerchantRequestAccessTokens } from "./merchantAuthSession";
+import {
+  MERCHANT_AUTH_COOKIE,
+  MERCHANT_AUTH_REFRESH_COOKIE,
+  parseCookieValue,
+  readMerchantAuthRefreshCookie,
+  readMerchantRequestAccessTokens,
+} from "./merchantAuthSession";
 
 test("parseCookieValue reads the merchant auth cookie from a header", () => {
   assert.equal(
@@ -29,4 +35,14 @@ test("readMerchantRequestAccessTokens removes duplicate request tokens", () => {
   });
 
   assert.deepEqual(readMerchantRequestAccessTokens(request), ["same-token"]);
+});
+
+test("readMerchantAuthRefreshCookie reads the refresh token cookie", () => {
+  const request = new Request("http://localhost/api/business-card-share", {
+    headers: {
+      cookie: `${MERCHANT_AUTH_COOKIE}=access-token; ${MERCHANT_AUTH_REFRESH_COOKIE}=refresh-token`,
+    },
+  });
+
+  assert.equal(readMerchantAuthRefreshCookie(request), "refresh-token");
 });
