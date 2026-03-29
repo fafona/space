@@ -6977,6 +6977,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                               previewViewport={previewViewport}
                               runtimeSiteId={editingSiteId || ""}
                               runtimeSiteName={merchantDisplayName}
+                              isPlatformEditor={isPlatformEditor}
                             />
                           </div>
                         );
@@ -7042,6 +7043,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                       previewViewport={previewViewport}
                       runtimeSiteId={editingSiteId || ""}
                       runtimeSiteName={merchantDisplayName}
+                      isPlatformEditor={isPlatformEditor}
                     />
                   </div>
                 );
@@ -7763,6 +7765,7 @@ function InlineEditorBlock({
   previewViewport,
   runtimeSiteId = "",
   runtimeSiteName = "",
+  isPlatformEditor = false,
 }: {
   block: Block;
   publicBlockId: string;
@@ -7794,6 +7797,7 @@ function InlineEditorBlock({
   previewViewport: "desktop" | "mobile";
   runtimeSiteId?: string;
   runtimeSiteName?: string;
+  isPlatformEditor?: boolean;
 }) {
   const { locale } = useI18n();
   type CommonEditorTextBox = {
@@ -9800,7 +9804,7 @@ type GalleryEditorImage = {
   }
 
   const shellClass =
-    block.type === "hero" ? "bg-white mx-auto" : "max-w-6xl mx-auto px-6 py-6";
+    block.type === "hero" ? "bg-white mx-auto relative" : "max-w-6xl mx-auto px-6 py-6 relative";
   const borderClass = getBlockBorderClass(block.props.blockBorderStyle);
   const borderInlineStyle = getBlockBorderInlineStyle(block.props.blockBorderStyle, block.props.blockBorderColor);
   const cardClass =
@@ -9878,6 +9882,30 @@ type GalleryEditorImage = {
   const blockShellMouseDownCapture = handleBlockShellMouseDownCapture;
   const blockShellMouseUpCapture = handleBlockShellMouseUpCapture;
   const blockShellClickCapture = handleBlockShellClickCapture;
+  function handleBlockSelectionOverlayMouseDown(event: ReactMouseEvent<HTMLElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!isSelected) {
+      onSelect();
+    }
+  }
+  function handleBlockSelectionOverlayClick(event: ReactMouseEvent<HTMLElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!isSelected) {
+      onSelect();
+    }
+  }
+  const blockSelectionOverlay =
+    !isSelected && isPlatformEditor ? (
+      <button
+        type="button"
+        aria-label="选中区块"
+        className="absolute inset-0 z-[70] cursor-pointer bg-transparent"
+        onMouseDown={handleBlockSelectionOverlayMouseDown}
+        onClick={handleBlockSelectionOverlayClick}
+      />
+    ) : null;
   function handleBlockShellMouseDownCapture(event: ReactMouseEvent<HTMLElement>) {
     if (isSelected) return;
     const target = event.target;
@@ -11128,6 +11156,7 @@ type GalleryEditorImage = {
           onEditBorderStyle={editBorderSettings}
           onDelete={onDelete}
         />
+        {blockSelectionOverlay}
         <div
           ref={resizeTargetRef}
           className={`relative rounded-xl shadow-sm pointer-events-auto ${isSelected ? "overflow-visible" : "overflow-hidden"} ${borderClass}`}
@@ -11196,6 +11225,7 @@ type GalleryEditorImage = {
           onEditBorderStyle={editBorderSettings}
           onDelete={onDelete}
         />
+        {blockSelectionOverlay}
         <div
           ref={resizeTargetRef}
           className={`${cardClass} relative !overflow-visible`}
@@ -11615,6 +11645,7 @@ type GalleryEditorImage = {
           onEditBorderStyle={editBorderSettings}
           onDelete={onDelete}
         />
+        {blockSelectionOverlay}
         <div
           ref={resizeTargetRef}
           className={`${cardClass} relative`}
@@ -12183,6 +12214,7 @@ type GalleryEditorImage = {
           onEditBorderStyle={editBorderSettings}
           onDelete={onDelete}
         />
+        {blockSelectionOverlay}
         <div
           ref={resizeTargetRef}
           className={`${navCardClass} ${isSelected ? "!overflow-visible" : ""}`}
@@ -12374,6 +12406,7 @@ type GalleryEditorImage = {
           onEditBorderStyle={editBorderSettings}
           onDelete={onDelete}
         />
+        {blockSelectionOverlay}
         <div
           ref={resizeTargetRef}
           className={`${cardClass} relative`}
@@ -12543,6 +12576,7 @@ type GalleryEditorImage = {
           onEditBorderStyle={editBorderSettings}
           onDelete={onDelete}
         />
+        {blockSelectionOverlay}
         <div
           ref={resizeTargetRef}
           className={`${cardClass} relative`}
@@ -12668,6 +12702,7 @@ type GalleryEditorImage = {
           onEditBorderStyle={editBorderSettings}
           onDelete={onDelete}
         />
+        {blockSelectionOverlay}
         <div className={cardClass} onClick={onSelect}>
           {imageDialog}
           {imageSettingsDialog}
@@ -12738,6 +12773,7 @@ type GalleryEditorImage = {
           onEditBorderStyle={editBorderSettings}
           onDelete={onDelete}
         />
+        {blockSelectionOverlay}
         <div
           ref={resizeTargetRef}
           className={`${cardClass} relative`}
@@ -12817,6 +12853,7 @@ type GalleryEditorImage = {
           onEditBorderStyle={editBorderSettings}
           onDelete={onDelete}
         />
+        {blockSelectionOverlay}
         <div
           ref={resizeTargetRef}
           className={`${cardClass} relative`}
@@ -13880,6 +13917,7 @@ type GalleryEditorImage = {
           onEditBorderStyle={editBorderSettings}
           onDelete={onDelete}
         />
+        {blockSelectionOverlay}
         <div
           ref={resizeTargetRef}
           className={`${cardClass} relative`}
@@ -15542,6 +15580,7 @@ type GalleryEditorImage = {
           onEditBorderStyle={editBorderSettings}
           onDelete={onDelete}
         />
+        {blockSelectionOverlay}
         <div
           ref={resizeTargetRef}
           className={`${cardClass} relative`}
@@ -16492,6 +16531,7 @@ type GalleryEditorImage = {
           onEditBorderStyle={editBorderSettings}
           onDelete={onDelete}
         />
+        {blockSelectionOverlay}
         <div
           ref={resizeTargetRef}
           className={`${cardClass} relative`}
@@ -16943,6 +16983,7 @@ type GalleryEditorImage = {
           onEditBorderStyle={editBorderSettings}
           onDelete={onDelete}
         />
+        {blockSelectionOverlay}
         <div
           ref={resizeTargetRef}
           className={`${cardClass} relative`}
@@ -17507,6 +17548,7 @@ type GalleryEditorImage = {
           onEditBorderStyle={editBorderSettings}
           onDelete={onDelete}
         />
+        {blockSelectionOverlay}
         <div
           ref={resizeTargetRef}
           className={`${cardClass} relative`}
