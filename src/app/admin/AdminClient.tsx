@@ -9851,11 +9851,12 @@ type GalleryEditorImage = {
       : block.type === "search-bar"
         ? { overflow: "visible" }
         : {};
-  const blockPreviewShellStyle = {
+  const blockPreviewShellStyle: CSSProperties = {
     ...blockBackgroundStyle,
     ...blockSizeStyle,
     ...blockPreviewOverflowStyle,
     ...borderInlineStyle,
+    pointerEvents: isSelected || hasOverlayOpen ? "auto" : "none",
   };
   function handleBlockShellMouseDownCapture(event: ReactMouseEvent<HTMLElement>) {
     if (isSelected) return;
