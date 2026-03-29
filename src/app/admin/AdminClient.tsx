@@ -4164,8 +4164,8 @@ export default function AdminClient({
       }
       return [];
     };
-    const tryLoadJustSignedInPublishedContent = async () => {
-      if (isPlatformEditor || !justSignedIn) return false;
+    const tryLoadPublishedSiteSnapshotFallback = async () => {
+      if (isPlatformEditor) return false;
       const scopedSiteId = getSiteIdFromStoreScope(storeScope).trim();
       if (!scopedSiteId) return false;
       const publishedSnapshot = await loadPublishedSiteSnapshotViaApi(scopedSiteId);
@@ -4193,6 +4193,10 @@ export default function AdminClient({
       savePublishedBlocksToStorage(combinedLoaded, buildSiteStoreScope(scopedSiteId));
       releaseCheckingScreen({ notice: null });
       return true;
+    };
+    const tryLoadJustSignedInPublishedContent = async () => {
+      if (!justSignedIn) return false;
+      return tryLoadPublishedSiteSnapshotFallback();
     };
     if (!isSupabaseEnabled || isSupabaseFallbackMode) {
       applyCachedEditorBlocks();
@@ -4537,6 +4541,11 @@ export default function AdminClient({
           }
           releaseCheckingScreen({ notice: null });
           return;
+        }
+        if (!isPlatformEditor && initialCached.length === 0) {
+          const restoredPublished = await tryLoadPublishedSiteSnapshotFallback();
+          if (!mounted) return;
+          if (restoredPublished) return;
         }
         setHasEditorContent(true);
         setRemoteContentVerified(gatewayReady);
