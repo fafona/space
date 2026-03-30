@@ -148,6 +148,23 @@ function buildDouyinActionHtml(rawValue?: string) {
   </button>`;
 }
 
+function buildDiscordActionHtml(rawValue?: string) {
+  const discordValue = normalizeText(rawValue).trim();
+  if (!discordValue) return "";
+  const href = buildSocialHref("Discord", discordValue);
+  if (href) {
+    return buildActionButtonHtml({
+      href,
+      label: "打开 Discord",
+      iconUrl: "/social-icons/discord.svg",
+      bgColor: "#5865F2",
+    });
+  }
+  return `<button class="inline-action inline-action-button" type="button" aria-label="\u590d\u5236 Discord \u8d26\u53f7\u5e76\u6253\u5f00 Discord" title="\u590d\u5236 Discord \u8d26\u53f7\u5e76\u6253\u5f00 Discord" style="background:#5865F2" data-discord-primary="discord://" data-discord-id="${escapeHtml(discordValue)}">
+    <img src="/social-icons/discord.svg" alt="" />
+  </button>`;
+}
+
 type SummaryRow = { label: string; value: string; actionHtml: string };
 
 function buildSummaryActionHtmlFromKey(key: MerchantBusinessCardContactDisplayKey, label: string, value: string) {
@@ -155,6 +172,9 @@ function buildSummaryActionHtmlFromKey(key: MerchantBusinessCardContactDisplayKe
   if (!normalizedValue) return "";
   if (key === "douyin") {
     return buildDouyinActionHtml(normalizedValue);
+  }
+  if (key === "discord") {
+    return buildDiscordActionHtml(normalizedValue);
   }
   switch (key) {
     case "phone":
@@ -214,13 +234,6 @@ function buildSummaryActionHtmlFromKey(key: MerchantBusinessCardContactDisplayKe
         label: "打开 LinkedIn",
         iconUrl: "/social-icons/linkedin.svg",
         bgColor: "#0A66C2",
-      });
-    case "discord":
-      return buildActionButtonHtml({
-        href: buildSocialHref("Discord", normalizedValue),
-        label: "打开 Discord",
-        iconUrl: "/social-icons/discord.svg",
-        bgColor: "#5865F2",
       });
     case "facebook":
       return buildActionButtonHtml({
@@ -870,6 +883,25 @@ function buildInlineI18nScript() {
       });
     });
 
+    const discordButtons = Array.from(document.querySelectorAll("[data-discord-primary]"));
+    discordButtons.forEach((button) => {
+      button.addEventListener("click", async (event) => {
+        event.preventDefault();
+        const target = event.currentTarget;
+        if (!(target instanceof HTMLElement)) return;
+        const discordId = String(target.dataset.discordId || "").trim();
+        const discordAppHref = String(target.dataset.discordPrimary || "discord://").trim();
+        if (!discordId) return;
+        const copied = await copyWechatId(discordId);
+        showWechatToast(
+          copied
+            ? "\u5df2\u590d\u5236 Discord \u8d26\u53f7\uff0c\u6b63\u5728\u5c1d\u8bd5\u6253\u5f00 Discord\uff0c\u8bf7\u7c98\u8d34\u641c\u7d22\uff1a" + discordId
+            : "\u8bf7\u8bb0\u4e0b Discord \u8d26\u53f7\u540e\u6253\u5f00 Discord \u641c\u7d22\uff1a" + discordId,
+        );
+        launchWechatScheme(discordAppHref || "discord://");
+      });
+    });
+
     const openTargetButtons = Array.from(document.querySelectorAll("[data-open-target-url]"));
     openTargetButtons.forEach((button) => {
       button.addEventListener("click", (event) => {
@@ -1019,12 +1051,7 @@ function buildContactSummaryHtmlLegacy(input: {
       ? {
           label: "Discord",
           value: input.contact.discord,
-          actionHtml: buildActionButtonHtml({
-            href: buildSocialHref("Discord", input.contact.discord),
-            label: "打开 Discord",
-            iconUrl: "/social-icons/discord.svg",
-            bgColor: "#5865F2",
-          }),
+          actionHtml: buildDiscordActionHtml(input.contact.discord),
         }
       : null,
     input.contact?.facebook
@@ -1291,12 +1318,7 @@ function buildOrderedContactSummaryHtml(input: {
       ? {
           label: "Discord",
           value: contact.discord,
-          actionHtml: buildActionButtonHtml({
-            href: buildSocialHref("Discord", contact.discord),
-            label: "打开 Discord",
-            iconUrl: "/social-icons/discord.svg",
-            bgColor: "#5865F2",
-          }),
+          actionHtml: buildDiscordActionHtml(contact.discord),
         }
       : null,
   );
