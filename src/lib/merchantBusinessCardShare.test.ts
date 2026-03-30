@@ -36,17 +36,6 @@ test("buildMerchantBusinessCardShareUrl creates a short share route when share k
   assert.equal(shareUrl, `https://faolla.com${MERCHANT_BUSINESS_CARD_SHARE_CARD_PATH}/card-abc123`);
 });
 
-test("buildMerchantBusinessCardShareUrl appends a version param for cache busting when provided", () => {
-  const shareUrl = buildMerchantBusinessCardShareUrl({
-    origin: "https://faolla.com",
-    shareKey: "card-abc123",
-    version: "1711820000000",
-    targetUrl: "https://fafona.faolla.com",
-  });
-
-  assert.equal(shareUrl, `https://faolla.com${MERCHANT_BUSINESS_CARD_SHARE_CARD_PATH}/card-abc123?v=1711820000000`);
-});
-
 test("readMerchantBusinessCardShareKey normalizes the short share key from search params", () => {
   assert.equal(
     readMerchantBusinessCardShareKey({
@@ -457,10 +446,9 @@ test("business card contact helpers build downloadable vcard links and content",
     buildMerchantBusinessCardContactDownloadUrl({
       origin: "http://localhost:3000",
       shareKey: "card-abc123",
-      version: "1711820000000",
       targetUrl: payload.targetUrl,
     }),
-    "https://faolla.com/card/card-abc123/contact?v=1711820000000",
+    "https://faolla.com/card/card-abc123/contact",
   );
   assert.equal(
     buildMerchantBusinessCardLegacyContactDownloadUrl({

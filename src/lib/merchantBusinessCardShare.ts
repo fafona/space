@@ -415,11 +415,6 @@ function buildStorageNoStoreUrl(value: string) {
   }
 }
 
-function normalizeShareVersion(value: unknown) {
-  const normalized = normalizeText(typeof value === "string" || typeof value === "number" ? `${value}` : "");
-  return /^[A-Za-z0-9._:-]{1,64}$/.test(normalized) ? normalized : "";
-}
-
 export function buildMerchantBusinessCardShareManifestPublicUrls(key: string, preferredOrigin?: string | null) {
   const objectPath = buildMerchantBusinessCardShareManifestObjectPath(key);
   return buildPublicStorageObjectUrls(objectPath, preferredOrigin);
@@ -560,7 +555,6 @@ export async function isMerchantBusinessCardShareRevoked(input: {
 export function buildMerchantBusinessCardShareUrl(input: {
   origin?: string | null;
   shareKey?: string | null;
-  version?: string | number | null;
   name?: string | null;
   imageUrl?: string | null;
   detailImageUrl?: string | null;
@@ -576,10 +570,6 @@ export function buildMerchantBusinessCardShareUrl(input: {
   if (shareKey) {
     shareUrl.pathname = `${MERCHANT_BUSINESS_CARD_SHARE_CARD_PATH}/${shareKey}`;
     shareUrl.search = "";
-    const version = normalizeShareVersion(input.version);
-    if (version) {
-      shareUrl.searchParams.set("v", version);
-    }
     return shareUrl.toString();
   }
 
@@ -848,19 +838,13 @@ export function buildMerchantBusinessCardContactDownloadPath(key: string) {
 export function buildMerchantBusinessCardContactDownloadUrl(input: {
   origin?: string | null;
   shareKey?: string | null;
-  version?: string | number | null;
   targetUrl?: string | null;
 }) {
   const shareKey = normalizeMerchantBusinessCardShareKey(input.shareKey);
   if (!shareKey) return "";
   const origin = resolveMerchantBusinessCardShareOrigin(input.origin, input.targetUrl);
   if (!origin) return "";
-  const url = new URL(buildMerchantBusinessCardContactDownloadPath(shareKey), `${origin}/`);
-  const version = normalizeShareVersion(input.version);
-  if (version) {
-    url.searchParams.set("v", version);
-  }
-  return url.toString();
+  return new URL(buildMerchantBusinessCardContactDownloadPath(shareKey), `${origin}/`).toString();
 }
 
 export function buildMerchantBusinessCardLegacyContactDownloadUrl(input: {

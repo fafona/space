@@ -2735,7 +2735,6 @@ export default function MerchantBusinessCardManager({
     if (!targetUrl) {
       throw new Error("missing_target");
     }
-    const versionTag = `${Date.now()}`;
     const shareImageUrl = await resolveShareImageUrl({
       card: input.card,
       renderedImageUrl: input.renderedImageUrl,
@@ -2750,7 +2749,6 @@ export default function MerchantBusinessCardManager({
     });
     const fallbackShareUrl = buildMerchantBusinessCardShareUrl({
       origin: resolveMerchantBusinessCardShareOrigin(undefined, targetUrl),
-      version: normalizeText(input.shareKey) ? versionTag : "",
       imageUrl: shareImageUrl,
       detailImageUrl,
       detailImageHeight: input.contactPageImageHeight,
@@ -2821,12 +2819,6 @@ export default function MerchantBusinessCardManager({
         shareKey = typeof payload?.shareKey === "string" ? payload.shareKey.trim() : "";
         lastErrorCode = typeof payload?.error === "string" ? payload.error.trim() : "";
         if (response.ok && shareUrl && shareKey) {
-          shareUrl = buildMerchantBusinessCardShareUrl({
-            origin: resolveMerchantBusinessCardShareOrigin(undefined, targetUrl),
-            shareKey,
-            version: versionTag,
-            targetUrl,
-          }) || shareUrl;
           break;
         }
         if (attempt === 0 && (response.status === 401 || lastErrorCode === "unauthorized")) {
@@ -2879,7 +2871,6 @@ export default function MerchantBusinessCardManager({
       contactUrl:
         buildMerchantBusinessCardContactDownloadUrl({
           shareKey,
-          version: versionTag,
           targetUrl,
         }) || fallbackContactUrl,
       shareImageUrl,
