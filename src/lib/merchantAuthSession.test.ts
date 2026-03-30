@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { NextResponse } from "next/server";
 import {
   MERCHANT_AUTH_COOKIE,
+  MERCHANT_AUTH_REFRESH_COOKIE_MAX_AGE_SECONDS,
   MERCHANT_AUTH_REFRESH_COOKIE,
   parseCookieValue,
   readMerchantAuthRefreshCookie,
   readMerchantRequestAccessTokens,
+  setMerchantAuthCookies,
 } from "./merchantAuthSession";
 
 test("parseCookieValue reads the merchant auth cookie from a header", () => {
@@ -45,4 +48,19 @@ test("readMerchantAuthRefreshCookie reads the refresh token cookie", () => {
   });
 
   assert.equal(readMerchantAuthRefreshCookie(request), "refresh-token");
+});
+
+test("setMerchantAuthCookies keeps refresh cookie alive longer than access cookie", () => {
+  const response = NextResponse.json({ ok: true });
+  setMerchantAuthCookies(response, {
+    accessToken: "access-token",
+    refreshToken: "refresh-token",
+    maxAgeSeconds: 3600,
+  });
+
+  assert.equal(response.cookies.get(MERCHANT_AUTH_COOKIE)?.maxAge, 3600);
+  assert.equal(
+    response.cookies.get(MERCHANT_AUTH_REFRESH_COOKIE)?.maxAge,
+    MERCHANT_AUTH_REFRESH_COOKIE_MAX_AGE_SECONDS,
+  );
 });

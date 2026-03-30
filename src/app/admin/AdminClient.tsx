@@ -60,6 +60,7 @@ import {
 import {
   clearStoredBrowserSupabaseSessionTokens,
   recoverBrowserSupabaseSessionWithRefresh,
+  startMerchantSessionKeepAlive,
   syncMerchantSessionCookies,
 } from "@/lib/authSessionRecovery";
 import { clearMerchantSignInBridge } from "@/lib/merchantSignInBridge";
@@ -4164,6 +4165,7 @@ export default function AdminClient({
       releaseCheckingScreen({ notice: null });
     }, AUTH_CHECK_TIMEOUT_MS);
     let authSubscription: { unsubscribe: () => void } | null = null;
+    let detachKeepAlive: (() => void) | null = null;
     let recoverSessionInFlight: Promise<Awaited<ReturnType<typeof recoverBrowserSupabaseSessionWithRefresh>>> | null = null;
     const recoverSession = async (timeoutMs: number) => {
       if (recoverSessionInFlight) return recoverSessionInFlight;
@@ -4181,7 +4183,11 @@ export default function AdminClient({
       if (isPlatformEditor) return;
       if (authSubscription || !mounted) return;
       const { data } = supabase.auth.onAuthStateChange((_event, session) => {
-        if (session || !mounted) return;
+        if (session) {
+          void syncMerchantSessionCookies(session, Math.max(2200, Math.min(6000, AUTH_CHECK_TIMEOUT_MS)));
+          return;
+        }
+        if (!mounted) return;
         void (async () => {
           const gatewayReady = await canReachSupabaseGateway(Math.min(2000, AUTH_CHECK_TIMEOUT_MS));
           if (!mounted || !gatewayReady) return;
@@ -4241,6 +4247,11 @@ export default function AdminClient({
         }
         if (sessionRecoveredFromFallback && session && !isPlatformEditor) {
           void syncMerchantSessionCookies(session, Math.max(2200, Math.min(6000, AUTH_CHECK_TIMEOUT_MS)));
+        }
+        if (session && !isPlatformEditor && !detachKeepAlive) {
+          detachKeepAlive = startMerchantSessionKeepAlive({
+            timeoutMs: Math.max(2200, Math.min(6000, AUTH_CHECK_TIMEOUT_MS)),
+          });
         }
         if (session) {
           try {
@@ -4441,6 +4452,7 @@ export default function AdminClient({
       mounted = false;
       clearTimeout(safetyTimeoutId);
       if (authSubscription) authSubscription.unsubscribe();
+      if (detachKeepAlive) detachKeepAlive();
       merchantIdsRef.current = [];
     };
   }, [defaultEditorBlocks, isPlatformEditor, justSignedIn, platformSeedBlocks, storeScope]);

@@ -345,6 +345,93 @@ export async function syncMerchantSessionCookies(
   }
 }
 
+type MerchantSessionKeepAliveOptions = {
+  intervalMs?: number;
+  refreshWindowMs?: number;
+  timeoutMs?: number;
+};
+
+export function startMerchantSessionKeepAlive(options?: MerchantSessionKeepAliveOptions) {
+  if (typeof window === "undefined") return () => {};
+
+  const intervalMs = Math.max(60_000, Math.min(15 * 60_000, options?.intervalMs ?? 8 * 60_000));
+  const refreshWindowMs = Math.max(30_000, Math.min(intervalMs, options?.refreshWindowMs ?? 12 * 60_000));
+  const timeoutMs = Math.max(1800, Math.min(9000, options?.timeoutMs ?? 4200));
+  let disposed = false;
+  let inFlight: Promise<Session | null> | null = null;
+
+  const tick = async (forceRefresh: boolean) => {
+    if (disposed) return null;
+    if (inFlight) return inFlight;
+    const task = (async () => {
+      try {
+        let currentSession: Session | null = null;
+        try {
+          const {
+            data: { session },
+          } = await withTimeout(supabase.auth.getSession(), timeoutMs);
+          currentSession = session ?? null;
+        } catch {
+          currentSession = null;
+        }
+
+        const expiresAtMs =
+          typeof currentSession?.expires_at === "number" && Number.isFinite(currentSession.expires_at)
+            ? currentSession.expires_at * 1000
+            : 0;
+        const shouldRefresh =
+          forceRefresh ||
+          !currentSession ||
+          !currentSession.refresh_token ||
+          !expiresAtMs ||
+          expiresAtMs - Date.now() <= refreshWindowMs;
+
+        const activeSession = shouldRefresh
+          ? await recoverBrowserSupabaseSessionWithRefresh(timeoutMs)
+          : currentSession;
+        if (!activeSession) return null;
+        await syncMerchantSessionCookies(activeSession, timeoutMs);
+        return activeSession;
+      } catch {
+        return null;
+      }
+    })();
+
+    inFlight = task;
+    try {
+      return await task;
+    } finally {
+      if (inFlight === task) {
+        inFlight = null;
+      }
+    }
+  };
+
+  const onVisibilityChange = () => {
+    if (document.visibilityState !== "visible") return;
+    void tick(true);
+  };
+  const onFocus = () => {
+    void tick(true);
+  };
+
+  const intervalId = window.setInterval(() => {
+    if (document.visibilityState === "hidden") return;
+    void tick(false);
+  }, intervalMs);
+
+  document.addEventListener("visibilitychange", onVisibilityChange);
+  window.addEventListener("focus", onFocus);
+  void tick(false);
+
+  return () => {
+    disposed = true;
+    window.clearInterval(intervalId);
+    document.removeEventListener("visibilitychange", onVisibilityChange);
+    window.removeEventListener("focus", onFocus);
+  };
+}
+
 export function isTransientAuthValidationError(error: unknown) {
   if (!error || typeof error !== "object") return false;
   const record = error as { message?: unknown; name?: unknown; status?: unknown };
