@@ -2144,27 +2144,17 @@ export default function MerchantBusinessCardManager({
                   </div>
                   {draft.mode === "link" ? (
                     <div className="overflow-hidden rounded-2xl border bg-white p-3">
-                      <div className="mb-2 text-xs font-semibold text-slate-700">联系卡图片预览</div>
-                      {normalizeText(draft.contactPageImageUrl) ? (
-                        <div
-                          className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50"
-                          style={{ height: `${draft.contactPageImageHeight}px` }}
-                        >
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={draft.contactPageImageUrl}
-                            alt="联系卡展示图预览"
-                            className="block h-full w-full object-cover"
-                          />
-                        </div>
-                      ) : (
-                        <div
-                          className="flex items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 text-center text-xs text-slate-500"
-                          style={{ height: `${draft.contactPageImageHeight}px` }}
-                        >
-                          未上传联系卡图片时，这里会回退显示联系方式摘要。
-                        </div>
-                      )}
+                      <div className="mb-2 text-xs font-semibold text-slate-700">联系卡预览</div>
+                      <div className="flex justify-center rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        <ContactCardSurface
+                          name={normalizeText(draft.name) || "名片预览"}
+                          targetUrl={websiteUrl}
+                          contacts={draft.contacts}
+                          contactFieldOrder={draft.contactFieldOrder}
+                          imageUrl={normalizeText(draft.contactPageImageUrl) || undefined}
+                          imageHeight={draft.contactPageImageHeight}
+                        />
+                      </div>
                     </div>
                   ) : null}
                   <div className="rounded-xl border bg-white px-3 py-2 text-xs text-slate-600">
