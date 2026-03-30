@@ -293,6 +293,23 @@ export async function recoverBrowserSupabaseSession(timeoutMs = 4500): Promise<S
   return pollSession(1200);
 }
 
+export async function recoverBrowserSupabaseSessionWithRefresh(timeoutMs = 4500): Promise<Session | null> {
+  const recovered = await recoverBrowserSupabaseSession(timeoutMs);
+  if (recovered) return recovered;
+
+  try {
+    const { data } = await withTimeout(
+      supabase.auth.refreshSession(),
+      Math.max(3200, Math.min(9000, timeoutMs + 2000)),
+    );
+    if (data.session) return data.session;
+  } catch {
+    // Ignore refresh failures and fall back to one final short poll.
+  }
+
+  return pollSession(1200);
+}
+
 export function isTransientAuthValidationError(error: unknown) {
   if (!error || typeof error !== "object") return false;
   const record = error as { message?: unknown; name?: unknown; status?: unknown };

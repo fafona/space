@@ -53,15 +53,13 @@ import {
   getResolvedSupabaseUrl,
   isSupabaseEnabled,
   isSupabaseFallbackMode,
-  legacySupabaseAuthStorageKey,
   resolvedSupabaseAnonKey,
-  resolvedSupabaseAuthStorageKey,
   supabase,
   supabaseMissingEnvNotice,
 } from "@/lib/supabase";
 import {
   clearStoredBrowserSupabaseSessionTokens,
-  recoverBrowserSupabaseSessionViaMerchantCookies,
+  recoverBrowserSupabaseSessionWithRefresh,
 } from "@/lib/authSessionRecovery";
 import { clearMerchantSignInBridge } from "@/lib/merchantSignInBridge";
 import { buildPublishedMerchantProfilePatch } from "@/lib/merchantProfileBinding";
@@ -4165,104 +4163,10 @@ export default function AdminClient({
       releaseCheckingScreen({ notice: null });
     }, AUTH_CHECK_TIMEOUT_MS);
     let authSubscription: { unsubscribe: () => void } | null = null;
-    const pollSession = async (timeoutMs: number) => {
-      const deadline = Date.now() + Math.max(400, timeoutMs);
-      while (Date.now() < deadline) {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        if (session) return session;
-        await new Promise<void>((resolve) => {
-          setTimeout(resolve, 220);
-        });
-      }
-      return null;
-    };
-    const isInvalidRefreshTokenMessage = (message: string) =>
-      /invalid refresh token|already used/i.test(String(message ?? ""));
-    const tryRecoverSessionFromStoredToken = async () => {
-      if (typeof window === "undefined") return null;
-      const extractTokens = (
-        input: unknown,
-      ): { access_token: string; refresh_token: string } | null => {
-        if (!input || typeof input !== "object") return null;
-        const record = input as Record<string, unknown>;
-        const containers: unknown[] = [record, record.currentSession, record.session];
-        for (const container of containers) {
-          if (!container || typeof container !== "object") continue;
-          const candidate = container as Record<string, unknown>;
-          const access = typeof candidate.access_token === "string" ? candidate.access_token.trim() : "";
-          const refresh = typeof candidate.refresh_token === "string" ? candidate.refresh_token.trim() : "";
-          if (access && refresh) return { access_token: access, refresh_token: refresh };
-        }
-        return null;
-      };
-      const storageKeys = [resolvedSupabaseAuthStorageKey, legacySupabaseAuthStorageKey].filter(
-        (value, index, list) => value && list.indexOf(value) === index,
-      );
-      const storages: Storage[] = [];
-      for (const candidate of [window.localStorage, window.sessionStorage]) {
-        try {
-          const probeKey = "__merchant_auth_probe__";
-          candidate.setItem(probeKey, "1");
-          candidate.removeItem(probeKey);
-          storages.push(candidate);
-        } catch {
-          // Ignore unavailable browser storage.
-        }
-      }
-      for (const storage of storages) {
-        for (const storageKey of storageKeys) {
-          try {
-            const raw = storage.getItem(storageKey);
-            if (!raw) continue;
-            const parsed = JSON.parse(raw) as unknown;
-            const tokens = extractTokens(parsed);
-            if (!tokens) continue;
-            const { data } = await withTimeout(
-              supabase.auth.setSession(tokens),
-              Math.max(3000, Math.min(8000, AUTH_CHECK_TIMEOUT_MS)),
-              "本地会话恢复超时",
-            );
-            if (data.session) return data.session;
-          } catch (error) {
-            const message = error instanceof Error ? error.message : "";
-            if (isInvalidRefreshTokenMessage(message)) {
-              try {
-                storage.removeItem(storageKey);
-              } catch {
-                // ignore storage cleanup failure
-              }
-            }
-          }
-        }
-      }
-      return null;
-    };
-    let recoverSessionInFlight: Promise<Awaited<ReturnType<typeof pollSession>>> | null = null;
+    let recoverSessionInFlight: Promise<Awaited<ReturnType<typeof recoverBrowserSupabaseSessionWithRefresh>>> | null = null;
     const recoverSession = async (timeoutMs: number) => {
       if (recoverSessionInFlight) return recoverSessionInFlight;
-      const task = (async () => {
-        const direct = await pollSession(timeoutMs);
-        if (direct) return direct;
-        const fromStored = await tryRecoverSessionFromStoredToken();
-        if (fromStored) return fromStored;
-        const fromMerchantCookies = await recoverBrowserSupabaseSessionViaMerchantCookies(
-          Math.max(2200, Math.min(9000, timeoutMs + 1200)),
-        );
-        if (fromMerchantCookies) return fromMerchantCookies;
-        try {
-          const { data } = await withTimeout(
-            supabase.auth.refreshSession(),
-            Math.max(3200, Math.min(9000, timeoutMs + 2000)),
-            "会话恢复超时",
-          );
-          if (data.session) return data.session;
-        } catch {
-          // Ignore refresh failure and fall back to a final short poll.
-        }
-        return pollSession(1200);
-      })();
+      const task = recoverBrowserSupabaseSessionWithRefresh(Math.max(2200, Math.min(9000, timeoutMs + 1200)));
       recoverSessionInFlight = task;
       try {
         return await task;
