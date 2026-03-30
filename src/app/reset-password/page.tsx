@@ -12,6 +12,12 @@ import { canReachSupabaseGateway, supabase } from "@/lib/supabase";
 
 type RecoveryState = "checking" | "ready" | "expired";
 
+function delay(ms: number) {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, Math.max(0, ms));
+  });
+}
+
 function readRecoveryHashParams() {
   if (typeof window === "undefined") return new URLSearchParams();
   return new URLSearchParams(window.location.hash.replace(/^#/, ""));
@@ -83,13 +89,6 @@ export default function ResetPasswordPage() {
   }, [t]);
 
   const recoverResetSession = useCallback(async (timeoutMs = 5000) => {
-    const directSession = await recoverBrowserSupabaseSession(Math.min(2200, timeoutMs));
-    if (directSession) {
-      void syncMerchantSessionCookies(directSession, 2500);
-      clearRecoveryUrlArtifacts();
-      return directSession;
-    }
-
     const hashParams = readRecoveryHashParams();
     const hashType = (hashParams.get("type") ?? "").trim();
     const accessToken = (hashParams.get("access_token") ?? "").trim();
@@ -107,19 +106,6 @@ export default function ResetPasswordPage() {
         clearRecoveryUrlArtifacts();
         return established;
       }
-    }
-
-    try {
-      await supabase.auth.initialize();
-    } catch {
-      // Keep going and try the explicit fallbacks below.
-    }
-
-    const initializedSession = await recoverBrowserSupabaseSession(timeoutMs);
-    if (initializedSession) {
-      void syncMerchantSessionCookies(initializedSession, 2500);
-      clearRecoveryUrlArtifacts();
-      return initializedSession;
     }
 
     if (typeof window !== "undefined") {
@@ -152,6 +138,19 @@ export default function ResetPasswordPage() {
       }
     }
 
+    try {
+      await supabase.auth.initialize();
+    } catch {
+      // Keep going and try stored-session recovery below.
+    }
+
+    const initializedSession = await recoverBrowserSupabaseSession(Math.max(timeoutMs, 4500));
+    if (initializedSession) {
+      void syncMerchantSessionCookies(initializedSession, 2500);
+      clearRecoveryUrlArtifacts();
+      return initializedSession;
+    }
+
     return null;
   }, [withTimeout]);
 
@@ -170,18 +169,21 @@ export default function ResetPasswordPage() {
     });
 
     async function initializeRecovery() {
-      const session = await recoverResetSession(5500).catch(() => null);
+      const hasIndicators = hasRecoveryIndicators();
+      const deadline = Date.now() + (hasIndicators ? 20000 : 6000);
+      while (!cancelled && Date.now() < deadline) {
+        const session = await recoverResetSession(hasIndicators ? 9000 : 5500).catch(() => null);
+        if (cancelled) return;
+        if (session) {
+          setRecoveryState("ready");
+          setMsg("");
+          return;
+        }
+        if (!hasIndicators) break;
+        await delay(600);
+      }
       if (cancelled) return;
-      if (session) {
-        setRecoveryState("ready");
-        setMsg("");
-        return;
-      }
       setRecoveryState("expired");
-      if (hasRecoveryIndicators()) {
-        setMsg(t("reset.sessionExpired"));
-        return;
-      }
       setMsg(t("reset.sessionExpired"));
     }
 
@@ -247,6 +249,7 @@ export default function ResetPasswordPage() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             placeholder={t("login.passwordMin6")}
+            disabled={saving || recoveryState === "checking"}
             showLabel={passwordToggleLabels.show}
             hideLabel={passwordToggleLabels.hide}
           />
@@ -260,6 +263,7 @@ export default function ResetPasswordPage() {
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
             placeholder={t("reset.inputConfirmPasswordAgain")}
+            disabled={saving || recoveryState === "checking"}
             showLabel={passwordToggleLabels.show}
             hideLabel={passwordToggleLabels.hide}
           />
