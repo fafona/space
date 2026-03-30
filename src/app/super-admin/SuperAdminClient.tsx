@@ -1044,8 +1044,8 @@ export default function SuperAdminClient() {
   const [configPageLimit, setConfigPageLimit] = useState("3");
   const [configBusinessCardLimit, setConfigBusinessCardLimit] = useState("1");
   const [configAllowBusinessCardLinkMode, setConfigAllowBusinessCardLinkMode] = useState(false);
-  const [configBusinessCardBackgroundImageLimitKb, setConfigBusinessCardBackgroundImageLimitKb] = useState("300");
-  const [configBusinessCardContactImageLimitKb, setConfigBusinessCardContactImageLimitKb] = useState("300");
+  const [configBusinessCardBackgroundImageLimitKb, setConfigBusinessCardBackgroundImageLimitKb] = useState("200");
+  const [configBusinessCardContactImageLimitKb, setConfigBusinessCardContactImageLimitKb] = useState("200");
   const [configBusinessCardExportImageLimitKb, setConfigBusinessCardExportImageLimitKb] = useState("400");
   const [configPublishLimitMb, setConfigPublishLimitMb] = useState("5");
   const [configAllowInsertBackground, setConfigAllowInsertBackground] = useState(false);
@@ -2982,11 +2982,11 @@ export default function SuperAdminClient() {
     const businessCardLimit = Math.max(1, Math.min(100, Math.round(Number(configBusinessCardLimit) || 1)));
     const businessCardBackgroundImageLimitKb = Math.max(
       50,
-      Math.min(5000, Math.round(Number(configBusinessCardBackgroundImageLimitKb) || 300)),
+      Math.min(5000, Math.round(Number(configBusinessCardBackgroundImageLimitKb) || 200)),
     );
     const businessCardContactImageLimitKb = Math.max(
       50,
-      Math.min(5000, Math.round(Number(configBusinessCardContactImageLimitKb) || 300)),
+      Math.min(5000, Math.round(Number(configBusinessCardContactImageLimitKb) || 200)),
     );
     const businessCardExportImageLimitKb = Math.max(
       50,

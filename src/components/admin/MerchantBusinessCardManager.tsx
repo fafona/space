@@ -899,8 +899,8 @@ export default function MerchantBusinessCardManager({
   cards,
   cardLimit = 1,
   allowLinkMode = true,
-  backgroundImageLimitKb = 300,
-  contactPageImageLimitKb = 300,
+  backgroundImageLimitKb = 200,
+  contactPageImageLimitKb = 200,
   exportImageLimitKb = 400,
   onCardsChange,
 }: MerchantBusinessCardManagerProps) {
@@ -1018,11 +1018,11 @@ export default function MerchantBusinessCardManager({
   const cardLimitReached = !editingCardId && cards.length >= normalizedCardLimit;
   const canOpenCreateEditor = canCreate && !cardLimitReached;
   const normalizedBackgroundImageLimitKb = useMemo(
-    () => Math.max(50, Math.min(5000, Math.round(Number(backgroundImageLimitKb) || 300))),
+    () => Math.max(50, Math.min(5000, Math.round(Number(backgroundImageLimitKb) || 200))),
     [backgroundImageLimitKb],
   );
   const normalizedContactPageImageLimitKb = useMemo(
-    () => Math.max(50, Math.min(5000, Math.round(Number(contactPageImageLimitKb) || 300))),
+    () => Math.max(50, Math.min(5000, Math.round(Number(contactPageImageLimitKb) || 200))),
     [contactPageImageLimitKb],
   );
   const normalizedExportImageLimitKb = useMemo(
