@@ -587,18 +587,6 @@
     "ko": "도시 위치 파악 및 콘텐츠 검색",
     "en": "City positioning and content search"
   },
-  "出登录超时，请稍后重试": {
-    "zh-TW": "出登入逾時，請稍後重試",
-    "ja": "ログインタイムアウトが発生しました。しばらくしてからもう一度お試しください。",
-    "ko": "로그인 시간 초과가 발생했습니다. 나중에 다시 시도해 주세요.",
-    "en": "Login timeout occurred, please try again later."
-  },
-  "出失败，请稍后重": {
-    "zh-TW": "出失敗，請稍後重",
-    "ja": "失敗しました。後でもう一度試してください。",
-    "ko": "실패했습니다. 나중에 다시 시도해 주세요.",
-    "en": "Failed, please try again later."
-  },
   "初回登録後は、メール確認を完了してからログインしてください。": {
     "zh-TW": "初回登録後は、メール確認を完了してからログインしてください。",
     "ja": "初回ログイン後、完了していることを確認しました。",
@@ -749,12 +737,6 @@
     "ko": "크기",
     "en": "size"
   },
-  "待处理": {
-    "zh-TW": "待處理",
-    "ja": "保留中",
-    "ko": "보류 중",
-    "en": "Pending"
-  },
   "待确认": {
     "zh-TW": "待確認",
     "ja": "確認中",
@@ -808,12 +790,6 @@
     "ja": "現在のブラウザはすでにホワイトリストに登録されています。",
     "ko": "현재 브라우저는 이미 허용 목록에 있습니다.",
     "en": "The current browser is already in the whitelist."
-  },
-  "当前名片没有可打开的网站链接": {
-    "zh-TW": "當前名片沒有可開啟的網站鏈接",
-    "ja": "現在の名刺には、開くための Web サイト リンクがありません。",
-    "ko": "현재 명함에는 열 수 있는 웹사이트 링크가 없습니다.",
-    "en": "The current business card has no website link to open."
   },
   "当前名片没有可复制的网站链接": {
     "zh-TW": "當前名片沒有可複製的網站鏈接",
@@ -934,12 +910,6 @@
     "ja": "現在のスタイルはプレーヤーを非表示にすることです",
     "ko": "현재 스타일은 플레이어를 숨기는 것입니다",
     "en": "The current style is to hide the player"
-  },
-  "当前页没有可重压的内嵌图": {
-    "zh-TW": "當前頁沒有可重壓的內嵌圖",
-    "ja": "現在のページには再表示できるインライン イメージがありません。",
-    "ko": "현재 페이지에는 억제할 수 있는 인라인 이미지가 없습니다.",
-    "en": "There is no inline image that can be repressed on the current page."
   },
   "当前页面未应用主题，无需还原": {
     "zh-TW": "目前頁面未套用主題，無需還原",
@@ -2393,12 +2363,6 @@
     "ko": "연락처 카드 QR 코드",
     "en": "Contact card QR code"
   },
-  "联系卡链接已复制，并已保存到名片夹": {
-    "zh-TW": "聯絡卡連結已複製，並已儲存至名片夾",
-    "ja": "連絡先カードのリンクを名刺フォルダーにコピーして保存しました",
-    "ko": "연락처 카드 링크가 복사되어 명함 폴더에 저장되었습니다.",
-    "en": "Contact card link copied and saved to business card folder"
-  },
   "联系卡链接已复制，手机打开后可保存联系人": {
     "zh-TW": "聯絡卡連結已複製，手機開啟後可儲存聯絡人",
     "ja": "連絡先カードのリンクがコピーされました。電話を開いた後、連絡先を保存できます。",
@@ -2446,12 +2410,6 @@
     "ja": "連絡先のダウンロードが開始されました",
     "ko": "연락처 다운로드가 시작되었습니다",
     "en": "Contact download has started"
-  },
-  "联系人已开始下载，并已保存到名片夹": {
-    "zh-TW": "聯絡人已開始下載，並已儲存至名片夾",
-    "ja": "連絡先がダウンロードされ、名刺フォルダーに保存されました",
-    "ko": "연락처가 다운로드되어 명함 폴더에 저장되었습니다.",
-    "en": "Contacts have been downloaded and saved to your business card folder"
   },
   "链接模式": {
     "zh-TW": "連結模式",
@@ -2602,12 +2560,6 @@
     "ja": "名刺の生成に失敗しました。もう一度お試しください。",
     "ko": "명함 생성에 실패했습니다. 다시 시도해 주세요.",
     "en": "Business card generation failed, please try again"
-  },
-  "名片图片已复制，并已保存到名片夹": {
-    "zh-TW": "名片圖片已複製，並已儲存至名片夾",
-    "ja": "名刺画像がコピーされ、名刺フォルダーに保存されました",
-    "ko": "명함 이미지가 복사되어 명함 폴더에 저장되었습니다.",
-    "en": "The business card image has been copied and saved to the business card folder"
   },
   "名片图片已复制，可直接发送": {
     "zh-TW": "名片圖片已複製，可直接發送",
@@ -2782,12 +2734,6 @@
     "ja": "バランス",
     "ko": "균형",
     "en": "balance"
-  },
-  "平台": {
-    "zh-TW": "平台",
-    "ja": "プラットフォーム",
-    "ko": "플랫폼",
-    "en": "platform"
   },
   "平台超级管理员": {
     "zh-TW": "平台超管理員",
@@ -3029,12 +2975,6 @@
     "ko": "카테고리명과 슬러그를 입력해주세요.",
     "en": "Please fill in the category name and slug"
   },
-  "请填写角色并勾选权限": {
-    "zh-TW": "請填寫角色並勾選權限",
-    "ja": "役割を入力し、権限を確認してください",
-    "ko": "역할을 입력하고 권한을 확인하세요.",
-    "en": "Please fill in the role and check the permissions"
-  },
   "请填写邮箱": {
     "zh-TW": "請填寫信箱",
     "ja": "メールアドレスをご記入ください",
@@ -3058,24 +2998,6 @@
     "ja": "メインサイトのメインタイトルを入力してください",
     "ko": "메인사이트의 메인제목을 입력해주세요.",
     "en": "Please fill in the main title of the main site"
-  },
-  "请填写租户名称和负责人": {
-    "zh-TW": "請填寫租戶名稱和負責人",
-    "ja": "テナント名と担当者をご記入ください",
-    "ko": "임차인의 성명과 담당자를 기재해주세요.",
-    "en": "Please fill in the tenant name and person in charge"
-  },
-  "请完整填写页面资产信息": {
-    "zh-TW": "請完整填寫頁面資產資訊",
-    "ja": "ページのアセット情報を入力してください",
-    "ko": "페이지 자산 정보를 작성해 주세요.",
-    "en": "Please complete the page asset information"
-  },
-  "请完整填写用户信息": {
-    "zh-TW": "請完整填寫用戶資訊",
-    "ja": "ユーザー情報を完全に入力してください",
-    "ko": "사용자 정보를 완전히 입력해주세요.",
-    "en": "Please fill in the user information completely"
   },
   "请完整填写站点信息": {
     "zh-TW": "請完整填寫站點信息",
@@ -3160,18 +3082,6 @@
     "ja": "最初にブロックを選択してください",
     "ko": "먼저 블록을 선택하세요.",
     "en": "Please select a block first"
-  },
-  "请先预览名片后再复制": {
-    "zh-TW": "請先預覽名片後再複製",
-    "ja": "名刺をコピーする前にプレビューしてください",
-    "ko": "복사하기 전에 명함을 미리 보십시오.",
-    "en": "Please preview the business card before copying it"
-  },
-  "请先预览名片后再下载联系人": {
-    "zh-TW": "請先預覽名片後再下載聯絡人",
-    "ja": "連絡先をダウンロードする前に名刺をプレビューしてください",
-    "ko": "연락처를 다운로드하기 전에 명함을 미리 보십시오.",
-    "en": "Please preview the business card before downloading the contact"
   },
   "请选择称谓": {
     "zh-TW": "請選擇稱謂",
@@ -3665,11 +3575,11 @@
     "ko": "판매자 구성이 저장되었습니다.",
     "en": "Merchant configuration saved"
   },
-  "商户识别超时，已使用朜缓存继续编辑": {
-    "zh-TW": "商家辨識逾時，已使用朜快取繼續編輯",
-    "ja": "販売者の識別がタイムアウトしました。編集を続行するために朜キャッシュが使用されました。",
-    "ko": "판매자 식별 시간이 초과되었습니다. 朜 캐시를 사용하여 편집을 계속했습니다.",
-    "en": "Merchant identification timed out, the 朜 cache has been used to continue editing."
+  "商户识别超时，已使用本地缓存继续编辑": {
+    "zh-TW": "商家識別逾時，已使用本機快取繼續編輯",
+    "ja": "販売者の識別がタイムアウトしました。編集を続行するためにローカル キャッシュが使用されました。",
+    "ko": "판매자 식별 시간이 초과되었습니다. 편집을 계속하는 데 로컬 캐시가 사용되었습니다.",
+    "en": "Merchant identification timed out, local cache has been used to continue editing."
   },
   "商户网站二维码": {
     "zh-TW": "商家網站二維碼",
@@ -3836,8 +3746,8 @@
   "生成超时，请稍后重试": {
     "zh-TW": "生成超時，請稍後重試",
     "ja": "生成がタイムアウトしました。後でもう一度お試しください。",
-    "ko": "시간 초과가 발생했습니다. 나중에 다시 시도해 주세요.",
-    "en": "Generate timeout, please try again later"
+    "ko": "생성 시간이 초과되었습니다. 나중에 다시 시도해 주세요.",
+    "en": "Generation timed out, please try again later"
   },
   "生成电子联系卡链接，手机打开后可保存联系人，也可单独复制名片图片。": {
     "zh-TW": "產生電子聯絡卡鏈接，手機開啟後可儲存聯絡人，也可單獨複製名片圖片。",
@@ -4511,6 +4421,18 @@
     "ko": "로그아웃",
     "en": "Log out"
   },
+  "退出登录超时，请稍后重试": {
+    "zh-TW": "登出登入逾時，請稍後重試",
+    "ja": "ログアウトがタイムアウトしました。後でもう一度お試しください。",
+    "ko": "로그아웃 시간이 초과되었습니다. 나중에 다시 시도해 주세요.",
+    "en": "Logout timed out, please try again later."
+  },
+  "退出失败，请稍后重试": {
+    "zh-TW": "退出失敗，請稍後重試",
+    "ja": "終了できませんでした。後でもう一度お試しください",
+    "ko": "종료하지 못했습니다. 나중에 다시 시도해 주세요.",
+    "en": "Failed to exit, please try again later"
+  },
   "退出中...": {
     "zh-TW": "退出中...",
     "ja": "終了中...",
@@ -4534,12 +4456,6 @@
     "ja": "ドラッグして幅を調整します",
     "ko": "드래그하여 너비를 조정하세요.",
     "en": "Drag to adjust width"
-  },
-  "外链化失败，请检查存储配置": {
-    "zh-TW": "外鏈化失敗，請檢查儲存配置",
-    "ja": "外部リンクに失敗しました。ストレージ構成を確認してください。",
-    "ko": "외부 연결에 실패했습니다. 저장소 구성을 확인하세요.",
-    "en": "External linking failed, please check the storage configuration"
   },
   "网站编辑": {
     "zh-TW": "網站編輯",
@@ -4674,7 +4590,7 @@
     "en": "Not configured"
   },
   "未匹配到你的商户站点，当前仅展示本地草稿。请先在“商户信息”完善绑定。": {
-    "zh-TW": "未匹配到你的商户站点，当前仅展示本地草稿。請先在「商家資訊」完善綁定。",
+    "zh-TW": "未配對到你的商家站點，目前僅顯示本地草稿。請先在「商家資訊」完善綁定。",
     "ja": "ビジネス サイトが一致しなかったため、現在ローカルの下書きのみが表示されています。最初に「ビジネス情報」で製本を完了してください。",
     "ko": "귀하의 비즈니스 사이트가 일치하지 않으며 현재 로컬 초안만 표시됩니다. 먼저 \"비즈니스 정보\"에서 바인딩을 완료하세요.",
     "en": "Your business site was not matched and only local drafts are currently displayed. Please complete the binding in \"Business Information\" first."
@@ -4793,12 +4709,6 @@
     "ko": "기능을 활성화할 수 있는 권한이 없습니다.",
     "en": "No permission to activate functions"
   },
-  "无角色管理权限": {
-    "zh-TW": "無角色管理權限",
-    "ja": "ロール管理権限がない",
-    "ko": "역할 관리 권한 없음",
-    "en": "No role management rights"
-  },
   "无效果": {
     "zh-TW": "無效果",
     "ja": "効果なし",
@@ -4810,12 +4720,6 @@
     "ja": "業種分類管理権限なし",
     "ko": "업종분류관리권한 없음",
     "en": "No industry classification management authority"
-  },
-  "无页面资产管理权限": {
-    "zh-TW": "無頁面資產管理權限",
-    "ja": "ページ資産管理権限がありません",
-    "ko": "페이지 자산 관리 권한이 없습니다.",
-    "en": "No page asset management permissions"
   },
   "无用户管理权限": {
     "zh-TW": "無用戶管理權限",
@@ -4840,12 +4744,6 @@
     "ja": "マスターステーションの設定権限がありません",
     "ko": "마스터 스테이션 구성 권한이 없습니다.",
     "en": "No master station configuration permissions"
-  },
-  "无租户管理权限": {
-    "zh-TW": "無租用戶管理權限",
-    "ja": "テナント管理権限なし",
-    "ko": "임차인 관리권 없음",
-    "en": "No tenant management rights"
   },
   "吸附网格": {
     "zh-TW": "吸附網格",
@@ -5043,7 +4941,7 @@
     "zh-TW": "新增產品",
     "ja": "新しい製品を追加する",
     "ko": "새 제품 추가",
-    "en": "Add new products"
+    "en": "Add new product"
   },
   "新增区块": {
     "zh-TW": "新增區塊",
@@ -5375,17 +5273,11 @@
     "ko": "페이지 탐색",
     "en": "Page navigation"
   },
-  "页面路径必须以 / 开头": {
-    "zh-TW": "頁面路徑必須以 / 開頭",
-    "ja": "ページパスは / で始まる必要があります",
-    "ko": "페이지 경로는 /로 시작해야 합니다.",
-    "en": "Page path must start with /"
-  },
-  "页面内加载超时，已使用朜缓存继续编辑": {
-    "zh-TW": "頁面內載入逾時，已使用朜快取繼續編輯",
-    "ja": "ページの読み込みがタイムアウトになり、編集を続行するために朜キャッシュが使用されました。",
-    "ko": "페이지 로드 시간이 초과되었으며 편집을 계속하는 데 朜 캐시가 사용되었습니다.",
-    "en": "The page load timed out and the 朜 cache has been used to continue editing."
+  "页面内加载超时，已使用本地缓存继续编辑": {
+    "zh-TW": "頁面內載入逾時，已使用本機快取繼續編輯",
+    "ja": "ページの読み込みがタイムアウトしました。編集を続行するためにローカル キャッシュが使用されました。",
+    "ko": "페이지 로드 시간이 초과되었습니다. 편집을 계속하는 데 로컬 캐시가 사용되었습니다.",
+    "en": "Page loading timeout, local cache has been used to continue editing."
   },
   "页面上限": {
     "zh-TW": "頁面上限",
@@ -5410,12 +5302,6 @@
     "ja": "削除中...",
     "ko": "풀이...",
     "en": "Removing..."
-  },
-  "已驳回": {
-    "zh-TW": "已駁回",
-    "ja": "解雇された",
-    "ko": "해고됨",
-    "en": "Dismissed"
   },
   "已定位": {
     "zh-TW": "已定位",
@@ -5488,18 +5374,6 @@
     "ja": "現在のページ ナビゲーション設定が他のページに適用されています (PC)",
     "ko": "현재 페이지 탐색 설정이 다른 페이지(PC)에 적용되었습니다.",
     "en": "Current page navigation settings have been applied to other pages (PC)"
-  },
-  "已解锁区块": {
-    "zh-TW": "已解鎖區塊",
-    "ja": "ブロックのロックが解除されました",
-    "ko": "블록 잠금 해제됨",
-    "en": "Block unlocked"
-  },
-  "已禁用": {
-    "zh-TW": "已停用",
-    "ja": "無効",
-    "ko": "장애가 있는",
-    "en": "Disabled"
   },
   "已开通": {
     "zh-TW": "已開通",
@@ -5579,23 +5453,11 @@
     "ko": "전체 배경 기본 데모 데이터가 생성되었습니다.",
     "en": "The total background default demo data has been generated."
   },
-  "已锁定区块": {
-    "zh-TW": "已鎖定區塊",
-    "ja": "ブロックがロックされました",
-    "ko": "블록이 잠겼습니다.",
-    "en": "Block locked"
-  },
   "已停用": {
     "zh-TW": "已停用",
     "ja": "無効化されました",
     "ko": "비활성화됨",
     "en": "Deactivated"
-  },
-  "已通过": {
-    "zh-TW": "已通過",
-    "ja": "合格した",
-    "ko": "합격",
-    "en": "Passed"
   },
   "已新增区块": {
     "zh-TW": "已新增區塊",
@@ -6311,12 +6173,6 @@
     "ko": "긍정적인 순서",
     "en": "positive sequence"
   },
-  "正在查登录状..": {
-    "zh-TW": "正在查登錄狀..",
-    "ja": "ログイン状況を確認しています。",
-    "ko": "로그인 상태를 확인하는 중..",
-    "en": "Checking login status.."
-  },
   "正在定位商户站点...": {
     "zh-TW": "正在定位商家站點...",
     "ja": "販売者のサイトを探しています...",
@@ -6353,12 +6209,6 @@
     "ko": "로그인 페이지로 리디렉션 중...",
     "en": "Redirecting to login page..."
   },
-  "正在外链化大图...": {
-    "zh-TW": "正在外鏈化大圖...",
-    "ja": "全体像を外部にリンクする...",
-    "ko": "큰 그림을 외부로 연결하는 중...",
-    "en": "Externally linking the big picture..."
-  },
   "正在載入頁面...": {
     "zh-TW": "正在載入頁面...",
     "ja": "ページを読み込み中...",
@@ -6370,12 +6220,6 @@
     "ja": "メイン サイトを読み込んでいます...",
     "ko": "메인 사이트 로딩중...",
     "en": "Loading the main site..."
-  },
-  "正在重压当前页图片...": {
-    "zh-TW": "正在重壓當前頁圖片...",
-    "ja": "現在のページの画像を抑制しています...",
-    "ko": "현재 페이지 사진을 억제하는 중...",
-    "en": "Repressing the current page pictures..."
   },
   "支持绑定独立域名。": {
     "zh-TW": "支援綁定獨立網域。",
@@ -6527,12 +6371,6 @@
     "ko": "비밀번호 재설정",
     "en": "reset password"
   },
-  "重压失败，请重试": {
-    "zh-TW": "重壓失敗，請重試",
-    "ja": "再圧力が失敗しました。もう一度試してください。",
-    "ko": "재압력에 실패했습니다. 다시 시도해 주세요.",
-    "en": "Re-pressure failed, please try again"
-  },
   "重置会话已失效，请回到登录页重新发送找回密码邮件。": {
     "zh-TW": "重設會話已失效，請回到登入頁重新傳送找回密碼郵件。",
     "ja": "リセットセッションの有効期限が切れました。ログイン ページに戻って、パスワード取得メールを再送信してください。",
@@ -6658,12 +6496,6 @@
     "ja": "カスタマイズ",
     "ko": "사용자 정의",
     "en": "Customize"
-  },
-  "自定义角色": {
-    "zh-TW": "自訂角色",
-    "ja": "カスタムロール",
-    "ko": "맞춤 역할",
-    "en": "Custom role"
   },
   "自定义样式": {
     "zh-TW": "自訂樣式",

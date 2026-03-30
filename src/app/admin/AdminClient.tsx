@@ -4411,7 +4411,7 @@ export default function AdminClient({
               });
             })(),
             AUTH_CHECK_TIMEOUT_MS,
-            "商户识别超时，已使用朜缓存继续编辑",
+            "商户识别超时，已使用本地缓存继续编辑",
           );
             if (!mounted) return;
             const preferredByScope = getSiteIdFromStoreScope(storeScope);
@@ -4448,7 +4448,7 @@ export default function AdminClient({
               })()
             : loadBlocksViaRestFallback(resolvedMerchantIds, accessToken),
           ADMIN_PAGE_LOAD_TIMEOUT_MS,
-          "页面内加载超时，已使用朜缓存继续编辑",
+          "页面内加载超时，已使用本地缓存继续编辑",
         );
         if (!mounted) return;
         if (restLoaded && Array.isArray(restLoaded) && restLoaded.length > 0) {
@@ -4470,7 +4470,7 @@ export default function AdminClient({
         const loaded = await withTimeout(
           isPlatformEditor ? loadPlatformBlocksFromSupabaseFallback() : loadBlocksFromSupabaseFallback(resolvedMerchantIds),
           ADMIN_PAGE_LOAD_TIMEOUT_MS,
-          "页面内加载超时，已使用朜缓存继续编辑",
+          "页面内加载超时，已使用本地缓存继续编辑",
         );
         if (!mounted) return;
         if (loaded && Array.isArray(loaded) && loaded.length > 0) {
@@ -6179,7 +6179,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       const { error } = await withTimeout(
         supabase.auth.signOut(),
         AUTH_CHECK_TIMEOUT_MS,
-        "出登录超时，请稍后重试",
+        "退出登录超时，请稍后重试",
       );
       if (error) {
         setTip(`退出失败：${error.message}`);
@@ -6189,7 +6189,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       clearMerchantSignInBridge();
       window.location.href = "/login?loggedOut=1";
     } catch (error) {
-      setTip(error instanceof Error ? error.message : "出失败，请稍后重");
+      setTip(error instanceof Error ? error.message : "退出失败，请稍后重试");
     } finally {
       setLoggingOut(false);
     }
@@ -6198,7 +6198,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   if (checkingAuth) {
     return (
       <main className="min-h-screen bg-gray-100 flex items-center justify-center">
-        <div className="text-sm text-gray-600">{"正在查登录状.."}</div>
+        <div className="text-sm text-gray-600">{"正在检查登录状态..."}</div>
       </main>
     );
   }
