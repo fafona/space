@@ -8,6 +8,10 @@ const CACHE_PATH = path.join(ROOT_DIR, "logs", "dom-translation-cache.json");
 const TARGET_LANGS = ["zh-TW", "ja", "ko", "en"];
 const MAX_TEXT_LENGTH = 140;
 const CONCURRENCY = 8;
+const SKIP_FILE_PATTERNS = [
+  /(?:^|[\\/])editorSystemDefaults\.ts$/,
+  /\.test\.(?:ts|tsx)$/,
+];
 
 function walkFiles(dir, out = []) {
   const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -19,6 +23,8 @@ function walkFiles(dir, out = []) {
     }
     if (!/\.(ts|tsx)$/.test(entry.name)) return;
     if (entry.name.endsWith(".generated.ts")) return;
+    const normalizedPath = next.replace(/\\/g, "/");
+    if (SKIP_FILE_PATTERNS.some((pattern) => pattern.test(normalizedPath))) return;
     out.push(next);
   });
   return out;
@@ -101,7 +107,7 @@ async function translateText(text, targetLang, retry = 0) {
       return text;
     }
     return json[0].map((item) => (Array.isArray(item) ? item[0] : "")).join("").trim() || text;
-  } catch (error) {
+  } catch {
     if (retry < 3) {
       await delay(250 * (retry + 1));
       return translateText(text, targetLang, retry + 1);

@@ -47,6 +47,24 @@
     "ko": "6자 이상",
     "en": "6 or more characters"
   },
+  "8位数字，例如 10000001": {
+    "zh-TW": "8位數字，例如 10000001",
+    "ja": "8 桁、たとえば 10000001",
+    "ko": "8자리(예: 10000001)",
+    "en": "8 digits, for example 10000001"
+  },
+  "按编号导入图片": {
+    "zh-TW": "按編號匯入圖片",
+    "ja": "番号を指定して画像をインポートする",
+    "ko": "번호별로 사진 가져오기",
+    "en": "Import pictures by number"
+  },
+  "按钮": {
+    "zh-TW": "按鈕",
+    "ja": "ボタン",
+    "ko": "단추",
+    "en": "button"
+  },
   "按行业快速查找商户站点，统一平台管理": {
     "zh-TW": "按行業快速尋找商戶站點，統一平台管理",
     "ja": "加盟店サイトを業界別に素早く検索し、プラットフォームを一元管理",
@@ -65,17 +83,41 @@
     "ko": "이 버튼을 누른 채 드래그하면 블록을 자유롭게 드래그할 수 있습니다.",
     "en": "Hold and drag this button to drag the block freely"
   },
-  "把当前页大图转为外链 URL": {
-    "zh-TW": "把目前頁大圖轉為外鏈 URL",
-    "ja": "現在のページ画像を外部リンク URL に変換します",
-    "ko": "현재 페이지 이미지를 외부링크 URL로 변환",
-    "en": "Convert the current page image to an external link URL"
+  "白名单上限只能设置为 1 到 20 台。": {
+    "zh-TW": "白名單上限只能設定為 1 到 20 台。",
+    "ja": "ホワイトリストの上限は1～20台までしか設定できません。",
+    "ko": "화이트리스트의 상한은 1~20개 장치까지만 설정할 수 있습니다.",
+    "en": "The upper limit of the whitelist can only be set from 1 to 20 devices."
   },
-  "保存": {
-    "zh-TW": "儲存",
-    "ja": "保存",
-    "ko": "구하다",
-    "en": "save"
+  "白名单设备": {
+    "zh-TW": "白名單設備",
+    "ja": "デバイスをホワイトリストに登録する",
+    "ko": "화이트리스트 장치",
+    "en": "Whitelist devices"
+  },
+  "白名单设备加载超时，请稍后重试": {
+    "zh-TW": "白名單設備載入超時，請稍後重試",
+    "ja": "ホワイトリスト デバイスの読み込みがタイムアウトしました。後でもう一度試してください。",
+    "ko": "허용 목록 장치 로드 시간이 초과되었습니다. 나중에 다시 시도해 주세요.",
+    "en": "Whitelist device loading timed out, please try again later."
+  },
+  "白名单设备上限保存失败，请稍后重试": {
+    "zh-TW": "白名單設備上限儲存失敗，請稍後重試",
+    "ja": "ホワイトリストのデバイス制限を保存できませんでした。後でもう一度試してください。",
+    "ko": "허용 목록 기기 한도를 저장하지 못했습니다. 나중에 다시 시도해 주세요.",
+    "en": "Failed to save the whitelist device limit, please try again later."
+  },
+  "白名单设备移除失败，请稍后重试": {
+    "zh-TW": "白名單設備移除失敗，請稍後重試",
+    "ja": "ホワイトリスト デバイスの削除に失敗しました。後でもう一度試してください。",
+    "ko": "화이트리스트 기기를 제거하지 못했습니다. 나중에 다시 시도해 주세요.",
+    "en": "Whitelist device removal failed, please try again later."
+  },
+  "白名单设备已达到上限，请先移除旧设备后再登录。": {
+    "zh-TW": "白名單設備已達上限，請先移除舊設備後再登入。",
+    "ja": "ホワイトリストのデバイス制限に達しました。再度ログインする前に古いデバイスを削除してください。",
+    "ko": "화이트리스트 장치 한도에 도달했습니다. 다시 로그인하기 전에 이전 장치를 제거하십시오.",
+    "en": "The whitelist device limit has been reached. Please remove the old device before logging in again."
   },
   "保存草稿": {
     "zh-TW": "儲存草稿",
@@ -89,17 +131,41 @@
     "ko": "시간 초과 저장",
     "en": "save timeout"
   },
-  "保存配置": {
-    "zh-TW": "儲存配置",
-    "ja": "設定の保存",
-    "ko": "구성 저장",
-    "en": "Save configuration"
+  "保存超时，请稍后重试": {
+    "zh-TW": "儲存超時，請稍後重試",
+    "ja": "保存がタイムアウトしました。後でもう一度お試しください",
+    "ko": "저장 시간이 초과되었습니다. 나중에 다시 시도해 주세요.",
+    "en": "Save timed out, please try again later"
   },
-  "背景": {
-    "zh-TW": "背景",
-    "ja": "背景",
-    "ko": "배경",
-    "en": "background"
+  "保存上限": {
+    "zh-TW": "保存上限",
+    "ja": "保存制限",
+    "ko": "저장 한도",
+    "en": "Save limit"
+  },
+  "保存失败，请重试": {
+    "zh-TW": "儲存失敗，請重試",
+    "ja": "保存に失敗しました。もう一度お試しください",
+    "ko": "저장하지 못했습니다. 다시 시도해 주세요.",
+    "en": "Save failed, please try again"
+  },
+  "保存修改": {
+    "zh-TW": "儲存修改",
+    "ja": "変更を保存する",
+    "ko": "변경사항 저장",
+    "en": "Save changes"
+  },
+  "保存中...": {
+    "zh-TW": "儲存中...",
+    "ja": "保存中...",
+    "ko": "절약...",
+    "en": "Saving..."
+  },
+  "备注（可选）": {
+    "zh-TW": "備註（可選）",
+    "ja": "備考（任意）",
+    "ko": "비고(선택사항)",
+    "en": "Remarks (optional)"
   },
   "背景参数": {
     "zh-TW": "背景參數",
@@ -113,6 +179,18 @@
     "ko": "배경 설정",
     "en": "Background settings"
   },
+  "背景图": {
+    "zh-TW": "背景圖",
+    "ja": "背景画像",
+    "ko": "배경 이미지",
+    "en": "Background image"
+  },
+  "背景图上传失败，请重试": {
+    "zh-TW": "背景圖上傳失敗，請重試",
+    "ja": "背景画像のアップロードに失敗しました。もう一度お試しください。",
+    "ko": "배경 이미지 업로드에 실패했습니다. 다시 시도해 주세요.",
+    "en": "Background image upload failed, please try again"
+  },
   "背景位置": {
     "zh-TW": "背景位置",
     "ja": "背景の位置",
@@ -125,17 +203,47 @@
     "ko": "배경 위치(예: 중앙, 상단, 왼쪽 상단)",
     "en": "Background position (such as center, top, left top)"
   },
+  "本次邮箱验证已失效，请重新登录后再验证。": {
+    "zh-TW": "本次信箱驗證已失效，請重新登入後再驗證。",
+    "ja": "このメール認証の有効期限が切れています。再度ログインして再度認証してください。",
+    "ko": "이 이메일 확인은 만료되었습니다. 다시 로그인하여 다시 확인해 주세요.",
+    "en": "This email verification has expired, please log in again and verify again."
+  },
   "本地服务": {
     "zh-TW": "本地服務",
     "ja": "ローカルサービス",
     "ko": "지역 서비스",
     "en": "local service"
   },
+  "本地会话恢复超时": {
+    "zh-TW": "本機會話恢復逾時",
+    "ja": "ローカルセッション再開タイムアウト",
+    "ko": "로컬 세션 재개 시간 초과",
+    "en": "Local session resume timeout"
+  },
+  "本地站点配置初始化失败，请重试": {
+    "zh-TW": "本機站點配置初始化失敗，請重試",
+    "ja": "ローカル サイト構成の初期化に失敗しました。もう一度お試しください。",
+    "ko": "로컬 사이트 구성 초기화에 실패했습니다. 다시 시도해 주세요.",
+    "en": "Local site configuration initialization failed, please try again"
+  },
+  "本站页面 ID": {
+    "zh-TW": "本站頁面 ID",
+    "ja": "このサイトのページID",
+    "ko": "이 사이트의 페이지 ID",
+    "en": "Page ID of this site"
+  },
   "边框样式": {
     "zh-TW": "邊框樣式",
     "ja": "ボーダースタイル",
     "ko": "테두리 스타일",
     "en": "border style"
+  },
+  "编号": {
+    "zh-TW": "編號",
+    "ja": "シリアルナンバー",
+    "ko": "일련번호",
+    "en": "serial number"
   },
   "编辑": {
     "zh-TW": "編輯",
@@ -155,17 +263,17 @@
     "ko": "갤러리 편집",
     "en": "Edit gallery"
   },
-  "編集": {
-    "zh-TW": "編集",
-    "ja": "編集",
-    "ko": "편집",
-    "en": "compilation"
+  "编码": {
+    "zh-TW": "編碼",
+    "ja": "コーディング",
+    "ko": "코딩",
+    "en": "coding"
   },
-  "編輯": {
-    "zh-TW": "編輯",
-    "ja": "編集",
-    "ko": "편집하다",
-    "en": "Edit"
+  "标签": {
+    "zh-TW": "標籤",
+    "ja": "ラベル",
+    "ko": "상표",
+    "en": "Label"
   },
   "标签：每行一个": {
     "zh-TW": "標籤：每行一個",
@@ -179,11 +287,11 @@
     "ko": "제목",
     "en": "title"
   },
-  "標題": {
-    "zh-TW": "標題",
-    "ja": "タイトル",
-    "ko": "제목",
-    "en": "Title"
+  "表格中没有可导入的产品数据。": {
+    "zh-TW": "表格中沒有可匯入的產品資料。",
+    "ja": "テーブルにインポートする商品データがありません。",
+    "ko": "표에 가져올 제품 데이터가 없습니다.",
+    "en": "There is no product data to import in the table."
   },
   "饼图": {
     "zh-TW": "圓餅圖",
@@ -191,11 +299,23 @@
     "ko": "원형 차트",
     "en": "pie chart"
   },
-  "並び順プレビュー": {
-    "zh-TW": "並び順プレビュー",
-    "ja": "とシュン プレビュー",
-    "ko": "프레뷰도 피하고",
-    "en": "and shun プレビュー"
+  "拨打电话": {
+    "zh-TW": "撥打電話",
+    "ja": "電話をかける",
+    "ko": "전화 걸기",
+    "en": "Make a call"
+  },
+  "拨打工作电话": {
+    "zh-TW": "撥打工作電話",
+    "ja": "仕事の電話をかける",
+    "ko": "직장에 전화 걸기",
+    "en": "Make a work call"
+  },
+  "拨号": {
+    "zh-TW": "撥號",
+    "ja": "ダイヤル",
+    "ko": "다이얼",
+    "en": "dial"
   },
   "玻璃状": {
     "zh-TW": "玻璃狀",
@@ -221,6 +341,12 @@
     "ko": "공들여 나열한 것",
     "en": "layout"
   },
+  "部分图片未上传到存储，当前先保存在草稿中；发布前会再次尝试外链化。": {
+    "zh-TW": "部分圖片未上傳到存儲，目前先保存在草稿中；發布前會再次嘗試外鏈化。",
+    "ja": "一部の画像はストレージにアップロードされておらず、現在下書きに保存されています。外部リンクは公開前に再試行されます。",
+    "ko": "일부 이미지는 스토리지에 업로드되지 않았으며 현재 초안으로 저장되어 있습니다. 게시하기 전에 외부 링크가 다시 시도됩니다.",
+    "en": "Some images have not been uploaded to storage and are currently saved in drafts; external links will be tried again before publishing."
+  },
   "餐饮": {
     "zh-TW": "餐飲",
     "ja": "食べ物",
@@ -233,23 +359,17 @@
     "ko": "초안이 저장되지 않았습니다.",
     "en": "Draft not saved"
   },
-  "草已保": {
-    "zh-TW": "草已保",
-    "ja": "草が救われました",
-    "ko": "잔디가 구해졌습니다",
-    "en": "The grass has been saved"
+  "草稿已保存": {
+    "zh-TW": "草稿已儲存",
+    "ja": "下書きが保存されました",
+    "ko": "초안이 저장되었습니다.",
+    "en": "Draft saved"
   },
   "层级": {
     "zh-TW": "層級",
     "ja": "階層",
     "ko": "계층",
     "en": "Hierarchy"
-  },
-  "杈规鏍峰紡": {
-    "zh-TW": "杈規鏍峰紡",
-    "ja": "Chu GuiHaifeng Fang",
-    "ko": "추귀하이펑팡",
-    "en": "Chu GuiHaifeng Fang"
   },
   "插入背景": {
     "zh-TW": "插入背景",
@@ -371,11 +491,71 @@
     "ko": "테넌트 목록 및 세부정보를 확인하세요.",
     "en": "View tenant list and details."
   },
+  "产品": {
+    "zh-TW": "產品",
+    "ja": "製品",
+    "ko": "제품",
+    "en": "product"
+  },
+  "产品编号": {
+    "zh-TW": "產品編號",
+    "ja": "製品番号",
+    "ko": "제품번호",
+    "en": "Product number"
+  },
+  "产品介绍": {
+    "zh-TW": "產品介紹",
+    "ja": "製品紹介",
+    "ko": "제품소개",
+    "en": "Product introduction"
+  },
+  "产品框样式": {
+    "zh-TW": "產品框樣式",
+    "ja": "製品の箱のスタイル",
+    "ko": "제품 상자 스타일",
+    "en": "Product box style"
+  },
+  "产品名称": {
+    "zh-TW": "產品名稱",
+    "ja": "製品名",
+    "ko": "제품명",
+    "en": "Product name"
+  },
+  "产品图片": {
+    "zh-TW": "產品圖片",
+    "ja": "製品写真",
+    "ko": "제품 사진",
+    "en": "Product pictures"
+  },
+  "产品图片已写入草稿，但未上传到存储；发布前会再次尝试外链化。": {
+    "zh-TW": "產品圖片已寫入草稿，但未上傳至儲存；發佈前會再次嘗試外鏈化。",
+    "ja": "製品画像は下書きに書き込まれていますが、ストレージにアップロードされていません。外部リンクは公開前に再度試行されます。",
+    "ko": "제품 이미지가 초안에 작성되었지만 저장소에 업로드되지 않았습니다. 게시하기 전에 외부 연결이 다시 시도됩니다.",
+    "en": "The product image has been written into a draft but has not been uploaded to storage; external linking will be attempted again before publishing."
+  },
+  "产品展示": {
+    "zh-TW": "產品展示",
+    "ja": "商品の展示",
+    "ko": "제품 디스플레이",
+    "en": "Product display"
+  },
   "超级后台登录": {
     "zh-TW": "超級後台登入",
     "ja": "スーパーバックグラウンドログイン",
     "ko": "슈퍼 백그라운드 로그인",
     "en": "Super background login"
+  },
+  "超级后台登录设备管理": {
+    "zh-TW": "超級後台登入裝置管理",
+    "ja": "スーパーバックグラウンドログインデバイス管理",
+    "ko": "슈퍼 백그라운드 로그인 장치 관리",
+    "en": "Super background login device management"
+  },
+  "超级后台登录失败，请重新验证。": {
+    "zh-TW": "超級後台登入失敗，請重新驗證。",
+    "ja": "スーパー バックグラウンド ログインに失敗しました。再確認してください。",
+    "ko": "슈퍼 백그라운드 로그인에 실패했습니다. 다시 확인해 주세요.",
+    "en": "Super background login failed, please re-verify."
   },
   "超級後台登入": {
     "zh-TW": "超級後台登入",
@@ -395,29 +575,17 @@
     "ko": "취소",
     "en": "Cancel"
   },
-  "琛?": {
-    "zh-TW": "琛?",
-    "ja": "チェン？",
-    "ko": "첸?",
-    "en": "Chen?"
-  },
-  "宸茶鍙朠C閰嶇疆鍒版墜鏈虹": {
-    "zh-TW": "宸茶鍙朠C閰 Mont疆鍒版墜鏈虹",
-    "ja": "Chencha 鍙朠C閰衰獒獒版ペンダントチェーンレインボー",
-    "ko": "Chencha 鍙朠C閰衰獒獒版 펜던트 체인 레인보우 ",
-    "en": "Chencha 鍙朠C閰衰獒獒版 pendant chain rainbow "
-  },
-  "成功": {
-    "zh-TW": "成功",
-    "ja": "成功",
-    "ko": "성공",
-    "en": "success"
-  },
   "城市": {
     "zh-TW": "城市",
     "ja": "市",
     "ko": "도시",
     "en": "City"
+  },
+  "城市定位与内容搜索": {
+    "zh-TW": "城市定位與內容搜索",
+    "ja": "都市の位置特定とコンテンツ検索",
+    "ko": "도시 위치 파악 및 콘텐츠 검색",
+    "en": "City positioning and content search"
   },
   "出登录超时，请稍后重试": {
     "zh-TW": "出登入逾時，請稍後重試",
@@ -431,11 +599,11 @@
     "ko": "실패했습니다. 나중에 다시 시도해 주세요.",
     "en": "Failed, please try again later."
   },
-  "初回登録後は、メール認証を完了してからログインしてください。": {
-    "zh-TW": "初回登録後は、メール認証を完了してからログインしてください。",
-    "ja": "初回ログイン後、認証プロセスは完了しました。",
-    "ko": "최초 로그인 후 인증절차가 완료되었습니다.",
-    "en": "After logging in for the first time, the verification process was completed."
+  "初回登録後は、メール確認を完了してからログインしてください。": {
+    "zh-TW": "初回登録後は、メール確認を完了してからログインしてください。",
+    "ja": "初回ログイン後、完了していることを確認しました。",
+    "ko": "처음 로그인 후 완료되었음을 확인하였습니다.",
+    "en": "After logging in for the first time, I confirmed that it was completed."
   },
   "处理告警": {
     "zh-TW": "處理告警",
@@ -449,11 +617,11 @@
     "ko": "프로세스 승인",
     "en": "Process approvals"
   },
-  "创建": {
-    "zh-TW": "創建",
-    "ja": "作成する",
-    "ko": "만들다",
-    "en": "create"
+  "处理中...": {
+    "zh-TW": "處理中...",
+    "ja": "処理...",
+    "ko": "처리 중...",
+    "en": "Processing..."
   },
   "创建、编辑、停用租户。": {
     "zh-TW": "建立、編輯、停用租戶。",
@@ -473,23 +641,29 @@
     "ko": "사용자를 생성하고, 사용자를 비활성화하고, 권한을 할당합니다.",
     "en": "Create users, disable users, assign permissions."
   },
-  "棰勮鏍峰紡": {
-    "zh-TW": "棰勮鏍峰紡",
-    "ja": "棰勮镙峰峰",
-    "ko": "棰勮镙峰峰",
-    "en": "棰勮镙峰峰"
-  },
-  "棰勮鏂囨湰 Preview: 艺术字体 Art Font 示例 ABC abc 123": {
-    "zh-TW": "棰勮鏂囨湰 Preview: 藝術字體 Art Font 範例 ABC abc 123",
-    "ja": "棰勮鏂囨湰 プレビュー: アート フォント アート フォントの例 ABC abc 123",
-    "ko": "棰勮鏂囨湰 미리보기: Art Font Art Font 예 ABC abc 123",
-    "en": "棰勮鏂囨湰 Preview: Art Font Art Font Example ABC abc 123"
+  "创建中...": {
+    "zh-TW": "創建中...",
+    "ja": "作成...",
+    "ko": "만드는 중...",
+    "en": "Creating..."
   },
   "春季": {
     "zh-TW": "春季",
     "ja": "春",
     "ko": "봄",
     "en": "spring"
+  },
+  "此信箱已註冊，但尚未完成信箱驗證。請先驗證信箱，或點擊下方「重發驗證郵件」。": {
+    "zh-TW": "此信箱已註冊，但尚未完成信箱驗證。請先驗證信箱，或點選下方「重發驗證郵件」。",
+    "ja": "このメールボックスは登録されていますが、メールボックスの検証が完了していません。最初にメール アドレスを確認するか、下の [確認メールを再送信する] をクリックしてください。",
+    "ko": "이 메일함은 등록되었으나 메일함 확인이 완료되지 않았습니다. 먼저 이메일 주소를 확인하거나 아래의 \"확인 이메일 재전송\"을 클릭하세요.",
+    "en": "This mailbox has been registered, but mailbox verification has not been completed. Please verify your email address first, or click \"Resend Verification Email\" below."
+  },
+  "此信箱已註冊，請直接登入。": {
+    "zh-TW": "此信箱已註冊，請直接登入。",
+    "ja": "このメールボックスは登録されています。直接ログインしてください。",
+    "ko": "이 메일함은 등록되었습니다. 직접 로그인해 주세요.",
+    "en": "This mailbox has been registered, please log in directly."
   },
   "促销": {
     "zh-TW": "促銷",
@@ -503,17 +677,77 @@
     "ko": "업데이트 가능한 페이지 기록이 있지만 초기화에 실패했습니다.",
     "en": "There is an updateable pages record, but initialization failed"
   },
-  "错误": {
-    "zh-TW": "錯誤",
-    "ja": "間違い",
-    "ko": "실수",
-    "en": "mistake"
+  "打开 Discord": {
+    "zh-TW": "打開 Discord",
+    "ja": "ディスコードを開く",
+    "ko": "오픈 디스코드",
+    "en": "Open Discord"
   },
-  "錯誤": {
-    "zh-TW": "錯誤",
-    "ja": "間違い",
-    "ko": "실수",
-    "en": "Mistake"
+  "打开 Facebook": {
+    "zh-TW": "打開 Facebook",
+    "ja": "Facebookを開く",
+    "ko": "페이스북 열기",
+    "en": "Open Facebook"
+  },
+  "打开 Instagram": {
+    "zh-TW": "開啟 Instagram",
+    "ja": "インスタグラムを開く",
+    "ko": "인스타그램 열기",
+    "en": "Open Instagram"
+  },
+  "打开 LinkedIn": {
+    "zh-TW": "打開 LinkedIn",
+    "ja": "LinkedInを開く",
+    "ko": "링크드인 열기",
+    "en": "Open LinkedIn"
+  },
+  "打开 Telegram": {
+    "zh-TW": "打開 Telegram",
+    "ja": "オープンテレグラム",
+    "ko": "오픈 텔레그램",
+    "en": "Open Telegram"
+  },
+  "打开 TikTok": {
+    "zh-TW": "打開 TikTok",
+    "ja": "TikTokを開く",
+    "ko": "틱톡 열기",
+    "en": "Open TikTok"
+  },
+  "打开 Twitter": {
+    "zh-TW": "打開 Twitter",
+    "ja": "ツイッターを開く",
+    "ko": "트위터 열기",
+    "en": "Open Twitter"
+  },
+  "打开 WhatsApp": {
+    "zh-TW": "打開 WhatsApp",
+    "ja": "WhatsAppを開く",
+    "ko": "WhatsApp 열기",
+    "en": "Open WhatsApp"
+  },
+  "打开抖音": {
+    "zh-TW": "打開抖音",
+    "ja": "TikTokを開く",
+    "ko": "틱톡 열기",
+    "en": "Open TikTok"
+  },
+  "打开微博": {
+    "zh-TW": "打開微博",
+    "ja": "Weiboを開く",
+    "ko": "웨이보 열기",
+    "en": "Open Weibo"
+  },
+  "打开小红书": {
+    "zh-TW": "打開小紅書",
+    "ja": "小さな赤い本を開いてください",
+    "ko": "작은 빨간 책을 펴세요",
+    "en": "Open the little red book"
+  },
+  "大小": {
+    "zh-TW": "大小",
+    "ja": "サイズ",
+    "ko": "크기",
+    "en": "size"
   },
   "待处理": {
     "zh-TW": "待處理",
@@ -521,35 +755,107 @@
     "ko": "보류 중",
     "en": "Pending"
   },
+  "待确认": {
+    "zh-TW": "待確認",
+    "ja": "確認中",
+    "ko": "확인 예정",
+    "en": "To be confirmed"
+  },
+  "单个号码": {
+    "zh-TW": "單一號碼",
+    "ja": "単一の数字",
+    "ko": "단일 숫자",
+    "en": "single number"
+  },
+  "单价": {
+    "zh-TW": "單價",
+    "ja": "単価",
+    "ko": "단가",
+    "en": "unit price"
+  },
   "当前不是商户站点作用域（缺少 site-xxx），已止发布以防写错": {
     "zh-TW": "目前不是商家網站作用域（缺少 site-xxx），已止發布以防寫錯",
     "ja": "現在、このサイトは販売者サイトのスコープに含まれておらず (site-xxx が欠落しています)、タイプミスを防ぐために公開がブロックされています。",
     "ko": "현재 판매자 사이트 범위에 속하지 않으며(site-xxx가 누락됨) 오타를 방지하기 위해 게시가 차단되었습니다.",
     "en": "It is currently not in the merchant site scope (site-xxx is missing) and has been blocked from being published to prevent typos."
   },
-  "当前浏览器不支持定位": {
-    "zh-TW": "目前瀏覽器不支援定位",
-    "ja": "現在のブラウザは位置情報をサポートしていません",
-    "ko": "현재 브라우저는 위치 지정을 지원하지 않습니다.",
-    "en": "The current browser does not support positioning"
+  "当前会话无权上传资源。": {
+    "zh-TW": "目前會話無權上傳資源。",
+    "ja": "現在のセッションにはリソースをアップロードする権限がありません。",
+    "ko": "현재 세션에는 리소스를 업로드할 권한이 없습니다.",
+    "en": "The current session does not have permission to upload resources."
   },
-  "当前区块类型不支持插入文": {
-    "zh-TW": "當前區塊類型不支援插入文",
-    "ja": "現在のブロック タイプは、挿入されたテキストをサポートしていません。",
-    "ko": "현재 블록 유형은 삽입된 텍스트를 지원하지 않습니다.",
-    "en": "The current block type does not support inserted text."
+  "当前浏览器会在验证成功后加入白名单。": {
+    "zh-TW": "目前瀏覽器會在驗證成功後加入白名單。",
+    "ja": "検証が成功すると、現在のブラウザがホワイトリストに追加されます。",
+    "ko": "확인이 성공적으로 완료되면 현재 브라우저가 화이트리스트에 추가됩니다.",
+    "en": "The current browser will be added to the whitelist after successful verification."
   },
-  "当前权限朼通相册区": {
-    "zh-TW": "目前權限朼通相簿區",
-    "ja": "現在の権限: Zhitong フォト アルバム エリア",
-    "ko": "현재 권한: Zhitong 사진 앨범 영역",
-    "en": "Current permissions: Zhitong photo album area"
+  "当前浏览器设备信息无效，请刷新后重试。": {
+    "zh-TW": "目前瀏覽器設備資訊無效，請刷新後重試。",
+    "ja": "現在のブラウザのデバイス情報は無効です。更新して再試行してください。",
+    "ko": "현재 브라우저 장치 정보가 잘못되었습니다. 새로고침한 후 다시 시도해 주세요.",
+    "en": "The current browser device information is invalid, please refresh and try again."
   },
-  "当前权限朼通音乐区": {
-    "zh-TW": "目前權限朼通音樂區",
-    "ja": "現在の許可: Tongtong Music Zone",
-    "ko": "현재 권한: 통통뮤직존",
-    "en": "Current permissions: Tongtong Music Zone"
+  "当前浏览器无法建立受信设备标识，请更换浏览器或关闭无痕模式后重试。": {
+    "zh-TW": "目前瀏覽器無法建立受信設備標識，請更換瀏覽器或關閉無痕模式後重試。",
+    "ja": "現在のブラウザは、信頼できるデバイス ID を確立できません。ブラウザを変更するか、シークレット モードをオフにして、もう一度お試しください。",
+    "ko": "현재 브라우저는 신뢰할 수 있는 장치 ID를 설정할 수 없습니다. 브라우저를 변경하거나 시크릿 모드를 끄고 다시 시도해 보세요.",
+    "en": "The current browser cannot establish a trusted device identity. Please change the browser or turn off incognito mode and try again."
+  },
+  "当前浏览器已在白名单内。": {
+    "zh-TW": "目前瀏覽器已在白名單內。",
+    "ja": "現在のブラウザはすでにホワイトリストに登録されています。",
+    "ko": "현재 브라우저는 이미 허용 목록에 있습니다.",
+    "en": "The current browser is already in the whitelist."
+  },
+  "当前名片没有可打开的网站链接": {
+    "zh-TW": "當前名片沒有可開啟的網站鏈接",
+    "ja": "現在の名刺には、開くための Web サイト リンクがありません。",
+    "ko": "현재 명함에는 열 수 있는 웹사이트 링크가 없습니다.",
+    "en": "The current business card has no website link to open."
+  },
+  "当前名片没有可复制的网站链接": {
+    "zh-TW": "當前名片沒有可複製的網站鏈接",
+    "ja": "現在の名刺にはコピーできる Web サイトへのリンクがありません",
+    "ko": "현재 명함에는 복사할 수 있는 웹사이트 링크가 없습니다.",
+    "en": "The current business card does not have a website link that can be copied"
+  },
+  "当前名片没有可下载的联系人": {
+    "zh-TW": "目前名片沒有可下載的聯絡人",
+    "ja": "現在の名刺にはダウンロード可能な連絡先がありません",
+    "ko": "현재 명함에 다운로드 가능한 연락처가 없습니다.",
+    "en": "There are no downloadable contacts for the current business card"
+  },
+  "当前内容加载不完整，请刷新页面或重新登录后重试。": {
+    "zh-TW": "目前內容載入不完整，請重新整理頁面或重新登入後重試。",
+    "ja": "現在のコンテンツは完全には読み込まれていません。ページを更新するか、再度ログインして再試行してください。",
+    "ko": "현재 콘텐츠가 완전히 로드되지 않았습니다. 페이지를 새로 고치거나 다시 로그인한 후 다시 시도하세요.",
+    "en": "The current content is not fully loaded, please refresh the page or log in again and try again."
+  },
+  "当前内容加载超时，请刷新页面或重新登录后重试。": {
+    "zh-TW": "目前內容載入逾時，請重新整理頁面或重新登入後重試。",
+    "ja": "現在のコンテンツの読み込みがタイムアウトしました。ページを更新するか、再度ログインして再試行してください。",
+    "ko": "현재 콘텐츠 로드 시간이 초과되었습니다. 페이지를 새로 고치거나 다시 로그인한 후 다시 시도하세요.",
+    "en": "The current content loading timeout, please refresh the page or log in again and try again."
+  },
+  "当前内容加载失败，请重新登录后重试。": {
+    "zh-TW": "目前內容載入失敗，請重新登入後重試。",
+    "ja": "現在のコンテンツの読み込みに失敗しました。再度ログインして、もう一度お試しください。",
+    "ko": "현재 콘텐츠를 로드하지 못했습니다. 다시 로그인한 후 다시 시도해 주세요.",
+    "en": "The current content failed to load, please log in again and try again."
+  },
+  "当前区块类型不支持插入文字": {
+    "zh-TW": "當前區塊類型不支援插入文字",
+    "ja": "現在のブロック タイプはテキストの挿入をサポートしていません",
+    "ko": "현재 블록 유형은 텍스트 삽입을 지원하지 않습니다.",
+    "en": "The current block type does not support inserting text"
+  },
+  "当前权限未开通按钮区块": {
+    "zh-TW": "目前權限未開通按鈕區塊",
+    "ja": "現在の権限はボタン ブロックに対して有効ではありません",
+    "ko": "버튼 블록에 대해 현재 권한이 활성화되어 있지 않습니다.",
+    "en": "The current permission is not enabled for the button block"
   },
   "当前权限未开通插入背景": {
     "zh-TW": "目前權限未開通插入背景",
@@ -557,17 +863,41 @@
     "ko": "현재 권한은 배경을 삽입할 수 없습니다.",
     "en": "The current permission is not enabled to insert background"
   },
+  "当前权限未开通产品区块": {
+    "zh-TW": "目前權限未開通產品區塊",
+    "ja": "現在の権限では製品ブロックを開いていません",
+    "ko": "현재 권한으로 제품 블록을 열지 않았습니다.",
+    "en": "The current permission has not opened the product block"
+  },
+  "当前权限未开通相册区块": {
+    "zh-TW": "目前權限未開通相簿區塊",
+    "ja": "現在の権限ではアルバム ブロックを開けません",
+    "ko": "현재 권한으로는 앨범 블록을 열 수 없습니다",
+    "en": "The current permissions do not open the album block"
+  },
+  "当前权限未开通音乐区块": {
+    "zh-TW": "目前權限未開通音樂區塊",
+    "ja": "現在の権限では音楽ブロックを開いていません",
+    "ko": "현재 권한으로 음악 블록을 열지 않았습니다.",
+    "en": "The current permission has not opened the music block"
+  },
+  "当前权限未开通预约区块": {
+    "zh-TW": "目前權限未開通預約區塊",
+    "ja": "現在の権限では予約ブロックが開かれていません",
+    "ko": "현재 권한으로 예약 블록이 열리지 않았습니다.",
+    "en": "The current permission has not opened the reservation block"
+  },
   "当前权限未开通主题效果": {
     "zh-TW": "目前權限未開通主題效果",
     "ja": "現在の権限ではテーマ効果が有効になっていません",
     "ko": "현재 권한으로는 테마 효과가 활성화되어 있지 않습니다.",
     "en": "The theme effect is not enabled for the current permissions"
   },
-  "当前商户": {
-    "zh-TW": "目前商戶",
-    "ja": "現在の加盟店",
-    "ko": "현재 판매자",
-    "en": "Current merchant"
+  "当前设备": {
+    "zh-TW": "目前設備",
+    "ja": "現在のデバイス",
+    "ko": "현재 장치",
+    "en": "current device"
   },
   "当前使用空白模板继续编辑": {
     "zh-TW": "目前使用空白範本繼續編輯",
@@ -581,6 +911,24 @@
     "ko": "현재 비어 있음",
     "en": "Currently empty"
   },
+  "当前为链接模式：二维码和链接都会进入联系卡，对方手机打开后可保存到通讯录。": {
+    "zh-TW": "目前為連結模式：二維碼和連結都會進入聯絡卡，對方手機開啟後可儲存到通訊錄。",
+    "ja": "現在リンク モード: QR コードとリンクの両方が連絡先カードに入力され、相手の携帯電話で開いた後、アドレス帳に保存できます。",
+    "ko": "현재 링크 모드: QR 코드와 링크가 모두 연락처 카드에 입력되며, 상대방 휴대폰에서 열어본 후 주소록에 저장할 수 있습니다.",
+    "en": "Currently in link mode: both the QR code and the link will be entered into the contact card, and can be saved to the address book after being opened on the other party's phone."
+  },
+  "当前为图片模式：生成后可保存或复制名片图片。": {
+    "zh-TW": "目前為圖片模式：生成後可儲存或複製名片圖片。",
+    "ja": "現在は写真モードです。生成後に名刺の写真を保存またはコピーできます。",
+    "ko": "현재 사진 모드: 생성 후 명함 사진을 저장하거나 복사할 수 있습니다.",
+    "en": "Currently in picture mode: you can save or copy the business card picture after generation."
+  },
+  "当前未登录，请重新登录后继续。": {
+    "zh-TW": "目前未登錄，請重新登入後繼續。",
+    "ja": "現在ログインしていません。続行するには再度ログインしてください。",
+    "ko": "현재 로그인되어 있지 않습니다. 계속하려면 다시 로그인하세요.",
+    "en": "You are not currently logged in, please log in again to continue."
+  },
   "当前样式为隐藏播放器": {
     "zh-TW": "目前樣式為隱藏播放器",
     "ja": "現在のスタイルはプレーヤーを非表示にすることです",
@@ -593,23 +941,35 @@
     "ko": "현재 페이지에는 억제할 수 있는 인라인 이미지가 없습니다.",
     "en": "There is no inline image that can be repressed on the current page."
   },
+  "当前页面未应用主题，无需还原": {
+    "zh-TW": "目前頁面未套用主題，無需還原",
+    "ja": "テーマは現在のページに適用されていないため、復元する必要はありません",
+    "ko": "현재 페이지에는 테마가 적용되지 않아 복원할 필요가 없습니다.",
+    "en": "The theme is not applied to the current page, no need to restore"
+  },
   "当前帧列": {
     "zh-TW": "目前影格列",
     "ja": "現在のフレーム列",
     "ko": "현재 프레임 열",
     "en": "Current frame column"
   },
-  "當前商戶": {
-    "zh-TW": "當前商戶",
-    "ja": "現在の加盟店",
-    "ko": "현재 판매자",
-    "en": "Current merchant"
+  "当前只有一个页面": {
+    "zh-TW": "目前只有一個頁面",
+    "ja": "現在ページは 1 つだけです",
+    "ko": "현재 페이지가 1개 밖에 없습니다.",
+    "en": "There is currently only one page"
   },
-  "导出": {
-    "zh-TW": "匯出",
-    "ja": "輸出",
-    "ko": "내보내다",
-    "en": "Export"
+  "当前只有一个页面，无需导航栏对齐": {
+    "zh-TW": "目前只有一個頁面，無需導覽列對齊",
+    "ja": "現在ページは 1 つだけなので、ナビゲーション バーの位置を調整する必要はありません。",
+    "ko": "현재는 페이지가 하나만 있으므로 탐색 모음 정렬이 필요하지 않습니다.",
+    "en": "Currently there is only one page, no need for navigation bar alignment"
+  },
+  "导出名片图片上限(KB)": {
+    "zh-TW": "匯出名片圖片上限(KB)",
+    "ja": "名刺画像のエクスポート上限（KB）",
+    "ko": "명함 이미지 내보내기 최대 한도(KB)",
+    "en": "Maximum limit for exporting business card images (KB)"
   },
   "导航": {
     "zh-TW": "導航",
@@ -617,29 +977,23 @@
     "ko": "항해",
     "en": "navigation"
   },
-  "导航区块參有一": {
-    "zh-TW": "導航區塊參有一",
-    "ja": "ナビゲーション ブロックには、",
-    "ko": "네비게이션 블록에는",
-    "en": "The navigation block has a"
+  "导航区块只能有一个": {
+    "zh-TW": "導航區塊只能有一個",
+    "ja": "ナビゲーション ブロックは 1 つだけ存在できます",
+    "ko": "탐색 블록은 하나만 있을 수 있습니다.",
+    "en": "There can only be one navigation block"
   },
-  "导入": {
-    "zh-TW": "導入",
-    "ja": "輸入",
-    "ko": "수입",
-    "en": "import"
+  "导入 Excel": {
+    "zh-TW": "導入 Excel",
+    "ja": "Excelにインポート",
+    "ko": "Excel로 가져오기",
+    "en": "Import into Excel"
   },
-  "導出": {
-    "zh-TW": "匯出",
-    "ja": "輸出",
-    "ko": "내보내다",
-    "en": "Export"
-  },
-  "導入": {
-    "zh-TW": "匯入",
-    "ja": "輸入",
-    "ko": "수입",
-    "en": "import"
+  "到店服务": {
+    "zh-TW": "到店服務",
+    "ja": "店内サービス",
+    "ko": "매장 내 서비스",
+    "en": "In-store service"
   },
   "到店服务、预约咨询、服务介绍": {
     "zh-TW": "到店服務、預約諮詢、服務介紹",
@@ -677,17 +1031,59 @@
     "ko": "로그인",
     "en": "Log in"
   },
-  "登录查超时，已回默商户标识": {
-    "zh-TW": "登入查超時，已回默商家標識",
-    "ja": "ログイン チェックがタイムアウトし、デフォルトの販売者 ID が復元されました。",
-    "ko": "로그인 확인 시간이 초과되어 기본 판매자 ID가 복원되었습니다.",
-    "en": "The login check timed out and the default merchant ID has been restored."
+  "登录会话": {
+    "zh-TW": "登入會話",
+    "ja": "ログインセッション",
+    "ko": "로그인 세션",
+    "en": "Login session"
   },
-  "登录查超时，已使用本地缓存继综辑": {
-    "zh-TW": "登入查超時，已使用本機快取繼綜輯",
-    "ja": "ログインチェックがタイムアウトしました。包括的なレビューを続行するためにローカルキャッシュが使用されました。",
-    "ko": "로그인 확인 시간이 초과되었습니다. 포괄적인 검토를 계속하기 위해 로컬 캐시가 사용되었습니다.",
-    "en": "Login check timeout, local cache has been used to continue the comprehensive review"
+  "登录检查超时，已回退到默认商户标识": {
+    "zh-TW": "登入檢查逾時，已回退到預設商家標識",
+    "ja": "ログイン チェックがタイムアウトし、デフォルトの販売者 ID に戻りました。",
+    "ko": "로그인 확인 시간이 초과되어 기본 판매자 ID로 돌아갔습니다.",
+    "en": "The login check timed out and has fallen back to the default merchant ID."
+  },
+  "登录检查超时，已使用本地缓存继续编辑": {
+    "zh-TW": "登入檢查逾時，已使用本機快取繼續編輯",
+    "ja": "ログイン チェックがタイムアウトしました。編集を続行するためにローカル キャッシュが使用されました。",
+    "ko": "로그인 확인 시간이 초과되었습니다. 편집을 계속하는 데 로컬 캐시가 사용되었습니다.",
+    "en": "Login check timed out, local cache has been used to continue editing."
+  },
+  "登录失败，请重试。": {
+    "zh-TW": "登入失敗，請重試。",
+    "ja": "ログインに失敗しました。もう一度お試しください。",
+    "ko": "로그인에 실패했습니다. 다시 시도해 주세요.",
+    "en": "Login failed, please try again."
+  },
+  "登录未完成，请重新登录后继续。": {
+    "zh-TW": "登入未完成，請重新登入後繼續。",
+    "ja": "ログインが完了していません。続行するには再度ログインしてください。",
+    "ko": "로그인이 완료되지 않았습니다. 계속하려면 다시 로그인하세요.",
+    "en": "Login is not completed, please log in again to continue."
+  },
+  "登录校验超时，已回退到重新登录": {
+    "zh-TW": "登入校驗逾時，已回退至重新登入",
+    "ja": "ログイン認証がタイムアウトになり、再度ログインに戻りました。",
+    "ko": "로그인 확인 시간이 초과되어 다시 로그인 상태로 돌아갔습니다.",
+    "en": "Login verification timed out, and has fallen back to logging in again."
+  },
+  "登录已断开，请重新登录后继续。": {
+    "zh-TW": "登入已斷開，請重新登入後繼續。",
+    "ja": "ログインが切断されました。続行するには再度ログインしてください。",
+    "ko": "로그인이 끊어졌습니다. 계속하려면 다시 로그인하세요.",
+    "en": "Login has been disconnected, please log in again to continue."
+  },
+  "登录账号": {
+    "zh-TW": "登入帳號",
+    "ja": "ログインアカウント",
+    "ko": "로그인 계정",
+    "en": "Login account"
+  },
+  "登录支持邮箱、用户名或 8 位 ID；注册仍需填写邮箱。": {
+    "zh-TW": "登入支援信箱、使用者名稱或 8 位 ID；註冊仍需填寫郵件信箱。",
+    "ja": "ログインは電子メール、ユーザー名、または 8 桁の ID をサポートします。登録には引き続き電子メールが必要です。",
+    "ko": "로그인은 이메일, 사용자 이름 또는 8자리 ID를 지원합니다. 등록하려면 여전히 이메일이 필요합니다.",
+    "en": "Login supports email, username or 8-digit ID; registration still requires email."
   },
   "登录中...": {
     "zh-TW": "登入中...",
@@ -695,17 +1091,29 @@
     "ko": "로그인...",
     "en": "Login..."
   },
+  "登录状态还没准备好，请刷新后台后再试一次": {
+    "zh-TW": "登入狀態還沒準備好，請刷新後台後再試一次",
+    "ja": "ログイン状態はまだ準備ができていません。背景を更新して再試行してください。",
+    "ko": "로그인 상태가 아직 준비되지 않았습니다. 배경을 새로고침하고 다시 시도하세요.",
+    "en": "The login status is not ready yet. Please refresh the background and try again."
+  },
+  "登录状态失效，联系卡链接未删除，请重新登录后重试": {
+    "zh-TW": "登入狀態失效，聯絡卡連結未刪除，請重新登入後重試",
+    "ja": "ログインステータスが無効であり、連絡先カードのリンクが削除されていません。再度ログインして、もう一度お試しください。",
+    "ko": "로그인 상태가 올바르지 않으며 연락처 카드 링크가 삭제되지 않았습니다. 다시 로그인한 후 다시 시도해 주세요.",
+    "en": "The login status is invalid and the contact card link has not been deleted. Please log in again and try again."
+  },
   "登録": {
     "zh-TW": "登録",
     "ja": "ログイン",
     "ko": "로그인",
     "en": "Login"
   },
-  "登録成功。メール認証後にログインしてください。": {
-    "zh-TW": "登録成功。メール認証後にログインしてください。",
-    "ja": "ログイン成功しました。メール認証後にログインしてください。",
-    "ko": "로그인에 성공했습니다. 메일 인증 후 로그인하세요.",
-    "en": "Login successful.にログインしてください after the certification of メール."
+  "登録成功。メール確認後にログインしてください。": {
+    "zh-TW": "登録成功。メール確認後にログインしてください。",
+    "ja": "ログインに成功しました。メールでの確認後、ログインしてください。",
+    "ko": "로그인에 성공했습니다. 메일로 확인 후 로그인해 주세요.",
+    "en": "Login successful.にログインしてください after confirmation by メール."
   },
   "登録中...": {
     "zh-TW": "登録中...",
@@ -719,11 +1127,35 @@
     "ko": "로그인",
     "en": "login"
   },
+  "登入帳號": {
+    "zh-TW": "登入帳號",
+    "ja": "ログインアカウント",
+    "ko": "로그인 계정",
+    "en": "Login account"
+  },
+  "登入支援信箱、使用者名稱或 8 位 ID；註冊仍需填寫信箱。": {
+    "zh-TW": "登入支援信箱、使用者名稱或 8 位 ID；註冊仍需填寫信箱。",
+    "ja": "ログインは電子メール、ユーザー名、または 8 桁の ID をサポートします。登録には引き続き電子メールが必要です。",
+    "ko": "로그인은 이메일, 사용자 이름 또는 8자리 ID를 지원합니다. 등록하려면 여전히 이메일이 필요합니다.",
+    "en": "Login supports email, username or 8-digit ID; registration still requires email."
+  },
   "登入中...": {
     "zh-TW": "登入中...",
     "ja": "ログイン中...",
     "ko": "로그인 중...",
     "en": "Logging in..."
+  },
+  "迪拉姆 AED": {
+    "zh-TW": "迪拉姆 AED",
+    "ja": "ディルハム AED",
+    "ko": "디르함 AED",
+    "en": "Dirham AED"
+  },
+  "第": {
+    "zh-TW": "第",
+    "ja": "いいえ。",
+    "ko": "아니요.",
+    "en": "No."
   },
   "点击样式按钮即可添加到中行": {
     "zh-TW": "點擊樣式按鈕即可新增至中行",
@@ -749,11 +1181,11 @@
     "ko": "영화적인 느낌",
     "en": "Cinematic feel"
   },
-  "店舗": {
-    "zh-TW": "店舗",
-    "ja": "店",
-    "ko": "가게",
-    "en": "shop"
+  "电子名片": {
+    "zh-TW": "電子名片",
+    "ja": "電子名刺",
+    "ko": "전자 명함",
+    "en": "electronic business card"
   },
   "店舗管理ログイン": {
     "zh-TW": "店舗管理ログイン",
@@ -766,12 +1198,6 @@
     "ja": "ショップログインに戻る",
     "ko": "Shop로그인에 참여하세요",
     "en": "Shopログインに戻る"
-  },
-  "電話": {
-    "zh-TW": "電話",
-    "ja": "電話",
-    "ko": "전화",
-    "en": "telephone"
   },
   "定时发布": {
     "zh-TW": "定時發布",
@@ -803,35 +1229,29 @@
     "ko": "포지셔닝에 성공했지만 도시 분석에 실패했습니다. 수동으로 선택하세요.",
     "en": "Positioning successful, but city analysis failed, please select manually"
   },
-  "定位失败": {
-    "zh-TW": "定位失敗",
-    "ja": "位置決めに失敗しました",
-    "ko": "포지셔닝 실패",
-    "en": "Positioning failed"
-  },
   "定位中...": {
     "zh-TW": "定位中...",
     "ja": "位置決め中...",
     "ko": "포지셔닝...",
     "en": "Positioning..."
   },
-  "都道府県": {
-    "zh-TW": "都道府県",
-    "ja": "県",
-    "ko": "현",
-    "en": "Prefecture"
-  },
-  "都市": {
-    "zh-TW": "都市",
-    "ja": "市",
-    "ko": "도시",
-    "en": "city"
+  "抖音": {
+    "zh-TW": "抖音",
+    "ja": "ティックトック",
+    "ko": "틱톡",
+    "en": "Tik Tok"
   },
   "读取 PC 配置将覆盖当前手机配置，是否继续？": {
     "zh-TW": "讀取 PC 配置將覆蓋目前手機配置，是否繼續？",
     "ja": "PC 設定を読み取ると、現在の電話設定が上書きされます。続けますか?",
     "ko": "PC 구성을 읽으면 현재 전화 구성을 덮어씁니다. 계속하시겠습니까?",
     "en": "Reading the PC configuration will overwrite the current phone configuration. Do you want to continue?"
+  },
+  "读取图片失败": {
+    "zh-TW": "讀取圖片失敗",
+    "ja": "画像の読み込みに失敗しました",
+    "ko": "이미지를 읽지 못했습니다.",
+    "en": "Failed to read image"
   },
   "读取图片失败，请重试": {
     "zh-TW": "讀取圖片失敗，請重試",
@@ -857,6 +1277,12 @@
     "ko": "여러 페이지 편집",
     "en": "Multiple page editing"
   },
+  "二维码只在右侧实时预览里显示，左侧不再重复占位置。": {
+    "zh-TW": "二維碼只在右側即時預覽顯示，左側不再重複佔位置。",
+    "ja": "QR コードは右側のリアルタイム プレビューにのみ表示され、左側の同じ位置には表示されなくなります。",
+    "ko": "QR 코드는 실시간 미리보기 오른쪽에만 표시되며 더 이상 왼쪽에서 같은 위치를 차지하지 않습니다.",
+    "en": "The QR code is only displayed in the real-time preview on the right side, and will no longer occupy the same position on the left side."
+  },
   "二月": {
     "zh-TW": "二月",
     "ja": "2月",
@@ -869,12 +1295,6 @@
     "ko": "풀어 주다",
     "en": "release"
   },
-  "发布..": {
-    "zh-TW": "發布..",
-    "ja": "リリース..",
-    "ko": "풀어 주다..",
-    "en": "release.."
-  },
   "发布超时，请压缩图片或减少数据量": {
     "zh-TW": "發布超時，請壓縮圖片或減少資料量",
     "ja": "投稿タイムアウトです。画像を圧縮するか、データサイズを小さくしてください。",
@@ -886,12 +1306,6 @@
     "ja": "正常に投稿されました",
     "ko": "성공적으로 게시되었습니다",
     "en": "Posted successfully"
-  },
-  "发布前回归清单": {
-    "zh-TW": "發布前回歸清單",
-    "ja": "発売前の返品チェックリスト",
-    "ko": "출시 전 반품 체크리스트",
-    "en": "Pre-launch return checklist"
   },
   "发布前回归清单未完成": {
     "zh-TW": "發布前回歸清單未完成",
@@ -971,6 +1385,18 @@
     "ko": "신체검사에 불합격했다고 게시됨",
     "en": "Posted that the physical examination failed"
   },
+  "发布通道未配置": {
+    "zh-TW": "發布通道未配置",
+    "ja": "公開チャネルが構成されていません",
+    "ko": "게시 채널이 구성되지 않았습니다.",
+    "en": "Publishing channel is not configured"
+  },
+  "发布中...": {
+    "zh-TW": "發布中...",
+    "ja": "公開...",
+    "ko": "게시...",
+    "en": "Publish..."
+  },
   "发起发布": {
     "zh-TW": "發起發布",
     "ja": "公開を開始する",
@@ -1001,35 +1427,23 @@
     "ko": "공식적인 릴리스 프로세스를 시작합니다.",
     "en": "Initiate the formal release process."
   },
+  "发送验证码邮件中...": {
+    "zh-TW": "發送驗證碼郵件中...",
+    "ja": "確認コードメールを送信中...",
+    "ko": "인증코드 이메일을 보내는 중...",
+    "en": "Sending verification code email..."
+  },
+  "发送邮件": {
+    "zh-TW": "傳送郵件",
+    "ja": "電子メールを送信する",
+    "ko": "이메일 보내기",
+    "en": "Send email"
+  },
   "发送中...": {
     "zh-TW": "發送中...",
     "ja": "送信中...",
     "ko": "배상...",
     "en": "Sending..."
-  },
-  "發布": {
-    "zh-TW": "發布",
-    "ja": "公開",
-    "ko": "출판하다",
-    "en": "publish"
-  },
-  "發布前回歸清單": {
-    "zh-TW": "發布前回歸清單",
-    "ja": "発売前の返品チェックリスト",
-    "ko": "출시 전 반품 체크리스트",
-    "en": "Pre-launch return checklist"
-  },
-  "發送中...": {
-    "zh-TW": "發送中...",
-    "ja": "送信中...",
-    "ko": "배상...",
-    "en": "Sending..."
-  },
-  "返回": {
-    "zh-TW": "返回",
-    "ja": "戻る",
-    "ko": "반품",
-    "en": "return"
   },
   "返回登录": {
     "zh-TW": "返回登入",
@@ -1055,11 +1469,53 @@
     "ko": "판매자 로그인으로 돌아가기",
     "en": "Return to merchant login"
   },
+  "方案": {
+    "zh-TW": "方案",
+    "ja": "プラン",
+    "ko": "계획",
+    "en": "plan"
+  },
   "方案二": {
     "zh-TW": "方案二",
     "ja": "オプション 2",
     "ko": "옵션 2",
     "en": "Option 2"
+  },
+  "方案模板保存失败，请重试": {
+    "zh-TW": "方案範本儲存失敗，請重試",
+    "ja": "ソリューション テンプレートの保存に失敗しました。もう一度お試しください。",
+    "ko": "솔루션 템플릿을 저장하지 못했습니다. 다시 시도해 주세요.",
+    "en": "Failed to save the solution template, please try again"
+  },
+  "方案模板分类保存失败，请重试": {
+    "zh-TW": "方案範本分類儲存失敗，請重試",
+    "ja": "ソリューション テンプレートの分類を保存できませんでした。もう一度お試しください。",
+    "ko": "솔루션 템플릿 분류를 저장하지 못했습니다. 다시 시도해 주세요.",
+    "en": "Failed to save solution template classification, please try again"
+  },
+  "方案模板名称保存失败，请重试": {
+    "zh-TW": "方案範本名稱儲存失敗，請重試",
+    "ja": "スキーム テンプレート名の保存に失敗しました。もう一度お試しください。",
+    "ko": "구성표 템플릿 이름을 저장하지 못했습니다. 다시 시도해 주세요.",
+    "en": "Failed to save scheme template name, please try again"
+  },
+  "方案模板已发布，但本地状态更新失败，请刷新后确认": {
+    "zh-TW": "方案範本已發布，但本地狀態更新失敗，請刷新後確認",
+    "ja": "ソリューション テンプレートはリリースされましたが、ローカル ステータスの更新に失敗しました。更新して確認してください。",
+    "ko": "솔루션 템플릿이 출시되었지만 로컬 상태 업데이트에 실패했습니다. 새로고침하고 확인해 주세요.",
+    "en": "The solution template has been released, but the local status update failed. Please refresh and confirm."
+  },
+  "方案模板已写入草稿，但审计记录更新失败，请刷新后确认": {
+    "zh-TW": "方案範本已寫入草稿，但審計記錄更新失敗，請刷新後確認",
+    "ja": "計画テンプレートはドラフトに書き込まれましたが、監査記録の更新に失敗しました。更新して確認してください。",
+    "ko": "계획 템플릿이 초안에 작성되었지만 감사 기록 ​​업데이트에 실패했습니다. 새로고침하고 확인해 주세요.",
+    "en": "The plan template has been written into a draft, but the audit record update failed. Please refresh and confirm."
+  },
+  "方案模板应用失败，请稍后重试": {
+    "zh-TW": "方案範本套用失敗，請稍後重試",
+    "ja": "ソリューション テンプレートの適用に失敗しました。後でもう一度お試しください。",
+    "ko": "솔루션 템플릿을 적용하지 못했습니다. 나중에 다시 시도해 주세요.",
+    "en": "Solution template application failed, please try again later"
   },
   "方案三": {
     "zh-TW": "方案三",
@@ -1073,6 +1529,12 @@
     "ko": "플랜 한도",
     "en": "Plan cap"
   },
+  "方案收录失败，请重试": {
+    "zh-TW": "方案收錄失敗，請重試",
+    "ja": "プランを含めることができませんでした。もう一度お試しください。",
+    "ko": "계획을 포함하지 못했습니다. 다시 시도해 주세요.",
+    "en": "Plan inclusion failed, please try again"
+  },
   "方案一": {
     "zh-TW": "方案一",
     "ja": "オプション 1",
@@ -1085,6 +1547,12 @@
     "ko": "방향",
     "en": "direction"
   },
+  "仿宋": {
+    "zh-TW": "仿宋",
+    "ja": "宋代の模倣",
+    "ko": "송나라의 모방",
+    "en": "Imitation of Song Dynasty"
+  },
   "访问趋势": {
     "zh-TW": "訪問趨勢",
     "ja": "訪問傾向",
@@ -1096,6 +1564,24 @@
     "ja": "10%拡大",
     "ko": "10% 확대",
     "en": "Zoom in 10%"
+  },
+  "分类": {
+    "zh-TW": "分類",
+    "ja": "分類",
+    "ko": "분류",
+    "en": "Classification"
+  },
+  "分类标签": {
+    "zh-TW": "分類標籤",
+    "ja": "分類タグ",
+    "ko": "분류 태그",
+    "en": "Classification tags"
+  },
+  "分类标签样式": {
+    "zh-TW": "分類標籤樣式",
+    "ja": "カテゴリラベルのスタイル",
+    "ko": "카테고리 라벨 스타일",
+    "en": "Category label style"
   },
   "分类名称": {
     "zh-TW": "分類名稱",
@@ -1121,30 +1607,6 @@
     "ko": "파티션 설명",
     "en": "Partition description"
   },
-  "分页": {
-    "zh-TW": "分頁",
-    "ja": "ページネーション",
-    "ko": "쪽수 매기기",
-    "en": "Pagination"
-  },
-  "分頁": {
-    "zh-TW": "分頁",
-    "ja": "ページネーション",
-    "ko": "쪽수 매기기",
-    "en": "Pagination"
-  },
-  "朌配到你的商户躻，当前展示本地草稿先在“商户信恝完善绑定": {
-    "zh-TW": "朌配到你的商家躻，目前展示本地草稿先在「商家信恝完善綁定",
-    "ja": "販売者に割り当てられている現在表示されているローカルドラフトは、まず「販売者情報」にバインドする必要があります。",
-    "ko": "판매자에게 할당되어 현재 표시된 지역 초안이 먼저 \"판매자 정보\"에 바인딩되어야 합니다.",
-    "en": "Assigned to your merchant, the currently displayed local draft must first be bound in \"Merchant Information\""
-  },
-  "朌配到商户躻，已阻写入远。先在“商户信恝完成绑定后再发布": {
-    "zh-TW": "朌配到商戶躻，已阻寫入遠。先在「商家信恝完成綁定後再發布",
-    "ja": "販売者に配布され、書き込みはブロックされました。 「加盟店情報」で製本完了後、初めて公開します。",
-    "ko": "판매자에게 배포되어 글이 차단되었습니다. 먼저 \"판매자 정보\"에서 바인딩을 완료한 후 게시하세요.",
-    "en": "Distributed to the merchant, the writing has been blocked. First publish it after completing the binding in \"Merchant Information\""
-  },
   "风格": {
     "zh-TW": "風格",
     "ja": "スタイル",
@@ -1169,17 +1631,47 @@
     "ko": "제공하다",
     "en": "Serve"
   },
-  "幅": {
-    "zh-TW": "幅",
-    "ja": "フレーム",
-    "ko": "액자",
-    "en": "frame"
+  "服务端发布通道未配置（缺少 SUPABASE_SERVICE_ROLE_KEY）。": {
+    "zh-TW": "服務端發布通道未配置（缺少 SUPABASE_SERVICE_ROLE_KEY）。",
+    "ja": "サーバー公開チャネルが構成されていません (SUPABASE_SERVICE_ROLE_KEY が欠落しています)。",
+    "ko": "서버 게시 채널이 구성되지 않았습니다(SUPABASE_SERVICE_ROLE_KEY가 누락됨).",
+    "en": "The server publishing channel is not configured (SUPABASE_SERVICE_ROLE_KEY is missing)."
   },
-  "该后缀已被使用，请更换后重新提交": {
-    "zh-TW": "該後綴已被使用，請更換後重新提交",
-    "ja": "このサフィックスは使用されています。変更して再送信してください。",
-    "ko": "이 접미사는 이미 사용되었습니다. 변경하여 다시 제출해 주세요.",
-    "en": "This suffix has been used, please change it and resubmit it."
+  "复制失败，请重试": {
+    "zh-TW": "複製失敗，請重試",
+    "ja": "コピーに失敗しました。もう一度お試しください",
+    "ko": "복사하지 못했습니다. 다시 시도해 주세요.",
+    "en": "Copy failed, please try again"
+  },
+  "该 ID 已在禁用设置中，不能用于创建用户": {
+    "zh-TW": "該 ID 已在停用設定中，不能用於建立用戶",
+    "ja": "ID はすでに無効に設定されているため、ユーザーの作成に使用できません",
+    "ko": "해당 ID는 이미 비활성화되어 있어 사용자를 생성하는 데 사용할 수 없습니다.",
+    "en": "The ID is already in disabled settings and cannot be used to create users"
+  },
+  "该方案没有可应用的页面内容": {
+    "zh-TW": "該方案沒有可應用的頁面內容",
+    "ja": "プランには該当するページ コンテンツがありません",
+    "ko": "계획에 적용 가능한 페이지 콘텐츠가 없습니다.",
+    "en": "The plan has no applicable page content"
+  },
+  "该方案模板没有可发布的页面内容": {
+    "zh-TW": "此方案範本沒有可發佈的頁面內容",
+    "ja": "このシナリオ テンプレートには公開するページ コンテンツがありません",
+    "ko": "이 시나리오 템플릿에는 게시할 페이지 콘텐츠가 없습니다.",
+    "en": "This scenario template has no page content to publish"
+  },
+  "该规则已存在": {
+    "zh-TW": "該規則已存在",
+    "ja": "ルールはすでに存在します",
+    "ko": "규칙이 이미 존재합니다.",
+    "en": "The rule already exists"
+  },
+  "该前缀已被使用，请更换后重新提交": {
+    "zh-TW": "該前綴已被使用，請更換後重新提交",
+    "ja": "このプレフィックスは使用されています。変更して再送信してください。",
+    "ko": "이 접두어는 이미 사용되었습니다. 변경한 후 다시 제출해 주세요.",
+    "en": "This prefix has been used, please change it and resubmit it."
   },
   "该行业暂无说明": {
     "zh-TW": "該產業暫無說明",
@@ -1187,11 +1679,23 @@
     "ko": "아직 이 업종에 대한 설명이 없습니다.",
     "en": "There is no description for this industry yet"
   },
-  "高度": {
-    "zh-TW": "高度",
-    "ja": "高い",
-    "ko": "높은",
-    "en": "high"
+  "该邮箱已注册，但还没完成邮箱验证。请先验证邮箱，或点击下方“重发验证邮件”。": {
+    "zh-TW": "該郵箱已註冊，但尚未完成郵箱驗證。請先驗證信箱，或點選下方「重發驗證郵件」。",
+    "ja": "メールアドレスは登録されていますが、メール認証が完了していません。まずメールを確認するか、下の「確認メールを再送信」をクリックしてください。",
+    "ko": "이메일 주소는 등록되었으나 이메일 인증이 완료되지 않았습니다. 먼저 이메일을 확인하시거나 아래의 \"확인 이메일 재전송\"을 클릭하세요.",
+    "en": "The email address has been registered, but email verification has not been completed. Please verify your email first, or click \"Resend Verification Email\" below."
+  },
+  "该邮箱已注册，请直接登录。": {
+    "zh-TW": "郵箱已註冊，請直接登入。",
+    "ja": "このメールアドレスは登録されていますので、直接ログインしてください。",
+    "ko": "해당 이메일 주소가 등록되었습니다. 직접 로그인해 주세요.",
+    "en": "This email address has been registered, please log in directly."
+  },
+  "该站点暂无可收录的已发布方案，请先发布前台": {
+    "zh-TW": "該網站暫無可收錄的已發布方案，請先發佈前台",
+    "ja": "現在、このサイトに公開されているプラ​​ンはありません。まずフロントデスクに公開してください。",
+    "ko": "현재 이 사이트에는 게시된 계획이 없습니다. 먼저 프런트 데스크에 게시하세요.",
+    "en": "There are currently no published plans included in this site, please publish to the front desk first"
   },
   "高端奢华": {
     "zh-TW": "高端奢華",
@@ -1217,35 +1721,41 @@
     "ko": "고품질",
     "en": "high quality"
   },
-  "高さ": {
-    "zh-TW": "高さ",
-    "ja": "高い",
-    "ko": "높은",
-    "en": "High"
-  },
   "更改": {
     "zh-TW": "變更",
     "ja": "変化",
     "ko": "변화",
     "en": "Change"
   },
-  "公開": {
-    "zh-TW": "公開",
-    "ja": "公共",
-    "ko": "공공의",
-    "en": "public"
+  "工作": {
+    "zh-TW": "工作",
+    "ja": "仕事",
+    "ko": "일하다",
+    "en": "Work"
   },
-  "公開前回帰チェックリスト": {
-    "zh-TW": "公開前回帰チェックリスト",
-    "ja": "公開前に返信",
-    "ko": "게시 전 답변",
-    "en": "Reply before publication"
+  "工作电话": {
+    "zh-TW": "工作電話",
+    "ja": "職場の電話",
+    "ko": "직장 전화",
+    "en": "work phone"
   },
   "功能开通": {
     "zh-TW": "功能開通",
     "ja": "機能の有効化",
     "ko": "기능 활성화",
     "en": "Function activation"
+  },
+  "固定大小翻页": {
+    "zh-TW": "固定大小翻頁",
+    "ja": "固定サイズのページめくり",
+    "ko": "고정된 크기의 페이지 넘김",
+    "en": "Fixed size page turning"
+  },
+  "固定大小滑动": {
+    "zh-TW": "固定大小滑動",
+    "ja": "固定サイズのスライド",
+    "ko": "고정 크기 슬라이드",
+    "en": "Fixed size slide"
   },
   "关闭": {
     "zh-TW": "關閉",
@@ -1258,6 +1768,30 @@
     "ja": "ポップアップウィンドウを閉じる",
     "ko": "팝업 창 닫기",
     "en": "Close pop-up window"
+  },
+  "关闭方案模板弹窗": {
+    "zh-TW": "關閉方案模板彈窗",
+    "ja": "プランテンプレートのポップアップウィンドウを閉じます",
+    "ko": "계획 템플릿 팝업 창 닫기",
+    "en": "Close the plan template pop-up window"
+  },
+  "关闭模板封面预览": {
+    "zh-TW": "關閉模板封面預覽",
+    "ja": "テンプレートの表紙のプレビューを閉じる",
+    "ko": "템플릿 표지 미리보기 닫기",
+    "en": "Close template cover preview"
+  },
+  "关闭新增用户弹窗": {
+    "zh-TW": "關閉新增用戶彈跳窗",
+    "ja": "新しいユーザーのポップアップ ウィンドウを閉じます",
+    "ko": "새 사용자 팝업 창을 닫습니다.",
+    "en": "Close the new user pop-up window"
+  },
+  "关闭应用设置弹窗": {
+    "zh-TW": "關閉應用程式設定彈窗",
+    "ja": "アプリ設定ポップアップウィンドウを閉じます",
+    "ko": "앱 설정 팝업 창 닫기",
+    "en": "Close the app settings pop-up window"
   },
   "关于我们": {
     "zh-TW": "關於我們",
@@ -1307,6 +1841,12 @@
     "ko": "테넌트 내의 사이트, 사용자 및 발행물을 관리합니다.",
     "en": "Manage sites, users and publications within the tenant."
   },
+  "规则不存在": {
+    "zh-TW": "規則不存在",
+    "ja": "ルールは存在しません",
+    "ko": "규칙이 존재하지 않습니다",
+    "en": "rules do not exist"
+  },
   "国": {
     "zh-TW": "國",
     "ja": "国",
@@ -1319,17 +1859,29 @@
     "ko": "국가",
     "en": "nation"
   },
-  "國家": {
-    "zh-TW": "國家",
-    "ja": "国家",
-    "ko": "국가",
-    "en": "nation"
+  "韩元 ₩": {
+    "zh-TW": "韓元 ₩",
+    "ja": "韓国ウォン₩",
+    "ko": "₩ ₩",
+    "en": "Korean Won ₩"
   },
-  "绗?": {
-    "zh-TW": "絎?",
-    "ja": "キルティング？",
-    "ko": "누비 이불 같은?",
-    "en": "Quilted?"
+  "号段范围": {
+    "zh-TW": "號段範圍",
+    "ja": "番号セグメントの範囲",
+    "ko": "번호 세그먼트 범위",
+    "en": "Number segment range"
+  },
+  "黑体": {
+    "zh-TW": "黑體",
+    "ja": "黒いボディ",
+    "ko": "흑체",
+    "en": "black body"
+  },
+  "横图": {
+    "zh-TW": "橫圖",
+    "ja": "横長画像",
+    "ko": "수평 이미지",
+    "en": "Horizontal image"
   },
   "横向": {
     "zh-TW": "橫向",
@@ -1343,23 +1895,35 @@
     "ko": "수평으로 균등하게 분할됨",
     "en": "Evenly divided horizontally"
   },
-  "后端连接不可用，请稍后重试": {
-    "zh-TW": "後端連線不可用，請稍後重試",
-    "ja": "バックエンド接続が利用できません。後でもう一度お試しください。",
-    "ko": "백엔드 연결을 사용할 수 없습니다. 나중에 다시 시도해 주세요.",
-    "en": "Backend connection unavailable, please try again later"
+  "后端连接不稳定，正在尝试发布...": {
+    "zh-TW": "後端連線不穩定，正在嘗試發布...",
+    "ja": "バックエンド接続が不安定なので、公開しようとしています...",
+    "ko": "백엔드 연결이 불안정합니다. 게시하는 중입니다...",
+    "en": "The backend connection is unstable, trying to publish..."
   },
-  "后连不稳定，在尝试发..": {
-    "zh-TW": "後連不穩定，在嘗試發..",
-    "ja": "バック接続が不安定なので、起動しようとしています...",
-    "ko": "후면 연결이 불안정하여 실행을 시도 중입니다...",
-    "en": "The back connection is unstable, trying to launch..."
+  "后端连接不稳定，正在尝试直接获取远端内容...": {
+    "zh-TW": "後端連線不穩定，正在嘗試直接取得遠端內容...",
+    "ja": "バックエンド接続が不安定で、リモート コンテンツを直接取得しようとしています...",
+    "ko": "백엔드 연결이 불안정하여 원격 콘텐츠를 직접 가져오려고 합니다...",
+    "en": "The backend connection is unstable, trying to obtain remote content directly..."
   },
-  "后连不稳定，在尝试直接取远竡..": {
-    "zh-TW": "後連不穩定，在嘗試直接取遠竡..",
-    "ja": "後方接続が不安定なので、遠位接続を直接取ろうとしています。",
-    "ko": "후방 연결이 불안정해서 말단 연결을 직접 잡아보려고 합니다..",
-    "en": "The posterior connection is unstable, so I'm trying to take the distal connection directly.."
+  "后端注册账号接口超时，当前先显示本地站点用户。": {
+    "zh-TW": "後端註冊帳號介面逾時，目前先顯示本機站點使用者。",
+    "ja": "バックエンドのアカウント登録インターフェイスがタイムアウトしました。現在、ローカル サイト ユーザーが最初に表示されます。",
+    "ko": "백엔드 계정 등록 인터페이스 시간이 초과되었습니다. 현재는 로컬 사이트 사용자가 먼저 표시됩니다.",
+    "en": "The backend account registration interface has timed out. Currently, local site users are displayed first."
+  },
+  "后端注册账号接口未授权，请重新登录超级后台。": {
+    "zh-TW": "後端註冊帳號介面未授權，請重新登入超級後台。",
+    "ja": "バックエンド登録アカウント インターフェイスが承認されていません。スーパー バックエンドに再度ログインしてください。",
+    "ko": "백엔드 등록 계정 인터페이스가 승인되지 않았습니다. 슈퍼 백엔드에 다시 로그인하세요.",
+    "en": "The backend registration account interface is not authorized, please log in to the super backend again."
+  },
+  "后端注册账号接口暂时不可用，当前先显示本地站点用户。": {
+    "zh-TW": "後端註冊帳號介面暫時無法使用，目前先顯示本機站點使用者。",
+    "ja": "バックエンド アカウント登録インターフェイスは一時的に利用できなくなり、現在はローカル サイト ユーザーが最初に表示されます。",
+    "ko": "백엔드 계정 등록 인터페이스를 일시적으로 사용할 수 없으며 현재 로컬 사이트 사용자가 먼저 표시됩니다.",
+    "en": "The backend account registration interface is temporarily unavailable, and local site users are currently displayed first."
   },
   "后台登录": {
     "zh-TW": "後台登入",
@@ -1367,23 +1931,11 @@
     "ko": "백엔드 로그인",
     "en": "Backend login"
   },
-  "后缀不能使用 8 位纯数字（该格式保留给后台地址）": {
-    "zh-TW": "後綴不能使用 8 位純數字（此格式保留給後台位址）",
-    "ja": "サフィックスには 8 桁の純粋な数字は使用できません (この形式はバックエンド アドレス用に予約されています)",
-    "ko": "접미사는 8자리 순수 숫자를 사용할 수 없습니다(이 형식은 백엔드 주소용으로 예약되어 있음).",
-    "en": "The suffix cannot use 8-digit pure numbers (this format is reserved for backend addresses)"
-  },
-  "后缀可用，域名已更新": {
-    "zh-TW": "後綴可用，網域已更新",
-    "ja": "サフィックスが利用可能、ドメイン名が更新されました",
-    "ko": "접미사 사용 가능, 도메인 이름 업데이트됨",
-    "en": "Suffix available, domain name updated"
-  },
-  "後端連線不可用，請稍後重試": {
-    "zh-TW": "後端連線不可用，請稍後重試",
-    "ja": "バックエンド接続が利用できません。後でもう一度お試しください。",
-    "ko": "백엔드 연결을 사용할 수 없습니다. 나중에 다시 시도해 주세요.",
-    "en": "The backend connection is unavailable, please try again later."
+  "后台连接不可用，请稍后重试": {
+    "zh-TW": "後台連線不可用，請稍後重試",
+    "ja": "バックグラウンド接続は利用できません。後でもう一度お試しください。",
+    "ko": "백그라운드 연결을 사용할 수 없습니다. 나중에 다시 시도해 주세요.",
+    "en": "The background connection is unavailable, please try again later."
   },
   "後台登入": {
     "zh-TW": "後台登入",
@@ -1391,35 +1943,11 @@
     "ko": "백스테이지 로그인",
     "en": "Backstage login"
   },
-  "候補店舗": {
-    "zh-TW": "候補店舗",
-    "ja": "待機店舗",
-    "ko": "대기 매장",
-    "en": "Waiting store"
-  },
-  "候选商户": {
-    "zh-TW": "候選商戶",
-    "ja": "加盟店候補",
-    "ko": "후보 가맹점",
-    "en": "Candidate merchants"
-  },
-  "候選商戶": {
-    "zh-TW": "候選商戶",
-    "ja": "加盟店候補",
-    "ko": "후보 가맹점",
-    "en": "Candidate merchants"
-  },
-  "画像": {
-    "zh-TW": "畫像",
-    "ja": "肖像画",
-    "ko": "초상화",
-    "en": "portrait"
-  },
-  "画像なし": {
-    "zh-TW": "畫像なし",
-    "ja": "ナナの肖像",
-    "ko": "나나의 초상",
-    "en": "Portrait of Nana"
+  "後台連線不可用，請稍後重試": {
+    "zh-TW": "後台連線不可用，請稍後重試",
+    "ja": "バックグラウンド接続は利用できません。後でもう一度お試しください。",
+    "ko": "백그라운드 연결을 사용할 수 없습니다. 나중에 다시 시도해 주세요.",
+    "en": "The background connection is unavailable, please try again later."
   },
   "欢迎来到我的官方网站，这里展示我的产品和服务。": {
     "zh-TW": "歡迎來到我的官方網站，這裡展示我的產品和服務。",
@@ -1439,17 +1967,23 @@
     "ko": "실패한 초안 복원",
     "en": "Restoring a failed draft"
   },
+  "恢复预约": {
+    "zh-TW": "恢復預約",
+    "ja": "予約を再開する",
+    "ko": "약속 재개",
+    "en": "Resume appointment"
+  },
+  "回复邮箱": {
+    "zh-TW": "回覆信箱",
+    "ja": "メールに返信する",
+    "ko": "이메일에 답장하기",
+    "en": "Reply to email"
+  },
   "回滚": {
     "zh-TW": "復原",
     "ja": "ロールバック",
     "ko": "롤백",
     "en": "rollback"
-  },
-  "回滚到此版本": {
-    "zh-TW": "回滾到此版本",
-    "ja": "このバージョンにロールバックする",
-    "ko": "이 버전으로 롤백",
-    "en": "Roll back to this version"
   },
   "回滚发布": {
     "zh-TW": "復原發布",
@@ -1463,11 +1997,17 @@
     "ko": "롤백 실패: 로컬 저장 공간이 부족합니다.",
     "en": "Rollback failed: insufficient local storage space"
   },
-  "回滾到此版本": {
-    "zh-TW": "回滾到此版本",
-    "ja": "このバージョンにロールバックする",
-    "ko": "이 버전으로 롤백",
-    "en": "Roll back to this version"
+  "会话": {
+    "zh-TW": "會話",
+    "ja": "セッション",
+    "ko": "세션",
+    "en": "session"
+  },
+  "会话恢复超时": {
+    "zh-TW": "會話恢復逾時",
+    "ja": "セッション再開タイムアウト",
+    "ko": "세션 재개 시간 초과",
+    "en": "Session resume timeout"
   },
   "会员中心": {
     "zh-TW": "會員中心",
@@ -1511,11 +2051,23 @@
     "ko": "이벤트 페이지",
     "en": "event page"
   },
+  "货号": {
+    "zh-TW": "貨號",
+    "ja": "品目番号",
+    "ko": "품목 번호",
+    "en": "Item number"
+  },
   "基础版本发布成功": {
     "zh-TW": "基礎版本發布成功",
     "ja": "基本バージョンが正常にリリースされました",
     "ko": "기본 버전이 성공적으로 출시되었습니다",
     "en": "Basic version released successfully"
+  },
+  "基础展示": {
+    "zh-TW": "基礎展示",
+    "ja": "基本表示",
+    "ko": "기본 디스플레이",
+    "en": "Basic display"
   },
   "极简风格": {
     "zh-TW": "極簡風格",
@@ -1529,23 +2081,17 @@
     "ko": "젠 이양",
     "en": "Zhen Yiyang"
   },
-  "検索": {
-    "zh-TW": "検索",
-    "ja": "検SO",
-    "ko": "検SO",
-    "en": "検SO"
+  "价格": {
+    "zh-TW": "價格",
+    "ja": "価格",
+    "ko": "가격",
+    "en": "price"
   },
   "简约样式": {
     "zh-TW": "簡約樣式",
     "ja": "シンプルなスタイル",
     "ko": "심플한 스타일",
     "en": "Simple style"
-  },
-  "建立": {
-    "zh-TW": "建立",
-    "ja": "確立する",
-    "ko": "설립하다",
-    "en": "Establish"
   },
   "将当前选中区块样式复制到手机端": {
     "zh-TW": "將目前選取區塊樣式複製到手機端",
@@ -1559,11 +2105,35 @@
     "ko": "현재 선택된 블록 스타일을 PC에 복사합니다.",
     "en": "Copy the currently selected block style to the PC"
   },
+  "将当前页导航设置应用到其他页面": {
+    "zh-TW": "將目前頁導航設定套用到其他頁面",
+    "ja": "現在のページ ナビゲーション設定を他のページに適用する",
+    "ko": "현재 페이지 탐색 설정을 다른 페이지에 적용",
+    "en": "Apply current page navigation settings to other pages"
+  },
+  "焦点陈列": {
+    "zh-TW": "焦點陳列",
+    "ja": "フォーカス表示",
+    "ko": "초점 표시",
+    "en": "focus display"
+  },
   "解析图片失败，请更换图片": {
     "zh-TW": "解析圖片失敗，請更換圖片",
     "ja": "画像の解析に失敗しました。画像を変更してください",
     "ko": "이미지를 구문 분석하지 못했습니다. 이미지를 변경하세요.",
     "en": "Failed to parse the image, please change the image"
+  },
+  "介绍": {
+    "zh-TW": "介紹",
+    "ja": "導入",
+    "ko": "소개하다",
+    "en": "introduce"
+  },
+  "仅 PC": {
+    "zh-TW": "僅 PC",
+    "ja": "パソコンのみ",
+    "ko": "PC 전용",
+    "en": "PC only"
   },
   "仅查看发布、审批、审计与告警。": {
     "zh-TW": "僅查看發布、審核、審計與警告。",
@@ -1577,6 +2147,12 @@
     "ko": "이미지 파일 업로드만 지원",
     "en": "Only supports uploading image files"
   },
+  "仅支持图片或音频 data URL。": {
+    "zh-TW": "僅支援圖片或音訊 data URL。",
+    "ja": "画像または音声データの URL のみがサポートされます。",
+    "ko": "이미지 또는 오디오 데이터 URL만 지원됩니다.",
+    "en": "Only image or audio data URLs are supported."
+  },
   "紧凑单列": {
     "zh-TW": "緊湊單列",
     "ja": "コンパクトな単列",
@@ -1589,11 +2165,29 @@
     "ko": "최근 정착지에서 빠르게 성장하는 산업",
     "en": "Industries with rapid growth in recent settlements"
   },
-  "禁用": {
-    "zh-TW": "停用",
-    "ja": "無効にする",
-    "ko": "장애를 입히다",
-    "en": "Disable"
+  "禁用 ID 规则保存失败，请稍后重试": {
+    "zh-TW": "停用 ID 規則儲存失敗，請稍後重試",
+    "ja": "無効な ID ルールを保存できませんでした。後でもう一度試してください。",
+    "ko": "비활성화된 ID 규칙을 저장하지 못했습니다. 나중에 다시 시도해 주세요.",
+    "en": "Disabled ID rule failed to save, please try again later."
+  },
+  "禁用 ID 规则加载超时，请稍后重试": {
+    "zh-TW": "停用 ID 規則載入逾時，請稍後重試",
+    "ja": "ID ルールのロード タイムアウトを無効にします。後でもう一度試してください。",
+    "ko": "ID 규칙 로드 시간 초과를 비활성화합니다. 나중에 다시 시도해 주세요.",
+    "en": "Disable ID rule load timeout, please try again later"
+  },
+  "禁用 ID 规则删除失败，请稍后重试": {
+    "zh-TW": "停用 ID 規則刪除失敗，請稍後重試",
+    "ja": "無効な ID ルールの削除に失敗しました。後でもう一度試してください。",
+    "ko": "비활성화된 ID 규칙을 삭제하지 못했습니다. 나중에 다시 시도해 주세요.",
+    "en": "Disabled ID rule deletion failed, please try again later."
+  },
+  "禁用ID设置": {
+    "zh-TW": "停用ID設定",
+    "ja": "ID設定を無効にする",
+    "ko": "ID 설정 비활성화",
+    "en": "Disable ID settings"
   },
   "经典": {
     "zh-TW": "經典",
@@ -1607,29 +2201,11 @@
     "ko": "클래식 스타일",
     "en": "classic style"
   },
-  "警告": {
-    "zh-TW": "警告",
-    "ja": "警告する",
-    "ko": "경고하다",
-    "en": "warn"
-  },
   "居中": {
     "zh-TW": "居中",
     "ja": "中心",
     "ko": "센터",
     "en": "center"
-  },
-  "涓夊垪绛夊": {
-    "zh-TW": "涓夊垪綿夊",
-    "ja": "涓夊垪绛夊",
-    "ko": "涓夊垪绛夊",
-    "en": "涓夊垪绛夊"
-  },
-  "涓浗": {
-    "zh-TW": "涓浗",
-    "ja": "涓浗",
-    "ko": "涓浗",
-    "en": "涓浗"
   },
   "卡片样式": {
     "zh-TW": "卡片樣式",
@@ -1667,17 +2243,53 @@
     "ko": "서비스 시작",
     "en": "Start service"
   },
+  "楷体": {
+    "zh-TW": "楷體",
+    "ja": "楷書",
+    "ko": "일반 스크립트",
+    "en": "regular script"
+  },
+  "可按钮区块": {
+    "zh-TW": "可按鈕區塊",
+    "ja": "ボタンブロック",
+    "ko": "버튼 블록",
+    "en": "Button block"
+  },
   "可插入背景": {
     "zh-TW": "可插入背景",
     "ja": "挿入可能な背景",
     "ko": "삽입 가능한 배경",
     "en": "Insertable background"
   },
+  "可产品区块": {
+    "zh-TW": "可產品區塊",
+    "ja": "製品ブロック",
+    "ko": "제품 블록",
+    "en": "product block"
+  },
   "可点击定位，或手动选择国家/省份/城市。": {
     "zh-TW": "可點選定位，或手動選擇國家/省份/城市。",
     "ja": "クリックして検索することも、手動で国/県/都市を選択することもできます。",
     "ko": "국가/도/시를 클릭하여 찾거나 수동으로 선택할 수 있습니다.",
     "en": "You can click to locate, or manually select the country/province/city."
+  },
+  "可链接模式名片": {
+    "zh-TW": "可連結模式名片",
+    "ja": "リンク可能なパターン名刺",
+    "ko": "연결 가능한 패턴 명함",
+    "en": "Linkable pattern business cards"
+  },
+  "可视数量": {
+    "zh-TW": "可視數量",
+    "ja": "目に見える量",
+    "ko": "눈에 보이는 양",
+    "en": "visible quantity"
+  },
+  "可填写备注或需求": {
+    "zh-TW": "可填寫備註或需求",
+    "ja": "注意事項や要件を記入できます",
+    "ko": "메모나 요구 사항을 입력할 수 있습니다.",
+    "en": "Notes or requirements can be filled in"
   },
   "可相册区块": {
     "zh-TW": "可相簿區塊",
@@ -1691,29 +2303,29 @@
     "ko": "음악 블록 사용 가능",
     "en": "Music block available"
   },
+  "可预约区块": {
+    "zh-TW": "可預約區塊",
+    "ja": "予約可能なブロック",
+    "ko": "예약 가능한 블록",
+    "en": "Reservable blocks"
+  },
   "可主题效果": {
     "zh-TW": "可主題效果",
     "ja": "利用可能なテーマ効果",
     "ko": "테마 효과 사용 가능",
     "en": "Theme effects available"
   },
-  "宽度": {
-    "zh-TW": "寬度",
-    "ja": "幅",
-    "ko": "너비",
-    "en": "width"
+  "客户可选择店铺、项目、日期时间并填写预约信息。": {
+    "zh-TW": "客戶可選擇店鋪、項目、日期時間並填寫預約資料。",
+    "ja": "顧客は店舗、プロジェクト、日時を選択し、予約情報を入力します。",
+    "ko": "고객은 매장, 프로젝트, 날짜 및 시간을 선택하고 예약 정보를 입력할 수 있습니다.",
+    "en": "Customers can select the store, project, date and time and fill in the reservation information."
   },
   "宽松单列": {
     "zh-TW": "寬鬆單列",
     "ja": "ゆったりとした単列",
     "ko": "느슨한 단일 행",
     "en": "Loose single row"
-  },
-  "寬度": {
-    "zh-TW": "寬度",
-    "ja": "幅",
-    "ko": "너비",
-    "en": "Width"
   },
   "栏目": {
     "zh-TW": "欄位",
@@ -1739,23 +2351,17 @@
     "ko": "오프라인으로 편집기 입력(개발 전용)",
     "en": "Enter the editor offline (development only)"
   },
-  "離線": {
-    "zh-TW": "離線",
-    "ja": "オフライン",
-    "ko": "오프라인",
-    "en": "Offline"
-  },
   "離線進入編輯器（僅開發）": {
     "zh-TW": "離線進入編輯器（僅開發）",
     "ja": "エディターをオフラインで起動します (開発のみ)",
     "ko": "오프라인으로 편집기 입력(개발 전용)",
     "en": "Enter the editor offline (development only)"
   },
-  "例如 abc": {
-    "zh-TW": "例如 abc",
-    "ja": "たとえばabc",
-    "ko": "예를 들어 ABC",
-    "en": "For example abc"
+  "例如 merchant-a": {
+    "zh-TW": "例如 merchant-a",
+    "ja": "たとえば、販売者-a",
+    "ko": "예를 들어 판매자-a",
+    "en": "For example merchant-a"
   },
   "联系方式": {
     "zh-TW": "聯絡方式",
@@ -1781,11 +2387,83 @@
     "ko": "연락처 정보 블록의 글꼴 스타일은 앞 뒤가 일관됩니다(고정 접두사 포함).",
     "en": "The font style of the contact information block is consistent between the front and back (including fixed prefix)"
   },
-  "鏈壘鍒板彲缂栬緫鐨勫晢鎴风珯鐐癸紝鏃犳硶淇濆瓨": {
-    "zh-TW": "鏈壘鍒板彲緙栬緫鐨勫晢鎴風珯鐐癸紝鏃犳硶淇濆瓨",
-    "ja": "鎖は鎖だ",
-    "ko": "사슬은 사슬이다",
-    "en": "The chain is the chain"
+  "联系卡二维码": {
+    "zh-TW": "聯絡卡二維碼",
+    "ja": "連絡先カードのQRコード",
+    "ko": "연락처 카드 QR 코드",
+    "en": "Contact card QR code"
+  },
+  "联系卡链接已复制，并已保存到名片夹": {
+    "zh-TW": "聯絡卡連結已複製，並已儲存至名片夾",
+    "ja": "連絡先カードのリンクを名刺フォルダーにコピーして保存しました",
+    "ko": "연락처 카드 링크가 복사되어 명함 폴더에 저장되었습니다.",
+    "en": "Contact card link copied and saved to business card folder"
+  },
+  "联系卡链接已复制，手机打开后可保存联系人": {
+    "zh-TW": "聯絡卡連結已複製，手機開啟後可儲存聯絡人",
+    "ja": "連絡先カードのリンクがコピーされました。電話を開いた後、連絡先を保存できます。",
+    "ko": "연락처 카드 링크가 복사되었습니다. 전화를 연 후에 연락처를 저장할 수 있습니다.",
+    "en": "The contact card link has been copied. The contact can be saved after opening the phone."
+  },
+  "联系卡图片": {
+    "zh-TW": "聯絡卡圖片",
+    "ja": "連絡先カードの写真",
+    "ko": "연락처 카드 사진",
+    "en": "Contact card picture"
+  },
+  "联系卡图片上传失败，请重试": {
+    "zh-TW": "聯絡卡圖片上傳失敗，請重試",
+    "ja": "連絡先カード画像のアップロードに失敗しました。もう一度お試しください。",
+    "ko": "연락처 카드 이미지 업로드에 실패했습니다. 다시 시도해 주세요.",
+    "en": "Contact card image upload failed, please try again"
+  },
+  "联系卡展示图上限(KB)": {
+    "zh-TW": "聯絡卡展示圖上限(KB)",
+    "ja": "連絡先カード表示画像の上限（KB）",
+    "ko": "연락처 카드 표시 이미지의 최대 한도(KB)",
+    "en": "Maximum limit for contact card display image (KB)"
+  },
+  "联系卡展示图预览": {
+    "zh-TW": "聯絡卡展示圖預覽",
+    "ja": "連絡先カードの表示プレビュー",
+    "ko": "연락처 카드 표시 미리보기",
+    "en": "Contact card display preview"
+  },
+  "联系人": {
+    "zh-TW": "聯絡人",
+    "ja": "連絡担当者",
+    "ko": "담당자",
+    "en": "Contact person"
+  },
+  "联系人下载地址生成失败，请重试": {
+    "zh-TW": "聯絡人下載地址產生失敗，請重試",
+    "ja": "連絡先のダウンロード アドレスを生成できませんでした。もう一度お試しください。",
+    "ko": "연락처 다운로드 주소를 생성하지 못했습니다. 다시 시도해 주세요.",
+    "en": "Failed to generate contact download address, please try again"
+  },
+  "联系人已开始下载": {
+    "zh-TW": "聯絡人已開始下載",
+    "ja": "連絡先のダウンロードが開始されました",
+    "ko": "연락처 다운로드가 시작되었습니다",
+    "en": "Contact download has started"
+  },
+  "联系人已开始下载，并已保存到名片夹": {
+    "zh-TW": "聯絡人已開始下載，並已儲存至名片夾",
+    "ja": "連絡先がダウンロードされ、名刺フォルダーに保存されました",
+    "ko": "연락처가 다운로드되어 명함 폴더에 저장되었습니다.",
+    "en": "Contacts have been downloaded and saved to your business card folder"
+  },
+  "链接模式": {
+    "zh-TW": "連結模式",
+    "ja": "リンクモード",
+    "ko": "연결 모드",
+    "en": "Linked mode"
+  },
+  "链接模式下会同时生成名片和联系卡。": {
+    "zh-TW": "連結模式下會同時產生名片和聯絡卡。",
+    "ja": "リンク モードでは、名刺と連絡先カードが同時に生成されます。",
+    "ko": "연결 모드에서는 명함과 연락처 카드가 동시에 생성됩니다.",
+    "en": "In linked mode, business cards and contact cards are generated at the same time."
   },
   "两次输入的密码不一致": {
     "zh-TW": "兩次輸入的密碼不一致",
@@ -1829,6 +2507,12 @@
     "ko": "비워두세요",
     "en": "Leave blank"
   },
+  "每页数量": {
+    "zh-TW": "每頁數量",
+    "ja": "ページあたりの数量",
+    "ko": "페이지당 수량",
+    "en": "Quantity per page"
+  },
   "密码": {
     "zh-TW": "密碼",
     "ja": "パスワード",
@@ -1853,17 +2537,17 @@
     "ko": "비밀번호",
     "en": "password"
   },
-  "密碼已重設成功，正在跳轉至登入頁...": {
-    "zh-TW": "密碼已重設成功，正在跳轉至登錄頁...",
-    "ja": "パスワードは正常にリセットされ、ログイン ページにリダイレクトされます...",
-    "ko": "비밀번호가 성공적으로 재설정되었으며 로그인 페이지로 리디렉션 중입니다...",
-    "en": "The password has been reset successfully and you are redirecting to the login page..."
+  "密碼至少 6 碼": {
+    "zh-TW": "密碼至少 6 碼",
+    "ja": "パスワードは6桁以上である必要があります",
+    "ko": "비밀번호는 6자리 이상이어야 합니다.",
+    "en": "Password must be at least 6 digits"
   },
-  "密碼至少 6 位": {
-    "zh-TW": "密碼至少 6 位",
-    "ja": "パスワードは6文字以上である必要があります",
-    "ko": "비밀번호는 6자 이상이어야 합니다.",
-    "en": "Password must be at least 6 characters"
+  "密碼重設成功，正在跳轉到登入頁...": {
+    "zh-TW": "密碼重設成功，正在跳轉到登錄頁...",
+    "ja": "パスワードのリセットが成功しました。ログイン ページにジャンプします...",
+    "ko": "비밀번호 재설정이 완료되었습니다. 로그인 페이지로 이동합니다...",
+    "en": "Password reset successful, jumping to login page..."
   },
   "描述": {
     "zh-TW": "描述",
@@ -1889,11 +2573,83 @@
     "ko": "이름 오름차순",
     "en": "Name ascending order"
   },
-  "名稱": {
-    "zh-TW": "名稱",
-    "ja": "名前",
-    "ko": "이름",
-    "en": "Name"
+  "名片背景图上限(KB)": {
+    "zh-TW": "名片背景圖上限(KB)",
+    "ja": "名刺背景画像の上限（KB）",
+    "ko": "명함 배경 이미지의 최대 한도(KB)",
+    "en": "Maximum limit for business card background images (KB)"
+  },
+  "名片横版": {
+    "zh-TW": "名片橫版",
+    "ja": "名刺横バージョン",
+    "ko": "명함 가로 버전",
+    "en": "Business card horizontal version"
+  },
+  "名片夹上限": {
+    "zh-TW": "名片夾上限",
+    "ja": "名刺所有者の制限",
+    "ko": "명함 소지자 한도",
+    "en": "Business card holder limit"
+  },
+  "名片链接无效": {
+    "zh-TW": "名片連結無效",
+    "ja": "名刺のリンクが無効です",
+    "ko": "명함 링크가 잘못되었습니다.",
+    "en": "Business card link is invalid"
+  },
+  "名片生成失败，请重试": {
+    "zh-TW": "名片生成失敗，請重試",
+    "ja": "名刺の生成に失敗しました。もう一度お試しください。",
+    "ko": "명함 생성에 실패했습니다. 다시 시도해 주세요.",
+    "en": "Business card generation failed, please try again"
+  },
+  "名片图片已复制，并已保存到名片夹": {
+    "zh-TW": "名片圖片已複製，並已儲存至名片夾",
+    "ja": "名刺画像がコピーされ、名刺フォルダーに保存されました",
+    "ko": "명함 이미지가 복사되어 명함 폴더에 저장되었습니다.",
+    "en": "The business card image has been copied and saved to the business card folder"
+  },
+  "名片图片已复制，可直接发送": {
+    "zh-TW": "名片圖片已複製，可直接發送",
+    "ja": "名刺画像はコピー済みなので直接送信可能",
+    "ko": "명함 이미지가 복사되어 바로 전송 가능합니다",
+    "en": "The business card image has been copied and can be sent directly"
+  },
+  "名片已更新并保存到名片夹": {
+    "zh-TW": "名片已更新並儲存到名片夾",
+    "ja": "名刺が更新され、名刺フォルダーに保存されました",
+    "ko": "명함이 업데이트되어 명함 폴더에 저장되었습니다.",
+    "en": "The business card has been updated and saved to the business card folder"
+  },
+  "名片已开始保存": {
+    "zh-TW": "名片已開始保存",
+    "ja": "名刺が保存されました",
+    "ko": "명함이 저장되었습니다",
+    "en": "Business card has been saved"
+  },
+  "名片已删除": {
+    "zh-TW": "名片已刪除",
+    "ja": "名刺が削除されました",
+    "ko": "명함이 삭제되었습니다.",
+    "en": "Business card deleted"
+  },
+  "名片已删除，二维码和联系卡链接已失效": {
+    "zh-TW": "名片已刪除，二維碼和聯絡卡連結失效",
+    "ja": "名刺は削除され、QR コードと連絡先カードのリンクは期限切れになりました。",
+    "ko": "명함이 삭제되었으며 QR 코드 및 연락처 카드 링크가 만료되었습니다.",
+    "en": "The business card has been deleted and the QR code and contact card links have expired."
+  },
+  "名片已生成并保存到名片夹": {
+    "zh-TW": "名片已產生並儲存到名片夾",
+    "ja": "名刺が生成され、名刺フォルダーに保存されました",
+    "ko": "명함이 생성되어 명함 폴더에 저장되었습니다.",
+    "en": "The business card has been generated and saved to the business card folder"
+  },
+  "名片预览": {
+    "zh-TW": "名片預覽",
+    "ja": "名刺のプレビュー",
+    "ko": "명함 미리보기",
+    "en": "Business card preview"
   },
   "默认": {
     "zh-TW": "預設",
@@ -1931,11 +2687,29 @@
     "ko": "대상이 같은 이름의 블록을 찾지 못했습니다.",
     "en": "The target did not find the block with the same name."
   },
-  "脳": {
-    "zh-TW": "脳",
-    "ja": "脳",
-    "ko": "脳",
-    "en": "脳"
+  "目标商户": {
+    "zh-TW": "目標商家",
+    "ja": "対象加盟店",
+    "ko": "대상 가맹점",
+    "en": "Target merchant"
+  },
+  "您可以继续修改并重新提交预约。": {
+    "zh-TW": "您可以繼續修改並重新提交預約。",
+    "ja": "引き続き予定を変更して再送信することができます。",
+    "ko": "계속해서 약속을 수정하고 다시 제출할 수 있습니다.",
+    "en": "You can continue to modify and resubmit your appointment."
+  },
+  "女士": {
+    "zh-TW": "女士",
+    "ja": "逃す",
+    "ko": "놓치다",
+    "en": "Miss"
+  },
+  "欧元 €": {
+    "zh-TW": "歐元 €",
+    "ja": "ユーロ ユーロ",
+    "ko": "유로 €",
+    "en": "Euro €"
   },
   "排序数字生效；同排名时按默认排序规则决定先后": {
     "zh-TW": "排序數字生效；同排名時依預設排序規則決定先後",
@@ -1943,35 +2717,11 @@
     "ko": "숫자 정렬이 적용됩니다. 순위가 동일할 경우 기본 정렬 규칙에 따라 순서가 결정됩니다.",
     "en": "Sorting numbers take effect; when ranking the same, the order is determined by the default sorting rules."
   },
-  "排序预览": {
-    "zh-TW": "排序預覽",
-    "ja": "並べ替えプレビュー",
-    "ko": "미리보기 정렬",
-    "en": "Sort preview"
-  },
-  "排序預覽": {
-    "zh-TW": "排序預覽",
-    "ja": "並べ替えプレビュー",
-    "ko": "미리보기 정렬",
-    "en": "Sort preview"
-  },
   "配置保存失败：本地存储空间不足，请压缩图片后重试": {
     "zh-TW": "配置保存失敗：本機儲存空間不足，請壓縮圖片後重試",
     "ja": "構成の保存に失敗しました: ローカルストレージスペースが不十分です。イメージを圧縮して再試行してください。",
     "ko": "구성 저장 실패: 로컬 저장 공간이 부족합니다. 이미지를 압축하고 다시 시도하십시오.",
     "en": "Failed to save configuration: Insufficient local storage space, please compress the image and try again"
-  },
-  "配置变更历史": {
-    "zh-TW": "配置變更歷史",
-    "ja": "設定変更履歴",
-    "ko": "구성 변경 내역",
-    "en": "Configuration change history"
-  },
-  "配置變更歷史": {
-    "zh-TW": "配置變更歷史",
-    "ja": "設定変更履歴",
-    "ko": "구성 변경 내역",
-    "en": "Configuration change history"
   },
   "配置更新": {
     "zh-TW": "配置更新",
@@ -1996,12 +2746,6 @@
     "ja": "構成内のマーチャントボックスのプレビューテキストスタイル/配置は、スーパーバックエンドの対応するブロックと一致しています。",
     "ko": "구성에서 판매자 상자의 미리보기 텍스트 스타일/배열은 슈퍼 백엔드의 해당 블록과 일치합니다.",
     "en": "The preview text style/arrangement of the merchant box in the configuration is consistent with the corresponding block of the super backend"
-  },
-  "批量重压当前页内嵌图片": {
-    "zh-TW": "批量重壓當前頁內嵌圖片",
-    "ja": "現在のページに埋め込まれた画像をバッチで抑制します",
-    "ko": "현재 페이지에 포함된 이미지를 일괄 억제합니다.",
-    "en": "Batch repress embedded images on current page"
   },
   "批准/驳回审批请求。": {
     "zh-TW": "批准/駁回審核請求。",
@@ -2081,11 +2825,17 @@
     "ko": "플랫폼의 주요 운영 산업",
     "en": "Key operating industries of the platform"
   },
-  "淇濆瓨瓒呮椂锛岃绋嶅悗閲嶈瘯": {
-    "zh-TW": "淇濆瓨瓚​​呮椂錛岃綾嶅悗閲嶈癯",
-    "ja": "Qi濆稨瓒呮椂椛囃绋嶅搗曗嶈瘯を読む",
-    "ko": "Qi濆稨瓒呮椂椛囃绋嶅搗曗읽기嶈瘯",
-    "en": "Qi濆稨瓒呮椂椛囃绋嶅搗曗Read嶈瘯"
+  "苹方": {
+    "zh-TW": "蘋方",
+    "ja": "平芳",
+    "ko": "핑팡",
+    "en": "Pingfang"
+  },
+  "其他": {
+    "zh-TW": "其他",
+    "ja": "他の",
+    "ko": "다른",
+    "en": "other"
   },
   "启用": {
     "zh-TW": "啟用",
@@ -2099,29 +2849,23 @@
     "ko": "활성화",
     "en": "Activating"
   },
-  "啟用": {
-    "zh-TW": "啟用",
-    "ja": "有効にする",
-    "ko": "~할 수 있게 하다",
-    "en": "enable"
+  "前缀不能使用 8 位纯数字（该格式保留给后台地址）": {
+    "zh-TW": "前綴不能使用 8 位純數字（此格式保留給後台位址）",
+    "ja": "プレフィックスには純粋な 8 桁の数字は使用できません (この形式はバックエンド アドレス用に予約されています)",
+    "ko": "접두사는 순수 8자리 숫자를 사용할 수 없습니다(이 형식은 백엔드 주소용으로 예약되어 있습니다).",
+    "en": "The prefix cannot use a pure 8-digit number (this format is reserved for backend addresses)"
   },
-  "褰撳墠椤垫湭搴旂敤涓婚锛屾棤闇€杩樺師": {
-    "zh-TW": "褰撳墠欏墊湭搴旂敤涓婚錛屾棤闇€榪樺師",
-    "ja": "褰揿堠椤MAT湭搴 Flag敤涓综合锛屾椤黑€杩枩师",
-    "ko": "褰揿堠椤MAT湭搴 Flag敤涓综合锛屾椤黑€杩枩师",
-    "en": "褰揿堠椤MAT湭搴 Flag敤涓综合锛屾椤黑€杩枩师"
+  "前缀可用，地址已更新": {
+    "zh-TW": "前綴可用，地址已更新",
+    "ja": "プレフィックスが利用可能、アドレスが更新されました",
+    "ko": "접두사 사용 가능, 주소 업데이트됨",
+    "en": "Prefix available, address updated"
   },
   "强调": {
     "zh-TW": "強調",
     "ja": "強調する",
     "ko": "강조하다",
     "en": "emphasize"
-  },
-  "鍥藉": {
-    "zh-TW": "鍥藉",
-    "ja": "忍耐力",
-    "ko": "인내",
-    "en": "Perseverance"
   },
   "清除背景": {
     "zh-TW": "清除背景",
@@ -2134,6 +2878,12 @@
     "ja": "鮮明な画像",
     "ko": "선명한 사진",
     "en": "Clear pictures"
+  },
+  "清空": {
+    "zh-TW": "清空",
+    "ja": "クリア",
+    "ko": "분명한",
+    "en": "Clear"
   },
   "清空当前": {
     "zh-TW": "清空目前",
@@ -2153,17 +2903,41 @@
     "ko": "요청이 실패했습니다. 네트워크를 확인한 후 다시 시도해 주세요.",
     "en": "The request failed, please check the network and try again"
   },
+  "请求体不是有效 JSON。": {
+    "zh-TW": "請求體不是有效 JSON。",
+    "ja": "リクエスト本文が有効な JSON ではありません。",
+    "ko": "요청 본문이 유효한 JSON이 아닙니다.",
+    "en": "The request body is not valid JSON."
+  },
+  "请输入称谓或姓名": {
+    "zh-TW": "請輸入稱謂或姓名",
+    "ja": "タイトルまたは名前を入力してください",
+    "ko": "직함이나 이름을 입력하세요.",
+    "en": "Please enter a title or name"
+  },
   "请输入地址": {
     "zh-TW": "請輸入地址",
     "ja": "住所を入力してください",
     "ko": "주소를 입력해주세요",
     "en": "Please enter address"
   },
+  "请输入登录账号": {
+    "zh-TW": "請輸入登入帳號",
+    "ja": "ログインアカウントを入力してください",
+    "ko": "로그인 계정을 입력해주세요",
+    "en": "Please enter your login account"
+  },
   "请输入电话": {
     "zh-TW": "請輸入電話",
     "ja": "電話番号を入力してください",
     "ko": "전화번호를 입력해주세요",
     "en": "Please enter phone number"
+  },
+  "请输入方案名称": {
+    "zh-TW": "請輸入方案名稱",
+    "ja": "プラン名を入力してください",
+    "ko": "계획명을 입력해주세요.",
+    "en": "Please enter the plan name"
   },
   "请输入关键词": {
     "zh-TW": "請輸入關鍵字",
@@ -2189,11 +2963,11 @@
     "ko": "판매자 이름을 입력하세요.",
     "en": "Please enter merchant name"
   },
-  "请输入商户名关键": {
-    "zh-TW": "請輸入商戶名稱關鍵",
-    "ja": "販売者名キーを入力してください",
-    "ko": "판매자 이름 키를 입력하세요.",
-    "en": "Please enter the merchant name key"
+  "请输入商户名称关键词": {
+    "zh-TW": "請輸入商戶名稱關鍵字",
+    "ja": "販売者の名前のキーワードを入力してください",
+    "ko": "판매자 이름 키워드를 입력하세요.",
+    "en": "Please enter the merchant name keywords"
   },
   "请输入新密码": {
     "zh-TW": "請輸入新密碼",
@@ -2201,17 +2975,29 @@
     "ko": "새로운 비밀번호를 입력해주세요",
     "en": "Please enter new password"
   },
+  "请输入用户名": {
+    "zh-TW": "請輸入使用者名稱",
+    "ja": "ユーザー名を入力してください",
+    "ko": "사용자 이름을 입력하세요",
+    "en": "Please enter username"
+  },
   "请输入邮箱": {
     "zh-TW": "請輸入信​​箱",
     "ja": "メールアドレスを入力してください",
     "ko": "이메일을 입력해주세요",
     "en": "Please enter your email"
   },
-  "请输入有效后缀（仅支持字母、数字、-、_）": {
-    "zh-TW": "請輸入有效字尾（僅支援字母、數字、-、_）",
-    "ja": "有効なサフィックスを入力してください (文字、数字、-、_ のみがサポートされています)",
-    "ko": "유효한 접미사를 입력하세요. (문자, 숫자, -, _만 지원됩니다.)",
-    "en": "Please enter a valid suffix (only letters, numbers, -, _ are supported)"
+  "请输入有效的邮箱验证码。": {
+    "zh-TW": "請輸入有效的郵箱驗證碼。",
+    "ja": "有効な電子メール確認コードを入力してください。",
+    "ko": "유효한 이메일 인증 코드를 입력하세요.",
+    "en": "Please enter a valid email verification code."
+  },
+  "请输入有效前缀（仅支持字母、数字、-、_）": {
+    "zh-TW": "請輸入有效前綴（僅支援字母、數字、-、_）",
+    "ja": "有効なプレフィックスを入力してください (文字、数字、-、_ のみがサポートされています)",
+    "ko": "유효한 접두사를 입력하세요. (문자, 숫자, -, _만 지원됩니다.)",
+    "en": "Please enter a valid prefix (only letters, numbers, -, _ are supported)"
   },
   "请输入账号": {
     "zh-TW": "請輸入帳號",
@@ -2225,6 +3011,18 @@
     "ko": "올바른 이메일 형식을 입력하세요.",
     "en": "Please enter the correct email format"
   },
+  "请填写称谓或姓名": {
+    "zh-TW": "請填寫稱謂或姓名",
+    "ja": "役職または名前を入力してください",
+    "ko": "직함이나 이름을 입력해주세요.",
+    "en": "Please fill in your title or name"
+  },
+  "请填写电话": {
+    "zh-TW": "請填寫電話",
+    "ja": "電話番号を入力してください",
+    "ko": "전화번호를 입력해주세요",
+    "en": "Please fill in the phone number"
+  },
   "请填写分类名称和 slug": {
     "zh-TW": "請填寫分類名稱和 slug",
     "ja": "カテゴリ名とスラッグを入力してください",
@@ -2236,6 +3034,12 @@
     "ja": "役割を入力し、権限を確認してください",
     "ko": "역할을 입력하고 권한을 확인하세요.",
     "en": "Please fill in the role and check the permissions"
+  },
+  "请填写邮箱": {
+    "zh-TW": "請填寫信箱",
+    "ja": "メールアドレスをご記入ください",
+    "ko": "이메일을 작성해주세요",
+    "en": "Please fill in your email"
   },
   "请填写总站副标题": {
     "zh-TW": "請填寫總站副標題",
@@ -2297,17 +3101,17 @@
     "ko": "먼저 업종 분류를 생성한 후 메인 사이트 파티션을 저장해 주세요.",
     "en": "Please create an industry classification first and then save the main site partition."
   },
+  "请先登录并发送验证码邮件。": {
+    "zh-TW": "請先登入並發送驗證碼郵件。",
+    "ja": "まずログインして、認証コードのメールを送信してください。",
+    "ko": "먼저 로그인 후 인증번호 이메일을 보내주세요.",
+    "en": "Please log in first and send the verification code email."
+  },
   "请先点击要编辑的文本": {
     "zh-TW": "請先點選要編輯的文本",
     "ja": "まず編集したいテキストをクリックしてください",
     "ko": "먼저 편집하려는 텍스트를 클릭하세요.",
     "en": "Please click on the text you want to edit first"
-  },
-  "请先输入": {
-    "zh-TW": "請先輸入",
-    "ja": "まずはご入力ください",
-    "ko": "먼저 입력해 주세요",
-    "en": "Please enter first"
   },
   "请先输入邮箱，再点击找回密码": {
     "zh-TW": "請先輸入信箱，再點選找回密碼",
@@ -2321,29 +3125,23 @@
     "ko": "등록된 이메일 주소를 먼저 입력해주세요",
     "en": "Please enter your registered email address first"
   },
-  "请先提交并通过后缀校验": {
-    "zh-TW": "請先提交並透過後綴校驗",
-    "ja": "最初に送信してサフィックス検証に合格してください",
-    "ko": "먼저 제출하고 접미사 확인을 통과하세요.",
-    "en": "Please submit first and pass suffix verification"
+  "请先提交并通过前缀校验": {
+    "zh-TW": "請先提交並透過前綴校驗",
+    "ja": "最初に送信してプレフィックス検証に合格してください",
+    "ko": "먼저 제출하고 접두사 확인을 통과하세요.",
+    "en": "Please submit first and pass prefix verification"
   },
-  "请先填写": {
-    "zh-TW": "請先填寫",
-    "ja": "まずはご記入ください",
-    "ko": "먼저 채워주세요",
-    "en": "Please fill in first"
+  "请先填写并提交域名前缀。": {
+    "zh-TW": "請先填寫並提交網域前綴。",
+    "ja": "まずドメイン名のプレフィックスを入力して送信してください。",
+    "ko": "먼저 도메인 이름 접두어를 입력하고 제출하세요.",
+    "en": "Please fill in and submit the domain name prefix first."
   },
-  "请先填写并提交域名后缀。": {
-    "zh-TW": "請先填寫並提交網域後綴。",
-    "ja": "まずドメイン名のサフィックスを入力して送信してください。",
-    "ko": "먼저 도메인 이름 접미사를 입력하고 제출하세요.",
-    "en": "Please fill in and submit the domain name suffix first."
-  },
-  "请先选择": {
-    "zh-TW": "請先選擇",
-    "ja": "最初に選択してください",
-    "ko": "먼저 선택해주세요",
-    "en": "Please select first"
+  "请先新增产品后再预览详情页。": {
+    "zh-TW": "請先新增產品後再預覽詳情頁。",
+    "ja": "まず製品を追加してから、詳細ページをプレビューしてください。",
+    "ko": "먼저 제품을 추가한 후 세부정보 페이지를 미리보세요.",
+    "en": "Please add a product first and then preview the details page."
   },
   "请先选择商户": {
     "zh-TW": "請先選擇商戶",
@@ -2357,17 +3155,29 @@
     "ko": "먼저 사이트를 선택해주세요",
     "en": "Please select a site first"
   },
-  "请先选中丌": {
-    "zh-TW": "請先選丌",
-    "ja": "いいえを選択してください",
-    "ko": "아니요를 선택하세요.",
-    "en": "Please select no"
-  },
   "请先选中一个区块": {
     "zh-TW": "請先選中一個區塊",
     "ja": "最初にブロックを選択してください",
     "ko": "먼저 블록을 선택하세요.",
     "en": "Please select a block first"
+  },
+  "请先预览名片后再复制": {
+    "zh-TW": "請先預覽名片後再複製",
+    "ja": "名刺をコピーする前にプレビューしてください",
+    "ko": "복사하기 전에 명함을 미리 보십시오.",
+    "en": "Please preview the business card before copying it"
+  },
+  "请先预览名片后再下载联系人": {
+    "zh-TW": "請先預覽名片後再下載聯絡人",
+    "ja": "連絡先をダウンロードする前に名刺をプレビューしてください",
+    "ko": "연락처를 다운로드하기 전에 명함을 미리 보십시오.",
+    "en": "Please preview the business card before downloading the contact"
+  },
+  "请选择称谓": {
+    "zh-TW": "請選擇稱謂",
+    "ja": "タイトルを選択してください",
+    "ko": "제목을 선택하세요",
+    "en": "Please select a title"
   },
   "请选择图片文件": {
     "zh-TW": "請選擇圖片文件",
@@ -2387,11 +3197,35 @@
     "ko": "유효한 업종 분류를 선택하세요.",
     "en": "Please select a valid industry classification"
   },
+  "请选择预约店铺": {
+    "zh-TW": "請選擇預約店鋪",
+    "ja": "予約店舗を選択してください",
+    "ko": "예약 매장을 선택해주세요",
+    "en": "Please select a reservation store"
+  },
+  "请选择预约日期时间": {
+    "zh-TW": "請選擇預約日期時間",
+    "ja": "予約日時を選択してください",
+    "ko": "약속 날짜와 시간을 선택해주세요",
+    "en": "Please select the appointment date and time"
+  },
+  "请选择预约项目": {
+    "zh-TW": "請選擇預約項目",
+    "ja": "予約商品を選択してください",
+    "ko": "예약항목을 선택해주세요",
+    "en": "Please select a reservation item"
+  },
   "请再次输入新密码": {
     "zh-TW": "請再次輸入新密碼",
     "ja": "新しいパスワードをもう一度入力してください",
     "ko": "새 비밀번호를 다시 입력해주세요",
     "en": "Please enter new password again"
+  },
+  "请在刚才登录的同一设备、同一浏览器中完成验证。": {
+    "zh-TW": "請在剛才登入的同一裝置、同一瀏覽器中完成驗證。",
+    "ja": "ログインしたときと同じデバイスとブラウザで認証を完了してください。",
+    "ko": "방금 로그인한 것과 동일한 기기 및 브라우저에서 인증을 완료해 주세요.",
+    "en": "Please complete verification on the same device and browser you just logged in with."
   },
   "请择上传压缩策略。切换后会作用于后续上传的新图片，已有图片不会自动重压缩": {
     "zh-TW": "請擇上傳壓縮策略。切換後會作用在後續上傳的新圖片，現有圖片不會自動重壓縮",
@@ -2399,17 +3233,29 @@
     "ko": "업로드 압축 전략을 선택하세요. 전환 후에는 이후에 업로드되는 새로운 이미지에 적용되며, 기존 이미지는 자동으로 재압축되지 않습니다.",
     "en": "Please select an upload compression strategy. After switching, it will be applied to new images uploaded subsequently, and existing images will not be automatically recompressed."
   },
+  "请至少选择一个端口，并勾选背景或页面范围": {
+    "zh-TW": "請至少選擇一個端口，並勾選背景或頁面範圍",
+    "ja": "少なくとも 1 つのポートを選択し、背景またはページ範囲を確認してください",
+    "ko": "포트를 하나 이상 선택하고 배경이나 페이지 범위를 확인하세요.",
+    "en": "Please select at least one port and check background or page range"
+  },
+  "請求超時，請稍後重試": {
+    "zh-TW": "請求超時，請稍後重試",
+    "ja": "リクエストがタイムアウトしました。後でもう一度お試しください",
+    "ko": "요청 시간이 초과되었습니다. 나중에 다시 시도해 주세요.",
+    "en": "Request timed out, please try again later"
+  },
   "請求失敗，請檢查網路後重試": {
     "zh-TW": "請求失敗，請檢查網絡後重試",
     "ja": "リクエストは失敗しました。ネットワークを確認してもう一度お試しください。",
     "ko": "요청이 실패했습니다. 네트워크를 확인한 후 다시 시도해 주세요.",
     "en": "Request failed, please check the network and try again"
   },
-  "請求逾時，請稍後重試": {
-    "zh-TW": "請求超時，請稍後重試",
-    "ja": "リクエストがタイムアウトしました。後でもう一度お試しください",
-    "ko": "요청 시간이 초과되었습니다. 나중에 다시 시도해 주세요.",
-    "en": "Request timed out, please try again later"
+  "請輸入登入帳號": {
+    "zh-TW": "請輸入登錄帳號",
+    "ja": "ログインアカウントを入力してください",
+    "ko": "로그인 계정을 입력해주세요",
+    "en": "Please enter your login account"
   },
   "請輸入密碼": {
     "zh-TW": "請輸入密碼",
@@ -2441,12 +3287,6 @@
     "ko": "올바른 이메일 형식을 입력하세요.",
     "en": "Please enter the correct email format"
   },
-  "請先輸入": {
-    "zh-TW": "請先輸入",
-    "ja": "まずはご入力ください",
-    "ko": "먼저 입력해 주세요",
-    "en": "Please enter first"
-  },
   "請先輸入信箱，再點擊找回密碼": {
     "zh-TW": "請先輸入信箱，再點擊找密碼",
     "ja": "最初にメールアドレスを入力してから、「パスワードを取得」をクリックしてください",
@@ -2459,29 +3299,11 @@
     "ko": "먼저 등록 이메일을 입력해주세요",
     "en": "Please enter your registration email first"
   },
-  "請先填寫": {
-    "zh-TW": "請先填寫",
-    "ja": "まずはご記入ください",
-    "ko": "먼저 채워주세요",
-    "en": "Please fill in first"
-  },
-  "請先選擇": {
-    "zh-TW": "請先選擇",
-    "ja": "最初に選択してください",
-    "ko": "먼저 선택해주세요",
-    "en": "Please select first"
-  },
   "請再次輸入新密碼": {
     "zh-TW": "請再次輸入新密碼",
     "ja": "新しいパスワードをもう一度入力してください",
     "ko": "새 비밀번호를 다시 입력해주세요",
     "en": "Please enter new password again"
-  },
-  "区块": {
-    "zh-TW": "區塊",
-    "ja": "ブロック",
-    "ko": "차단하다",
-    "en": "block"
   },
   "区块类型统计（当前页）：": {
     "zh-TW": "區塊類型統計（目前頁）：",
@@ -2489,17 +3311,23 @@
     "ko": "블록 유형 통계(현재 페이지):",
     "en": "Block type statistics (current page):"
   },
-  "區塊": {
-    "zh-TW": "區塊",
-    "ja": "ブロック",
-    "ko": "차단하다",
-    "en": "block"
-  },
   "取消": {
     "zh-TW": "取消",
     "ja": "キャンセル",
     "ko": "취소",
     "en": "Cancel"
+  },
+  "取消确认": {
+    "zh-TW": "取消確認",
+    "ja": "キャンセル確認",
+    "ko": "취소 확인",
+    "en": "Cancel confirmation"
+  },
+  "取消预约": {
+    "zh-TW": "取消預約",
+    "ja": "予約をキャンセルする",
+    "ko": "예약 취소",
+    "en": "Cancel reservation"
   },
   "去前台": {
     "zh-TW": "去前台",
@@ -2525,6 +3353,42 @@
     "ko": "site-xxx 범위가 누락되어 아직 게시할 수 없습니다.",
     "en": "The site-xxx scope is missing and cannot be published yet."
   },
+  "缺少规则 ID": {
+    "zh-TW": "缺少規則 ID",
+    "ja": "ルールIDがありません",
+    "ko": "규칙 ID가 누락되었습니다.",
+    "en": "Missing rule ID"
+  },
+  "缺少商户 ID，无法初始化本地配置": {
+    "zh-TW": "缺少商家 ID，無法初始化本機配置",
+    "ja": "販売者 ID が見つからないため、ローカル構成を初期化できません",
+    "ko": "판매자 ID 누락으로 인해 로컬 구성을 초기화할 수 없습니다.",
+    "en": "Unable to initialize local configuration due to missing merchant ID"
+  },
+  "缺少有效的发布内容。": {
+    "zh-TW": "缺少有效的發佈內容。",
+    "ja": "有効な投稿コンテンツがありません。",
+    "ko": "유효한 게시 콘텐츠가 누락되었습니다.",
+    "en": "Valid posting content is missing."
+  },
+  "缺少有效的资源内容。": {
+    "zh-TW": "缺少有效的資源內容。",
+    "ja": "有効なリソース コンテンツが不足しています。",
+    "ko": "유효한 리소스 콘텐츠가 부족합니다.",
+    "en": "Lack of valid resource content."
+  },
+  "缺少站点 ID，无法收录方案": {
+    "zh-TW": "缺少網站 ID，無法收錄方案",
+    "ja": "サイト ID が欠落しているため、プランを含めることができません。",
+    "ko": "사이트 ID가 누락되어 계획을 포함할 수 없습니다.",
+    "en": "The site ID is missing and the plan cannot be included."
+  },
+  "缺少站点 ID，无法应用方案模板": {
+    "zh-TW": "缺少網站 ID，無法套用方案模板",
+    "ja": "シナリオ テンプレートを適用するためのサイト ID がありません",
+    "ko": "시나리오 템플릿을 적용할 사이트 ID가 누락되었습니다.",
+    "en": "Missing site ID to apply scenario template"
+  },
   "确定": {
     "zh-TW": "確定",
     "ja": "もちろん",
@@ -2542,6 +3406,12 @@
     "ja": "保存することを確認しますか?",
     "ko": "저장하시겠습니까?",
     "en": "Confirm to save?"
+  },
+  "确认创建": {
+    "zh-TW": "確認創建",
+    "ja": "作成の確認",
+    "ko": "생성 확인",
+    "en": "Confirm creation"
   },
   "确认继续吗？": {
     "zh-TW": "確認繼續嗎？",
@@ -2561,17 +3431,23 @@
     "ko": "새 비밀번호 확인",
     "en": "Confirm new password"
   },
+  "确认预览无误后即可生成名片。": {
+    "zh-TW": "確認預覽無誤後即可產生名片。",
+    "ja": "プレビューが正しいことを確認した後、名刺を生成できます。",
+    "ko": "미리보기가 올바른지 확인한 후 명함을 생성할 수 있습니다.",
+    "en": "After confirming that the preview is correct, the business card can be generated."
+  },
+  "确认预约": {
+    "zh-TW": "確認預約",
+    "ja": "予約を確認する",
+    "ko": "예약 확인",
+    "en": "Confirm reservation"
+  },
   "确认重置密码": {
     "zh-TW": "確認重設密碼",
     "ja": "パスワードリセットの確認",
     "ko": "비밀번호 재설정 확인",
     "en": "Confirm password reset"
-  },
-  "確認": {
-    "zh-TW": "確認",
-    "ja": "確認する",
-    "ko": "확인하다",
-    "en": "Confirm"
   },
   "確認新密碼": {
     "zh-TW": "確認新密碼",
@@ -2591,11 +3467,17 @@
     "ko": "비밀번호 재설정 확인",
     "en": "Confirm password reset"
   },
-  "娆ф床鍥藉": {
-    "zh-TW": "嬈ф床鍥藉",
-    "ja": "娆фベッドチェック",
-    "ko": "娆ф 침대 웨지 ",
-    "en": "娆ф bed wedge "
+  "確認メールを再送信": {
+    "zh-TW": "確認メールを再送信",
+    "ja": "送信前にメールをご確認ください。",
+    "ko": "보내기 전에 메일을 확인해 주세요.",
+    "en": "Please confirm the mail before sending."
+  },
+  "確認メールを再送信しました。受信箱と迷惑メールをご確認ください。": {
+    "zh-TW": "確認メールを再送信しました。受信箱と迷惑メールをご確認ください。",
+    "ja": "メッセージを確認して送信してください。郵便受けに戸惑って確認しました。",
+    "ko": "메시지를 확인한 후 메시지를 보내세요. 우편함을 보고 헷갈려서 확인했습니다.",
+    "en": "Confirm the message and then send the message. I was confused by the mailbox and confirmed it."
   },
   "热门行业": {
     "zh-TW": "熱門產業",
@@ -2603,17 +3485,11 @@
     "ko": "인기 산업",
     "en": "Popular industries"
   },
-  "認証メールを再送信": {
-    "zh-TW": "認証メールを再送信",
-    "ja": "メールを確認してから手紙を送信してください",
-    "ko": "메일을 확인한 후 편지를 보내세요.",
-    "en": "Verify the mail and then send the letter"
-  },
-  "認証メールを再送信しました。受信箱と迷惑メールを確認してください。": {
-    "zh-TW": "認証メールを再送信しました。受信箱と迷惑メールを確認してください。",
-    "ja": "メールを認証してから手紙を送信します。郵便受けに戸惑って確認しました。",
-    "ko": "메일을 인증한 후 편지를 보내세요. 우편함을 보고 헷갈려서 확인했습니다.",
-    "en": "Certify the mail and then send the letter. I was confused by the mailbox and confirmed it."
+  "人民币 ¥": {
+    "zh-TW": "人民幣 ¥",
+    "ja": "人民元円",
+    "ko": "인민폐 엔",
+    "en": "RMB ¥"
   },
   "仍继续执行发布动作吗？": {
     "zh-TW": "仍繼續執行發布動作嗎？",
@@ -2627,17 +3503,41 @@
     "ko": "일본어",
     "en": "Japanese"
   },
+  "日元 JPY ¥": {
+    "zh-TW": "日元 JPY ¥",
+    "ja": "日本円 円 円",
+    "ko": "일본 엔 JPY ¥",
+    "en": "Japanese Yen JPY ¥"
+  },
   "日志": {
     "zh-TW": "紀錄",
     "ja": "ログ",
     "ko": "통나무",
     "en": "log"
   },
+  "瑞士法郎 CHF": {
+    "zh-TW": "瑞士法郎 CHF",
+    "ja": "スイスフラン CHF",
+    "ko": "스위스 프랑 CHF",
+    "en": "Swiss Franc CHF"
+  },
   "三列": {
     "zh-TW": "三列",
     "ja": "3つの列",
     "ko": "세 개의 열",
     "en": "three columns"
+  },
+  "三列等宽": {
+    "zh-TW": "三列等寬",
+    "ja": "同じ幅の 3 つの列",
+    "ko": "너비가 같은 세 개의 열",
+    "en": "Three columns of equal width"
+  },
+  "三列卡片": {
+    "zh-TW": "三列卡片",
+    "ja": "3 列のカード",
+    "ko": "카드 3자리수",
+    "en": "Three columns of cards"
   },
   "三月": {
     "zh-TW": "三月",
@@ -2651,11 +3551,11 @@
     "ko": "Xi 디스플레이 플랫폼에 등록된 가맹점의 정문",
     "en": "The front entrance of registered merchants on the Xi display platform"
   },
-  "色": {
-    "zh-TW": "色",
-    "ja": "色",
-    "ko": "색상",
-    "en": "color"
+  "扫码进入网站": {
+    "zh-TW": "掃碼進入網站",
+    "ja": "コードをスキャンしてウェブサイトにアクセスします",
+    "ko": "코드를 스캔하여 웹사이트에 들어가세요",
+    "en": "Scan the code to enter the website"
   },
   "色彩（可选）": {
     "zh-TW": "色彩（可選）",
@@ -2663,23 +3563,35 @@
     "ko": "색상(선택사항)",
     "en": "Color (optional)"
   },
-  "筛选": {
-    "zh-TW": "篩選",
-    "ja": "フィルター",
-    "ko": "필터",
-    "en": "filter"
-  },
-  "篩選": {
-    "zh-TW": "篩選",
-    "ja": "フィルター",
-    "ko": "필터",
-    "en": "Filter"
+  "删": {
+    "zh-TW": "刪",
+    "ja": "消去",
+    "ko": "삭제",
+    "en": "delete"
   },
   "删除": {
     "zh-TW": "刪除",
     "ja": "消去",
     "ko": "삭제",
     "en": "delete"
+  },
+  "删除超时，二维码和联系卡链接暂未失效，请稍后重试": {
+    "zh-TW": "刪除逾時，二維碼和聯絡卡連結暫未失效，請稍後重試",
+    "ja": "削除がタイムアウトしました。QR コードと連絡先カードのリンクの有効期限がまだ切れていません。後でもう一度お試しください。",
+    "ko": "삭제 시간이 초과되었습니다. QR 코드와 연락처 카드 링크가 아직 만료되지 않았습니다. 나중에 다시 시도해 주세요.",
+    "en": "Deletion timed out, the QR code and contact card links have not expired yet, please try again later."
+  },
+  "删除方案模板": {
+    "zh-TW": "刪除方案模板",
+    "ja": "シナリオテンプレートの削除",
+    "ko": "시나리오 템플릿 삭제",
+    "en": "Delete scenario template"
+  },
+  "删除方案模板失败，请重试": {
+    "zh-TW": "刪除方案範本失敗，請重試",
+    "ja": "プラン テンプレートを削除できませんでした。もう一度お試しください。",
+    "ko": "계획 템플릿을 삭제하지 못했습니다. 다시 시도해 주세요.",
+    "en": "Failed to delete plan template, please try again"
   },
   "删除后一": {
     "zh-TW": "刪除後一",
@@ -2693,17 +3605,23 @@
     "ko": "삭제 확인",
     "en": "Delete confirmation"
   },
-  "刪除": {
-    "zh-TW": "刪除",
-    "ja": "消去",
-    "ko": "삭제",
-    "en": "delete"
+  "删除失败，二维码和联系卡链接未失效，请重试": {
+    "zh-TW": "刪除失敗，二維碼和聯絡卡連結未失效，請重試",
+    "ja": "削除に失敗しました。 QR コードと連絡先カードのリンクは無効ではありません。もう一度試してください。",
+    "ko": "삭제에 실패했습니다. QR 코드와 연락처 카드 링크가 유효하지 않습니다. 다시 시도해 주세요.",
+    "en": "Deletion failed. The QR code and contact card link are not invalid. Please try again."
   },
-  "商戶": {
-    "zh-TW": "商戶",
-    "ja": "商人",
-    "ko": "상인",
-    "en": "Merchant"
+  "删除失败，请重试": {
+    "zh-TW": "刪除失敗，請重試",
+    "ja": "削除に失敗しました。もう一度お試しください",
+    "ko": "삭제하지 못했습니다. 다시 시도해 주세요.",
+    "en": "Deletion failed, please try again"
+  },
+  "删除中...": {
+    "zh-TW": "刪除中...",
+    "ja": "削除中...",
+    "ko": "삭제 중...",
+    "en": "Deleting..."
   },
   "商户": {
     "zh-TW": "商家",
@@ -2717,6 +3635,12 @@
     "ko": "판매자 인증 시간이 초과되었습니다. 저장하려면 나중에 다시 시도하세요.",
     "en": "Merchant authentication timed out, please try again later to save."
   },
+  "商户框图片仍是内嵌图片，且上传到存储失败，请重新上传后再保存": {
+    "zh-TW": "商家框圖片仍是內嵌圖片，且上傳至儲存失敗，請重新上傳後再儲存",
+    "ja": "マーチャント ボックスの画像はまだ埋め込まれた画像であり、ストレージへのアップロードに失敗しました。もう一度アップロードして、再度保存してください。",
+    "ko": "판매자 상자 이미지가 여전히 삽입된 이미지이므로 저장소에 업로드하지 못했습니다. 다시 업로드하신 후 다시 저장해 주세요.",
+    "en": "The merchant box image is still an embedded image and failed to be uploaded to the storage. Please upload it again and save it again."
+  },
   "商户列表": {
     "zh-TW": "商家列表",
     "ja": "加盟店リスト",
@@ -2728,6 +3652,12 @@
     "ja": "販売者名",
     "ko": "판매자 이름",
     "en": "Merchant name"
+  },
+  "商户名片": {
+    "zh-TW": "商家名片",
+    "ja": "販売者の名刺",
+    "ko": "판매자 명함",
+    "en": "Merchant business card"
   },
   "商户配置已保存": {
     "zh-TW": "商家配置已儲存",
@@ -2741,17 +3671,35 @@
     "ko": "판매자 식별 시간이 초과되었습니다. 朜 캐시를 사용하여 편집을 계속했습니다.",
     "en": "Merchant identification timed out, the 朜 cache has been used to continue editing."
   },
+  "商户网站二维码": {
+    "zh-TW": "商家網站二維碼",
+    "ja": "販売者ウェブサイトの QR コード",
+    "ko": "판매자 웹사이트 QR 코드",
+    "en": "Merchant website QR code"
+  },
   "商户信息": {
     "zh-TW": "商家資訊",
     "ja": "加盟店情報",
     "ko": "판매자 정보",
     "en": "Merchant information"
   },
-  "商户信息已保": {
-    "zh-TW": "商家資訊已保",
-    "ja": "販売者情報は保護されています",
-    "ko": "판매자 정보는 보호되었습니다",
-    "en": "Merchant information has been protected"
+  "商户信息已保存": {
+    "zh-TW": "商家資料已儲存",
+    "ja": "ビジネス情報が保存されました",
+    "ko": "업체정보가 저장되었습니다",
+    "en": "Business information has been saved"
+  },
+  "商户信息已保存；当前还没有线上页面记录，首次发布后前台地址才会生效": {
+    "zh-TW": "商家資料已儲存；目前尚未有線上頁面記錄，首次發布後前台地址才會生效",
+    "ja": "販売者情報は保存されました。現在、オンライン ページの記録はなく、フロント デスクのアドレスは初めて公開されるまで有効になりません。",
+    "ko": "판매자 정보가 저장되었습니다. 현재 온라인 페이지 기록이 없으며 프런트 데스크 주소는 처음 게시될 때까지 적용되지 않습니다.",
+    "en": "The merchant information has been saved; there is currently no online page record, and the front desk address will not take effect until it is published for the first time."
+  },
+  "商户信息已保存；线上商户资料同步失败，稍后重新保存或重新发布后会自动修复": {
+    "zh-TW": "商家資訊已儲存；線上商家資料同步失敗，稍後重新儲存或重新發布後會自動修復",
+    "ja": "販売者情報が保存されました。オンライン販売者情報の同期に失敗しました。後で再保存または再公開すると、自動的に修復されます。",
+    "ko": "판매자 정보가 저장되었습니다. 온라인 가맹점 정보 동기화에 실패하여 나중에 다시 저장하거나 다시 게시한 후 자동으로 복구됩니다.",
+    "en": "Merchant information has been saved; synchronization of online merchant information failed and will be automatically repaired after re-saving or re-publishing later."
   },
   "商户已到期，请先在配置中延后到期时间": {
     "zh-TW": "商家已到期，請先在組態中延後到期時間",
@@ -2777,11 +3725,29 @@
     "ko": "판매자 백엔드 로그인",
     "en": "Merchant backend login"
   },
-  "上传": {
-    "zh-TW": "上傳",
-    "ja": "アップロード",
-    "ko": "업로드",
-    "en": "upload"
+  "商品编号": {
+    "zh-TW": "商品編號",
+    "ja": "品目番号",
+    "ko": "품목 번호",
+    "en": "Item number"
+  },
+  "商品介绍": {
+    "zh-TW": "商品介紹",
+    "ja": "製品紹介",
+    "ko": "제품소개",
+    "en": "Product introduction"
+  },
+  "商品名称": {
+    "zh-TW": "商品名稱",
+    "ja": "製品名",
+    "ko": "제품명",
+    "en": "Product name"
+  },
+  "上侧": {
+    "zh-TW": "上側",
+    "ja": "上側",
+    "ko": "위쪽",
+    "en": "upper side"
   },
   "上传背景": {
     "zh-TW": "上傳背景",
@@ -2801,23 +3767,17 @@
     "ko": "사진 업로드",
     "en": "Upload pictures"
   },
-  "上传压缩策略": {
-    "zh-TW": "上傳壓縮策略",
-    "ja": "アップロード圧縮戦略",
-    "ko": "업로드 압축 전략",
-    "en": "Upload compression strategy"
-  },
   "上传音频": {
     "zh-TW": "上傳音訊",
     "ja": "音声をアップロードする",
     "ko": "오디오 업로드",
     "en": "Upload audio"
   },
-  "上傳": {
-    "zh-TW": "上傳",
-    "ja": "アップロード",
-    "ko": "업로드",
-    "en": "upload"
+  "上一页": {
+    "zh-TW": "上一頁",
+    "ja": "前のページへ",
+    "ko": "이전 페이지",
+    "en": "Previous page"
   },
   "上一页按钮": {
     "zh-TW": "上一頁按鈕",
@@ -2849,18 +3809,6 @@
     "ko": "숨김으로 설정",
     "en": "Set as hidden"
   },
-  "設定変更履歴": {
-    "zh-TW": "設定変更履歴",
-    "ja": "設定更新手順",
-    "ko": "업데이트 지침 설정",
-    "en": "Setting update instructions"
-  },
-  "設定を保存": {
-    "zh-TW": "設定を保存",
-    "ja": "設定を保存する",
-    "ko": "설정 저장",
-    "en": "Save settings"
-  },
   "审计同学": {
     "zh-TW": "審計同學",
     "ja": "クラスメートを監査する",
@@ -2878,6 +3826,42 @@
     "ja": "監査人",
     "ko": "감사",
     "en": "auditor"
+  },
+  "生成": {
+    "zh-TW": "產生",
+    "ja": "生成する",
+    "ko": "생성하다",
+    "en": "generate"
+  },
+  "生成超时，请稍后重试": {
+    "zh-TW": "生成超時，請稍後重試",
+    "ja": "生成がタイムアウトしました。後でもう一度お試しください。",
+    "ko": "시간 초과가 발생했습니다. 나중에 다시 시도해 주세요.",
+    "en": "Generate timeout, please try again later"
+  },
+  "生成电子联系卡链接，手机打开后可保存联系人，也可单独复制名片图片。": {
+    "zh-TW": "產生電子聯絡卡鏈接，手機開啟後可儲存聯絡人，也可單獨複製名片圖片。",
+    "ja": "電子連絡先カードのリンクを生成します。電話を開いたら、連絡先を保存したり、名刺の画像を個別にコピーしたりできます。",
+    "ko": "전자 연락처 카드 링크를 생성합니다. 휴대폰을 연 후 연락처를 저장하거나 명함 이미지를 별도로 복사할 수 있습니다.",
+    "en": "Generate an electronic contact card link. After opening the phone, you can save the contact or copy the business card image separately."
+  },
+  "生成名片": {
+    "zh-TW": "生成名片",
+    "ja": "名刺を生成する",
+    "ko": "명함 생성",
+    "en": "Generate business card"
+  },
+  "生成普通名片图片，适合保存或复制。": {
+    "zh-TW": "產生普通名片圖片，適合保存或複製。",
+    "ja": "保存やコピーに適した通常の名刺画像を生成します。",
+    "ko": "저장이나 복사에 적합한 일반 명함 이미지를 생성합니다.",
+    "en": "Generate ordinary business card images, suitable for saving or copying."
+  },
+  "生成中...": {
+    "zh-TW": "生成中...",
+    "ja": "生成中...",
+    "ko": "생성 중...",
+    "en": "Generating..."
   },
   "省": {
     "zh-TW": "省",
@@ -2897,41 +3881,23 @@
     "ko": "실패하다",
     "en": "fail"
   },
-  "失敗": {
-    "zh-TW": "失敗",
-    "ja": "失敗",
-    "ko": "실패하다",
-    "en": "Fail"
-  },
   "实线": {
     "zh-TW": "實線",
     "ja": "実線",
     "ko": "실선",
     "en": "solid line"
   },
-  "使用者": {
-    "zh-TW": "使用者",
-    "ja": "ユーザー",
-    "ko": "사용자",
-    "en": "user"
+  "示例产品": {
+    "zh-TW": "範例產品",
+    "ja": "サンプル品",
+    "ko": "샘플제품",
+    "en": "Sample products"
   },
   "是": {
     "zh-TW": "是",
     "ja": "はい",
     "ko": "예",
     "en": "yes"
-  },
-  "是否继续": {
-    "zh-TW": "是否繼續",
-    "ja": "続けますか?",
-    "ko": "계속하시겠습니까?",
-    "en": "Do you want to continue?"
-  },
-  "是否繼續": {
-    "zh-TW": "是否繼續",
-    "ja": "続けますか?",
-    "ko": "계속하시겠습니까?",
-    "en": "Do you want to continue?"
   },
   "是否仍继续发布？": {
     "zh-TW": "是否仍繼續發布？",
@@ -2945,11 +3911,35 @@
     "ko": "프레임에 적응",
     "en": "Adapt to frame"
   },
+  "收录方案": {
+    "zh-TW": "收錄方案",
+    "ja": "インクルージョンプラン",
+    "ko": "포함 계획",
+    "en": "Inclusion plan"
+  },
+  "收录中..": {
+    "zh-TW": "收錄中..",
+    "ja": "含む...",
+    "ko": "포함...",
+    "en": "Including..."
+  },
   "收起": {
     "zh-TW": "收起",
     "ja": "近い",
     "ko": "닫다",
     "en": "close"
+  },
+  "收起编辑侧栏": {
+    "zh-TW": "收起編輯側欄",
+    "ja": "編集サイドバーを折りたたむ",
+    "ko": "수정 사이드바 접기",
+    "en": "Collapse editing sidebar"
+  },
+  "收起侧栏": {
+    "zh-TW": "收起側欄",
+    "ja": "サイドバーを折りたたむ",
+    "ko": "사이드바 접기",
+    "en": "Collapse sidebar"
   },
   "手工模拟失败发布": {
     "zh-TW": "手動模擬失敗發布",
@@ -2963,23 +3953,29 @@
     "ko": "수동 직접 해제",
     "en": "Manual direct release"
   },
+  "手机": {
+    "zh-TW": "智慧型手機",
+    "ja": "携帯電話",
+    "ko": "휴대폰",
+    "en": "cell phone"
+  },
+  "首次发布超时，正在自动重试...": {
+    "zh-TW": "首次發布超時，正在自動重試...",
+    "ja": "最初のリリースがタイムアウトになり、自動的に再試行されます...",
+    "ko": "첫 번째 릴리스 시간이 초과되었습니다. 자동으로 다시 시도하는 중입니다...",
+    "en": "First release timed out, automatically retrying..."
+  },
   "首次注册后需要先验证邮箱，再进行登录。": {
     "zh-TW": "首次註冊後需先驗證郵箱，再進行登入。",
     "ja": "初回登録後は、ログインする前にメールアドレスの認証が必要です。",
     "ko": "처음 등록한 후 로그인하기 전에 이메일 주소를 확인해야 합니다.",
     "en": "After registering for the first time, you need to verify your email address before logging in."
   },
-  "首次註冊後需要先完成信箱驗證，再進行登入。": {
-    "zh-TW": "首次註冊後需先完成信箱驗證，再進行登錄。",
-    "ja": "初回登録後は、ログインする前にメール認証を完了する必要があります。",
-    "ko": "최초 회원가입 후, 로그인 전 이메일 인증을 완료하셔야 합니다.",
-    "en": "After registering for the first time, you need to complete email verification before logging in."
-  },
-  "首发布超时，在自动重..": {
-    "zh-TW": "首發布超時，在自動重..",
-    "ja": "最初のリリースはタイムアウトになり、自動的に再起動されます。",
-    "ko": "초기 릴리스 시간이 초과되고 자동으로 다시 시작됩니다.",
-    "en": "The initial release times out and automatically restarts.."
+  "首次註冊後需要先驗證信箱，再進行登入。": {
+    "zh-TW": "首次註冊後需先驗證信箱，再進行登錄。",
+    "ja": "初回登録後は、ログインする前にメールアドレスの認証が必要です。",
+    "ko": "처음 등록한 후 로그인하기 전에 이메일 주소를 확인해야 합니다.",
+    "en": "After registering for the first time, you need to verify your email address before logging in."
   },
   "首屏展示": {
     "zh-TW": "首屏展示",
@@ -2992,6 +3988,24 @@
     "ja": "フロントページ",
     "ko": "첫 페이지",
     "en": "front page"
+  },
+  "售价": {
+    "zh-TW": "售價",
+    "ja": "販売価格",
+    "ko": "판매 가격",
+    "en": "selling price"
+  },
+  "输入产品介绍、规格或卖点": {
+    "zh-TW": "輸入產品介紹、規格或賣點",
+    "ja": "製品紹介、仕様、セールスポイントを入力してください",
+    "ko": "제품 소개, 사양 또는 판매 포인트를 입력하세요.",
+    "en": "Enter product introduction, specifications or selling points"
+  },
+  "输入产品名称": {
+    "zh-TW": "輸入產品名稱",
+    "ja": "製品名を入力してください",
+    "ko": "제품명을 입력하세요",
+    "en": "Enter product name"
   },
   "输入城市": {
     "zh-TW": "輸入城市",
@@ -3017,6 +4031,18 @@
     "ko": "오디오 URL을 입력하세요",
     "en": "Enter audio URL"
   },
+  "输入邮件里的验证码": {
+    "zh-TW": "輸入郵件裡的驗證碼",
+    "ja": "メールにある認証コードを入力してください",
+    "ko": "이메일에 인증번호를 입력하세요",
+    "en": "Enter the verification code in the email"
+  },
+  "竖图": {
+    "zh-TW": "豎圖",
+    "ja": "縦長画像",
+    "ko": "세로 이미지",
+    "en": "Vertical image"
+  },
   "数据统计": {
     "zh-TW": "數據統計",
     "ja": "統計",
@@ -3041,23 +4067,53 @@
     "ko": "이중 행",
     "en": "double row"
   },
+  "双列卡片": {
+    "zh-TW": "雙列卡片",
+    "ja": "2列カード",
+    "ko": "이중 열 카드",
+    "en": "double column cards"
+  },
   "双线": {
     "zh-TW": "雙線",
     "ja": "二重線",
     "ko": "이중선",
     "en": "Double line"
   },
-  "説明": {
-    "zh-TW": "竄明",
-    "ja": "説明",
-    "ko": "설명",
-    "en": "Description"
+  "说明": {
+    "zh-TW": "說明",
+    "ja": "説明する",
+    "ko": "설명하다",
+    "en": "illustrate"
+  },
+  "思源黑体": {
+    "zh-TW": "思源黑體",
+    "ja": "思源黒体",
+    "ko": "쓰위안 흑체",
+    "en": "Siyuan black body"
+  },
+  "思源宋体": {
+    "zh-TW": "思源宋體",
+    "ja": "思源ソンティ",
+    "ko": "쓰위안 송티",
+    "en": "Siyuan Songti"
+  },
+  "四列卡片": {
+    "zh-TW": "四列卡片",
+    "ja": "4列のカード",
+    "ko": "네 열의 카드",
+    "en": "four columns of cards"
   },
   "四月": {
     "zh-TW": "四月",
     "ja": "4月",
     "ko": "4월",
     "en": "April"
+  },
+  "宋体": {
+    "zh-TW": "宋體",
+    "ja": "宋の時代",
+    "ko": "송나라",
+    "en": "Song Dynasty"
   },
   "送信": {
     "zh-TW": "送信",
@@ -3083,29 +4139,41 @@
     "ko": "검색 버튼",
     "en": "search button"
   },
+  "搜索产品名称/编号/介绍": {
+    "zh-TW": "搜尋產品名​​稱/編號/介紹",
+    "ja": "製品名/品番/紹介文を検索",
+    "ko": "제품명/번호/소개 검색",
+    "en": "Search product name/number/introduction"
+  },
+  "搜索方案名称 / 来源网站 / 域名前缀 / 分类": {
+    "zh-TW": "搜尋方案名稱 / 來源網站 / 網域前綴 / 分類",
+    "ja": "検索プラン名 / ソース Web サイト / ドメイン名プレフィックス / 分類",
+    "ko": "검색 계획 이름 / 소스 웹 사이트 / 도메인 이름 접두사 / 분류",
+    "en": "Search plan name / source website / domain name prefix / classification"
+  },
   "搜索输入": {
     "zh-TW": "搜尋輸入",
     "ja": "検索入力",
     "ko": "검색 입력",
     "en": "search input"
   },
-  "搜索用户/名称/后缀/行业/城市/域名": {
-    "zh-TW": "搜尋用戶/姓名/後綴/行業/城市/域名",
-    "ja": "ユーザー/名前/サフィックス/業界/都市/ドメイン名を検索",
-    "ko": "사용자/이름/접미사/산업/도시/도메인 이름 검색",
-    "en": "Search user/name/suffix/industry/city/domain name"
+  "搜索预约编号 / 店铺 / 项目 / 姓名 / 邮箱 / 电话 / 备注": {
+    "zh-TW": "搜尋預約編號 / 店舖 / 項目 / 姓名 / 信箱 / 電話 / 備註",
+    "ja": "予約番号/店舗/商品/名前/メールアドレス/電話番号/メモを検索",
+    "ko": "예약번호/매장/상품/이름/이메일/전화번호/메모 검색",
+    "en": "Search reservation number/store/item/name/email/phone/notes"
   },
-  "搜尋": {
-    "zh-TW": "搜尋",
-    "ja": "検索",
-    "ko": "찾다",
-    "en": "Search"
+  "搜索账号/邮箱/ID/名称/前缀/行业/城市/域名": {
+    "zh-TW": "搜尋帳號/信箱/ID/姓名/前綴/產業/城市/域名",
+    "ja": "アカウント/メールアドレス/ID/名前/プレフィックス/業界/都市/ドメイン名を検索",
+    "ko": "계정/이메일/ID/이름/접두사/산업/도시/도메인 이름 검색",
+    "en": "Search account/email/ID/name/prefix/industry/city/domain name"
   },
-  "濉厖鏂瑰紡": {
-    "zh-TW": "濉厖鏂瑰紡",
-    "ja": "扉Pang Ke Rose Textile",
-    "ko": "扉Pang Ke Rose Textile",
-    "en": "扉Pang Ke Rose Textile"
+  "随产品延伸": {
+    "zh-TW": "隨產品延伸",
+    "ja": "製品による拡張",
+    "ko": "제품으로 확장",
+    "en": "Extension with product"
   },
   "缩小 10%": {
     "zh-TW": "縮小 10%",
@@ -3113,29 +4181,29 @@
     "ko": "10% 더 작아짐",
     "en": "10% smaller"
   },
-  "锁定/解锁": {
-    "zh-TW": "鎖定/解鎖",
-    "ja": "ロック/ロック解除",
-    "ko": "잠금/잠금 해제",
-    "en": "lock/unlock"
-  },
-  "锁定后不可拖动微调": {
-    "zh-TW": "鎖定後不可拖曳微調",
-    "ja": "ロック後はドラッグや微調整ができなくなります。",
-    "ko": "잠금 후에는 드래그 및 미세조정이 불가능합니다.",
-    "en": "After locking, dragging and fine-tuning is not possible."
-  },
   "提交": {
     "zh-TW": "提交",
     "ja": "提出する",
     "ko": "제출하다",
     "en": "submit"
   },
-  "提交后缀": {
-    "zh-TW": "提交後綴",
-    "ja": "送信サフィックス",
-    "ko": "접미사 제출",
-    "en": "submit suffix"
+  "提交前缀": {
+    "zh-TW": "提交前綴",
+    "ja": "コミットプレフィックス",
+    "ko": "커밋 접두사",
+    "en": "commit prefix"
+  },
+  "提交验证码": {
+    "zh-TW": "提交驗證碼",
+    "ja": "確認コードを送信する",
+    "ko": "인증 코드 제출",
+    "en": "Submit verification code"
+  },
+  "提交预约": {
+    "zh-TW": "提交預約",
+    "ja": "予定を送信する",
+    "ko": "약속 제출",
+    "en": "Submit appointment"
   },
   "提交中...": {
     "zh-TW": "提交中...",
@@ -3155,11 +4223,65 @@
     "ko": "볼륨이 한도를 초과했습니다.",
     "en": "Volume exceeds limit"
   },
-  "戻る": {
-    "zh-TW": "戻る",
-    "ja": "戻る",
-    "ko": "戻루",
-    "en": "戻る"
+  "替换按钮样式": {
+    "zh-TW": "替換按鈕樣式",
+    "ja": "ボタンのスタイルを置き換える",
+    "ko": "버튼 스타일 교체",
+    "en": "Replace button style"
+  },
+  "替换产品数据": {
+    "zh-TW": "替換產品數據",
+    "ja": "製品データを置き換える",
+    "ko": "제품 데이터 교체",
+    "en": "Replace product data"
+  },
+  "替换联系方式": {
+    "zh-TW": "替換聯絡方式",
+    "ja": "連絡先の詳細を交換する",
+    "ko": "연락처 세부정보 교체",
+    "en": "Replace contact details"
+  },
+  "替换相册图片": {
+    "zh-TW": "替換相簿圖片",
+    "ja": "アルバム画像を置き換える",
+    "ko": "앨범 사진 교체",
+    "en": "Replace album picture"
+  },
+  "替换字体样式": {
+    "zh-TW": "替換字體樣式",
+    "ja": "フォントスタイルを置き換える",
+    "ko": "글꼴 스타일 바꾸기",
+    "en": "Replace font style"
+  },
+  "添加规则": {
+    "zh-TW": "新增規則",
+    "ja": "ルールの追加",
+    "ko": "규칙 추가",
+    "en": "Add rules"
+  },
+  "添加中...": {
+    "zh-TW": "新增中...",
+    "ja": "追加中...",
+    "ko": "첨가...",
+    "en": "Adding..."
+  },
+  "填充方式": {
+    "zh-TW": "填充方式",
+    "ja": "充填方法",
+    "ko": "충전방법",
+    "en": "Filling method"
+  },
+  "跳转": {
+    "zh-TW": "跳轉",
+    "ja": "ジャンプ",
+    "ko": "도약",
+    "en": "Jump"
+  },
+  "跳转目标": {
+    "zh-TW": "跳轉目標",
+    "ja": "ジャンプターゲット",
+    "ko": "점프 타겟",
+    "en": "Jump target"
   },
   "停用": {
     "zh-TW": "停用",
@@ -3173,11 +4295,23 @@
     "ko": "기치",
     "en": "banner"
   },
+  "通配规则": {
+    "zh-TW": "通配規則",
+    "ja": "ワイルドカードルール",
+    "ko": "와일드카드 규칙",
+    "en": "wildcard rules"
+  },
   "通用": {
     "zh-TW": "一般",
     "ja": "ユニバーサル",
     "ko": "만능인",
     "en": "Universal"
+  },
+  "同步商户域名前缀超时": {
+    "zh-TW": "同步商家網域名稱前綴逾時",
+    "ja": "販売業者のドメイン名プレフィックスの同期がタイムアウトしました",
+    "ko": "판매자 도메인 이름 접두사 동기화 시간이 초과되었습니다.",
+    "en": "Synchronization of merchant domain name prefix timed out"
   },
   "同城": {
     "zh-TW": "同城",
@@ -3209,6 +4343,18 @@
     "ko": "균일한 폭",
     "en": "uniform width"
   },
+  "统一设置": {
+    "zh-TW": "統一設定",
+    "ja": "統一された設定",
+    "ko": "통합 설정",
+    "en": "Unified settings"
+  },
+  "头图": {
+    "zh-TW": "頭圖",
+    "ja": "ヘッダー画像",
+    "ko": "헤더 이미지",
+    "en": "header image"
+  },
   "图表": {
     "zh-TW": "圖表",
     "ja": "チャート",
@@ -3226,12 +4372,6 @@
     "ja": "チャートの説明テキスト",
     "ko": "차트 설명 텍스트",
     "en": "Chart description text"
-  },
-  "图片": {
-    "zh-TW": "圖片",
-    "ja": "写真",
-    "ko": "그림",
-    "en": "picture"
   },
   "图片参数": {
     "zh-TW": "圖片參數",
@@ -3251,6 +4391,12 @@
     "ko": "이미지 처리에 실패했습니다. 다시 시도해 주세요.",
     "en": "Image processing failed, please try again"
   },
+  "图片导入失败，请重试": {
+    "zh-TW": "圖片匯入失敗，請重試",
+    "ja": "画像のインポートに失敗しました。もう一度お試しください。",
+    "ko": "이미지 가져오기에 실패했습니다. 다시 시도해 주세요.",
+    "en": "Image import failed, please try again"
+  },
   "图片读取失败，请重新选择图片后重试": {
     "zh-TW": "圖片讀取失敗，請重新選擇圖片後重試",
     "ja": "画像の読み込みに失敗しました。画像を選択し直してもう一度お試しください。",
@@ -3268,6 +4414,24 @@
     "ja": "画像の解析に失敗しました。画像を変更してください",
     "ko": "이미지 구문 분석에 실패했습니다. 이미지를 변경하세요.",
     "en": "Image parsing failed, please change the image"
+  },
+  "图片模式": {
+    "zh-TW": "圖片模式",
+    "ja": "ピクチャーモード",
+    "ko": "영상 모드",
+    "en": "Picture mode"
+  },
+  "图片批量导入会按文件名匹配产品编号，例如 SKU-001.jpg -> SKU-001。Excel 支持列名：编号、名称、介绍、价格、分类/标签。": {
+    "zh-TW": "圖片批次匯入會依檔案名稱來符合產品編號，例如 SKU-001.jpg -> SKU-001。 Excel 支援列名：編號、名稱、介紹、價格、分類/標籤。",
+    "ja": "画像のバッチインポートでは、SKU-001.jpg -> SKU-001 のように、ファイル名で製品番号が照合されます。 Excel では、列名 (番号、名前、説明、価格、カテゴリ/タグ) がサポートされています。",
+    "ko": "이미지 일괄 가져오기는 파일 이름별로 제품 번호를 일치시킵니다(예: SKU-001.jpg -> SKU-001). Excel에서는 번호, 이름, 설명, 가격, 카테고리/태그 등 열 이름을 지원합니다.",
+    "en": "Batch import of images will match product numbers by file name, for example, SKU-001.jpg -> SKU-001. Excel supports column names: number, name, description, price, category/tag."
+  },
+  "图片上传到存储失败，请检查存储配置后重试": {
+    "zh-TW": "圖片上傳到儲存失敗，請檢查儲存配置後重試",
+    "ja": "画像をストレージにアップロードできませんでした。ストレージ構成を確認して、もう一度お試しください。",
+    "ko": "이미지를 저장소에 업로드하지 못했습니다. 저장소 구성을 확인한 후 다시 시도해 주세요.",
+    "en": "Failed to upload the image to the storage, please check the storage configuration and try again"
   },
   "图片设置": {
     "zh-TW": "圖片設定",
@@ -3299,11 +4463,17 @@
     "ko": "이미지 파일이 너무 큽니다. 10MB 이내의 이미지를 선택하세요.",
     "en": "The image file is too large, please choose an image within 10MB"
   },
-  "圖片": {
-    "zh-TW": "圖片",
-    "ja": "写真",
-    "ko": "영화",
-    "en": "pictures"
+  "图片已替换到草稿，但未上传到存储；发布前会再次尝试外链化。": {
+    "zh-TW": "圖片已替換到草稿，但未上傳到儲存；發布前會再次嘗試外鏈化。",
+    "ja": "画像は下書きで置き換えられましたが、ストレージにアップロードされていません。外部リンクは公開前に再度試行されます。",
+    "ko": "이미지가 초안에서 교체되었지만 저장소에 업로드되지 않았습니다. 게시하기 전에 외부 연결이 다시 시도됩니다.",
+    "en": "The image has been replaced in the draft, but has not been uploaded to storage; external linking will be attempted again before publishing."
+  },
+  "图片已写入当前草稿，但未上传到存储；发布前会再次尝试外链化。": {
+    "zh-TW": "圖片已寫入目前草稿，但未上傳至儲存；發布前會再次嘗試外鏈化。",
+    "ja": "画像は現在のドラフトに書き込まれていますが、ストレージにはアップロードされていません。公開前にアウトリンクが再度試行されます。",
+    "ko": "이미지가 현재 초안에 기록되었지만 저장소에 업로드되지 않았습니다. 게시하기 전에 아웃링크가 다시 시도됩니다.",
+    "en": "The image has been written to the current draft but has not been uploaded to storage; outlinking will be attempted again before publishing."
   },
   "推荐": {
     "zh-TW": "推薦",
@@ -3329,23 +4499,11 @@
     "ko": "추천-지방 정렬",
     "en": "Recommendation-provincial sorting"
   },
-  "推荐排序": {
-    "zh-TW": "推薦排序",
-    "ja": "推奨される並べ替え",
-    "ko": "권장 정렬",
-    "en": "Recommended sorting"
-  },
   "推荐行业": {
     "zh-TW": "推薦產業",
     "ja": "おすすめの業種",
     "ko": "추천 업종",
     "en": "Recommended industries"
-  },
-  "推薦排序": {
-    "zh-TW": "推薦排序",
-    "ja": "推奨される並べ替え",
-    "ko": "권장 정렬",
-    "en": "Recommended sorting"
   },
   "退出登录": {
     "zh-TW": "登出登入",
@@ -3377,14 +4535,8 @@
     "ko": "드래그하여 너비를 조정하세요.",
     "en": "Drag to adjust width"
   },
-  "外链化大图": {
-    "zh-TW": "外鏈化大圖",
-    "ja": "外部リンクの全体像",
-    "ko": "외부 연결의 큰 그림",
-    "en": "Big picture of external linking"
-  },
-  "外链化失败，请查存储配": {
-    "zh-TW": "外鏈化失敗，請查儲存配",
+  "外链化失败，请检查存储配置": {
+    "zh-TW": "外鏈化失敗，請檢查儲存配置",
     "ja": "外部リンクに失敗しました。ストレージ構成を確認してください。",
     "ko": "외부 연결에 실패했습니다. 저장소 구성을 확인하세요.",
     "en": "External linking failed, please check the storage configuration"
@@ -3394,6 +4546,12 @@
     "ja": "ウェブサイト編集者",
     "ko": "웹사이트 편집자",
     "en": "Website editor"
+  },
+  "网站说明": {
+    "zh-TW": "網站說明",
+    "ja": "ウェブサイトの説明",
+    "ko": "웹사이트 설명",
+    "en": "Website description"
   },
   "忘记密码（通过邮箱找回）": {
     "zh-TW": "忘記密碼（透過信箱找）",
@@ -3407,6 +4565,24 @@
     "ko": "비밀번호를 잊으셨나요? (우편함을 통해 검색하세요)",
     "en": "Forgot password (retrieve through mailbox)"
   },
+  "微博": {
+    "zh-TW": "微博",
+    "ja": "微博",
+    "ko": "웨이보",
+    "en": "Weibo"
+  },
+  "微软雅黑": {
+    "zh-TW": "微軟雅黑",
+    "ja": "マイクロソフト弥平",
+    "ko": "마이크로소프트 야헤이",
+    "en": "Microsoft Yahei"
+  },
+  "微信": {
+    "zh-TW": "微信",
+    "ja": "微信",
+    "ko": "위챗",
+    "en": "WeChat"
+  },
   "维护页面分组、标签与状态。": {
     "zh-TW": "維護頁面分組、標籤與狀態。",
     "ja": "ページグループ、タグ、ステータスを維持します。",
@@ -3414,12 +4590,6 @@
     "en": "Maintain page groups, tags and status."
   },
   "维护中": {
-    "zh-TW": "維護中",
-    "ja": "メンテナンス中",
-    "ko": "유지보수 중",
-    "en": "Under maintenance"
-  },
-  "維護中": {
     "zh-TW": "維護中",
     "ja": "メンテナンス中",
     "ko": "유지보수 중",
@@ -3437,11 +4607,23 @@
     "ko": "분류되지 않음",
     "en": "Uncategorized"
   },
+  "未记录来源网站": {
+    "zh-TW": "未記錄來源網站",
+    "ja": "未収録のソース Web サイト",
+    "ko": "녹음되지 않은 소스 웹사이트",
+    "en": "Unrecorded source website"
+  },
   "未检测到配置变更": {
     "zh-TW": "未偵測到配置變更",
     "ja": "構成変更は検出されませんでした",
     "ko": "구성 변경 사항이 감지되지 않았습니다.",
     "en": "No configuration changes detected"
+  },
+  "未建站": {
+    "zh-TW": "未建站",
+    "ja": "ウェブサイトは開設されていません",
+    "ko": "개설된 웹사이트 없음",
+    "en": "No website established"
   },
   "未开通": {
     "zh-TW": "未開通",
@@ -3455,11 +4637,35 @@
     "ko": "미래 기술",
     "en": "future technology"
   },
+  "未命名产品": {
+    "zh-TW": "未命名產品",
+    "ja": "名前のない製品",
+    "ko": "이름이 없는 제품",
+    "en": "Unnamed product"
+  },
+  "未命名方案": {
+    "zh-TW": "未命名方案",
+    "ja": "名前のないスキーム",
+    "ko": "이름 없는 구성표",
+    "en": "Unnamed scheme"
+  },
   "未命名分区": {
     "zh-TW": "未命名分區",
     "ja": "名前のないパーティション",
     "ko": "이름 없는 파티션",
     "en": "unnamed partition"
+  },
+  "未命名名片": {
+    "zh-TW": "未命名名片",
+    "ja": "名前のない名刺",
+    "ko": "이름이 없는 명함",
+    "en": "Unnamed business card"
+  },
+  "未命名预约": {
+    "zh-TW": "未命名預約",
+    "ja": "名前のない予定",
+    "ko": "이름 없는 약속",
+    "en": "Unnamed appointment"
   },
   "未配置": {
     "zh-TW": "未配置",
@@ -3467,11 +4673,23 @@
     "ko": "구성되지 않음",
     "en": "Not configured"
   },
+  "未匹配到你的商户站点，当前仅展示本地草稿。请先在“商户信息”完善绑定。": {
+    "zh-TW": "未匹配到你的商户站点，当前仅展示本地草稿。請先在「商家資訊」完善綁定。",
+    "ja": "ビジネス サイトが一致しなかったため、現在ローカルの下書きのみが表示されています。最初に「ビジネス情報」で製本を完了してください。",
+    "ko": "귀하의 비즈니스 사이트가 일치하지 않으며 현재 로컬 초안만 표시됩니다. 먼저 \"비즈니스 정보\"에서 바인딩을 완료하세요.",
+    "en": "Your business site was not matched and only local drafts are currently displayed. Please complete the binding in \"Business Information\" first."
+  },
   "未设置": {
     "zh-TW": "未設定",
     "ja": "設定されていません",
     "ko": "설정되지 않음",
     "en": "not set"
+  },
+  "未设置商户名称": {
+    "zh-TW": "未設定商戶名稱",
+    "ja": "販売者名が設定されていません",
+    "ko": "판매자 이름이 설정되지 않았습니다.",
+    "en": "Merchant name not set"
   },
   "未设置行业": {
     "zh-TW": "未設定行業",
@@ -3479,11 +4697,11 @@
     "ko": "업종이 설정되지 않았습니다.",
     "en": "Industry not set"
   },
-  "未锁定": {
-    "zh-TW": "未鎖定",
-    "ja": "ロック解除済み",
-    "ko": "잠금 해제됨",
-    "en": "Unlocked"
+  "未识别区块": {
+    "zh-TW": "未識別區塊",
+    "ja": "認識できないブロック",
+    "ko": "인식할 수 없는 블록",
+    "en": "Unrecognized block"
   },
   "未填商户信息时不能去前台，商户信息按钮有高亮/抖动提示": {
     "zh-TW": "未填商家資料時不能去前台，商家資訊按鈕有高亮/抖動提示",
@@ -3491,17 +4709,23 @@
     "ko": "가맹점 정보를 입력하지 않으시면 프런트로 방문하실 수 없습니다. 판매자 정보 버튼에는 강조 표시/흔들기 프롬프트가 있습니다.",
     "en": "If you do not fill in the merchant information, you cannot go to the front desk. The merchant information button will have a highlight/shaking prompt."
   },
-  "未选中区块": {
-    "zh-TW": "未選中區塊",
-    "ja": "選択されていないブロック",
-    "ko": "선택되지 않은 블록",
-    "en": "unselected block"
+  "未选择任何文件": {
+    "zh-TW": "未選擇任何文件",
+    "ja": "ファイルが選択されていません",
+    "ko": "선택한 파일이 없습니다.",
+    "en": "No files selected"
   },
-  "未找到": {
-    "zh-TW": "未找到",
-    "ja": "見つかりません",
-    "ko": "찾을 수 없음",
-    "en": "not found"
+  "未找到对应预约记录": {
+    "zh-TW": "未找到對應預約記錄",
+    "ja": "対応する予定レコードが見つかりません",
+    "ko": "해당 약속 기록이 없습니다.",
+    "en": "No corresponding appointment record found"
+  },
+  "未找到可编辑的商户站点，无法保存": {
+    "zh-TW": "未找到可編輯​​的商家站點，無法儲存",
+    "ja": "編集可能なビジネス サイトが見つからないため、保存できません",
+    "ko": "편집 가능한 업체 사이트를 찾을 수 없으며 저장할 수 없습니다.",
+    "en": "Editable business site not found and cannot be saved"
   },
   "未找到可回滚的历史版本": {
     "zh-TW": "未找到可回滾的歷史版本",
@@ -3515,11 +4739,17 @@
     "ko": "알 수 없는 운영자",
     "en": "unknown operator"
   },
-  "文字サイズ": {
-    "zh-TW": "文サイズ",
-    "ja": "文字サイズ",
-    "ko": "텍스트 크기",
-    "en": "Text サイズ"
+  "未知错误": {
+    "zh-TW": "未知錯誤",
+    "ja": "不明なエラー",
+    "ko": "알 수 없는 오류",
+    "en": "unknown error"
+  },
+  "文字样式": {
+    "zh-TW": "文字樣式",
+    "ja": "テキストスタイル",
+    "ko": "텍스트 스타일",
+    "en": "text style"
   },
   "我的商家主页": {
     "zh-TW": "我的商家主頁",
@@ -3527,17 +4757,23 @@
     "ko": "내 비즈니스 홈페이지",
     "en": "My business homepage"
   },
+  "我们已收到您的预约，可在此继续修改或取消。": {
+    "zh-TW": "我們已收到您的預約，可在此繼續修改或取消。",
+    "ja": "ご予約を受け付けました。ここで変更またはキャンセルを続けることができます。",
+    "ko": "귀하의 예약이 접수되었으며 여기에서 계속 수정하거나 취소하실 수 있습니다.",
+    "en": "We have received your reservation and you can continue to modify or cancel it here."
+  },
   "无边框": {
     "zh-TW": "無邊框",
     "ja": "国境なし",
     "ko": "국경 없음",
     "en": "No borders"
   },
-  "无变更，已跳过发": {
-    "zh-TW": "無變更，已跳過發",
-    "ja": "変更はありません。投稿はスキップされました",
-    "ko": "변경사항이 없습니다. 게시물을 건너뛰었습니다.",
-    "en": "No changes, post has been skipped"
+  "无变更，已跳过发布": {
+    "zh-TW": "無變更，已跳過發布",
+    "ja": "変更なし、公開はスキップされました",
+    "ko": "변경사항 없음, 게시를 건너뛰었습니다.",
+    "en": "No changes, publishing skipped"
   },
   "无地域": {
     "zh-TW": "無地域",
@@ -3611,17 +4847,23 @@
     "ko": "임차인 관리권 없음",
     "en": "No tenant management rights"
   },
-  "無効": {
-    "zh-TW": "無効",
-    "ja": "無効",
-    "ko": "유효하지 않은",
-    "en": "Invalid"
-  },
   "吸附网格": {
     "zh-TW": "吸附網格",
     "ja": "スナップグリッド",
     "ko": "스냅 그리드",
     "en": "snap grid"
+  },
+  "系统默认": {
+    "zh-TW": "系統預設",
+    "ja": "システムのデフォルト",
+    "ko": "시스템 기본값",
+    "en": "System default"
+  },
+  "下一页": {
+    "zh-TW": "下一頁",
+    "ja": "次のページ",
+    "ko": "다음 페이지",
+    "en": "Next page"
   },
   "下一页按钮": {
     "zh-TW": "下一頁按鈕",
@@ -3641,29 +4883,29 @@
     "ko": "아래로 이동하여 미세 조정",
     "en": "Move down fine-tuning"
   },
-  "鎼滅储鍐呭": {
-    "zh-TW": "鎼滅儲鍐呭",
-    "ja": "锼铼\"呭",
-    "ko": "锼铼鈥捍呭",
-    "en": "锼铼鈥捍呭"
+  "下载失败，请重试": {
+    "zh-TW": "下載失敗，請重試",
+    "ja": "ダウンロードに失敗しました。もう一度お試しください",
+    "ko": "다운로드에 실패했습니다. 다시 시도해 주세요.",
+    "en": "Download failed, please try again"
   },
-  "先に入力してください": {
-    "zh-TW": "先に入力してください",
-    "ja": "部隊に入ったのは初めてです",
-    "ko": "처음으로 부대에 들어왔네요",
-    "en": "It's the first time I've entered the force"
+  "先生": {
+    "zh-TW": "先生",
+    "ja": "紳士",
+    "ko": "신사",
+    "en": "gentlemen"
   },
-  "先に選択してください": {
-    "zh-TW": "先に選択してください",
-    "ja": "まず最初のものを選択してください",
-    "ko": "먼저 첫 번째 것을 선택하세요.",
-    "en": "First choose the first one"
+  "先に登録メールを入力してください": {
+    "zh-TW": "先に登録メールを入力してください",
+    "ja": "まずはログインしてください",
+    "ko": "먼저 로그인하세요",
+    "en": "Log in first"
   },
-  "先にメールを入力してからパスワード再設定を押してください": {
-    "zh-TW": "先にメールを入力してからパスワード再設定を押してください",
-    "ja": "まず力を入力してから設定します",
-    "ko": "먼저 force를 입력한 후 설정하세요.",
-    "en": "First enter the force and then set it up"
+  "先にメールを入力してから、パスワード再設定を押してください": {
+    "zh-TW": "先にメールを入力してから、パスワード再設定を押してください",
+    "ja": "まず「してから、パスワード」に力を入れてから「を気をつけてください」を設定してください",
+    "ko": "먼저 して下, password에 힘을 가한 다음 を気て しだしい를 설정합니다",
+    "en": "First put the force into the してから, パスワード and then set the を気てください"
   },
   "显示": {
     "zh-TW": "顯示",
@@ -3677,12 +4919,6 @@
     "ko": "지도 위치 표시",
     "en": "Show map location"
   },
-  "現在の店舗": {
-    "zh-TW": "現在の店舗",
-    "ja": "現在の店舗",
-    "ko": "현재 매장",
-    "en": "The current store"
-  },
   "相册": {
     "zh-TW": "相簿",
     "ja": "フォトアルバム",
@@ -3695,17 +4931,11 @@
     "ko": "앨범 표시",
     "en": "Album display"
   },
-  "缃簬椤跺眰": {
-    "zh-TW": "繃簬欏跺眰",
-    "ja": "缃簬椤淺簰",
-    "ko": "缃簬椤淺簰",
-    "en": "缃簬椤淺簰"
-  },
-  "缃簬搴曞眰": {
-    "zh-TW": "纈簬搴曞眰",
-    "ja": "缃簬搴曞簰",
-    "ko": "缃簬搴曞簰",
-    "en": "缃簬搴曞簰"
+  "详情页设置": {
+    "zh-TW": "詳情頁設定",
+    "ja": "詳細ページの設定",
+    "ko": "세부정보 페이지 설정",
+    "en": "Details page settings"
   },
   "向上": {
     "zh-TW": "向上",
@@ -3730,6 +4960,12 @@
     "ja": "左",
     "ko": "왼쪽",
     "en": "left"
+  },
+  "项目或类型": {
+    "zh-TW": "項目或類型",
+    "ja": "アイテムまたはタイプ",
+    "ko": "품목 또는 유형",
+    "en": "Item or type"
   },
   "小红书": {
     "zh-TW": "小紅書",
@@ -3791,11 +5027,11 @@
     "ko": "새 비밀번호",
     "en": "new password"
   },
-  "新密碼至少 6 位": {
-    "zh-TW": "新密碼至少 6 位",
-    "ja": "新しいパスワードは6文字以上である必要があります",
-    "ko": "새 비밀번호는 6자 이상이어야 합니다.",
-    "en": "New password must be at least 6 characters"
+  "新密碼至少 6 碼": {
+    "zh-TW": "新密碼至少 6 碼",
+    "ja": "新しいパスワードは6桁以上である必要があります",
+    "ko": "새 비밀번호는 6자리 이상이어야 합니다.",
+    "en": "New password must be at least 6 digits"
   },
   "新用户后台默认仅导航区块，并展示“在此处增加区块”引导": {
     "zh-TW": "新用戶後台預設僅導航區塊，並展示「在此處增加區塊」引導",
@@ -3803,11 +5039,11 @@
     "ko": "기본적으로 신규 사용자를 위한 백엔드는 블록을 탐색하고 \"여기에 블록 추가\" 가이드를 표시합니다.",
     "en": "By default, the backend for new users only navigates blocks and displays the \"Add block here\" guide."
   },
-  "新增": {
-    "zh-TW": "新增",
-    "ja": "新しい",
-    "ko": "새로운",
-    "en": "New"
+  "新增产品": {
+    "zh-TW": "新增產品",
+    "ja": "新しい製品を追加する",
+    "ko": "새 제품 추가",
+    "en": "Add new products"
   },
   "新增区块": {
     "zh-TW": "新增區塊",
@@ -3815,17 +5051,23 @@
     "ko": "새 블록 추가",
     "en": "Add new block"
   },
+  "新增用户失败，请稍后重试": {
+    "zh-TW": "新增用戶失敗，請稍後重試",
+    "ja": "ユーザーを追加できませんでした。後でもう一度お試しください。",
+    "ko": "사용자를 추가하지 못했습니다. 나중에 다시 시도해 주세요.",
+    "en": "Failed to add user, please try again later"
+  },
   "新增站点、调整分类和状态。": {
     "zh-TW": "新增網站、調整分類和狀態。",
     "ja": "新しいサイトを追加し、カテゴリとステータスを調整します。",
     "ko": "새 사이트를 추가하고 카테고리와 상태를 조정하세요.",
     "en": "Add new sites, adjust categories and status."
   },
-  "新しいパスワード確認": {
-    "zh-TW": "新しいパスワード確認",
-    "ja": "新しいパスワードを確認しました",
-    "ko": "새로운 비밀번호가 확인되었습니다",
-    "en": "新しいパスワード confirmed"
+  "新しいパスワード（確認）": {
+    "zh-TW": "新しいパスワード（確認）",
+    "ja": "新しいパスワード(確認)",
+    "ko": "새로운 비밀번호(확인)",
+    "en": "新しいパスワード(confirm)"
   },
   "新しいパスワードは6文字以上必要です": {
     "zh-TW": "新しいパスワードは6文字以上必要です",
@@ -3845,11 +5087,23 @@
     "ko": "사서함",
     "en": "mailbox"
   },
-  "信箱尚未驗證，請先到信箱點擊驗證連結再登入。": {
-    "zh-TW": "信箱尚未驗證，請先到信箱點擊驗證鏈接再登錄。",
+  "信箱 / 使用者名稱 / 8位ID": {
+    "zh-TW": "信箱 / 使用者名稱 / 8位元ID",
+    "ja": "メールボックス / ユーザー名 / 8桁のID",
+    "ko": "메일함 / 사용자명 / 아이디 8자리",
+    "en": "Mailbox / Username / 8-digit ID"
+  },
+  "信箱尚未驗證，請先至信箱點擊驗證連結後再登入。": {
+    "zh-TW": "信箱尚未驗證，請先至信箱點擊驗證連結後再登入。",
     "ja": "メールボックスはまだ検証されていません。ログインする前に、メールボックスに移動し、確認リンクをクリックしてください。",
     "ko": "아직 메일함이 확인되지 않았습니다. 메일함으로 이동하여 인증링크를 클릭하신 후 로그인해주세요.",
     "en": "The mailbox has not been verified yet. Please go to the mailbox and click the verification link before logging in."
+  },
+  "行": {
+    "zh-TW": "列",
+    "ja": "わかりました",
+    "ko": "좋아요",
+    "en": "OK"
   },
   "行高": {
     "zh-TW": "行高",
@@ -3887,35 +5141,23 @@
     "ko": "업계 템플릿 및 판매자 사이트",
     "en": "Industry templates and merchant sites"
   },
-  "行业排序": {
-    "zh-TW": "行業排序",
-    "ja": "業界ランキング",
-    "ko": "업계 순위",
-    "en": "Industry ranking"
+  "修改名片": {
+    "zh-TW": "修改名片",
+    "ja": "名刺を変更する",
+    "ko": "명함 수정",
+    "en": "Modify business card"
   },
-  "行業": {
-    "zh-TW": "產業",
-    "ja": "業界",
-    "ko": "산업",
-    "en": "Industry"
-  },
-  "行業排序": {
-    "zh-TW": "行業排序",
-    "ja": "業界ランキング",
-    "ko": "업계 순위",
-    "en": "Industry ranking"
+  "修改预约": {
+    "zh-TW": "修改預約",
+    "ja": "予定を変更する",
+    "ko": "약속 수정",
+    "en": "Modify appointment"
   },
   "虚线": {
     "zh-TW": "虛線",
     "ja": "点線",
     "ko": "점선",
     "en": "dotted line"
-  },
-  "続行しますか": {
-    "zh-TW": "続行しますか",
-    "ja": "続けますか",
-    "ko": "여행마스까",
-    "en": "続行しますか"
   },
   "旋转": {
     "zh-TW": "旋轉",
@@ -3928,6 +5170,18 @@
     "ja": "都市を選択してください",
     "ko": "도시를 선택하세요",
     "en": "Select city"
+  },
+  "选择日期": {
+    "zh-TW": "選擇日期",
+    "ja": "日付を選択してください",
+    "ko": "날짜 선택",
+    "en": "Select date"
+  },
+  "选择时间": {
+    "zh-TW": "選擇時間",
+    "ja": "時間を選択してください",
+    "ko": "시간 선택",
+    "en": "Select time"
   },
   "选择文件后会立即读取，不会自动盖原图片": {
     "zh-TW": "選擇檔案後會立即讀取，不會自動蓋原圖片",
@@ -3959,17 +5213,23 @@
     "ko": "언어 선택",
     "en": "Select language"
   },
-  "削除": {
-    "zh-TW": "削除",
-    "ja": "切り落とす",
-    "ko": "잘라내다",
-    "en": "cut off"
+  "压缩后": {
+    "zh-TW": "壓縮後",
+    "ja": "圧縮後",
+    "ko": "압축 후",
+    "en": "After compression"
   },
   "压缩优先": {
     "zh-TW": "壓縮優先",
     "ja": "最初に圧縮",
     "ko": "압축 우선",
     "en": "Compression first"
+  },
+  "压缩中...": {
+    "zh-TW": "壓縮中...",
+    "ja": "圧縮中...",
+    "ko": "압축 중...",
+    "en": "Compressing..."
   },
   "言語": {
     "zh-TW": "言語",
@@ -3995,17 +5255,59 @@
     "ko": "색상 투명도:",
     "en": "Color transparency:"
   },
-  "顏色": {
-    "zh-TW": "顏色",
-    "ja": "色",
-    "ko": "색상",
-    "en": "color"
+  "验证成功，请继续重置密码。": {
+    "zh-TW": "驗證成功，請繼續重設密碼。",
+    "ja": "検証は成功しました。パスワードのリセットを続けてください。",
+    "ko": "확인이 완료되었습니다. 계속해서 비밀번호를 재설정하세요.",
+    "en": "Verification successful, please continue to reset your password."
+  },
+  "验证服务暂时不可用，请稍后重试。": {
+    "zh-TW": "驗證服務暫時無法使用，請稍後重試。",
+    "ja": "認証サービスは一時的に利用できません。しばらくしてからもう一度お試しください。",
+    "ko": "인증 서비스를 일시적으로 사용할 수 없습니다. 나중에 다시 시도해 주세요.",
+    "en": "The verification service is temporarily unavailable, please try again later."
+  },
+  "验证链接无效或已过期，请重新发送验证邮件。": {
+    "zh-TW": "驗證連結無效或已過期，請重新發送驗證郵件。",
+    "ja": "確認リンクが無効か期限切れです。確認メールを再送信してください。",
+    "ko": "확인 링크가 유효하지 않거나 만료되었습니다. 확인 이메일을 다시 보내주세요.",
+    "en": "The verification link is invalid or expired, please resend the verification email."
+  },
+  "验证码无效或已过期，请重新获取后再试。": {
+    "zh-TW": "驗證碼無效或過期，請重新取得後再試。",
+    "ja": "確認コードが無効か期限切れです。再度取得してもう一度お試しください。",
+    "ko": "인증코드가 유효하지 않거나 만료되었습니다. 다시 인증번호를 받아 다시 시도해 주세요.",
+    "en": "The verification code is invalid or expired, please obtain it again and try again."
+  },
+  "验证码验证失败，请重新获取后再试。": {
+    "zh-TW": "驗證碼驗證失敗，請重新取得後再試。",
+    "ja": "認証コードの検証に失敗しました。認証コードを再度取得して、もう一度お試しください。",
+    "ko": "인증코드 확인에 실패했습니다. 다시 인증번호를 받아 다시 시도해 주세요.",
+    "en": "Verification code verification failed, please obtain it again and try again."
+  },
+  "验证码邮件发送失败，请稍后重试。": {
+    "zh-TW": "驗證碼郵件發送失敗，請稍後重試。",
+    "ja": "確認コードメールの送信に失敗しました。しばらくしてからもう一度お試しください。",
+    "ko": "인증 코드 이메일을 보내지 못했습니다. 나중에 다시 시도해 주세요.",
+    "en": "The verification code email failed to be sent, please try again later."
+  },
+  "验证验证码中...": {
+    "zh-TW": "驗證驗證碼中...",
+    "ja": "確認コードを検証しています...",
+    "ko": "인증 코드 확인 중...",
+    "en": "Verifying verification code..."
   },
   "验证邮件已重新发送，请检查收件箱和垃圾箱。": {
     "zh-TW": "驗證郵件已重新發送，請檢查收件匣和垃圾箱。",
     "ja": "確認メールが再送信されました。受信箱とスパムを確認してください。",
     "ko": "인증메일이 재전송되었습니다. 받은편지함과 스팸함을 확인해 주세요.",
     "en": "The verification email has been resent, please check your inbox and spam."
+  },
+  "验证中...": {
+    "zh-TW": "驗證中...",
+    "ja": "確認中...",
+    "ko": "확인 중...",
+    "en": "Verifying..."
   },
   "驗證郵件已重新發送，請檢查收件匣與垃圾郵件。": {
     "zh-TW": "驗證郵件已重新發送，請檢查收件匣與垃圾郵件。",
@@ -4024,12 +5326,6 @@
     "ja": "スタイル -> PC",
     "ko": "스타일->PC",
     "en": "Style->PC"
-  },
-  "页面": {
-    "zh-TW": "頁面",
-    "ja": "ページ",
-    "ko": "페이지",
-    "en": "page"
   },
   "页面 1": {
     "zh-TW": "頁 1",
@@ -4061,6 +5357,12 @@
     "ko": "페이지 배경 이미지가 변경되었습니다.",
     "en": "The page background image has been changed"
   },
+  "页面背景图片已上传": {
+    "zh-TW": "頁面背景圖片已上傳",
+    "ja": "ページ背景画像をアップロードしました",
+    "ko": "페이지 배경 이미지가 업로드되었습니다.",
+    "en": "Page background image has been uploaded"
+  },
   "页面编辑": {
     "zh-TW": "頁面編輯",
     "ja": "ページ編集",
@@ -4091,29 +5393,23 @@
     "ko": "페이지 제한",
     "en": "page limit"
   },
-  "頁面": {
-    "zh-TW": "頁面",
-    "ja": "ページ",
-    "ko": "페이지",
-    "en": "Page"
-  },
-  "業種": {
-    "zh-TW": "業種",
-    "ja": "業種",
-    "ko": "사업 유형",
-    "en": "Type of business"
-  },
-  "業種並び順": {
-    "zh-TW": "業種並び順",
-    "ja": "業種が調和していない",
-    "ko": "업종이 조화롭지 못하다",
-    "en": "The types of business are not harmonious"
-  },
   "一月": {
     "zh-TW": "一月",
     "ja": "1月",
     "ko": "1월",
     "en": "January"
+  },
+  "移出白名单": {
+    "zh-TW": "移出白名單",
+    "ja": "ホワイトリストから削除",
+    "ko": "허용 목록에서 제거",
+    "en": "Remove from whitelist"
+  },
+  "移除中...": {
+    "zh-TW": "移除中...",
+    "ja": "削除中...",
+    "ko": "풀이...",
+    "en": "Removing..."
   },
   "已驳回": {
     "zh-TW": "已駁回",
@@ -4121,11 +5417,23 @@
     "ko": "해고됨",
     "en": "Dismissed"
   },
-  "已定位，但当前城市不在欧洲国家列表中": {
-    "zh-TW": "已定位，但當前城市不在歐洲國家列表中",
-    "ja": "対象となっていますが、現在の都市はヨーロッパ諸国のリストに含まれていません",
-    "ko": "타겟팅되었지만 현재 도시는 유럽 국가 목록에 없습니다.",
-    "en": "Targeted, but current city is not in the list of European countries"
+  "已定位": {
+    "zh-TW": "已定位",
+    "ja": "ターゲットを絞った",
+    "ko": "타겟",
+    "en": "Targeted"
+  },
+  "已定位，但当前城市不在支持的国家列表中": {
+    "zh-TW": "已定位，但當前城市不在支援的國家列表中",
+    "ja": "対象となっていますが、現在の都市はサポートされている国のリストに含まれていません",
+    "ko": "타겟이 지정되었지만 현재 도시는 지원되는 국가 목록에 없습니다.",
+    "en": "Targeted, but current city is not in the list of supported countries"
+  },
+  "已读取PC配置到手机端": {
+    "zh-TW": "已讀取PC配置到手機端",
+    "ja": "PCの設定が携帯電話に読み込まれました",
+    "ko": "PC 구성이 휴대폰으로 읽혀졌습니다.",
+    "en": "PC configuration has been read to the mobile phone"
   },
   "已发布到前台": {
     "zh-TW": "已發佈到前台",
@@ -4163,6 +5471,24 @@
     "ko": "마지막으로 성공한 릴리스로 롤백되었습니다.",
     "en": "Rolled back to last successful release"
   },
+  "已建站": {
+    "zh-TW": "已建站",
+    "ja": "ウェブサイト開設",
+    "ko": "홈페이지 개설",
+    "en": "Website established"
+  },
+  "已将当前页导航设置应用到其他页面（手机）": {
+    "zh-TW": "已將目前頁導航設定套用到其他頁面（手機）",
+    "ja": "現在のページ ナビゲーション設定が他のページに適用されています (携帯電話)",
+    "ko": "현재 페이지 탐색 설정이 다른 페이지(휴대폰)에 적용되었습니다.",
+    "en": "Current page navigation settings have been applied to other pages (mobile phone)"
+  },
+  "已将当前页导航设置应用到其他页面（PC）": {
+    "zh-TW": "已將目前頁導航設定套用到其他頁面（PC）",
+    "ja": "現在のページ ナビゲーション設定が他のページに適用されています (PC)",
+    "ko": "현재 페이지 탐색 설정이 다른 페이지(PC)에 적용되었습니다.",
+    "en": "Current page navigation settings have been applied to other pages (PC)"
+  },
   "已解锁区块": {
     "zh-TW": "已解鎖區塊",
     "ja": "ブロックのロックが解除されました",
@@ -4187,17 +5513,29 @@
     "ko": "구성된",
     "en": "configured"
   },
-  "已清除主题效果，恢到应用前状": {
-    "zh-TW": "已清除主題效果，恢到應用前狀",
+  "已清除主题效果，恢复到应用前状态": {
+    "zh-TW": "已清除主題效果，恢復到應用程式前狀態",
     "ja": "テーマの効果がクリアされ、適用前の状態に戻ります",
     "ko": "테마 효과가 삭제되어 적용 전 상태로 복원되었습니다.",
     "en": "The theme effect has been cleared and restored to the state before application"
+  },
+  "已取消": {
+    "zh-TW": "已取消",
+    "ja": "キャンセル",
+    "ko": "취소",
+    "en": "Canceled"
   },
   "已取消回滚": {
     "zh-TW": "已取消回滾",
     "ja": "ロールバックがキャンセルされました",
     "ko": "롤백이 취소되었습니다.",
     "en": "Rollback canceled"
+  },
+  "已确认": {
+    "zh-TW": "已確認",
+    "ja": "確認済み",
+    "ko": "확인됨",
+    "en": "Confirmed"
   },
   "已删除区": {
     "zh-TW": "已刪除區",
@@ -4211,17 +5549,35 @@
     "ko": "업로드됨",
     "en": "Uploaded"
   },
+  "已上传背景图": {
+    "zh-TW": "已上傳背景圖",
+    "ja": "背景画像をアップロードしました",
+    "ko": "배경 이미지가 업로드되었습니다.",
+    "en": "Background image uploaded"
+  },
+  "已上传背景图，可重新选择": {
+    "zh-TW": "已上傳背景圖，可重新選擇",
+    "ja": "背景画像がアップロードされ、再選択できるようになりました。",
+    "ko": "배경 이미지가 업로드되었으며 다시 선택할 수 있습니다.",
+    "en": "The background image has been uploaded and can be reselected."
+  },
+  "已上传联系卡图片": {
+    "zh-TW": "已上傳聯絡卡圖片",
+    "ja": "連絡先カードの画像がアップロードされました",
+    "ko": "연락처 카드 이미지가 업로드되었습니다.",
+    "en": "Contact card image uploaded"
+  },
+  "已上传联系卡图片，可重新选择": {
+    "zh-TW": "已上傳聯絡卡圖片，可重新選擇",
+    "ja": "連絡先カードの画像がアップロードされ、再選択できるようになりました。",
+    "ko": "연락처 카드 이미지가 업로드되었으며 다시 선택할 수 있습니다.",
+    "en": "The contact card image has been uploaded and can be reselected."
+  },
   "已生成总后台默认演示数据。": {
     "zh-TW": "已產生總後台預設演示資料。",
     "ja": "合計のバックグラウンドのデフォルト デモ データが生成されました。",
     "ko": "전체 배경 기본 데모 데이터가 생성되었습니다.",
     "en": "The total background default demo data has been generated."
-  },
-  "已锁定": {
-    "zh-TW": "已鎖定",
-    "ja": "ロックされた",
-    "ko": "잠긴",
-    "en": "locked"
   },
   "已锁定区块": {
     "zh-TW": "已鎖定區塊",
@@ -4241,11 +5597,17 @@
     "ko": "합격",
     "en": "Passed"
   },
-  "已新增区": {
-    "zh-TW": "已新增區",
-    "ja": "新しいエリアが追加されました",
-    "ko": "새로운 지역이 추가되었습니다",
-    "en": "New area has been added"
+  "已新增区块": {
+    "zh-TW": "已新增區塊",
+    "ja": "ブロックが追加されました",
+    "ko": "블록이 추가됨",
+    "en": "Block added"
+  },
+  "已隐藏二维码；生成和预览都会同步隐藏。": {
+    "zh-TW": "已隱藏二維碼；生成和預覽都會同步隱藏。",
+    "ja": "QR コードは非表示になっています。生成とプレビューの両方が同時に非表示になります。",
+    "ko": "QR 코드가 숨겨져 있습니다. 생성과 미리보기가 동시에 숨겨집니다.",
+    "en": "The QR code has been hidden; both generation and preview will be hidden simultaneously."
   },
   "已与总站同步": {
     "zh-TW": "已與總站同步",
@@ -4283,6 +5645,12 @@
     "ko": "오디오 파일이 너무 큽니다. 더 작은 파일을 선택하세요.",
     "en": "Audio file is too large, please choose a smaller file"
   },
+  "音频已写入当前草稿，但未上传到存储；发布前会阻止内嵌音频。": {
+    "zh-TW": "音訊已寫入目前草稿，但未上傳到儲存；發布前會阻止內嵌音訊。",
+    "ja": "オーディオは現在のドラフトに書き込まれていますが、ストレージにはアップロードされていません。埋め込みオーディオは公開前にブロックされます。",
+    "ko": "오디오가 현재 초안에 기록되었지만 저장소에 업로드되지 않았습니다. 게시하기 전에 포함된 오디오가 차단됩니다.",
+    "en": "Audio has been written to the current draft but not uploaded to storage; embedded audio is blocked before publishing."
+  },
   "隐藏": {
     "zh-TW": "隱藏",
     "ja": "隠れる",
@@ -4301,6 +5669,30 @@
     "ko": "애플리케이션",
     "en": "application"
   },
+  "应用到草稿": {
+    "zh-TW": "應用到草稿",
+    "ja": "ドラフトに応募する",
+    "ko": "초안에 적용",
+    "en": "Apply to draft"
+  },
+  "应用方案模板": {
+    "zh-TW": "應用方案模板",
+    "ja": "アプリケーションテンプレート",
+    "ko": "애플리케이션 템플릿",
+    "en": "Application template"
+  },
+  "应用中...": {
+    "zh-TW": "應用中...",
+    "ja": "申請中...",
+    "ko": "신청 중...",
+    "en": "Applying..."
+  },
+  "英镑 £": {
+    "zh-TW": "英鎊 £",
+    "ja": "ポンドポンド",
+    "ko": "파운드 파운드",
+    "en": "pound pound"
+  },
   "营销活动": {
     "zh-TW": "行銷活動",
     "ja": "マーケティング活動",
@@ -4312,12 +5704,6 @@
     "ja": "プラットフォームに対する完全な権限を持っています。",
     "ko": "플랫폼에 대한 모든 권한을 갖습니다.",
     "en": "Have full permissions on the platform."
-  },
-  "用户": {
-    "zh-TW": "使用者",
-    "ja": "ユーザー",
-    "ko": "사용자",
-    "en": "user"
   },
   "用户管理": {
     "zh-TW": "使用者管理",
@@ -4331,11 +5717,59 @@
     "ko": "사용자 목록 및 권한 서비스",
     "en": "User list and permission service"
   },
+  "用户名已存在，请更换后重试": {
+    "zh-TW": "使用者名稱已存在，請更換後重試",
+    "ja": "ユーザー名はすでに存在します。変更してもう一度お試しください。",
+    "ko": "사용자 이름이 이미 존재합니다. 변경한 후 다시 시도해 주세요.",
+    "en": "The username already exists, please change it and try again"
+  },
+  "用于产品编号，例如 SKU-001。": {
+    "zh-TW": "用於產品編號，例如 SKU-001。",
+    "ja": "SKU-001 などの製品番号に使用されます。",
+    "ko": "SKU-001과 같은 제품 번호에 사용됩니다.",
+    "en": "Used for product numbers, such as SKU-001."
+  },
+  "用于产品简介和详情介绍。": {
+    "zh-TW": "用於產品簡介和詳情介紹。",
+    "ja": "商品紹介や詳しい紹介に使用します。",
+    "ko": "제품 소개 및 상세 소개에 사용됩니다.",
+    "en": "Used for product introduction and detailed introduction."
+  },
+  "用于产品名称标题。": {
+    "zh-TW": "用於產品名稱標題。",
+    "ja": "商品名のタイトルに使用されます。",
+    "ko": "제품 이름 제목에 사용됩니다.",
+    "en": "Used for product name titles."
+  },
+  "用于登录展示与用户名登录": {
+    "zh-TW": "用於登入展示與使用者名稱登入",
+    "ja": "ログイン表示とユーザー名ログインに使用されます",
+    "ko": "로그인 표시 및 사용자 이름 로그인에 사용됩니다.",
+    "en": "Used for login display and username login"
+  },
+  "用于价格文本。": {
+    "zh-TW": "用於價格文字。",
+    "ja": "価格のテキストに使用されます。",
+    "ko": "가격 텍스트에 사용됩니다.",
+    "en": "Used for price text."
+  },
   "邮箱": {
     "zh-TW": "信箱",
     "ja": "郵便",
     "ko": "우편",
     "en": "Mail"
+  },
+  "邮箱 / 用户名 / 8位ID": {
+    "zh-TW": "信箱 / 使用者名稱 / 8位元ID",
+    "ja": "メールアドレス/ユーザー名/8桁のID",
+    "ko": "이메일/사용자 이름/8자리 아이디",
+    "en": "Email/Username/8-digit ID"
+  },
+  "邮箱格式无效": {
+    "zh-TW": "郵箱格式無效",
+    "ja": "電子メールの形式が無効です",
+    "ko": "이메일 형식이 잘못되었습니다.",
+    "en": "Email format is invalid"
   },
   "邮箱未验证，请先去邮箱点击验证链接后再登录。": {
     "zh-TW": "郵箱未驗證，請先去信箱點選驗證連結後再登入。",
@@ -4343,11 +5777,35 @@
     "ko": "귀하의 이메일 주소가 확인되지 않았습니다. 이메일 주소로 이동하여 확인 링크를 클릭한 후 로그인하세요.",
     "en": "Your email address has not been verified. Please go to your email address and click the verification link before logging in."
   },
-  "有効": {
-    "zh-TW": "有効",
-    "ja": "有効",
-    "ko": "유효한",
-    "en": "valid"
+  "邮箱验证成功，请继续登录。": {
+    "zh-TW": "郵箱驗證成功，請繼續登入。",
+    "ja": "メール認証が成功しました。引き続きログインしてください。",
+    "ko": "이메일 인증에 성공했습니다. 계속해서 로그인해 주세요.",
+    "en": "Email verification is successful, please continue to log in."
+  },
+  "邮箱验证成功，请直接登录。": {
+    "zh-TW": "郵箱驗證成功，請直接登入。",
+    "ja": "メール認証が成功しました。直接ログインしてください。",
+    "ko": "이메일 인증에 성공했습니다. 직접 로그인해 주세요.",
+    "en": "Email verification is successful, please log in directly."
+  },
+  "邮箱验证服务未配置完成，请稍后再试。": {
+    "zh-TW": "郵箱驗證服務未配置完成，請稍後再試。",
+    "ja": "電子メール検証サービスが設定されていません。後でもう一度試してください。",
+    "ko": "이메일 확인 서비스가 구성되지 않았습니다. 나중에 다시 시도해 주세요.",
+    "en": "The email verification service has not been configured. Please try again later."
+  },
+  "邮箱验证失败，请重新发送验证邮件。": {
+    "zh-TW": "郵箱驗證失敗，請重新傳送驗證郵件。",
+    "ja": "メール認証に失敗しました。確認メールを再送信してください。",
+    "ko": "이메일 확인에 실패했습니다. 확인 이메일을 다시 보내주세요.",
+    "en": "Email verification failed, please resend the verification email."
+  },
+  "邮箱已验证，正在完成超级后台登录...": {
+    "zh-TW": "郵箱已驗證，正在完成超級後台登入...",
+    "ja": "電子メールが確認され、スーパー バックグラウンド ログインが完了しています...",
+    "ko": "이메일이 확인되었으며 슈퍼백그라운드 로그인이 완료되었습니다...",
+    "en": "Email has been verified and super background login is being completed..."
   },
   "有効なメールアドレスを入力してください": {
     "zh-TW": "有効なメールアドレスを入力してください",
@@ -4360,6 +5818,12 @@
     "ja": "右",
     "ko": "오른쪽",
     "en": "right"
+  },
+  "右侧": {
+    "zh-TW": "右側",
+    "ja": "右側",
+    "ko": "오른쪽",
+    "en": "right side"
   },
   "右对齐": {
     "zh-TW": "右對齊",
@@ -4403,11 +5867,107 @@
     "ko": "언어",
     "en": "Language"
   },
-  "预览": {
-    "zh-TW": "預覽",
-    "ja": "プレビュー",
-    "ko": "시사",
-    "en": "Preview"
+  "预览文本 Preview: 艺术字体 Art Font 示例 ABC abc 123": {
+    "zh-TW": "預覽文字 Preview: 藝術字體 Art Font 範例 ABC abc 123",
+    "ja": "テキストのプレビュー プレビュー: アート フォント アート フォントの例 ABC abc 123",
+    "ko": "미리보기 텍스트 미리보기: Art Font Art 글꼴 예 ABC abc 123",
+    "en": "Preview text Preview: Art Font Art Font example ABC abc 123"
+  },
+  "预览样式": {
+    "zh-TW": "預覽樣式",
+    "ja": "プレビュースタイル",
+    "ko": "미리보기 스타일",
+    "en": "Preview style"
+  },
+  "预约": {
+    "zh-TW": "預約",
+    "ja": "予約する",
+    "ko": "예약하다",
+    "en": "reserve"
+  },
+  "预约编号生成失败": {
+    "zh-TW": "預約編號生成失敗",
+    "ja": "予約番号の生成に失敗しました",
+    "ko": "예약번호 생성 실패",
+    "en": "Reservation number generation failed"
+  },
+  "预约店铺": {
+    "zh-TW": "預約店鋪",
+    "ja": "店舗を予約する",
+    "ko": "매장 예약",
+    "en": "Book a store"
+  },
+  "预约更新失败": {
+    "zh-TW": "預約更新失敗",
+    "ja": "予約の更新に失敗しました",
+    "ko": "예약 업데이트 실패",
+    "en": "Reservation update failed"
+  },
+  "预约管理": {
+    "zh-TW": "預約管理",
+    "ja": "予約管理",
+    "ko": "약속관리",
+    "en": "Appointment management"
+  },
+  "预约记录不存在": {
+    "zh-TW": "預約記錄不存在",
+    "ja": "予約記録が存在しません",
+    "ko": "약속 기록이 존재하지 않습니다",
+    "en": "Appointment record does not exist"
+  },
+  "预约记录参数缺失": {
+    "zh-TW": "預約記錄參數缺失",
+    "ja": "予約レコードのパラメータがありません",
+    "ko": "약속 기록 매개변수가 누락되었습니다.",
+    "en": "Appointment record parameters are missing"
+  },
+  "预约记录读取失败": {
+    "zh-TW": "預約記錄讀取失敗",
+    "ja": "予約記録の読み取りに失敗しました",
+    "ko": "예약 기록 읽기 실패",
+    "en": "Reservation record reading failed"
+  },
+  "预约凭证缺失": {
+    "zh-TW": "預約憑證缺失",
+    "ja": "予約バウチャーがありません",
+    "ko": "예약 바우처가 누락되었습니다",
+    "en": "Reservation voucher is missing"
+  },
+  "预约凭证无效": {
+    "zh-TW": "預約憑證無效",
+    "ja": "予約バウチャーは無効です",
+    "ko": "예약 바우처가 유효하지 않습니다.",
+    "en": "The reservation voucher is invalid"
+  },
+  "预约取消失败，请稍后重试": {
+    "zh-TW": "預約取消失敗，請稍後重試",
+    "ja": "予約のキャンセルに失敗しました。後でもう一度お試しください",
+    "ko": "약속을 취소하지 못했습니다. 나중에 다시 시도해 주세요.",
+    "en": "Appointment cancellation failed, please try again later"
+  },
+  "预约日期时间格式无效": {
+    "zh-TW": "預約日期時間格式無效",
+    "ja": "予約の日時の形式が無効です",
+    "ko": "약속 날짜 및 시간 형식이 잘못되었습니다.",
+    "en": "Appointment date and time format is invalid"
+  },
+  "预约提交成功": {
+    "zh-TW": "預約提交成功",
+    "ja": "予約が正常に送信されました",
+    "ko": "약속이 성공적으로 제출되었습니다.",
+    "en": "Appointment submitted successfully"
+  },
+  "预约提交失败，请稍后重试": {
+    "zh-TW": "預約提交失敗，請稍後重試",
+    "ja": "予約の送信に失敗しました。後でもう一度お試しください。",
+    "ko": "예약 제출에 실패했습니다. 나중에 다시 시도해 주세요.",
+    "en": "Reservation submission failed, please try again later"
+  },
+  "预约已取消": {
+    "zh-TW": "預約已取消",
+    "ja": "予約がキャンセルされました",
+    "ko": "약속이 취소되었습니다.",
+    "en": "Appointment canceled"
   },
   "域名": {
     "zh-TW": "網域",
@@ -4415,29 +5975,29 @@
     "ko": "도메인 이름",
     "en": "domain name"
   },
-  "域名后缀": {
-    "zh-TW": "網域後綴",
-    "ja": "ドメイン名のサフィックス",
-    "ko": "도메인 이름 접미사",
-    "en": "Domain name suffix"
+  "域名前缀": {
+    "zh-TW": "網域前綴",
+    "ja": "ドメイン名のプレフィックス",
+    "ko": "도메인 이름 접두사",
+    "en": "Domain name prefix"
   },
-  "預覽": {
-    "zh-TW": "預覽",
-    "ja": "プレビュー",
-    "ko": "시사",
-    "en": "Preview"
+  "远端加载超时，当前仅展示本地缓存。超级后台发布将走服务端通道。": {
+    "zh-TW": "遠端載入逾時，目前僅展示本機快取。超級後台發布將走服務端通道。",
+    "ja": "リモート読み込みがタイムアウトになり、現在はローカル キャッシュのみが表示されます。スーパー バックエンドのリリースはサーバー チャネルを通じて行われます。",
+    "ko": "원격 로딩 시간이 초과되어 현재 로컬 캐시만 표시됩니다. 슈퍼 백엔드 릴리스는 서버 채널을 통해 이루어집니다.",
+    "en": "The remote loading timed out and currently only the local cache is displayed. Super backend release will be through the server channel."
   },
-  "預設": {
-    "zh-TW": "預設",
-    "ja": "デフォルト",
-    "ko": "기본",
-    "en": "Default"
+  "远端连接不稳定，当前仅展示本地缓存。超级后台发布将走服务端通道。": {
+    "zh-TW": "遠端連線不穩定，目前僅展示本機快取。超級後台發布將走服務端通道。",
+    "ja": "リモート接続が不安定で、現在はローカル キャッシュのみが表示されます。スーパー バックエンドのリリースはサーバー チャネルを通じて行われます。",
+    "ko": "원격 연결이 불안정하여 현재 로컬 캐시만 표시됩니다. 슈퍼 백엔드 릴리스는 서버 채널을 통해 이루어집니다.",
+    "en": "The remote connection is unstable and currently only the local cache is displayed. Super backend release will be through the server channel."
   },
-  "远端加载超时，当前仅展示本地缓存，已临时锁定发布以防覆盖线上内容。": {
-    "zh-TW": "遠端載入逾時，目前僅顯示本機緩存，已暫時鎖定發布以防覆蓋線上內容。",
-    "ja": "リモート読み込みがタイムアウトしました。現在はローカル キャッシュのみが表示されており、オンライン コンテンツの上書きを防ぐために公開が一時的にロックされています。",
-    "ko": "원격 로드 시간이 초과되어 현재 로컬 캐시만 표시되며 온라인 콘텐츠 덮어쓰기를 방지하기 위해 게시가 일시적으로 잠겨 있습니다.",
-    "en": "The remote loading has timed out, currently only the local cache is displayed, and publishing has been temporarily locked to prevent overwriting of online content."
+  "远端内容未验证，已阻止发布（防止覆盖线上内容）。请先重新加载页面内容后再发布。": {
+    "zh-TW": "遠端內容未驗證，已阻止發布（防止覆蓋線上內容）。請先重新載入頁面內容後再發布。",
+    "ja": "リモート コンテンツは検証されておらず、公開がブロックされています (オンライン コンテンツが上書きされるのを防ぐため)。公開する前にページのコンテンツをリロードしてください。",
+    "ko": "원격 콘텐츠는 확인되지 않았으며 게시가 차단되었습니다(온라인 콘텐츠를 덮어쓰는 것을 방지하기 위해). 게시하기 전에 페이지 콘텐츠를 다시 로드하세요.",
+    "en": "The remote content has not been verified and has been blocked from publishing (to prevent online content from being overwritten). Please reload the page content before publishing."
   },
   "远端内容未验证，暂不可发布": {
     "zh-TW": "遠端內容未經驗證，暫不可發布",
@@ -4451,29 +6011,17 @@
     "ko": "원격 통계(Supabase):",
     "en": "Remote statistics (Supabase):"
   },
-  "远连接不稳定，当前仅展示本地缓存，已临时锁定发布以防盖线上内容": {
-    "zh-TW": "遠端連線不穩定，目前僅顯示本機快取，已暫時鎖定發布以防蓋線上內容",
-    "ja": "リモート接続が不安定です。現在、ローカル キャッシュのみが表示されます。オンライン コンテンツがブロックされないように、リリースは一時的にロックされています。",
-    "ko": "원격 연결이 불안정합니다. 현재는 로컬 캐시만 표시됩니다. 온라인 콘텐츠가 차단되는 것을 방지하기 위해 릴리스가 일시적으로 잠겨 있습니다.",
-    "en": "The remote connection is unstable. Currently, only the local cache is displayed. The release has been temporarily locked to prevent online content from being blocked."
-  },
-  "远内未证，已止发布（防覆盖线上内）先重新加载页靼内后再发布": {
-    "zh-TW": "遠內未證，已止發布（防覆蓋線上內）先重新加載頁靼內後再發布",
-    "ja": "内容は検証されておらず、（オンライン報道を防ぐため）公開は停止されています。公開する前にページをリロードしてください。",
-    "ko": "내용이 확인되지 않았으며 게시가 중단되었습니다(온라인 취재 방지). 게시하기 전에 페이지를 새로고침하세요.",
-    "en": "The content has not been verified, and publication has been stopped (to prevent online coverage). Please reload the page before publishing."
-  },
   "月": {
     "zh-TW": "月",
     "ja": "月",
     "ko": "달",
     "en": "moon"
   },
-  "閲嶅帇澶辫触锛岃閲嶈瘯": {
-    "zh-TW": "閲嶅帇澶辮觸錛岃閲嶈瘯",
-    "ja": "続きを読む",
-    "ko": "더 읽어보세요",
-    "en": "Read more"
+  "允许登录": {
+    "zh-TW": "允許登入",
+    "ja": "ログインを許可する",
+    "ko": "로그인 허용",
+    "en": "Allow login"
   },
   "杂志风格": {
     "zh-TW": "雜誌風格",
@@ -4499,23 +6047,17 @@
     "ko": "세트션의 컷의 시간 제한을 다시 설정하세요. 메시지를 다시 보내세요.",
     "en": "Set the time limit of the セッションのがcutれました again. Send the message again."
   },
-  "再設定メールを送信しました。メールを確認してください。": {
-    "zh-TW": "再設定メールを送信しました。メールを確認してください。",
-    "ja": "メッセージを送信するにはメールボックスをリセットしてください。メールを確認してください。",
-    "ko": "메시지를 보내려면 사서함을 재설정하세요. 메일을 확인해주세요.",
-    "en": "Reset the mailbox to send messages.メールをconfirmationしてください."
-  },
   "在线": {
     "zh-TW": "網路",
     "ja": "オンライン",
     "ko": "온라인",
     "en": "online"
   },
-  "在線": {
-    "zh-TW": "在線",
-    "ja": "オンライン",
-    "ko": "온라인",
-    "en": "online"
+  "在线预约": {
+    "zh-TW": "線上預約",
+    "ja": "オンラインで予約する",
+    "ko": "온라인으로 예약하기",
+    "en": "Make an appointment online"
   },
   "在这里编写副标题说明文案": {
     "zh-TW": "在這裡寫一個副標題說明文案",
@@ -4528,6 +6070,12 @@
     "ja": "ここにテキストを入力します。",
     "ko": "여기에 텍스트를 입력하세요.",
     "en": "Enter text here."
+  },
+  "在这里填写产品卖点、规格或简短介绍。": {
+    "zh-TW": "在這裡填寫產品賣點、規格或簡短介紹。",
+    "ja": "ここに製品のセールスポイント、仕様、または簡単な紹介を入力します。",
+    "ko": "여기에 제품 판매 포인트, 사양 또는 간략한 소개를 입력하세요.",
+    "en": "Fill in the product selling points, specifications or brief introduction here."
   },
   "暂不切换": {
     "zh-TW": "暫不切換",
@@ -4559,6 +6107,24 @@
     "ko": "아직 변경 다이어그램이 없습니다.",
     "en": "No change diagram yet"
   },
+  "暂无产品，点击“新增产品”或导入 Excel。": {
+    "zh-TW": "暫無產品，點選「新增產品」或匯入 Excel。",
+    "ja": "現在製品がありません。[製品を追加] をクリックするか、Excel にインポートしてください。",
+    "ko": "현재 제품이 없습니다. \"제품 추가\"를 클릭하거나 Excel로 가져오세요.",
+    "en": "There are currently no products, click \"Add Product\" or import into Excel."
+  },
+  "暂无产品，请先新增产品或导入数据。": {
+    "zh-TW": "暫無產品，請先新增產品或匯入資料。",
+    "ja": "現在製品がありません。まず製品を追加するか、データをインポートしてください。",
+    "ko": "현재 제품이 없습니다. 먼저 제품을 추가하거나 데이터를 가져오세요.",
+    "en": "There are currently no products, please add a product or import data first."
+  },
+  "暂无产品，请在后台添加产品信息。": {
+    "zh-TW": "暫無產品，請在背景新增產品資訊。",
+    "ja": "現在商品がありません。背景に商品情報を追加してください。",
+    "ko": "현재 상품이 없습니다. 백그라운드에서 상품정보를 추가해주세요.",
+    "en": "There are currently no products, please add product information in the background."
+  },
   "暂无发布失败快照": {
     "zh-TW": "暫無發布失敗快照",
     "ja": "公開できる失敗したスナップショットはまだありません。",
@@ -4582,12 +6148,6 @@
     "ja": "まだ販売者がいません",
     "ko": "아직 판매자가 없습니다.",
     "en": "No merchant yet"
-  },
-  "暂无数据": {
-    "zh-TW": "暫無數據",
-    "ja": "まだデータがありません",
-    "ko": "아직 데이터가 없습니다",
-    "en": "No data yet"
   },
   "暂无说明": {
     "zh-TW": "暫無說明",
@@ -4625,35 +6185,35 @@
     "ko": "아직 오디오가 없습니다. 먼저 오디오를 업로드해 주세요.",
     "en": "There is no audio yet, please upload the audio first"
   },
-  "暫無圖片": {
-    "zh-TW": "暫無圖片",
-    "ja": "まだ写真がありません",
-    "ko": "아직 사진이 없습니다.",
-    "en": "No pictures yet"
-  },
-  "暫無資料": {
-    "zh-TW": "暫無資料",
-    "ja": "まだ情報はありません",
-    "ko": "아직 정보가 없습니다",
-    "en": "No information yet"
-  },
   "展开": {
     "zh-TW": "展開",
     "ja": "拡大する",
     "ko": "확장하다",
     "en": "Expand"
   },
+  "展开编辑侧栏": {
+    "zh-TW": "展開編輯側欄",
+    "ja": "編集サイドバーを展開する",
+    "ko": "편집 사이드바 펼치기",
+    "en": "Expand editing sidebar"
+  },
+  "展开侧栏": {
+    "zh-TW": "展開側欄",
+    "ja": "サイドバーを展開する",
+    "ko": "사이드바 확장",
+    "en": "Expand sidebar"
+  },
+  "展示平台注册商户的前台入口": {
+    "zh-TW": "展示平台註冊商戶的前台入口",
+    "ja": "登録加盟店の正面玄関をプラットフォーム上に表示",
+    "ko": "플랫폼에 등록된 가맹점의 정문을 표시합니다.",
+    "en": "Display the front entrance of registered merchants on the platform"
+  },
   "占用大的区块": {
     "zh-TW": "佔用大的區塊",
     "ja": "大きなブロックを占有します",
     "ko": "큰 블록을 차지함",
     "en": "Occupies a large block"
-  },
-  "站点": {
-    "zh-TW": "站點",
-    "ja": "サイト",
-    "ko": "대지",
-    "en": "site"
   },
   "站点 campaign.fafona.com 当前状态为维护中，请确认发布时间。": {
     "zh-TW": "網站 campaign.fafona.com 目前狀態為維護中，請確認發佈時間。",
@@ -4673,11 +6233,11 @@
     "ko": "사이트 이름",
     "en": "Site name"
   },
-  "站點": {
-    "zh-TW": "站點",
-    "ja": "サイト",
-    "ko": "대지",
-    "en": "site"
+  "站点信息缺失": {
+    "zh-TW": "站點資訊缺失",
+    "ja": "サイト情報がありません",
+    "ko": "사이트 정보가 누락되었습니다.",
+    "en": "Site information missing"
   },
   "账号": {
     "zh-TW": "帳號",
@@ -4690,6 +6250,12 @@
     "ja": "アカウントまたはパスワードが間違っています",
     "ko": "잘못된 계정 또는 비밀번호",
     "en": "Incorrect account or password"
+  },
+  "账号或密码错误。": {
+    "zh-TW": "帳號或密碼錯誤。",
+    "ja": "アカウントまたはパスワードが間違っています。",
+    "ko": "계정이나 비밀번호가 잘못되었습니다.",
+    "en": "The account or password is wrong."
   },
   "帳號": {
     "zh-TW": "帳號",
@@ -4709,11 +6275,11 @@
     "ko": "비밀번호 찾기 이메일이 발송되었습니다. 이메일로 이동하여 링크를 클릭하여 비밀번호를 재설정하세요.",
     "en": "The password retrieval email has been sent. Please go to the email and click the link to reset your password."
   },
-  "找回密碼郵件已發送，請前往信箱點擊連結重設密碼。": {
-    "zh-TW": "找回密碼郵件已發送，請前往信箱點擊連結重設密碼。",
-    "ja": "パスワード取得メールを送信しました。受信箱にアクセスし、リンクをクリックしてパスワードをリセットしてください。",
-    "ko": "비밀번호 찾기 이메일이 발송되었습니다. 받은편지함으로 이동하여 링크를 클릭하여 비밀번호를 재설정하세요.",
-    "en": "The password retrieval email has been sent. Please go to your inbox and click the link to reset your password."
+  "找回密碼郵件已送出，請至信箱點擊連結後重設密碼。": {
+    "zh-TW": "找回密碼郵件已送出，請至信箱點擊連結後重設密碼。",
+    "ja": "パスワード取得メールを送信しました。メールボックス内のリンクをクリックしてパスワードをリセットしてください。",
+    "ko": "비밀번호 찾기 이메일이 발송되었습니다. 비밀번호를 재설정하려면 메일함의 링크를 클릭하세요.",
+    "en": "The password retrieval email has been sent. Please click on the link in your mailbox to reset your password."
   },
   "折线": {
     "zh-TW": "折線",
@@ -4727,17 +6293,17 @@
     "ko": "가맹점 소개 내용은 추후 백그라운드에서 자유롭게 편집이 가능합니다.",
     "en": "Here is the merchant’s introduction content, which can be edited freely in the background later."
   },
-  "榛樿": {
-    "zh-TW": "榛樿",
-    "ja": "ヘーゼル ",
-    "ko": "헤이즐 ",
-    "en": "Hazel "
-  },
   "正常": {
     "zh-TW": "正常",
     "ja": "普通",
     "ko": "정상",
     "en": "normal"
+  },
+  "正方形": {
+    "zh-TW": "方塊",
+    "ja": "四角",
+    "ko": "정사각형",
+    "en": "square"
   },
   "正序": {
     "zh-TW": "正序",
@@ -4750,6 +6316,12 @@
     "ja": "ログイン状況を確認しています。",
     "ko": "로그인 상태를 확인하는 중..",
     "en": "Checking login status.."
+  },
+  "正在定位商户站点...": {
+    "zh-TW": "正在定位商家站點...",
+    "ja": "販売者のサイトを探しています...",
+    "ko": "판매자 사이트를 찾는 중...",
+    "en": "Locating merchant site..."
   },
   "正在加载页面...": {
     "zh-TW": "正在載入頁面...",
@@ -4769,11 +6341,23 @@
     "ko": "메인 사이트 로딩중...",
     "en": "Loading the main site..."
   },
-  "正在外链化大..": {
-    "zh-TW": "正在外鏈化大..",
-    "ja": "外部リンクを構築しています...",
-    "ko": "외부 링크 구축 중...",
-    "en": "Building external links..."
+  "正在检查登录状态...": {
+    "zh-TW": "正在檢查登入狀態...",
+    "ja": "ログインステータスを確認しています...",
+    "ko": "로그인 상태를 확인하는 중...",
+    "en": "Checking login status..."
+  },
+  "正在跳转到登录页...": {
+    "zh-TW": "正在跳到登入頁...",
+    "ja": "ログインページにリダイレクトしています...",
+    "ko": "로그인 페이지로 리디렉션 중...",
+    "en": "Redirecting to login page..."
+  },
+  "正在外链化大图...": {
+    "zh-TW": "正在外鏈化大圖...",
+    "ja": "全体像を外部にリンクする...",
+    "ko": "큰 그림을 외부로 연결하는 중...",
+    "en": "Externally linking the big picture..."
   },
   "正在載入頁面...": {
     "zh-TW": "正在載入頁面...",
@@ -4787,17 +6371,23 @@
     "ko": "메인 사이트 로딩중...",
     "en": "Loading the main site..."
   },
-  "正在重压当前页图..": {
-    "zh-TW": "正在重壓當前頁圖..",
-    "ja": "現在のページの画像を抑制しています。",
-    "ko": "현재 페이지 이미지를 억제하는 중입니다..",
-    "en": "Repressing the current page image.."
+  "正在重压当前页图片...": {
+    "zh-TW": "正在重壓當前頁圖片...",
+    "ja": "現在のページの画像を抑制しています...",
+    "ko": "현재 페이지 사진을 억제하는 중...",
+    "en": "Repressing the current page pictures..."
   },
   "支持绑定独立域名。": {
     "zh-TW": "支援綁定獨立網域。",
     "ja": "独立したドメイン名のバインドをサポートします。",
     "ko": "독립 도메인 이름 바인딩을 지원합니다.",
     "en": "Supports binding independent domain names."
+  },
+  "支持产品图片、编号、名称、介绍和价格展示。": {
+    "zh-TW": "支援產品圖片、編號、名稱、介紹和價格展示。",
+    "ja": "製品の写真、番号、名前、紹介、価格表示をサポートします。",
+    "ko": "제품 사진, 번호, 이름, 소개 및 가격 표시를 지원합니다.",
+    "en": "Support product pictures, numbers, names, introductions and price displays."
   },
   "支持多页面编辑和切换发布。": {
     "zh-TW": "支援多頁面編輯和切換發布。",
@@ -4816,6 +6406,12 @@
     "ja": "プラットフォーム API 統合機能をサポートします。",
     "ko": "플랫폼 API 통합 기능을 지원합니다.",
     "en": "Support platform API integration capabilities."
+  },
+  "支持区块 ID、锚点、页面 ID、站内路径或完整网址": {
+    "zh-TW": "支援區塊 ID、錨點、頁面 ID、站內路徑或完整網址",
+    "ja": "ブロックID、アンカー、ページID、サイトパスまたは完全なURLをサポート",
+    "ko": "블록 ID, 앵커, 페이지 ID, 사이트 경로 또는 전체 URL 지원",
+    "en": "Supports block ID, anchor, page ID, site path or full URL"
   },
   "支持深度流量与行为分析。": {
     "zh-TW": "支援深度流量與行為分析。",
@@ -4853,20 +6449,50 @@
     "ko": "직접 출판하다",
     "en": "publish directly"
   },
+  "职位": {
+    "zh-TW": "職位",
+    "ja": "位置",
+    "ko": "위치",
+    "en": "Position"
+  },
+  "至少 6 碼": {
+    "zh-TW": "至少 6 碼",
+    "ja": "少なくともサイズ6",
+    "ko": "최소 사이즈 6",
+    "en": "At least size 6"
+  },
   "至少 6 位": {
     "zh-TW": "至少 6 位",
     "ja": "少なくとも6人",
     "ko": "최소 6명",
     "en": "At least 6 people"
   },
-  "中文 (繁體)": {
-    "zh-TW": "中文 (繁體)",
+  "置于底层": {
+    "zh-TW": "置於底層",
+    "ja": "底に置く",
+    "ko": "맨 아래에 놓다",
+    "en": "put on bottom"
+  },
+  "置于顶层": {
+    "zh-TW": "置於頂層",
+    "ja": "一番上に移動",
+    "ko": "맨 위로 가져오기",
+    "en": "Bring to top"
+  },
+  "中": {
+    "zh-TW": "中",
+    "ja": "真ん中",
+    "ko": "가운데",
+    "en": "middle"
+  },
+  "中文（繁體）": {
+    "zh-TW": "中文（繁體）",
     "ja": "中国語（繁体字）",
     "ko": "중국어(번체)",
     "en": "Chinese (Traditional)"
   },
-  "中文 (简体)": {
-    "zh-TW": "中文 (簡體)",
+  "中文（简体）": {
+    "zh-TW": "中文（簡體）",
     "ja": "中国語（簡体字）",
     "ko": "중국어(간체)",
     "en": "Chinese (Simplified)"
@@ -4889,11 +6515,11 @@
     "ko": "반복하다",
     "en": "repeat"
   },
-  "重設會話已失效，請返回登入頁重新發送找回密碼郵件。": {
-    "zh-TW": "重設會話已失效，請返回登錄頁重新發送找回密碼郵件。",
-    "ja": "リセットセッションの有効期限が切れました。ログインページに戻ってパスワード取得メールを再送信してください。",
-    "ko": "재설정 세션이 만료되었습니다. 비밀번호 검색 이메일을 다시 보내려면 로그인 페이지로 돌아가세요.",
-    "en": "The reset session has expired. Please return to the login page to resend the password retrieval email."
+  "重設會話已失效，請回到登入頁重新發送找回密碼郵件。": {
+    "zh-TW": "重設會話已失效，請回到登錄頁重新發送找回密碼郵件。",
+    "ja": "リセットセッションの有効期限が切れました。ログイン ページに戻って、パスワード取得メールを再送信してください。",
+    "ko": "재설정 세션이 만료되었습니다. 로그인 페이지로 돌아가서 비밀번호 찾기 이메일을 다시 보내주세요.",
+    "en": "The reset session has expired. Please return to the login page and resend the password retrieval email."
   },
   "重設密碼": {
     "zh-TW": "重設密碼",
@@ -4901,17 +6527,11 @@
     "ko": "비밀번호 재설정",
     "en": "reset password"
   },
-  "重压当前页": {
-    "zh-TW": "重壓當前頁",
-    "ja": "現在のページを抑制する",
-    "ko": "현재 페이지를 억제합니다",
-    "en": "Repress current page"
-  },
-  "重置": {
-    "zh-TW": "重置",
-    "ja": "リセット",
-    "ko": "다시 놓기",
-    "en": "reset"
+  "重压失败，请重试": {
+    "zh-TW": "重壓失敗，請重試",
+    "ja": "再圧力が失敗しました。もう一度試してください。",
+    "ko": "재압력에 실패했습니다. 다시 시도해 주세요.",
+    "en": "Re-pressure failed, please try again"
   },
   "重置会话已失效，请回到登录页重新发送找回密码邮件。": {
     "zh-TW": "重設會話已失效，請回到登入頁重新傳送找回密碼郵件。",
@@ -4925,23 +6545,11 @@
     "ko": "비밀번호 재설정",
     "en": "reset password"
   },
-  "主题": {
-    "zh-TW": "主題",
-    "ja": "テーマ",
-    "ko": "주제",
-    "en": "theme"
-  },
-  "主題": {
-    "zh-TW": "主題",
-    "ja": "トピック",
-    "ko": "주제",
-    "en": "Topic"
-  },
-  "住所": {
-    "zh-TW": "住所",
-    "ja": "住居",
-    "ko": "거주",
-    "en": "residence"
+  "主店": {
+    "zh-TW": "主店",
+    "ja": "本店",
+    "ko": "본점",
+    "en": "main store"
   },
   "注册": {
     "zh-TW": "註冊",
@@ -4954,6 +6562,18 @@
     "ja": "登録は正常に完了しました。メールを確認して認証を完了し、再度ログインしてください。",
     "ko": "등록이 완료되었습니다. 이메일을 확인하여 인증을 완료한 후 다시 로그인해 주세요.",
     "en": "Registration is successful, please check your email to complete verification and then log in again."
+  },
+  "注册后可直接使用邮箱和密码登录。": {
+    "zh-TW": "註冊後可直接使用郵箱和密碼登入。",
+    "ja": "登録後は、メールアドレスとパスワードを使用して直接ログインできます。",
+    "ko": "회원가입 후 이메일과 비밀번호를 이용해 직접 로그인하실 수 있습니다.",
+    "en": "After registration, you can log in directly using your email and password."
+  },
+  "注册跳号与规则管理": {
+    "zh-TW": "註冊跳號與規則管理",
+    "ja": "登録ジャンプとルール管理",
+    "ko": "등록 점프 및 규칙 관리",
+    "en": "Registration jump and rule management"
   },
   "注册中...": {
     "zh-TW": "註冊中...",
@@ -4973,11 +6593,17 @@
     "ko": "등록하다",
     "en": "register"
   },
-  "註冊成功，請先到信箱完成驗證後再登入。": {
-    "zh-TW": "註冊成功，請先到信箱完成驗證後再登錄。",
+  "註冊成功，請先到信箱完成驗證，再登入。": {
+    "zh-TW": "註冊成功，請先到信箱完成驗證，再登錄。",
     "ja": "登録は成功しました。ログインする前にメールボックスにアクセスして認証を完了してください。",
     "ko": "등록이 성공했습니다. 로그인 전 메일함으로 이동하여 인증을 완료해주세요.",
     "en": "Registration is successful. Please go to your mailbox to complete verification before logging in."
+  },
+  "註冊後可直接使用信箱與密碼登入。": {
+    "zh-TW": "註冊後可直接使用信箱與密碼登錄。",
+    "ja": "登録後は、メールアドレスとパスワードを使用して直接ログインできます。",
+    "ko": "회원가입 후 이메일 주소와 비밀번호를 이용해 직접 로그인하실 수 있습니다.",
+    "en": "After registration, you can log in directly using your email address and password."
   },
   "註冊中...": {
     "zh-TW": "註冊中...",
@@ -4985,37 +6611,25 @@
     "ko": "등록 중...",
     "en": "Registering..."
   },
-  "状态": {
-    "zh-TW": "狀態",
-    "ja": "州",
-    "ko": "상태",
-    "en": "state"
+  "咨询预约": {
+    "zh-TW": "諮詢預約",
+    "ja": "相談予約",
+    "ko": "상담예약",
+    "en": "Consultation appointment"
   },
-  "状態": {
-    "zh-TW": "狀態",
-    "ja": "状態",
-    "ko": "상태",
-    "en": "Status"
+  "资源上传服务未配置。": {
+    "zh-TW": "資源上傳服務未配置。",
+    "ja": "リソース アップロード サービスが構成されていません。",
+    "ko": "리소스 업로드 서비스가 구성되지 않았습니다.",
+    "en": "The resource upload service is not configured."
   },
-  "狀態": {
-    "zh-TW": "狀態",
-    "ja": "状態",
-    "ko": "상태",
-    "en": "condition"
-  },
-  "追加": {
-    "zh-TW": "追加",
-    "ja": "追加",
-    "ko": "추가",
-    "en": "Append"
+  "资源上传失败": {
+    "zh-TW": "資源上傳失敗",
+    "ja": "リソースのアップロードに失敗しました",
+    "ko": "리소스 업로드 실패",
+    "en": "Resource upload failed"
   },
   "字号": {
-    "zh-TW": "號碼",
-    "ja": "フォントサイズ",
-    "ko": "글꼴 크기",
-    "en": "Font size"
-  },
-  "字號": {
     "zh-TW": "號碼",
     "ja": "フォントサイズ",
     "ko": "글꼴 크기",
@@ -5039,11 +6653,11 @@
     "ko": "글꼴 스타일",
     "en": "Font style"
   },
-  "字體": {
-    "zh-TW": "字體",
-    "ja": "フォント",
-    "ko": "세례반",
-    "en": "font"
+  "自定义": {
+    "zh-TW": "自訂",
+    "ja": "カスタマイズ",
+    "ko": "사용자 정의",
+    "en": "Customize"
   },
   "自定义角色": {
     "zh-TW": "自訂角色",
@@ -5051,11 +6665,23 @@
     "ko": "맞춤 역할",
     "en": "Custom role"
   },
+  "自定义样式": {
+    "zh-TW": "自訂樣式",
+    "ja": "カスタムスタイル",
+    "ko": "맞춤 스타일",
+    "en": "Custom style"
+  },
   "自定义域名": {
     "zh-TW": "自訂域名",
     "ja": "カスタムドメイン名",
     "ko": "맞춤 도메인 이름",
     "en": "Custom domain name"
+  },
+  "自动定位不可用，请手动选择国家/省份/城市": {
+    "zh-TW": "自動定位不可用，請手動選擇國家/省份/城市",
+    "ja": "自動測位は利用できません。国/県/都市を手動で選択してください",
+    "ko": "자동 위치 지정을 사용할 수 없습니다. 국가/도/시를 수동으로 선택하세요.",
+    "en": "Automatic positioning is not available, please select the country/province/city manually"
   },
   "总站副标题": {
     "zh-TW": "總站副標題",
@@ -5093,11 +6719,11 @@
     "ko": "주요 사이트 제목",
     "en": "Main site title"
   },
-  "總站暫未發布可視化內容，請到超級後台編輯器發布後查看。": {
-    "zh-TW": "總站暫未發布可視化內容，請到超級後台編輯器發布後查看。",
-    "ja": "メイン Web サイトではまだビジュアル コンテンツが公開されていません。公開後、スーパー バックグラウンド エディターで確認してください。",
-    "ko": "메인 홈페이지에는 아직 비주얼 콘텐츠가 공개되지 않았으니, 슈퍼백그라운드 에디터에서 공개 후 확인 부탁드립니다.",
-    "en": "The main website has not yet released the visual content, please check it after it is released in the super background editor."
+  "總站尚未發布可視化內容，請至超級後台編輯器發布後查看。": {
+    "zh-TW": "總站尚未發布可視化內容，請至超級後台編輯器發布後查看。",
+    "ja": "メイン Web サイトではビジュアル コンテンツがまだリリースされていません。リリース後にスーパー バックエンド エディターにアクセスして確認してください。",
+    "ko": "메인 웹사이트는 아직 시각적 콘텐츠를 공개하지 않았습니다. 공개된 후 슈퍼 백엔드 편집기로 가서 확인하시기 바랍니다.",
+    "en": "The main website has not yet released the visual content, please go to the super backend editor to check it after it is released."
   },
   "纵向": {
     "zh-TW": "縱向",
@@ -5110,6 +6736,12 @@
     "ja": "縦に均等に分割",
     "ko": "수직으로 균등하게 분할됨",
     "en": "Evenly divided vertically"
+  },
+  "纵向列表": {
+    "zh-TW": "縱向列表",
+    "ja": "縦方向のリスト",
+    "ko": "세로 목록",
+    "en": "vertical list"
   },
   "租户负责人": {
     "zh-TW": "租戶負責人",
@@ -5129,6 +6761,18 @@
     "ko": "임차인 운영",
     "en": "Tenant operations"
   },
+  "组织": {
+    "zh-TW": "組織",
+    "ja": "整理する",
+    "ko": "정리하다",
+    "en": "organize"
+  },
+  "最近登录成功": {
+    "zh-TW": "最近登入成功",
+    "ja": "最近正常にログインしました",
+    "ko": "최근 로그인에 성공했습니다",
+    "en": "Recently logged in successfully"
+  },
   "最早注册优先": {
     "zh-TW": "最早註冊優先",
     "ja": "まずは早めの登録を",
@@ -5140,6 +6784,12 @@
     "ja": "左",
     "ko": "왼쪽",
     "en": "Left"
+  },
+  "左侧": {
+    "zh-TW": "左側",
+    "ja": "左側",
+    "ko": "왼쪽",
+    "en": "left side"
   },
   "左对齐": {
     "zh-TW": "左對齊",
@@ -5165,12 +6815,6 @@
     "ko": "미세 조정하려면 왼쪽으로 이동하세요.",
     "en": "Move left to fine-tune"
   },
-  "作成": {
-    "zh-TW": "作成",
-    "ja": "作った",
-    "ko": "만들어진",
-    "en": "made"
-  },
   "A/B 实验": {
     "zh-TW": "A/B 實驗",
     "ja": "A/B 実験",
@@ -5183,11 +6827,41 @@
     "ko": "AI 카피라이팅",
     "en": "AI copywriting"
   },
+  "Excel 导入失败，请检查文件格式。": {
+    "zh-TW": "Excel 匯入失敗，請檢查文件格式。",
+    "ja": "Excel のインポートに失敗しました。ファイル形式を確認してください。",
+    "ko": "Excel 가져오기에 실패했습니다. 파일 형식을 확인하세요.",
+    "en": "Excel import failed, please check the file format."
+  },
   "Fafona 平台演示租户": {
     "zh-TW": "Fafona 平台演示租戶",
     "ja": "Fafona プラットフォームのデモ テナント",
     "ko": "Fafona 플랫폼 데모 테넌트",
     "en": "Fafona platform demo tenant"
+  },
+  "ID 必须是 8 位数字": {
+    "zh-TW": "ID 必須是 8 位數字",
+    "ja": "IDは8桁でなければなりません",
+    "ko": "ID는 8자리여야 합니다.",
+    "en": "ID must be 8 digits"
+  },
+  "ID 已存在，请更换后重试": {
+    "zh-TW": "ID 已存在，請更換後重試",
+    "ja": "ID は既に存在します。変更して再試行してください。",
+    "ko": "아이디가 이미 존재합니다. 변경 후 다시 시도해 주세요.",
+    "en": "ID already exists, please change it and try again"
+  },
+  "IP定位": {
+    "zh-TW": "IP定位",
+    "ja": "IPポジショニング",
+    "ko": "IP 포지셔닝",
+    "en": "IP positioning"
+  },
+  "PC + 手机": {
+    "zh-TW": "PC + 手機",
+    "ja": "パソコン＋携帯電話",
+    "ko": "PC + 휴대폰",
+    "en": "PC + mobile phone"
   },
   "slug 仅支持小写字母、数字和连字符": {
     "zh-TW": "slug 僅支援小寫字母、數字和連字符",
@@ -5207,17 +6881,17 @@
     "ko": "아카운트を入力",
     "en": "アカウントを入力"
   },
-  "おすすめ並び順": {
-    "zh-TW": "おすすめ並び順",
-    "ja": "おすすめ和び顺",
-    "ko": "오스수스와베顺",
-    "en": "おすすめ和び顺"
+  "オフラインでエディタに入る（開発専用）": {
+    "zh-TW": "オフラインでエディタに入る（開発専用）",
+    "ja": "オフラインでエディタに入る（専用）",
+    "ko": "오후라인데에디타에 넣기(전용)",
+    "en": "オフラインでエディタに入る (for exclusive use)"
   },
-  "オフラインでエディタを開く（開発用）": {
-    "zh-TW": "オフラインでエディタを開く（開発用）",
-    "ja": "オフラインでエディタを开く（開くため）",
-    "ko": "오후라인데에디타를开ku(개봉용)",
-    "en": "オフラインでエディタを开く (for opening)"
+  "このメールアドレスは既に登録されていますが、メール確認が未完了です。先に確認するか、下の確認メール再送を使ってください。": {
+    "zh-TW": "このメールアドレスは既に登録されていますが、メール確認が未完了です。先に確認するか、下の確認メール再送を使ってください。",
+    "ja": "このメールアドレスは ログインが完了していません まずは注文を確認し、次に注文を確認してから注文を送信してください。",
+    "ko": "이 메일아드레스は 　　　　　　　　　　　　　　　　　　　　　　　　　화 　　　　　　　　　　　　　　　　　로그인 아직 완료되지 않았습니다. 먼저 주문을 확인하고 다음 주문을 확인한 후 주문을 보내십시오.",
+    "en": "このメールアドレスは 　　　　　　　　　　　　　　　　　　　　　　　　ifies 　　 　　　　　　　　　　　　　　　　log yet in not finished Confirm the order first, confirm the order next, and then send the order."
   },
   "スーパー管理者ログイン": {
     "zh-TW": "スーパー管理者ログイン",
@@ -5230,6 +6904,12 @@
     "ja": "パスワードリセット",
     "ko": "비밀번호 재설정",
     "en": "パスワード reset"
+  },
+  "パスワード再設定メールを送信しました。受信箱をご確認ください。": {
+    "zh-TW": "パスワード再設定メールを送信しました。受信箱をご確認ください。",
+    "ja": "パスワードメールを送信メッセージをリセットしました。メールボックスを受け入れて確認します。",
+    "ko": "비밀번호를 재설정하세요. 메시지 보내기를 완료했습니다. 사서함을 수락하고 확인하십시오.",
+    "en": "パスワードReset the メールをSend messageしました. Accept the mailbox and confirm it."
   },
   "パスワードが一致しません": {
     "zh-TW": "パスワードが一致しません",
@@ -5273,12 +6953,6 @@
     "ko": "backEndに涚dedikimaせん.しばrackuして 다시 시도해 보세요.",
     "en": "バックエンドに涚できません.しばらくして Try again してください."
   },
-  "ページ分割": {
-    "zh-TW": "ページ分割",
-    "ja": "分割",
-    "ko": "분할",
-    "en": "division"
-  },
   "ページを読み込み中...": {
     "zh-TW": "ページを読み込み中...",
     "ja": "ページを読み込み中...",
@@ -5297,16 +6971,34 @@
     "ko": "포타르を読込め中...",
     "en": "ポータルを読み込み中..."
   },
-  "まず登録メールを入力してください": {
-    "zh-TW": "まず登録メールを入力してください",
-    "ja": "まずはログインメールを入力してください",
-    "ko": "まず登录메일을 보내세요",
-    "en": "まず登录メールを入力してください"
+  "メール未確認です。確認リンクを押してからログインしてください。": {
+    "zh-TW": "メール未確認です。確認リンクを押してからログインしてください。",
+    "ja": "メール未確認です。リンクを気になってからログインしてください。",
+    "ko": "메일미확인입니다. 링크를 확인하세요.",
+    "en": "メールUnconfirmedです. Confirm the リンクを気てからログインしてください."
+  },
+  "メールを入力してください": {
+    "zh-TW": "メールを入力してください",
+    "ja": "メールを入力してください",
+    "ko": "메일을 이용하려고 합니다.",
+    "en": "メールを入力してください"
   },
   "もう一度入力してください": {
     "zh-TW": "もう一度入力してください",
     "ja": "一度力を入れてください",
     "ko": "もу 일단 힘에 들어가면 して ku だ い",
     "en": "もうOnce enters the force してください"
+  },
+  "リクエストに失敗しました。ネットワークを確認して再試行してください。": {
+    "zh-TW": "リクエストに失敗しました。ネットワークを確認して再試行してください。",
+    "ja": "リクエストに失敗しました。ネットワークを確認して再試行してください。",
+    "ko": "리크에스트에 실패했습니다.넷트워크を확인하고 다시 시도하세요.",
+    "en": "リクエストにFAILUREしました.ネットワークをConfirm and try again."
+  },
+  "ログインはメール、ユーザー名、8桁IDに対応しています。新規登録はメール入力が必要です。": {
+    "zh-TW": "ログインはメール、ユーザー名、8桁IDに対応しています。新規登録はメール入力が必要です。",
+    "ja": "ログインはメール、ユーザー名、8桁IDに対応しています。ログインするために新しいルールを入力する必要はありません。",
+    "ko": "로그인은 메일, 유자이름, 8桁IDに対応していまс. 로그인하기 위해 새로운 규칙을 입력할 필요는 없습니다.",
+    "en": "ログインはメール, ユーザーname, 8桁IDに対応しています. It is not necessary to enter the new rules to log in."
   }
 }

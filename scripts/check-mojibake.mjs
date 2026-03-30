@@ -2,30 +2,29 @@ import fs from "node:fs";
 import path from "node:path";
 
 const strict = process.argv.includes("--strict");
-const rootDir = path.resolve(process.cwd(), "src");
+const rootDirs = [
+  path.resolve(process.cwd(), "src"),
+  path.resolve(process.cwd(), "scripts"),
+];
 const supportedExt = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".json", ".md"]);
-const suspiciousTokens = [
-  "锛?",
-  "銆?",
-  "鍥剧墖",
-  "闊抽",
-  "鍙戝竷浣撴",
-  "鏈€杩戝け璐",
-  "杈撳叆",
-  "涓婁紶",
-  "鏆傛棤",
-  "鎾斁鍣",
-  "璇烽€夋嫨",
-  "鍖哄潡",
-  "鑱旂郴鏂瑰紡",
+const suspiciousPatterns = [
+  /请先选中丌/,
+  /正在重压当前页图\.\./,
+  /重压完成\{stats\.changed\}/,
+  /正在外链化大\.\./,
+  /外链化失败，请查存储配/,
+  /草已保/,
+  /^\s*["']发布\.\.["'](?=\s*[:),}])/,
+  /无变更，已跳过发(?=["'}\s])/,
 ];
 
 function walk(dir, collector) {
+  if (!fs.existsSync(dir)) return;
   const entries = fs.readdirSync(dir, { withFileTypes: true });
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+      if (entry.name === "node_modules" || entry.name === ".next" || entry.name.startsWith(".")) continue;
       walk(fullPath, collector);
       continue;
     }
@@ -35,29 +34,34 @@ function walk(dir, collector) {
 }
 
 function checkFile(filePath) {
+  if (path.basename(filePath) === "check-mojibake.mjs") return [];
   const raw = fs.readFileSync(filePath, "utf8");
   const lines = raw.split(/\r?\n/);
   const issues = [];
   lines.forEach((line, index) => {
-    if (line.includes("�")) {
+    if (line.includes("\uFFFD")) {
       issues.push({ filePath, line: index + 1, reason: "contains replacement character", sample: line.trim() });
       return;
     }
-    const token = suspiciousTokens.find((item) => line.includes(item));
-    if (token) {
-      issues.push({ filePath, line: index + 1, reason: `contains suspicious token: ${token}`, sample: line.trim() });
+    if (/[\uE000-\uF8FF]/.test(line)) {
+      issues.push({ filePath, line: index + 1, reason: "contains private-use unicode characters", sample: line.trim() });
+      return;
+    }
+    const pattern = suspiciousPatterns.find((item) => item.test(line));
+    if (pattern) {
+      issues.push({ filePath, line: index + 1, reason: `contains suspicious pattern: ${pattern}`, sample: line.trim() });
     }
   });
   return issues;
 }
 
-if (!fs.existsSync(rootDir)) {
-  console.log("skip: src directory not found");
+if (!rootDirs.some((dir) => fs.existsSync(dir))) {
+  console.log("skip: source directories not found");
   process.exit(0);
 }
 
 const files = [];
-walk(rootDir, files);
+rootDirs.forEach((dir) => walk(dir, files));
 
 const issues = [];
 for (const filePath of files) {

@@ -3296,7 +3296,7 @@ export default function AdminClient({
   function toggleSelectedBlockLock() {
     const id = selectedIdRef.current;
     if (!id) {
-      showTip("请先选中丌");
+      showTip("请先选中一个区块");
       return;
     }
     const index = blocksRef.current.findIndex((block) => block.id === id);
@@ -3393,7 +3393,7 @@ export default function AdminClient({
 
   async function recompressCurrentPageImages() {
     const options = getCurrentImageCompressionOptions();
-    showSavePublishTip("正在重压当前页图..");
+    showSavePublishTip("正在重压当前页图片...");
     try {
       const { blocks: nextBlocks, stats } = await recompressInlineImagesInBlocks(blocksRef.current, options);
       if (stats.visited === 0) {
@@ -3402,7 +3402,7 @@ export default function AdminClient({
       }
       applyBlocks(nextBlocks, { selectedId: selectedIdRef.current || nextBlocks[0]?.id || "" });
       showSavePublishTip(
-        `重压完成{stats.changed}/${stats.visited} 张，${formatBytes(stats.beforeBytes)} -> ${formatBytes(stats.afterBytes)}`,
+        `重压完成：${stats.changed}/${stats.visited} 张，${formatBytes(stats.beforeBytes)} -> ${formatBytes(stats.afterBytes)}`,
       );
     } catch (error) {
       showTip(error instanceof Error ? error.message : "重压失败，请重试");
@@ -3475,7 +3475,7 @@ export default function AdminClient({
   }
 
   async function externalizeCurrentPageLargeImages() {
-    showSavePublishTip("正在外链化大..");
+    showSavePublishTip("正在外链化大图...");
     try {
       const merchantHint = await resolveFirstMerchantHint();
       const { blocks: nextBlocks, stats } = await externalizeInlineImagesInBlocks(blocksRef.current, merchantHint);
@@ -3488,7 +3488,7 @@ export default function AdminClient({
         `外链化完成：${stats.replaced}/${stats.visited} 张，${formatBytes(stats.beforeBytes)} -> ${formatBytes(stats.afterBytes)}`,
       );
     } catch (error) {
-      showTip(error instanceof Error ? error.message : "外链化失败，请查存储配");
+      showTip(error instanceof Error ? error.message : "外链化失败，请检查存储配置");
     }
   }
 
@@ -5743,7 +5743,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     );
     setPlanConfig(mergedConfig);
     persistDraftForConfigs(mergedConfig);
-    showSavePublishTip("草已保");
+    showSavePublishTip("草稿已保存");
   }
 
   async function showAnalyticsSummary() {
@@ -5956,7 +5956,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       setBackendNotice("后端连接不稳定，正在尝试发布...");
     }
     setPublishing(true);
-    showSavePublishTip("发布..");
+    showSavePublishTip("发布中...");
 
     try {
       const scopedSiteId = getSiteIdFromStoreScope(storeScope).trim();
@@ -6034,7 +6034,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       const diffSummary = computePublishDiffSummary(combinedBlocks, publishedBlocks);
       const totalChanges = diffSummary.changedCount + diffSummary.addedCount + diffSummary.removedCount;
       if (totalChanges === 0) {
-        showSavePublishTip("无变更，已跳过发");
+        showSavePublishTip("无变更，已跳过发布");
         trackPublishEvent({
           success: true,
           bytes: payloadBytes,
@@ -6602,7 +6602,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                       : undefined
                 }
               >
-                {publishing ? "发布.." : "发布"}
+                {publishing ? "发布中..." : "发布"}
               </button>
             </div>
           </div>
@@ -10806,7 +10806,7 @@ type GalleryEditorImage = {
             setLayerSettingsOpen(false);
           }}
         >
-          {"缃簬椤跺眰"}
+          {"置于顶层"}
         </button>
         <button
           className="w-full px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm text-left"

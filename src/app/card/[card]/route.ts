@@ -132,19 +132,6 @@ function buildActionButtonHtml(input: {
   </a>`;
 }
 
-// Legacy deep links are intentionally kept as a reference for future native integrations.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function buildWeChatActionHtmlLegacy(rawValue?: string) {
-  const wechatId = normalizeText(rawValue).replace(/^@+/, "").trim();
-  if (!wechatId) return "";
-  const primaryHref = `weixin://contacts/profile/${encodeURIComponent(wechatId)}`;
-  const secondaryHref = `weixin://dl/chat?username=${encodeURIComponent(wechatId)}`;
-  const tertiaryHref = `weixin://dl/chat?${encodeURIComponent(wechatId)}`;
-  return `<button class="inline-action inline-action-button" type="button" aria-label="打开微信联系人" title="打开微信联系人" style="background:#07C160" data-wechat-primary="${escapeHtml(primaryHref)}" data-wechat-secondary="${escapeHtml(secondaryHref)}" data-wechat-tertiary="${escapeHtml(tertiaryHref)}" data-wechat-id="${escapeHtml(wechatId)}">
-    <img src="/social-icons/wechat.svg" alt="" />
-  </button>`;
-}
-
 function buildWeChatActionHtml(rawValue?: string) {
   const wechatId = normalizeText(rawValue).replace(/^@+/, "").trim();
   if (!wechatId) return "";
