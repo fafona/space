@@ -1,16 +1,25 @@
-﻿"use client";
+"use client";
 
+import { createClient } from "@supabase/supabase-js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "@/components/I18nProvider";
 import PasswordField, { getPasswordToggleLabels } from "@/components/PasswordField";
-import {
-  establishBrowserSupabaseSession,
-  recoverBrowserSupabaseSession,
-  syncMerchantSessionCookies,
-} from "@/lib/authSessionRecovery";
-import { canReachSupabaseGateway, supabase } from "@/lib/supabase";
+import { recoverBrowserSupabaseSession } from "@/lib/authSessionRecovery";
+import { getResolvedSupabaseUrl, resolvedSupabaseAnonKey } from "@/lib/supabase";
 
 type RecoveryState = "checking" | "ready" | "expired";
+
+type RecoveryPayload = {
+  accessToken: string;
+  refreshToken: string;
+  tokenHash: string;
+  code: string;
+  type: string;
+  capturedAt: number;
+};
+
+const RESET_RECOVERY_STORAGE_KEY = "merchant-space:password-reset-recovery:v1";
+const RESET_RECOVERY_STORAGE_TTL_MS = 30 * 60 * 1000;
 
 function delay(ms: number) {
   return new Promise<void>((resolve) => {
@@ -23,8 +32,87 @@ function readRecoveryHashParams() {
   return new URLSearchParams(window.location.hash.replace(/^#/, ""));
 }
 
+function normalizeRecoveryPayload(input: Partial<RecoveryPayload> | null | undefined): RecoveryPayload | null {
+  const accessToken = String(input?.accessToken ?? "").trim();
+  const refreshToken = String(input?.refreshToken ?? "").trim();
+  const tokenHash = String(input?.tokenHash ?? "").trim();
+  const code = String(input?.code ?? "").trim();
+  const type = String(input?.type ?? "").trim();
+  const capturedAt =
+    typeof input?.capturedAt === "number" && Number.isFinite(input.capturedAt) ? input.capturedAt : Date.now();
+  if (!accessToken && !tokenHash && !code) return null;
+  if (Date.now() - capturedAt > RESET_RECOVERY_STORAGE_TTL_MS) return null;
+  return {
+    accessToken,
+    refreshToken,
+    tokenHash,
+    code,
+    type,
+    capturedAt,
+  };
+}
+
+function readRecoveryPayloadFromUrl(): RecoveryPayload | null {
+  if (typeof window === "undefined") return null;
+  const url = new URL(window.location.href);
+  const hashParams = readRecoveryHashParams();
+  return normalizeRecoveryPayload({
+    accessToken: hashParams.get("access_token") ?? "",
+    refreshToken: hashParams.get("refresh_token") ?? "",
+    tokenHash: url.searchParams.get("token_hash") ?? url.searchParams.get("token") ?? "",
+    code: url.searchParams.get("code") ?? "",
+    type: hashParams.get("type") ?? url.searchParams.get("type") ?? "",
+    capturedAt: Date.now(),
+  });
+}
+
+function readStoredRecoveryPayload(): RecoveryPayload | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(RESET_RECOVERY_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<RecoveryPayload>;
+    const normalized = normalizeRecoveryPayload(parsed);
+    if (!normalized) {
+      window.sessionStorage.removeItem(RESET_RECOVERY_STORAGE_KEY);
+      return null;
+    }
+    return normalized;
+  } catch {
+    return null;
+  }
+}
+
+function persistRecoveryPayload(payload: RecoveryPayload | null) {
+  if (typeof window === "undefined") return;
+  try {
+    if (!payload) {
+      window.sessionStorage.removeItem(RESET_RECOVERY_STORAGE_KEY);
+      return;
+    }
+    window.sessionStorage.setItem(RESET_RECOVERY_STORAGE_KEY, JSON.stringify(payload));
+  } catch {
+    // Ignore browser storage failures.
+  }
+}
+
+function clearStoredRecoveryPayload() {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(RESET_RECOVERY_STORAGE_KEY);
+  } catch {
+    // Ignore browser storage cleanup failures.
+  }
+}
+
+function hasDirectRecoveryPayload(payload: RecoveryPayload | null | undefined) {
+  if (!payload) return false;
+  return Boolean((payload.accessToken && payload.refreshToken) || payload.tokenHash);
+}
+
 function hasRecoveryIndicators() {
   if (typeof window === "undefined") return false;
+  if (readStoredRecoveryPayload()) return true;
   const url = new URL(window.location.href);
   const hashParams = readRecoveryHashParams();
   return (
@@ -59,6 +147,17 @@ export default function ResetPasswordPage() {
   const sessionExpiredMessageRef = useRef(t("reset.sessionExpired"));
   const timeoutMessageRef = useRef(t("login.timeout"));
   const recoveryResolvedRef = useRef(false);
+  const recoveryPayloadRef = useRef<RecoveryPayload | null>(null);
+  const resetSupabase = useMemo(() => {
+    return createClient(getResolvedSupabaseUrl(), resolvedSupabaseAnonKey, {
+      auth: {
+        storageKey: "merchant-space:password-reset-session:v1",
+        persistSession: true,
+        detectSessionInUrl: true,
+        autoRefreshToken: true,
+      },
+    });
+  }, []);
 
   useEffect(() => {
     sessionExpiredMessageRef.current = t("reset.sessionExpired");
@@ -96,83 +195,64 @@ export default function ResetPasswordPage() {
     }
   }, []);
 
-  const recoverResetSession = useCallback(async (timeoutMs = 5000) => {
-    const hashParams = readRecoveryHashParams();
-    const hashType = (hashParams.get("type") ?? "").trim();
-    const accessToken = (hashParams.get("access_token") ?? "").trim();
-    const refreshToken = (hashParams.get("refresh_token") ?? "").trim();
-    if (hashType === "recovery" && accessToken && refreshToken) {
-      const established = await establishBrowserSupabaseSession(
-        {
-          access_token: accessToken,
-          refresh_token: refreshToken,
-        },
-        timeoutMs,
-      );
-      if (established) {
-        void syncMerchantSessionCookies(established, 2500);
-        clearRecoveryUrlArtifacts();
-        return established;
+  const recoverResetSession = useCallback(
+    async (timeoutMs = 5000) => {
+      const storedPayload = recoveryPayloadRef.current ?? readStoredRecoveryPayload();
+      if (storedPayload) {
+        recoveryPayloadRef.current = storedPayload;
       }
-    }
 
-    if (typeof window !== "undefined") {
-      const url = new URL(window.location.href);
-      const code = (url.searchParams.get("code") ?? "").trim();
+      const code = String(storedPayload?.code ?? "").trim();
       if (code) {
-        const { data, error } = await withTimeout(supabase.auth.exchangeCodeForSession(code), Math.max(3000, timeoutMs));
-        if (!error && data.session) {
-          void syncMerchantSessionCookies(data.session, 2500);
-          clearRecoveryUrlArtifacts();
-          return data.session;
-        }
-      }
-
-      const tokenHash = (url.searchParams.get("token_hash") ?? url.searchParams.get("token") ?? "").trim();
-      const queryType = (url.searchParams.get("type") ?? "").trim();
-      if (tokenHash && queryType === "recovery") {
         const { data, error } = await withTimeout(
-          supabase.auth.verifyOtp({
-            type: "recovery",
-            token_hash: tokenHash,
-          }),
+          resetSupabase.auth.exchangeCodeForSession(code),
           Math.max(3000, timeoutMs),
         );
         if (!error && data.session) {
-          void syncMerchantSessionCookies(data.session, 2500);
+          clearStoredRecoveryPayload();
           clearRecoveryUrlArtifacts();
           return data.session;
         }
       }
-    }
 
-    try {
-      await supabase.auth.initialize();
-    } catch {
-      // Keep going and try stored-session recovery below.
-    }
+      try {
+        await resetSupabase.auth.initialize();
+      } catch {
+        // Keep going and try existing browser session recovery below.
+      }
 
-    const initializedSession = await recoverBrowserSupabaseSession(Math.max(timeoutMs, 4500));
-    if (initializedSession) {
-      void syncMerchantSessionCookies(initializedSession, 2500);
-      clearRecoveryUrlArtifacts();
-      return initializedSession;
-    }
+      const {
+        data: { session: directSession },
+      } = await resetSupabase.auth.getSession();
+      if (directSession) {
+        clearStoredRecoveryPayload();
+        clearRecoveryUrlArtifacts();
+        return directSession;
+      }
 
-    return null;
-  }, [withTimeout]);
+      const initializedSession = await recoverBrowserSupabaseSession(Math.max(timeoutMs, 4500));
+      if (initializedSession) {
+        clearStoredRecoveryPayload();
+        clearRecoveryUrlArtifacts();
+        return initializedSession;
+      }
+
+      return null;
+    },
+    [resetSupabase, withTimeout],
+  );
 
   useEffect(() => {
     let cancelled = false;
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((event, session) => {
+    } = resetSupabase.auth.onAuthStateChange((event, session) => {
       if (cancelled) return;
       if ((event === "PASSWORD_RECOVERY" || event === "SIGNED_IN") && session) {
         recoveryResolvedRef.current = true;
         setRecoveryState("ready");
         setMsg("");
-        void syncMerchantSessionCookies(session, 2500);
+        clearStoredRecoveryPayload();
         clearRecoveryUrlArtifacts();
       }
     });
@@ -180,13 +260,27 @@ export default function ResetPasswordPage() {
       cancelled = true;
       subscription.unsubscribe();
     };
-  }, []);
+  }, [resetSupabase]);
 
   useEffect(() => {
     let cancelled = false;
 
     async function initializeRecovery() {
       if (recoveryResolvedRef.current) return;
+      const urlPayload = readRecoveryPayloadFromUrl();
+      const storedPayload = urlPayload ?? readStoredRecoveryPayload();
+      if (storedPayload) {
+        recoveryPayloadRef.current = storedPayload;
+        persistRecoveryPayload(storedPayload);
+        clearRecoveryUrlArtifacts();
+        if (hasDirectRecoveryPayload(storedPayload)) {
+          recoveryResolvedRef.current = true;
+          setRecoveryState("ready");
+          setMsg("");
+          return;
+        }
+      }
+
       const hasIndicators = hasRecoveryIndicators();
       const deadline = Date.now() + (hasIndicators ? 20000 : 6000);
       while (!cancelled && Date.now() < deadline) {
@@ -213,6 +307,55 @@ export default function ResetPasswordPage() {
     };
   }, [recoverResetSession]);
 
+  const submitPasswordResetViaServer = useCallback(async () => {
+    const payload = recoveryPayloadRef.current ?? readStoredRecoveryPayload();
+    recoveryPayloadRef.current = payload;
+    if (!payload || !hasDirectRecoveryPayload(payload)) {
+      return false;
+    }
+
+    const response = await withTimeout(
+      fetch("/api/auth/reset-password", {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          accept: "application/json",
+        },
+        body: JSON.stringify({
+          password,
+          accessToken: payload.accessToken,
+          refreshToken: payload.refreshToken,
+          tokenHash: payload.tokenHash,
+        }),
+      }),
+      20000,
+    );
+
+    const result = (await response.json().catch(() => null)) as { ok?: unknown; error?: unknown } | null;
+    if (!response.ok || result?.ok !== true) {
+      const errorMessage = typeof result?.error === "string" ? result.error : "";
+      if (/expired|session/i.test(errorMessage)) {
+        setRecoveryState("expired");
+        setMsg(sessionExpiredMessageRef.current);
+        return true;
+      }
+      if (/env_missing|unavailable/i.test(errorMessage)) {
+        setMsg(t("login.backendUnavailable"));
+        return true;
+      }
+      setMsg(errorMessage || t("login.requestFailed"));
+      return true;
+    }
+
+    clearStoredRecoveryPayload();
+    setMsg(t("reset.successRedirect"));
+    setTimeout(() => {
+      window.location.href = "/login";
+    }, 900);
+    return true;
+  }, [password, t, withTimeout]);
+
   async function updatePassword() {
     if (saving) return;
     setMsg("");
@@ -220,7 +363,7 @@ export default function ResetPasswordPage() {
     if (validationError) return setMsg(validationError);
     if (recoveryState !== "ready") {
       const recoveredSession = await recoverResetSession(5500).catch(() => null);
-      if (!recoveredSession) {
+      if (!recoveredSession && !hasDirectRecoveryPayload(recoveryPayloadRef.current ?? readStoredRecoveryPayload())) {
         setRecoveryState("expired");
         setMsg(sessionExpiredMessageRef.current);
         return;
@@ -228,13 +371,13 @@ export default function ResetPasswordPage() {
       recoveryResolvedRef.current = true;
       setRecoveryState("ready");
     }
-    if (!(await canReachSupabaseGateway(4000))) {
-      return setMsg(t("login.backendUnavailable"));
-    }
 
     setSaving(true);
     try {
-      const { error } = await withTimeout(supabase.auth.updateUser({ password }));
+      const handledByServer = await submitPasswordResetViaServer();
+      if (handledByServer) return;
+
+      const { error } = await withTimeout(resetSupabase.auth.updateUser({ password }));
 
       if (error) {
         if (/session/i.test(error.message)) {
@@ -245,6 +388,7 @@ export default function ResetPasswordPage() {
         return;
       }
 
+      clearStoredRecoveryPayload();
       setMsg(t("reset.successRedirect"));
       setTimeout(() => {
         window.location.href = "/login";
