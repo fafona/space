@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "@/components/I18nProvider";
 import PasswordField, { getPasswordToggleLabels } from "@/components/PasswordField";
 import {
@@ -56,6 +56,14 @@ export default function ResetPasswordPage() {
   const [saving, setSaving] = useState(false);
   const [recoveryState, setRecoveryState] = useState<RecoveryState>("checking");
   const passwordToggleLabels = useMemo(() => getPasswordToggleLabels(locale), [locale]);
+  const sessionExpiredMessageRef = useRef(t("reset.sessionExpired"));
+  const timeoutMessageRef = useRef(t("login.timeout"));
+  const recoveryResolvedRef = useRef(false);
+
+  useEffect(() => {
+    sessionExpiredMessageRef.current = t("reset.sessionExpired");
+    timeoutMessageRef.current = t("login.timeout");
+  }, [t]);
 
   function validate(): string | null {
     if (!password) return t("reset.requiredNewPassword");
@@ -77,7 +85,7 @@ export default function ResetPasswordPage() {
     const timeoutTask = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {
         timedOut = true;
-        reject(new Error(t("login.timeout")));
+        reject(new Error(timeoutMessageRef.current));
       }, timeoutMs);
     });
 
@@ -86,7 +94,7 @@ export default function ResetPasswordPage() {
     } finally {
       if (timer) clearTimeout(timer);
     }
-  }, [t]);
+  }, []);
 
   const recoverResetSession = useCallback(async (timeoutMs = 5000) => {
     const hashParams = readRecoveryHashParams();
@@ -161,20 +169,32 @@ export default function ResetPasswordPage() {
     } = supabase.auth.onAuthStateChange((event, session) => {
       if (cancelled) return;
       if ((event === "PASSWORD_RECOVERY" || event === "SIGNED_IN") && session) {
+        recoveryResolvedRef.current = true;
         setRecoveryState("ready");
         setMsg("");
         void syncMerchantSessionCookies(session, 2500);
         clearRecoveryUrlArtifacts();
       }
     });
+    return () => {
+      cancelled = true;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
 
     async function initializeRecovery() {
+      if (recoveryResolvedRef.current) return;
       const hasIndicators = hasRecoveryIndicators();
       const deadline = Date.now() + (hasIndicators ? 20000 : 6000);
       while (!cancelled && Date.now() < deadline) {
+        if (recoveryResolvedRef.current) return;
         const session = await recoverResetSession(hasIndicators ? 9000 : 5500).catch(() => null);
-        if (cancelled) return;
+        if (cancelled || recoveryResolvedRef.current) return;
         if (session) {
+          recoveryResolvedRef.current = true;
           setRecoveryState("ready");
           setMsg("");
           return;
@@ -182,17 +202,16 @@ export default function ResetPasswordPage() {
         if (!hasIndicators) break;
         await delay(600);
       }
-      if (cancelled) return;
+      if (cancelled || recoveryResolvedRef.current) return;
       setRecoveryState("expired");
-      setMsg(t("reset.sessionExpired"));
+      setMsg(sessionExpiredMessageRef.current);
     }
 
     void initializeRecovery();
     return () => {
       cancelled = true;
-      subscription.unsubscribe();
     };
-  }, [recoverResetSession, t]);
+  }, [recoverResetSession]);
 
   async function updatePassword() {
     if (saving) return;
@@ -203,9 +222,10 @@ export default function ResetPasswordPage() {
       const recoveredSession = await recoverResetSession(5500).catch(() => null);
       if (!recoveredSession) {
         setRecoveryState("expired");
-        setMsg(t("reset.sessionExpired"));
+        setMsg(sessionExpiredMessageRef.current);
         return;
       }
+      recoveryResolvedRef.current = true;
       setRecoveryState("ready");
     }
     if (!(await canReachSupabaseGateway(4000))) {
@@ -218,7 +238,7 @@ export default function ResetPasswordPage() {
 
       if (error) {
         if (/session/i.test(error.message)) {
-          setMsg(t("reset.sessionExpired"));
+          setMsg(sessionExpiredMessageRef.current);
           return;
         }
         setMsg(error.message);
