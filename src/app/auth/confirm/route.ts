@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createClient, type EmailOtpType } from "@supabase/supabase-js";
+import { createClient, type EmailOtpType, type Session } from "@supabase/supabase-js";
 import { createSuperAdminEmailProofToken } from "@/lib/superAdminVerification";
 
 export const dynamic = "force-dynamic";
@@ -62,6 +62,28 @@ function appendSuperAdminProofParams(url: URL, confirmed: boolean) {
   return url;
 }
 
+function appendRecoverySessionHash(url: URL, session: Session | null | undefined) {
+  const accessToken = String(session?.access_token ?? "").trim();
+  const refreshToken = String(session?.refresh_token ?? "").trim();
+  if (!accessToken || !refreshToken) return url;
+  const hashParams = new URLSearchParams();
+  hashParams.set("type", "recovery");
+  hashParams.set("access_token", accessToken);
+  hashParams.set("refresh_token", refreshToken);
+  if (typeof session?.expires_in === "number" && Number.isFinite(session.expires_in)) {
+    hashParams.set("expires_in", String(session.expires_in));
+  }
+  if (typeof session?.expires_at === "number" && Number.isFinite(session.expires_at)) {
+    hashParams.set("expires_at", String(session.expires_at));
+  }
+  const tokenType = String(session?.token_type ?? "").trim();
+  if (tokenType) {
+    hashParams.set("token_type", tokenType);
+  }
+  url.hash = hashParams.toString();
+  return url;
+}
+
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url);
   const tokenHash = (requestUrl.searchParams.get("token_hash") ?? requestUrl.searchParams.get("token") ?? "").trim();
@@ -93,7 +115,7 @@ export async function GET(request: Request) {
     },
   });
 
-  const { error } = await supabase.auth.verifyOtp({
+  const { data, error } = await supabase.auth.verifyOtp({
     type: rawType,
     token_hash: tokenHash,
   });
@@ -107,5 +129,8 @@ export async function GET(request: Request) {
 
   const successMessage = rawType === "recovery" ? "验证成功，请继续重置密码。" : "邮箱验证成功，请继续登录。";
   const successRedirect = appendResultParams(redirectTo, true, successMessage);
+  if (rawType === "recovery") {
+    appendRecoverySessionHash(successRedirect, data.session);
+  }
   return NextResponse.redirect(appendSuperAdminProofParams(successRedirect, true), { status: 303 });
 }
