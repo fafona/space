@@ -1,15 +1,17 @@
 ﻿"use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useI18n } from "@/components/I18nProvider";
+import PasswordField, { getPasswordToggleLabels } from "@/components/PasswordField";
 import { canReachSupabaseGateway, supabase } from "@/lib/supabase";
 
 export default function ResetPasswordPage() {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [msg, setMsg] = useState("");
   const [saving, setSaving] = useState(false);
+  const passwordToggleLabels = useMemo(() => getPasswordToggleLabels(locale), [locale]);
 
   function validate(): string | null {
     if (!password) return t("reset.requiredNewPassword");
@@ -82,25 +84,27 @@ export default function ResetPasswordPage() {
 
         <div className="space-y-2">
           <div className="text-sm text-gray-600">{t("reset.newPassword")}</div>
-          <input
+          <PasswordField
             className="w-full rounded border p-2"
-            type="password"
             autoComplete="new-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             placeholder={t("login.passwordMin6")}
+            showLabel={passwordToggleLabels.show}
+            hideLabel={passwordToggleLabels.hide}
           />
         </div>
 
         <div className="space-y-2">
           <div className="text-sm text-gray-600">{t("reset.confirmPassword")}</div>
-          <input
+          <PasswordField
             className="w-full rounded border p-2"
-            type="password"
             autoComplete="new-password"
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
             placeholder={t("reset.inputConfirmPasswordAgain")}
+            showLabel={passwordToggleLabels.show}
+            hideLabel={passwordToggleLabels.hide}
           />
         </div>
 

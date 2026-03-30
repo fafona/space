@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import PasswordField, { getPasswordToggleLabels } from "@/components/PasswordField";
 import {
   buildCurrentSuperAdminDeviceLabel,
   buildSuperAdminLoginHref,
@@ -29,7 +30,7 @@ function describeSuperAdminLoginError(code: string) {
 }
 
 function SuperAdminLoginForm() {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   const searchParams = useSearchParams();
   const nextHref = useMemo(() => {
     const raw = (searchParams.get("next") ?? "").trim();
@@ -52,6 +53,7 @@ function SuperAdminLoginForm() {
   const [pendingChallenge, setPendingChallenge] = useState("");
   const completedChallengeRef = useRef("");
   const activeChallenge = challengeFromUrl || pendingChallenge;
+  const passwordToggleLabels = useMemo(() => getPasswordToggleLabels(locale), [locale]);
 
   useEffect(() => {
     if (!loggedOut) return;
@@ -262,9 +264,8 @@ function SuperAdminLoginForm() {
         </div>
         <div className="space-y-2">
           <div className="text-sm text-gray-600">{t("superLogin.password")}</div>
-          <input
+          <PasswordField
             ref={passwordInputRef}
-            type="password"
             className="w-full rounded border p-2"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
@@ -272,6 +273,8 @@ function SuperAdminLoginForm() {
             name="super-admin-login-password"
             autoComplete="new-password"
             data-lpignore="true"
+            showLabel={passwordToggleLabels.show}
+            hideLabel={passwordToggleLabels.hide}
           />
         </div>
         <div className="space-y-2">

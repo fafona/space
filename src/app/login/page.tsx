@@ -3,6 +3,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useI18n } from "@/components/I18nProvider";
+import PasswordField, { getPasswordToggleLabels } from "@/components/PasswordField";
 import {
   clearStoredBrowserSupabaseSessionTokens,
   establishBrowserSupabaseSession,
@@ -91,6 +92,7 @@ function LoginPageInner() {
     if (normalizedLocale.startsWith("zh")) return "登录支持邮箱、用户名或 8 位 ID；注册仍需填写邮箱。";
     return "Sign in supports email, username, or 8-digit ID. Sign up still requires an email.";
   }, [normalizedLocale]);
+  const passwordToggleLabels = useMemo(() => getPasswordToggleLabels(locale), [locale]);
 
   useEffect(() => {
     const confirmed = (searchParams.get("confirmed") ?? "").trim();
@@ -691,16 +693,17 @@ function LoginPageInner() {
 
         <div className="space-y-2">
           <div className="text-sm text-gray-600">{t("login.password")}</div>
-          <input
+          <PasswordField
             ref={passwordInputRef}
             className="w-full rounded border p-2"
-            type="password"
             name="merchant-login-password"
             autoComplete="new-password"
             data-lpignore="true"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             placeholder={t("login.passwordMin6")}
+            showLabel={passwordToggleLabels.show}
+            hideLabel={passwordToggleLabels.hide}
           />
         </div>
 
