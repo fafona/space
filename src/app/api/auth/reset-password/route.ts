@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import {
+  clearResetRecoveryCookies,
+  readResetRecoveryCookie,
+  readResetRecoveryRefreshCookie,
+} from "@/lib/resetPasswordRecoverySession";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -111,9 +116,11 @@ export async function POST(request: Request) {
   try {
     const payload = (await request.json().catch(() => null)) as ResetPasswordPayload | null;
     const password = typeof payload?.password === "string" ? payload.password : "";
-    const accessToken = typeof payload?.accessToken === "string" ? payload.accessToken : "";
-    const refreshToken = typeof payload?.refreshToken === "string" ? payload.refreshToken : "";
+    const accessTokenFromBody = typeof payload?.accessToken === "string" ? payload.accessToken : "";
+    const refreshTokenFromBody = typeof payload?.refreshToken === "string" ? payload.refreshToken : "";
     const tokenHash = typeof payload?.tokenHash === "string" ? payload.tokenHash : typeof payload?.token === "string" ? payload.token : "";
+    const accessToken = accessTokenFromBody.trim() || readResetRecoveryCookie(request);
+    const refreshToken = refreshTokenFromBody.trim() || readResetRecoveryRefreshCookie(request);
 
     if (!password || password.length < 6) {
       return noStoreJson({ ok: false, error: "reset_password_invalid_password" }, { status: 400 });
@@ -130,32 +137,44 @@ export async function POST(request: Request) {
     });
     if (!resolved.userId) {
       const errorCode = resolved.error || "reset_password_session_expired";
-      return noStoreJson(
+      const response = noStoreJson(
         { ok: false, error: errorCode },
         { status: /env_missing|unavailable/i.test(errorCode) ? 503 : 401 },
       );
+      clearResetRecoveryCookies(response);
+      return response;
     }
 
     const serviceSupabase = createServiceRoleSupabaseClient();
     if (!serviceSupabase) {
-      return noStoreJson({ ok: false, error: "reset_password_env_missing" }, { status: 503 });
+      const response = noStoreJson({ ok: false, error: "reset_password_env_missing" }, { status: 503 });
+      clearResetRecoveryCookies(response);
+      return response;
     }
 
     const { error } = await serviceSupabase.auth.admin.updateUserById(resolved.userId, {
       password,
     });
     if (error) {
-      return noStoreJson(
+      const response = noStoreJson(
         {
           ok: false,
           error: error.message || "reset_password_update_failed",
         },
         { status: 400 },
       );
+      if (/session|expired|invalid/i.test(String(error.message ?? ""))) {
+        clearResetRecoveryCookies(response);
+      }
+      return response;
     }
 
-    return noStoreJson({ ok: true });
+    const response = noStoreJson({ ok: true });
+    clearResetRecoveryCookies(response);
+    return response;
   } catch {
-    return noStoreJson({ ok: false, error: "reset_password_unavailable" }, { status: 503 });
+    const response = noStoreJson({ ok: false, error: "reset_password_unavailable" }, { status: 503 });
+    clearResetRecoveryCookies(response);
+    return response;
   }
 }

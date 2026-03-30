@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient, type EmailOtpType, type Session } from "@supabase/supabase-js";
 import { createSuperAdminEmailProofToken } from "@/lib/superAdminVerification";
+import { setResetRecoveryCookies } from "@/lib/resetPasswordRecoverySession";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -132,5 +133,13 @@ export async function GET(request: Request) {
   if (rawType === "recovery") {
     appendRecoverySessionHash(successRedirect, data.session);
   }
-  return NextResponse.redirect(appendSuperAdminProofParams(successRedirect, true), { status: 303 });
+  const response = NextResponse.redirect(appendSuperAdminProofParams(successRedirect, true), { status: 303 });
+  if (rawType === "recovery") {
+    setResetRecoveryCookies(response, {
+      accessToken: String(data.session?.access_token ?? "").trim(),
+      refreshToken: String(data.session?.refresh_token ?? "").trim(),
+      maxAgeSeconds: data.session?.expires_in,
+    });
+  }
+  return response;
 }

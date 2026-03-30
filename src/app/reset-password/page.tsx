@@ -126,6 +126,21 @@ function hasRecoveryIndicators() {
   );
 }
 
+function hasUrlRecoveryIndicators() {
+  if (typeof window === "undefined") return false;
+  const url = new URL(window.location.href);
+  const hashParams = readRecoveryHashParams();
+  return (
+    hashParams.get("type") === "recovery" ||
+    hashParams.has("access_token") ||
+    hashParams.has("refresh_token") ||
+    (url.searchParams.get("type") ?? "").trim() === "recovery" ||
+    Boolean((url.searchParams.get("code") ?? "").trim()) ||
+    Boolean((url.searchParams.get("token_hash") ?? url.searchParams.get("token") ?? "").trim()) ||
+    (url.searchParams.get("confirmed") ?? "").trim() === "1"
+  );
+}
+
 function clearRecoveryUrlArtifacts() {
   if (typeof window === "undefined") return;
   const url = new URL(window.location.href);
@@ -194,6 +209,26 @@ export default function ResetPasswordPage() {
       if (timer) clearTimeout(timer);
     }
   }, []);
+
+  const hasServerRecoverySession = useCallback(
+    async (timeoutMs = 6000) => {
+      const response = await withTimeout(
+        fetch("/api/auth/reset-password/session", {
+          method: "GET",
+          cache: "no-store",
+          headers: {
+            accept: "application/json",
+          },
+        }),
+        timeoutMs,
+      ).catch(() => null);
+
+      if (!response || !response.ok) return false;
+      const result = (await response.json().catch(() => null)) as { ready?: unknown } | null;
+      return result?.ready === true;
+    },
+    [withTimeout],
+  );
 
   const recoverResetSession = useCallback(
     async (timeoutMs = 5000) => {
@@ -268,7 +303,12 @@ export default function ResetPasswordPage() {
     async function initializeRecovery() {
       if (recoveryResolvedRef.current) return;
       const urlPayload = readRecoveryPayloadFromUrl();
-      const storedPayload = urlPayload ?? readStoredRecoveryPayload();
+      const preferFreshRecoveryAttempt = hasUrlRecoveryIndicators();
+      if (preferFreshRecoveryAttempt && !urlPayload) {
+        clearStoredRecoveryPayload();
+        recoveryPayloadRef.current = null;
+      }
+      const storedPayload = urlPayload ?? (preferFreshRecoveryAttempt ? null : readStoredRecoveryPayload());
       if (storedPayload) {
         recoveryPayloadRef.current = storedPayload;
         persistRecoveryPayload(storedPayload);
@@ -293,6 +333,14 @@ export default function ResetPasswordPage() {
           setMsg("");
           return;
         }
+        const serverReady = await hasServerRecoverySession(hasIndicators ? 9000 : 5000).catch(() => false);
+        if (cancelled || recoveryResolvedRef.current) return;
+        if (serverReady) {
+          recoveryResolvedRef.current = true;
+          setRecoveryState("ready");
+          setMsg("");
+          return;
+        }
         if (!hasIndicators) break;
         await delay(600);
       }
@@ -305,7 +353,7 @@ export default function ResetPasswordPage() {
     return () => {
       cancelled = true;
     };
-  }, [recoverResetSession]);
+  }, [hasServerRecoverySession, recoverResetSession]);
 
   const submitPasswordResetViaServer = useCallback(async () => {
     const payload = recoveryPayloadRef.current ?? readStoredRecoveryPayload();
@@ -336,6 +384,8 @@ export default function ResetPasswordPage() {
     if (!response.ok || result?.ok !== true) {
       const errorMessage = typeof result?.error === "string" ? result.error : "";
       if (/expired|session/i.test(errorMessage)) {
+        clearStoredRecoveryPayload();
+        recoveryPayloadRef.current = null;
         setRecoveryState("expired");
         setMsg(sessionExpiredMessageRef.current);
         return true;
@@ -349,6 +399,7 @@ export default function ResetPasswordPage() {
     }
 
     clearStoredRecoveryPayload();
+    recoveryPayloadRef.current = null;
     setMsg(t("reset.successRedirect"));
     setTimeout(() => {
       window.location.href = "/login";
@@ -363,7 +414,14 @@ export default function ResetPasswordPage() {
     if (validationError) return setMsg(validationError);
     if (recoveryState !== "ready") {
       const recoveredSession = await recoverResetSession(5500).catch(() => null);
-      if (!recoveredSession && !hasDirectRecoveryPayload(recoveryPayloadRef.current ?? readStoredRecoveryPayload())) {
+      const serverReady = recoveredSession ? true : await hasServerRecoverySession(5500).catch(() => false);
+      if (
+        !recoveredSession &&
+        !serverReady &&
+        !hasDirectRecoveryPayload(recoveryPayloadRef.current ?? readStoredRecoveryPayload())
+      ) {
+        clearStoredRecoveryPayload();
+        recoveryPayloadRef.current = null;
         setRecoveryState("expired");
         setMsg(sessionExpiredMessageRef.current);
         return;
@@ -381,6 +439,9 @@ export default function ResetPasswordPage() {
 
       if (error) {
         if (/session/i.test(error.message)) {
+          clearStoredRecoveryPayload();
+          recoveryPayloadRef.current = null;
+          setRecoveryState("expired");
           setMsg(sessionExpiredMessageRef.current);
           return;
         }
@@ -389,6 +450,7 @@ export default function ResetPasswordPage() {
       }
 
       clearStoredRecoveryPayload();
+      recoveryPayloadRef.current = null;
       setMsg(t("reset.successRedirect"));
       setTimeout(() => {
         window.location.href = "/login";
