@@ -3049,13 +3049,7 @@ export default function AdminClient({
       "";
 
     try {
-      const {
-        data: { session },
-      } = await withTimeout(
-        supabase.auth.getSession(),
-        AUTH_CHECK_TIMEOUT_MS,
-        "商户身份识别超时，请稍后重试",
-      );
+      const session = await recoverBrowserSupabaseSessionWithRefresh(Math.max(2600, AUTH_CHECK_TIMEOUT_MS));
       sessionUserEmail = session?.user?.email ?? null;
       if (!targetSiteId) {
         const resolvedMerchantIds = await resolveMerchantIds(session?.user?.id, session?.user?.email, {
@@ -3069,6 +3063,42 @@ export default function AdminClient({
       }
     } catch {
       // Fall back to in-memory ids when auth refresh is temporarily unavailable.
+    }
+
+    if (!targetSiteId && typeof window !== "undefined") {
+      try {
+        const response = await withTimeout(
+          fetch("/api/auth/merchant-session", {
+            method: "GET",
+            cache: "no-store",
+            credentials: "same-origin",
+            headers: {
+              accept: "application/json",
+            },
+          }),
+          Math.max(2200, AUTH_CHECK_TIMEOUT_MS),
+          "商户身份识别超时，请稍后重试",
+        );
+        if (response.ok) {
+          const payload = (await response.json().catch(() => null)) as
+            | {
+                authenticated?: boolean;
+                merchantId?: unknown;
+                user?: { email?: string | null } | null;
+              }
+            | null;
+          const cookieMerchantId = typeof payload?.merchantId === "string" ? payload.merchantId.trim() : "";
+          const cookieSessionEmail = typeof payload?.user?.email === "string" ? payload.user.email.trim() : "";
+          if (cookieSessionEmail) {
+            sessionUserEmail = cookieSessionEmail;
+          }
+          if (cookieMerchantId) {
+            targetSiteId = cookieMerchantId;
+          }
+        }
+      } catch {
+        // Ignore cookie-session fallback failures and keep the current guard message.
+      }
     }
 
     if (!targetSiteId) return "";
