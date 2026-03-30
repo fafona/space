@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { useI18n } from "@/components/I18nProvider";
+import { resolveSupportedLocale } from "@/lib/i18n";
 import { LANGUAGE_OPTIONS } from "@/lib/i18n";
 import { useHydrated } from "@/lib/useHydrated";
 
@@ -17,10 +18,11 @@ export default function GlobalLanguageSwitcher() {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
   const inEditor = pathname.startsWith("/admin") || pathname.startsWith("/super-admin/editor");
+  const resolvedLocale = useMemo(() => resolveSupportedLocale(locale), [locale]);
 
   const selected = useMemo(
-    () => LANGUAGE_OPTIONS.find((item) => item.code === locale) ?? LANGUAGE_OPTIONS[0],
-    [locale],
+    () => LANGUAGE_OPTIONS.find((item) => item.code === resolvedLocale) ?? LANGUAGE_OPTIONS[0],
+    [resolvedLocale],
   );
   const asianOptions = useMemo(() => LANGUAGE_OPTIONS.filter((item) => item.region === "asia"), []);
   const europeanOptions = useMemo(
@@ -92,7 +94,7 @@ export default function GlobalLanguageSwitcher() {
                   key={item.code}
                   type="button"
                   className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left transition ${
-                    item.code === locale ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-100"
+                    item.code === resolvedLocale ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-100"
                   }`}
                   onClick={() => {
                     setLocale(item.code);
@@ -120,7 +122,7 @@ export default function GlobalLanguageSwitcher() {
                   key={item.code}
                   type="button"
                   className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left transition ${
-                    item.code === locale ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-100"
+                    item.code === resolvedLocale ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-100"
                   }`}
                   onClick={() => {
                     setLocale(item.code);

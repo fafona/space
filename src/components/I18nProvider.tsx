@@ -50,11 +50,25 @@ function getLocaleClientSnapshot() {
 }
 
 export function I18nProvider({ children }: { children: React.ReactNode }) {
-  const locale = useSyncExternalStore(
+  const rawLocale = useSyncExternalStore(
     subscribeLocale,
     getLocaleClientSnapshot,
     getLocaleServerSnapshot,
   );
+  const locale = resolveSupportedLocale(rawLocale);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const storedRaw = window.localStorage.getItem(I18N_STORAGE_KEY);
+      if (!storedRaw) return;
+      if (resolveSupportedLocale(storedRaw) !== locale || storedRaw.trim() !== locale) {
+        writeStoredLocale(locale);
+      }
+    } catch {
+      // Ignore locale storage normalization failures.
+    }
+  }, [locale]);
 
   useEffect(() => {
     if (typeof document === "undefined") return;
