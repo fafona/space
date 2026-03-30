@@ -14,7 +14,7 @@ const isDevelopment = process.env.NODE_ENV === "development";
 export const hasSupabaseEnv = missingEnvKeys.length === 0;
 export const isSupabaseFallbackMode = !hasSupabaseEnv && isDevelopment;
 export const isSupabaseEnabled = hasSupabaseEnv || isSupabaseFallbackMode;
-export const BACKEND_UNAVAILABLE_NOTICE = "Backend service is unavailable. Showing cached local content.";
+export const BACKEND_UNAVAILABLE_NOTICE = "后端服务暂时不可用，当前先显示本地缓存内容。";
 export const supabaseMissingEnvNotice =
   missingEnvKeys.length > 0
     ? `Backend config missing: ${missingEnvKeys.join(", ")}.${isDevelopment ? " Development fallback is enabled." : " Please configure environment variables."}`

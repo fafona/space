@@ -4223,13 +4223,17 @@ export default function AdminClient({
 
         if (!mounted) return;
         clearTimeout(safetyTimeoutId);
-        if (sessionError) {
-          releaseCheckingScreen({ notice: BACKEND_UNAVAILABLE_NOTICE });
-          return;
+        if (sessionError && !session) {
+          session = await recoverSession(justSignedIn ? 6000 : 4500);
+          if (!mounted) return;
         }
         if (!session) {
           session = await recoverSession(justSignedIn ? 6000 : 4500);
           if (!mounted) return;
+        }
+        if (sessionError && !session && !isPlatformEditor && !gatewayReady) {
+          releaseCheckingScreen({ notice: BACKEND_UNAVAILABLE_NOTICE });
+          return;
         }
         if (session) {
           try {
