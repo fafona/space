@@ -403,6 +403,23 @@ function buildPublicStorageObjectUrls(objectPath: string, preferredOrigin?: stri
   );
 }
 
+function buildStorageNoStoreUrl(value: string) {
+  const normalized = normalizeText(value);
+  if (!normalized) return "";
+  try {
+    const url = new URL(normalized);
+    url.searchParams.set("_ts", `${Date.now()}`);
+    return url.toString();
+  } catch {
+    return normalized;
+  }
+}
+
+function normalizeShareVersion(value: unknown) {
+  const normalized = normalizeText(typeof value === "string" || typeof value === "number" ? `${value}` : "");
+  return /^[A-Za-z0-9._:-]{1,64}$/.test(normalized) ? normalized : "";
+}
+
 export function buildMerchantBusinessCardShareManifestPublicUrls(key: string, preferredOrigin?: string | null) {
   const objectPath = buildMerchantBusinessCardShareManifestObjectPath(key);
   return buildPublicStorageObjectUrls(objectPath, preferredOrigin);
@@ -524,7 +541,7 @@ export async function isMerchantBusinessCardShareRevoked(input: {
   for (const objectPath of Array.from(new Set(objectPaths))) {
     for (const url of buildPublicStorageObjectUrls(objectPath, input.preferredOrigin)) {
       try {
-        const response = await fetch(url, {
+        const response = await fetch(buildStorageNoStoreUrl(url), {
           cache: "no-store",
           next: { revalidate: 0 },
         });
@@ -543,6 +560,7 @@ export async function isMerchantBusinessCardShareRevoked(input: {
 export function buildMerchantBusinessCardShareUrl(input: {
   origin?: string | null;
   shareKey?: string | null;
+  version?: string | number | null;
   name?: string | null;
   imageUrl?: string | null;
   detailImageUrl?: string | null;
@@ -558,6 +576,10 @@ export function buildMerchantBusinessCardShareUrl(input: {
   if (shareKey) {
     shareUrl.pathname = `${MERCHANT_BUSINESS_CARD_SHARE_CARD_PATH}/${shareKey}`;
     shareUrl.search = "";
+    const version = normalizeShareVersion(input.version);
+    if (version) {
+      shareUrl.searchParams.set("v", version);
+    }
     return shareUrl.toString();
   }
 
@@ -826,13 +848,19 @@ export function buildMerchantBusinessCardContactDownloadPath(key: string) {
 export function buildMerchantBusinessCardContactDownloadUrl(input: {
   origin?: string | null;
   shareKey?: string | null;
+  version?: string | number | null;
   targetUrl?: string | null;
 }) {
   const shareKey = normalizeMerchantBusinessCardShareKey(input.shareKey);
   if (!shareKey) return "";
   const origin = resolveMerchantBusinessCardShareOrigin(input.origin, input.targetUrl);
   if (!origin) return "";
-  return new URL(buildMerchantBusinessCardContactDownloadPath(shareKey), `${origin}/`).toString();
+  const url = new URL(buildMerchantBusinessCardContactDownloadPath(shareKey), `${origin}/`);
+  const version = normalizeShareVersion(input.version);
+  if (version) {
+    url.searchParams.set("v", version);
+  }
+  return url.toString();
 }
 
 export function buildMerchantBusinessCardLegacyContactDownloadUrl(input: {
@@ -1014,7 +1042,7 @@ export async function loadMerchantBusinessCardSharePayloadByKey(
 
   for (const url of buildMerchantBusinessCardShareManifestPublicUrls(normalizedKey, preferredOrigin)) {
     try {
-      const response = await fetch(url, {
+      const response = await fetch(buildStorageNoStoreUrl(url), {
         cache: "no-store",
         next: { revalidate: 0 },
       });

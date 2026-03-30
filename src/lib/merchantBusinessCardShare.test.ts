@@ -36,6 +36,17 @@ test("buildMerchantBusinessCardShareUrl creates a short share route when share k
   assert.equal(shareUrl, `https://faolla.com${MERCHANT_BUSINESS_CARD_SHARE_CARD_PATH}/card-abc123`);
 });
 
+test("buildMerchantBusinessCardShareUrl appends a version param for cache busting when provided", () => {
+  const shareUrl = buildMerchantBusinessCardShareUrl({
+    origin: "https://faolla.com",
+    shareKey: "card-abc123",
+    version: "1711820000000",
+    targetUrl: "https://fafona.faolla.com",
+  });
+
+  assert.equal(shareUrl, `https://faolla.com${MERCHANT_BUSINESS_CARD_SHARE_CARD_PATH}/card-abc123?v=1711820000000`);
+});
+
 test("readMerchantBusinessCardShareKey normalizes the short share key from search params", () => {
   assert.equal(
     readMerchantBusinessCardShareKey({
@@ -294,7 +305,9 @@ test("loadMerchantBusinessCardSharePayloadByKey prefers the newest manifest acro
 
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-    const payload = responses.get(url);
+    const lookupUrl = new URL(url);
+    lookupUrl.searchParams.delete("_ts");
+    const payload = responses.get(lookupUrl.toString());
     if (!payload) {
       return new Response("not found", { status: 404 });
     }
@@ -351,7 +364,9 @@ test("loadMerchantBusinessCardSharePayloadByKey prefers richer contact data when
 
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-    const payload = responses.get(url);
+    const lookupUrl = new URL(url);
+    lookupUrl.searchParams.delete("_ts");
+    const payload = responses.get(lookupUrl.toString());
     if (!payload) {
       return new Response("not found", { status: 404 });
     }
@@ -442,9 +457,10 @@ test("business card contact helpers build downloadable vcard links and content",
     buildMerchantBusinessCardContactDownloadUrl({
       origin: "http://localhost:3000",
       shareKey: "card-abc123",
+      version: "1711820000000",
       targetUrl: payload.targetUrl,
     }),
-    "https://faolla.com/card/card-abc123/contact",
+    "https://faolla.com/card/card-abc123/contact?v=1711820000000",
   );
   assert.equal(
     buildMerchantBusinessCardLegacyContactDownloadUrl({
