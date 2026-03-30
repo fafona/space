@@ -132,6 +132,8 @@ function buildActionButtonHtml(input: {
   </a>`;
 }
 
+// Legacy deep links are intentionally kept as a reference for future native integrations.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function buildWeChatActionHtmlLegacy(rawValue?: string) {
   const wechatId = normalizeText(rawValue).replace(/^@+/, "").trim();
   if (!wechatId) return "";
@@ -145,11 +147,8 @@ function buildWeChatActionHtmlLegacy(rawValue?: string) {
 
 function buildWeChatActionHtml(rawValue?: string) {
   const wechatId = normalizeText(rawValue).replace(/^@+/, "").trim();
-  if (!wechatId) return buildWeChatActionHtmlLegacy(rawValue);
-  const primaryHref = `weixin://contacts/profile/${encodeURIComponent(wechatId)}`;
-  const secondaryHref = `weixin://dl/chat?username=${encodeURIComponent(wechatId)}`;
-  const tertiaryHref = "weixin://";
-  return `<button class="inline-action inline-action-button" type="button" aria-label="\u6253\u5f00\u5fae\u4fe1\u8054\u7cfb\u4eba" title="\u6253\u5f00\u5fae\u4fe1\u8054\u7cfb\u4eba" style="background:#07C160" data-wechat-primary="${escapeHtml(primaryHref)}" data-wechat-secondary="${escapeHtml(secondaryHref)}" data-wechat-tertiary="${escapeHtml(tertiaryHref)}" data-wechat-id="${escapeHtml(wechatId)}">
+  if (!wechatId) return "";
+  return `<button class="inline-action inline-action-button" type="button" aria-label="\u590d\u5236\u5fae\u4fe1\u53f7\u5e76\u6253\u5f00\u5fae\u4fe1" title="\u590d\u5236\u5fae\u4fe1\u53f7\u5e76\u6253\u5f00\u5fae\u4fe1" style="background:#07C160" data-wechat-primary="weixin://" data-wechat-id="${escapeHtml(wechatId)}">
     <img src="/social-icons/wechat.svg" alt="" />
   </button>`;
 }
@@ -623,43 +622,20 @@ function buildInlineI18nScript() {
 
     const wechatButtons = Array.from(document.querySelectorAll("[data-wechat-primary]"));
     wechatButtons.forEach((button) => {
-      button.addEventListener("click", (event) => {
+      button.addEventListener("click", async (event) => {
         event.preventDefault();
         const target = event.currentTarget;
         if (!(target instanceof HTMLElement)) return;
-        const attempts = [
-          target.dataset.wechatPrimary || "",
-          target.dataset.wechatSecondary || "",
-          target.dataset.wechatTertiary || "",
-        ]
-          .map((value) => String(value || "").trim())
-          .filter(Boolean);
         const wechatId = String(target.dataset.wechatId || "").trim();
-        if (attempts.length === 0) return;
-        launchWechatScheme(attempts[0]);
-        if (attempts.length > 1) {
-          window.setTimeout(() => {
-            if (document.visibilityState === "visible") {
-              launchWechatScheme(attempts[1]);
-            }
-          }, 260);
-        }
-        if (attempts.length > 2) {
-          window.setTimeout(() => {
-            if (document.visibilityState === "visible") {
-              launchWechatScheme(attempts[2]);
-            }
-          }, 620);
-        }
-        window.setTimeout(async () => {
-          if (document.visibilityState !== "visible" || !wechatId) return;
-          const copied = await copyWechatId(wechatId);
-          showWechatToast(
-            copied
-              ? "\u672a\u80fd\u76f4\u63a5\u6253\u5f00\u5bf9\u5e94\u5fae\u4fe1\u8054\u7cfb\u4eba\uff0c\u5df2\u590d\u5236\u5fae\u4fe1\u53f7\uff1a" + wechatId
-              : "\u672a\u80fd\u76f4\u63a5\u6253\u5f00\u5bf9\u5e94\u5fae\u4fe1\u8054\u7cfb\u4eba\uff0c\u8bf7\u5728\u5fae\u4fe1\u4e2d\u641c\u7d22\uff1a" + wechatId,
-          );
-        }, 1080);
+        const wechatAppHref = String(target.dataset.wechatPrimary || "weixin://").trim();
+        if (!wechatId) return;
+        const copied = await copyWechatId(wechatId);
+        showWechatToast(
+          copied
+            ? "\u5df2\u590d\u5236\u5fae\u4fe1\u53f7\uff0c\u6b63\u5728\u5c1d\u8bd5\u6253\u5f00\u5fae\u4fe1\uff0c\u8bf7\u7c98\u8d34\u641c\u7d22\uff1a" + wechatId
+            : "\u8bf7\u8bb0\u4e0b\u5fae\u4fe1\u53f7\u540e\u6253\u5f00\u5fae\u4fe1\u641c\u7d22\uff1a" + wechatId,
+        );
+        launchWechatScheme(wechatAppHref || "weixin://");
       });
     });
 
