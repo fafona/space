@@ -15,6 +15,7 @@ import {
   buildMerchantBusinessCardShareManifestPublicUrls,
   buildMerchantBusinessCardShareTitle,
   buildMerchantBusinessCardShareUrl,
+  createMerchantBusinessCardShareKey,
   loadMerchantBusinessCardSharePayloadByKey,
   normalizeMerchantBusinessCardShareContact,
   normalizeMerchantBusinessCardShareImageUrl,
@@ -23,6 +24,40 @@ import {
   readMerchantBusinessCardShareKey,
   resolveMerchantBusinessCardShareOrigin,
 } from "./merchantBusinessCardShare";
+
+test("createMerchantBusinessCardShareKey uses contact name slug with a short code", () => {
+  assert.equal(
+    createMerchantBusinessCardShareKey({
+      contactName: "Felix",
+      name: "fafona",
+      targetUrl: "https://fafona.faolla.com",
+      code: "abc123",
+    }),
+    "felix-abc123",
+  );
+});
+
+test("createMerchantBusinessCardShareKey falls back to merchant or target slug when contact name is unavailable", () => {
+  assert.equal(
+    createMerchantBusinessCardShareKey({
+      contactName: "联系人",
+      name: "fafona",
+      targetUrl: "https://fafona.faolla.com",
+      code: "abc123",
+    }),
+    "fafona-abc123",
+  );
+
+  assert.equal(
+    createMerchantBusinessCardShareKey({
+      contactName: "联系人",
+      name: "商户名片",
+      targetUrl: "https://felix.faolla.com",
+      code: "abc123",
+    }),
+    "felix-abc123",
+  );
+});
 
 test("buildMerchantBusinessCardShareUrl creates a short share route when share key exists", () => {
   const shareUrl = buildMerchantBusinessCardShareUrl({

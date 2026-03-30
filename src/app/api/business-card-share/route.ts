@@ -4,6 +4,7 @@ import {
   buildMerchantBusinessCardShareManifestObjectPath,
   buildMerchantBusinessCardShareRevocationByKeyObjectPath,
   buildMerchantBusinessCardShareRevocationByLegacyPayloadObjectPath,
+  createMerchantBusinessCardShareKey,
   resolveMerchantBusinessCardShareOrigin,
   buildMerchantBusinessCardShareUrl,
   normalizeMerchantBusinessCardSharePayload,
@@ -66,8 +67,14 @@ function normalizeImageDimension(value: unknown) {
   return normalized >= 120 && normalized <= 4096 ? normalized : 0;
 }
 
-function createShareKey() {
-  return `card-${crypto.randomUUID().replace(/-/g, "").slice(0, 20)}`;
+function createShareKey(body?: BusinessCardShareRequestBody | null) {
+  const contact =
+    body?.contact && typeof body.contact === "object" ? (body.contact as Record<string, unknown>) : undefined;
+  return createMerchantBusinessCardShareKey({
+    contactName: normalizeText(contact?.displayName ?? contact?.contactName),
+    name: normalizeText(body?.name),
+    targetUrl: normalizeText(body?.targetUrl),
+  });
 }
 
 function createJsonBlob(value: unknown) {
@@ -193,7 +200,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "invalid_json" }, { status: 400 });
   }
 
-  const shareKey = normalizeMerchantBusinessCardShareKey(normalizeText(body?.key)) || createShareKey();
+  const shareKey = normalizeMerchantBusinessCardShareKey(normalizeText(body?.key)) || createShareKey(body);
   const name = normalizeText(body?.name).slice(0, 80);
   const targetUrl = normalizeMerchantBusinessCardShareTargetUrl(normalizeText(body?.targetUrl));
   const shareOrigin = resolveMerchantBusinessCardShareOrigin(request.url, targetUrl);

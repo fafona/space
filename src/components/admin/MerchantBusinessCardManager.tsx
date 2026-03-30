@@ -34,6 +34,8 @@ import {
   buildMerchantBusinessCardShareUrl,
   buildMerchantBusinessCardContactDownloadUrl,
   buildMerchantBusinessCardLegacyContactDownloadUrl,
+  createMerchantBusinessCardShareKey,
+  createMerchantBusinessCardShareKeyCode,
   normalizeMerchantBusinessCardShareImageUrl,
   resolveMerchantBusinessCardShareOrigin,
   type MerchantBusinessCardShareContact,
@@ -208,10 +210,6 @@ function createId(prefix: string) {
     return `${prefix}-${crypto.randomUUID()}`;
   }
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function createShareKey() {
-  return createId("card").toLowerCase();
 }
 
 async function renderCardNodeToImage(node: HTMLElement) {
@@ -905,7 +903,7 @@ export default function MerchantBusinessCardManager({
   onCardsChange,
 }: MerchantBusinessCardManagerProps) {
   const [draft, setDraft] = useState(() => createDefaultMerchantBusinessCardDraft(profile));
-  const [draftShareKey, setDraftShareKey] = useState(() => createShareKey());
+  const [draftShareCode, setDraftShareCode] = useState(() => createMerchantBusinessCardShareKeyCode());
   const [editorOpen, setEditorOpen] = useState(false);
   const [folderOpen, setFolderOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -1036,8 +1034,16 @@ export default function MerchantBusinessCardManager({
   const canUseDraftLinkMode = allowLinkMode || editingCard?.mode === "link";
   const activeLinkShareKey = useMemo(() => {
     if (draft.mode !== "link") return "";
-    return normalizeText(editingCard?.shareKey) || normalizeText(draftShareKey) || "";
-  }, [draft.mode, draftShareKey, editingCard]);
+    return (
+      normalizeText(editingCard?.shareKey) ||
+      createMerchantBusinessCardShareKey({
+        contactName: draft.contacts.contactName,
+        name: draft.name,
+        targetUrl: websiteUrl,
+        code: draftShareCode,
+      })
+    );
+  }, [draft.contacts.contactName, draft.mode, draft.name, draftShareCode, editingCard, websiteUrl]);
   const draftLinkUrl = useMemo(() => {
     if (draft.mode !== "link" || !websiteUrl) return "";
     return buildMerchantBusinessCardShareUrl({
@@ -1140,7 +1146,7 @@ export default function MerchantBusinessCardManager({
     setContactPageImageFileName("");
     setContactPageImageFileDetail("");
     setIsContactPageImageProcessing(false);
-    setDraftShareKey(createShareKey());
+    setDraftShareCode(createMerchantBusinessCardShareKeyCode());
     setSelectedFieldKeys(["merchantName"]);
     setEditingCardId(null);
     setPreviewAsset(null);
@@ -1159,7 +1165,7 @@ export default function MerchantBusinessCardManager({
     setContactPageImageFileName("");
     setContactPageImageFileDetail("");
     setIsContactPageImageProcessing(false);
-    setDraftShareKey(normalizeText(card.shareKey) || createShareKey());
+    setDraftShareCode(createMerchantBusinessCardShareKeyCode());
     setSelectedFieldKeys(["merchantName"]);
     setEditingCardId(card.id);
     setPreviewAsset(null);
@@ -2894,7 +2900,13 @@ export default function MerchantBusinessCardManager({
     const existingCard = editingCardId ? cards.find((card) => card.id === editingCardId) ?? null : null;
     const resolvedShareKey =
       nextDraft.mode === "link"
-        ? normalizeText(existingCard?.shareKey) || normalizeText(draftShareKey) || createShareKey()
+        ? normalizeText(existingCard?.shareKey) ||
+          createMerchantBusinessCardShareKey({
+            contactName: nextDraft.contacts.contactName,
+            name: nextDraft.name,
+            targetUrl: websiteUrl,
+            code: draftShareCode,
+          })
         : "";
     const shareContactPayload =
       nextDraft.mode === "link"

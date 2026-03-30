@@ -15,6 +15,9 @@ export const MERCHANT_BUSINESS_CARD_SHARE_REVOCATION_FOLDER = "merchant-share-re
 const PUBLIC_STORAGE_BUCKET_CANDIDATES = ["page-assets", "assets", "uploads", "public"] as const;
 const MERCHANT_BUSINESS_CARD_SHARE_REVOCATION_KEY_FOLDER = `${MERCHANT_BUSINESS_CARD_SHARE_REVOCATION_FOLDER}/key`;
 const MERCHANT_BUSINESS_CARD_SHARE_REVOCATION_LEGACY_FOLDER = `${MERCHANT_BUSINESS_CARD_SHARE_REVOCATION_FOLDER}/legacy`;
+const MERCHANT_BUSINESS_CARD_SHARE_KEY_SLUG_MAX_LENGTH = 18;
+const MERCHANT_BUSINESS_CARD_SHARE_KEY_CODE_LENGTH = 6;
+const MERCHANT_BUSINESS_CARD_SHARE_KEY_CODE_ALPHABET = "23456789abcdefghjkmnpqrstuvwxyz";
 
 type SearchParamValue = string | string[] | undefined;
 type SearchParamsLike = URLSearchParams | Record<string, SearchParamValue>;
@@ -59,6 +62,75 @@ export type MerchantBusinessCardShareContact = {
 
 function normalizeText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeMerchantBusinessCardShareKeySlug(value: unknown) {
+  const normalized = normalizeText(value);
+  if (!normalized) return "";
+  return normalized
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/['’]+/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, MERCHANT_BUSINESS_CARD_SHARE_KEY_SLUG_MAX_LENGTH)
+    .replace(/-+$/g, "");
+}
+
+function buildMerchantBusinessCardShareKeyTargetSlugCandidate(targetUrl: unknown) {
+  const normalized = normalizeMerchantBusinessCardShareTargetUrl(normalizeText(targetUrl));
+  if (!normalized) return "";
+  try {
+    const hostname = new URL(normalized).hostname.replace(/^www\./i, "");
+    const labels = hostname.split(".").filter(Boolean);
+    if (labels.length >= 3) return labels[0] ?? "";
+    return labels[0] ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function normalizeMerchantBusinessCardShareKeyCode(value: unknown, length = MERCHANT_BUSINESS_CARD_SHARE_KEY_CODE_LENGTH) {
+  const normalized = normalizeText(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "")
+    .slice(0, Math.max(4, Math.min(12, Math.round(length) || MERCHANT_BUSINESS_CARD_SHARE_KEY_CODE_LENGTH)));
+  return normalized;
+}
+
+export function createMerchantBusinessCardShareKeyCode(length = MERCHANT_BUSINESS_CARD_SHARE_KEY_CODE_LENGTH) {
+  const targetLength = Math.max(4, Math.min(12, Math.round(length) || MERCHANT_BUSINESS_CARD_SHARE_KEY_CODE_LENGTH));
+  const alphabet = MERCHANT_BUSINESS_CARD_SHARE_KEY_CODE_ALPHABET;
+  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+    const randomBytes = new Uint8Array(targetLength);
+    crypto.getRandomValues(randomBytes);
+    return Array.from(randomBytes, (value) => alphabet[value % alphabet.length]).join("");
+  }
+  let result = "";
+  for (let index = 0; index < targetLength; index += 1) {
+    result += alphabet[Math.floor(Math.random() * alphabet.length)] ?? "x";
+  }
+  return result;
+}
+
+export function createMerchantBusinessCardShareKey(input: {
+  contactName?: string | null;
+  name?: string | null;
+  targetUrl?: string | null;
+  code?: string | null;
+}) {
+  const slug =
+    normalizeMerchantBusinessCardShareKeySlug(input.contactName) ||
+    normalizeMerchantBusinessCardShareKeySlug(input.name) ||
+    normalizeMerchantBusinessCardShareKeySlug(buildMerchantBusinessCardShareKeyTargetSlugCandidate(input.targetUrl)) ||
+    "card";
+  const code =
+    normalizeMerchantBusinessCardShareKeyCode(input.code, MERCHANT_BUSINESS_CARD_SHARE_KEY_CODE_LENGTH) ||
+    createMerchantBusinessCardShareKeyCode();
+  const candidate = `${slug}-${code}`;
+  return normalizeMerchantBusinessCardShareKey(candidate) || `card-${code}`;
 }
 
 function clampImageDimension(value: unknown) {
