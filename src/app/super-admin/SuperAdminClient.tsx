@@ -14,9 +14,16 @@ import {
   subscribeBlocksStore,
   subscribePublishedBlocksStore,
 } from "@/data/blockStore";
-import type { Block, MerchantCardTextLayoutConfig, MerchantCardTextRole, TypographyEditableProps } from "@/data/homeBlocks";
+import type {
+  Block,
+  MerchantCardTextLayoutConfig,
+  MerchantCardTextRole,
+  MerchantListPublishedSite,
+  TypographyEditableProps,
+} from "@/data/homeBlocks";
 import {
   FEATURE_CATALOG,
+  MERCHANT_INDUSTRY_OPTIONS,
   MERCHANT_SORT_RULES,
   applyAlert,
   applyAudit,
@@ -110,6 +117,56 @@ function getMerchantProfileName(site: Pick<Site, "merchantName"> | null | undefi
   return (site?.merchantName ?? "").trim();
 }
 
+function pickPreferredText(...values: Array<string | null | undefined>) {
+  for (const value of values) {
+    const normalized = String(value ?? "").trim();
+    if (normalized) return normalized;
+  }
+  return "";
+}
+
+function normalizeMerchantIndustryValue(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim();
+  return MERCHANT_INDUSTRY_OPTIONS.find((item) => item === normalized) ?? "";
+}
+
+function mergeSnapshotLocation(
+  siteLocation: Site["location"] | null | undefined,
+  snapshotLocation: MerchantListPublishedSite["location"] | null | undefined,
+): Site["location"] {
+  return {
+    countryCode: pickPreferredText(snapshotLocation?.countryCode, siteLocation?.countryCode),
+    country: pickPreferredText(snapshotLocation?.country, siteLocation?.country),
+    provinceCode: pickPreferredText(snapshotLocation?.provinceCode, siteLocation?.provinceCode),
+    province: pickPreferredText(snapshotLocation?.province, siteLocation?.province),
+    city: pickPreferredText(snapshotLocation?.city, siteLocation?.city),
+  };
+}
+
+function applyBackendProfileSnapshot(
+  site: Site,
+  snapshot: MerchantListPublishedSite | null | undefined,
+  fallbackEmail?: string,
+): Site {
+  if (!snapshot) return site;
+  const mergedPrefix = pickPreferredText(snapshot.domainPrefix, snapshot.domainSuffix, site.domainPrefix, site.domainSuffix);
+  return {
+    ...site,
+    merchantName: pickPreferredText(snapshot.merchantName, site.merchantName),
+    domainPrefix: mergedPrefix || site.domainPrefix,
+    domainSuffix: mergedPrefix || site.domainSuffix,
+    domain: pickPreferredText(snapshot.domain, site.domain),
+    industry: normalizeMerchantIndustryValue(pickPreferredText(snapshot.industry, site.industry)),
+    location: mergeSnapshotLocation(site.location, snapshot.location),
+    contactAddress: pickPreferredText(snapshot.contactAddress, site.contactAddress),
+    contactName: pickPreferredText(snapshot.contactName, site.contactName),
+    contactPhone: pickPreferredText(snapshot.contactPhone, site.contactPhone),
+    contactEmail: pickPreferredText(snapshot.contactEmail, site.contactEmail, fallbackEmail),
+    merchantCardImageUrl: pickPreferredText(snapshot.merchantCardImageUrl, site.merchantCardImageUrl),
+    name: pickPreferredText(snapshot.name, site.name, snapshot.merchantName, site.merchantName),
+  };
+}
+
 function normalizePublishedSitePrefix(value: string | null | undefined) {
   const normalized = String(value ?? "").trim();
   if (!normalized) return "";
@@ -144,9 +201,16 @@ function getPlanTemplatePreviewOptions(rawBlocks: unknown): PlanTemplatePreviewO
 function buildBackendOnlySite(account: BackendMerchantAccount): Site {
   const timestamp = account.createdAt ?? nextIsoNow();
   const normalizedMerchantId = normalizeMerchantIdValue(account.merchantId);
-  const publishedPrefix = normalizePublishedSitePrefix(account.siteSlug);
-  const merchantLabel = account.merchantName || account.username || account.loginId || account.email || account.merchantId || "";
-  return {
+  const publishedPrefix = normalizePublishedSitePrefix(account.siteSlug || account.profileSnapshot?.domainPrefix || account.profileSnapshot?.domainSuffix);
+  const merchantLabel =
+    account.merchantName ||
+    account.profileSnapshot?.merchantName ||
+    account.username ||
+    account.loginId ||
+    account.email ||
+    account.merchantId ||
+    "";
+  const baseSite: Site = {
     id: normalizedMerchantId || `backend-${account.merchantId || account.email || "merchant"}`,
     tenantId: "backend-only",
     merchantName: merchantLabel,
@@ -180,6 +244,7 @@ function buildBackendOnlySite(account: BackendMerchantAccount): Site {
     createdAt: timestamp,
     updatedAt: timestamp,
   };
+  return applyBackendProfileSnapshot(baseSite, account.profileSnapshot, account.email);
 }
 
 function buildMerchantSiteContext(site: Site, owner: PlatformState["users"][number] | null, nowMs: number): MerchantSiteContext {
@@ -958,6 +1023,7 @@ type BackendMerchantAccount = {
   publishedBytesKnown: boolean;
   visits: MerchantVisits;
   visitsKnown: boolean;
+  profileSnapshot: MerchantListPublishedSite | null;
 };
 
 type MerchantTableSortField =
@@ -1404,8 +1470,9 @@ export default function SuperAdminClient() {
         }) ?? null;
       const legacySiteContext = legacySiteContextByEmail.get(normalizeEmailValue(account.email)) ?? null;
       const localSite = matchedSite ?? legacySiteContext?.site ?? null;
-      const localSiteContext = localSite
-        ? buildMerchantSiteContext(localSite, merchantOwnerBySiteId.get(localSite.id) ?? null, nowMs)
+      const mergedSite = localSite ? applyBackendProfileSnapshot(localSite, account.profileSnapshot, account.email) : null;
+      const localSiteContext = mergedSite
+        ? buildMerchantSiteContext(mergedSite, merchantOwnerBySiteId.get(mergedSite.id) ?? null, nowMs)
         : legacySiteContext;
       const hasPublishedSite = account.hasPublishedSite === true;
       const publishedPrefix = normalizePublishedSitePrefix(account.siteSlug);

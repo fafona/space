@@ -87,6 +87,10 @@ export type MerchantListPublishedSite = {
   category: string;
   industry: MerchantIndustry;
   location: SiteLocation;
+  contactAddress?: string;
+  contactName?: string;
+  contactPhone?: string;
+  contactEmail?: string;
   merchantCardImageUrl?: string;
   sortConfig: MerchantSortConfig;
   createdAt: string;

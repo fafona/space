@@ -37,6 +37,7 @@ import {
   type PlanTemplate,
   type PlanTemplateCategory,
   type Site,
+  type SiteLocation,
 } from "@/data/platformControlStore";
 import {
   loadBlocksFromStorage,
@@ -5708,7 +5709,20 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
   }
 
-  async function syncMerchantProfileBinding(merchantId: string, domainPrefix: string, merchantName: string) {
+  async function syncMerchantProfileBinding(
+    merchantId: string,
+    domainPrefix: string,
+    merchantName: string,
+    profile?: {
+      domain?: string;
+      contactAddress?: string;
+      contactName?: string;
+      contactPhone?: string;
+      contactEmail?: string;
+      industry?: string;
+      location?: SiteLocation | null;
+    },
+  ) {
     const normalizedMerchantId = String(merchantId ?? "").trim();
     const normalizedPrefix = normalizeDomainPrefixForMerchant(domainPrefix);
     const normalizedMerchantName = String(merchantName ?? "").trim();
@@ -5743,6 +5757,13 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         merchantId: normalizedMerchantId,
         domainPrefix: normalizedPrefix,
         merchantName: normalizedMerchantName,
+        domain: String(profile?.domain ?? "").trim(),
+        contactAddress: String(profile?.contactAddress ?? "").trim(),
+        contactName: String(profile?.contactName ?? "").trim(),
+        contactPhone: String(profile?.contactPhone ?? "").trim(),
+        contactEmail: String(profile?.contactEmail ?? "").trim(),
+        industry: String(profile?.industry ?? "").trim(),
+        location: profile?.location ?? null,
       }),
     });
 
@@ -7282,7 +7303,15 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             setMerchantProfileDialogOpen(false);
             setMerchantProfileAttention(false);
             showTip("商户信息已保存");
-            void syncMerchantProfileBinding(targetSiteId, normalizedDomainPrefix, merchantName).then((result) => {
+            void syncMerchantProfileBinding(targetSiteId, normalizedDomainPrefix, merchantName, {
+              domain: buildMerchantDomainFromBase(baseDomain, domainPrefix),
+              contactAddress,
+              contactName,
+              contactPhone,
+              contactEmail,
+              industry,
+              location,
+            }).then((result) => {
               if (!result.ok) {
                 showTip("商户信息已保存；线上商户资料同步失败，稍后重新保存或重新发布后会自动修复");
                 return;

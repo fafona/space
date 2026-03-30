@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import type { MerchantListPublishedSite } from "@/data/homeBlocks";
 import { loadMerchantIdRulesFromStore } from "@/lib/merchantIdRuleStore";
 import { findBlockingMerchantIdRule } from "@/lib/merchantIdRules";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
+import { loadStoredPlatformMerchantSnapshot, type PlatformMerchantSnapshotStoreClient } from "@/lib/platformMerchantSnapshotStore";
 import { SUPER_ADMIN_SESSION_COOKIE, SUPER_ADMIN_SESSION_VALUE } from "@/lib/superAdminSession";
 
 export const dynamic = "force-dynamic";
@@ -65,6 +67,7 @@ type MerchantAccountItem = {
   publishedBytesKnown: boolean;
   visits: MerchantVisitSummary;
   visitsKnown: boolean;
+  profileSnapshot: MerchantListPublishedSite | null;
 };
 
 type AdminListUsersClient = {
@@ -184,6 +187,13 @@ function sortByCreatedAtDesc(items: MerchantAccountItem[]) {
     const rightTs = new Date(right.createdAt ?? 0).getTime();
     return rightTs - leftTs;
   });
+}
+
+async function loadPlatformMerchantSnapshotByMerchantId(
+  supabase: PlatformMerchantSnapshotStoreClient,
+) {
+  const payload = await loadStoredPlatformMerchantSnapshot(supabase);
+  return new Map((payload?.snapshot ?? []).map((site) => [site.id, site] as const));
 }
 
 function normalizeSlug(value: string | null | undefined) {
@@ -372,6 +382,10 @@ export async function GET(request: Request) {
         .filter(([email]) => Boolean(email)),
     );
 
+    const snapshotByMerchantId = await loadPlatformMerchantSnapshotByMerchantId(
+      supabase as unknown as PlatformMerchantSnapshotStoreClient,
+    );
+
     const merchantItems: MerchantAccountItem[] = ((merchants ?? []) as MerchantRow[]).map((merchant) => {
       const email = normalizeEmail(
         merchant.user_email,
@@ -386,14 +400,16 @@ export async function GET(request: Request) {
         authByEmail.get(email) ??
         null;
       const metadata = readAccountMetadata(authUser);
-      const merchantName = String(merchant.name ?? "").trim();
+      const merchantId = String(merchant.id ?? "").trim();
+      const snapshotSite = snapshotByMerchantId.get(merchantId) ?? null;
+      const merchantName = String(merchant.name ?? "").trim() || String(snapshotSite?.merchantName ?? "").trim();
 
       return {
-        merchantId: String(merchant.id ?? "").trim(),
+        merchantId,
         merchantName,
         email,
         username: metadata.username || merchantName,
-        loginId: metadata.loginId || metadata.merchantId || String(merchant.id ?? "").trim(),
+        loginId: metadata.loginId || metadata.merchantId || merchantId,
         createdAt: merchant.created_at ?? authUser?.created_at ?? null,
         authUserId: (authUser?.id ?? fallbackAuthUserId) || null,
         emailConfirmed: Boolean(authUser?.email_confirmed_at),
@@ -401,12 +417,13 @@ export async function GET(request: Request) {
         lastSignInAt: authUser?.last_sign_in_at ?? null,
         manualCreated: metadata.manualCreated,
         hasPublishedSite: false,
-        siteSlug: "",
+        siteSlug: String(snapshotSite?.domainPrefix ?? snapshotSite?.domainSuffix ?? "").trim(),
         siteUpdatedAt: null,
         publishedBytes: 0,
         publishedBytesKnown: false,
         visits: { today: 0, day7: 0, day30: 0, total: 0 },
         visitsKnown: false,
+        profileSnapshot: snapshotSite,
       };
     });
 
@@ -428,7 +445,7 @@ export async function GET(request: Request) {
         const metadata = readAccountMetadata(user);
         return {
           merchantId: metadata.merchantId,
-          merchantName: "",
+          merchantName: String((snapshotByMerchantId.get(metadata.merchantId)?.merchantName ?? "")).trim(),
           email: normalizeEmail(user.email),
           username: metadata.username,
           loginId: metadata.loginId || metadata.merchantId,
@@ -439,12 +456,13 @@ export async function GET(request: Request) {
           lastSignInAt: user.last_sign_in_at ?? null,
           manualCreated: metadata.manualCreated,
           hasPublishedSite: false,
-          siteSlug: "",
+          siteSlug: String(snapshotByMerchantId.get(metadata.merchantId)?.domainPrefix ?? snapshotByMerchantId.get(metadata.merchantId)?.domainSuffix ?? "").trim(),
           siteUpdatedAt: null,
           publishedBytes: 0,
           publishedBytesKnown: false,
           visits: { today: 0, day7: 0, day30: 0, total: 0 },
           visitsKnown: false,
+          profileSnapshot: snapshotByMerchantId.get(metadata.merchantId) ?? null,
         };
       });
 
@@ -457,6 +475,8 @@ export async function GET(request: Request) {
     const normalizedItems = [...dedupedByEmail.values()].map((item) => ({
       ...item,
       merchantId: isNumericMerchantId(item.merchantId) ? item.merchantId : "",
+      profileSnapshot:
+        isNumericMerchantId(item.merchantId) ? snapshotByMerchantId.get(item.merchantId) ?? item.profileSnapshot ?? null : null,
     }));
     const merchantIds = [...new Set(normalizedItems.map((item) => item.merchantId).filter((item) => isNumericMerchantId(item)))];
     let publishedSiteInfoByMerchantId = new Map<
@@ -496,7 +516,9 @@ export async function GET(request: Request) {
         return {
           ...item,
           hasPublishedSite: publishedSiteInfo?.hasPublishedSite === true,
-          siteSlug: publishedSiteInfo?.siteSlug ?? "",
+          siteSlug:
+            publishedSiteInfo?.siteSlug ??
+            String(item.profileSnapshot?.domainPrefix ?? item.profileSnapshot?.domainSuffix ?? "").trim(),
           siteUpdatedAt: publishedSiteInfo?.siteUpdatedAt ?? null,
           publishedBytes: publishedSiteInfo?.publishedBytes ?? 0,
           publishedBytesKnown: publishedSiteInfo?.publishedBytesKnown === true,
@@ -660,6 +682,7 @@ export async function POST(request: Request) {
       publishedBytesKnown: false,
       visits: { today: 0, day7: 0, day30: 0, total: 0 },
       visitsKnown: false,
+      profileSnapshot: null,
     };
 
     return NextResponse.json({ item }, { status: 201 });

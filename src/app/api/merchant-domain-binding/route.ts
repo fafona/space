@@ -1,7 +1,17 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import type { MerchantIndustry, SiteLocation } from "@/data/platformControlStore";
 import { parseCookieValue, readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
 import { normalizeMerchantProfileBindingPayload } from "@/lib/merchantProfileBinding";
+import {
+  buildPlatformMerchantSnapshotSite,
+  upsertPlatformMerchantSnapshotSite,
+} from "@/lib/platformMerchantSnapshot";
+import {
+  loadStoredPlatformMerchantSnapshot,
+  savePlatformMerchantSnapshot,
+  type PlatformMerchantSnapshotStoreClient,
+} from "@/lib/platformMerchantSnapshotStore";
 import { SUPER_ADMIN_SESSION_COOKIE, SUPER_ADMIN_SESSION_VALUE } from "@/lib/superAdminSession";
 
 export const dynamic = "force-dynamic";
@@ -37,6 +47,13 @@ type DomainBindingBody = {
   merchantId?: unknown;
   domainPrefix?: unknown;
   merchantName?: unknown;
+  domain?: unknown;
+  contactAddress?: unknown;
+  contactName?: unknown;
+  contactPhone?: unknown;
+  contactEmail?: unknown;
+  industry?: unknown;
+  location?: unknown;
 };
 
 function readEnv(name: string) {
@@ -45,6 +62,34 @@ function readEnv(name: string) {
 
 function normalizeEmail(value: string | null | undefined) {
   return String(value ?? "").trim().toLowerCase();
+}
+
+function normalizeText(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeLocation(value: unknown): SiteLocation {
+  if (!value || typeof value !== "object") {
+    return {
+      countryCode: "",
+      country: "",
+      provinceCode: "",
+      province: "",
+      city: "",
+    };
+  }
+  const input = value as Partial<SiteLocation>;
+  return {
+    countryCode: normalizeText(input.countryCode).toUpperCase(),
+    country: normalizeText(input.country),
+    provinceCode: normalizeText(input.provinceCode),
+    province: normalizeText(input.province),
+    city: normalizeText(input.city),
+  };
+}
+
+function normalizeIndustry(value: unknown): MerchantIndustry {
+  return normalizeText(value) as MerchantIndustry;
 }
 
 function isMissingSlugColumn(message: string) {
@@ -212,6 +257,54 @@ async function updateMerchantName(
   return { ok: true as const, updated: true };
 }
 
+async function syncMerchantProfileSnapshot(
+  supabase: PlatformMerchantSnapshotStoreClient,
+  input: {
+    merchantId: string;
+    merchantName: string;
+    domainPrefix: string;
+    domain?: string;
+    contactAddress?: string;
+    contactName?: string;
+    contactPhone?: string;
+    contactEmail?: string;
+    industry?: MerchantIndustry;
+    location?: SiteLocation;
+  },
+) {
+  const existingPayload = await loadStoredPlatformMerchantSnapshot(supabase);
+  const existingSite = existingPayload?.snapshot.find((site) => site.id === input.merchantId) ?? null;
+  const snapshotSite = buildPlatformMerchantSnapshotSite({
+    id: input.merchantId,
+    merchantName: input.merchantName,
+    domainPrefix: input.domainPrefix,
+    domainSuffix: input.domainPrefix,
+    name: input.merchantName || input.merchantId,
+    domain: input.domain,
+    category: "",
+    industry: input.industry,
+    location: input.location,
+    contactAddress: input.contactAddress,
+    contactName: input.contactName,
+    contactPhone: input.contactPhone,
+    contactEmail: input.contactEmail,
+    createdAt: existingSite?.createdAt ?? new Date().toISOString(),
+  });
+  if (!snapshotSite) {
+    return { ok: false as const, message: "merchant_profile_snapshot_invalid" };
+  }
+
+  const nextPayload = {
+    snapshot: upsertPlatformMerchantSnapshotSite(existingPayload?.snapshot ?? [], snapshotSite),
+    defaultSortRule: existingPayload?.defaultSortRule ?? "created_desc",
+  };
+  const saveResult = await savePlatformMerchantSnapshot(supabase, nextPayload);
+  if (saveResult.error) {
+    return { ok: false as const, message: saveResult.error };
+  }
+  return { ok: true as const };
+}
+
 export async function POST(request: Request) {
   const supabaseUrl = readEnv("NEXT_PUBLIC_SUPABASE_URL");
   const serviceRoleKey = readEnv("SUPABASE_SERVICE_ROLE_KEY") || readEnv("NEXT_SUPABASE_SERVICE_ROLE_KEY");
@@ -231,6 +324,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "invalid_payload" }, { status: 400 });
   }
   const { merchantId, domainPrefix, merchantName } = normalizedPayload;
+  const normalizedProfile = {
+    domain: normalizeText(body?.domain),
+    contactAddress: normalizeText(body?.contactAddress),
+    contactName: normalizeText(body?.contactName),
+    contactPhone: normalizeText(body?.contactPhone),
+    contactEmail: normalizeText(body?.contactEmail),
+    industry: normalizeIndustry(body?.industry),
+    location: normalizeLocation(body?.location),
+  };
 
   try {
     const supabase = createClient(supabaseUrl, serviceRoleKey, {
@@ -268,6 +370,28 @@ export async function POST(request: Request) {
       );
     }
 
+    const snapshotResult = await syncMerchantProfileSnapshot(supabase as unknown as PlatformMerchantSnapshotStoreClient, {
+      merchantId,
+      merchantName,
+      domainPrefix,
+      domain: normalizedProfile.domain,
+      contactAddress: normalizedProfile.contactAddress,
+      contactName: normalizedProfile.contactName,
+      contactPhone: normalizedProfile.contactPhone,
+      contactEmail: normalizedProfile.contactEmail,
+      industry: normalizedProfile.industry,
+      location: normalizedProfile.location,
+    });
+    if (!snapshotResult.ok) {
+      return NextResponse.json(
+        {
+          error: "merchant_domain_binding_failed",
+          message: snapshotResult.message,
+        },
+        { status: 500 },
+      );
+    }
+
     return NextResponse.json({
       ok: true,
       merchantId,
@@ -276,6 +400,7 @@ export async function POST(request: Request) {
       updated: slugResult.updated || merchantNameResult.updated,
       slugUpdated: slugResult.updated,
       merchantNameUpdated: merchantNameResult.updated,
+      profileSnapshotUpdated: true,
     });
   } catch (error) {
     return NextResponse.json(

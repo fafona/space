@@ -102,6 +102,10 @@ function normalizeSnapshotSite(input: unknown): MerchantListPublishedSite | null
     category: normalizeText(value.category),
     industry: normalizeMerchantIndustry(value.industry),
     location: normalizeSiteLocation(value.location),
+    contactAddress: normalizeText(value.contactAddress),
+    contactName: normalizeText(value.contactName),
+    contactPhone: normalizeText(value.contactPhone),
+    contactEmail: normalizeText(value.contactEmail),
     merchantCardImageUrl: normalizeText(value.merchantCardImageUrl),
     sortConfig: normalizeMerchantSortConfig(value.sortConfig),
     createdAt: normalizeText(value.createdAt),
@@ -155,6 +159,10 @@ export function buildPlatformMerchantSnapshotPayloadFromSites(
       category: normalizeText(site.category),
       industry: normalizeMerchantIndustry(site.industry),
       location: normalizeSiteLocation(site.location),
+      contactAddress: normalizeText(site.contactAddress),
+      contactName: normalizeText(site.contactName),
+      contactPhone: normalizeText(site.contactPhone),
+      contactEmail: normalizeText(site.contactEmail),
       merchantCardImageUrl: normalizeText(site.merchantCardImageUrl),
       sortConfig: normalizeMerchantSortConfig(site.sortConfig),
       createdAt: normalizeText(site.createdAt),
@@ -191,6 +199,57 @@ export function buildPlatformMerchantSnapshotBlocks(
       } as never,
     },
   ];
+}
+
+export function buildPlatformMerchantSnapshotSite(
+  input: Partial<Site> & {
+    id: string;
+    merchantName?: string | null;
+    domainPrefix?: string | null;
+    domainSuffix?: string | null;
+    domain?: string | null;
+    category?: string | null;
+    industry?: MerchantIndustry | null;
+    location?: Partial<SiteLocation> | null;
+    contactAddress?: string | null;
+    contactName?: string | null;
+    contactPhone?: string | null;
+    contactEmail?: string | null;
+    merchantCardImageUrl?: string | null;
+    createdAt?: string | null;
+    sortConfig?: Partial<MerchantSortConfig> | null;
+    name?: string | null;
+  },
+): MerchantListPublishedSite | null {
+  return normalizeSnapshotSite({
+    id: input.id,
+    merchantName: input.merchantName,
+    domainPrefix: input.domainPrefix,
+    domainSuffix: input.domainSuffix,
+    name: input.name,
+    domain: input.domain,
+    category: input.category,
+    industry: input.industry,
+    location: input.location,
+    contactAddress: input.contactAddress,
+    contactName: input.contactName,
+    contactPhone: input.contactPhone,
+    contactEmail: input.contactEmail,
+    merchantCardImageUrl: input.merchantCardImageUrl,
+    sortConfig: input.sortConfig,
+    createdAt: input.createdAt,
+  });
+}
+
+export function upsertPlatformMerchantSnapshotSite(
+  sites: MerchantListPublishedSite[],
+  nextSite: MerchantListPublishedSite,
+): MerchantListPublishedSite[] {
+  return sortSnapshotSites(
+    [...sites.filter((site) => site.id !== nextSite.id), nextSite]
+      .map((site) => normalizeSnapshotSite(site))
+      .filter((site): site is MerchantListPublishedSite => !!site),
+  );
 }
 
 export function readPlatformMerchantSnapshotFromBlocks(
