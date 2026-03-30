@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import {
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -2960,6 +2961,7 @@ export default function AdminClient({
   const [publishing, setPublishing] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [merchantProfileDialogOpen, setMerchantProfileDialogOpen] = useState(false);
+  const [merchantSiteIdOverride, setMerchantSiteIdOverride] = useState("");
   const [merchantBookingManagerOpen, setMerchantBookingManagerOpen] = useState(false);
   const [merchantProfileAttention, setMerchantProfileAttention] = useState(false);
   const merchantProfileButtonRef = useRef<HTMLButtonElement>(null);
@@ -3034,6 +3036,49 @@ export default function AdminClient({
     },
   });
   const syncPlatformMerchantSnapshotToServerRef = useRef<() => Promise<boolean>>(async () => false);
+
+  const ensureEditableMerchantSiteId = useCallback(async () => {
+    if (isPlatformEditor) return "";
+
+    let sessionUserEmail: string | null = null;
+    let targetSiteId =
+      getSiteIdFromStoreScope(storeScope).trim() ||
+      merchantSiteIdOverride ||
+      merchantIdsRef.current.find((item) => isMerchantNumericId(item)) ||
+      merchantIdsRef.current[0] ||
+      "";
+
+    try {
+      const {
+        data: { session },
+      } = await withTimeout(
+        supabase.auth.getSession(),
+        AUTH_CHECK_TIMEOUT_MS,
+        "商户身份识别超时，请稍后重试",
+      );
+      sessionUserEmail = session?.user?.email ?? null;
+      if (!targetSiteId) {
+        const resolvedMerchantIds = await resolveMerchantIds(session?.user?.id, session?.user?.email, {
+          ...(session?.user?.user_metadata ?? {}),
+          ...(session?.user?.app_metadata ?? {}),
+        });
+        if (resolvedMerchantIds.length > 0) {
+          merchantIdsRef.current = mergePreferredMerchantIds(resolvedMerchantIds, merchantIdsRef.current);
+          targetSiteId = resolvedMerchantIds.find((item) => isMerchantNumericId(item)) ?? resolvedMerchantIds[0] ?? "";
+        }
+      }
+    } catch {
+      // Fall back to in-memory ids when auth refresh is temporarily unavailable.
+    }
+
+    if (!targetSiteId) return "";
+    const ensuredSite = ensureScopedMerchantSite(targetSiteId, sessionUserEmail);
+    const ensuredSiteId = String(ensuredSite?.id ?? targetSiteId).trim();
+    if (!ensuredSiteId) return "";
+    merchantIdsRef.current = mergePreferredMerchantIds([ensuredSiteId], merchantIdsRef.current);
+    setMerchantSiteIdOverride(ensuredSiteId);
+    return ensuredSiteId;
+  }, [isPlatformEditor, merchantSiteIdOverride, storeScope]);
 
   useEffect(() => {
     if (hasAddedExtraBlock) return;
@@ -6193,7 +6238,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       : "";
   const editingSiteId =
     !isPlatformEditor && merchantPlatformState
-      ? scopedSiteId || fallbackMerchantSiteId
+      ? merchantSiteIdOverride || scopedSiteId || fallbackMerchantSiteId
       : "";
   const editingSite =
     editingSiteId && merchantPlatformState
@@ -6399,13 +6444,19 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               {!isPlatformEditor ? (
                 <button
                   ref={merchantProfileButtonRef}
-                  className={`px-3 py-2 rounded border transition-colors disabled:opacity-50 ${
+                  className={`px-3 py-2 rounded border transition-colors ${
                     merchantProfileAttention
                       ? "border-rose-500 bg-rose-50 text-rose-700 hover:bg-rose-100"
                       : "bg-white hover:bg-gray-50"
                   }`}
-                  onClick={() => setMerchantProfileDialogOpen(true)}
-                  disabled={!editingSiteId}
+                  onClick={async () => {
+                    const resolvedSiteId = await ensureEditableMerchantSiteId();
+                    if (!resolvedSiteId) {
+                      showTip("正在初始化商户资料，请稍后重试");
+                      return;
+                    }
+                    setMerchantProfileDialogOpen(true);
+                  }}
                 >
                   {"商户信息"}
                 </button>
@@ -7075,14 +7126,16 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               ),
             });
           }}
-          onSave={({ merchantName, domainPrefix, contactAddress, contactName, contactPhone, contactEmail, location, industry }) => {
-            if (!editingSiteId) {
+          onSave={async ({ merchantName, domainPrefix, contactAddress, contactName, contactPhone, contactEmail, location, industry }) => {
+            const targetSiteId = editingSiteId || (await ensureEditableMerchantSiteId());
+            if (!targetSiteId) {
               showTip("未找到可编辑的商户站点，无法保存");
               return;
             }
-            ensureScopedMerchantSite(editingSiteId, contactEmail || null);
+            setMerchantSiteIdOverride(targetSiteId);
+            ensureScopedMerchantSite(targetSiteId, contactEmail || null);
             const platformState = loadPlatformState();
-            const target = platformState.sites.find((item) => item.id === editingSiteId) ?? null;
+            const target = platformState.sites.find((item) => item.id === targetSiteId) ?? null;
             const normalizedDomainPrefix = normalizeDomainPrefixForMerchant(domainPrefix);
             const baseDomain =
               resolveRuntimePortalBaseDomain(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "") ||
@@ -7091,7 +7144,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             savePlatformState({
               ...platformState,
               sites: platformState.sites.map((item) =>
-                item.id === editingSiteId
+                item.id === targetSiteId
                   ? {
                       ...item,
                       merchantName,
@@ -7112,7 +7165,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             setMerchantProfileDialogOpen(false);
             setMerchantProfileAttention(false);
             showTip("商户信息已保存");
-            void syncMerchantProfileBinding(editingSiteId, normalizedDomainPrefix, merchantName).then((result) => {
+            void syncMerchantProfileBinding(targetSiteId, normalizedDomainPrefix, merchantName).then((result) => {
               if (!result.ok) {
                 showTip("商户信息已保存；线上商户资料同步失败，稍后重新保存或重新发布后会自动修复");
                 return;
