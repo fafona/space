@@ -245,6 +245,12 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
   const locationHintDefault = resolveLocalizedSystemDefaultText(undefined, "可点击定位，或手动选择国家/省份/城市。", locale);
   const locatingLabel = resolveLocalizedSystemDefaultText(undefined, "定位中...", locale);
 
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "production" && debugLocateText) {
+      console.debug("[SearchBarBlock]", debugLocateText);
+    }
+  }, [debugLocateText]);
+
   const provinceOptions = useMemo(() => getEuropeProvinceOptions(countryCode), [countryCode]);
   const cityOptions = useMemo(
     () => (isCustomProvinceCode(provinceCode) ? [] : getEuropeCityOptions(countryCode, provinceCode)),

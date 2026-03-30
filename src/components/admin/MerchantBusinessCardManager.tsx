@@ -1449,14 +1449,6 @@ export default function MerchantBusinessCardManager({
     }
   };
 
-  const openCardTarget = (card: MerchantBusinessCardAsset) => {
-    if (!card.targetUrl) {
-      setTip("当前名片没有可打开的网站链接");
-      return;
-    }
-    window.open(card.targetUrl, "_blank", "noopener,noreferrer");
-  };
-
   const previewMode = previewAsset?.mode || draft.mode;
   const previewTargetUrl = normalizeText(previewAsset?.targetUrl) || websiteUrl;
   const previewName = normalizeText(previewAsset?.name) || normalizeText(draft.name) || "名片预览";
@@ -2196,7 +2188,139 @@ export default function MerchantBusinessCardManager({
         <div className="fixed inset-0 z-[2147483000] bg-black/45 p-4" onMouseDown={() => setFolderOpen(false)}>
           <div className="mx-auto flex h-full max-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
             <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4"><div><div className="text-lg font-semibold text-slate-900">名片夹</div><div className="text-sm text-slate-500">查看已生成的图片名片或链接名片，可预览并继续操作。</div></div><div className="flex flex-wrap gap-2"><button type="button" className="rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50" onClick={openCreateEditorFromFolder} disabled={!canOpenCreateEditor}>生成名片</button><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => setFolderOpen(false)}>关闭</button></div></div>
-            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">{cards.length > 0 ? <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{cards.map((card) => <article key={card.id} className="overflow-hidden rounded-2xl border bg-slate-50 shadow-sm"><div className="space-y-4 p-4"><button type="button" className="block w-full overflow-hidden rounded-2xl border bg-transparent text-left" onClick={() => { setPreviewAsset(card); setPreviewOpen(true); }}><img src={card.imageUrl} alt={card.name} className="block h-auto w-full object-cover bg-transparent" /></button><div><div className="flex items-center gap-2"><div className="text-base font-semibold text-slate-900">{card.name}</div><span className="rounded-full bg-slate-900 px-2 py-0.5 text-[10px] text-white">{getCardModeLabel(card.mode)}</span></div><div className="text-xs text-slate-500">{new Date(card.createdAt).toLocaleString("zh-CN", { hour12: false })}</div>{card.mode === "link" ? <div className="mt-1 text-xs text-slate-500">手机打开联系卡链接后可直接保存联系人。</div> : null}</div>{card.mode === "link" ? <div className="space-y-2"><div className="grid grid-cols-2 gap-2"><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => { setPreviewAsset(card); setPreviewOpen(true); }}>预览</button><button type="button" className="rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800" onClick={() => void copyCardLink(card)}>复制联系卡链接</button></div><div className="grid grid-cols-2 gap-2"><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => void downloadCardContact(card)}>下载联系人</button><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => void copyCardImage(card)}>复制名片图片</button></div><div className="grid grid-cols-2 gap-2"><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => openEditorForCard(card)}>修改</button><button type="button" className="rounded border border-rose-200 bg-white px-3 py-2 text-sm text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50" onClick={() => void deleteCard(card)} disabled={deletingCardId === card.id}>{deletingCardId === card.id ? "删除中..." : "删除"}</button></div></div> : <div className="grid grid-cols-2 gap-2"><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => { setPreviewAsset(card); setPreviewOpen(true); }}>预览</button><button type="button" className="rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800" onClick={() => void saveCard(card)}>保存</button><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => openEditorForCard(card)}>修改</button><button type="button" className="rounded border border-rose-200 bg-white px-3 py-2 text-sm text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50" onClick={() => void deleteCard(card)} disabled={deletingCardId === card.id}>{deletingCardId === card.id ? "删除中..." : "删除"}</button></div>}</div></article>)}</div> : <div className="flex min-h-[240px] items-center justify-center rounded-2xl border border-dashed bg-slate-50 px-6 text-center text-sm text-slate-500">还没有生成名片。请先在上方点击“生成名片”制作一张。</div>}</div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+              {cards.length > 0 ? (
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  {cards.map((card) => (
+                    <article key={card.id} className="overflow-hidden rounded-2xl border bg-slate-50 shadow-sm">
+                      <div className="space-y-4 p-4">
+                        <button
+                          type="button"
+                          className="block w-full overflow-hidden rounded-2xl border bg-transparent text-left"
+                          onClick={() => {
+                            setPreviewAsset(card);
+                            setPreviewOpen(true);
+                          }}
+                        >
+                          {/* 名片夹封面来自用户已生成内容，保留原始地址和比例比 next/image 更稳。 */}
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={card.imageUrl} alt={card.name} className="block h-auto w-full object-cover bg-transparent" />
+                        </button>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <div className="text-base font-semibold text-slate-900">{card.name}</div>
+                            <span className="rounded-full bg-slate-900 px-2 py-0.5 text-[10px] text-white">
+                              {getCardModeLabel(card.mode)}
+                            </span>
+                          </div>
+                          <div className="text-xs text-slate-500">
+                            {new Date(card.createdAt).toLocaleString("zh-CN", { hour12: false })}
+                          </div>
+                          {card.mode === "link" ? (
+                            <div className="mt-1 text-xs text-slate-500">手机打开联系卡链接后可直接保存联系人。</div>
+                          ) : null}
+                        </div>
+                        {card.mode === "link" ? (
+                          <div className="space-y-2">
+                            <div className="grid grid-cols-2 gap-2">
+                              <button
+                                type="button"
+                                className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                                onClick={() => {
+                                  setPreviewAsset(card);
+                                  setPreviewOpen(true);
+                                }}
+                              >
+                                预览
+                              </button>
+                              <button
+                                type="button"
+                                className="rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800"
+                                onClick={() => void copyCardLink(card)}
+                              >
+                                复制联系卡链接
+                              </button>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                              <button
+                                type="button"
+                                className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                                onClick={() => void downloadCardContact(card)}
+                              >
+                                下载联系人
+                              </button>
+                              <button
+                                type="button"
+                                className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                                onClick={() => void copyCardImage(card)}
+                              >
+                                复制名片图片
+                              </button>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                              <button
+                                type="button"
+                                className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                                onClick={() => openEditorForCard(card)}
+                              >
+                                修改
+                              </button>
+                              <button
+                                type="button"
+                                className="rounded border border-rose-200 bg-white px-3 py-2 text-sm text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                onClick={() => void deleteCard(card)}
+                                disabled={deletingCardId === card.id}
+                              >
+                                {deletingCardId === card.id ? "删除中..." : "删除"}
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-2 gap-2">
+                            <button
+                              type="button"
+                              className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                              onClick={() => {
+                                setPreviewAsset(card);
+                                setPreviewOpen(true);
+                              }}
+                            >
+                              预览
+                            </button>
+                            <button
+                              type="button"
+                              className="rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800"
+                              onClick={() => void saveCard(card)}
+                            >
+                              保存
+                            </button>
+                            <button
+                              type="button"
+                              className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                              onClick={() => openEditorForCard(card)}
+                            >
+                              修改
+                            </button>
+                            <button
+                              type="button"
+                              className="rounded border border-rose-200 bg-white px-3 py-2 text-sm text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+                              onClick={() => void deleteCard(card)}
+                              disabled={deletingCardId === card.id}
+                            >
+                              {deletingCardId === card.id ? "删除中..." : "删除"}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <div className="flex min-h-[240px] items-center justify-center rounded-2xl border border-dashed bg-slate-50 px-6 text-center text-sm text-slate-500">
+                  还没有生成名片。请先在上方点击“生成名片”制作一张。
+                </div>
+              )}
+            </div>
           </div>
         </div>,
       ) : null}
@@ -2223,6 +2347,8 @@ export default function MerchantBusinessCardManager({
                 <div className="mx-auto grid min-h-full max-w-[1400px] items-start gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(380px,430px)]">
                   <div className="flex min-h-full items-center justify-center rounded-3xl border border-white/10 bg-white/5 p-4">
                     {previewAsset ? (
+                      /* 预览的是用户刚生成或上传的实际图片资源，这里需要原样展示。 */
+                      /* eslint-disable-next-line @next/next/no-img-element */
                       <img src={previewAsset.imageUrl} alt={previewAsset.name} className="block h-auto max-w-full bg-transparent object-contain" />
                     ) : (
                       <CardSurface draft={draft} websiteUrl={websiteUrl} qrCodeUrl={qrCodeUrl} scale={fullScale} />
@@ -2242,6 +2368,8 @@ export default function MerchantBusinessCardManager({
               ) : (
                 <div className="mx-auto flex min-h-full items-center justify-center">
                   {previewAsset ? (
+                    /* 预览的是用户刚生成或上传的实际图片资源，这里需要原样展示。 */
+                    /* eslint-disable-next-line @next/next/no-img-element */
                     <img src={previewAsset.imageUrl} alt={previewAsset.name} className="block h-auto max-w-full bg-transparent object-contain" />
                   ) : (
                     <CardSurface draft={draft} websiteUrl={websiteUrl} qrCodeUrl={qrCodeUrl} scale={fullScale} />
@@ -2842,74 +2970,12 @@ export default function MerchantBusinessCardManager({
     return asset;
   }
 
-  async function copyPreviewImage() {
-    try {
-      const asset = await saveCurrentDraftToFolder();
-      if (!asset) {
-        setTip("请先预览名片后再复制");
-        return;
-      }
-      await copyImageToClipboard(asset.imageUrl);
-      setTip("名片图片已复制，并已保存到名片夹");
-    } catch (error) {
-      setTip(
-        error instanceof Error && error.message === "business_card_limit_reached"
-          ? `名片夹已达到上限（${normalizedCardLimit} 张），请先删除旧名片或到超级后台调整数量限制`
-          : error instanceof Error && error.message === "export_image_limit_exceeded"
-            ? `导出名片图片不能超过 ${normalizedExportImageLimitKb} KB，请调整内容或背景后再试`
-            : "复制失败，请重试",
-      );
-    }
-  }
-
   async function copyCardImage(card: MerchantBusinessCardAsset) {
     try {
       await copyImageToClipboard(card.imageUrl);
       setTip("名片图片已复制，可直接发送");
     } catch {
       setTip("复制失败，请重试");
-    }
-  }
-
-  async function copyPreviewLink(url: string) {
-    const normalizedUrl = normalizeText(url);
-    if (!normalizedUrl) {
-      setTip("当前名片没有可复制的网站链接");
-      return;
-    }
-
-    try {
-      const asset = await saveCurrentDraftToFolder();
-      if (!asset) {
-        setTip("请先预览名片后再复制");
-        return;
-      }
-      const { shareUrl } = await buildShareBundle({
-        targetUrl: normalizedUrl,
-        cardName: normalizeText(asset.name) || "商户名片",
-        shareKey: normalizeText(asset.shareKey),
-        card: asset,
-        contactPageImageUrl: normalizeText(asset.contactPageImageUrl),
-        imageWidth: asset.width,
-        imageHeight: asset.height,
-        contact: buildShareContactPayload({
-          name: asset.name,
-          title: asset.title,
-          contacts: asset.contacts,
-          contactFieldOrder: asset.contactFieldOrder,
-          targetUrl: normalizedUrl,
-        }),
-      });
-      await copyTextToClipboard(shareUrl);
-      setTip("联系卡链接已复制，并已保存到名片夹");
-    } catch (error) {
-      setTip(
-        error instanceof Error && error.message === "business_card_limit_reached"
-          ? `名片夹已达到上限（${normalizedCardLimit} 张），请先删除旧名片或到超级后台调整数量限制`
-          : error instanceof Error && error.message === "export_image_limit_exceeded"
-            ? `导出名片图片不能超过 ${normalizedExportImageLimitKb} KB，请调整内容或背景后再试`
-            : "复制失败，请重试",
-      );
     }
   }
 
@@ -2940,51 +3006,6 @@ export default function MerchantBusinessCardManager({
       setTip("联系卡链接已复制，手机打开后可保存联系人");
     } catch {
       setTip("复制失败，请重试");
-    }
-  }
-
-  async function downloadPreviewContact(url: string) {
-    const normalizedUrl = normalizeText(url);
-    if (!normalizedUrl) {
-      setTip("当前名片没有可下载的联系人");
-      return;
-    }
-    try {
-      const asset = await saveCurrentDraftToFolder();
-      if (!asset) {
-        setTip("请先预览名片后再下载联系人");
-        return;
-      }
-      const { contactUrl } = await buildShareBundle({
-        targetUrl: normalizedUrl,
-        cardName: normalizeText(asset.name) || "商户名片",
-        shareKey: normalizeText(asset.shareKey),
-        card: asset,
-        contactPageImageUrl: normalizeText(asset.contactPageImageUrl),
-        imageWidth: asset.width,
-        imageHeight: asset.height,
-        contact: buildShareContactPayload({
-          name: asset.name,
-          title: asset.title,
-          contacts: asset.contacts,
-          contactFieldOrder: asset.contactFieldOrder,
-          targetUrl: normalizedUrl,
-        }),
-      });
-      if (!contactUrl) {
-        setTip("联系人下载地址生成失败，请重试");
-        return;
-      }
-      await openContactDownload(contactUrl, normalizeText(asset.contacts.contactName) || normalizeText(asset.name));
-      setTip("联系人已开始下载，并已保存到名片夹");
-    } catch (error) {
-      setTip(
-        error instanceof Error && error.message === "business_card_limit_reached"
-          ? `名片夹已达到上限（${normalizedCardLimit} 张），请先删除旧名片或到超级后台调整数量限制`
-          : error instanceof Error && error.message === "export_image_limit_exceeded"
-            ? `导出名片图片不能超过 ${normalizedExportImageLimitKb} KB，请调整内容或背景后再试`
-            : "下载失败，请重试",
-      );
     }
   }
 

@@ -18,7 +18,6 @@ import type { Block, MerchantCardTextLayoutConfig, MerchantCardTextRole, Typogra
 import {
   FEATURE_CATALOG,
   MERCHANT_SORT_RULES,
-  PERMISSION_CATALOG,
   applyAlert,
   applyAudit,
   createAlertRecord,
@@ -30,18 +29,13 @@ import {
   createHomeLayoutSection,
   createIndustryCategory,
   createPlanTemplate,
-  createPageAsset,
-  createPlatformUser,
-  createRole,
   createSite,
-  createTenant,
   loadPlatformState,
   nextIsoNow,
   PLAN_TEMPLATE_CATEGORY_OPTIONS,
   resolvePermissionsForUser,
   savePlatformState,
   subscribePlatformState,
-  type ApprovalStatus,
   type ApprovalType,
   type FeatureKey,
   type HomeLayoutSection,
@@ -59,7 +53,7 @@ import {
   type SiteStatus,
 } from "@/data/platformControlStore";
 import { SUPER_ADMIN_MESSAGES } from "@/constants/messages";
-import { readPageViewDailyStats, readPublishEvents, readRemoteAnalyticsSummary, trackPublishEvent } from "@/lib/analytics";
+import { readPageViewDailyStats, trackPublishEvent } from "@/lib/analytics";
 import { parseMerchantIdRuleInput, sortMerchantIdRules, type MerchantIdRule } from "@/lib/merchantIdRules";
 import {
   matchPlanTemplateCategory,
@@ -283,21 +277,10 @@ function publishStatusLabel(status: PublishStatus) {
   return "回滚";
 }
 
-function approvalStatusLabel(status: ApprovalStatus) {
-  if (status === "pending") return "待处理";
-  if (status === "approved") return "已通过";
-  return "已驳回";
-}
-
 function siteStatusLabel(status: SiteStatus) {
   if (status === "online") return "在线";
   if (status === "maintenance") return "维护中";
   return "离线";
-}
-
-function userStatusLabel(status: PlatformState["users"][number]["status"]) {
-  if (status === "active") return "正常";
-  return "已禁用";
 }
 
 function formatBytes(bytes: number) {
@@ -615,11 +598,6 @@ function pickMerchantListBlock(blocks: Block[]) {
 
 type MerchantVisits = { today: number; day7: number; day30: number; total: number };
 
-const splitTags = (raw: string) =>
-  raw
-    .split(/[,\s，]+/)
-    .map((item) => item.trim())
-    .filter(Boolean);
 const EMPTY_BLOCKS: Block[] = [];
 const RELEASE_REGRESSION_CHECKLIST = [
   { id: "new-user-nav-tip", label: "新用户后台默认仅导航区块，并展示“在此处增加区块”引导" },
@@ -1040,10 +1018,7 @@ export default function SuperAdminClient() {
   );
   const [applyingPlanTemplateKey, setApplyingPlanTemplateKey] = useState("");
   const [nowMs, setNowMs] = useState(() => Date.now());
-  const [remotePv30, setRemotePv30] = useState<number | null>(null);
 
-  const [tenantName, setTenantName] = useState("");
-  const [tenantOwner, setTenantOwner] = useState("");
   const [siteTenantId, setSiteTenantId] = useState("");
   const [siteName, setSiteName] = useState("");
   const [siteDomain, setSiteDomain] = useState("");
@@ -1057,21 +1032,10 @@ export default function SuperAdminClient() {
   const [portalDirty, setPortalDirty] = useState(false);
   const portalDirtyRef = useRef(false);
 
-  const [userName, setUserName] = useState("");
-  const [userEmail, setUserEmail] = useState("");
-  const [userRoleId, setUserRoleId] = useState("");
-  const [roleName, setRoleName] = useState("");
-  const [rolePermissions, setRolePermissions] = useState<PermissionKey[]>(["dashboard.view"]);
-
   const [featureSiteId, setFeatureSiteId] = useState("");
-  const [assetSiteId, setAssetSiteId] = useState("");
-  const [assetPath, setAssetPath] = useState("");
-  const [assetGroup, setAssetGroup] = useState("");
-  const [assetTags, setAssetTags] = useState("");
 
   const [publishSiteId, setPublishSiteId] = useState("");
   const [publishNote, setPublishNote] = useState("");
-  const [approvalFilter, setApprovalFilter] = useState<ApprovalStatus | "all">("pending");
   const [userKeyword, setUserKeyword] = useState("");
   const [merchantDetailSiteId, setMerchantDetailSiteId] = useState("");
   const [userPanelMode, setUserPanelMode] = useState<"detail" | "config" | "history">("detail");
@@ -1352,12 +1316,6 @@ export default function SuperAdminClient() {
   }, [portalDirty]);
 
   useEffect(() => {
-    void readRemoteAnalyticsSummary(30)
-      .then((summary) => setRemotePv30(summary?.pageView30d ?? null))
-      .catch(() => setRemotePv30(null));
-  }, []);
-
-  useEffect(() => {
     if (!tip) return;
     const timer = window.setTimeout(() => setTip(""), TIP_AUTO_DISMISS_MS);
     return () => window.clearTimeout(timer);
@@ -1372,9 +1330,7 @@ export default function SuperAdminClient() {
   const activeSiteTenantId = siteTenantId || state.tenants[0]?.id || "";
   const activeSiteCategoryId =
     siteCategoryId || state.industryCategories.find((item) => item.status === "active")?.id || "";
-  const activeUserRoleId = userRoleId || state.roles[0]?.id || "";
   const activeFeatureSiteId = featureSiteId || state.sites[0]?.id || "";
-  const activeAssetSiteId = assetSiteId || state.sites[0]?.id || "";
   const activePublishSiteId = publishSiteId || state.sites[0]?.id || "";
 
   const operator = state.users.find((item) => item.id === activeOperatorId) ?? null;
@@ -1919,8 +1875,6 @@ export default function SuperAdminClient() {
         .sort((a, b) => a.sortOrder - b.sortOrder),
     [portalDraft.sections],
   );
-
-  const localPublishEvents = readPublishEvents();
 
   const publish30d = state.publishRecords.filter(
     (item) => nowMs - new Date(item.at).getTime() <= 30 * 86400_000,
@@ -2503,28 +2457,6 @@ export default function SuperAdminClient() {
     }
   }
 
-  function createTenantAction() {
-    if (!guard("tenant.manage", "无租户管理权限")) return;
-    if (!tenantName.trim() || !tenantOwner.trim()) {
-      setTip("请填写租户名称和负责人");
-      return;
-    }
-
-    const tenant = createTenant({ name: tenantName, owner: tenantOwner });
-    commit((prev) =>
-      withAudit(
-        { ...prev, tenants: [tenant, ...prev.tenants] },
-        "tenant_create",
-        "tenant",
-        tenant.id,
-        tenant.name,
-      ),
-    );
-
-    setTenantName("");
-    setTenantOwner("");
-  }
-
   function createSiteAction() {
     if (!guard("site.manage", "无站点管理权限")) return;
     if (!activeSiteTenantId || !siteName.trim() || !siteDomain.trim() || !activeSiteCategoryId) {
@@ -2738,36 +2670,6 @@ export default function SuperAdminClient() {
     );
     setPortalDirty(false);
     setTip("总站页面已保存");
-  }
-
-  function createUserAction() {
-    if (!guard("user.manage", "无用户管理权限")) return;
-    if (!userName.trim() || !userEmail.trim() || !activeUserRoleId) {
-      setTip("请完整填写用户信息");
-      return;
-    }
-
-    const user = createPlatformUser({
-      name: userName,
-      email: userEmail,
-      department: "平台",
-      tenantIds: [],
-      siteIds: [],
-      roleIds: [activeUserRoleId],
-    });
-
-    commit((prev) =>
-      withAudit(
-        { ...prev, users: [user, ...prev.users] },
-        "user_create",
-        "user",
-        user.id,
-        user.name,
-      ),
-    );
-
-    setUserName("");
-    setUserEmail("");
   }
 
   function resetManualUserDialog() {
@@ -3402,33 +3304,6 @@ export default function SuperAdminClient() {
     );
   }
 
-  function createRoleAction() {
-    if (!guard("role.manage", "无角色管理权限")) return;
-    if (!roleName.trim() || rolePermissions.length === 0) {
-      setTip("请填写角色并勾选权限");
-      return;
-    }
-
-    const role = createRole({
-      name: roleName,
-      description: "自定义角色",
-      permissions: rolePermissions,
-    });
-
-    commit((prev) =>
-      withAudit(
-        { ...prev, roles: [role, ...prev.roles] },
-        "role_create",
-        "role",
-        role.id,
-        role.name,
-      ),
-    );
-
-    setRoleName("");
-    setRolePermissions(["dashboard.view"]);
-  }
-
   function toggleFeatureAction(siteId: string, key: FeatureKey) {
     if (!guard("feature.manage", "无功能开通权限")) return;
     commit((prev) =>
@@ -3451,41 +3326,6 @@ export default function SuperAdminClient() {
         key,
       ),
     );
-  }
-
-  function createAssetAction() {
-    if (!guard("page_asset.manage", "无页面资产管理权限")) return;
-    if (!activeAssetSiteId || !assetPath.trim() || !assetGroup.trim()) {
-      setTip("请完整填写页面资产信息");
-      return;
-    }
-    if (!assetPath.startsWith("/")) {
-      setTip("页面路径必须以 / 开头");
-      return;
-    }
-
-    const asset = createPageAsset({
-      siteId: activeAssetSiteId,
-      pagePath: assetPath,
-      group: assetGroup,
-      tags: splitTags(assetTags),
-      status: "draft",
-      updatedBy: operatorName,
-    });
-
-    commit((prev) =>
-      withAudit(
-        { ...prev, pageAssets: [asset, ...prev.pageAssets] },
-        "asset_create",
-        "asset",
-        asset.id,
-        asset.pagePath,
-      ),
-    );
-
-    setAssetPath("");
-    setAssetGroup("");
-    setAssetTags("");
   }
 
   function requestApprovalAction(type: ApprovalType) {
@@ -4784,7 +4624,7 @@ export default function SuperAdminClient() {
                                     <div className="overflow-hidden rounded-2xl border bg-slate-50">
                                       <div className="relative aspect-[4/3] w-full bg-slate-900">
                                         {(() => {
-                                          const { coverImageUrl, coverBackgroundStyle, hasCustomCoverBackground } =
+                                          const { coverImageUrl, coverBackgroundStyle } =
                                             getPlanTemplateCoverSurface(planTemplateApplyTemplate);
                                           if (coverImageUrl) {
                                             return (

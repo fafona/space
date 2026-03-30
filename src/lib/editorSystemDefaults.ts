@@ -278,36 +278,6 @@ function localizeSystemDefaultValue<T>(value: T, locale: string): T {
   return value;
 }
 
-function canonicalizeSystemDefaultValue<T>(value: T): T {
-  if (typeof value === "string") {
-    const canonical = toCanonicalSystemDefaultText(value);
-    return (canonical ?? value) as T;
-  }
-
-  if (Array.isArray(value)) {
-    let changed = false;
-    const next = value.map((item) => {
-      const canonicalized = canonicalizeSystemDefaultValue(item);
-      if (canonicalized !== item) changed = true;
-      return canonicalized;
-    });
-    return (changed ? next : value) as T;
-  }
-
-  if (value && typeof value === "object") {
-    const source = value as Record<string, unknown>;
-    let changed = false;
-    const nextEntries = Object.entries(source).map(([key, nestedValue]) => {
-      const canonicalized = canonicalizeSystemDefaultValue(nestedValue);
-      if (canonicalized !== nestedValue) changed = true;
-      return [key, canonicalized] as const;
-    });
-    return (changed ? Object.fromEntries(nextEntries) : value) as T;
-  }
-
-  return value;
-}
-
 const EDITOR_DEFAULT_PAGE_NAME_PATTERN =
   /^(?:page|pagina|página|seite|strona|\u0441\u0442\u0440\u0430\u043d\u0438\u0446\u0430|\u0441\u0442\u043e\u0440\u0456\u043d\u043a\u0430|\u9801\u9762|\u9875\u9762|\u30da\u30fc\u30b8|\ud398\uc774\uc9c0)\s*([0-9]{1,2})$/iu;
 const EDITOR_DEFAULT_PLAN_NAME_PATTERN =

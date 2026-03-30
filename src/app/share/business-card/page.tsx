@@ -169,7 +169,6 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
   }
 
   const title = buildMerchantBusinessCardShareTitle(payload.name);
-  const description = buildMerchantBusinessCardShareDescription(payload.name, payload.targetUrl);
   const shareKey = readMerchantBusinessCardShareKey(resolvedSearchParams);
   const shareUrl = buildMerchantBusinessCardShareUrl({
     origin,

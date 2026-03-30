@@ -71,6 +71,8 @@ export default function GlobalLanguageSwitcher() {
           aria-label={t("lang.placeholder")}
           aria-expanded={open}
         >
+          {/* 国旗来自第三方静态 CDN，小图标原样请求比接入 next/image 配置更轻。 */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={flagImageUrl(selected.countryCode)}
             alt={selected.label}
@@ -97,6 +99,8 @@ export default function GlobalLanguageSwitcher() {
                     setOpen(false);
                   }}
                 >
+                  {/* 国旗来自第三方静态 CDN，小图标原样请求比接入 next/image 配置更轻。 */}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={flagImageUrl(item.countryCode)}
                     alt={item.label}
@@ -123,6 +127,8 @@ export default function GlobalLanguageSwitcher() {
                     setOpen(false);
                   }}
                 >
+                  {/* 国旗来自第三方静态 CDN，小图标原样请求比接入 next/image 配置更轻。 */}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={flagImageUrl(item.countryCode)}
                     alt={item.label}

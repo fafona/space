@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 export type GradientDirection =
@@ -163,19 +163,19 @@ function ColorOrGradientPickerInner({
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
 
-  const resetDraftFromValue = () => {
+  const resetDraftFromValue = useCallback(() => {
     const nextParsed = parseGradientValue(value);
     setMode(allowGradient ? nextParsed.mode : "solid");
     setSolidColor(nextParsed.solidColor);
     setStartColor(nextParsed.startColor);
     setEndColor(nextParsed.endColor);
     setDirection(nextParsed.direction);
-  };
+  }, [allowGradient, value]);
 
-  const closeWithoutCommit = () => {
+  const closeWithoutCommit = useCallback(() => {
     resetDraftFromValue();
     setOpen(false);
-  };
+  }, [resetDraftFromValue]);
 
   const commitDraft = () => {
     if (mode === "solid" || !allowGradient) {
@@ -232,7 +232,7 @@ function ColorOrGradientPickerInner({
     };
     document.addEventListener("mousedown", handlePointerDown);
     return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, [open, value, allowGradient]);
+  }, [closeWithoutCommit, open]);
 
   useLayoutEffect(() => {
     if (!open || typeof window === "undefined") return;

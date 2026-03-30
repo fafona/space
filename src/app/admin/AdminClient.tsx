@@ -3293,27 +3293,6 @@ export default function AdminClient({
     }
   }
 
-  function toggleSelectedBlockLock() {
-    const id = selectedIdRef.current;
-    if (!id) {
-      showTip("请先选中一个区块");
-      return;
-    }
-    const index = blocksRef.current.findIndex((block) => block.id === id);
-    if (index < 0) return;
-    const target = blocksRef.current[index];
-    const next = [...blocksRef.current];
-    next[index] = {
-      ...target,
-      props: {
-        ...target.props,
-        blockLocked: !isBlockLocked(target),
-      } as never,
-    } as Block;
-    applyBlocks(next, { selectedId: id });
-    showTip(isBlockLocked(target) ? "已解锁区块" : "已锁定区块");
-  }
-
   function copySelectedBlockStyleToViewport(targetViewport: ViewportKey) {
     const id = selectedIdRef.current;
     if (!id) {
@@ -3391,24 +3370,6 @@ export default function AdminClient({
     showSavePublishTip("已恢复最近失败快照");
   }
 
-  async function recompressCurrentPageImages() {
-    const options = getCurrentImageCompressionOptions();
-    showSavePublishTip("正在重压当前页图片...");
-    try {
-      const { blocks: nextBlocks, stats } = await recompressInlineImagesInBlocks(blocksRef.current, options);
-      if (stats.visited === 0) {
-        showTip("当前页没有可重压的内嵌图");
-        return;
-      }
-      applyBlocks(nextBlocks, { selectedId: selectedIdRef.current || nextBlocks[0]?.id || "" });
-      showSavePublishTip(
-        `重压完成：${stats.changed}/${stats.visited} 张，${formatBytes(stats.beforeBytes)} -> ${formatBytes(stats.afterBytes)}`,
-      );
-    } catch (error) {
-      showTip(error instanceof Error ? error.message : "重压失败，请重试");
-    }
-  }
-
   async function resolveFirstMerchantHint() {
     let merchantIds = merchantIdsRef.current;
     if (merchantIds.length === 0) {
@@ -3472,24 +3433,6 @@ export default function AdminClient({
   async function persistAudioFileForEditor(file: File) {
     const dataUrl = await fileToAudioDataUrl(file);
     return persistInlineAudioForEditor(dataUrl);
-  }
-
-  async function externalizeCurrentPageLargeImages() {
-    showSavePublishTip("正在外链化大图...");
-    try {
-      const merchantHint = await resolveFirstMerchantHint();
-      const { blocks: nextBlocks, stats } = await externalizeInlineImagesInBlocks(blocksRef.current, merchantHint);
-      if (stats.visited === 0) {
-        showTip(`当前页面没有超过 ${formatBytes(EXTERNALIZE_MIN_IMAGE_BYTES)} 的内嵌图片`);
-        return;
-      }
-      applyBlocks(nextBlocks, { selectedId: selectedIdRef.current || nextBlocks[0]?.id || "" });
-      showSavePublishTip(
-        `外链化完成：${stats.replaced}/${stats.visited} 张，${formatBytes(stats.beforeBytes)} -> ${formatBytes(stats.afterBytes)}`,
-      );
-    } catch (error) {
-      showTip(error instanceof Error ? error.message : "外链化失败，请检查存储配置");
-    }
   }
 
   function getThemeSnapshotKey() {
@@ -6313,8 +6256,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     : [{ id: "page-1", name: "页面1", blocks: editingPlan?.blocks ?? defaultEditorBlocks }];
   const editingPageIndex = Math.max(0, editingPages.findIndex((page) => page.id === editingPageId));
   const imageCompressionOptions = getCurrentImageCompressionOptions();
-  const selectedBlock = blocks.find((item) => item.id === selectedId) ?? null;
-  const selectedBlockLocked = selectedBlock?.props.blockLocked === true;
   const merchantPlatformState = !isPlatformEditor ? loadPlatformState() : null;
   const scopedSiteId = !isPlatformEditor ? getSiteIdFromStoreScope(storeScope) : "";
   const fallbackMerchantSiteId =
