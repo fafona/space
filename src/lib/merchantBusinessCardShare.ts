@@ -24,6 +24,7 @@ export type MerchantBusinessCardSharePayload = {
   imageUrl?: string;
   detailImageUrl?: string;
   detailImageHeight?: number;
+  updatedAt?: string;
   targetUrl: string;
   imageWidth?: number;
   imageHeight?: number;
@@ -67,6 +68,13 @@ function clampImageDimension(value: unknown) {
 
 function clampContactText(value: unknown, maxLength: number) {
   return normalizeText(value).slice(0, maxLength);
+}
+
+function normalizeUpdatedAt(value: unknown) {
+  const normalized = normalizeText(typeof value === "string" ? value : "");
+  if (!normalized) return "";
+  const timestamp = Date.parse(normalized);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : "";
 }
 
 function normalizeContactPhoneList(value: unknown) {
@@ -247,6 +255,7 @@ function normalizeSharePayload(
     imageUrl?: string | null;
     detailImageUrl?: string | null;
     detailImageHeight?: number | null;
+    updatedAt?: string | null;
     targetUrl?: string | null;
     imageWidth?: number | null;
     imageHeight?: number | null;
@@ -259,6 +268,7 @@ function normalizeSharePayload(
   const detailImageUrl = normalizeMerchantBusinessCardShareImageUrl(input.detailImageUrl, preferredOrigin);
   const detailImageHeight = clampImageDimension(input.detailImageHeight);
   if (!targetUrl) return null;
+  const updatedAt = normalizeUpdatedAt(input.updatedAt);
   const imageWidth = clampImageDimension(input.imageWidth);
   const imageHeight = clampImageDimension(input.imageHeight);
   return {
@@ -266,6 +276,7 @@ function normalizeSharePayload(
     ...(imageUrl ? { imageUrl } : {}),
     ...(detailImageUrl ? { detailImageUrl } : {}),
     ...(detailImageUrl && detailImageHeight ? { detailImageHeight } : {}),
+    ...(updatedAt ? { updatedAt } : {}),
     targetUrl,
     ...(imageUrl && imageWidth ? { imageWidth } : {}),
     ...(imageUrl && imageHeight ? { imageHeight } : {}),
@@ -661,6 +672,7 @@ export function parseMerchantBusinessCardShareParams(
       imageUrl: readSearchParam(searchParams, "image"),
       detailImageUrl: readSearchParam(searchParams, "detailImage"),
       detailImageHeight: Number(readSearchParam(searchParams, "detailImageHeight")),
+      updatedAt: readSearchParam(searchParams, "updatedAt"),
       targetUrl: readSearchParam(searchParams, "target"),
       imageWidth: Number(readSearchParam(searchParams, "imageWidth")),
       imageHeight: Number(readSearchParam(searchParams, "imageHeight")),
@@ -949,12 +961,56 @@ export function buildMerchantBusinessCardVCardFileName(payload: MerchantBusiness
   return `${sanitized || "business-card"}-card${buildStableContactCode(payload)}.vcf`;
 }
 
+function countShareContactFields(contact?: MerchantBusinessCardShareContact | null) {
+  if (!contact) return 0;
+  let count = 0;
+  const scalarKeys: Array<keyof MerchantBusinessCardShareContact> = [
+    "displayName",
+    "organization",
+    "title",
+    "phone",
+    "email",
+    "address",
+    "wechat",
+    "whatsapp",
+    "twitter",
+    "weibo",
+    "telegram",
+    "linkedin",
+    "discord",
+    "facebook",
+    "instagram",
+    "tiktok",
+    "douyin",
+    "xiaohongshu",
+    "websiteUrl",
+    "note",
+  ];
+  for (const key of scalarKeys) {
+    if (normalizeText(contact[key] as string | undefined)) {
+      count += 1;
+    }
+  }
+  if (Array.isArray(contact.phones)) {
+    count += contact.phones.map((value) => normalizeText(value)).filter(Boolean).length;
+  }
+  if (Array.isArray(contact.contactFieldOrder)) {
+    count += contact.contactFieldOrder.filter(Boolean).length;
+  }
+  if (contact.contactOnlyFields) {
+    count += Object.values(contact.contactOnlyFields).filter(Boolean).length;
+  }
+  return count;
+}
+
 export async function loadMerchantBusinessCardSharePayloadByKey(
   key: string | null | undefined,
   preferredOrigin?: string | null,
 ) {
   const normalizedKey = normalizeMerchantBusinessCardShareKey(key);
   if (!normalizedKey) return null;
+
+  const candidates: MerchantBusinessCardSharePayload[] = [];
 
   for (const url of buildMerchantBusinessCardShareManifestPublicUrls(normalizedKey, preferredOrigin)) {
     try {
@@ -965,13 +1021,29 @@ export async function loadMerchantBusinessCardSharePayloadByKey(
       if (!response.ok) continue;
       const json = (await response.json().catch(() => null)) as MerchantBusinessCardSharePayload | null;
       const payload = normalizeSharePayload(json ?? {}, preferredOrigin);
-      if (payload) return payload;
+      if (payload) {
+        candidates.push(payload);
+      }
     } catch {
       continue;
     }
   }
 
-  return null;
+  if (candidates.length === 0) return null;
+
+  const [latest] = [...candidates].sort((left, right) => {
+    const leftTs = Date.parse(left.updatedAt ?? "") || 0;
+    const rightTs = Date.parse(right.updatedAt ?? "") || 0;
+    if (rightTs !== leftTs) {
+      return rightTs - leftTs;
+    }
+    const contactScoreDiff = countShareContactFields(right.contact) - countShareContactFields(left.contact);
+    if (contactScoreDiff !== 0) {
+      return contactScoreDiff;
+    }
+    return 0;
+  });
+  return latest ?? candidates[0] ?? null;
 }
 
 export async function resolveMerchantBusinessCardSharePayload(

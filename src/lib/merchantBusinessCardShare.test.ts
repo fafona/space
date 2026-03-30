@@ -15,6 +15,7 @@ import {
   buildMerchantBusinessCardShareManifestPublicUrls,
   buildMerchantBusinessCardShareTitle,
   buildMerchantBusinessCardShareUrl,
+  loadMerchantBusinessCardSharePayloadByKey,
   normalizeMerchantBusinessCardShareContact,
   normalizeMerchantBusinessCardShareImageUrl,
   normalizeMerchantBusinessCardShareKey,
@@ -256,6 +257,121 @@ test("share helpers preserve explicit contact field order", () => {
 
   const parsed = parseMerchantBusinessCardShareParams(new URL(shareUrl).searchParams, "https://faolla.com");
   assert.deepEqual(parsed?.contact?.contactFieldOrder?.slice(0, 4), ["wechat", "phone", "douyin", "contactName"]);
+});
+
+test("loadMerchantBusinessCardSharePayloadByKey prefers the newest manifest across buckets", async () => {
+  const originalFetch = globalThis.fetch;
+  const responses = new Map<string, unknown>([
+    [
+      "https://faolla.com/storage/v1/object/public/page-assets/merchant-shares/card-abc123.json",
+      {
+        name: "fafona",
+        imageUrl: "https://faolla.com/storage/v1/object/public/page-assets/card.png",
+        targetUrl: "https://fafona.faolla.com",
+        updatedAt: "2026-03-30T15:00:00.000Z",
+        contact: {
+          displayName: "Felix",
+          tiktok: "old-tiktok",
+        },
+      },
+    ],
+    [
+      "https://faolla.com/storage/v1/object/public/assets/merchant-shares/card-abc123.json",
+      {
+        name: "fafona",
+        imageUrl: "https://faolla.com/storage/v1/object/public/page-assets/card.png",
+        targetUrl: "https://fafona.faolla.com",
+        updatedAt: "2026-03-30T15:05:00.000Z",
+        contact: {
+          displayName: "Felix",
+          tiktok: "new-tiktok",
+          douyin: "new-douyin",
+          telegram: "new-telegram",
+        },
+      },
+    ],
+  ]);
+
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const payload = responses.get(url);
+    if (!payload) {
+      return new Response("not found", { status: 404 });
+    }
+    return new Response(JSON.stringify(payload), {
+      status: 200,
+      headers: {
+        "content-type": "application/json",
+      },
+    });
+  }) as typeof fetch;
+
+  try {
+    const payload = await loadMerchantBusinessCardSharePayloadByKey("card-abc123", "https://faolla.com");
+    assert.equal(payload?.contact?.tiktok, "new-tiktok");
+    assert.equal(payload?.contact?.douyin, "new-douyin");
+    assert.equal(payload?.contact?.telegram, "new-telegram");
+    assert.equal(payload?.updatedAt, "2026-03-30T15:05:00.000Z");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("loadMerchantBusinessCardSharePayloadByKey prefers richer contact data when old manifests lack timestamps", async () => {
+  const originalFetch = globalThis.fetch;
+  const responses = new Map<string, unknown>([
+    [
+      "https://faolla.com/storage/v1/object/public/page-assets/merchant-shares/card-abc123.json",
+      {
+        name: "fafona",
+        imageUrl: "https://faolla.com/storage/v1/object/public/page-assets/card.png",
+        targetUrl: "https://fafona.faolla.com",
+        contact: {
+          displayName: "Felix",
+          tiktok: "old-tiktok",
+        },
+      },
+    ],
+    [
+      "https://faolla.com/storage/v1/object/public/assets/merchant-shares/card-abc123.json",
+      {
+        name: "fafona",
+        imageUrl: "https://faolla.com/storage/v1/object/public/page-assets/card.png",
+        targetUrl: "https://fafona.faolla.com",
+        contact: {
+          displayName: "Felix",
+          tiktok: "new-tiktok",
+          douyin: "new-douyin",
+          telegram: "new-telegram",
+          linkedin: "new-linkedin",
+        },
+      },
+    ],
+  ]);
+
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const payload = responses.get(url);
+    if (!payload) {
+      return new Response("not found", { status: 404 });
+    }
+    return new Response(JSON.stringify(payload), {
+      status: 200,
+      headers: {
+        "content-type": "application/json",
+      },
+    });
+  }) as typeof fetch;
+
+  try {
+    const payload = await loadMerchantBusinessCardSharePayloadByKey("card-abc123", "https://faolla.com");
+    assert.equal(payload?.contact?.tiktok, "new-tiktok");
+    assert.equal(payload?.contact?.douyin, "new-douyin");
+    assert.equal(payload?.contact?.telegram, "new-telegram");
+    assert.equal(payload?.contact?.linkedin, "new-linkedin");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("share helpers preserve contact-only flags in legacy query params", () => {

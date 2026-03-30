@@ -218,6 +218,7 @@ export async function POST(request: Request) {
     imageUrl,
     ...(detailImageUrl ? { detailImageUrl } : {}),
     ...(detailImageUrl && detailImageHeight ? { detailImageHeight } : {}),
+    updatedAt: new Date().toISOString(),
     targetUrl,
     ...(imageWidth ? { imageWidth } : {}),
     ...(imageHeight ? { imageHeight } : {}),
@@ -243,33 +244,51 @@ export async function POST(request: Request) {
     }
   }
 
+  const succeededBuckets: string[] = [];
+  const failedBuckets: Array<{ bucket: string; message: string }> = [];
+
   for (const bucket of BUCKET_CANDIDATES) {
     const uploaded = await supabase.storage.from(bucket).upload(objectPath, blob, {
       contentType: "application/json; charset=utf-8",
       cacheControl: "31536000",
       upsert: true,
     });
-    if (uploaded.error) continue;
+    if (uploaded.error) {
+      failedBuckets.push({
+        bucket,
+        message: normalizeText(uploaded.error.message) || "share_manifest_upload_failed",
+      });
+      continue;
+    }
+    succeededBuckets.push(bucket);
+  }
 
-    const shareUrl = buildMerchantBusinessCardShareUrl({
-      origin: shareOrigin,
-      shareKey,
-      imageUrl,
-      targetUrl,
-      name,
-    });
-    if (!shareUrl) break;
+  const shareUrl = buildMerchantBusinessCardShareUrl({
+    origin: shareOrigin,
+    shareKey,
+    imageUrl,
+    targetUrl,
+    name,
+  });
 
+  if (succeededBuckets.length > 0 && shareUrl) {
     return NextResponse.json({
       ok: true,
       shareKey,
       shareUrl,
-      bucket,
+      buckets: succeededBuckets,
       objectPath,
     });
   }
 
-  return NextResponse.json({ ok: false, error: "share_manifest_upload_failed" }, { status: 409 });
+  return NextResponse.json(
+    {
+      ok: false,
+      error: "share_manifest_upload_failed",
+      failedBuckets,
+    },
+    { status: 409 },
+  );
 }
 
 export async function DELETE(request: Request) {
