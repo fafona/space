@@ -140,6 +140,182 @@ function buildWeChatActionHtml(rawValue?: string) {
   </button>`;
 }
 
+type SummaryRow = { label: string; value: string; actionHtml: string };
+
+function buildSummaryActionHtmlFromKey(key: MerchantBusinessCardContactDisplayKey, label: string, value: string) {
+  const normalizedValue = normalizeText(value);
+  if (!normalizedValue) return "";
+  switch (key) {
+    case "phone":
+      return buildActionButtonHtml({
+        href: buildPhoneHref(normalizedValue),
+        label: label === "电话" ? "拨号" : `拨打${label}`,
+        iconSvg: buildInlineSvgIcon("phone"),
+        bgColor: "#007AFF",
+      });
+    case "email":
+      return buildActionButtonHtml({
+        href: `mailto:${normalizedValue}`,
+        label: "发送邮件",
+        iconUrl: "/social-icons/maildotru.svg",
+        bgColor: "#0A84FF",
+      });
+    case "address":
+      return buildActionButtonHtml({
+        href: buildAddressHref(normalizedValue),
+        label: "导航",
+        iconSvg: buildInlineSvgIcon("map"),
+        bgColor: "#EA4335",
+      });
+    case "wechat":
+      return buildWeChatActionHtml(normalizedValue);
+    case "whatsapp":
+      return buildActionButtonHtml({
+        href: buildSocialHref("WhatsApp", normalizedValue),
+        label: "打开 WhatsApp",
+        iconUrl: "/social-icons/whatsapp.svg",
+        bgColor: "#25D366",
+      });
+    case "twitter":
+      return buildActionButtonHtml({
+        href: buildSocialHref("Twitter", normalizedValue),
+        label: "打开 Twitter",
+        iconUrl: "/social-icons/twitter.svg",
+        bgColor: "#111827",
+      });
+    case "weibo":
+      return buildActionButtonHtml({
+        href: `https://weibo.com/n/${encodeURIComponent(normalizedValue.replace(/^@+/, ""))}`,
+        label: "打开微博",
+        iconUrl: "/social-icons/weibo.svg",
+        bgColor: "#E6162D",
+      });
+    case "telegram":
+      return buildActionButtonHtml({
+        href: buildSocialHref("Telegram", normalizedValue),
+        label: "打开 Telegram",
+        iconUrl: "/social-icons/telegram.svg",
+        bgColor: "#229ED9",
+      });
+    case "linkedin":
+      return buildActionButtonHtml({
+        href: buildSocialHref("LinkedIn", normalizedValue),
+        label: "打开 LinkedIn",
+        iconUrl: "/social-icons/linkedin.svg",
+        bgColor: "#0A66C2",
+      });
+    case "discord":
+      return buildActionButtonHtml({
+        href: buildSocialHref("Discord", normalizedValue),
+        label: "打开 Discord",
+        iconUrl: "/social-icons/discord.svg",
+        bgColor: "#5865F2",
+      });
+    case "facebook":
+      return buildActionButtonHtml({
+        href: buildSocialHref("Facebook", normalizedValue),
+        label: "打开 Facebook",
+        iconUrl: "/social-icons/facebook.svg",
+        bgColor: "#1877F2",
+      });
+    case "instagram":
+      return buildActionButtonHtml({
+        href: buildSocialHref("Instagram", normalizedValue),
+        label: "打开 Instagram",
+        iconUrl: "/social-icons/instagram.svg",
+        bgColor: "#E4405F",
+      });
+    case "tiktok":
+      return buildActionButtonHtml({
+        href: buildSocialHref("TikTok", normalizedValue),
+        label: "打开 TikTok",
+        iconUrl: "/social-icons/tiktok.svg",
+        bgColor: "#111827",
+      });
+    case "douyin":
+      return buildActionButtonHtml({
+        href: `https://www.douyin.com/search/${encodeURIComponent(normalizedValue.replace(/^@+/, ""))}`,
+        label: "打开抖音",
+        iconUrl: "/social-icons/tiktok.svg",
+        bgColor: "#161823",
+      });
+    case "xiaohongshu":
+      return buildActionButtonHtml({
+        href: `https://www.xiaohongshu.com/search_result?keyword=${encodeURIComponent(normalizedValue)}`,
+        label: "打开小红书",
+        iconUrl: "/social-icons/xiaohongshu.svg",
+        bgColor: "#FF2442",
+      });
+    default:
+      return "";
+  }
+}
+
+function resolveContactNoteKey(label: string): MerchantBusinessCardContactDisplayKey | null {
+  const normalizedLabel = normalizeText(label);
+  if (!normalizedLabel) return null;
+  if (/^工作\d*$/u.test(normalizedLabel)) return "phone";
+  switch (normalizedLabel) {
+    case "联系人":
+      return "contactName";
+    case "电话":
+      return "phone";
+    case "邮箱":
+      return "email";
+    case "地址":
+      return "address";
+    case "微信":
+      return "wechat";
+    case "WhatsApp":
+      return "whatsapp";
+    case "Twitter":
+      return "twitter";
+    case "微博":
+      return "weibo";
+    case "Telegram":
+      return "telegram";
+    case "LinkedIn":
+      return "linkedin";
+    case "Discord":
+      return "discord";
+    case "Facebook":
+      return "facebook";
+    case "Instagram":
+      return "instagram";
+    case "TikTok":
+      return "tiktok";
+    case "抖音":
+      return "douyin";
+    case "小红书":
+      return "xiaohongshu";
+    default:
+      return null;
+  }
+}
+
+function buildContactNoteFallbackRows(note?: string) {
+  const rowsByKey: Partial<Record<MerchantBusinessCardContactDisplayKey, SummaryRow[]>> = {};
+  const normalizedNote = normalizeText(note);
+  if (!normalizedNote) return rowsByKey;
+
+  for (const line of normalizedNote.split(/\r?\n+/).map((item) => item.trim()).filter(Boolean)) {
+    const match = line.match(/^([^:：]+)\s*[:：]\s*(.+)$/u);
+    if (!match) continue;
+    const label = normalizeText(match[1]);
+    const value = normalizeText(match[2]);
+    const key = resolveContactNoteKey(label);
+    if (!key || !value) continue;
+    const row: SummaryRow = {
+      label,
+      value,
+      actionHtml: buildSummaryActionHtmlFromKey(key, label, value),
+    };
+    rowsByKey[key] = [...(rowsByKey[key] ?? []), row];
+  }
+
+  return rowsByKey;
+}
+
 function buildLanguageSwitcherHtml() {
   const asiaOptions = LANGUAGE_OPTIONS.filter((item) => item.region === "asia");
   const preferredCodes = ["en-GB", "es-ES"];
@@ -864,8 +1040,6 @@ function buildOrderedContactSummaryHtml(input: {
   name: string;
   contact?: MerchantBusinessCardShareContact;
 }) {
-  type SummaryRow = { label: string; value: string; actionHtml: string };
-
   const contact = input.contact;
   if (!contact) return "";
 
@@ -1129,6 +1303,7 @@ function buildOrderedContactSummaryHtml(input: {
       : null,
   );
 
+  const fallbackRowsByKey = buildContactNoteFallbackRows(contact.note);
   const rows: SummaryRow[] = [];
   if (contact.title) {
     rows.push({
@@ -1138,7 +1313,14 @@ function buildOrderedContactSummaryHtml(input: {
     });
   }
   for (const key of orderedKeys) {
-    rows.push(...(rowsByKey[key] ?? []));
+    const directRows = rowsByKey[key] ?? [];
+    const fallbackRows = fallbackRowsByKey[key] ?? [];
+    const mergedRows = [...directRows];
+    for (const fallbackRow of fallbackRows) {
+      if (mergedRows.some((row) => row.label === fallbackRow.label && row.value === fallbackRow.value)) continue;
+      mergedRows.push(fallbackRow);
+    }
+    rows.push(...mergedRows);
   }
 
   if (rows.length === 0) {

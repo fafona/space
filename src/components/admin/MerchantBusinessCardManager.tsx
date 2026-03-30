@@ -36,6 +36,7 @@ import {
   buildMerchantBusinessCardLegacyContactDownloadUrl,
   normalizeMerchantBusinessCardShareImageUrl,
   resolveMerchantBusinessCardShareOrigin,
+  type MerchantBusinessCardShareContact,
 } from "@/lib/merchantBusinessCardShare";
 import { recoverBrowserSupabaseSession } from "@/lib/authSessionRecovery";
 import { uploadImageDataUrlToPublicStorage } from "@/lib/publicAssetUpload";
@@ -1051,10 +1052,11 @@ export default function MerchantBusinessCardManager({
         title: draft.title,
         contacts: draft.contacts,
         contactFieldOrder: draft.contactFieldOrder,
+        contactOnlyFields: draft.contactOnlyFields,
         targetUrl: websiteUrl,
       }),
     });
-  }, [activeLinkShareKey, draft.contactFieldOrder, draft.contacts, draft.mode, draft.name, draft.title, websiteUrl]);
+  }, [activeLinkShareKey, draft.contactFieldOrder, draft.contactOnlyFields, draft.contacts, draft.mode, draft.name, draft.title, websiteUrl]);
   const qrTargetUrl = draft.mode === "link" ? draftLinkUrl || websiteUrl : websiteUrl;
 
   useEffect(() => {
@@ -1334,6 +1336,7 @@ export default function MerchantBusinessCardManager({
         title: card.title,
         contacts: card.contacts,
         contactFieldOrder: card.contactFieldOrder,
+        contactOnlyFields: card.contactOnlyFields,
         targetUrl,
       }),
     };
@@ -2732,16 +2735,7 @@ export default function MerchantBusinessCardManager({
     contactPageImageHeight?: number;
     imageWidth?: number;
     imageHeight?: number;
-    contact?: {
-      displayName?: string;
-      organization?: string;
-      title?: string;
-      phone?: string;
-      email?: string;
-      address?: string;
-      websiteUrl?: string;
-      note?: string;
-    };
+    contact?: MerchantBusinessCardShareContact;
   }) {
     const targetUrl = normalizeText(input.targetUrl);
     if (!targetUrl) {
@@ -2915,6 +2909,7 @@ export default function MerchantBusinessCardManager({
             title: nextDraft.title,
             contacts: nextDraft.contacts,
             contactFieldOrder: nextDraft.contactFieldOrder,
+            contactOnlyFields: nextDraft.contactOnlyFields,
             targetUrl: websiteUrl,
           })
         : undefined;
@@ -2989,6 +2984,7 @@ export default function MerchantBusinessCardManager({
           title: card.title,
           contacts: card.contacts,
           contactFieldOrder: card.contactFieldOrder,
+          contactOnlyFields: card.contactOnlyFields,
           targetUrl,
         }),
       });
@@ -3019,6 +3015,7 @@ export default function MerchantBusinessCardManager({
           title: card.title,
           contacts: card.contacts,
           contactFieldOrder: card.contactFieldOrder,
+          contactOnlyFields: card.contactOnlyFields,
           targetUrl,
         }),
       });
@@ -3070,9 +3067,13 @@ export default function MerchantBusinessCardManager({
     title: string;
     contacts: MerchantBusinessCardDraft["contacts"];
     contactFieldOrder: MerchantBusinessCardDraft["contactFieldOrder"];
+    contactOnlyFields: MerchantBusinessCardDraft["contactOnlyFields"];
     targetUrl: string;
   }) {
     const orderedKeys = normalizeMerchantBusinessCardContactFieldOrder(input.contactFieldOrder);
+    const contactOnlyFields = Object.fromEntries(
+      orderedKeys.filter((key) => input.contactOnlyFields[key]).map((key) => [key, true]),
+    ) as Partial<MerchantBusinessCardDraft["contactOnlyFields"]>;
     const extraPhoneLines = normalizePhoneList(input.contacts.phones ?? [])
       .slice(1)
       .map((value, index) => `${index === 0 ? "工作" : `工作${index + 1}`}: ${value}`);
@@ -3107,6 +3108,7 @@ export default function MerchantBusinessCardManager({
       douyin: normalizeText(input.contacts.douyin),
       xiaohongshu: normalizeText(input.contacts.xiaohongshu),
       contactFieldOrder: orderedKeys,
+      ...(Object.keys(contactOnlyFields).length > 0 ? { contactOnlyFields } : {}),
       websiteUrl: normalizeText(input.targetUrl),
       note: [...extraPhoneLines, ...socialLines].join("\n"),
     };

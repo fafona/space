@@ -2,6 +2,7 @@ import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import {
   MERCHANT_BUSINESS_CARD_PHONE_LIMIT,
   normalizeMerchantBusinessCardContactFieldOrder,
+  type MerchantBusinessCardContactOnlyFields,
   type MerchantBusinessCardContactDisplayKey,
 } from "./merchantBusinessCards";
 
@@ -36,6 +37,7 @@ export type MerchantBusinessCardShareContact = {
   phone?: string;
   phones?: string[];
   contactFieldOrder?: MerchantBusinessCardContactDisplayKey[];
+  contactOnlyFields?: Partial<MerchantBusinessCardContactOnlyFields>;
   email?: string;
   address?: string;
   wechat?: string;
@@ -71,6 +73,34 @@ function normalizeContactPhoneList(value: unknown) {
   return Array.isArray(value)
     ? value.map((item) => clampContactText(item, 80)).filter(Boolean).slice(0, MERCHANT_BUSINESS_CARD_PHONE_LIMIT)
     : [];
+}
+
+function normalizeContactOnlyFields(value: unknown) {
+  if (!value || typeof value !== "object") return undefined;
+  const source = value as Partial<Record<MerchantBusinessCardContactDisplayKey, unknown>>;
+  const normalized = Object.fromEntries(
+    ([
+      "contactName",
+      "phone",
+      "email",
+      "address",
+      "wechat",
+      "whatsapp",
+      "twitter",
+      "weibo",
+      "telegram",
+      "linkedin",
+      "discord",
+      "facebook",
+      "instagram",
+      "tiktok",
+      "douyin",
+      "xiaohongshu",
+    ] as const)
+      .filter((key) => source[key] === true)
+      .map((key) => [key, true]),
+  ) as Partial<MerchantBusinessCardContactOnlyFields>;
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
 }
 
 function isLocalHost(hostname: string) {
@@ -276,6 +306,7 @@ export function normalizeMerchantBusinessCardShareContact(
   const contactFieldOrder = hasExplicitContactFieldOrder
     ? normalizeMerchantBusinessCardContactFieldOrder(source.contactFieldOrder)
     : undefined;
+  const contactOnlyFields = normalizeContactOnlyFields(source.contactOnlyFields);
   const contact = {
     ...(clampContactText(source.displayName, 120)
       ? { displayName: clampContactText(source.displayName, 120) }
@@ -335,6 +366,7 @@ export function normalizeMerchantBusinessCardShareContact(
       ? { xiaohongshu: clampContactText(source.xiaohongshu, 120) }
       : {}),
     ...(websiteUrl ? { websiteUrl } : {}),
+    ...(contactOnlyFields ? { contactOnlyFields } : {}),
     ...(clampContactText(source.note, 600)
       ? { note: clampContactText(source.note, 600) }
       : {}),
@@ -414,6 +446,12 @@ export function buildMerchantBusinessCardShareLegacyFingerprint(
     contact.phone ?? "",
     (contact.phones ?? []).join("|"),
     (contact.contactFieldOrder ?? []).join("|"),
+    (contact.contactOnlyFields
+      ? Object.entries(contact.contactOnlyFields)
+          .filter(([, enabled]) => enabled)
+          .map(([key]) => key)
+          .join("|")
+      : ""),
     contact.email ?? "",
     contact.address ?? "",
     contact.wechat ?? "",
@@ -556,6 +594,12 @@ export function buildMerchantBusinessCardShareUrl(input: {
   if (payload.contact?.contactFieldOrder?.length) {
     shareUrl.searchParams.set("contactOrder", payload.contact.contactFieldOrder.join(","));
   }
+  const contactOnlyKeys = Object.entries(payload.contact?.contactOnlyFields ?? {})
+    .filter(([, enabled]) => enabled)
+    .map(([key]) => key);
+  if (contactOnlyKeys.length > 0) {
+    shareUrl.searchParams.set("contactOnly", contactOnlyKeys.join(","));
+  }
   if (payload.contact?.email) {
     shareUrl.searchParams.set("email", payload.contact.email);
   }
@@ -633,6 +677,34 @@ export function parseMerchantBusinessCardShareParams(
           ?.split(",")
           .map((item) => item.trim())
           .filter(Boolean) as MerchantBusinessCardContactDisplayKey[] | undefined,
+        contactOnlyFields: Object.fromEntries(
+          (readSearchParam(searchParams, "contactOnly")
+            ?.split(",")
+            .map((item) => item.trim())
+            .filter(Boolean)
+            .filter(
+              (item): item is MerchantBusinessCardContactDisplayKey =>
+                [
+                  "contactName",
+                  "phone",
+                  "email",
+                  "address",
+                  "wechat",
+                  "whatsapp",
+                  "twitter",
+                  "weibo",
+                  "telegram",
+                  "linkedin",
+                  "discord",
+                  "facebook",
+                  "instagram",
+                  "tiktok",
+                  "douyin",
+                  "xiaohongshu",
+                ].includes(item as MerchantBusinessCardContactDisplayKey),
+            ) ?? []
+          ).map((key) => [key, true]),
+        ) as Partial<MerchantBusinessCardContactOnlyFields>,
         email: readSearchParam(searchParams, "email"),
         address: readSearchParam(searchParams, "address"),
         wechat: readSearchParam(searchParams, "wechat"),
@@ -793,6 +865,12 @@ export function buildMerchantBusinessCardLegacyContactDownloadUrl(input: {
   if (payload.contact?.phones?.length) url.searchParams.set("phones", payload.contact.phones.join(","));
   if (payload.contact?.contactFieldOrder?.length) {
     url.searchParams.set("contactOrder", payload.contact.contactFieldOrder.join(","));
+  }
+  const contactOnlyKeys = Object.entries(payload.contact?.contactOnlyFields ?? {})
+    .filter(([, enabled]) => enabled)
+    .map(([key]) => key);
+  if (contactOnlyKeys.length > 0) {
+    url.searchParams.set("contactOnly", contactOnlyKeys.join(","));
   }
   if (payload.contact?.email) url.searchParams.set("email", payload.contact.email);
   if (payload.contact?.address) url.searchParams.set("address", payload.contact.address);
