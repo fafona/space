@@ -10,15 +10,19 @@ type AdminPageProps = {
 export default async function AdminPage(props: AdminPageProps) {
   const resolvedSearchParams = props.searchParams ? await props.searchParams : undefined;
   const rawScope = resolvedSearchParams?.scope;
+  const rawInternalMerchantRewrite = resolvedSearchParams?.__merchantInternalRewrite;
   const forcedScope = Array.isArray(rawScope) ? rawScope[0] : rawScope;
+  const internalMerchantRewrite = Array.isArray(rawInternalMerchantRewrite)
+    ? rawInternalMerchantRewrite[0]
+    : rawInternalMerchantRewrite;
   const scopedSiteId =
     typeof forcedScope === "string" && forcedScope.startsWith("site-")
       ? forcedScope.slice("site-".length).trim()
       : "";
-  if (isMerchantNumericId(scopedSiteId)) {
+  if (isMerchantNumericId(scopedSiteId) && internalMerchantRewrite !== "1") {
     const params = new URLSearchParams();
     Object.entries(resolvedSearchParams ?? {}).forEach(([key, value]) => {
-      if (key === "scope") return;
+      if (key === "scope" || key === "__merchantInternalRewrite") return;
       if (Array.isArray(value)) {
         value.forEach((item) => {
           if (typeof item === "string") params.append(key, item);

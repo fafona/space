@@ -1,8 +1,9 @@
 import { headers } from "next/headers";
 import { createClient } from "@supabase/supabase-js";
-import MerchantEntryPageClient from "./MerchantEntryPageClient";
+import SitePageClient from "@/app/site/[siteId]/SitePageClient";
 import { isMobileViewportRequest } from "@/lib/deviceViewport";
 import { isMerchantNumericId, normalizeDomainPrefix } from "@/lib/merchantIdentity";
+import { fetchPublishedSitePayloadFromSupabase } from "@/lib/publishedSiteData";
 
 type MerchantEntryPageProps = {
   params: Promise<{
@@ -109,9 +110,27 @@ async function resolveInitialSiteIdByPrefix(prefix: string) {
 export default async function MerchantEntryPage({ params }: MerchantEntryPageProps) {
   const { merchantEntry } = await params;
   const initialIsMobileViewport = isMobileViewportRequest(await headers());
-  const initialResolvedSiteId = isMerchantNumericId(merchantEntry)
-    ? ""
-    : await resolveInitialSiteIdByPrefix(merchantEntry);
+  if (isMerchantNumericId(merchantEntry)) {
+    const { default: MerchantNumericEntryPageClient } = await import("./MerchantNumericEntryPageClient");
+    return <MerchantNumericEntryPageClient />;
+  }
+
+  const initialResolvedSiteId = await resolveInitialSiteIdByPrefix(merchantEntry);
+  if (initialResolvedSiteId) {
+    const publishedSite = await fetchPublishedSitePayloadFromSupabase(initialResolvedSiteId).catch(() => null);
+    if (publishedSite?.blocks?.length) {
+      return (
+        <SitePageClient
+          forcedSiteId={initialResolvedSiteId}
+          initialIsMobileViewport={initialIsMobileViewport}
+          initialPublishedBlocks={publishedSite.blocks}
+          initialMerchantName={publishedSite.merchantName}
+        />
+      );
+    }
+  }
+
+  const { default: MerchantEntryPageClient } = await import("./MerchantEntryPageClient");
   return (
     <MerchantEntryPageClient
       initialIsMobileViewport={initialIsMobileViewport}

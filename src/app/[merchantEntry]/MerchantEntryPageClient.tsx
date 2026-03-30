@@ -1,23 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import AdminClient from "@/app/admin/AdminClient";
-import SitePageClient from "@/app/site/[siteId]/SitePageClient";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
+import SitePageClient from "@/app/site/[siteId]/SitePageClient";
 import { loadPlatformState, subscribePlatformState } from "@/data/platformControlStore";
-import {
-  hasStoredBrowserSupabaseSessionTokens,
-  isTransientAuthValidationError,
-  recoverBrowserSupabaseSession,
-} from "@/lib/authSessionRecovery";
-import { buildMerchantSiteLinker } from "@/lib/merchantSiteLinking";
 import { isMerchantNumericId, normalizeDomainPrefix } from "@/lib/merchantIdentity";
-import { clearMerchantSignInBridge, hasMerchantSignInBridge } from "@/lib/merchantSignInBridge";
 import { resolvePublishedSiteByPrefix } from "@/lib/publishedSiteLookup";
 import { buildPlatformHomeHref } from "@/lib/siteRouting";
-import { isSupabaseEnabled, supabase } from "@/lib/supabase";
 import { useHydrated } from "@/lib/useHydrated";
 
 type MerchantEntryPageClientProps = {
@@ -30,23 +21,8 @@ export default function MerchantEntryPageClient({
   initialResolvedSiteId = "",
 }: MerchantEntryPageClientProps) {
   const params = useParams<{ merchantEntry: string }>();
-  const searchParams = useSearchParams();
   const merchantEntry = String(params?.merchantEntry ?? "").trim();
-  const isNumericMerchantEntry = isMerchantNumericId(merchantEntry);
   const hydrated = useHydrated();
-  const [justSignedIn] = useState(() => (searchParams.get("justSignedIn") ?? "").trim() === "1");
-  const [hasStoredSessionTokens] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return hasStoredBrowserSupabaseSessionTokens();
-  });
-  const skipEntrySessionCheck = useMemo(
-    () => hydrated && isNumericMerchantEntry && (justSignedIn || hasStoredSessionTokens),
-    [hasStoredSessionTokens, hydrated, isNumericMerchantEntry, justSignedIn],
-  );
-  const recentSignInBridgeActive = useMemo(
-    () => hydrated && justSignedIn && isNumericMerchantEntry && hasMerchantSignInBridge(merchantEntry),
-    [hydrated, isNumericMerchantEntry, justSignedIn, merchantEntry],
-  );
   const normalizedPrefix = useMemo(() => normalizeDomainPrefix(merchantEntry), [merchantEntry]);
   const [platformState, setPlatformState] = useState(() => loadPlatformState());
   const [remoteLookup, setRemoteLookup] = useState<{
@@ -58,22 +34,6 @@ export default function MerchantEntryPageClient({
     siteId: initialResolvedSiteId,
     resolved: !!initialResolvedSiteId,
   });
-  const [numericAdminAuthReady, setNumericAdminAuthReady] = useState(() => recentSignInBridgeActive);
-  const [numericAdminAuthenticated, setNumericAdminAuthenticated] = useState(() => recentSignInBridgeActive);
-  const [numericSessionEmail, setNumericSessionEmail] = useState("");
-  const [numericSessionLookupDone, setNumericSessionLookupDone] = useState(() => !isNumericMerchantEntry || !isSupabaseEnabled);
-  const matchMerchantSite = useMemo(
-    () => buildMerchantSiteLinker(platformState.sites, platformState.users),
-    [platformState.sites, platformState.users],
-  );
-  const numericScopedSiteId = useMemo(() => {
-    if (!merchantEntry || !isNumericMerchantEntry) return "";
-    const matched = matchMerchantSite({
-      merchantId: merchantEntry,
-      email: numericSessionEmail,
-    });
-    return matched?.id || merchantEntry;
-  }, [isNumericMerchantEntry, matchMerchantSite, merchantEntry, numericSessionEmail]);
 
   useEffect(
     () =>
@@ -82,18 +42,6 @@ export default function MerchantEntryPageClient({
       }),
     [],
   );
-
-  useEffect(() => {
-    if (!hydrated || !justSignedIn || typeof window === "undefined") return;
-    try {
-      const url = new URL(window.location.href);
-      if (!url.searchParams.has("justSignedIn")) return;
-      url.searchParams.delete("justSignedIn");
-      window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
-    } catch {
-      // Ignore URL cleanup failures; AdminClient still keeps the bridge state in memory.
-    }
-  }, [hydrated, justSignedIn]);
 
   useEffect(() => {
     if (!hydrated || !merchantEntry || isMerchantNumericId(merchantEntry)) return;
@@ -116,163 +64,12 @@ export default function MerchantEntryPageClient({
     };
   }, [hydrated, initialResolvedSiteId, merchantEntry, normalizedPrefix]);
 
-  useEffect(() => {
-    if (!hydrated || !merchantEntry || !isNumericMerchantEntry) return;
-    if (!isSupabaseEnabled) return;
-
-    let mounted = true;
-    if (skipEntrySessionCheck) {
-      return () => {
-        mounted = false;
-      };
-    }
-    if (recentSignInBridgeActive) {
-      return () => {
-        mounted = false;
-      };
-    }
-
-    const redirectToLogin = () => {
-      if (!mounted || typeof window === "undefined") return;
-      setNumericAdminAuthenticated(false);
-      setNumericAdminAuthReady(true);
-      window.location.replace(`/login?redirect=${encodeURIComponent(`/${merchantEntry}`)}`);
-    };
-
-    void (async () => {
-      let session = await recoverBrowserSupabaseSession(4500);
-      if (!mounted) return;
-      if (!session?.user) {
-        if (hasStoredBrowserSupabaseSessionTokens()) {
-          setNumericAdminAuthenticated(true);
-          setNumericAdminAuthReady(true);
-          return;
-        }
-        redirectToLogin();
-        return;
-      }
-
-      try {
-        const { data, error } = await supabase.auth.getUser();
-        if (!mounted) return;
-        if (error || !data.user) {
-          if (error && isTransientAuthValidationError(error)) {
-            setNumericAdminAuthenticated(true);
-            setNumericAdminAuthReady(true);
-            return;
-          }
-          session = await recoverBrowserSupabaseSession(2200);
-          if (!mounted) return;
-          if (!session?.user) {
-            if (hasStoredBrowserSupabaseSessionTokens()) {
-              setNumericAdminAuthenticated(true);
-              setNumericAdminAuthReady(true);
-              return;
-            }
-            await supabase.auth.signOut({ scope: "local" }).catch(() => {
-              // Ignore local cleanup failure.
-            });
-            redirectToLogin();
-            return;
-          }
-        }
-      } catch {
-        if (!mounted) return;
-        setNumericAdminAuthenticated(true);
-        setNumericAdminAuthReady(true);
-        return;
-      }
-
-      setNumericAdminAuthenticated(true);
-      setNumericAdminAuthReady(true);
-    })().catch(() => {
-      redirectToLogin();
-    });
-
-    return () => {
-      mounted = false;
-    };
-  }, [hydrated, isNumericMerchantEntry, merchantEntry, recentSignInBridgeActive, skipEntrySessionCheck]);
-
-  useEffect(() => {
-    if (!hydrated || !merchantEntry || !isNumericMerchantEntry || !isSupabaseEnabled) return;
-
-    let mounted = true;
-    if (skipEntrySessionCheck) {
-      return () => {
-        mounted = false;
-      };
-    }
-    void Promise.resolve()
-      .then(() => {
-        if (!mounted) return null;
-        setNumericSessionLookupDone(false);
-        return recoverBrowserSupabaseSession(2200);
-      })
-      .then((session) => {
-        if (!mounted) return;
-        setNumericSessionEmail(String(session?.user?.email ?? "").trim().toLowerCase());
-      })
-      .catch(() => {
-        if (!mounted) return;
-        setNumericSessionEmail("");
-      })
-      .finally(() => {
-        if (!mounted) return;
-        setNumericSessionLookupDone(true);
-      });
-
-    return () => {
-      mounted = false;
-    };
-  }, [hydrated, isNumericMerchantEntry, merchantEntry, skipEntrySessionCheck]);
-
-  useEffect(() => {
-    if (!recentSignInBridgeActive) return;
-
-    let mounted = true;
-    void recoverBrowserSupabaseSession(3200)
-      .then((session) => {
-        if (!mounted || !session?.user) return;
-        clearMerchantSignInBridge(merchantEntry);
-      })
-      .catch(() => {
-        // Keep bridge available during transient recovery failures.
-      });
-
-    return () => {
-      mounted = false;
-    };
-  }, [merchantEntry, recentSignInBridgeActive]);
-
   const resolvedSiteId = remoteLookup.prefix === normalizedPrefix ? remoteLookup.siteId : "";
   const remoteResolved =
-    !merchantEntry || isNumericMerchantEntry || (remoteLookup.prefix === normalizedPrefix && remoteLookup.resolved);
+    !merchantEntry || isMerchantNumericId(merchantEntry) || (remoteLookup.prefix === normalizedPrefix && remoteLookup.resolved);
 
   if (!hydrated) {
     return <LoadingProgressScreen message="正在加载站点..." />;
-  }
-
-  if (merchantEntry && isNumericMerchantEntry) {
-    if (!isSupabaseEnabled) {
-      return <AdminClient forcedScope={`site-${numericScopedSiteId || merchantEntry}`} initialJustSignedIn={justSignedIn} />;
-    }
-    if (skipEntrySessionCheck) {
-      return <AdminClient forcedScope={`site-${numericScopedSiteId || merchantEntry}`} initialJustSignedIn={justSignedIn} />;
-    }
-    if (!numericSessionLookupDone) {
-      return <LoadingProgressScreen message="正在定位商户站点..." />;
-    }
-    if (recentSignInBridgeActive) {
-      return <AdminClient forcedScope={`site-${numericScopedSiteId || merchantEntry}`} initialJustSignedIn={justSignedIn} />;
-    }
-    if (!numericAdminAuthReady) {
-      return <LoadingProgressScreen message="正在检查登录状态..." />;
-    }
-    if (!numericAdminAuthenticated) {
-      return <LoadingProgressScreen message="正在跳转到登录页..." />;
-    }
-    return <AdminClient forcedScope={`site-${numericScopedSiteId || merchantEntry}`} initialJustSignedIn={justSignedIn} />;
   }
 
   const byPrefix = merchantEntry
@@ -309,11 +106,8 @@ export default function MerchantEntryPageClient({
     <main className="min-h-screen bg-slate-100 p-6">
       <div className="mx-auto max-w-3xl rounded-lg border bg-white p-6 shadow-sm">
         <h1 className="text-lg font-semibold text-slate-900">地址未匹配到站点</h1>
-        <p className="mt-2 text-sm text-slate-600">请检查商户后台地址（8位 ID）或商户前台前缀是否正确。</p>
+        <p className="mt-2 text-sm text-slate-600">请检查商户后台地址、商户 ID 或商户前台前缀是否正确。</p>
         <div className="mt-4 flex flex-wrap gap-2">
-          <Link href="/login" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50">
-            去商户登录
-          </Link>
           <Link href={buildPlatformHomeHref()} className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50">
             去总站首页
           </Link>

@@ -208,11 +208,15 @@ async function fetchPublishedSiteBlocksViaApi(siteId: string) {
 type SitePageClientProps = {
   forcedSiteId?: string;
   initialIsMobileViewport?: boolean;
+  initialPublishedBlocks?: Block[];
+  initialMerchantName?: string;
 };
 
 export function SitePageClient({
   forcedSiteId,
   initialIsMobileViewport = false,
+  initialPublishedBlocks = EMPTY_BLOCKS,
+  initialMerchantName = "",
 }: SitePageClientProps = {}) {
   const params = useParams<{ siteId?: string }>();
   const routeSiteId = typeof params?.siteId === "string" ? params.siteId : "";
@@ -223,9 +227,12 @@ export function SitePageClient({
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isMobileViewport, setIsMobileViewport] = useState(initialIsMobileViewport);
   const [platformState, setPlatformState] = useState(() => loadPlatformState());
-  const [dbBlocks, setDbBlocks] = useState<Block[] | null>(null);
-  const [scopedPublishedBlocksLocal, setScopedPublishedBlocksLocal] = useState<Block[] | null>(null);
-  const [remoteResolved, setRemoteResolved] = useState(false);
+  const hasInitialPublishedBlocks = initialPublishedBlocks.length > 0;
+  const [dbBlocks, setDbBlocks] = useState<Block[] | null>(() => (hasInitialPublishedBlocks ? initialPublishedBlocks : null));
+  const [scopedPublishedBlocksLocal, setScopedPublishedBlocksLocal] = useState<Block[] | null>(() =>
+    hasInitialPublishedBlocks ? initialPublishedBlocks : null,
+  );
+  const [remoteResolved, setRemoteResolved] = useState(hasInitialPublishedBlocks);
 
   const effectiveScopedPublishedBlocks = scopedPublishedBlocksLocal ?? EMPTY_BLOCKS;
   const hasScopedLocalBlocks = effectiveScopedPublishedBlocks.length > 0;
@@ -267,6 +274,7 @@ export function SitePageClient({
   );
 
   const site = useMemo(() => platformState.sites.find((item) => item.id === siteId) ?? null, [platformState.sites, siteId]);
+  const effectiveMerchantName = (site?.merchantName ?? site?.name ?? initialMerchantName).trim();
   useEffect(() => {
     if (!hydrated || !site || !resolvedPageId) return;
     trackPageView(`site:${site.id}:${resolvedPageId}`);
@@ -284,12 +292,14 @@ export function SitePageClient({
 
   useEffect(() => {
     if (!hydrated) return;
+    if (hasInitialPublishedBlocks) return;
     const scoped = loadPublishedWithFallback(siteId, siteScope);
     setScopedPublishedBlocksLocal(scoped);
-  }, [hydrated, siteId, siteScope]);
+  }, [hasInitialPublishedBlocks, hydrated, siteId, siteScope]);
 
   useEffect(() => {
     if (!hydrated || typeof window === "undefined") return;
+    if (hasInitialPublishedBlocks) return;
     const refreshLocalPublished = () => {
       const scoped = loadPublishedWithFallback(siteId, siteScope);
       setScopedPublishedBlocksLocal(scoped);
@@ -325,7 +335,7 @@ export function SitePageClient({
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [hydrated, siteId, siteScope]);
+  }, [hasInitialPublishedBlocks, hydrated, siteId, siteScope]);
 
   useEffect(() => {
     if (!hydrated || !siteId) {
@@ -396,7 +406,8 @@ export function SitePageClient({
   }, [hydrated, siteId, siteScope]);
 
   const waitingForPublishedSync = Boolean(siteId) && !dbBlocks && !hasScopedLocalBlocks && !remoteResolved;
-  if (!hydrated || isInitialLoading || waitingForPublishedSync) {
+  const shouldHoldForHydration = (!hydrated || isInitialLoading) && !hasInitialPublishedBlocks;
+  if (shouldHoldForHydration || waitingForPublishedSync) {
     return <LoadingProgressScreen message="正在加载站点..." />;
   }
 
@@ -466,7 +477,7 @@ export function SitePageClient({
         currentPageIndex={activePageIndex}
         availablePages={activePlan?.pages?.map((page) => ({ id: page.id, name: page.name })) ?? []}
         bookingSiteId={site?.id ?? siteId}
-        bookingSiteName={(site?.merchantName ?? site?.name ?? "").trim()}
+        bookingSiteName={effectiveMerchantName}
         bookingInteractive
         onNavigatePage={(pageId) => {
           if (activePlan?.pages?.some((page) => page.id === pageId)) setCurrentPageId(pageId);
