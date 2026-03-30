@@ -2058,6 +2058,7 @@ type AdminClientProps = {
   forceDesktopEditorSidebar?: boolean;
   initialPublishedBlocks?: Block[];
   initialJustSignedIn?: boolean;
+  startInLoadingState?: boolean;
 };
 
 function estimateUtf8Size(value: string) {
@@ -2895,6 +2896,7 @@ export default function AdminClient({
   forceDesktopEditorSidebar = false,
   initialPublishedBlocks,
   initialJustSignedIn = false,
+  startInLoadingState = false,
 }: AdminClientProps = {}) {
   const [storeScope] = useState<string>(() => readBlocksStoreScopeFromLocation(forcedScope));
   const [justSignedIn] = useState<boolean>(() => {
@@ -2952,7 +2954,7 @@ export default function AdminClient({
   const tipDurationMsRef = useRef<number | null>(DEFAULT_TIP_DURATION_MS);
   const tipDismissByPointerRef = useRef<boolean>(true);
   const [dialog, setDialog] = useState<CenterDialog | null>(null);
-  const [checkingAuth, setCheckingAuth] = useState(false);
+  const [checkingAuth, setCheckingAuth] = useState(startInLoadingState);
   const [hasEditorContent, setHasEditorContent] = useState(true);
   const [remoteContentVerified, setRemoteContentVerified] = useState<boolean>(!isSupabaseEnabled || isSupabaseFallbackMode);
   const [publishing, setPublishing] = useState(false);

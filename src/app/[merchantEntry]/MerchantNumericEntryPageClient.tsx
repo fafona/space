@@ -204,7 +204,13 @@ export default function MerchantNumericEntryPageClient() {
   }
 
   if (!isSupabaseEnabled || skipEntrySessionCheck || recentSignInBridgeActive) {
-    return <AdminClient forcedScope={`site-${numericScopedSiteId || merchantEntry}`} initialJustSignedIn={justSignedIn} />;
+    return (
+      <AdminClient
+        forcedScope={`site-${numericScopedSiteId || merchantEntry}`}
+        initialJustSignedIn={justSignedIn}
+        startInLoadingState
+      />
+    );
   }
   if (!numericSessionLookupDone) {
     return <LoadingProgressScreen message="正在定位商户站点..." />;
@@ -215,5 +221,11 @@ export default function MerchantNumericEntryPageClient() {
   if (!numericAdminAuthenticated) {
     return <LoadingProgressScreen message="正在跳转到登录页..." />;
   }
-  return <AdminClient forcedScope={`site-${numericScopedSiteId || merchantEntry}`} initialJustSignedIn={justSignedIn} />;
+  return (
+    <AdminClient
+      forcedScope={`site-${numericScopedSiteId || merchantEntry}`}
+      initialJustSignedIn={justSignedIn}
+      startInLoadingState
+    />
+  );
 }

@@ -36,5 +36,10 @@ export default async function AdminPage(props: AdminPageProps) {
     const targetHref = buildMerchantBackendHref(scopedSiteId);
     redirect(params.size > 0 ? `${targetHref}?${params.toString()}` : targetHref);
   }
-  return <AdminClient forcedScope={typeof forcedScope === "string" ? forcedScope : undefined} />;
+  return (
+    <AdminClient
+      forcedScope={typeof forcedScope === "string" ? forcedScope : undefined}
+      startInLoadingState={internalMerchantRewrite === "1"}
+    />
+  );
 }
