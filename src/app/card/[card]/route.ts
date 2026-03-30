@@ -783,6 +783,51 @@ function buildInlineI18nScript() {
       }, 12);
     }
 
+    function isWechatBrowser() {
+      try {
+        return /micromessenger/i.test(String(navigator.userAgent || ""));
+      } catch {
+        return false;
+      }
+    }
+
+    function navigateToUrl(url) {
+      const href = String(url || "").trim();
+      if (!href) return;
+      try {
+        window.location.assign(href);
+      } catch {
+        window.location.href = href;
+      }
+    }
+
+    function openTargetUrl(url) {
+      const href = String(url || "").trim();
+      if (!href) return;
+      if (!isWechatBrowser()) {
+        navigateToUrl(href);
+        return;
+      }
+      const anchor = document.createElement("a");
+      anchor.href = href;
+      anchor.target = "_blank";
+      anchor.rel = "noopener noreferrer";
+      anchor.style.display = "none";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => {
+        if (document.visibilityState === "visible") {
+          navigateToUrl(href);
+        }
+      }, 24);
+      window.setTimeout(() => {
+        if (document.visibilityState === "visible") {
+          showWechatToast("若未成功跳转，请点右上角并选择在浏览器中打开");
+        }
+      }, 720);
+    }
+
     const wechatButtons = Array.from(document.querySelectorAll("[data-wechat-primary]"));
     wechatButtons.forEach((button) => {
       button.addEventListener("click", async (event) => {
@@ -799,6 +844,16 @@ function buildInlineI18nScript() {
             : "\u8bf7\u8bb0\u4e0b\u5fae\u4fe1\u53f7\u540e\u6253\u5f00\u5fae\u4fe1\u641c\u7d22\uff1a" + wechatId,
         );
         launchWechatScheme(wechatAppHref || "weixin://");
+      });
+    });
+
+    const openTargetButtons = Array.from(document.querySelectorAll("[data-open-target-url]"));
+    openTargetButtons.forEach((button) => {
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        const target = event.currentTarget;
+        if (!(target instanceof HTMLElement)) return;
+        openTargetUrl(String(target.dataset.openTargetUrl || "").trim());
       });
     });
 
@@ -1549,17 +1604,22 @@ function buildShareCardHtml(input: {
         gap: 12px;
         margin-top: 16px;
       }
-      a.button {
-        display: inline-block;
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
         padding: 10px 16px;
         border-radius: 999px;
         text-decoration: none;
+        border: 0;
+        cursor: pointer;
+        font: inherit;
       }
-      a.button {
+      .button {
         background: #0f172a;
         color: #fff;
       }
-      a.button.secondary {
+      .button.secondary {
         background: #fff;
         color: #0f172a;
         border: 1px solid rgba(15,23,42,.12);
@@ -1616,7 +1676,7 @@ function buildShareCardHtml(input: {
               ? `<a class="button" href="${escapeHtml(input.contactUrl)}">一键保存到通讯录</a>`
               : ""
           }
-          <a class="button secondary" href="${targetUrl}">打开网页</a>
+          <button class="button secondary" type="button" data-open-target-url="${targetUrl}">打开网页</button>
         </div>
         <div class="footer">
           名片服务由 <a href="https://www.faolla.com" target="_blank" rel="noopener noreferrer" data-no-translate="1">www.faolla.com</a> 提供
