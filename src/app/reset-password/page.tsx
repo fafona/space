@@ -5,21 +5,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "@/components/I18nProvider";
 import PasswordField, { getPasswordToggleLabels } from "@/components/PasswordField";
 import { recoverBrowserSupabaseSession } from "@/lib/authSessionRecovery";
+import {
+  clearStoredResetPasswordRecoveryPayload,
+  hasDirectResetPasswordRecoveryPayload,
+  persistResetPasswordRecoveryPayload,
+  readResetPasswordRecoveryHashParams,
+  readResetPasswordRecoveryPayloadFromUrl,
+  readStoredResetPasswordRecoveryPayload,
+  type ResetPasswordRecoveryPayload,
+} from "@/lib/resetPasswordRecoveryPayload";
 import { getResolvedSupabaseUrl, resolvedSupabaseAnonKey } from "@/lib/supabase";
 
 type RecoveryState = "checking" | "ready" | "expired";
-
-type RecoveryPayload = {
-  accessToken: string;
-  refreshToken: string;
-  tokenHash: string;
-  code: string;
-  type: string;
-  capturedAt: number;
-};
-
-const RESET_RECOVERY_STORAGE_KEY = "merchant-space:password-reset-recovery:v1";
-const RESET_RECOVERY_STORAGE_TTL_MS = 30 * 60 * 1000;
 
 function delay(ms: number) {
   return new Promise<void>((resolve) => {
@@ -29,90 +26,12 @@ function delay(ms: number) {
 
 function readRecoveryHashParams() {
   if (typeof window === "undefined") return new URLSearchParams();
-  return new URLSearchParams(window.location.hash.replace(/^#/, ""));
-}
-
-function normalizeRecoveryPayload(input: Partial<RecoveryPayload> | null | undefined): RecoveryPayload | null {
-  const accessToken = String(input?.accessToken ?? "").trim();
-  const refreshToken = String(input?.refreshToken ?? "").trim();
-  const tokenHash = String(input?.tokenHash ?? "").trim();
-  const code = String(input?.code ?? "").trim();
-  const type = String(input?.type ?? "").trim();
-  const capturedAt =
-    typeof input?.capturedAt === "number" && Number.isFinite(input.capturedAt) ? input.capturedAt : Date.now();
-  if (!accessToken && !tokenHash && !code) return null;
-  if (Date.now() - capturedAt > RESET_RECOVERY_STORAGE_TTL_MS) return null;
-  return {
-    accessToken,
-    refreshToken,
-    tokenHash,
-    code,
-    type,
-    capturedAt,
-  };
-}
-
-function readRecoveryPayloadFromUrl(): RecoveryPayload | null {
-  if (typeof window === "undefined") return null;
-  const url = new URL(window.location.href);
-  const hashParams = readRecoveryHashParams();
-  return normalizeRecoveryPayload({
-    accessToken: hashParams.get("access_token") ?? "",
-    refreshToken: hashParams.get("refresh_token") ?? "",
-    tokenHash: url.searchParams.get("token_hash") ?? url.searchParams.get("token") ?? "",
-    code: url.searchParams.get("code") ?? "",
-    type: hashParams.get("type") ?? url.searchParams.get("type") ?? "",
-    capturedAt: Date.now(),
-  });
-}
-
-function readStoredRecoveryPayload(): RecoveryPayload | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.sessionStorage.getItem(RESET_RECOVERY_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<RecoveryPayload>;
-    const normalized = normalizeRecoveryPayload(parsed);
-    if (!normalized) {
-      window.sessionStorage.removeItem(RESET_RECOVERY_STORAGE_KEY);
-      return null;
-    }
-    return normalized;
-  } catch {
-    return null;
-  }
-}
-
-function persistRecoveryPayload(payload: RecoveryPayload | null) {
-  if (typeof window === "undefined") return;
-  try {
-    if (!payload) {
-      window.sessionStorage.removeItem(RESET_RECOVERY_STORAGE_KEY);
-      return;
-    }
-    window.sessionStorage.setItem(RESET_RECOVERY_STORAGE_KEY, JSON.stringify(payload));
-  } catch {
-    // Ignore browser storage failures.
-  }
-}
-
-function clearStoredRecoveryPayload() {
-  if (typeof window === "undefined") return;
-  try {
-    window.sessionStorage.removeItem(RESET_RECOVERY_STORAGE_KEY);
-  } catch {
-    // Ignore browser storage cleanup failures.
-  }
-}
-
-function hasDirectRecoveryPayload(payload: RecoveryPayload | null | undefined) {
-  if (!payload) return false;
-  return Boolean((payload.accessToken && payload.refreshToken) || payload.tokenHash);
+  return readResetPasswordRecoveryHashParams(new URL(window.location.href));
 }
 
 function hasRecoveryIndicators() {
   if (typeof window === "undefined") return false;
-  if (readStoredRecoveryPayload()) return true;
+  if (readStoredResetPasswordRecoveryPayload()) return true;
   const url = new URL(window.location.href);
   const hashParams = readRecoveryHashParams();
   return (
@@ -162,7 +81,7 @@ export default function ResetPasswordPage() {
   const sessionExpiredMessageRef = useRef(t("reset.sessionExpired"));
   const timeoutMessageRef = useRef(t("login.timeout"));
   const recoveryResolvedRef = useRef(false);
-  const recoveryPayloadRef = useRef<RecoveryPayload | null>(null);
+  const recoveryPayloadRef = useRef<ResetPasswordRecoveryPayload | null>(null);
   const resetSupabase = useMemo(() => {
     return createClient(getResolvedSupabaseUrl(), resolvedSupabaseAnonKey, {
       auth: {
@@ -232,7 +151,7 @@ export default function ResetPasswordPage() {
 
   const recoverResetSession = useCallback(
     async (timeoutMs = 5000) => {
-      const storedPayload = recoveryPayloadRef.current ?? readStoredRecoveryPayload();
+      const storedPayload = recoveryPayloadRef.current ?? readStoredResetPasswordRecoveryPayload();
       if (storedPayload) {
         recoveryPayloadRef.current = storedPayload;
       }
@@ -244,7 +163,7 @@ export default function ResetPasswordPage() {
           Math.max(3000, timeoutMs),
         );
         if (!error && data.session) {
-          clearStoredRecoveryPayload();
+          clearStoredResetPasswordRecoveryPayload();
           clearRecoveryUrlArtifacts();
           return data.session;
         }
@@ -260,14 +179,14 @@ export default function ResetPasswordPage() {
         data: { session: directSession },
       } = await resetSupabase.auth.getSession();
       if (directSession) {
-        clearStoredRecoveryPayload();
+        clearStoredResetPasswordRecoveryPayload();
         clearRecoveryUrlArtifacts();
         return directSession;
       }
 
       const initializedSession = await recoverBrowserSupabaseSession(Math.max(timeoutMs, 4500));
       if (initializedSession) {
-        clearStoredRecoveryPayload();
+        clearStoredResetPasswordRecoveryPayload();
         clearRecoveryUrlArtifacts();
         return initializedSession;
       }
@@ -287,7 +206,7 @@ export default function ResetPasswordPage() {
         recoveryResolvedRef.current = true;
         setRecoveryState("ready");
         setMsg("");
-        clearStoredRecoveryPayload();
+        clearStoredResetPasswordRecoveryPayload();
         clearRecoveryUrlArtifacts();
       }
     });
@@ -302,18 +221,18 @@ export default function ResetPasswordPage() {
 
     async function initializeRecovery() {
       if (recoveryResolvedRef.current) return;
-      const urlPayload = readRecoveryPayloadFromUrl();
+      const urlPayload = readResetPasswordRecoveryPayloadFromUrl(new URL(window.location.href));
       const preferFreshRecoveryAttempt = hasUrlRecoveryIndicators();
       if (preferFreshRecoveryAttempt && !urlPayload) {
-        clearStoredRecoveryPayload();
+        clearStoredResetPasswordRecoveryPayload();
         recoveryPayloadRef.current = null;
       }
-      const storedPayload = urlPayload ?? (preferFreshRecoveryAttempt ? null : readStoredRecoveryPayload());
+      const storedPayload = urlPayload ?? (preferFreshRecoveryAttempt ? null : readStoredResetPasswordRecoveryPayload());
       if (storedPayload) {
         recoveryPayloadRef.current = storedPayload;
-        persistRecoveryPayload(storedPayload);
+        persistResetPasswordRecoveryPayload(storedPayload);
         clearRecoveryUrlArtifacts();
-        if (hasDirectRecoveryPayload(storedPayload)) {
+        if (hasDirectResetPasswordRecoveryPayload(storedPayload)) {
           recoveryResolvedRef.current = true;
           setRecoveryState("ready");
           setMsg("");
@@ -356,9 +275,9 @@ export default function ResetPasswordPage() {
   }, [hasServerRecoverySession, recoverResetSession]);
 
   const submitPasswordResetViaServer = useCallback(async () => {
-    const payload = recoveryPayloadRef.current ?? readStoredRecoveryPayload();
+    const payload = recoveryPayloadRef.current ?? readStoredResetPasswordRecoveryPayload();
     recoveryPayloadRef.current = payload;
-    if (!payload || !hasDirectRecoveryPayload(payload)) {
+    if (!payload || !hasDirectResetPasswordRecoveryPayload(payload)) {
       return false;
     }
 
@@ -380,11 +299,11 @@ export default function ResetPasswordPage() {
       20000,
     );
 
-    const result = (await response.json().catch(() => null)) as { ok?: unknown; error?: unknown } | null;
+      const result = (await response.json().catch(() => null)) as { ok?: unknown; error?: unknown } | null;
     if (!response.ok || result?.ok !== true) {
       const errorMessage = typeof result?.error === "string" ? result.error : "";
       if (/expired|session/i.test(errorMessage)) {
-        clearStoredRecoveryPayload();
+        clearStoredResetPasswordRecoveryPayload();
         recoveryPayloadRef.current = null;
         setRecoveryState("expired");
         setMsg(sessionExpiredMessageRef.current);
@@ -398,7 +317,7 @@ export default function ResetPasswordPage() {
       return true;
     }
 
-    clearStoredRecoveryPayload();
+    clearStoredResetPasswordRecoveryPayload();
     recoveryPayloadRef.current = null;
     setMsg(t("reset.successRedirect"));
     setTimeout(() => {
@@ -418,9 +337,9 @@ export default function ResetPasswordPage() {
       if (
         !recoveredSession &&
         !serverReady &&
-        !hasDirectRecoveryPayload(recoveryPayloadRef.current ?? readStoredRecoveryPayload())
+        !hasDirectResetPasswordRecoveryPayload(recoveryPayloadRef.current ?? readStoredResetPasswordRecoveryPayload())
       ) {
-        clearStoredRecoveryPayload();
+        clearStoredResetPasswordRecoveryPayload();
         recoveryPayloadRef.current = null;
         setRecoveryState("expired");
         setMsg(sessionExpiredMessageRef.current);
@@ -439,7 +358,7 @@ export default function ResetPasswordPage() {
 
       if (error) {
         if (/session/i.test(error.message)) {
-          clearStoredRecoveryPayload();
+          clearStoredResetPasswordRecoveryPayload();
           recoveryPayloadRef.current = null;
           setRecoveryState("expired");
           setMsg(sessionExpiredMessageRef.current);
@@ -449,7 +368,7 @@ export default function ResetPasswordPage() {
         return;
       }
 
-      clearStoredRecoveryPayload();
+      clearStoredResetPasswordRecoveryPayload();
       recoveryPayloadRef.current = null;
       setMsg(t("reset.successRedirect"));
       setTimeout(() => {

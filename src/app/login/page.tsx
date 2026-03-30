@@ -648,9 +648,10 @@ function LoginPageInner() {
 
     setPendingAction("forgot");
     try {
+      const resetBridgeUrl = new URL("/reset-password/bridge", window.location.origin).toString();
       const { error } = await withTimeout(
         supabase.auth.resetPasswordForEmail(trimmedEmail, {
-          redirectTo: `${window.location.origin}/reset-password`,
+          redirectTo: resetBridgeUrl,
         }),
       );
 

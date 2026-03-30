@@ -135,3 +135,53 @@ export async function GET(request: Request) {
     return response;
   }
 }
+
+export async function POST(request: Request) {
+  try {
+    const supabase = createServerSupabaseClient();
+    if (!supabase) {
+      return noStoreJson({ ok: false, error: "reset_password_env_missing" }, { status: 503 });
+    }
+
+    const payload = (await request.json().catch(() => null)) as
+      | {
+          accessToken?: unknown;
+          refreshToken?: unknown;
+          expiresIn?: unknown;
+        }
+      | null;
+
+    const accessToken = typeof payload?.accessToken === "string" ? payload.accessToken.trim() : "";
+    const refreshToken = typeof payload?.refreshToken === "string" ? payload.refreshToken.trim() : "";
+    const expiresIn =
+      typeof payload?.expiresIn === "number" && Number.isFinite(payload.expiresIn) ? payload.expiresIn : undefined;
+
+    if (!accessToken) {
+      const response = noStoreJson({ ok: false, error: "reset_password_missing_access_token" }, { status: 400 });
+      clearResetRecoveryCookies(response);
+      return response;
+    }
+
+    const { data, error } = await supabase.auth.getUser(accessToken);
+    if (error || !data.user) {
+      const response = noStoreJson({ ok: false, error: "reset_password_invalid_access_token" }, { status: 401 });
+      clearResetRecoveryCookies(response);
+      return response;
+    }
+
+    const response = noStoreJson({
+      ok: true,
+      ready: true,
+    });
+    setResetRecoveryCookies(response, {
+      accessToken,
+      refreshToken,
+      maxAgeSeconds: expiresIn,
+    });
+    return response;
+  } catch {
+    const response = noStoreJson({ ok: false, error: "reset_password_session_unavailable" }, { status: 503 });
+    clearResetRecoveryCookies(response);
+    return response;
+  }
+}
