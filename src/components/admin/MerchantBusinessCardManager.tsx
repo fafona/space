@@ -32,8 +32,6 @@ import {
 import { ColorOrGradientPicker, ColorSwatchPalette } from "@/components/admin/ColorOrGradientPicker";
 import {
   buildMerchantBusinessCardShareUrl,
-  buildMerchantBusinessCardContactDownloadUrl,
-  buildMerchantBusinessCardLegacyContactDownloadUrl,
   createMerchantBusinessCardShareKey,
   createMerchantBusinessCardShareKeyCode,
   normalizeMerchantBusinessCardShareImageUrl,
@@ -523,27 +521,6 @@ async function copyImageToClipboard(sourceImageUrl: string) {
     }
   }
   await copyImageViaLegacyClipboard(blob);
-}
-
-function looksLikeMobileBrowser() {
-  if (typeof navigator === "undefined") return false;
-  return /android|iphone|ipad|ipod|mobile|micromessenger|wechat/i.test(navigator.userAgent);
-}
-
-function parseDownloadFileName(contentDisposition: string | null, fallback: string) {
-  const utf8Match = contentDisposition?.match(/filename\*=UTF-8''([^;]+)/i);
-  if (utf8Match?.[1]) {
-    try {
-      return decodeURIComponent(utf8Match[1]);
-    } catch {
-      return fallback;
-    }
-  }
-  const asciiMatch = contentDisposition?.match(/filename="([^"]+)"/i);
-  if (asciiMatch?.[1]) {
-    return asciiMatch[1];
-  }
-  return fallback;
 }
 
 function sanitizeShareAssetHint(value: string) {
@@ -1168,6 +1145,30 @@ export default function MerchantBusinessCardManager({
     setDraftShareCode(createMerchantBusinessCardShareKeyCode());
     setSelectedFieldKeys(["merchantName"]);
     setEditingCardId(card.id);
+    setPreviewAsset(null);
+    setPreviewOpen(false);
+    setFolderOpen(false);
+    setEditorOpen(true);
+  };
+
+  const openDuplicateEditorForCard = (card: MerchantBusinessCardAsset) => {
+    if (!canCreate) return;
+    if (cardLimitReached) {
+      setTip(`名片夹已达到上限（${normalizedCardLimit} 张），请先删除旧名片或到超级后台调整数量限制`);
+      return;
+    }
+    const nextDraft = normalizeMerchantBusinessCardDraft(card);
+    setDraft(nextDraft);
+    setContactPhoneEditorValues(resolveDraftPhoneValues(nextDraft.contacts));
+    setBackgroundImageFileName("");
+    setBackgroundImageFileDetail("");
+    setIsBackgroundImageProcessing(false);
+    setContactPageImageFileName("");
+    setContactPageImageFileDetail("");
+    setIsContactPageImageProcessing(false);
+    setDraftShareCode(createMerchantBusinessCardShareKeyCode());
+    setSelectedFieldKeys(["merchantName"]);
+    setEditingCardId(null);
     setPreviewAsset(null);
     setPreviewOpen(false);
     setFolderOpen(false);
@@ -2237,10 +2238,11 @@ export default function MerchantBusinessCardManager({
                             <div className="grid grid-cols-2 gap-2">
                               <button
                                 type="button"
-                                className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
-                                onClick={() => void downloadCardContact(card)}
+                                className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                onClick={() => openDuplicateEditorForCard(card)}
+                                disabled={!canCreate || cardLimitReached}
                               >
-                                下载联系人
+                                生成新名片
                               </button>
                               <button
                                 type="button"
@@ -2762,20 +2764,10 @@ export default function MerchantBusinessCardManager({
       name: input.cardName,
       contact: input.contact,
     });
-    const fallbackContactUrl = buildMerchantBusinessCardLegacyContactDownloadUrl({
-      origin: resolveMerchantBusinessCardShareOrigin(undefined, targetUrl),
-      imageUrl: shareImageUrl,
-      detailImageUrl,
-      detailImageHeight: input.contactPageImageHeight,
-      targetUrl,
-      name: input.cardName,
-      contact: input.contact,
-    });
     if (!shareImageUrl) {
       if (fallbackShareUrl) {
         return {
           shareUrl: fallbackShareUrl,
-          contactUrl: fallbackContactUrl,
           shareImageUrl: "",
           detailImageUrl,
           shareKey: "",
@@ -2851,7 +2843,6 @@ export default function MerchantBusinessCardManager({
       if (fallbackShareUrl) {
         return {
           shareUrl: fallbackShareUrl,
-          contactUrl: fallbackContactUrl,
           shareImageUrl,
           detailImageUrl,
           shareKey: "",
@@ -2874,11 +2865,6 @@ export default function MerchantBusinessCardManager({
     }
     return {
       shareUrl,
-      contactUrl:
-        buildMerchantBusinessCardContactDownloadUrl({
-          shareKey,
-          targetUrl,
-        }) || fallbackContactUrl,
       shareImageUrl,
       detailImageUrl,
       shareKey,
@@ -2999,73 +2985,6 @@ export default function MerchantBusinessCardManager({
     } catch {
       setTip("复制失败，请重试");
     }
-  }
-
-  async function downloadCardContact(card: MerchantBusinessCardAsset) {
-    const targetUrl = normalizeText(card.targetUrl);
-    if (!targetUrl) {
-      setTip("当前名片没有可下载的联系人");
-      return;
-    }
-    try {
-      const { contactUrl } = await buildShareBundle({
-        targetUrl,
-        cardName: normalizeText(card.name) || "商户名片",
-        shareKey: normalizeText(card.shareKey),
-        card,
-        contactPageImageUrl: normalizeText(card.contactPageImageUrl),
-        imageWidth: card.width,
-        imageHeight: card.height,
-        contact: buildShareContactPayload({
-          name: card.name,
-          title: card.title,
-          contacts: card.contacts,
-          contactFieldOrder: card.contactFieldOrder,
-          contactOnlyFields: card.contactOnlyFields,
-          targetUrl,
-        }),
-      });
-      if (!contactUrl) {
-        setTip("联系人下载地址生成失败，请重试");
-        return;
-      }
-      await openContactDownload(contactUrl, normalizeText(card.contacts.contactName) || normalizeText(card.name));
-      setTip("联系人已开始下载");
-    } catch {
-      setTip("下载失败，请重试");
-    }
-  }
-
-  async function openContactDownload(url: string, fallbackName: string) {
-    if (looksLikeMobileBrowser()) {
-      const link = document.createElement("a");
-      link.href = url;
-      link.target = "_blank";
-      link.rel = "noopener noreferrer";
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      return;
-    }
-
-    const response = await fetch(url, {
-      credentials: "same-origin",
-    });
-    if (!response.ok) {
-      throw new Error("contact_download_failed");
-    }
-    const blob = await response.blob();
-    const objectUrl = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = objectUrl;
-    link.download = parseDownloadFileName(
-      response.headers.get("content-disposition"),
-      `${(fallbackName || "contact").replace(/[\\/:*?\"<>|]+/g, "").trim() || "contact"}.vcf`,
-    );
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
   }
 
   function buildShareContactPayload(input: {
