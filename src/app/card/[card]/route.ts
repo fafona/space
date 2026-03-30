@@ -140,11 +140,22 @@ function buildWeChatActionHtml(rawValue?: string) {
   </button>`;
 }
 
+function buildDouyinActionHtml(rawValue?: string) {
+  const douyinId = normalizeText(rawValue).replace(/^@+/, "").trim();
+  if (!douyinId) return "";
+  return `<button class="inline-action inline-action-button" type="button" aria-label="\u590d\u5236\u6296\u97f3\u53f7\u5e76\u6253\u5f00\u6296\u97f3" title="\u590d\u5236\u6296\u97f3\u53f7\u5e76\u6253\u5f00\u6296\u97f3" style="background:#161823" data-douyin-primary="snssdk1128://" data-douyin-id="${escapeHtml(douyinId)}">
+    <img src="/social-icons/tiktok.svg" alt="" />
+  </button>`;
+}
+
 type SummaryRow = { label: string; value: string; actionHtml: string };
 
 function buildSummaryActionHtmlFromKey(key: MerchantBusinessCardContactDisplayKey, label: string, value: string) {
   const normalizedValue = normalizeText(value);
   if (!normalizedValue) return "";
+  if (key === "douyin") {
+    return buildDouyinActionHtml(normalizedValue);
+  }
   switch (key) {
     case "phone":
       return buildActionButtonHtml({
@@ -231,13 +242,6 @@ function buildSummaryActionHtmlFromKey(key: MerchantBusinessCardContactDisplayKe
         label: "打开 TikTok",
         iconUrl: "/social-icons/tiktok.svg",
         bgColor: "#111827",
-      });
-    case "douyin":
-      return buildActionButtonHtml({
-        href: `https://www.douyin.com/search/${encodeURIComponent(normalizedValue.replace(/^@+/, ""))}`,
-        label: "打开抖音",
-        iconUrl: "/social-icons/tiktok.svg",
-        bgColor: "#161823",
       });
     case "xiaohongshu":
       return buildActionButtonHtml({
@@ -847,6 +851,25 @@ function buildInlineI18nScript() {
       });
     });
 
+    const douyinButtons = Array.from(document.querySelectorAll("[data-douyin-primary]"));
+    douyinButtons.forEach((button) => {
+      button.addEventListener("click", async (event) => {
+        event.preventDefault();
+        const target = event.currentTarget;
+        if (!(target instanceof HTMLElement)) return;
+        const douyinId = String(target.dataset.douyinId || "").trim();
+        const douyinAppHref = String(target.dataset.douyinPrimary || "snssdk1128://").trim();
+        if (!douyinId) return;
+        const copied = await copyWechatId(douyinId);
+        showWechatToast(
+          copied
+            ? "\u5df2\u590d\u5236\u6296\u97f3\u53f7\uff0c\u6b63\u5728\u5c1d\u8bd5\u6253\u5f00\u6296\u97f3\uff0c\u8bf7\u7c98\u8d34\u641c\u7d22\uff1a" + douyinId
+            : "\u8bf7\u8bb0\u4e0b\u6296\u97f3\u53f7\u540e\u6253\u5f00\u6296\u97f3\u641c\u7d22\uff1a" + douyinId,
+        );
+        launchWechatScheme(douyinAppHref || "snssdk1128://");
+      });
+    });
+
     const openTargetButtons = Array.from(document.querySelectorAll("[data-open-target-url]"));
     openTargetButtons.forEach((button) => {
       button.addEventListener("click", (event) => {
@@ -1044,12 +1067,7 @@ function buildContactSummaryHtmlLegacy(input: {
       ? {
           label: "抖音",
           value: input.contact.douyin,
-          actionHtml: buildActionButtonHtml({
-            href: buildSocialHref("抖音", input.contact.douyin),
-            label: "打开抖音",
-            iconUrl: "/social-icons/tiktok.svg",
-            bgColor: "#161823",
-          }),
+          actionHtml: buildDouyinActionHtml(input.contact.douyin),
         }
       : null,
     input.contact?.xiaohongshu
@@ -1333,12 +1351,7 @@ function buildOrderedContactSummaryHtml(input: {
       ? {
           label: "抖音",
           value: contact.douyin,
-          actionHtml: buildActionButtonHtml({
-            href: `https://www.douyin.com/search/${encodeURIComponent(contact.douyin.replace(/^@+/, ""))}`,
-            label: "打开抖音",
-            iconUrl: "/social-icons/tiktok.svg",
-            bgColor: "#161823",
-          }),
+          actionHtml: buildDouyinActionHtml(contact.douyin),
         }
       : null,
   );
