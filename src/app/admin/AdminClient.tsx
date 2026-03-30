@@ -60,6 +60,7 @@ import {
 import {
   clearStoredBrowserSupabaseSessionTokens,
   recoverBrowserSupabaseSessionWithRefresh,
+  syncMerchantSessionCookies,
 } from "@/lib/authSessionRecovery";
 import { clearMerchantSignInBridge } from "@/lib/merchantSignInBridge";
 import { buildPublishedMerchantProfilePatch } from "@/lib/merchantProfileBinding";
@@ -4220,20 +4221,26 @@ export default function AdminClient({
           "登录检查超时，已使用本地缓存继续编辑",
         );
         let session = rawSession;
+        let sessionRecoveredFromFallback = false;
 
         if (!mounted) return;
         clearTimeout(safetyTimeoutId);
         if (sessionError && !session) {
           session = await recoverSession(justSignedIn ? 6000 : 4500);
+          sessionRecoveredFromFallback = Boolean(session);
           if (!mounted) return;
         }
         if (!session) {
           session = await recoverSession(justSignedIn ? 6000 : 4500);
+          sessionRecoveredFromFallback = Boolean(session);
           if (!mounted) return;
         }
         if (sessionError && !session && !isPlatformEditor && !gatewayReady) {
           releaseCheckingScreen({ notice: BACKEND_UNAVAILABLE_NOTICE });
           return;
+        }
+        if (sessionRecoveredFromFallback && session && !isPlatformEditor) {
+          void syncMerchantSessionCookies(session, Math.max(2200, Math.min(6000, AUTH_CHECK_TIMEOUT_MS)));
         }
         if (session) {
           try {

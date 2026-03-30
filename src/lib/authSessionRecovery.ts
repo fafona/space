@@ -310,6 +310,41 @@ export async function recoverBrowserSupabaseSessionWithRefresh(timeoutMs = 4500)
   return pollSession(1200);
 }
 
+export async function syncMerchantSessionCookies(
+  session: Pick<Session, "access_token" | "refresh_token" | "expires_in"> | null | undefined,
+  timeoutMs = 3200,
+): Promise<boolean> {
+  if (typeof window === "undefined") return false;
+  const accessToken = String(session?.access_token ?? "").trim();
+  const refreshToken = String(session?.refresh_token ?? "").trim();
+  const expiresIn =
+    typeof session?.expires_in === "number" && Number.isFinite(session.expires_in) ? session.expires_in : undefined;
+  if (!accessToken) return false;
+
+  try {
+    const response = await withTimeout(
+      fetch("/api/auth/merchant-session", {
+        method: "POST",
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          accept: "application/json",
+        },
+        body: JSON.stringify({
+          accessToken,
+          refreshToken,
+          expiresIn,
+        }),
+      }),
+      Math.max(1200, timeoutMs),
+    );
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
 export function isTransientAuthValidationError(error: unknown) {
   if (!error || typeof error !== "object") return false;
   const record = error as { message?: unknown; name?: unknown; status?: unknown };

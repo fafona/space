@@ -153,3 +153,54 @@ export async function GET(request: Request) {
     return noStoreJson({ authenticated: false, error: "merchant_session_unavailable" }, { status: 503 });
   }
 }
+
+export async function POST(request: Request) {
+  try {
+    const supabase = createServerSupabaseClient();
+    if (!supabase) {
+      return noStoreJson({ error: "merchant_session_env_missing" }, { status: 503 });
+    }
+
+    const payload = (await request.json().catch(() => null)) as
+      | {
+          accessToken?: unknown;
+          refreshToken?: unknown;
+          expiresIn?: unknown;
+        }
+      | null;
+
+    const accessToken = typeof payload?.accessToken === "string" ? payload.accessToken.trim() : "";
+    const refreshToken = typeof payload?.refreshToken === "string" ? payload.refreshToken.trim() : "";
+    const expiresIn = typeof payload?.expiresIn === "number" && Number.isFinite(payload.expiresIn) ? payload.expiresIn : undefined;
+
+    if (!accessToken) {
+      const response = noStoreJson({ ok: false, error: "merchant_session_missing_access_token" }, { status: 400 });
+      clearMerchantAuthCookies(response);
+      return response;
+    }
+
+    const { data, error } = await supabase.auth.getUser(accessToken);
+    if (error || !data.user) {
+      const response = noStoreJson({ ok: false, error: "merchant_session_invalid_access_token" }, { status: 401 });
+      clearMerchantAuthCookies(response);
+      return response;
+    }
+
+    const response = noStoreJson({
+      ok: true,
+      authenticated: true,
+      accessToken,
+      refreshToken: refreshToken || null,
+      expiresIn: expiresIn ?? null,
+      user: data.user,
+    });
+    setMerchantAuthCookies(response, {
+      accessToken,
+      refreshToken,
+      maxAgeSeconds: expiresIn,
+    });
+    return response;
+  } catch {
+    return noStoreJson({ ok: false, error: "merchant_session_sync_unavailable" }, { status: 503 });
+  }
+}
