@@ -44,6 +44,54 @@ type ServerSignInResult = {
   needsJustSignedInBridge: boolean;
 };
 
+function trimTrailingSlash(value: string) {
+  return value.replace(/\/+$/g, "");
+}
+
+function normalizeOrigin(value: string) {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) return "";
+  const candidate = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimTrailingSlash(trimmed)}`;
+  try {
+    const parsed = new URL(candidate);
+    parsed.pathname = "";
+    parsed.search = "";
+    parsed.hash = "";
+    return trimTrailingSlash(parsed.toString());
+  } catch {
+    return "";
+  }
+}
+
+function toRootOrigin(value: string) {
+  const normalized = normalizeOrigin(value);
+  if (!normalized) return "";
+  try {
+    const parsed = new URL(normalized);
+    const hostParts = parsed.hostname.split(".").filter(Boolean);
+    if (hostParts.length >= 3) {
+      parsed.hostname = hostParts.slice(1).join(".");
+    }
+    parsed.pathname = "";
+    parsed.search = "";
+    parsed.hash = "";
+    return trimTrailingSlash(parsed.toString());
+  } catch {
+    return "";
+  }
+}
+
+function resolveAuthEmailRedirectOrigin() {
+  const fromEnv = toRootOrigin(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "");
+  if (fromEnv) return fromEnv;
+  if (typeof window !== "undefined" && window.location?.origin) {
+    const fromWindow = toRootOrigin(window.location.origin);
+    if (fromWindow) return fromWindow;
+    return trimTrailingSlash(window.location.origin);
+  }
+  return "";
+}
+
 function LoginPageInner() {
   const { locale, t } = useI18n();
   const searchParams = useSearchParams();
@@ -93,6 +141,7 @@ function LoginPageInner() {
     return "Sign in supports email, username, or 8-digit ID. Sign up still requires an email.";
   }, [normalizedLocale]);
   const passwordToggleLabels = useMemo(() => getPasswordToggleLabels(locale), [locale]);
+  const authEmailRedirectOrigin = useMemo(() => resolveAuthEmailRedirectOrigin(), []);
 
   useEffect(() => {
     const confirmed = (searchParams.get("confirmed") ?? "").trim();
@@ -537,7 +586,7 @@ function LoginPageInner() {
           email: account.trim(),
           password,
           options: {
-            emailRedirectTo: `${window.location.origin}/login`,
+            emailRedirectTo: `${authEmailRedirectOrigin || window.location.origin}/login`,
           },
         }),
       );
@@ -621,7 +670,7 @@ function LoginPageInner() {
           type: "signup",
           email: trimmedEmail,
           options: {
-            emailRedirectTo: `${window.location.origin}/login`,
+            emailRedirectTo: `${authEmailRedirectOrigin || window.location.origin}/login`,
           },
         }),
       );
@@ -648,7 +697,7 @@ function LoginPageInner() {
 
     setPendingAction("forgot");
     try {
-      const resetBridgeUrl = new URL("/reset-password/bridge", window.location.origin).toString();
+      const resetBridgeUrl = new URL("/reset-password/bridge", authEmailRedirectOrigin || window.location.origin).toString();
       const { error } = await withTimeout(
         supabase.auth.resetPasswordForEmail(trimmedEmail, {
           redirectTo: resetBridgeUrl,
