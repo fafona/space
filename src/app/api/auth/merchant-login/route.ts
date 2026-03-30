@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
+import { loadMerchantIdRulesFromStore } from "@/lib/merchantIdRuleStore";
+import { findNextAllowedMerchantIdNumber, MERCHANT_ID_MAX, MERCHANT_ID_MIN, type MerchantIdRule } from "@/lib/merchantIdRules";
 import { setMerchantAuthCookies } from "@/lib/merchantAuthSession";
 
 export const dynamic = "force-dynamic";
@@ -60,6 +62,14 @@ function normalizeEmail(...values: Array<string | null | undefined>) {
 
 function normalizeAccountValue(value: string | null | undefined) {
   return String(value ?? "").trim().toLowerCase();
+}
+
+function isDuplicateKeyError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const record = error as { code?: unknown; message?: unknown };
+  if (typeof record.code === "string" && record.code === "23505") return true;
+  const message = typeof record.message === "string" ? record.message : "";
+  return /duplicate key|already exists|unique constraint/i.test(message);
 }
 
 function readMetadataString(metadata: AuthMetadata, ...keys: string[]) {
@@ -236,6 +246,57 @@ async function resolveMerchantId(
   return candidates[0] ?? "";
 }
 
+async function readBlockedMerchantIdRules(supabase: AdminListUsersClient): Promise<MerchantIdRule[]> {
+  try {
+    const { rules } = await loadMerchantIdRulesFromStore(supabase);
+    return rules;
+  } catch {
+    return [];
+  }
+}
+
+async function tryAllocateSequentialMerchantId(
+  supabase: AdminListUsersClient,
+  user: AuthUserSummary | null,
+  email: string,
+): Promise<string> {
+  const userId = String(user?.id ?? "").trim();
+  if (!userId) return "";
+  const blockedRules = await readBlockedMerchantIdRules(supabase);
+  let candidate = MERCHANT_ID_MIN;
+  while (candidate <= MERCHANT_ID_MAX) {
+    const nextAllowed = findNextAllowedMerchantIdNumber(candidate, blockedRules);
+    if (!nextAllowed) return "";
+    candidate = nextAllowed;
+    const candidateId = String(candidate);
+    const { error } = await (supabase as unknown as {
+      from: (table: string) => {
+        insert: (values: Record<string, unknown>) => Promise<{ error: Error | null }>;
+      };
+    })
+      .from("merchants")
+      .insert({
+        id: candidateId,
+        name: "",
+        email: email || null,
+        owner_email: email || null,
+        contact_email: email || null,
+        user_email: email || null,
+        user_id: userId,
+        auth_user_id: userId,
+        owner_user_id: userId,
+        owner_id: userId,
+        auth_id: userId,
+        created_by: userId,
+        created_by_user_id: userId,
+      });
+    if (!error) return candidateId;
+    if (!isDuplicateKeyError(error)) return "";
+    candidate += 1;
+  }
+  return "";
+}
+
 export async function POST(request: Request) {
   try {
     const payload = (await request.json().catch(() => null)) as { account?: unknown; password?: unknown } | null;
@@ -317,7 +378,10 @@ export async function POST(request: Request) {
       upstreamPayload?.user && typeof upstreamPayload.user === "object"
         ? (upstreamPayload.user as AuthUserSummary)
         : null;
-    const merchantId = await resolveMerchantId(supabase, account, email, authUser);
+    let merchantId = await resolveMerchantId(supabase, account, email, authUser);
+    if (!merchantId) {
+      merchantId = await tryAllocateSequentialMerchantId(supabase, authUser, email);
+    }
 
     const response = NextResponse.json({
       email,
