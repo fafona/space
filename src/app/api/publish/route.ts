@@ -434,10 +434,7 @@ export async function POST(request: Request) {
         const responseBody = {
           ok: false,
           code: "merchant_service_paused",
-          message:
-            blockedState.reason === "expired"
-              ? "商户服务已到期或未设置到期时间，暂不允许发布"
-              : "商户服务已暂停，暂不允许发布",
+          message: "服务到期，详询官方客服",
           requestId,
         };
         resultCache.set(requestId, { at: Date.now(), status, body: responseBody });
