@@ -6467,8 +6467,18 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       );
       const siteId =
         (editingSiteId || prefetchedIdentity?.merchantId || merchantSessionIdentityRef.current.merchantId || "").trim();
+      const merchantEmail =
+        ((editingSite?.contactEmail ?? "").trim() ||
+          String(prefetchedIdentity?.email ?? "").trim() ||
+          String(merchantSessionIdentityRef.current.email ?? "").trim()) ?? "";
       if (siteId) {
         headers.set("x-merchant-site-id", siteId);
+      }
+      if (merchantEmail) {
+        headers.set("x-merchant-email", merchantEmail);
+      }
+      if (merchantDisplayName) {
+        headers.set("x-merchant-name", merchantDisplayName);
       }
 
       if (isSupabaseEnabled && !isSupabaseFallbackMode) {

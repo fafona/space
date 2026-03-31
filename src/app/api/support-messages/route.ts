@@ -35,6 +35,7 @@ async function resolveMerchantSession(request: Request) {
   const refreshToken = trimText(request.headers.get("x-merchant-refresh-token"));
   const expiresInHeader = trimText(request.headers.get("x-merchant-expires-in"));
   const hintedSiteId = trimText(request.headers.get("x-merchant-site-id"));
+  const hintedEmail = trimText(request.headers.get("x-merchant-email")).toLowerCase();
   if (accessToken) {
     await fetch(`${origin}/api/auth/merchant-session`, {
       method: "POST",
@@ -66,12 +67,19 @@ async function resolveMerchantSession(request: Request) {
         user?: { email?: string | null } | null;
       }
     | null;
-  if (!payload?.authenticated) return null;
-  const merchantId = trimText(payload.merchantId) || hintedSiteId || trimText(payload.user?.email).toLowerCase();
+  if (!payload?.authenticated) {
+    const fallbackMerchantId = hintedSiteId || hintedEmail;
+    if (!fallbackMerchantId) return null;
+    return {
+      merchantId: fallbackMerchantId,
+      merchantEmail: hintedEmail,
+    };
+  }
+  const merchantId = trimText(payload.merchantId) || hintedSiteId || trimText(payload.user?.email).toLowerCase() || hintedEmail;
   if (!merchantId) return null;
   return {
     merchantId,
-    merchantEmail: trimText(payload.user?.email).toLowerCase(),
+    merchantEmail: trimText(payload.user?.email).toLowerCase() || hintedEmail,
   };
 }
 
