@@ -2688,6 +2688,45 @@ type MerchantDraftSnapshot = {
   updatedAt: string | null;
 };
 
+const REMOTE_MERCHANT_DRAFT_SYNC_KEY = "merchant-space:merchant-draft-remote-sync:v1";
+
+function merchantDraftSyncScopeToken(scope?: string) {
+  const normalized = String(scope ?? "").trim();
+  if (!normalized) return "default";
+  return normalized.replace(/[^a-zA-Z0-9:_-]/g, "_");
+}
+
+function buildRemoteMerchantDraftSyncStorageKey(scope?: string) {
+  const token = merchantDraftSyncScopeToken(scope);
+  return token === "default" ? REMOTE_MERCHANT_DRAFT_SYNC_KEY : `${REMOTE_MERCHANT_DRAFT_SYNC_KEY}:${token}`;
+}
+
+function readRemoteMerchantDraftSyncTimestamp(scope?: string) {
+  if (typeof window === "undefined") return "";
+  try {
+    return String(localStorage.getItem(buildRemoteMerchantDraftSyncStorageKey(scope)) ?? "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function recordRemoteMerchantDraftSyncTimestamp(updatedAt: string | null | undefined, scope?: string) {
+  const normalizedUpdatedAt = String(updatedAt ?? "").trim();
+  if (!normalizedUpdatedAt || typeof window === "undefined") return;
+  try {
+    localStorage.setItem(buildRemoteMerchantDraftSyncStorageKey(scope), normalizedUpdatedAt);
+  } catch {
+    // ignore sync stamp write failures
+  }
+}
+
+function parseIsoTimestampMs(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return 0;
+  const parsed = Date.parse(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 async function loadPublishedSiteSnapshotViaApi(siteId: string): Promise<PublishedSiteSnapshot | null> {
   const normalizedSiteId = String(siteId ?? "").trim();
   if (!normalizedSiteId) return null;
@@ -4290,14 +4329,34 @@ export default function AdminClient({
       candidate.length > 0 &&
       !isSameBlocksSnapshot(candidate, defaultEditorBlocks) &&
       !isSameBlocksSnapshot(candidate, homeBlocks);
-    const hasMeaningfulCachedDraft = () => {
-      for (const candidateScope of getCandidateStoreScopes()) {
+    const hasMeaningfulCachedDraft = (candidateScopes = getCandidateStoreScopes()) => {
+      for (const candidateScope of candidateScopes) {
         const cachedDraft = loadBlocksFromStorage([], candidateScope);
         if (isMeaningfulCachedSnapshot(cachedDraft)) {
           return true;
         }
       }
       return false;
+    };
+    const getRemoteDraftSyncScopes = (merchantIds: string[]) =>
+      [...new Set([storeScope, ...merchantIds.map((siteId) => buildSiteStoreScope(siteId))].filter(Boolean))];
+    const hasAppliedRemoteDraftAtOrAfter = (updatedAt: string | null | undefined, candidateScopes: string[]) => {
+      const remoteUpdatedAtMs = parseIsoTimestampMs(updatedAt);
+      if (remoteUpdatedAtMs <= 0) return false;
+      const latestAppliedMs = candidateScopes.reduce((max, candidateScope) => {
+        return Math.max(max, parseIsoTimestampMs(readRemoteMerchantDraftSyncTimestamp(candidateScope)));
+      }, 0);
+      return latestAppliedMs >= remoteUpdatedAtMs;
+    };
+    const shouldApplyRemoteDraft = (draft: MerchantDraftSnapshot | null, candidateScopes: string[]) => {
+      if (!draft || draft.blocks.length === 0) return false;
+      if (!hasMeaningfulCachedDraft(candidateScopes)) return true;
+      return !hasAppliedRemoteDraftAtOrAfter(draft.updatedAt, candidateScopes);
+    };
+    const markRemoteDraftApplied = (updatedAt: string | null | undefined, candidateScopes: string[]) => {
+      candidateScopes.forEach((candidateScope) => {
+        recordRemoteMerchantDraftSyncTimestamp(updatedAt, candidateScope);
+      });
     };
     const applyCachedEditorBlocks = () => {
       if (isPlatformEditor && platformSeedBlocks.length > 0) {
@@ -4578,10 +4637,11 @@ export default function AdminClient({
         }
         setHasEditorContent(true);
         releaseCheckingScreen({ notice: null });
-        if (!isPlatformEditor && !hasMeaningfulCachedDraft()) {
+        if (!isPlatformEditor) {
           const remoteDraft = await loadMerchantDraftSnapshotViaApi(resolvedMerchantIds);
           if (!mounted) return;
-          if (remoteDraft && remoteDraft.blocks.length > 0) {
+          const remoteDraftScopes = getRemoteDraftSyncScopes(resolvedMerchantIds);
+          if (remoteDraft && shouldApplyRemoteDraft(remoteDraft, remoteDraftScopes)) {
             setRemoteContentVerified(true);
             applyPersistedBlocksToEditorRef.current(remoteDraft.blocks);
             saveBlocksToStorage(remoteDraft.blocks, storeScope);
@@ -4590,6 +4650,7 @@ export default function AdminClient({
                 saveBlocksToStorage(remoteDraft.blocks, buildSiteStoreScope(siteId));
               }
             });
+            markRemoteDraftApplied(remoteDraft.updatedAt, remoteDraftScopes);
             releaseCheckingScreen({ notice: null });
             return;
           }

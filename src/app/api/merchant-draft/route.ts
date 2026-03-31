@@ -22,7 +22,14 @@ type LooseQueryBuilder = PromiseLike<LoosePostgrestResponse> & {
 type LooseSupabaseClient = MerchantDraftStoreClient & {
   auth: {
     getUser: (token: string) => Promise<{
-      data: { user: { id?: string; email?: string | null } | null };
+      data: {
+        user: {
+          id?: string;
+          email?: string | null;
+          user_metadata?: Record<string, unknown> | null;
+          app_metadata?: Record<string, unknown> | null;
+        } | null;
+      };
       error: { message?: string } | null;
     }>;
   };
@@ -48,6 +55,31 @@ function normalizeText(value: unknown) {
 
 function normalizeEmail(value: string | null | undefined) {
   return String(value ?? "").trim().toLowerCase();
+}
+
+function readMetadataMerchantIds(user: {
+  user_metadata?: Record<string, unknown> | null;
+  app_metadata?: Record<string, unknown> | null;
+} | null) {
+  const merchantIds: string[] = [];
+  const metadata = {
+    ...(user?.user_metadata ?? {}),
+    ...(user?.app_metadata ?? {}),
+  } as Record<string, unknown>;
+  const push = (value: unknown) => {
+    if (typeof value !== "string") return;
+    const trimmed = value.trim();
+    if (!trimmed || merchantIds.includes(trimmed)) return;
+    merchantIds.push(trimmed);
+  };
+  push(metadata.merchant_id);
+  push(metadata.merchantId);
+  push(metadata.merchantID);
+  push(metadata.site_id);
+  push(metadata.siteId);
+  push(metadata.shop_id);
+  push(metadata.shopId);
+  return merchantIds;
 }
 
 async function getAuthorizedMerchantIds(
@@ -99,6 +131,11 @@ async function isAuthorizedForMerchant(
   for (const accessToken of accessTokens) {
     const authResult = await supabase.auth.getUser(accessToken);
     if (authResult.error || !authResult.data.user) continue;
+
+    const metadataMerchantIds = readMetadataMerchantIds(authResult.data.user);
+    if (metadataMerchantIds.includes(merchantId)) {
+      return true;
+    }
 
     const authorizedMerchantIds = await getAuthorizedMerchantIds(
       supabase,
