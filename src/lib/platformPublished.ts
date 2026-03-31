@@ -159,6 +159,7 @@ export function buildPublishedMerchantSnapshotFromRows(
           city: "",
         },
         merchantCardImageUrl: "",
+        merchantCardImageOpacity: 1,
         sortConfig: createDefaultMerchantSortConfig(),
         createdAt,
       } satisfies MerchantListPublishedSite;

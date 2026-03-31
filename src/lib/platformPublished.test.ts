@@ -48,9 +48,11 @@ test("buildPublishedMerchantSnapshotFromRows maps published merchant pages into 
   assert.equal(byId.get("10000000")?.merchantName, "fafona");
   assert.equal(byId.get("10000000")?.domainPrefix, "fafona");
   assert.equal(byId.get("10000000")?.domain, "fafona");
+  assert.equal(byId.get("10000000")?.merchantCardImageOpacity, 1);
   assert.equal(byId.get("10000001")?.merchantName, "20889576");
   assert.equal(byId.get("10000001")?.domainPrefix, "");
   assert.equal(byId.get("10000001")?.domain, "10000001");
+  assert.equal(byId.get("10000001")?.merchantCardImageOpacity, 1);
 });
 
 test("injectPublishedMerchantSnapshotIntoBlocks patches empty merchant snapshots recursively", () => {
@@ -116,6 +118,7 @@ test("injectPublishedMerchantSnapshotIntoBlocks patches empty merchant snapshots
         city: "",
       },
       merchantCardImageUrl: "",
+      merchantCardImageOpacity: 1,
       sortConfig: {
         recommendedCountryRank: null,
         recommendedProvinceRank: null,
@@ -175,6 +178,7 @@ test("injectPublishedMerchantSnapshotIntoBlocks can replace stale merchant snaps
               city: "",
             },
             merchantCardImageUrl: "",
+            merchantCardImageOpacity: 1,
             sortConfig: {
               recommendedCountryRank: null,
               recommendedProvinceRank: null,
@@ -211,6 +215,7 @@ test("injectPublishedMerchantSnapshotIntoBlocks can replace stale merchant snaps
           city: "Sevilla",
         },
         merchantCardImageUrl: "https://example.com/card.webp",
+        merchantCardImageOpacity: 0.45,
         sortConfig: {
           recommendedCountryRank: null,
           recommendedProvinceRank: null,
@@ -227,11 +232,17 @@ test("injectPublishedMerchantSnapshotIntoBlocks can replace stale merchant snaps
   );
 
   const rootProps = next[0].props as {
-    publishedMerchantSnapshot?: Array<{ industry?: string; location?: { city?: string }; merchantCardImageUrl?: string }>;
+    publishedMerchantSnapshot?: Array<{
+      industry?: string;
+      location?: { city?: string };
+      merchantCardImageUrl?: string;
+      merchantCardImageOpacity?: number;
+    }>;
     publishedMerchantDefaultSortRule?: string;
   };
   assert.equal(rootProps.publishedMerchantSnapshot?.[0]?.industry, "娱乐");
   assert.equal(rootProps.publishedMerchantSnapshot?.[0]?.location?.city, "Sevilla");
   assert.equal(rootProps.publishedMerchantSnapshot?.[0]?.merchantCardImageUrl, "https://example.com/card.webp");
+  assert.equal(rootProps.publishedMerchantSnapshot?.[0]?.merchantCardImageOpacity, 0.45);
   assert.equal(rootProps.publishedMerchantDefaultSortRule, "monthly_views_desc");
 });

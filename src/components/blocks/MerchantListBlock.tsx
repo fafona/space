@@ -724,18 +724,14 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
                 legacyMerchantCardStyle,
               );
               const merchantCardImageUrl = (site.merchantCardImageUrl ?? "").trim();
+              const merchantCardImageOpacity =
+                typeof site.merchantCardImageOpacity === "number" && Number.isFinite(site.merchantCardImageOpacity)
+                  ? Math.max(0, Math.min(1, site.merchantCardImageOpacity))
+                  : 1;
               const hasMerchantCardImage = merchantCardImageUrl.length > 0;
               const merchantCardStyle = {
                 ...getBlockBorderInlineStyle(styleConfig.borderStyle, styleConfig.borderColor),
                 ...getColorLayerStyle(styleConfig.bgColor, styleConfig.bgOpacity),
-                ...(hasMerchantCardImage
-                  ? {
-                      backgroundImage: `url(${merchantCardImageUrl})`,
-                      backgroundSize: "cover",
-                      backgroundPosition: "center",
-                      backgroundRepeat: "no-repeat",
-                    }
-                  : {}),
               };
               return (
                 <Link
@@ -752,6 +748,15 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
                     ...merchantCardStyle,
                   }}
                 >
+                  {hasMerchantCardImage ? (
+                    <div
+                      className="absolute inset-0 bg-cover bg-center bg-no-repeat"
+                      style={{
+                        backgroundImage: `url(${merchantCardImageUrl})`,
+                        opacity: merchantCardImageOpacity,
+                      }}
+                    />
+                  ) : null}
                   <div className="relative min-w-0 h-full">
                     <div
                       className={`${merchantCardTextBoxClass} text-base font-semibold text-slate-900`}

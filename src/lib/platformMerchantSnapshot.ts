@@ -83,6 +83,11 @@ function toTimestamp(value: string | null | undefined) {
   return Number.isFinite(time) ? time : 0;
 }
 
+function normalizeUnitInterval(value: unknown, fallback = 1) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  return Math.max(0, Math.min(1, value));
+}
+
 function normalizeSnapshotSite(input: unknown): MerchantListPublishedSite | null {
   if (!input || typeof input !== "object") return null;
   const value = input as Partial<MerchantListPublishedSite>;
@@ -107,6 +112,7 @@ function normalizeSnapshotSite(input: unknown): MerchantListPublishedSite | null
     contactPhone: normalizeText(value.contactPhone),
     contactEmail: normalizeText(value.contactEmail),
     merchantCardImageUrl: normalizeText(value.merchantCardImageUrl),
+    merchantCardImageOpacity: normalizeUnitInterval(value.merchantCardImageOpacity, 1),
     sortConfig: normalizeMerchantSortConfig(value.sortConfig),
     createdAt: normalizeText(value.createdAt),
   };
@@ -164,6 +170,7 @@ export function buildPlatformMerchantSnapshotPayloadFromSites(
       contactPhone: normalizeText(site.contactPhone),
       contactEmail: normalizeText(site.contactEmail),
       merchantCardImageUrl: normalizeText(site.merchantCardImageUrl),
+      merchantCardImageOpacity: normalizeUnitInterval(site.merchantCardImageOpacity, 1),
       sortConfig: normalizeMerchantSortConfig(site.sortConfig),
       createdAt: normalizeText(site.createdAt),
     } satisfies MerchantListPublishedSite);
@@ -216,6 +223,7 @@ export function buildPlatformMerchantSnapshotSite(
     contactPhone?: string | null;
     contactEmail?: string | null;
     merchantCardImageUrl?: string | null;
+    merchantCardImageOpacity?: number | null;
     createdAt?: string | null;
     sortConfig?: Partial<MerchantSortConfig> | null;
     name?: string | null;
@@ -236,6 +244,7 @@ export function buildPlatformMerchantSnapshotSite(
     contactPhone: input.contactPhone,
     contactEmail: input.contactEmail,
     merchantCardImageUrl: input.merchantCardImageUrl,
+    merchantCardImageOpacity: input.merchantCardImageOpacity,
     sortConfig: input.sortConfig,
     createdAt: input.createdAt,
   });

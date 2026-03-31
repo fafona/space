@@ -92,6 +92,7 @@ export type MerchantListPublishedSite = {
   contactPhone?: string;
   contactEmail?: string;
   merchantCardImageUrl?: string;
+  merchantCardImageOpacity?: number;
   sortConfig: MerchantSortConfig;
   createdAt: string;
 };

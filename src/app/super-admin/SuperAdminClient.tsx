@@ -95,8 +95,8 @@ import {
   syncSuperAdminAuthenticatedCookie,
 } from "@/lib/superAdminAuth";
 import { type SuperAdminTrustedDeviceRecord } from "@/lib/superAdminTrustedDevices";
-import { supabase } from "@/lib/supabase";
 import { useHydrated } from "@/lib/useHydrated";
+import { uploadImageDataUrlToPublicStorage } from "@/lib/publicAssetUpload";
 
 function fmt(iso: string | null) {
   if (!iso) return "-";
@@ -128,6 +128,11 @@ function pickPreferredText(...values: Array<string | null | undefined>) {
 function normalizeMerchantIndustryValue(value: string | null | undefined) {
   const normalized = String(value ?? "").trim();
   return MERCHANT_INDUSTRY_OPTIONS.find((item) => item === normalized) ?? "";
+}
+
+function normalizeUnitInterval(value: unknown, fallback = 1) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  return Math.max(0, Math.min(1, value));
 }
 
 function mergeSnapshotLocation(
@@ -163,6 +168,7 @@ function applyBackendProfileSnapshot(
     contactPhone: pickPreferredText(snapshot.contactPhone, site.contactPhone),
     contactEmail: pickPreferredText(snapshot.contactEmail, site.contactEmail, fallbackEmail),
     merchantCardImageUrl: pickPreferredText(snapshot.merchantCardImageUrl, site.merchantCardImageUrl),
+    merchantCardImageOpacity: normalizeUnitInterval(snapshot.merchantCardImageOpacity, site.merchantCardImageOpacity ?? 1),
     name: pickPreferredText(snapshot.name, site.name, snapshot.merchantName, site.merchantName),
   };
 }
@@ -239,6 +245,7 @@ function buildBackendOnlySite(account: BackendMerchantAccount): Site {
     serviceExpiresAt: null,
     permissionConfig: createDefaultMerchantPermissionConfig(),
     merchantCardImageUrl: "",
+    merchantCardImageOpacity: 1,
     sortConfig: createDefaultMerchantSortConfig(),
     configHistory: [],
     createdAt: timestamp,
@@ -545,52 +552,8 @@ async function optimizeMerchantCardImage(file: File) {
   return best;
 }
 
-function parseMerchantCardImageDataUrlMeta(dataUrl: string) {
-  const matched = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,/i);
-  if (!matched) return null;
-  const mime = matched[1].toLowerCase();
-  const extension = (() => {
-    if (mime === "image/jpeg") return "jpg";
-    if (mime === "image/png") return "png";
-    if (mime === "image/webp") return "webp";
-    if (mime === "image/gif") return "gif";
-    if (mime === "image/bmp") return "bmp";
-    if (mime === "image/svg+xml") return "svg";
-    return "img";
-  })();
-  return { mime, extension };
-}
-
-function dataUrlToBlob(dataUrl: string, mime: string) {
-  const base64 = dataUrl.split(",")[1] ?? "";
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return new Blob([bytes], { type: mime });
-}
-
 async function uploadMerchantCardImageDataUrlToSupabase(dataUrl: string, siteHint = "merchant-card") {
-  const meta = parseMerchantCardImageDataUrlMeta(dataUrl);
-  if (!meta) return null;
-  const blob = dataUrlToBlob(dataUrl, meta.mime);
-  const now = new Date();
-  const yyyy = `${now.getFullYear()}`;
-  const mm = `${now.getMonth() + 1}`.padStart(2, "0");
-  const bucketCandidates = ["page-assets", "assets", "uploads", "public"];
-
-  for (const bucket of bucketCandidates) {
-    const objectPath = `merchant-cards/${siteHint}/${yyyy}/${mm}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${meta.extension}`;
-    const uploaded = await supabase.storage.from(bucket).upload(objectPath, blob, {
-      contentType: meta.mime,
-      upsert: false,
-    });
-    if (uploaded.error) continue;
-    const { data } = supabase.storage.from(bucket).getPublicUrl(objectPath);
-    if (data?.publicUrl) return data.publicUrl;
-  }
-  return null;
+  return uploadImageDataUrlToPublicStorage(dataUrl, siteHint);
 }
 
 function parseDateInputToIso(value: string) {
@@ -757,6 +720,7 @@ function createMerchantConfigSnapshot(site: Site): MerchantConfigSnapshot {
     serviceExpiresAt: site.serviceExpiresAt ?? null,
     permissionConfig: site.permissionConfig ?? createDefaultMerchantPermissionConfig(),
     merchantCardImageUrl: (site.merchantCardImageUrl ?? "").trim(),
+    merchantCardImageOpacity: normalizeUnitInterval(site.merchantCardImageOpacity, 1),
     sortConfig: site.sortConfig ?? createDefaultMerchantSortConfig(),
   };
 }
@@ -933,6 +897,11 @@ function buildMerchantConfigDiffLines(current: MerchantConfigSnapshot, target: M
     const fromLabel = (current.merchantCardImageUrl ?? "").trim() ? "已配置" : "未配置";
     const toLabel = (target.merchantCardImageUrl ?? "").trim() ? "已配置" : "未配置";
     lines.push(`商户卡图片：${fromLabel} -> ${toLabel}`);
+  }
+  if (normalizeUnitInterval(current.merchantCardImageOpacity, 1) !== normalizeUnitInterval(target.merchantCardImageOpacity, 1)) {
+    lines.push(
+      `商户卡图片透明度：${Math.round(normalizeUnitInterval(current.merchantCardImageOpacity, 1) * 100)}% -> ${Math.round(normalizeUnitInterval(target.merchantCardImageOpacity, 1) * 100)}%`,
+    );
   }
   const permissionFields: Array<{
     key: keyof MerchantConfigSnapshot["permissionConfig"];
@@ -1154,6 +1123,7 @@ export default function SuperAdminClient() {
   const [configAllowProductBlock, setConfigAllowProductBlock] = useState(false);
   const [configAllowBookingBlock, setConfigAllowBookingBlock] = useState(false);
   const [configMerchantCardImage, setConfigMerchantCardImage] = useState("");
+  const [configMerchantCardImageOpacity, setConfigMerchantCardImageOpacity] = useState(1);
   const [configRecommendedCountryRank, setConfigRecommendedCountryRank] = useState("");
   const [configRecommendedProvinceRank, setConfigRecommendedProvinceRank] = useState("");
   const [configRecommendedCityRank, setConfigRecommendedCityRank] = useState("");
@@ -1944,6 +1914,7 @@ export default function SuperAdminClient() {
   const previewMerchantNameTextPosition = resolveMerchantCardTextPosition(previewMerchantCardTextLayout, "name");
   const previewMerchantIndustryTextPosition = resolveMerchantCardTextPosition(previewMerchantCardTextLayout, "industry");
   const previewMerchantDomainTextPosition = resolveMerchantCardTextPosition(previewMerchantCardTextLayout, "domain");
+  const previewMerchantCardImageOpacity = normalizeUnitInterval(configMerchantCardImageOpacity, 1);
   const previewMerchantCardTextBoxClass =
     merchantListPreviewProps.merchantCardTextBoxVisible === true
       ? "inline-flex w-fit max-w-full rounded border border-slate-300 bg-white/90 px-1.5 py-0.5"
@@ -2058,6 +2029,7 @@ export default function SuperAdminClient() {
     setConfigAllowProductBlock(permission.allowProductBlock);
     setConfigAllowBookingBlock(permission.allowBookingBlock);
     setConfigMerchantCardImage((site.merchantCardImageUrl ?? "").trim());
+    setConfigMerchantCardImageOpacity(normalizeUnitInterval(site.merchantCardImageOpacity, 1));
     setConfigRecommendedCountryRank(rankInput(sortConfig.recommendedCountryRank));
     setConfigRecommendedProvinceRank(rankInput(sortConfig.recommendedProvinceRank));
     setConfigRecommendedCityRank(rankInput(sortConfig.recommendedCityRank));
@@ -2111,6 +2083,7 @@ export default function SuperAdminClient() {
       serviceExpiresAt: row.site.serviceExpiresAt ?? row.expireAt,
       permissionConfig: row.site.permissionConfig ?? createDefaultMerchantPermissionConfig(),
       merchantCardImageUrl: (row.site.merchantCardImageUrl ?? "").trim(),
+      merchantCardImageOpacity: normalizeUnitInterval(row.site.merchantCardImageOpacity, 1),
       sortConfig: row.site.sortConfig ?? createDefaultMerchantSortConfig(),
       configHistory: row.site.configHistory ?? [],
       createdAt: row.site.createdAt ?? timestamp,
@@ -3070,7 +3043,7 @@ export default function SuperAdminClient() {
         selectedMerchantSite?.id ?? "merchant-card",
       );
       if (!uploadedUrl) {
-        setTip("图片上传到存储失败，请检查存储配置后重试");
+        setTip("商户框图片上传失败，请稍后重试");
         return;
       }
       setConfigMerchantCardImage(uploadedUrl);
@@ -3122,11 +3095,12 @@ export default function SuperAdminClient() {
       industryProvinceRank: parseRankInput(configIndustryProvinceRank),
       industryCityRank: parseRankInput(configIndustryCityRank),
     };
+    const merchantCardImageOpacity = normalizeUnitInterval(configMerchantCardImageOpacity, 1);
     let nextMerchantCardImage = configMerchantCardImage.trim();
     if (/^data:image\//i.test(nextMerchantCardImage)) {
       const uploadedUrl = await uploadMerchantCardImageDataUrlToSupabase(nextMerchantCardImage, selectedMerchantSite.id);
       if (!uploadedUrl) {
-        setTip("商户框图片仍是内嵌图片，且上传到存储失败，请重新上传后再保存");
+        setTip("商户框图片上传失败，请重新上传后再保存");
         return;
       }
       nextMerchantCardImage = uploadedUrl;
@@ -3198,6 +3172,11 @@ export default function SuperAdminClient() {
     if (prevMerchantCardImage !== nextMerchantCardImage) {
       pendingChanges.push(`商户框图片：${prevMerchantCardImage ? "已上传" : "默认样式"} -> ${nextMerchantCardImage ? "已上传" : "默认样式"}`);
     }
+    if (normalizeUnitInterval(selectedMerchantSite.merchantCardImageOpacity, 1) !== merchantCardImageOpacity) {
+      pendingChanges.push(
+        `商户框图片透明度：${Math.round(normalizeUnitInterval(selectedMerchantSite.merchantCardImageOpacity, 1) * 100)}% -> ${Math.round(merchantCardImageOpacity * 100)}%`,
+      );
+    }
     if (prevSortConfig.recommendedCountryRank !== sortConfig.recommendedCountryRank) {
       pendingChanges.push(`推荐-国家排序：${formatRank(prevSortConfig.recommendedCountryRank)} -> ${formatRank(sortConfig.recommendedCountryRank)}`);
     }
@@ -3250,6 +3229,7 @@ export default function SuperAdminClient() {
         allowBookingBlock: configAllowBookingBlock,
       },
       merchantCardImageUrl: nextMerchantCardImage,
+      merchantCardImageOpacity,
       sortConfig,
     };
     const historySummary =
@@ -3270,6 +3250,7 @@ export default function SuperAdminClient() {
             serviceExpiresAt: afterSnapshot.serviceExpiresAt,
             permissionConfig: afterSnapshot.permissionConfig,
             merchantCardImageUrl: afterSnapshot.merchantCardImageUrl,
+            merchantCardImageOpacity: afterSnapshot.merchantCardImageOpacity,
             sortConfig: afterSnapshot.sortConfig,
             configHistory: appendMerchantConfigHistory(item.configHistory, historyEntry),
             updatedAt: nextIsoNow(),
@@ -3327,6 +3308,7 @@ export default function SuperAdminClient() {
       serviceExpiresAt: rollbackTarget.serviceExpiresAt ?? null,
       permissionConfig: rollbackTarget.permissionConfig ?? createDefaultMerchantPermissionConfig(),
       merchantCardImageUrl: rollbackMerchantCardImage,
+      merchantCardImageOpacity: normalizeUnitInterval(rollbackTarget.merchantCardImageOpacity, 1),
       sortConfig: rollbackTarget.sortConfig ?? createDefaultMerchantSortConfig(),
     };
     const rollbackDiffLines = buildMerchantConfigDiffLines(rollbackBeforeSnapshot, rollbackAfterSnapshot);
@@ -3375,6 +3357,7 @@ export default function SuperAdminClient() {
             serviceExpiresAt: rollbackAfterSnapshot.serviceExpiresAt,
             permissionConfig: rollbackAfterSnapshot.permissionConfig,
             merchantCardImageUrl: rollbackAfterSnapshot.merchantCardImageUrl,
+            merchantCardImageOpacity: rollbackAfterSnapshot.merchantCardImageOpacity,
             sortConfig: rollbackAfterSnapshot.sortConfig,
             configHistory: appendMerchantConfigHistory(site.configHistory, rollbackHistoryEntry),
             updatedAt: nextIsoNow(),
@@ -5280,6 +5263,21 @@ export default function SuperAdminClient() {
                                 <div className="space-y-2">
                                   <input type="file" accept="image/*" onChange={handleMerchantCardImageUpload} />
                                   <div className="grid gap-2 md:grid-cols-2">
+                                    <label className="space-y-1 md:col-span-2">
+                                      <div className="flex items-center justify-between text-slate-500">
+                                        <span>图片透明度</span>
+                                        <span>{Math.round(configMerchantCardImageOpacity * 100)}%</span>
+                                      </div>
+                                      <input
+                                        className="w-full"
+                                        type="range"
+                                        min={0}
+                                        max={100}
+                                        step={1}
+                                        value={Math.round(configMerchantCardImageOpacity * 100)}
+                                        onChange={(e) => setConfigMerchantCardImageOpacity(Math.max(0, Math.min(1, Number(e.target.value) / 100)))}
+                                      />
+                                    </label>
                                     <label className="space-y-1">
                                       <div className="text-slate-500">预览宽度</div>
                                       <input
@@ -5315,12 +5313,18 @@ export default function SuperAdminClient() {
                                       height: `${previewCardHeight}px`,
                                       color: "#0f172a",
                                       borderColor: "#334155",
-                                      backgroundColor: configMerchantCardImage ? undefined : "#f8fafc",
-                                      backgroundImage: configMerchantCardImage ? `url(${configMerchantCardImage})` : undefined,
-                                      backgroundSize: "cover",
-                                      backgroundPosition: "center",
+                                      backgroundColor: "#f8fafc",
                                     }}
                                   >
+                                    {configMerchantCardImage ? (
+                                      <div
+                                        className="absolute inset-0 bg-cover bg-center bg-no-repeat"
+                                        style={{
+                                          backgroundImage: `url(${configMerchantCardImage})`,
+                                          opacity: previewMerchantCardImageOpacity,
+                                        }}
+                                      />
+                                    ) : null}
                                     <div className="relative h-full min-w-0">
                                       <div
                                         className={`${previewMerchantCardTextBoxClass} text-base font-semibold text-slate-900`}

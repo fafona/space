@@ -115,6 +115,7 @@ export type MerchantConfigSnapshot = {
   serviceExpiresAt: string | null;
   permissionConfig: MerchantServicePermissionConfig;
   merchantCardImageUrl: string;
+  merchantCardImageOpacity: number;
   sortConfig: MerchantSortConfig;
 };
 
@@ -150,6 +151,7 @@ export type Site = {
   serviceExpiresAt?: string | null;
   permissionConfig?: MerchantServicePermissionConfig;
   merchantCardImageUrl?: string;
+  merchantCardImageOpacity?: number;
   businessCards?: MerchantBusinessCardAsset[];
   sortConfig?: MerchantSortConfig;
   configHistory?: MerchantConfigHistoryEntry[];
@@ -479,6 +481,11 @@ function normalizeMerchantSortConfig(value: unknown): MerchantSortConfig {
   };
 }
 
+function normalizeUnitInterval(value: unknown, fallback = 1) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  return Math.max(0, Math.min(1, value));
+}
+
 function normalizeMerchantConfigSnapshot(value: unknown): MerchantConfigSnapshot {
   const source = value && typeof value === "object" ? (value as Partial<MerchantConfigSnapshot>) : {};
   return {
@@ -488,6 +495,7 @@ function normalizeMerchantConfigSnapshot(value: unknown): MerchantConfigSnapshot
         : null,
     permissionConfig: normalizeMerchantPermissionConfig(source.permissionConfig),
     merchantCardImageUrl: normalizeText(source.merchantCardImageUrl),
+    merchantCardImageOpacity: normalizeUnitInterval(source.merchantCardImageOpacity, 1),
     sortConfig: normalizeMerchantSortConfig(source.sortConfig),
   };
 }
@@ -826,6 +834,7 @@ function createDefaultState(): PlatformState {
         serviceExpiresAt: null,
         permissionConfig: createDefaultMerchantPermissionConfig(),
         merchantCardImageUrl: "",
+        merchantCardImageOpacity: 1,
         businessCards: [],
         sortConfig: createDefaultMerchantSortConfig(),
         configHistory: [],
@@ -860,6 +869,7 @@ function createDefaultState(): PlatformState {
         serviceExpiresAt: null,
         permissionConfig: createDefaultMerchantPermissionConfig(),
         merchantCardImageUrl: "",
+        merchantCardImageOpacity: 1,
         businessCards: [],
         sortConfig: createDefaultMerchantSortConfig(),
         configHistory: [],
@@ -1078,6 +1088,7 @@ function normalizeState(input: PlatformState): PlatformState {
               : null,
           permissionConfig: normalizeMerchantPermissionConfig((site as { permissionConfig?: unknown }).permissionConfig),
           merchantCardImageUrl: normalizeText((site as { merchantCardImageUrl?: unknown }).merchantCardImageUrl),
+          merchantCardImageOpacity: normalizeUnitInterval((site as { merchantCardImageOpacity?: unknown }).merchantCardImageOpacity, 1),
           businessCards: normalizeMerchantBusinessCards((site as { businessCards?: unknown }).businessCards),
           sortConfig: normalizeMerchantSortConfig((site as { sortConfig?: unknown }).sortConfig),
           configHistory: normalizeMerchantConfigHistory((site as { configHistory?: unknown }).configHistory),
@@ -1321,6 +1332,7 @@ export function createSite(input: {
     serviceExpiresAt: null,
     permissionConfig: createDefaultMerchantPermissionConfig(),
     merchantCardImageUrl: "",
+    merchantCardImageOpacity: 1,
     businessCards: [],
     sortConfig: createDefaultMerchantSortConfig(),
     configHistory: [],
