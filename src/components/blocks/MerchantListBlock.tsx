@@ -729,10 +729,15 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
                   ? Math.max(0, Math.min(1, site.merchantCardImageOpacity))
                   : 1;
               const hasMerchantCardImage = merchantCardImageUrl.length > 0;
-              const merchantCardStyle = {
-                ...getBlockBorderInlineStyle(styleConfig.borderStyle, styleConfig.borderColor),
-                ...getColorLayerStyle(styleConfig.bgColor, styleConfig.bgOpacity),
-              };
+              const merchantCardStyle = hasMerchantCardImage
+                ? {
+                    ...getBlockBorderInlineStyle(styleConfig.borderStyle, styleConfig.borderColor),
+                    backgroundColor: "#ffffff",
+                  }
+                : {
+                    ...getBlockBorderInlineStyle(styleConfig.borderStyle, styleConfig.borderColor),
+                    ...getColorLayerStyle(styleConfig.bgColor, styleConfig.bgOpacity),
+                  };
               return (
                 <Link
                   key={site.id}
