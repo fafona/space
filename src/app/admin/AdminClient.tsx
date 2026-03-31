@@ -6717,6 +6717,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const toolbarActionsClassName = shouldUseDesktopEditorSidebar
     ? "grid grid-cols-2 gap-2"
     : "flex items-center gap-2";
+  const supportButtonClassName = shouldUseDesktopEditorSidebar
+    ? "col-span-2 px-3 py-2 rounded bg-black text-white hover:bg-slate-800"
+    : "px-3 py-2 rounded bg-black text-white hover:bg-slate-800";
+  const publishActionsClassName = shouldUseDesktopEditorSidebar
+    ? "grid grid-cols-2 gap-2"
+    : "flex items-center gap-2 flex-wrap";
 
   return (
     <main
@@ -6848,40 +6854,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                 </button>
               ) : null}
               <button
-                className="px-3 py-2 rounded border bg-white hover:bg-gray-50"
+                className={supportButtonClassName}
                 onClick={openSupportDialog}
               >
                 {"联系我们"}
-              </button>
-              <button
-                className="px-3 py-2 rounded border bg-white hover:bg-gray-50"
-                onClick={rollbackToLastSuccessfulPublished}
-              >
-                {"回滚发布"}
-              </button>
-              <button
-                className="px-3 py-2 rounded border bg-white hover:bg-gray-50"
-                onClick={restoreLatestFailedSnapshot}
-              >
-                {"恢复失败草稿"}
-              </button>
-              <button
-                className="px-3 py-2 rounded bg-black text-white disabled:opacity-50 lg:col-span-2"
-                onClick={publishToFrontend}
-                disabled={
-                  publishing ||
-                  (!isPlatformEditor && !remoteContentVerified) ||
-                  (!isPlatformEditor && !getSiteIdFromStoreScope(storeScope).trim())
-                }
-                title={
-                  !isPlatformEditor && !getSiteIdFromStoreScope(storeScope).trim()
-                    ? "缺少 site-xxx 作用域，暂不可发布"
-                    : (!isPlatformEditor && !remoteContentVerified)
-                      ? "远端内容未验证，暂不可发布"
-                      : undefined
-                }
-              >
-                {publishing ? "发布中..." : "发布"}
               </button>
             </div>
           </div>
@@ -7111,6 +7087,46 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                       onChange={handlePageImageUpload}
                     />
                   </div>
+
+                  {!isPlatformEditor ? (
+                    <>
+                      <div className="h-px w-full bg-gray-200 hidden lg:block" />
+                      <div className="flex items-center gap-2 flex-wrap lg:flex-col lg:items-stretch">
+                        <div className={publishActionsClassName}>
+                          <button
+                            className="px-3 py-2 rounded border bg-white hover:bg-gray-50"
+                            onClick={rollbackToLastSuccessfulPublished}
+                          >
+                            {"回滚发布"}
+                          </button>
+                          <button
+                            className="px-3 py-2 rounded border bg-white hover:bg-gray-50"
+                            onClick={restoreLatestFailedSnapshot}
+                          >
+                            {"恢复失败草稿"}
+                          </button>
+                          <button
+                            className={`px-3 py-2 rounded bg-black text-white disabled:opacity-50 ${shouldUseDesktopEditorSidebar ? "col-span-2" : ""}`}
+                            onClick={publishToFrontend}
+                            disabled={
+                              publishing ||
+                              (!isPlatformEditor && !remoteContentVerified) ||
+                              (!isPlatformEditor && !getSiteIdFromStoreScope(storeScope).trim())
+                            }
+                            title={
+                              !isPlatformEditor && !getSiteIdFromStoreScope(storeScope).trim()
+                                ? "缺少 site-xxx 作用域，暂不可发布"
+                                : (!isPlatformEditor && !remoteContentVerified)
+                                  ? "远端内容未验证，暂不可发布"
+                                  : undefined
+                            }
+                          >
+                            {publishing ? "发布中..." : "发布"}
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  ) : null}
                 </div>
               </div>
             </div>
