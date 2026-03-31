@@ -37,6 +37,7 @@ async function resolveMerchantSession(request: Request) {
   const hintedSiteId = trimText(request.headers.get("x-merchant-site-id"));
   const hintedEmail = trimText(request.headers.get("x-merchant-email")).toLowerCase();
   const hintedName = trimText(request.headers.get("x-merchant-name"));
+  const fallbackMerchantId = hintedSiteId || hintedEmail || hintedName;
   if (accessToken) {
     await fetch(`${origin}/api/auth/merchant-session`, {
       method: "POST",
@@ -60,7 +61,13 @@ async function resolveMerchantSession(request: Request) {
     },
     cache: "no-store",
   }).catch(() => null);
-  if (!response?.ok) return null;
+  if (!response) {
+    if (!fallbackMerchantId) return null;
+    return {
+      merchantId: fallbackMerchantId,
+      merchantEmail: hintedEmail,
+    };
+  }
   const payload = (await response.json().catch(() => null)) as
     | {
         authenticated?: boolean;
@@ -69,7 +76,6 @@ async function resolveMerchantSession(request: Request) {
       }
     | null;
   if (!payload?.authenticated) {
-    const fallbackMerchantId = hintedSiteId || hintedEmail || hintedName;
     if (!fallbackMerchantId) return null;
     return {
       merchantId: fallbackMerchantId,
