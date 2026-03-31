@@ -48,7 +48,7 @@ type MerchantProfileDialogProps = {
     contactEmail: string;
     location: SiteLocation;
     industry: MerchantIndustry;
-  }) => void;
+  }) => void | Promise<void>;
 };
 
 type SearchOption = {
@@ -291,6 +291,7 @@ export default function MerchantProfileDialog({
   const [industry, setIndustry] = useState<MerchantIndustry>(initialState.industry);
   const [businessCards, setBusinessCards] = useState<MerchantBusinessCardAsset[]>(() => initialBusinessCards ?? []);
   const [domainSubmitCooldownLeftSec, setDomainSubmitCooldownLeftSec] = useState(0);
+  const [savePending, setSavePending] = useState(false);
   const normalizedTakenPrefixes = useMemo(
     () =>
       new Set(
@@ -344,6 +345,10 @@ export default function MerchantProfileDialog({
       window.clearInterval(timer);
     };
   }, [computeDomainSubmitCooldownLeftSec, open]);
+
+  useEffect(() => {
+    if (!open) setSavePending(false);
+  }, [open]);
 
   function submitDomainPrefix() {
     if (domainSubmitCooldownLeftSec > 0) {
@@ -874,15 +879,17 @@ export default function MerchantProfileDialog({
         <div className="flex justify-end gap-2">
           <button
             type="button"
-            className="rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50"
+            className="rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
             onClick={onClose}
+            disabled={savePending}
           >
             取消
           </button>
           <button
             type="button"
-            className="rounded bg-black px-3 py-2 text-sm text-white hover:opacity-90"
-            onClick={() => {
+            className="rounded bg-black px-3 py-2 text-sm text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+            onClick={async () => {
+              if (savePending) return;
               if (!domainPrefixConfirmed) {
                 setDomainPrefixError("请先提交并通过前缀校验");
                 setDomainPrefixMessage("");
@@ -908,19 +915,27 @@ export default function MerchantProfileDialog({
                     province: "",
                     city: "",
                   };
-              onSave({
-                merchantName: merchantName.trim(),
-                domainPrefix: domainPrefixConfirmed,
-                contactAddress: contactAddress.trim(),
-                contactName: contactName.trim(),
-                contactPhone: contactPhone.trim(),
-                contactEmail: contactEmail.trim(),
-                location,
-                industry,
-              });
+              setSavePending(true);
+              try {
+                await Promise.resolve(
+                  onSave({
+                    merchantName: merchantName.trim(),
+                    domainPrefix: domainPrefixConfirmed,
+                    contactAddress: contactAddress.trim(),
+                    contactName: contactName.trim(),
+                    contactPhone: contactPhone.trim(),
+                    contactEmail: contactEmail.trim(),
+                    location,
+                    industry,
+                  }),
+                );
+              } finally {
+                setSavePending(false);
+              }
             }}
+            disabled={savePending}
           >
-            保存
+            {savePending ? "保存中..." : "保存"}
           </button>
         </div>
       </div>

@@ -1475,6 +1475,8 @@ export default function SuperAdminClient() {
         ? buildMerchantSiteContext(mergedSite, merchantOwnerBySiteId.get(mergedSite.id) ?? null, nowMs)
         : legacySiteContext;
       const hasPublishedSite = account.hasPublishedSite === true;
+      const hasSyncedProfile = Boolean(account.profileSnapshot);
+      const canOperateAsSite = hasPublishedSite || hasSyncedProfile;
       const publishedPrefix = normalizePublishedSitePrefix(account.siteSlug);
       if (localSiteContext) {
         const merchantName = getMerchantProfileName(localSiteContext.site);
@@ -1502,18 +1504,19 @@ export default function SuperAdminClient() {
           statusKey: localSiteContext.statusKey,
         };
       }
+      const backendOnlySite = buildBackendOnlySite(account);
       return {
-        site: buildBackendOnlySite(account),
-        hasSite: hasPublishedSite,
+        site: backendOnlySite,
+        hasSite: canOperateAsSite,
         hasLocalSite: false,
         backendAccount: account,
         merchantId,
         loginAccount: account.email || "-",
         userEmail: account.email || "-",
-        merchantName: "",
-        prefix: publishedPrefix || "-",
-        industry: "-",
-        city: "-",
+        merchantName: getMerchantProfileName(backendOnlySite),
+        prefix: normalizePublishedSitePrefix(backendOnlySite.domainPrefix ?? backendOnlySite.domainSuffix) || publishedPrefix || "-",
+        industry: (backendOnlySite.industry ?? "").trim() || "-",
+        city: (backendOnlySite.location?.city ?? "").trim() || "-",
         sizeBytes: account.publishedBytes,
         sizeKnown: account.publishedBytesKnown,
         visits: account.visits,
@@ -1521,8 +1524,8 @@ export default function SuperAdminClient() {
         registerAt: account.createdAt ?? nextIsoNow(),
         expireAt: null,
         expired: false,
-        statusLabel: hasPublishedSite ? "已建站" : "未建站",
-        statusKey: hasPublishedSite ? "linked" : "unlinked",
+        statusLabel: canOperateAsSite ? "已建站" : "未建站",
+        statusKey: canOperateAsSite ? "linked" : "unlinked",
       };
     });
 
@@ -1675,6 +1678,11 @@ export default function SuperAdminClient() {
     selectedMerchantRow?.hasLocalSite
       ? state.sites.find((site) => site.id === selectedMerchantRow.site.id) ?? selectedMerchantRow.site
       : null;
+  const ensureSelectedMerchantConfigSite = () => {
+    if (selectedMerchantSite) return selectedMerchantSite;
+    if (!selectedMerchantRow?.hasSite) return null;
+    return ensureLocalMerchantSiteFromRow(selectedMerchantRow);
+  };
   const selectedMerchantConfigHistory = selectedMerchantSite?.configHistory ?? [];
   const merchantConfigHistoryContent = (
     <div className="space-y-3 text-xs">
@@ -2051,35 +2059,29 @@ export default function SuperAdminClient() {
     const nextSite: Site = {
       id: merchantId,
       tenantId: mainSite?.tenantId ?? stateRef.current.tenants[0]?.id ?? "tenant-demo",
-      merchantName: row.merchantName || "",
+      merchantName: (row.site.merchantName ?? "").trim() || row.merchantName || "",
       domainPrefix: prefix,
       domainSuffix: prefix,
-      contactAddress: "",
-      contactName: "",
-      contactPhone: "",
-      contactEmail: row.userEmail || "",
-      name: row.merchantName || `商户 ${merchantId}`,
-      domain: buildMerchantFrontendHref(merchantId, prefix),
+      contactAddress: (row.site.contactAddress ?? "").trim(),
+      contactName: (row.site.contactName ?? "").trim(),
+      contactPhone: (row.site.contactPhone ?? "").trim(),
+      contactEmail: (row.site.contactEmail ?? "").trim() || row.userEmail || "",
+      name: (row.site.name ?? "").trim() || row.merchantName || `商户 ${merchantId}`,
+      domain: (row.site.domain ?? "").trim() || buildMerchantFrontendHref(merchantId, prefix),
       categoryId: mainSite?.categoryId ?? "",
       category: mainSite?.category ?? "商户",
-      industry: "",
+      industry: row.site.industry,
       status: row.statusKey === "paused" ? "maintenance" : "online",
       publishedVersion: row.hasSite ? 1 : 0,
       lastPublishedAt: null,
-      features: mainSite?.features ?? createFeaturePackage("basic"),
-      location: {
-        countryCode: "",
-        country: "",
-        provinceCode: "",
-        province: "",
-        city: "",
-      },
-      serviceExpiresAt: row.expireAt,
-      permissionConfig: createDefaultMerchantPermissionConfig(),
-      merchantCardImageUrl: "",
-      sortConfig: createDefaultMerchantSortConfig(),
-      configHistory: [],
-      createdAt: timestamp,
+      features: row.site.features ?? mainSite?.features ?? createFeaturePackage("basic"),
+      location: row.site.location,
+      serviceExpiresAt: row.site.serviceExpiresAt ?? row.expireAt,
+      permissionConfig: row.site.permissionConfig ?? createDefaultMerchantPermissionConfig(),
+      merchantCardImageUrl: (row.site.merchantCardImageUrl ?? "").trim(),
+      sortConfig: row.site.sortConfig ?? createDefaultMerchantSortConfig(),
+      configHistory: row.site.configHistory ?? [],
+      createdAt: row.site.createdAt ?? timestamp,
       updatedAt: timestamp,
     };
 
@@ -2100,6 +2102,11 @@ export default function SuperAdminClient() {
       return null;
     }
     return nextSite;
+  }
+
+  function ensureOperableMerchantSiteFromRow(row: MerchantUserRow) {
+    if (!row.hasSite) return null;
+    return ensureLocalMerchantSiteFromRow(row) ?? row.site;
   }
 
   function openMerchantConfigPanel(site: Site) {
@@ -4311,7 +4318,12 @@ export default function SuperAdminClient() {
                                   <div className="flex flex-wrap gap-1">
                                     <button
                                       className="rounded border px-2 py-1"
-                                      onClick={() => openMerchantDetailPanel(row.site.id)}
+                                      onClick={() => {
+                                        if (row.hasSite && !row.hasLocalSite) {
+                                          ensureLocalMerchantSiteFromRow(row);
+                                        }
+                                        openMerchantDetailPanel(row.site.id);
+                                      }}
                                     >
                                       详情
                                     </button>
@@ -4330,7 +4342,7 @@ export default function SuperAdminClient() {
                                             <button
                                               className="rounded border px-2 py-1"
                                               onClick={() => {
-                                                const localSite = ensureLocalMerchantSiteFromRow(row);
+                                                const localSite = ensureOperableMerchantSiteFromRow(row);
                                                 if (!localSite) return;
                                                 toggleMerchantServiceAction(localSite.id);
                                               }}
@@ -4340,7 +4352,7 @@ export default function SuperAdminClient() {
                                             <button
                                               className="rounded border bg-black px-2 py-1 text-white hover:bg-slate-800"
                                               onClick={() => {
-                                                const localSite = ensureLocalMerchantSiteFromRow(row);
+                                                const localSite = ensureOperableMerchantSiteFromRow(row);
                                                 if (!localSite) return;
                                                 openMerchantConfigPanel(localSite);
                                               }}
@@ -4351,13 +4363,19 @@ export default function SuperAdminClient() {
                                         ) : null}
                                         <button
                                           className="rounded border px-2 py-1"
-                                          onClick={() => openPlanTemplateDialogForSite(row.site)}
+                                          onClick={() => {
+                                            const targetSite = ensureOperableMerchantSiteFromRow(row) ?? row.site;
+                                            openPlanTemplateDialogForSite(targetSite);
+                                          }}
                                         >
                                           方案模板
                                         </button>
                                         <button
                                           className="rounded border px-2 py-1 disabled:opacity-50"
-                                          onClick={() => void captureMerchantTemplate(row.site)}
+                                          onClick={() => {
+                                            const targetSite = ensureOperableMerchantSiteFromRow(row) ?? row.site;
+                                            void captureMerchantTemplate(targetSite);
+                                          }}
                                           disabled={capturingTemplateSiteId === row.site.id}
                                         >
                                           {capturingTemplateSiteId === row.site.id ? "收录中.." : "收录方案"}
@@ -4997,22 +5015,25 @@ export default function SuperAdminClient() {
                           详情
                         </button>
                         <button
-                          className={`rounded border px-2 py-1 ${userPanelMode === "config" ? "bg-black text-white" : "bg-white"} ${selectedMerchantSite ? "" : "opacity-40"}`}
+                          className={`rounded border px-2 py-1 ${userPanelMode === "config" ? "bg-black text-white" : "bg-white"} ${selectedMerchantRow?.hasSite ? "" : "opacity-40"}`}
                           onClick={() => {
-                            if (selectedMerchantSite) hydrateMerchantConfigDraft(selectedMerchantSite);
+                            const localSite = ensureSelectedMerchantConfigSite();
+                            if (!localSite) return;
+                            hydrateMerchantConfigDraft(localSite);
                             setUserPanelMode("config");
                           }}
-                          disabled={!selectedMerchantSite}
+                          disabled={!selectedMerchantRow?.hasSite}
                         >
                           配置
                         </button>
                         <button
-                          className={`rounded border px-2 py-1 ${userPanelMode === "history" ? "bg-black text-white" : "bg-white"} ${selectedMerchantSite ? "" : "opacity-40"}`}
+                          className={`rounded border px-2 py-1 ${userPanelMode === "history" ? "bg-black text-white" : "bg-white"} ${selectedMerchantRow?.hasSite ? "" : "opacity-40"}`}
                           onClick={() => {
-                            if (!selectedMerchantSite) return;
+                            const localSite = ensureSelectedMerchantConfigSite();
+                            if (!localSite) return;
                             setUserPanelMode("history");
                           }}
-                          disabled={!selectedMerchantSite}
+                          disabled={!selectedMerchantRow?.hasSite}
                         >
                           配置历史
                         </button>
@@ -5042,7 +5063,7 @@ export default function SuperAdminClient() {
                               </div>
                             ) : !selectedMerchantRow.hasLocalSite ? (
                               <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-amber-800">
-                                该商户已有线上站点，但当前浏览器里没有对应的本地配置记录；可以查看前台、收录方案、应用模板，配置和服务开关会先隐藏。
+                                该商户资料已经同步到超级后台，但当前浏览器里还没有本地配置镜像；点击配置、配置历史、暂停/开启服务或方案模板时会自动补建本地配置。
                               </div>
                             ) : null}
                             <div className="grid grid-cols-2 gap-2">
@@ -5108,7 +5129,9 @@ export default function SuperAdminClient() {
                           </div>
                         ) : !selectedMerchantSite ? (
                           <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                            该账号尚未创建站点，当前没有可配置的站点参数。先为它建站后，才能配置前台、域名、服务状态和发布内容。
+                            {selectedMerchantRow.hasSite
+                              ? "正在初始化该商户的本地配置，请稍后再试一次；如果这是新商户，系统会自动把超级后台资料补成本地可编辑站点。"
+                              : "该账号尚未创建站点，当前没有可配置的站点参数。先为它建站后，才能配置前台、域名、服务状态和发布内容。"}
                           </div>
                         ) : userPanelMode === "history" ? (
                           merchantConfigHistoryContent

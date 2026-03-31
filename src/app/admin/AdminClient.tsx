@@ -7300,10 +7300,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                   : item,
               ),
             });
-            setMerchantProfileDialogOpen(false);
-            setMerchantProfileAttention(false);
-            showTip("商户信息已保存");
-            void syncMerchantProfileBinding(targetSiteId, normalizedDomainPrefix, merchantName, {
+            const syncResult = await syncMerchantProfileBinding(targetSiteId, normalizedDomainPrefix, merchantName, {
               domain: buildMerchantDomainFromBase(baseDomain, domainPrefix),
               contactAddress,
               contactName,
@@ -7311,15 +7308,18 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               contactEmail,
               industry,
               location,
-            }).then((result) => {
-              if (!result.ok) {
-                showTip("商户信息已保存；线上商户资料同步失败，稍后重新保存或重新发布后会自动修复");
-                return;
-              }
-              if (!result.slugUpdated) {
-                showTip("商户信息已保存；当前还没有线上页面记录，首次发布后前台地址才会生效");
-              }
             });
+            if (!syncResult.ok) {
+              showTip("商户信息已保存到当前后台，但同步到超级后台失败，请稍后重新保存");
+              return;
+            }
+            setMerchantProfileDialogOpen(false);
+            setMerchantProfileAttention(false);
+            if (!syncResult.slugUpdated) {
+              showTip("商户信息已保存；超级后台已同步，当前还没有线上页面记录，首次发布后前台地址才会生效");
+              return;
+            }
+            showTip("商户信息已保存，超级后台已同步更新");
           }}
         />
       ) : null}
