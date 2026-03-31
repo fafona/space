@@ -450,7 +450,7 @@ const MAX_MERCHANT_CARD_IMAGE_DATA_URL_BYTES = 900_000;
 const MAX_PLATFORM_STATE_STORAGE_BYTES = 4_500_000;
 const MERCHANT_CARD_IMAGE_MAX_SIDE = 1280;
 const MERCHANT_CARD_IMAGE_MIN_SIDE = 160;
-const MERCHANT_CARD_IMAGE_TARGET_BYTES = 240_000;
+const MERCHANT_CARD_IMAGE_TARGET_BYTES = 80_000;
 const TIP_AUTO_DISMISS_MS = 4200;
 const STORAGE_SAFE_AUDIT_RECORDS = 500;
 const STORAGE_SAFE_ALERT_RECORDS = 240;
@@ -496,6 +496,10 @@ async function optimizeMerchantCardImage(file: File) {
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
     throw new Error("图片尺寸异常，请更换图片");
   }
+  const originalBytes = estimateUtf8Size(original);
+  if (originalBytes <= MERCHANT_CARD_IMAGE_TARGET_BYTES && Math.max(width, height) <= MERCHANT_CARD_IMAGE_MAX_SIDE) {
+    return original;
+  }
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("图片处理失败，请重试");
@@ -519,7 +523,7 @@ async function optimizeMerchantCardImage(file: File) {
   ];
 
   let best = original;
-  let bestBytes = estimateUtf8Size(original);
+  let bestBytes = originalBytes;
   let reachedTarget = bestBytes <= MERCHANT_CARD_IMAGE_TARGET_BYTES;
 
   for (const candidateSide of sideCandidates) {
