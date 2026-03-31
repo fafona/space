@@ -6457,15 +6457,41 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
   }
 
+  async function requestSupportWithSessionRecovery(init: RequestInit) {
+    const sendRequest = () =>
+      fetch("/api/support-messages", {
+        credentials: "same-origin",
+        cache: "no-store",
+        ...init,
+      });
+
+    let response = await sendRequest();
+    if (response.status !== 401 && response.status !== 403) {
+      return response;
+    }
+    if (!isSupabaseEnabled || isSupabaseFallbackMode) {
+      return response;
+    }
+
+    const recoveredSession = await recoverBrowserSupabaseSessionWithRefresh(
+      Math.max(2600, Math.min(7000, AUTH_CHECK_TIMEOUT_MS)),
+    );
+    if (!recoveredSession) {
+      return response;
+    }
+
+    await syncMerchantSessionCookies(recoveredSession, Math.max(2200, Math.min(6000, AUTH_CHECK_TIMEOUT_MS)));
+    response = await sendRequest();
+    return response;
+  }
+
   async function loadSupportThread() {
     if (isPlatformEditor) return;
     setSupportLoading(true);
     setSupportError("");
     try {
-      const response = await fetch("/api/support-messages", {
+      const response = await requestSupportWithSessionRecovery({
         method: "GET",
-        credentials: "same-origin",
-        cache: "no-store",
       });
       const payload = (await response.json().catch(() => null)) as
         | {
@@ -6501,12 +6527,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     setSupportSending(true);
     setSupportError("");
     try {
-      const response = await fetch("/api/support-messages", {
+      const response = await requestSupportWithSessionRecovery({
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        credentials: "same-origin",
         body: JSON.stringify({
           text,
           merchantName: merchantDisplayName,
@@ -7452,17 +7477,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                   if (supportSending) return;
                   setSupportDialogOpen(false);
                 }}
-                aria-label="关闭联系我们弹窗"
+                aria-label="关闭在线客服弹窗"
               />
               <div className="fixed inset-0 z-[2147483301] flex items-center justify-center p-4">
                 <div className="flex h-full max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl md:flex-row">
                   <div className="w-full space-y-4 border-b bg-slate-50 px-5 py-5 md:w-[320px] md:border-b-0 md:border-r">
-                    <div className="space-y-1">
-                      <div className="text-base font-semibold text-slate-900">联系我们</div>
-                      <div className="text-sm leading-6 text-slate-500">
-                        可以给超级后台留言，我们会在“信息处理”里直接回复你。
-                      </div>
-                    </div>
                     <div className="rounded-2xl border bg-white p-4 text-sm leading-7 text-slate-700">
                       <div className="text-sm font-semibold text-slate-900">官方联系方式</div>
                       <div className="mt-3 space-y-2">
@@ -7501,17 +7520,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                         </div>
                       </div>
                     </div>
-                    <div className="rounded-2xl border border-dashed bg-white px-4 py-3 text-xs leading-6 text-slate-500">
-                      当前商户：{merchantDisplayName}
-                    </div>
                   </div>
 
                   <div className="flex min-h-0 flex-1 flex-col">
                     <div className="flex items-center justify-between gap-3 border-b px-5 py-4">
-                      <div>
-                        <div className="text-base font-semibold text-slate-900">留言窗口</div>
-                        <div className="text-xs text-slate-500">商户与超级后台的沟通记录会保留在这里。</div>
-                      </div>
+                      <div className="text-base font-semibold text-slate-900">在线客服</div>
                       <button
                         type="button"
                         className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
@@ -7568,8 +7581,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                         onChange={(event) => setSupportDraft(event.target.value)}
                         disabled={supportSending}
                       />
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="text-xs text-slate-500">留言会同步到超级后台“信息处理”。</div>
+                      <div className="flex justify-end">
                         <button
                           type="button"
                           className="rounded bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50"
