@@ -7315,11 +7315,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             }
             setMerchantProfileDialogOpen(false);
             setMerchantProfileAttention(false);
-            if (!syncResult.slugUpdated) {
-              showTip("商户信息已保存；超级后台已同步，当前还没有线上页面记录，首次发布后前台地址才会生效");
-              return;
-            }
-            showTip("商户信息已保存，超级后台已同步更新");
+            showTip("商户信息已保存");
           }}
         />
       ) : null}
