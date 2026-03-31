@@ -295,6 +295,38 @@ async function fetchPublishedBlocksForTemplateCapture(siteId: string) {
   return loadPublishedBlocksFromStorage([], normalizedSiteId);
 }
 
+async function saveMerchantDraftViaApi(siteId: string, blocks: Block[], updatedAt?: string) {
+  const normalizedSiteId = String(siteId ?? "").trim();
+  if (!normalizedSiteId) {
+    return { ok: false as const, message: "缺少站点 ID，无法同步商户草稿" };
+  }
+  try {
+    const response = await fetch("/api/merchant-draft", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({
+        siteId: normalizedSiteId,
+        blocks,
+        updatedAt: String(updatedAt ?? "").trim() || new Date().toISOString(),
+      }),
+    });
+    const payload = (await response.json().catch(() => null)) as { message?: string } | null;
+    if (!response.ok) {
+      return {
+        ok: false as const,
+        message: payload?.message || "商户后台草稿同步失败，请稍后重试",
+      };
+    }
+    return { ok: true as const };
+  } catch (error) {
+    return {
+      ok: false as const,
+      message: error instanceof Error ? error.message : "商户后台草稿同步失败，请稍后重试",
+    };
+  }
+}
+
 function badgeClass(value: string) {
   if (["active", "online", "success", "approved"].includes(value)) {
     return "border-emerald-300 bg-emerald-50 text-emerald-700";
@@ -2437,6 +2469,7 @@ export default function SuperAdminClient() {
     try {
       if (mode === "draft") {
         saveBlocksToStorage(blocks, scopeKey);
+        const draftSync = await saveMerchantDraftViaApi(siteId, blocks, publishedAt);
         const saved = commit((prev) =>
           withAudit(
             { ...prev },
@@ -2448,6 +2481,10 @@ export default function SuperAdminClient() {
         );
         if (!saved) {
           setTip("方案模板已写入草稿，但审计记录更新失败，请刷新后确认");
+          return;
+        }
+        if (!draftSync.ok) {
+          setTip(`方案模板已写入草稿，但商户后台同步失败：${draftSync.message}`);
           return;
         }
         setPlanTemplateApplyDialog(null);

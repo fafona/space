@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import type { Block } from "@/data/homeBlocks";
 import { sanitizeBlocksForRuntime } from "@/lib/blocksSanitizer";
+import { saveStoredMerchantDraft, type MerchantDraftStoreClient } from "@/lib/merchantDraftStore";
 import { normalizeDomainPrefix } from "@/lib/merchantIdentity";
 import { getInlinePublishPayloadViolation } from "@/lib/publishPayloadValidation";
 
@@ -452,6 +453,18 @@ export async function POST(request: Request) {
       };
       resultCache.set(requestId, { at: Date.now(), status, body: responseBody });
       return makeCachedResponse(status, responseBody);
+    }
+
+    if (!isPlatformEditor && merchantIds.length > 0) {
+      await Promise.allSettled(
+        merchantIds.map((merchantId) =>
+          saveStoredMerchantDraft(supabase as unknown as MerchantDraftStoreClient, {
+            siteId: merchantId,
+            blocks: payloadBlocks,
+            updatedAt: normalizedUpdatedAt,
+          }),
+        ),
+      );
     }
 
     const status = 200;

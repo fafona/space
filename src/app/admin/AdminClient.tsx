@@ -2682,6 +2682,12 @@ type PublishedSiteSnapshot = {
   merchantName: string;
 };
 
+type MerchantDraftSnapshot = {
+  siteId: string;
+  blocks: Block[];
+  updatedAt: string | null;
+};
+
 async function loadPublishedSiteSnapshotViaApi(siteId: string): Promise<PublishedSiteSnapshot | null> {
   const normalizedSiteId = String(siteId ?? "").trim();
   if (!normalizedSiteId) return null;
@@ -2714,6 +2720,43 @@ async function loadPublishedSiteSnapshotViaApi(siteId: string): Promise<Publishe
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function loadMerchantDraftSnapshotViaApi(merchantIds: string[]): Promise<MerchantDraftSnapshot | null> {
+  const uniqueMerchantIds = [...new Set(merchantIds.map((item) => String(item ?? "").trim()).filter(Boolean))].slice(0, 8);
+  for (const merchantId of uniqueMerchantIds) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12000);
+    try {
+      const response = await fetch(`/api/merchant-draft?siteId=${encodeURIComponent(merchantId)}`, {
+        method: "GET",
+        cache: "no-store",
+        credentials: "same-origin",
+        signal: controller.signal,
+      });
+      if (!response.ok) continue;
+      const json = (await response.json().catch(() => null)) as
+        | {
+            siteId?: unknown;
+            updatedAt?: unknown;
+            blocks?: unknown;
+          }
+        | null;
+      if (!Array.isArray(json?.blocks)) continue;
+      const sanitized = sanitizeBlocksForRuntime(json.blocks as Block[]).blocks;
+      if (sanitized.length === 0) continue;
+      return {
+        siteId: typeof json?.siteId === "string" ? json.siteId.trim() : merchantId,
+        updatedAt: typeof json?.updatedAt === "string" ? json.updatedAt.trim() : null,
+        blocks: sanitized,
+      };
+    } catch {
+      // ignore per-site draft fetch failures and try the next candidate
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return null;
 }
 
 async function loadPlatformBlocksViaRestFallback(accessToken?: string | null) {
@@ -4233,34 +4276,42 @@ export default function AdminClient({
         setCheckingAuth(false);
       }
     };
+    const getCandidateStoreScopes = () =>
+      storeScope !== "default"
+        ? [storeScope]
+        : (() => {
+            const siteScopes = loadPlatformState()
+              .sites.map((item) => buildSiteStoreScope(item.id))
+              .filter((item) => item && item !== "default");
+            const discoveredScopes = discoverSiteScopesFromLocalStorage();
+            return [...new Set([...siteScopes, ...discoveredScopes, "default"])];
+          })();
+    const isMeaningfulCachedSnapshot = (candidate: Block[]) =>
+      candidate.length > 0 &&
+      !isSameBlocksSnapshot(candidate, defaultEditorBlocks) &&
+      !isSameBlocksSnapshot(candidate, homeBlocks);
+    const hasMeaningfulCachedDraft = () => {
+      for (const candidateScope of getCandidateStoreScopes()) {
+        const cachedDraft = loadBlocksFromStorage([], candidateScope);
+        if (isMeaningfulCachedSnapshot(cachedDraft)) {
+          return true;
+        }
+      }
+      return false;
+    };
     const applyCachedEditorBlocks = () => {
       if (isPlatformEditor && platformSeedBlocks.length > 0) {
         savePublishedBlocksToStorage(platformSeedBlocks, storeScope);
       }
-      const candidateScopes =
-        storeScope !== "default"
-          ? [storeScope]
-          : (() => {
-              const siteScopes = loadPlatformState()
-                .sites.map((item) => buildSiteStoreScope(item.id))
-                .filter((item) => item && item !== "default");
-              const discoveredScopes = discoverSiteScopesFromLocalStorage();
-              return [...new Set([...siteScopes, ...discoveredScopes, "default"])];
-            })();
+      const candidateScopes = getCandidateStoreScopes();
       for (const candidateScope of candidateScopes) {
         const cachedDraft = loadBlocksFromStorage([], candidateScope);
-        const isCachedDraftDefault =
-          isSameBlocksSnapshot(cachedDraft, defaultEditorBlocks) ||
-          isSameBlocksSnapshot(cachedDraft, homeBlocks);
-        if (cachedDraft.length > 0 && !isCachedDraftDefault) {
+        if (isMeaningfulCachedSnapshot(cachedDraft)) {
           applyPersistedBlocksToEditorRef.current(cachedDraft, { resetHistory: true });
           return cachedDraft;
         }
         const cachedPublished = loadPublishedBlocksFromStorage([], candidateScope);
-        const isCachedPublishedDefault =
-          isSameBlocksSnapshot(cachedPublished, defaultEditorBlocks) ||
-          isSameBlocksSnapshot(cachedPublished, homeBlocks);
-        if (cachedPublished.length > 0 && !isCachedPublishedDefault) {
+        if (isMeaningfulCachedSnapshot(cachedPublished)) {
           applyPersistedBlocksToEditorRef.current(cachedPublished, { resetHistory: true });
           return cachedPublished;
         }
@@ -4527,6 +4578,22 @@ export default function AdminClient({
         }
         setHasEditorContent(true);
         releaseCheckingScreen({ notice: null });
+        if (!isPlatformEditor && !hasMeaningfulCachedDraft()) {
+          const remoteDraft = await loadMerchantDraftSnapshotViaApi(resolvedMerchantIds);
+          if (!mounted) return;
+          if (remoteDraft && remoteDraft.blocks.length > 0) {
+            setRemoteContentVerified(true);
+            applyPersistedBlocksToEditorRef.current(remoteDraft.blocks);
+            saveBlocksToStorage(remoteDraft.blocks, storeScope);
+            resolvedMerchantIds.forEach((siteId) => {
+              if ((siteId ?? "").trim()) {
+                saveBlocksToStorage(remoteDraft.blocks, buildSiteStoreScope(siteId));
+              }
+            });
+            releaseCheckingScreen({ notice: null });
+            return;
+          }
+        }
         const accessToken = session?.access_token ?? null;
         const restLoaded = await withTimeout(
           isPlatformEditor
