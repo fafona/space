@@ -68,6 +68,7 @@ import {
 import { clearMerchantSignInBridge } from "@/lib/merchantSignInBridge";
 import { buildPublishedMerchantProfilePatch } from "@/lib/merchantProfileBinding";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
+import { type PlatformSupportThread } from "@/lib/platformSupportInbox";
 import { BLOCK_BORDER_STYLE_OPTIONS, getBlockBorderClass, getBlockBorderInlineStyle } from "@/components/blocks/borderStyle";
 import { toRichHtml } from "@/components/blocks/richText";
 import {
@@ -201,7 +202,7 @@ import MerchantBookingManagerDialog from "@/components/admin/MerchantBookingMana
 import MerchantProfileDialog from "@/components/admin/MerchantProfileDialog";
 import { useI18n } from "@/components/I18nProvider";
 import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
-import { getMerchantServiceState } from "@/lib/merchantServiceStatus";
+import { OFFICIAL_SERVICE_CONTACT, getMerchantServiceState } from "@/lib/merchantServiceStatus";
 
 const IMAGE_FILL_VALUES: ImageFillMode[] = [
   "cover",
@@ -2973,6 +2974,14 @@ function getMerchantIdentityNotice(merchantIds: string[]) {
   return trySaveWithPayload({ blocks: sanitizedBlocks });
 }
 
+function formatSupportMessageTime(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return "-";
+  const timestamp = new Date(normalized).getTime();
+  if (!Number.isFinite(timestamp)) return normalized;
+  return new Date(timestamp).toLocaleString("zh-CN", { hour12: false });
+}
+
 export default function AdminClient({
   forcedScope,
   editorTitle = "页面编辑",
@@ -3047,6 +3056,12 @@ export default function AdminClient({
   const [merchantProfileDialogOpen, setMerchantProfileDialogOpen] = useState(false);
   const [merchantSiteIdOverride, setMerchantSiteIdOverride] = useState("");
   const [merchantBookingManagerOpen, setMerchantBookingManagerOpen] = useState(false);
+  const [supportDialogOpen, setSupportDialogOpen] = useState(false);
+  const [supportThread, setSupportThread] = useState<PlatformSupportThread | null>(null);
+  const [supportLoading, setSupportLoading] = useState(false);
+  const [supportSending, setSupportSending] = useState(false);
+  const [supportError, setSupportError] = useState("");
+  const [supportDraft, setSupportDraft] = useState("");
   const [merchantProfileAttention, setMerchantProfileAttention] = useState(false);
   const merchantProfileButtonRef = useRef<HTMLButtonElement>(null);
   const [topBarCollapsed, setTopBarCollapsed] = useState(false);
@@ -6442,6 +6457,87 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
   }
 
+  async function loadSupportThread() {
+    if (isPlatformEditor) return;
+    setSupportLoading(true);
+    setSupportError("");
+    try {
+      const response = await fetch("/api/support-messages", {
+        method: "GET",
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | {
+            thread?: PlatformSupportThread | null;
+            error?: string;
+          }
+        | null;
+      if (!response.ok) {
+        setSupportError(payload?.error === "unauthorized" ? "当前未登录，请重新登录后再联系我们" : "留言记录加载失败，请稍后重试");
+        return;
+      }
+      setSupportThread(payload?.thread ?? null);
+    } catch {
+      setSupportError("留言记录加载失败，请稍后重试");
+    } finally {
+      setSupportLoading(false);
+    }
+  }
+
+  function openSupportDialog() {
+    if (isPlatformEditor) return;
+    setSupportDialogOpen(true);
+    void loadSupportThread();
+  }
+
+  async function sendSupportMessage() {
+    if (supportSending) return;
+    const text = supportDraft.trim();
+    if (!text) {
+      showTip("请先填写留言内容");
+      return;
+    }
+    setSupportSending(true);
+    setSupportError("");
+    try {
+      const response = await fetch("/api/support-messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          text,
+          merchantName: merchantDisplayName,
+          merchantEmail:
+            (editingSite?.contactEmail ?? "").trim() ||
+            merchantSessionIdentityRef.current.email ||
+            "",
+          siteId: (editingSiteId || merchantSessionIdentityRef.current.merchantId || "").trim(),
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | {
+            thread?: PlatformSupportThread | null;
+            error?: string;
+            message?: string;
+          }
+        | null;
+      if (!response.ok) {
+        setSupportError(payload?.message || "留言发送失败，请稍后重试");
+        return;
+      }
+      setSupportThread(payload?.thread ?? null);
+      setSupportDraft("");
+      showTip("留言已发送");
+    } catch {
+      setSupportError("留言发送失败，请稍后重试");
+    } finally {
+      setSupportSending(false);
+    }
+  }
+
   if (checkingAuth) {
     return (
       <main className="min-h-screen bg-gray-100 flex items-center justify-center">
@@ -6753,22 +6849,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               ) : null}
               <button
                 className="px-3 py-2 rounded border bg-white hover:bg-gray-50"
-                onClick={async () => {
-                  const mergedConfig = mergePlanConfigWithEditingBlocks(
-                    planConfigRef.current,
-                    editingPlanIdRef.current,
-                    editingPageIdRef.current,
-                    blocksRef.current,
-                  );
-                  const desktopConfig = previewViewport === "desktop" ? mergedConfig : viewportStatesRef.current.desktop.planConfig;
-                  const mobileConfig = previewViewport === "mobile" ? mergedConfig : viewportStatesRef.current.mobile.planConfig;
-                  const combinedBlocks = buildCombinedPersistedBlocks(desktopConfig, mobileConfig);
-                  const payloadBytes = estimateUtf8Size(JSON.stringify(combinedBlocks));
-                  const passed = await runPublishPreflightDialog(combinedBlocks, payloadBytes);
-                  if (passed) showTip("发布体检通过");
-                }}
+                onClick={openSupportDialog}
               >
-                {"发布体检"}
+                {"联系我们"}
               </button>
               <button
                 className="px-3 py-2 rounded border bg-white hover:bg-gray-50"
@@ -7341,6 +7424,151 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           </div>
         </div>,
       )
+        : null}
+
+      {supportDialogOpen && !isPlatformEditor
+        ? renderTopMostOverlay(
+            <>
+              <button
+                type="button"
+                className="fixed inset-0 z-[2147483300] bg-black/45"
+                onClick={() => {
+                  if (supportSending) return;
+                  setSupportDialogOpen(false);
+                }}
+                aria-label="关闭联系我们弹窗"
+              />
+              <div className="fixed inset-0 z-[2147483301] flex items-center justify-center p-4">
+                <div className="flex h-full max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl md:flex-row">
+                  <div className="w-full space-y-4 border-b bg-slate-50 px-5 py-5 md:w-[320px] md:border-b-0 md:border-r">
+                    <div className="space-y-1">
+                      <div className="text-base font-semibold text-slate-900">联系我们</div>
+                      <div className="text-sm leading-6 text-slate-500">
+                        可以给超级后台留言，我们会在“信息处理”里直接回复你。
+                      </div>
+                    </div>
+                    <div className="rounded-2xl border bg-white p-4 text-sm leading-7 text-slate-700">
+                      <div className="text-sm font-semibold text-slate-900">官方联系方式</div>
+                      <div className="mt-3 space-y-2">
+                        <div>
+                          服务商：
+                          <a
+                            className="font-medium text-slate-900 underline underline-offset-4"
+                            href={OFFICIAL_SERVICE_CONTACT.serviceProviderUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            www.faolla.com
+                          </a>
+                        </div>
+                        <div>联系人：{OFFICIAL_SERVICE_CONTACT.contactName}</div>
+                        <div>
+                          WhatsApp：
+                          <a
+                            className="font-medium text-slate-900 underline underline-offset-4"
+                            href={`https://wa.me/${OFFICIAL_SERVICE_CONTACT.whatsapp.replace(/[^\d]/g, "")}`}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            {OFFICIAL_SERVICE_CONTACT.whatsapp}
+                          </a>
+                        </div>
+                        <div>Wechat：{OFFICIAL_SERVICE_CONTACT.wechat}</div>
+                        <div>
+                          Mail：
+                          <a
+                            className="font-medium text-slate-900 underline underline-offset-4"
+                            href={`mailto:${OFFICIAL_SERVICE_CONTACT.email}`}
+                          >
+                            {OFFICIAL_SERVICE_CONTACT.email}
+                          </a>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="rounded-2xl border border-dashed bg-white px-4 py-3 text-xs leading-6 text-slate-500">
+                      当前商户：{merchantDisplayName}
+                    </div>
+                  </div>
+
+                  <div className="flex min-h-0 flex-1 flex-col">
+                    <div className="flex items-center justify-between gap-3 border-b px-5 py-4">
+                      <div>
+                        <div className="text-base font-semibold text-slate-900">留言窗口</div>
+                        <div className="text-xs text-slate-500">商户与超级后台的沟通记录会保留在这里。</div>
+                      </div>
+                      <button
+                        type="button"
+                        className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+                        onClick={() => setSupportDialogOpen(false)}
+                        disabled={supportSending}
+                      >
+                        关闭
+                      </button>
+                    </div>
+
+                    <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50 px-5 py-5">
+                      {supportLoading ? (
+                        <div className="rounded-2xl border border-dashed bg-white px-4 py-6 text-center text-sm text-slate-500">
+                          正在加载留言记录...
+                        </div>
+                      ) : supportThread?.messages.length ? (
+                        <div className="space-y-3">
+                          {supportThread.messages.map((message) => {
+                            const isMerchantMessage = message.sender === "merchant";
+                            return (
+                              <div
+                                key={message.id}
+                                className={`flex ${isMerchantMessage ? "justify-end" : "justify-start"}`}
+                              >
+                                <div
+                                  className={`max-w-[85%] rounded-2xl px-4 py-3 shadow-sm ${
+                                    isMerchantMessage
+                                      ? "bg-slate-900 text-white"
+                                      : "border bg-white text-slate-900"
+                                  }`}
+                                >
+                                  <div className="text-[11px] opacity-70">
+                                    {isMerchantMessage ? "我" : "超级后台"} | {formatSupportMessageTime(message.createdAt)}
+                                  </div>
+                                  <div className="mt-1 whitespace-pre-wrap break-words text-sm leading-6">{message.text}</div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="rounded-2xl border border-dashed bg-white px-4 py-6 text-center text-sm text-slate-500">
+                          还没有留言记录，可以直接在下方给超级后台留言。
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="space-y-3 border-t px-5 py-4">
+                      {supportError ? <div className="text-sm text-rose-600">{supportError}</div> : null}
+                      <textarea
+                        className="min-h-[120px] w-full rounded-2xl border px-4 py-3 text-sm outline-none transition focus:border-slate-400"
+                        placeholder="请输入你想留言的内容，例如遇到的问题、需要协助的事项或希望超级后台处理的内容。"
+                        value={supportDraft}
+                        onChange={(event) => setSupportDraft(event.target.value)}
+                        disabled={supportSending}
+                      />
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-xs text-slate-500">留言会同步到超级后台“信息处理”。</div>
+                        <button
+                          type="button"
+                          className="rounded bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50"
+                          onClick={() => void sendSupportMessage()}
+                          disabled={supportSending || !supportDraft.trim()}
+                        >
+                          {supportSending ? "发送中..." : "发送留言"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </>,
+          )
         : null}
 
       {merchantProfileDialogOpen && !isPlatformEditor ? (
