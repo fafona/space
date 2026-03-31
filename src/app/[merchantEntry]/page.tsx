@@ -1,5 +1,6 @@
-import { headers } from "next/headers";
 import { createClient } from "@supabase/supabase-js";
+import { headers } from "next/headers";
+import ServiceMaintenancePage from "@/components/ServiceMaintenancePage";
 import SitePageClient from "@/app/site/[siteId]/SitePageClient";
 import { isMobileViewportRequest } from "@/lib/deviceViewport";
 import { isMerchantNumericId, normalizeDomainPrefix } from "@/lib/merchantIdentity";
@@ -119,6 +120,15 @@ export default async function MerchantEntryPage({ params }: MerchantEntryPagePro
   if (initialResolvedSiteId) {
     const publishedSite = await fetchPublishedSitePayloadFromSupabase(initialResolvedSiteId).catch(() => null);
     if (publishedSite?.blocks?.length) {
+      if (publishedSite.serviceState?.maintenance) {
+        return (
+          <ServiceMaintenancePage
+            title="站点维护中"
+            merchantName={publishedSite.merchantName || publishedSite.serviceState.merchantName || initialResolvedSiteId}
+            reason={publishedSite.serviceState.reason}
+          />
+        );
+      }
       return (
         <SitePageClient
           forcedSiteId={initialResolvedSiteId}

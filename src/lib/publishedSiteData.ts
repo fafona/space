@@ -1,6 +1,8 @@
 import { createClient } from "@supabase/supabase-js";
 import type { Block } from "@/data/homeBlocks";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
+import type { PublishedMerchantServiceState } from "@/lib/publishedMerchantService";
+import { loadPublishedMerchantServiceStateBySiteId } from "@/lib/publishedMerchantService";
 
 export type PublishedPageRow = {
   blocks?: unknown;
@@ -18,6 +20,7 @@ export type PublishedSitePayload = {
   slug: string;
   merchantName: string;
   blocks: Block[];
+  serviceState: PublishedMerchantServiceState | null;
 };
 
 function readEnv(name: string) {
@@ -103,11 +106,13 @@ export async function fetchPublishedSitePayloadFromSupabase(siteId: string): Pro
     .limit(1)
     .maybeSingle();
   const merchantName = String((merchantProfile as MerchantProfileRow | null)?.name ?? "").trim();
+  const serviceState = await loadPublishedMerchantServiceStateBySiteId(normalizedSiteId).catch(() => null);
 
   return {
     siteId: normalizedSiteId,
     slug: String(chosen.slug ?? "").trim(),
     merchantName,
     blocks: chosen.blocks as Block[],
+    serviceState,
   };
 }

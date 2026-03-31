@@ -46,6 +46,8 @@ test("buildPlatformMerchantSnapshotPayloadFromState keeps merchant info and card
         },
         merchantCardImageUrl: "https://example.com/card.webp",
         merchantCardImageOpacity: 0.45,
+        status: "maintenance",
+        serviceExpiresAt: "2026-04-30T00:00:00.000Z",
         sortConfig: {
           recommendedCountryRank: 2,
           recommendedProvinceRank: null,
@@ -73,6 +75,8 @@ test("buildPlatformMerchantSnapshotPayloadFromState keeps merchant info and card
   assert.equal(payload.snapshot[0]?.location.country, "Spain");
   assert.equal(payload.snapshot[0]?.merchantCardImageUrl, "https://example.com/card.webp");
   assert.equal(payload.snapshot[0]?.merchantCardImageOpacity, 0.45);
+  assert.equal(payload.snapshot[0]?.status, "maintenance");
+  assert.equal(payload.snapshot[0]?.serviceExpiresAt, "2026-04-30T00:00:00.000Z");
 });
 
 test("platform merchant snapshot blocks round-trip through storage payload", () => {
@@ -96,6 +100,8 @@ test("platform merchant snapshot blocks round-trip through storage payload", () 
         },
         merchantCardImageUrl: "https://example.com/card.webp",
         merchantCardImageOpacity: 0.45,
+        status: "maintenance",
+        serviceExpiresAt: "2026-04-30T00:00:00.000Z",
         sortConfig: {
           recommendedCountryRank: 2,
           recommendedProvinceRank: null,
@@ -116,4 +122,6 @@ test("platform merchant snapshot blocks round-trip through storage payload", () 
   assert.equal(payload?.snapshot[0]?.location.city, "Sevilla");
   assert.equal(payload?.snapshot[0]?.merchantCardImageUrl, "https://example.com/card.webp");
   assert.equal(payload?.snapshot[0]?.merchantCardImageOpacity, 0.45);
+  assert.equal(payload?.snapshot[0]?.status, "maintenance");
+  assert.equal(payload?.snapshot[0]?.serviceExpiresAt, "2026-04-30T00:00:00.000Z");
 });

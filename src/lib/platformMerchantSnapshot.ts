@@ -8,6 +8,7 @@ import {
   type MerchantSortRule,
   type PlatformState,
   type Site,
+  type SiteStatus,
   type SiteLocation,
 } from "@/data/platformControlStore";
 
@@ -88,6 +89,19 @@ function normalizeUnitInterval(value: unknown, fallback = 1) {
   return Math.max(0, Math.min(1, value));
 }
 
+function normalizeSiteStatus(value: unknown): SiteStatus {
+  const normalized = normalizeText(value);
+  if (normalized === "maintenance" || normalized === "offline") return normalized;
+  return "online";
+}
+
+function normalizeServiceExpiresAt(value: unknown) {
+  const normalized = normalizeText(value);
+  if (!normalized) return null;
+  const timestamp = new Date(normalized).getTime();
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
+}
+
 function normalizeSnapshotSite(input: unknown): MerchantListPublishedSite | null {
   if (!input || typeof input !== "object") return null;
   const value = input as Partial<MerchantListPublishedSite>;
@@ -113,6 +127,8 @@ function normalizeSnapshotSite(input: unknown): MerchantListPublishedSite | null
     contactEmail: normalizeText(value.contactEmail),
     merchantCardImageUrl: normalizeText(value.merchantCardImageUrl),
     merchantCardImageOpacity: normalizeUnitInterval(value.merchantCardImageOpacity, 1),
+    status: normalizeSiteStatus(value.status),
+    serviceExpiresAt: normalizeServiceExpiresAt(value.serviceExpiresAt),
     sortConfig: normalizeMerchantSortConfig(value.sortConfig),
     createdAt: normalizeText(value.createdAt),
   };
@@ -171,6 +187,8 @@ export function buildPlatformMerchantSnapshotPayloadFromSites(
       contactEmail: normalizeText(site.contactEmail),
       merchantCardImageUrl: normalizeText(site.merchantCardImageUrl),
       merchantCardImageOpacity: normalizeUnitInterval(site.merchantCardImageOpacity, 1),
+      status: normalizeSiteStatus(site.status),
+      serviceExpiresAt: normalizeServiceExpiresAt(site.serviceExpiresAt),
       sortConfig: normalizeMerchantSortConfig(site.sortConfig),
       createdAt: normalizeText(site.createdAt),
     } satisfies MerchantListPublishedSite);
@@ -224,6 +242,8 @@ export function buildPlatformMerchantSnapshotSite(
     contactEmail?: string | null;
     merchantCardImageUrl?: string | null;
     merchantCardImageOpacity?: number | null;
+    status?: SiteStatus | null;
+    serviceExpiresAt?: string | null;
     createdAt?: string | null;
     sortConfig?: Partial<MerchantSortConfig> | null;
     name?: string | null;
@@ -245,6 +265,8 @@ export function buildPlatformMerchantSnapshotSite(
     contactEmail: input.contactEmail,
     merchantCardImageUrl: input.merchantCardImageUrl,
     merchantCardImageOpacity: input.merchantCardImageOpacity,
+    status: input.status,
+    serviceExpiresAt: input.serviceExpiresAt,
     sortConfig: input.sortConfig,
     createdAt: input.createdAt,
   });

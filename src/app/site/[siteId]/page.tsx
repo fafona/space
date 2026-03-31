@@ -1,7 +1,8 @@
 import { headers } from "next/headers";
-import SitePageClient from "./SitePageClient";
+import ServiceMaintenancePage from "@/components/ServiceMaintenancePage";
 import { isMobileViewportRequest } from "@/lib/deviceViewport";
 import { fetchPublishedSitePayloadFromSupabase } from "@/lib/publishedSiteData";
+import SitePageClient from "./SitePageClient";
 
 type SitePageProps = {
   params: Promise<{
@@ -13,6 +14,15 @@ export default async function SitePage({ params }: SitePageProps) {
   const { siteId } = await params;
   const initialIsMobileViewport = isMobileViewportRequest(await headers());
   const publishedSite = await fetchPublishedSitePayloadFromSupabase(siteId).catch(() => null);
+  if (publishedSite?.serviceState?.maintenance) {
+    return (
+      <ServiceMaintenancePage
+        title="站点维护中"
+        merchantName={publishedSite.merchantName || publishedSite.serviceState.merchantName || siteId}
+        reason={publishedSite.serviceState.reason}
+      />
+    );
+  }
 
   return (
     <SitePageClient

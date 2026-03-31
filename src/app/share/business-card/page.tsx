@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 import QRCode from "qrcode";
+import ServiceMaintenancePage from "@/components/ServiceMaintenancePage";
 import {
   buildMerchantBusinessCardContactDownloadUrl,
   buildMerchantBusinessCardLegacyContactDownloadUrl,
@@ -10,6 +11,7 @@ import {
   readMerchantBusinessCardShareKey,
   resolveMerchantBusinessCardSharePayload,
 } from "@/lib/merchantBusinessCardShare";
+import { loadPublishedMerchantServiceStateByTargetUrl } from "@/lib/publishedMerchantService";
 
 type ShareBusinessCardPageProps = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -80,6 +82,9 @@ export async function generateMetadata({ searchParams }: ShareBusinessCardPagePr
   const origin = resolveRequestOrigin(requestHeaders);
   const resolvedSearchParams = await searchParams;
   const payload = await resolveMerchantBusinessCardSharePayload(resolvedSearchParams, origin);
+  const serviceState = payload
+    ? await loadPublishedMerchantServiceStateByTargetUrl(payload.targetUrl).catch(() => null)
+    : null;
   const metadataBase = origin ? new URL(origin) : undefined;
 
   if (!payload) {
@@ -87,6 +92,18 @@ export async function generateMetadata({ searchParams }: ShareBusinessCardPagePr
       metadataBase,
       title: "商户名片",
       description: "名片链接无效",
+      robots: {
+        index: false,
+        follow: false,
+      },
+    };
+  }
+
+  if (serviceState?.maintenance) {
+    return {
+      metadataBase,
+      title: `${payload.name || "FAOLLA CARD"} | 服务维护中`,
+      description: "该商户服务当前维护中，请联系官方服务支持。",
       robots: {
         index: false,
         follow: false,
@@ -155,6 +172,9 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
   const origin = resolveRequestOrigin(requestHeaders);
   const resolvedSearchParams = await searchParams;
   const payload = await resolveMerchantBusinessCardSharePayload(resolvedSearchParams, origin);
+  const serviceState = payload
+    ? await loadPublishedMerchantServiceStateByTargetUrl(payload.targetUrl).catch(() => null)
+    : null;
   const isMobileRequest = looksLikeMobileRequest(requestHeaders);
 
   if (!payload) {
@@ -165,6 +185,16 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
           <p className="mt-3 text-sm leading-6 text-slate-600">这张联系卡缺少有效信息，暂时无法打开。</p>
         </section>
       </main>
+    );
+  }
+
+  if (serviceState?.maintenance) {
+    return (
+      <ServiceMaintenancePage
+        title="联系卡维护中"
+        merchantName={payload.name || serviceState.merchantName}
+        reason={serviceState.reason}
+      />
     );
   }
 

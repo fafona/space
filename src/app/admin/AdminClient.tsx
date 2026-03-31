@@ -201,6 +201,7 @@ import MerchantBookingManagerDialog from "@/components/admin/MerchantBookingMana
 import MerchantProfileDialog from "@/components/admin/MerchantProfileDialog";
 import { useI18n } from "@/components/I18nProvider";
 import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
+import { describeMerchantServiceRestriction, getMerchantServiceState } from "@/lib/merchantServiceStatus";
 
 const IMAGE_FILL_VALUES: ImageFillMode[] = [
   "cover",
@@ -6099,6 +6100,20 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       publishTargetSiteId = targetSiteId;
       const targetSite = targetSiteId ? latestState.sites.find((item) => item.id === targetSiteId) ?? null : null;
       publishTargetDomainPrefix = normalizeDomainPrefixForMerchant(targetSite?.domainPrefix ?? targetSite?.domainSuffix ?? "");
+      const serviceState = getMerchantServiceState(targetSite?.status, targetSite?.serviceExpiresAt);
+      if (serviceState.maintenance) {
+        const reasonText = describeMerchantServiceRestriction(serviceState.reason);
+        showTip(
+          serviceState.reason === "expired"
+            ? `${reasonText}，请先在超级后台设置有效到期时间后再发布`
+            : `${reasonText}，暂不允许发布`,
+          {
+            durationMs: 4200,
+            dismissOnPointer: true,
+          },
+        );
+        return;
+      }
       const missingFields = getMissingMerchantProfileFields(targetSite);
       if (missingFields.length > 0) {
         setTopBarCollapsed(false);

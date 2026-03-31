@@ -16,6 +16,8 @@ import {
   type MerchantBusinessCardContactDisplayKey,
 } from "@/lib/merchantBusinessCards";
 import { DEFAULT_LOCALE, I18N_STORAGE_KEY, LANGUAGE_OPTIONS } from "@/lib/i18n";
+import { loadPublishedMerchantServiceStateByTargetUrl } from "@/lib/publishedMerchantService";
+import { OFFICIAL_SERVICE_CONTACT, describeMerchantMaintenanceMessage, type MerchantServiceRestrictionReason } from "@/lib/merchantServiceStatus";
 
 function escapeHtml(value: string) {
   return value
@@ -1723,6 +1725,160 @@ function buildShareCardHtml(input: {
 </html>`;
 }
 
+function buildMaintenanceSummaryHtml(reason: MerchantServiceRestrictionReason) {
+  return `
+    <div class="summary-row">
+      <div class="summary-copy">
+        <strong class="summary-label">状态：</strong>
+        <span class="summary-value">${escapeHtml(reason === "expired" ? "已过期" : "维护中")}</span>
+      </div>
+    </div>
+    <div class="summary-row">
+      <div class="summary-copy">
+        <strong class="summary-label">说明：</strong>
+        <span class="summary-value">${escapeHtml(describeMerchantMaintenanceMessage(reason))}</span>
+      </div>
+    </div>
+    <div class="summary-row">
+      <div class="summary-copy">
+        <strong class="summary-label">服务商：</strong>
+        <span class="summary-value" data-no-translate="1">${escapeHtml("www.faolla.com")}</span>
+      </div>
+      <div class="summary-action">
+        <a class="inline-action" href="${escapeHtml(OFFICIAL_SERVICE_CONTACT.serviceProviderUrl)}" aria-label="打开服务商官网" title="打开服务商官网" style="background:#111827">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7h-2V6.41l-9.29 9.3-1.42-1.42 9.3-9.29H14V3z"/><path d="M5 5h6v2H7v10h10v-4h2v6H5V5z"/></svg>
+        </a>
+      </div>
+    </div>
+    <div class="summary-row">
+      <div class="summary-copy">
+        <strong class="summary-label">联系人：</strong>
+        <span class="summary-value" data-no-translate="1">${escapeHtml(OFFICIAL_SERVICE_CONTACT.contactName)}</span>
+      </div>
+    </div>
+    <div class="summary-row">
+      <div class="summary-copy">
+        <strong class="summary-label">WhatsApp：</strong>
+        <span class="summary-value" data-no-translate="1">${escapeHtml(OFFICIAL_SERVICE_CONTACT.whatsapp)}</span>
+      </div>
+      <div class="summary-action">
+        <a class="inline-action" href="${escapeHtml(`https://wa.me/${OFFICIAL_SERVICE_CONTACT.whatsapp.replace(/[^\d]/g, "")}`)}" aria-label="打开 WhatsApp" title="打开 WhatsApp" style="background:#25D366">
+          <img src="/social-icons/whatsapp.svg" alt="" />
+        </a>
+      </div>
+    </div>
+    <div class="summary-row">
+      <div class="summary-copy">
+        <strong class="summary-label">Wechat：</strong>
+        <span class="summary-value" data-no-translate="1">${escapeHtml(OFFICIAL_SERVICE_CONTACT.wechat)}</span>
+      </div>
+    </div>
+    <div class="summary-row">
+      <div class="summary-copy">
+        <strong class="summary-label">Mail：</strong>
+        <span class="summary-value" data-no-translate="1">${escapeHtml(OFFICIAL_SERVICE_CONTACT.email)}</span>
+      </div>
+      <div class="summary-action">
+        <a class="inline-action" href="${escapeHtml(`mailto:${OFFICIAL_SERVICE_CONTACT.email}`)}" aria-label="发送邮件" title="发送邮件" style="background:#0A84FF">
+          <img src="/social-icons/maildotru.svg" alt="" />
+        </a>
+      </div>
+    </div>`;
+}
+
+// Legacy maintenance template kept temporarily to avoid touching unrelated share-card layout logic.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function buildMaintenanceCardHtml(input: {
+  merchantName: string;
+  shareUrl: string;
+  reason: MerchantServiceRestrictionReason;
+}) {
+  return buildShareCardHtml({
+    title: `${input.merchantName || "FAOLLA CARD"} | 服务维护中`,
+    description: "该商户服务当前维护中，请联系官方服务支持。",
+    merchantName: input.merchantName,
+    summaryHtml: buildMaintenanceSummaryHtml(input.reason),
+    targetUrl: OFFICIAL_SERVICE_CONTACT.serviceProviderUrl,
+    shareUrl: input.shareUrl,
+  });
+}
+
+function buildServiceMaintenanceSummaryHtml(reason: MerchantServiceRestrictionReason) {
+  return `
+    <div class="summary-row">
+      <div class="summary-copy">
+        <strong class="summary-label">状态：</strong>
+        <span class="summary-value">${escapeHtml(reason === "expired" ? "已过期" : "维护中")}</span>
+      </div>
+    </div>
+    <div class="summary-row">
+      <div class="summary-copy">
+        <strong class="summary-label">说明：</strong>
+        <span class="summary-value">${escapeHtml(describeMerchantMaintenanceMessage(reason))}</span>
+      </div>
+    </div>
+    <div class="summary-row">
+      <div class="summary-copy">
+        <strong class="summary-label">服务商：</strong>
+        <span class="summary-value" data-no-translate="1">www.faolla.com</span>
+      </div>
+      <div class="summary-action">
+        <a class="inline-action" href="${escapeHtml(OFFICIAL_SERVICE_CONTACT.serviceProviderUrl)}" aria-label="打开服务商官网" title="打开服务商官网" style="background:#111827">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7h-2V6.41l-9.29 9.3-1.42-1.42 9.3-9.29H14V3z"/><path d="M5 5h6v2H7v10h10v-4h2v6H5V5z"/></svg>
+        </a>
+      </div>
+    </div>
+    <div class="summary-row">
+      <div class="summary-copy">
+        <strong class="summary-label">联系人：</strong>
+        <span class="summary-value" data-no-translate="1">${escapeHtml(OFFICIAL_SERVICE_CONTACT.contactName)}</span>
+      </div>
+    </div>
+    <div class="summary-row">
+      <div class="summary-copy">
+        <strong class="summary-label">WhatsApp：</strong>
+        <span class="summary-value" data-no-translate="1">${escapeHtml(OFFICIAL_SERVICE_CONTACT.whatsapp)}</span>
+      </div>
+      <div class="summary-action">
+        <a class="inline-action" href="${escapeHtml(`https://wa.me/${OFFICIAL_SERVICE_CONTACT.whatsapp.replace(/[^\d]/g, "")}`)}" aria-label="打开 WhatsApp" title="打开 WhatsApp" style="background:#25D366">
+          <img src="/social-icons/whatsapp.svg" alt="" />
+        </a>
+      </div>
+    </div>
+    <div class="summary-row">
+      <div class="summary-copy">
+        <strong class="summary-label">Wechat：</strong>
+        <span class="summary-value" data-no-translate="1">${escapeHtml(OFFICIAL_SERVICE_CONTACT.wechat)}</span>
+      </div>
+    </div>
+    <div class="summary-row">
+      <div class="summary-copy">
+        <strong class="summary-label">Mail：</strong>
+        <span class="summary-value" data-no-translate="1">${escapeHtml(OFFICIAL_SERVICE_CONTACT.email)}</span>
+      </div>
+      <div class="summary-action">
+        <a class="inline-action" href="${escapeHtml(`mailto:${OFFICIAL_SERVICE_CONTACT.email}`)}" aria-label="发送邮件" title="发送邮件" style="background:#0A84FF">
+          <img src="/social-icons/maildotru.svg" alt="" />
+        </a>
+      </div>
+    </div>`;
+}
+
+function buildServiceMaintenanceCardHtml(input: {
+  merchantName: string;
+  shareUrl: string;
+  reason: MerchantServiceRestrictionReason;
+}) {
+  return buildShareCardHtml({
+    title: `${input.merchantName || "FAOLLA CARD"} | 服务维护中`,
+    description: "该商户服务当前维护中，请联系官方服务支持。",
+    merchantName: input.merchantName,
+    summaryHtml: buildServiceMaintenanceSummaryHtml(input.reason),
+    targetUrl: OFFICIAL_SERVICE_CONTACT.serviceProviderUrl,
+    shareUrl: input.shareUrl,
+  });
+}
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ card: string }> },
@@ -1796,6 +1952,23 @@ export async function GET(
     name: payload.name,
     contact: payload.contact,
   });
+  const serviceState = await loadPublishedMerchantServiceStateByTargetUrl(payload.targetUrl).catch(() => null);
+  if (serviceState?.maintenance) {
+    return new NextResponse(
+      buildServiceMaintenanceCardHtml({
+        merchantName: payload.name || serviceState.merchantName || "FAOLLA CARD",
+        shareUrl,
+        reason: serviceState.reason,
+      }),
+      {
+        status: 200,
+        headers: {
+          "content-type": "text/html; charset=utf-8",
+          "cache-control": "no-store, max-age=0",
+        },
+      },
+    );
+  }
 
   return new NextResponse(
     buildShareCardHtml({

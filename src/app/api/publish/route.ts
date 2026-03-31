@@ -4,6 +4,7 @@ import type { Block } from "@/data/homeBlocks";
 import { sanitizeBlocksForRuntime } from "@/lib/blocksSanitizer";
 import { saveStoredMerchantDraft, type MerchantDraftStoreClient } from "@/lib/merchantDraftStore";
 import { normalizeDomainPrefix } from "@/lib/merchantIdentity";
+import { loadPublishedMerchantServiceStatesBySiteIds } from "@/lib/publishedMerchantService";
 import { getInlinePublishPayloadViolation } from "@/lib/publishPayloadValidation";
 
 type SaveErrorLike = { message: string } | null;
@@ -421,6 +422,28 @@ export async function POST(request: Request) {
     const isPlatformEditor = body.isPlatformEditor === true;
     const merchantIds = normalizeMerchantIds(body.merchantIds, isPlatformEditor);
     const merchantSlug = isPlatformEditor ? "home" : normalizeDomainPrefix(body.merchantSlug);
+    if (!isPlatformEditor && merchantIds.length > 0) {
+      const serviceStates = await loadPublishedMerchantServiceStatesBySiteIds(merchantIds).catch(
+        () => new Map<string, { maintenance?: boolean; reason?: "expired" | "paused" | null }>(),
+      );
+      const blockedState = merchantIds
+        .map((merchantId) => serviceStates.get(merchantId) ?? null)
+        .find((item) => item?.maintenance) ?? null;
+      if (blockedState) {
+        const status = 409;
+        const responseBody = {
+          ok: false,
+          code: "merchant_service_paused",
+          message:
+            blockedState.reason === "expired"
+              ? "商户服务已到期或未设置到期时间，暂不允许发布"
+              : "商户服务已暂停，暂不允许发布",
+          requestId,
+        };
+        resultCache.set(requestId, { at: Date.now(), status, body: responseBody });
+        return makeCachedResponse(status, responseBody);
+      }
+    }
 
     const supabase = createClient(supabaseUrl, serviceRoleKey, {
       auth: {

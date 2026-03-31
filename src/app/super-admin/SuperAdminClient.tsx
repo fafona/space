@@ -84,6 +84,7 @@ import {
   PLAN_TEMPLATE_PREVIEW_VARIANT,
 } from "@/lib/planTemplatePreviewCapture";
 import { buildPlatformMerchantSnapshotPayloadFromSites } from "@/lib/platformMerchantSnapshot";
+import { getMerchantServiceState } from "@/lib/merchantServiceStatus";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
 import { buildMerchantFrontendHref, buildPlatformHomeHref, buildSiteStoreScope, PLATFORM_EDITOR_SCOPE } from "@/lib/siteRouting";
 import { getPagePlanConfigFromBlocks } from "@/lib/pagePlans";
@@ -261,10 +262,9 @@ function buildMerchantSiteContext(site: Site, owner: PlatformState["users"][numb
   const city = (site.location?.city ?? "").trim() || "-";
   const sizeBytes = readMerchantPublishedBytes(site.id);
   const visits = readMerchantVisits(site.id, nowMs);
-  const expireAt = site.serviceExpiresAt ?? null;
-  const expired = !!expireAt && Number.isFinite(new Date(expireAt).getTime()) && new Date(expireAt).getTime() <= nowMs;
-  const manuallyPaused = site.status !== "online";
-  const statusKey: "active" | "paused" = expired || manuallyPaused ? "paused" : "active";
+  const serviceState = getMerchantServiceState(site.status, site.serviceExpiresAt, nowMs);
+  const expireAt = serviceState.serviceExpiresAt;
+  const statusKey: "active" | "paused" = serviceState.maintenance ? "paused" : "active";
   return {
     site,
     userEmail,
@@ -274,7 +274,7 @@ function buildMerchantSiteContext(site: Site, owner: PlatformState["users"][numb
     sizeBytes,
     visits,
     expireAt,
-    expired,
+    expired: serviceState.expired,
     statusKey,
     statusLabel: statusKey === "active" ? "正常" : "暂停",
   };
@@ -2984,14 +2984,14 @@ export default function SuperAdminClient() {
     if (!guard("user.manage", "无用户管理权限")) return;
     const target = state.sites.find((item) => item.id === siteId);
     if (!target) return;
-    if (target.status !== "online" && target.serviceExpiresAt) {
-      const expireAt = new Date(target.serviceExpiresAt).getTime();
-      if (Number.isFinite(expireAt) && expireAt <= nowMs) {
-        setTip("商户已到期，请先在配置中延后到期时间");
+    const serviceState = getMerchantServiceState(target.status, target.serviceExpiresAt, nowMs);
+    if (serviceState.maintenance) {
+      if (serviceState.expired) {
+        setTip("商户已到期或未设置到期时间，请先在配置中设置有效到期时间");
         return;
       }
     }
-    const status: SiteStatus = target.status === "online" ? "maintenance" : "online";
+    const status: SiteStatus = serviceState.maintenance ? "online" : "maintenance";
     commit((prev) =>
       withAudit(
         {
@@ -3086,10 +3086,7 @@ export default function SuperAdminClient() {
       setTip(SUPER_ADMIN_MESSAGES.expireDateInvalid);
       return;
     }
-    const expired =
-      !!serviceExpiresAt &&
-      Number.isFinite(new Date(serviceExpiresAt).getTime()) &&
-      new Date(serviceExpiresAt).getTime() <= nowMs;
+    const expired = getMerchantServiceState(selectedMerchantSite.status, serviceExpiresAt, nowMs).expired;
     const nextStatus: SiteStatus = expired ? "maintenance" : selectedMerchantSite.status;
     const sortConfig = {
       recommendedCountryRank: parseRankInput(configRecommendedCountryRank),
@@ -3343,10 +3340,11 @@ export default function SuperAdminClient() {
         return;
       }
     }
-    const rollbackExpired =
-      !!rollbackAfterSnapshot.serviceExpiresAt &&
-      Number.isFinite(new Date(rollbackAfterSnapshot.serviceExpiresAt).getTime()) &&
-      new Date(rollbackAfterSnapshot.serviceExpiresAt).getTime() <= nowMs;
+    const rollbackExpired = getMerchantServiceState(
+      selectedMerchantSite.status,
+      rollbackAfterSnapshot.serviceExpiresAt,
+      nowMs,
+    ).expired;
     const rollbackHistoryEntry = buildMerchantConfigHistoryEntry({
       operator: operatorName,
       summary: `回滚到 ${fmt(targetHistory.at)} 配置`,

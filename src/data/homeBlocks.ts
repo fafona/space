@@ -1,6 +1,6 @@
 ﻿import type { CustomGalleryLayout, GalleryLayoutPreset } from "@/lib/galleryLayout";
 import { BLOCKS_SCHEMA_VERSION } from "../lib/blocksSchema";
-import type { MerchantIndustry, MerchantSortConfig, MerchantSortRule, SiteLocation } from "./platformControlStore";
+import type { MerchantIndustry, MerchantSortConfig, MerchantSortRule, SiteLocation, SiteStatus } from "./platformControlStore";
 import type {
   ProductContainerMode,
   ProductImageAspectRatio,
@@ -93,6 +93,8 @@ export type MerchantListPublishedSite = {
   contactEmail?: string;
   merchantCardImageUrl?: string;
   merchantCardImageOpacity?: number;
+  status?: SiteStatus;
+  serviceExpiresAt?: string | null;
   sortConfig: MerchantSortConfig;
   createdAt: string;
 };
