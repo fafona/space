@@ -6458,14 +6458,51 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }
 
   async function requestSupportWithSessionRecovery(init: RequestInit) {
-    const sendRequest = () =>
-      fetch("/api/support-messages", {
-        credentials: "same-origin",
-        cache: "no-store",
-        ...init,
-      });
+    const buildSupportRequestInit = async (allowRecovery: boolean) => {
+      const headers = new Headers(init.headers ?? undefined);
+      headers.set("accept", "application/json");
 
-    let response = await sendRequest();
+      const prefetchedIdentity = await prefetchMerchantSessionIdentity(Math.max(1600, Math.min(3200, AUTH_CHECK_TIMEOUT_MS))).catch(
+        () => null,
+      );
+      const siteId =
+        (editingSiteId || prefetchedIdentity?.merchantId || merchantSessionIdentityRef.current.merchantId || "").trim();
+      if (siteId) {
+        headers.set("x-merchant-site-id", siteId);
+      }
+
+      if (isSupabaseEnabled && !isSupabaseFallbackMode) {
+        let activeSession = (
+          await supabase.auth.getSession().catch(() => null)
+        )?.data.session ?? null;
+        if (!activeSession && allowRecovery) {
+          activeSession = await recoverBrowserSupabaseSessionWithRefresh(
+            Math.max(2600, Math.min(7000, AUTH_CHECK_TIMEOUT_MS)),
+          );
+        }
+        if (activeSession?.access_token) {
+          headers.set("x-merchant-access-token", activeSession.access_token);
+          if (activeSession.refresh_token) {
+            headers.set("x-merchant-refresh-token", activeSession.refresh_token);
+          }
+          if (typeof activeSession.expires_in === "number" && Number.isFinite(activeSession.expires_in)) {
+            headers.set("x-merchant-expires-in", String(activeSession.expires_in));
+          }
+        }
+      }
+
+      return {
+        credentials: "same-origin" as const,
+        cache: "no-store" as const,
+        ...init,
+        headers,
+      };
+    };
+
+    const sendRequest = async (allowRecovery: boolean) =>
+      fetch("/api/support-messages", await buildSupportRequestInit(allowRecovery));
+
+    let response = await sendRequest(false);
     if (response.status !== 401 && response.status !== 403) {
       return response;
     }
@@ -6481,7 +6518,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
 
     await syncMerchantSessionCookies(recoveredSession, Math.max(2200, Math.min(6000, AUTH_CHECK_TIMEOUT_MS)));
-    response = await sendRequest();
+    response = await sendRequest(true);
     return response;
   }
 

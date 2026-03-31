@@ -31,6 +31,26 @@ function noStoreJson(body: unknown, init?: ResponseInit) {
 
 async function resolveMerchantSession(request: Request) {
   const origin = new URL(request.url).origin;
+  const accessToken = trimText(request.headers.get("x-merchant-access-token"));
+  const refreshToken = trimText(request.headers.get("x-merchant-refresh-token"));
+  const expiresInHeader = trimText(request.headers.get("x-merchant-expires-in"));
+  const hintedSiteId = trimText(request.headers.get("x-merchant-site-id"));
+  if (accessToken) {
+    await fetch(`${origin}/api/auth/merchant-session`, {
+      method: "POST",
+      headers: {
+        cookie: request.headers.get("cookie") ?? "",
+        "content-type": "application/json",
+        accept: "application/json",
+      },
+      cache: "no-store",
+      body: JSON.stringify({
+        accessToken,
+        refreshToken,
+        expiresIn: expiresInHeader ? Number(expiresInHeader) : undefined,
+      }),
+    }).catch(() => null);
+  }
   const response = await fetch(`${origin}/api/auth/merchant-session`, {
     method: "GET",
     headers: {
@@ -47,7 +67,7 @@ async function resolveMerchantSession(request: Request) {
       }
     | null;
   if (!payload?.authenticated) return null;
-  const merchantId = trimText(payload.merchantId);
+  const merchantId = trimText(payload.merchantId) || hintedSiteId || trimText(payload.user?.email).toLowerCase();
   if (!merchantId) return null;
   return {
     merchantId,
