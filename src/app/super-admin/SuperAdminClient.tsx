@@ -2299,6 +2299,17 @@ export default function SuperAdminClient() {
     setMerchantPanelOpen(true);
   }
 
+  function openMerchantDetailPanelForRow(row: MerchantUserRow | null | undefined) {
+    if (!row) return;
+    const resolvedSite = row.hasSite ? ensureLocalMerchantSiteFromRow(row) ?? row.site : row.site;
+    const resolvedSiteId = String(resolvedSite?.id ?? row.site.id ?? "").trim();
+    if (!resolvedSiteId) {
+      setTip("商户详情初始化失败，请稍后重试");
+      return;
+    }
+    openMerchantDetailPanel(resolvedSiteId);
+  }
+
   async function requestSupportThreadsWithSessionRecovery(init: RequestInit) {
     const sendRequest = () =>
       fetch("/api/super-admin/support-messages", {
@@ -4705,12 +4716,7 @@ export default function SuperAdminClient() {
                                   <div className="flex flex-wrap gap-1">
                                     <button
                                       className="rounded border px-2 py-1"
-                                      onClick={() => {
-                                        if (row.hasSite && !row.hasLocalSite) {
-                                          ensureLocalMerchantSiteFromRow(row);
-                                        }
-                                        openMerchantDetailPanel(row.site.id);
-                                      }}
+                                      onClick={() => openMerchantDetailPanelForRow(row)}
                                     >
                                       详情
                                     </button>
@@ -6068,13 +6074,7 @@ export default function SuperAdminClient() {
                             <button
                               type="button"
                               className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
-                              onClick={() => {
-                                if (!selectedSupportMerchantRow) return;
-                                if (selectedSupportMerchantRow.hasSite && !selectedSupportMerchantRow.hasLocalSite) {
-                                  ensureLocalMerchantSiteFromRow(selectedSupportMerchantRow);
-                                }
-                                openMerchantDetailPanel(selectedSupportMerchantRow.site.id);
-                              }}
+                              onClick={() => openMerchantDetailPanelForRow(selectedSupportMerchantRow)}
                               disabled={!selectedSupportMerchantRow}
                             >
                               查看详情
