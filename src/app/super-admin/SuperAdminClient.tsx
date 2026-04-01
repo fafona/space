@@ -138,6 +138,10 @@ function normalizeMerchantIdValue(value: string | null | undefined) {
   return /^\d+$/.test(normalized) ? normalized : "";
 }
 
+function buildSupportMerchantSelectionKey(merchantId: string | null | undefined, siteId: string | null | undefined) {
+  return normalizeMerchantIdValue(merchantId) || String(siteId ?? "").trim();
+}
+
 function getMerchantProfileName(site: Pick<Site, "merchantName"> | null | undefined) {
   return (site?.merchantName ?? "").trim();
 }
@@ -1172,6 +1176,7 @@ export default function SuperAdminClient() {
   const [supportThreadsLoading, setSupportThreadsLoading] = useState(false);
   const [supportThreadsError, setSupportThreadsError] = useState("");
   const [supportSelectedMerchantId, setSupportSelectedMerchantId] = useState("");
+  const [supportMerchantKeyword, setSupportMerchantKeyword] = useState("");
   const [supportReplyDraft, setSupportReplyDraft] = useState("");
   const [supportSending, setSupportSending] = useState(false);
   const [supportDisplayMode, setSupportDisplayMode] = useState<"name" | "id">("name");
@@ -1746,24 +1751,88 @@ export default function SuperAdminClient() {
   }, [clampedMerchantTablePage, displayMerchantRows]);
   const selectedMerchantRow =
     merchantRows.find((item) => item.site.id === merchantDetailSiteId) ?? filteredMerchantRows[0] ?? merchantRows[0] ?? null;
-  const selectedSupportThread =
-    supportThreads.find((item) => item.merchantId === supportSelectedMerchantId) ?? supportThreads[0] ?? null;
-  const selectedSupportMerchantRow =
-    (selectedSupportThread
-      ? merchantRows.find((item) => normalizeMerchantIdValue(item.merchantId) === selectedSupportThread.merchantId) ??
-        merchantRows.find((item) => item.site.id === selectedSupportThread.siteId)
-      : null) ?? null;
+  const supportThreadBySelectionKey = useMemo(() => {
+    const map = new Map<string, PlatformSupportThread>();
+    supportThreads.forEach((thread) => {
+      const key = buildSupportMerchantSelectionKey(thread.merchantId, thread.siteId);
+      if (key && !map.has(key)) {
+        map.set(key, thread);
+      }
+    });
+    return map;
+  }, [supportThreads]);
+  const filteredSupportMerchantRows = useMemo(() => {
+    const q = supportMerchantKeyword.trim().toLowerCase();
+    if (!q) return merchantRows;
+    return merchantRows.filter((row) =>
+      [
+        row.userEmail,
+        row.loginAccount,
+        row.merchantId,
+        row.merchantName,
+        row.backendAccount?.username,
+        row.backendAccount?.loginId,
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(q),
+    );
+  }, [merchantRows, supportMerchantKeyword]);
+  const supportListRows = useMemo(() => {
+    return filteredSupportMerchantRows
+      .map((row) => {
+        const selectionKey = buildSupportMerchantSelectionKey(row.merchantId, row.site.id);
+        const thread = supportThreadBySelectionKey.get(selectionKey) ?? null;
+        const lastMessage = thread?.messages[thread.messages.length - 1] ?? null;
+        return {
+          row,
+          selectionKey,
+          thread,
+          lastMessage,
+        };
+      })
+      .filter((item) => item.selectionKey)
+      .sort((left, right) => {
+        const leftThreadTs = left.thread ? new Date(left.thread.updatedAt).getTime() : 0;
+        const rightThreadTs = right.thread ? new Date(right.thread.updatedAt).getTime() : 0;
+        if (leftThreadTs && !rightThreadTs) return -1;
+        if (!leftThreadTs && rightThreadTs) return 1;
+        if (leftThreadTs !== rightThreadTs) return rightThreadTs - leftThreadTs;
+        const leftRegisterTs = new Date(left.row.registerAt).getTime();
+        const rightRegisterTs = new Date(right.row.registerAt).getTime();
+        if (leftRegisterTs !== rightRegisterTs) return rightRegisterTs - leftRegisterTs;
+        return left.row.merchantName.localeCompare(right.row.merchantName, "zh-CN");
+      });
+  }, [filteredSupportMerchantRows, supportThreadBySelectionKey]);
+  const selectedSupportListRow =
+    supportListRows.find((item) => item.selectionKey === supportSelectedMerchantId) ?? supportListRows[0] ?? null;
+  const selectedSupportMerchantRow = selectedSupportListRow?.row ?? null;
+  const selectedSupportThread = useMemo(
+    () =>
+      selectedSupportMerchantRow
+        ? (selectedSupportListRow?.thread ?? {
+            merchantId: buildSupportMerchantSelectionKey(selectedSupportMerchantRow.merchantId, selectedSupportMerchantRow.site.id),
+            siteId: selectedSupportMerchantRow.site.id,
+            merchantName: selectedSupportMerchantRow.merchantName,
+            merchantEmail: selectedSupportMerchantRow.userEmail,
+            updatedAt: selectedSupportMerchantRow.registerAt,
+            messages: [],
+          })
+        : null,
+    [selectedSupportListRow, selectedSupportMerchantRow],
+  );
   const selectedSupportDisplayLabel =
     supportDisplayMode === "id"
-      ? selectedSupportThread?.merchantId || "-"
+      ? selectedSupportMerchantRow?.merchantId || selectedSupportThread?.merchantId || "-"
       : selectedSupportMerchantRow?.merchantName ||
         selectedSupportThread?.merchantName ||
         selectedSupportThread?.merchantId ||
         "-";
   const selectedSupportLatestMessage = selectedSupportThread?.messages[selectedSupportThread.messages.length - 1] ?? null;
-  const selectedSupportLatestMessageKey = selectedSupportThread
-    ? `${selectedSupportThread.merchantId}:${selectedSupportLatestMessage?.id ?? "empty"}:${selectedSupportLatestMessage?.createdAt ?? ""}`
-    : "";
+  const selectedSupportLatestMessageKey =
+    selectedSupportThread && selectedSupportLatestMessage
+      ? `${selectedSupportThread.merchantId}:${selectedSupportLatestMessage.id}:${selectedSupportLatestMessage.createdAt}`
+      : "";
   const selectedSupportLatestMerchantMessageAt =
     selectedSupportLatestMessage?.sender === "merchant"
       ? normalizeSupportMessageTimestamp(selectedSupportLatestMessage.createdAt)
@@ -1893,9 +1962,9 @@ export default function SuperAdminClient() {
   }, [canFilterByCity, canFilterByCountry, canFilterByProvince, sortPreviewFilter]);
   useEffect(() => {
     setSupportSelectedMerchantId((current) =>
-      supportThreads.some((item) => item.merchantId === current) ? current : supportThreads[0]?.merchantId ?? "",
+      supportListRows.some((item) => item.selectionKey === current) ? current : supportListRows[0]?.selectionKey ?? "",
     );
-  }, [supportThreads]);
+  }, [supportListRows]);
   useEffect(() => {
     if (!hydrated || typeof window === "undefined") return;
     const nextLastReadMap = supportThreads.reduce<Record<string, string>>((accumulator, thread) => {
@@ -1949,6 +2018,10 @@ export default function SuperAdminClient() {
   useEffect(() => {
     if (!hydrated || !authed || activeMenu !== "support_messages") return;
     if (!selectedSupportThread) return;
+    if (!selectedSupportLatestMessageKey) {
+      supportLastMessageKeyRef.current = "";
+      return;
+    }
     const viewport = supportMessagesViewportRef.current;
     if (!viewport) return;
     if (supportLastMessageKeyRef.current === selectedSupportLatestMessageKey) return;
@@ -2102,7 +2175,8 @@ export default function SuperAdminClient() {
   const merchantActiveCount = filteredMerchantRows.filter((item) => item.statusKey === "active" || item.statusKey === "linked").length;
   const merchantPausedCount = filteredMerchantRows.filter((item) => item.statusKey === "paused").length;
   const merchantUnlinkedCount = filteredMerchantRows.filter((item) => item.statusKey === "unlinked").length;
-  const supportThreadCount = supportThreads.length;
+  const supportMerchantListCount = supportListRows.length;
+  const supportMerchantTotalCount = merchantRows.length;
   const releaseChecklistCheckedCount = RELEASE_REGRESSION_CHECKLIST.filter((item) => releaseChecklistState[item.id]).length;
   const portalSitesByCategory = useMemo(() => {
     const map = new Map<string, PlatformState["sites"]>();
@@ -5869,7 +5943,12 @@ export default function SuperAdminClient() {
                       <div className="text-xs text-slate-500">商户留言会集中在这里处理，右侧可以直接回复并查看商户详情。</div>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <div className="rounded border bg-slate-50 px-3 py-2 text-sm">会话数：{supportThreadCount}</div>
+                      <div className="rounded border bg-slate-50 px-3 py-2 text-sm">
+                        商户数：
+                        {supportMerchantKeyword.trim()
+                          ? `${supportMerchantListCount}/${supportMerchantTotalCount}`
+                          : supportMerchantTotalCount}
+                      </div>
                       <div className="inline-flex overflow-hidden rounded border">
                         <button
                           type="button"
@@ -5901,33 +5980,42 @@ export default function SuperAdminClient() {
 
                 <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
                   <div className="flex min-h-0 flex-col overflow-hidden rounded-lg border bg-white">
-                    <div className="border-b px-4 py-3 text-sm font-semibold text-slate-900">商户会话列表</div>
+                    <div className="border-b px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <div className="shrink-0 text-sm font-semibold text-slate-900">商户</div>
+                        <input
+                          type="text"
+                          className="min-w-0 flex-1 rounded border px-3 py-2 text-sm outline-none transition focus:border-slate-400"
+                          placeholder="搜索邮箱 / ID / 账号 / 名称"
+                          value={supportMerchantKeyword}
+                          onChange={(event) => setSupportMerchantKeyword(event.target.value)}
+                        />
+                      </div>
+                    </div>
                     <div className="min-h-0 flex-1 overflow-y-auto p-3">
-                      {supportThreadsLoading && supportThreads.length === 0 ? (
-                        <div className="rounded border border-dashed px-3 py-4 text-xs text-slate-500">正在加载留言记录…</div>
-                      ) : supportThreads.length > 0 ? (
+                      {supportListRows.length > 0 ? (
                         <div className="space-y-2">
-                          {supportThreads.map((thread) => {
-                            const row =
-                              merchantRows.find((item) => normalizeMerchantIdValue(item.merchantId) === thread.merchantId) ??
-                              merchantRows.find((item) => item.site.id === thread.siteId) ??
-                              null;
+                          {supportListRows.map(({ row, selectionKey, thread, lastMessage }) => {
                             const displayLabel =
                               supportDisplayMode === "id"
-                                ? thread.merchantId
-                                : row?.merchantName || thread.merchantName || thread.merchantId;
-                            const subtitle = row?.loginAccount || thread.merchantEmail || row?.userEmail || "-";
-                            const lastMessage = thread.messages[thread.messages.length - 1];
-                            const active = selectedSupportThread?.merchantId === thread.merchantId;
-                            const hasUnread = supportUnreadMerchantIds.has(thread.merchantId);
+                                ? row.merchantId || thread?.merchantId || selectionKey
+                                : row.merchantName || thread?.merchantName || selectionKey;
+                            const subtitle = [
+                              row.backendAccount?.loginId || row.backendAccount?.username || "",
+                              row.userEmail || row.loginAccount || thread?.merchantEmail || "",
+                            ]
+                              .filter(Boolean)
+                              .join(" | ") || "-";
+                            const active = selectedSupportListRow?.selectionKey === selectionKey;
+                            const hasUnread = Boolean(thread && supportUnreadMerchantIds.has(thread.merchantId));
                             return (
                               <button
-                                key={thread.merchantId}
+                                key={selectionKey}
                                 type="button"
                                 className={`w-full rounded-2xl border px-3 py-3 text-left transition ${
                                   active ? "border-blue-300 bg-blue-50" : "bg-white hover:bg-slate-50"
                                 }`}
-                                onClick={() => setSupportSelectedMerchantId(thread.merchantId)}
+                                onClick={() => setSupportSelectedMerchantId(selectionKey)}
                               >
                                 <div className="flex items-start justify-between gap-2">
                                   <div className="min-w-0">
@@ -5939,18 +6027,26 @@ export default function SuperAdminClient() {
                                     </div>
                                     <div className="truncate text-[11px] text-slate-500">{subtitle}</div>
                                   </div>
-                                  <div className="shrink-0 text-[11px] text-slate-400">{formatSupportMessageTime(thread.updatedAt)}</div>
+                                  <div className="shrink-0 text-[11px] text-slate-400">
+                                    {thread ? formatSupportMessageTime(thread.updatedAt) : "未留言"}
+                                  </div>
                                 </div>
                                 <div className="mt-2 line-clamp-2 text-xs leading-5 text-slate-600">
-                                  {lastMessage?.text || "暂无消息"}
+                                  {lastMessage?.text || "暂无留言记录"}
                                 </div>
                               </button>
                             );
                           })}
                         </div>
+                      ) : backendMerchantAccountsLoading ? (
+                        <div className="rounded border border-dashed px-3 py-4 text-xs text-slate-500">正在加载商户列表…</div>
+                      ) : supportMerchantKeyword.trim() ? (
+                        <div className="rounded border border-dashed px-3 py-4 text-xs text-slate-500">
+                          没有匹配的商户，请换个关键词试试。
+                        </div>
                       ) : (
                         <div className="rounded border border-dashed px-3 py-4 text-xs text-slate-500">
-                          目前还没有商户留言。
+                          当前还没有已注册商户。
                         </div>
                       )}
                     </div>
@@ -5987,27 +6083,33 @@ export default function SuperAdminClient() {
                         </div>
 
                         <div ref={supportMessagesViewportRef} className="min-h-0 flex-1 overflow-y-auto bg-slate-50 px-5 py-5">
-                          <div className="space-y-3">
-                            {selectedSupportThread.messages.map((message) => {
-                              const isMerchantMessage = message.sender === "merchant";
-                              return (
-                                <div key={message.id} className={`flex ${isMerchantMessage ? "justify-start" : "justify-end"}`}>
-                                  <div
-                                    className={`max-w-[82%] rounded-2xl px-4 py-3 shadow-sm ${
-                                      isMerchantMessage
-                                        ? "border bg-white text-slate-900"
-                                        : "bg-slate-900 text-white"
-                                    }`}
-                                  >
-                                    <div className="text-[11px] opacity-70">
-                                      {isMerchantMessage ? "商户" : "超级后台"} | {formatSupportMessageTime(message.createdAt)}
+                          {selectedSupportThread.messages.length > 0 ? (
+                            <div className="space-y-3">
+                              {selectedSupportThread.messages.map((message) => {
+                                const isMerchantMessage = message.sender === "merchant";
+                                return (
+                                  <div key={message.id} className={`flex ${isMerchantMessage ? "justify-start" : "justify-end"}`}>
+                                    <div
+                                      className={`max-w-[82%] rounded-2xl px-4 py-3 shadow-sm ${
+                                        isMerchantMessage
+                                          ? "border bg-white text-slate-900"
+                                          : "bg-slate-900 text-white"
+                                      }`}
+                                    >
+                                      <div className="text-[11px] opacity-70">
+                                        {isMerchantMessage ? "商户" : "超级后台"} | {formatSupportMessageTime(message.createdAt)}
+                                      </div>
+                                      <div className="mt-1 whitespace-pre-wrap break-words text-sm leading-6">{message.text}</div>
                                     </div>
-                                    <div className="mt-1 whitespace-pre-wrap break-words text-sm leading-6">{message.text}</div>
                                   </div>
-                                </div>
-                              );
-                            })}
-                          </div>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <div className="rounded border border-dashed bg-white px-4 py-6 text-center text-sm text-slate-500">
+                              当前还没有留言记录，你可以直接在下方发第一条消息。
+                            </div>
+                          )}
                         </div>
 
                         <div className="shrink-0 space-y-3 border-t px-5 py-4">
@@ -6016,6 +6118,11 @@ export default function SuperAdminClient() {
                             placeholder="请输入要回复商户的内容"
                             value={supportReplyDraft}
                             onChange={(event) => setSupportReplyDraft(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key !== "Enter" || !event.ctrlKey || event.nativeEvent.isComposing) return;
+                              event.preventDefault();
+                              void sendSupportReplyAction();
+                            }}
                             disabled={supportSending}
                           />
                           <div className="flex items-center justify-between gap-3">
@@ -6033,7 +6140,7 @@ export default function SuperAdminClient() {
                       </div>
                     ) : (
                       <div className="flex h-full min-h-0 items-center justify-center px-6 text-center text-sm text-slate-500">
-                        暂无可处理的商户会话，请先等待商户从后台“联系我们”发送留言。
+                        {supportMerchantKeyword.trim() ? "暂无匹配商户，请调整搜索条件。" : "暂无可处理商户，请先确认注册用户数据是否已加载。"}
                       </div>
                     )}
                   </div>

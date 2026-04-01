@@ -8340,6 +8340,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                         placeholder="请输入你想留言的内容，例如遇到的问题、需要协助的事项或希望超级后台处理的内容。"
                         value={supportDraft}
                         onChange={(event) => setSupportDraft(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter" || !event.ctrlKey || event.nativeEvent.isComposing) return;
+                          event.preventDefault();
+                          void sendSupportMessage();
+                        }}
                         disabled={supportSending}
                       />
                       <div className="flex min-w-0 justify-end">
