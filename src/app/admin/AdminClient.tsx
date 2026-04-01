@@ -979,6 +979,72 @@ const STYLE_SYNC_KEYS = [
   "mapType",
   "mapShowMarker",
 ] as const;
+const PAGE_BACKGROUND_PROP_KEYS = [
+  "pageBgImageUrl",
+  "pageBgFillMode",
+  "pageBgPosition",
+  "pageBgColor",
+  "pageBgOpacity",
+  "pageBgImageOpacity",
+  "pageBgColorOpacity",
+] as const;
+const GENERIC_THEME_COPY_KEYS = [
+  "fontFamily",
+  "fontColor",
+  "bgColor",
+  "bgOpacity",
+  "bgImageOpacity",
+  "bgColorOpacity",
+  "blockBorderStyle",
+  "blockBorderColor",
+] as const;
+const PRODUCT_THEME_COPY_KEYS = [
+  "productCardBgColor",
+  "productCardBgOpacity",
+  "productCardBorderStyle",
+  "productCardBorderColor",
+  "productTagBgColor",
+  "productTagBgOpacity",
+  "productTagActiveBgColor",
+  "productTagActiveBgOpacity",
+  "productCodeTypography",
+  "productNameTypography",
+  "productDescriptionTypography",
+  "productPriceTypography",
+] as const;
+const MERCHANT_LIST_THEME_COPY_KEYS = [
+  "merchantCardBgColor",
+  "merchantCardBgOpacity",
+  "merchantCardBorderStyle",
+  "merchantCardBorderColor",
+  "merchantTabButtonBgColor",
+  "merchantTabButtonBgOpacity",
+  "merchantTabButtonBorderStyle",
+  "merchantTabButtonBorderColor",
+  "merchantTabButtonActiveBgColor",
+  "merchantTabButtonActiveBgOpacity",
+  "merchantTabButtonActiveBorderStyle",
+  "merchantTabButtonActiveBorderColor",
+  "merchantPagerButtonBgColor",
+  "merchantPagerButtonBgOpacity",
+  "merchantPagerButtonBorderStyle",
+  "merchantPagerButtonBorderColor",
+  "merchantPagerButtonDisabledBgColor",
+  "merchantPagerButtonDisabledBgOpacity",
+  "merchantPagerButtonDisabledBorderStyle",
+  "merchantPagerButtonDisabledBorderColor",
+  "merchantCardTypography",
+  "merchantCardIndustryStyles",
+] as const;
+const PAGE_COPY_BACKGROUND_ITEM_ID = "background";
+const PAGE_COPY_THEME_ITEM_ID = "theme";
+
+type PageCopySelectionState = Record<string, boolean>;
+type PageCopyBlockEntry = {
+  block: Block;
+  index: number;
+  occurrenceIndex: number;
+};
 
 function getEmbeddedMobilePlanConfig(sourceBlocks: Block[]): PagePlanConfig | null {
   const carrier = sourceBlocks.find((block) => !!(block?.props as { pagePlanConfigMobile?: unknown } | undefined)?.pagePlanConfigMobile);
@@ -1228,6 +1294,49 @@ function toPlainText(value: string | undefined, fallback = "") {
     .replace(/&quot;/gi, '"')
     .replace(/&#39;/gi, "'");
   return noTags.trim() || fallback;
+}
+
+function getThemeCopyKeysForBlockType(type: Block["type"]) {
+  if (type === "product") return PRODUCT_THEME_COPY_KEYS;
+  if (type === "merchant-list") return MERCHANT_LIST_THEME_COPY_KEYS;
+  return [] as const;
+}
+
+function pickDefinedProps(
+  source: Record<string, unknown> | undefined,
+  keys: readonly string[],
+): Record<string, unknown> {
+  const next: Record<string, unknown> = {};
+  if (!source) return next;
+  keys.forEach((key) => {
+    if (typeof source[key] !== "undefined") {
+      next[key] = source[key];
+    }
+  });
+  return next;
+}
+
+function buildPageCopyItemIdForBlock(blockId: string): `block:${string}` {
+  return `block:${blockId}`;
+}
+
+function buildPageCopyBlockLabel(block: Block, index: number) {
+  const props = block.props as Record<string, unknown>;
+  const summary = [
+    toPlainText(typeof props.heading === "string" ? props.heading : "", ""),
+    toPlainText(typeof props.title === "string" ? props.title : "", ""),
+    toPlainText(typeof props.buttonLabel === "string" ? props.buttonLabel : "", ""),
+    toPlainText(typeof props.phone === "string" ? props.phone : "", ""),
+    toPlainText(typeof props.address === "string" ? props.address : "", ""),
+    toPlainText(typeof props.text === "string" ? props.text : "", ""),
+  ]
+    .map((item) => item.trim())
+    .find(Boolean);
+  const clippedSummary =
+    summary && summary.length > 22
+      ? `${summary.slice(0, 22).trimEnd()}...`
+      : summary;
+  return `${index + 1}. ${getBlockTypeLabel(block.type)}${clippedSummary ? ` · ${clippedSummary}` : ""}`;
 }
 
 function hasVisibleRichText(value?: string) {
@@ -3180,6 +3289,9 @@ export default function AdminClient({
   const [pageImageDialogOpen, setPageImageDialogOpen] = useState(false);
   const [pageImageUrlInput, setPageImageUrlInput] = useState("");
   const [pageImageSettingsOpen, setPageImageSettingsOpen] = useState(false);
+  const [pageCopyDialogOpen, setPageCopyDialogOpen] = useState(false);
+  const [pageCopyTargetPageId, setPageCopyTargetPageId] = useState("");
+  const [pageCopySelections, setPageCopySelections] = useState<PageCopySelectionState>(() => buildPageCopySelectionDefaults(initialBlocks));
   const [pageSettingsFillMode, setPageSettingsFillMode] = useState<ImageFillMode>("cover");
   const [pageSettingsPosition, setPageSettingsPosition] = useState("center");
   const [pageSettingsColor, setPageSettingsColor] = useState("");
@@ -3422,13 +3534,13 @@ export default function AdminClient({
   }, [isPlatformEditor]);
 
   useEffect(() => {
-    if (!planTemplateDialogOpen || typeof document === "undefined") return () => {};
+    if ((!planTemplateDialogOpen && !pageCopyDialogOpen) || typeof document === "undefined") return () => {};
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       document.body.style.overflow = previousOverflow;
     };
-  }, [planTemplateDialogOpen]);
+  }, [pageCopyDialogOpen, planTemplateDialogOpen]);
 
   function recordRecentColor(value: string) {
     const normalized = normalizeRecentColorToken(value);
@@ -5134,6 +5246,134 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     };
   }
 
+  function stripPageBackgroundPropsFromBlock(block: Block) {
+    const cloned = cloneBlocks([block])[0];
+    const nextProps = { ...cloned.props } as Record<string, unknown>;
+    PAGE_BACKGROUND_PROP_KEYS.forEach((key) => {
+      delete nextProps[key];
+    });
+    return {
+      ...cloned,
+      props: nextProps as never,
+    } as Block;
+  }
+
+  function buildPageCopySelectionDefaults(sourceBlocks: Block[]): PageCopySelectionState {
+    const next: PageCopySelectionState = {
+      [PAGE_COPY_BACKGROUND_ITEM_ID]: false,
+      [PAGE_COPY_THEME_ITEM_ID]: false,
+    };
+    sourceBlocks.forEach((block) => {
+      next[buildPageCopyItemIdForBlock(block.id)] = false;
+    });
+    return next;
+  }
+
+  function createCopiedBlock(block: Block, options?: { keepId?: string }) {
+    const cloned = stripPageBackgroundPropsFromBlock(block);
+    return {
+      ...cloned,
+      id: options?.keepId || `${cloned.type}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    } as Block;
+  }
+
+  function buildThemeCopyTemplate(sourceBlocks: Block[]) {
+    const genericSource =
+      sourceBlocks.find((block) => {
+        const props = block.props as Record<string, unknown>;
+        return GENERIC_THEME_COPY_KEYS.some((key) => typeof props[key] !== "undefined");
+      }) ??
+      sourceBlocks.find((block) => block.type !== "nav") ??
+      sourceBlocks[0] ??
+      null;
+    const genericPatch = genericSource
+      ? pickDefinedProps(genericSource.props as Record<string, unknown>, GENERIC_THEME_COPY_KEYS)
+      : {};
+    const perTypePatch = new Map<Block["type"], Record<string, unknown>>();
+    sourceBlocks.forEach((block) => {
+      if (perTypePatch.has(block.type)) return;
+      perTypePatch.set(block.type, {
+        ...pickDefinedProps(block.props as Record<string, unknown>, GENERIC_THEME_COPY_KEYS),
+        ...pickDefinedProps(block.props as Record<string, unknown>, getThemeCopyKeysForBlockType(block.type)),
+      });
+    });
+    return {
+      genericPatch,
+      perTypePatch,
+    };
+  }
+
+  function applyThemeCopyFromSourceBlocks(sourceBlocks: Block[], targetBlocks: Block[]) {
+    const template = buildThemeCopyTemplate(sourceBlocks);
+    const hasGenericPatch = Object.keys(template.genericPatch).length > 0;
+    const hasPerTypePatch = [...template.perTypePatch.values()].some((patch) => Object.keys(patch).length > 0);
+    if (!hasGenericPatch && !hasPerTypePatch) {
+      return cloneBlocks(targetBlocks);
+    }
+    return targetBlocks.map((block) => {
+      const patch = {
+        ...template.genericPatch,
+        ...(template.perTypePatch.get(block.type) ?? {}),
+      };
+      if (Object.keys(patch).length === 0) return block;
+      return {
+        ...block,
+        props: {
+          ...block.props,
+          ...patch,
+        } as never,
+      } as Block;
+    });
+  }
+
+  function buildPageCopyBlockEntries(sourceBlocks: Block[]): PageCopyBlockEntry[] {
+    const typeCounts = new Map<Block["type"], number>();
+    return sourceBlocks.map((block, index) => {
+      const currentOccurrence = typeCounts.get(block.type) ?? 0;
+      typeCounts.set(block.type, currentOccurrence + 1);
+      return {
+        block,
+        index,
+        occurrenceIndex: currentOccurrence,
+      };
+    });
+  }
+
+  function findBlockIndexByTypeOccurrence(targetBlocks: Block[], type: Block["type"], occurrenceIndex: number) {
+    let currentOccurrence = 0;
+    for (let index = 0; index < targetBlocks.length; index += 1) {
+      if (targetBlocks[index]?.type !== type) continue;
+      if (currentOccurrence === occurrenceIndex) return index;
+      currentOccurrence += 1;
+    }
+    return -1;
+  }
+
+  function copySelectedBlocksToPage(sourceBlocks: Block[], selectedBlockIds: string[], targetBlocks: Block[]) {
+    if (selectedBlockIds.length === 0) return cloneBlocks(targetBlocks);
+    const selectedBlockIdSet = new Set(selectedBlockIds);
+    const selectedEntries = buildPageCopyBlockEntries(sourceBlocks).filter((entry) => selectedBlockIdSet.has(entry.block.id));
+    const nextBlocks = cloneBlocks(targetBlocks);
+    selectedEntries.forEach((entry) => {
+      const targetIndex = findBlockIndexByTypeOccurrence(nextBlocks, entry.block.type, entry.occurrenceIndex);
+      if (targetIndex >= 0) {
+        const existingTargetBlock = nextBlocks[targetIndex];
+        const preservedPageBackground = targetIndex === 0 ? getPageBackgroundPatch(existingTargetBlock) : null;
+        const copiedBlock = createCopiedBlock(entry.block, { keepId: existingTargetBlock.id });
+        nextBlocks[targetIndex] = {
+          ...copiedBlock,
+          props: {
+            ...copiedBlock.props,
+            ...(preservedPageBackground ?? {}),
+          } as never,
+        } as Block;
+        return;
+      }
+      nextBlocks.push(createCopiedBlock(entry.block));
+    });
+    return normalizeBlockLayers(nextBlocks);
+  }
+
   function updatePageBackground(patch: Partial<PageBackgroundPatch>) {
     if (blocks.length === 0) return;
 
@@ -5796,6 +6036,106 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     setBlocks(targetBlocks);
     setSelectedId(targetBlocks[0]?.id ?? "");
     persistDraftForConfigs(nextConfig);
+  }
+
+  function openPageCopyDialog() {
+    const targetPages = editingPages.filter((page) => page.id !== editingPageIdRef.current);
+    if (targetPages.length === 0) {
+      showTip("当前只有一个页面，暂无可复制的目标页面");
+      return;
+    }
+    setPageCopySelections(buildPageCopySelectionDefaults(blocksRef.current));
+    setPageCopyTargetPageId(targetPages[0]?.id ?? "");
+    setPageCopyDialogOpen(true);
+  }
+
+  function applySelectedItemsToTargetPage() {
+    const targetPageId = pageCopyTargetPageId.trim();
+    const includeBackground = pageCopySelections[PAGE_COPY_BACKGROUND_ITEM_ID] === true;
+    const includeTheme = pageCopySelections[PAGE_COPY_THEME_ITEM_ID] === true;
+    const selectedBlockIds = blocksRef.current
+      .filter((block) => pageCopySelections[buildPageCopyItemIdForBlock(block.id)] === true)
+      .map((block) => block.id);
+    if (!targetPageId) {
+      showTip("请选择目标页面");
+      return;
+    }
+    if (targetPageId === editingPageIdRef.current) {
+      showTip("目标页面不能是当前页面");
+      return;
+    }
+    if (!includeBackground && !includeTheme && selectedBlockIds.length === 0) {
+      showTip("请先选择需要复制的项目");
+      return;
+    }
+
+    const mergedConfig = mergePlanConfigWithEditingBlocks(
+      planConfigRef.current,
+      editingPlanIdRef.current,
+      editingPageIdRef.current,
+      blocksRef.current,
+      { syncNavPages: false },
+    );
+    const planIndex = mergedConfig.plans.findIndex((plan) => plan.id === editingPlanIdRef.current);
+    const safePlanIndex = planIndex >= 0 ? planIndex : 0;
+    const currentPlan = mergedConfig.plans[safePlanIndex] ?? null;
+    if (!currentPlan) return;
+    const targetPage = currentPlan.pages.find((page) => page.id === targetPageId) ?? null;
+    if (!targetPage) {
+      showTip("未找到目标页面，请重新选择");
+      return;
+    }
+
+    const sourceBlocks = cloneBlocks(blocksRef.current);
+    let nextTargetBlocks = cloneBlocks(getBlocksForPage(currentPlan, targetPageId));
+    if (selectedBlockIds.length > 0) {
+      nextTargetBlocks = copySelectedBlocksToPage(sourceBlocks, selectedBlockIds, nextTargetBlocks);
+    }
+    if (includeTheme) {
+      nextTargetBlocks = applyThemeCopyFromSourceBlocks(sourceBlocks, nextTargetBlocks);
+    }
+    if (includeBackground) {
+      const pageBackgroundPatch = getPageBackgroundPatch(sourceBlocks[0]);
+      if (nextTargetBlocks[0]) {
+        nextTargetBlocks[0] = {
+          ...nextTargetBlocks[0],
+          props: {
+            ...nextTargetBlocks[0].props,
+            ...pageBackgroundPatch,
+          } as never,
+        } as Block;
+      } else if (sourceBlocks[0]) {
+        const copiedFirstBlock = createCopiedBlock(sourceBlocks[0]);
+        nextTargetBlocks = [
+          {
+            ...copiedFirstBlock,
+            props: {
+              ...copiedFirstBlock.props,
+              ...pageBackgroundPatch,
+            } as never,
+          } as Block,
+        ];
+      }
+    }
+
+    const nextPlan = setBlocksForPage(
+      {
+        ...currentPlan,
+        activePageId: editingPageIdRef.current,
+      },
+      targetPageId,
+      nextTargetBlocks,
+    );
+    const nextPlanConfig: PagePlanConfig = {
+      ...mergedConfig,
+      plans: mergedConfig.plans.map((plan, index) => (index === safePlanIndex ? nextPlan : plan)),
+    };
+    const targetPageLabel = toPlainText(targetPage.name, targetPage.id);
+    pushUndoSnapshot(createSnapshot());
+    setPlanConfig(nextPlanConfig);
+    persistDraftForConfigs(nextPlanConfig);
+    setPageCopyDialogOpen(false);
+    showTip(`已复制到页面：${targetPageLabel}`);
   }
 
   async function deleteBlock(blockId: string) {
@@ -6949,6 +7289,15 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     ? editingPlan.pages
     : [{ id: "page-1", name: "页面1", blocks: editingPlan?.blocks ?? defaultEditorBlocks }];
   const editingPageIndex = Math.max(0, editingPages.findIndex((page) => page.id === editingPageId));
+  const pageCopyTargetPages = editingPages.filter((page) => page.id !== editingPageId);
+  const pageCopyBlockOptions = blocks.map((block, index) => ({
+    id: buildPageCopyItemIdForBlock(block.id),
+    label: buildPageCopyBlockLabel(block, index),
+  }));
+  const pageCopySelectedItemCount =
+    (pageCopySelections[PAGE_COPY_BACKGROUND_ITEM_ID] ? 1 : 0) +
+    (pageCopySelections[PAGE_COPY_THEME_ITEM_ID] ? 1 : 0) +
+    pageCopyBlockOptions.filter((item) => pageCopySelections[item.id] === true).length;
   const imageCompressionOptions = getCurrentImageCompressionOptions();
   const otherBookingViewport = previewViewport === "desktop" ? "mobile" : "desktop";
   const activeBookingOptions = collectBookingOptionsFromPlanConfig(planConfig);
@@ -7244,6 +7593,13 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                         </option>
                       ))}
                     </select>
+                    <button
+                      type="button"
+                      className="rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50 lg:w-full"
+                      onClick={openPageCopyDialog}
+                    >
+                      复制
+                    </button>
                   </div>
 
                   <div className="h-px w-full bg-gray-200 hidden lg:block" />
@@ -7861,13 +8217,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                           {visibleSupportMessages.map((message) => {
                             const isMerchantMessage = message.sender === "merchant";
                             return (
-                              <div
-                                key={message.id}
-                                className={`flex ${isMerchantMessage ? "justify-end" : "justify-start"}`}
-                              >
-                                <div className={`flex items-end ${isMerchantMessage ? "flex-row" : "flex-row-reverse"}`}>
+                              <div key={message.id} className={`flex ${isMerchantMessage ? "justify-end" : "justify-start"}`}>
+                                <div className={`flex max-w-[82%] min-w-0 items-end ${isMerchantMessage ? "flex-row" : "flex-row-reverse"}`}>
                                   <div
-                                    className={`max-w-[85%] rounded-2xl px-4 py-3 shadow-sm ${
+                                    className={`min-w-0 rounded-2xl px-4 py-3 shadow-sm ${
                                       isMerchantMessage
                                         ? "bg-slate-900 text-white"
                                         : "border bg-white text-slate-900"
@@ -7876,14 +8229,14 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                                     <div className="text-[11px] opacity-70">
                                       {isMerchantMessage ? "我" : "超级后台"} | {formatSupportMessageTime(message.createdAt)}
                                     </div>
-                                    <div className="mt-1 whitespace-pre-wrap break-words text-sm leading-6">
+                                    <div className="mt-1 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-sm leading-6">
                                       {renderSupportMessageText(message.text)}
                                     </div>
                                   </div>
                                   {isMerchantMessage && message.localStatus === "failed" ? (
                                     <span
                                       aria-label="发送失败"
-                                      className="mb-1 ml-2 inline-flex h-5 w-5 items-center justify-center rounded-full border border-rose-500 bg-white text-[12px] font-semibold leading-none text-rose-600"
+                                      className="mb-1 ml-2 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-rose-500 bg-white text-[12px] font-semibold leading-none text-rose-600"
                                     >
                                       !
                                     </span>
@@ -8052,6 +8405,170 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           onClose={() => setMerchantBookingManagerOpen(false)}
         />
       ) : null}
+
+      {pageCopyDialogOpen
+        ? renderTopMostOverlay(
+            <div
+              data-editor-overlay
+              className="fixed inset-0 z-[2147482550] bg-black/45 p-4"
+              onMouseDown={(event) => {
+                if (event.target === event.currentTarget) {
+                  setPageCopyDialogOpen(false);
+                }
+              }}
+            >
+              <div className="mx-auto flex h-full max-h-[calc(100vh-2rem)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl">
+                <div className="flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4">
+                  <div className="space-y-1">
+                    <div className="text-lg font-semibold text-slate-900">复制到目标页面</div>
+                    <div className="text-sm text-slate-500">
+                      勾选需要复制的背景、主题或区块，再选择目标页面后确认复制。
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50"
+                    onClick={() => setPageCopyDialogOpen(false)}
+                  >
+                    关闭
+                  </button>
+                </div>
+
+                <div className="space-y-4 overflow-y-auto px-5 py-5">
+                  <label className="space-y-2">
+                    <div className="text-sm font-medium text-slate-700">目标页面</div>
+                    <select
+                      className="w-full rounded border px-3 py-2 text-sm"
+                      value={pageCopyTargetPageId}
+                      onChange={(event) => setPageCopyTargetPageId(event.target.value)}
+                    >
+                      {pageCopyTargetPages.map((page) => (
+                        <option key={page.id} value={page.id}>
+                          {toPlainText(page.name, page.id)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <div className="space-y-3 rounded-2xl border bg-slate-50 px-4 py-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-medium text-slate-800">复制项目</div>
+                        <div className="text-xs text-slate-500">已选择 {pageCopySelectedItemCount} 项</div>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          className="rounded border bg-white px-3 py-1.5 text-xs hover:bg-slate-50"
+                          onClick={() =>
+                            setPageCopySelections((current) =>
+                              Object.keys(current).reduce<PageCopySelectionState>((accumulator, key) => {
+                                accumulator[key] = true;
+                                return accumulator;
+                              }, {}),
+                            )
+                          }
+                        >
+                          全选
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded border bg-white px-3 py-1.5 text-xs hover:bg-slate-50"
+                          onClick={() => setPageCopySelections(buildPageCopySelectionDefaults(blocks))}
+                        >
+                          清空
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-2 md:grid-cols-2">
+                      <label className="flex items-start gap-3 rounded-xl border bg-white px-3 py-3 text-sm">
+                        <input
+                          type="checkbox"
+                          className="mt-1 h-4 w-4"
+                          checked={pageCopySelections[PAGE_COPY_BACKGROUND_ITEM_ID] === true}
+                          onChange={(event) =>
+                            setPageCopySelections((current) => ({
+                              ...current,
+                              [PAGE_COPY_BACKGROUND_ITEM_ID]: event.target.checked,
+                            }))
+                          }
+                        />
+                        <span className="space-y-1">
+                          <span className="block font-medium text-slate-800">背景</span>
+                          <span className="block text-xs text-slate-500">复制当前页面背景图、颜色、透明度和填充方式。</span>
+                        </span>
+                      </label>
+                      <label className="flex items-start gap-3 rounded-xl border bg-white px-3 py-3 text-sm">
+                        <input
+                          type="checkbox"
+                          className="mt-1 h-4 w-4"
+                          checked={pageCopySelections[PAGE_COPY_THEME_ITEM_ID] === true}
+                          onChange={(event) =>
+                            setPageCopySelections((current) => ({
+                              ...current,
+                              [PAGE_COPY_THEME_ITEM_ID]: event.target.checked,
+                            }))
+                          }
+                        />
+                        <span className="space-y-1">
+                          <span className="block font-medium text-slate-800">主题</span>
+                          <span className="block text-xs text-slate-500">复制当前页面的主题风格样式，尽量保留目标页已有内容。</span>
+                        </span>
+                      </label>
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium text-slate-800">当前页区块</div>
+                      <div className="grid gap-2 md:grid-cols-2">
+                        {pageCopyBlockOptions.map((item) => (
+                          <label key={item.id} className="flex items-center gap-3 rounded-xl border bg-white px-3 py-3 text-sm">
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4"
+                              checked={pageCopySelections[item.id] === true}
+                              onChange={(event) =>
+                                setPageCopySelections((current) => ({
+                                  ...current,
+                                  [item.id]: event.target.checked,
+                                }))
+                              }
+                            />
+                            <span className="min-w-0 truncate text-slate-700" title={item.label}>
+                              {item.label}
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-dashed bg-white px-3 py-3 text-xs leading-5 text-slate-500">
+                      区块复制会把内容一起带过去。若目标页已有同类型同顺位区块，会优先覆盖；没有时会新增到目标页。
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap justify-end gap-2 border-t px-5 py-4">
+                  <button
+                    type="button"
+                    className="rounded border bg-white px-4 py-2 text-sm hover:bg-slate-50"
+                    onClick={() => setPageCopyDialogOpen(false)}
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded bg-black px-4 py-2 text-sm text-white disabled:opacity-50"
+                    onClick={applySelectedItemsToTargetPage}
+                    disabled={pageCopySelectedItemCount === 0 || !pageCopyTargetPageId}
+                  >
+                    确认复制
+                  </button>
+                </div>
+              </div>
+            </div>,
+          )
+        : null}
 
       {planTemplateDialogOpen && isPlatformEditor
         ? renderTopMostOverlay(
