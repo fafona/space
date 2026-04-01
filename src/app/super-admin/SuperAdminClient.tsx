@@ -100,6 +100,9 @@ import { type SuperAdminTrustedDeviceRecord } from "@/lib/superAdminTrustedDevic
 import { useHydrated } from "@/lib/useHydrated";
 import { uploadImageDataUrlToPublicStorage } from "@/lib/publicAssetUpload";
 
+const SUPPORT_THREADS_POLL_INTERVAL_MS = 5000;
+const SUPER_ADMIN_SUPPORT_LAST_READ_STORAGE_KEY_PREFIX = "super-admin-support-last-read:";
+
 function fmt(iso: string | null) {
   if (!iso) return "-";
   const date = new Date(iso);
@@ -113,6 +116,17 @@ function formatSupportMessageTime(value: string | null | undefined) {
   return Number.isFinite(timestamp)
     ? new Date(timestamp).toLocaleString("zh-CN", { hour12: false })
     : normalized;
+}
+
+function normalizeSupportMessageTimestamp(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return "";
+  const timestamp = new Date(normalized).getTime();
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : "";
+}
+
+function buildSuperAdminSupportLastReadStorageKey(merchantId: string) {
+  return `${SUPER_ADMIN_SUPPORT_LAST_READ_STORAGE_KEY_PREFIX}${merchantId.trim() || "default"}`;
 }
 
 function normalizeEmailValue(value: string | null | undefined) {
@@ -1161,8 +1175,11 @@ export default function SuperAdminClient() {
   const [supportReplyDraft, setSupportReplyDraft] = useState("");
   const [supportSending, setSupportSending] = useState(false);
   const [supportDisplayMode, setSupportDisplayMode] = useState<"name" | "id">("name");
+  const [supportLastReadMap, setSupportLastReadMap] = useState<Record<string, string>>({});
   const supportMessagesViewportRef = useRef<HTMLDivElement>(null);
   const supportLastMessageKeyRef = useRef("");
+  const supportThreadsRequestIdRef = useRef(0);
+  const loadSupportThreadsActionRef = useRef<(options?: { silent?: boolean; suppressError?: boolean }) => Promise<void>>(async () => {});
   const [manualUserDialogOpen, setManualUserDialogOpen] = useState(false);
   const [manualUserId, setManualUserId] = useState("");
   const [manualUserName, setManualUserName] = useState("");
@@ -1258,13 +1275,33 @@ export default function SuperAdminClient() {
   }, [authed, hydrated, platformMerchantSnapshotPayload.snapshot.length, platformMerchantSnapshotPayloadKey]);
 
   useEffect(() => {
-    if (!hydrated || !authed || activeMenu !== "support_messages") return;
-    void loadSupportThreadsAction();
+    if (!hydrated || !authed || typeof window === "undefined") return;
+    void loadSupportThreadsActionRef.current({
+      silent: activeMenu !== "support_messages",
+      suppressError: activeMenu !== "support_messages",
+    });
+    const refreshSupportThreads = () => {
+      void loadSupportThreadsActionRef.current({
+        silent: true,
+        suppressError: activeMenu !== "support_messages",
+      });
+    };
     const timer = window.setInterval(() => {
-      void loadSupportThreadsAction();
-    }, 15000);
+      if (document.visibilityState !== "visible") return;
+      refreshSupportThreads();
+    }, SUPPORT_THREADS_POLL_INTERVAL_MS);
+    const handleFocus = () => refreshSupportThreads();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        refreshSupportThreads();
+      }
+    };
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => {
       window.clearInterval(timer);
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [activeMenu, authed, hydrated]);
 
@@ -1727,6 +1764,25 @@ export default function SuperAdminClient() {
   const selectedSupportLatestMessageKey = selectedSupportThread
     ? `${selectedSupportThread.merchantId}:${selectedSupportLatestMessage?.id ?? "empty"}:${selectedSupportLatestMessage?.createdAt ?? ""}`
     : "";
+  const selectedSupportLatestMerchantMessageAt =
+    selectedSupportLatestMessage?.sender === "merchant"
+      ? normalizeSupportMessageTimestamp(selectedSupportLatestMessage.createdAt)
+      : "";
+  const supportUnreadMerchantIds = useMemo(() => {
+    const unreadMerchantIds = new Set<string>();
+    supportThreads.forEach((thread) => {
+      const lastMessage = thread.messages[thread.messages.length - 1];
+      if (!lastMessage || lastMessage.sender !== "merchant") return;
+      const lastMessageAt = normalizeSupportMessageTimestamp(lastMessage.createdAt);
+      if (!lastMessageAt) return;
+      const lastReadAt = normalizeSupportMessageTimestamp(supportLastReadMap[thread.merchantId]);
+      if (new Date(lastMessageAt).getTime() > new Date(lastReadAt || 0).getTime()) {
+        unreadMerchantIds.add(thread.merchantId);
+      }
+    });
+    return unreadMerchantIds;
+  }, [supportLastReadMap, supportThreads]);
+  const supportHasUnreadThreads = supportUnreadMerchantIds.size > 0;
   const selectedMerchantDisplaySite = selectedMerchantRow?.site ?? null;
   const selectedMerchantSite =
     selectedMerchantRow?.hasLocalSite
@@ -1841,8 +1897,50 @@ export default function SuperAdminClient() {
     );
   }, [supportThreads]);
   useEffect(() => {
+    if (!hydrated || typeof window === "undefined") return;
+    const nextLastReadMap = supportThreads.reduce<Record<string, string>>((accumulator, thread) => {
+      const merchantId = thread.merchantId.trim();
+      if (!merchantId) return accumulator;
+      const stored = normalizeSupportMessageTimestamp(
+        window.localStorage.getItem(buildSuperAdminSupportLastReadStorageKey(merchantId)),
+      );
+      if (stored) {
+        accumulator[merchantId] = stored;
+      }
+      return accumulator;
+    }, {});
+    setSupportLastReadMap((current) => {
+      const currentKeys = Object.keys(current);
+      const nextKeys = Object.keys(nextLastReadMap);
+      if (
+        currentKeys.length === nextKeys.length &&
+        nextKeys.every((merchantId) => current[merchantId] === nextLastReadMap[merchantId])
+      ) {
+        return current;
+      }
+      return nextLastReadMap;
+    });
+  }, [hydrated, supportThreads]);
+  useEffect(() => {
     setSupportReplyDraft("");
   }, [supportSelectedMerchantId]);
+  useEffect(() => {
+    if (!hydrated || !authed || activeMenu !== "support_messages" || typeof window === "undefined") return;
+    const merchantId = selectedSupportThread?.merchantId?.trim();
+    if (!merchantId || !selectedSupportLatestMerchantMessageAt) return;
+    window.localStorage.setItem(
+      buildSuperAdminSupportLastReadStorageKey(merchantId),
+      selectedSupportLatestMerchantMessageAt,
+    );
+    setSupportLastReadMap((current) =>
+      current[merchantId] === selectedSupportLatestMerchantMessageAt
+        ? current
+        : {
+            ...current,
+            [merchantId]: selectedSupportLatestMerchantMessageAt,
+          },
+    );
+  }, [activeMenu, authed, hydrated, selectedSupportLatestMerchantMessageAt, selectedSupportThread]);
   useEffect(() => {
     if (activeMenu !== "support_messages") {
       supportLastMessageKeyRef.current = "";
@@ -2127,13 +2225,40 @@ export default function SuperAdminClient() {
     setMerchantPanelOpen(true);
   }
 
-  async function loadSupportThreadsAction() {
-    setSupportThreadsLoading(true);
-    setSupportThreadsError("");
-    try {
-      const response = await fetch("/api/super-admin/support-messages", {
-        method: "GET",
+  async function requestSupportThreadsWithSessionRecovery(init: RequestInit) {
+    const sendRequest = () =>
+      fetch("/api/super-admin/support-messages", {
         credentials: "same-origin",
+        ...init,
+      });
+
+    syncSuperAdminAuthenticatedCookie();
+    let response = await sendRequest();
+    if (response.status !== 401 && response.status !== 403) {
+      return response;
+    }
+
+    const recovered = syncSuperAdminAuthenticatedCookie();
+    if (!recovered) {
+      return response;
+    }
+    response = await sendRequest();
+    return response;
+  }
+
+  async function loadSupportThreadsAction(options?: { silent?: boolean; suppressError?: boolean }) {
+    const silent = options?.silent === true;
+    const suppressError = options?.suppressError === true;
+    const requestId = ++supportThreadsRequestIdRef.current;
+    if (!silent) {
+      setSupportThreadsLoading(true);
+    }
+    if (!suppressError) {
+      setSupportThreadsError("");
+    }
+    try {
+      const response = await requestSupportThreadsWithSessionRecovery({
+        method: "GET",
         cache: "no-store",
       });
       const payload = (await response.json().catch(() => null)) as
@@ -2142,17 +2267,27 @@ export default function SuperAdminClient() {
             error?: string;
           }
         | null;
+      if (requestId !== supportThreadsRequestIdRef.current) return;
       if (!response.ok) {
-        setSupportThreadsError(payload?.error === "unauthorized" ? "超级后台登录已失效，请重新登录" : "信息处理加载失败，请稍后重试");
+        if (!suppressError) {
+          setSupportThreadsError(payload?.error === "unauthorized" ? "超级后台登录已失效，请重新登录" : "信息处理加载失败，请稍后重试");
+        }
         return;
       }
+      setSupportThreadsError("");
       setSupportThreads(Array.isArray(payload?.threads) ? payload.threads : []);
     } catch {
-      setSupportThreadsError("信息处理加载失败，请稍后重试");
+      if (requestId !== supportThreadsRequestIdRef.current) return;
+      if (!suppressError) {
+        setSupportThreadsError("信息处理加载失败，请稍后重试");
+      }
     } finally {
-      setSupportThreadsLoading(false);
+      if (!silent && requestId === supportThreadsRequestIdRef.current) {
+        setSupportThreadsLoading(false);
+      }
     }
   }
+  loadSupportThreadsActionRef.current = loadSupportThreadsAction;
 
   async function sendSupportReplyAction() {
     if (!selectedSupportThread || supportSending) return;
@@ -2164,12 +2299,11 @@ export default function SuperAdminClient() {
     setSupportSending(true);
     setSupportThreadsError("");
     try {
-      const response = await fetch("/api/super-admin/support-messages", {
+      const response = await requestSupportThreadsWithSessionRecovery({
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        credentials: "same-origin",
         body: JSON.stringify({
           merchantId: selectedSupportThread.merchantId,
           siteId: selectedSupportThread.siteId,
@@ -3740,7 +3874,12 @@ export default function SuperAdminClient() {
                 }`}
                 onClick={() => setActiveMenu(menu.key)}
               >
-                <div className="font-medium">{menu.label}</div>
+                <div className="flex items-center gap-2 font-medium">
+                  <span>{menu.label}</span>
+                  {menu.key === "support_messages" && supportHasUnreadThreads ? (
+                    <span aria-label="有未读消息" className="inline-flex h-2.5 w-2.5 rounded-full bg-rose-500" />
+                  ) : null}
+                </div>
                 <div className="text-xs text-slate-500">{menu.hint}</div>
               </button>
             ))}
@@ -5780,6 +5919,7 @@ export default function SuperAdminClient() {
                             const subtitle = row?.loginAccount || thread.merchantEmail || row?.userEmail || "-";
                             const lastMessage = thread.messages[thread.messages.length - 1];
                             const active = selectedSupportThread?.merchantId === thread.merchantId;
+                            const hasUnread = supportUnreadMerchantIds.has(thread.merchantId);
                             return (
                               <button
                                 key={thread.merchantId}
@@ -5791,7 +5931,12 @@ export default function SuperAdminClient() {
                               >
                                 <div className="flex items-start justify-between gap-2">
                                   <div className="min-w-0">
-                                    <div className="truncate text-sm font-medium text-slate-900">{displayLabel}</div>
+                                    <div className="flex items-center gap-2">
+                                      <div className="truncate text-sm font-medium text-slate-900">{displayLabel}</div>
+                                      {hasUnread ? (
+                                        <span aria-label="有未读消息" className="inline-flex h-2.5 w-2.5 shrink-0 rounded-full bg-rose-500" />
+                                      ) : null}
+                                    </div>
                                     <div className="truncate text-[11px] text-slate-500">{subtitle}</div>
                                   </div>
                                   <div className="shrink-0 text-[11px] text-slate-400">{formatSupportMessageTime(thread.updatedAt)}</div>

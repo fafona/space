@@ -3161,6 +3161,7 @@ export default function AdminClient({
   const supportSendingRef = useRef(false);
   const supportMessagesViewportRef = useRef<HTMLDivElement>(null);
   const supportLastVisibleMessageKeyRef = useRef("");
+  const supportScrollToLatestPendingRef = useRef(false);
   const [merchantProfileAttention, setMerchantProfileAttention] = useState(false);
   const merchantProfileButtonRef = useRef<HTMLButtonElement>(null);
   const [topBarCollapsed, setTopBarCollapsed] = useState(false);
@@ -6721,6 +6722,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
   function openSupportDialog() {
     if (isPlatformEditor) return;
+    supportScrollToLatestPendingRef.current = true;
+    setSupportLoading(true);
     setSupportDialogOpen(true);
   }
 
@@ -6774,16 +6777,23 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   useEffect(() => {
     if (!supportDialogOpen) {
       supportLastVisibleMessageKeyRef.current = "";
+      supportScrollToLatestPendingRef.current = false;
+      return;
     }
+    supportScrollToLatestPendingRef.current = true;
   }, [supportDialogOpen]);
 
   useEffect(() => {
     if (isPlatformEditor || !supportDialogOpen || typeof window === "undefined") return;
-    if (!latestVisibleSupportMessageKey) return;
+    if (supportLoading) return;
     const viewport = supportMessagesViewportRef.current;
     if (!viewport) return;
-    if (supportLastVisibleMessageKeyRef.current === latestVisibleSupportMessageKey) return;
-    const behavior: ScrollBehavior = supportLastVisibleMessageKeyRef.current ? "smooth" : "auto";
+    const shouldScrollToLatest = supportScrollToLatestPendingRef.current;
+    const shouldScrollForNewMessage =
+      !!latestVisibleSupportMessageKey && supportLastVisibleMessageKeyRef.current !== latestVisibleSupportMessageKey;
+    if (!shouldScrollToLatest && !shouldScrollForNewMessage) return;
+    const behavior: ScrollBehavior = shouldScrollToLatest || !supportLastVisibleMessageKeyRef.current ? "auto" : "smooth";
+    supportScrollToLatestPendingRef.current = false;
     supportLastVisibleMessageKeyRef.current = latestVisibleSupportMessageKey;
     const timer = window.setTimeout(() => {
       viewport.scrollTo({ top: viewport.scrollHeight, behavior });
@@ -6791,7 +6801,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     return () => {
       window.clearTimeout(timer);
     };
-  }, [isPlatformEditor, latestVisibleSupportMessageKey, supportDialogOpen]);
+  }, [isPlatformEditor, latestVisibleSupportMessageKey, supportDialogOpen, supportLoading]);
 
   async function sendSupportMessage() {
     if (supportSending) return;
@@ -8593,6 +8603,16 @@ type GalleryEditorImage = {
   } | null>(null);
   const activeEditorRef = useRef<HTMLDivElement | null>(null);
   const selectedRangeRef = useRef<Range | null>(null);
+  const getRichFieldPatchRef = useRef(getRichFieldPatch);
+  const updateNavItemRef = useRef(updateNavItem);
+  const updateCommonTextBoxRef = useRef(updateCommonTextBox);
+  const persistEditorTypographyChangeRef = useRef<(editor: HTMLDivElement, options?: { includeBlockLevelPatch?: boolean }) => void>(() => {});
+  const typographyEditorSnapshotRef = useRef<{
+    html: string;
+    range: SerializedEditorRange | null;
+  } | null>(null);
+  const typographyDialogInitialValuesRef = useRef<TypographyDialogValues | null>(null);
+  const typographyPreviewAppliedRef = useRef(false);
   const [imageDialogOpen, setImageDialogOpen] = useState(false);
   const [imageUrlInput, setImageUrlInput] = useState("");
   const [typographyDialogOpen, setTypographyDialogOpen] = useState(false);
@@ -9083,7 +9103,21 @@ type GalleryEditorImage = {
   useEffect(() => {
     if (isSelected) return;
     setImageDialogOpen(false);
-    setTypographyDialogOpen(false);
+    if (typographyDialogOpen) {
+      const editor = activeEditorRef.current;
+      if (typographyTarget === "editor" && typographyPreviewAppliedRef.current && editor && typographyEditorSnapshotRef.current) {
+        editor.innerHTML = typographyEditorSnapshotRef.current.html;
+        persistEditorTypographyChangeRef.current(editor);
+      }
+      typographyEditorSnapshotRef.current = null;
+      typographyDialogInitialValuesRef.current = null;
+      typographyPreviewAppliedRef.current = false;
+      setTypographyDialogOpen(false);
+    } else {
+      typographyEditorSnapshotRef.current = null;
+      typographyDialogInitialValuesRef.current = null;
+      typographyPreviewAppliedRef.current = false;
+    }
     setImageSettingsOpen(false);
     setBorderSettingsOpen(false);
     setLayerSettingsOpen(false);
@@ -9101,7 +9135,13 @@ type GalleryEditorImage = {
     onResizePreview(0);
     activeEditorRef.current = null;
     selectedRangeRef.current = null;
-  }, [isSelected, onResizePreview]);
+  }, [isSelected, onResizePreview, typographyDialogOpen, typographyTarget]);
+
+  useEffect(() => {
+    getRichFieldPatchRef.current = getRichFieldPatch;
+    updateNavItemRef.current = updateNavItem;
+    updateCommonTextBoxRef.current = updateCommonTextBox;
+  });
 
   useEffect(() => {
     if (!isCommonCanvasBlockType(block.type)) return;
@@ -9550,11 +9590,146 @@ type GalleryEditorImage = {
     activeEditorRef.current = editor;
   }
 
+  function clearTypographyPreviewSession() {
+    typographyEditorSnapshotRef.current = null;
+    typographyDialogInitialValuesRef.current = null;
+    typographyPreviewAppliedRef.current = false;
+  }
+
+  const getCurrentTypographyDialogValues = useCallback(
+    () =>
+      ({
+        fontFamily: typoFontFamily,
+        fontSize: Math.max(8, Math.min(96, Number(typoFontSize) || 16)),
+        fontColor: typoFontColor,
+        bold: typoBold,
+        italic: typoItalic,
+        underline: typoUnderline,
+      }) satisfies TypographyDialogValues,
+    [typoBold, typoFontColor, typoFontFamily, typoFontSize, typoItalic, typoUnderline],
+  );
+
+  function setTypographyDialogValues(next: TypographyDialogValues) {
+    setTypoFontFamily(next.fontFamily);
+    setTypoFontSize(next.fontSize);
+    setTypoFontColor(next.fontColor);
+    setTypoBold(next.bold);
+    setTypoItalic(next.italic);
+    setTypoUnderline(next.underline);
+  }
+
+  function buildBlockLevelTypographyPatch(values: TypographyDialogValues): Partial<Block["props"]> {
+    return {
+      fontFamily: values.fontFamily.trim() || undefined,
+      fontColor: values.fontColor.trim() || undefined,
+      fontSize: values.fontSize,
+      fontWeight: values.bold ? "bold" : "normal",
+      fontStyle: values.italic ? "italic" : "normal",
+      textDecoration: values.underline ? "underline" : "none",
+    };
+  }
+
+  function applyTypographyStylesToSpan(span: HTMLSpanElement, values: TypographyDialogValues) {
+    const fontFamily = values.fontFamily.trim();
+    const fontColor = values.fontColor.trim();
+    span.style.fontFamily = fontFamily || "";
+    span.style.backgroundImage = "";
+    span.style.backgroundClip = "";
+    span.style.webkitBackgroundClip = "";
+    span.style.color = "";
+    if (fontColor) {
+      if (isGradientToken(fontColor)) {
+        span.style.backgroundImage = fontColor;
+        span.style.backgroundClip = "text";
+        span.style.webkitBackgroundClip = "text";
+        span.style.color = "transparent";
+      } else {
+        span.style.color = fontColor;
+      }
+    }
+    span.style.fontSize = `${values.fontSize}px`;
+    span.style.fontWeight = values.bold ? "bold" : "normal";
+    span.style.fontStyle = values.italic ? "italic" : "normal";
+    span.style.textDecoration = values.underline ? "underline" : "none";
+  }
+
+  const persistEditorTypographyChange = useCallback((editor: HTMLDivElement, options?: { includeBlockLevelPatch?: boolean }) => {
+    const commonBoxId = editor.dataset.commonBoxId?.trim();
+    const fieldName = editor.dataset.field as RichFieldName | undefined;
+    const blockLevelTypographyPatch = options?.includeBlockLevelPatch ? buildBlockLevelTypographyPatch(getCurrentTypographyDialogValues()) : null;
+
+    if (isCommonCanvasBlockType(block.type) && commonBoxId) {
+      updateCommonTextBoxRef.current(commonBoxId, { html: editor.innerHTML });
+    } else {
+      const contentPatch = fieldName ? getRichFieldPatchRef.current(fieldName, editor.innerHTML) : null;
+      const mergedPatch: Partial<Block["props"]> = {
+        ...(contentPatch ?? {}),
+        ...(block.type !== "nav" ? (blockLevelTypographyPatch ?? {}) : {}),
+      };
+      if (Object.keys(mergedPatch).length > 0) {
+        onChange(mergedPatch);
+      }
+    }
+    if (block.type === "nav") {
+      const navItemId = editor.dataset.navItemId?.trim();
+      if (navItemId) {
+        updateNavItemRef.current(navItemId, { label: editor.innerHTML });
+      }
+    }
+  }, [block.type, getCurrentTypographyDialogValues, onChange]);
+  persistEditorTypographyChangeRef.current = persistEditorTypographyChange;
+
+  const applyTypographyPreviewToEditor = useCallback((values: TypographyDialogValues) => {
+    const editor = activeEditorRef.current;
+    const snapshot = typographyEditorSnapshotRef.current;
+    if (!editor || !snapshot) return;
+    editor.innerHTML = snapshot.html;
+    const range = restoreEditorRange(editor, snapshot.range);
+    if (!range) return;
+    const selection = window.getSelection();
+    if (!selection) return;
+    editor.focus();
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    const span = document.createElement("span");
+    applyTypographyStylesToSpan(span, values);
+    if (range.collapsed) {
+      const marker = document.createTextNode("");
+      span.appendChild(marker);
+      range.insertNode(span);
+      const caretRange = document.createRange();
+      caretRange.setStart(marker, 0);
+      caretRange.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(caretRange);
+      if (!marker.data) {
+        marker.data = "\u200B";
+      }
+    } else {
+      span.appendChild(range.extractContents());
+      range.insertNode(span);
+    }
+
+    persistEditorTypographyChange(editor);
+  }, [persistEditorTypographyChange]);
+
+  const cancelTypographyEditing = useCallback(() => {
+    const editor = activeEditorRef.current;
+    if (typographyTarget === "editor" && typographyPreviewAppliedRef.current && editor && typographyEditorSnapshotRef.current) {
+      editor.innerHTML = typographyEditorSnapshotRef.current.html;
+      persistEditorTypographyChange(editor);
+    }
+    clearTypographyPreviewSession();
+    setTypographyDialogOpen(false);
+  }, [persistEditorTypographyChange, typographyTarget]);
+
   function editTypography() {
     const editor = activeEditorRef.current;
     const currentRange = selectedRangeRef.current;
     const canUseEditor = !!editor && !!currentRange && editor.contains(currentRange.commonAncestorContainer);
     if (block.type === "search-bar" && !canUseEditor) {
+      clearTypographyPreviewSession();
       setTypoFontFamily((block.props.fontFamily ?? "").trim());
       setTypoFontSize(
         typeof block.props.fontSize === "number" && Number.isFinite(block.props.fontSize)
@@ -9571,6 +9746,7 @@ type GalleryEditorImage = {
       return;
     }
     if (block.type === "merchant-list" && !canUseEditor) {
+      clearTypographyPreviewSession();
       setTypoFontFamily((block.props.fontFamily ?? "").trim());
       setTypoFontSize(
         typeof block.props.fontSize === "number" && Number.isFinite(block.props.fontSize)
@@ -9587,6 +9763,7 @@ type GalleryEditorImage = {
       return;
     }
     if (block.type === "button" && !canUseEditor) {
+      clearTypographyPreviewSession();
       setTypoFontFamily((block.props.fontFamily ?? "").trim());
       setTypoFontSize(
         typeof block.props.fontSize === "number" && Number.isFinite(block.props.fontSize)
@@ -9607,56 +9784,80 @@ type GalleryEditorImage = {
       return;
     }
 
+    const dialogValuesFromSelection = (() => {
+      if (typoRememberLast) {
+        return getCurrentTypographyDialogValues();
+      }
+      const range = selectedRangeRef.current;
+      const rangeInCurrentEditor = !!range && editor.contains(range.commonAncestorContainer);
+      const selectedNode = (rangeInCurrentEditor ? range.commonAncestorContainer : editor) as HTMLElement;
+      const element = selectedNode.nodeType === Node.ELEMENT_NODE ? selectedNode : selectedNode.parentElement;
+      const style = element ? window.getComputedStyle(element) : null;
+      return {
+        fontFamily: style?.fontFamily?.replaceAll('"', "") ?? "",
+        fontSize: Math.round(Number.parseFloat(style?.fontSize ?? "16")) || 16,
+        fontColor: style?.color ?? "#111111",
+        bold: (style?.fontWeight ?? "").toString() === "700" || style?.fontWeight === "bold",
+        italic: style?.fontStyle === "italic",
+        underline: (style?.textDecorationLine ?? "").includes("underline"),
+      } satisfies TypographyDialogValues;
+    })();
+    typographyDialogInitialValuesRef.current = dialogValuesFromSelection;
+    typographyEditorSnapshotRef.current = {
+      html: editor.innerHTML,
+      range: currentRange && editor.contains(currentRange.commonAncestorContainer) ? serializeEditorRange(editor, currentRange) : null,
+    };
+    typographyPreviewAppliedRef.current = false;
+
     if (typoRememberLast) {
+      setTypographyDialogValues(dialogValuesFromSelection);
       setTypographyTarget("editor");
       setTypographyDialogOpen(true);
       return;
     }
 
-    const range = selectedRangeRef.current;
-    const rangeInCurrentEditor = !!range && editor.contains(range.commonAncestorContainer);
-    const selectedNode = (rangeInCurrentEditor ? range.commonAncestorContainer : editor) as HTMLElement;
-    const element = selectedNode.nodeType === Node.ELEMENT_NODE ? selectedNode : selectedNode.parentElement;
-    const style = element ? window.getComputedStyle(element) : null;
-    setTypoFontFamily(style?.fontFamily?.replaceAll('"', "") ?? "");
-    setTypoFontSize(Math.round(Number.parseFloat(style?.fontSize ?? "16")) || 16);
-    setTypoFontColor(style?.color ?? "#111111");
-    setTypoBold((style?.fontWeight ?? "").toString() === "700" || style?.fontWeight === "bold");
-    setTypoItalic(style?.fontStyle === "italic");
-    setTypoUnderline((style?.textDecorationLine ?? "").includes("underline"));
+    setTypographyDialogValues(dialogValuesFromSelection);
     setTypoRememberLast(true);
     setTypographyTarget("editor");
     setTypographyDialogOpen(true);
   }
 
   function applyTypography() {
-    const size = Math.max(8, Math.min(96, Number(typoFontSize) || 16));
-    const blockLevelTypographyPatch: Partial<Block["props"]> = {
-      fontFamily: typoFontFamily.trim() || undefined,
-      fontColor: typoFontColor.trim() || undefined,
-      fontSize: size,
-      fontWeight: typoBold ? "bold" : "normal",
-      fontStyle: typoItalic ? "italic" : "normal",
-      textDecoration: typoUnderline ? "underline" : "none",
-    };
+    const values = getCurrentTypographyDialogValues();
+    const blockLevelTypographyPatch = buildBlockLevelTypographyPatch(values);
     if (typographyTarget === "search-controls" && block.type === "search-bar") {
       onChange(blockLevelTypographyPatch);
-      onRecordColor(typoFontColor);
+      onRecordColor(values.fontColor);
       setTypoRememberLast(true);
+      clearTypographyPreviewSession();
       setTypographyDialogOpen(false);
       return;
     }
     if (typographyTarget === "merchant-controls" && block.type === "merchant-list") {
       onChange(blockLevelTypographyPatch);
-      onRecordColor(typoFontColor);
+      onRecordColor(values.fontColor);
       setTypoRememberLast(true);
+      clearTypographyPreviewSession();
       setTypographyDialogOpen(false);
       return;
     }
     if (typographyTarget === "button-controls" && block.type === "button") {
       onChange(blockLevelTypographyPatch);
-      onRecordColor(typoFontColor);
+      onRecordColor(values.fontColor);
       setTypoRememberLast(true);
+      clearTypographyPreviewSession();
+      setTypographyDialogOpen(false);
+      return;
+    }
+    if (typographyPreviewAppliedRef.current) {
+      onRecordColor(values.fontColor);
+      setTypoRememberLast(true);
+      clearTypographyPreviewSession();
+      setTypographyDialogOpen(false);
+      return;
+    }
+    if (areTypographyDialogValuesEqual(typographyDialogInitialValuesRef.current, values)) {
+      clearTypographyPreviewSession();
       setTypographyDialogOpen(false);
       return;
     }
@@ -9684,21 +9885,7 @@ type GalleryEditorImage = {
     }
 
     const span = document.createElement("span");
-    if (typoFontFamily.trim()) span.style.fontFamily = typoFontFamily.trim();
-    if (typoFontColor.trim()) {
-      if (isGradientToken(typoFontColor.trim())) {
-        span.style.backgroundImage = typoFontColor.trim();
-        span.style.backgroundClip = "text";
-        span.style.webkitBackgroundClip = "text";
-        span.style.color = "transparent";
-      } else {
-        span.style.color = typoFontColor.trim();
-      }
-    }
-    span.style.fontSize = `${size}px`;
-    span.style.fontWeight = typoBold ? "bold" : "normal";
-    span.style.fontStyle = typoItalic ? "italic" : "normal";
-    span.style.textDecoration = typoUnderline ? "underline" : "none";
+    applyTypographyStylesToSpan(span, values);
     if (range.collapsed) {
       const marker = document.createTextNode("");
       span.appendChild(marker);
@@ -9722,33 +9909,45 @@ type GalleryEditorImage = {
       span.appendChild(range.extractContents());
       range.insertNode(span);
     }
-
-    const commonBoxId = editor.dataset.commonBoxId?.trim();
-    const fieldName = editor.dataset.field as RichFieldName | undefined;
-
-    if (isCommonCanvasBlockType(block.type) && commonBoxId) {
-      updateCommonTextBox(commonBoxId, { html: editor.innerHTML });
-    } else {
-      const contentPatch = fieldName ? getRichFieldPatch(fieldName, editor.innerHTML) : null;
-      const mergedPatch: Partial<Block["props"]> = {
-        ...(contentPatch ?? {}),
-        ...(block.type !== "nav" ? blockLevelTypographyPatch : {}),
-      };
-      if (Object.keys(mergedPatch).length > 0) {
-        onChange(mergedPatch);
-      }
-    }
-    if (block.type === "nav") {
-      const navItemId = editor.dataset.navItemId?.trim();
-      if (navItemId) {
-        updateNavItem(navItemId, { label: editor.innerHTML });
-      }
-    }
-    onRecordColor(typoFontColor);
+    persistEditorTypographyChange(editor, { includeBlockLevelPatch: range.collapsed });
+    onRecordColor(values.fontColor);
     setTypoRememberLast(true);
-
+    clearTypographyPreviewSession();
     setTypographyDialogOpen(false);
   }
+
+  useEffect(() => {
+    if (!typographyDialogOpen || typographyTarget !== "editor") return;
+    const editor = activeEditorRef.current;
+    const snapshot = typographyEditorSnapshotRef.current;
+    if (!editor || !snapshot || !typographyDialogInitialValuesRef.current) return;
+
+    const currentValues = getCurrentTypographyDialogValues();
+    const unchanged = areTypographyDialogValuesEqual(typographyDialogInitialValuesRef.current, currentValues);
+    if (unchanged && !typographyPreviewAppliedRef.current) return;
+
+    if (unchanged) {
+      editor.innerHTML = snapshot.html;
+      persistEditorTypographyChange(editor);
+      typographyPreviewAppliedRef.current = false;
+      return;
+    }
+
+    applyTypographyPreviewToEditor(currentValues);
+    typographyPreviewAppliedRef.current = true;
+  }, [
+    applyTypographyPreviewToEditor,
+    getCurrentTypographyDialogValues,
+    persistEditorTypographyChange,
+    typoBold,
+    typoFontColor,
+    typoFontFamily,
+    typoFontSize,
+    typoItalic,
+    typoUnderline,
+    typographyDialogOpen,
+    typographyTarget,
+  ]);
 
   function insertImage() {
     setImageUrlInput(block.props.bgImageUrl ?? "");
@@ -11713,7 +11912,7 @@ type GalleryEditorImage = {
           </button>
           <button
             className="px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm"
-            onClick={() => setTypographyDialogOpen(false)}
+            onClick={cancelTypographyEditing}
           >
             {"取消"}
           </button>
@@ -18650,6 +18849,92 @@ type GalleryEditorImage = {
 }
 
 type RichFieldName = "title" | "subtitle" | "heading" | "text" | "phone" | "address" | "buttonLabel";
+
+type SerializedEditorRange = {
+  start: number;
+  end: number;
+  collapsed: boolean;
+};
+
+type TypographyDialogValues = {
+  fontFamily: string;
+  fontSize: number;
+  fontColor: string;
+  bold: boolean;
+  italic: boolean;
+  underline: boolean;
+};
+
+function serializeEditorRange(root: HTMLElement, range: Range): SerializedEditorRange | null {
+  if (!root.contains(range.commonAncestorContainer)) return null;
+  const startRange = document.createRange();
+  startRange.selectNodeContents(root);
+  startRange.setEnd(range.startContainer, range.startOffset);
+  const endRange = document.createRange();
+  endRange.selectNodeContents(root);
+  endRange.setEnd(range.endContainer, range.endOffset);
+  const start = startRange.toString().length;
+  const end = endRange.toString().length;
+  return {
+    start,
+    end: Math.max(start, end),
+    collapsed: range.collapsed,
+  };
+}
+
+function resolveEditorTextPosition(root: HTMLElement, targetOffset: number) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let consumed = 0;
+  let lastTextNode: Text | null = null;
+  let currentNode = walker.nextNode();
+  while (currentNode) {
+    const textNode = currentNode as Text;
+    lastTextNode = textNode;
+    const length = textNode.data.length;
+    if (targetOffset <= consumed + length) {
+      return {
+        node: textNode,
+        offset: Math.max(0, targetOffset - consumed),
+      };
+    }
+    consumed += length;
+    currentNode = walker.nextNode();
+  }
+  if (lastTextNode) {
+    return {
+      node: lastTextNode,
+      offset: lastTextNode.data.length,
+    };
+  }
+  const fallback = document.createTextNode("");
+  root.appendChild(fallback);
+  return {
+    node: fallback,
+    offset: 0,
+  };
+}
+
+function restoreEditorRange(root: HTMLElement, serialized: SerializedEditorRange | null) {
+  if (!serialized) return null;
+  const start = resolveEditorTextPosition(root, serialized.start);
+  const end = resolveEditorTextPosition(root, serialized.end);
+  const range = document.createRange();
+  range.setStart(start.node, start.offset);
+  range.setEnd(end.node, end.offset);
+  return range;
+}
+
+function areTypographyDialogValuesEqual(left: TypographyDialogValues | null, right: TypographyDialogValues) {
+  if (!left) return false;
+  return (
+    left.fontFamily === right.fontFamily &&
+    left.fontSize === right.fontSize &&
+    left.fontColor === right.fontColor &&
+    left.bold === right.bold &&
+    left.italic === right.italic &&
+    left.underline === right.underline
+  );
+}
 
 function RecentColorBar({
   colors,
