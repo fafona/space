@@ -25,7 +25,23 @@ type MerchantCookieSessionPayload = {
 function getBrowserStorages(): Storage[] {
   if (typeof window === "undefined") return [];
   const storages: Storage[] = [];
-  for (const candidate of [window.localStorage, window.sessionStorage]) {
+  for (const candidate of [window.sessionStorage]) {
+    try {
+      const probeKey = "__merchant_storage_probe__";
+      candidate.setItem(probeKey, "1");
+      candidate.removeItem(probeKey);
+      storages.push(candidate);
+    } catch {
+      // Ignore unavailable browser storage.
+    }
+  }
+  return storages;
+}
+
+function getLegacyPersistentBrowserStorages(): Storage[] {
+  if (typeof window === "undefined") return [];
+  const storages: Storage[] = [];
+  for (const candidate of [window.localStorage]) {
     try {
       const probeKey = "__merchant_storage_probe__";
       candidate.setItem(probeKey, "1");
@@ -139,6 +155,15 @@ export function persistBrowserSupabaseSessionSnapshot(session: BrowserSessionSna
       }
     }
   }
+  for (const storage of getLegacyPersistentBrowserStorages()) {
+    for (const storageKey of storageKeys) {
+      try {
+        storage.removeItem(storageKey);
+      } catch {
+        // Ignore browser storage cleanup failures.
+      }
+    }
+  }
   return stored;
 }
 
@@ -189,7 +214,7 @@ export function clearStoredBrowserSupabaseSessionTokens() {
   const storageKeys = [resolvedSupabaseAuthStorageKey, legacySupabaseAuthStorageKey].filter(
     (value, index, list) => value && list.indexOf(value) === index,
   );
-  for (const storage of getBrowserStorages()) {
+  for (const storage of [...getBrowserStorages(), ...getLegacyPersistentBrowserStorages()]) {
     for (const storageKey of storageKeys) {
       try {
         storage.removeItem(storageKey);

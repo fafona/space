@@ -5,12 +5,6 @@ export const MERCHANT_AUTH_REFRESH_COOKIE = "merchant-space-merchant-refresh";
 export const MERCHANT_AUTH_ACCESS_COOKIE_FALLBACK_MAX_AGE_SECONDS = 60 * 60;
 export const MERCHANT_AUTH_REFRESH_COOKIE_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
 
-function normalizeAccessMaxAge(value: unknown) {
-  const parsed = typeof value === "number" ? value : Number.parseInt(String(value ?? ""), 10);
-  if (!Number.isFinite(parsed)) return MERCHANT_AUTH_ACCESS_COOKIE_FALLBACK_MAX_AGE_SECONDS;
-  return Math.max(60, Math.min(MERCHANT_AUTH_REFRESH_COOKIE_MAX_AGE_SECONDS, Math.round(parsed)));
-}
-
 export function parseCookieValue(cookieHeader: string, key: string) {
   return cookieHeader
     .split(";")
@@ -52,7 +46,6 @@ export function setMerchantAuthCookies(
 ) {
   const normalizedAccessToken = String(input.accessToken ?? "").trim();
   const normalizedRefreshToken = String(input.refreshToken ?? "").trim();
-  const normalizedAccessMaxAge = normalizeAccessMaxAge(input.maxAgeSeconds);
   if (!normalizedAccessToken) {
     clearMerchantAuthCookies(response);
     return;
@@ -65,7 +58,6 @@ export function setMerchantAuthCookies(
     // Keeping this cookie non-secure avoids dropping the session on the http admin entry.
     secure: false,
     path: "/",
-    maxAge: normalizedAccessMaxAge,
   });
 
   if (normalizedRefreshToken) {
@@ -74,9 +66,6 @@ export function setMerchantAuthCookies(
       sameSite: "lax",
       secure: false,
       path: "/",
-      // Keep the refresh token around much longer than the access token so
-      // long-lived backend tabs can recover a fresh session on focus/refresh.
-      maxAge: MERCHANT_AUTH_REFRESH_COOKIE_MAX_AGE_SECONDS,
     });
   } else {
     response.cookies.set(MERCHANT_AUTH_REFRESH_COOKIE, "", {

@@ -295,16 +295,11 @@ export async function GET(request: Request) {
       merchantId: merchantId || null,
       user,
     });
-    if (
-      accessToken !== cookieAccessToken ||
-      (refreshToken || "") !== (cookieRefreshToken || "")
-    ) {
-      setMerchantAuthCookies(response, {
-        accessToken,
-        refreshToken,
-        maxAgeSeconds: expiresIn ?? undefined,
-      });
-    }
+    setMerchantAuthCookies(response, {
+      accessToken,
+      refreshToken,
+      maxAgeSeconds: expiresIn ?? undefined,
+    });
     return response;
   } catch {
     return noStoreJson({ authenticated: false, error: "merchant_session_unavailable" }, { status: 503 });

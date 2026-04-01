@@ -28,6 +28,27 @@ const fallbackUrl = isSupabaseFallbackMode ? "http://127.0.0.1:54321" : "https:/
 const fallbackAnon = "fallback-anon-key";
 const configuredSupabaseUrl = rawUrl || fallbackUrl;
 
+function getBrowserSessionStorage() {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.sessionStorage;
+  } catch {
+    return null;
+  }
+}
+
+const supabaseSessionStorageAdapter = {
+  getItem(key: string) {
+    return getBrowserSessionStorage()?.getItem(key) ?? null;
+  },
+  setItem(key: string, value: string) {
+    getBrowserSessionStorage()?.setItem(key, value);
+  },
+  removeItem(key: string) {
+    getBrowserSessionStorage()?.removeItem(key);
+  },
+};
+
 export function resolveBrowserSupabaseProxyUrl(browserOrigin: string, upstreamUrl: string) {
   const normalizedBrowserOrigin = String(browserOrigin ?? "").trim();
   const normalizedUpstreamUrl = String(upstreamUrl ?? "").trim();
@@ -258,6 +279,7 @@ export const supabase = createClient(resolvedSupabaseUrl, resolvedSupabaseAnonKe
     fetch: safeSupabaseFetch,
   },
   auth: {
+    storage: supabaseSessionStorageAdapter,
     storageKey: legacySupabaseAuthStorageKey || undefined,
     persistSession: true,
     detectSessionInUrl: true,
