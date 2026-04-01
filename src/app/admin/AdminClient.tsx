@@ -68,7 +68,7 @@ import {
 import { clearMerchantSignInBridge } from "@/lib/merchantSignInBridge";
 import { buildPublishedMerchantProfilePatch } from "@/lib/merchantProfileBinding";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
-import { type PlatformSupportThread } from "@/lib/platformSupportInbox";
+import { type PlatformSupportMessage, type PlatformSupportThread } from "@/lib/platformSupportInbox";
 import { BLOCK_BORDER_STYLE_OPTIONS, getBlockBorderClass, getBlockBorderInlineStyle } from "@/components/blocks/borderStyle";
 import { toRichHtml } from "@/components/blocks/richText";
 import {
@@ -329,6 +329,9 @@ const DEFAULT_TIP_DURATION_MS = 2600;
 const SAVE_PUBLISH_TIP_DURATION_MS = 5200;
 const AUTH_CHECK_TIMEOUT_MS = 6000;
 const ADMIN_PAGE_LOAD_TIMEOUT_MS = 35000;
+const SUPPORT_THREAD_OPEN_POLL_INTERVAL_MS = 1200;
+const SUPPORT_THREAD_POLL_INTERVAL_MS = 5000;
+const SUPPORT_LAST_READ_STORAGE_KEY_PREFIX = "merchant-space:admin:support-last-read:";
 const MERCHANT_IDS_CACHE_KEY = "merchant-space:admin:merchant-ids:v2";
 const MERCHANT_IDS_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
@@ -2982,6 +2985,96 @@ function formatSupportMessageTime(value: string | null | undefined) {
   return new Date(timestamp).toLocaleString("zh-CN", { hour12: false });
 }
 
+function normalizeSupportMessageTimestamp(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return "";
+  const timestamp = new Date(normalized).getTime();
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : "";
+}
+
+function buildSupportLastReadStorageKey(merchantId: string) {
+  return `${SUPPORT_LAST_READ_STORAGE_KEY_PREFIX}${merchantId.trim() || "default"}`;
+}
+
+type LocalSupportMessageStatus = "pending" | "failed";
+
+type LocalSupportMessage = PlatformSupportMessage & {
+  merchantId: string;
+  status: LocalSupportMessageStatus;
+};
+
+function compareSupportMessages(left: Pick<PlatformSupportMessage, "createdAt" | "id">, right: Pick<PlatformSupportMessage, "createdAt" | "id">) {
+  const leftTs = new Date(left.createdAt).getTime();
+  const rightTs = new Date(right.createdAt).getTime();
+  if (leftTs !== rightTs) return leftTs - rightTs;
+  return left.id.localeCompare(right.id, "en");
+}
+
+function splitSupportLinkToken(value: string) {
+  let link = value;
+  let trailing = "";
+  while (/[.,!?;:)}\]>\u3002\uff0c\uff1b\uff1a\uff01\uff1f]$/.test(link)) {
+    trailing = link.slice(-1) + trailing;
+    link = link.slice(0, -1);
+  }
+  return { link, trailing };
+}
+
+function normalizeSupportLinkHref(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  const candidate = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  try {
+    const parsed = new URL(candidate);
+    if (!/^https?:$/i.test(parsed.protocol)) return "";
+    return parsed.toString();
+  } catch {
+    return "";
+  }
+}
+
+function renderSupportMessageText(value: string) {
+  const text = String(value ?? "");
+  if (!text) return text;
+  const parts: ReactNode[] = [];
+  const pattern = /((?:https?:\/\/|www\.)[^\s]+)/gi;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null = pattern.exec(text);
+  while (match) {
+    const matched = match[0] ?? "";
+    const startIndex = match.index;
+    if (startIndex > lastIndex) {
+      parts.push(text.slice(lastIndex, startIndex));
+    }
+    const { link, trailing } = splitSupportLinkToken(matched);
+    const href = normalizeSupportLinkHref(link);
+    if (href) {
+      parts.push(
+        <a
+          key={`support-link-${startIndex}-${link}`}
+          className="underline underline-offset-4 break-all"
+          href={href}
+          target="_blank"
+          rel="noreferrer"
+        >
+          {link}
+        </a>,
+      );
+      if (trailing) {
+        parts.push(trailing);
+      }
+    } else {
+      parts.push(matched);
+    }
+    lastIndex = startIndex + matched.length;
+    match = pattern.exec(text);
+  }
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex));
+  }
+  return parts;
+}
+
 export default function AdminClient({
   forcedScope,
   editorTitle = "页面编辑",
@@ -3062,6 +3155,12 @@ export default function AdminClient({
   const [supportSending, setSupportSending] = useState(false);
   const [supportError, setSupportError] = useState("");
   const [supportDraft, setSupportDraft] = useState("");
+  const [supportLastReadAt, setSupportLastReadAt] = useState("");
+  const [supportLocalMessages, setSupportLocalMessages] = useState<LocalSupportMessage[]>([]);
+  const supportRequestIdRef = useRef(0);
+  const supportSendingRef = useRef(false);
+  const supportMessagesViewportRef = useRef<HTMLDivElement>(null);
+  const supportLastVisibleMessageKeyRef = useRef("");
   const [merchantProfileAttention, setMerchantProfileAttention] = useState(false);
   const merchantProfileButtonRef = useRef<HTMLButtonElement>(null);
   const [topBarCollapsed, setTopBarCollapsed] = useState(false);
@@ -6457,7 +6556,52 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
   }
 
-  async function requestSupportWithSessionRecovery(init: RequestInit) {
+  const merchantPlatformState = !isPlatformEditor ? loadPlatformState() : null;
+  const scopedSiteId = !isPlatformEditor ? getSiteIdFromStoreScope(storeScope) : "";
+  const fallbackMerchantSiteId =
+    !isPlatformEditor
+      ? merchantIdsRef.current.find((item) => isMerchantNumericId(item)) ?? merchantIdsRef.current[0] ?? ""
+      : "";
+  const editingSiteId =
+    !isPlatformEditor && merchantPlatformState
+      ? merchantSiteIdOverride || scopedSiteId || fallbackMerchantSiteId
+      : "";
+  const editingSite =
+    editingSiteId && merchantPlatformState
+      ? merchantPlatformState.sites.find((item) => item.id === editingSiteId) ?? null
+      : null;
+  const merchantDisplayName = !isPlatformEditor
+    ? ((editingSite?.merchantName ?? "").trim() || "未设置商户名称")
+    : "";
+  const supportReadMerchantId = (supportThread?.merchantId || editingSiteId || "").trim();
+  const latestSupportAdminMessageAt = normalizeSupportMessageTimestamp(
+    [...(supportThread?.messages ?? [])]
+      .reverse()
+      .find((message) => message.sender === "super_admin")
+      ?.createdAt,
+  );
+  const visibleSupportMessages = [
+    ...(supportThread?.messages ?? []).map((message) => ({
+      ...message,
+      localStatus: null as LocalSupportMessageStatus | null,
+    })),
+    ...supportLocalMessages
+      .filter((message) => message.merchantId === supportReadMerchantId)
+      .map((message) => ({
+        ...message,
+        localStatus: message.status,
+      })),
+  ].sort(compareSupportMessages);
+  const latestVisibleSupportMessage = visibleSupportMessages[visibleSupportMessages.length - 1] ?? null;
+  const latestVisibleSupportMessageKey = latestVisibleSupportMessage
+    ? `${latestVisibleSupportMessage.id}:${latestVisibleSupportMessage.localStatus ?? "server"}`
+    : "";
+  const supportHasUnreadMessages =
+    !!latestSupportAdminMessageAt &&
+    !!supportReadMerchantId &&
+    new Date(latestSupportAdminMessageAt).getTime() > new Date(supportLastReadAt || 0).getTime();
+
+  const requestSupportWithSessionRecovery = useCallback(async (init: RequestInit) => {
     const buildSupportRequestInit = async (allowRecovery: boolean) => {
       const headers = new Headers(init.headers ?? undefined);
       headers.set("accept", "application/json");
@@ -6530,12 +6674,18 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     await syncMerchantSessionCookies(recoveredSession, Math.max(2200, Math.min(6000, AUTH_CHECK_TIMEOUT_MS)));
     response = await sendRequest(true);
     return response;
-  }
+  }, [editingSite?.contactEmail, editingSiteId, merchantDisplayName, prefetchMerchantSessionIdentity]);
 
-  async function loadSupportThread() {
+  const loadSupportThread = useCallback(async (options?: { silent?: boolean; suppressError?: boolean }) => {
     if (isPlatformEditor) return;
-    setSupportLoading(true);
-    setSupportError("");
+    const silent = options?.silent === true;
+    const suppressError = options?.suppressError === true;
+    if (silent && supportSendingRef.current) return;
+    const requestId = ++supportRequestIdRef.current;
+    if (!silent) {
+      setSupportLoading(true);
+      setSupportError("");
+    }
     try {
       const response = await requestSupportWithSessionRecovery({
         method: "GET",
@@ -6546,23 +6696,102 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             error?: string;
           }
         | null;
+      if (requestId !== supportRequestIdRef.current) return;
       if (!response.ok) {
-        setSupportError(payload?.error === "unauthorized" ? "当前未登录，请重新登录后再联系我们" : "留言记录加载失败，请稍后重试");
+        if (!suppressError) {
+          setSupportError(payload?.error === "unauthorized" ? "当前未登录，请重新登录后再联系我们" : "留言记录加载失败，请稍后重试");
+        }
         return;
+      }
+      if (!suppressError) {
+        setSupportError("");
       }
       setSupportThread(payload?.thread ?? null);
     } catch {
-      setSupportError("留言记录加载失败，请稍后重试");
+      if (requestId !== supportRequestIdRef.current) return;
+      if (!suppressError) {
+        setSupportError("留言记录加载失败，请稍后重试");
+      }
     } finally {
-      setSupportLoading(false);
+      if (!silent) {
+        setSupportLoading(false);
+      }
     }
-  }
+  }, [isPlatformEditor, requestSupportWithSessionRecovery]);
 
   function openSupportDialog() {
     if (isPlatformEditor) return;
     setSupportDialogOpen(true);
-    void loadSupportThread();
   }
+
+  useEffect(() => {
+    if (isPlatformEditor || typeof window === "undefined") return;
+
+    void loadSupportThread({ silent: !supportDialogOpen, suppressError: !supportDialogOpen });
+    const refreshSupportThread = () => {
+      void loadSupportThread({ silent: true, suppressError: !supportDialogOpen });
+    };
+
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      refreshSupportThread();
+    }, supportDialogOpen ? SUPPORT_THREAD_OPEN_POLL_INTERVAL_MS : SUPPORT_THREAD_POLL_INTERVAL_MS);
+    const handleFocus = () => refreshSupportThread();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        refreshSupportThread();
+      }
+    };
+
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [isPlatformEditor, loadSupportThread, supportDialogOpen]);
+
+  useEffect(() => {
+    if (isPlatformEditor || typeof window === "undefined") return;
+    if (!supportReadMerchantId) {
+      setSupportLastReadAt("");
+      return;
+    }
+    setSupportLastReadAt(
+      normalizeSupportMessageTimestamp(localStorage.getItem(buildSupportLastReadStorageKey(supportReadMerchantId))),
+    );
+  }, [isPlatformEditor, supportReadMerchantId]);
+
+  useEffect(() => {
+    if (isPlatformEditor || !supportDialogOpen || typeof window === "undefined") return;
+    if (!supportReadMerchantId || !latestSupportAdminMessageAt) return;
+    if (latestSupportAdminMessageAt === supportLastReadAt) return;
+    setSupportLastReadAt(latestSupportAdminMessageAt);
+    localStorage.setItem(buildSupportLastReadStorageKey(supportReadMerchantId), latestSupportAdminMessageAt);
+  }, [isPlatformEditor, latestSupportAdminMessageAt, supportDialogOpen, supportLastReadAt, supportReadMerchantId]);
+
+  useEffect(() => {
+    if (!supportDialogOpen) {
+      supportLastVisibleMessageKeyRef.current = "";
+    }
+  }, [supportDialogOpen]);
+
+  useEffect(() => {
+    if (isPlatformEditor || !supportDialogOpen || typeof window === "undefined") return;
+    if (!latestVisibleSupportMessageKey) return;
+    const viewport = supportMessagesViewportRef.current;
+    if (!viewport) return;
+    if (supportLastVisibleMessageKeyRef.current === latestVisibleSupportMessageKey) return;
+    const behavior: ScrollBehavior = supportLastVisibleMessageKeyRef.current ? "smooth" : "auto";
+    supportLastVisibleMessageKeyRef.current = latestVisibleSupportMessageKey;
+    const timer = window.setTimeout(() => {
+      viewport.scrollTo({ top: viewport.scrollHeight, behavior });
+    }, 0);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [isPlatformEditor, latestVisibleSupportMessageKey, supportDialogOpen]);
 
   async function sendSupportMessage() {
     if (supportSending) return;
@@ -6571,8 +6800,21 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       showTip("请先填写留言内容");
       return;
     }
+    const merchantId = supportReadMerchantId || editingSiteId || merchantSessionIdentityRef.current.merchantId || "default";
+    const localMessage: LocalSupportMessage = {
+      id: `local-support-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      merchantId,
+      sender: "merchant",
+      text,
+      createdAt: new Date().toISOString(),
+      status: "pending",
+    };
+    const requestId = ++supportRequestIdRef.current;
+    supportSendingRef.current = true;
     setSupportSending(true);
     setSupportError("");
+    setSupportDraft("");
+    setSupportLocalMessages((current) => [...current, localMessage]);
     try {
       const response = await requestSupportWithSessionRecovery({
         method: "POST",
@@ -6596,16 +6838,41 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             message?: string;
           }
         | null;
+      if (requestId !== supportRequestIdRef.current) return;
+      setSupportLoading(false);
       if (!response.ok) {
+        setSupportLocalMessages((current) =>
+          current.map((message) =>
+            message.id === localMessage.id
+              ? {
+                  ...message,
+                  status: "failed",
+                }
+              : message,
+          ),
+        );
         setSupportError(payload?.message || "留言发送失败，请稍后重试");
         return;
       }
+      setSupportLocalMessages((current) => current.filter((message) => message.id !== localMessage.id));
+      setSupportError("");
       setSupportThread(payload?.thread ?? null);
-      setSupportDraft("");
-      showTip("留言已发送");
     } catch {
+      if (requestId !== supportRequestIdRef.current) return;
+      setSupportLoading(false);
+      setSupportLocalMessages((current) =>
+        current.map((message) =>
+          message.id === localMessage.id
+            ? {
+                ...message,
+                status: "failed",
+              }
+            : message,
+        ),
+      );
       setSupportError("留言发送失败，请稍后重试");
     } finally {
+      supportSendingRef.current = false;
       setSupportSending(false);
     }
   }
@@ -6673,23 +6940,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     : [{ id: "page-1", name: "页面1", blocks: editingPlan?.blocks ?? defaultEditorBlocks }];
   const editingPageIndex = Math.max(0, editingPages.findIndex((page) => page.id === editingPageId));
   const imageCompressionOptions = getCurrentImageCompressionOptions();
-  const merchantPlatformState = !isPlatformEditor ? loadPlatformState() : null;
-  const scopedSiteId = !isPlatformEditor ? getSiteIdFromStoreScope(storeScope) : "";
-  const fallbackMerchantSiteId =
-    !isPlatformEditor
-      ? merchantIdsRef.current.find((item) => isMerchantNumericId(item)) ?? merchantIdsRef.current[0] ?? ""
-      : "";
-  const editingSiteId =
-    !isPlatformEditor && merchantPlatformState
-      ? merchantSiteIdOverride || scopedSiteId || fallbackMerchantSiteId
-      : "";
-  const editingSite =
-    editingSiteId && merchantPlatformState
-      ? merchantPlatformState.sites.find((item) => item.id === editingSiteId) ?? null
-      : null;
-  const merchantDisplayName = !isPlatformEditor
-    ? ((editingSite?.merchantName ?? "").trim() || "未设置商户名称")
-    : "";
   const otherBookingViewport = previewViewport === "desktop" ? "mobile" : "desktop";
   const activeBookingOptions = collectBookingOptionsFromPlanConfig(planConfig);
   const otherBookingOptions = collectBookingOptionsFromPlanConfig(viewportStatesRef.current[otherBookingViewport].planConfig);
@@ -6790,8 +7040,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     ? "grid grid-cols-2 gap-2"
     : "flex items-center gap-2";
   const supportButtonClassName = shouldUseDesktopEditorSidebar
-    ? "col-span-2 px-3 py-2 rounded bg-black text-white hover:bg-slate-800"
-    : "px-3 py-2 rounded bg-black text-white hover:bg-slate-800";
+    ? `col-span-2 relative px-3 py-2 rounded text-white ${supportHasUnreadMessages ? "bg-rose-700 hover:bg-rose-800" : "bg-black hover:bg-slate-800"}`
+    : `relative px-3 py-2 rounded text-white ${supportHasUnreadMessages ? "bg-rose-700 hover:bg-rose-800" : "bg-black hover:bg-slate-800"}`;
   const publishActionsClassName = shouldUseDesktopEditorSidebar
     ? "grid grid-cols-2 gap-2"
     : "flex items-center gap-2 flex-wrap";
@@ -6928,8 +7178,17 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               <button
                 className={supportButtonClassName}
                 onClick={openSupportDialog}
+                aria-label={supportHasUnreadMessages ? "联系我们，有新消息" : "联系我们"}
               >
-                {"联系我们"}
+                <span className="relative inline-flex items-center">
+                  {"联系我们"}
+                  {supportHasUnreadMessages ? (
+                    <span
+                      aria-hidden="true"
+                      className="absolute -right-3 -top-1 h-2.5 w-2.5 rounded-full bg-rose-500 ring-2 ring-white"
+                    />
+                  ) : null}
+                </span>
               </button>
             </div>
           </div>
@@ -7582,31 +7841,43 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                       </button>
                     </div>
 
-                    <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50 px-5 py-5">
+                    <div ref={supportMessagesViewportRef} className="min-h-0 flex-1 overflow-y-auto bg-slate-50 px-5 py-5">
                       {supportLoading ? (
                         <div className="rounded-2xl border border-dashed bg-white px-4 py-6 text-center text-sm text-slate-500">
                           正在加载留言记录...
                         </div>
-                      ) : supportThread?.messages.length ? (
+                      ) : visibleSupportMessages.length ? (
                         <div className="space-y-3">
-                          {supportThread.messages.map((message) => {
+                          {visibleSupportMessages.map((message) => {
                             const isMerchantMessage = message.sender === "merchant";
                             return (
                               <div
                                 key={message.id}
                                 className={`flex ${isMerchantMessage ? "justify-end" : "justify-start"}`}
                               >
-                                <div
-                                  className={`max-w-[85%] rounded-2xl px-4 py-3 shadow-sm ${
-                                    isMerchantMessage
-                                      ? "bg-slate-900 text-white"
-                                      : "border bg-white text-slate-900"
-                                  }`}
-                                >
-                                  <div className="text-[11px] opacity-70">
-                                    {isMerchantMessage ? "我" : "超级后台"} | {formatSupportMessageTime(message.createdAt)}
+                                <div className={`flex items-end ${isMerchantMessage ? "flex-row" : "flex-row-reverse"}`}>
+                                  <div
+                                    className={`max-w-[85%] rounded-2xl px-4 py-3 shadow-sm ${
+                                      isMerchantMessage
+                                        ? "bg-slate-900 text-white"
+                                        : "border bg-white text-slate-900"
+                                    }`}
+                                  >
+                                    <div className="text-[11px] opacity-70">
+                                      {isMerchantMessage ? "我" : "超级后台"} | {formatSupportMessageTime(message.createdAt)}
+                                    </div>
+                                    <div className="mt-1 whitespace-pre-wrap break-words text-sm leading-6">
+                                      {renderSupportMessageText(message.text)}
+                                    </div>
                                   </div>
-                                  <div className="mt-1 whitespace-pre-wrap break-words text-sm leading-6">{message.text}</div>
+                                  {isMerchantMessage && message.localStatus === "failed" ? (
+                                    <span
+                                      aria-label="发送失败"
+                                      className="mb-1 ml-2 inline-flex h-5 w-5 items-center justify-center rounded-full border border-rose-500 bg-white text-[12px] font-semibold leading-none text-rose-600"
+                                    >
+                                      !
+                                    </span>
+                                  ) : null}
                                 </div>
                               </div>
                             );

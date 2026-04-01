@@ -1161,6 +1161,8 @@ export default function SuperAdminClient() {
   const [supportReplyDraft, setSupportReplyDraft] = useState("");
   const [supportSending, setSupportSending] = useState(false);
   const [supportDisplayMode, setSupportDisplayMode] = useState<"name" | "id">("name");
+  const supportMessagesViewportRef = useRef<HTMLDivElement>(null);
+  const supportLastMessageKeyRef = useRef("");
   const [manualUserDialogOpen, setManualUserDialogOpen] = useState(false);
   const [manualUserId, setManualUserId] = useState("");
   const [manualUserName, setManualUserName] = useState("");
@@ -1721,6 +1723,10 @@ export default function SuperAdminClient() {
         selectedSupportThread?.merchantName ||
         selectedSupportThread?.merchantId ||
         "-";
+  const selectedSupportLatestMessage = selectedSupportThread?.messages[selectedSupportThread.messages.length - 1] ?? null;
+  const selectedSupportLatestMessageKey = selectedSupportThread
+    ? `${selectedSupportThread.merchantId}:${selectedSupportLatestMessage?.id ?? "empty"}:${selectedSupportLatestMessage?.createdAt ?? ""}`
+    : "";
   const selectedMerchantDisplaySite = selectedMerchantRow?.site ?? null;
   const selectedMerchantSite =
     selectedMerchantRow?.hasLocalSite
@@ -1837,6 +1843,28 @@ export default function SuperAdminClient() {
   useEffect(() => {
     setSupportReplyDraft("");
   }, [supportSelectedMerchantId]);
+  useEffect(() => {
+    if (activeMenu !== "support_messages") {
+      supportLastMessageKeyRef.current = "";
+    }
+  }, [activeMenu]);
+  useEffect(() => {
+    if (!hydrated || !authed || activeMenu !== "support_messages") return;
+    if (!selectedSupportThread) return;
+    const viewport = supportMessagesViewportRef.current;
+    if (!viewport) return;
+    if (supportLastMessageKeyRef.current === selectedSupportLatestMessageKey) return;
+    const previousKey = supportLastMessageKeyRef.current;
+    const behavior: ScrollBehavior =
+      previousKey && previousKey.startsWith(`${selectedSupportThread.merchantId}:`) ? "smooth" : "auto";
+    supportLastMessageKeyRef.current = selectedSupportLatestMessageKey;
+    const timer = window.setTimeout(() => {
+      viewport.scrollTo({ top: viewport.scrollHeight, behavior });
+    }, 0);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [activeMenu, authed, hydrated, selectedSupportLatestMessageKey, selectedSupportThread]);
   const selectedDraftSortConfig = useMemo<MerchantSortConfig>(
     () => ({
       recommendedCountryRank: parseRankInput(configRecommendedCountryRank),
@@ -5694,7 +5722,7 @@ export default function SuperAdminClient() {
             ) : null}
 
             {activeMenu === "support_messages" ? (
-              <section className="space-y-4">
+              <section className="flex h-[calc(100svh-7rem)] min-h-0 flex-col gap-4 overflow-hidden">
                 <div className="rounded-lg border bg-white p-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="space-y-1">
@@ -5732,10 +5760,10 @@ export default function SuperAdminClient() {
                   {supportThreadsError ? <div className="mt-3 text-sm text-rose-600">{supportThreadsError}</div> : null}
                 </div>
 
-                <div className="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
-                  <div className="min-h-[620px] rounded-lg border bg-white">
+                <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
+                  <div className="flex min-h-0 flex-col overflow-hidden rounded-lg border bg-white">
                     <div className="border-b px-4 py-3 text-sm font-semibold text-slate-900">商户会话列表</div>
-                    <div className="max-h-[560px] overflow-y-auto p-3">
+                    <div className="min-h-0 flex-1 overflow-y-auto p-3">
                       {supportThreadsLoading && supportThreads.length === 0 ? (
                         <div className="rounded border border-dashed px-3 py-4 text-xs text-slate-500">正在加载留言记录…</div>
                       ) : supportThreads.length > 0 ? (
@@ -5783,9 +5811,9 @@ export default function SuperAdminClient() {
                     </div>
                   </div>
 
-                  <div className="min-h-[620px] rounded-lg border bg-white">
+                  <div className="min-h-0 overflow-hidden rounded-lg border bg-white">
                     {selectedSupportThread ? (
-                      <div className="flex h-full min-h-[620px] flex-col">
+                      <div className="flex h-full min-h-0 flex-col">
                         <div className="flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4">
                           <div className="space-y-1">
                             <div className="text-base font-semibold text-slate-900">{selectedSupportDisplayLabel}</div>
@@ -5813,7 +5841,7 @@ export default function SuperAdminClient() {
                           </div>
                         </div>
 
-                        <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50 px-5 py-5">
+                        <div ref={supportMessagesViewportRef} className="min-h-0 flex-1 overflow-y-auto bg-slate-50 px-5 py-5">
                           <div className="space-y-3">
                             {selectedSupportThread.messages.map((message) => {
                               const isMerchantMessage = message.sender === "merchant";
@@ -5837,9 +5865,9 @@ export default function SuperAdminClient() {
                           </div>
                         </div>
 
-                        <div className="space-y-3 border-t px-5 py-4">
+                        <div className="shrink-0 space-y-3 border-t px-5 py-4">
                           <textarea
-                            className="min-h-[120px] w-full rounded-2xl border px-4 py-3 text-sm outline-none transition focus:border-slate-400"
+                            className="h-32 w-full resize-none rounded-2xl border px-4 py-3 text-sm outline-none transition focus:border-slate-400"
                             placeholder="请输入要回复商户的内容"
                             value={supportReplyDraft}
                             onChange={(event) => setSupportReplyDraft(event.target.value)}
@@ -5859,7 +5887,7 @@ export default function SuperAdminClient() {
                         </div>
                       </div>
                     ) : (
-                      <div className="flex min-h-[620px] items-center justify-center px-6 text-center text-sm text-slate-500">
+                      <div className="flex h-full min-h-0 items-center justify-center px-6 text-center text-sm text-slate-500">
                         暂无可处理的商户会话，请先等待商户从后台“联系我们”发送留言。
                       </div>
                     )}
