@@ -31,6 +31,7 @@ export async function GET(request: Request) {
       siteId: payload.siteId,
       slug: payload.slug,
       merchantName: payload.merchantName,
+      serviceState: payload.serviceState,
       blocks: payload.blocks,
     });
   } catch (error) {

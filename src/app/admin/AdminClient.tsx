@@ -1998,6 +1998,8 @@ type ScopedMerchantSitePatch = {
   domainPrefix?: string | null;
   contactEmail?: string | null;
   name?: string | null;
+  status?: Site["status"] | null;
+  serviceExpiresAt?: string | null;
 };
 
 function ensureScopedMerchantSite(siteId: string, userEmail?: string | null, patch?: ScopedMerchantSitePatch) {
@@ -2018,21 +2020,31 @@ function ensureScopedMerchantSite(siteId: string, userEmail?: string | null, pat
       .trim()
       .toLowerCase();
   const normalizedName = String(patch?.name ?? "").trim();
+  const normalizedStatus =
+    patch && Object.prototype.hasOwnProperty.call(patch, "status") && typeof patch.status === "string"
+      ? patch.status
+      : null;
+  const hasServiceExpiresAtPatch = Boolean(patch && Object.prototype.hasOwnProperty.call(patch, "serviceExpiresAt"));
+  const nextPatchedServiceExpiresAt = hasServiceExpiresAtPatch ? patch?.serviceExpiresAt ?? null : undefined;
   const applyPatch = (site: Site): Site => {
     const nextMerchantName = normalizedMerchantName || String(site.merchantName ?? "").trim();
     const nextDomainPrefix = normalizedDomainPrefix || normalizeDomainPrefixForMerchant(site.domainPrefix ?? site.domainSuffix ?? "");
     const nextContactEmail = normalizedContactEmail || String(site.contactEmail ?? "").trim().toLowerCase();
     const nextName = normalizedName || nextMerchantName || String(site.name ?? "").trim() || `商户 ${normalizedSiteId}`;
+    const nextStatus = normalizedStatus ?? site.status;
     const nextDomain =
       nextDomainPrefix
         ? buildMerchantDomainFromBase(baseDomain, nextDomainPrefix)
         : String(site.domain ?? "").trim() || buildMerchantDomainFromBase(baseDomain, normalizedSiteId);
+    const nextServiceExpiresAt = hasServiceExpiresAtPatch ? nextPatchedServiceExpiresAt ?? null : site.serviceExpiresAt;
     const changed =
       nextMerchantName !== String(site.merchantName ?? "").trim() ||
       nextDomainPrefix !== normalizeDomainPrefixForMerchant(site.domainPrefix ?? site.domainSuffix ?? "") ||
       nextContactEmail !== String(site.contactEmail ?? "").trim().toLowerCase() ||
       nextName !== String(site.name ?? "").trim() ||
-      nextDomain !== String(site.domain ?? "").trim();
+      nextDomain !== String(site.domain ?? "").trim() ||
+      nextStatus !== site.status ||
+      nextServiceExpiresAt !== site.serviceExpiresAt;
     return {
       ...site,
       merchantName: nextMerchantName,
@@ -2041,6 +2053,8 @@ function ensureScopedMerchantSite(siteId: string, userEmail?: string | null, pat
       contactEmail: nextContactEmail,
       name: nextName,
       domain: nextDomain,
+      status: nextStatus,
+      serviceExpiresAt: nextServiceExpiresAt,
       updatedAt: changed ? current : site.updatedAt,
     };
   };
@@ -2794,6 +2808,11 @@ type PublishedSiteSnapshot = {
   blocks: Block[];
   slug: string;
   merchantName: string;
+  serviceState: {
+    status: Site["status"];
+    serviceExpiresAt: string | null;
+    maintenance: boolean;
+  } | null;
 };
 
 type MerchantDraftSnapshot = {
@@ -2858,21 +2877,79 @@ async function loadPublishedSiteSnapshotViaApi(siteId: string): Promise<Publishe
           blocks?: unknown;
           slug?: unknown;
           merchantName?: unknown;
+          serviceState?:
+            | {
+                status?: unknown;
+                serviceExpiresAt?: unknown;
+                maintenance?: unknown;
+              }
+            | null;
         }
       | null;
     if (!Array.isArray(json?.blocks)) return null;
     const sanitized = sanitizeBlocksForRuntime(json.blocks as Block[]).blocks;
     if (sanitized.length === 0) return null;
+    const normalizedServiceState =
+      json?.serviceState && typeof json.serviceState === "object"
+        ? getMerchantServiceState(
+            typeof json.serviceState.status === "string" ? json.serviceState.status : null,
+            typeof json.serviceState.serviceExpiresAt === "string" ? json.serviceState.serviceExpiresAt : null,
+          )
+        : null;
     return {
       blocks: sanitized,
       slug: typeof json?.slug === "string" ? json.slug.trim() : "",
       merchantName: typeof json?.merchantName === "string" ? json.merchantName.trim() : "",
+      serviceState: normalizedServiceState
+        ? {
+            status: normalizedServiceState.status,
+            serviceExpiresAt: normalizedServiceState.serviceExpiresAt,
+            maintenance: normalizedServiceState.maintenance,
+          }
+        : null,
     };
   } catch {
     return null;
   } finally {
     clearTimeout(timer);
   }
+}
+
+function applyPublishedSiteSnapshotToScopedMerchantSite(
+  siteId: string,
+  snapshot: PublishedSiteSnapshot | null | undefined,
+  userEmail?: string | null,
+) {
+  const normalizedSiteId = String(siteId ?? "").trim();
+  if (!normalizedSiteId || !snapshot) return null;
+  const localSite = loadPlatformState().sites.find((item) => item.id === normalizedSiteId) ?? null;
+  return ensureScopedMerchantSite(
+    normalizedSiteId,
+    userEmail ?? null,
+    {
+      ...buildPublishedMerchantProfilePatch(
+        {
+          merchantName: localSite?.merchantName,
+          domainPrefix: localSite?.domainPrefix ?? localSite?.domainSuffix,
+        },
+        snapshot,
+      ),
+      ...(snapshot.serviceState
+        ? {
+            status: snapshot.serviceState.status,
+            serviceExpiresAt: snapshot.serviceState.serviceExpiresAt,
+          }
+        : {}),
+    },
+  );
+}
+
+async function syncScopedMerchantSiteFromPublishedSnapshot(siteId: string, userEmail?: string | null) {
+  const normalizedSiteId = String(siteId ?? "").trim();
+  if (!normalizedSiteId) return null;
+  const snapshot = await loadPublishedSiteSnapshotViaApi(normalizedSiteId);
+  if (!snapshot) return null;
+  return applyPublishedSiteSnapshotToScopedMerchantSite(normalizedSiteId, snapshot, userEmail);
 }
 
 async function loadMerchantDraftSnapshotViaApi(merchantIds: string[]): Promise<MerchantDraftSnapshot | null> {
@@ -4612,18 +4689,7 @@ export default function AdminClient({
       const publishedSnapshot = await loadPublishedSiteSnapshotViaApi(scopedSiteId);
       if (!mounted || !publishedSnapshot) return false;
       merchantIdsRef.current = [scopedSiteId];
-      const localSite = loadPlatformState().sites.find((item) => item.id === scopedSiteId) ?? null;
-      ensureScopedMerchantSite(
-        scopedSiteId,
-        null,
-        buildPublishedMerchantProfilePatch(
-          {
-            merchantName: localSite?.merchantName,
-            domainPrefix: localSite?.domainPrefix ?? localSite?.domainSuffix,
-          },
-          publishedSnapshot,
-        ),
-      );
+      applyPublishedSiteSnapshotToScopedMerchantSite(scopedSiteId, publishedSnapshot, null);
       setHasEditorContent(true);
       setRemoteContentVerified(true);
       applyPersistedBlocksToEditorRef.current(publishedSnapshot.blocks);
@@ -4853,6 +4919,7 @@ export default function AdminClient({
             }
             if (currentMerchantSiteId) {
               ensureScopedMerchantSite(currentMerchantSiteId, activeSession.user.email);
+              void syncScopedMerchantSiteFromPublishedSnapshot(currentMerchantSiteId, activeSession.user.email);
             }
             const identityNotice = getMerchantIdentityNotice(resolvedMerchantIds);
             if (identityNotice) {
@@ -6553,9 +6620,19 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       }
       const latestState = loadPlatformState();
       publishTargetSiteId = targetSiteId;
-      const targetSite = targetSiteId ? latestState.sites.find((item) => item.id === targetSiteId) ?? null : null;
+      let targetSite = targetSiteId ? latestState.sites.find((item) => item.id === targetSiteId) ?? null : null;
       publishTargetDomainPrefix = normalizeDomainPrefixForMerchant(targetSite?.domainPrefix ?? targetSite?.domainSuffix ?? "");
-      const serviceState = getMerchantServiceState(targetSite?.status, targetSite?.serviceExpiresAt);
+      let serviceState = getMerchantServiceState(targetSite?.status, targetSite?.serviceExpiresAt);
+      if (serviceState.maintenance && targetSiteId) {
+        const refreshedSite = await syncScopedMerchantSiteFromPublishedSnapshot(targetSiteId);
+        if (refreshedSite) {
+          targetSite = refreshedSite;
+          publishTargetDomainPrefix = normalizeDomainPrefixForMerchant(
+            refreshedSite.domainPrefix ?? refreshedSite.domainSuffix ?? "",
+          );
+          serviceState = getMerchantServiceState(refreshedSite.status, refreshedSite.serviceExpiresAt);
+        }
+      }
       if (serviceState.maintenance) {
         showTip("服务到期，详询官方客服", {
           durationMs: 4200,
@@ -8152,8 +8229,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                 aria-label="关闭在线客服弹窗"
               />
               <div className="fixed inset-0 z-[2147483301] flex items-center justify-center p-4">
-                <div className="flex h-full max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl md:flex-row">
-                  <div className="w-full space-y-4 border-b bg-slate-50 px-5 py-5 md:w-[320px] md:border-b-0 md:border-r">
+                <div className="flex h-full min-h-0 min-w-0 max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl md:grid md:grid-cols-[320px_minmax(0,1fr)]">
+                  <div className="min-w-0 space-y-4 overflow-y-auto border-b bg-slate-50 px-5 py-5 md:border-b-0 md:border-r">
                     <div className="rounded-2xl border bg-white p-4 text-sm leading-7 text-slate-700">
                       <div className="text-sm font-semibold text-slate-900">官方联系方式</div>
                       <div className="mt-3 space-y-2">
@@ -8194,12 +8271,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                     </div>
                   </div>
 
-                  <div className="flex min-h-0 flex-1 flex-col">
-                    <div className="flex items-center justify-between gap-3 border-b px-5 py-4">
-                      <div className="text-base font-semibold text-slate-900">在线客服</div>
+                  <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+                    <div className="flex min-w-0 items-center justify-between gap-3 border-b px-5 py-4">
+                      <div className="min-w-0 truncate text-base font-semibold text-slate-900">在线客服</div>
                       <button
                         type="button"
-                        className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+                        className="shrink-0 rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
                         onClick={() => setSupportDialogOpen(false)}
                         disabled={supportSending}
                       >
@@ -8207,17 +8284,20 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                       </button>
                     </div>
 
-                    <div ref={supportMessagesViewportRef} className="min-h-0 flex-1 overflow-y-auto bg-slate-50 px-5 py-5">
+                    <div ref={supportMessagesViewportRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-slate-50 px-5 py-5">
                       {supportLoading ? (
                         <div className="rounded-2xl border border-dashed bg-white px-4 py-6 text-center text-sm text-slate-500">
                           正在加载留言记录...
                         </div>
                       ) : visibleSupportMessages.length ? (
-                        <div className="space-y-3">
+                        <div className="min-w-0 space-y-3">
                           {visibleSupportMessages.map((message) => {
                             const isMerchantMessage = message.sender === "merchant";
                             return (
-                              <div key={message.id} className={`flex ${isMerchantMessage ? "justify-end" : "justify-start"}`}>
+                              <div
+                                key={message.id}
+                                className={`flex min-w-0 ${isMerchantMessage ? "justify-end" : "justify-start"}`}
+                              >
                                 <div className={`flex max-w-[82%] min-w-0 items-end ${isMerchantMessage ? "flex-row" : "flex-row-reverse"}`}>
                                   <div
                                     className={`min-w-0 rounded-2xl px-4 py-3 shadow-sm ${
@@ -8253,19 +8333,19 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                       )}
                     </div>
 
-                    <div className="space-y-3 border-t px-5 py-4">
+                    <div className="min-w-0 shrink-0 space-y-3 border-t px-5 py-4">
                       {supportError ? <div className="text-sm text-rose-600">{supportError}</div> : null}
                       <textarea
-                        className="min-h-[120px] w-full rounded-2xl border px-4 py-3 text-sm outline-none transition focus:border-slate-400"
+                        className="h-32 max-w-full min-w-0 resize-none rounded-2xl border px-4 py-3 text-sm outline-none transition focus:border-slate-400"
                         placeholder="请输入你想留言的内容，例如遇到的问题、需要协助的事项或希望超级后台处理的内容。"
                         value={supportDraft}
                         onChange={(event) => setSupportDraft(event.target.value)}
                         disabled={supportSending}
                       />
-                      <div className="flex justify-end">
+                      <div className="flex min-w-0 justify-end">
                         <button
                           type="button"
-                          className="rounded bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50"
+                          className="shrink-0 rounded bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50"
                           onClick={() => void sendSupportMessage()}
                           disabled={supportSending || !supportDraft.trim()}
                         >
