@@ -4473,8 +4473,10 @@ export default function SuperAdminClient() {
               </>
             ) : null}
 
-            {activeMenu === "user_manage" ? (
-              <section className="space-y-4">
+            {activeMenu === "user_manage" || merchantPanelOpen ? (
+              <>
+                {activeMenu === "user_manage" ? (
+                  <section className="space-y-4">
                 <div className="rounded-lg border bg-white p-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="grid min-w-0 flex-1 gap-2 md:grid-cols-5">
@@ -5387,8 +5389,11 @@ export default function SuperAdminClient() {
                         : null}
                     </>
                   ) : null}
+                </div>
+              </section>
+            ) : null}
 
-                  {merchantPanelOpen ? (
+                {merchantPanelOpen ? (
                     <>
                       <button
                         type="button"
@@ -5936,8 +5941,7 @@ export default function SuperAdminClient() {
                       </div>
                     </>
                   ) : null}
-                </div>
-              </section>
+              </>
             ) : null}
 
             {activeMenu === "support_messages" ? (
