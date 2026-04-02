@@ -19121,7 +19121,6 @@ type GalleryEditorImage = {
     })();
     const contactAddresses = contactAddressEditorValues.map((item) => item.trim()).filter(Boolean);
     const contactAddressEntryMinHeight = Math.max(42, contactAddresses.length * 44 || 42);
-    const contactMapLabel = resolveLocalizedSystemDefaultText(undefined, "地图位置", locale);
     const contactEntries = [
       {
         key: "address",
@@ -19130,16 +19129,6 @@ type GalleryEditorImage = {
         platformLabel: "Address",
         minHeight: contactAddressEntryMinHeight,
       },
-      ...(contactAddresses.length > 0
-        ? [
-            {
-              key: "map",
-              label: contactMapLabel,
-              value: contactMapLabel,
-              platformLabel: "Map",
-            },
-          ]
-        : []),
       { key: "phone", label: "电话", value: contactPhones.join(" / "), platformLabel: "Phone" },
       { key: "email", label: "Email", value: (block.props.email ?? "").trim(), platformLabel: "Email" },
       { key: "whatsapp", label: "WhatsApp", value: (block.props.whatsapp ?? "").trim(), platformLabel: "WhatsApp" },
@@ -19534,20 +19523,6 @@ type GalleryEditorImage = {
     const renderContactEntryPreviewContent = (item: (typeof contactEntries)[number]) => {
       if (item.key === "address") {
         return renderAddressPreviewRows();
-      }
-      if (item.key === "map") {
-        return (
-          <>
-            <span className="min-w-0 flex-1 whitespace-pre-wrap break-words" style={contactTypographyStyle}>
-              {contactMapLabel}
-            </span>
-            <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#EA4335] text-white shadow-sm">
-              <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" aria-hidden="true">
-                <path d="M12 2a7 7 0 0 0-7 7c0 4.74 6.14 11.84 6.4 12.14a.8.8 0 0 0 1.2 0C12.86 20.84 19 13.74 19 9a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5z" />
-              </svg>
-            </span>
-          </>
-        );
       }
       return (
         <>

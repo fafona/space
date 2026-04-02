@@ -272,7 +272,6 @@ export default function ContactBlock(props: ContactBlockProps) {
   const mapEmbedUrl = addressText
     ? `https://www.google.com/maps?output=embed&hl=zh-CN&z=${mapZoom}&t=${mapType}&q=${encodeURIComponent(mapQuery)}`
     : null;
-  const mapLocationLabel = resolveLocalizedSystemDefaultText(undefined, "地图位置", locale);
   const phoneList = normalizeContactList(props.phones);
   const fallbackPhone = htmlToPlainText(props.phone ?? "");
   const resolvedPhoneList = phoneList.length > 0 ? phoneList : fallbackPhone ? [fallbackPhone] : [];
@@ -290,18 +289,6 @@ export default function ContactBlock(props: ContactBlockProps) {
       buttonClass: "",
       minHeight: addressEntryMinHeight,
     },
-    ...(mapEmbedUrl
-      ? [
-          {
-            key: "map" as ContactLayoutKey,
-            label: mapLocationLabel,
-            value: mapLocationLabel,
-            href: null,
-            iconUrl: "",
-            buttonClass: "inline-flex h-8 w-8 items-center justify-center rounded-full bg-[#EA4335] text-white shadow-sm hover:opacity-90",
-          },
-        ]
-      : []),
     {
       key: "phone" as ContactLayoutKey,
       label: "电话",
@@ -460,6 +447,25 @@ export default function ContactBlock(props: ContactBlockProps) {
             >
               {`地址${addressList.length > 1 ? idx + 1 : ""}：${line}`}
             </button>
+            {mapEmbedUrl ? (
+              <button
+                type="button"
+                className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-white shadow-sm hover:opacity-90 ${
+                  isActive ? "bg-[#EA4335]" : "bg-[#EA4335]/80"
+                }`}
+                onClick={() => {
+                  trackContactClick("map");
+                  setActiveAddressIndex(idx);
+                  setShowMap((prev) => (isActive ? !prev : true));
+                }}
+                aria-label="显示地图位置"
+                title="显示地图位置"
+              >
+                <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" aria-hidden="true">
+                  <path d="M12 2a7 7 0 0 0-7 7c0 4.74 6.14 11.84 6.4 12.14a.8.8 0 0 0 1.2 0C12.86 20.84 19 13.74 19 9a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5z" />
+                </svg>
+              </button>
+            ) : null}
           </div>
         );
       })}
@@ -469,37 +475,6 @@ export default function ContactBlock(props: ContactBlockProps) {
   const renderContactEntryContent = (item: (typeof withPos)[number]) => {
     if (item.key === "address") {
       return renderAddressRows();
-    }
-    if (item.key === "map") {
-      return (
-        <>
-          <button
-            type="button"
-            className="min-w-0 flex-1 rounded px-1 py-0.5 text-left whitespace-pre-wrap break-words"
-            style={contactTypographyStyle}
-            onClick={() => {
-              trackContactClick("map");
-              setShowMap((prev) => !prev);
-            }}
-          >
-            {mapLocationLabel}
-          </button>
-          <button
-            type="button"
-            className={item.buttonClass}
-            onClick={() => {
-              trackContactClick("map");
-              setShowMap((prev) => !prev);
-            }}
-            aria-label="显示地图位置"
-            title="显示地图位置"
-          >
-            <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" aria-hidden="true">
-              <path d="M12 2a7 7 0 0 0-7 7c0 4.74 6.14 11.84 6.4 12.14a.8.8 0 0 0 1.2 0C12.86 20.84 19 13.74 19 9a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5z" />
-            </svg>
-          </button>
-        </>
-      );
     }
     const opensInNewTab = !!item.href && /^https?:\/\//i.test(item.href);
     return (
@@ -554,17 +529,6 @@ export default function ContactBlock(props: ContactBlockProps) {
             __html: toRichHtml(props.heading, resolveLocalizedSystemDefaultText(props.heading, "联系方式", locale)),
           }}
         />
-        {showMap && mapEmbedUrl ? (
-          <div className="mt-3 w-full overflow-hidden rounded-lg border border-gray-200">
-            <iframe
-              title="地图位置"
-              src={mapEmbedUrl}
-              className="w-full h-[28rem] md:h-[40rem]"
-              loading="lazy"
-              referrerPolicy="no-referrer-when-downgrade"
-            />
-          </div>
-        ) : null}
         <div
           className="mt-3 relative bg-transparent"
           style={{ minHeight: `${contentHeight}px`, width: `${contentWidth}px`, maxWidth: "100%" }}
@@ -583,6 +547,17 @@ export default function ContactBlock(props: ContactBlockProps) {
             );
           })}
         </div>
+        {showMap && mapEmbedUrl ? (
+          <div className="mt-3 w-full overflow-hidden rounded-lg border border-gray-200">
+            <iframe
+              title="地图位置"
+              src={mapEmbedUrl}
+              className="w-full h-[28rem] md:h-[40rem]"
+              loading="lazy"
+              referrerPolicy="no-referrer-when-downgrade"
+            />
+          </div>
+        ) : null}
         {contactNotice ? <div className="mt-2 text-xs text-slate-600">{contactNotice}</div> : null}
       </div>
     </section>
