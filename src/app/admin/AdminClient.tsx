@@ -10311,10 +10311,15 @@ type GalleryEditorImage = {
     } else {
       span.appendChild(range.extractContents());
       range.insertNode(span);
+      const previewRange = document.createRange();
+      previewRange.selectNodeContents(span);
+      previewRange.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(previewRange);
     }
 
-    persistEditorTypographyChange(editor);
-  }, [persistEditorTypographyChange]);
+    persistEditorTypographyChangeRef.current(editor);
+  }, []);
 
   const cancelTypographyEditing = useCallback(() => {
     const editor = activeEditorRef.current;
@@ -10537,7 +10542,7 @@ type GalleryEditorImage = {
 
     if (unchanged) {
       editor.innerHTML = snapshot.html;
-      persistEditorTypographyChange(editor);
+      persistEditorTypographyChangeRef.current(editor);
       typographyPreviewAppliedRef.current = false;
       return;
     }
@@ -10547,7 +10552,6 @@ type GalleryEditorImage = {
   }, [
     applyTypographyPreviewToEditor,
     getCurrentTypographyDialogValues,
-    persistEditorTypographyChange,
     typoBold,
     typoFontColor,
     typoFontFamily,
