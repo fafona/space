@@ -13,7 +13,7 @@ import {
   getEuropeCountryOptions,
   getEuropeProvinceOptions,
 } from "@/lib/europeLocationOptions";
-import type { MerchantBusinessCardAsset } from "@/lib/merchantBusinessCards";
+import { normalizeMerchantBusinessCards, type MerchantBusinessCardAsset } from "@/lib/merchantBusinessCards";
 import { buildMerchantDomain, resolveMerchantRootHost } from "@/lib/siteRouting";
 import MerchantBusinessCardManager from "@/components/admin/MerchantBusinessCardManager";
 
@@ -289,7 +289,7 @@ export default function MerchantProfileDialog({
   const [customProvinceName, setCustomProvinceName] = useState(initialState.customProvinceName);
   const [customCityName, setCustomCityName] = useState(initialState.customCityName);
   const [industry, setIndustry] = useState<MerchantIndustry>(initialState.industry);
-  const [businessCards, setBusinessCards] = useState<MerchantBusinessCardAsset[]>(() => initialBusinessCards ?? []);
+  const [businessCards, setBusinessCards] = useState<MerchantBusinessCardAsset[]>(() => normalizeMerchantBusinessCards(initialBusinessCards ?? []));
   const [domainSubmitCooldownLeftSec, setDomainSubmitCooldownLeftSec] = useState(0);
   const [savePending, setSavePending] = useState(false);
   const normalizedTakenPrefixes = useMemo(

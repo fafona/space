@@ -18,9 +18,13 @@ import {
   MERCHANT_BUSINESS_CARD_PHONE_LIMIT,
   applyMerchantBusinessCardContactFieldOrderToTextLayout,
   createDefaultMerchantBusinessCardDraft,
+  disableMerchantBusinessCardChatDisplay,
   getMerchantBusinessCardRequiredFields,
+  normalizeMerchantBusinessCardChatDisplaySelection,
   normalizeMerchantBusinessCardDraft,
   normalizeMerchantBusinessCardContactFieldOrder,
+  resolveMerchantBusinessCardForChatDisplay,
+  selectMerchantBusinessCardForChat,
   type MerchantBusinessCardAsset,
   type MerchantBusinessCardContactDisplayKey,
   type MerchantBusinessCardCustomText,
@@ -905,6 +909,10 @@ export default function MerchantBusinessCardManager({
   const [isContactPageImageProcessing, setIsContactPageImageProcessing] = useState(false);
   const hiddenPreviewRef = useRef<HTMLDivElement | null>(null);
 
+  const normalizedCards = useMemo(
+    () => normalizeMerchantBusinessCardChatDisplaySelection(cards),
+    [cards],
+  );
   const missingFields = useMemo(() => getMerchantBusinessCardRequiredFields(profile), [profile]);
   const canCreate = missingFields.length === 0;
   const websiteUrl = useMemo(
@@ -990,7 +998,11 @@ export default function MerchantBusinessCardManager({
   const fullScale = useMemo(() => Math.min(1, 1000 / Math.max(1, draft.width)), [draft.width]);
   const qrMayBeUnreadable = draft.qr.size < QR_MIN_READABLE_SIZE;
   const qrReadyForCurrentDraft = !draft.showQr || !!qrCodeUrl;
-  const cardLimitReached = !editingCardId && cards.length >= normalizedCardLimit;
+  const selectedChatDisplayCard = useMemo(
+    () => resolveMerchantBusinessCardForChatDisplay(normalizedCards),
+    [normalizedCards],
+  );
+  const cardLimitReached = !editingCardId && normalizedCards.length >= normalizedCardLimit;
   const canOpenCreateEditor = canCreate && !cardLimitReached;
   const normalizedBackgroundImageLimitKb = useMemo(
     () => Math.max(50, Math.min(5000, Math.round(Number(backgroundImageLimitKb) || 200))),
@@ -1005,8 +1017,8 @@ export default function MerchantBusinessCardManager({
     [exportImageLimitKb],
   );
   const editingCard = useMemo(
-    () => (editingCardId ? cards.find((card) => card.id === editingCardId) ?? null : null),
-    [cards, editingCardId],
+    () => (editingCardId ? normalizedCards.find((card) => card.id === editingCardId) ?? null : null),
+    [editingCardId, normalizedCards],
   );
   const canUseDraftLinkMode = allowLinkMode || editingCard?.mode === "link";
   const activeLinkShareKey = useMemo(() => {
@@ -1425,8 +1437,11 @@ export default function MerchantBusinessCardManager({
     try {
       await deleteCardShare(card);
 
-      const nextCards = cards.filter((item) => item.id !== card.id);
-      onCardsChange(nextCards);
+      let nextCards = normalizedCards.filter((item) => item.id !== card.id);
+      if (card.chatDisplayDisabled && nextCards.length > 0) {
+        nextCards = disableMerchantBusinessCardChatDisplay(nextCards);
+      }
+      onCardsChange(normalizeMerchantBusinessCardChatDisplaySelection(nextCards));
       if (previewAsset?.id === card.id) {
         setPreviewAsset(null);
         setPreviewOpen(false);
@@ -1450,6 +1465,17 @@ export default function MerchantBusinessCardManager({
     } finally {
       setDeletingCardId((current) => (current === card.id ? null : current));
     }
+  };
+
+  const markCardAsChatDisplay = (cardId: string) => {
+    onCardsChange(selectMerchantBusinessCardForChat(normalizedCards, cardId));
+    setTip("这张名片会在聊天模块中展示");
+  };
+
+  const disableChatDisplayForAllCards = () => {
+    if (normalizedCards.length === 0) return;
+    onCardsChange(disableMerchantBusinessCardChatDisplay(normalizedCards));
+    setTip("聊天模块中的名片展示已关闭");
   };
 
   const previewMode = previewAsset?.mode || draft.mode;
@@ -1501,7 +1527,7 @@ export default function MerchantBusinessCardManager({
           <span className="min-w-0 flex-1">
             <span className="flex items-baseline gap-2 leading-none">
               <span className="text-base font-semibold tracking-[0.02em]">名片夹</span>
-              <span className="text-sm font-medium text-slate-500">{`${cards.length}/${normalizedCardLimit}`}</span>
+              <span className="text-sm font-medium text-slate-500">{`${normalizedCards.length}/${normalizedCardLimit}`}</span>
             </span>
             <span className="mt-1.5 block text-xs leading-5 text-slate-500">
               完善商户信息后可生成名片。链接模式会生成联系卡链接，对方手机打开后可保存联系人。
@@ -2183,9 +2209,25 @@ export default function MerchantBusinessCardManager({
           <div className="mx-auto flex h-full max-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
             <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4"><div><div className="text-lg font-semibold text-slate-900">名片夹</div><div className="text-sm text-slate-500">查看已生成的图片名片或链接名片，可预览并继续操作。</div></div><div className="flex flex-wrap gap-2"><button type="button" className="rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50" onClick={openCreateEditorFromFolder} disabled={!canOpenCreateEditor}>生成名片</button><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => setFolderOpen(false)}>关闭</button></div></div>
             <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
-              {cards.length > 0 ? (
+              {normalizedCards.length > 0 ? (
+                <div className="space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border bg-slate-50 px-4 py-3">
+                    <div className="text-sm text-slate-600">
+                      聊天展示名片：
+                      <span className="ml-1 font-medium text-slate-900">
+                        {selectedChatDisplayCard ? selectedChatDisplayCard.name : "已关闭"}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                      onClick={disableChatDisplayForAllCards}
+                    >
+                      关闭聊天展示
+                    </button>
+                  </div>
                 <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                  {cards.map((card) => (
+                  {normalizedCards.map((card) => (
                     <article key={card.id} className="overflow-hidden rounded-2xl border bg-slate-50 shadow-sm">
                       <div className="space-y-4 p-4">
                         <button
@@ -2206,6 +2248,11 @@ export default function MerchantBusinessCardManager({
                             <span className="rounded-full bg-slate-900 px-2 py-0.5 text-[10px] text-white">
                               {getCardModeLabel(card.mode)}
                             </span>
+                            {card.showInChat ? (
+                              <span className="rounded-full bg-emerald-600 px-2 py-0.5 text-[10px] text-white">
+                                聊天展示中
+                              </span>
+                            ) : null}
                           </div>
                           <div className="text-xs text-slate-500">
                             {new Date(card.createdAt).toLocaleString("zh-CN", { hour12: false })}
@@ -2255,6 +2302,15 @@ export default function MerchantBusinessCardManager({
                             <div className="grid grid-cols-2 gap-2">
                               <button
                                 type="button"
+                                className={`rounded border px-3 py-2 text-sm ${
+                                  card.showInChat ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "bg-white hover:bg-slate-50"
+                                }`}
+                                onClick={() => markCardAsChatDisplay(card.id)}
+                              >
+                                {card.showInChat ? "当前聊天展示" : "设为聊天展示"}
+                              </button>
+                              <button
+                                type="button"
                                 className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
                                 onClick={() => openEditorForCard(card)}
                               >
@@ -2291,6 +2347,15 @@ export default function MerchantBusinessCardManager({
                             </button>
                             <button
                               type="button"
+                              className={`rounded border px-3 py-2 text-sm ${
+                                card.showInChat ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "bg-white hover:bg-slate-50"
+                              }`}
+                              onClick={() => markCardAsChatDisplay(card.id)}
+                            >
+                              {card.showInChat ? "当前聊天展示" : "设为聊天展示"}
+                            </button>
+                            <button
+                              type="button"
                               className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
                               onClick={() => openEditorForCard(card)}
                             >
@@ -2309,6 +2374,7 @@ export default function MerchantBusinessCardManager({
                       </div>
                     </article>
                   ))}
+                </div>
                 </div>
               ) : (
                 <div className="flex min-h-[240px] items-center justify-center rounded-2xl border border-dashed bg-slate-50 px-6 text-center text-sm text-slate-500">
@@ -2642,13 +2708,15 @@ export default function MerchantBusinessCardManager({
     patch: Partial<Pick<MerchantBusinessCardAsset, "shareImageUrl" | "shareKey" | "contactPagePublicImageUrl">>,
   ) {
     onCardsChange(
-      cards.map((item) =>
-        item.id === cardId
-          ? {
-              ...item,
-              ...patch,
-            }
-          : item,
+      normalizeMerchantBusinessCardChatDisplaySelection(
+        normalizedCards.map((item) =>
+          item.id === cardId
+            ? {
+                ...item,
+                ...patch,
+              }
+            : item,
+        ),
       ),
     );
   }
@@ -2874,7 +2942,7 @@ export default function MerchantBusinessCardManager({
   async function saveCurrentDraftToFolder() {
     const node = hiddenPreviewRef.current;
     if (!node || !websiteUrl || !qrReadyForCurrentDraft) return null;
-    if (!editingCardId && cards.length >= normalizedCardLimit) {
+    if (!editingCardId && normalizedCards.length >= normalizedCardLimit) {
       throw new Error("business_card_limit_reached");
     }
 
@@ -2883,7 +2951,7 @@ export default function MerchantBusinessCardManager({
       throw new Error("export_image_limit_exceeded");
     }
     const nextDraft = normalizeMerchantBusinessCardDraft(draft);
-    const existingCard = editingCardId ? cards.find((card) => card.id === editingCardId) ?? null : null;
+    const existingCard = editingCardId ? normalizedCards.find((card) => card.id === editingCardId) ?? null : null;
     const resolvedShareKey =
       nextDraft.mode === "link"
         ? normalizeText(existingCard?.shareKey) ||
@@ -2936,13 +3004,14 @@ export default function MerchantBusinessCardManager({
         : {}),
       ...(nextDraft.mode === "link" && normalizeText(shareBundle?.shareKey) ? { shareKey: normalizeText(shareBundle?.shareKey) } : {}),
       targetUrl: websiteUrl,
+      ...(existingCard?.showInChat ? { showInChat: true } : {}),
+      ...(existingCard?.chatDisplayDisabled ? { chatDisplayDisabled: true } : {}),
     };
 
-    onCardsChange(
-      existingCard
-        ? cards.map((card) => (card.id === existingCard.id ? asset : card))
-        : [asset, ...cards],
-    );
+    const nextCards = existingCard
+      ? normalizedCards.map((card) => (card.id === existingCard.id ? asset : card))
+      : [asset, ...normalizedCards];
+    onCardsChange(normalizeMerchantBusinessCardChatDisplaySelection(nextCards));
     setEditingCardId(asset.id);
     return asset;
   }

@@ -84,6 +84,8 @@ import {
   PLAN_TEMPLATE_PREVIEW_VARIANT,
 } from "@/lib/planTemplatePreviewCapture";
 import { buildPlatformMerchantSnapshotPayloadFromSites } from "@/lib/platformMerchantSnapshot";
+import ChatBusinessCardDialog from "@/components/admin/ChatBusinessCardDialog";
+import { resolveMerchantBusinessCardForChatDisplay } from "@/lib/merchantBusinessCards";
 import { type PlatformSupportThread } from "@/lib/platformSupportInbox";
 import { getMerchantServiceState } from "@/lib/merchantServiceStatus";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
@@ -1184,6 +1186,7 @@ export default function SuperAdminClient() {
   const [supportMerchantKeyword, setSupportMerchantKeyword] = useState("");
   const [supportReplyDraft, setSupportReplyDraft] = useState("");
   const [supportSending, setSupportSending] = useState(false);
+  const [supportBusinessCardDialogOpen, setSupportBusinessCardDialogOpen] = useState(false);
   const [supportDisplayMode, setSupportDisplayMode] = useState<"name" | "id">("name");
   const [supportLastReadMap, setSupportLastReadMap] = useState<Record<string, string>>({});
   const supportMessagesViewportRef = useRef<HTMLDivElement>(null);
@@ -1850,6 +1853,9 @@ export default function SuperAdminClient() {
         selectedSupportThread?.merchantName ||
         selectedSupportThread?.merchantId ||
         "-";
+  const selectedSupportBusinessCard = resolveMerchantBusinessCardForChatDisplay(
+    selectedSupportMerchantRow?.site.businessCards ?? [],
+  );
   const selectedSupportLatestMessage = selectedSupportThread?.messages[selectedSupportThread.messages.length - 1] ?? null;
   const selectedSupportThreadMerchantId = selectedSupportThread?.merchantId?.trim() ?? "";
   const selectedSupportLatestMessageKey =
@@ -2071,6 +2077,7 @@ export default function SuperAdminClient() {
   useEffect(() => {
     if (activeMenu !== "support_messages") {
       supportLastMessageKeyRef.current = "";
+      setSupportBusinessCardDialogOpen(false);
     }
   }, [activeMenu]);
   useEffect(() => {
@@ -6181,6 +6188,13 @@ export default function SuperAdminClient() {
                           <div className="flex flex-wrap gap-2">
                             <button
                               type="button"
+                              className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                              onClick={() => setSupportBusinessCardDialogOpen(true)}
+                            >
+                              名片
+                            </button>
+                            <button
+                              type="button"
                               className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
                               onClick={() => openMerchantDetailPanelForRow(selectedSupportMerchantRow)}
                               disabled={!selectedSupportMerchantRow}
@@ -6256,6 +6270,19 @@ export default function SuperAdminClient() {
                 </div>
               </section>
             ) : null}
+
+            <ChatBusinessCardDialog
+              open={supportBusinessCardDialogOpen && activeMenu === "support_messages"}
+              merchantName={selectedSupportMerchantRow?.merchantName || selectedSupportDisplayLabel}
+              subtitle={[
+                selectedSupportMerchantRow?.merchantId || selectedSupportThread?.merchantId || "",
+                selectedSupportMerchantRow?.userEmail || selectedSupportThread?.merchantEmail || "",
+              ]
+                .filter(Boolean)
+                .join(" | ")}
+              card={selectedSupportBusinessCard}
+              onClose={() => setSupportBusinessCardDialogOpen(false)}
+            />
 
             {activeMenu === "merchant_id_rules" ? (
               <section className="space-y-4">

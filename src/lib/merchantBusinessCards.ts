@@ -145,6 +145,8 @@ export type MerchantBusinessCardAsset = MerchantBusinessCardDraft & {
   contactPagePublicImageUrl?: string;
   shareKey?: string;
   targetUrl: string;
+  showInChat?: boolean;
+  chatDisplayDisabled?: boolean;
 };
 
 export type MerchantBusinessCardProfileInput = {
@@ -715,7 +717,7 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
 
 export function normalizeMerchantBusinessCards(value: unknown): MerchantBusinessCardAsset[] {
   if (!Array.isArray(value)) return [];
-  return value
+  const normalizedCards = value
     .map((item, index) => {
       if (!item || typeof item !== "object") return null;
       const source = item as Partial<MerchantBusinessCardAsset>;
@@ -737,7 +739,74 @@ export function normalizeMerchantBusinessCards(value: unknown): MerchantBusiness
         ...(contactPagePublicImageUrl ? { contactPagePublicImageUrl } : {}),
         ...(shareKey ? { shareKey } : {}),
         targetUrl,
+        ...(typeof source.showInChat === "boolean" ? { showInChat: source.showInChat } : {}),
+        ...(typeof source.chatDisplayDisabled === "boolean" ? { chatDisplayDisabled: source.chatDisplayDisabled } : {}),
       } satisfies MerchantBusinessCardAsset;
     })
     .filter((item): item is MerchantBusinessCardAsset => !!item);
+  return normalizeMerchantBusinessCardChatDisplaySelection(normalizedCards);
+}
+
+export function normalizeMerchantBusinessCardChatDisplaySelection(cards: MerchantBusinessCardAsset[]) {
+  const normalizedCards = cards.map((card) => ({
+    ...card,
+    showInChat: card.showInChat === true,
+    chatDisplayDisabled: card.chatDisplayDisabled === true,
+  }));
+  const selectedIndex = normalizedCards.findIndex((card) => card.showInChat === true);
+  if (selectedIndex >= 0) {
+    return normalizedCards.map((card, index) => ({
+      ...card,
+      showInChat: index === selectedIndex,
+      chatDisplayDisabled: false,
+    }));
+  }
+  const hasManualDisabledState = normalizedCards.some((card) => card.chatDisplayDisabled === true);
+  if (hasManualDisabledState) {
+    return normalizedCards.map((card) => ({
+      ...card,
+      showInChat: false,
+      chatDisplayDisabled: true,
+    }));
+  }
+  if (normalizedCards.length === 0) return normalizedCards;
+  let defaultIndex = 0;
+  let defaultTimestamp = Number.POSITIVE_INFINITY;
+  normalizedCards.forEach((card, index) => {
+    const timestamp = new Date(card.createdAt).getTime();
+    const normalizedTimestamp = Number.isFinite(timestamp) ? timestamp : Number.POSITIVE_INFINITY;
+    if (normalizedTimestamp < defaultTimestamp) {
+      defaultTimestamp = normalizedTimestamp;
+      defaultIndex = index;
+    }
+  });
+  return normalizedCards.map((card, index) => ({
+    ...card,
+    showInChat: index === defaultIndex,
+    chatDisplayDisabled: false,
+  }));
+}
+
+export function selectMerchantBusinessCardForChat(cards: MerchantBusinessCardAsset[], cardId: string) {
+  const normalizedCards = normalizeMerchantBusinessCardChatDisplaySelection(cards);
+  const normalizedCardId = normalizeText(cardId);
+  if (!normalizedCardId) return normalizedCards;
+  return normalizedCards.map((card) => ({
+    ...card,
+    showInChat: card.id === normalizedCardId,
+    chatDisplayDisabled: false,
+  }));
+}
+
+export function disableMerchantBusinessCardChatDisplay(cards: MerchantBusinessCardAsset[]) {
+  return normalizeMerchantBusinessCardChatDisplaySelection(cards).map((card) => ({
+    ...card,
+    showInChat: false,
+    chatDisplayDisabled: true,
+  }));
+}
+
+export function resolveMerchantBusinessCardForChatDisplay(cards: MerchantBusinessCardAsset[]) {
+  const normalizedCards = normalizeMerchantBusinessCardChatDisplaySelection(cards);
+  return normalizedCards.find((card) => card.showInChat) ?? null;
 }

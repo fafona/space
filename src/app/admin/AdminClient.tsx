@@ -71,7 +71,15 @@ import { clearMerchantSignInBridge } from "@/lib/merchantSignInBridge";
 import { buildPublishedMerchantProfilePatch } from "@/lib/merchantProfileBinding";
 import { resolveCommonCanvasLayout } from "@/lib/commonCanvasLayout";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
+import ChatBusinessCardDialog from "@/components/admin/ChatBusinessCardDialog";
+import { resolveMerchantBusinessCardForChatDisplay } from "@/lib/merchantBusinessCards";
 import { type PlatformSupportMessage, type PlatformSupportThread } from "@/lib/platformSupportInbox";
+import {
+  findMerchantPeerThreadForMerchants,
+  type MerchantPeerContactSummary,
+  type MerchantPeerMessage,
+  type MerchantPeerThread,
+} from "@/lib/merchantPeerInbox";
 import { BLOCK_BORDER_STYLE_OPTIONS, getBlockBorderClass, getBlockBorderInlineStyle } from "@/components/blocks/borderStyle";
 import { stripInlineTextColorStylesFromHtml, toRichHtml } from "@/components/blocks/richText";
 import {
@@ -207,7 +215,7 @@ import MerchantBookingManagerDialog from "@/components/admin/MerchantBookingMana
 import MerchantProfileDialog from "@/components/admin/MerchantProfileDialog";
 import { useI18n } from "@/components/I18nProvider";
 import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
-import { OFFICIAL_SERVICE_CONTACT, getMerchantServiceState } from "@/lib/merchantServiceStatus";
+import { getMerchantServiceState } from "@/lib/merchantServiceStatus";
 
 const IMAGE_FILL_VALUES: ImageFillMode[] = [
   "cover",
@@ -507,6 +515,7 @@ const ADMIN_PAGE_LOAD_TIMEOUT_MS = 35000;
 const SUPPORT_THREAD_OPEN_POLL_INTERVAL_MS = 1200;
 const SUPPORT_THREAD_POLL_INTERVAL_MS = 5000;
 const SUPPORT_LAST_READ_STORAGE_KEY_PREFIX = "merchant-space:admin:support-last-read:";
+const SUPPORT_OFFICIAL_CONTACT_KEY = "official";
 const MERCHANT_IDS_CACHE_KEY = "merchant-space:admin:merchant-ids:v2";
 const MERCHANT_IDS_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
@@ -3545,6 +3554,11 @@ type LocalSupportMessage = PlatformSupportMessage & {
   status: LocalSupportMessageStatus;
 };
 
+type LocalPeerSupportMessage = MerchantPeerMessage & {
+  contactMerchantId: string;
+  status: LocalSupportMessageStatus;
+};
+
 function compareSupportMessages(left: Pick<PlatformSupportMessage, "createdAt" | "id">, right: Pick<PlatformSupportMessage, "createdAt" | "id">) {
   const leftTs = new Date(left.createdAt).getTime();
   const rightTs = new Date(right.createdAt).getTime();
@@ -3698,9 +3712,19 @@ export default function AdminClient({
   const [supportSending, setSupportSending] = useState(false);
   const [supportError, setSupportError] = useState("");
   const [supportDraft, setSupportDraft] = useState("");
+  const [supportContactKeyword, setSupportContactKeyword] = useState("");
   const [supportLastReadAt, setSupportLastReadAt] = useState("");
   const [supportLocalMessages, setSupportLocalMessages] = useState<LocalSupportMessage[]>([]);
+  const [supportPeerContacts, setSupportPeerContacts] = useState<MerchantPeerContactSummary[]>([]);
+  const [supportPeerThreads, setSupportPeerThreads] = useState<MerchantPeerThread[]>([]);
+  const [supportPeerLoading, setSupportPeerLoading] = useState(false);
+  const [supportSearchLoading, setSupportSearchLoading] = useState(false);
+  const [supportSearchError, setSupportSearchError] = useState("");
+  const [supportSelectedContactKey, setSupportSelectedContactKey] = useState(SUPPORT_OFFICIAL_CONTACT_KEY);
+  const [supportPeerLocalMessages, setSupportPeerLocalMessages] = useState<LocalPeerSupportMessage[]>([]);
+  const [supportBusinessCardDialogOpen, setSupportBusinessCardDialogOpen] = useState(false);
   const supportRequestIdRef = useRef(0);
+  const supportPeerRequestIdRef = useRef(0);
   const supportSendingRef = useRef(false);
   const supportMessagesViewportRef = useRef<HTMLDivElement>(null);
   const supportInputRef = useRef<HTMLTextAreaElement>(null);
@@ -7389,6 +7413,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const merchantDisplayName = !isPlatformEditor
     ? ((editingSite?.merchantName ?? "").trim() || "未设置商户名称")
     : "";
+  const currentSupportMerchantId = (
+    editingSiteId ||
+    merchantSessionIdentityRef.current.merchantId ||
+    supportThread?.merchantId ||
+    ""
+  ).trim();
   const latestSupportAdminMessage = [...(supportThread?.messages ?? [])]
     .reverse()
     .find((message) => message.sender === "super_admin") ?? null;
@@ -7399,28 +7429,124 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const latestSupportAdminMessageAt = normalizeSupportMessageTimestamp(
     latestSupportAdminMessage?.createdAt,
   );
-  const visibleSupportMessages = [
+  const officialVisibleSupportMessages = [
     ...(supportThread?.messages ?? []).map((message) => ({
       ...message,
       localStatus: null as LocalSupportMessageStatus | null,
+      isSelf: message.sender === "merchant",
+      senderLabel: message.sender === "merchant" ? "我" : "Faolla",
     })),
     ...supportLocalMessages
       .filter((message) => message.merchantId === supportReadMerchantId)
       .map((message) => ({
         ...message,
         localStatus: message.status,
+        isSelf: true,
+        senderLabel: "我",
       })),
   ].sort(compareSupportMessages);
+  const supportOfficialName = "Faolla";
+  const supportOfficialSiteLabel = "www.faolla.com";
+  const selectedSupportPeerMerchantId = supportSelectedContactKey.startsWith("merchant:")
+    ? supportSelectedContactKey.slice("merchant:".length).trim()
+    : "";
+  const selectedSupportPeerContact =
+    supportPeerContacts.find((contact) => contact.merchantId === selectedSupportPeerMerchantId) ?? null;
+  const selectedSupportPeerSite =
+    merchantPlatformState?.sites.find((site) => site.id === selectedSupportPeerMerchantId) ?? null;
+  const selectedSupportBusinessCard =
+    supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY
+      ? null
+      : resolveMerchantBusinessCardForChatDisplay(selectedSupportPeerSite?.businessCards ?? []);
+  const selectedSupportPeerThread =
+    currentSupportMerchantId && selectedSupportPeerMerchantId
+      ? findMerchantPeerThreadForMerchants(
+          {
+            contacts: [],
+            threads: supportPeerThreads,
+          },
+          currentSupportMerchantId,
+          selectedSupportPeerMerchantId,
+        )
+      : null;
+  const peerVisibleSupportMessages = selectedSupportPeerMerchantId
+    ? [
+        ...(selectedSupportPeerThread?.messages ?? []).map((message) => ({
+          ...message,
+          localStatus: null as LocalSupportMessageStatus | null,
+          isSelf: message.senderMerchantId === currentSupportMerchantId,
+          senderLabel:
+            message.senderMerchantId === currentSupportMerchantId
+              ? "我"
+              : selectedSupportPeerContact?.merchantName || selectedSupportPeerMerchantId,
+        })),
+        ...supportPeerLocalMessages
+          .filter((message) => message.contactMerchantId === selectedSupportPeerMerchantId)
+          .map((message) => ({
+            ...message,
+            localStatus: message.status,
+            isSelf: true,
+            senderLabel: "我",
+          })),
+      ].sort(compareSupportMessages)
+    : [];
+  const visibleSupportMessages =
+    supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY ? officialVisibleSupportMessages : peerVisibleSupportMessages;
+  const latestOfficialVisibleSupportMessage =
+    officialVisibleSupportMessages[officialVisibleSupportMessages.length - 1] ?? null;
   const latestVisibleSupportMessage = visibleSupportMessages[visibleSupportMessages.length - 1] ?? null;
   const latestVisibleSupportMessageKey = latestVisibleSupportMessage
     ? `${latestVisibleSupportMessage.id}:${latestVisibleSupportMessage.localStatus ?? "server"}`
     : "";
+  const selectedSupportDisplayName =
+    supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY
+      ? supportOfficialName
+      : selectedSupportPeerContact?.merchantName || selectedSupportPeerMerchantId || "未选择联系人";
+  const selectedSupportSubtitle =
+    supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY
+      ? supportOfficialSiteLabel
+      : [selectedSupportPeerMerchantId, selectedSupportPeerContact?.merchantEmail].filter(Boolean).join(" | ") || "-";
+  const selectedSupportLoading =
+    supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY ? supportLoading : supportPeerLoading;
+  const selectedSupportEmptyStateText =
+    supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY
+      ? "还没有留言记录，可以直接在下方给 Faolla 留言。"
+      : "还没有聊天记录，可以直接在下方发送第一条消息。";
+  const selectedSupportInputPlaceholder =
+    supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY
+      ? "请输入你想留言的内容，例如遇到的问题、需要协助的事项或希望 Faolla 处理的内容。"
+      : selectedSupportPeerContact
+        ? `请输入要发送给 ${selectedSupportPeerContact.merchantName} 的内容。`
+        : "请先在左侧精确搜索商户ID或邮箱，再开始聊天。";
+  const selectedSupportSendButtonLabel =
+    supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY ? "发送留言" : "发送消息";
+  const supportCanSend =
+    !!supportDraft.trim() &&
+    (supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY || !!selectedSupportPeerContact);
   const supportHasUnreadMessages =
     !!latestSupportAdminMessageAt &&
     !!supportReadMerchantId &&
     new Date(latestSupportAdminMessageAt).getTime() > new Date(supportLastReadAt || 0).getTime();
+  const supportContactRows = [
+    {
+      key: SUPPORT_OFFICIAL_CONTACT_KEY,
+      name: supportOfficialName,
+      subtitle: supportOfficialSiteLabel,
+      preview: latestOfficialVisibleSupportMessage?.text || "还没有留言记录，可以直接在右侧给 Faolla 留言。",
+      updatedAt: latestOfficialVisibleSupportMessage?.createdAt || "",
+      unread: supportHasUnreadMessages,
+    },
+    ...supportPeerContacts.map((contact) => ({
+      key: `merchant:${contact.merchantId}`,
+      name: contact.merchantName || contact.merchantId,
+      subtitle: [contact.merchantId, contact.merchantEmail].filter(Boolean).join(" | ") || contact.merchantId,
+      preview: contact.lastMessage?.text || "还没有聊天记录，可以直接开始对话。",
+      updatedAt: contact.updatedAt || contact.savedAt,
+      unread: false,
+    })),
+  ];
 
-  const requestSupportWithSessionRecovery = useCallback(async (init: RequestInit) => {
+  const requestMerchantChatWithSessionRecovery = useCallback(async (path: string, init: RequestInit) => {
     const buildSupportRequestInit = async (allowRecovery: boolean) => {
       const headers = new Headers(init.headers ?? undefined);
       headers.set("accept", "application/json");
@@ -7473,7 +7599,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     };
 
     const sendRequest = async (allowRecovery: boolean) =>
-      fetch("/api/support-messages", await buildSupportRequestInit(allowRecovery));
+      fetch(path, await buildSupportRequestInit(allowRecovery));
 
     let response = await sendRequest(false);
     if (response.status !== 401 && response.status !== 403) {
@@ -7494,6 +7620,16 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     response = await sendRequest(true);
     return response;
   }, [editingSite?.contactEmail, editingSiteId, merchantDisplayName, prefetchMerchantSessionIdentity]);
+
+  const requestSupportWithSessionRecovery = useCallback(
+    (init: RequestInit) => requestMerchantChatWithSessionRecovery("/api/support-messages", init),
+    [requestMerchantChatWithSessionRecovery],
+  );
+
+  const requestMerchantPeerWithSessionRecovery = useCallback(
+    (init: RequestInit) => requestMerchantChatWithSessionRecovery("/api/merchant-peer-messages", init),
+    [requestMerchantChatWithSessionRecovery],
+  );
 
   const loadSupportThread = useCallback(async (options?: { silent?: boolean; suppressError?: boolean }) => {
     if (isPlatformEditor) return;
@@ -7538,6 +7674,93 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
   }, [isPlatformEditor, requestSupportWithSessionRecovery]);
 
+  const loadSupportPeerInbox = useCallback(async (options?: { silent?: boolean; suppressError?: boolean }) => {
+    if (isPlatformEditor) return;
+    const silent = options?.silent === true;
+    const suppressError = options?.suppressError === true;
+    const requestId = ++supportPeerRequestIdRef.current;
+    if (!silent) {
+      setSupportPeerLoading(true);
+    }
+    try {
+      const response = await requestMerchantPeerWithSessionRecovery({
+        method: "GET",
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | {
+            contacts?: MerchantPeerContactSummary[];
+            threads?: MerchantPeerThread[];
+            error?: string;
+          }
+        | null;
+      if (requestId !== supportPeerRequestIdRef.current) return;
+      if (!response.ok) {
+        if (!suppressError) {
+          setSupportError(payload?.error === "unauthorized" ? "当前未登录，请重新登录后再聊天" : "商户联系人加载失败，请稍后重试");
+        }
+        return;
+      }
+      setSupportPeerContacts(Array.isArray(payload?.contacts) ? payload.contacts : []);
+      setSupportPeerThreads(Array.isArray(payload?.threads) ? payload.threads : []);
+    } catch {
+      if (requestId !== supportPeerRequestIdRef.current) return;
+      if (!suppressError) {
+        setSupportError("商户联系人加载失败，请稍后重试");
+      }
+    } finally {
+      if (!silent) {
+        setSupportPeerLoading(false);
+      }
+    }
+  }, [isPlatformEditor, requestMerchantPeerWithSessionRecovery]);
+
+  async function searchSupportPeerMerchant() {
+    if (isPlatformEditor || supportSearchLoading) return;
+    const query = supportContactKeyword.trim();
+    if (!query) {
+      showTip("请输入完整的商户ID或邮箱");
+      return;
+    }
+    setSupportSearchLoading(true);
+    setSupportSearchError("");
+    try {
+      const response = await requestMerchantPeerWithSessionRecovery({
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "search",
+          query,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | {
+            contacts?: MerchantPeerContactSummary[];
+            threads?: MerchantPeerThread[];
+            contact?: { merchantId?: string; merchantName?: string; merchantEmail?: string } | null;
+            message?: string;
+          }
+        | null;
+      if (!response.ok) {
+        setSupportSearchError(payload?.message || "没有找到匹配的商户");
+        return;
+      }
+      setSupportPeerContacts(Array.isArray(payload?.contacts) ? payload.contacts : []);
+      setSupportPeerThreads(Array.isArray(payload?.threads) ? payload.threads : []);
+      setSupportSearchError("");
+      const foundMerchantId = String(payload?.contact?.merchantId ?? "").trim();
+      if (foundMerchantId) {
+        setSupportSelectedContactKey(`merchant:${foundMerchantId}`);
+        setSupportContactKeyword("");
+      }
+    } catch {
+      setSupportSearchError("商户搜索失败，请稍后重试");
+    } finally {
+      setSupportSearchLoading(false);
+    }
+  }
+
   function openSupportDialog() {
     if (isPlatformEditor) return;
     supportScrollToLatestPendingRef.current = true;
@@ -7549,8 +7772,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     if (isPlatformEditor || typeof window === "undefined") return;
 
     void loadSupportThread({ silent: !supportDialogOpen, suppressError: !supportDialogOpen });
+    void loadSupportPeerInbox({ silent: !supportDialogOpen, suppressError: !supportDialogOpen });
     const refreshSupportThread = () => {
       void loadSupportThread({ silent: true, suppressError: !supportDialogOpen });
+      void loadSupportPeerInbox({ silent: true, suppressError: !supportDialogOpen });
     };
 
     const timer = window.setInterval(() => {
@@ -7571,7 +7796,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       window.removeEventListener("focus", handleFocus);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [isPlatformEditor, loadSupportThread, supportDialogOpen]);
+  }, [isPlatformEditor, loadSupportPeerInbox, loadSupportThread, supportDialogOpen]);
 
   useEffect(() => {
     if (isPlatformEditor || typeof window === "undefined") return;
@@ -7586,6 +7811,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }, [isPlatformEditor, supportReadMerchantId]);
 
   useEffect(() => {
+    if (supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY) return;
+    if (selectedSupportPeerContact) return;
+    setSupportSelectedContactKey(SUPPORT_OFFICIAL_CONTACT_KEY);
+  }, [selectedSupportPeerContact, supportSelectedContactKey]);
+
+  useEffect(() => {
     if (isPlatformEditor || !latestSupportAdminMessageKey) return;
     const previousKey = supportLastIncomingAdminMessageKeyRef.current;
     supportLastIncomingAdminMessageKeyRef.current = latestSupportAdminMessageKey;
@@ -7595,24 +7826,38 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
   useEffect(() => {
     if (isPlatformEditor || !supportDialogOpen || typeof window === "undefined") return;
+    if (supportSelectedContactKey !== SUPPORT_OFFICIAL_CONTACT_KEY) return;
     if (!supportReadMerchantId || !latestSupportAdminMessageAt) return;
     if (latestSupportAdminMessageAt === supportLastReadAt) return;
     setSupportLastReadAt(latestSupportAdminMessageAt);
     localStorage.setItem(buildSupportLastReadStorageKey(supportReadMerchantId), latestSupportAdminMessageAt);
-  }, [isPlatformEditor, latestSupportAdminMessageAt, supportDialogOpen, supportLastReadAt, supportReadMerchantId]);
+  }, [
+    isPlatformEditor,
+    latestSupportAdminMessageAt,
+    supportDialogOpen,
+    supportLastReadAt,
+    supportReadMerchantId,
+    supportSelectedContactKey,
+  ]);
 
   useEffect(() => {
     if (!supportDialogOpen) {
       supportLastVisibleMessageKeyRef.current = "";
       supportScrollToLatestPendingRef.current = false;
+      setSupportBusinessCardDialogOpen(false);
       return;
     }
     supportScrollToLatestPendingRef.current = true;
   }, [supportDialogOpen]);
 
   useEffect(() => {
+    if (!supportDialogOpen) return;
+    supportScrollToLatestPendingRef.current = true;
+  }, [supportDialogOpen, supportSelectedContactKey]);
+
+  useEffect(() => {
     if (isPlatformEditor || !supportDialogOpen || typeof window === "undefined") return;
-    if (supportLoading) return;
+    if (selectedSupportLoading) return;
     const viewport = supportMessagesViewportRef.current;
     if (!viewport) return;
     const shouldScrollToLatest = supportScrollToLatestPendingRef.current;
@@ -7628,12 +7873,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     return () => {
       window.clearTimeout(timer);
     };
-  }, [isPlatformEditor, latestVisibleSupportMessageKey, supportDialogOpen, supportLoading]);
+  }, [isPlatformEditor, latestVisibleSupportMessageKey, selectedSupportLoading, supportDialogOpen]);
 
   useEffect(() => {
-    if (isPlatformEditor || !supportDialogOpen || supportLoading || supportSending) return;
+    if (isPlatformEditor || !supportDialogOpen || selectedSupportLoading || supportSending) return;
     focusSupportInput();
-  }, [focusSupportInput, isPlatformEditor, supportDialogOpen, supportLoading, supportSending]);
+  }, [focusSupportInput, isPlatformEditor, selectedSupportLoading, supportDialogOpen, supportSending]);
 
   async function sendSupportMessage() {
     if (supportSending) return;
@@ -7642,47 +7887,72 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       showTip("请先填写留言内容");
       return;
     }
+    const isOfficialContact = supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY;
+    if (!isOfficialContact && !selectedSupportPeerContact) {
+      showTip("请先在左侧精确搜索商户ID或邮箱");
+      return;
+    }
     const merchantId = supportReadMerchantId || editingSiteId || merchantSessionIdentityRef.current.merchantId || "default";
-    const localMessage: LocalSupportMessage = {
-      id: `local-support-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-      merchantId,
-      sender: "merchant",
-      text,
-      createdAt: new Date().toISOString(),
-      status: "pending",
-    };
     const requestId = ++supportRequestIdRef.current;
     supportSendingRef.current = true;
     setSupportSending(true);
     setSupportError("");
     setSupportDraft("");
-    setSupportLocalMessages((current) => [...current, localMessage]);
-    try {
-      const response = await requestSupportWithSessionRecovery({
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          text,
-          merchantName: merchantDisplayName,
-          merchantEmail:
-            (editingSite?.contactEmail ?? "").trim() ||
-            merchantSessionIdentityRef.current.email ||
-            "",
-          siteId: (editingSiteId || merchantSessionIdentityRef.current.merchantId || "").trim(),
-        }),
-      });
-      const payload = (await response.json().catch(() => null)) as
-        | {
-            thread?: PlatformSupportThread | null;
-            error?: string;
-            message?: string;
-          }
-        | null;
-      if (requestId !== supportRequestIdRef.current) return;
-      setSupportLoading(false);
-      if (!response.ok) {
+    if (isOfficialContact) {
+      const localMessage: LocalSupportMessage = {
+        id: `local-support-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+        merchantId,
+        sender: "merchant",
+        text,
+        createdAt: new Date().toISOString(),
+        status: "pending",
+      };
+      setSupportLocalMessages((current) => [...current, localMessage]);
+      try {
+        const response = await requestSupportWithSessionRecovery({
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            text,
+            merchantName: merchantDisplayName,
+            merchantEmail:
+              (editingSite?.contactEmail ?? "").trim() ||
+              merchantSessionIdentityRef.current.email ||
+              "",
+            siteId: (editingSiteId || merchantSessionIdentityRef.current.merchantId || "").trim(),
+          }),
+        });
+        const payload = (await response.json().catch(() => null)) as
+          | {
+              thread?: PlatformSupportThread | null;
+              error?: string;
+              message?: string;
+            }
+          | null;
+        if (requestId !== supportRequestIdRef.current) return;
+        setSupportLoading(false);
+        if (!response.ok) {
+          setSupportLocalMessages((current) =>
+            current.map((message) =>
+              message.id === localMessage.id
+                ? {
+                    ...message,
+                    status: "failed",
+                  }
+                : message,
+            ),
+          );
+          setSupportError(payload?.message || "留言发送失败，请稍后重试");
+          return;
+        }
+        setSupportLocalMessages((current) => current.filter((message) => message.id !== localMessage.id));
+        setSupportError("");
+        setSupportThread(payload?.thread ?? null);
+      } catch {
+        if (requestId !== supportRequestIdRef.current) return;
+        setSupportLoading(false);
         setSupportLocalMessages((current) =>
           current.map((message) =>
             message.id === localMessage.id
@@ -7693,26 +7963,81 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               : message,
           ),
         );
-        setSupportError(payload?.message || "留言发送失败，请稍后重试");
+        setSupportError("留言发送失败，请稍后重试");
+      } finally {
+        supportSendingRef.current = false;
+        setSupportSending(false);
+      }
+      return;
+    }
+
+    const peerMerchantId = selectedSupportPeerContact?.merchantId || "";
+    const localPeerMessage: LocalPeerSupportMessage = {
+      id: `local-peer-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      contactMerchantId: peerMerchantId,
+      senderMerchantId: merchantId,
+      text,
+      createdAt: new Date().toISOString(),
+      status: "pending",
+    };
+    setSupportPeerLocalMessages((current) => [...current, localPeerMessage]);
+    try {
+      const response = await requestMerchantPeerWithSessionRecovery({
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "send",
+          recipientMerchantId: peerMerchantId,
+          text,
+          merchantName: merchantDisplayName,
+          merchantEmail:
+            (editingSite?.contactEmail ?? "").trim() ||
+            merchantSessionIdentityRef.current.email ||
+            "",
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | {
+            contacts?: MerchantPeerContactSummary[];
+            threads?: MerchantPeerThread[];
+            error?: string;
+            message?: string;
+          }
+        | null;
+      if (requestId !== supportRequestIdRef.current) return;
+      if (!response.ok) {
+        setSupportPeerLocalMessages((current) =>
+          current.map((message) =>
+            message.id === localPeerMessage.id
+              ? {
+                  ...message,
+                  status: "failed",
+                }
+              : message,
+          ),
+        );
+        setSupportError(payload?.message || "消息发送失败，请稍后重试");
         return;
       }
-      setSupportLocalMessages((current) => current.filter((message) => message.id !== localMessage.id));
+      setSupportPeerLocalMessages((current) => current.filter((message) => message.id !== localPeerMessage.id));
+      setSupportPeerContacts(Array.isArray(payload?.contacts) ? payload.contacts : []);
+      setSupportPeerThreads(Array.isArray(payload?.threads) ? payload.threads : []);
       setSupportError("");
-      setSupportThread(payload?.thread ?? null);
     } catch {
       if (requestId !== supportRequestIdRef.current) return;
-      setSupportLoading(false);
-      setSupportLocalMessages((current) =>
+      setSupportPeerLocalMessages((current) =>
         current.map((message) =>
-          message.id === localMessage.id
+          message.id === localPeerMessage.id
             ? {
                 ...message,
                 status: "failed",
               }
             : message,
-        ),
+          ),
       );
-      setSupportError("留言发送失败，请稍后重试");
+      setSupportError("消息发送失败，请稍后重试");
     } finally {
       supportSendingRef.current = false;
       setSupportSending(false);
@@ -8646,90 +8971,138 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               />
               <div className="fixed inset-0 z-[2147483301] flex items-center justify-center p-4">
                 <div className="flex h-full min-h-0 min-w-0 max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl md:grid md:grid-cols-[320px_minmax(0,1fr)]">
-                  <div className="min-w-0 space-y-4 overflow-y-auto border-b bg-slate-50 px-5 py-5 md:border-b-0 md:border-r">
-                    <div className="rounded-2xl border bg-white p-4 text-sm leading-7 text-slate-700">
-                      <div className="text-sm font-semibold text-slate-900">官方联系方式</div>
-                      <div className="mt-3 space-y-2">
-                        <div>
-                          服务商：
-                          <a
-                            className="font-medium text-slate-900 underline underline-offset-4"
-                            href={OFFICIAL_SERVICE_CONTACT.serviceProviderUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            www.faolla.com
-                          </a>
-                        </div>
-                        <div>联系人：{OFFICIAL_SERVICE_CONTACT.contactName}</div>
-                        <div>
-                          WhatsApp：
-                          <a
-                            className="font-medium text-slate-900 underline underline-offset-4"
-                            href={`https://wa.me/${OFFICIAL_SERVICE_CONTACT.whatsapp.replace(/[^\d]/g, "")}`}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            {OFFICIAL_SERVICE_CONTACT.whatsapp}
-                          </a>
-                        </div>
-                        <div>Wechat：{OFFICIAL_SERVICE_CONTACT.wechat}</div>
-                        <div>
-                          Mail：
-                          <a
-                            className="font-medium text-slate-900 underline underline-offset-4"
-                            href={`mailto:${OFFICIAL_SERVICE_CONTACT.email}`}
-                          >
-                            {OFFICIAL_SERVICE_CONTACT.email}
-                          </a>
-                        </div>
+                  <div className="flex min-h-0 min-w-0 flex-col overflow-hidden border-b bg-white md:border-b-0 md:border-r">
+                    <div className="border-b px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          className="min-w-0 flex-1 rounded border px-3 py-2 text-sm outline-none transition focus:border-slate-400"
+                          placeholder="精确搜索商户ID或邮箱"
+                          value={supportContactKeyword}
+                          onChange={(event) => setSupportContactKeyword(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+                            event.preventDefault();
+                            void searchSupportPeerMerchant();
+                          }}
+                        />
+                        <button
+                          type="button"
+                          className="shrink-0 rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+                          onClick={() => void searchSupportPeerMerchant()}
+                          disabled={supportSearchLoading}
+                        >
+                          {supportSearchLoading ? "搜索中..." : "搜索"}
+                        </button>
                       </div>
+                      <div className="mt-2 text-[11px] text-slate-500">只支持精确搜索 8 位商户ID或完整邮箱。</div>
+                    </div>
+                    <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50 p-3">
+                      {supportSearchError ? (
+                        <div className="mb-3 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-600">
+                          {supportSearchError}
+                        </div>
+                      ) : null}
+                      {supportContactRows.length > 0 ? (
+                        <div className="space-y-2">
+                          {supportContactRows.map((contactRow) => {
+                            const active = supportSelectedContactKey === contactRow.key;
+                            return (
+                              <button
+                                key={contactRow.key}
+                                type="button"
+                                className={`w-full rounded-2xl border px-3 py-3 text-left transition ${
+                                  active ? "border-blue-300 bg-blue-50" : "bg-white hover:bg-slate-50"
+                                }`}
+                                onClick={() => {
+                                  setSupportSelectedContactKey(contactRow.key);
+                                  focusSupportInput();
+                                }}
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="min-w-0">
+                                    <div className="flex items-center gap-2">
+                                      <div className="truncate text-sm font-medium text-slate-900">{contactRow.name}</div>
+                                      {contactRow.unread ? (
+                                        <span aria-label="有未读消息" className="inline-flex h-2.5 w-2.5 shrink-0 rounded-full bg-rose-500" />
+                                      ) : null}
+                                    </div>
+                                    <div className="truncate text-[11px] text-slate-500">{contactRow.subtitle}</div>
+                                  </div>
+                                  <div className="shrink-0 text-[11px] text-slate-400">
+                                    {contactRow.updatedAt ? formatSupportMessageTime(contactRow.updatedAt) : "未聊天"}
+                                  </div>
+                                </div>
+                                <div className="mt-2 line-clamp-2 text-xs leading-5 text-slate-600">
+                                  {contactRow.preview}
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="rounded border border-dashed px-3 py-4 text-xs text-slate-500">
+                          还没有联系人，请先精确搜索商户ID或邮箱。
+                        </div>
+                      )}
                     </div>
                   </div>
 
                   <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
                     <div className="flex min-w-0 items-center justify-between gap-3 border-b px-5 py-4">
-                      <div className="min-w-0 truncate text-base font-semibold text-slate-900">在线客服</div>
-                      <button
-                        type="button"
-                        className="shrink-0 rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
-                        onClick={() => setSupportDialogOpen(false)}
-                        disabled={supportSending}
-                      >
-                        关闭
-                      </button>
+                      <div className="min-w-0">
+                        <div className="truncate text-base font-semibold text-slate-900">{selectedSupportDisplayName}</div>
+                        <div className="truncate text-xs text-slate-500">{selectedSupportSubtitle}</div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <button
+                          type="button"
+                          className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+                          onClick={() => setSupportBusinessCardDialogOpen(true)}
+                          disabled={supportSending}
+                        >
+                          名片
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+                          onClick={() => setSupportDialogOpen(false)}
+                          disabled={supportSending}
+                        >
+                          关闭
+                        </button>
+                      </div>
                     </div>
 
                     <div ref={supportMessagesViewportRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-slate-50 px-5 py-5">
-                      {supportLoading ? (
+                      {selectedSupportLoading ? (
                         <div className="rounded-2xl border border-dashed bg-white px-4 py-6 text-center text-sm text-slate-500">
-                          正在加载留言记录...
+                          正在加载聊天记录...
                         </div>
                       ) : visibleSupportMessages.length ? (
                         <div className="min-w-0 space-y-3">
                           {visibleSupportMessages.map((message) => {
-                            const isMerchantMessage = message.sender === "merchant";
                             return (
                               <div
                                 key={message.id}
-                                className={`flex min-w-0 ${isMerchantMessage ? "justify-end" : "justify-start"}`}
+                                className={`flex min-w-0 ${message.isSelf ? "justify-end" : "justify-start"}`}
                               >
-                                <div className={`flex max-w-[82%] min-w-0 items-end ${isMerchantMessage ? "flex-row" : "flex-row-reverse"}`}>
+                                <div className={`flex max-w-[82%] min-w-0 items-end ${message.isSelf ? "flex-row" : "flex-row-reverse"}`}>
                                   <div
                                     className={`min-w-0 rounded-2xl px-4 py-3 shadow-sm ${
-                                      isMerchantMessage
+                                      message.isSelf
                                         ? "bg-slate-900 text-white"
                                         : "border bg-white text-slate-900"
                                     }`}
                                   >
                                     <div className="text-[11px] opacity-70">
-                                      {isMerchantMessage ? "我" : "Faolla"} | {formatSupportMessageTime(message.createdAt)}
+                                      {message.senderLabel} | {formatSupportMessageTime(message.createdAt)}
                                     </div>
                                     <div className="mt-1 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-sm leading-6">
                                       {renderSupportMessageText(message.text)}
                                     </div>
                                   </div>
-                                  {isMerchantMessage && message.localStatus === "failed" ? (
+                                  {message.isSelf && message.localStatus === "failed" ? (
                                     <span
                                       aria-label="发送失败"
                                       className="mb-1 ml-2 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-rose-500 bg-white text-[12px] font-semibold leading-none text-rose-600"
@@ -8744,17 +9117,19 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                         </div>
                       ) : (
                         <div className="rounded-2xl border border-dashed bg-white px-4 py-6 text-center text-sm text-slate-500">
-                          还没有留言记录，可以直接在下方给超级后台留言。
+                          {selectedSupportEmptyStateText}
                         </div>
                       )}
                     </div>
 
                     <div className="min-w-0 shrink-0 space-y-3 border-t px-5 py-4">
-                      {supportError ? <div className="text-sm text-rose-600">{supportError}</div> : null}
+                      {supportError && supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY ? (
+                        <div className="text-sm text-rose-600">{supportError}</div>
+                      ) : null}
                       <textarea
                         ref={supportInputRef}
                         className="h-32 w-full max-w-full min-w-0 resize-none rounded-2xl border px-4 py-3 text-sm outline-none transition focus:border-slate-400"
-                        placeholder="请输入你想留言的内容，例如遇到的问题、需要协助的事项或希望超级后台处理的内容。"
+                        placeholder={selectedSupportInputPlaceholder}
                         value={supportDraft}
                         onChange={(event) => setSupportDraft(event.target.value)}
                         onKeyDown={(event) => {
@@ -8762,16 +9137,16 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                           event.preventDefault();
                           void sendSupportMessage();
                         }}
-                        disabled={supportSending}
+                        disabled={supportSending || (!selectedSupportPeerContact && supportSelectedContactKey !== SUPPORT_OFFICIAL_CONTACT_KEY)}
                       />
                       <div className="flex min-w-0 justify-end">
                         <button
                           type="button"
                           className="shrink-0 rounded bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50"
                           onClick={() => void sendSupportMessage()}
-                          disabled={supportSending || !supportDraft.trim()}
+                          disabled={supportSending || !supportCanSend}
                         >
-                          {supportSending ? "发送中..." : "发送留言"}
+                          {supportSending ? "发送中..." : selectedSupportSendButtonLabel}
                         </button>
                       </div>
                     </div>
@@ -8781,6 +9156,14 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             </>,
           )
         : null}
+
+      <ChatBusinessCardDialog
+        open={supportBusinessCardDialogOpen && supportDialogOpen && !isPlatformEditor}
+        merchantName={selectedSupportDisplayName}
+        subtitle={selectedSupportSubtitle}
+        card={selectedSupportBusinessCard}
+        onClose={() => setSupportBusinessCardDialogOpen(false)}
+      />
 
       {merchantProfileDialogOpen && !isPlatformEditor ? (
         <MerchantProfileDialog

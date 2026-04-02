@@ -124,6 +124,10 @@ export type TranslationKey =
   | "login.resendSuccess"
   | "login.inputEmailBeforeForgot"
   | "login.forgotSuccess"
+  | "login.resetCodeLabel"
+  | "login.resetCodePlaceholder"
+  | "login.verifyResetCode"
+  | "login.verifyingResetCode"
   | "reset.title"
   | "reset.newPassword"
   | "reset.confirmPassword"
@@ -137,6 +141,15 @@ export type TranslationKey =
   | "reset.sessionExpired"
   | "reset.successRedirect"
   | "reset.inputConfirmPasswordAgain"
+  | "reset.email"
+  | "reset.code"
+  | "reset.codePlaceholder"
+  | "reset.verifyCode"
+  | "reset.verifyingCode"
+  | "reset.resendCode"
+  | "reset.resendingCode"
+  | "reset.invalidCode"
+  | "reset.codeHelp"
   | "superLogin.title"
   | "superLogin.account"
   | "superLogin.accountPlaceholder"
@@ -182,7 +195,11 @@ const EN_BUNDLE: TranslationBundle = {
   "login.inputRegisterEmailFirst": "Enter your registration email first",
   "login.resendSuccess": "Verification email resent. Check inbox and spam.",
   "login.inputEmailBeforeForgot": "Enter your email first, then click forgot password",
-  "login.forgotSuccess": "Password reset email sent. Please check your inbox.",
+  "login.forgotSuccess": "Password reset email sent. Enter the code from the email below, or use the email link if it opens normally.",
+  "login.resetCodeLabel": "Email Code",
+  "login.resetCodePlaceholder": "Enter the code from the email",
+  "login.verifyResetCode": "Verify Reset Code",
+  "login.verifyingResetCode": "Verifying reset code...",
   "reset.title": "Reset Password",
   "reset.newPassword": "New Password",
   "reset.confirmPassword": "Confirm New Password",
@@ -196,6 +213,15 @@ const EN_BUNDLE: TranslationBundle = {
   "reset.sessionExpired": "Reset session expired. Please request a new reset email.",
   "reset.successRedirect": "Password reset successfully. Redirecting to login...",
   "reset.inputConfirmPasswordAgain": "Enter password again",
+  "reset.email": "Email",
+  "reset.code": "Email Code",
+  "reset.codePlaceholder": "Enter the code from the email",
+  "reset.verifyCode": "Use Code to Continue",
+  "reset.verifyingCode": "Verifying code...",
+  "reset.resendCode": "Resend Email Code",
+  "reset.resendingCode": "Resending email code...",
+  "reset.invalidCode": "The email code is invalid or expired. Please resend and try again.",
+  "reset.codeHelp": "If the email link opens as expired on mobile, resend a fresh email code here and enter it directly.",
   "superLogin.title": "Super Admin Login",
   "superLogin.account": "Account",
   "superLogin.accountPlaceholder": "Enter account",
@@ -241,7 +267,11 @@ const ZH_CN_BUNDLE: TranslationBundle = {
   "login.inputRegisterEmailFirst": "请先输入注册邮箱",
   "login.resendSuccess": "验证邮件已重新发送，请检查收件箱和垃圾箱。",
   "login.inputEmailBeforeForgot": "请先输入邮箱，再点击找回密码",
-  "login.forgotSuccess": "找回密码邮件已发送，请去邮箱点击链接后重置密码。",
+  "login.forgotSuccess": "找回密码邮件已发送。可以直接输入邮件里的验证码，也可以在链接能正常打开时点击邮件链接。",
+  "login.resetCodeLabel": "邮件验证码",
+  "login.resetCodePlaceholder": "输入邮件里的验证码",
+  "login.verifyResetCode": "验证并继续重置",
+  "login.verifyingResetCode": "正在验证验证码...",
   "reset.title": "重置密码",
   "reset.newPassword": "新密码",
   "reset.confirmPassword": "确认新密码",
@@ -255,6 +285,15 @@ const ZH_CN_BUNDLE: TranslationBundle = {
   "reset.sessionExpired": "重置会话已失效，请回到登录页重新发送找回密码邮件。",
   "reset.successRedirect": "密码已重置成功，正在跳转到登录页...",
   "reset.inputConfirmPasswordAgain": "再次输入新密码",
+  "reset.email": "邮箱",
+  "reset.code": "邮件验证码",
+  "reset.codePlaceholder": "输入邮件里的验证码",
+  "reset.verifyCode": "用邮件验证码继续",
+  "reset.verifyingCode": "正在验证验证码...",
+  "reset.resendCode": "重新发送邮件验证码",
+  "reset.resendingCode": "正在重新发送邮件验证码...",
+  "reset.invalidCode": "邮件验证码无效或已过期，请重新发送后再试。",
+  "reset.codeHelp": "如果手机里点开邮件链接后直接显示已失效，可以在这里重新发送邮件验证码，再直接输入验证码继续重置。",
   "superLogin.title": "超级后台登录",
   "superLogin.account": "账号",
   "superLogin.accountPlaceholder": "请输入账号",

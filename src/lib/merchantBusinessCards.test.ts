@@ -2,9 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   createDefaultMerchantBusinessCardDraft,
+  disableMerchantBusinessCardChatDisplay,
   getMerchantBusinessCardRequiredFields,
   normalizeMerchantBusinessCardDraft,
   normalizeMerchantBusinessCards,
+  resolveMerchantBusinessCardForChatDisplay,
+  selectMerchantBusinessCardForChat,
 } from "./merchantBusinessCards";
 
 test("business card generation requires complete merchant profile", () => {
@@ -374,4 +377,54 @@ test("normalizeMerchantBusinessCards keeps only valid generated card assets", ()
   assert.equal(cards[0]?.customTexts[0]?.text, "VIP only");
   assert.equal(cards[0]?.contacts.address, "Sevilla");
   assert.deepEqual(cards[0]?.contacts.phones, ["123", "456"]);
+  assert.equal(cards[0]?.showInChat, true);
+});
+
+test("business card chat display defaults to the first card and can be reassigned", () => {
+  const cards = normalizeMerchantBusinessCards([
+    {
+      id: "card-1",
+      createdAt: "2026-03-17T09:00:00.000Z",
+      name: "card 1",
+      imageUrl: "data:image/png;base64,aaa",
+      targetUrl: "https://a.example.com",
+    },
+    {
+      id: "card-2",
+      createdAt: "2026-03-18T09:00:00.000Z",
+      name: "card 2",
+      imageUrl: "data:image/png;base64,bbb",
+      targetUrl: "https://b.example.com",
+    },
+  ]);
+
+  assert.equal(resolveMerchantBusinessCardForChatDisplay(cards)?.id, "card-1");
+
+  const reassigned = selectMerchantBusinessCardForChat(cards, "card-2");
+  assert.equal(resolveMerchantBusinessCardForChatDisplay(reassigned)?.id, "card-2");
+  assert.equal(reassigned[0]?.showInChat, false);
+  assert.equal(reassigned[1]?.showInChat, true);
+});
+
+test("business card chat display can be manually disabled for all cards", () => {
+  const cards = normalizeMerchantBusinessCards([
+    {
+      id: "card-1",
+      createdAt: "2026-03-17T09:00:00.000Z",
+      name: "card 1",
+      imageUrl: "data:image/png;base64,aaa",
+      targetUrl: "https://a.example.com",
+    },
+    {
+      id: "card-2",
+      createdAt: "2026-03-18T09:00:00.000Z",
+      name: "card 2",
+      imageUrl: "data:image/png;base64,bbb",
+      targetUrl: "https://b.example.com",
+    },
+  ]);
+
+  const disabled = disableMerchantBusinessCardChatDisplay(cards);
+  assert.equal(resolveMerchantBusinessCardForChatDisplay(disabled), null);
+  assert.equal(disabled.every((card) => card.chatDisplayDisabled === true), true);
 });

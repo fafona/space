@@ -6,6 +6,11 @@ import { useI18n } from "@/components/I18nProvider";
 import PasswordField, { getPasswordToggleLabels } from "@/components/PasswordField";
 import { recoverBrowserSupabaseSession } from "@/lib/authSessionRecovery";
 import {
+  clearStoredResetPasswordEmailRequest,
+  persistResetPasswordEmailRequest,
+  readStoredResetPasswordEmailRequest,
+} from "@/lib/resetPasswordEmailRequest";
+import {
   clearStoredResetPasswordRecoveryPayload,
   hasDirectResetPasswordRecoveryPayload,
   persistResetPasswordRecoveryPayload,
@@ -75,8 +80,13 @@ export default function ResetPasswordPage() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [msg, setMsg] = useState("");
+  const [helperMsg, setHelperMsg] = useState("");
   const [saving, setSaving] = useState(false);
   const [recoveryState, setRecoveryState] = useState<RecoveryState>("checking");
+  const [resetEmail, setResetEmail] = useState("");
+  const [resetCode, setResetCode] = useState("");
+  const [verifyingCode, setVerifyingCode] = useState(false);
+  const [resendingCode, setResendingCode] = useState(false);
   const passwordToggleLabels = useMemo(() => getPasswordToggleLabels(locale), [locale]);
   const sessionExpiredMessageRef = useRef(t("reset.sessionExpired"));
   const timeoutMessageRef = useRef(t("login.timeout"));
@@ -97,6 +107,22 @@ export default function ResetPasswordPage() {
     sessionExpiredMessageRef.current = t("reset.sessionExpired");
     timeoutMessageRef.current = t("login.timeout");
   }, [t]);
+
+  useEffect(() => {
+    const storedRequest = readStoredResetPasswordEmailRequest();
+    if (!storedRequest?.email) return;
+    setResetEmail((current) => current || storedRequest.email);
+  }, []);
+
+  function normalizeResetCodeError(message: string) {
+    const normalized = String(message ?? "").trim();
+    if (/invalid_email/i.test(normalized)) return t("login.invalidEmail");
+    if (/invalid_code|invalid_or_expired|expired|otp|token/i.test(normalized)) return t("reset.invalidCode");
+    if (/env_missing|unavailable|failed to fetch|fetch failed|network/i.test(normalized)) {
+      return t("login.backendUnavailable");
+    }
+    return normalized || t("login.requestFailed");
+  }
 
   function validate(): string | null {
     if (!password) return t("reset.requiredNewPassword");
@@ -319,6 +345,7 @@ export default function ResetPasswordPage() {
 
     clearStoredResetPasswordRecoveryPayload();
     recoveryPayloadRef.current = null;
+    clearStoredResetPasswordEmailRequest();
     setMsg(t("reset.successRedirect"));
     setTimeout(() => {
       window.location.href = "/login";
@@ -370,6 +397,7 @@ export default function ResetPasswordPage() {
 
       clearStoredResetPasswordRecoveryPayload();
       recoveryPayloadRef.current = null;
+      clearStoredResetPasswordEmailRequest();
       setMsg(t("reset.successRedirect"));
       setTimeout(() => {
         window.location.href = "/login";
@@ -378,6 +406,87 @@ export default function ResetPasswordPage() {
       setMsg(error instanceof Error ? error.message : t("login.requestFailed"));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function resendResetEmailCode() {
+    if (resendingCode || verifyingCode || saving) return;
+    const email = resetEmail.trim().toLowerCase();
+    if (!email || !email.includes("@")) {
+      setMsg(t("login.invalidEmail"));
+      return;
+    }
+
+    setMsg("");
+    setHelperMsg("");
+    setResendingCode(true);
+    try {
+      const response = await withTimeout(
+        fetch("/api/auth/reset-password/request", {
+          method: "POST",
+          cache: "no-store",
+          headers: {
+            "Content-Type": "application/json",
+            accept: "application/json",
+          },
+          body: JSON.stringify({ email }),
+        }),
+      );
+      const payload = (await response.json().catch(() => null)) as { ok?: unknown; error?: unknown } | null;
+      if (!response.ok || payload?.ok !== true) {
+        throw new Error(typeof payload?.error === "string" ? payload.error : t("login.requestFailed"));
+      }
+      persistResetPasswordEmailRequest(email);
+      setResetCode("");
+      setHelperMsg(t("login.forgotSuccess"));
+    } catch (error) {
+      setMsg(error instanceof Error ? normalizeResetCodeError(error.message) : t("login.requestFailed"));
+    } finally {
+      setResendingCode(false);
+    }
+  }
+
+  async function verifyResetCodeFallback() {
+    if (verifyingCode || resendingCode || saving) return;
+    const email = resetEmail.trim().toLowerCase();
+    const code = resetCode.trim();
+    if (!email || !email.includes("@")) {
+      setMsg(t("login.invalidEmail"));
+      return;
+    }
+    if (!code) {
+      setMsg(t("reset.invalidCode"));
+      return;
+    }
+
+    setMsg("");
+    setHelperMsg("");
+    setVerifyingCode(true);
+    try {
+      const response = await withTimeout(
+        fetch("/api/auth/reset-password/verify-code", {
+          method: "POST",
+          cache: "no-store",
+          headers: {
+            "Content-Type": "application/json",
+            accept: "application/json",
+          },
+          body: JSON.stringify({ email, code }),
+        }),
+      );
+      const payload = (await response.json().catch(() => null)) as { ok?: unknown; error?: unknown } | null;
+      if (!response.ok || payload?.ok !== true) {
+        throw new Error(typeof payload?.error === "string" ? payload.error : t("reset.invalidCode"));
+      }
+      persistResetPasswordEmailRequest(email);
+      recoveryResolvedRef.current = true;
+      setRecoveryState("ready");
+      setResetCode("");
+      setMsg("");
+    } catch (error) {
+      setMsg(error instanceof Error ? normalizeResetCodeError(error.message) : t("reset.invalidCode"));
+    } finally {
+      setVerifyingCode(false);
     }
   }
 
@@ -416,6 +525,55 @@ export default function ResetPasswordPage() {
 
         {recoveryState === "checking" ? <div className="text-sm text-slate-500">{t("common.loadingPage")}</div> : null}
         {msg ? <div className="text-sm text-red-600">{msg}</div> : null}
+
+        {recoveryState === "expired" ? (
+          <div className="space-y-3 rounded border border-slate-200 bg-slate-50 p-3">
+            <div className="text-sm text-slate-600">{t("reset.codeHelp")}</div>
+            {helperMsg ? <div className="text-sm text-slate-500">{helperMsg}</div> : null}
+            <div className="space-y-2">
+              <div className="text-sm text-gray-600">{t("reset.email")}</div>
+              <input
+                className="w-full rounded border p-2"
+                value={resetEmail}
+                onChange={(event) => setResetEmail(event.target.value)}
+                placeholder={t("login.email")}
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                disabled={saving || verifyingCode || resendingCode}
+              />
+            </div>
+            <div className="space-y-2">
+              <div className="text-sm text-gray-600">{t("reset.code")}</div>
+              <input
+                className="w-full rounded border p-2"
+                value={resetCode}
+                onChange={(event) => setResetCode(event.target.value)}
+                placeholder={t("reset.codePlaceholder")}
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                disabled={saving || verifyingCode || resendingCode}
+              />
+            </div>
+            <div className="flex gap-2">
+              <button
+                className="flex-1 rounded border bg-white px-3 py-2 hover:bg-gray-50 disabled:opacity-40"
+                onClick={verifyResetCodeFallback}
+                disabled={saving || verifyingCode || resendingCode}
+              >
+                {verifyingCode ? t("reset.verifyingCode") : t("reset.verifyCode")}
+              </button>
+              <button
+                className="flex-1 rounded border bg-white px-3 py-2 hover:bg-gray-50 disabled:opacity-40"
+                onClick={resendResetEmailCode}
+                disabled={saving || verifyingCode || resendingCode}
+              >
+                {resendingCode ? t("reset.resendingCode") : t("reset.resendCode")}
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         <button
           className="w-full rounded bg-black px-3 py-2 text-white disabled:opacity-40"

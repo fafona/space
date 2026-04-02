@@ -13,6 +13,11 @@ import {
   recoverBrowserSupabaseSession,
 } from "@/lib/authSessionRecovery";
 import { ensureMerchantIdentityForUser, isMerchantNumericId } from "@/lib/merchantIdentity";
+import {
+  clearStoredResetPasswordEmailRequest,
+  persistResetPasswordEmailRequest,
+  readStoredResetPasswordEmailRequest,
+} from "@/lib/resetPasswordEmailRequest";
 import { clearMerchantSignInBridge, setMerchantSignInBridge } from "@/lib/merchantSignInBridge";
 import { buildMerchantBackendHref } from "@/lib/siteRouting";
 import {
@@ -98,13 +103,18 @@ function LoginPageInner() {
   const isDevelopment = process.env.NODE_ENV === "development";
   const [account, setAccount] = useState("");
   const [password, setPassword] = useState("");
+  const [resetCode, setResetCode] = useState("");
   const accountInputRef = useRef<HTMLInputElement>(null);
   const passwordInputRef = useRef<HTMLInputElement>(null);
   const [msg, setMsg] = useState<string>("");
   const [gatewayReachable, setGatewayReachable] = useState<boolean | null>(null);
   const [needConfirmEmail, setNeedConfirmEmail] = useState(false);
   const [emailConfirmationRequired, setEmailConfirmationRequired] = useState<boolean | null>(null);
-  const [pendingAction, setPendingAction] = useState<"signin" | "signup" | "forgot" | "resend" | null>(null);
+  const [pendingResetEmail, setPendingResetEmail] = useState("");
+  const [pendingResetEmailMasked, setPendingResetEmailMasked] = useState("");
+  const [pendingAction, setPendingAction] = useState<
+    "signin" | "signup" | "forgot" | "resend" | "verify_reset_code" | null
+  >(null);
   const requestedRedirectPath = useMemo(() => {
     const raw = (searchParams.get("redirect") ?? "").trim();
     if (!raw.startsWith("/") || raw.startsWith("//")) return "";
@@ -161,9 +171,13 @@ function LoginPageInner() {
   useEffect(() => {
     if (!loggedOut) return;
     clearStoredBrowserSupabaseSessionTokens();
+    clearStoredResetPasswordEmailRequest();
     clearMerchantSignInBridge();
     setAccount("");
     setPassword("");
+    setResetCode("");
+    setPendingResetEmail("");
+    setPendingResetEmailMasked("");
     setMsg("");
 
     const scrub = () => {
@@ -181,6 +195,13 @@ function LoginPageInner() {
       timers.forEach((timer) => window.clearTimeout(timer));
     };
   }, [loggedOut]);
+
+  useEffect(() => {
+    const storedRequest = readStoredResetPasswordEmailRequest();
+    if (!storedRequest) return;
+    setPendingResetEmail(storedRequest.email);
+    setPendingResetEmailMasked(storedRequest.email);
+  }, []);
 
   const redirectToMerchantBackend = useCallback(
     async (
@@ -431,6 +452,14 @@ function LoginPageInner() {
       return t("superLogin.invalid");
     }
     return message;
+  }
+
+  function normalizeResetCodeError(message: string) {
+    const normalized = normalizeError(message);
+    if (/invalid_code|invalid_or_expired|expired|otp|token/i.test(message)) {
+      return t("reset.invalidCode");
+    }
+    return normalized;
   }
 
   async function withTimeout<T>(task: Promise<T>, timeoutMs = 15000): Promise<T> {
@@ -697,17 +726,68 @@ function LoginPageInner() {
 
     setPendingAction("forgot");
     try {
-      const resetBridgeUrl = new URL("/reset-password/bridge", authEmailRedirectOrigin || window.location.origin).toString();
-      const { error } = await withTimeout(
-        supabase.auth.resetPasswordForEmail(trimmedEmail, {
-          redirectTo: resetBridgeUrl,
+      const response = await withTimeout(
+        fetch("/api/auth/reset-password/request", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            accept: "application/json",
+          },
+          body: JSON.stringify({
+            email: trimmedEmail,
+          }),
         }),
       );
-
-      if (error) return setMsg(normalizeError(error.message));
+      const payload = (await response.json().catch(() => null)) as
+        | { ok?: unknown; error?: unknown; maskedEmail?: unknown }
+        | null;
+      if (!response.ok || payload?.ok !== true) {
+        const errorMessage = typeof payload?.error === "string" ? payload.error : t("login.requestFailed");
+        return setMsg(normalizeError(errorMessage));
+      }
+      persistResetPasswordEmailRequest(trimmedEmail);
+      setPendingResetEmail(trimmedEmail);
+      setPendingResetEmailMasked(typeof payload?.maskedEmail === "string" ? payload.maskedEmail.trim() : trimmedEmail);
+      setResetCode("");
       setMsg(t("login.forgotSuccess"));
     } catch (error) {
       setMsg(error instanceof Error ? normalizeError(error.message) : t("login.requestFailed"));
+    } finally {
+      setPendingAction(null);
+    }
+  }
+
+  async function verifyResetCode() {
+    if (pendingAction) return;
+    setMsg("");
+
+    const email = pendingResetEmail.trim() || account.trim().toLowerCase();
+    if (!email || !email.includes("@")) return setMsg(t("login.inputEmailBeforeForgot"));
+    if (!resetCode.trim()) return setMsg(t("reset.invalidCode"));
+
+    setPendingAction("verify_reset_code");
+    try {
+      const response = await withTimeout(
+        fetch("/api/auth/reset-password/verify-code", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            accept: "application/json",
+          },
+          body: JSON.stringify({
+            email,
+            code: resetCode,
+          }),
+        }),
+      );
+      const payload = (await response.json().catch(() => null)) as { ok?: unknown; error?: unknown } | null;
+      if (!response.ok || payload?.ok !== true) {
+        const errorMessage = typeof payload?.error === "string" ? payload.error : t("login.requestFailed");
+        throw new Error(errorMessage);
+      }
+      window.location.href = "/reset-password";
+    } catch (error) {
+      setMsg(error instanceof Error ? normalizeResetCodeError(error.message) : t("reset.invalidCode"));
     } finally {
       setPendingAction(null);
     }
@@ -793,6 +873,31 @@ function LoginPageInner() {
         >
           {pendingAction === "forgot" ? t("common.sending") : t("login.forgot")}
         </button>
+
+        {pendingResetEmail ? (
+          <div className="space-y-2 rounded border border-slate-200 bg-slate-50 p-3">
+            <div className="text-sm text-gray-600">
+              {t("login.resetCodeLabel")}
+              {pendingResetEmailMasked ? <span className="ml-2 text-xs text-gray-500">{pendingResetEmailMasked}</span> : null}
+            </div>
+            <input
+              className="w-full rounded border p-2"
+              value={resetCode}
+              onChange={(event) => setResetCode(event.target.value)}
+              placeholder={t("login.resetCodePlaceholder")}
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+            />
+            <button
+              className="w-full rounded border bg-white px-3 py-2 hover:bg-gray-50 disabled:opacity-50"
+              onClick={verifyResetCode}
+              disabled={pendingAction !== null}
+            >
+              {pendingAction === "verify_reset_code" ? t("login.verifyingResetCode") : t("login.verifyResetCode")}
+            </button>
+          </div>
+        ) : null}
 
         {needConfirmEmail ? (
           <button
