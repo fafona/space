@@ -10328,7 +10328,14 @@ type GalleryEditorImage = {
 
   function editTypography() {
     const editor = activeEditorRef.current;
-    const currentRange = selectedRangeRef.current;
+    const liveSelection = typeof window !== "undefined" ? window.getSelection() : null;
+    const liveRange =
+      editor && liveSelection && liveSelection.rangeCount > 0 ? liveSelection.getRangeAt(0) : null;
+    const liveRangeInCurrentEditor = !!editor && !!liveRange && editor.contains(liveRange.commonAncestorContainer);
+    if (liveRangeInCurrentEditor && liveRange) {
+      updateSelectionRange(liveRange);
+    }
+    const currentRange = liveRangeInCurrentEditor && liveRange ? liveRange.cloneRange() : selectedRangeRef.current;
     const canUseEditor = !!editor && !!currentRange && editor.contains(currentRange.commonAncestorContainer);
     if (block.type === "search-bar" && !canUseEditor) {
       clearTypographyPreviewSession();
@@ -19915,6 +19922,10 @@ function EditorBlockHeader({
 }) {
   const anchorClassName =
     toolbarAnchorClassName ?? "absolute left-0 bottom-full mb-[2px] z-[80] flex items-end gap-3 w-max max-w-none";
+  function preserveEditorSelection(event: ReactMouseEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
   return (
     <div data-editor-toolbar className="relative h-0 overflow-visible pointer-events-auto">
       {isSelected ? (
@@ -19988,6 +19999,7 @@ function EditorBlockHeader({
           <div className="z-30 flex items-center gap-2 flex-nowrap overflow-visible pr-1 pb-1">
             <button
               className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50 shrink-0 whitespace-nowrap"
+              onMouseDown={preserveEditorSelection}
               onClick={(e) => {
                 e.stopPropagation();
                 onEditTypography();
