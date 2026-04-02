@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
   getBlocksSnapshot,
@@ -1187,10 +1187,25 @@ export default function SuperAdminClient() {
   const [supportDisplayMode, setSupportDisplayMode] = useState<"name" | "id">("name");
   const [supportLastReadMap, setSupportLastReadMap] = useState<Record<string, string>>({});
   const supportMessagesViewportRef = useRef<HTMLDivElement>(null);
+  const supportReplyInputRef = useRef<HTMLTextAreaElement>(null);
   const supportLastMessageKeyRef = useRef("");
   const supportLastIncomingMerchantMessageKeyRef = useRef("");
   const supportThreadsRequestIdRef = useRef(0);
   const loadSupportThreadsActionRef = useRef<(options?: { silent?: boolean; suppressError?: boolean }) => Promise<void>>(async () => {});
+  const focusSupportReplyInput = useCallback(() => {
+    if (typeof window === "undefined") return;
+    window.requestAnimationFrame(() => {
+      const input = supportReplyInputRef.current;
+      if (!input || input.disabled) return;
+      input.focus({ preventScroll: true });
+      const caretPosition = input.value.length;
+      try {
+        input.setSelectionRange(caretPosition, caretPosition);
+      } catch {
+        // Ignore browsers that do not allow selection updates on this field.
+      }
+    });
+  }, []);
   const [manualUserDialogOpen, setManualUserDialogOpen] = useState(false);
   const [manualUserId, setManualUserId] = useState("");
   const [manualUserName, setManualUserName] = useState("");
@@ -1836,6 +1851,7 @@ export default function SuperAdminClient() {
         selectedSupportThread?.merchantId ||
         "-";
   const selectedSupportLatestMessage = selectedSupportThread?.messages[selectedSupportThread.messages.length - 1] ?? null;
+  const selectedSupportThreadMerchantId = selectedSupportThread?.merchantId?.trim() ?? "";
   const selectedSupportLatestMessageKey =
     selectedSupportThread && selectedSupportLatestMessage
       ? `${selectedSupportThread.merchantId}:${selectedSupportLatestMessage.id}:${selectedSupportLatestMessage.createdAt}`
@@ -2078,6 +2094,18 @@ export default function SuperAdminClient() {
       window.clearTimeout(timer);
     };
   }, [activeMenu, authed, hydrated, selectedSupportLatestMessageKey, selectedSupportThread]);
+  useEffect(() => {
+    if (!hydrated || !authed || activeMenu !== "support_messages" || supportSending) return;
+    if (!selectedSupportThreadMerchantId) return;
+    focusSupportReplyInput();
+  }, [
+    activeMenu,
+    authed,
+    focusSupportReplyInput,
+    hydrated,
+    selectedSupportThreadMerchantId,
+    supportSending,
+  ]);
   const selectedDraftSortConfig = useMemo<MerchantSortConfig>(
     () => ({
       recommendedCountryRank: parseRankInput(configRecommendedCountryRank),
@@ -6194,6 +6222,7 @@ export default function SuperAdminClient() {
 
                         <div className="shrink-0 space-y-3 border-t px-5 py-4">
                           <textarea
+                            ref={supportReplyInputRef}
                             className="h-32 w-full resize-none rounded-2xl border px-4 py-3 text-sm outline-none transition focus:border-slate-400"
                             placeholder="请输入要回复商户的内容"
                             value={supportReplyDraft}

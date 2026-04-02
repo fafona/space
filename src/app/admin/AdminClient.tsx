@@ -3703,9 +3703,24 @@ export default function AdminClient({
   const supportRequestIdRef = useRef(0);
   const supportSendingRef = useRef(false);
   const supportMessagesViewportRef = useRef<HTMLDivElement>(null);
+  const supportInputRef = useRef<HTMLTextAreaElement>(null);
   const supportLastIncomingAdminMessageKeyRef = useRef("");
   const supportLastVisibleMessageKeyRef = useRef("");
   const supportScrollToLatestPendingRef = useRef(false);
+  const focusSupportInput = useCallback(() => {
+    if (typeof window === "undefined") return;
+    window.requestAnimationFrame(() => {
+      const input = supportInputRef.current;
+      if (!input || input.disabled) return;
+      input.focus({ preventScroll: true });
+      const caretPosition = input.value.length;
+      try {
+        input.setSelectionRange(caretPosition, caretPosition);
+      } catch {
+        // Ignore browsers that do not allow setting selection on this element state.
+      }
+    });
+  }, []);
   const [merchantProfileAttention, setMerchantProfileAttention] = useState(false);
   const merchantProfileButtonRef = useRef<HTMLButtonElement>(null);
   const [topBarCollapsed, setTopBarCollapsed] = useState(false);
@@ -7615,6 +7630,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     };
   }, [isPlatformEditor, latestVisibleSupportMessageKey, supportDialogOpen, supportLoading]);
 
+  useEffect(() => {
+    if (isPlatformEditor || !supportDialogOpen || supportLoading || supportSending) return;
+    focusSupportInput();
+  }, [focusSupportInput, isPlatformEditor, supportDialogOpen, supportLoading, supportSending]);
+
   async function sendSupportMessage() {
     if (supportSending) return;
     const text = supportDraft.trim();
@@ -8732,6 +8752,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                     <div className="min-w-0 shrink-0 space-y-3 border-t px-5 py-4">
                       {supportError ? <div className="text-sm text-rose-600">{supportError}</div> : null}
                       <textarea
+                        ref={supportInputRef}
                         className="h-32 w-full max-w-full min-w-0 resize-none rounded-2xl border px-4 py-3 text-sm outline-none transition focus:border-slate-400"
                         placeholder="请输入你想留言的内容，例如遇到的问题、需要协助的事项或希望超级后台处理的内容。"
                         value={supportDraft}
