@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
-import { createClient, type EmailOtpType, type Session } from "@supabase/supabase-js";
+import { createClient, type EmailOtpType } from "@supabase/supabase-js";
 import { createSuperAdminEmailProofToken } from "@/lib/superAdminVerification";
-import { setResetRecoveryCookies } from "@/lib/resetPasswordRecoverySession";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -44,53 +43,65 @@ function resolveSafeRedirect(publicOrigin: string, rawRedirectTo: string | null,
 }
 
 function appendResultParams(url: URL, confirmed: boolean, message?: string) {
-  url.searchParams.set("confirmed", confirmed ? "1" : "0");
+  const nextUrl = new URL(url.toString());
+  nextUrl.searchParams.set("confirmed", confirmed ? "1" : "0");
   if (message) {
-    url.searchParams.set("confirm_message", message);
+    nextUrl.searchParams.set("confirm_message", message);
   } else {
-    url.searchParams.delete("confirm_message");
+    nextUrl.searchParams.delete("confirm_message");
   }
-  return url;
+  return nextUrl;
 }
 
 function appendSuperAdminProofParams(url: URL, confirmed: boolean) {
-  const challenge = (url.searchParams.get("superAdminChallenge") ?? "").trim();
-  if (!challenge || !confirmed) return url;
+  const nextUrl = new URL(url.toString());
+  const challenge = (nextUrl.searchParams.get("superAdminChallenge") ?? "").trim();
+  if (!challenge || !confirmed) return nextUrl;
   const proof = createSuperAdminEmailProofToken(challenge);
-  if (!proof) return url;
-  url.searchParams.set("superAdminVerified", "1");
-  url.searchParams.set("superAdminProof", proof);
-  return url;
+  if (!proof) return nextUrl;
+  nextUrl.searchParams.set("superAdminVerified", "1");
+  nextUrl.searchParams.set("superAdminProof", proof);
+  return nextUrl;
 }
 
-function appendRecoverySessionHash(url: URL, session: Session | null | undefined) {
-  const accessToken = String(session?.access_token ?? "").trim();
-  const refreshToken = String(session?.refresh_token ?? "").trim();
-  if (!accessToken || !refreshToken) return url;
-  const hashParams = new URLSearchParams();
-  hashParams.set("type", "recovery");
-  hashParams.set("access_token", accessToken);
-  hashParams.set("refresh_token", refreshToken);
-  if (typeof session?.expires_in === "number" && Number.isFinite(session.expires_in)) {
-    hashParams.set("expires_in", String(session.expires_in));
+function appendRecoveryRedirectParams(url: URL, input: { tokenHash?: string; code?: string }) {
+  const nextUrl = new URL(url.toString());
+  const tokenHash = String(input.tokenHash ?? "").trim();
+  const code = String(input.code ?? "").trim();
+  nextUrl.searchParams.set("type", "recovery");
+  if (tokenHash) {
+    nextUrl.searchParams.set("token_hash", tokenHash);
+  } else {
+    nextUrl.searchParams.delete("token_hash");
   }
-  if (typeof session?.expires_at === "number" && Number.isFinite(session.expires_at)) {
-    hashParams.set("expires_at", String(session.expires_at));
+  if (code) {
+    nextUrl.searchParams.set("code", code);
+  } else {
+    nextUrl.searchParams.delete("code");
   }
-  const tokenType = String(session?.token_type ?? "").trim();
-  if (tokenType) {
-    hashParams.set("token_type", tokenType);
-  }
-  url.hash = hashParams.toString();
-  return url;
+  nextUrl.searchParams.delete("token");
+  nextUrl.hash = "";
+  return nextUrl;
 }
 
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url);
   const tokenHash = (requestUrl.searchParams.get("token_hash") ?? requestUrl.searchParams.get("token") ?? "").trim();
+  const code = (requestUrl.searchParams.get("code") ?? "").trim();
   const rawType = (requestUrl.searchParams.get("type") ?? "").trim() as EmailOtpType;
   const publicOrigin = resolvePublicOrigin(request, requestUrl);
   const redirectTo = resolveSafeRedirect(publicOrigin, requestUrl.searchParams.get("redirect_to"), rawType || "signup");
+
+  if (rawType === "recovery") {
+    if (!tokenHash && !code) {
+      return NextResponse.redirect(
+        appendResultParams(redirectTo, false, "验证链接无效或已过期，请重新发送重置密码邮件。"),
+        { status: 303 },
+      );
+    }
+
+    return NextResponse.redirect(appendRecoveryRedirectParams(redirectTo, { tokenHash, code }), { status: 303 });
+  }
 
   if (!tokenHash || !SUPPORTED_TYPES.has(rawType)) {
     return NextResponse.redirect(
@@ -116,7 +127,7 @@ export async function GET(request: Request) {
     },
   });
 
-  const { data, error } = await supabase.auth.verifyOtp({
+  const { error } = await supabase.auth.verifyOtp({
     type: rawType,
     token_hash: tokenHash,
   });
@@ -128,18 +139,6 @@ export async function GET(request: Request) {
     );
   }
 
-  const successMessage = rawType === "recovery" ? "验证成功，请继续重置密码。" : "邮箱验证成功，请继续登录。";
-  const successRedirect = appendResultParams(redirectTo, true, successMessage);
-  if (rawType === "recovery") {
-    appendRecoverySessionHash(successRedirect, data.session);
-  }
-  const response = NextResponse.redirect(appendSuperAdminProofParams(successRedirect, true), { status: 303 });
-  if (rawType === "recovery") {
-    setResetRecoveryCookies(response, {
-      accessToken: String(data.session?.access_token ?? "").trim(),
-      refreshToken: String(data.session?.refresh_token ?? "").trim(),
-      maxAgeSeconds: data.session?.expires_in,
-    });
-  }
-  return response;
+  const successRedirect = appendResultParams(redirectTo, true, "邮箱验证成功，请继续登录。");
+  return NextResponse.redirect(appendSuperAdminProofParams(successRedirect, true), { status: 303 });
 }
