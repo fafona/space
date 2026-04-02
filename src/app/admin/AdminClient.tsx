@@ -5869,7 +5869,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     nextOffsetY: number,
     options?: { allowDragDownOverflow?: boolean },
   ) {
-    const element = document.querySelector<HTMLElement>(`[data-block-id="${blockId}"]`);
+    const blockRoot = document.querySelector<HTMLElement>(`[data-block-id="${blockId}"]`);
+    const element = blockRoot?.querySelector<HTMLElement>("[data-block-visual-boundary]") ?? blockRoot;
     if (!element) {
       return {
         x: nextOffsetX,
@@ -13108,6 +13109,7 @@ type GalleryEditorImage = {
         />
         <div
           ref={resizeTargetRef}
+          data-block-visual-boundary
           className={`relative rounded-xl shadow-sm pointer-events-auto ${isSelected ? "overflow-visible" : "overflow-hidden"} ${borderClass}`}
           onClick={onSelect}
           style={{
@@ -13177,6 +13179,7 @@ type GalleryEditorImage = {
         />
         <div
           ref={resizeTargetRef}
+          data-block-visual-boundary
           className={`${cardClass} relative !overflow-visible`}
           onClick={onSelect}
           style={blockPreviewShellStyle}
@@ -13609,6 +13612,7 @@ type GalleryEditorImage = {
         />
         <div
           ref={resizeTargetRef}
+          data-block-visual-boundary
           className={`${cardClass} relative`}
           onClick={onSelect}
           style={{ ...blockBackgroundStyle, ...blockSizeStyle, ...borderInlineStyle }}
@@ -14180,6 +14184,7 @@ type GalleryEditorImage = {
         />
         <div
           ref={resizeTargetRef}
+          data-block-visual-boundary
           className={`${navCardClass} ${isSelected ? "!overflow-visible" : ""}`}
           onClick={onSelect}
           style={{ ...blockBackgroundStyle, ...navBlockSizeStyle, ...borderInlineStyle }}
@@ -14380,6 +14385,7 @@ type GalleryEditorImage = {
         />
         <div
           ref={resizeTargetRef}
+          data-block-visual-boundary
           className={`${cardClass} relative`}
           onClick={onSelect}
           style={{ ...blockBackgroundStyle, ...blockSizeStyle, ...borderInlineStyle }}
@@ -14546,6 +14552,7 @@ type GalleryEditorImage = {
         />
         <div
           ref={resizeTargetRef}
+          data-block-visual-boundary
           className={`${cardClass} relative`}
           onClick={onSelect}
           style={{ ...blockBackgroundStyle, ...blockSizeStyle, ...borderInlineStyle }}
@@ -14646,6 +14653,7 @@ type GalleryEditorImage = {
     return (
       <section
         ref={resizeTargetRef}
+        data-block-visual-boundary
         data-block-id={block.id}
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
@@ -14735,6 +14743,7 @@ type GalleryEditorImage = {
         />
         <div
           ref={resizeTargetRef}
+          data-block-visual-boundary
           className={`${cardClass} relative`}
           onClick={onSelect}
           style={{ ...blockBackgroundStyle, ...blockSizeStyle, ...borderInlineStyle }}
@@ -14811,6 +14820,7 @@ type GalleryEditorImage = {
         />
         <div
           ref={resizeTargetRef}
+          data-block-visual-boundary
           className={`${cardClass} relative`}
           onClick={onSelect}
           style={{ ...blockBackgroundStyle, ...blockSizeStyle, ...borderInlineStyle }}
@@ -15867,6 +15877,7 @@ type GalleryEditorImage = {
         />
         <div
           ref={resizeTargetRef}
+          data-block-visual-boundary
           className={`${cardClass} relative`}
           onClick={onSelect}
           style={blockPreviewShellStyle}
@@ -17536,6 +17547,7 @@ type GalleryEditorImage = {
         />
         <div
           ref={resizeTargetRef}
+          data-block-visual-boundary
           className={`${cardClass} relative`}
           onClick={onSelect}
           style={blockPreviewShellStyle}
@@ -18484,6 +18496,7 @@ type GalleryEditorImage = {
         />
         <div
           ref={resizeTargetRef}
+          data-block-visual-boundary
           className={`${cardClass} relative`}
           onClick={onSelect}
           style={blockPreviewShellStyle}
@@ -18932,6 +18945,7 @@ type GalleryEditorImage = {
         />
         <div
           ref={resizeTargetRef}
+          data-block-visual-boundary
           className={`${cardClass} relative`}
           onClick={onSelect}
           style={blockPreviewShellStyle}
@@ -19571,6 +19585,7 @@ type GalleryEditorImage = {
         />
         <div
           ref={resizeTargetRef}
+          data-block-visual-boundary
           className={`${cardClass} relative`}
           onClick={onSelect}
           style={{ ...blockBackgroundStyle, ...blockSizeStyle, ...borderInlineStyle }}
