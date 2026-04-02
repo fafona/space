@@ -5,7 +5,7 @@ import { useI18n } from "@/components/I18nProvider";
 import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
 import { getBackgroundStyle } from "./backgroundStyle";
 import { getBlockBorderClass, getBlockBorderInlineStyle } from "./borderStyle";
-import { toRichHtml } from "./richText";
+import { stripInlineTextColorStylesFromHtml, toRichHtml } from "./richText";
 
 type NavItem = {
   id?: string;
@@ -210,6 +210,8 @@ export default function NavBlock(props: NavBlockProps) {
         <nav className={orientation === "vertical" ? "flex flex-col items-start gap-2" : "flex flex-wrap items-center gap-2"}>
           {localizedNavItems.map((item) => {
             const isActive = props.currentPageId === item.pageId;
+            const labelHtml = toRichHtml(item.label, "");
+            const renderedLabelHtml = isActive ? stripInlineTextColorStylesFromHtml(labelHtml) : labelHtml;
             return (
               <button
                 key={item.id}
@@ -220,7 +222,7 @@ export default function NavBlock(props: NavBlockProps) {
               >
                 <span
                   style={isActive ? navItemActiveLabelStyle : undefined}
-                  dangerouslySetInnerHTML={{ __html: toRichHtml(item.label, "") }}
+                  dangerouslySetInnerHTML={{ __html: renderedLabelHtml }}
                 />
               </button>
             );

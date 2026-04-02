@@ -7,9 +7,10 @@ const PUBLISHED_KEY = "merchant-space:homeBlocks:published:v1";
 const DRAFT_STORE_EVENT = "merchant-space:blocks-draft-changed";
 const PUBLISHED_STORE_EVENT = "merchant-space:blocks-published-changed";
 const PUBLISHED_HISTORY_KEY = "merchant-space:homeBlocks:published-history:v1";
+const LATEST_SAVED_DRAFT_SNAPSHOT_KEY = "merchant-space:latest-saved-draft-snapshot:v1";
 const PUBLISH_FAILURE_SNAPSHOTS_KEY = "merchant-space:publish-failure-snapshots:v1";
 const MAX_PUBLISH_FAILURE_SNAPSHOTS = 12;
-const MAX_PUBLISHED_HISTORY = 20;
+const MAX_PUBLISHED_HISTORY = 2;
 const MAX_RAW_STORAGE_LENGTH = 12_000_000;
 
 export type BlocksStoreScope = string | undefined;
@@ -29,6 +30,12 @@ type PublishedHistorySnapshot = {
   id: string;
   at: string;
   bytes: number;
+  blocks: Block[];
+};
+
+type SavedDraftSnapshot = {
+  id: string;
+  at: string;
   blocks: Block[];
 };
 
@@ -220,10 +227,43 @@ export function rollbackToPreviousPublishedVersion(scope?: BlocksStoreScope): Bl
   ensurePublishedHistorySeeded(scope);
   const current = readPublishedHistoryRaw(scope);
   if (current.length < 2) return null;
-  const [, target, ...rest] = current;
-  writePublishedHistoryRaw([target, ...rest], scope);
-  savePublishedBlocksToStorage(target.blocks, scope);
+  const [, target] = current;
   return target.blocks;
+}
+
+export function saveLatestDraftSnapshot(blocks: Block[], scope?: BlocksStoreScope) {
+  if (typeof window === "undefined") return;
+  try {
+    const sanitized = canonicalizeEditorBlocksSystemDefaults(sanitizeBlocksForRuntime(blocks).blocks);
+    const snapshot: SavedDraftSnapshot = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      at: new Date().toISOString(),
+      blocks: sanitized,
+    };
+    localStorage.setItem(scopedKey(LATEST_SAVED_DRAFT_SNAPSHOT_KEY, scope), JSON.stringify(snapshot));
+  } catch {
+    // Ignore local cache write failures.
+  }
+}
+
+export function readLatestDraftSnapshot(scope?: BlocksStoreScope): SavedDraftSnapshot | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(scopedKey(LATEST_SAVED_DRAFT_SNAPSHOT_KEY, scope));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") return null;
+    const record = parsed as Record<string, unknown>;
+    if (typeof record.id !== "string" || typeof record.at !== "string") return null;
+    if (!Array.isArray(record.blocks)) return null;
+    return {
+      id: record.id,
+      at: record.at,
+      blocks: canonicalizeEditorBlocksSystemDefaults(sanitizeBlocksForRuntime(record.blocks as Block[]).blocks),
+    };
+  } catch {
+    return null;
+  }
 }
 
 export function clearBlocksStorage(scope?: BlocksStoreScope) {

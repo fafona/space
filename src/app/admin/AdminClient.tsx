@@ -44,6 +44,8 @@ import {
   loadPublishedBlocksFromStorage,
   rollbackToPreviousPublishedVersion,
   recordPublishedVersion,
+  readLatestDraftSnapshot,
+  saveLatestDraftSnapshot,
   saveBlocksToStorage,
   savePublishedBlocksToStorage,
   savePublishFailureSnapshot,
@@ -70,7 +72,7 @@ import { buildPublishedMerchantProfilePatch } from "@/lib/merchantProfileBinding
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
 import { type PlatformSupportMessage, type PlatformSupportThread } from "@/lib/platformSupportInbox";
 import { BLOCK_BORDER_STYLE_OPTIONS, getBlockBorderClass, getBlockBorderInlineStyle } from "@/components/blocks/borderStyle";
-import { toRichHtml } from "@/components/blocks/richText";
+import { stripInlineTextColorStylesFromHtml, toRichHtml } from "@/components/blocks/richText";
 import {
   buildPersistedBlocksFromPlanConfig,
   cloneBlocks,
@@ -247,7 +249,34 @@ const FONT_FAMILY_OPTIONS = [
   "Copperplate, Papyrus, fantasy",
   "monospace",
 ];
-const FONT_SIZE_OPTIONS = [12, 14, 16, 18, 20, 24, 28, 32, 36, 48];
+
+function normalizeFontFamilyOptionKey(value: string) {
+  return value
+    .replaceAll('"', "")
+    .split(",")
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean)
+    .join(",");
+}
+
+function resolveFontFamilyOptionValue(value: string) {
+  const cleaned = value.replaceAll('"', "").trim();
+  if (!cleaned) return "";
+  const normalized = normalizeFontFamilyOptionKey(cleaned);
+  const exactMatch = FONT_FAMILY_OPTIONS.find((option) => normalizeFontFamilyOptionKey(option) === normalized);
+  if (exactMatch) return exactMatch;
+  const candidateFamilies = normalized.split(",").filter(Boolean);
+  for (const family of candidateFamilies) {
+    const matchedOption = FONT_FAMILY_OPTIONS.find((option) => {
+      const optionFamilies = normalizeFontFamilyOptionKey(option).split(",").filter(Boolean);
+      return optionFamilies[0] === family;
+    });
+    if (matchedOption) return matchedOption;
+  }
+  return cleaned;
+}
+const MAX_TYPOGRAPHY_FONT_SIZE = 80;
+const FONT_SIZE_OPTIONS = [12, 14, 16, 18, 20, 24, 28, 32, 36, 42, 48, 56, 64, 72, 80];
 const BLOCK_TYPE_LABELS: Record<Block["type"], string> = {
   common: "通用",
   button: "按钮",
@@ -2186,6 +2215,7 @@ type AdminClientProps = {
   frontendHref?: string;
   editorMode?: "merchant" | "platform";
   forceDesktopEditorSidebar?: boolean;
+  showPublishActions?: boolean;
   initialPublishedBlocks?: Block[];
   initialJustSignedIn?: boolean;
   startInLoadingState?: boolean;
@@ -3267,6 +3297,7 @@ export default function AdminClient({
   frontendHref = "/site/site-main",
   editorMode = "merchant",
   forceDesktopEditorSidebar = false,
+  showPublishActions,
   initialPublishedBlocks,
   initialJustSignedIn = false,
   startInLoadingState = false,
@@ -3908,18 +3939,18 @@ export default function AdminClient({
     }
     pushUndoSnapshot(createSnapshot());
     applyPersistedBlocksToEditor(previousPublished, { resetHistory: false });
-    showSavePublishTip("已回滚到上次成功发布版本");
+    showSavePublishTip("已切回上次成功发布版本");
   }
 
-  function restoreLatestFailedSnapshot() {
-    const snapshots = readPublishFailureSnapshots(storeScope);
-    if (snapshots.length === 0) {
-      showTip("暂无发布失败快照");
+  function restoreLatestSavedDraft() {
+    const latestDraftSnapshot = readLatestDraftSnapshot(storeScope);
+    if (!latestDraftSnapshot || latestDraftSnapshot.blocks.length === 0) {
+      showTip("暂无可恢复的草稿");
       return;
     }
     pushUndoSnapshot(createSnapshot());
-    applyPersistedBlocksToEditor(snapshots[0].blocks, { resetHistory: false });
-    showSavePublishTip("已恢复最近失败快照");
+    applyPersistedBlocksToEditor(latestDraftSnapshot.blocks, { resetHistory: false });
+    showSavePublishTip("已恢复上次保存的草稿");
   }
 
   async function resolveFirstMerchantHint() {
@@ -6447,8 +6478,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       editingPageIdRef.current,
       blocksRef.current,
     );
+    const desktopConfig = previewViewport === "desktop" ? mergedConfig : viewportStatesRef.current.desktop.planConfig;
+    const mobileConfig = previewViewport === "mobile" ? mergedConfig : viewportStatesRef.current.mobile.planConfig;
+    const combinedDraft = buildCombinedPersistedBlocks(desktopConfig, mobileConfig);
     setPlanConfig(mergedConfig);
-    persistDraftForConfigs(mergedConfig);
+    saveBlocksToStorage(combinedDraft, storeScope);
+    saveLatestDraftSnapshot(combinedDraft, storeScope);
     showSavePublishTip("草稿已保存");
   }
 
@@ -7433,6 +7468,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }, 0);
   const mobileFrontendPreviewPadding = Math.max(120, Math.max(0, maxBlockOffsetY) + 100);
   const shouldUseDesktopEditorSidebar = forceDesktopEditorSidebar || isPlatformEditor || isDesktopEditorSidebar;
+  const shouldShowPublishActions = showPublishActions ?? !isPlatformEditor;
   const planTemplateKeyword = planTemplateSearch.trim().toLowerCase();
   const filteredPlanTemplates = planTemplates.filter((template) => {
     if (!matchPlanTemplateCategory(template, planTemplateFilter)) return false;
@@ -7862,7 +7898,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                     />
                   </div>
 
-                  {!isPlatformEditor ? (
+                  {shouldShowPublishActions ? (
                     <>
                       <div className="h-px w-full bg-gray-200 hidden lg:block" />
                       <div className="flex items-center gap-2 flex-wrap lg:flex-col lg:items-stretch">
@@ -7875,9 +7911,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                           </button>
                           <button
                             className="px-3 py-2 rounded border bg-white hover:bg-gray-50"
-                            onClick={restoreLatestFailedSnapshot}
+                            onClick={restoreLatestSavedDraft}
                           >
-                            {"恢复失败草稿"}
+                            {"恢复草稿"}
                           </button>
                           <button
                             className={`px-3 py-2 rounded bg-black text-white disabled:opacity-50 ${shouldUseDesktopEditorSidebar ? "col-span-2" : ""}`}
@@ -9224,7 +9260,7 @@ type GalleryEditorImage = {
   const [typoBold, setTypoBold] = useState(false);
   const [typoItalic, setTypoItalic] = useState(false);
   const [typoUnderline, setTypoUnderline] = useState(false);
-  const [typoRememberLast, setTypoRememberLast] = useState(false);
+  const [, setTypoRememberLast] = useState(false);
   const [typographyTarget, setTypographyTarget] = useState<"editor" | "button-controls" | "search-controls" | "merchant-controls">("editor");
   const [imageSettingsOpen, setImageSettingsOpen] = useState(false);
   const [borderSettingsOpen, setBorderSettingsOpen] = useState(false);
@@ -10202,7 +10238,7 @@ type GalleryEditorImage = {
     () =>
       ({
         fontFamily: typoFontFamily,
-        fontSize: Math.max(8, Math.min(96, Number(typoFontSize) || 16)),
+        fontSize: Math.max(8, Math.min(MAX_TYPOGRAPHY_FONT_SIZE, Number(typoFontSize) || 16)),
         fontColor: typoFontColor,
         bold: typoBold,
         italic: typoItalic,
@@ -10213,11 +10249,62 @@ type GalleryEditorImage = {
 
   function setTypographyDialogValues(next: TypographyDialogValues) {
     setTypoFontFamily(next.fontFamily);
-    setTypoFontSize(next.fontSize);
+    setTypoFontSize(Math.max(8, Math.min(MAX_TYPOGRAPHY_FONT_SIZE, Math.round(next.fontSize) || 16)));
     setTypoFontColor(next.fontColor);
     setTypoBold(next.bold);
     setTypoItalic(next.italic);
     setTypoUnderline(next.underline);
+  }
+
+  function readTypographyDialogValuesFromSelection(
+    editor: HTMLDivElement,
+    range: Range | null,
+  ): TypographyDialogValues {
+    const rangeInCurrentEditor = !!range && editor.contains(range.commonAncestorContainer);
+    const selectedNode = (rangeInCurrentEditor ? range.commonAncestorContainer : editor) as HTMLElement;
+    const element = selectedNode.nodeType === Node.ELEMENT_NODE ? selectedNode : selectedNode.parentElement;
+    const computedStyle = element ? window.getComputedStyle(element) : null;
+
+    const readInlineStyle = (pick: (node: HTMLElement) => string) => {
+      let current = element;
+      while (current && editor.contains(current)) {
+        const value = pick(current).trim();
+        if (value) return value;
+        current = current.parentElement;
+      }
+      return "";
+    };
+
+    const inlineFontFamily = readInlineStyle((node) => node.style.fontFamily);
+    const inlineFontSize = readInlineStyle((node) => node.style.fontSize);
+    const inlineColor = readInlineStyle((node) => node.style.color);
+    const inlineBackgroundImage = readInlineStyle((node) => node.style.backgroundImage);
+    const inlineFontWeight = readInlineStyle((node) => node.style.fontWeight);
+    const inlineFontStyle = readInlineStyle((node) => node.style.fontStyle);
+    const inlineTextDecoration = readInlineStyle((node) => node.style.textDecoration);
+
+    const resolvedFontColor =
+      inlineBackgroundImage && inlineBackgroundImage !== "none"
+        ? inlineBackgroundImage
+        : inlineColor || computedStyle?.color || "#111111";
+
+    return {
+      fontFamily: resolveFontFamilyOptionValue(inlineFontFamily || computedStyle?.fontFamily || ""),
+      fontSize: Math.max(
+        8,
+        Math.min(
+          MAX_TYPOGRAPHY_FONT_SIZE,
+          Math.round(Number.parseFloat(inlineFontSize || computedStyle?.fontSize || "16")) || 16,
+        ),
+      ),
+      fontColor: resolvedFontColor,
+      bold:
+        (inlineFontWeight || computedStyle?.fontWeight || "").toString() === "700" ||
+        inlineFontWeight === "bold" ||
+        computedStyle?.fontWeight === "bold",
+      italic: (inlineFontStyle || computedStyle?.fontStyle || "") === "italic",
+      underline: (inlineTextDecoration || computedStyle?.textDecorationLine || "").includes("underline"),
+    } satisfies TypographyDialogValues;
   }
 
   function buildBlockLevelTypographyPatch(values: TypographyDialogValues): Partial<Block["props"]> {
@@ -10347,7 +10434,7 @@ type GalleryEditorImage = {
       setTypoFontFamily((block.props.fontFamily ?? "").trim());
       setTypoFontSize(
         typeof block.props.fontSize === "number" && Number.isFinite(block.props.fontSize)
-          ? Math.max(8, Math.min(96, Math.round(block.props.fontSize)))
+          ? Math.max(8, Math.min(MAX_TYPOGRAPHY_FONT_SIZE, Math.round(block.props.fontSize)))
           : 16,
       );
       setTypoFontColor((block.props.fontColor ?? "").trim() || "#111111");
@@ -10364,7 +10451,7 @@ type GalleryEditorImage = {
       setTypoFontFamily((block.props.fontFamily ?? "").trim());
       setTypoFontSize(
         typeof block.props.fontSize === "number" && Number.isFinite(block.props.fontSize)
-          ? Math.max(8, Math.min(96, Math.round(block.props.fontSize)))
+          ? Math.max(8, Math.min(MAX_TYPOGRAPHY_FONT_SIZE, Math.round(block.props.fontSize)))
           : 16,
       );
       setTypoFontColor((block.props.fontColor ?? "").trim() || "#111111");
@@ -10381,7 +10468,7 @@ type GalleryEditorImage = {
       setTypoFontFamily((block.props.fontFamily ?? "").trim());
       setTypoFontSize(
         typeof block.props.fontSize === "number" && Number.isFinite(block.props.fontSize)
-          ? Math.max(8, Math.min(96, Math.round(block.props.fontSize)))
+          ? Math.max(8, Math.min(MAX_TYPOGRAPHY_FONT_SIZE, Math.round(block.props.fontSize)))
           : 16,
       );
       setTypoFontColor((block.props.fontColor ?? "").trim() || "#111111");
@@ -10398,24 +10485,7 @@ type GalleryEditorImage = {
       return;
     }
 
-    const dialogValuesFromSelection = (() => {
-      if (typoRememberLast) {
-        return getCurrentTypographyDialogValues();
-      }
-      const range = selectedRangeRef.current;
-      const rangeInCurrentEditor = !!range && editor.contains(range.commonAncestorContainer);
-      const selectedNode = (rangeInCurrentEditor ? range.commonAncestorContainer : editor) as HTMLElement;
-      const element = selectedNode.nodeType === Node.ELEMENT_NODE ? selectedNode : selectedNode.parentElement;
-      const style = element ? window.getComputedStyle(element) : null;
-      return {
-        fontFamily: style?.fontFamily?.replaceAll('"', "") ?? "",
-        fontSize: Math.round(Number.parseFloat(style?.fontSize ?? "16")) || 16,
-        fontColor: style?.color ?? "#111111",
-        bold: (style?.fontWeight ?? "").toString() === "700" || style?.fontWeight === "bold",
-        italic: style?.fontStyle === "italic",
-        underline: (style?.textDecorationLine ?? "").includes("underline"),
-      } satisfies TypographyDialogValues;
-    })();
+    const dialogValuesFromSelection = readTypographyDialogValuesFromSelection(editor, currentRange);
     typographyDialogInitialValuesRef.current = dialogValuesFromSelection;
     typographyEditorSnapshotRef.current = {
       html: editor.innerHTML,
@@ -10423,15 +10493,7 @@ type GalleryEditorImage = {
     };
     typographyPreviewAppliedRef.current = false;
 
-    if (typoRememberLast) {
-      setTypographyDialogValues(dialogValuesFromSelection);
-      setTypographyTarget("editor");
-      setTypographyDialogOpen(true);
-      return;
-    }
-
     setTypographyDialogValues(dialogValuesFromSelection);
-    setTypoRememberLast(true);
     setTypographyTarget("editor");
     setTypographyDialogOpen(true);
   }
@@ -13795,25 +13857,30 @@ type GalleryEditorImage = {
                 ))}
               </div>
               <div className={orientation === "vertical" ? "flex flex-col items-start gap-2 pt-1" : "flex flex-wrap gap-2 pt-1"}>
-                {localizedNavItems.map((item) => (
-                  <button
-                    key={`preview-${item.id}`}
-                    type="button"
-                    className={`${navItemButtonClass} ${getBlockBorderClass(item.pageId === selectedNavPageId ? navItemActiveBorderStyle : navItemBorderStyle)} ${
-                      item.pageId === selectedNavPageId ? "" : "hover:brightness-[0.98]"
-                    }`}
-                    style={item.pageId === selectedNavPageId ? navItemActiveButtonStyle : navItemButtonStyle}
-                    onClick={() => {
-                      onSelect();
-                      setPreviewNavPageId(item.pageId);
-                    }}
-                  >
-                    <span
-                      style={item.pageId === selectedNavPageId ? navItemActiveLabelStyle : undefined}
-                      dangerouslySetInnerHTML={{ __html: toRichHtml(item.label, "") }}
-                    />
-                  </button>
-                ))}
+                {localizedNavItems.map((item) => {
+                  const isActive = item.pageId === selectedNavPageId;
+                  const labelHtml = toRichHtml(item.label, "");
+                  const renderedLabelHtml = isActive ? stripInlineTextColorStylesFromHtml(labelHtml) : labelHtml;
+                  return (
+                    <button
+                      key={`preview-${item.id}`}
+                      type="button"
+                      className={`${navItemButtonClass} ${getBlockBorderClass(isActive ? navItemActiveBorderStyle : navItemBorderStyle)} ${
+                        isActive ? "" : "hover:brightness-[0.98]"
+                      }`}
+                      style={isActive ? navItemActiveButtonStyle : navItemButtonStyle}
+                      onClick={() => {
+                        onSelect();
+                        setPreviewNavPageId(item.pageId);
+                      }}
+                    >
+                      <span
+                        style={isActive ? navItemActiveLabelStyle : undefined}
+                        dangerouslySetInnerHTML={{ __html: renderedLabelHtml }}
+                      />
+                    </button>
+                  );
+                })}
               </div>
             </div>
           ) : (
@@ -13825,25 +13892,30 @@ type GalleryEditorImage = {
                 />
               ) : null}
               <div className={orientation === "vertical" ? "flex flex-col items-start gap-2" : "flex flex-wrap gap-2"}>
-                {localizedNavItems.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    className={`${navItemButtonClass} ${getBlockBorderClass(item.pageId === selectedNavPageId ? navItemActiveBorderStyle : navItemBorderStyle)} ${
-                      item.pageId === selectedNavPageId ? "" : "hover:brightness-[0.98]"
-                    }`}
-                    style={item.pageId === selectedNavPageId ? navItemActiveButtonStyle : navItemButtonStyle}
-                    onClick={() => {
-                      onSelect();
-                      setPreviewNavPageId(item.pageId);
-                    }}
-                  >
-                    <span
-                      style={item.pageId === selectedNavPageId ? navItemActiveLabelStyle : undefined}
-                      dangerouslySetInnerHTML={{ __html: toRichHtml(item.label, "") }}
-                    />
-                  </button>
-                ))}
+                {localizedNavItems.map((item) => {
+                  const isActive = item.pageId === selectedNavPageId;
+                  const labelHtml = toRichHtml(item.label, "");
+                  const renderedLabelHtml = isActive ? stripInlineTextColorStylesFromHtml(labelHtml) : labelHtml;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={`${navItemButtonClass} ${getBlockBorderClass(isActive ? navItemActiveBorderStyle : navItemBorderStyle)} ${
+                        isActive ? "" : "hover:brightness-[0.98]"
+                      }`}
+                      style={isActive ? navItemActiveButtonStyle : navItemButtonStyle}
+                      onClick={() => {
+                        onSelect();
+                        setPreviewNavPageId(item.pageId);
+                      }}
+                    >
+                      <span
+                        style={isActive ? navItemActiveLabelStyle : undefined}
+                        dangerouslySetInnerHTML={{ __html: renderedLabelHtml }}
+                      />
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}

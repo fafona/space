@@ -47,6 +47,7 @@ export default function SuperAdminEditorClient({ initialPublishedBlocks }: Super
       <AdminClient
         editorMode="platform"
         forceDesktopEditorSidebar
+        showPublishActions
         forcedScope={PLATFORM_EDITOR_SCOPE}
         editorTitle={`Portal Visual Editor · ${SUPER_ADMIN_EDITOR_BUILD_TOKEN}`}
         frontendHref={buildPlatformHomeHref()}
