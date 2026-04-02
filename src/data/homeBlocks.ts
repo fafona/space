@@ -217,6 +217,7 @@ type ContactProps = BackgroundEditableProps &
     contactLayout?: Partial<
       Record<
         | "phone"
+        | "address"
         | "email"
         | "whatsapp"
         | "wechat"

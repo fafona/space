@@ -99,6 +99,7 @@ import {
 import { type SuperAdminTrustedDeviceRecord } from "@/lib/superAdminTrustedDevices";
 import { useHydrated } from "@/lib/useHydrated";
 import { uploadImageDataUrlToPublicStorage } from "@/lib/publicAssetUpload";
+import { useNotificationSound } from "@/lib/useNotificationSound";
 
 const SUPPORT_THREADS_POLL_INTERVAL_MS = 5000;
 const SUPER_ADMIN_SUPPORT_LAST_READ_STORAGE_KEY_PREFIX = "super-admin-support-last-read:";
@@ -1183,6 +1184,7 @@ export default function SuperAdminClient() {
   const [supportLastReadMap, setSupportLastReadMap] = useState<Record<string, string>>({});
   const supportMessagesViewportRef = useRef<HTMLDivElement>(null);
   const supportLastMessageKeyRef = useRef("");
+  const supportLastIncomingMerchantMessageKeyRef = useRef("");
   const supportThreadsRequestIdRef = useRef(0);
   const loadSupportThreadsActionRef = useRef<(options?: { silent?: boolean; suppressError?: boolean }) => Promise<void>>(async () => {});
   const [manualUserDialogOpen, setManualUserDialogOpen] = useState(false);
@@ -1210,6 +1212,7 @@ export default function SuperAdminClient() {
   const [releaseChecklistState, setReleaseChecklistState] = useState<Record<string, boolean>>(() =>
     loadReleaseChecklistStateFromStorage(),
   );
+  const playNotificationSound = useNotificationSound();
   const platformMerchantSnapshotPayload = useMemo(
     () => buildPlatformMerchantSnapshotPayloadFromSites(state.sites, state.homeLayout.merchantDefaultSortRule),
     [state.sites, state.homeLayout.merchantDefaultSortRule],
@@ -1833,6 +1836,30 @@ export default function SuperAdminClient() {
     selectedSupportThread && selectedSupportLatestMessage
       ? `${selectedSupportThread.merchantId}:${selectedSupportLatestMessage.id}:${selectedSupportLatestMessage.createdAt}`
       : "";
+  const latestIncomingMerchantMessageKey = useMemo(() => {
+    let latestKey = "";
+    let latestTimestamp = 0;
+
+    supportThreads.forEach((thread) => {
+      for (let index = thread.messages.length - 1; index >= 0; index -= 1) {
+        const message = thread.messages[index];
+        if (!message || message.sender !== "merchant") continue;
+        const timestamp = new Date(message.createdAt).getTime();
+        const normalizedTimestamp = Number.isFinite(timestamp) ? timestamp : 0;
+        const key = `${thread.merchantId}:${message.id}:${message.createdAt}`;
+        if (
+          normalizedTimestamp > latestTimestamp ||
+          (normalizedTimestamp === latestTimestamp && key > latestKey)
+        ) {
+          latestTimestamp = normalizedTimestamp;
+          latestKey = key;
+        }
+        break;
+      }
+    });
+
+    return latestKey;
+  }, [supportThreads]);
   const selectedSupportLatestMerchantMessageAt =
     selectedSupportLatestMessage?.sender === "merchant"
       ? normalizeSupportMessageTimestamp(selectedSupportLatestMessage.createdAt)
@@ -1993,6 +2020,17 @@ export default function SuperAdminClient() {
   useEffect(() => {
     setSupportReplyDraft("");
   }, [supportSelectedMerchantId]);
+  useEffect(() => {
+    if (!hydrated || !authed) {
+      supportLastIncomingMerchantMessageKeyRef.current = "";
+      return;
+    }
+    if (!latestIncomingMerchantMessageKey) return;
+    const previousKey = supportLastIncomingMerchantMessageKeyRef.current;
+    supportLastIncomingMerchantMessageKeyRef.current = latestIncomingMerchantMessageKey;
+    if (!previousKey || previousKey === latestIncomingMerchantMessageKey) return;
+    void playNotificationSound();
+  }, [authed, hydrated, latestIncomingMerchantMessageKey, playNotificationSound]);
   useEffect(() => {
     if (!hydrated || !authed || activeMenu !== "support_messages" || typeof window === "undefined") return;
     const merchantId = selectedSupportThread?.merchantId?.trim();

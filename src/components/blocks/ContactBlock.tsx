@@ -13,6 +13,7 @@ import { toRichHtml } from "./richText";
 
 type ContactLayoutKey =
   | "phone"
+  | "address"
   | "email"
   | "whatsapp"
   | "wechat"
@@ -58,6 +59,7 @@ type ContactEntry = {
   href: string | null;
   iconUrl: string;
   buttonClass: string;
+  minHeight?: number;
 };
 
 function looksLikeUrl(value: string) {
@@ -165,9 +167,9 @@ function clampWidth(value: unknown, fallback = 360) {
   return Math.max(200, Math.round(value));
 }
 
-function clampHeight(value: unknown, fallback = 42) {
-  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
-  return Math.max(32, Math.round(value));
+function clampHeight(value: unknown, fallback = 42, min = 32) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return Math.max(min, fallback);
+  return Math.max(min, Math.round(value));
 }
 
 function clampMapZoom(value: unknown, fallback = 5) {
@@ -274,8 +276,18 @@ export default function ContactBlock(props: ContactBlockProps) {
   const resolvedPhoneList = phoneList.length > 0 ? phoneList : fallbackPhone ? [fallbackPhone] : [];
   const phoneText = resolvedPhoneList.join(" / ");
   const primaryPhone = resolvedPhoneList[0] ?? "";
+  const addressEntryMinHeight = Math.max(42, addressList.length * 44 || 42);
 
   const entries: ContactEntry[] = [
+    {
+      key: "address" as ContactLayoutKey,
+      label: "地址",
+      value: addressList.join("\n"),
+      href: null,
+      iconUrl: "",
+      buttonClass: "",
+      minHeight: addressEntryMinHeight,
+    },
     {
       key: "phone" as ContactLayoutKey,
       label: "电话",
@@ -384,12 +396,15 @@ export default function ContactBlock(props: ContactBlockProps) {
 
   const withPos = entries.map((item, index) => {
     const p = props.contactLayout?.[item.key];
+    const minHeight = typeof item.minHeight === "number" && Number.isFinite(item.minHeight) ? Math.max(32, Math.round(item.minHeight)) : 32;
+    const defaultHeight = Math.max(minHeight, 42);
     return {
       ...item,
       x: clampCoord(p?.x ?? 0),
       y: clampCoord(p?.y ?? index * 48),
       width: clampWidth(p?.width),
-      height: clampHeight(p?.height),
+      height: clampHeight(p?.height, defaultHeight, minHeight),
+      minHeight,
     };
   });
   const contentHeight = Math.max(170, ...withPos.map((item) => item.y + item.height));
@@ -415,6 +430,93 @@ export default function ContactBlock(props: ContactBlockProps) {
     }, 3200);
   };
 
+  const renderAddressRows = () => (
+    <div className="min-w-0 flex-1 space-y-2 overflow-hidden">
+      {addressList.map((line, idx) => {
+        const isActive = idx === safeAddressIndex;
+        return (
+          <div key={`${line}-${idx}`} className="flex min-w-0 items-start gap-2">
+            <button
+              type="button"
+              className={`min-w-0 flex-1 rounded px-1 py-0.5 text-left whitespace-pre-wrap break-words ${isActive ? "bg-black/5" : ""}`}
+              style={contactTypographyStyle}
+              onClick={() => {
+                setActiveAddressIndex(idx);
+                if (!showMap) setShowMap(true);
+              }}
+            >
+              {`地址${addressList.length > 1 ? idx + 1 : ""}：${line}`}
+            </button>
+            {mapEmbedUrl ? (
+              <button
+                type="button"
+                className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-white shadow-sm hover:opacity-90 ${
+                  isActive ? "bg-[#EA4335]" : "bg-[#EA4335]/80"
+                }`}
+                onClick={() => {
+                  trackContactClick("address");
+                  setActiveAddressIndex(idx);
+                  setShowMap((prev) => (isActive ? !prev : true));
+                }}
+                aria-label="显示地图位置"
+                title="显示地图位置"
+              >
+                <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" aria-hidden="true">
+                  <path d="M12 2a7 7 0 0 0-7 7c0 4.74 6.14 11.84 6.4 12.14a.8.8 0 0 0 1.2 0C12.86 20.84 19 13.74 19 9a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5z" />
+                </svg>
+              </button>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  const renderContactEntryContent = (item: (typeof withPos)[number]) => {
+    if (item.key === "address") {
+      return renderAddressRows();
+    }
+    const opensInNewTab = !!item.href && /^https?:\/\//i.test(item.href);
+    return (
+      <>
+        <span className="min-w-0 flex-1 break-all whitespace-pre-wrap" style={contactTypographyStyle}>
+          {item.label}：{item.value}
+        </span>
+        {item.href ? (
+          <a
+            href={item.href}
+            target={opensInNewTab ? "_blank" : undefined}
+            rel={opensInNewTab ? "noreferrer noopener" : undefined}
+            className={item.buttonClass}
+            onClick={() => {
+              trackContactClick(item.key);
+              if (item.key === "wechat") {
+                void navigator.clipboard?.writeText(item.value).then(
+                  () => {
+                    showTemporaryContactNotice(`已复制微信号 ${item.value}，如未直达联系人，请在微信中粘贴搜索。`);
+                  },
+                  () => {
+                    showTemporaryContactNotice(`请在微信中搜索：${item.value}`);
+                  },
+                );
+              }
+            }}
+            aria-label={item.key === "wechat" ? `打开微信并复制${item.label}` : `打开${item.label}`}
+            title={item.key === "wechat" ? `打开微信并复制${item.label}` : `打开${item.label}`}
+          >
+            {item.key === "phone" ? (
+              <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" aria-hidden="true">
+                <path d="M6.62 10.79a15.53 15.53 0 0 0 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1C10.4 21 3 13.6 3 4c0-.55.45-1 1-1h3.49c.55 0 1 .45 1 1 0 1.24.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.19 2.2z" />
+              </svg>
+            ) : (
+              <Image src={item.iconUrl} alt="" width={20} height={20} className="h-5 w-5 object-contain" />
+            )}
+          </a>
+        ) : null}
+      </>
+    );
+  };
+
   return (
     <section className="max-w-6xl mx-auto px-6 py-6" style={offsetStyle}>
       <div
@@ -427,48 +529,6 @@ export default function ContactBlock(props: ContactBlockProps) {
             __html: toRichHtml(props.heading, resolveLocalizedSystemDefaultText(props.heading, "联系方式", locale)),
           }}
         />
-        <div className="mt-2 space-y-2">
-          {addressList.length > 0 ? (
-            addressList.map((line, idx) => {
-              const isActive = idx === safeAddressIndex;
-              return (
-                <div key={`${line}-${idx}`} className="flex items-start gap-2">
-                  <button
-                    type="button"
-                    className={`text-left break-all flex-1 rounded px-1 py-0.5 ${isActive ? "bg-black/5" : ""}`}
-                    style={contactTypographyStyle}
-                    onClick={() => {
-                      setActiveAddressIndex(idx);
-                      if (!showMap) setShowMap(true);
-                    }}
-                  >
-                    {`地址${addressList.length > 1 ? idx + 1 : ""}：${line}`}
-                  </button>
-                  {mapEmbedUrl ? (
-                    <button
-                      type="button"
-                      className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-white shadow-sm hover:opacity-90 ${
-                        isActive ? "bg-[#EA4335]" : "bg-[#EA4335]/80"
-                      }`}
-                      onClick={() => {
-                        setActiveAddressIndex(idx);
-                        setShowMap((prev) => (isActive ? !prev : true));
-                      }}
-                      aria-label="显示地图位置"
-                      title="显示地图位置"
-                    >
-                      <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" aria-hidden="true">
-                        <path d="M12 2a7 7 0 0 0-7 7c0 4.74 6.14 11.84 6.4 12.14a.8.8 0 0 0 1.2 0C12.86 20.84 19 13.74 19 9a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5z" />
-                      </svg>
-                    </button>
-                  ) : null}
-                </div>
-              );
-            })
-          ) : (
-            <div className="break-all" style={contactTypographyStyle} dangerouslySetInnerHTML={{ __html: `地址：${toRichHtml(props.address, "中国")}` }} />
-          )}
-        </div>
         {showMap && mapEmbedUrl ? (
           <div className="mt-3 w-full overflow-hidden rounded-lg border border-gray-200">
             <iframe
@@ -485,45 +545,15 @@ export default function ContactBlock(props: ContactBlockProps) {
           style={{ minHeight: `${contentHeight}px`, width: `${contentWidth}px`, maxWidth: "100%" }}
         >
           {withPos.map((item) => {
-            const opensInNewTab = !!item.href && /^https?:\/\//i.test(item.href);
             return (
               <div
                 key={item.key}
-                className="absolute flex items-center justify-between gap-2 px-1 py-1 overflow-hidden"
+                className={`absolute flex gap-2 px-1 py-1 overflow-hidden ${
+                  item.key === "address" ? "items-start" : "items-center justify-between"
+                }`}
                 style={{ left: `${item.x}px`, top: `${item.y}px`, width: `${item.width}px`, height: `${item.height}px` }}
               >
-                <span className="min-w-0 break-all flex-1" style={contactTypographyStyle}>{item.label}：{item.value}</span>
-                {item.href ? (
-                  <a
-                    href={item.href}
-                    target={opensInNewTab ? "_blank" : undefined}
-                    rel={opensInNewTab ? "noreferrer noopener" : undefined}
-                    className={item.buttonClass}
-                    onClick={() => {
-                      trackContactClick(item.key);
-                      if (item.key === "wechat") {
-                        void navigator.clipboard?.writeText(item.value).then(
-                          () => {
-                            showTemporaryContactNotice(`已复制微信号 ${item.value}，如未直达联系人，请在微信中粘贴搜索。`);
-                          },
-                          () => {
-                            showTemporaryContactNotice(`请在微信中搜索：${item.value}`);
-                          },
-                        );
-                      }
-                    }}
-                    aria-label={item.key === "wechat" ? `打开微信并复制${item.label}` : `打开${item.label}`}
-                    title={item.key === "wechat" ? `打开微信并复制${item.label}` : `打开${item.label}`}
-                  >
-                    {item.key === "phone" ? (
-                      <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" aria-hidden="true">
-                        <path d="M6.62 10.79a15.53 15.53 0 0 0 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1C10.4 21 3 13.6 3 4c0-.55.45-1 1-1h3.49c.55 0 1 .45 1 1 0 1.24.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.19 2.2z" />
-                      </svg>
-                    ) : (
-                      <Image src={item.iconUrl} alt="" width={20} height={20} className="h-5 w-5 object-contain" />
-                    )}
-                  </a>
-                ) : null}
+                {renderContactEntryContent(item)}
               </div>
             );
           })}

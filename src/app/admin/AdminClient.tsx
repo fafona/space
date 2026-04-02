@@ -84,6 +84,7 @@ import {
 } from "@/lib/pagePlans";
 import { buildPublicBlockId } from "@/lib/blockPublicId";
 import { countInlineAssets, hasInlineAssets } from "@/lib/inlineAssetStats";
+import { useNotificationSound } from "@/lib/useNotificationSound";
 import {
   PLAN_TEMPLATE_FILTER_OPTIONS,
   type PlanTemplateFilterCategory,
@@ -228,14 +229,14 @@ const BACKGROUND_POSITION_OPTIONS = [
   "right bottom",
 ];
 const FONT_FAMILY_OPTIONS = [
-  "Microsoft YaHei, SimHei, sans-serif",
-  "SimSun, serif",
-  "SimHei, sans-serif",
-  "KaiTi, STKaiti, serif",
-  "FangSong, STFangsong, serif",
-  "YouYuan, sans-serif",
-  "STXingkai, KaiTi, serif",
-  "STCaiyun, SimHei, sans-serif",
+  "Microsoft YaHei, Segoe UI, SimHei, sans-serif",
+  "SimSun, Times New Roman, serif",
+  "SimHei, Arial, sans-serif",
+  "KaiTi, STKaiti, Georgia, serif",
+  "FangSong, STFangsong, Georgia, serif",
+  "YouYuan, Trebuchet MS, sans-serif",
+  "STXingkai, Brush Script MT, KaiTi, cursive, serif",
+  "STCaiyun, Papyrus, SimHei, fantasy, sans-serif",
   "Arial, Helvetica, sans-serif",
   "Times New Roman, Times, serif",
   "Georgia, serif",
@@ -3377,6 +3378,7 @@ export default function AdminClient({
   const supportRequestIdRef = useRef(0);
   const supportSendingRef = useRef(false);
   const supportMessagesViewportRef = useRef<HTMLDivElement>(null);
+  const supportLastIncomingAdminMessageKeyRef = useRef("");
   const supportLastVisibleMessageKeyRef = useRef("");
   const supportScrollToLatestPendingRef = useRef(false);
   const [merchantProfileAttention, setMerchantProfileAttention] = useState(false);
@@ -3424,6 +3426,7 @@ export default function AdminClient({
     merchantId: "",
     email: null,
   });
+  const playNotificationSound = useNotificationSound();
   const merchantSessionIdentityTaskRef = useRef<Promise<{ merchantId: string; email: string | null } | null> | null>(null);
   const themeBaseBlocksByPageRef = useRef<Map<string, Block[]>>(new Map());
   const backgroundLayerRef = useRef<HTMLDivElement>(null);
@@ -7026,12 +7029,15 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const merchantDisplayName = !isPlatformEditor
     ? ((editingSite?.merchantName ?? "").trim() || "未设置商户名称")
     : "";
+  const latestSupportAdminMessage = [...(supportThread?.messages ?? [])]
+    .reverse()
+    .find((message) => message.sender === "super_admin") ?? null;
+  const latestSupportAdminMessageKey = latestSupportAdminMessage
+    ? `${latestSupportAdminMessage.id}:${latestSupportAdminMessage.createdAt}`
+    : "";
   const supportReadMerchantId = (supportThread?.merchantId || editingSiteId || "").trim();
   const latestSupportAdminMessageAt = normalizeSupportMessageTimestamp(
-    [...(supportThread?.messages ?? [])]
-      .reverse()
-      .find((message) => message.sender === "super_admin")
-      ?.createdAt,
+    latestSupportAdminMessage?.createdAt,
   );
   const visibleSupportMessages = [
     ...(supportThread?.messages ?? []).map((message) => ({
@@ -7211,12 +7217,21 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     if (isPlatformEditor || typeof window === "undefined") return;
     if (!supportReadMerchantId) {
       setSupportLastReadAt("");
+      supportLastIncomingAdminMessageKeyRef.current = "";
       return;
     }
     setSupportLastReadAt(
       normalizeSupportMessageTimestamp(localStorage.getItem(buildSupportLastReadStorageKey(supportReadMerchantId))),
     );
   }, [isPlatformEditor, supportReadMerchantId]);
+
+  useEffect(() => {
+    if (isPlatformEditor || !latestSupportAdminMessageKey) return;
+    const previousKey = supportLastIncomingAdminMessageKeyRef.current;
+    supportLastIncomingAdminMessageKeyRef.current = latestSupportAdminMessageKey;
+    if (!previousKey || previousKey === latestSupportAdminMessageKey) return;
+    void playNotificationSound();
+  }, [isPlatformEditor, latestSupportAdminMessageKey, playNotificationSound]);
 
   useEffect(() => {
     if (isPlatformEditor || !supportDialogOpen || typeof window === "undefined") return;
@@ -9349,6 +9364,7 @@ type GalleryEditorImage = {
   const [activeContactEntryKeys, setActiveContactEntryKeys] = useState<
     Array<
       | "phone"
+      | "address"
       | "email"
       | "whatsapp"
       | "wechat"
@@ -12338,17 +12354,30 @@ type GalleryEditorImage = {
           </div>
           <div className="space-y-1">
             <div className="text-xs text-gray-600">字号</div>
-            <select
+            <input
+              type="number"
+              inputMode="numeric"
+              min={8}
+              max={120}
+              step={1}
+              list="merchant-card-typography-font-size-options"
               className="border p-2 rounded w-full text-sm"
-              value={String(merchantCardTypoFontSizeInput)}
-              onChange={(e) => setMerchantCardTypoFontSizeInput(Number(e.target.value))}
-            >
+              value={merchantCardTypoFontSizeInput}
+              onChange={(e) => {
+                const nextValue = Number.parseInt(e.target.value, 10);
+                if (!Number.isFinite(nextValue)) return;
+                setMerchantCardTypoFontSizeInput(Math.max(8, Math.min(120, nextValue)));
+              }}
+              onBlur={(e) => {
+                const nextValue = Number.parseInt(e.target.value, 10);
+                setMerchantCardTypoFontSizeInput(Math.max(8, Math.min(120, Number.isFinite(nextValue) ? nextValue : 16)));
+              }}
+            />
+            <datalist id="merchant-card-typography-font-size-options">
               {FONT_SIZE_OPTIONS.map((size) => (
-                <option key={`merchant-card-typo-size-${size}`} value={size}>
-                  {size}
-                </option>
+                <option key={`merchant-card-typo-size-${size}`} value={size} />
               ))}
-            </select>
+            </datalist>
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -12520,17 +12549,30 @@ type GalleryEditorImage = {
           </div>
           <div className="space-y-1">
             <div className="text-xs text-gray-600">{"字号"}</div>
-            <select
+            <input
+              type="number"
+              inputMode="numeric"
+              min={8}
+              max={MAX_TYPOGRAPHY_FONT_SIZE}
+              step={1}
+              list="typography-font-size-options"
               className="border p-2 rounded w-full text-sm"
-              value={String(typoFontSize)}
-              onChange={(e) => setTypoFontSize(Number(e.target.value))}
-            >
+              value={typoFontSize}
+              onChange={(e) => {
+                const nextValue = Number.parseInt(e.target.value, 10);
+                if (!Number.isFinite(nextValue)) return;
+                setTypoFontSize(Math.max(8, Math.min(MAX_TYPOGRAPHY_FONT_SIZE, nextValue)));
+              }}
+              onBlur={(e) => {
+                const nextValue = Number.parseInt(e.target.value, 10);
+                setTypoFontSize(Math.max(8, Math.min(MAX_TYPOGRAPHY_FONT_SIZE, Number.isFinite(nextValue) ? nextValue : 16)));
+              }}
+            />
+            <datalist id="typography-font-size-options">
               {FONT_SIZE_OPTIONS.map((size) => (
-                <option key={size} value={size}>
-                  {size}
-                </option>
+                <option key={size} value={size} />
               ))}
-            </select>
+            </datalist>
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -18661,6 +18703,7 @@ type GalleryEditorImage = {
   if (block.type === "contact") {
     type ContactEntryKey =
       | "phone"
+      | "address"
       | "email"
       | "whatsapp"
       | "wechat"
@@ -18692,7 +18735,15 @@ type GalleryEditorImage = {
       return [fallback];
     })();
     const contactAddresses = contactAddressEditorValues.map((item) => item.trim()).filter(Boolean);
+    const contactAddressEntryMinHeight = Math.max(42, contactAddresses.length * 44 || 42);
     const contactEntries = [
+      {
+        key: "address",
+        label: "地址",
+        value: contactAddresses.join("\n"),
+        platformLabel: "Address",
+        minHeight: contactAddressEntryMinHeight,
+      },
       { key: "phone", label: "电话", value: contactPhones.join(" / "), platformLabel: "Phone" },
       { key: "email", label: "Email", value: (block.props.email ?? "").trim(), platformLabel: "Email" },
       { key: "whatsapp", label: "WhatsApp", value: (block.props.whatsapp ?? "").trim(), platformLabel: "WhatsApp" },
@@ -18710,11 +18761,13 @@ type GalleryEditorImage = {
       .filter((item) => item.value)
       .map((item, index) => {
         const pos = contactLayout[item.key as keyof typeof contactLayout];
+        const minHeight = typeof item.minHeight === "number" && Number.isFinite(item.minHeight) ? Math.max(32, Math.round(item.minHeight)) : 32;
         const x = typeof pos?.x === "number" && Number.isFinite(pos.x) ? Math.max(0, Math.round(pos.x)) : 0;
         const y = typeof pos?.y === "number" && Number.isFinite(pos.y) ? Math.max(0, Math.round(pos.y)) : index * 48;
         const width = typeof pos?.width === "number" && Number.isFinite(pos.width) ? Math.max(200, Math.round(pos.width)) : 360;
-        const height = typeof pos?.height === "number" && Number.isFinite(pos.height) ? Math.max(32, Math.round(pos.height)) : 42;
-        return { ...item, x, y, width, height, minHeight: 32 };
+        const defaultHeight = Math.max(minHeight, 42);
+        const height = typeof pos?.height === "number" && Number.isFinite(pos.height) ? Math.max(minHeight, Math.round(pos.height)) : defaultHeight;
+        return { ...item, x, y, width, height, minHeight };
       });
     const contactCanvasHeight = Math.max(180, ...contactEntries.map((item) => item.y + item.height));
     const contactCanvasWidth = Math.max(280, ...contactEntries.map((item) => item.x + item.width));
@@ -18794,12 +18847,13 @@ type GalleryEditorImage = {
         const nextLayout = { ...contactLayout };
 	        selectedKeys.forEach((selectedKey) => {
 	          const origin = originMap.get(selectedKey);
+          const found = contactEntries.find((item) => item.key === selectedKey);
 	          if (!origin) return;
 	          nextLayout[selectedKey] = {
 	            x: maybeSnap(origin.x + dx),
 	            y: maybeSnap(origin.y + dy),
 	            width: clampContactLayoutValue((contactLayout[selectedKey] ?? {}).width, origin.width, 200),
-              height: clampContactLayoutValue((contactLayout[selectedKey] ?? {}).height, origin.height, 32),
+              height: clampContactLayoutValue((contactLayout[selectedKey] ?? {}).height, origin.height, found?.minHeight ?? 32),
 	          };
 	        });
         onChange({ contactLayout: nextLayout });
@@ -18843,7 +18897,7 @@ type GalleryEditorImage = {
 	          const current = contactLayout[selectedKey] ?? {};
 	          const originWidth = originWidths.get(selectedKey) ?? found?.width ?? 360;
             const originHeight = originHeights.get(selectedKey) ?? found?.height ?? 42;
-	          nextLayout[selectedKey] = {
+          nextLayout[selectedKey] = {
 	            x: clampContactLayoutValue(current.x, found?.x ?? 0),
 	            y: clampContactLayoutValue(current.y, found?.y ?? 0),
             width:
@@ -18852,8 +18906,8 @@ type GalleryEditorImage = {
                 : clampContactLayoutValue(current.width, found?.width ?? 360, 200),
             height:
               direction === "height"
-                ? maybeSnap(originHeight + deltaHeight, 32)
-                : clampContactLayoutValue(current.height, found?.height ?? 42, 32),
+                ? maybeSnap(originHeight + deltaHeight, found?.minHeight ?? 32)
+                : clampContactLayoutValue(current.height, found?.height ?? 42, found?.minHeight ?? 32),
           };
         });
         onChange({ contactLayout: nextLayout });
@@ -18881,7 +18935,7 @@ type GalleryEditorImage = {
 	          x: maybeSnap(clampContactLayoutValue(current.x, source.x) + deltaX),
 	          y: maybeSnap(clampContactLayoutValue(current.y, source.y) + deltaY),
 	          width: clampContactLayoutValue(current.width, source.width, 200),
-            height: clampContactLayoutValue(current.height, source.height, 32),
+            height: clampContactLayoutValue(current.height, source.height, source.minHeight),
 	        };
 	      });
       onChange({ contactLayout: nextLayout });
@@ -18906,7 +18960,7 @@ type GalleryEditorImage = {
             x: maybeSnap(Math.max(0, clampContactLayoutValue(current.x, item.x) - deltaX)),
             y: clampContactLayoutValue(current.y, item.y),
             width: clampContactLayoutValue(current.width, item.width, 200),
-            height: clampContactLayoutValue(current.height, item.height, 32),
+            height: clampContactLayoutValue(current.height, item.height, item.minHeight),
           };
         });
       }
@@ -18919,7 +18973,7 @@ type GalleryEditorImage = {
             x: maybeSnap(clampContactLayoutValue(current.x, item.x) + deltaX),
             y: clampContactLayoutValue(current.y, item.y),
             width: clampContactLayoutValue(current.width, item.width, 200),
-            height: clampContactLayoutValue(current.height, item.height, 32),
+            height: clampContactLayoutValue(current.height, item.height, item.minHeight),
           };
         });
       }
@@ -18931,7 +18985,7 @@ type GalleryEditorImage = {
             x: clampContactLayoutValue(current.x, item.x),
             y: clampContactLayoutValue(current.y, item.y),
             width: Math.max(200, width),
-            height: clampContactLayoutValue(current.height, item.height, 32),
+            height: clampContactLayoutValue(current.height, item.height, item.minHeight),
           };
         });
       }
@@ -18943,7 +18997,7 @@ type GalleryEditorImage = {
             x: clampContactLayoutValue(current.x, item.x),
             y: clampContactLayoutValue(current.y, item.y),
             width: clampContactLayoutValue(current.width, item.width, 200),
-            height: Math.max(32, height),
+            height: Math.max(item.minHeight, height),
           };
         });
       }
@@ -18960,7 +19014,7 @@ type GalleryEditorImage = {
             x: Math.max(0, Math.round(cursorX)),
             y: Math.max(0, Math.round(baselineY)),
             width: clampContactLayoutValue(current.width, item.width, 200),
-            height: clampContactLayoutValue(current.height, item.height, 32),
+            height: clampContactLayoutValue(current.height, item.height, item.minHeight),
           };
           cursorX += item.width + gap;
         });
@@ -18978,7 +19032,7 @@ type GalleryEditorImage = {
             x: Math.max(0, Math.round(baselineX)),
             y: Math.max(0, Math.round(cursorY)),
             width: clampContactLayoutValue(current.width, item.width, 200),
-            height: clampContactLayoutValue(current.height, item.height, 32),
+            height: clampContactLayoutValue(current.height, item.height, item.minHeight),
           };
           cursorY += item.height + gap;
         });
@@ -19000,29 +19054,40 @@ type GalleryEditorImage = {
       const nextLayout = { ...contactLayout };
       if (mode === "single-tight") {
         const width = Math.max(220, Math.min(safeCanvasWidth, 360));
-        contactEntries.forEach((item, idx) => {
-          nextLayout[item.key as ContactEntryKey] = { x: 0, y: maybeSnap(idx * 48), width, height: 42 };
+        let cursorY = 0;
+        contactEntries.forEach((item) => {
+          const height = Math.max(item.minHeight, 42);
+          nextLayout[item.key as ContactEntryKey] = { x: 0, y: maybeSnap(cursorY), width, height };
+          cursorY += height + 6;
         });
       }
       if (mode === "single-wide") {
         const width = Math.max(240, safeCanvasWidth);
-        contactEntries.forEach((item, idx) => {
-          nextLayout[item.key as ContactEntryKey] = { x: 0, y: maybeSnap(idx * 56), width, height: 42 };
+        let cursorY = 0;
+        contactEntries.forEach((item) => {
+          const height = Math.max(item.minHeight, 42);
+          nextLayout[item.key as ContactEntryKey] = { x: 0, y: maybeSnap(cursorY), width, height };
+          cursorY += height + 14;
         });
       }
       if (mode === "double-column") {
         const gap = 14;
         const width = Math.max(200, Math.floor((safeCanvasWidth - gap) / 2));
-        contactEntries.forEach((item, idx) => {
-          const col = idx % 2;
-          const row = Math.floor(idx / 2);
-          nextLayout[item.key as ContactEntryKey] = {
-            x: maybeSnap(col * (width + gap)),
-            y: maybeSnap(row * 56),
-            width,
-            height: 42,
-          };
-        });
+        let rowY = 0;
+        for (let idx = 0; idx < contactEntries.length; idx += 2) {
+          const rowItems = contactEntries.slice(idx, idx + 2);
+          const rowHeight = Math.max(...rowItems.map((item) => Math.max(item.minHeight, 42)));
+          rowItems.forEach((item, itemIndex) => {
+            const col = itemIndex;
+            nextLayout[item.key as ContactEntryKey] = {
+              x: maybeSnap(col * (width + gap)),
+              y: maybeSnap(rowY),
+              width,
+              height: Math.max(item.minHeight, 42),
+            };
+          });
+          rowY += rowHeight + 14;
+        }
       }
       setActiveContactEntryKeys(contactEntries.map((item) => item.key as ContactEntryKey));
       onChange({ contactLayout: nextLayout });
@@ -19042,6 +19107,60 @@ type GalleryEditorImage = {
         phone: filtered[0] ?? "",
         phones: normalized.length > 0 ? normalized : [""],
       });
+    };
+    const renderAddressPreviewRows = () => (
+      <div className="min-w-0 flex-1 space-y-2 overflow-hidden">
+        {contactAddresses.map((line, idx) => {
+          const isActive = idx === 0;
+          return (
+            <div key={`contact-address-preview-${idx}`} className="flex min-w-0 items-start gap-2">
+              <div
+                className={`min-w-0 flex-1 rounded px-1 py-0.5 whitespace-pre-wrap break-words ${isActive ? "bg-black/5" : ""}`}
+                style={contactTypographyStyle}
+              >
+                {`地址${contactAddresses.length > 1 ? idx + 1 : ""}：${line}`}
+              </div>
+              <span
+                className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-white shadow-sm ${
+                  isActive ? "bg-[#EA4335]" : "bg-[#EA4335]/80"
+                }`}
+                aria-hidden="true"
+              >
+                <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current">
+                  <path d="M12 2a7 7 0 0 0-7 7c0 4.74 6.14 11.84 6.4 12.14a.8.8 0 0 0 1.2 0C12.86 20.84 19 13.74 19 9a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5z" />
+                </svg>
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    );
+    const renderContactEntryPreviewContent = (item: (typeof contactEntries)[number]) => {
+      if (item.key === "address") {
+        return renderAddressPreviewRows();
+      }
+      return (
+        <>
+          <span className="min-w-0 flex-1 whitespace-pre-wrap break-words" style={contactTypographyStyle}>
+            {item.label}：{item.value}
+          </span>
+          <span className={socialIconClass(item.platformLabel)}>
+            {item.platformLabel === "Phone" ? (
+              <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" aria-hidden="true">
+                <path d="M6.62 10.79a15.53 15.53 0 0 0 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1C10.4 21 3 13.6 3 4c0-.55.45-1 1-1h3.49c.55 0 1 .45 1 1 0 1.24.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.19 2.2z" />
+              </svg>
+            ) : (
+              <NextImage
+                src={socialIconUrl(item.platformLabel)}
+                alt=""
+                width={16}
+                height={16}
+                className="h-4 w-4 object-contain"
+              />
+            )}
+          </span>
+        </>
+      );
     };
     return (
       <section
@@ -19421,7 +19540,9 @@ type GalleryEditorImage = {
                   {contactEntries.map((item) => (
                     <div
                       key={item.key}
-                      className={`absolute flex items-center justify-between gap-2 rounded border bg-white px-2 py-1 shadow-sm cursor-move overflow-hidden ${
+                      className={`absolute flex gap-2 rounded border bg-white px-2 py-1 shadow-sm cursor-move overflow-hidden ${
+                        item.key === "address" ? "items-start" : "items-center justify-between"
+                      } ${
                         activeContactEntryKeys.includes(item.key as ContactEntryKey)
                           ? "border-blue-500 bg-blue-50/70 ring-4 ring-blue-400/45 shadow-md"
                           : "border-gray-300"
@@ -19429,24 +19550,7 @@ type GalleryEditorImage = {
                       style={{ left: `${item.x}px`, top: `${item.y}px`, width: `${item.width}px`, height: `${item.height}px` }}
                       onMouseDown={(event) => startContactEntryDrag(item.key as ContactEntryKey, event)}
                     >
-                      <span className="min-w-0 break-all flex-1" style={contactTypographyStyle}>
-                        {item.label}：{item.value}
-                      </span>
-                      <span className={socialIconClass(item.platformLabel)}>
-                        {item.platformLabel === "Phone" ? (
-                          <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" aria-hidden="true">
-                            <path d="M6.62 10.79a15.53 15.53 0 0 0 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1C10.4 21 3 13.6 3 4c0-.55.45-1 1-1h3.49c.55 0 1 .45 1 1 0 1.24.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.19 2.2z" />
-                          </svg>
-                        ) : (
-                          <NextImage
-                            src={socialIconUrl(item.platformLabel)}
-                            alt=""
-                            width={16}
-                            height={16}
-                            className="h-4 w-4 object-contain"
-                          />
-                        )}
-                      </span>
+                      {renderContactEntryPreviewContent(item)}
                       <div
                         className="absolute top-0 right-0 h-full w-2 cursor-ew-resize"
                         onMouseDown={(event) => startContactEntryResize(item.key as ContactEntryKey, "width", event)}
@@ -19466,31 +19570,6 @@ type GalleryEditorImage = {
                 className="text-xl font-bold whitespace-pre-wrap break-words"
                 dangerouslySetInnerHTML={{ __html: toRichHtml(block.props.heading, "") }}
               />
-              <div className="mt-2 space-y-2">
-                {contactAddresses.length > 0 ? (
-                  contactAddresses.map((line, idx) => {
-                    const isActive = idx === 0;
-                    return (
-                    <div key={`${line}-${idx}`} className="flex items-start gap-2">
-                      <span className={`text-left break-all flex-1 rounded px-1 py-0.5 ${isActive ? "bg-black/5" : ""}`} style={contactTypographyStyle}>
-                        {`地址${contactAddresses.length > 1 ? idx + 1 : ""}：${line}`}
-                      </span>
-                      <span
-                        className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-white shadow-sm ${
-                          isActive ? "bg-[#EA4335]" : "bg-[#EA4335]/80"
-                        }`}
-                        aria-hidden="true"
-                      >
-                        <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current">
-                          <path d="M12 2a7 7 0 0 0-7 7c0 4.74 6.14 11.84 6.4 12.14a.8.8 0 0 0 1.2 0C12.86 20.84 19 13.74 19 9a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5z" />
-                        </svg>
-                      </span>
-                    </div>
-                  )})
-                ) : (
-                  <div className="break-all" style={contactTypographyStyle}>{`地址：${toPlainText(block.props.address, "")}`}</div>
-                )}
-              </div>
               <div
                 className="mt-3 relative bg-transparent"
                 style={{ minHeight: `${contactCanvasHeight}px`, width: `${contactCanvasWidth}px`, maxWidth: "100%" }}
@@ -19498,27 +19577,12 @@ type GalleryEditorImage = {
                 {contactEntries.map((item) => (
                   <div
                     key={item.key}
-                    className="absolute flex items-center justify-between gap-2 px-1 py-1 overflow-hidden"
+                    className={`absolute flex gap-2 px-1 py-1 overflow-hidden ${
+                      item.key === "address" ? "items-start" : "items-center justify-between"
+                    }`}
                     style={{ left: `${item.x}px`, top: `${item.y}px`, width: `${item.width}px`, height: `${item.height}px` }}
                   >
-                    <span className="min-w-0 break-all flex-1" style={contactTypographyStyle}>
-                      {item.label}：{item.value}
-                    </span>
-                    <span className={socialIconClass(item.platformLabel)}>
-                      {item.platformLabel === "Phone" ? (
-                        <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" aria-hidden="true">
-                          <path d="M6.62 10.79a15.53 15.53 0 0 0 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1C10.4 21 3 13.6 3 4c0-.55.45-1 1-1h3.49c.55 0 1 .45 1 1 0 1.24.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.19 2.2z" />
-                        </svg>
-                      ) : (
-                        <NextImage
-                          src={socialIconUrl(item.platformLabel)}
-                          alt=""
-                          width={16}
-                          height={16}
-                          className="h-4 w-4 object-contain"
-                        />
-                      )}
-                    </span>
+                    {renderContactEntryPreviewContent(item)}
                   </div>
                 ))}
               </div>
