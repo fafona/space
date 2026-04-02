@@ -14,6 +14,7 @@ import { normalizeDomainPrefix } from "@/lib/merchantIdentity";
 import { cloneBlocks, getPagePlanConfigFromBlocks } from "@/lib/pagePlans";
 import { resolvePublishedSiteByPrefix } from "@/lib/publishedSiteLookup";
 import { extractMerchantPrefixFromHost, resolveRuntimePortalBaseDomain } from "@/lib/siteRouting";
+import { useMobileHorizontalScrollLock } from "@/lib/useMobileHorizontalScrollLock";
 
 function readViewportWidth() {
   if (typeof window === "undefined") return 0;
@@ -94,6 +95,8 @@ export default function HomePageClient({
       window.visualViewport?.removeEventListener("resize", syncViewport);
     };
   }, []);
+
+  useMobileHorizontalScrollLock(isMobileViewport);
 
   useEffect(() => {
     if (!resolvedPageId) return;
@@ -177,7 +180,7 @@ export default function HomePageClient({
 
   return (
     <main
-      className="min-h-screen bg-gray-50 py-8"
+      className="min-h-screen w-full overflow-x-hidden bg-gray-50 py-8"
       style={{ ...pageBackgroundStyle, paddingBottom: `calc(2rem + ${backgroundExtendPadding}px)` }}
     >
       <div className="max-w-6xl mx-auto px-6 mb-4 flex items-center justify-end gap-2">

@@ -26,6 +26,7 @@ import {
   supabase,
 } from "@/lib/supabase";
 import { useHydrated } from "@/lib/useHydrated";
+import { useMobileHorizontalScrollLock } from "@/lib/useMobileHorizontalScrollLock";
 
 const EMPTY_BLOCKS: Block[] = [];
 const MIN_INITIAL_LOADING_MS = 0;
@@ -265,6 +266,8 @@ export function SitePageClient({
     };
   }, []);
 
+  useMobileHorizontalScrollLock(isMobileViewport);
+
   useEffect(
     () =>
       subscribePlatformState(() => {
@@ -468,7 +471,7 @@ export function SitePageClient({
 
   return (
     <main
-      className="min-h-screen bg-gray-50 py-8"
+      className="min-h-screen w-full overflow-x-hidden bg-gray-50 py-8"
       style={{ ...pageBackgroundStyle, paddingBottom: `calc(2rem + ${backgroundExtendPadding}px)` }}
     >
       <BlockRenderer

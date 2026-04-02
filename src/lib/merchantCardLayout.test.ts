@@ -43,3 +43,29 @@ test("reflows merchant tabs and shifts cards down when translated labels grow", 
   assert.ok(adaptedTab3.y >= adaptedTab2.y);
   assert.ok(adaptedPrev.width > 92);
 });
+
+test("keeps custom pager positions instead of forcing them back to the default corner", () => {
+  const base = resolveMerchantListLayoutEntries(
+    {
+      prev: { x: 520, y: 680, width: 92, height: 34 },
+      next: { x: 624, y: 680, width: 92, height: 34 },
+    },
+    8,
+    6,
+  );
+  const adapted = resolveAdaptiveMerchantListEntries(base, {
+    availableWidth: 820,
+    tabLabels: ["Recommended", "Food", "Entertainment", "Retail", "Services", "Organization"],
+    prevLabel: "Previous",
+    nextLabel: "Next",
+  });
+
+  const adaptedPrev = adapted.find((item) => item.key === "prev");
+  const adaptedNext = adapted.find((item) => item.key === "next");
+
+  assert.ok(adaptedPrev && adaptedNext);
+  assert.equal(adaptedPrev.x, 520);
+  assert.equal(adaptedPrev.y, 680);
+  assert.equal(adaptedNext.x, 624);
+  assert.equal(adaptedNext.y, 680);
+});

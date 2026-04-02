@@ -218,6 +218,7 @@ type ContactProps = BackgroundEditableProps &
       Record<
         | "phone"
         | "address"
+        | "map"
         | "email"
         | "whatsapp"
         | "wechat"
