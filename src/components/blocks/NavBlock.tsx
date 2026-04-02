@@ -155,7 +155,7 @@ export default function NavBlock(props: NavBlockProps) {
       : 1;
   const navItemBorderStyle = (props.navItemBorderStyle ?? "solid") as BlockBorderStyle;
   const navItemBorderColor = pickSolidBorderColor(props.navItemBorderColor ?? "#6b7280", "#6b7280");
-  const navItemClass = `px-4 py-2 rounded overflow-hidden text-sm whitespace-pre-wrap`;
+  const navItemClass = "inline-flex max-w-full items-center justify-center rounded px-4 py-2 text-center text-sm leading-tight";
   const navItemStyle = {
     ...getBlockBorderInlineStyle(navItemBorderStyle, navItemBorderColor),
     ...getColorLayerStyle(navItemBgColor, navItemBgOpacity),
@@ -221,6 +221,7 @@ export default function NavBlock(props: NavBlockProps) {
                 onClick={() => props.onNavigatePage?.(item.pageId)}
               >
                 <span
+                  className="block w-full break-words whitespace-normal"
                   style={isActive ? navItemActiveLabelStyle : undefined}
                   dangerouslySetInnerHTML={{ __html: renderedLabelHtml }}
                 />

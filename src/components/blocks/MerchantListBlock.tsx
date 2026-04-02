@@ -16,6 +16,7 @@ import { findEuropeCountryByCode, getEuropeProvinceOptions } from "@/lib/europeL
 import {
   buildMerchantCardPlacement,
   getMerchantTabKey,
+  resolveAdaptiveMerchantListEntries,
   getMerchantLayoutCanvasWidth,
   getMerchantLayoutContainerHeight,
   resolveMerchantListLayoutEntries,
@@ -496,19 +497,32 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
     () => resolveMerchantListLayoutEntries(props.merchantCardLayout, maxItems, industryTabs.length),
     [industryTabs.length, maxItems, props.merchantCardLayout],
   );
-  const merchantCardEntries = useMemo(
-    () => merchantLayoutEntries.filter((item) => item.kind === "card"),
-    [merchantLayoutEntries],
+  const adaptiveMerchantLayoutEntries = useMemo(
+    () =>
+      resolveAdaptiveMerchantListEntries(merchantLayoutEntries, {
+        availableWidth:
+          typeof props.blockWidth === "number" && Number.isFinite(props.blockWidth)
+            ? Math.max(160, Math.round(props.blockWidth) - 48)
+            : undefined,
+        tabLabels: industryTabs.map((item) => item.label),
+        prevLabel: prevPageLabel,
+        nextLabel: nextPageLabel,
+      }),
+    [industryTabs, merchantLayoutEntries, nextPageLabel, prevPageLabel, props.blockWidth],
   );
-  const prevLayout = merchantLayoutEntries.find((item) => item.kind === "prev");
-  const nextLayout = merchantLayoutEntries.find((item) => item.kind === "next");
+  const merchantCardEntries = useMemo(
+    () => adaptiveMerchantLayoutEntries.filter((item) => item.kind === "card"),
+    [adaptiveMerchantLayoutEntries],
+  );
+  const prevLayout = adaptiveMerchantLayoutEntries.find((item) => item.kind === "prev");
+  const nextLayout = adaptiveMerchantLayoutEntries.find((item) => item.kind === "next");
   const merchantLayoutCanvasWidth = useMemo(
-    () => getMerchantLayoutCanvasWidth(merchantLayoutEntries),
-    [merchantLayoutEntries],
+    () => getMerchantLayoutCanvasWidth(adaptiveMerchantLayoutEntries),
+    [adaptiveMerchantLayoutEntries],
   );
   const merchantLayoutContainerHeight = useMemo(
-    () => getMerchantLayoutContainerHeight(merchantLayoutEntries),
-    [merchantLayoutEntries],
+    () => getMerchantLayoutContainerHeight(adaptiveMerchantLayoutEntries),
+    [adaptiveMerchantLayoutEntries],
   );
 
   const cardStyle = getBackgroundStyle({
@@ -615,8 +629,10 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
     borderStyle: merchantCardBorderStyle,
     borderColor: merchantCardBorderColor,
   };
-  const merchantTabButtonBaseClass = "absolute rounded px-3 py-1.5 text-xs transition";
-  const merchantPagerButtonBaseClass = "absolute rounded px-3 py-1.5 text-xs transition disabled:cursor-not-allowed";
+  const merchantTabButtonBaseClass =
+    "absolute flex items-center justify-center rounded px-3 py-1.5 text-center text-xs leading-tight transition";
+  const merchantPagerButtonBaseClass =
+    "absolute flex items-center justify-center rounded px-3 py-1.5 text-center text-xs leading-tight transition disabled:cursor-not-allowed";
   const merchantTypographyBaseStyle: Record<string, string | number> = {};
   if (props.fontFamily?.trim()) merchantTypographyBaseStyle.fontFamily = props.fontFamily.trim();
   if (typeof props.fontSize === "number" && Number.isFinite(props.fontSize) && props.fontSize > 0) {
@@ -687,7 +703,7 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
             }}
           >
             {industryTabs.map((tab, index) => {
-              const layout = merchantLayoutEntries.find(
+              const layout = adaptiveMerchantLayoutEntries.find(
                 (item) => item.kind === "tab" && item.key === getMerchantTabKey(index),
               );
               if (!layout) return null;
@@ -711,12 +727,12 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
                     setPageIndex(0);
                   }}
                 >
-                  <span style={merchantButtonLabelStyle}>{tab.label}</span>
-                </button>
-              );
-            })}
+                    <span className="block w-full break-words whitespace-normal" style={merchantButtonLabelStyle}>{tab.label}</span>
+                  </button>
+                );
+              })}
             {pagedSites.map((site, index) => {
-              const layout = buildMerchantCardPlacement(merchantLayoutEntries, index);
+              const layout = buildMerchantCardPlacement(adaptiveMerchantLayoutEntries, index);
               const targetIndustry = (site.industry || "all") as MerchantIndustryTabIndustry;
               const styleConfig = resolveMerchantIndustryCardStyle(
                 props.merchantCardIndustryStyles,
@@ -814,7 +830,7 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
                 disabled={safePageIndex <= 0}
                 onClick={() => setPageIndex((prev) => Math.max(0, prev - 1))}
               >
-                <span style={merchantButtonLabelStyle}>{prevPageLabel}</span>
+                <span className="block w-full break-words whitespace-normal" style={merchantButtonLabelStyle}>{prevPageLabel}</span>
               </button>
             ) : null}
             {nextLayout ? (
@@ -833,7 +849,7 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
                 disabled={safePageIndex >= totalPages - 1}
                 onClick={() => setPageIndex((prev) => Math.min(totalPages - 1, prev + 1))}
               >
-                <span style={merchantButtonLabelStyle}>{nextPageLabel}</span>
+                <span className="block w-full break-words whitespace-normal" style={merchantButtonLabelStyle}>{nextPageLabel}</span>
               </button>
             ) : null}
           </div>

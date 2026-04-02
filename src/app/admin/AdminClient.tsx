@@ -69,6 +69,7 @@ import {
 } from "@/lib/authSessionRecovery";
 import { clearMerchantSignInBridge } from "@/lib/merchantSignInBridge";
 import { buildPublishedMerchantProfilePatch } from "@/lib/merchantProfileBinding";
+import { resolveCommonCanvasLayout } from "@/lib/commonCanvasLayout";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
 import { type PlatformSupportMessage, type PlatformSupportThread } from "@/lib/platformSupportInbox";
 import { BLOCK_BORDER_STYLE_OPTIONS, getBlockBorderClass, getBlockBorderInlineStyle } from "@/components/blocks/borderStyle";
@@ -128,6 +129,7 @@ import {
   getMerchantLayoutCanvasHeight,
   getMerchantLayoutCanvasWidth,
   getMerchantLayoutContainerHeight,
+  resolveAdaptiveMerchantListEntries,
   resolveMerchantListLayoutEntries,
   type MerchantCardLayoutConfig,
   type MerchantListLayoutKey,
@@ -10182,17 +10184,28 @@ type GalleryEditorImage = {
         text: undefined,
       });
     };
+    const currentBlockWidth = normalizeBlockWidth(block.props.blockWidth, block.type);
+    const currentBlockHeight = normalizeBlockHeight(block.props.blockHeight, block.type);
+    const resolveCanvasMetrics = (boxes: CommonEditorTextBox[]) =>
+      resolveCommonCanvasLayout(boxes, {
+        availableWidth: typeof currentBlockWidth === "number" ? Math.max(120, currentBlockWidth - 48) : undefined,
+        availableHeight: typeof currentBlockHeight === "number" ? Math.max(72, currentBlockHeight - 56) : undefined,
+        minCanvasWidth: 280,
+        minCanvasHeight: 280,
+      });
 
     const onMove = (event: MouseEvent) => {
       const dragging = commonBoxDragRef.current;
       if (dragging) {
+        const boxes = readBoxes();
+        const metrics = resolveCanvasMetrics(boxes);
+        const scale = metrics.scale > 0 ? metrics.scale : 1;
         const deltaX = event.clientX - dragging.startX;
         const deltaY = event.clientY - dragging.startY;
-        const boxes = readBoxes();
         const current = boxes.find((item) => item.id === dragging.id);
         if (!current) return;
-        const nextX = Math.round(dragging.boxStartX + deltaX);
-        const nextY = Math.round(dragging.boxStartY + deltaY);
+        const nextX = Math.round(dragging.boxStartX + deltaX / scale);
+        const nextY = Math.round(dragging.boxStartY + deltaY / scale);
         commitBoxes(boxes.map((item) => (item.id === dragging.id ? { ...item, x: nextX, y: nextY } : item)));
         return;
       }
@@ -10211,9 +10224,11 @@ type GalleryEditorImage = {
 
       const resizing = commonBoxResizeRef.current;
       if (resizing) {
+        const boxes = readBoxes();
+        const metrics = resolveCanvasMetrics(boxes);
+        const scale = metrics.scale > 0 ? metrics.scale : 1;
         const deltaX = event.clientX - resizing.startX;
         const deltaY = event.clientY - resizing.startY;
-        const boxes = readBoxes();
         const current = boxes.find((item) => item.id === resizing.id);
         if (!current) return;
         const minWidth = 80;
@@ -10227,31 +10242,33 @@ type GalleryEditorImage = {
         let nextY = resizing.boxStartY;
         let nextWidth = resizing.boxStartWidth;
         let nextHeight = resizing.boxStartHeight;
+        const normalizedDeltaX = deltaX / scale;
+        const normalizedDeltaY = deltaY / scale;
 
         if (resizeFromLeft) {
-          const rawWidth = resizing.boxStartWidth - deltaX;
+          const rawWidth = resizing.boxStartWidth - normalizedDeltaX;
           if (rawWidth >= minWidth) {
             nextWidth = rawWidth;
-            nextX = resizing.boxStartX + deltaX;
+            nextX = resizing.boxStartX + normalizedDeltaX;
           } else {
             nextWidth = minWidth;
             nextX = resizing.boxStartX + (resizing.boxStartWidth - minWidth);
           }
         } else if (resizeFromRight) {
-          nextWidth = Math.max(minWidth, resizing.boxStartWidth + deltaX);
+          nextWidth = Math.max(minWidth, resizing.boxStartWidth + normalizedDeltaX);
         }
 
         if (resizeFromTop) {
-          const rawHeight = resizing.boxStartHeight - deltaY;
+          const rawHeight = resizing.boxStartHeight - normalizedDeltaY;
           if (rawHeight >= minHeight) {
             nextHeight = rawHeight;
-            nextY = resizing.boxStartY + deltaY;
+            nextY = resizing.boxStartY + normalizedDeltaY;
           } else {
             nextHeight = minHeight;
             nextY = resizing.boxStartY + (resizing.boxStartHeight - minHeight);
           }
         } else if (resizeFromBottom) {
-          nextHeight = Math.max(minHeight, resizing.boxStartHeight + deltaY);
+          nextHeight = Math.max(minHeight, resizing.boxStartHeight + normalizedDeltaY);
         }
 
         const patch: Partial<CommonEditorTextBox> = {
@@ -10754,11 +10771,6 @@ type GalleryEditorImage = {
     editor.innerHTML = snapshot.html;
     const range = restoreEditorRange(editor, snapshot.range);
     if (!range) return;
-    const selection = window.getSelection();
-    if (!selection) return;
-    editor.focus();
-    selection.removeAllRanges();
-    selection.addRange(range);
 
     const span = document.createElement("span");
     applyTypographyStylesToSpan(span, values);
@@ -10766,11 +10778,6 @@ type GalleryEditorImage = {
       const marker = document.createTextNode("");
       span.appendChild(marker);
       range.insertNode(span);
-      const caretRange = document.createRange();
-      caretRange.setStart(marker, 0);
-      caretRange.collapse(true);
-      selection.removeAllRanges();
-      selection.addRange(caretRange);
       if (!marker.data) {
         marker.data = "\u200B";
       }
@@ -10778,11 +10785,6 @@ type GalleryEditorImage = {
       span.appendChild(range.extractContents());
       clearInlineTypographyStylesWithinSpan(span);
       range.insertNode(span);
-      const previewRange = document.createRange();
-      previewRange.selectNodeContents(span);
-      previewRange.collapse(false);
-      selection.removeAllRanges();
-      selection.addRange(previewRange);
     }
 
     persistEditorTypographyChangeRef.current(editor);
@@ -11273,6 +11275,18 @@ type GalleryEditorImage = {
     }));
   }
 
+  function getCommonCanvasMetrics() {
+    if (!isCommonCanvasBlockType(block.type)) return null;
+    const availableWidth = typeof blockWidth === "number" ? Math.max(120, blockWidth - 48) : undefined;
+    const availableHeight = typeof blockHeight === "number" ? Math.max(72, blockHeight - 48) : undefined;
+    return resolveCommonCanvasLayout(getCommonTextBoxes(), {
+      availableWidth,
+      availableHeight,
+      minCanvasWidth: 280,
+      minCanvasHeight: 240,
+    });
+  }
+
   function commitCommonTextBoxes(nextBoxes: CommonEditorTextBox[]) {
     if (!isCommonCanvasBlockType(block.type)) return;
     onChange({
@@ -11320,9 +11334,13 @@ type GalleryEditorImage = {
     if (target?.closest("[data-common-box]")) return;
     const canvas = commonCanvasRef.current;
     if (!canvas) return;
+    const metrics = getCommonCanvasMetrics();
+    const scale = metrics?.scale && metrics.scale > 0 ? metrics.scale : 1;
+    const translateX = metrics?.translateX ?? 0;
+    const translateY = metrics?.translateY ?? 0;
     const rect = canvas.getBoundingClientRect();
-    const clickX = Math.max(0, Math.round(event.clientX - rect.left));
-    const clickY = Math.max(0, Math.round(event.clientY - rect.top));
+    const clickX = Math.round((event.clientX - rect.left) / scale - translateX);
+    const clickY = Math.round((event.clientY - rect.top) / scale - translateY);
     const newBox: CommonEditorTextBox = {
       id: `txt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       html: "",
@@ -11381,9 +11399,13 @@ type GalleryEditorImage = {
     event.stopPropagation();
     const canvas = commonCanvasRef.current;
     if (!canvas) return;
+    const metrics = getCommonCanvasMetrics();
+    const scale = metrics?.scale && metrics.scale > 0 ? metrics.scale : 1;
+    const translateX = metrics?.translateX ?? 0;
+    const translateY = metrics?.translateY ?? 0;
     const rect = canvas.getBoundingClientRect();
-    const centerX = rect.left + box.x + box.width / 2;
-    const centerY = rect.top + box.y + box.height / 2;
+    const centerX = rect.left + (box.x + translateX + box.width / 2) * scale;
+    const centerY = rect.top + (box.y + translateY + box.height / 2) * scale;
     commonBoxRotateRef.current = {
       id: box.id,
       centerX,
@@ -13129,6 +13151,7 @@ type GalleryEditorImage = {
 
   if (isCommonCanvasBlockType(block.type)) {
     const commonBoxes = getCommonTextBoxes();
+    const commonCanvasMetrics = getCommonCanvasMetrics();
     return (
       <section
         data-block-id={block.id}
@@ -13165,136 +13188,152 @@ type GalleryEditorImage = {
           {buttonJumpDialog}
           <div
             ref={commonCanvasRef}
-            className={`mt-2 relative min-h-[280px] rounded overflow-visible ${isSelected && commonInsertMode ? "cursor-crosshair" : ""}`}
+            className={`mt-2 relative rounded overflow-visible ${isSelected && commonInsertMode ? "cursor-crosshair" : ""}`}
+            style={{
+              minHeight: blockHeight ? undefined : `${commonCanvasMetrics?.renderHeight ?? 280}px`,
+              width: `${commonCanvasMetrics?.renderWidth ?? 280}px`,
+              height: `${commonCanvasMetrics?.renderHeight ?? 280}px`,
+              maxWidth: "100%",
+            }}
             onMouseDown={handleCommonCanvasMouseDown}
           >
-            {commonBoxes.map((box) => (
-              <div
-                key={box.id}
-                data-common-box
-                className={`absolute bg-transparent ${isSelected ? "border" : "border-transparent"} ${
-                  activeCommonTextBoxId === box.id ? "border-black" : "border-gray-300/70"
-                }`}
-                style={{
-                  left: `${box.x}px`,
-                  top: `${box.y}px`,
-                  width: `${box.width}px`,
-                  height: `${box.height}px`,
-                  transform: `rotate(${box.rotateDeg}deg)`,
-                  transformOrigin: "center center",
-                }}
-                onMouseDownCapture={(event) => {
-                  const target = event.target as HTMLElement | null;
-                  if (target?.closest("[contenteditable='true']")) {
+            <div
+              className="absolute left-0 top-0"
+              style={{
+                width: `${commonCanvasMetrics?.bounds.width ?? 280}px`,
+                height: `${commonCanvasMetrics?.bounds.height ?? 280}px`,
+                transform: `scale(${commonCanvasMetrics?.scale ?? 1})`,
+                transformOrigin: "top left",
+              }}
+            >
+              {commonBoxes.map((box) => (
+                <div
+                  key={box.id}
+                  data-common-box
+                  className={`absolute bg-transparent ${isSelected ? "border" : "border-transparent"} ${
+                    activeCommonTextBoxId === box.id ? "border-black" : "border-gray-300/70"
+                  }`}
+                  style={{
+                    left: `${box.x + (commonCanvasMetrics?.translateX ?? 0)}px`,
+                    top: `${box.y + (commonCanvasMetrics?.translateY ?? 0)}px`,
+                    width: `${box.width}px`,
+                    height: `${box.height}px`,
+                    transform: `rotate(${box.rotateDeg}deg)`,
+                    transformOrigin: "center center",
+                  }}
+                  onMouseDownCapture={(event) => {
+                    const target = event.target as HTMLElement | null;
+                    if (target?.closest("[contenteditable='true']")) {
+                      event.stopPropagation();
+                    }
+                  }}
+                  onClick={(event) => {
                     event.stopPropagation();
-                  }
-                }}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onSelect();
-                  setActiveCommonTextBoxId(box.id);
-                }}
-              >
-                {isSelected ? (
-                  <RichTextEditor
-                    field="text"
-                    className="w-full h-full p-2 text-gray-700"
-                    value={box.html}
-                    dataCommonBoxId={box.id}
-                    onChange={(_, html, editorEl) => {
-                      const patch: Partial<CommonEditorTextBox> = { html };
-                      if (editorEl) {
-                        const nextWidth = Math.max(box.width, Math.ceil(editorEl.scrollWidth));
-                        const nextHeight = Math.max(box.height, Math.ceil(editorEl.scrollHeight));
-                        if (nextWidth > box.width) patch.width = nextWidth;
-                        if (nextHeight > box.height) patch.height = nextHeight;
-                      }
-                      updateCommonTextBox(box.id, patch);
-                    }}
-                    onActivate={registerActiveEditor}
-                    onSelectionChange={updateSelectionRange}
-                  />
-                ) : (
-                  <div
-                    className="w-full h-full p-2 text-gray-700 whitespace-pre-wrap break-words overflow-hidden"
-                    dangerouslySetInnerHTML={{ __html: toRichHtml(box.html, "") }}
-                  />
-                )}
-                {isSelected ? (
-                  <>
-                    <button
-                      type="button"
-                      className="absolute -top-2 -left-2 z-30 flex h-5 w-5 cursor-move items-center justify-center rounded-full border border-black bg-white text-black"
-                      onMouseDown={(event) => startCommonBoxDrag(box, event)}
-                      title={"拖动"}
-                    >
-                      <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
-                        <path d="M8 2 L6.5 3.5 M8 2 L9.5 3.5 M8 2 V14" />
-                        <path d="M14 8 L12.5 6.5 M14 8 L12.5 9.5 M14 8 H2" />
-                        <path d="M8 14 L6.5 12.5 M8 14 L9.5 12.5" />
-                        <path d="M2 8 L3.5 6.5 M2 8 L3.5 9.5" />
-                      </svg>
-                    </button>
-                    <button
-                      className="absolute -top-2 -right-2 z-30 w-5 h-5 rounded-full bg-black text-white text-xs leading-none"
-                      onMouseDown={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
+                    onSelect();
+                    setActiveCommonTextBoxId(box.id);
+                  }}
+                >
+                  {isSelected ? (
+                    <RichTextEditor
+                      field="text"
+                      className="w-full h-full p-2 text-gray-700"
+                      value={box.html}
+                      dataCommonBoxId={box.id}
+                      onChange={(_, html, editorEl) => {
+                        const patch: Partial<CommonEditorTextBox> = { html };
+                        if (editorEl) {
+                          const nextWidth = Math.max(box.width, Math.ceil(editorEl.scrollWidth));
+                          const nextHeight = Math.max(box.height, Math.ceil(editorEl.scrollHeight));
+                          if (nextWidth > box.width) patch.width = nextWidth;
+                          if (nextHeight > box.height) patch.height = nextHeight;
+                        }
+                        updateCommonTextBox(box.id, patch);
                       }}
-                      onClick={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        deleteCommonTextBox(box.id);
-                      }}
-                      aria-label="删除"
-                      title="删除"
-                    >
-                      {"删"}
-                    </button>
-                    <div
-                      className="absolute top-2 bottom-2 left-0 w-2 -translate-x-1 cursor-ew-resize"
-                      onMouseDown={(event) => startCommonBoxResize(box, "left", event)}
+                      onActivate={registerActiveEditor}
+                      onSelectionChange={updateSelectionRange}
                     />
+                  ) : (
                     <div
-                      className="absolute top-2 bottom-2 right-0 w-2 cursor-ew-resize"
-                      onMouseDown={(event) => startCommonBoxResize(box, "right", event)}
+                      className="w-full h-full p-2 text-gray-700 whitespace-pre-wrap break-words overflow-hidden"
+                      dangerouslySetInnerHTML={{ __html: toRichHtml(box.html, "") }}
                     />
-                    <div
-                      className="absolute top-0 left-2 right-2 h-2 -translate-y-1 cursor-ns-resize"
-                      onMouseDown={(event) => startCommonBoxResize(box, "top", event)}
-                    />
-                    <div
-                      className="absolute bottom-0 left-0 w-full h-2 cursor-ns-resize"
-                      onMouseDown={(event) => startCommonBoxResize(box, "bottom", event)}
-                    />
-                    <div
-                      className="absolute -bottom-1 -left-1 w-3 h-3 rounded-full border border-black bg-white cursor-nesw-resize"
-                      onMouseDown={(event) => startCommonBoxResize(box, "bottom-left", event)}
-                    />
-                    <div
-                      className="absolute -bottom-1 -right-1 w-3 h-3 rounded-full border border-black bg-white cursor-nwse-resize"
-                      onMouseDown={(event) => startCommonBoxResize(box, "bottom-right", event)}
-                    />
-                    <div
-                      className="absolute left-1/2 -top-7 -translate-x-1/2 flex items-center justify-center"
-                      onMouseDown={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                      }}
-                    >
+                  )}
+                  {isSelected ? (
+                    <>
                       <button
                         type="button"
-                        className="w-5 h-5 rounded-full border border-black bg-white text-[10px] leading-none"
-                        onMouseDown={(event) => startCommonBoxRotate(box, event)}
-                        title={"旋转"}
+                        className="absolute -top-2 -left-2 z-30 flex h-5 w-5 cursor-move items-center justify-center rounded-full border border-black bg-white text-black"
+                        onMouseDown={(event) => startCommonBoxDrag(box, event)}
+                        title={"拖动"}
                       >
-                        ?
+                        <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
+                          <path d="M8 2 L6.5 3.5 M8 2 L9.5 3.5 M8 2 V14" />
+                          <path d="M14 8 L12.5 6.5 M14 8 L12.5 9.5 M14 8 H2" />
+                          <path d="M8 14 L6.5 12.5 M8 14 L9.5 12.5" />
+                          <path d="M2 8 L3.5 6.5 M2 8 L3.5 9.5" />
+                        </svg>
                       </button>
-                    </div>
-                  </>
-                ) : null}
-              </div>
-            ))}
+                      <button
+                        className="absolute -top-2 -right-2 z-30 w-5 h-5 rounded-full bg-black text-white text-xs leading-none"
+                        onMouseDown={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                        }}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          deleteCommonTextBox(box.id);
+                        }}
+                        aria-label="删除"
+                        title="删除"
+                      >
+                        {"删"}
+                      </button>
+                      <div
+                        className="absolute top-2 bottom-2 left-0 w-2 -translate-x-1 cursor-ew-resize"
+                        onMouseDown={(event) => startCommonBoxResize(box, "left", event)}
+                      />
+                      <div
+                        className="absolute top-2 bottom-2 right-0 w-2 cursor-ew-resize"
+                        onMouseDown={(event) => startCommonBoxResize(box, "right", event)}
+                      />
+                      <div
+                        className="absolute top-0 left-2 right-2 h-2 -translate-y-1 cursor-ns-resize"
+                        onMouseDown={(event) => startCommonBoxResize(box, "top", event)}
+                      />
+                      <div
+                        className="absolute bottom-0 left-0 w-full h-2 cursor-ns-resize"
+                        onMouseDown={(event) => startCommonBoxResize(box, "bottom", event)}
+                      />
+                      <div
+                        className="absolute -bottom-1 -left-1 w-3 h-3 rounded-full border border-black bg-white cursor-nesw-resize"
+                        onMouseDown={(event) => startCommonBoxResize(box, "bottom-left", event)}
+                      />
+                      <div
+                        className="absolute -bottom-1 -right-1 w-3 h-3 rounded-full border border-black bg-white cursor-nwse-resize"
+                        onMouseDown={(event) => startCommonBoxResize(box, "bottom-right", event)}
+                      />
+                      <div
+                        className="absolute left-1/2 -top-7 -translate-x-1/2 flex items-center justify-center"
+                        onMouseDown={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                        }}
+                      >
+                        <button
+                          type="button"
+                          className="w-5 h-5 rounded-full border border-black bg-white text-[10px] leading-none"
+                          onMouseDown={(event) => startCommonBoxRotate(box, event)}
+                          title={"旋转"}
+                        >
+                          ?
+                        </button>
+                      </div>
+                    </>
+                  ) : null}
+                </div>
+              ))}
+            </div>
             {null}
           </div>
           {resizeHandles}
@@ -14096,7 +14135,8 @@ type GalleryEditorImage = {
       navItemBorderColor,
     );
     const navItemActiveTextColor = (block.props.navItemActiveTextColor ?? "").trim();
-    const navItemButtonClass = "px-3 py-2 rounded overflow-hidden text-sm whitespace-pre-wrap";
+    const navItemButtonClass =
+      "inline-flex max-w-full items-center justify-center rounded px-3 py-2 text-center text-sm leading-tight";
     const navItemButtonStyle = {
       ...getBlockBorderInlineStyle(navItemBorderStyle, navItemBorderColor),
       ...getColorLayerStyle(navItemBgColor, navItemBgOpacity),
@@ -14251,6 +14291,7 @@ type GalleryEditorImage = {
                       }}
                     >
                       <span
+                        className="block w-full break-words whitespace-normal"
                         style={isActive ? navItemActiveLabelStyle : undefined}
                         dangerouslySetInnerHTML={{ __html: renderedLabelHtml }}
                       />
@@ -14286,6 +14327,7 @@ type GalleryEditorImage = {
                       }}
                     >
                       <span
+                        className="block w-full break-words whitespace-normal"
                         style={isActive ? navItemActiveLabelStyle : undefined}
                         dangerouslySetInnerHTML={{ __html: renderedLabelHtml }}
                       />
@@ -17095,9 +17137,10 @@ type GalleryEditorImage = {
       borderStyle: merchantCardBorderStyle,
       borderColor: merchantCardBorderColor,
     };
-    const merchantTabButtonBaseClass = "absolute rounded px-3 py-1.5 text-xs transition pointer-events-auto";
+    const merchantTabButtonBaseClass =
+      "absolute flex items-center justify-center rounded px-3 py-1.5 text-center text-xs leading-tight transition pointer-events-auto";
     const merchantPagerButtonBaseClass =
-      "absolute rounded px-3 py-1.5 text-xs transition pointer-events-auto disabled:cursor-not-allowed";
+      "absolute flex items-center justify-center rounded px-3 py-1.5 text-center text-xs leading-tight transition pointer-events-auto disabled:cursor-not-allowed";
     const merchantTypographyBaseStyle: Record<string, string | number> = {};
     if (block.props.fontFamily?.trim()) merchantTypographyBaseStyle.fontFamily = block.props.fontFamily.trim();
     if (typeof block.props.fontSize === "number" && Number.isFinite(block.props.fontSize) && block.props.fontSize > 0) {
@@ -17140,12 +17183,18 @@ type GalleryEditorImage = {
       : "inline-flex w-fit max-w-full";
     const merchantCardLayout = (block.props.merchantCardLayout ?? {}) as MerchantCardLayoutConfig;
     const merchantLayoutEntries = resolveMerchantListLayoutEntries(merchantCardLayout, maxItems, merchantTabs.length);
-    const merchantCardEntries = merchantLayoutEntries.filter((item) => item.kind === "card");
-    const merchantPrevLayout = merchantLayoutEntries.find((item) => item.kind === "prev");
-    const merchantNextLayout = merchantLayoutEntries.find((item) => item.kind === "next");
-    const merchantCardCanvasWidth = getMerchantLayoutCanvasWidth(merchantLayoutEntries);
-    const merchantCardCanvasHeight = getMerchantLayoutCanvasHeight(merchantLayoutEntries);
-    const merchantCardsContainerHeight = getMerchantLayoutContainerHeight(merchantLayoutEntries);
+    const adaptiveMerchantLayoutEntries = resolveAdaptiveMerchantListEntries(merchantLayoutEntries, {
+      availableWidth: typeof blockWidth === "number" ? Math.max(160, blockWidth - 48) : undefined,
+      tabLabels: merchantTabs.map((item) => item.label),
+      prevLabel: prevPageLabel,
+      nextLabel: nextPageLabel,
+    });
+    const merchantCardEntries = adaptiveMerchantLayoutEntries.filter((item) => item.kind === "card");
+    const merchantPrevLayout = adaptiveMerchantLayoutEntries.find((item) => item.kind === "prev");
+    const merchantNextLayout = adaptiveMerchantLayoutEntries.find((item) => item.kind === "next");
+    const merchantCardCanvasWidth = getMerchantLayoutCanvasWidth(adaptiveMerchantLayoutEntries);
+    const merchantCardCanvasHeight = getMerchantLayoutCanvasHeight(adaptiveMerchantLayoutEntries);
+    const merchantCardsContainerHeight = getMerchantLayoutContainerHeight(adaptiveMerchantLayoutEntries);
     const merchantCardSnapStep = Math.max(2, Math.min(40, Math.round(merchantCardLayoutSnapStep) || 8));
     const maybeSnapMerchantCard = (value: number, min = 0) => {
       const clamped = Math.max(min, Math.round(value));
@@ -17791,7 +17840,7 @@ type GalleryEditorImage = {
               <div className="mt-4 max-w-full overflow-x-auto pb-1">
                 <div className="relative" style={{ width: `${merchantCardCanvasWidth}px`, minHeight: `${merchantCardsContainerHeight}px` }}>
                   {merchantTabs.map((tab, index) => {
-                    const layout = merchantLayoutEntries.find(
+                    const layout = adaptiveMerchantLayoutEntries.find(
                       (item) => item.kind === "tab" && item.key === getMerchantTabKey(index),
                     );
                     if (!layout) return null;
@@ -17815,12 +17864,12 @@ type GalleryEditorImage = {
                           setMerchantPreviewPageIndex(0);
                         }}
                       >
-                        <span style={merchantButtonLabelStyle}>{tab.label}</span>
+                        <span className="block w-full break-words whitespace-normal" style={merchantButtonLabelStyle}>{tab.label}</span>
                       </button>
                     );
                   })}
                   {merchantSites.map((site, index) => {
-                    const layout = buildMerchantCardPlacement(merchantLayoutEntries, index);
+                    const layout = buildMerchantCardPlacement(adaptiveMerchantLayoutEntries, index);
                     const targetIndustry = (site.industry || "all") as MerchantIndustryTabIndustry;
                     const styleConfig = resolveMerchantIndustryCardStyle(
                       block.props.merchantCardIndustryStyles,
@@ -17910,7 +17959,7 @@ type GalleryEditorImage = {
                       disabled={safeMerchantPreviewPageIndex <= 0}
                       onClick={() => setMerchantPreviewPageIndex((prev) => Math.max(0, prev - 1))}
                     >
-                      <span style={merchantButtonLabelStyle}>{prevPageLabel}</span>
+                      <span className="block w-full break-words whitespace-normal" style={merchantButtonLabelStyle}>{prevPageLabel}</span>
                     </button>
                   ) : null}
                   {merchantNextLayout ? (
@@ -17933,7 +17982,7 @@ type GalleryEditorImage = {
                       disabled={safeMerchantPreviewPageIndex >= merchantTotalPages - 1}
                       onClick={() => setMerchantPreviewPageIndex((prev) => Math.min(merchantTotalPages - 1, prev + 1))}
                     >
-                      <span style={merchantButtonLabelStyle}>{nextPageLabel}</span>
+                      <span className="block w-full break-words whitespace-normal" style={merchantButtonLabelStyle}>{nextPageLabel}</span>
                     </button>
                   ) : null}
                 </div>

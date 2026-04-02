@@ -37,6 +37,7 @@ const DEFAULT_TAB_WIDTH = 108;
 const DEFAULT_TAB_HEIGHT = 34;
 const DEFAULT_TAB_GAP = 8;
 const DEFAULT_TAB_COLUMNS = 6;
+const DEFAULT_CHROME_GAP = 12;
 const MIN_CARD_COUNT = 1;
 const MAX_CARD_COUNT = 24;
 const MIN_TAB_COUNT = 0;
@@ -211,4 +212,153 @@ export function buildMerchantCardPlacement(entries: MerchantLayoutEntry[], index
     width: entry.width,
     height: entry.height,
   };
+}
+
+function parseLayoutIndex(key: MerchantListLayoutKey) {
+  const matched = key.match(/(\d+)$/);
+  return matched ? Math.max(0, Number.parseInt(matched[1], 10) - 1) : 0;
+}
+
+function estimateAdaptiveButtonWidth(label: string) {
+  const text = String(label ?? "").trim();
+  if (!text) return 64;
+  let width = 24;
+  for (const char of text) {
+    if (/\s/.test(char)) {
+      width += 4;
+    } else if (/[\u0000-\u00ff]/.test(char)) {
+      width += /[A-Z0-9]/.test(char) ? 8 : 7;
+    } else {
+      width += 12;
+    }
+  }
+  return Math.max(64, Math.min(420, Math.round(width)));
+}
+
+function entriesOverlap(a: MerchantLayoutEntry, b: MerchantLayoutEntry) {
+  return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+}
+
+function shouldFlowAdaptiveTabs(entries: MerchantLayoutEntry[], widths: number[], heights: number[], availableWidth: number) {
+  const expanded = entries.map((entry, index) => ({
+    ...entry,
+    width: widths[index] ?? entry.width,
+    height: heights[index] ?? entry.height,
+  }));
+  if (expanded.some((entry, index) => entry.width > entries[index].width || entry.height > entries[index].height)) {
+    return true;
+  }
+  if (expanded.some((entry) => entry.x + entry.width > availableWidth)) return true;
+  for (let index = 0; index < expanded.length; index += 1) {
+    for (let otherIndex = index + 1; otherIndex < expanded.length; otherIndex += 1) {
+      if (entriesOverlap(expanded[index], expanded[otherIndex])) return true;
+    }
+  }
+  return false;
+}
+
+export function resolveAdaptiveMerchantListEntries(
+  entries: MerchantLayoutEntry[],
+  options: {
+    availableWidth?: number;
+    tabLabels?: string[];
+    prevLabel?: string;
+    nextLabel?: string;
+  } = {},
+) {
+  const tabs = entries
+    .filter((item) => item.kind === "tab")
+    .sort((left, right) => parseLayoutIndex(left.key) - parseLayoutIndex(right.key));
+  const cards = entries.filter((item) => item.kind === "card");
+  const chrome = entries.filter((item) => item.kind === "prev" || item.kind === "next");
+  const availableWidth = Math.max(
+    160,
+    Math.round(
+      Number.isFinite(options.availableWidth)
+        ? Number(options.availableWidth)
+        : Math.max(260, ...entries.map((item) => item.x + item.width)),
+    ),
+  );
+
+  const tabWidths = tabs.map((entry, index) => {
+    const label = options.tabLabels?.[index] ?? entry.label;
+    const desiredWidth = Math.max(entry.minWidth, entry.width, estimateAdaptiveButtonWidth(label));
+    return Math.min(availableWidth, desiredWidth);
+  });
+  const tabHeights = tabs.map((entry, index) => {
+    const desiredWidth = Math.max(entry.minWidth, entry.width, estimateAdaptiveButtonWidth(options.tabLabels?.[index] ?? entry.label));
+    const currentWidth = Math.max(1, tabWidths[index] ?? entry.width);
+    const lineCount = Math.max(1, Math.ceil(desiredWidth / currentWidth));
+    return Math.max(entry.minHeight, entry.height, lineCount > 1 ? 18 * lineCount + 8 : entry.height);
+  });
+  const flowTabs = shouldFlowAdaptiveTabs(tabs, tabWidths, tabHeights, availableWidth);
+  const tabsTop = tabs.length > 0 ? Math.min(...tabs.map((item) => item.y)) : 0;
+
+  const adaptedTabs = flowTabs
+    ? (() => {
+        let cursorX = 0;
+        let cursorY = tabsTop;
+        let rowHeight = 0;
+        return tabs.map((entry, index) => {
+          const width = tabWidths[index] ?? entry.width;
+          const height = tabHeights[index] ?? entry.height;
+          if (cursorX > 0 && cursorX + width > availableWidth) {
+            cursorX = 0;
+            cursorY += rowHeight + DEFAULT_TAB_GAP;
+            rowHeight = 0;
+          }
+          const nextEntry = { ...entry, x: cursorX, y: cursorY, width, height };
+          cursorX += width + DEFAULT_TAB_GAP;
+          rowHeight = Math.max(rowHeight, height);
+          return nextEntry;
+        });
+      })()
+    : tabs.map((entry, index) => ({
+        ...entry,
+        width: tabWidths[index] ?? entry.width,
+        height: tabHeights[index] ?? entry.height,
+      }));
+
+  const originalTabsBottom = tabs.length > 0 ? Math.max(...tabs.map((item) => item.y + item.height)) : 0;
+  const adaptedTabsBottom = adaptedTabs.length > 0 ? Math.max(...adaptedTabs.map((item) => item.y + item.height)) : 0;
+  const tabsDeltaY = adaptedTabsBottom - originalTabsBottom;
+
+  const adaptedCards = cards.map((entry) => ({
+    ...entry,
+    y: entry.y + tabsDeltaY,
+  }));
+
+  const baseChrome = {
+    prev: chrome.find((item) => item.kind === "prev") ?? null,
+    next: chrome.find((item) => item.kind === "next") ?? null,
+  };
+  const cardsBottom = adaptedCards.length > 0 ? Math.max(...adaptedCards.map((item) => item.y + item.height)) : adaptedTabsBottom;
+  const pagerBaseY = cardsBottom + 14;
+  const prevWidth = baseChrome.prev ? Math.min(availableWidth, Math.max(baseChrome.prev.minWidth, baseChrome.prev.width, estimateAdaptiveButtonWidth(options.prevLabel ?? baseChrome.prev.label))) : 0;
+  const nextWidth = baseChrome.next ? Math.min(availableWidth, Math.max(baseChrome.next.minWidth, baseChrome.next.width, estimateAdaptiveButtonWidth(options.nextLabel ?? baseChrome.next.label))) : 0;
+  const prevHeight = baseChrome.prev ? Math.max(baseChrome.prev.minHeight, baseChrome.prev.height) : 0;
+  const nextHeight = baseChrome.next ? Math.max(baseChrome.next.minHeight, baseChrome.next.height) : 0;
+  const pagerNeedsWrap = prevWidth > 0 && nextWidth > 0 && prevWidth + DEFAULT_CHROME_GAP + nextWidth > availableWidth;
+
+  const adaptedChrome = chrome.map((entry) => {
+    if (entry.kind === "prev") {
+      return {
+        ...entry,
+        x: 0,
+        y: pagerBaseY,
+        width: prevWidth || entry.width,
+        height: prevHeight || entry.height,
+      };
+    }
+    const nextY = pagerNeedsWrap ? pagerBaseY + Math.max(prevHeight, nextHeight) + DEFAULT_CHROME_GAP : pagerBaseY;
+    return {
+      ...entry,
+      x: pagerNeedsWrap ? 0 : (prevWidth > 0 ? prevWidth + DEFAULT_CHROME_GAP : 0),
+      y: nextY,
+      width: nextWidth || entry.width,
+      height: nextHeight || entry.height,
+    };
+  });
+
+  return [...adaptedTabs, ...adaptedChrome, ...adaptedCards];
 }

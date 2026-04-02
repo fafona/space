@@ -1,4 +1,5 @@
 import type { BackgroundEditableProps } from "@/data/homeBlocks";
+import { resolveCommonCanvasLayout } from "@/lib/commonCanvasLayout";
 import { getBackgroundStyle } from "./backgroundStyle";
 import { getBlockBorderClass, getBlockBorderInlineStyle } from "./borderStyle";
 import { toRichHtml } from "./richText";
@@ -70,7 +71,8 @@ export default function CommonBlock(props: CommonBlockProps) {
     width: blockWidth ? `${blockWidth}px` : undefined,
     height: blockHeight ? `${blockHeight}px` : undefined,
   };
-  const viewportHeight = blockHeight ? Math.max(72, Math.round(blockHeight) - 48) : 280;
+  const viewportWidth = blockWidth ? Math.max(120, Math.round(blockWidth) - 48) : undefined;
+  const viewportHeight = blockHeight ? Math.max(72, Math.round(blockHeight) - 48) : undefined;
   const offsetX =
     typeof props.blockOffsetX === "number" && Number.isFinite(props.blockOffsetX)
       ? Math.round(props.blockOffsetX)
@@ -91,6 +93,10 @@ export default function CommonBlock(props: CommonBlockProps) {
   const borderClass = getBlockBorderClass(props.blockBorderStyle);
   const borderInlineStyle = getBlockBorderInlineStyle(props.blockBorderStyle, props.blockBorderColor);
   const boxes = normalizeCommonTextBoxes(props);
+  const canvasLayout = resolveCommonCanvasLayout(boxes, {
+    availableWidth: viewportWidth,
+    availableHeight: viewportHeight,
+  });
 
   return (
     <section className="max-w-6xl mx-auto px-6 py-6" style={offsetStyle}>
@@ -98,26 +104,44 @@ export default function CommonBlock(props: CommonBlockProps) {
         className={`bg-white rounded-xl shadow-sm p-6 overflow-hidden ${borderClass}`}
         style={{ ...cardStyle, ...sizeStyle, ...borderInlineStyle }}
       >
-        <div className="relative min-h-[240px] overflow-auto" style={{ height: `${viewportHeight}px` }}>
-          {boxes.map((box) => (
-            <div
-              key={box.id}
-              className="absolute border border-transparent"
-              style={{
-                left: `${box.x}px`,
-                top: `${box.y}px`,
-                width: `${box.width}px`,
-                height: `${box.height}px`,
-                transform: `rotate(${box.rotateDeg ?? 0}deg)`,
-                transformOrigin: "center center",
-              }}
-            >
+        <div
+          className="relative overflow-visible"
+          style={{
+            minHeight: blockHeight ? undefined : `${canvasLayout.renderHeight}px`,
+            width: `${canvasLayout.renderWidth}px`,
+            height: `${canvasLayout.renderHeight}px`,
+            maxWidth: "100%",
+          }}
+        >
+          <div
+            className="absolute left-0 top-0"
+            style={{
+              width: `${canvasLayout.bounds.width}px`,
+              height: `${canvasLayout.bounds.height}px`,
+              transform: `scale(${canvasLayout.scale})`,
+              transformOrigin: "top left",
+            }}
+          >
+            {boxes.map((box) => (
               <div
-                className="w-full h-full whitespace-pre-wrap break-words overflow-hidden text-gray-700"
-                dangerouslySetInnerHTML={{ __html: toRichHtml(box.html, "") }}
-              />
-            </div>
-          ))}
+                key={box.id}
+                className="absolute border border-transparent"
+                style={{
+                  left: `${box.x + canvasLayout.translateX}px`,
+                  top: `${box.y + canvasLayout.translateY}px`,
+                  width: `${box.width}px`,
+                  height: `${box.height}px`,
+                  transform: `rotate(${box.rotateDeg ?? 0}deg)`,
+                  transformOrigin: "center center",
+                }}
+              >
+                <div
+                  className="w-full h-full whitespace-pre-wrap break-words overflow-hidden text-gray-700"
+                  dangerouslySetInnerHTML={{ __html: toRichHtml(box.html, "") }}
+                />
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </section>
