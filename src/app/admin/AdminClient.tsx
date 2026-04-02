@@ -291,6 +291,17 @@ const INLINE_TYPOGRAPHY_STYLE_PROPERTIES = [
   "-webkit-text-fill-color",
   "text-fill-color",
 ] as const;
+
+function clampTypographyFontSizeInput(value: number) {
+  if (!Number.isFinite(value)) return 16;
+  return Math.max(8, Math.min(MAX_TYPOGRAPHY_FONT_SIZE, Math.round(value)));
+}
+
+function clampMerchantCardTypographyFontSizeInput(value: number) {
+  if (!Number.isFinite(value)) return 16;
+  return Math.max(8, Math.min(120, Math.round(value)));
+}
+
 const BLOCK_TYPE_LABELS: Record<Block["type"], string> = {
   common: "通用",
   button: "按钮",
@@ -10267,7 +10278,7 @@ type GalleryEditorImage = {
     () =>
       ({
         fontFamily: typoFontFamily,
-        fontSize: Math.max(8, Math.min(MAX_TYPOGRAPHY_FONT_SIZE, Number(typoFontSize) || 16)),
+        fontSize: clampTypographyFontSizeInput(Number(typoFontSize)),
         fontColor: typoFontColor,
         bold: typoBold,
         italic: typoItalic,
@@ -10278,7 +10289,7 @@ type GalleryEditorImage = {
 
   function setTypographyDialogValues(next: TypographyDialogValues) {
     setTypoFontFamily(next.fontFamily);
-    setTypoFontSize(Math.max(8, Math.min(MAX_TYPOGRAPHY_FONT_SIZE, Math.round(next.fontSize) || 16)));
+    setTypoFontSize(clampTypographyFontSizeInput(next.fontSize));
     setTypoFontColor(next.fontColor);
     setTypoBold(next.bold);
     setTypoItalic(next.italic);
@@ -10321,10 +10332,7 @@ type GalleryEditorImage = {
       fontFamily: resolveFontFamilyOptionValue(inlineFontFamily || computedStyle?.fontFamily || ""),
       fontSize: Math.max(
         8,
-        Math.min(
-          MAX_TYPOGRAPHY_FONT_SIZE,
-          Math.round(Number.parseFloat(inlineFontSize || computedStyle?.fontSize || "16")) || 16,
-        ),
+        clampTypographyFontSizeInput(Math.round(Number.parseFloat(inlineFontSize || computedStyle?.fontSize || "16")) || 16),
       ),
       fontColor: resolvedFontColor,
       bold:
@@ -10488,7 +10496,7 @@ type GalleryEditorImage = {
       setTypoFontFamily((block.props.fontFamily ?? "").trim());
       setTypoFontSize(
         typeof block.props.fontSize === "number" && Number.isFinite(block.props.fontSize)
-          ? Math.max(8, Math.min(MAX_TYPOGRAPHY_FONT_SIZE, Math.round(block.props.fontSize)))
+          ? clampTypographyFontSizeInput(block.props.fontSize)
           : 16,
       );
       setTypoFontColor((block.props.fontColor ?? "").trim() || "#111111");
@@ -10505,7 +10513,7 @@ type GalleryEditorImage = {
       setTypoFontFamily((block.props.fontFamily ?? "").trim());
       setTypoFontSize(
         typeof block.props.fontSize === "number" && Number.isFinite(block.props.fontSize)
-          ? Math.max(8, Math.min(MAX_TYPOGRAPHY_FONT_SIZE, Math.round(block.props.fontSize)))
+          ? clampTypographyFontSizeInput(block.props.fontSize)
           : 16,
       );
       setTypoFontColor((block.props.fontColor ?? "").trim() || "#111111");
@@ -10522,7 +10530,7 @@ type GalleryEditorImage = {
       setTypoFontFamily((block.props.fontFamily ?? "").trim());
       setTypoFontSize(
         typeof block.props.fontSize === "number" && Number.isFinite(block.props.fontSize)
-          ? Math.max(8, Math.min(MAX_TYPOGRAPHY_FONT_SIZE, Math.round(block.props.fontSize)))
+          ? clampTypographyFontSizeInput(block.props.fontSize)
           : 16,
       );
       setTypoFontColor((block.props.fontColor ?? "").trim() || "#111111");
@@ -11377,7 +11385,7 @@ type GalleryEditorImage = {
     setMerchantCardTypoFontFamilyInput((style.fontFamily ?? "").trim());
     setMerchantCardTypoFontSizeInput(
       typeof style.fontSize === "number" && Number.isFinite(style.fontSize) && style.fontSize > 0
-        ? Math.max(8, Math.min(120, style.fontSize))
+        ? clampMerchantCardTypographyFontSizeInput(style.fontSize)
         : defaults.fontSize,
     );
     setMerchantCardTypoFontColorInput((style.fontColor ?? "").trim() || defaults.fontColor);
@@ -11411,7 +11419,7 @@ type GalleryEditorImage = {
     if (block.type !== "merchant-list") return;
     const nextStyle: TypographyEditableProps = {
       fontFamily: merchantCardTypoFontFamilyInput.trim() || undefined,
-      fontSize: Math.max(8, Math.min(120, merchantCardTypoFontSizeInput)),
+      fontSize: clampMerchantCardTypographyFontSizeInput(merchantCardTypoFontSizeInput),
       fontColor: merchantCardTypoFontColorInput.trim() || undefined,
       fontWeight: merchantCardTypoBoldInput ? "bold" : "normal",
       fontStyle: merchantCardTypoItalicInput ? "italic" : "normal",
@@ -12333,7 +12341,7 @@ type GalleryEditorImage = {
       : {};
   const merchantCardTypographyDraftStyle = buildTypographyInlineStyle({
     fontFamily: merchantCardTypoFontFamilyInput.trim() || undefined,
-    fontSize: Math.max(8, Math.min(120, merchantCardTypoFontSizeInput)),
+    fontSize: clampMerchantCardTypographyFontSizeInput(merchantCardTypoFontSizeInput),
     fontColor: merchantCardTypoFontColorInput.trim() || undefined,
     fontWeight: merchantCardTypoBoldInput ? "bold" : "normal",
     fontStyle: merchantCardTypoItalicInput ? "italic" : "normal",
@@ -12404,11 +12412,13 @@ type GalleryEditorImage = {
               onChange={(e) => {
                 const nextValue = Number.parseInt(e.target.value, 10);
                 if (!Number.isFinite(nextValue)) return;
-                setMerchantCardTypoFontSizeInput(Math.max(8, Math.min(120, nextValue)));
+                setMerchantCardTypoFontSizeInput(nextValue);
               }}
               onBlur={(e) => {
                 const nextValue = Number.parseInt(e.target.value, 10);
-                setMerchantCardTypoFontSizeInput(Math.max(8, Math.min(120, Number.isFinite(nextValue) ? nextValue : 16)));
+                setMerchantCardTypoFontSizeInput(
+                  clampMerchantCardTypographyFontSizeInput(Number.isFinite(nextValue) ? nextValue : 16),
+                );
               }}
             />
             <datalist id="merchant-card-typography-font-size-options">
@@ -12599,11 +12609,11 @@ type GalleryEditorImage = {
               onChange={(e) => {
                 const nextValue = Number.parseInt(e.target.value, 10);
                 if (!Number.isFinite(nextValue)) return;
-                setTypoFontSize(Math.max(8, Math.min(MAX_TYPOGRAPHY_FONT_SIZE, nextValue)));
+                setTypoFontSize(nextValue);
               }}
               onBlur={(e) => {
                 const nextValue = Number.parseInt(e.target.value, 10);
-                setTypoFontSize(Math.max(8, Math.min(MAX_TYPOGRAPHY_FONT_SIZE, Number.isFinite(nextValue) ? nextValue : 16)));
+                setTypoFontSize(clampTypographyFontSizeInput(Number.isFinite(nextValue) ? nextValue : 16));
               }}
             />
             <datalist id="typography-font-size-options">
@@ -12646,7 +12656,7 @@ type GalleryEditorImage = {
           className="rounded border p-3 text-sm"
           style={{
             fontFamily: typoFontFamily || undefined,
-            fontSize: typoFontSize,
+            fontSize: clampTypographyFontSizeInput(typoFontSize),
             color: isGradientToken(typoFontColor) ? "transparent" : typoFontColor || undefined,
             backgroundImage: isGradientToken(typoFontColor) ? typoFontColor : undefined,
             backgroundClip: isGradientToken(typoFontColor) ? ("text" as const) : undefined,
