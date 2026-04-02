@@ -293,14 +293,16 @@ const INLINE_TYPOGRAPHY_STYLE_PROPERTIES = [
 ] as const;
 
 function clampTypographyFontSizeInput(value: unknown) {
-  const numericValue = Number(value);
+  const numericValue =
+    typeof value === "string" ? Number.parseInt(value.replace(/[^\d]/g, ""), 10) : Number(value);
   if (!Number.isFinite(numericValue)) return 16;
   return Math.max(8, Math.min(MAX_TYPOGRAPHY_FONT_SIZE, Math.round(numericValue)));
 }
 
 function normalizeTypographyFontSizeInputValue(value: unknown) {
   if (value === "") return "";
-  const numericValue = Number(value);
+  const numericValue =
+    typeof value === "string" ? Number.parseInt(value.replace(/[^\d]/g, ""), 10) : Number(value);
   if (!Number.isFinite(numericValue)) return "";
   return String(Math.round(numericValue));
 }
@@ -310,14 +312,16 @@ function clampTypographyFontSizeInputToString(value: unknown) {
 }
 
 function clampMerchantCardTypographyFontSizeInput(value: unknown) {
-  const numericValue = Number(value);
+  const numericValue =
+    typeof value === "string" ? Number.parseInt(value.replace(/[^\d]/g, ""), 10) : Number(value);
   if (!Number.isFinite(numericValue)) return 16;
   return Math.max(8, Math.min(120, Math.round(numericValue)));
 }
 
 function normalizeMerchantCardTypographyFontSizeInputValue(value: unknown) {
   if (value === "") return "";
-  const numericValue = Number(value);
+  const numericValue =
+    typeof value === "string" ? Number.parseInt(value.replace(/[^\d]/g, ""), 10) : Number(value);
   if (!Number.isFinite(numericValue)) return "";
   return String(Math.round(numericValue));
 }
@@ -12425,11 +12429,9 @@ type GalleryEditorImage = {
           <div className="space-y-1">
             <div className="text-xs text-gray-600">字号</div>
             <input
-              type="number"
+              type="text"
               inputMode="numeric"
-              min={8}
-              max={120}
-              step={1}
+              autoComplete="off"
               list="merchant-card-typography-font-size-options"
               className="border p-2 rounded w-full text-sm"
               value={merchantCardTypoFontSizeInput}
@@ -12617,11 +12619,9 @@ type GalleryEditorImage = {
           <div className="space-y-1">
             <div className="text-xs text-gray-600">{"字号"}</div>
             <input
-              type="number"
+              type="text"
               inputMode="numeric"
-              min={8}
-              max={MAX_TYPOGRAPHY_FONT_SIZE}
-              step={1}
+              autoComplete="off"
               list="typography-font-size-options"
               className="border p-2 rounded w-full text-sm"
               value={typoFontSize}
