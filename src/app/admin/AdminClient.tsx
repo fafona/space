@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -72,7 +73,7 @@ import { buildPublishedMerchantProfilePatch } from "@/lib/merchantProfileBinding
 import { resolveCommonCanvasLayout } from "@/lib/commonCanvasLayout";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
 import ChatBusinessCardDialog from "@/components/admin/ChatBusinessCardDialog";
-import { resolveMerchantBusinessCardForChatDisplay } from "@/lib/merchantBusinessCards";
+import { resolveMerchantBusinessCardForChatDisplay, type MerchantBusinessCardAsset } from "@/lib/merchantBusinessCards";
 import { type PlatformSupportMessage, type PlatformSupportThread } from "@/lib/platformSupportInbox";
 import {
   findMerchantPeerThreadForMerchants,
@@ -3547,6 +3548,23 @@ function buildSupportLastReadStorageKey(merchantId: string) {
   return `${SUPPORT_LAST_READ_STORAGE_KEY_PREFIX}${merchantId.trim() || "default"}`;
 }
 
+function buildSupportPeerLastReadStorageKey(ownerMerchantId: string, contactMerchantId: string) {
+  const owner = ownerMerchantId.trim() || "default";
+  const contact = contactMerchantId.trim() || "default";
+  return `${SUPPORT_LAST_READ_STORAGE_KEY_PREFIX}peer:${owner}:${contact}`;
+}
+
+function findLatestIncomingPeerMessage(thread: MerchantPeerThread | null | undefined, currentMerchantId: string) {
+  const normalizedCurrentMerchantId = currentMerchantId.trim();
+  if (!thread || !normalizedCurrentMerchantId) return null;
+  for (let index = thread.messages.length - 1; index >= 0; index -= 1) {
+    const message = thread.messages[index];
+    if (!message || message.senderMerchantId === normalizedCurrentMerchantId) continue;
+    return message;
+  }
+  return null;
+}
+
 type LocalSupportMessageStatus = "pending" | "failed";
 
 type LocalSupportMessage = PlatformSupportMessage & {
@@ -3714,6 +3732,7 @@ export default function AdminClient({
   const [supportDraft, setSupportDraft] = useState("");
   const [supportContactKeyword, setSupportContactKeyword] = useState("");
   const [supportLastReadAt, setSupportLastReadAt] = useState("");
+  const [supportPeerLastReadMap, setSupportPeerLastReadMap] = useState<Record<string, string>>({});
   const [supportLocalMessages, setSupportLocalMessages] = useState<LocalSupportMessage[]>([]);
   const [supportPeerContacts, setSupportPeerContacts] = useState<MerchantPeerContactSummary[]>([]);
   const [supportPeerThreads, setSupportPeerThreads] = useState<MerchantPeerThread[]>([]);
@@ -3729,8 +3748,11 @@ export default function AdminClient({
   const supportMessagesViewportRef = useRef<HTMLDivElement>(null);
   const supportInputRef = useRef<HTMLTextAreaElement>(null);
   const supportLastIncomingAdminMessageKeyRef = useRef("");
+  const supportLastIncomingPeerMessageKeyRef = useRef("");
   const supportLastVisibleMessageKeyRef = useRef("");
   const supportScrollToLatestPendingRef = useRef(false);
+  const merchantChatBusinessCardSyncTimerRef = useRef<number | null>(null);
+  const merchantChatBusinessCardSyncPayloadRef = useRef("");
   const focusSupportInput = useCallback(() => {
     if (typeof window === "undefined") return;
     window.requestAnimationFrame(() => {
@@ -7413,6 +7435,13 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const merchantDisplayName = !isPlatformEditor
     ? ((editingSite?.merchantName ?? "").trim() || "未设置商户名称")
     : "";
+  const currentMerchantChatBusinessCardSyncPayload =
+    !isPlatformEditor && editingSiteId
+      ? JSON.stringify({
+          merchantId: editingSiteId,
+          chatBusinessCard: resolveMerchantBusinessCardForChatDisplay(editingSite?.businessCards ?? []),
+        })
+      : "";
   const currentSupportMerchantId = (
     editingSiteId ||
     merchantSessionIdentityRef.current.merchantId ||
@@ -7450,6 +7479,22 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const selectedSupportPeerMerchantId = supportSelectedContactKey.startsWith("merchant:")
     ? supportSelectedContactKey.slice("merchant:".length).trim()
     : "";
+  const supportPeerThreadByContactMerchantId = useMemo(() => {
+    const map = new Map<string, MerchantPeerThread>();
+    if (!currentSupportMerchantId) return map;
+    supportPeerThreads.forEach((thread) => {
+      let contactMerchantId = "";
+      if (thread.merchantAId === currentSupportMerchantId) {
+        contactMerchantId = thread.merchantBId;
+      } else if (thread.merchantBId === currentSupportMerchantId) {
+        contactMerchantId = thread.merchantAId;
+      }
+      if (contactMerchantId && !map.has(contactMerchantId)) {
+        map.set(contactMerchantId, thread);
+      }
+    });
+    return map;
+  }, [currentSupportMerchantId, supportPeerThreads]);
   const selectedSupportPeerContact =
     supportPeerContacts.find((contact) => contact.merchantId === selectedSupportPeerMerchantId) ?? null;
   const selectedSupportPeerSite =
@@ -7457,7 +7502,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const selectedSupportBusinessCard =
     supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY
       ? null
-      : resolveMerchantBusinessCardForChatDisplay(selectedSupportPeerSite?.businessCards ?? []);
+      : selectedSupportPeerContact?.chatBusinessCard ??
+        resolveMerchantBusinessCardForChatDisplay(selectedSupportPeerSite?.businessCards ?? []);
   const selectedSupportPeerThread =
     currentSupportMerchantId && selectedSupportPeerMerchantId
       ? findMerchantPeerThreadForMerchants(
@@ -7469,6 +7515,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           selectedSupportPeerMerchantId,
         )
       : null;
+  const latestSelectedSupportPeerIncomingMessage = useMemo(
+    () => findLatestIncomingPeerMessage(selectedSupportPeerThread, currentSupportMerchantId),
+    [currentSupportMerchantId, selectedSupportPeerThread],
+  );
   const peerVisibleSupportMessages = selectedSupportPeerMerchantId
     ? [
         ...(selectedSupportPeerThread?.messages ?? []).map((message) => ({
@@ -7523,10 +7573,28 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const supportCanSend =
     !!supportDraft.trim() &&
     (supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY || !!selectedSupportPeerContact);
-  const supportHasUnreadMessages =
+  const supportPeerUnreadContactIds = useMemo(() => {
+    const unreadContactIds = new Set<string>();
+    if (!currentSupportMerchantId) return unreadContactIds;
+    supportPeerContacts.forEach((contact) => {
+      const latestIncomingMessage = findLatestIncomingPeerMessage(
+        supportPeerThreadByContactMerchantId.get(contact.merchantId),
+        currentSupportMerchantId,
+      );
+      const latestIncomingAt = normalizeSupportMessageTimestamp(latestIncomingMessage?.createdAt);
+      if (!latestIncomingAt) return;
+      const lastReadAt = normalizeSupportMessageTimestamp(supportPeerLastReadMap[contact.merchantId]);
+      if (new Date(latestIncomingAt).getTime() > new Date(lastReadAt || 0).getTime()) {
+        unreadContactIds.add(contact.merchantId);
+      }
+    });
+    return unreadContactIds;
+  }, [currentSupportMerchantId, supportPeerContacts, supportPeerLastReadMap, supportPeerThreadByContactMerchantId]);
+  const supportHasUnreadOfficialMessages =
     !!latestSupportAdminMessageAt &&
     !!supportReadMerchantId &&
     new Date(latestSupportAdminMessageAt).getTime() > new Date(supportLastReadAt || 0).getTime();
+  const supportHasUnreadMessages = supportHasUnreadOfficialMessages || supportPeerUnreadContactIds.size > 0;
   const supportContactRows = [
     {
       key: SUPPORT_OFFICIAL_CONTACT_KEY,
@@ -7534,7 +7602,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       subtitle: supportOfficialSiteLabel,
       preview: latestOfficialVisibleSupportMessage?.text || "还没有留言记录，可以直接在右侧给 Faolla 留言。",
       updatedAt: latestOfficialVisibleSupportMessage?.createdAt || "",
-      unread: supportHasUnreadMessages,
+      unread: supportHasUnreadOfficialMessages,
     },
     ...supportPeerContacts.map((contact) => ({
       key: `merchant:${contact.merchantId}`,
@@ -7542,9 +7610,39 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       subtitle: [contact.merchantId, contact.merchantEmail].filter(Boolean).join(" | ") || contact.merchantId,
       preview: contact.lastMessage?.text || "还没有聊天记录，可以直接开始对话。",
       updatedAt: contact.updatedAt || contact.savedAt,
-      unread: false,
+      unread: supportPeerUnreadContactIds.has(contact.merchantId),
     })),
   ];
+  const latestIncomingPeerMessageKey = useMemo(() => {
+    let latestKey = "";
+    let latestTimestamp = 0;
+    if (!currentSupportMerchantId) return latestKey;
+    supportPeerThreads.forEach((thread) => {
+      const latestIncomingMessage = findLatestIncomingPeerMessage(thread, currentSupportMerchantId);
+      if (!latestIncomingMessage) return;
+      const contactMerchantId =
+        thread.merchantAId === currentSupportMerchantId
+          ? thread.merchantBId
+          : thread.merchantBId === currentSupportMerchantId
+            ? thread.merchantAId
+            : "";
+      if (!contactMerchantId) return;
+      const timestamp = new Date(latestIncomingMessage.createdAt).getTime();
+      const normalizedTimestamp = Number.isFinite(timestamp) ? timestamp : 0;
+      const nextKey = `${contactMerchantId}:${latestIncomingMessage.id}:${latestIncomingMessage.createdAt}`;
+      if (
+        normalizedTimestamp > latestTimestamp ||
+        (normalizedTimestamp === latestTimestamp && nextKey > latestKey)
+      ) {
+        latestTimestamp = normalizedTimestamp;
+        latestKey = nextKey;
+      }
+    });
+    return latestKey;
+  }, [currentSupportMerchantId, supportPeerThreads]);
+  const latestSelectedSupportPeerIncomingMessageAt = normalizeSupportMessageTimestamp(
+    latestSelectedSupportPeerIncomingMessage?.createdAt,
+  );
 
   const requestMerchantChatWithSessionRecovery = useCallback(async (path: string, init: RequestInit) => {
     const buildSupportRequestInit = async (allowRecovery: boolean) => {
@@ -7630,6 +7728,77 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     (init: RequestInit) => requestMerchantChatWithSessionRecovery("/api/merchant-peer-messages", init),
     [requestMerchantChatWithSessionRecovery],
   );
+
+  const requestMerchantChatBusinessCardSync = useCallback(
+    (init: RequestInit) => requestMerchantChatWithSessionRecovery("/api/merchant-chat-business-card", init),
+    [requestMerchantChatWithSessionRecovery],
+  );
+
+  const scheduleMerchantChatBusinessCardSync = useCallback(
+    (merchantId: string, cards: MerchantBusinessCardAsset[]) => {
+      if (isPlatformEditor || typeof window === "undefined") return;
+      const normalizedMerchantId = String(merchantId ?? "").trim();
+      if (!normalizedMerchantId) return;
+      const body = JSON.stringify({
+        merchantId: normalizedMerchantId,
+        chatBusinessCard: resolveMerchantBusinessCardForChatDisplay(cards),
+      });
+      if (merchantChatBusinessCardSyncTimerRef.current) {
+        clearTimeout(merchantChatBusinessCardSyncTimerRef.current);
+        merchantChatBusinessCardSyncTimerRef.current = null;
+      }
+      merchantChatBusinessCardSyncTimerRef.current = window.setTimeout(() => {
+        void (async () => {
+          const response = await requestMerchantChatBusinessCardSync({
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body,
+          }).catch(() => null);
+          if (response?.ok) {
+            merchantChatBusinessCardSyncPayloadRef.current = body;
+          }
+        })();
+      }, 500);
+    },
+    [isPlatformEditor, requestMerchantChatBusinessCardSync],
+  );
+
+  useEffect(() => {
+    if (merchantChatBusinessCardSyncTimerRef.current) {
+      clearTimeout(merchantChatBusinessCardSyncTimerRef.current);
+      merchantChatBusinessCardSyncTimerRef.current = null;
+    }
+    if (isPlatformEditor || typeof window === "undefined" || !currentMerchantChatBusinessCardSyncPayload || !editingSiteId) return;
+    if (merchantChatBusinessCardSyncPayloadRef.current === currentMerchantChatBusinessCardSyncPayload) return;
+    const body = currentMerchantChatBusinessCardSyncPayload;
+    merchantChatBusinessCardSyncTimerRef.current = window.setTimeout(() => {
+      void (async () => {
+        const response = await requestMerchantChatBusinessCardSync({
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body,
+        }).catch(() => null);
+        if (response?.ok) {
+          merchantChatBusinessCardSyncPayloadRef.current = body;
+        }
+      })();
+    }, 500);
+    return () => {
+      if (merchantChatBusinessCardSyncTimerRef.current) {
+        clearTimeout(merchantChatBusinessCardSyncTimerRef.current);
+        merchantChatBusinessCardSyncTimerRef.current = null;
+      }
+    };
+  }, [
+    currentMerchantChatBusinessCardSyncPayload,
+    editingSiteId,
+    isPlatformEditor,
+    requestMerchantChatBusinessCardSync,
+  ]);
 
   const loadSupportThread = useCallback(async (options?: { silent?: boolean; suppressError?: boolean }) => {
     if (isPlatformEditor) return;
@@ -7811,6 +7980,37 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }, [isPlatformEditor, supportReadMerchantId]);
 
   useEffect(() => {
+    if (isPlatformEditor || typeof window === "undefined") return;
+    if (!currentSupportMerchantId) {
+      setSupportPeerLastReadMap({});
+      supportLastIncomingPeerMessageKeyRef.current = "";
+      return;
+    }
+    const nextLastReadMap = supportPeerContacts.reduce<Record<string, string>>((accumulator, contact) => {
+      const merchantId = contact.merchantId.trim();
+      if (!merchantId) return accumulator;
+      const stored = normalizeSupportMessageTimestamp(
+        localStorage.getItem(buildSupportPeerLastReadStorageKey(currentSupportMerchantId, merchantId)),
+      );
+      if (stored) {
+        accumulator[merchantId] = stored;
+      }
+      return accumulator;
+    }, {});
+    setSupportPeerLastReadMap((current) => {
+      const currentKeys = Object.keys(current);
+      const nextKeys = Object.keys(nextLastReadMap);
+      if (
+        currentKeys.length === nextKeys.length &&
+        nextKeys.every((merchantId) => current[merchantId] === nextLastReadMap[merchantId])
+      ) {
+        return current;
+      }
+      return nextLastReadMap;
+    });
+  }, [currentSupportMerchantId, isPlatformEditor, supportPeerContacts]);
+
+  useEffect(() => {
     if (supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY) return;
     if (selectedSupportPeerContact) return;
     setSupportSelectedContactKey(SUPPORT_OFFICIAL_CONTACT_KEY);
@@ -7825,6 +8025,14 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }, [isPlatformEditor, latestSupportAdminMessageKey, playNotificationSound]);
 
   useEffect(() => {
+    if (isPlatformEditor || !latestIncomingPeerMessageKey) return;
+    const previousKey = supportLastIncomingPeerMessageKeyRef.current;
+    supportLastIncomingPeerMessageKeyRef.current = latestIncomingPeerMessageKey;
+    if (!previousKey || previousKey === latestIncomingPeerMessageKey) return;
+    void playNotificationSound();
+  }, [isPlatformEditor, latestIncomingPeerMessageKey, playNotificationSound]);
+
+  useEffect(() => {
     if (isPlatformEditor || !supportDialogOpen || typeof window === "undefined") return;
     if (supportSelectedContactKey !== SUPPORT_OFFICIAL_CONTACT_KEY) return;
     if (!supportReadMerchantId || !latestSupportAdminMessageAt) return;
@@ -7837,6 +8045,34 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     supportDialogOpen,
     supportLastReadAt,
     supportReadMerchantId,
+    supportSelectedContactKey,
+  ]);
+
+  useEffect(() => {
+    if (isPlatformEditor || !supportDialogOpen || typeof window === "undefined") return;
+    if (supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY) return;
+    if (!currentSupportMerchantId || !selectedSupportPeerMerchantId || !latestSelectedSupportPeerIncomingMessageAt) return;
+    const currentLastReadAt = normalizeSupportMessageTimestamp(supportPeerLastReadMap[selectedSupportPeerMerchantId]);
+    if (latestSelectedSupportPeerIncomingMessageAt === currentLastReadAt) return;
+    setSupportPeerLastReadMap((current) =>
+      current[selectedSupportPeerMerchantId] === latestSelectedSupportPeerIncomingMessageAt
+        ? current
+        : {
+            ...current,
+            [selectedSupportPeerMerchantId]: latestSelectedSupportPeerIncomingMessageAt,
+          },
+    );
+    localStorage.setItem(
+      buildSupportPeerLastReadStorageKey(currentSupportMerchantId, selectedSupportPeerMerchantId),
+      latestSelectedSupportPeerIncomingMessageAt,
+    );
+  }, [
+    currentSupportMerchantId,
+    isPlatformEditor,
+    latestSelectedSupportPeerIncomingMessageAt,
+    selectedSupportPeerMerchantId,
+    supportDialogOpen,
+    supportPeerLastReadMap,
     supportSelectedContactKey,
   ]);
 
@@ -9222,6 +9458,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                   : item,
               ),
             });
+            scheduleMerchantChatBusinessCardSync(editingSiteId, cards);
           }}
           onSave={async ({ merchantName, domainPrefix, contactAddress, contactName, contactPhone, contactEmail, location, industry }) => {
             const targetSiteId = editingSiteId || (await ensureEditableMerchantSiteId());

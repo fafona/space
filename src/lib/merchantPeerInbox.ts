@@ -1,3 +1,5 @@
+import type { MerchantBusinessCardAsset } from "@/lib/merchantBusinessCards";
+
 type StoredBlock = {
   id?: unknown;
   type?: unknown;
@@ -40,6 +42,7 @@ export type MerchantPeerContactSummary = {
   merchantId: string;
   merchantName: string;
   merchantEmail: string;
+  chatBusinessCard?: MerchantBusinessCardAsset | null;
   savedAt: string;
   updatedAt: string;
   lastMessage: MerchantPeerMessage | null;

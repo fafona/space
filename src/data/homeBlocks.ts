@@ -1,5 +1,6 @@
 ﻿import type { CustomGalleryLayout, GalleryLayoutPreset } from "@/lib/galleryLayout";
 import { BLOCKS_SCHEMA_VERSION } from "../lib/blocksSchema";
+import type { MerchantBusinessCardAsset } from "@/lib/merchantBusinessCards";
 import type { MerchantIndustry, MerchantSortConfig, MerchantSortRule, SiteLocation, SiteStatus } from "./platformControlStore";
 import type {
   ProductContainerMode,
@@ -93,6 +94,7 @@ export type MerchantListPublishedSite = {
   contactEmail?: string;
   merchantCardImageUrl?: string;
   merchantCardImageOpacity?: number;
+  chatBusinessCard?: MerchantBusinessCardAsset | null;
   status?: SiteStatus;
   serviceExpiresAt?: string | null;
   sortConfig: MerchantSortConfig;

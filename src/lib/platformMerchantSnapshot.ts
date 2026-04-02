@@ -1,4 +1,5 @@
 import type { Block, MerchantListPublishedSite } from "@/data/homeBlocks";
+import { normalizeMerchantBusinessCards, resolveMerchantBusinessCardForChatDisplay, type MerchantBusinessCardAsset } from "@/lib/merchantBusinessCards";
 import {
   MERCHANT_INDUSTRY_OPTIONS,
   MERCHANT_SORT_RULES,
@@ -102,6 +103,11 @@ function normalizeServiceExpiresAt(value: unknown) {
   return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
 }
 
+function normalizeSnapshotChatBusinessCard(value: unknown): MerchantBusinessCardAsset | null {
+  if (!value || typeof value !== "object") return null;
+  return normalizeMerchantBusinessCards([value])[0] ?? null;
+}
+
 function normalizeSnapshotSite(input: unknown): MerchantListPublishedSite | null {
   if (!input || typeof input !== "object") return null;
   const value = input as Partial<MerchantListPublishedSite>;
@@ -127,6 +133,7 @@ function normalizeSnapshotSite(input: unknown): MerchantListPublishedSite | null
     contactEmail: normalizeText(value.contactEmail),
     merchantCardImageUrl: normalizeText(value.merchantCardImageUrl),
     merchantCardImageOpacity: normalizeUnitInterval(value.merchantCardImageOpacity, 1),
+    chatBusinessCard: normalizeSnapshotChatBusinessCard(value.chatBusinessCard),
     status: normalizeSiteStatus(value.status),
     serviceExpiresAt: normalizeServiceExpiresAt(value.serviceExpiresAt),
     sortConfig: normalizeMerchantSortConfig(value.sortConfig),
@@ -187,6 +194,7 @@ export function buildPlatformMerchantSnapshotPayloadFromSites(
       contactEmail: normalizeText(site.contactEmail),
       merchantCardImageUrl: normalizeText(site.merchantCardImageUrl),
       merchantCardImageOpacity: normalizeUnitInterval(site.merchantCardImageOpacity, 1),
+      chatBusinessCard: resolveMerchantBusinessCardForChatDisplay(site.businessCards ?? []),
       status: normalizeSiteStatus(site.status),
       serviceExpiresAt: normalizeServiceExpiresAt(site.serviceExpiresAt),
       sortConfig: normalizeMerchantSortConfig(site.sortConfig),
@@ -242,6 +250,7 @@ export function buildPlatformMerchantSnapshotSite(
     contactEmail?: string | null;
     merchantCardImageUrl?: string | null;
     merchantCardImageOpacity?: number | null;
+    chatBusinessCard?: MerchantBusinessCardAsset | null;
     status?: SiteStatus | null;
     serviceExpiresAt?: string | null;
     createdAt?: string | null;
@@ -265,6 +274,7 @@ export function buildPlatformMerchantSnapshotSite(
     contactEmail: input.contactEmail,
     merchantCardImageUrl: input.merchantCardImageUrl,
     merchantCardImageOpacity: input.merchantCardImageOpacity,
+    chatBusinessCard: input.chatBusinessCard,
     status: input.status,
     serviceExpiresAt: input.serviceExpiresAt,
     sortConfig: input.sortConfig,
