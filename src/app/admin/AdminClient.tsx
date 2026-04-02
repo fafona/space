@@ -278,6 +278,19 @@ function resolveFontFamilyOptionValue(value: string) {
 }
 const MAX_TYPOGRAPHY_FONT_SIZE = 80;
 const FONT_SIZE_OPTIONS = [12, 14, 16, 18, 20, 24, 28, 32, 36, 42, 48, 56, 64, 72, 80];
+const INLINE_TYPOGRAPHY_STYLE_PROPERTIES = [
+  "font-family",
+  "font-size",
+  "font-weight",
+  "font-style",
+  "text-decoration",
+  "color",
+  "background-image",
+  "background-clip",
+  "-webkit-background-clip",
+  "-webkit-text-fill-color",
+  "text-fill-color",
+] as const;
 const BLOCK_TYPE_LABELS: Record<Block["type"], string> = {
   common: "通用",
   button: "按钮",
@@ -10358,6 +10371,30 @@ type GalleryEditorImage = {
     span.style.textDecoration = values.underline ? "underline" : "none";
   }
 
+  function clearInlineTypographyStylesWithinSpan(span: HTMLSpanElement) {
+    const descendants = span.querySelectorAll<HTMLElement>("*");
+    descendants.forEach((element) => {
+      INLINE_TYPOGRAPHY_STYLE_PROPERTIES.forEach((property) => {
+        element.style.removeProperty(property);
+      });
+      element.removeAttribute("color");
+      element.removeAttribute("face");
+      element.removeAttribute("size");
+      if (!element.getAttribute("style")?.trim()) {
+        element.removeAttribute("style");
+      }
+    });
+    const presentationalElements = Array.from(span.querySelectorAll("font, small, big, sup, sub"));
+    presentationalElements.forEach((element) => {
+      const parent = element.parentNode;
+      if (!parent) return;
+      while (element.firstChild) {
+        parent.insertBefore(element.firstChild, element);
+      }
+      parent.removeChild(element);
+    });
+  }
+
   const persistEditorTypographyChange = useCallback((editor: HTMLDivElement, options?: { includeBlockLevelPatch?: boolean }) => {
     const commonBoxId = editor.dataset.commonBoxId?.trim();
     const fieldName = editor.dataset.field as RichFieldName | undefined;
@@ -10413,6 +10450,7 @@ type GalleryEditorImage = {
       }
     } else {
       span.appendChild(range.extractContents());
+      clearInlineTypographyStylesWithinSpan(span);
       range.insertNode(span);
       const previewRange = document.createRange();
       previewRange.selectNodeContents(span);
