@@ -6,4 +6,6 @@ test("merchant permission config includes default business card background image
   const permission = createDefaultMerchantPermissionConfig();
   assert.equal(permission.businessCardBackgroundImageLimitKb, 200);
   assert.equal(permission.businessCardContactImageLimitKb, 200);
+  assert.equal(permission.commonBlockImageLimitKb, 300);
+  assert.equal(permission.galleryBlockImageLimitKb, 300);
 });

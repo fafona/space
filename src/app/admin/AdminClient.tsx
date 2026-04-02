@@ -330,6 +330,97 @@ function clampMerchantCardTypographyFontSizeInputToString(value: unknown) {
   return String(clampMerchantCardTypographyFontSizeInput(value));
 }
 
+function FontSizeComboInput({
+  value,
+  onChange,
+  onCommit,
+  options,
+  className = "border p-2 rounded w-full text-sm pr-10",
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  onCommit: (value: string) => void;
+  options: readonly number[];
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (rootRef.current?.contains(event.target as Node)) return;
+      setOpen(false);
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, [open]);
+
+  return (
+    <div
+      ref={rootRef}
+      className="relative"
+      onBlur={(event) => {
+        if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+        setOpen(false);
+        onCommit(value);
+      }}
+    >
+      <div className="relative">
+        <input
+          type="text"
+          inputMode="numeric"
+          autoComplete="off"
+          className={className}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowDown") {
+              event.preventDefault();
+              setOpen(true);
+            } else if (event.key === "Escape") {
+              setOpen(false);
+            }
+          }}
+        />
+        <button
+          type="button"
+          className="absolute inset-y-0 right-0 flex w-9 items-center justify-center rounded-r border-l bg-white text-gray-600 hover:bg-gray-50"
+          onClick={() => setOpen((prev) => !prev)}
+          aria-label="选择字号"
+          title="选择字号"
+        >
+          <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+            <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+      </div>
+      {open ? (
+        <div className="absolute right-0 z-30 mt-1 max-h-56 min-w-full overflow-auto rounded border bg-white py-1 shadow-lg">
+          {options.map((size) => (
+            <button
+              key={`font-size-option-${size}`}
+              type="button"
+              className="block w-full px-3 py-2 text-left text-sm hover:bg-gray-50"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => {
+                const nextValue = String(size);
+                onChange(nextValue);
+                onCommit(nextValue);
+                setOpen(false);
+              }}
+            >
+              {size}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 const BLOCK_TYPE_LABELS: Record<Block["type"], string> = {
   common: "通用",
   button: "按钮",
@@ -446,6 +537,11 @@ const MAX_PUBLISH_PAYLOAD_BYTES = 30_000_000;
 const MAX_IMAGE_FILE_BYTES = 10_000_000;
 const EXTERNALIZE_MIN_IMAGE_BYTES = 300_000;
 type UploadCompressionPreset = "high" | "balanced" | "compact";
+type EditorImageUploadPurpose = "common" | "gallery";
+type PersistedEditorAssetResult = {
+  value: string;
+  externalized: boolean;
+};
 const IMAGE_COMPRESSION_OPTIONS: Record<UploadCompressionPreset, { label: string; maxSide: number; quality: number }> = {
   high: { label: "高质量", maxSide: 3200, quality: 0.92 },
   balanced: { label: "平衡", maxSide: 2600, quality: 0.88 },
@@ -1673,6 +1769,52 @@ async function loadImageFromDataUrl(dataUrl: string): Promise<HTMLImageElement> 
   });
 }
 
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
+}
+
+async function blobToDataUrl(blob: Blob): Promise<string> {
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+    reader.onerror = () => reject(new Error("图片读取失败，请重新选择图片后重试"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function estimateDataUrlBytes(dataUrl: string) {
+  const base64 = dataUrl.split(",")[1] ?? "";
+  if (!base64) {
+    return typeof TextEncoder !== "undefined" ? new TextEncoder().encode(dataUrl).length : dataUrl.length;
+  }
+  return Math.max(0, Math.floor((base64.length * 3) / 4));
+}
+
+async function yieldToBrowser() {
+  await new Promise<void>((resolve) => {
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => resolve());
+      return;
+    }
+    setTimeout(resolve, 0);
+  });
+}
+
+async function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality: number) {
+  return await new Promise<Blob | null>((resolve) => {
+    canvas.toBlob((blob) => resolve(blob), type, quality);
+  });
+}
+
+async function loadImageFromBlob(blob: Blob): Promise<HTMLImageElement> {
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    return await loadImageFromDataUrl(objectUrl);
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
 async function compressImageDataUrl(dataUrl: string, options: { maxSide: number; quality: number }): Promise<string> {
   const image = await loadImageFromDataUrl(dataUrl);
   const naturalWidth = image.naturalWidth || image.width;
@@ -1693,6 +1835,135 @@ async function compressImageDataUrl(dataUrl: string, options: { maxSide: number;
 
   ctx.drawImage(image, 0, 0, targetWidth, targetHeight);
   return canvas.toDataURL("image/webp", options.quality);
+}
+
+function buildInitialImageCompressionPlan(sourceBytes: number, limitBytes: number) {
+  const ratio = clamp(limitBytes / Math.max(sourceBytes, 1), 0.05, 1);
+  if (ratio >= 0.72) {
+    return {
+      scale: 1,
+      quality: clamp(ratio * 0.96, 0.68, 0.92),
+    };
+  }
+  return {
+    scale: clamp(Math.sqrt(ratio / 0.84) * 0.99, 0.16, 1),
+    quality: 0.84,
+  };
+}
+
+function refineImageCompressionPlan(
+  previous: { scale: number; quality: number },
+  candidateBytes: number,
+  limitBytes: number,
+) {
+  const ratio = clamp(limitBytes / Math.max(candidateBytes, 1), 0.05, 1);
+  return {
+    scale: clamp(previous.scale * Math.sqrt(ratio) * 0.98, 0.12, 1),
+    quality: clamp(Math.min(previous.quality * ratio * 1.04, previous.quality), 0.42, 0.92),
+  };
+}
+
+async function renderCompressedImageCandidate(
+  image: HTMLImageElement,
+  scale: number,
+  quality: number,
+) {
+  const targetWidth = Math.max(1, Math.round(image.naturalWidth * scale));
+  const targetHeight = Math.max(1, Math.round(image.naturalHeight * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+  const context = canvas.getContext("2d");
+  if (!context) {
+    throw new Error("读取图片失败");
+  }
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
+  context.clearRect(0, 0, targetWidth, targetHeight);
+  context.drawImage(image, 0, 0, targetWidth, targetHeight);
+
+  const blob = await canvasToBlob(canvas, "image/webp", quality);
+  if (blob) {
+    return { blob, dataUrl: "", bytes: blob.size };
+  }
+  const dataUrl = canvas.toDataURL("image/webp", quality);
+  return { blob: null, dataUrl, bytes: estimateDataUrlBytes(dataUrl) };
+}
+
+async function finalizeCompressedImageCandidate(candidate: {
+  blob: Blob | null;
+  dataUrl: string;
+  bytes: number;
+}) {
+  return {
+    dataUrl: candidate.blob ? await blobToDataUrl(candidate.blob) : candidate.dataUrl,
+    bytes: candidate.bytes,
+  };
+}
+
+async function compressImageFileWithinLimit(
+  file: File,
+  limitBytes: number,
+  options: { maxSide: number; quality: number } = IMAGE_COMPRESSION_OPTIONS.high,
+) {
+  if (!file.type.startsWith("image/")) {
+    throw new Error("请选择图片文件");
+  }
+  if (file.size > MAX_IMAGE_FILE_BYTES) {
+    throw new Error("图片文件过大，请选择 10MB 以内图片");
+  }
+  const originalBytes = file.size || 0;
+  if (originalBytes > 0 && originalBytes <= limitBytes) {
+    const dataUrl = await fileToOriginalImageDataUrl(file, options);
+    return {
+      dataUrl,
+      compressed: false,
+      bytes: originalBytes || estimateDataUrlBytes(dataUrl),
+    };
+  }
+
+  const image = await loadImageFromBlob(file);
+  let plan = buildInitialImageCompressionPlan(originalBytes || limitBytes + 1, limitBytes);
+  let bestCandidate:
+    | {
+        blob: Blob | null;
+        dataUrl: string;
+        bytes: number;
+      }
+    | null = null;
+
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    await yieldToBrowser();
+    const candidate = await renderCompressedImageCandidate(image, plan.scale, plan.quality);
+    if (!bestCandidate || candidate.bytes < bestCandidate.bytes) {
+      bestCandidate = candidate;
+    }
+    if (candidate.bytes <= limitBytes) {
+      const finalized = await finalizeCompressedImageCandidate(candidate);
+      return {
+        dataUrl: finalized.dataUrl,
+        compressed: true,
+        bytes: finalized.bytes,
+      };
+    }
+    plan = refineImageCompressionPlan(plan, candidate.bytes, limitBytes);
+  }
+
+  if (bestCandidate) {
+    const finalized = await finalizeCompressedImageCandidate(bestCandidate);
+    return {
+      dataUrl: finalized.dataUrl,
+      compressed: true,
+      bytes: finalized.bytes,
+    };
+  }
+
+  const originalDataUrl = await fileToOriginalImageDataUrl(file, options);
+  return {
+    dataUrl: originalDataUrl,
+    compressed: false,
+    bytes: originalBytes || estimateDataUrlBytes(originalDataUrl),
+  };
 }
 
 async function fileToOriginalImageDataUrl(
@@ -4033,7 +4304,7 @@ export default function AdminClient({
     return merchantIds[0] ?? "public";
   }
 
-  async function persistInlineImageForEditor(dataUrl: string) {
+  async function persistInlineImageForEditor(dataUrl: string): Promise<PersistedEditorAssetResult> {
     const safeValue = ensureSafeImageUrlSize(dataUrl);
     if (!safeValue || !isInlineDataImageUrl(safeValue)) {
       return { value: safeValue ?? "", externalized: false };
@@ -4046,12 +4317,31 @@ export default function AdminClient({
     return { value: safeValue, externalized: false };
   }
 
-  async function persistImageFileForEditor(file: File) {
-    const dataUrl = await fileToOriginalImageDataUrl(file, imageCompressionOptions);
+  async function persistImageFileForEditor(
+    file: File,
+    options?: { purpose?: EditorImageUploadPurpose },
+  ): Promise<PersistedEditorAssetResult> {
+    let dataUrl: string;
+    const limitKb =
+      !isPlatformEditor && options?.purpose === "common"
+        ? Math.max(50, Math.round(merchantPermissionConfig?.commonBlockImageLimitKb ?? 300))
+        : !isPlatformEditor && options?.purpose === "gallery"
+          ? Math.max(50, Math.round(merchantPermissionConfig?.galleryBlockImageLimitKb ?? 300))
+          : null;
+    if (limitKb) {
+      const limitBytes = limitKb * 1024;
+      const compressed = await compressImageFileWithinLimit(file, limitBytes, imageCompressionOptions);
+      if (compressed.bytes > limitBytes) {
+        throw new Error(`图片压缩后仍超过 ${limitKb}KB，请换一张更小的图片`);
+      }
+      dataUrl = compressed.dataUrl;
+    } else {
+      dataUrl = await fileToOriginalImageDataUrl(file, imageCompressionOptions);
+    }
     return persistInlineImageForEditor(dataUrl);
   }
 
-  async function persistProductImageFileForEditor(file: File) {
+  async function persistProductImageFileForEditor(file: File): Promise<PersistedEditorAssetResult> {
     const dataUrl = await fileToOptimizedImageDataUrl(file, PRODUCT_IMAGE_UPLOAD_OPTIONS);
     return persistInlineImageForEditor(dataUrl);
   }
@@ -9242,9 +9532,9 @@ function InlineEditorBlock({
   onRecordColor: (color: string) => void;
   onClearRecentColors: () => void;
   onApplyNavSettingsToOtherPages: (blockId: string) => void;
-  onPersistImageFile: (file: File) => Promise<{ value: string; externalized: boolean }>;
-  onPersistProductImageFile: (file: File) => Promise<{ value: string; externalized: boolean }>;
-  onPersistAudioFile: (file: File) => Promise<{ value: string; externalized: boolean }>;
+  onPersistImageFile: (file: File, options?: { purpose?: EditorImageUploadPurpose }) => Promise<PersistedEditorAssetResult>;
+  onPersistProductImageFile: (file: File) => Promise<PersistedEditorAssetResult>;
+  onPersistAudioFile: (file: File) => Promise<PersistedEditorAssetResult>;
   previewViewport: "desktop" | "mobile";
   runtimeSiteId?: string;
   runtimeSiteName?: string;
@@ -10754,7 +11044,7 @@ type GalleryEditorImage = {
     const file = event.target.files?.[0];
     if (!file) return;
     try {
-      const result = await onPersistImageFile(file);
+      const result = await onPersistImageFile(file, block.type === "common" ? { purpose: "common" } : undefined);
       onChange({
         bgImageUrl: result.value,
         bgImageOpacity:
@@ -10787,7 +11077,7 @@ type GalleryEditorImage = {
     const files = Array.from(event.target.files ?? []);
     if (files.length === 0) return;
     try {
-      const uploaded = await Promise.all(files.map((file) => onPersistImageFile(file)));
+      const uploaded = await Promise.all(files.map((file) => onPersistImageFile(file, { purpose: "gallery" })));
       const existing = getGalleryImages();
       const uploadedItems = uploaded.map((result, idx) => ({
         id: `img-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
@@ -10818,7 +11108,7 @@ type GalleryEditorImage = {
     const file = event.target.files?.[0];
     if (!file) return;
     try {
-      const result = await onPersistImageFile(file);
+      const result = await onPersistImageFile(file, { purpose: "gallery" });
       updateGalleryImage(id, { url: result.value });
       if (!result.externalized) {
         onAlert("图片已替换到草稿，但未上传到存储；发布前会再次尝试外链化。");
@@ -11547,10 +11837,6 @@ type GalleryEditorImage = {
     typeof block.props.blockOffsetY === "number" && Number.isFinite(block.props.blockOffsetY)
       ? Math.round(block.props.blockOffsetY)
       : 0;
-  const blockLayer =
-    typeof block.props.blockLayer === "number" && Number.isFinite(block.props.blockLayer)
-      ? Math.max(1, Math.round(block.props.blockLayer))
-      : 1;
   const effectiveOffsetX = draftResize?.offsetX ?? offsetX;
   const effectiveOffsetY = (draftResize?.offsetY ?? offsetY) + previewOffsetY;
   const isEditingBlock = isSelected || hasOverlayOpen;
@@ -11558,7 +11844,7 @@ type GalleryEditorImage = {
     position: "relative" as const,
     transform:
       effectiveOffsetX || effectiveOffsetY ? `translate(${effectiveOffsetX}px, ${effectiveOffsetY}px)` : undefined,
-    zIndex: isDraggingSource ? 10000 : isEditingBlock ? 9999 : blockLayer,
+    zIndex: isDraggingSource ? 10000 : isEditingBlock ? 9999 : undefined,
   };
   const blockSizeStyle = {
     width: blockWidth ? `${blockWidth}px` : undefined,
@@ -12428,25 +12714,17 @@ type GalleryEditorImage = {
           </div>
           <div className="space-y-1">
             <div className="text-xs text-gray-600">字号</div>
-            <input
-              type="text"
-              inputMode="numeric"
-              autoComplete="off"
-              list="merchant-card-typography-font-size-options"
-              className="border p-2 rounded w-full text-sm"
+            <FontSizeComboInput
+              className="border p-2 rounded w-full text-sm pr-10"
               value={merchantCardTypoFontSizeInput}
-              onChange={(e) => {
-                setMerchantCardTypoFontSizeInput(normalizeMerchantCardTypographyFontSizeInputValue(e.target.value));
+              onChange={(value) => {
+                setMerchantCardTypoFontSizeInput(normalizeMerchantCardTypographyFontSizeInputValue(value));
               }}
-              onBlur={(e) => {
-                setMerchantCardTypoFontSizeInput(clampMerchantCardTypographyFontSizeInputToString(e.target.value));
+              onCommit={(value) => {
+                setMerchantCardTypoFontSizeInput(clampMerchantCardTypographyFontSizeInputToString(value));
               }}
+              options={FONT_SIZE_OPTIONS}
             />
-            <datalist id="merchant-card-typography-font-size-options">
-              {FONT_SIZE_OPTIONS.map((size) => (
-                <option key={`merchant-card-typo-size-${size}`} value={size} />
-              ))}
-            </datalist>
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -12618,25 +12896,17 @@ type GalleryEditorImage = {
           </div>
           <div className="space-y-1">
             <div className="text-xs text-gray-600">{"字号"}</div>
-            <input
-              type="text"
-              inputMode="numeric"
-              autoComplete="off"
-              list="typography-font-size-options"
-              className="border p-2 rounded w-full text-sm"
+            <FontSizeComboInput
+              className="border p-2 rounded w-full text-sm pr-10"
               value={typoFontSize}
-              onChange={(e) => {
-                setTypoFontSize(normalizeTypographyFontSizeInputValue(e.target.value));
+              onChange={(value) => {
+                setTypoFontSize(normalizeTypographyFontSizeInputValue(value));
               }}
-              onBlur={(e) => {
-                setTypoFontSize(clampTypographyFontSizeInputToString(e.target.value));
+              onCommit={(value) => {
+                setTypoFontSize(clampTypographyFontSizeInputToString(value));
               }}
+              options={FONT_SIZE_OPTIONS}
             />
-            <datalist id="typography-font-size-options">
-              {FONT_SIZE_OPTIONS.map((size) => (
-                <option key={size} value={size} />
-              ))}
-            </datalist>
           </div>
         </div>
         <div className="flex flex-wrap gap-2">

@@ -947,6 +947,8 @@ function buildMerchantConfigDiffLines(current: MerchantConfigSnapshot, target: M
     { key: "businessCardBackgroundImageLimitKb", label: "名片背景图上限(KB)" },
     { key: "businessCardContactImageLimitKb", label: "联系卡展示图上限(KB)" },
     { key: "businessCardExportImageLimitKb", label: "导出名片图片上限(KB)" },
+    { key: "commonBlockImageLimitKb", label: "通用区块图片上限(KB)" },
+    { key: "galleryBlockImageLimitKb", label: "相册区块图片上限(KB)" },
     { key: "publishSizeLimitMb", label: "发布体积上限(MB)" },
     { key: "allowInsertBackground", label: "可插入背景" },
     { key: "allowThemeEffects", label: "可主题效果" },
@@ -1147,6 +1149,8 @@ export default function SuperAdminClient() {
   const [configBusinessCardBackgroundImageLimitKb, setConfigBusinessCardBackgroundImageLimitKb] = useState("200");
   const [configBusinessCardContactImageLimitKb, setConfigBusinessCardContactImageLimitKb] = useState("200");
   const [configBusinessCardExportImageLimitKb, setConfigBusinessCardExportImageLimitKb] = useState("400");
+  const [configCommonBlockImageLimitKb, setConfigCommonBlockImageLimitKb] = useState("300");
+  const [configGalleryBlockImageLimitKb, setConfigGalleryBlockImageLimitKb] = useState("300");
   const [configPublishLimitMb, setConfigPublishLimitMb] = useState("5");
   const [configAllowInsertBackground, setConfigAllowInsertBackground] = useState(false);
   const [configAllowThemeEffects, setConfigAllowThemeEffects] = useState(false);
@@ -2313,6 +2317,8 @@ export default function SuperAdminClient() {
     setConfigBusinessCardBackgroundImageLimitKb(`${permission.businessCardBackgroundImageLimitKb}`);
     setConfigBusinessCardContactImageLimitKb(`${permission.businessCardContactImageLimitKb}`);
     setConfigBusinessCardExportImageLimitKb(`${permission.businessCardExportImageLimitKb}`);
+    setConfigCommonBlockImageLimitKb(`${permission.commonBlockImageLimitKb}`);
+    setConfigGalleryBlockImageLimitKb(`${permission.galleryBlockImageLimitKb}`);
     setConfigPublishLimitMb(`${permission.publishSizeLimitMb}`);
     setConfigAllowInsertBackground(permission.allowInsertBackground);
     setConfigAllowThemeEffects(permission.allowThemeEffects);
@@ -3488,6 +3494,14 @@ export default function SuperAdminClient() {
       50,
       Math.min(5000, Math.round(Number(configBusinessCardExportImageLimitKb) || 400)),
     );
+    const commonBlockImageLimitKb = Math.max(
+      50,
+      Math.min(5000, Math.round(Number(configCommonBlockImageLimitKb) || 300)),
+    );
+    const galleryBlockImageLimitKb = Math.max(
+      50,
+      Math.min(5000, Math.round(Number(configGalleryBlockImageLimitKb) || 300)),
+    );
     const publishSizeLimitMb = Math.max(1, Math.min(100, Math.round(Number(configPublishLimitMb) || 1)));
     const serviceExpiresAt = parseDateInputToIso(configExpireDate);
     if (configExpireDate.trim() && !serviceExpiresAt) {
@@ -3553,6 +3567,12 @@ export default function SuperAdminClient() {
       pendingChanges.push(
         `导出名片图片上限：${prevPermission.businessCardExportImageLimitKb}KB -> ${businessCardExportImageLimitKb}KB`,
       );
+    }
+    if (prevPermission.commonBlockImageLimitKb !== commonBlockImageLimitKb) {
+      pendingChanges.push(`通用区块图片上限：${prevPermission.commonBlockImageLimitKb}KB -> ${commonBlockImageLimitKb}KB`);
+    }
+    if (prevPermission.galleryBlockImageLimitKb !== galleryBlockImageLimitKb) {
+      pendingChanges.push(`相册区块图片上限：${prevPermission.galleryBlockImageLimitKb}KB -> ${galleryBlockImageLimitKb}KB`);
     }
     if (prevPermission.publishSizeLimitMb !== publishSizeLimitMb) {
       pendingChanges.push(`发布体积限制：${prevPermission.publishSizeLimitMb}MB -> ${publishSizeLimitMb}MB`);
@@ -3628,6 +3648,8 @@ export default function SuperAdminClient() {
         businessCardBackgroundImageLimitKb,
         businessCardContactImageLimitKb,
         businessCardExportImageLimitKb,
+        commonBlockImageLimitKb,
+        galleryBlockImageLimitKb,
         publishSizeLimitMb,
         allowInsertBackground: configAllowInsertBackground,
         allowThemeEffects: configAllowThemeEffects,
@@ -5639,6 +5661,22 @@ export default function SuperAdminClient() {
                                     className="w-full rounded border bg-white px-2 py-1.5"
                                     value={configBusinessCardExportImageLimitKb}
                                     onChange={(e) => setConfigBusinessCardExportImageLimitKb(e.target.value)}
+                                  />
+                                </label>
+                                <label className="space-y-1">
+                                  <div className="text-slate-500">通用区块图片上限(KB)</div>
+                                  <input
+                                    className="w-full rounded border bg-white px-2 py-1.5"
+                                    value={configCommonBlockImageLimitKb}
+                                    onChange={(e) => setConfigCommonBlockImageLimitKb(e.target.value)}
+                                  />
+                                </label>
+                                <label className="space-y-1">
+                                  <div className="text-slate-500">相册区块图片上限(KB)</div>
+                                  <input
+                                    className="w-full rounded border bg-white px-2 py-1.5"
+                                    value={configGalleryBlockImageLimitKb}
+                                    onChange={(e) => setConfigGalleryBlockImageLimitKb(e.target.value)}
                                   />
                                 </label>
                               </div>

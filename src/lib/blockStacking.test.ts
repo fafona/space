@@ -22,6 +22,10 @@ test("does not force stacking for plain flow blocks", () => {
   assert.equal(getBlockRenderStackOrder(makeBlock("a"), 0, 4), undefined);
 });
 
+test("does not force stacking for blocks that only follow natural layer order", () => {
+  assert.equal(getBlockRenderStackOrder(makeBlock("b", 2), 1, 4), undefined);
+});
+
 test("renders offset blocks above later blocks within the same layer", () => {
   const first = getBlockRenderStackOrder(
     {
@@ -51,8 +55,27 @@ test("renders offset blocks above later blocks within the same layer", () => {
 });
 
 test("keeps higher block layers above lower layers", () => {
-  const lowerLayer = getBlockRenderStackOrder(makeBlock("a", 1), 0, 4);
-  const higherLayer = getBlockRenderStackOrder(makeBlock("b", 2), 3, 4);
-  assert.equal(lowerLayer, undefined);
+  const lowerLayer = getBlockRenderStackOrder(makeBlock("a", 3), 0, 4);
+  const higherLayer = getBlockRenderStackOrder(makeBlock("b", 4), 1, 4);
+  assert.ok(typeof lowerLayer === "number");
   assert.ok(typeof higherLayer === "number");
+  assert.ok(higherLayer > lowerLayer);
+});
+
+test("keeps custom layers above offset-only blocks", () => {
+  const offsetOnly = getBlockRenderStackOrder(
+    {
+      ...makeBlock("a"),
+      props: {
+        ...makeBlock("a").props,
+        blockOffsetY: 40,
+      } as never,
+    },
+    0,
+    4,
+  );
+  const customLayer = getBlockRenderStackOrder(makeBlock("b", 4), 1, 4);
+  assert.ok(typeof offsetOnly === "number");
+  assert.ok(typeof customLayer === "number");
+  assert.ok(customLayer > offsetOnly);
 });

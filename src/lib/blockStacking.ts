@@ -14,9 +14,20 @@ function hasNonZeroOffset(block: Block) {
   );
 }
 
+function hasCustomLayerOrder(block: Block, index: number) {
+  const value = block.props.blockLayer;
+  if (typeof value !== "number" || !Number.isFinite(value)) return false;
+  return Math.max(1, Math.round(value)) !== index + 1;
+}
+
 export function getBlockRenderStackOrder(block: Block, index: number, total: number) {
   const layer = getBlockLayer(block);
-  if (layer <= 1 && !hasNonZeroOffset(block)) return undefined;
+  const offset = hasNonZeroOffset(block);
+  const customLayer = hasCustomLayerOrder(block, index);
+  if (!offset && !customLayer) return undefined;
   const reverseIndex = Math.max(0, total - index);
-  return layer * 10_000 + reverseIndex;
+  if (customLayer) {
+    return 1_000_000 + layer * 1_000 + reverseIndex;
+  }
+  return 100_000 + reverseIndex;
 }
