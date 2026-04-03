@@ -381,6 +381,44 @@ function writeMerchantAccountsCache(scope: MerchantAccountsScope, items: Merchan
   });
 }
 
+function buildSupportScopeItems(merchants: MerchantRow[]) {
+  return sortByCreatedAtDesc(
+    merchants.map((merchant) => {
+      const merchantId = String(merchant.id ?? "").trim();
+      const email = normalizeEmail(
+        merchant.user_email,
+        merchant.email,
+        merchant.owner_email,
+        merchant.contact_email,
+      );
+      const merchantName = String(merchant.name ?? "").trim() || merchantId;
+      const authUserId = String(merchant.auth_user_id ?? merchant.user_id ?? "").trim() || null;
+      const manualEmail = merchantId ? buildManualUserEmail(merchantId) : "";
+      return {
+        merchantId,
+        merchantName,
+        email,
+        username: merchantName,
+        loginId: merchantId,
+        createdAt: merchant.created_at ?? null,
+        authUserId,
+        emailConfirmed: email === manualEmail ? true : false,
+        emailConfirmedAt: null,
+        lastSignInAt: null,
+        manualCreated: email === manualEmail,
+        hasPublishedSite: false,
+        siteSlug: "",
+        siteUpdatedAt: null,
+        publishedBytes: 0,
+        publishedBytesKnown: false,
+        visits: { today: 0, day7: 0, day30: 0, total: 0 },
+        visitsKnown: false,
+        profileSnapshot: null,
+      } satisfies MerchantAccountItem;
+    }),
+  );
+}
+
 function ensureAuthorized(request: Request) {
   const cookieHeader = request.headers.get("cookie") ?? "";
   return parseCookieValue(cookieHeader, SUPER_ADMIN_SESSION_COOKIE) === SUPER_ADMIN_SESSION_VALUE;
@@ -403,6 +441,18 @@ export async function GET(request: Request) {
   }
 
   try {
+    if (scope === "support") {
+      const { data: merchants, error: merchantError } = await supabase
+        .from("merchants")
+        .select("id,name,email,owner_email,contact_email,user_email,user_id,auth_user_id,created_at")
+        .order("created_at", { ascending: false })
+        .limit(500);
+      if (merchantError) throw merchantError;
+      const items = buildSupportScopeItems((merchants ?? []) as MerchantRow[]);
+      writeMerchantAccountsCache(scope, items);
+      return NextResponse.json({ items });
+    }
+
     const [{ data: merchants, error: merchantError }, authUsers] = await Promise.all([
       supabase
         .from("merchants")
@@ -518,12 +568,6 @@ export async function GET(request: Request) {
         isNumericMerchantId(item.merchantId) ? snapshotByMerchantId.get(item.merchantId) ?? item.profileSnapshot ?? null : null,
     }));
     const merchantIds = [...new Set(normalizedItems.map((item) => item.merchantId).filter((item) => isNumericMerchantId(item)))];
-    if (scope === "support") {
-      const items = sortByCreatedAtDesc(normalizedItems);
-      writeMerchantAccountsCache(scope, items);
-      return NextResponse.json({ items });
-    }
-
     let publishedSiteInfoByMerchantId = new Map<
       string,
       { hasPublishedSite: boolean; siteSlug: string; siteUpdatedAt: string | null; publishedBytes: number; publishedBytesKnown: boolean }
