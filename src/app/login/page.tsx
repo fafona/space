@@ -16,7 +16,6 @@ import { ensureMerchantIdentityForUser, isMerchantNumericId } from "@/lib/mercha
 import {
   clearStoredResetPasswordEmailRequest,
   persistResetPasswordEmailRequest,
-  readStoredResetPasswordEmailRequest,
 } from "@/lib/resetPasswordEmailRequest";
 import {
   buildResetPasswordRecoveryUrl,
@@ -215,13 +214,6 @@ function LoginPageInner() {
       timers.forEach((timer) => window.clearTimeout(timer));
     };
   }, [loggedOut]);
-
-  useEffect(() => {
-    const storedRequest = readStoredResetPasswordEmailRequest();
-    if (!storedRequest) return;
-    setPendingResetEmail(storedRequest.email);
-    setPendingResetEmailMasked(storedRequest.email);
-  }, []);
 
   const redirectToMerchantBackend = useCallback(
     async (
