@@ -2,9 +2,9 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Merchant Space",
-    short_name: "Merchant",
-    description: "Merchant Space mobile workspace",
+    name: "faolla.com",
+    short_name: "faolla.com",
+    description: "faolla.com mobile workspace",
     start_url: "/",
     display: "standalone",
     background_color: "#f2f5f9",

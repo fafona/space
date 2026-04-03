@@ -7,14 +7,14 @@ import UnhandledRejectionGuard from "@/components/UnhandledRejectionGuard";
 import type { Metadata, Viewport } from "next";
 
 export const metadata: Metadata = {
-  applicationName: "Merchant Space",
-  title: "Merchant Space",
-  description: "Merchant Space mobile workspace",
+  applicationName: "faolla.com",
+  title: "faolla.com",
+  description: "faolla.com mobile workspace",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "Merchant Space",
+    title: "faolla.com",
   },
   formatDetection: {
     telephone: false,
