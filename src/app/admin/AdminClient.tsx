@@ -10,6 +10,7 @@ import {
   type CSSProperties,
   type ChangeEvent,
   type MouseEvent as ReactMouseEvent,
+  type TouchEvent,
 } from "react";
 import NextImage from "next/image";
 import { createPortal } from "react-dom";
@@ -3539,6 +3540,92 @@ function formatSupportMessageTime(value: string | null | undefined) {
   return new Date(timestamp).toLocaleString("zh-CN", { hour12: false });
 }
 
+function formatSupportClockTime(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return "-";
+  const timestamp = new Date(normalized).getTime();
+  return Number.isFinite(timestamp)
+    ? new Date(timestamp).toLocaleTimeString("zh-CN", {
+        hour12: false,
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : normalized;
+}
+
+function formatSupportConversationTime(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return "-";
+  const date = new Date(normalized);
+  const timestamp = date.getTime();
+  if (!Number.isFinite(timestamp)) return normalized;
+
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfTarget = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const dayDiff = Math.round((startOfToday - startOfTarget) / 86400000);
+
+  if (dayDiff === 0) return formatSupportClockTime(normalized);
+  if (dayDiff === 1) return "昨天";
+  if (date.getFullYear() === now.getFullYear()) {
+    return date.toLocaleDateString("zh-CN", {
+      month: "numeric",
+      day: "numeric",
+    });
+  }
+  return date.toLocaleDateString("zh-CN", {
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+  });
+}
+
+function formatSupportThreadDateLabel(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return "";
+  const date = new Date(normalized);
+  const timestamp = date.getTime();
+  if (!Number.isFinite(timestamp)) return normalized;
+
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfTarget = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const dayDiff = Math.round((startOfToday - startOfTarget) / 86400000);
+
+  if (dayDiff === 0) return "今天";
+  if (dayDiff === 1) return "昨天";
+  if (date.getFullYear() === now.getFullYear()) {
+    return date.toLocaleDateString("zh-CN", {
+      month: "long",
+      day: "numeric",
+    });
+  }
+  return date.toLocaleDateString("zh-CN", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+}
+
+function isSameSupportCalendarDay(left: string | null | undefined, right: string | null | undefined) {
+  const leftDate = new Date(String(left ?? "").trim());
+  const rightDate = new Date(String(right ?? "").trim());
+  if (!Number.isFinite(leftDate.getTime()) || !Number.isFinite(rightDate.getTime())) return false;
+  return (
+    leftDate.getFullYear() === rightDate.getFullYear() &&
+    leftDate.getMonth() === rightDate.getMonth() &&
+    leftDate.getDate() === rightDate.getDate()
+  );
+}
+
+function getSupportContactAvatarLabel(value: string | null | undefined, fallback = "商") {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return fallback;
+  const compact = normalized.replace(/\s+/g, "");
+  if (!compact) return fallback;
+  return compact.slice(0, 2).toUpperCase();
+}
+
 function normalizeSupportMessageTimestamp(value: string | null | undefined) {
   const normalized = String(value ?? "").trim();
   if (!normalized) return "";
@@ -3577,6 +3664,18 @@ type LocalSupportMessage = PlatformSupportMessage & {
 type LocalPeerSupportMessage = MerchantPeerMessage & {
   contactMerchantId: string;
   status: LocalSupportMessageStatus;
+};
+
+type SupportContactRow = {
+  key: string;
+  name: string;
+  badge?: string;
+  subtitle: string;
+  preview: string;
+  updatedAt: string;
+  unread: boolean;
+  avatarLabel: string;
+  isOfficial: boolean;
 };
 
 function compareSupportMessages(left: Pick<PlatformSupportMessage, "createdAt" | "id">, right: Pick<PlatformSupportMessage, "createdAt" | "id">) {
@@ -3743,6 +3842,7 @@ export default function AdminClient({
   const [supportSearchLoading, setSupportSearchLoading] = useState(false);
   const [supportSearchError, setSupportSearchError] = useState("");
   const [supportSelectedContactKey, setSupportSelectedContactKey] = useState(SUPPORT_OFFICIAL_CONTACT_KEY);
+  const [supportMobileView, setSupportMobileView] = useState<"list" | "thread">("list");
   const [supportPeerLocalMessages, setSupportPeerLocalMessages] = useState<LocalPeerSupportMessage[]>([]);
   const [supportBusinessCardDialogOpen, setSupportBusinessCardDialogOpen] = useState(false);
   const [supportBusinessCardLoading, setSupportBusinessCardLoading] = useState(false);
@@ -3759,6 +3859,7 @@ export default function AdminClient({
   const supportLastIncomingPeerMessageKeyRef = useRef("");
   const supportLastVisibleMessageKeyRef = useRef("");
   const supportScrollToLatestPendingRef = useRef(false);
+  const supportMobileSwipeStartRef = useRef<{ x: number; y: number; fromEdge: boolean } | null>(null);
   const merchantChatBusinessCardSyncTimerRef = useRef<number | null>(null);
   const merchantChatBusinessCardSyncPayloadRef = useRef("");
   const focusSupportInput = useCallback(() => {
@@ -3775,6 +3876,38 @@ export default function AdminClient({
       }
     });
   }, []);
+  const closeMobileSupportThread = useCallback(() => {
+    setSupportBusinessCardDialogOpen(false);
+    setSupportMobileView("list");
+  }, []);
+  const openSupportContactThread = useCallback((contactKey: string) => {
+    setSupportSelectedContactKey(contactKey);
+    setSupportMobileView("thread");
+  }, []);
+  const handleSupportMobileThreadTouchStart = useCallback((event: TouchEvent<HTMLDivElement>) => {
+    const touch = event.touches[0];
+    if (!touch) return;
+    supportMobileSwipeStartRef.current = {
+      x: touch.clientX,
+      y: touch.clientY,
+      fromEdge: touch.clientX <= 36,
+    };
+  }, []);
+  const handleSupportMobileThreadTouchEnd = useCallback(
+    (event: TouchEvent<HTMLDivElement>) => {
+      const start = supportMobileSwipeStartRef.current;
+      supportMobileSwipeStartRef.current = null;
+      if (!start?.fromEdge) return;
+      const touch = event.changedTouches[0];
+      if (!touch) return;
+      const deltaX = touch.clientX - start.x;
+      const deltaY = touch.clientY - start.y;
+      if (deltaX >= 72 && Math.abs(deltaY) <= 64 && deltaX > Math.abs(deltaY) * 1.2) {
+        closeMobileSupportThread();
+      }
+    },
+    [closeMobileSupportThread],
+  );
   const [merchantProfileAttention, setMerchantProfileAttention] = useState(false);
   const merchantProfileButtonRef = useRef<HTMLButtonElement>(null);
   const [topBarCollapsed, setTopBarCollapsed] = useState(false);
@@ -7723,6 +7856,13 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const supportCanSend =
     !!supportDraft.trim() &&
     (supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY || !!selectedSupportPeerContact);
+  const isMobileSupportDialog = supportDialogOpen && !isPlatformEditor && !isDesktopEditorSidebar;
+  const selectedSupportConversationVisible = !isMobileSupportDialog || supportMobileView === "thread";
+  const selectedSupportAvatarLabel = getSupportContactAvatarLabel(
+    selectedSupportDisplayName,
+    selectedSupportIsOfficial ? "FA" : "商",
+  );
+  const selectedSupportHeaderMeta = selectedSupportSubtitle;
   const supportPeerUnreadContactIds = useMemo(() => {
     const unreadContactIds = new Set<string>();
     if (!currentSupportMerchantId) return unreadContactIds;
@@ -7745,7 +7885,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     !!supportReadMerchantId &&
     new Date(latestSupportAdminMessageAt).getTime() > new Date(supportLastReadAt || 0).getTime();
   const supportHasUnreadMessages = supportHasUnreadOfficialMessages || supportPeerUnreadContactIds.size > 0;
-  const supportContactRows = [
+  const supportContactRows: SupportContactRow[] = [
     {
       key: SUPPORT_OFFICIAL_CONTACT_KEY,
       name: supportOfficialName,
@@ -7754,8 +7894,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       preview: latestOfficialVisibleSupportMessage?.text || "还没有留言记录，可以直接在右侧给 Faolla 留言。",
       updatedAt: latestOfficialVisibleSupportMessage?.createdAt || "",
       unread: supportHasUnreadOfficialMessages,
+      avatarLabel: getSupportContactAvatarLabel(supportOfficialName, "FA"),
+      isOfficial: true,
     },
-    ...supportPeerContacts.map((contact) => ({
+    ...supportPeerContacts.map((contact): SupportContactRow => ({
       key: `merchant:${contact.merchantId}`,
       name: contact.merchantName || contact.merchantId,
       badge: undefined as string | undefined,
@@ -7763,8 +7905,20 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       preview: contact.lastMessage?.text || "还没有聊天记录，可以直接开始对话。",
       updatedAt: contact.updatedAt || contact.savedAt,
       unread: supportPeerUnreadContactIds.has(contact.merchantId),
+      avatarLabel: getSupportContactAvatarLabel(contact.merchantName || contact.merchantId, "商"),
+      isOfficial: false,
     })),
   ];
+  const supportUnreadConversationCount =
+    (supportHasUnreadOfficialMessages ? 1 : 0) + supportPeerUnreadContactIds.size;
+  const mobileSupportContactListSummary =
+    supportUnreadConversationCount > 0
+      ? `${supportUnreadConversationCount} 个会话有新消息`
+      : `全部 ${supportContactRows.length} 个会话已读`;
+  const showMobileSupportThread =
+    isMobileSupportDialog &&
+    supportMobileView === "thread" &&
+    (supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY || !!selectedSupportPeerContact);
   const latestIncomingPeerMessageKey = useMemo(() => {
     let latestKey = "";
     let latestTimestamp = 0;
@@ -8088,6 +8242,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       const foundMerchantId = String(payload?.contact?.merchantId ?? "").trim();
       if (foundMerchantId) {
         setSupportSelectedContactKey(`merchant:${foundMerchantId}`);
+        if (!isDesktopEditorSidebar) {
+          setSupportMobileView("thread");
+        }
         setSupportContactKeyword("");
       }
     } catch {
@@ -8102,6 +8259,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     supportScrollToLatestPendingRef.current = true;
     setSupportDataActivated(true);
     setSupportLoading(true);
+    if (!isDesktopEditorSidebar) {
+      setSupportMobileView("list");
+    }
     setSupportDialogOpen(true);
   }
 
@@ -8133,7 +8293,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       window.removeEventListener("focus", handleFocus);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [isPlatformEditor, loadSupportPeerInbox, loadSupportThread, supportDataActivated, supportDialogOpen]);
+  }, [isDesktopEditorSidebar, isPlatformEditor, loadSupportPeerInbox, loadSupportThread, supportDataActivated, supportDialogOpen]);
 
   useEffect(() => {
     if (isPlatformEditor || typeof window === "undefined") return;
@@ -8183,6 +8343,17 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     if (selectedSupportPeerContact) return;
     setSupportSelectedContactKey(SUPPORT_OFFICIAL_CONTACT_KEY);
   }, [selectedSupportPeerContact, supportSelectedContactKey]);
+
+  useEffect(() => {
+    if (supportDialogOpen) {
+      if (!isDesktopEditorSidebar) {
+        setSupportMobileView("list");
+      }
+      return;
+    }
+    supportMobileSwipeStartRef.current = null;
+    setSupportMobileView("list");
+  }, [isDesktopEditorSidebar, supportDialogOpen]);
 
   useEffect(() => {
     if (isPlatformEditor || !supportDialogOpen || !supportBusinessCardDialogOpen) return;
@@ -8269,7 +8440,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }, [isPlatformEditor, latestIncomingPeerMessageKey, playNotificationSound]);
 
   useEffect(() => {
-    if (isPlatformEditor || !supportDialogOpen || typeof window === "undefined") return;
+    if (isPlatformEditor || !supportDialogOpen || !selectedSupportConversationVisible || typeof window === "undefined") return;
     if (supportSelectedContactKey !== SUPPORT_OFFICIAL_CONTACT_KEY) return;
     if (!supportReadMerchantId || !latestSupportAdminMessageAt) return;
     if (latestSupportAdminMessageAt === supportLastReadAt) return;
@@ -8278,6 +8449,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }, [
     isPlatformEditor,
     latestSupportAdminMessageAt,
+    selectedSupportConversationVisible,
     supportDialogOpen,
     supportLastReadAt,
     supportReadMerchantId,
@@ -8285,7 +8457,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   ]);
 
   useEffect(() => {
-    if (isPlatformEditor || !supportDialogOpen || typeof window === "undefined") return;
+    if (isPlatformEditor || !supportDialogOpen || !selectedSupportConversationVisible || typeof window === "undefined") return;
     if (supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY) return;
     if (!currentSupportMerchantId || !selectedSupportPeerMerchantId || !latestSelectedSupportPeerIncomingMessageAt) return;
     const currentLastReadAt = normalizeSupportMessageTimestamp(supportPeerLastReadMap[selectedSupportPeerMerchantId]);
@@ -8306,6 +8478,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     currentSupportMerchantId,
     isPlatformEditor,
     latestSelectedSupportPeerIncomingMessageAt,
+    selectedSupportConversationVisible,
     selectedSupportPeerMerchantId,
     supportDialogOpen,
     supportPeerLastReadMap,
@@ -8325,10 +8498,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   useEffect(() => {
     if (!supportDialogOpen) return;
     supportScrollToLatestPendingRef.current = true;
-  }, [supportDialogOpen, supportSelectedContactKey]);
+  }, [supportDialogOpen, supportSelectedContactKey, supportMobileView]);
 
   useEffect(() => {
-    if (isPlatformEditor || !supportDialogOpen || typeof window === "undefined") return;
+    if (isPlatformEditor || !supportDialogOpen || !selectedSupportConversationVisible || typeof window === "undefined") return;
     if (selectedSupportLoading) return;
     const viewport = supportMessagesViewportRef.current;
     if (!viewport) return;
@@ -8345,12 +8518,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     return () => {
       window.clearTimeout(timer);
     };
-  }, [isPlatformEditor, latestVisibleSupportMessageKey, selectedSupportLoading, supportDialogOpen]);
+  }, [isPlatformEditor, latestVisibleSupportMessageKey, selectedSupportConversationVisible, selectedSupportLoading, supportDialogOpen]);
 
   useEffect(() => {
-    if (isPlatformEditor || !supportDialogOpen || selectedSupportLoading || supportSending) return;
+    if (isPlatformEditor || !supportDialogOpen || !selectedSupportConversationVisible || selectedSupportLoading || supportSending) return;
     focusSupportInput();
-  }, [focusSupportInput, isPlatformEditor, selectedSupportLoading, supportDialogOpen, supportSending]);
+  }, [focusSupportInput, isPlatformEditor, selectedSupportConversationVisible, selectedSupportLoading, supportDialogOpen, supportSending]);
 
   async function sendSupportMessage() {
     if (supportSending) return;
@@ -8672,6 +8845,278 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     if (typeof window === "undefined") return content;
     return createPortal(content, document.body);
   }
+
+  const supportMobileDialogContent = showMobileSupportThread ? (
+    <div
+      className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_48%,#f8fafc_100%)]"
+      onTouchStart={handleSupportMobileThreadTouchStart}
+      onTouchEnd={handleSupportMobileThreadTouchEnd}
+      onTouchCancel={() => {
+        supportMobileSwipeStartRef.current = null;
+      }}
+    >
+      <div className="shrink-0 border-b border-slate-200/80 bg-white/90 px-3 pb-3 pt-[calc(env(safe-area-inset-top)+0.55rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <button
+              type="button"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-slate-900 hover:bg-slate-100"
+              onClick={closeMobileSupportThread}
+              aria-label="返回会话列表"
+            >
+              <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" aria-hidden="true">
+                <path
+                  d="M19 12H7M12 7l-5 5 5 5"
+                  stroke="currentColor"
+                  strokeWidth="2.2"
+                  strokeLinecap="square"
+                  strokeLinejoin="miter"
+                />
+              </svg>
+            </button>
+            {selectedSupportIsOfficial ? (
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm">
+                {selectedSupportAvatarLabel}
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm transition hover:scale-[1.02]"
+                onClick={() => setSupportBusinessCardDialogOpen(true)}
+                aria-label="查看聊天名片"
+              >
+                {selectedSupportAvatarLabel}
+              </button>
+            )}
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <div className="truncate text-[15px] font-semibold text-slate-900">{selectedSupportDisplayName}</div>
+                {selectedSupportIsOfficial ? (
+                  <span className="inline-flex shrink-0 items-center rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium leading-none text-white">
+                    {supportOfficialBadgeLabel}
+                  </span>
+                ) : null}
+              </div>
+              <div className="mt-1 line-clamp-2 text-[11px] leading-5 text-slate-500">{selectedSupportHeaderMeta}</div>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="shrink-0 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-50"
+            onClick={() => setSupportDialogOpen(false)}
+            disabled={supportSending}
+          >
+            关闭
+          </button>
+        </div>
+      </div>
+      {supportError && supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY ? (
+        <div className="border-b border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-600">{supportError}</div>
+      ) : null}
+      <div ref={supportMessagesViewportRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-4">
+        {selectedSupportLoading ? (
+          <div className="rounded-[28px] border border-dashed border-slate-300 bg-white/90 px-5 py-8 text-center text-sm text-slate-500 shadow-sm">
+            正在加载聊天记录...
+          </div>
+        ) : visibleSupportMessages.length ? (
+          <div className="space-y-3">
+            {visibleSupportMessages.map((message, index) => {
+              const previousMessage = index > 0 ? visibleSupportMessages[index - 1] : null;
+              const showDateDivider =
+                !previousMessage || !isSameSupportCalendarDay(previousMessage.createdAt, message.createdAt);
+              const messageMeta =
+                message.localStatus === "pending"
+                  ? "发送中"
+                  : message.localStatus === "failed"
+                    ? "发送失败"
+                    : formatSupportClockTime(message.createdAt);
+              return (
+                <div key={message.id} className="space-y-3">
+                  {showDateDivider ? (
+                    <div className="flex justify-center">
+                      <span className="rounded-full bg-white/90 px-3 py-1 text-[11px] text-slate-500 shadow-sm">
+                        {formatSupportThreadDateLabel(message.createdAt)}
+                      </span>
+                    </div>
+                  ) : null}
+                  <div className={`flex ${message.isSelf ? "justify-end" : "justify-start"}`}>
+                    <div
+                      className={`max-w-[84%] min-w-0 rounded-[24px] px-4 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.08)] ${
+                        message.isSelf
+                          ? "bg-slate-900 text-white"
+                          : "border border-slate-200 bg-white text-slate-900"
+                      }`}
+                    >
+                      <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-[15px] leading-6">
+                        {renderSupportMessageText(message.text)}
+                      </div>
+                      <div
+                        className={`mt-2 text-right text-[10px] ${
+                          message.isSelf ? "text-white/70" : "text-slate-400"
+                        }`}
+                      >
+                        {messageMeta}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="rounded-[28px] border border-dashed border-slate-300 bg-white/90 px-5 py-8 text-center shadow-sm">
+            <div className="text-sm font-medium text-slate-900">还没有聊天记录</div>
+            <div className="mt-2 text-xs leading-6 text-slate-500">{selectedSupportEmptyStateText}</div>
+          </div>
+        )}
+      </div>
+      <div className="border-t border-slate-200/80 bg-white/95 px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-3 shadow-[0_-8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
+        <div className="rounded-[28px] border border-slate-200 bg-white p-2 shadow-sm">
+          <textarea
+            ref={supportInputRef}
+            className="h-24 w-full resize-none bg-transparent px-3 py-2 text-base outline-none transition placeholder:text-slate-400"
+            placeholder={selectedSupportInputPlaceholder}
+            value={supportDraft}
+            onChange={(event) => setSupportDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" || !event.ctrlKey || event.nativeEvent.isComposing) return;
+              event.preventDefault();
+              void sendSupportMessage();
+            }}
+            disabled={supportSending || (!selectedSupportPeerContact && supportSelectedContactKey !== SUPPORT_OFFICIAL_CONTACT_KEY)}
+          />
+          <div className="flex items-center justify-between gap-3 border-t border-slate-100 px-2 pb-1 pt-2">
+            <div className="text-[11px] leading-5 text-slate-500">
+              {selectedSupportIsOfficial ? "消息会同步到 Faolla 官方后台。" : "消息会直接发送给当前联系人。"}
+            </div>
+            <button
+              type="button"
+              className="shrink-0 rounded-full bg-slate-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+              onClick={() => void sendSupportMessage()}
+              disabled={supportSending || !supportCanSend}
+            >
+              {supportSending ? "发送中..." : selectedSupportSendButtonLabel}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  ) : (
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_48%,#f8fafc_100%)]">
+      <div className="shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
+        <div className="flex items-center gap-3">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm">
+            会话
+          </div>
+          <button
+            type="button"
+            className="shrink-0 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
+            onClick={() => {
+              void loadSupportThread({ silent: false, suppressError: false });
+              void loadSupportPeerInbox({ silent: false, suppressError: false });
+            }}
+            disabled={supportLoading || supportPeerLoading}
+          >
+            {supportLoading || supportPeerLoading ? "刷新中" : "刷新"}
+          </button>
+          <div className="min-w-0 flex-1">
+            <div className="text-[15px] font-semibold text-slate-900">聊天列表</div>
+            <div className="mt-1 text-xs text-slate-500">{mobileSupportContactListSummary}</div>
+          </div>
+          <button
+            type="button"
+            className="shrink-0 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-50"
+            onClick={() => setSupportDialogOpen(false)}
+            disabled={supportSending}
+          >
+            关闭
+          </button>
+        </div>
+        <div className="mt-4 flex items-center gap-2">
+          <div className="flex min-w-0 flex-1 items-center gap-3 rounded-[24px] border border-slate-200 bg-white px-4 py-3 shadow-sm">
+            <span className="shrink-0 text-sm text-slate-400">搜索</span>
+            <input
+              type="text"
+              className="min-w-0 flex-1 bg-transparent text-base text-slate-900 outline-none placeholder:text-slate-400"
+              placeholder="商户ID / 邮箱"
+              value={supportContactKeyword}
+              onChange={(event) => setSupportContactKeyword(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+                event.preventDefault();
+                void searchSupportPeerMerchant();
+              }}
+            />
+          </div>
+          <button
+            type="button"
+            className="shrink-0 rounded-full border border-slate-200 bg-white px-4 py-3 text-sm shadow-sm hover:bg-slate-50 disabled:opacity-50"
+            onClick={() => void searchSupportPeerMerchant()}
+            disabled={supportSearchLoading}
+          >
+            {supportSearchLoading ? "搜索中" : "搜索"}
+          </button>
+        </div>
+        <div className="mt-2 text-[11px] text-slate-500">只支持精确搜索 8 位商户ID或完整邮箱。</div>
+        {supportSearchError ? (
+          <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-600">
+            {supportSearchError}
+          </div>
+        ) : null}
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-3">
+        <div className="space-y-2.5">
+          {supportContactRows.map((contactRow) => {
+            const active = supportSelectedContactKey === contactRow.key;
+            return (
+              <button
+                key={contactRow.key}
+                type="button"
+                className={`w-full rounded-[26px] border px-3 py-3.5 text-left shadow-[0_10px_24px_rgba(15,23,42,0.06)] transition ${
+                  active ? "border-slate-900 bg-white" : "border-slate-200 bg-white/90 hover:bg-white"
+                }`}
+                onClick={() => openSupportContactThread(contactRow.key)}
+              >
+                <div className="flex items-start gap-3">
+                  <div
+                    className={`mt-0.5 flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-sm font-semibold ${
+                      contactRow.isOfficial || contactRow.unread
+                        ? "bg-slate-900 text-white"
+                        : "bg-slate-100 text-slate-700"
+                    }`}
+                  >
+                    {contactRow.avatarLabel}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <div className="truncate text-sm font-semibold text-slate-900">{contactRow.name}</div>
+                          {contactRow.badge ? (
+                            <span className="inline-flex shrink-0 items-center rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium text-white">
+                              {contactRow.badge}
+                            </span>
+                          ) : null}
+                          {contactRow.unread ? (
+                            <span aria-label="有未读消息" className="inline-flex h-2.5 w-2.5 shrink-0 rounded-full bg-rose-500" />
+                          ) : null}
+                        </div>
+                        <div className="mt-1 truncate text-[11px] text-slate-500">{contactRow.subtitle}</div>
+                      </div>
+                      <div className="shrink-0 text-[11px] text-slate-400">
+                        {contactRow.updatedAt ? formatSupportConversationTime(contactRow.updatedAt) : "未开始"}
+                      </div>
+                    </div>
+                    <div className="mt-2 line-clamp-2 text-[13px] leading-5 text-slate-600">{contactRow.preview}</div>
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
 
   const editorMainClassName = `min-h-screen bg-gray-100 ${!topBarCollapsed && shouldUseDesktopEditorSidebar ? "pl-[320px]" : ""}`;
   const toolbarWrapperClassName = topBarCollapsed
@@ -9441,7 +9886,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                 }}
                 aria-label="关闭在线客服弹窗"
               />
-              <div className="fixed inset-0 z-[2147483301] flex items-center justify-center p-4">
+              <div className={`fixed inset-0 z-[2147483301] ${isMobileSupportDialog ? "" : "flex items-center justify-center p-4"}`}>
+                {isMobileSupportDialog ? supportMobileDialogContent : (
                 <div className="flex h-full min-h-0 min-w-0 max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl md:grid md:grid-cols-[320px_minmax(0,1fr)]">
                   <div className="flex min-h-0 min-w-0 flex-col overflow-hidden border-b bg-white md:border-b-0 md:border-r">
                     <div className="border-b px-4 py-3">
@@ -9636,6 +10082,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                     </div>
                   </div>
                 </div>
+                )}
               </div>
             </>,
           )
