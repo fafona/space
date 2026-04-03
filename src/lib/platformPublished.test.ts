@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { Block } from "@/data/homeBlocks";
+import type { Block, MerchantListPublishedSite } from "@/data/homeBlocks";
 import {
   blocksNeedPublishedMerchantSnapshot,
   buildPublishedMerchantSnapshotFromRows,
@@ -245,6 +245,190 @@ test("injectPublishedMerchantSnapshotIntoBlocks can replace stale merchant snaps
   assert.equal(rootProps.publishedMerchantSnapshot?.[0]?.location?.city, "Sevilla");
   assert.equal(rootProps.publishedMerchantSnapshot?.[0]?.merchantCardImageUrl, "https://example.com/card.webp");
   assert.equal(rootProps.publishedMerchantSnapshot?.[0]?.merchantCardImageOpacity, 0.45);
+  assert.equal(rootProps.publishedMerchantDefaultSortRule, "monthly_views_desc");
+});
+
+test("injectPublishedMerchantSnapshotIntoBlocks keeps richer existing merchant card config when force replacing", () => {
+  const blocks: Block[] = [
+    {
+      id: "merchant-root",
+      type: "merchant-list",
+      props: {
+        heading: "商户列表",
+        publishedMerchantSnapshot: [
+          {
+            id: "10909091",
+            merchantName: "ABC",
+            domainPrefix: "abc",
+            domainSuffix: "abc",
+            name: "ABC",
+            domain: "abc.faolla.com",
+            category: "品牌官网",
+            industry: "零售",
+            location: {
+              countryCode: "ES",
+              country: "Spain",
+              provinceCode: "41",
+              province: "Sevilla",
+              city: "Sevilla",
+            },
+            contactAddress: "C.Transporte,55",
+            contactName: "Felix",
+            contactPhone: "633130577",
+            contactEmail: "fafona.felix@gmail.com",
+            merchantCardImageUrl: "https://example.com/abc.webp",
+            merchantCardImageOpacity: 0.57,
+            sortConfig: {
+              recommendedCountryRank: null,
+              recommendedProvinceRank: null,
+              recommendedCityRank: null,
+              industryCountryRank: null,
+              industryProvinceRank: null,
+              industryCityRank: null,
+            },
+            createdAt: "2026-03-30T22:30:25.281331+00:00",
+          },
+          {
+            id: "10000000",
+            merchantName: "fafona",
+            domainPrefix: "fafona",
+            domainSuffix: "fafona",
+            name: "fafona",
+            domain: "fafona.faolla.com",
+            category: "品牌官网",
+            industry: "娱乐",
+            location: {
+              countryCode: "ES",
+              country: "Spain",
+              provinceCode: "41",
+              province: "Sevilla",
+              city: "Sevilla",
+            },
+            contactAddress: "C. Transporte, 12",
+            contactName: "Felix",
+            contactPhone: "633130577",
+            contactEmail: "caimin00x@gmail.com",
+            merchantCardImageUrl: "https://example.com/fafona.webp",
+            merchantCardImageOpacity: 0.5,
+            sortConfig: {
+              recommendedCountryRank: null,
+              recommendedProvinceRank: null,
+              recommendedCityRank: null,
+              industryCountryRank: null,
+              industryProvinceRank: null,
+              industryCityRank: null,
+            },
+            createdAt: "2026-03-23T00:02:47.824Z",
+          },
+        ],
+        publishedMerchantDefaultSortRule: "name_asc",
+      } as never,
+    },
+  ];
+
+  const next = injectPublishedMerchantSnapshotIntoBlocks(
+    blocks,
+    [
+      {
+        id: "10909091",
+        merchantName: "ABC",
+        domainPrefix: "abc",
+        domainSuffix: "",
+        name: "ABC",
+        domain: "10909091",
+        category: "",
+        industry: "",
+        location: {
+          countryCode: "",
+          country: "",
+          provinceCode: "",
+          province: "",
+          city: "",
+        },
+        merchantCardImageUrl: "",
+        merchantCardImageOpacity: 1,
+        sortConfig: {
+          recommendedCountryRank: null,
+          recommendedProvinceRank: null,
+          recommendedCityRank: null,
+          industryCountryRank: null,
+          industryProvinceRank: null,
+          industryCityRank: null,
+        },
+        createdAt: "2026-03-30T22:30:25.281331+00:00",
+      },
+      {
+        id: "10000001",
+        merchantName: "20889576",
+        domainPrefix: "",
+        domainSuffix: "",
+        name: "20889576",
+        domain: "10000001",
+        category: "",
+        industry: "",
+        location: {
+          countryCode: "",
+          country: "",
+          provinceCode: "",
+          province: "",
+          city: "",
+        },
+        merchantCardImageUrl: "",
+        merchantCardImageOpacity: 1,
+        sortConfig: {
+          recommendedCountryRank: null,
+          recommendedProvinceRank: null,
+          recommendedCityRank: null,
+          industryCountryRank: null,
+          industryProvinceRank: null,
+          industryCityRank: null,
+        },
+        createdAt: "2026-03-03T03:30:04.550Z",
+      },
+      {
+        id: "10000000",
+        merchantName: "fafona",
+        domainPrefix: "fafona",
+        domainSuffix: "",
+        name: "fafona",
+        domain: "fafona",
+        category: "",
+        industry: "",
+        location: {
+          countryCode: "",
+          country: "",
+          provinceCode: "",
+          province: "",
+          city: "",
+        },
+        merchantCardImageUrl: "",
+        merchantCardImageOpacity: 1,
+        sortConfig: {
+          recommendedCountryRank: null,
+          recommendedProvinceRank: null,
+          recommendedCityRank: null,
+          industryCountryRank: null,
+          industryProvinceRank: null,
+          industryCityRank: null,
+        },
+        createdAt: "2026-03-23T00:02:47.824Z",
+      },
+    ],
+    "monthly_views_desc",
+    { forceReplace: true },
+  );
+
+  const rootProps = next[0].props as {
+    publishedMerchantSnapshot?: MerchantListPublishedSite[];
+    publishedMerchantDefaultSortRule?: string;
+  };
+  assert.equal(rootProps.publishedMerchantSnapshot?.length, 3);
+  const byId = new Map((rootProps.publishedMerchantSnapshot ?? []).map((item) => [item.id, item] as const));
+  assert.equal(byId.get("10909091")?.merchantCardImageUrl, "https://example.com/abc.webp");
+  assert.equal(byId.get("10909091")?.category, "品牌官网");
+  assert.equal(byId.get("10909091")?.industry, "零售");
+  assert.equal(byId.get("10000000")?.merchantCardImageUrl, "https://example.com/fafona.webp");
+  assert.equal(byId.get("10000001")?.merchantName, "20889576");
   assert.equal(rootProps.publishedMerchantDefaultSortRule, "monthly_views_desc");
 });
 

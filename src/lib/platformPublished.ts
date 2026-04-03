@@ -356,7 +356,10 @@ export function injectPublishedMerchantSnapshotIntoBlocks(
     if (block.type === "merchant-list") {
       const existingSnapshot = nextProps.publishedMerchantSnapshot;
       if (options?.forceReplace || !Array.isArray(existingSnapshot) || existingSnapshot.length === 0) {
-        nextProps.publishedMerchantSnapshot = snapshot;
+        nextProps.publishedMerchantSnapshot =
+          options?.forceReplace && Array.isArray(existingSnapshot) && existingSnapshot.length > 0
+            ? mergePublishedMerchantSnapshots(snapshot, existingSnapshot as MerchantListPublishedSite[])
+            : snapshot;
         if (
           options?.forceReplace ||
           typeof nextProps.publishedMerchantDefaultSortRule !== "string" ||
