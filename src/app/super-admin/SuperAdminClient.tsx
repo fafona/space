@@ -1652,13 +1652,16 @@ export default function SuperAdminClient() {
     if (!hydrated || !authed) return;
     let cancelled = false;
     const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 8000);
+    const timeout = window.setTimeout(() => controller.abort(), isMobileSupportOnlyMode ? 6000 : 15_000);
     const loadAccounts = async () => {
       setBackendMerchantAccountsLoading(true);
       setBackendMerchantAccountsError("");
       try {
+        const requestUrl = isMobileSupportOnlyMode
+          ? "/api/super-admin/merchant-accounts?scope=support"
+          : "/api/super-admin/merchant-accounts";
         const requestAccounts = async () =>
-          fetch("/api/super-admin/merchant-accounts", {
+          fetch(requestUrl, {
             method: "GET",
             cache: "no-store",
             signal: controller.signal,
@@ -1691,7 +1694,7 @@ export default function SuperAdminClient() {
       controller.abort();
       window.clearTimeout(timeout);
     };
-  }, [authed, hydrated]);
+  }, [authed, hydrated, isMobileSupportOnlyMode]);
 
   useEffect(() => {
     if (!hydrated || !authed) return;

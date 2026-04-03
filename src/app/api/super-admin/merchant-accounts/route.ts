@@ -10,6 +10,8 @@ import { SUPER_ADMIN_SESSION_COOKIE, SUPER_ADMIN_SESSION_VALUE } from "@/lib/sup
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
+const MERCHANT_ACCOUNTS_CACHE_TTL_MS = 30_000;
+
 type MerchantRow = {
   id: string;
   name?: string | null;
@@ -69,6 +71,16 @@ type MerchantAccountItem = {
   visitsKnown: boolean;
   profileSnapshot: MerchantListPublishedSite | null;
 };
+
+type MerchantAccountsScope = "full" | "support";
+
+const merchantAccountsCache = new Map<
+  MerchantAccountsScope,
+  {
+    expiresAt: number;
+    items: MerchantAccountItem[];
+  }
+>();
 
 type AdminListUsersClient = {
   auth: {
@@ -348,6 +360,27 @@ function conflictJson(error: string, message: string) {
   return NextResponse.json({ error, message }, { status: 409 });
 }
 
+function readMerchantAccountsScope(request: Request): MerchantAccountsScope {
+  const scope = new URL(request.url).searchParams.get("scope");
+  return scope === "support" ? "support" : "full";
+}
+
+function readMerchantAccountsCache(scope: MerchantAccountsScope) {
+  const cached = merchantAccountsCache.get(scope);
+  if (!cached || cached.expiresAt <= Date.now()) {
+    merchantAccountsCache.delete(scope);
+    return null;
+  }
+  return cached.items;
+}
+
+function writeMerchantAccountsCache(scope: MerchantAccountsScope, items: MerchantAccountItem[]) {
+  merchantAccountsCache.set(scope, {
+    expiresAt: Date.now() + MERCHANT_ACCOUNTS_CACHE_TTL_MS,
+    items,
+  });
+}
+
 function ensureAuthorized(request: Request) {
   const cookieHeader = request.headers.get("cookie") ?? "";
   return parseCookieValue(cookieHeader, SUPER_ADMIN_SESSION_COOKIE) === SUPER_ADMIN_SESSION_VALUE;
@@ -356,6 +389,12 @@ function ensureAuthorized(request: Request) {
 export async function GET(request: Request) {
   if (!ensureAuthorized(request)) {
     return unauthorizedJson();
+  }
+
+  const scope = readMerchantAccountsScope(request);
+  const cachedItems = readMerchantAccountsCache(scope);
+  if (cachedItems) {
+    return NextResponse.json({ items: cachedItems });
   }
 
   const supabase = createServerSupabaseClient();
@@ -479,6 +518,12 @@ export async function GET(request: Request) {
         isNumericMerchantId(item.merchantId) ? snapshotByMerchantId.get(item.merchantId) ?? item.profileSnapshot ?? null : null,
     }));
     const merchantIds = [...new Set(normalizedItems.map((item) => item.merchantId).filter((item) => isNumericMerchantId(item)))];
+    if (scope === "support") {
+      const items = sortByCreatedAtDesc(normalizedItems);
+      writeMerchantAccountsCache(scope, items);
+      return NextResponse.json({ items });
+    }
+
     let publishedSiteInfoByMerchantId = new Map<
       string,
       { hasPublishedSite: boolean; siteSlug: string; siteUpdatedAt: string | null; publishedBytes: number; publishedBytesKnown: boolean }
@@ -527,6 +572,8 @@ export async function GET(request: Request) {
         };
       }),
     );
+
+    writeMerchantAccountsCache(scope, items);
 
     return NextResponse.json({ items });
   } catch (error) {
@@ -685,6 +732,7 @@ export async function POST(request: Request) {
       profileSnapshot: null,
     };
 
+    merchantAccountsCache.clear();
     return NextResponse.json({ item }, { status: 201 });
   } catch (error) {
     return NextResponse.json(
