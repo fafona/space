@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent, type ReactNode, type TouchEvent } from "react";
 import { createPortal } from "react-dom";
 import {
   getBlocksSnapshot,
@@ -1361,12 +1361,12 @@ export default function SuperAdminClient() {
   const [supportReplyDraft, setSupportReplyDraft] = useState("");
   const [supportSending, setSupportSending] = useState(false);
   const [supportBusinessCardDialogOpen, setSupportBusinessCardDialogOpen] = useState(false);
-  const [supportDisplayMode, setSupportDisplayMode] = useState<"name" | "id">("name");
   const [supportLastReadMap, setSupportLastReadMap] = useState<Record<string, string>>({});
   const supportMessagesViewportRef = useRef<HTMLDivElement>(null);
   const supportReplyInputRef = useRef<HTMLTextAreaElement>(null);
   const supportLastMessageKeyRef = useRef("");
   const supportLastIncomingMerchantMessageKeyRef = useRef("");
+  const supportMobileSwipeStartRef = useRef<{ x: number; y: number; fromEdge: boolean } | null>(null);
   const supportThreadsRequestIdRef = useRef(0);
   const supportThreadsDigestRef = useRef("");
   const supportThreadsLoadTaskRef = useRef<Promise<void> | null>(null);
@@ -1395,6 +1395,33 @@ export default function SuperAdminClient() {
       }
     });
   }, []);
+  const closeMobileSupportThread = useCallback(() => {
+    setSupportMobileView("list");
+  }, []);
+  const handleSupportMobileThreadTouchStart = useCallback((event: TouchEvent<HTMLDivElement>) => {
+    const touch = event.touches[0];
+    if (!touch) return;
+    supportMobileSwipeStartRef.current = {
+      x: touch.clientX,
+      y: touch.clientY,
+      fromEdge: touch.clientX <= 36,
+    };
+  }, []);
+  const handleSupportMobileThreadTouchEnd = useCallback(
+    (event: TouchEvent<HTMLDivElement>) => {
+      const start = supportMobileSwipeStartRef.current;
+      supportMobileSwipeStartRef.current = null;
+      if (!start?.fromEdge) return;
+      const touch = event.changedTouches[0];
+      if (!touch) return;
+      const deltaX = touch.clientX - start.x;
+      const deltaY = touch.clientY - start.y;
+      if (deltaX >= 72 && Math.abs(deltaY) <= 64 && deltaX > Math.abs(deltaY) * 1.2) {
+        closeMobileSupportThread();
+      }
+    },
+    [closeMobileSupportThread],
+  );
   useEffect(() => {
     if (typeof window === "undefined") return;
     const media = window.matchMedia("(max-width: 1023px)");
@@ -2074,12 +2101,10 @@ export default function SuperAdminClient() {
     [selectedSupportListRow, selectedSupportMerchantRow],
   );
   const selectedSupportDisplayLabel =
-    supportDisplayMode === "id"
-      ? selectedSupportMerchantRow?.merchantId || selectedSupportThread?.merchantId || "-"
-      : selectedSupportMerchantRow?.merchantName ||
-        selectedSupportThread?.merchantName ||
-        selectedSupportThread?.merchantId ||
-        "-";
+    selectedSupportMerchantRow?.merchantName ||
+    selectedSupportThread?.merchantName ||
+    selectedSupportThread?.merchantId ||
+    "-";
   const selectedSupportBusinessCard = resolveMerchantBusinessCardForChatDisplay(
     selectedSupportMerchantRow?.site.businessCards ?? [],
   );
@@ -6351,16 +6376,24 @@ export default function SuperAdminClient() {
               isMobileSupportOnlyMode ? (
                 <section className="relative flex h-full min-h-0 flex-col overflow-hidden bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_48%,#f8fafc_100%)]">
                   {showMobileSupportThread ? (
-                    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                    <div
+                      className="flex min-h-0 flex-1 flex-col overflow-hidden"
+                      onTouchStart={handleSupportMobileThreadTouchStart}
+                      onTouchEnd={handleSupportMobileThreadTouchEnd}
+                      onTouchCancel={() => {
+                        supportMobileSwipeStartRef.current = null;
+                      }}
+                    >
                       <div className="shrink-0 border-b border-slate-200/80 bg-white/90 px-3 pb-3 pt-[calc(env(safe-area-inset-top)+0.55rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex min-w-0 items-center gap-3">
                             <button
                               type="button"
-                              className="shrink-0 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
-                              onClick={() => setSupportMobileView("list")}
+                              className="shrink-0 rounded-full p-1 text-[28px] leading-none text-slate-900 hover:bg-slate-100"
+                              onClick={closeMobileSupportThread}
+                              aria-label="返回会话列表"
                             >
-                              返回
+                              {"<"}
                             </button>
                             <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm">
                               {getSupportAvatarLabel(selectedSupportDisplayLabel, "商")}
@@ -6504,27 +6537,7 @@ export default function SuperAdminClient() {
                             <div className="mt-1 text-xs text-slate-500">{mobileSupportListSummary}</div>
                           </div>
                         </div>
-                        <div className="mt-4 inline-flex w-full rounded-full bg-slate-100 p-1">
-                          <button
-                            type="button"
-                            className={`flex-1 rounded-full px-3 py-2 text-sm ${
-                              supportDisplayMode === "name" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"
-                            }`}
-                            onClick={() => setSupportDisplayMode("name")}
-                          >
-                            按名称
-                          </button>
-                          <button
-                            type="button"
-                            className={`flex-1 rounded-full px-3 py-2 text-sm ${
-                              supportDisplayMode === "id" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"
-                            }`}
-                            onClick={() => setSupportDisplayMode("id")}
-                          >
-                            按 ID
-                          </button>
-                        </div>
-                        <label className="mt-3 block">
+                        <label className="mt-4 block">
                           <div className="flex items-center gap-3 rounded-[24px] border border-slate-200 bg-white px-4 py-3 shadow-sm">
                             <span className="shrink-0 text-sm text-slate-400">搜索</span>
                             <input
@@ -6547,10 +6560,7 @@ export default function SuperAdminClient() {
                         {supportListRows.length > 0 ? (
                           <div className="space-y-2.5">
                             {supportListRows.map(({ row, selectionKey, thread, lastMessage }) => {
-                              const displayLabel =
-                                supportDisplayMode === "id"
-                                  ? row.merchantId || thread?.merchantId || selectionKey
-                                  : row.merchantName || thread?.merchantName || selectionKey;
+                              const displayLabel = row.merchantName || thread?.merchantName || row.merchantId || thread?.merchantId || selectionKey;
                               const subtitle = [
                                 row.backendAccount?.loginId || row.backendAccount?.username || "",
                                 row.userEmail || row.loginAccount || thread?.merchantEmail || "",
@@ -6639,22 +6649,6 @@ export default function SuperAdminClient() {
                           ? `${supportMerchantListCount}/${supportMerchantTotalCount}`
                           : supportMerchantTotalCount}
                       </div>
-                      <div className="inline-flex overflow-hidden rounded border">
-                        <button
-                          type="button"
-                          className={`px-3 py-2 text-sm ${supportDisplayMode === "name" ? "bg-black text-white" : "bg-white hover:bg-slate-50"}`}
-                          onClick={() => setSupportDisplayMode("name")}
-                        >
-                          按名称
-                        </button>
-                        <button
-                          type="button"
-                          className={`border-l px-3 py-2 text-sm ${supportDisplayMode === "id" ? "bg-black text-white" : "bg-white hover:bg-slate-50"}`}
-                          onClick={() => setSupportDisplayMode("id")}
-                        >
-                          按ID
-                        </button>
-                      </div>
                       <button
                         type="button"
                         className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
@@ -6691,10 +6685,7 @@ export default function SuperAdminClient() {
                       {supportListRows.length > 0 ? (
                         <div className="space-y-2">
                           {supportListRows.map(({ row, selectionKey, thread, lastMessage }) => {
-                            const displayLabel =
-                              supportDisplayMode === "id"
-                                ? row.merchantId || thread?.merchantId || selectionKey
-                                : row.merchantName || thread?.merchantName || selectionKey;
+                            const displayLabel = row.merchantName || thread?.merchantName || row.merchantId || thread?.merchantId || selectionKey;
                             const subtitle = [
                               row.backendAccount?.loginId || row.backendAccount?.username || "",
                               row.userEmail || row.loginAccount || thread?.merchantEmail || "",
