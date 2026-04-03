@@ -64,6 +64,8 @@ import {
 } from "@/lib/supabase";
 import {
   clearStoredBrowserSupabaseSessionTokens,
+  isTransientAuthValidationError,
+  recoverBrowserSupabaseSessionViaMerchantCookies,
   recoverBrowserSupabaseSessionWithRefresh,
   startMerchantSessionKeepAlive,
   syncMerchantSessionCookies,
@@ -3914,6 +3916,58 @@ export default function AdminClient({
     [isPlatformEditor],
   );
 
+  const readFreshMerchantSessionIdentity = useCallback(
+    async (timeoutMs = Math.max(1800, Math.min(4200, AUTH_CHECK_TIMEOUT_MS))) => {
+      if (isPlatformEditor || typeof window === "undefined") return null;
+
+      try {
+        const response = await withTimeout(
+          fetch("/api/auth/merchant-session", {
+            method: "GET",
+            cache: "no-store",
+            credentials: "same-origin",
+            headers: {
+              accept: "application/json",
+            },
+          }),
+          timeoutMs,
+          "商户身份识别超时，请稍后重试",
+        );
+        const payload = (await response.json().catch(() => null)) as
+          | {
+              authenticated?: boolean;
+              merchantId?: unknown;
+              user?: { email?: string | null } | null;
+            }
+          | null;
+        if (!response.ok || payload?.authenticated !== true) {
+          if (response.status === 401 || response.status === 403) {
+            merchantSessionIdentityRef.current = {
+              merchantId: "",
+              email: null,
+            };
+          }
+          return null;
+        }
+        const merchantId = typeof payload?.merchantId === "string" ? payload.merchantId.trim() : "";
+        const email = typeof payload?.user?.email === "string" ? payload.user.email.trim() : "";
+        if (!merchantId && !email) return null;
+        merchantSessionIdentityRef.current = {
+          merchantId,
+          email: email || null,
+        };
+        if (merchantId) {
+          merchantIdsRef.current = mergePreferredMerchantIds([merchantId], merchantIdsRef.current);
+          setMerchantSiteIdOverride((current) => current || merchantId);
+        }
+        return merchantSessionIdentityRef.current;
+      } catch {
+        return null;
+      }
+    },
+    [isPlatformEditor],
+  );
+
   const ensureEditableMerchantSiteId = useCallback(async () => {
     if (isPlatformEditor) return "";
 
@@ -5173,6 +5227,31 @@ export default function AdminClient({
     let authSubscription: { unsubscribe: () => void } | null = null;
     let detachKeepAlive: (() => void) | null = null;
     let recoverSessionInFlight: Promise<Awaited<ReturnType<typeof recoverBrowserSupabaseSessionWithRefresh>>> | null = null;
+    const recoverCookieBackedMerchantAccess = async (timeoutMs: number) => {
+      if (isPlatformEditor) return null;
+      const [cookieSession, freshIdentity] = await Promise.all([
+        recoverBrowserSupabaseSessionViaMerchantCookies(Math.max(2200, Math.min(7000, timeoutMs))).catch(() => null),
+        readFreshMerchantSessionIdentity(Math.max(2200, Math.min(7000, timeoutMs))).catch(() => null),
+      ]);
+      const merchantId = freshIdentity?.merchantId?.trim() ?? "";
+      const email =
+        (typeof freshIdentity?.email === "string" ? freshIdentity.email.trim() : "") ||
+        (typeof cookieSession?.user?.email === "string" ? cookieSession.user.email.trim() : "");
+      if (!cookieSession && !merchantId && !email) return null;
+      if (merchantId) {
+        merchantIdsRef.current = mergePreferredMerchantIds([merchantId], merchantIdsRef.current);
+        setMerchantSiteIdOverride((current) => current || merchantId);
+      }
+      merchantSessionIdentityRef.current = {
+        merchantId,
+        email: email || null,
+      };
+      return {
+        session: cookieSession,
+        merchantId,
+        email: email || null,
+      };
+    };
     const recoverSession = async (timeoutMs: number) => {
       if (recoverSessionInFlight) return recoverSessionInFlight;
       const task = recoverBrowserSupabaseSessionWithRefresh(Math.max(2200, Math.min(9000, timeoutMs + 1200)));
@@ -5199,6 +5278,15 @@ export default function AdminClient({
           if (!mounted || !gatewayReady) return;
           const confirmedSession = await recoverSession(justSignedIn ? 6000 : 4500);
           if (!mounted || confirmedSession) return;
+          const cookieBackedAccess = await recoverCookieBackedMerchantAccess(justSignedIn ? 6000 : 4500);
+          if (!mounted) return;
+          if (cookieBackedAccess?.session || cookieBackedAccess?.merchantId || cookieBackedAccess?.email) {
+            setRemoteContentVerified(false);
+            setHasEditorContent(true);
+            setBackendNotice(null);
+            releaseCheckingScreen({ notice: null });
+            return;
+          }
           if (justSignedIn) {
             setRemoteContentVerified(false);
             setHasEditorContent(true);
@@ -5234,6 +5322,7 @@ export default function AdminClient({
         );
         let session = rawSession;
         let sessionRecoveredFromFallback = false;
+        let cookieBackedMerchantIdentity: { merchantId: string; email: string | null } | null = null;
 
         if (!mounted) return;
         clearTimeout(safetyTimeoutId);
@@ -5246,6 +5335,20 @@ export default function AdminClient({
           session = await recoverSession(justSignedIn ? 6000 : 4500);
           sessionRecoveredFromFallback = Boolean(session);
           if (!mounted) return;
+        }
+        if (!session && !isPlatformEditor) {
+          const cookieBackedAccess = await recoverCookieBackedMerchantAccess(justSignedIn ? 6000 : 4500);
+          if (!mounted) return;
+          if (cookieBackedAccess?.session) {
+            session = cookieBackedAccess.session;
+            sessionRecoveredFromFallback = true;
+          }
+          if (cookieBackedAccess?.merchantId || cookieBackedAccess?.email) {
+            cookieBackedMerchantIdentity = {
+              merchantId: cookieBackedAccess.merchantId,
+              email: cookieBackedAccess.email,
+            };
+          }
         }
         if (sessionError && !session && !isPlatformEditor && !gatewayReady) {
           releaseCheckingScreen({ notice: BACKEND_UNAVAILABLE_NOTICE });
@@ -5266,14 +5369,27 @@ export default function AdminClient({
               Math.max(2500, Math.min(6000, AUTH_CHECK_TIMEOUT_MS)),
               "登录校验超时，已回退到重新登录",
             );
-            if (error || !data.user) {
+            const transientValidationFailure = Boolean(error) && (isTransientAuthValidationError(error) || !gatewayReady);
+            if (transientValidationFailure) {
+              // Keep the current browser session on transient validation failures.
+            } else if (error || !data.user) {
               const recoveredSession = await recoverSession(Math.max(2200, Math.min(6000, AUTH_CHECK_TIMEOUT_MS)));
               if (!mounted) return;
               if (!recoveredSession?.user) {
-                await supabase.auth.signOut({ scope: "local" }).catch(() => {
-                  // ignore local session cleanup failure
-                });
-                session = null;
+                const cookieBackedAccess = await recoverCookieBackedMerchantAccess(Math.max(2600, Math.min(7000, AUTH_CHECK_TIMEOUT_MS)));
+                if (!mounted) return;
+                if (cookieBackedAccess?.session?.user) {
+                  session = cookieBackedAccess.session;
+                  cookieBackedMerchantIdentity = {
+                    merchantId: cookieBackedAccess.merchantId,
+                    email: cookieBackedAccess.email,
+                  };
+                } else {
+                  await supabase.auth.signOut({ scope: "local" }).catch(() => {
+                    // ignore local session cleanup failure
+                  });
+                  session = null;
+                }
               } else {
                 session = recoveredSession;
               }
@@ -5303,10 +5419,17 @@ export default function AdminClient({
               releaseCheckingScreen({ notice: "登录未完成，请重新登录后继续。" });
               return;
             }
+            if (cookieBackedMerchantIdentity) {
+              setBackendNotice(null);
+              setRemoteContentVerified(false);
+              setHasEditorContent(true);
+              releaseCheckingScreen({ notice: null });
+            } else {
             setRemoteContentVerified(false);
             setHasEditorContent(true);
             releaseCheckingScreen({ notice: "当前未登录，请重新登录后继续。" });
             return;
+            }
           }
         }
         if (session) {
@@ -5319,7 +5442,7 @@ export default function AdminClient({
           }
           clearJustSignedInFlagFromUrl();
         }
-        if (!isPlatformEditor || session) {
+        if (!isPlatformEditor || session || cookieBackedMerchantIdentity) {
           setBackendNotice(null);
         }
         if (initialCached.length > 0) {
@@ -5329,22 +5452,29 @@ export default function AdminClient({
         let resolvedMerchantIds: string[] = [];
           if (!isPlatformEditor) {
             const activeSession = session;
-            if (!activeSession) {
+            if (!activeSession && !cookieBackedMerchantIdentity) {
               releaseCheckingScreen({ notice: BACKEND_UNAVAILABLE_NOTICE });
               return;
             }
-            const merchantIds = await withTimeout(
-              (() => {
-                const scopedSiteId = getSiteIdFromStoreScope(storeScope).trim();
-                if (scopedSiteId) return Promise.resolve([scopedSiteId]);
-              return resolveMerchantIds(activeSession.user.id, activeSession.user.email, {
-                ...(activeSession.user.user_metadata ?? {}),
-                ...(activeSession.user.app_metadata ?? {}),
-              });
-            })(),
-            AUTH_CHECK_TIMEOUT_MS,
-            "商户识别超时，已使用本地缓存继续编辑",
-          );
+            const merchantIds = activeSession
+              ? await withTimeout(
+                  (() => {
+                    const scopedSiteId = getSiteIdFromStoreScope(storeScope).trim();
+                    if (scopedSiteId) return Promise.resolve([scopedSiteId]);
+                    return resolveMerchantIds(activeSession.user.id, activeSession.user.email, {
+                      ...(activeSession.user.user_metadata ?? {}),
+                      ...(activeSession.user.app_metadata ?? {}),
+                    });
+                  })(),
+                  AUTH_CHECK_TIMEOUT_MS,
+                  "商户识别超时，已使用本地缓存继续编辑",
+                )
+              : mergePreferredMerchantIds(
+                  [
+                    cookieBackedMerchantIdentity?.merchantId ?? "",
+                    ...(merchantIdsRef.current ?? []),
+                  ].filter(Boolean),
+                );
             if (!mounted) return;
             const preferredByScope = getSiteIdFromStoreScope(storeScope);
             resolvedMerchantIds = preferredByScope ? [preferredByScope] : mergePreferredMerchantIds(merchantIds);
@@ -5357,8 +5487,11 @@ export default function AdminClient({
               return;
             }
             if (currentMerchantSiteId) {
-              ensureScopedMerchantSite(currentMerchantSiteId, activeSession.user.email);
-              void syncScopedMerchantSiteFromPublishedSnapshot(currentMerchantSiteId, activeSession.user.email);
+              const merchantEmail =
+                activeSession?.user?.email ??
+                (typeof cookieBackedMerchantIdentity?.email === "string" ? cookieBackedMerchantIdentity.email : null);
+              ensureScopedMerchantSite(currentMerchantSiteId, merchantEmail);
+              void syncScopedMerchantSiteFromPublishedSnapshot(currentMerchantSiteId, merchantEmail);
             }
             const identityNotice = getMerchantIdentityNotice(resolvedMerchantIds);
             if (identityNotice) {
@@ -5480,7 +5613,14 @@ export default function AdminClient({
       if (detachKeepAlive) detachKeepAlive();
       merchantIdsRef.current = [];
     };
-  }, [defaultEditorBlocks, isPlatformEditor, justSignedIn, platformSeedBlocks, storeScope]);
+  }, [
+    defaultEditorBlocks,
+    isPlatformEditor,
+    justSignedIn,
+    platformSeedBlocks,
+    readFreshMerchantSessionIdentity,
+    storeScope,
+  ]);
 
   function updateBlockProps(blockId: string, patch: Partial<Block["props"]>) {
     const currentBlocks = blocksRef.current;
