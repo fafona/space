@@ -81,6 +81,11 @@ type AdminListUsersClient = {
   };
 };
 
+const AUTH_USERS_TIMEOUT_MS = 2500;
+const SNAPSHOT_LOAD_TIMEOUT_MS = 1500;
+const PUBLISHED_SITE_INFO_TIMEOUT_MS = 1500;
+const PAGE_EVENTS_TIMEOUT_MS = 1500;
+
 function parseCookieValue(cookieHeader: string, key: string) {
   return cookieHeader
     .split(";")
@@ -179,6 +184,19 @@ async function listAuthUsers(supabase: AdminListUsersClient) {
     page += 1;
   }
   return users;
+}
+
+async function resolveWithin<T>(task: PromiseLike<T>, timeoutMs: number, fallback: T): Promise<T> {
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+  const safeTask = Promise.resolve(task).catch(() => fallback);
+  const timeoutTask = new Promise<T>((resolve) => {
+    timeoutHandle = setTimeout(() => resolve(fallback), timeoutMs);
+  });
+  try {
+    return await Promise.race([safeTask, timeoutTask]);
+  } finally {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+  }
 }
 
 function sortByCreatedAtDesc(items: MerchantAccountItem[]) {
@@ -364,13 +382,18 @@ export async function GET(request: Request) {
   }
 
   try {
-    const [{ data: merchants, error: merchantError }, authUsers] = await Promise.all([
+    const [{ data: merchants, error: merchantError }, authUsers, snapshotByMerchantId] = await Promise.all([
       supabase
         .from("merchants")
         .select("id,name,email,owner_email,contact_email,user_email,user_id,auth_user_id,created_at")
         .order("created_at", { ascending: false })
         .limit(500),
-      listAuthUsers(supabase),
+      resolveWithin(listAuthUsers(supabase), AUTH_USERS_TIMEOUT_MS, [] as AuthUserSummary[]),
+      resolveWithin(
+        loadPlatformMerchantSnapshotByMerchantId(supabase as unknown as PlatformMerchantSnapshotStoreClient),
+        SNAPSHOT_LOAD_TIMEOUT_MS,
+        new Map<string, MerchantListPublishedSite>(),
+      ),
     ]);
 
     if (merchantError) throw merchantError;
@@ -380,10 +403,6 @@ export async function GET(request: Request) {
       authUsers
         .map((user) => [normalizeEmail(user.email), user] as const)
         .filter(([email]) => Boolean(email)),
-    );
-
-    const snapshotByMerchantId = await loadPlatformMerchantSnapshotByMerchantId(
-      supabase as unknown as PlatformMerchantSnapshotStoreClient,
     );
 
     const merchantItems: MerchantAccountItem[] = ((merchants ?? []) as MerchantRow[]).map((merchant) => {
@@ -484,11 +503,21 @@ export async function GET(request: Request) {
       { hasPublishedSite: boolean; siteSlug: string; siteUpdatedAt: string | null; publishedBytes: number; publishedBytesKnown: boolean }
     >();
     if (merchantIds.length > 0) {
-      const { data: pageRows, error: pageError } = await supabase
-        .from("pages")
-        .select("merchant_id,slug,updated_at,blocks")
-        .in("merchant_id", merchantIds)
-        .limit(Math.max(merchantIds.length * 4, 100));
+      const { data: pageRows, error: pageError } = await resolveWithin(
+        supabase
+          .from("pages")
+          .select("merchant_id,slug,updated_at")
+          .in("merchant_id", merchantIds)
+          .limit(Math.max(merchantIds.length * 4, 100)),
+        PUBLISHED_SITE_INFO_TIMEOUT_MS,
+        {
+          count: null,
+          data: null,
+          error: { message: "pages_timeout", details: "", hint: "", code: "timeout", name: "TimeoutError" },
+          status: 408,
+          statusText: "Request Timeout",
+        },
+      );
       if (!pageError && Array.isArray(pageRows)) {
         publishedSiteInfoByMerchantId = buildPublishedSiteInfoByMerchantId(pageRows as PageRow[]);
       }
@@ -497,11 +526,21 @@ export async function GET(request: Request) {
     let visitsByMerchantId = new Map<string, MerchantVisitSummary>();
     let visitsKnown = false;
     if (merchantIds.length > 0) {
-      const { data: pageEvents, error: pageEventsError } = await supabase
-        .from("page_events")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(5000);
+      const { data: pageEvents, error: pageEventsError } = await resolveWithin(
+        supabase
+          .from("page_events")
+          .select("created_at,event_type,type,event,channel,page_path")
+          .order("created_at", { ascending: false })
+          .limit(5000),
+        PAGE_EVENTS_TIMEOUT_MS,
+        {
+          count: null,
+          data: null,
+          error: { message: "page_events_timeout", details: "", hint: "", code: "timeout", name: "TimeoutError" },
+          status: 408,
+          statusText: "Request Timeout",
+        },
+      );
       if (!pageEventsError && Array.isArray(pageEvents)) {
         visitsByMerchantId = buildMerchantVisitsByMerchantId(pageEvents, Date.now());
         visitsKnown = true;

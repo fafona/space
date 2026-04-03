@@ -104,6 +104,7 @@ import { uploadImageDataUrlToPublicStorage } from "@/lib/publicAssetUpload";
 import { useNotificationSound } from "@/lib/useNotificationSound";
 
 const SUPPORT_THREADS_POLL_INTERVAL_MS = 5000;
+const BACKEND_MERCHANT_ACCOUNTS_TIMEOUT_MS = 15000;
 const SUPER_ADMIN_SUPPORT_LAST_READ_STORAGE_KEY_PREFIX = "super-admin-support-last-read:";
 const MOBILE_SUPPORT_QUICK_REPLIES = [
   { key: "received", label: "已收到", text: "您好，已收到您的留言，我们会尽快处理并回复您。" },
@@ -1269,6 +1270,8 @@ export default function SuperAdminClient() {
   const supportReplyInputRef = useRef<HTMLTextAreaElement>(null);
   const supportLastMessageKeyRef = useRef("");
   const supportLastIncomingMerchantMessageKeyRef = useRef("");
+  const backendMerchantAccountsAbortRef = useRef<AbortController | null>(null);
+  const backendMerchantAccountsRequestIdRef = useRef(0);
   const supportThreadsRequestIdRef = useRef(0);
   const loadSupportThreadsActionRef = useRef<(options?: { silent?: boolean; suppressError?: boolean }) => Promise<void>>(async () => {});
   const focusSupportReplyInput = useCallback(() => {
@@ -1293,6 +1296,68 @@ export default function SuperAdminClient() {
     media.addEventListener("change", updateMobileSupportOnlyMode);
     return () => media.removeEventListener("change", updateMobileSupportOnlyMode);
   }, []);
+
+  useEffect(() => {
+    return () => {
+      backendMerchantAccountsAbortRef.current?.abort();
+    };
+  }, []);
+
+  const loadBackendMerchantAccountsAction = useCallback(
+    async (options?: { silent?: boolean; suppressError?: boolean }) => {
+      if (!hydrated || !authed || typeof window === "undefined") return;
+      const silent = options?.silent === true;
+      const suppressError = options?.suppressError === true;
+      const requestId = ++backendMerchantAccountsRequestIdRef.current;
+      backendMerchantAccountsAbortRef.current?.abort();
+      const controller = new AbortController();
+      backendMerchantAccountsAbortRef.current = controller;
+      const timeout = window.setTimeout(() => controller.abort(), BACKEND_MERCHANT_ACCOUNTS_TIMEOUT_MS);
+
+      if (!silent) {
+        setBackendMerchantAccountsLoading(true);
+      }
+      if (!suppressError) {
+        setBackendMerchantAccountsError("");
+      }
+
+      try {
+        const requestAccounts = async () =>
+          fetch("/api/super-admin/merchant-accounts", {
+            method: "GET",
+            cache: "no-store",
+            signal: controller.signal,
+          });
+        let response = await requestAccounts();
+        if ((response.status === 401 || response.status === 403) && syncSuperAdminAuthenticatedCookie()) {
+          response = await requestAccounts();
+        }
+        if (!response.ok) {
+          throw new Error(`merchant_account_http_${response.status}`);
+        }
+        const payload = (await response.json()) as { items?: BackendMerchantAccount[] };
+        if (requestId !== backendMerchantAccountsRequestIdRef.current) return;
+        setBackendMerchantAccounts(Array.isArray(payload.items) ? payload.items : []);
+        setBackendMerchantAccountsError("");
+      } catch (error) {
+        if (requestId !== backendMerchantAccountsRequestIdRef.current) return;
+        if (error instanceof DOMException && error.name === "AbortError") {
+          setBackendMerchantAccountsError("merchant_account_timeout");
+          return;
+        }
+        setBackendMerchantAccountsError(error instanceof Error ? error.message : "merchant_account_load_failed");
+      } finally {
+        window.clearTimeout(timeout);
+        if (backendMerchantAccountsAbortRef.current === controller) {
+          backendMerchantAccountsAbortRef.current = null;
+        }
+        if (!silent && requestId === backendMerchantAccountsRequestIdRef.current) {
+          setBackendMerchantAccountsLoading(false);
+        }
+      }
+    },
+    [authed, hydrated],
+  );
   const [manualUserDialogOpen, setManualUserDialogOpen] = useState(false);
   const [manualUserId, setManualUserId] = useState("");
   const [manualUserName, setManualUserName] = useState("");
@@ -1434,49 +1499,33 @@ export default function SuperAdminClient() {
   }, [authed, hydrated]);
 
   useEffect(() => {
-    if (!hydrated || !authed) return;
-    let cancelled = false;
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 8000);
-    const loadAccounts = async () => {
-      setBackendMerchantAccountsLoading(true);
-      setBackendMerchantAccountsError("");
-      try {
-        const requestAccounts = async () =>
-          fetch("/api/super-admin/merchant-accounts", {
-            method: "GET",
-            cache: "no-store",
-            signal: controller.signal,
-          });
-        let response = await requestAccounts();
-        if ((response.status === 401 || response.status === 403) && syncSuperAdminAuthenticatedCookie()) {
-          response = await requestAccounts();
-        }
-        if (!response.ok) {
-          throw new Error(`merchant_account_http_${response.status}`);
-        }
-        const payload = (await response.json()) as { items?: BackendMerchantAccount[] };
-        if (cancelled) return;
-        setBackendMerchantAccounts(Array.isArray(payload.items) ? payload.items : []);
-      } catch (error) {
-        if (cancelled) return;
-        setBackendMerchantAccounts([]);
-        if (error instanceof DOMException && error.name === "AbortError") {
-          setBackendMerchantAccountsError("merchant_account_timeout");
-          return;
-        }
-        setBackendMerchantAccountsError(error instanceof Error ? error.message : "merchant_account_load_failed");
-      } finally {
-        if (!cancelled) setBackendMerchantAccountsLoading(false);
+    void loadBackendMerchantAccountsAction();
+  }, [loadBackendMerchantAccountsAction]);
+
+  useEffect(() => {
+    if (!hydrated || !authed || !backendMerchantAccountsError || typeof window === "undefined") return;
+    const retryLoadAccounts = () => {
+      if (document.visibilityState !== "visible") return;
+      void loadBackendMerchantAccountsAction({
+        silent: backendMerchantAccounts.length > 0,
+        suppressError: true,
+      });
+    };
+    const handleFocus = () => retryLoadAccounts();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        retryLoadAccounts();
       }
     };
-    void loadAccounts();
+    const timer = window.setTimeout(retryLoadAccounts, 4000);
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => {
-      cancelled = true;
-      controller.abort();
-      window.clearTimeout(timeout);
+      window.clearTimeout(timer);
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [authed, hydrated]);
+  }, [authed, backendMerchantAccounts.length, backendMerchantAccountsError, hydrated, loadBackendMerchantAccountsAction]);
 
   useEffect(() => {
     if (!hydrated || !authed) return;
@@ -4344,14 +4393,6 @@ export default function SuperAdminClient() {
                     </>
                   ) : (
                     <>
-                      <button
-                        type="button"
-                        className="rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-100 disabled:opacity-50"
-                        onClick={() => void loadSupportThreadsAction()}
-                        disabled={supportThreadsLoading}
-                      >
-                        {supportThreadsLoading ? "刷新中..." : "刷新"}
-                      </button>
                     </>
                   )}
                 </div>
@@ -6605,10 +6646,13 @@ export default function SuperAdminClient() {
                           <button
                             type="button"
                             className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-100"
-                            onClick={() => void loadSupportThreadsAction()}
-                            disabled={supportThreadsLoading}
+                            onClick={() => {
+                              void loadSupportThreadsAction();
+                              void loadBackendMerchantAccountsAction({ silent: true, suppressError: true });
+                            }}
+                            disabled={supportThreadsLoading || backendMerchantAccountsLoading}
                           >
-                            {supportThreadsLoading ? "刷新中..." : "刷新"}
+                            {supportThreadsLoading || backendMerchantAccountsLoading ? "刷新中..." : "刷新"}
                           </button>
                         </div>
                       </div>
@@ -6649,10 +6693,13 @@ export default function SuperAdminClient() {
                       <button
                         type="button"
                         className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
-                        onClick={() => void loadSupportThreadsAction()}
-                        disabled={supportThreadsLoading}
+                        onClick={() => {
+                          void loadSupportThreadsAction();
+                          void loadBackendMerchantAccountsAction({ silent: true, suppressError: true });
+                        }}
+                        disabled={supportThreadsLoading || backendMerchantAccountsLoading}
                       >
-                        {supportThreadsLoading ? "刷新中..." : "刷新"}
+                        {supportThreadsLoading || backendMerchantAccountsLoading ? "刷新中..." : "刷新"}
                       </button>
                     </div>
                   </div>
