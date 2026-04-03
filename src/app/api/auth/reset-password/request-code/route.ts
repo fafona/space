@@ -35,8 +35,12 @@ export async function POST(request: Request) {
     const publicOrigin = resolvePublicOrigin(request, requestUrl);
     const redirectUrl = new URL("/reset-password/bridge", publicOrigin);
 
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: redirectUrl.toString(),
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: {
+        shouldCreateUser: false,
+        emailRedirectTo: redirectUrl.toString(),
+      },
     });
 
     if (error) {

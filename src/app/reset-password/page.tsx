@@ -420,7 +420,7 @@ export default function ResetPasswordPage() {
     setResendingCode(true);
     try {
       const response = await withTimeout(
-        fetch("/api/auth/reset-password/request", {
+        fetch("/api/auth/reset-password/request-code", {
           method: "POST",
           cache: "no-store",
           headers: {

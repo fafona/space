@@ -717,6 +717,9 @@ function LoginPageInner() {
     if (pendingAction) return;
     setMsg("");
     setNeedConfirmEmail(false);
+    setPendingResetEmail("");
+    setPendingResetEmailMasked("");
+    setResetCode("");
 
     const trimmedEmail = account.trim();
     if (!trimmedEmail) return setMsg(t("login.inputEmailBeforeForgot"));
@@ -746,9 +749,6 @@ function LoginPageInner() {
         return setMsg(normalizeError(errorMessage));
       }
       persistResetPasswordEmailRequest(trimmedEmail);
-      setPendingResetEmail(trimmedEmail);
-      setPendingResetEmailMasked(typeof payload?.maskedEmail === "string" ? payload.maskedEmail.trim() : trimmedEmail);
-      setResetCode("");
       setMsg(t("login.forgotSuccess"));
     } catch (error) {
       setMsg(error instanceof Error ? normalizeError(error.message) : t("login.requestFailed"));
