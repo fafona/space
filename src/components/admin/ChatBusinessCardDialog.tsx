@@ -464,7 +464,7 @@ export default function ChatBusinessCardDialog({
           />
           <div className="fixed inset-0 z-[2147483401] flex items-center justify-center p-4">
             <div className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl">
-              <div className="flex items-start justify-between gap-3 border-b px-5 py-4">
+              <div className="global-language-switcher-safe-pad flex items-start justify-between gap-3 border-b px-5 py-4">
                 <div className="min-w-0">
                   <div className="truncate text-base font-semibold text-slate-900">{merchantName || "名片"}</div>
                   {subtitle ? <div className="truncate text-xs text-slate-500">{subtitle}</div> : null}
@@ -524,7 +524,7 @@ export default function ChatBusinessCardDialog({
           />
           <div className="fixed inset-0 z-[2147483403] flex items-center justify-center p-3">
             <div className="w-full max-w-5xl">
-              <div className="mb-3 flex items-center justify-between gap-3 text-white">
+              <div className="global-language-switcher-safe-pad mb-3 flex items-center justify-between gap-3 text-white">
                 <div className="min-w-0 truncate text-sm font-medium">{cardActionTitle}</div>
                 <button
                   type="button"

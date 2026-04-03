@@ -7,6 +7,7 @@
   --app-safe-right: env(safe-area-inset-right, 0px);
   --app-safe-bottom: env(safe-area-inset-bottom, 0px);
   --app-safe-left: env(safe-area-inset-left, 0px);
+  --global-language-switcher-safe-space: calc(var(--app-safe-right) + 4.5rem);
 }
 
 @theme inline {
@@ -79,6 +80,20 @@ body.translated-rtl {
 /* Hide first paint until client-side local translation finishes. */
 html[data-i18n-pending="1"] body {
   visibility: hidden;
+}
+
+.global-language-switcher-safe-pad {
+  padding-right: var(--global-language-switcher-safe-space) !important;
+}
+
+.global-language-switcher-safe-offset {
+  right: var(--global-language-switcher-safe-space) !important;
+}
+
+@media (min-width: 768px) {
+  :root {
+    --global-language-switcher-safe-space: calc(var(--app-safe-right) + 9rem);
+  }
 }
 
 @media (max-width: 767px) {

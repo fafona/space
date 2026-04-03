@@ -9487,7 +9487,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                   </div>
 
                   <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-                    <div className="flex min-w-0 items-center justify-between gap-3 border-b px-5 py-4">
+                    <div className="global-language-switcher-safe-pad flex min-w-0 items-center justify-between gap-3 border-b px-5 py-4">
                       <div className="min-w-0">
                         <div className="truncate text-base font-semibold text-slate-900">{selectedSupportDisplayName}</div>
                         <div className="truncate text-xs text-slate-500">{selectedSupportSubtitle}</div>
@@ -9746,7 +9746,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               }}
             >
               <div className="mx-auto flex h-full max-h-[calc(100vh-2rem)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl">
-                <div className="flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4">
+                <div className="global-language-switcher-safe-pad flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4">
                   <div className="space-y-1">
                     <div className="text-lg font-semibold text-slate-900">复制到目标页面</div>
                     <div className="text-sm text-slate-500">
@@ -9910,7 +9910,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               }}
             >
               <div className="mx-auto flex h-full max-h-[calc(100vh-2rem)] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl">
-                <div className="flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4">
+                <div className="global-language-switcher-safe-pad flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4">
                   <div className="space-y-1">
                     <div className="text-lg font-semibold text-slate-900">方案模板</div>
                     <div className="text-sm text-slate-500">选择整套已收录方案，一次应用 PC 和手机端页面配置。</div>
@@ -10178,7 +10178,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         ? renderTopMostOverlay(
             <div className="fixed inset-0 z-[2147483600] flex items-center justify-center bg-black/65 p-4">
               <div className="max-h-[92vh] w-full max-w-5xl overflow-hidden rounded-2xl border bg-white shadow-2xl">
-                <div className="flex items-center justify-between border-b px-5 py-4">
+                <div className="global-language-switcher-safe-pad flex items-center justify-between border-b px-5 py-4">
                   <div className="text-base font-semibold text-slate-900">{planTemplateCoverPreview.name}</div>
                   <div className="flex flex-wrap items-center gap-2">
                     <button
@@ -16592,7 +16592,7 @@ type GalleryEditorImage = {
                 <div className="relative max-h-[90vh] w-full overflow-auto rounded-3xl bg-white p-5 shadow-2xl sm:p-6">
                   <button
                     type="button"
-                    className="absolute right-4 top-4 z-10 flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-2xl leading-none text-slate-600 hover:bg-slate-50"
+                    className="global-language-switcher-safe-offset absolute top-4 z-10 flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-2xl leading-none text-slate-600 hover:bg-slate-50"
                     onClick={() => setProductDetailPreview(null)}
                     aria-label="关闭"
                   >
