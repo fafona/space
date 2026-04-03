@@ -6459,7 +6459,7 @@ export default function SuperAdminClient() {
                         <div className="rounded-[28px] border border-slate-200 bg-white p-2 shadow-sm">
                           <textarea
                             ref={supportReplyInputRef}
-                            className="h-24 w-full resize-none bg-transparent px-3 py-2 text-[15px] outline-none transition placeholder:text-slate-400"
+                            className="h-24 w-full resize-none bg-transparent px-3 py-2 text-base outline-none transition placeholder:text-slate-400"
                             placeholder="输入回复内容，回车换行"
                             value={supportReplyDraft}
                             onChange={(event) => setSupportReplyDraft(event.target.value)}
@@ -6543,7 +6543,7 @@ export default function SuperAdminClient() {
                             <span className="shrink-0 text-sm text-slate-400">搜索</span>
                             <input
                               type="text"
-                              className="min-w-0 flex-1 bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400"
+                              className="min-w-0 flex-1 bg-transparent text-base text-slate-900 outline-none placeholder:text-slate-400"
                               placeholder="邮箱 / ID / 账号 / 名称"
                               value={supportMerchantKeyword}
                               onChange={(event) => setSupportMerchantKeyword(event.target.value)}
