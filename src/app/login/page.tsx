@@ -462,6 +462,11 @@ function LoginPageInner() {
     return normalized;
   }
 
+  function shouldPreferResetCodeFlow(emailValue: string) {
+    const domain = emailValue.trim().toLowerCase().split("@")[1] ?? "";
+    return new Set(["qq.com", "vip.qq.com", "foxmail.com", "hotmail.com", "outlook.com", "live.com"]).has(domain);
+  }
+
   async function withTimeout<T>(task: Promise<T>, timeoutMs = 15000): Promise<T> {
     let timer: ReturnType<typeof setTimeout> | null = null;
     let timedOut = false;
@@ -724,13 +729,14 @@ function LoginPageInner() {
     const trimmedEmail = account.trim();
     if (!trimmedEmail) return setMsg(t("login.inputEmailBeforeForgot"));
     if (!trimmedEmail.includes("@")) return setMsg(t("login.invalidEmail"));
+    const preferResetCodeFlow = shouldPreferResetCodeFlow(trimmedEmail);
     const gatewayReady = await canReachSupabaseGateway(4000);
     setGatewayReachable(gatewayReady);
 
     setPendingAction("forgot");
     try {
       const response = await withTimeout(
-        fetch("/api/auth/reset-password/request", {
+        fetch(preferResetCodeFlow ? "/api/auth/reset-password/request-code" : "/api/auth/reset-password/request", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -749,6 +755,12 @@ function LoginPageInner() {
         return setMsg(normalizeError(errorMessage));
       }
       persistResetPasswordEmailRequest(trimmedEmail);
+      if (preferResetCodeFlow) {
+        const maskedEmail = typeof payload?.maskedEmail === "string" ? payload.maskedEmail : trimmedEmail;
+        setPendingResetEmail(trimmedEmail);
+        setPendingResetEmailMasked(maskedEmail);
+        setResetCode("");
+      }
       setMsg(t("login.forgotSuccess"));
     } catch (error) {
       setMsg(error instanceof Error ? normalizeError(error.message) : t("login.requestFailed"));
