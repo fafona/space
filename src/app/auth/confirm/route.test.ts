@@ -1,10 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {
-  GET,
-  createResetPasswordSessionRedirectResponse,
-  isResetPasswordRedirectTarget,
-} from "@/app/auth/confirm/route";
+import { GET } from "@/app/auth/confirm/route";
+import { appendResetPasswordBridgeRedirectParams, isResetPasswordRedirectTarget } from "@/lib/authConfirmRedirect";
 
 test("recovery confirm redirects to bridge without consuming token hash", async () => {
   const response = await GET(
@@ -44,17 +41,15 @@ test("reset-password redirects are detected for reset page paths", () => {
   assert.equal(isResetPasswordRedirectTarget(new URL("http://localhost/login")), false);
 });
 
-test("reset-password session redirect writes recovery cookies", () => {
-  const response = createResetPasswordSessionRedirectResponse(new URL("http://localhost/reset-password"), {
-    access_token: "demo-access",
-    refresh_token: "demo-refresh",
-    expires_in: 900,
+test("reset-password bridge redirect preserves email flow payload", () => {
+  const url = appendResetPasswordBridgeRedirectParams(new URL("http://localhost/reset-password"), {
+    type: "email",
+    tokenHash: "demo-token",
+    code: "demo-code",
   });
 
-  assert.ok(response);
-  assert.equal(response.status, 303);
-  assert.equal(response.headers.get("location"), "http://localhost/reset-password");
-  const setCookieHeader = response.headers.get("set-cookie") ?? "";
-  assert.match(setCookieHeader, /merchant-space-reset-recovery=demo-access/i);
-  assert.match(setCookieHeader, /merchant-space-reset-recovery-refresh=demo-refresh/i);
+  assert.equal(url.pathname, "/reset-password/bridge");
+  assert.equal(url.searchParams.get("type"), "email");
+  assert.equal(url.searchParams.get("token_hash"), "demo-token");
+  assert.equal(url.searchParams.get("code"), "demo-code");
 });

@@ -36,6 +36,14 @@ function hasDirectSessionPayload(payload: ResetPasswordRecoveryPayload | null | 
   return Boolean(payload?.accessToken && payload?.refreshToken);
 }
 
+function resolveBridgeOtpType(payload: ResetPasswordRecoveryPayload | null | undefined) {
+  const rawType = String(payload?.type ?? "").trim();
+  if (rawType === "email" || rawType === "magiclink" || rawType === "recovery") {
+    return rawType;
+  }
+  return "recovery";
+}
+
 export default function ResetPasswordBridgePage() {
   const { t } = useI18n();
   const [message, setMessage] = useState("");
@@ -124,8 +132,9 @@ export default function ResetPasswordBridgePage() {
       }
 
       if (payload.tokenHash) {
+        const otpType = resolveBridgeOtpType(payload);
         const { data, error } = await resetSupabase.auth.verifyOtp({
-          type: "recovery",
+          type: otpType,
           token_hash: payload.tokenHash,
         });
         const accessToken = String(data.session?.access_token ?? "").trim();

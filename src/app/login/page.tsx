@@ -794,9 +794,9 @@ function LoginPageInner() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-gray-100 p-6">
-      <div className="w-full max-w-md space-y-4 rounded-xl border bg-white p-6">
-        <h1 className="text-xl font-bold">{t("login.title")}</h1>
+    <main className="flex min-h-screen items-center justify-center bg-gray-100 p-6 text-slate-900">
+      <div className="w-full max-w-md space-y-4 rounded-xl border bg-white p-6 text-slate-900">
+        <h1 className="text-xl font-bold text-slate-900">{t("login.title")}</h1>
         <div className="text-xs text-gray-500">{loginAccountTip}</div>
 
         <div className="space-y-2">
@@ -807,7 +807,7 @@ function LoginPageInner() {
           <div className="text-sm text-gray-600">{loginAccountLabel}</div>
           <input
             ref={accountInputRef}
-            className="w-full rounded border p-2"
+            className="w-full rounded border p-2 text-slate-900 placeholder:text-slate-300"
             type="text"
             name="merchant-login-account"
             autoComplete="off"
@@ -825,7 +825,7 @@ function LoginPageInner() {
           <div className="text-sm text-gray-600">{t("login.password")}</div>
           <PasswordField
             ref={passwordInputRef}
-            className="w-full rounded border p-2"
+            className="w-full rounded border p-2 text-slate-900 placeholder:text-slate-300"
             name="merchant-login-password"
             autoComplete="new-password"
             data-lpignore="true"
@@ -848,7 +848,7 @@ function LoginPageInner() {
             {pendingAction === "signin" ? t("login.signingIn") : t("login.signIn")}
           </button>
           <button
-            className="flex-1 rounded border bg-white px-3 py-2 disabled:opacity-50"
+            className="flex-1 rounded border bg-white px-3 py-2 text-slate-900 disabled:opacity-50"
             onClick={signUp}
             disabled={pendingAction !== null}
           >
@@ -867,7 +867,7 @@ function LoginPageInner() {
         ) : null}
 
         <button
-          className="w-full rounded border bg-white px-3 py-2 hover:bg-gray-50 disabled:opacity-50"
+          className="w-full rounded border bg-white px-3 py-2 text-slate-900 hover:bg-gray-50 disabled:opacity-50"
           onClick={forgotPassword}
           disabled={pendingAction !== null}
         >
@@ -881,7 +881,7 @@ function LoginPageInner() {
               {pendingResetEmailMasked ? <span className="ml-2 text-xs text-gray-500">{pendingResetEmailMasked}</span> : null}
             </div>
             <input
-              className="w-full rounded border p-2"
+              className="w-full rounded border p-2 text-slate-900 placeholder:text-slate-300"
               value={resetCode}
               onChange={(event) => setResetCode(event.target.value)}
               placeholder={t("login.resetCodePlaceholder")}
@@ -890,7 +890,7 @@ function LoginPageInner() {
               spellCheck={false}
             />
             <button
-              className="w-full rounded border bg-white px-3 py-2 hover:bg-gray-50 disabled:opacity-50"
+              className="w-full rounded border bg-white px-3 py-2 text-slate-900 hover:bg-gray-50 disabled:opacity-50"
               onClick={verifyResetCode}
               disabled={pendingAction !== null}
             >
@@ -901,7 +901,7 @@ function LoginPageInner() {
 
         {needConfirmEmail ? (
           <button
-            className="w-full rounded border bg-white px-3 py-2 hover:bg-gray-50 disabled:opacity-50"
+            className="w-full rounded border bg-white px-3 py-2 text-slate-900 hover:bg-gray-50 disabled:opacity-50"
             onClick={resendConfirmationEmail}
             disabled={pendingAction !== null}
           >

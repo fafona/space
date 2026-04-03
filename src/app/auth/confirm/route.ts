@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { createClient, type EmailOtpType } from "@supabase/supabase-js";
-import { setResetRecoveryCookies } from "@/lib/resetPasswordRecoverySession";
+import {
+  appendResetPasswordBridgeRedirectParams,
+  isResetPasswordRedirectTarget,
+} from "@/lib/authConfirmRedirect";
 import { createSuperAdminEmailProofToken } from "@/lib/superAdminVerification";
 
 export const dynamic = "force-dynamic";
@@ -14,12 +17,6 @@ const SUPPORTED_TYPES = new Set<EmailOtpType>([
   "recovery",
   "email",
 ]);
-
-type AuthSessionSummary = {
-  access_token?: string | null;
-  refresh_token?: string | null;
-  expires_in?: number | null;
-};
 
 function readEnv(name: string) {
   return (process.env[name] ?? "").trim();
@@ -91,27 +88,6 @@ function appendRecoveryRedirectParams(url: URL, input: { tokenHash?: string; cod
   return nextUrl;
 }
 
-export function isResetPasswordRedirectTarget(url: URL) {
-  const pathname = url.pathname.replace(/\/+$/, "") || "/";
-  return pathname === "/reset-password" || pathname.startsWith("/reset-password/");
-}
-
-export function createResetPasswordSessionRedirectResponse(
-  redirectTo: URL,
-  session: AuthSessionSummary | null | undefined,
-) {
-  const accessToken = String(session?.access_token ?? "").trim();
-  if (!accessToken) return null;
-
-  const response = NextResponse.redirect(redirectTo, { status: 303 });
-  setResetRecoveryCookies(response, {
-    accessToken,
-    refreshToken: String(session?.refresh_token ?? "").trim(),
-    maxAgeSeconds: session?.expires_in,
-  });
-  return response;
-}
-
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url);
   const tokenHash = (requestUrl.searchParams.get("token_hash") ?? requestUrl.searchParams.get("token") ?? "").trim();
@@ -155,7 +131,20 @@ export async function GET(request: Request) {
     },
   });
 
-  const { data, error } = await supabase.auth.verifyOtp({
+  if ((rawType === "email" || rawType === "magiclink") && isResetPasswordRedirectTarget(redirectTo)) {
+    if (!tokenHash && !code) {
+      return NextResponse.redirect(
+        appendResultParams(redirectTo, false, "验证链接无效或已过期，请重新发送找回密码邮件。"),
+        { status: 303 },
+      );
+    }
+    return NextResponse.redirect(
+      appendResetPasswordBridgeRedirectParams(redirectTo, { type: rawType, tokenHash, code }),
+      { status: 303 },
+    );
+  }
+
+  const { error } = await supabase.auth.verifyOtp({
     type: rawType,
     token_hash: tokenHash,
   });
@@ -163,17 +152,6 @@ export async function GET(request: Request) {
   if (error) {
     return NextResponse.redirect(
       appendResultParams(redirectTo, false, error.message || "邮箱验证失败，请重新发送验证邮件。"),
-      { status: 303 },
-    );
-  }
-
-  if ((rawType === "email" || rawType === "magiclink") && isResetPasswordRedirectTarget(redirectTo)) {
-    const resetRedirect = createResetPasswordSessionRedirectResponse(redirectTo, data.session);
-    if (resetRedirect) {
-      return resetRedirect;
-    }
-    return NextResponse.redirect(
-      appendResultParams(redirectTo, false, "重置会话已失效，请重新发送找回密码邮件。"),
       { status: 303 },
     );
   }

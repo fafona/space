@@ -489,14 +489,14 @@ export default function ResetPasswordPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-gray-100 p-6">
-      <div className="w-full max-w-md space-y-4 rounded-xl border bg-white p-6">
-        <h1 className="text-xl font-bold">{t("reset.title")}</h1>
+    <main className="flex min-h-screen items-center justify-center bg-gray-100 p-6 text-slate-900">
+      <div className="w-full max-w-md space-y-4 rounded-xl border bg-white p-6 text-slate-900">
+        <h1 className="text-xl font-bold text-slate-900">{t("reset.title")}</h1>
 
         <div className="space-y-2">
           <div className="text-sm text-gray-600">{t("reset.newPassword")}</div>
           <PasswordField
-            className="w-full rounded border p-2"
+            className="w-full rounded border p-2 text-slate-900 placeholder:text-slate-300"
             autoComplete="new-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
@@ -510,7 +510,7 @@ export default function ResetPasswordPage() {
         <div className="space-y-2">
           <div className="text-sm text-gray-600">{t("reset.confirmPassword")}</div>
           <PasswordField
-            className="w-full rounded border p-2"
+            className="w-full rounded border p-2 text-slate-900 placeholder:text-slate-300"
             autoComplete="new-password"
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
@@ -531,7 +531,7 @@ export default function ResetPasswordPage() {
             <div className="space-y-2">
               <div className="text-sm text-gray-600">{t("reset.email")}</div>
               <input
-                className="w-full rounded border p-2"
+                className="w-full rounded border p-2 text-slate-900 placeholder:text-slate-300"
                 value={resetEmail}
                 onChange={(event) => setResetEmail(event.target.value)}
                 placeholder={t("login.email")}
@@ -544,7 +544,7 @@ export default function ResetPasswordPage() {
             <div className="space-y-2">
               <div className="text-sm text-gray-600">{t("reset.code")}</div>
               <input
-                className="w-full rounded border p-2"
+                className="w-full rounded border p-2 text-slate-900 placeholder:text-slate-300"
                 value={resetCode}
                 onChange={(event) => setResetCode(event.target.value)}
                 placeholder={t("reset.codePlaceholder")}
@@ -556,14 +556,14 @@ export default function ResetPasswordPage() {
             </div>
             <div className="flex gap-2">
               <button
-                className="flex-1 rounded border bg-white px-3 py-2 hover:bg-gray-50 disabled:opacity-40"
+                className="flex-1 rounded border bg-white px-3 py-2 text-slate-900 hover:bg-gray-50 disabled:opacity-40"
                 onClick={verifyResetCodeFallback}
                 disabled={saving || verifyingCode || resendingCode}
               >
                 {verifyingCode ? t("reset.verifyingCode") : t("reset.verifyCode")}
               </button>
               <button
-                className="flex-1 rounded border bg-white px-3 py-2 hover:bg-gray-50 disabled:opacity-40"
+                className="flex-1 rounded border bg-white px-3 py-2 text-slate-900 hover:bg-gray-50 disabled:opacity-40"
                 onClick={resendResetEmailCode}
                 disabled={saving || verifyingCode || resendingCode}
               >
@@ -582,7 +582,7 @@ export default function ResetPasswordPage() {
         </button>
 
         <button
-          className="w-full rounded border bg-white px-3 py-2 hover:bg-gray-50"
+          className="w-full rounded border bg-white px-3 py-2 text-slate-900 hover:bg-gray-50"
           onClick={() => (window.location.href = "/login")}
         >
           {t("common.backToLogin")}
