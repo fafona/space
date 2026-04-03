@@ -12,8 +12,8 @@ import {
   saveMerchantPeerInbox,
   type MerchantPeerInboxStoreClient,
 } from "@/lib/merchantPeerInboxStore";
-import { loadStoredPlatformMerchantSnapshot, type PlatformMerchantSnapshotStoreClient } from "@/lib/platformMerchantSnapshotStore";
 import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
+import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -45,71 +45,6 @@ function noStoreJson(body: unknown, init?: ResponseInit) {
   const response = NextResponse.json(body, init);
   response.headers.set("cache-control", "no-store");
   return response;
-}
-
-async function resolveMerchantSession(request: Request) {
-  const origin = new URL(request.url).origin;
-  const accessToken = trimText(request.headers.get("x-merchant-access-token"));
-  const refreshToken = trimText(request.headers.get("x-merchant-refresh-token"));
-  const expiresInHeader = trimText(request.headers.get("x-merchant-expires-in"));
-  const hintedSiteId = trimText(request.headers.get("x-merchant-site-id"));
-  const hintedEmail = normalizeEmail(request.headers.get("x-merchant-email"));
-  const hintedName = trimText(request.headers.get("x-merchant-name"));
-  const fallbackMerchantId = hintedSiteId || hintedEmail || hintedName;
-  if (accessToken) {
-    await fetch(`${origin}/api/auth/merchant-session`, {
-      method: "POST",
-      headers: {
-        cookie: request.headers.get("cookie") ?? "",
-        "content-type": "application/json",
-        accept: "application/json",
-      },
-      cache: "no-store",
-      body: JSON.stringify({
-        accessToken,
-        refreshToken,
-        expiresIn: expiresInHeader ? Number(expiresInHeader) : undefined,
-      }),
-    }).catch(() => null);
-  }
-  const response = await fetch(`${origin}/api/auth/merchant-session`, {
-    method: "GET",
-    headers: {
-      cookie: request.headers.get("cookie") ?? "",
-    },
-    cache: "no-store",
-  }).catch(() => null);
-  if (!response) {
-    if (!fallbackMerchantId) return null;
-    return {
-      merchantId: fallbackMerchantId,
-      merchantEmail: hintedEmail,
-      merchantName: hintedName,
-    };
-  }
-  const payload = (await response.json().catch(() => null)) as
-    | {
-        authenticated?: boolean;
-        merchantId?: string | null;
-        user?: { email?: string | null } | null;
-      }
-    | null;
-  if (!payload?.authenticated) {
-    if (!fallbackMerchantId) return null;
-    return {
-      merchantId: fallbackMerchantId,
-      merchantEmail: hintedEmail,
-      merchantName: hintedName,
-    };
-  }
-  const merchantId =
-    trimText(payload.merchantId) || hintedSiteId || normalizeEmail(payload.user?.email) || hintedEmail || hintedName;
-  if (!merchantId) return null;
-  return {
-    merchantId,
-    merchantEmail: normalizeEmail(payload.user?.email) || hintedEmail,
-    merchantName: hintedName,
-  };
 }
 
 function readResolvedMerchantEmail(record: Record<string, unknown> | null | undefined) {
@@ -215,12 +150,8 @@ async function resolveMerchantByExactQuery(
 function buildInboxResponse(
   payload: Awaited<ReturnType<typeof loadStoredMerchantPeerInbox>>,
   merchantId: string,
-  chatBusinessCardByMerchantId?: Map<string, unknown>,
 ) {
-  const contacts = listMerchantPeerContactsForMerchant(payload, merchantId).map((contact) => ({
-    ...contact,
-    chatBusinessCard: (chatBusinessCardByMerchantId?.get(contact.merchantId) as typeof contact.chatBusinessCard | undefined) ?? null,
-  }));
+  const contacts = listMerchantPeerContactsForMerchant(payload, merchantId);
   const threads = listMerchantPeerThreadsForMerchant(payload, merchantId);
   return {
     ok: true,
@@ -229,24 +160,8 @@ function buildInboxResponse(
   };
 }
 
-async function loadChatBusinessCardByMerchantId(
-  supabase: PlatformMerchantSnapshotStoreClient,
-  merchantIds: string[],
-) {
-  const normalizedMerchantIds = [...new Set(merchantIds.map((merchantId) => normalizeMerchantId(merchantId)).filter(Boolean))];
-  if (normalizedMerchantIds.length === 0) return new Map<string, unknown>();
-  const snapshotPayload = await loadStoredPlatformMerchantSnapshot(supabase);
-  const map = new Map<string, unknown>();
-  (snapshotPayload?.snapshot ?? []).forEach((site) => {
-    const merchantId = normalizeMerchantId(site.id);
-    if (!merchantId || !normalizedMerchantIds.includes(merchantId)) return;
-    map.set(merchantId, site.chatBusinessCard ?? null);
-  });
-  return map;
-}
-
 export async function GET(request: Request) {
-  const session = await resolveMerchantSession(request);
+  const session = await resolveMerchantSessionFromRequest(request);
   if (!session) {
     return noStoreJson({ error: "unauthorized" }, { status: 401 });
   }
@@ -257,19 +172,15 @@ export async function GET(request: Request) {
   }
 
   const payload = await loadStoredMerchantPeerInbox(supabase as unknown as MerchantPeerInboxStoreClient);
-  const chatBusinessCardByMerchantId = await loadChatBusinessCardByMerchantId(
-    supabase as unknown as PlatformMerchantSnapshotStoreClient,
-    listMerchantPeerContactsForMerchant(payload, session.merchantId).map((contact) => contact.merchantId),
-  );
   return noStoreJson({
-    ...buildInboxResponse(payload, session.merchantId, chatBusinessCardByMerchantId),
+    ...buildInboxResponse(payload, session.merchantId),
     currentMerchantId: session.merchantId,
     currentMerchantEmail: session.merchantEmail,
   });
 }
 
 export async function POST(request: Request) {
-  const session = await resolveMerchantSession(request);
+  const session = await resolveMerchantSessionFromRequest(request);
   if (!session) {
     return noStoreJson({ error: "unauthorized" }, { status: 401 });
   }
@@ -329,17 +240,10 @@ export async function POST(request: Request) {
         { status: 500 },
       );
     }
-    const chatBusinessCardByMerchantId = await loadChatBusinessCardByMerchantId(
-      supabase as unknown as PlatformMerchantSnapshotStoreClient,
-      [resolved.record.merchantId, ...listMerchantPeerContactsForMerchant(nextPayload, session.merchantId).map((contact) => contact.merchantId)],
-    );
 
     return noStoreJson({
-      ...buildInboxResponse(nextPayload, session.merchantId, chatBusinessCardByMerchantId),
-      contact: {
-        ...resolved.record,
-        chatBusinessCard: chatBusinessCardByMerchantId.get(resolved.record.merchantId) ?? null,
-      },
+      ...buildInboxResponse(nextPayload, session.merchantId),
+      contact: resolved.record,
     });
   }
 
@@ -385,13 +289,9 @@ export async function POST(request: Request) {
         { status: 500 },
       );
     }
-    const chatBusinessCardByMerchantId = await loadChatBusinessCardByMerchantId(
-      supabase as unknown as PlatformMerchantSnapshotStoreClient,
-      [recipient.merchantId, ...listMerchantPeerContactsForMerchant(nextPayload, session.merchantId).map((contact) => contact.merchantId)],
-    );
 
     return noStoreJson({
-      ...buildInboxResponse(nextPayload, session.merchantId, chatBusinessCardByMerchantId),
+      ...buildInboxResponse(nextPayload, session.merchantId),
       thread: findMerchantPeerThreadForMerchants(nextPayload, session.merchantId, recipient.merchantId),
     });
   }

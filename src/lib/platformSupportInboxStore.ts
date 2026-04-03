@@ -21,6 +21,14 @@ export type PlatformSupportInboxStoreClient = {
   from: (table: string) => SupportQueryBuilder;
 };
 
+const PLATFORM_SUPPORT_INBOX_CACHE_TTL_MS = 15_000;
+let platformSupportInboxCache:
+  | {
+      expiresAt: number;
+      value: PlatformSupportInboxPayload;
+    }
+  | null = null;
+
 function toErrorMessage(input: unknown) {
   if (!input || typeof input !== "object") return "unknown_error";
   const message = (input as { message?: unknown }).message;
@@ -51,6 +59,10 @@ function isMissingUpdatedAtColumn(message: string) {
 export async function loadStoredPlatformSupportInbox(
   supabase: PlatformSupportInboxStoreClient,
 ): Promise<PlatformSupportInboxPayload> {
+  if (platformSupportInboxCache && platformSupportInboxCache.expiresAt > Date.now()) {
+    return platformSupportInboxCache.value;
+  }
+
   const initialQuery = await supabase
     .from("pages")
     .select("blocks")
@@ -81,7 +93,12 @@ export async function loadStoredPlatformSupportInbox(
   }
 
   if (error) return { threads: [] };
-  return readPlatformSupportInboxFromBlocks(data?.blocks);
+  const payload = readPlatformSupportInboxFromBlocks(data?.blocks);
+  platformSupportInboxCache = {
+    expiresAt: Date.now() + PLATFORM_SUPPORT_INBOX_CACHE_TTL_MS,
+    value: payload,
+  };
+  return payload;
 }
 
 export async function savePlatformSupportInbox(
@@ -161,7 +178,20 @@ export async function savePlatformSupportInbox(
   };
 
   const first = await updatePayload(basePayload);
-  if (!first.error) return { error: null };
+  if (!first.error) {
+    platformSupportInboxCache = {
+      expiresAt: Date.now() + PLATFORM_SUPPORT_INBOX_CACHE_TTL_MS,
+      value: payload,
+    };
+    return { error: null };
+  }
   if (!isMissingUpdatedAtColumn(first.error)) return first;
-  return updatePayload(payloadWithoutUpdatedAt);
+  const fallback = await updatePayload(payloadWithoutUpdatedAt);
+  if (!fallback.error) {
+    platformSupportInboxCache = {
+      expiresAt: Date.now() + PLATFORM_SUPPORT_INBOX_CACHE_TTL_MS,
+      value: payload,
+    };
+  }
+  return fallback;
 }

@@ -11,6 +11,7 @@ import {
   type PlatformSupportInboxStoreClient,
 } from "@/lib/platformSupportInboxStore";
 import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
+import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -29,68 +30,6 @@ function noStoreJson(body: unknown, init?: ResponseInit) {
   return response;
 }
 
-async function resolveMerchantSession(request: Request) {
-  const origin = new URL(request.url).origin;
-  const accessToken = trimText(request.headers.get("x-merchant-access-token"));
-  const refreshToken = trimText(request.headers.get("x-merchant-refresh-token"));
-  const expiresInHeader = trimText(request.headers.get("x-merchant-expires-in"));
-  const hintedSiteId = trimText(request.headers.get("x-merchant-site-id"));
-  const hintedEmail = trimText(request.headers.get("x-merchant-email")).toLowerCase();
-  const hintedName = trimText(request.headers.get("x-merchant-name"));
-  const fallbackMerchantId = hintedSiteId || hintedEmail || hintedName;
-  if (accessToken) {
-    await fetch(`${origin}/api/auth/merchant-session`, {
-      method: "POST",
-      headers: {
-        cookie: request.headers.get("cookie") ?? "",
-        "content-type": "application/json",
-        accept: "application/json",
-      },
-      cache: "no-store",
-      body: JSON.stringify({
-        accessToken,
-        refreshToken,
-        expiresIn: expiresInHeader ? Number(expiresInHeader) : undefined,
-      }),
-    }).catch(() => null);
-  }
-  const response = await fetch(`${origin}/api/auth/merchant-session`, {
-    method: "GET",
-    headers: {
-      cookie: request.headers.get("cookie") ?? "",
-    },
-    cache: "no-store",
-  }).catch(() => null);
-  if (!response) {
-    if (!fallbackMerchantId) return null;
-    return {
-      merchantId: fallbackMerchantId,
-      merchantEmail: hintedEmail,
-    };
-  }
-  const payload = (await response.json().catch(() => null)) as
-    | {
-        authenticated?: boolean;
-        merchantId?: string | null;
-        user?: { email?: string | null } | null;
-      }
-    | null;
-  if (!payload?.authenticated) {
-    if (!fallbackMerchantId) return null;
-    return {
-      merchantId: fallbackMerchantId,
-      merchantEmail: hintedEmail,
-    };
-  }
-  const merchantId =
-    trimText(payload.merchantId) || hintedSiteId || trimText(payload.user?.email).toLowerCase() || hintedEmail || hintedName;
-  if (!merchantId) return null;
-  return {
-    merchantId,
-    merchantEmail: trimText(payload.user?.email).toLowerCase() || hintedEmail,
-  };
-}
-
 function buildThreadResponse(thread: PlatformSupportThread | null, merchantId: string, merchantEmail = "") {
   return (
     thread ?? {
@@ -105,7 +44,7 @@ function buildThreadResponse(thread: PlatformSupportThread | null, merchantId: s
 }
 
 export async function GET(request: Request) {
-  const session = await resolveMerchantSession(request);
+  const session = await resolveMerchantSessionFromRequest(request);
   if (!session) {
     return noStoreJson({ error: "unauthorized" }, { status: 401 });
   }
@@ -125,7 +64,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const session = await resolveMerchantSession(request);
+  const session = await resolveMerchantSessionFromRequest(request);
   if (!session) {
     return noStoreJson({ error: "unauthorized" }, { status: 401 });
   }

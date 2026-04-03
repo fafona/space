@@ -1,6 +1,7 @@
 import {
   MERCHANT_PEER_INBOX_SLUG,
   buildMerchantPeerInboxBlocks,
+  normalizeMerchantPeerInboxPayload,
   readMerchantPeerInboxFromBlocks,
   type MerchantPeerInboxPayload,
 } from "@/lib/merchantPeerInbox";
@@ -20,6 +21,14 @@ type MerchantPeerQueryBuilder = PromiseLike<{ data?: unknown; error: StoreErrorL
 export type MerchantPeerInboxStoreClient = {
   from: (table: string) => MerchantPeerQueryBuilder;
 };
+
+const MERCHANT_PEER_INBOX_CACHE_TTL_MS = 15_000;
+let merchantPeerInboxCache:
+  | {
+      expiresAt: number;
+      value: MerchantPeerInboxPayload;
+    }
+  | null = null;
 
 function toErrorMessage(input: unknown) {
   if (!input || typeof input !== "object") return "unknown_error";
@@ -51,6 +60,10 @@ function isMissingUpdatedAtColumn(message: string) {
 export async function loadStoredMerchantPeerInbox(
   supabase: MerchantPeerInboxStoreClient,
 ): Promise<MerchantPeerInboxPayload> {
+  if (merchantPeerInboxCache && merchantPeerInboxCache.expiresAt > Date.now()) {
+    return merchantPeerInboxCache.value;
+  }
+
   const initialQuery = await supabase
     .from("pages")
     .select("blocks")
@@ -81,14 +94,20 @@ export async function loadStoredMerchantPeerInbox(
   }
 
   if (error) return { contacts: [], threads: [] };
-  return readMerchantPeerInboxFromBlocks(data?.blocks);
+  const payload = readMerchantPeerInboxFromBlocks(data?.blocks);
+  merchantPeerInboxCache = {
+    expiresAt: Date.now() + MERCHANT_PEER_INBOX_CACHE_TTL_MS,
+    value: payload,
+  };
+  return payload;
 }
 
 export async function saveMerchantPeerInbox(
   supabase: MerchantPeerInboxStoreClient,
   payload: MerchantPeerInboxPayload,
 ): Promise<{ error: string | null }> {
-  const blocks = buildMerchantPeerInboxBlocks(payload);
+  const normalizedPayload = normalizeMerchantPeerInboxPayload(payload);
+  const blocks = buildMerchantPeerInboxBlocks(normalizedPayload);
   const basePayload = {
     blocks,
     updated_at: new Date().toISOString(),
@@ -161,7 +180,20 @@ export async function saveMerchantPeerInbox(
   };
 
   const first = await updatePayload(basePayload);
-  if (!first.error) return { error: null };
+  if (!first.error) {
+    merchantPeerInboxCache = {
+      expiresAt: Date.now() + MERCHANT_PEER_INBOX_CACHE_TTL_MS,
+      value: normalizedPayload,
+    };
+    return { error: null };
+  }
   if (!isMissingUpdatedAtColumn(first.error)) return first;
-  return updatePayload(payloadWithoutUpdatedAt);
+  const fallback = await updatePayload(payloadWithoutUpdatedAt);
+  if (!fallback.error) {
+    merchantPeerInboxCache = {
+      expiresAt: Date.now() + MERCHANT_PEER_INBOX_CACHE_TTL_MS,
+      value: normalizedPayload,
+    };
+  }
+  return fallback;
 }

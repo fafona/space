@@ -21,6 +21,14 @@ export type PlatformMerchantSnapshotStoreClient = {
   from: (table: string) => SnapshotQueryBuilder;
 };
 
+const PLATFORM_MERCHANT_SNAPSHOT_CACHE_TTL_MS = 30_000;
+let platformMerchantSnapshotCache:
+  | {
+      expiresAt: number;
+      value: PlatformMerchantSnapshotPayload | null;
+    }
+  | null = null;
+
 function toErrorMessage(input: unknown) {
   if (!input || typeof input !== "object") return "unknown_error";
   const message = (input as { message?: unknown }).message;
@@ -51,6 +59,10 @@ function isMissingUpdatedAtColumn(message: string) {
 export async function loadStoredPlatformMerchantSnapshot(
   supabase: PlatformMerchantSnapshotStoreClient,
 ): Promise<PlatformMerchantSnapshotPayload | null> {
+  if (platformMerchantSnapshotCache && platformMerchantSnapshotCache.expiresAt > Date.now()) {
+    return platformMerchantSnapshotCache.value;
+  }
+
   const initialQuery = await supabase
     .from("pages")
     .select("blocks")
@@ -82,7 +94,12 @@ export async function loadStoredPlatformMerchantSnapshot(
 
   if (error) return null;
   const payload = readPlatformMerchantSnapshotFromBlocks(data?.blocks);
-  return payload && payload.snapshot.length > 0 ? payload : null;
+  const normalizedPayload = payload && payload.snapshot.length > 0 ? payload : null;
+  platformMerchantSnapshotCache = {
+    expiresAt: Date.now() + PLATFORM_MERCHANT_SNAPSHOT_CACHE_TTL_MS,
+    value: normalizedPayload,
+  };
+  return normalizedPayload;
 }
 
 export async function savePlatformMerchantSnapshot(
@@ -162,7 +179,20 @@ export async function savePlatformMerchantSnapshot(
   };
 
   const first = await updatePayload(basePayload);
-  if (!first.error) return { error: null };
+  if (!first.error) {
+    platformMerchantSnapshotCache = {
+      expiresAt: Date.now() + PLATFORM_MERCHANT_SNAPSHOT_CACHE_TTL_MS,
+      value: payload,
+    };
+    return { error: null };
+  }
   if (!isMissingUpdatedAtColumn(first.error)) return first;
-  return updatePayload(payloadWithoutUpdatedAt);
+  const fallback = await updatePayload(payloadWithoutUpdatedAt);
+  if (!fallback.error) {
+    platformMerchantSnapshotCache = {
+      expiresAt: Date.now() + PLATFORM_MERCHANT_SNAPSHOT_CACHE_TTL_MS,
+      value: payload,
+    };
+  }
+  return fallback;
 }

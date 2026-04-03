@@ -118,8 +118,11 @@ const SUPABASE_WRITE_FETCH_TIMEOUT_MS = parsePositiveInt(
   process.env.NEXT_PUBLIC_SUPABASE_WRITE_TIMEOUT_MS,
   DEFAULT_WRITE_FETCH_TIMEOUT_MS,
 );
+const SUPABASE_GATEWAY_SUCCESS_CACHE_MS = 15_000;
 
 let supabaseNetworkCooldownUntil = 0;
+let supabaseGatewayReachableUntil = 0;
+let supabaseGatewayProbeTask: Promise<boolean> | null = null;
 
 function activateSupabaseCooldown(ms = SUPABASE_FETCH_COOLDOWN_MS) {
   supabaseNetworkCooldownUntil = Date.now() + Math.max(1_000, ms);
@@ -131,6 +134,14 @@ function clearSupabaseCooldown() {
 
 function isSupabaseCooldownActive() {
   return Date.now() < supabaseNetworkCooldownUntil;
+}
+
+function rememberSupabaseGatewayReachable(ms = SUPABASE_GATEWAY_SUCCESS_CACHE_MS) {
+  supabaseGatewayReachableUntil = Date.now() + Math.max(1_000, ms);
+}
+
+function isSupabaseGatewayRecentlyReachable() {
+  return Date.now() < supabaseGatewayReachableUntil;
 }
 
 function isTransientNetworkError(error: unknown) {
@@ -321,27 +332,38 @@ async function probeSupabaseEndpoint(
 
 export async function canReachSupabaseGateway(timeoutMs = 4000): Promise<boolean> {
   if (!isSupabaseEnabled || typeof fetch !== "function") return false;
+  if (isSupabaseGatewayRecentlyReachable()) return true;
   if (isSupabaseCooldownActive()) return false;
-
-  const authProbe = await probeSupabaseEndpoint("/auth/v1/settings", timeoutMs, {
-    apikey: resolvedSupabaseAnonKey,
-  });
-  if (authProbe.ok) {
-    clearSupabaseCooldown();
-    return true;
+  if (supabaseGatewayProbeTask) {
+    return supabaseGatewayProbeTask;
   }
 
-  const restProbe = await probeSupabaseEndpoint("/rest/v1/", timeoutMs, {
-    apikey: resolvedSupabaseAnonKey,
-    Authorization: `Bearer ${resolvedSupabaseAnonKey}`,
-  });
-  if (restProbe.ok) {
-    clearSupabaseCooldown();
-    return true;
+  const task = (async () => {
+    const [authProbe, restProbe] = await Promise.all([
+      probeSupabaseEndpoint("/auth/v1/settings", timeoutMs, {
+        apikey: resolvedSupabaseAnonKey,
+      }),
+      probeSupabaseEndpoint("/rest/v1/", timeoutMs, {
+        apikey: resolvedSupabaseAnonKey,
+        Authorization: `Bearer ${resolvedSupabaseAnonKey}`,
+      }),
+    ]);
+    if (authProbe.ok || restProbe.ok) {
+      clearSupabaseCooldown();
+      rememberSupabaseGatewayReachable();
+      return true;
+    }
+    if (authProbe.shouldCooldown || restProbe.shouldCooldown) {
+      activateSupabaseCooldown();
+    }
+    return false;
+  })();
+  supabaseGatewayProbeTask = task;
+  try {
+    return await task;
+  } finally {
+    if (supabaseGatewayProbeTask === task) {
+      supabaseGatewayProbeTask = null;
+    }
   }
-
-  if (authProbe.shouldCooldown || restProbe.shouldCooldown) {
-    activateSupabaseCooldown();
-  }
-  return false;
 }

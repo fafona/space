@@ -13,6 +13,8 @@ type ChatBusinessCardDialogProps = {
   merchantName: string;
   subtitle?: string;
   card: MerchantBusinessCardAsset | null;
+  loading?: boolean;
+  error?: string;
   onClose: () => void;
 };
 
@@ -68,6 +70,8 @@ export default function ChatBusinessCardDialog({
   merchantName,
   subtitle = "",
   card,
+  loading = false,
+  error = "",
   onClose,
 }: ChatBusinessCardDialogProps) {
   if (!open || typeof document === "undefined") return null;
@@ -97,7 +101,15 @@ export default function ChatBusinessCardDialog({
             </button>
           </div>
           <div className="min-h-0 overflow-y-auto px-5 py-5">
-            {card ? (
+            {loading ? (
+              <div className="rounded-2xl border border-dashed bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
+                正在加载聊天名片...
+              </div>
+            ) : error ? (
+              <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-10 text-center text-sm text-rose-600">
+                {error}
+              </div>
+            ) : card ? (
               <div className="space-y-4">
                 <div className="overflow-hidden rounded-2xl border bg-slate-50 p-4">
                   {/* eslint-disable-next-line @next/next/no-img-element */}

@@ -3727,6 +3727,7 @@ export default function AdminClient({
   const [merchantSiteIdOverride, setMerchantSiteIdOverride] = useState("");
   const [merchantBookingManagerOpen, setMerchantBookingManagerOpen] = useState(false);
   const [supportDialogOpen, setSupportDialogOpen] = useState(false);
+  const [supportDataActivated, setSupportDataActivated] = useState(false);
   const [supportThread, setSupportThread] = useState<PlatformSupportThread | null>(null);
   const [supportLoading, setSupportLoading] = useState(false);
   const [supportSending, setSupportSending] = useState(false);
@@ -3744,6 +3745,11 @@ export default function AdminClient({
   const [supportSelectedContactKey, setSupportSelectedContactKey] = useState(SUPPORT_OFFICIAL_CONTACT_KEY);
   const [supportPeerLocalMessages, setSupportPeerLocalMessages] = useState<LocalPeerSupportMessage[]>([]);
   const [supportBusinessCardDialogOpen, setSupportBusinessCardDialogOpen] = useState(false);
+  const [supportBusinessCardLoading, setSupportBusinessCardLoading] = useState(false);
+  const [supportBusinessCardError, setSupportBusinessCardError] = useState("");
+  const [supportPeerBusinessCardByMerchantId, setSupportPeerBusinessCardByMerchantId] = useState<
+    Record<string, MerchantBusinessCardAsset | null>
+  >({});
   const supportRequestIdRef = useRef(0);
   const supportPeerRequestIdRef = useRef(0);
   const supportSendingRef = useRef(false);
@@ -7639,11 +7645,13 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     supportPeerContacts.find((contact) => contact.merchantId === selectedSupportPeerMerchantId) ?? null;
   const selectedSupportPeerSite =
     merchantPlatformState?.sites.find((site) => site.id === selectedSupportPeerMerchantId) ?? null;
+  const selectedSupportFallbackBusinessCard =
+    selectedSupportPeerContact?.chatBusinessCard ??
+    resolveMerchantBusinessCardForChatDisplay(selectedSupportPeerSite?.businessCards ?? []);
   const selectedSupportBusinessCard =
     supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY
       ? null
-      : selectedSupportPeerContact?.chatBusinessCard ??
-        resolveMerchantBusinessCardForChatDisplay(selectedSupportPeerSite?.businessCards ?? []);
+      : (supportPeerBusinessCardByMerchantId[selectedSupportPeerMerchantId] ?? selectedSupportFallbackBusinessCard);
   const selectedSupportPeerThread =
     currentSupportMerchantId && selectedSupportPeerMerchantId
       ? findMerchantPeerThreadForMerchants(
@@ -7789,15 +7797,18 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       const headers = new Headers(init.headers ?? undefined);
       headers.set("accept", "application/json");
 
-      const prefetchedIdentity = await prefetchMerchantSessionIdentity(Math.max(1600, Math.min(3200, AUTH_CHECK_TIMEOUT_MS))).catch(
-        () => null,
-      );
+      const cachedMerchantId = merchantSessionIdentityRef.current.merchantId.trim();
+      const cachedEmail = String(merchantSessionIdentityRef.current.email ?? "").trim();
+      const knownSiteId = (editingSiteId || cachedMerchantId || "").trim();
+      const knownEmail = ((editingSite?.contactEmail ?? "").trim() || cachedEmail) ?? "";
+      const prefetchedIdentity =
+        knownSiteId || knownEmail
+          ? null
+          : await prefetchMerchantSessionIdentity(Math.max(1600, Math.min(3200, AUTH_CHECK_TIMEOUT_MS))).catch(() => null);
       const siteId =
-        (editingSiteId || prefetchedIdentity?.merchantId || merchantSessionIdentityRef.current.merchantId || "").trim();
+        (knownSiteId || prefetchedIdentity?.merchantId || "").trim();
       const merchantEmail =
-        ((editingSite?.contactEmail ?? "").trim() ||
-          String(prefetchedIdentity?.email ?? "").trim() ||
-          String(merchantSessionIdentityRef.current.email ?? "").trim()) ?? "";
+        (knownEmail || String(prefetchedIdentity?.email ?? "").trim()) ?? "";
       if (siteId) {
         headers.set("x-merchant-site-id", siteId);
       }
@@ -7871,6 +7882,18 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
   const requestMerchantChatBusinessCardSync = useCallback(
     (init: RequestInit) => requestMerchantChatWithSessionRecovery("/api/merchant-chat-business-card", init),
+    [requestMerchantChatWithSessionRecovery],
+  );
+
+  const requestMerchantChatBusinessCardById = useCallback(
+    (merchantId: string, init?: RequestInit) =>
+      requestMerchantChatWithSessionRecovery(
+        `/api/merchant-chat-business-card?merchantId=${encodeURIComponent(merchantId)}`,
+        {
+          method: "GET",
+          ...init,
+        },
+      ),
     [requestMerchantChatWithSessionRecovery],
   );
 
@@ -8073,12 +8096,13 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   function openSupportDialog() {
     if (isPlatformEditor) return;
     supportScrollToLatestPendingRef.current = true;
+    setSupportDataActivated(true);
     setSupportLoading(true);
     setSupportDialogOpen(true);
   }
 
   useEffect(() => {
-    if (isPlatformEditor || typeof window === "undefined") return;
+    if (isPlatformEditor || typeof window === "undefined" || !supportDataActivated) return;
 
     void loadSupportThread({ silent: !supportDialogOpen, suppressError: !supportDialogOpen });
     void loadSupportPeerInbox({ silent: !supportDialogOpen, suppressError: !supportDialogOpen });
@@ -8105,7 +8129,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       window.removeEventListener("focus", handleFocus);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [isPlatformEditor, loadSupportPeerInbox, loadSupportThread, supportDialogOpen]);
+  }, [isPlatformEditor, loadSupportPeerInbox, loadSupportThread, supportDataActivated, supportDialogOpen]);
 
   useEffect(() => {
     if (isPlatformEditor || typeof window === "undefined") return;
@@ -8155,6 +8179,74 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     if (selectedSupportPeerContact) return;
     setSupportSelectedContactKey(SUPPORT_OFFICIAL_CONTACT_KEY);
   }, [selectedSupportPeerContact, supportSelectedContactKey]);
+
+  useEffect(() => {
+    if (isPlatformEditor || !supportDialogOpen || !supportBusinessCardDialogOpen) return;
+    if (supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY) {
+      setSupportBusinessCardLoading(false);
+      setSupportBusinessCardError("");
+      return;
+    }
+    if (!selectedSupportPeerMerchantId) return;
+    if (selectedSupportFallbackBusinessCard) {
+      setSupportBusinessCardLoading(false);
+      setSupportBusinessCardError("");
+      return;
+    }
+    if (Object.prototype.hasOwnProperty.call(supportPeerBusinessCardByMerchantId, selectedSupportPeerMerchantId)) {
+      setSupportBusinessCardLoading(false);
+      setSupportBusinessCardError("");
+      return;
+    }
+
+    let cancelled = false;
+    setSupportBusinessCardLoading(true);
+    setSupportBusinessCardError("");
+    void (async () => {
+      try {
+        const response = await requestMerchantChatBusinessCardById(selectedSupportPeerMerchantId);
+        const payload = (await response.json().catch(() => null)) as
+          | {
+              chatBusinessCard?: MerchantBusinessCardAsset | null;
+              message?: string;
+            }
+          | null;
+        if (cancelled) return;
+        if (!response.ok) {
+          setSupportBusinessCardError(payload?.message || "聊天名片加载失败，请稍后重试");
+          return;
+        }
+        setSupportPeerBusinessCardByMerchantId((current) =>
+          Object.prototype.hasOwnProperty.call(current, selectedSupportPeerMerchantId)
+            ? current
+            : {
+                ...current,
+                [selectedSupportPeerMerchantId]: payload?.chatBusinessCard ?? null,
+              },
+        );
+      } catch {
+        if (cancelled) return;
+        setSupportBusinessCardError("聊天名片加载失败，请稍后重试");
+      } finally {
+        if (!cancelled) {
+          setSupportBusinessCardLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    isPlatformEditor,
+    requestMerchantChatBusinessCardById,
+    selectedSupportFallbackBusinessCard,
+    selectedSupportPeerMerchantId,
+    supportBusinessCardDialogOpen,
+    supportDialogOpen,
+    supportPeerBusinessCardByMerchantId,
+    supportSelectedContactKey,
+  ]);
 
   useEffect(() => {
     if (isPlatformEditor || !latestSupportAdminMessageKey) return;
@@ -9538,7 +9630,13 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         merchantName={selectedSupportDisplayName}
         subtitle={selectedSupportSubtitle}
         card={selectedSupportBusinessCard}
-        onClose={() => setSupportBusinessCardDialogOpen(false)}
+        loading={supportBusinessCardLoading}
+        error={supportBusinessCardError}
+        onClose={() => {
+          setSupportBusinessCardDialogOpen(false);
+          setSupportBusinessCardLoading(false);
+          setSupportBusinessCardError("");
+        }}
       />
 
       {merchantProfileDialogOpen && !isPlatformEditor ? (

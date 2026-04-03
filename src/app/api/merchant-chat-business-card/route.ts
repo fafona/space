@@ -137,6 +137,53 @@ async function resolveMerchantName(supabase: LooseSupabaseClient, merchantId: st
   return normalizeText((data as MerchantRow | null)?.name) || merchantId;
 }
 
+export async function GET(request: Request) {
+  const supabaseUrl = readEnv("NEXT_PUBLIC_SUPABASE_URL");
+  const serviceRoleKey = readEnv("SUPABASE_SERVICE_ROLE_KEY") || readEnv("NEXT_SUPABASE_SERVICE_ROLE_KEY");
+  if (!supabaseUrl || !serviceRoleKey) {
+    return NextResponse.json({ error: "merchant_chat_business_card_env_missing" }, { status: 503 });
+  }
+
+  const merchantId = normalizeMerchantId(new URL(request.url).searchParams.get("merchantId"));
+  if (!merchantId) {
+    return NextResponse.json({ error: "invalid_merchant_id" }, { status: 400 });
+  }
+
+  try {
+    const supabase = createClient(supabaseUrl, serviceRoleKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+      },
+    }) as unknown as LooseSupabaseClient;
+
+    const authorized = await isAuthorizedForMerchant(request, supabase, merchantId);
+    if (!authorized) {
+      return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    }
+
+    const snapshotPayload = await loadStoredPlatformMerchantSnapshot(
+      supabase as unknown as PlatformMerchantSnapshotStoreClient,
+    );
+    const snapshotSite = snapshotPayload?.snapshot.find((site) => site.id === merchantId) ?? null;
+    return NextResponse.json({
+      ok: true,
+      merchantId,
+      chatBusinessCard: snapshotSite?.chatBusinessCard ?? null,
+      hasChatBusinessCard: !!snapshotSite?.chatBusinessCard,
+    });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error: "merchant_chat_business_card_failed",
+        message: error instanceof Error ? error.message : "unknown_error",
+      },
+      { status: 500 },
+    );
+  }
+}
+
 export async function POST(request: Request) {
   const supabaseUrl = readEnv("NEXT_PUBLIC_SUPABASE_URL");
   const serviceRoleKey = readEnv("SUPABASE_SERVICE_ROLE_KEY") || readEnv("NEXT_SUPABASE_SERVICE_ROLE_KEY");
