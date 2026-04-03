@@ -372,17 +372,33 @@ export default function ChatBusinessCardDialog({
     setActionNotice("");
     try {
       const imageBlob = await fetchCardImageBlob(card.imageUrl);
-      const objectUrl = URL.createObjectURL(imageBlob);
-      const link = document.createElement("a");
-      link.href = objectUrl;
-      link.download = buildCardFileName(card);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-      setActionNotice("已开始保存，请在系统下载或照片中查看。");
+      const imageFile = new File([imageBlob], buildCardFileName(card), {
+        type: imageBlob.type || "image/png",
+      });
+      const systemNavigator = navigator as Navigator & { canShare?: (data?: ShareData) => boolean };
+      const shareData: ShareData = {
+        title: cardActionTitle,
+        files: [imageFile],
+      };
+      if (typeof systemNavigator.share === "function" && (!systemNavigator.canShare || systemNavigator.canShare(shareData))) {
+        await systemNavigator.share(shareData);
+        setActionNotice("已打开系统保存面板，请选择“保存到照片”。");
+      } else {
+        const objectUrl = URL.createObjectURL(imageBlob);
+        const link = document.createElement("a");
+        link.href = objectUrl;
+        link.download = buildCardFileName(card);
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+        setActionNotice("当前设备不支持直接调起保存面板，已改为浏览器保存。");
+      }
       setActionSheetOpen(false);
-    } catch {
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return;
+      }
       setActionNotice("保存失败，请稍后重试。");
     } finally {
       setActionBusy(null);
