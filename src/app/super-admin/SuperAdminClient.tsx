@@ -2006,9 +2006,9 @@ export default function SuperAdminClient() {
 
     return selectedRowSite;
   }, [merchantRows, selectedSupportMerchantRow, selectedSupportThread, state.sites]);
-  const selectedSupportBusinessCard = resolveMerchantBusinessCardForChatDisplay(
-    selectedSupportBusinessCardSite?.businessCards ?? [],
-  );
+  const selectedSupportBusinessCard =
+    selectedSupportMerchantRow?.backendAccount?.profileSnapshot?.chatBusinessCard ??
+    resolveMerchantBusinessCardForChatDisplay(selectedSupportBusinessCardSite?.businessCards ?? []);
   const selectedSupportLatestMessage = selectedSupportThread?.messages[selectedSupportThread.messages.length - 1] ?? null;
   const selectedSupportThreadMerchantId = selectedSupportThread?.merchantId?.trim() ?? "";
   const selectedSupportLatestMessageKey =
