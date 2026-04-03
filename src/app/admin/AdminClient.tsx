@@ -7758,6 +7758,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     ...supportPeerContacts.map((contact) => ({
       key: `merchant:${contact.merchantId}`,
       name: contact.merchantName || contact.merchantId,
+      badge: undefined as string | undefined,
       subtitle: [contact.merchantId, contact.merchantEmail].filter(Boolean).join(" | ") || contact.merchantId,
       preview: contact.lastMessage?.text || "还没有聊天记录，可以直接开始对话。",
       updatedAt: contact.updatedAt || contact.savedAt,
