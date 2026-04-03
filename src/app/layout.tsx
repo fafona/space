@@ -4,12 +4,28 @@ import ClientDomTranslator from "@/components/ClientDomTranslator";
 import GlobalLanguageSwitcher from "@/components/GlobalLanguageSwitcher";
 import { I18nProvider } from "@/components/I18nProvider";
 import UnhandledRejectionGuard from "@/components/UnhandledRejectionGuard";
-import type { Viewport } from "next";
+import type { Metadata, Viewport } from "next";
+
+export const metadata: Metadata = {
+  applicationName: "Merchant Space",
+  title: "Merchant Space",
+  description: "Merchant Space mobile workspace",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "Merchant Space",
+  },
+  formatDetection: {
+    telephone: false,
+  },
+};
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
+  themeColor: "#0f172a",
 };
 
 const IGNORE_REJECTION_SCRIPT = `

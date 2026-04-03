@@ -3,6 +3,10 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  --app-safe-top: env(safe-area-inset-top, 0px);
+  --app-safe-right: env(safe-area-inset-right, 0px);
+  --app-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --app-safe-left: env(safe-area-inset-left, 0px);
 }
 
 @theme inline {
@@ -45,6 +49,7 @@ input[type="reset"]:disabled,
 html {
   margin-top: 0 !important;
   top: 0 !important;
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
