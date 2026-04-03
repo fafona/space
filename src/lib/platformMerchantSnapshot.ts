@@ -103,9 +103,25 @@ function normalizeServiceExpiresAt(value: unknown) {
   return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
 }
 
+function compactSnapshotChatBusinessCard(
+  card: MerchantBusinessCardAsset | null | undefined,
+): MerchantBusinessCardAsset | null {
+  if (!card) return null;
+  const shareImageUrl = normalizeText(card.shareImageUrl);
+  const contactPagePublicImageUrl = normalizeText(card.contactPagePublicImageUrl);
+  return {
+    ...card,
+    imageUrl: shareImageUrl || contactPagePublicImageUrl,
+    shareImageUrl: shareImageUrl || undefined,
+    contactPageImageUrl: "",
+    contactPagePublicImageUrl: contactPagePublicImageUrl || undefined,
+    backgroundImageUrl: "",
+  };
+}
+
 function normalizeSnapshotChatBusinessCard(value: unknown): MerchantBusinessCardAsset | null {
   if (!value || typeof value !== "object") return null;
-  return normalizeMerchantBusinessCards([value])[0] ?? null;
+  return compactSnapshotChatBusinessCard(normalizeMerchantBusinessCards([value])[0] ?? null);
 }
 
 function normalizeSnapshotSite(input: unknown): MerchantListPublishedSite | null {
@@ -194,7 +210,7 @@ export function buildPlatformMerchantSnapshotPayloadFromSites(
       contactEmail: normalizeText(site.contactEmail),
       merchantCardImageUrl: normalizeText(site.merchantCardImageUrl),
       merchantCardImageOpacity: normalizeUnitInterval(site.merchantCardImageOpacity, 1),
-      chatBusinessCard: resolveMerchantBusinessCardForChatDisplay(site.businessCards ?? []),
+      chatBusinessCard: compactSnapshotChatBusinessCard(resolveMerchantBusinessCardForChatDisplay(site.businessCards ?? [])),
       status: normalizeSiteStatus(site.status),
       serviceExpiresAt: normalizeServiceExpiresAt(site.serviceExpiresAt),
       sortConfig: normalizeMerchantSortConfig(site.sortConfig),
