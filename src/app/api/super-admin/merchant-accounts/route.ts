@@ -81,28 +81,6 @@ type AdminListUsersClient = {
   };
 };
 
-type MerchantAccountsCacheEntry = {
-  items: MerchantAccountItem[];
-  expiresAt: number;
-  staleUntil: number;
-};
-
-const AUTH_USERS_CACHE_TTL_MS = 60_000;
-const MERCHANT_ACCOUNTS_CACHE_TTL_MS = 30_000;
-const MERCHANT_ACCOUNTS_CACHE_STALE_TTL_MS = 5 * 60_000;
-const MERCHANT_ROWS_TIMEOUT_MS = 4500;
-const AUTH_USERS_TIMEOUT_MS = 2500;
-const SNAPSHOT_LOAD_TIMEOUT_MS = 1500;
-const PUBLISHED_SITE_INFO_TIMEOUT_MS = 1500;
-const PAGE_EVENTS_TIMEOUT_MS = 1500;
-let authUsersCache:
-  | {
-      expiresAt: number;
-      users: AuthUserSummary[];
-    }
-  | null = null;
-let merchantAccountsCache: MerchantAccountsCacheEntry | null = null;
-
 function parseCookieValue(cookieHeader: string, key: string) {
   return cookieHeader
     .split(";")
@@ -182,9 +160,6 @@ function isDuplicateKeyError(error: unknown) {
 }
 
 async function listAuthUsers(supabase: AdminListUsersClient) {
-  if (authUsersCache && authUsersCache.expiresAt > Date.now()) {
-    return authUsersCache.users;
-  }
   const users: AuthUserSummary[] = [];
   let page = 1;
   while (true) {
@@ -203,24 +178,7 @@ async function listAuthUsers(supabase: AdminListUsersClient) {
     if (chunk.length < 200) break;
     page += 1;
   }
-  authUsersCache = {
-    expiresAt: Date.now() + AUTH_USERS_CACHE_TTL_MS,
-    users,
-  };
   return users;
-}
-
-async function resolveWithin<T>(task: PromiseLike<T>, timeoutMs: number, fallback: T): Promise<T> {
-  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-  const safeTask = Promise.resolve(task).catch(() => fallback);
-  const timeoutTask = new Promise<T>((resolve) => {
-    timeoutHandle = setTimeout(() => resolve(fallback), timeoutMs);
-  });
-  try {
-    return await Promise.race([safeTask, timeoutTask]);
-  } finally {
-    if (timeoutHandle) clearTimeout(timeoutHandle);
-  }
 }
 
 function sortByCreatedAtDesc(items: MerchantAccountItem[]) {
@@ -382,12 +340,6 @@ function envMissingJson() {
   return NextResponse.json({ error: "merchant_account_env_missing" }, { status: 503 });
 }
 
-function noStoreJson(body: unknown, init?: ResponseInit) {
-  const response = NextResponse.json(body, init);
-  response.headers.set("cache-control", "no-store");
-  return response;
-}
-
 function badRequestJson(error: string, message: string) {
   return NextResponse.json({ error, message }, { status: 400 });
 }
@@ -401,24 +353,6 @@ function ensureAuthorized(request: Request) {
   return parseCookieValue(cookieHeader, SUPER_ADMIN_SESSION_COOKIE) === SUPER_ADMIN_SESSION_VALUE;
 }
 
-function readFreshMerchantAccountsCache() {
-  if (!merchantAccountsCache || merchantAccountsCache.expiresAt <= Date.now()) return null;
-  return merchantAccountsCache.items;
-}
-
-function readStaleMerchantAccountsCache() {
-  if (!merchantAccountsCache || merchantAccountsCache.staleUntil <= Date.now()) return null;
-  return merchantAccountsCache.items;
-}
-
-function writeMerchantAccountsCache(items: MerchantAccountItem[]) {
-  merchantAccountsCache = {
-    items,
-    expiresAt: Date.now() + MERCHANT_ACCOUNTS_CACHE_TTL_MS,
-    staleUntil: Date.now() + MERCHANT_ACCOUNTS_CACHE_STALE_TTL_MS,
-  };
-}
-
 export async function GET(request: Request) {
   if (!ensureAuthorized(request)) {
     return unauthorizedJson();
@@ -429,49 +363,27 @@ export async function GET(request: Request) {
     return envMissingJson();
   }
 
-  const freshCache = readFreshMerchantAccountsCache();
-  if (freshCache) {
-    return noStoreJson({ items: freshCache });
-  }
-
   try {
-    const [{ data: merchants, error: merchantError }, authUsers, snapshotByMerchantId] = await Promise.all([
-      resolveWithin(
-        supabase
-          .from("merchants")
-          .select("id,name,email,owner_email,contact_email,user_email,user_id,auth_user_id,created_at")
-          .order("created_at", { ascending: false })
-          .limit(500),
-        MERCHANT_ROWS_TIMEOUT_MS,
-        {
-          count: null,
-          data: null,
-          error: { message: "merchants_timeout", details: "", hint: "", code: "timeout", name: "TimeoutError" },
-          status: 408,
-          statusText: "Request Timeout",
-        },
-      ),
-      resolveWithin(listAuthUsers(supabase), AUTH_USERS_TIMEOUT_MS, [] as AuthUserSummary[]),
-      resolveWithin(
-        loadPlatformMerchantSnapshotByMerchantId(supabase as unknown as PlatformMerchantSnapshotStoreClient),
-        SNAPSHOT_LOAD_TIMEOUT_MS,
-        new Map<string, MerchantListPublishedSite>(),
-      ),
+    const [{ data: merchants, error: merchantError }, authUsers] = await Promise.all([
+      supabase
+        .from("merchants")
+        .select("id,name,email,owner_email,contact_email,user_email,user_id,auth_user_id,created_at")
+        .order("created_at", { ascending: false })
+        .limit(500),
+      listAuthUsers(supabase),
     ]);
 
-    if (merchantError && merchantError.message !== "merchants_timeout") throw merchantError;
-    if (merchantError?.message === "merchants_timeout") {
-      const staleCache = readStaleMerchantAccountsCache();
-      if (staleCache) {
-        return noStoreJson({ items: staleCache });
-      }
-    }
+    if (merchantError) throw merchantError;
 
     const authById = new Map(authUsers.map((user) => [user.id, user] as const));
     const authByEmail = new Map(
       authUsers
         .map((user) => [normalizeEmail(user.email), user] as const)
         .filter(([email]) => Boolean(email)),
+    );
+
+    const snapshotByMerchantId = await loadPlatformMerchantSnapshotByMerchantId(
+      supabase as unknown as PlatformMerchantSnapshotStoreClient,
     );
 
     const merchantItems: MerchantAccountItem[] = ((merchants ?? []) as MerchantRow[]).map((merchant) => {
@@ -572,21 +484,11 @@ export async function GET(request: Request) {
       { hasPublishedSite: boolean; siteSlug: string; siteUpdatedAt: string | null; publishedBytes: number; publishedBytesKnown: boolean }
     >();
     if (merchantIds.length > 0) {
-      const { data: pageRows, error: pageError } = await resolveWithin(
-        supabase
-          .from("pages")
-          .select("merchant_id,slug,updated_at")
-          .in("merchant_id", merchantIds)
-          .limit(Math.max(merchantIds.length * 4, 100)),
-        PUBLISHED_SITE_INFO_TIMEOUT_MS,
-        {
-          count: null,
-          data: null,
-          error: { message: "pages_timeout", details: "", hint: "", code: "timeout", name: "TimeoutError" },
-          status: 408,
-          statusText: "Request Timeout",
-        },
-      );
+      const { data: pageRows, error: pageError } = await supabase
+        .from("pages")
+        .select("merchant_id,slug,updated_at,blocks")
+        .in("merchant_id", merchantIds)
+        .limit(Math.max(merchantIds.length * 4, 100));
       if (!pageError && Array.isArray(pageRows)) {
         publishedSiteInfoByMerchantId = buildPublishedSiteInfoByMerchantId(pageRows as PageRow[]);
       }
@@ -595,21 +497,11 @@ export async function GET(request: Request) {
     let visitsByMerchantId = new Map<string, MerchantVisitSummary>();
     let visitsKnown = false;
     if (merchantIds.length > 0) {
-      const { data: pageEvents, error: pageEventsError } = await resolveWithin(
-        supabase
-          .from("page_events")
-          .select("created_at,event_type,type,event,channel,page_path")
-          .order("created_at", { ascending: false })
-          .limit(5000),
-        PAGE_EVENTS_TIMEOUT_MS,
-        {
-          count: null,
-          data: null,
-          error: { message: "page_events_timeout", details: "", hint: "", code: "timeout", name: "TimeoutError" },
-          status: 408,
-          statusText: "Request Timeout",
-        },
-      );
+      const { data: pageEvents, error: pageEventsError } = await supabase
+        .from("page_events")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(5000);
       if (!pageEventsError && Array.isArray(pageEvents)) {
         visitsByMerchantId = buildMerchantVisitsByMerchantId(pageEvents, Date.now());
         visitsKnown = true;
@@ -636,14 +528,9 @@ export async function GET(request: Request) {
       }),
     );
 
-    writeMerchantAccountsCache(items);
-    return noStoreJson({ items });
+    return NextResponse.json({ items });
   } catch (error) {
-    const staleCache = readStaleMerchantAccountsCache();
-    if (staleCache) {
-      return noStoreJson({ items: staleCache });
-    }
-    return noStoreJson(
+    return NextResponse.json(
       {
         error: "merchant_account_load_failed",
         message: error instanceof Error ? error.message : "unknown_error",

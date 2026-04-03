@@ -4,37 +4,12 @@ import ClientDomTranslator from "@/components/ClientDomTranslator";
 import GlobalLanguageSwitcher from "@/components/GlobalLanguageSwitcher";
 import { I18nProvider } from "@/components/I18nProvider";
 import UnhandledRejectionGuard from "@/components/UnhandledRejectionGuard";
-import type { Metadata, Viewport } from "next";
-
-export const metadata: Metadata = {
-  applicationName: "faolla.com",
-  title: "faolla.com",
-  description: "faolla.com mobile workspace",
-  manifest: "/manifest.webmanifest",
-  icons: {
-    icon: [
-      { url: "/icon-32.png", sizes: "32x32", type: "image/png" },
-      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
-      { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
-    ],
-    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
-    shortcut: "/icon-32.png",
-  },
-  appleWebApp: {
-    capable: true,
-    statusBarStyle: "black-translucent",
-    title: "faolla.com",
-  },
-  formatDetection: {
-    telephone: false,
-  },
-};
+import type { Viewport } from "next";
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  themeColor: "#0f172a",
 };
 
 const IGNORE_REJECTION_SCRIPT = `

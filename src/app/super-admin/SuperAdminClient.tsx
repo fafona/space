@@ -104,14 +104,7 @@ import { uploadImageDataUrlToPublicStorage } from "@/lib/publicAssetUpload";
 import { useNotificationSound } from "@/lib/useNotificationSound";
 
 const SUPPORT_THREADS_POLL_INTERVAL_MS = 5000;
-const BACKEND_MERCHANT_ACCOUNTS_TIMEOUT_MS = 15000;
 const SUPER_ADMIN_SUPPORT_LAST_READ_STORAGE_KEY_PREFIX = "super-admin-support-last-read:";
-const MOBILE_SUPPORT_QUICK_REPLIES = [
-  { key: "received", label: "已收到", text: "您好，已收到您的留言，我们会尽快处理并回复您。" },
-  { key: "processing", label: "处理中", text: "您好，问题已经进入处理中，处理进展会第一时间同步给您。" },
-  { key: "need_info", label: "补充信息", text: "为便于我们更快定位问题，请补充一下具体情况、时间点或相关截图。" },
-  { key: "resolved", label: "已处理", text: "您好，这边已经处理完成。若您这边还有问题，欢迎继续留言告诉我们。" },
-] as const;
 
 function fmt(iso: string | null) {
   if (!iso) return "-";
@@ -1270,8 +1263,6 @@ export default function SuperAdminClient() {
   const supportReplyInputRef = useRef<HTMLTextAreaElement>(null);
   const supportLastMessageKeyRef = useRef("");
   const supportLastIncomingMerchantMessageKeyRef = useRef("");
-  const backendMerchantAccountsAbortRef = useRef<AbortController | null>(null);
-  const backendMerchantAccountsRequestIdRef = useRef(0);
   const supportThreadsRequestIdRef = useRef(0);
   const loadSupportThreadsActionRef = useRef<(options?: { silent?: boolean; suppressError?: boolean }) => Promise<void>>(async () => {});
   const focusSupportReplyInput = useCallback(() => {
@@ -1296,68 +1287,6 @@ export default function SuperAdminClient() {
     media.addEventListener("change", updateMobileSupportOnlyMode);
     return () => media.removeEventListener("change", updateMobileSupportOnlyMode);
   }, []);
-
-  useEffect(() => {
-    return () => {
-      backendMerchantAccountsAbortRef.current?.abort();
-    };
-  }, []);
-
-  const loadBackendMerchantAccountsAction = useCallback(
-    async (options?: { silent?: boolean; suppressError?: boolean }) => {
-      if (!hydrated || !authed || typeof window === "undefined") return;
-      const silent = options?.silent === true;
-      const suppressError = options?.suppressError === true;
-      const requestId = ++backendMerchantAccountsRequestIdRef.current;
-      backendMerchantAccountsAbortRef.current?.abort();
-      const controller = new AbortController();
-      backendMerchantAccountsAbortRef.current = controller;
-      const timeout = window.setTimeout(() => controller.abort(), BACKEND_MERCHANT_ACCOUNTS_TIMEOUT_MS);
-
-      if (!silent) {
-        setBackendMerchantAccountsLoading(true);
-      }
-      if (!suppressError) {
-        setBackendMerchantAccountsError("");
-      }
-
-      try {
-        const requestAccounts = async () =>
-          fetch("/api/super-admin/merchant-accounts", {
-            method: "GET",
-            cache: "no-store",
-            signal: controller.signal,
-          });
-        let response = await requestAccounts();
-        if ((response.status === 401 || response.status === 403) && syncSuperAdminAuthenticatedCookie()) {
-          response = await requestAccounts();
-        }
-        if (!response.ok) {
-          throw new Error(`merchant_account_http_${response.status}`);
-        }
-        const payload = (await response.json()) as { items?: BackendMerchantAccount[] };
-        if (requestId !== backendMerchantAccountsRequestIdRef.current) return;
-        setBackendMerchantAccounts(Array.isArray(payload.items) ? payload.items : []);
-        setBackendMerchantAccountsError("");
-      } catch (error) {
-        if (requestId !== backendMerchantAccountsRequestIdRef.current) return;
-        if (error instanceof DOMException && error.name === "AbortError") {
-          setBackendMerchantAccountsError("merchant_account_timeout");
-          return;
-        }
-        setBackendMerchantAccountsError(error instanceof Error ? error.message : "merchant_account_load_failed");
-      } finally {
-        window.clearTimeout(timeout);
-        if (backendMerchantAccountsAbortRef.current === controller) {
-          backendMerchantAccountsAbortRef.current = null;
-        }
-        if (!silent && requestId === backendMerchantAccountsRequestIdRef.current) {
-          setBackendMerchantAccountsLoading(false);
-        }
-      }
-    },
-    [authed, hydrated],
-  );
   const [manualUserDialogOpen, setManualUserDialogOpen] = useState(false);
   const [manualUserId, setManualUserId] = useState("");
   const [manualUserName, setManualUserName] = useState("");
@@ -1499,33 +1428,49 @@ export default function SuperAdminClient() {
   }, [authed, hydrated]);
 
   useEffect(() => {
-    void loadBackendMerchantAccountsAction();
-  }, [loadBackendMerchantAccountsAction]);
-
-  useEffect(() => {
-    if (!hydrated || !authed || !backendMerchantAccountsError || typeof window === "undefined") return;
-    const retryLoadAccounts = () => {
-      if (document.visibilityState !== "visible") return;
-      void loadBackendMerchantAccountsAction({
-        silent: backendMerchantAccounts.length > 0,
-        suppressError: true,
-      });
-    };
-    const handleFocus = () => retryLoadAccounts();
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
-        retryLoadAccounts();
+    if (!hydrated || !authed) return;
+    let cancelled = false;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 8000);
+    const loadAccounts = async () => {
+      setBackendMerchantAccountsLoading(true);
+      setBackendMerchantAccountsError("");
+      try {
+        const requestAccounts = async () =>
+          fetch("/api/super-admin/merchant-accounts", {
+            method: "GET",
+            cache: "no-store",
+            signal: controller.signal,
+          });
+        let response = await requestAccounts();
+        if ((response.status === 401 || response.status === 403) && syncSuperAdminAuthenticatedCookie()) {
+          response = await requestAccounts();
+        }
+        if (!response.ok) {
+          throw new Error(`merchant_account_http_${response.status}`);
+        }
+        const payload = (await response.json()) as { items?: BackendMerchantAccount[] };
+        if (cancelled) return;
+        setBackendMerchantAccounts(Array.isArray(payload.items) ? payload.items : []);
+      } catch (error) {
+        if (cancelled) return;
+        setBackendMerchantAccounts([]);
+        if (error instanceof DOMException && error.name === "AbortError") {
+          setBackendMerchantAccountsError("merchant_account_timeout");
+          return;
+        }
+        setBackendMerchantAccountsError(error instanceof Error ? error.message : "merchant_account_load_failed");
+      } finally {
+        if (!cancelled) setBackendMerchantAccountsLoading(false);
       }
     };
-    const timer = window.setTimeout(retryLoadAccounts, 4000);
-    window.addEventListener("focus", handleFocus);
-    document.addEventListener("visibilitychange", handleVisibilityChange);
+    void loadAccounts();
     return () => {
-      window.clearTimeout(timer);
-      window.removeEventListener("focus", handleFocus);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      cancelled = true;
+      controller.abort();
+      window.clearTimeout(timeout);
     };
-  }, [authed, backendMerchantAccounts.length, backendMerchantAccountsError, hydrated, loadBackendMerchantAccountsAction]);
+  }, [authed, hydrated]);
 
   useEffect(() => {
     if (!hydrated || !authed) return;
@@ -2019,45 +1964,9 @@ export default function SuperAdminClient() {
         selectedSupportThread?.merchantName ||
         selectedSupportThread?.merchantId ||
         "-";
-  const selectedSupportBusinessCardSite = useMemo(() => {
-    const normalizedMerchantId = normalizeMerchantIdValue(
-      selectedSupportMerchantRow?.merchantId || selectedSupportThread?.merchantId || selectedSupportThread?.siteId,
-    );
-    const threadSiteId = String(selectedSupportThread?.siteId ?? "").trim();
-    const selectedRowSiteId = String(selectedSupportMerchantRow?.site.id ?? "").trim();
-    const selectedRowSite =
-      selectedSupportMerchantRow?.hasLocalSite && selectedRowSiteId
-        ? state.sites.find((site) => site.id === selectedRowSiteId) ?? selectedSupportMerchantRow.site
-        : selectedSupportMerchantRow?.site ?? null;
-    if (selectedRowSite?.businessCards?.length) return selectedRowSite;
-
-    if (threadSiteId) {
-      const exactThreadSite = state.sites.find((site) => site.id === threadSiteId) ?? null;
-      if (exactThreadSite?.businessCards?.length) return exactThreadSite;
-    }
-
-    if (normalizedMerchantId) {
-      const localMerchantRowSite =
-        merchantRows.find((row) => row.hasLocalSite && normalizeMerchantIdValue(row.merchantId) === normalizedMerchantId)?.site ?? null;
-      if (localMerchantRowSite?.businessCards?.length) return localMerchantRowSite;
-
-      const exactMerchantSite =
-        state.sites.find((site) => normalizeMerchantIdValue(site.id) === normalizedMerchantId) ?? null;
-      if (exactMerchantSite?.businessCards?.length) return exactMerchantSite;
-    }
-
-    const normalizedThreadPrefix = normalizePublishedSitePrefix(threadSiteId);
-    if (normalizedThreadPrefix) {
-      const prefixedSite =
-        state.sites.find((site) => normalizePublishedSitePrefix(site.domainPrefix ?? site.domainSuffix) === normalizedThreadPrefix) ?? null;
-      if (prefixedSite?.businessCards?.length) return prefixedSite;
-    }
-
-    return selectedRowSite;
-  }, [merchantRows, selectedSupportMerchantRow, selectedSupportThread, state.sites]);
-  const selectedSupportBusinessCard =
-    selectedSupportMerchantRow?.backendAccount?.profileSnapshot?.chatBusinessCard ??
-    resolveMerchantBusinessCardForChatDisplay(selectedSupportBusinessCardSite?.businessCards ?? []);
+  const selectedSupportBusinessCard = resolveMerchantBusinessCardForChatDisplay(
+    selectedSupportMerchantRow?.site.businessCards ?? [],
+  );
   const selectedSupportLatestMessage = selectedSupportThread?.messages[selectedSupportThread.messages.length - 1] ?? null;
   const selectedSupportThreadMerchantId = selectedSupportThread?.merchantId?.trim() ?? "";
   const selectedSupportLatestMessageKey =
@@ -4251,45 +4160,6 @@ export default function SuperAdminClient() {
         .filter(Boolean)
         .join(" | ") || "商户留言与回复"
     : "商户留言与回复";
-  const mobileSupportInsetStyle = isMobileSupportOnlyMode
-    ? {
-        paddingLeft: "calc(var(--app-safe-left) + 1rem)",
-        paddingRight: "calc(var(--app-safe-right) + 1rem)",
-      }
-    : undefined;
-  const mobileSupportHeaderStyle = isMobileSupportOnlyMode
-    ? {
-        paddingTop: "calc(var(--app-safe-top) + 0.85rem)",
-        paddingLeft: "calc(var(--app-safe-left) + 1rem)",
-        paddingRight: "calc(var(--app-safe-right) + 1rem)",
-      }
-    : undefined;
-  const mobileSupportViewportStyle = isMobileSupportOnlyMode
-    ? {
-        paddingLeft: "calc(var(--app-safe-left) + 1rem)",
-        paddingRight: "calc(var(--app-safe-right) + 1rem)",
-        paddingBottom: "calc(var(--app-safe-bottom) + 1rem)",
-      }
-    : undefined;
-  const mobileSupportFooterStyle = isMobileSupportOnlyMode
-    ? {
-        paddingLeft: "calc(var(--app-safe-left) + 1rem)",
-        paddingRight: "calc(var(--app-safe-right) + 1rem)",
-        paddingBottom: "calc(var(--app-safe-bottom) + 1rem)",
-      }
-    : undefined;
-  const mobileSupportTipStyle = isMobileSupportOnlyMode
-    ? {
-        top: "calc(var(--app-safe-top) + 4.75rem)",
-      }
-    : undefined;
-  const mobileSupportUnreadCount = supportUnreadMerchantIds.size;
-  const mobileSupportDraftLength = supportReplyDraft.trim().length;
-  const mobileSupportHasDraft = mobileSupportDraftLength > 0;
-  function applyMobileSupportQuickReply(template: string) {
-    setSupportReplyDraft((previous) => (previous.trim() ? `${previous.trimEnd()}\n${template}` : template));
-    focusSupportReplyInput();
-  }
   function logoutSuperAdmin() {
     clearSuperAdminAuthenticated();
     window.location.href = `${buildSuperAdminLoginHref("/super-admin")}&loggedOut=1`;
@@ -4306,13 +4176,7 @@ export default function SuperAdminClient() {
   }
 
   return (
-    <main
-      className={
-        isMobileSupportOnlyMode
-          ? "h-[100dvh] overflow-hidden bg-[#eef1f5] text-slate-950"
-          : "min-h-screen bg-slate-100"
-      }
-    >
+    <main className={isMobileSupportOnlyMode ? "h-[100svh] overflow-hidden bg-slate-100" : "min-h-screen bg-slate-100"}>
       <div className={isMobileSupportOnlyMode ? "flex h-full min-h-0 flex-col" : "flex min-h-screen"}>
         {!isMobileSupportOnlyMode ? (
         <aside className="w-64 border-r bg-white">
@@ -4343,59 +4207,24 @@ export default function SuperAdminClient() {
 
         <div className={isMobileSupportOnlyMode ? "flex min-h-0 flex-1 flex-col" : "flex-1 min-h-0"}>
           {isMobileSupportOnlyMode ? (
-            <header className="border-b border-slate-200 bg-white" style={mobileSupportHeaderStyle}>
-              <div className="flex items-center justify-between gap-3 pb-3">
-                <div className="flex min-w-0 items-center gap-3">
-                  {showMobileSupportThread ? (
-                    <button
-                      type="button"
-                      className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-base font-medium text-slate-700 transition hover:bg-slate-100"
-                      onClick={() => setSupportMobileView("list")}
-                      aria-label="返回会话列表"
-                    >
-                      ←
-                    </button>
-                  ) : (
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-950 text-sm font-semibold text-white">
-                      {mobileSupportUnreadCount > 0 ? Math.min(mobileSupportUnreadCount, 99) : "讯"}
-                    </div>
-                  )}
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <div className="truncate text-lg font-semibold text-slate-950">{mobileSupportHeaderTitle}</div>
-                      {supportHasUnreadThreads ? (
-                        <span aria-label="有未读消息" className="inline-flex h-2.5 w-2.5 shrink-0 rounded-full bg-rose-500" />
-                      ) : null}
-                    </div>
-                    <div className="mt-0.5 truncate text-xs text-slate-500">
-                      {showMobileSupportThread ? mobileSupportHeaderSubtitle : `${supportMerchantTotalCount} 个会话 · ${mobileSupportUnreadCount} 个未读`}
-                    </div>
+            <header className="border-b bg-white px-4 py-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <div className="truncate text-base font-semibold text-slate-900">{mobileSupportHeaderTitle}</div>
+                    {supportHasUnreadThreads ? (
+                      <span aria-label="有未读消息" className="inline-flex h-2.5 w-2.5 shrink-0 rounded-full bg-rose-500" />
+                    ) : null}
                   </div>
+                  <div className="mt-1 truncate text-xs text-slate-500">{mobileSupportHeaderSubtitle}</div>
                 </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  {showMobileSupportThread ? (
-                    <>
-                      <button
-                        type="button"
-                        className="rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-100"
-                        onClick={() => setSupportBusinessCardDialogOpen(true)}
-                      >
-                        名片
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-100 disabled:opacity-50"
-                        onClick={() => openMerchantDetailPanelForRow(selectedSupportMerchantRow)}
-                        disabled={!selectedSupportMerchantRow}
-                      >
-                        详情
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                    </>
-                  )}
-                </div>
+                <button
+                  type="button"
+                  className="shrink-0 rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                  onClick={logoutSuperAdmin}
+                >
+                  退出
+                </button>
               </div>
             </header>
           ) : (
@@ -4421,7 +4250,6 @@ export default function SuperAdminClient() {
               className={`pointer-events-none fixed left-4 right-4 top-20 z-[130] ${
                 isMobileSupportOnlyMode ? "" : "md:left-72 md:right-auto md:w-[min(680px,calc(100vw-20rem))]"
               }`}
-              style={mobileSupportTipStyle}
             >
               <div
                 className="pointer-events-auto rounded border border-amber-300 bg-amber-50/95 px-3 py-2 text-sm text-amber-700 shadow-lg backdrop-blur"
@@ -6394,185 +6222,152 @@ export default function SuperAdminClient() {
               isMobileSupportOnlyMode ? (
                 <section className="flex h-full min-h-0 flex-col overflow-hidden">
                   {showMobileSupportThread ? (
-                    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[#e7edf3]">
-                      {supportThreadsError ? (
-                        <div className="pt-3" style={mobileSupportInsetStyle}>
-                          <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-600">
-                            {supportThreadsError}
-                          </div>
-                        </div>
-                      ) : null}
-                      <div
-                        ref={supportMessagesViewportRef}
-                        className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-3"
-                        style={mobileSupportViewportStyle}
-                      >
-                        <div className="mx-auto w-full max-w-3xl space-y-3">
-                          <div className="flex justify-center py-1">
-                            <div className="rounded-full bg-white px-3 py-1 text-[11px] text-slate-500 shadow-sm">
-                              当前会话
-                            </div>
-                          </div>
-                          <div className="rounded-2xl bg-white px-4 py-3 text-xs leading-5 text-slate-500 shadow-sm">
-                            <div className="text-sm font-medium text-slate-900">{selectedSupportDisplayLabel}</div>
-                            <div className="mt-1">
+                    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-white">
+                      <div className="flex items-start justify-between gap-3 border-b px-4 py-3">
+                        <div className="flex min-w-0 items-start gap-3">
+                          <button
+                            type="button"
+                            className="shrink-0 rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                            onClick={() => setSupportMobileView("list")}
+                          >
+                            返回
+                          </button>
+                          <div className="min-w-0">
+                            <div className="truncate text-base font-semibold text-slate-900">{selectedSupportDisplayLabel}</div>
+                            <div className="truncate text-xs text-slate-500">
                               ID：{selectedSupportThread?.merchantId}
                               {selectedSupportMerchantRow?.loginAccount ? ` | 账号：${selectedSupportMerchantRow.loginAccount}` : ""}
                               {selectedSupportMerchantRow?.userEmail ? ` | 邮箱：${selectedSupportMerchantRow.userEmail}` : ""}
                             </div>
                           </div>
-                          {selectedSupportThread && selectedSupportThread.messages.length > 0 ? (
-                            <div className="space-y-3">
-                              {selectedSupportThread.messages.map((message) => {
-                                const isMerchantMessage = message.sender === "merchant";
-                                return (
-                                  <div key={message.id} className={`flex ${isMerchantMessage ? "justify-start" : "justify-end"}`}>
-                                    <div
-                                      className={`max-w-[82%] rounded-[22px] px-4 py-3 ${
-                                        isMerchantMessage
-                                          ? "border border-slate-200 bg-white text-slate-900"
-                                          : "bg-slate-950 text-white"
-                                      }`}
-                                    >
-                                      <div className="text-[11px] opacity-70">
-                                        {isMerchantMessage ? "商户" : "超级后台"} | {formatSupportMessageTime(message.createdAt)}
-                                      </div>
-                                      <div className="mt-1 whitespace-pre-wrap break-words text-sm leading-6">{message.text}</div>
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          ) : (
-                            <div className="rounded-[24px] border border-dashed border-white/80 bg-white/76 px-4 py-6 text-center text-sm text-slate-500 shadow-[0_14px_34px_rgba(15,23,42,.06)]">
-                              当前还没有留言记录，你可以直接在下方发第一条消息。
-                            </div>
-                          )}
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <button
+                            type="button"
+                            className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                            onClick={() => setSupportBusinessCardDialogOpen(true)}
+                          >
+                            名片
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+                            onClick={() => openMerchantDetailPanelForRow(selectedSupportMerchantRow)}
+                            disabled={!selectedSupportMerchantRow}
+                          >
+                            详情
+                          </button>
                         </div>
                       </div>
-                      <div className="shrink-0 border-t border-slate-200 bg-white" style={mobileSupportFooterStyle}>
-                        <div className="space-y-3 py-3">
-                          <div className="flex items-center justify-between gap-3">
-                            <div>
-                              <div className="text-sm font-medium text-slate-900">快捷回复</div>
-                              <div className="mt-1 text-xs text-slate-500">先点模板，再补一句，就更像聊天工具。</div>
-                            </div>
-                            <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
-                              {mobileSupportDraftLength} 字
-                            </div>
+                      {supportThreadsError ? <div className="border-b px-4 py-2 text-sm text-rose-600">{supportThreadsError}</div> : null}
+                      <div ref={supportMessagesViewportRef} className="min-h-0 flex-1 overflow-y-auto bg-slate-50 px-4 py-4">
+                        {selectedSupportThread && selectedSupportThread.messages.length > 0 ? (
+                          <div className="space-y-3">
+                            {selectedSupportThread.messages.map((message) => {
+                              const isMerchantMessage = message.sender === "merchant";
+                              return (
+                                <div key={message.id} className={`flex ${isMerchantMessage ? "justify-start" : "justify-end"}`}>
+                                  <div
+                                    className={`max-w-[88%] rounded-2xl px-4 py-3 shadow-sm ${
+                                      isMerchantMessage
+                                        ? "border bg-white text-slate-900"
+                                        : "bg-slate-900 text-white"
+                                    }`}
+                                  >
+                                    <div className="text-[11px] opacity-70">
+                                      {isMerchantMessage ? "商户" : "超级后台"} | {formatSupportMessageTime(message.createdAt)}
+                                    </div>
+                                    <div className="mt-1 whitespace-pre-wrap break-words text-sm leading-6">{message.text}</div>
+                                  </div>
+                                </div>
+                              );
+                            })}
                           </div>
-                          <div className="flex gap-2 overflow-x-auto pb-1">
-                            {MOBILE_SUPPORT_QUICK_REPLIES.map((item) => (
-                              <button
-                                key={item.key}
-                                type="button"
-                                className="shrink-0 rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-100"
-                                onClick={() => applyMobileSupportQuickReply(item.text)}
-                                disabled={supportSending}
-                              >
-                                {item.label}
-                              </button>
-                            ))}
+                        ) : (
+                          <div className="rounded border border-dashed bg-white px-4 py-6 text-center text-sm text-slate-500">
+                            当前还没有留言记录，你可以直接在下方发第一条消息。
                           </div>
-                          <div className="rounded-[28px] bg-slate-100 p-3">
-                            <div className="flex flex-wrap items-center justify-between gap-3">
-                              <div className="text-xs text-slate-500">消息会直接同步到商户后台。</div>
-                              <div className="flex flex-wrap items-center gap-2">
-                                <button
-                                  type="button"
-                                  className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
-                                  onClick={focusSupportReplyInput}
-                                  disabled={supportSending}
-                                >
-                                  输入
-                                </button>
-                                <button
-                                  type="button"
-                                  className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
-                                  onClick={() => setSupportReplyDraft("")}
-                                  disabled={!mobileSupportHasDraft || supportSending}
-                                >
-                                  清空
-                                </button>
-                              </div>
-                            </div>
-                            <div className="mt-3 flex items-end gap-3">
-                              <div className="min-w-0 flex-1 rounded-[24px] bg-white px-4 py-3">
-                                <textarea
-                                  ref={supportReplyInputRef}
-                                  className="mobile-safe-input-text h-20 w-full resize-none bg-transparent text-base leading-6 text-slate-900 outline-none"
-                                  placeholder="请输入要回复商户的内容"
-                                  value={supportReplyDraft}
-                                  onChange={(event) => setSupportReplyDraft(event.target.value)}
-                                  onKeyDown={(event) => {
-                                    if (event.key !== "Enter" || !event.ctrlKey || event.nativeEvent.isComposing) return;
-                                    event.preventDefault();
-                                    void sendSupportReplyAction();
-                                  }}
-                                  disabled={supportSending}
-                                />
-                              </div>
-                              <button
-                                type="button"
-                                className="mb-1 inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-slate-950 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-50"
-                                onClick={() => void sendSupportReplyAction()}
-                                disabled={supportSending || !mobileSupportHasDraft}
-                                aria-label={supportSending ? "发送中" : "发送回复"}
-                              >
-                                {supportSending ? "..." : "发"}
-                              </button>
-                            </div>
-                          </div>
+                        )}
+                      </div>
+                      <div className="shrink-0 space-y-3 border-t bg-white px-4 py-3">
+                        <textarea
+                          ref={supportReplyInputRef}
+                          className="h-28 w-full resize-none rounded-2xl border px-4 py-3 text-sm outline-none transition focus:border-slate-400"
+                          placeholder="请输入要回复商户的内容"
+                          value={supportReplyDraft}
+                          onChange={(event) => setSupportReplyDraft(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key !== "Enter" || !event.ctrlKey || event.nativeEvent.isComposing) return;
+                            event.preventDefault();
+                            void sendSupportReplyAction();
+                          }}
+                          disabled={supportSending}
+                        />
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="text-xs text-slate-500">回复会直接出现在商户后台的“联系我们”窗口里。</div>
+                          <button
+                            type="button"
+                            className="rounded bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50"
+                            onClick={() => void sendSupportReplyAction()}
+                            disabled={supportSending || !supportReplyDraft.trim()}
+                          >
+                            {supportSending ? "发送中..." : "发送回复"}
+                          </button>
                         </div>
                       </div>
                     </div>
                   ) : (
                     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-white">
-                      <div className="border-b border-slate-200 bg-white py-3" style={mobileSupportInsetStyle}>
-                        <div className="space-y-3">
-                          <div className="rounded-[18px] bg-slate-100 px-4 py-3">
-                            <input
-                              type="text"
-                              className="mobile-safe-input-text w-full bg-transparent text-base text-slate-900 outline-none placeholder:text-slate-400"
-                              placeholder="搜索邮箱 / ID / 账号 / 名称"
-                              value={supportMerchantKeyword}
-                              onChange={(event) => setSupportMerchantKeyword(event.target.value)}
-                            />
+                      <div className="space-y-3 border-b px-4 py-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="rounded border bg-slate-50 px-3 py-2 text-sm">
+                            商户数：
+                            {supportMerchantKeyword.trim()
+                              ? `${supportMerchantListCount}/${supportMerchantTotalCount}`
+                              : supportMerchantTotalCount}
                           </div>
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="inline-flex overflow-hidden rounded-[14px] bg-slate-100 p-1">
-                              <button
-                                type="button"
-                                className={`rounded-[10px] px-3 py-2 text-sm ${supportDisplayMode === "name" ? "bg-white text-slate-950 shadow-sm" : "text-slate-600"}`}
-                                onClick={() => setSupportDisplayMode("name")}
-                              >
-                                按名称
-                              </button>
-                              <button
-                                type="button"
-                                className={`rounded-[10px] px-3 py-2 text-sm ${supportDisplayMode === "id" ? "bg-white text-slate-950 shadow-sm" : "text-slate-600"}`}
-                                onClick={() => setSupportDisplayMode("id")}
-                              >
-                                按ID
-                              </button>
-                            </div>
-                            <div className="text-xs text-slate-500">
-                              {supportMerchantKeyword.trim()
-                                ? `${supportMerchantListCount}/${supportMerchantTotalCount}`
-                                : `${supportMerchantTotalCount} 个会话`}
-                            </div>
-                          </div>
-                          {supportThreadsError ? <div className="text-sm text-rose-600">{supportThreadsError}</div> : null}
-                          {backendMerchantAccountsError ? (
-                            <div className="text-sm text-amber-600">
-                              商户列表加载失败，当前先展示已有会话。{describeBackendMerchantAccountsError(backendMerchantAccountsError)}
-                            </div>
-                          ) : null}
+                          <button
+                            type="button"
+                            className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                            onClick={() => void loadSupportThreadsAction()}
+                            disabled={supportThreadsLoading}
+                          >
+                            {supportThreadsLoading ? "刷新中..." : "刷新"}
+                          </button>
                         </div>
+                        <div className="inline-flex overflow-hidden rounded border">
+                          <button
+                            type="button"
+                            className={`px-3 py-2 text-sm ${supportDisplayMode === "name" ? "bg-black text-white" : "bg-white hover:bg-slate-50"}`}
+                            onClick={() => setSupportDisplayMode("name")}
+                          >
+                            按名称
+                          </button>
+                          <button
+                            type="button"
+                            className={`border-l px-3 py-2 text-sm ${supportDisplayMode === "id" ? "bg-black text-white" : "bg-white hover:bg-slate-50"}`}
+                            onClick={() => setSupportDisplayMode("id")}
+                          >
+                            按ID
+                          </button>
+                        </div>
+                        <input
+                          type="text"
+                          className="w-full rounded border px-3 py-2 text-sm outline-none transition focus:border-slate-400"
+                          placeholder="搜索邮箱 / ID / 账号 / 名称"
+                          value={supportMerchantKeyword}
+                          onChange={(event) => setSupportMerchantKeyword(event.target.value)}
+                        />
+                        {supportThreadsError ? <div className="text-sm text-rose-600">{supportThreadsError}</div> : null}
+                        {backendMerchantAccountsError ? (
+                          <div className="text-sm text-amber-600">
+                            商户列表加载失败，当前先展示已有会话。{describeBackendMerchantAccountsError(backendMerchantAccountsError)}
+                          </div>
+                        ) : null}
                       </div>
-                      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-white" style={mobileSupportViewportStyle}>
+                      <div className="min-h-0 flex-1 overflow-y-auto p-3">
                         {supportListRows.length > 0 ? (
-                          <div className="divide-y divide-slate-100">
+                          <div className="space-y-2">
                             {supportListRows.map(({ row, selectionKey, thread, lastMessage }) => {
                               const displayLabel =
                                 supportDisplayMode === "id"
@@ -6589,72 +6384,44 @@ export default function SuperAdminClient() {
                                 <button
                                   key={selectionKey}
                                   type="button"
-                                  className="w-full px-0 text-left transition active:bg-slate-50"
+                                  className="w-full rounded-2xl border bg-white px-3 py-3 text-left transition hover:bg-slate-50"
                                   onClick={() => {
                                     setSupportSelectedMerchantId(selectionKey);
                                     setSupportMobileView("thread");
                                   }}
                                 >
-                                  <div className="flex items-start gap-3 py-4">
-                                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-950 text-sm font-semibold text-white">
-                                      {(displayLabel || "?").slice(0, 1)}
-                                    </div>
-                                    <div className="min-w-0 flex-1">
-                                      <div className="flex items-start justify-between gap-3">
-                                        <div className="min-w-0">
-                                          <div className="flex items-center gap-2">
-                                            <div className="truncate text-sm font-medium text-slate-900">{displayLabel}</div>
-                                            {hasUnread ? (
-                                              <span aria-label="有未读消息" className="inline-flex h-2.5 w-2.5 shrink-0 rounded-full bg-rose-500" />
-                                            ) : null}
-                                          </div>
-                                          <div className="mt-1 truncate text-[11px] text-slate-500">{subtitle}</div>
-                                        </div>
-                                        <div className="shrink-0 text-[11px] text-slate-400">
-                                          {thread ? formatSupportMessageTime(thread.updatedAt) : "未留言"}
-                                        </div>
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="min-w-0">
+                                      <div className="flex items-center gap-2">
+                                        <div className="truncate text-sm font-medium text-slate-900">{displayLabel}</div>
+                                        {hasUnread ? (
+                                          <span aria-label="有未读消息" className="inline-flex h-2.5 w-2.5 shrink-0 rounded-full bg-rose-500" />
+                                        ) : null}
                                       </div>
-                                      <div className="mt-2 line-clamp-2 text-xs leading-5 text-slate-600">
-                                        {lastMessage?.text || "暂无留言记录"}
-                                      </div>
+                                      <div className="truncate text-[11px] text-slate-500">{subtitle}</div>
                                     </div>
+                                    <div className="shrink-0 text-[11px] text-slate-400">
+                                      {thread ? formatSupportMessageTime(thread.updatedAt) : "未留言"}
+                                    </div>
+                                  </div>
+                                  <div className="mt-2 line-clamp-2 text-xs leading-5 text-slate-600">
+                                    {lastMessage?.text || "暂无留言记录"}
                                   </div>
                                 </button>
                               );
                             })}
                           </div>
                         ) : backendMerchantAccountsLoading ? (
-                          <div className="py-6 text-sm text-slate-500">
-                            正在加载商户列表…
-                          </div>
+                          <div className="rounded border border-dashed px-3 py-4 text-xs text-slate-500">正在加载商户列表…</div>
                         ) : supportMerchantKeyword.trim() ? (
-                          <div className="py-6 text-sm text-slate-500">
+                          <div className="rounded border border-dashed px-3 py-4 text-xs text-slate-500">
                             没有匹配的商户，请换个关键词试试。
                           </div>
                         ) : (
-                          <div className="py-6 text-sm text-slate-500">
+                          <div className="rounded border border-dashed px-3 py-4 text-xs text-slate-500">
                             当前还没有已注册商户。
                           </div>
                         )}
-                      </div>
-                      <div className="shrink-0 border-t border-slate-200 bg-white" style={mobileSupportFooterStyle}>
-                        <div className="flex items-center justify-between gap-3 py-2">
-                          <div className="flex items-center gap-2">
-                            <div className="rounded-full bg-slate-950 px-3 py-1 text-xs font-medium text-white">会话</div>
-                            <div className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">未读 {mobileSupportUnreadCount}</div>
-                          </div>
-                          <button
-                            type="button"
-                            className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-100"
-                            onClick={() => {
-                              void loadSupportThreadsAction();
-                              void loadBackendMerchantAccountsAction({ silent: true, suppressError: true });
-                            }}
-                            disabled={supportThreadsLoading || backendMerchantAccountsLoading}
-                          >
-                            {supportThreadsLoading || backendMerchantAccountsLoading ? "刷新中..." : "刷新"}
-                          </button>
-                        </div>
                       </div>
                     </div>
                   )}
@@ -6693,13 +6460,10 @@ export default function SuperAdminClient() {
                       <button
                         type="button"
                         className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
-                        onClick={() => {
-                          void loadSupportThreadsAction();
-                          void loadBackendMerchantAccountsAction({ silent: true, suppressError: true });
-                        }}
-                        disabled={supportThreadsLoading || backendMerchantAccountsLoading}
+                        onClick={() => void loadSupportThreadsAction()}
+                        disabled={supportThreadsLoading}
                       >
-                        {supportThreadsLoading || backendMerchantAccountsLoading ? "刷新中..." : "刷新"}
+                        {supportThreadsLoading ? "刷新中..." : "刷新"}
                       </button>
                     </div>
                   </div>

@@ -5,13 +5,6 @@ export const MERCHANT_AUTH_REFRESH_COOKIE = "merchant-space-merchant-refresh";
 export const MERCHANT_AUTH_ACCESS_COOKIE_FALLBACK_MAX_AGE_SECONDS = 60 * 60;
 export const MERCHANT_AUTH_REFRESH_COOKIE_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
 
-function normalizeCookieMaxAgeSeconds(value: unknown, fallback: number) {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return fallback;
-  }
-  return Math.max(60, Math.round(value));
-}
-
 export function parseCookieValue(cookieHeader: string, key: string) {
   return cookieHeader
     .split(";")
@@ -53,10 +46,6 @@ export function setMerchantAuthCookies(
 ) {
   const normalizedAccessToken = String(input.accessToken ?? "").trim();
   const normalizedRefreshToken = String(input.refreshToken ?? "").trim();
-  const accessCookieMaxAge = normalizeCookieMaxAgeSeconds(
-    input.maxAgeSeconds,
-    MERCHANT_AUTH_ACCESS_COOKIE_FALLBACK_MAX_AGE_SECONDS,
-  );
   if (!normalizedAccessToken) {
     clearMerchantAuthCookies(response);
     return;
@@ -69,7 +58,6 @@ export function setMerchantAuthCookies(
     // Keeping this cookie non-secure avoids dropping the session on the http admin entry.
     secure: false,
     path: "/",
-    maxAge: accessCookieMaxAge,
   });
 
   if (normalizedRefreshToken) {
@@ -78,7 +66,6 @@ export function setMerchantAuthCookies(
       sameSite: "lax",
       secure: false,
       path: "/",
-      maxAge: MERCHANT_AUTH_REFRESH_COOKIE_MAX_AGE_SECONDS,
     });
   } else {
     response.cookies.set(MERCHANT_AUTH_REFRESH_COOKIE, "", {

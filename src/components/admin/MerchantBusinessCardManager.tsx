@@ -232,7 +232,7 @@ async function renderCardNodeToImage(node: HTMLElement) {
     await document.fonts.ready.catch(() => undefined);
   }
   return toPng(node, {
-    pixelRatio: Math.max(2, Math.min(typeof window !== "undefined" ? window.devicePixelRatio || 2 : 2, 3)),
+    pixelRatio: 1,
     cacheBust: true,
     backgroundColor: "transparent",
   });

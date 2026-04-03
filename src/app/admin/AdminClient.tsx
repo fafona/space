@@ -206,7 +206,6 @@ import {
 } from "@/lib/buttonBlock";
 import { ensureMerchantIdentityForUser, isMerchantNumericId } from "@/lib/merchantIdentity";
 import {
-  buildMerchantBackendHref,
   buildMerchantDomain,
   buildMerchantFrontendHref,
   buildSiteStoreScope,
@@ -5265,22 +5264,6 @@ export default function AdminClient({
         }
       }
     };
-    const redirectToMerchantLogin = (merchantIdHint?: string) => {
-      if (isPlatformEditor || typeof window === "undefined") return;
-      const resolvedMerchantId =
-        [
-          merchantIdHint,
-          getSiteIdFromStoreScope(storeScope),
-          merchantSessionIdentityRef.current.merchantId,
-          ...merchantIdsRef.current,
-        ]
-          .map((item) => String(item ?? "").trim())
-          .find(Boolean) ?? "";
-      clearStoredBrowserSupabaseSessionTokens();
-      clearMerchantSignInBridge(resolvedMerchantId || undefined);
-      const targetHref = buildMerchantBackendHref(resolvedMerchantId);
-      window.location.replace(`/login?redirect=${encodeURIComponent(targetHref)}`);
-    };
     const attachAuthListener = () => {
       if (isPlatformEditor) return;
       if (authSubscription || !mounted) return;
@@ -5304,7 +5287,16 @@ export default function AdminClient({
             releaseCheckingScreen({ notice: null });
             return;
           }
-          redirectToMerchantLogin();
+          if (justSignedIn) {
+            setRemoteContentVerified(false);
+            setHasEditorContent(true);
+            setBackendNotice("登录已断开，请重新登录后继续。");
+            return;
+          }
+          setRemoteContentVerified(false);
+          setHasEditorContent(true);
+          setBackendNotice("当前未登录，请重新登录后继续。");
+          releaseCheckingScreen({ notice: "当前未登录，请重新登录后继续。" });
         })().catch(() => {
           // Ignore listener network failures; keep current editor session.
         });
@@ -5422,7 +5414,9 @@ export default function AdminClient({
               const restored = await tryLoadJustSignedInPublishedContent();
               if (!mounted) return;
               if (restored) return;
-              redirectToMerchantLogin();
+              setRemoteContentVerified(false);
+              setHasEditorContent(true);
+              releaseCheckingScreen({ notice: "登录未完成，请重新登录后继续。" });
               return;
             }
             if (cookieBackedMerchantIdentity) {
@@ -5431,8 +5425,10 @@ export default function AdminClient({
               setHasEditorContent(true);
               releaseCheckingScreen({ notice: null });
             } else {
-              redirectToMerchantLogin();
-              return;
+            setRemoteContentVerified(false);
+            setHasEditorContent(true);
+            releaseCheckingScreen({ notice: "当前未登录，请重新登录后继续。" });
+            return;
             }
           }
         }
@@ -8260,37 +8256,79 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     focusSupportInput();
   }, [focusSupportInput, isPlatformEditor, selectedSupportLoading, supportDialogOpen, supportSending]);
 
-  async function submitOfficialSupportMessage(localMessage: LocalSupportMessage) {
+  async function sendSupportMessage() {
+    if (supportSending) return;
+    const text = supportDraft.trim();
+    if (!text) {
+      showTip("请先填写留言内容");
+      return;
+    }
+    const isOfficialContact = supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY;
+    if (!isOfficialContact && !selectedSupportPeerContact) {
+      showTip("请先在左侧精确搜索商户ID或邮箱");
+      return;
+    }
+    const merchantId = supportReadMerchantId || editingSiteId || merchantSessionIdentityRef.current.merchantId || "default";
     const requestId = ++supportRequestIdRef.current;
     supportSendingRef.current = true;
     setSupportSending(true);
     setSupportError("");
-    try {
-      const response = await requestSupportWithSessionRecovery({
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          text: localMessage.text,
-          merchantName: merchantDisplayName,
-          merchantEmail:
-            (editingSite?.contactEmail ?? "").trim() ||
-            merchantSessionIdentityRef.current.email ||
-            "",
-          siteId: (editingSiteId || merchantSessionIdentityRef.current.merchantId || "").trim(),
-        }),
-      });
-      const payload = (await response.json().catch(() => null)) as
-        | {
-            thread?: PlatformSupportThread | null;
-            error?: string;
-            message?: string;
-          }
-        | null;
-      if (requestId !== supportRequestIdRef.current) return;
-      setSupportLoading(false);
-      if (!response.ok) {
+    setSupportDraft("");
+    if (isOfficialContact) {
+      const localMessage: LocalSupportMessage = {
+        id: `local-support-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+        merchantId,
+        sender: "merchant",
+        text,
+        createdAt: new Date().toISOString(),
+        status: "pending",
+      };
+      setSupportLocalMessages((current) => [...current, localMessage]);
+      try {
+        const response = await requestSupportWithSessionRecovery({
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            text,
+            merchantName: merchantDisplayName,
+            merchantEmail:
+              (editingSite?.contactEmail ?? "").trim() ||
+              merchantSessionIdentityRef.current.email ||
+              "",
+            siteId: (editingSiteId || merchantSessionIdentityRef.current.merchantId || "").trim(),
+          }),
+        });
+        const payload = (await response.json().catch(() => null)) as
+          | {
+              thread?: PlatformSupportThread | null;
+              error?: string;
+              message?: string;
+            }
+          | null;
+        if (requestId !== supportRequestIdRef.current) return;
+        setSupportLoading(false);
+        if (!response.ok) {
+          setSupportLocalMessages((current) =>
+            current.map((message) =>
+              message.id === localMessage.id
+                ? {
+                    ...message,
+                    status: "failed",
+                  }
+                : message,
+            ),
+          );
+          setSupportError(payload?.message || "留言发送失败，请稍后重试");
+          return;
+        }
+        setSupportLocalMessages((current) => current.filter((message) => message.id !== localMessage.id));
+        setSupportError("");
+        setSupportThread(payload?.thread ?? null);
+      } catch {
+        if (requestId !== supportRequestIdRef.current) return;
+        setSupportLoading(false);
         setSupportLocalMessages((current) =>
           current.map((message) =>
             message.id === localMessage.id
@@ -8301,37 +8339,24 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               : message,
           ),
         );
-        setSupportError(payload?.message || "留言发送失败，请稍后重试");
-        return;
+        setSupportError("留言发送失败，请稍后重试");
+      } finally {
+        supportSendingRef.current = false;
+        setSupportSending(false);
       }
-      setSupportLocalMessages((current) => current.filter((message) => message.id !== localMessage.id));
-      setSupportError("");
-      setSupportThread(payload?.thread ?? null);
-    } catch {
-      if (requestId !== supportRequestIdRef.current) return;
-      setSupportLoading(false);
-      setSupportLocalMessages((current) =>
-        current.map((message) =>
-          message.id === localMessage.id
-            ? {
-                ...message,
-                status: "failed",
-              }
-            : message,
-        ),
-      );
-      setSupportError("留言发送失败，请稍后重试");
-    } finally {
-      supportSendingRef.current = false;
-      setSupportSending(false);
+      return;
     }
-  }
 
-  async function submitPeerSupportMessage(localPeerMessage: LocalPeerSupportMessage) {
-    const requestId = ++supportRequestIdRef.current;
-    supportSendingRef.current = true;
-    setSupportSending(true);
-    setSupportError("");
+    const peerMerchantId = selectedSupportPeerContact?.merchantId || "";
+    const localPeerMessage: LocalPeerSupportMessage = {
+      id: `local-peer-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      contactMerchantId: peerMerchantId,
+      senderMerchantId: merchantId,
+      text,
+      createdAt: new Date().toISOString(),
+      status: "pending",
+    };
+    setSupportPeerLocalMessages((current) => [...current, localPeerMessage]);
     try {
       const response = await requestMerchantPeerWithSessionRecovery({
         method: "POST",
@@ -8340,8 +8365,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         },
         body: JSON.stringify({
           action: "send",
-          recipientMerchantId: localPeerMessage.contactMerchantId,
-          text: localPeerMessage.text,
+          recipientMerchantId: peerMerchantId,
+          text,
           merchantName: merchantDisplayName,
           merchantEmail:
             (editingSite?.contactEmail ?? "").trim() ||
@@ -8386,100 +8411,13 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                 status: "failed",
               }
             : message,
-        ),
+          ),
       );
       setSupportError("消息发送失败，请稍后重试");
     } finally {
       supportSendingRef.current = false;
       setSupportSending(false);
     }
-  }
-
-  async function resendFailedSupportMessage(messageId: string) {
-    if (supportSending) return;
-    const isOfficialContact = supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY;
-    if (isOfficialContact) {
-      const failedMessage = supportLocalMessages.find((message) => message.id === messageId && message.status === "failed");
-      if (!failedMessage) return;
-      supportScrollToLatestPendingRef.current = true;
-      setSupportLocalMessages((current) =>
-        current.map((message) =>
-          message.id === messageId
-            ? {
-                ...message,
-                status: "pending",
-              }
-            : message,
-        ),
-      );
-      setSupportError("");
-      await submitOfficialSupportMessage({
-        ...failedMessage,
-        status: "pending",
-      });
-      return;
-    }
-
-    const failedPeerMessage = supportPeerLocalMessages.find((message) => message.id === messageId && message.status === "failed");
-    if (!failedPeerMessage) return;
-    supportScrollToLatestPendingRef.current = true;
-    setSupportPeerLocalMessages((current) =>
-      current.map((message) =>
-        message.id === messageId
-          ? {
-              ...message,
-              status: "pending",
-            }
-          : message,
-      ),
-    );
-    setSupportError("");
-    await submitPeerSupportMessage({
-      ...failedPeerMessage,
-      status: "pending",
-    });
-  }
-
-  async function sendSupportMessage() {
-    if (supportSending) return;
-    const text = supportDraft.trim();
-    if (!text) {
-      showTip("请先填写留言内容");
-      return;
-    }
-    const isOfficialContact = supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY;
-    if (!isOfficialContact && !selectedSupportPeerContact) {
-      showTip("请先在左侧精确搜索商户ID或邮箱");
-      return;
-    }
-    const merchantId = supportReadMerchantId || editingSiteId || merchantSessionIdentityRef.current.merchantId || "default";
-    setSupportDraft("");
-    supportScrollToLatestPendingRef.current = true;
-    if (isOfficialContact) {
-      const localMessage: LocalSupportMessage = {
-        id: `local-support-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-        merchantId,
-        sender: "merchant",
-        text,
-        createdAt: new Date().toISOString(),
-        status: "pending",
-      };
-      setSupportLocalMessages((current) => [...current, localMessage]);
-      await submitOfficialSupportMessage(localMessage);
-      return;
-    }
-
-    const peerMerchantId = selectedSupportPeerContact?.merchantId || "";
-    const localPeerMessage: LocalPeerSupportMessage = {
-      id: `local-peer-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-      contactMerchantId: peerMerchantId,
-      senderMerchantId: merchantId,
-      text,
-      createdAt: new Date().toISOString(),
-      status: "pending",
-    };
-    setSupportPeerLocalMessages((current) => [...current, localPeerMessage]);
-    await submitPeerSupportMessage(localPeerMessage);
   }
 
   if (checkingAuth) {
@@ -9541,16 +9479,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                                     </div>
                                   </div>
                                   {message.isSelf && message.localStatus === "failed" ? (
-                                    <button
-                                      type="button"
-                                      aria-label="发送失败，点击重新发送"
-                                      title="点击重新发送"
-                                      className="mb-1 ml-2 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-rose-500 bg-white text-[12px] font-semibold leading-none text-rose-600 transition hover:bg-rose-50 disabled:opacity-50"
-                                      onClick={() => void resendFailedSupportMessage(message.id)}
-                                      disabled={supportSending}
+                                    <span
+                                      aria-label="发送失败"
+                                      className="mb-1 ml-2 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-rose-500 bg-white text-[12px] font-semibold leading-none text-rose-600"
                                     >
                                       !
-                                    </button>
+                                    </span>
                                   ) : null}
                                 </div>
                               </div>
