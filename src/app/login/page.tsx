@@ -154,8 +154,24 @@ function LoginPageInner() {
     if (normalizedLocale.startsWith("zh")) return "登录支持邮箱、用户名或 8 位 ID；注册仍需填写邮箱。";
     return "Sign in supports email, username, or 8-digit ID. Sign up still requires an email.";
   }, [normalizedLocale]);
+  const resetCodePreferredHint = useMemo(() => {
+    if (normalizedLocale.startsWith("zh-tw")) {
+      return "QQ、Foxmail、Hotmail、Outlook、Live 這些信箱請使用郵件驗證碼重設密碼，不要點郵件連結。";
+    }
+    if (normalizedLocale.startsWith("ja")) {
+      return "QQ / Foxmail / Hotmail / Outlook / Live のメールは、メールコードでパスワードを再設定してください。メールリンクは使わないでください。";
+    }
+    if (normalizedLocale.startsWith("ko")) {
+      return "QQ / Foxmail / Hotmail / Outlook / Live 메일은 이메일 인증코드로 비밀번호를 재설정해 주세요. 메일 링크는 누르지 마세요.";
+    }
+    if (normalizedLocale.startsWith("zh")) {
+      return "QQ、Foxmail、Hotmail、Outlook、Live 这些邮箱请使用邮件验证码重置密码，不要点邮件链接。";
+    }
+    return "QQ, Foxmail, Hotmail, Outlook, and Live mailboxes should use the email code to reset the password instead of the email link.";
+  }, [normalizedLocale]);
   const passwordToggleLabels = useMemo(() => getPasswordToggleLabels(locale), [locale]);
   const authEmailRedirectOrigin = useMemo(() => resolveAuthEmailRedirectOrigin(), []);
+  const shouldShowResetCodePreferredHint = useMemo(() => shouldPreferResetCodeFlow(account), [account]);
 
   useEffect(() => {
     const confirmed = (searchParams.get("confirmed") ?? "").trim();
@@ -911,6 +927,12 @@ function LoginPageInner() {
         >
           {pendingAction === "forgot" ? t("common.sending") : t("login.forgot")}
         </button>
+
+        {shouldShowResetCodePreferredHint ? (
+          <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            {resetCodePreferredHint}
+          </div>
+        ) : null}
 
         {pendingResetEmail ? (
           <div className="space-y-2 rounded border border-slate-200 bg-slate-50 p-3">
