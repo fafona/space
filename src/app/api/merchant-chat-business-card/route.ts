@@ -170,6 +170,7 @@ export async function GET(request: Request) {
     return NextResponse.json({
       ok: true,
       merchantId,
+      profile: snapshotSite,
       chatBusinessCard: snapshotSite?.chatBusinessCard ?? null,
       hasChatBusinessCard: !!snapshotSite?.chatBusinessCard,
     });

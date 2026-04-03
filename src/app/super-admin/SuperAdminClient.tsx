@@ -258,14 +258,17 @@ function buildSupportMerchantCardLink(card: MerchantBusinessCardAsset | null) {
   });
 }
 
-function normalizeSupportExternalUrl(value: string | null | undefined) {
+function normalizeSupportExternalUrl(value: string | null | undefined, fallbackOrigin?: string | null) {
   const normalized = normalizeSupportDetailText(value);
   if (!normalized) return "";
   if (/^https?:\/\//i.test(normalized)) return normalized;
   if (normalized.startsWith("/")) {
-    if (typeof window === "undefined") return normalized;
+    const baseOrigin =
+      normalizeSupportDetailText(fallbackOrigin) ||
+      (typeof window !== "undefined" ? normalizeSupportDetailText(window.location.origin) : "");
+    if (!baseOrigin) return normalized;
     try {
-      return new URL(normalized, window.location.origin).toString();
+      return new URL(normalized, baseOrigin).toString();
     } catch {
       return normalized;
     }
@@ -1438,6 +1441,7 @@ export default function SuperAdminClient() {
   const [supportSending, setSupportSending] = useState(false);
   const [supportBusinessCardDialogOpen, setSupportBusinessCardDialogOpen] = useState(false);
   const [supportMerchantInfoSheetOpen, setSupportMerchantInfoSheetOpen] = useState(false);
+  const [supportMerchantProfile, setSupportMerchantProfile] = useState<MerchantListPublishedSite | null>(null);
   const [supportLastReadMap, setSupportLastReadMap] = useState<Record<string, string>>({});
   const supportMessagesViewportRef = useRef<HTMLDivElement>(null);
   const supportReplyInputRef = useRef<HTMLTextAreaElement>(null);
@@ -2190,27 +2194,37 @@ export default function SuperAdminClient() {
     normalizeSupportDisplayValue(selectedSupportMerchantRow?.merchantId) ||
     normalizeSupportDisplayValue(selectedSupportThread?.merchantId) ||
     "-";
+  const selectedSupportProfile =
+    supportMerchantProfile && supportMerchantProfile.id === selectedSupportMerchantId ? supportMerchantProfile : null;
   const selectedSupportMerchantEmail =
+    normalizeSupportDisplayValue(selectedSupportProfile?.contactEmail) ||
     normalizeSupportDisplayValue(selectedSupportMerchantRow?.userEmail) ||
     normalizeSupportDisplayValue(selectedSupportThread?.merchantEmail) ||
     "-";
   const selectedSupportMerchantIndustry =
+    normalizeSupportDisplayValue(selectedSupportProfile?.industry) ||
     normalizeSupportDisplayValue(selectedSupportMerchantRow?.industry) ||
     normalizeSupportDisplayValue(selectedSupportMerchantRow?.site.industry) ||
-    "-";
+    "未设置行业";
   const selectedSupportMerchantCity =
+    normalizeSupportDisplayValue(selectedSupportProfile?.location.city) ||
     normalizeSupportDisplayValue(selectedSupportMerchantRow?.city) ||
     normalizeSupportDisplayValue(selectedSupportMerchantRow?.site.location.city) ||
     "-";
   const selectedSupportMerchantPhone =
-    normalizeSupportDisplayValue(selectedSupportMerchantRow?.site.contactPhone) || "-";
+    normalizeSupportDisplayValue(selectedSupportProfile?.contactPhone) ||
+    normalizeSupportDisplayValue(selectedSupportMerchantRow?.site.contactPhone) ||
+    "-";
   const selectedSupportMerchantPrefix =
+    normalizeSupportDisplayValue(selectedSupportProfile?.domainPrefix) ||
+    normalizeSupportDisplayValue(selectedSupportProfile?.domainSuffix) ||
     normalizeSupportDisplayValue(selectedSupportMerchantRow?.site.domainPrefix) ||
     normalizeSupportDisplayValue(selectedSupportMerchantRow?.site.domainSuffix) ||
     normalizeSupportDisplayValue(selectedSupportMerchantRow?.prefix);
   const selectedSupportBusinessCard = resolveMerchantBusinessCardForChatDisplay(
     selectedSupportMerchantRow?.site.businessCards ?? [],
   );
+  const selectedSupportResolvedBusinessCard = selectedSupportProfile?.chatBusinessCard ?? selectedSupportBusinessCard;
   const selectedSupportLatestMessage = selectedSupportThread?.messages[selectedSupportThread.messages.length - 1] ?? null;
   const selectedSupportThreadMerchantId = selectedSupportThread?.merchantId?.trim() ?? "";
   const selectedSupportLatestMessageKey =
@@ -2269,51 +2283,82 @@ export default function SuperAdminClient() {
     ]
       .filter(Boolean)
       .join(" · ") || "商户留言与回复";
+  const selectedSupportMerchantHeaderIndustry =
+    selectedSupportMerchantIndustry !== "-" ? selectedSupportMerchantIndustry : "未设置行业";
   const selectedSupportMerchantWebsiteHref = useMemo(() => {
-    const explicitDomain = normalizeSupportDisplayValue(selectedSupportMerchantRow?.site.domain);
+    const publicBaseDomain = normalizeSupportDisplayValue(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN);
+    const explicitDomain =
+      normalizeSupportDisplayValue(selectedSupportProfile?.domain) ||
+      normalizeSupportDisplayValue(selectedSupportMerchantRow?.site.domain);
+    if (selectedSupportMerchantId !== "-" && selectedSupportMerchantPrefix) {
+      const preferredHref = buildMerchantFrontendHref(
+        selectedSupportMerchantId,
+        selectedSupportMerchantPrefix,
+        publicBaseDomain || undefined,
+      );
+      const normalizedPreferredHref = normalizeSupportExternalUrl(
+        preferredHref,
+        publicBaseDomain ? `https://${publicBaseDomain.replace(/^https?:\/\//i, "")}` : undefined,
+      );
+      if (normalizedPreferredHref) {
+        return normalizedPreferredHref;
+      }
+    }
     if (explicitDomain) {
-      return normalizeSupportExternalUrl(explicitDomain);
+      return normalizeSupportExternalUrl(
+        explicitDomain,
+        publicBaseDomain ? `https://${publicBaseDomain.replace(/^https?:\/\//i, "")}` : undefined,
+      );
     }
     if (selectedSupportMerchantId === "-") return "";
-    return normalizeSupportExternalUrl(buildMerchantFrontendHref(selectedSupportMerchantId, selectedSupportMerchantPrefix));
-  }, [selectedSupportMerchantId, selectedSupportMerchantPrefix, selectedSupportMerchantRow?.site.domain]);
+    const fallbackHref = buildMerchantFrontendHref(
+      selectedSupportMerchantId,
+      selectedSupportMerchantPrefix,
+      publicBaseDomain || undefined,
+    );
+    return normalizeSupportExternalUrl(
+      fallbackHref,
+      publicBaseDomain ? `https://${publicBaseDomain.replace(/^https?:\/\//i, "")}` : undefined,
+    );
+  }, [
+    selectedSupportMerchantId,
+    selectedSupportMerchantPrefix,
+    selectedSupportMerchantRow?.site.domain,
+    selectedSupportProfile?.domain,
+  ]);
   const selectedSupportMerchantWebsiteLabel =
     selectedSupportMerchantWebsiteHref ? formatSupportUrlLabel(selectedSupportMerchantWebsiteHref) : "-";
   const selectedSupportMerchantCardHref = useMemo(
-    () => buildSupportMerchantCardLink(selectedSupportBusinessCard),
-    [selectedSupportBusinessCard],
+    () => buildSupportMerchantCardLink(selectedSupportResolvedBusinessCard),
+    [selectedSupportResolvedBusinessCard],
   );
   const selectedSupportMerchantCardLabel =
     selectedSupportMerchantCardHref ? formatSupportUrlLabel(selectedSupportMerchantCardHref) : "-";
   const selectedSupportMerchantInfoItems = useMemo(
     () => [
-      { label: "名称", value: selectedSupportDisplayLabel },
       { label: "ID", value: selectedSupportMerchantId },
-      { label: "邮箱", value: selectedSupportMerchantEmail },
-      { label: "行业", value: selectedSupportMerchantIndustry },
-      { label: "城市", value: selectedSupportMerchantCity },
       { label: "电话", value: selectedSupportMerchantPhone },
-      {
-        label: "官网",
-        value: selectedSupportMerchantWebsiteLabel,
-        href: selectedSupportMerchantWebsiteHref,
-        openInNewTab: true,
-      },
+      { label: "邮箱", value: selectedSupportMerchantEmail },
       {
         label: "联系卡",
         value: selectedSupportMerchantCardLabel,
         href: selectedSupportMerchantCardHref,
         openInNewTab: false,
       },
+      { label: "城市", value: selectedSupportMerchantCity },
+      {
+        label: "官网",
+        value: selectedSupportMerchantWebsiteLabel,
+        href: selectedSupportMerchantWebsiteHref,
+        openInNewTab: true,
+      },
     ],
     [
-      selectedSupportDisplayLabel,
       selectedSupportMerchantCardHref,
       selectedSupportMerchantCardLabel,
       selectedSupportMerchantCity,
       selectedSupportMerchantEmail,
       selectedSupportMerchantId,
-      selectedSupportMerchantIndustry,
       selectedSupportMerchantPhone,
       selectedSupportMerchantWebsiteHref,
       selectedSupportMerchantWebsiteLabel,
@@ -2457,6 +2502,9 @@ export default function SuperAdminClient() {
       setSupportMerchantInfoSheetOpen(false);
     }
   }, [activeMenu, isMobileSupportOnlyMode, selectedSupportThread, supportMobileView]);
+  useEffect(() => {
+    setSupportMerchantProfile(null);
+  }, [selectedSupportMerchantId]);
   useEffect(() => {
     if (!hydrated || typeof window === "undefined") return;
     const nextLastReadMap = supportThreads.reduce<Record<string, string>>((accumulator, thread) => {
@@ -2828,9 +2876,9 @@ export default function SuperAdminClient() {
     openMerchantDetailPanel(resolvedSiteId);
   }
 
-  async function requestSupportThreadsWithSessionRecovery(init: RequestInit) {
+  const requestSuperAdminWithSessionRecovery = useCallback(async (url: string, init: RequestInit) => {
     const sendRequest = () =>
-      fetch("/api/super-admin/support-messages", {
+      fetch(url, {
         credentials: "same-origin",
         ...init,
       });
@@ -2847,7 +2895,41 @@ export default function SuperAdminClient() {
     }
     response = await sendRequest();
     return response;
-  }
+  }, []);
+
+  const requestSupportThreadsWithSessionRecovery = useCallback(
+    (init: RequestInit) => requestSuperAdminWithSessionRecovery("/api/super-admin/support-messages", init),
+    [requestSuperAdminWithSessionRecovery],
+  );
+  useEffect(() => {
+    if (!authed || !hydrated || !supportMerchantInfoSheetOpen) return;
+    const merchantId = selectedSupportMerchantId.trim();
+    if (!/^\d{8}$/.test(merchantId)) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await requestSuperAdminWithSessionRecovery(
+          `/api/merchant-chat-business-card?merchantId=${encodeURIComponent(merchantId)}`,
+          {
+            method: "GET",
+            cache: "no-store",
+          },
+        );
+        const payload = (await response.json().catch(() => null)) as
+          | {
+              profile?: MerchantListPublishedSite | null;
+            }
+          | null;
+        if (cancelled || !response.ok) return;
+        setSupportMerchantProfile(payload?.profile ?? null);
+      } catch {
+        if (cancelled) return;
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [authed, hydrated, requestSuperAdminWithSessionRecovery, selectedSupportMerchantId, supportMerchantInfoSheetOpen]);
 
   async function loadSupportThreadsAction(options?: { silent?: boolean; suppressError?: boolean }) {
     if (supportThreadsLoadTaskRef.current) {
@@ -6993,7 +7075,7 @@ export default function SuperAdminClient() {
                             </div>
                             <div className="min-w-0">
                               <div className="truncate text-base font-semibold text-slate-900">{selectedSupportDisplayLabel}</div>
-                              <div className="mt-1 text-xs text-slate-500">商户资料</div>
+                              <div className="mt-1 text-xs text-slate-500">{selectedSupportMerchantHeaderIndustry}</div>
                             </div>
                           </div>
                           <button
