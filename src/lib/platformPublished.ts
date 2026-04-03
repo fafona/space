@@ -288,6 +288,60 @@ function blocksContainMerchantListInPlanConfig(input: unknown): boolean {
   });
 }
 
+function mergePublishedMerchantSnapshotCollections(
+  preferredSnapshot: MerchantListPublishedSite[],
+  fallbackSnapshot: MerchantListPublishedSite[],
+) {
+  const mergedCurrent = mergePublishedMerchantSnapshots(preferredSnapshot, fallbackSnapshot);
+  const mergedIds = new Set(mergedCurrent.map((site) => site.id));
+  const appendedFallback = fallbackSnapshot.filter((site) => !mergedIds.has(site.id));
+  return [...mergedCurrent, ...appendedFallback];
+}
+
+function collectPublishedMerchantSnapshotsFromPlanConfig(
+  input: unknown,
+  current: MerchantListPublishedSite[],
+): MerchantListPublishedSite[] {
+  if (!input || typeof input !== "object") return current;
+  const plans = (input as { plans?: unknown }).plans;
+  if (!Array.isArray(plans)) return current;
+  return plans.reduce<MerchantListPublishedSite[]>((snapshot, plan) => {
+    let next = snapshot;
+    const planBlocks = Array.isArray((plan as { blocks?: unknown }).blocks)
+      ? ((plan as { blocks?: Block[] }).blocks ?? [])
+      : [];
+    if (planBlocks.length > 0) {
+      next = collectPublishedMerchantSnapshotsFromBlocks(planBlocks, next);
+    }
+    const pages = Array.isArray((plan as { pages?: unknown }).pages)
+      ? ((plan as { pages?: Array<{ blocks?: Block[] }> }).pages ?? [])
+      : [];
+    return pages.reduce<MerchantListPublishedSite[]>((pageSnapshot, page) => {
+      const pageBlocks = Array.isArray(page.blocks) ? page.blocks : [];
+      return pageBlocks.length > 0 ? collectPublishedMerchantSnapshotsFromBlocks(pageBlocks, pageSnapshot) : pageSnapshot;
+    }, next);
+  }, current);
+}
+
+export function collectPublishedMerchantSnapshotsFromBlocks(
+  blocks: Block[],
+  current: MerchantListPublishedSite[] = [],
+): MerchantListPublishedSite[] {
+  return blocks.reduce<MerchantListPublishedSite[]>((snapshot, block) => {
+    let next = snapshot;
+    const props = (block.props ?? {}) as Record<string, unknown>;
+    if (block.type === "merchant-list" && Array.isArray(props.publishedMerchantSnapshot) && props.publishedMerchantSnapshot.length > 0) {
+      next = mergePublishedMerchantSnapshotCollections(
+        props.publishedMerchantSnapshot as MerchantListPublishedSite[],
+        next,
+      );
+    }
+    next = collectPublishedMerchantSnapshotsFromPlanConfig(props.pagePlanConfig, next);
+    next = collectPublishedMerchantSnapshotsFromPlanConfig(props.pagePlanConfigMobile, next);
+    return next;
+  }, current);
+}
+
 export function blocksNeedPublishedMerchantSnapshot(blocks: Block[]): boolean {
   return blocks.some((block) => {
     const props = (block.props ?? {}) as Record<string, unknown>;

@@ -30,6 +30,7 @@ import {
 import { buildMerchantFrontendHref } from "@/lib/siteRouting";
 import { useI18n } from "@/components/I18nProvider";
 import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
+import { getMerchantServiceState } from "@/lib/merchantServiceStatus";
 import { getBackgroundStyle } from "./backgroundStyle";
 import { getBlockBorderClass, getBlockBorderInlineStyle } from "./borderStyle";
 import { toRichHtml } from "./richText";
@@ -314,6 +315,10 @@ function isRealRegisteredMerchantSite(site: MerchantListRuntimeSite) {
   return REAL_MERCHANT_SITE_ID_REGEX.test(siteId);
 }
 
+function hasActiveMerchantService(site: MerchantListRuntimeSite, nowMs: number) {
+  return !getMerchantServiceState(site.status, site.serviceExpiresAt, nowMs).maintenance;
+}
+
 function resolveRankLevelByFilter(filter: SearchFilter): MerchantRankLevel {
   if ((filter.city ?? "").trim()) return "city";
   if ((filter.provinceCode ?? "").trim() || (filter.province ?? "").trim()) return "province";
@@ -471,6 +476,7 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
       const siteViews30d = readSitePageView30dMap(sortNowMs);
       const sorted = merchantSitesSource
         .filter((site) => isRealRegisteredMerchantSite(site))
+        .filter((site) => hasActiveMerchantService(site, sortNowMs))
         .filter((site) => siteMatchesFilter(site, searchFilter))
         .filter((site) => (activeIndustry === "all" ? true : site.industry === activeIndustry))
         .sort((a, b) => {

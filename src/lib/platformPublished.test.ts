@@ -4,6 +4,7 @@ import type { Block, MerchantListPublishedSite } from "@/data/homeBlocks";
 import {
   blocksNeedPublishedMerchantSnapshot,
   buildPublishedMerchantSnapshotFromRows,
+  collectPublishedMerchantSnapshotsFromBlocks,
   injectPublishedMerchantSnapshotIntoBlocks,
   mergePublishedMerchantSnapshots,
 } from "./platformPublished";
@@ -430,6 +431,143 @@ test("injectPublishedMerchantSnapshotIntoBlocks keeps richer existing merchant c
   assert.equal(byId.get("10000000")?.merchantCardImageUrl, "https://example.com/fafona.webp");
   assert.equal(byId.get("10000001")?.merchantName, "20889576");
   assert.equal(rootProps.publishedMerchantDefaultSortRule, "monthly_views_desc");
+});
+
+test("collectPublishedMerchantSnapshotsFromBlocks merges richer existing homepage card config with nested snapshots", () => {
+  const blocks: Block[] = [
+    {
+      id: "merchant-root",
+      type: "merchant-list",
+      props: {
+        publishedMerchantSnapshot: [
+          {
+            id: "10909091",
+            merchantName: "ABC",
+            domainPrefix: "abc",
+            domainSuffix: "abc",
+            name: "ABC",
+            domain: "abc.faolla.com",
+            category: "品牌官网",
+            industry: "零售",
+            location: {
+              countryCode: "ES",
+              country: "Spain",
+              provinceCode: "41",
+              province: "Sevilla",
+              city: "Sevilla",
+            },
+            contactAddress: "C.Transporte,55",
+            contactName: "Felix",
+            contactPhone: "633130577",
+            contactEmail: "fafona.felix@gmail.com",
+            merchantCardImageUrl: "https://example.com/abc.webp",
+            merchantCardImageOpacity: 0.57,
+            sortConfig: {
+              recommendedCountryRank: null,
+              recommendedProvinceRank: null,
+              recommendedCityRank: null,
+              industryCountryRank: null,
+              industryProvinceRank: null,
+              industryCityRank: null,
+            },
+            createdAt: "2026-03-30T22:30:25.281331+00:00",
+          },
+        ],
+      } as never,
+    },
+    {
+      id: "common-root",
+      type: "common",
+      props: {
+        pagePlanConfig: {
+          activePlanId: "plan-1",
+          plans: [
+            {
+              id: "plan-1",
+              pages: [
+                {
+                  id: "page-1",
+                  blocks: [
+                    {
+                      id: "merchant-nested",
+                      type: "merchant-list",
+                      props: {
+                        publishedMerchantSnapshot: [
+                          {
+                            id: "10909091",
+                            merchantName: "ABC",
+                            domainPrefix: "abc",
+                            domainSuffix: "",
+                            name: "ABC",
+                            domain: "10909091",
+                            category: "",
+                            industry: "",
+                            location: {
+                              countryCode: "",
+                              country: "",
+                              provinceCode: "",
+                              province: "",
+                              city: "",
+                            },
+                            merchantCardImageUrl: "",
+                            merchantCardImageOpacity: 1,
+                            sortConfig: {
+                              recommendedCountryRank: null,
+                              recommendedProvinceRank: null,
+                              recommendedCityRank: null,
+                              industryCountryRank: null,
+                              industryProvinceRank: null,
+                              industryCityRank: null,
+                            },
+                            createdAt: "2026-03-30T22:30:25.281331+00:00",
+                          },
+                          {
+                            id: "10000001",
+                            merchantName: "20889576",
+                            domainPrefix: "",
+                            domainSuffix: "",
+                            name: "20889576",
+                            domain: "10000001",
+                            category: "",
+                            industry: "",
+                            location: {
+                              countryCode: "",
+                              country: "",
+                              provinceCode: "",
+                              province: "",
+                              city: "",
+                            },
+                            merchantCardImageUrl: "",
+                            merchantCardImageOpacity: 1,
+                            sortConfig: {
+                              recommendedCountryRank: null,
+                              recommendedProvinceRank: null,
+                              recommendedCityRank: null,
+                              industryCountryRank: null,
+                              industryProvinceRank: null,
+                              industryCityRank: null,
+                            },
+                            createdAt: "2026-03-03T03:30:04.550Z",
+                          },
+                        ],
+                      } as never,
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      } as never,
+    },
+  ];
+
+  const snapshot = collectPublishedMerchantSnapshotsFromBlocks(blocks);
+  assert.equal(snapshot.length, 2);
+  const byId = new Map(snapshot.map((item) => [item.id, item] as const));
+  assert.equal(byId.get("10909091")?.merchantCardImageUrl, "https://example.com/abc.webp");
+  assert.equal(byId.get("10909091")?.category, "品牌官网");
+  assert.equal(byId.get("10000001")?.merchantName, "20889576");
 });
 
 test("mergePublishedMerchantSnapshots restores missing published merchants while keeping richer stored card data", () => {
