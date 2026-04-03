@@ -45,8 +45,7 @@ function hasRecoveryIndicators() {
     hashParams.has("refresh_token") ||
     (url.searchParams.get("type") ?? "").trim() === "recovery" ||
     Boolean((url.searchParams.get("code") ?? "").trim()) ||
-    Boolean((url.searchParams.get("token_hash") ?? url.searchParams.get("token") ?? "").trim()) ||
-    (url.searchParams.get("confirmed") ?? "").trim() === "1"
+    Boolean((url.searchParams.get("token_hash") ?? url.searchParams.get("token") ?? "").trim())
   );
 }
 
@@ -60,8 +59,7 @@ function hasUrlRecoveryIndicators() {
     hashParams.has("refresh_token") ||
     (url.searchParams.get("type") ?? "").trim() === "recovery" ||
     Boolean((url.searchParams.get("code") ?? "").trim()) ||
-    Boolean((url.searchParams.get("token_hash") ?? url.searchParams.get("token") ?? "").trim()) ||
-    (url.searchParams.get("confirmed") ?? "").trim() === "1"
+    Boolean((url.searchParams.get("token_hash") ?? url.searchParams.get("token") ?? "").trim())
   );
 }
 
