@@ -440,7 +440,7 @@ export default function ChatBusinessCardDialog({
       <button
         type="button"
         className={mode === "viewer" ? "block w-full touch-manipulation" : "block w-full touch-manipulation rounded-2xl"}
-        onClick={handleImageClick}
+        onClick={mode === "viewer" ? undefined : handleImageClick}
         onTouchStart={handleImageTouchStart}
         onTouchMove={handleImageTouchMove}
         onTouchEnd={handleImageTouchEnd}
@@ -453,7 +453,7 @@ export default function ChatBusinessCardDialog({
           alt={card.name}
           className={
             mode === "viewer"
-              ? "mx-auto block h-auto max-h-[88vh] w-auto max-w-full rounded-2xl bg-transparent object-contain shadow-2xl"
+              ? "mx-auto block h-auto max-h-[82vh] w-auto max-w-full rounded-[24px] bg-white object-contain shadow-2xl"
               : "mx-auto block h-auto max-h-[60vh] w-auto max-w-full bg-transparent object-contain"
           }
         />
@@ -463,70 +463,71 @@ export default function ChatBusinessCardDialog({
 
   return createPortal(
     <>
-      <button
-        type="button"
-        className="fixed inset-0 z-[2147483400] bg-black/50"
-        onClick={onClose}
-        aria-label="关闭名片弹窗"
-      />
-      <div className="fixed inset-0 z-[2147483401] flex items-center justify-center p-4">
-        <div className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl">
-          <div className="flex items-start justify-between gap-3 border-b px-5 py-4">
-            <div className="min-w-0">
-              <div className="truncate text-base font-semibold text-slate-900">{merchantName || "名片"}</div>
-              {subtitle ? <div className="truncate text-xs text-slate-500">{subtitle}</div> : null}
-            </div>
-            <button
-              type="button"
-              className="shrink-0 rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
-              onClick={onClose}
-            >
-              关闭
-            </button>
-          </div>
-          <div className="min-h-0 overflow-y-auto px-5 py-5">
-            {card ? (
-              <div className="space-y-4">
-                <div className="overflow-hidden rounded-2xl border bg-slate-50 p-4">
-                  {renderCardImage("inline")}
-                  <div className="mt-3 text-center text-[11px] leading-5 text-slate-500">
-                    手机端可单击看大图，长按图片可分享、保存到照片或识别二维码。
-                  </div>
+      {!imageViewerOpen ? (
+        <>
+          <button
+            type="button"
+            className="fixed inset-0 z-[2147483400] bg-black/50"
+            onClick={onClose}
+            aria-label="关闭名片弹窗"
+          />
+          <div className="fixed inset-0 z-[2147483401] flex items-center justify-center p-4">
+            <div className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl">
+              <div className="flex items-start justify-between gap-3 border-b px-5 py-4">
+                <div className="min-w-0">
+                  <div className="truncate text-base font-semibold text-slate-900">{merchantName || "名片"}</div>
+                  {subtitle ? <div className="truncate text-xs text-slate-500">{subtitle}</div> : null}
                 </div>
-                <div className="rounded-2xl border bg-slate-50 px-4 py-3">
-                  <div className="text-sm font-medium text-slate-900">{card.name}</div>
-                  <div className="mt-1 text-xs text-slate-500">
-                    {card.mode === "link" ? "链接模式名片" : "图片模式名片"}
-                  </div>
-                  {shareUrl ? (
-                    <div className="mt-3 space-y-2">
-                      <div className="text-xs font-medium text-slate-600">名片链接</div>
-                      <a
-                        href={shareUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="block break-all text-sm text-blue-600 underline underline-offset-4"
-                      >
-                        {shareUrl}
-                      </a>
+                <button
+                  type="button"
+                  className="shrink-0 rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                  onClick={onClose}
+                >
+                  关闭
+                </button>
+              </div>
+              <div className="min-h-0 overflow-y-auto px-5 py-5">
+                {card ? (
+                  <div className="space-y-4">
+                    <div className="overflow-hidden rounded-2xl border bg-slate-50 p-4">
+                      {renderCardImage("inline")}
+                      <div className="mt-3 text-center text-[11px] leading-5 text-slate-500">
+                        单击看大图，长按图片可分享、保存或识别二维码。
+                      </div>
                     </div>
-                  ) : null}
-                </div>
+                    <div className="rounded-2xl border bg-slate-50 px-4 py-3">
+                      <div className="text-sm font-medium text-slate-900">{card.name}</div>
+                      {shareUrl ? (
+                        <div className="mt-3 space-y-2">
+                          <div className="text-xs font-medium text-slate-600">名片链接</div>
+                          <a
+                            href={shareUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="block break-all text-sm text-blue-600 underline underline-offset-4"
+                          >
+                            {shareUrl}
+                          </a>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-dashed bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
+                    这个商户当前没有设置用于聊天展示的名片。
+                  </div>
+                )}
               </div>
-            ) : (
-              <div className="rounded-2xl border border-dashed bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
-                这个商户当前没有设置用于聊天展示的名片。
-              </div>
-            )}
+            </div>
           </div>
-        </div>
-      </div>
+        </>
+      ) : null}
 
       {imageViewerOpen && card ? (
         <>
           <button
             type="button"
-            className="fixed inset-0 z-[2147483402] bg-black/85"
+            className="fixed inset-0 z-[2147483402] bg-slate-950"
             onClick={() => setImageViewerOpen(false)}
             aria-label="关闭大图预览"
           />
@@ -542,7 +543,9 @@ export default function ChatBusinessCardDialog({
                   关闭
                 </button>
               </div>
-              {renderCardImage("viewer")}
+              <div className="rounded-[28px] bg-white p-2 shadow-2xl">
+                {renderCardImage("viewer")}
+              </div>
               <div className="mt-3 text-center text-xs text-white/70">长按图片可分享、保存到照片或识别二维码。</div>
             </div>
           </div>
