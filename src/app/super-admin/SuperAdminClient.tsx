@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent, type ReactNode, type TouchEvent } from "react";
 import { createPortal } from "react-dom";
+import { buildMerchantBusinessCardShareUrl, resolveMerchantBusinessCardShareOrigin } from "@/lib/merchantBusinessCardShare";
 import {
   getBlocksSnapshot,
   getPublishedBlocksSnapshot,
@@ -85,7 +86,7 @@ import {
 } from "@/lib/planTemplatePreviewCapture";
 import { buildPlatformMerchantSnapshotPayloadFromSites } from "@/lib/platformMerchantSnapshot";
 import ChatBusinessCardDialog from "@/components/admin/ChatBusinessCardDialog";
-import { resolveMerchantBusinessCardForChatDisplay } from "@/lib/merchantBusinessCards";
+import { resolveMerchantBusinessCardForChatDisplay, type MerchantBusinessCardAsset } from "@/lib/merchantBusinessCards";
 import { type PlatformSupportMessage, type PlatformSupportThread } from "@/lib/platformSupportInbox";
 import { getMerchantServiceState } from "@/lib/merchantServiceStatus";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
@@ -206,6 +207,81 @@ function getSupportAvatarLabel(value: string | null | undefined, fallback = "商
   const compact = normalized.replace(/\s+/g, "");
   if (!compact) return fallback;
   return compact.slice(0, 2).toUpperCase();
+}
+
+function normalizeSupportDetailText(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeSupportDisplayValue(value: unknown) {
+  const normalized = normalizeSupportDetailText(value);
+  return normalized && normalized !== "-" ? normalized : "";
+}
+
+function buildSupportMerchantCardLink(card: MerchantBusinessCardAsset | null) {
+  if (!card || card.mode !== "link") return "";
+  const targetUrl = normalizeSupportDetailText(card.targetUrl);
+  if (!targetUrl) return "";
+  return buildMerchantBusinessCardShareUrl({
+    origin: resolveMerchantBusinessCardShareOrigin(undefined, targetUrl),
+    shareKey: normalizeSupportDetailText(card.shareKey),
+    name: normalizeSupportDetailText(card.name),
+    imageUrl: normalizeSupportDetailText(card.shareImageUrl) || normalizeSupportDetailText(card.imageUrl),
+    detailImageUrl:
+      normalizeSupportDetailText(card.contactPagePublicImageUrl) || normalizeSupportDetailText(card.contactPageImageUrl),
+    detailImageHeight: card.contactPageImageHeight,
+    targetUrl,
+    contact: {
+      displayName: normalizeSupportDetailText(card.contacts.contactName) || normalizeSupportDetailText(card.name),
+      organization: normalizeSupportDetailText(card.name),
+      title: normalizeSupportDetailText(card.title),
+      phone: normalizeSupportDetailText(card.contacts.phone),
+      phones: Array.isArray(card.contacts.phones) ? card.contacts.phones.filter(Boolean) : [],
+      contactFieldOrder: card.contactFieldOrder,
+      contactOnlyFields: card.contactOnlyFields,
+      email: normalizeSupportDetailText(card.contacts.email),
+      address: normalizeSupportDetailText(card.contacts.address),
+      wechat: normalizeSupportDetailText(card.contacts.wechat),
+      whatsapp: normalizeSupportDetailText(card.contacts.whatsapp),
+      twitter: normalizeSupportDetailText(card.contacts.twitter),
+      weibo: normalizeSupportDetailText(card.contacts.weibo),
+      telegram: normalizeSupportDetailText(card.contacts.telegram),
+      linkedin: normalizeSupportDetailText(card.contacts.linkedin),
+      discord: normalizeSupportDetailText(card.contacts.discord),
+      facebook: normalizeSupportDetailText(card.contacts.facebook),
+      instagram: normalizeSupportDetailText(card.contacts.instagram),
+      tiktok: normalizeSupportDetailText(card.contacts.tiktok),
+      douyin: normalizeSupportDetailText(card.contacts.douyin),
+      xiaohongshu: normalizeSupportDetailText(card.contacts.xiaohongshu),
+      websiteUrl: targetUrl,
+    },
+  });
+}
+
+function normalizeSupportExternalUrl(value: string | null | undefined) {
+  const normalized = normalizeSupportDetailText(value);
+  if (!normalized) return "";
+  if (/^https?:\/\//i.test(normalized)) return normalized;
+  if (normalized.startsWith("/")) {
+    if (typeof window === "undefined") return normalized;
+    try {
+      return new URL(normalized, window.location.origin).toString();
+    } catch {
+      return normalized;
+    }
+  }
+  return `https://${normalized}`;
+}
+
+function formatSupportUrlLabel(value: string | null | undefined) {
+  const normalized = normalizeSupportDetailText(value);
+  if (!normalized) return "-";
+  try {
+    const url = new URL(normalizeSupportExternalUrl(normalized));
+    return `${url.host}${url.pathname === "/" ? "" : url.pathname}`.replace(/\/+$/g, "") || normalized;
+  } catch {
+    return normalized.replace(/^https?:\/\//i, "").replace(/\/+$/g, "") || normalized;
+  }
 }
 
 function buildSupportThreadsDigest(threads: PlatformSupportThread[]) {
@@ -1361,6 +1437,7 @@ export default function SuperAdminClient() {
   const [supportReplyDraft, setSupportReplyDraft] = useState("");
   const [supportSending, setSupportSending] = useState(false);
   const [supportBusinessCardDialogOpen, setSupportBusinessCardDialogOpen] = useState(false);
+  const [supportMerchantInfoSheetOpen, setSupportMerchantInfoSheetOpen] = useState(false);
   const [supportLastReadMap, setSupportLastReadMap] = useState<Record<string, string>>({});
   const supportMessagesViewportRef = useRef<HTMLDivElement>(null);
   const supportReplyInputRef = useRef<HTMLTextAreaElement>(null);
@@ -1396,6 +1473,7 @@ export default function SuperAdminClient() {
     });
   }, []);
   const closeMobileSupportThread = useCallback(() => {
+    setSupportMerchantInfoSheetOpen(false);
     setSupportMobileView("list");
   }, []);
   const handleSupportMobileThreadTouchStart = useCallback((event: TouchEvent<HTMLDivElement>) => {
@@ -2105,6 +2183,28 @@ export default function SuperAdminClient() {
     selectedSupportThread?.merchantName ||
     selectedSupportThread?.merchantId ||
     "-";
+  const selectedSupportMerchantId =
+    normalizeSupportDisplayValue(selectedSupportMerchantRow?.merchantId) ||
+    normalizeSupportDisplayValue(selectedSupportThread?.merchantId) ||
+    "-";
+  const selectedSupportMerchantEmail =
+    normalizeSupportDisplayValue(selectedSupportMerchantRow?.userEmail) ||
+    normalizeSupportDisplayValue(selectedSupportThread?.merchantEmail) ||
+    "-";
+  const selectedSupportMerchantIndustry =
+    normalizeSupportDisplayValue(selectedSupportMerchantRow?.industry) ||
+    normalizeSupportDisplayValue(selectedSupportMerchantRow?.site.industry) ||
+    "-";
+  const selectedSupportMerchantCity =
+    normalizeSupportDisplayValue(selectedSupportMerchantRow?.city) ||
+    normalizeSupportDisplayValue(selectedSupportMerchantRow?.site.location.city) ||
+    "-";
+  const selectedSupportMerchantPhone =
+    normalizeSupportDisplayValue(selectedSupportMerchantRow?.site.contactPhone) || "-";
+  const selectedSupportMerchantPrefix =
+    normalizeSupportDisplayValue(selectedSupportMerchantRow?.site.domainPrefix) ||
+    normalizeSupportDisplayValue(selectedSupportMerchantRow?.site.domainSuffix) ||
+    normalizeSupportDisplayValue(selectedSupportMerchantRow?.prefix);
   const selectedSupportBusinessCard = resolveMerchantBusinessCardForChatDisplay(
     selectedSupportMerchantRow?.site.businessCards ?? [],
   );
@@ -2160,16 +2260,62 @@ export default function SuperAdminClient() {
   const supportUnreadThreadCount = supportUnreadMerchantIds.size;
   const selectedSupportMerchantMeta =
     [
-      selectedSupportThread?.merchantId ? `ID ${selectedSupportThread.merchantId}` : "",
+      selectedSupportMerchantId !== "-" ? `ID ${selectedSupportMerchantId}` : "",
       selectedSupportMerchantRow?.loginAccount ? `账号 ${selectedSupportMerchantRow.loginAccount}` : "",
-      selectedSupportMerchantRow?.userEmail || selectedSupportThread?.merchantEmail || "",
+      selectedSupportMerchantEmail !== "-" ? selectedSupportMerchantEmail : "",
     ]
       .filter(Boolean)
       .join(" · ") || "商户留言与回复";
-  const selectedSupportThreadMessageCount = selectedSupportThread?.messages.length ?? 0;
-  const selectedSupportThreadStatusText = selectedSupportLatestMessage
-    ? `最新消息 ${formatSupportConversationTime(selectedSupportLatestMessage.createdAt)}`
-    : "等待开始对话";
+  const selectedSupportMerchantWebsiteHref = useMemo(() => {
+    const explicitDomain = normalizeSupportDisplayValue(selectedSupportMerchantRow?.site.domain);
+    if (explicitDomain) {
+      return normalizeSupportExternalUrl(explicitDomain);
+    }
+    if (selectedSupportMerchantId === "-") return "";
+    return normalizeSupportExternalUrl(buildMerchantFrontendHref(selectedSupportMerchantId, selectedSupportMerchantPrefix));
+  }, [selectedSupportMerchantId, selectedSupportMerchantPrefix, selectedSupportMerchantRow?.site.domain]);
+  const selectedSupportMerchantWebsiteLabel =
+    selectedSupportMerchantWebsiteHref ? formatSupportUrlLabel(selectedSupportMerchantWebsiteHref) : "-";
+  const selectedSupportMerchantCardHref = useMemo(
+    () => buildSupportMerchantCardLink(selectedSupportBusinessCard),
+    [selectedSupportBusinessCard],
+  );
+  const selectedSupportMerchantCardLabel =
+    selectedSupportMerchantCardHref ? formatSupportUrlLabel(selectedSupportMerchantCardHref) : "-";
+  const selectedSupportMerchantInfoItems = useMemo(
+    () => [
+      { label: "名称", value: selectedSupportDisplayLabel },
+      { label: "ID", value: selectedSupportMerchantId },
+      { label: "邮箱", value: selectedSupportMerchantEmail },
+      { label: "行业", value: selectedSupportMerchantIndustry },
+      { label: "城市", value: selectedSupportMerchantCity },
+      { label: "电话", value: selectedSupportMerchantPhone },
+      {
+        label: "官网",
+        value: selectedSupportMerchantWebsiteLabel,
+        href: selectedSupportMerchantWebsiteHref,
+        openInNewTab: true,
+      },
+      {
+        label: "联系卡",
+        value: selectedSupportMerchantCardLabel,
+        href: selectedSupportMerchantCardHref,
+        openInNewTab: false,
+      },
+    ],
+    [
+      selectedSupportDisplayLabel,
+      selectedSupportMerchantCardHref,
+      selectedSupportMerchantCardLabel,
+      selectedSupportMerchantCity,
+      selectedSupportMerchantEmail,
+      selectedSupportMerchantId,
+      selectedSupportMerchantIndustry,
+      selectedSupportMerchantPhone,
+      selectedSupportMerchantWebsiteHref,
+      selectedSupportMerchantWebsiteLabel,
+    ],
+  );
   const mobileSupportListSummary = supportThreadsLoading
     ? "正在同步商户留言..."
     : supportUnreadThreadCount > 0
@@ -2303,6 +2449,11 @@ export default function SuperAdminClient() {
       setSupportMobileView("list");
     }
   }, [isMobileSupportOnlyMode, selectedSupportMerchantRow, supportMobileView]);
+  useEffect(() => {
+    if (activeMenu !== "support_messages" || !isMobileSupportOnlyMode || supportMobileView !== "thread" || !selectedSupportThread) {
+      setSupportMerchantInfoSheetOpen(false);
+    }
+  }, [activeMenu, isMobileSupportOnlyMode, selectedSupportThread, supportMobileView]);
   useEffect(() => {
     if (!hydrated || typeof window === "undefined") return;
     const nextLastReadMap = supportThreads.reduce<Record<string, string>>((accumulator, thread) => {
@@ -6385,47 +6536,37 @@ export default function SuperAdminClient() {
                       }}
                     >
                       <div className="shrink-0 border-b border-slate-200/80 bg-white/90 px-3 pb-3 pt-[calc(env(safe-area-inset-top)+0.55rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
-                        <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-start gap-3">
                           <div className="flex min-w-0 items-center gap-3">
                             <button
                               type="button"
-                              className="shrink-0 rounded-full p-1 text-[28px] leading-none text-slate-900 hover:bg-slate-100"
+                              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-slate-900 hover:bg-slate-100"
                               onClick={closeMobileSupportThread}
                               aria-label="返回会话列表"
                             >
-                              {"<"}
+                              <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" aria-hidden="true">
+                                <path
+                                  d="M19 12H7M12 7l-5 5 5 5"
+                                  stroke="currentColor"
+                                  strokeWidth="2.2"
+                                  strokeLinecap="square"
+                                  strokeLinejoin="miter"
+                                />
+                              </svg>
                             </button>
-                            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm">
+                            <button
+                              type="button"
+                              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm transition hover:scale-[1.02]"
+                              onClick={() => setSupportMerchantInfoSheetOpen(true)}
+                              aria-label="查看商户信息"
+                            >
                               {getSupportAvatarLabel(selectedSupportDisplayLabel, "商")}
-                            </div>
+                            </button>
                             <div className="min-w-0">
                               <div className="truncate text-[15px] font-semibold text-slate-900">{selectedSupportDisplayLabel}</div>
                               <div className="mt-1 line-clamp-2 text-[11px] leading-5 text-slate-500">{selectedSupportMerchantMeta}</div>
                             </div>
                           </div>
-                          <div className="flex shrink-0 items-center gap-2">
-                            <button
-                              type="button"
-                              className="rounded-full border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
-                              onClick={() => setSupportBusinessCardDialogOpen(true)}
-                            >
-                              名片
-                            </button>
-                            <button
-                              type="button"
-                              className="rounded-full border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
-                              onClick={() => openMerchantDetailPanelForRow(selectedSupportMerchantRow)}
-                              disabled={!selectedSupportMerchantRow}
-                            >
-                              详情
-                            </button>
-                          </div>
-                        </div>
-                        <div className="mt-3 flex items-center gap-2 text-[11px] text-slate-500">
-                          <span className="inline-flex rounded-full bg-slate-900 px-2.5 py-1 text-white">
-                            {selectedSupportThreadMessageCount} 条消息
-                          </span>
-                          <span className="truncate">{selectedSupportThreadStatusText}</span>
                         </div>
                       </div>
                       {supportThreadsError ? (
@@ -6449,29 +6590,22 @@ export default function SuperAdminClient() {
                                     </div>
                                   ) : null}
                                   <div className={`flex ${isMerchantMessage ? "justify-start" : "justify-end"}`}>
-                                    <div className={`flex max-w-[92%] items-end gap-2 ${isMerchantMessage ? "" : "flex-row-reverse"}`}>
-                                      <div
-                                        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-2xl text-[11px] font-semibold shadow-sm ${
-                                          isMerchantMessage
-                                            ? "border border-slate-200 bg-white text-slate-700"
-                                            : "bg-slate-900 text-white"
-                                        }`}
-                                      >
-                                        {isMerchantMessage ? getSupportAvatarLabel(selectedSupportDisplayLabel, "商") : "后台"}
+                                    <div
+                                      className={`max-w-[84%] min-w-0 rounded-[24px] px-4 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.08)] ${
+                                        isMerchantMessage
+                                          ? "border border-slate-200 bg-white text-slate-900"
+                                          : "bg-slate-900 text-white"
+                                      }`}
+                                    >
+                                      <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-[15px] leading-6">
+                                        {message.text}
                                       </div>
                                       <div
-                                        className={`min-w-0 rounded-[24px] px-4 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.08)] ${
-                                          isMerchantMessage
-                                            ? "border border-slate-200 bg-white text-slate-900"
-                                            : "bg-slate-900 text-white"
+                                        className={`mt-2 text-right text-[10px] ${
+                                          isMerchantMessage ? "text-slate-400" : "text-white/70"
                                         }`}
                                       >
-                                        <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-[15px] leading-6">
-                                          {message.text}
-                                        </div>
-                                        <div className={`mt-2 text-[10px] ${isMerchantMessage ? "text-slate-400" : "text-white/70"}`}>
-                                          {isMerchantMessage ? "商户" : "超级后台"} · {formatSupportClockTime(message.createdAt)}
-                                        </div>
+                                        {formatSupportClockTime(message.createdAt)}
                                       </div>
                                     </div>
                                   </div>
@@ -6836,6 +6970,63 @@ export default function SuperAdminClient() {
               </section>
               )
             ) : null}
+
+            {supportMerchantInfoSheetOpen && activeMenu === "support_messages" && showMobileSupportThread
+              ? renderTopMostOverlay(
+                  <>
+                    <button
+                      type="button"
+                      className="fixed inset-0 z-[2147483400] bg-slate-950/40 backdrop-blur-[1px]"
+                      onClick={() => setSupportMerchantInfoSheetOpen(false)}
+                      aria-label="关闭商户信息"
+                    />
+                    <div className="fixed inset-x-0 bottom-0 z-[2147483401] px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)]">
+                      <div className="mx-auto w-full max-w-md rounded-[30px] bg-white px-4 pb-4 pt-3 shadow-[0_24px_80px_rgba(15,23,42,0.2)]">
+                        <div className="mx-auto h-1.5 w-12 rounded-full bg-slate-200" />
+                        <div className="mt-4 flex items-start justify-between gap-3">
+                          <div className="flex min-w-0 items-center gap-3">
+                            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white">
+                              {getSupportAvatarLabel(selectedSupportDisplayLabel, "商")}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="truncate text-base font-semibold text-slate-900">{selectedSupportDisplayLabel}</div>
+                              <div className="mt-1 text-xs text-slate-500">商户资料</div>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            className="rounded-full border border-slate-200 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50"
+                            onClick={() => setSupportMerchantInfoSheetOpen(false)}
+                          >
+                            关闭
+                          </button>
+                        </div>
+                        <div className="mt-4 divide-y divide-slate-100 overflow-hidden rounded-[24px] border border-slate-100 bg-slate-50/70">
+                          {selectedSupportMerchantInfoItems.map((item) => (
+                            <div key={item.label} className="px-4 py-3">
+                              <div className="text-[11px] font-medium tracking-[0.08em] text-slate-400">{item.label}</div>
+                              <div className="mt-1 text-sm leading-6 text-slate-900">
+                                {item.href ? (
+                                  <a
+                                    href={item.href}
+                                    target={item.openInNewTab ? "_blank" : undefined}
+                                    rel={item.openInNewTab ? "noreferrer" : undefined}
+                                    className="break-all text-slate-900 underline decoration-slate-300 underline-offset-4"
+                                  >
+                                    {item.value}
+                                  </a>
+                                ) : (
+                                  <span>{item.value}</span>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </>,
+                )
+              : null}
 
             <ChatBusinessCardDialog
               open={supportBusinessCardDialogOpen && activeMenu === "support_messages"}
