@@ -207,8 +207,6 @@ export default function ChatBusinessCardDialog({
   const [actionSheetOpen, setActionSheetOpen] = useState(false);
   const [actionBusy, setActionBusy] = useState<CardActionKind>(null);
   const [actionNotice, setActionNotice] = useState("");
-  const [qrResult, setQrResult] = useState("");
-  const [qrResultOpen, setQrResultOpen] = useState(false);
   const longPressTimerRef = useRef<number | null>(null);
   const longPressTriggeredRef = useRef(false);
   const suppressNextClickRef = useRef(false);
@@ -223,8 +221,6 @@ export default function ChatBusinessCardDialog({
     setActionSheetOpen(false);
     setActionBusy(null);
     setActionNotice("");
-    setQrResult("");
-    setQrResultOpen(false);
   }, [open]);
 
   useEffect(() => {
@@ -411,9 +407,13 @@ export default function ChatBusinessCardDialog({
     setActionNotice("");
     try {
       const decodedValue = await decodeCardQrCode(card.imageUrl);
-      setQrResult(decodedValue);
-      setQrResultOpen(true);
       setActionSheetOpen(false);
+      if (isLikelyUrl(decodedValue) && typeof window !== "undefined") {
+        window.location.assign(decodedValue);
+        return;
+      }
+      await copyTextToClipboard(decodedValue);
+      setActionNotice("已识别二维码内容并复制。");
     } catch (error) {
       if (error instanceof Error && error.message === "card_qr_not_found") {
         setActionNotice("这张名片图片里没有识别到二维码。");
@@ -423,31 +423,6 @@ export default function ChatBusinessCardDialog({
     } finally {
       setActionBusy(null);
     }
-  };
-
-  const handleCopyQrResult = async () => {
-    if (!qrResult) return;
-    try {
-      await copyTextToClipboard(qrResult);
-      setActionNotice("二维码内容已复制。");
-      setQrResultOpen(false);
-    } catch {
-      setActionNotice("复制失败，请稍后重试。");
-    }
-  };
-
-  const handleOpenQrResult = () => {
-    if (!qrResult || typeof window === "undefined") return;
-    if (isLikelyUrl(qrResult)) {
-      const opened = window.open(qrResult, "_blank", "noopener,noreferrer");
-      if (!opened) {
-        setActionNotice("浏览器拦截了新窗口，请允许弹窗后重试。");
-        return;
-      }
-      setQrResultOpen(false);
-      return;
-    }
-    void handleCopyQrResult();
   };
 
   const renderCardImage = (mode: "inline" | "viewer") => {
@@ -616,48 +591,6 @@ export default function ChatBusinessCardDialog({
                   onClick={() => setActionSheetOpen(false)}
                 >
                   取消
-                </button>
-              </div>
-            </div>
-          </div>
-        </>
-      ) : null}
-
-      {qrResultOpen ? (
-        <>
-          <button
-            type="button"
-            className="fixed inset-0 z-[2147483406] bg-black/55"
-            onClick={() => setQrResultOpen(false)}
-            aria-label="关闭二维码识别结果"
-          />
-          <div className="fixed inset-0 z-[2147483407] flex items-center justify-center p-4">
-            <div className="w-full max-w-md rounded-3xl bg-white p-5 shadow-2xl">
-              <div className="text-base font-semibold text-slate-900">二维码识别结果</div>
-              <div className="mt-2 rounded-2xl bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-700 break-all">
-                {qrResult}
-              </div>
-              <div className="mt-4 grid grid-cols-1 gap-2">
-                <button
-                  type="button"
-                  className="rounded-2xl bg-slate-950 px-4 py-3 text-sm font-medium text-white transition hover:bg-slate-800"
-                  onClick={handleOpenQrResult}
-                >
-                  {isLikelyUrl(qrResult) ? "打开识别结果" : "复制识别结果"}
-                </button>
-                <button
-                  type="button"
-                  className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-                  onClick={() => void handleCopyQrResult()}
-                >
-                  复制内容
-                </button>
-                <button
-                  type="button"
-                  className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-500 transition hover:bg-slate-50"
-                  onClick={() => setQrResultOpen(false)}
-                >
-                  关闭
                 </button>
               </div>
             </div>
