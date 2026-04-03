@@ -62,6 +62,9 @@ export async function POST(request: Request) {
     const response = noStoreJson({
       ok: true,
       ready: true,
+      accessToken,
+      refreshToken,
+      expiresIn: data.session?.expires_in ?? null,
     });
     setResetRecoveryCookies(response, {
       accessToken,

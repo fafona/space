@@ -18,6 +18,10 @@ import {
   persistResetPasswordEmailRequest,
   readStoredResetPasswordEmailRequest,
 } from "@/lib/resetPasswordEmailRequest";
+import {
+  buildResetPasswordRecoveryUrl,
+  persistResetPasswordRecoveryPayload,
+} from "@/lib/resetPasswordRecoveryPayload";
 import { clearMerchantSignInBridge, setMerchantSignInBridge } from "@/lib/merchantSignInBridge";
 import { buildMerchantBackendHref } from "@/lib/siteRouting";
 import {
@@ -792,12 +796,34 @@ function LoginPageInner() {
           }),
         }),
       );
-      const payload = (await response.json().catch(() => null)) as { ok?: unknown; error?: unknown } | null;
+      const payload = (await response.json().catch(() => null)) as
+        | {
+            ok?: unknown;
+            error?: unknown;
+            accessToken?: unknown;
+            refreshToken?: unknown;
+          }
+        | null;
       if (!response.ok || payload?.ok !== true) {
         const errorMessage = typeof payload?.error === "string" ? payload.error : t("login.requestFailed");
         throw new Error(errorMessage);
       }
-      window.location.href = "/reset-password";
+      const accessToken = typeof payload?.accessToken === "string" ? payload.accessToken.trim() : "";
+      const refreshToken = typeof payload?.refreshToken === "string" ? payload.refreshToken.trim() : "";
+      if (!accessToken) {
+        throw new Error(t("reset.sessionExpired"));
+      }
+      const recoveryPayload = {
+        accessToken,
+        refreshToken,
+        tokenHash: "",
+        code: "",
+        type: "recovery",
+        capturedAt: Date.now(),
+      } as const;
+      persistResetPasswordRecoveryPayload(recoveryPayload);
+      const targetUrl = buildResetPasswordRecoveryUrl(new URL("/reset-password", window.location.origin), recoveryPayload);
+      window.location.href = `${targetUrl.pathname}${targetUrl.search}${targetUrl.hash}`;
     } catch (error) {
       setMsg(error instanceof Error ? normalizeResetCodeError(error.message) : t("reset.invalidCode"));
     } finally {

@@ -472,11 +472,33 @@ export default function ResetPasswordPage() {
           body: JSON.stringify({ email, code }),
         }),
       );
-      const payload = (await response.json().catch(() => null)) as { ok?: unknown; error?: unknown } | null;
+      const payload = (await response.json().catch(() => null)) as
+        | {
+            ok?: unknown;
+            error?: unknown;
+            accessToken?: unknown;
+            refreshToken?: unknown;
+          }
+        | null;
       if (!response.ok || payload?.ok !== true) {
         throw new Error(typeof payload?.error === "string" ? payload.error : t("reset.invalidCode"));
       }
+      const accessToken = typeof payload?.accessToken === "string" ? payload.accessToken.trim() : "";
+      const refreshToken = typeof payload?.refreshToken === "string" ? payload.refreshToken.trim() : "";
+      if (!accessToken) {
+        throw new Error(t("reset.sessionExpired"));
+      }
       persistResetPasswordEmailRequest(email);
+      const recoveryPayload = {
+        accessToken,
+        refreshToken,
+        tokenHash: "",
+        code: "",
+        type: "recovery",
+        capturedAt: Date.now(),
+      } as const;
+      recoveryPayloadRef.current = recoveryPayload;
+      persistResetPasswordRecoveryPayload(recoveryPayload);
       recoveryResolvedRef.current = true;
       setRecoveryState("ready");
       setResetCode("");
