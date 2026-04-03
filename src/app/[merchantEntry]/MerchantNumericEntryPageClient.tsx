@@ -6,9 +6,9 @@ import AdminClient from "@/app/admin/AdminClient";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
 import { loadPlatformState, subscribePlatformState } from "@/data/platformControlStore";
 import {
-  hasStoredBrowserSupabaseSessionTokens,
   isTransientAuthValidationError,
   recoverBrowserSupabaseSession,
+  recoverBrowserSupabaseSessionWithRefresh,
 } from "@/lib/authSessionRecovery";
 import { buildMerchantSiteLinker } from "@/lib/merchantSiteLinking";
 import { clearMerchantSignInBridge, hasMerchantSignInBridge } from "@/lib/merchantSignInBridge";
@@ -21,14 +21,7 @@ export default function MerchantNumericEntryPageClient() {
   const merchantEntry = String(params?.merchantEntry ?? "").trim();
   const hydrated = useHydrated();
   const [justSignedIn] = useState(() => (searchParams.get("justSignedIn") ?? "").trim() === "1");
-  const [hasStoredSessionTokens] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return hasStoredBrowserSupabaseSessionTokens();
-  });
-  const skipEntrySessionCheck = useMemo(
-    () => hydrated && (justSignedIn || hasStoredSessionTokens),
-    [hasStoredSessionTokens, hydrated, justSignedIn],
-  );
+  const skipEntrySessionCheck = useMemo(() => hydrated && justSignedIn, [hydrated, justSignedIn]);
   const recentSignInBridgeActive = useMemo(
     () => hydrated && justSignedIn && hasMerchantSignInBridge(merchantEntry),
     [hydrated, justSignedIn, merchantEntry],
@@ -94,14 +87,9 @@ export default function MerchantNumericEntryPageClient() {
     };
 
     void (async () => {
-      let session = await recoverBrowserSupabaseSession(4500);
+      let session = await recoverBrowserSupabaseSessionWithRefresh(5200);
       if (!mounted) return;
       if (!session?.user) {
-        if (hasStoredBrowserSupabaseSessionTokens()) {
-          setNumericAdminAuthenticated(true);
-          setNumericAdminAuthReady(true);
-          return;
-        }
         redirectToLogin();
         return;
       }
@@ -115,14 +103,9 @@ export default function MerchantNumericEntryPageClient() {
             setNumericAdminAuthReady(true);
             return;
           }
-          session = await recoverBrowserSupabaseSession(2200);
+          session = await recoverBrowserSupabaseSessionWithRefresh(3200);
           if (!mounted) return;
           if (!session?.user) {
-            if (hasStoredBrowserSupabaseSessionTokens()) {
-              setNumericAdminAuthenticated(true);
-              setNumericAdminAuthReady(true);
-              return;
-            }
             await supabase.auth.signOut({ scope: "local" }).catch(() => {
               // Ignore local cleanup failure.
             });
