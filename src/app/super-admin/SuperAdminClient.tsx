@@ -86,7 +86,7 @@ import {
 import { buildPlatformMerchantSnapshotPayloadFromSites } from "@/lib/platformMerchantSnapshot";
 import ChatBusinessCardDialog from "@/components/admin/ChatBusinessCardDialog";
 import { resolveMerchantBusinessCardForChatDisplay } from "@/lib/merchantBusinessCards";
-import { type PlatformSupportThread } from "@/lib/platformSupportInbox";
+import { type PlatformSupportMessage, type PlatformSupportThread } from "@/lib/platformSupportInbox";
 import { getMerchantServiceState } from "@/lib/merchantServiceStatus";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
 import { buildMerchantFrontendHref, buildPlatformHomeHref, buildSiteStoreScope, PLATFORM_EDITOR_SCOPE } from "@/lib/siteRouting";
@@ -284,6 +284,74 @@ function buildBackendOnlySite(account: BackendMerchantAccount): Site {
     updatedAt: timestamp,
   };
   return applyBackendProfileSnapshot(baseSite, account.profileSnapshot, account.email);
+}
+
+function buildThreadOnlyMerchantRow(thread: PlatformSupportThread): MerchantUserRow {
+  const normalizedMerchantId =
+    normalizeMerchantIdValue(thread.merchantId) || normalizeMerchantIdValue(thread.siteId);
+  const timestamp = thread.updatedAt || nextIsoNow();
+  const merchantLabel =
+    (thread.merchantName ?? "").trim() || normalizedMerchantId || (thread.siteId ?? "").trim() || "商户";
+  const siteId = normalizedMerchantId || (thread.siteId ?? "").trim() || `support-${merchantLabel}`;
+  const prefix = normalizePublishedSitePrefix(thread.siteId);
+  const site: Site = {
+    id: siteId,
+    tenantId: "support-thread",
+    merchantName: merchantLabel,
+    domainPrefix: prefix,
+    domainSuffix: prefix,
+    contactAddress: "",
+    contactName: "",
+    contactPhone: "",
+    contactEmail: (thread.merchantEmail ?? "").trim(),
+    name: merchantLabel,
+    domain: buildMerchantFrontendHref(normalizedMerchantId || siteId, prefix),
+    categoryId: "support-thread",
+    category: "商户",
+    industry: "",
+    status: "online",
+    publishedVersion: 0,
+    lastPublishedAt: null,
+    features: createFeaturePackage("basic"),
+    location: {
+      countryCode: "",
+      country: "",
+      provinceCode: "",
+      province: "",
+      city: "",
+    },
+    serviceExpiresAt: null,
+    permissionConfig: createDefaultMerchantPermissionConfig(),
+    merchantCardImageUrl: "",
+    merchantCardImageOpacity: 1,
+    sortConfig: createDefaultMerchantSortConfig(),
+    configHistory: [],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+
+  return {
+    site,
+    hasSite: Boolean(normalizedMerchantId),
+    hasLocalSite: false,
+    backendAccount: null,
+    merchantId: normalizedMerchantId || (thread.merchantId ?? "").trim() || "-",
+    loginAccount: (thread.merchantEmail ?? "").trim() || normalizedMerchantId || "-",
+    userEmail: (thread.merchantEmail ?? "").trim() || "-",
+    merchantName: merchantLabel,
+    prefix: prefix || "-",
+    industry: "-",
+    city: "-",
+    sizeBytes: 0,
+    sizeKnown: false,
+    visits: { today: 0, day7: 0, day30: 0, total: 0 },
+    visitsKnown: false,
+    registerAt: timestamp,
+    expireAt: null,
+    expired: false,
+    statusLabel: "已建站",
+    statusKey: "linked",
+  };
 }
 
 function buildMerchantSiteContext(site: Site, owner: PlatformState["users"][number] | null, nowMs: number): MerchantSiteContext {
@@ -1293,6 +1361,7 @@ export default function SuperAdminClient() {
 
   useEffect(() => {
     if (!hydrated || !authed) return;
+    if (isMobileSupportOnlyMode) return;
     if (platformMerchantSnapshotPayload.snapshot.length === 0) return;
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
@@ -1312,7 +1381,7 @@ export default function SuperAdminClient() {
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [authed, hydrated, platformMerchantSnapshotPayload.snapshot.length, platformMerchantSnapshotPayloadKey]);
+  }, [authed, hydrated, isMobileSupportOnlyMode, platformMerchantSnapshotPayload.snapshot.length, platformMerchantSnapshotPayloadKey]);
 
   useEffect(() => {
     if (!hydrated || !authed || typeof window === "undefined") return;
@@ -1363,22 +1432,27 @@ export default function SuperAdminClient() {
     let cancelled = false;
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 8000);
-    setBackendMerchantAccountsLoading(true);
-    setBackendMerchantAccountsError("");
-    fetch("/api/super-admin/merchant-accounts", {
-      method: "GET",
-      cache: "no-store",
-      signal: controller.signal,
-    })
-      .then(async (response) => {
+    const loadAccounts = async () => {
+      setBackendMerchantAccountsLoading(true);
+      setBackendMerchantAccountsError("");
+      try {
+        const requestAccounts = async () =>
+          fetch("/api/super-admin/merchant-accounts", {
+            method: "GET",
+            cache: "no-store",
+            signal: controller.signal,
+          });
+        let response = await requestAccounts();
+        if ((response.status === 401 || response.status === 403) && syncSuperAdminAuthenticatedCookie()) {
+          response = await requestAccounts();
+        }
         if (!response.ok) {
           throw new Error(`merchant_account_http_${response.status}`);
         }
         const payload = (await response.json()) as { items?: BackendMerchantAccount[] };
         if (cancelled) return;
         setBackendMerchantAccounts(Array.isArray(payload.items) ? payload.items : []);
-      })
-      .catch((error) => {
+      } catch (error) {
         if (cancelled) return;
         setBackendMerchantAccounts([]);
         if (error instanceof DOMException && error.name === "AbortError") {
@@ -1386,10 +1460,11 @@ export default function SuperAdminClient() {
           return;
         }
         setBackendMerchantAccountsError(error instanceof Error ? error.message : "merchant_account_load_failed");
-      })
-      .finally(() => {
+      } finally {
         if (!cancelled) setBackendMerchantAccountsLoading(false);
-      });
+      }
+    };
+    void loadAccounts();
     return () => {
       cancelled = true;
       controller.abort();
@@ -1796,37 +1871,63 @@ export default function SuperAdminClient() {
     });
     return map;
   }, [supportThreads]);
-  const filteredSupportMerchantRows = useMemo(() => {
-    const q = supportMerchantKeyword.trim().toLowerCase();
-    if (!q) return merchantRows;
-    return merchantRows.filter((row) =>
-      [
-        row.userEmail,
-        row.loginAccount,
-        row.merchantId,
-        row.merchantName,
-        row.backendAccount?.username,
-        row.backendAccount?.loginId,
-      ]
-        .join(" ")
-        .toLowerCase()
-        .includes(q),
-    );
-  }, [merchantRows, supportMerchantKeyword]);
+  const supportBaseRows = useMemo(() => {
+    const merged = new Map<
+      string,
+      {
+        row: MerchantUserRow;
+        selectionKey: string;
+        thread: PlatformSupportThread | null;
+        lastMessage: PlatformSupportMessage | null;
+      }
+    >();
+
+    merchantRows.forEach((row) => {
+      const selectionKey = buildSupportMerchantSelectionKey(row.merchantId, row.site.id);
+      if (!selectionKey) return;
+      const thread = supportThreadBySelectionKey.get(selectionKey) ?? null;
+      merged.set(selectionKey, {
+        row,
+        selectionKey,
+        thread,
+        lastMessage: thread?.messages[thread.messages.length - 1] ?? null,
+      });
+    });
+
+    supportThreads.forEach((thread) => {
+      const selectionKey = buildSupportMerchantSelectionKey(thread.merchantId, thread.siteId);
+      if (!selectionKey || merged.has(selectionKey)) return;
+      const row = buildThreadOnlyMerchantRow(thread);
+      merged.set(selectionKey, {
+        row,
+        selectionKey,
+        thread,
+        lastMessage: thread.messages[thread.messages.length - 1] ?? null,
+      });
+    });
+
+    return [...merged.values()];
+  }, [merchantRows, supportThreadBySelectionKey, supportThreads]);
   const supportListRows = useMemo(() => {
-    return filteredSupportMerchantRows
-      .map((row) => {
-        const selectionKey = buildSupportMerchantSelectionKey(row.merchantId, row.site.id);
-        const thread = supportThreadBySelectionKey.get(selectionKey) ?? null;
-        const lastMessage = thread?.messages[thread.messages.length - 1] ?? null;
-        return {
-          row,
-          selectionKey,
-          thread,
-          lastMessage,
-        };
+    const q = supportMerchantKeyword.trim().toLowerCase();
+    return supportBaseRows
+      .filter((item) => {
+        if (!q) return true;
+        return [
+          item.row.userEmail,
+          item.row.loginAccount,
+          item.row.merchantId,
+          item.row.merchantName,
+          item.row.backendAccount?.username,
+          item.row.backendAccount?.loginId,
+          item.thread?.merchantEmail,
+          item.thread?.merchantName,
+          item.thread?.merchantId,
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(q);
       })
-      .filter((item) => item.selectionKey)
       .sort((left, right) => {
         const leftThreadTs = left.thread ? new Date(left.thread.updatedAt).getTime() : 0;
         const rightThreadTs = right.thread ? new Date(right.thread.updatedAt).getTime() : 0;
@@ -1838,7 +1939,7 @@ export default function SuperAdminClient() {
         if (leftRegisterTs !== rightRegisterTs) return rightRegisterTs - leftRegisterTs;
         return left.row.merchantName.localeCompare(right.row.merchantName, "zh-CN");
       });
-  }, [filteredSupportMerchantRows, supportThreadBySelectionKey]);
+  }, [supportBaseRows, supportMerchantKeyword]);
   const selectedSupportListRow =
     supportListRows.find((item) => item.selectionKey === supportSelectedMerchantId) ?? supportListRows[0] ?? null;
   const selectedSupportMerchantRow = selectedSupportListRow?.row ?? null;
@@ -2278,7 +2379,7 @@ export default function SuperAdminClient() {
   const merchantPausedCount = filteredMerchantRows.filter((item) => item.statusKey === "paused").length;
   const merchantUnlinkedCount = filteredMerchantRows.filter((item) => item.statusKey === "unlinked").length;
   const supportMerchantListCount = supportListRows.length;
-  const supportMerchantTotalCount = merchantRows.length;
+  const supportMerchantTotalCount = supportBaseRows.length;
   const releaseChecklistCheckedCount = RELEASE_REGRESSION_CHECKLIST.filter((item) => releaseChecklistState[item.id]).length;
   const portalSitesByCategory = useMemo(() => {
     const map = new Map<string, PlatformState["sites"]>();
@@ -6258,6 +6359,11 @@ export default function SuperAdminClient() {
                           onChange={(event) => setSupportMerchantKeyword(event.target.value)}
                         />
                         {supportThreadsError ? <div className="text-sm text-rose-600">{supportThreadsError}</div> : null}
+                        {backendMerchantAccountsError ? (
+                          <div className="text-sm text-amber-600">
+                            商户列表加载失败，当前先展示已有会话。{describeBackendMerchantAccountsError(backendMerchantAccountsError)}
+                          </div>
+                        ) : null}
                       </div>
                       <div className="min-h-0 flex-1 overflow-y-auto p-3">
                         {supportListRows.length > 0 ? (
@@ -6362,6 +6468,11 @@ export default function SuperAdminClient() {
                     </div>
                   </div>
                   {supportThreadsError ? <div className="mt-3 text-sm text-rose-600">{supportThreadsError}</div> : null}
+                  {backendMerchantAccountsError ? (
+                    <div className="mt-3 text-sm text-amber-600">
+                      商户列表加载失败，当前先展示已有会话。{describeBackendMerchantAccountsError(backendMerchantAccountsError)}
+                    </div>
+                  ) : null}
                 </div>
 
                 <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">

@@ -110,6 +110,95 @@ function normalizePublishedMerchantSlug(value: string | null | undefined) {
   return normalized;
 }
 
+function normalizeText(value: string | null | undefined) {
+  return String(value ?? "").trim();
+}
+
+function pickPreferredText(preferred: string | null | undefined, fallback: string | null | undefined) {
+  return normalizeText(preferred) || normalizeText(fallback);
+}
+
+function mergePublishedSnapshotLocation(
+  preferred: MerchantListPublishedSite["location"] | null | undefined,
+  fallback: MerchantListPublishedSite["location"] | null | undefined,
+) {
+  return {
+    countryCode: pickPreferredText(preferred?.countryCode, fallback?.countryCode),
+    country: pickPreferredText(preferred?.country, fallback?.country),
+    provinceCode: pickPreferredText(preferred?.provinceCode, fallback?.provinceCode),
+    province: pickPreferredText(preferred?.province, fallback?.province),
+    city: pickPreferredText(preferred?.city, fallback?.city),
+  };
+}
+
+function mergePublishedSnapshotSortConfig(
+  preferred: MerchantListPublishedSite["sortConfig"] | null | undefined,
+  fallback: MerchantListPublishedSite["sortConfig"] | null | undefined,
+) {
+  return {
+    recommendedCountryRank: preferred?.recommendedCountryRank ?? fallback?.recommendedCountryRank ?? null,
+    recommendedProvinceRank: preferred?.recommendedProvinceRank ?? fallback?.recommendedProvinceRank ?? null,
+    recommendedCityRank: preferred?.recommendedCityRank ?? fallback?.recommendedCityRank ?? null,
+    industryCountryRank: preferred?.industryCountryRank ?? fallback?.industryCountryRank ?? null,
+    industryProvinceRank: preferred?.industryProvinceRank ?? fallback?.industryProvinceRank ?? null,
+    industryCityRank: preferred?.industryCityRank ?? fallback?.industryCityRank ?? null,
+  };
+}
+
+function mergePublishedMerchantSnapshotSite(
+  preferred: MerchantListPublishedSite,
+  fallback: MerchantListPublishedSite,
+): MerchantListPublishedSite {
+  const preferredImageUrl = normalizeText(preferred.merchantCardImageUrl);
+  const fallbackImageUrl = normalizeText(fallback.merchantCardImageUrl);
+  const nextImageUrl = preferredImageUrl || fallbackImageUrl;
+  const fallbackOpacity =
+    typeof fallback.merchantCardImageOpacity === "number" && Number.isFinite(fallback.merchantCardImageOpacity)
+      ? fallback.merchantCardImageOpacity
+      : 1;
+  const preferredOpacity =
+    typeof preferred.merchantCardImageOpacity === "number" && Number.isFinite(preferred.merchantCardImageOpacity)
+      ? preferred.merchantCardImageOpacity
+      : fallbackOpacity;
+
+  return {
+    ...fallback,
+    ...preferred,
+    merchantName: pickPreferredText(preferred.merchantName, fallback.merchantName),
+    domainPrefix: pickPreferredText(preferred.domainPrefix, fallback.domainPrefix),
+    domainSuffix: pickPreferredText(preferred.domainSuffix, fallback.domainSuffix),
+    name: pickPreferredText(preferred.name, fallback.name),
+    domain: pickPreferredText(preferred.domain, fallback.domain),
+    category: pickPreferredText(preferred.category, fallback.category),
+    industry: (pickPreferredText(preferred.industry, fallback.industry) || "") as MerchantListPublishedSite["industry"],
+    location: mergePublishedSnapshotLocation(preferred.location, fallback.location),
+    contactAddress: pickPreferredText(preferred.contactAddress, fallback.contactAddress),
+    contactName: pickPreferredText(preferred.contactName, fallback.contactName),
+    contactPhone: pickPreferredText(preferred.contactPhone, fallback.contactPhone),
+    contactEmail: pickPreferredText(preferred.contactEmail, fallback.contactEmail),
+    merchantCardImageUrl: nextImageUrl,
+    merchantCardImageOpacity: nextImageUrl
+      ? (preferredImageUrl ? preferredOpacity : fallbackOpacity)
+      : preferredOpacity,
+    chatBusinessCard: preferred.chatBusinessCard ?? fallback.chatBusinessCard ?? null,
+    status: (pickPreferredText(preferred.status, fallback.status) || "online") as MerchantListPublishedSite["status"],
+    serviceExpiresAt: preferred.serviceExpiresAt ?? fallback.serviceExpiresAt ?? null,
+    sortConfig: mergePublishedSnapshotSortConfig(preferred.sortConfig, fallback.sortConfig),
+    createdAt: pickPreferredText(preferred.createdAt, fallback.createdAt),
+  };
+}
+
+export function mergePublishedMerchantSnapshots(
+  preferredSnapshot: MerchantListPublishedSite[],
+  fallbackSnapshot: MerchantListPublishedSite[],
+) {
+  const fallbackById = new Map(fallbackSnapshot.map((site) => [site.id, site] as const));
+  return preferredSnapshot.map((site) => {
+    const fallback = fallbackById.get(site.id);
+    return fallback ? mergePublishedMerchantSnapshotSite(site, fallback) : site;
+  });
+}
+
 export function buildPublishedMerchantSnapshotFromRows(
   pageRows: PublishedMerchantPageRow[],
   merchantRows: PublishedMerchantProfileRow[],
@@ -357,7 +446,6 @@ async function loadPublishedMerchantSnapshot(
   supabase: LooseSupabaseClient,
 ): Promise<PublishedMerchantSnapshotLoadResult> {
   const stored = await loadStoredPlatformMerchantSnapshot(supabase);
-  if (stored) return stored;
 
   const [pageRowsResult, merchantRowsResult] = await Promise.all([
     (await supabase
@@ -371,15 +459,25 @@ async function loadPublishedMerchantSnapshot(
   ]);
 
   if (pageRowsResult.error || merchantRowsResult.error) {
-    return {
+    return stored ?? {
       snapshot: [],
       defaultSortRule: "created_desc",
       replaceExistingSnapshot: false,
     };
   }
 
+  const derivedSnapshot = buildPublishedMerchantSnapshotFromRows(pageRowsResult.data ?? [], merchantRowsResult.data ?? []);
+  if (stored && derivedSnapshot.length > 0) {
+    return {
+      snapshot: mergePublishedMerchantSnapshots(derivedSnapshot, stored.snapshot),
+      defaultSortRule: stored.defaultSortRule,
+      replaceExistingSnapshot: true,
+    };
+  }
+  if (stored) return stored;
+
   return {
-    snapshot: buildPublishedMerchantSnapshotFromRows(pageRowsResult.data ?? [], merchantRowsResult.data ?? []),
+    snapshot: derivedSnapshot,
     defaultSortRule: "created_desc",
     replaceExistingSnapshot: false,
   };

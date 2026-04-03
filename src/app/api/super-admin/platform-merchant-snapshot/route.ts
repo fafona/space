@@ -2,10 +2,15 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { SUPER_ADMIN_SESSION_COOKIE, SUPER_ADMIN_SESSION_VALUE } from "@/lib/superAdminSession";
 import {
-  PLATFORM_MERCHANT_SNAPSHOT_SLUG,
-  buildPlatformMerchantSnapshotBlocks,
   normalizePlatformMerchantSnapshotPayload,
+  type PlatformMerchantSnapshotPayload,
 } from "@/lib/platformMerchantSnapshot";
+import { mergePublishedMerchantSnapshots } from "@/lib/platformPublished";
+import {
+  loadStoredPlatformMerchantSnapshot,
+  savePlatformMerchantSnapshot,
+  type PlatformMerchantSnapshotStoreClient,
+} from "@/lib/platformMerchantSnapshotStore";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -40,33 +45,6 @@ function readEnv(name: string) {
   return String(process.env[name] ?? "").trim();
 }
 
-function toErrorMessage(input: unknown) {
-  if (!input || typeof input !== "object") return "unknown_error";
-  const message = (input as { message?: unknown }).message;
-  return typeof message === "string" && message.trim() ? message.trim() : "unknown_error";
-}
-
-function isMissingSlugColumn(message: string) {
-  return (
-    /column\s+pages\.slug\s+does\s+not\s+exist/i.test(message) ||
-    /could not find the ['"]slug['"] column of ['"]pages['"] in the schema cache/i.test(message)
-  );
-}
-
-function isMissingMerchantIdColumn(message: string) {
-  return (
-    /column\s+pages\.merchant_id\s+does\s+not\s+exist/i.test(message) ||
-    /could not find the ['"]merchant_id['"] column of ['"]pages['"] in the schema cache/i.test(message)
-  );
-}
-
-function isMissingUpdatedAtColumn(message: string) {
-  return (
-    /column\s+pages\.updated_at\s+does\s+not\s+exist/i.test(message) ||
-    /could not find the ['"]updated_at['"] column of ['"]pages['"] in the schema cache/i.test(message)
-  );
-}
-
 function createServerSupabaseClient() {
   const supabaseUrl = readEnv("NEXT_PUBLIC_SUPABASE_URL");
   const serviceRoleKey =
@@ -82,77 +60,17 @@ function createServerSupabaseClient() {
   }) as unknown as LooseSupabaseClient;
 }
 
-async function savePlatformMerchantSnapshot(
-  supabase: LooseSupabaseClient,
-  blocks: ReturnType<typeof buildPlatformMerchantSnapshotBlocks>,
-) {
-  const basePayload = {
-    blocks,
-    updated_at: new Date().toISOString(),
-  };
-
-  const queryExisting = async () => {
-    const scoped = await supabase
-      .from("pages")
-      .select("id")
-      .is("merchant_id", null)
-      .eq("slug", PLATFORM_MERCHANT_SNAPSHOT_SLUG)
-      .limit(1)
-      .maybeSingle();
-    if (!scoped.error) {
-      return { record: (scoped.data ?? null) as { id?: string | number | null } | null, supportsSlug: true, supportsMerchantId: true };
-    }
-
-    const scopedMessage = toErrorMessage(scoped.error);
-    if (isMissingMerchantIdColumn(scopedMessage)) {
-      const bySlug = await supabase
-        .from("pages")
-        .select("id")
-        .eq("slug", PLATFORM_MERCHANT_SNAPSHOT_SLUG)
-        .limit(1)
-        .maybeSingle();
-      if (!bySlug.error) {
-        return { record: (bySlug.data ?? null) as { id?: string | number | null } | null, supportsSlug: true, supportsMerchantId: false };
-      }
-      return { error: toErrorMessage(bySlug.error) };
-    }
-
-    if (isMissingSlugColumn(scopedMessage)) {
-      return { error: "pages_slug_column_missing" };
-    }
-
-    return { error: scopedMessage };
-  };
-
-  const existing = await queryExisting();
-  if ("error" in existing && existing.error) {
-    return { error: existing.error };
-  }
-
-  const recordId = existing.record?.id;
-  const payloadWithoutUpdatedAt = { blocks };
-  const updatePayload = async (payload: Record<string, unknown>) => {
-    if (recordId !== undefined && recordId !== null) {
-      const updated = await supabase.from("pages").update(payload).eq("id", recordId);
-      return updated.error ? { error: toErrorMessage(updated.error) } : { error: null };
-    }
-
-    if (existing.supportsSlug) {
-      const inserted = await supabase.from("pages").insert({
-        ...payload,
-        slug: PLATFORM_MERCHANT_SNAPSHOT_SLUG,
-        ...(existing.supportsMerchantId ? { merchant_id: null } : {}),
-      });
-      return inserted.error ? { error: toErrorMessage(inserted.error) } : { error: null };
-    }
-
-    return { error: "pages_slug_column_missing" };
-  };
-
-  const first = await updatePayload(basePayload);
-  if (!first.error) return { error: null };
-  if (!isMissingUpdatedAtColumn(first.error)) return first;
-  return updatePayload(payloadWithoutUpdatedAt);
+function mergePlatformMerchantSnapshotPayloads(
+  incoming: PlatformMerchantSnapshotPayload,
+  existing: PlatformMerchantSnapshotPayload,
+): PlatformMerchantSnapshotPayload {
+  const mergedCurrent = mergePublishedMerchantSnapshots(incoming.snapshot, existing.snapshot);
+  const mergedIds = new Set(mergedCurrent.map((site) => site.id));
+  const appendedExisting = existing.snapshot.filter((site) => !mergedIds.has(site.id));
+  return normalizePlatformMerchantSnapshotPayload({
+    snapshot: [...mergedCurrent, ...appendedExisting],
+    defaultSortRule: incoming.defaultSortRule || existing.defaultSortRule,
+  });
 }
 
 export async function POST(request: Request) {
@@ -178,9 +96,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "empty_snapshot" }, { status: 400 });
   }
 
+  let nextPayload = payload;
+  const existingPayload = await loadStoredPlatformMerchantSnapshot(supabase as unknown as PlatformMerchantSnapshotStoreClient);
+  if (existingPayload && payload.snapshot.length < existingPayload.snapshot.length) {
+    nextPayload = mergePlatformMerchantSnapshotPayloads(payload, existingPayload);
+  }
+
   const saveResult = await savePlatformMerchantSnapshot(
-    supabase,
-    buildPlatformMerchantSnapshotBlocks(payload),
+    supabase as unknown as PlatformMerchantSnapshotStoreClient,
+    nextPayload,
   );
 
   if (saveResult.error) {
@@ -195,7 +119,7 @@ export async function POST(request: Request) {
 
   return NextResponse.json({
     ok: true,
-    count: payload.snapshot.length,
-    defaultSortRule: payload.defaultSortRule,
+    count: nextPayload.snapshot.length,
+    defaultSortRule: nextPayload.defaultSortRule,
   });
 }
