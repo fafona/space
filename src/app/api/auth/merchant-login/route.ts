@@ -17,6 +17,11 @@ type AuthUserSummary = {
   app_metadata?: AuthMetadata;
 };
 
+type ResolvedAccountIdentity = {
+  email: string;
+  merchantId: string;
+};
+
 type AdminListUsersClient = {
   auth: {
     admin: {
@@ -41,12 +46,14 @@ type AdminListUsersClient = {
 };
 
 const AUTH_USERS_CACHE_TTL_MS = 60_000;
+const ACCOUNT_IDENTITY_CACHE_TTL_MS = 60_000;
 let authUsersCache:
   | {
       expiresAt: number;
       users: AuthUserSummary[];
     }
   | null = null;
+const accountIdentityCache = new Map<string, { expiresAt: number; identity: ResolvedAccountIdentity }>();
 
 function readEnv(name: string) {
   return (process.env[name] ?? "").trim();
@@ -139,10 +146,39 @@ async function listAuthUsers(supabase: AdminListUsersClient) {
   return users;
 }
 
-async function resolveAccountEmail(supabase: AdminListUsersClient, account: string) {
+function readCachedAccountIdentity(account: string): ResolvedAccountIdentity | null {
+  const cacheKey = normalizeAccountValue(account);
+  if (!cacheKey) return null;
+  const cached = accountIdentityCache.get(cacheKey) ?? null;
+  if (!cached) return null;
+  if (cached.expiresAt <= Date.now()) {
+    accountIdentityCache.delete(cacheKey);
+    return null;
+  }
+  return cached.identity;
+}
+
+function writeCachedAccountIdentity(account: string, identity: ResolvedAccountIdentity) {
+  const cacheKey = normalizeAccountValue(account);
+  if (!cacheKey || !identity.email) return;
+  accountIdentityCache.set(cacheKey, {
+    expiresAt: Date.now() + ACCOUNT_IDENTITY_CACHE_TTL_MS,
+    identity,
+  });
+}
+
+async function resolveAccountIdentity(supabase: AdminListUsersClient, account: string): Promise<ResolvedAccountIdentity> {
+  const cached = readCachedAccountIdentity(account);
+  if (cached) return cached;
   const normalizedAccount = normalizeAccountValue(account);
-  if (!normalizedAccount) return "";
-  if (normalizedAccount.includes("@")) return normalizedAccount;
+  if (!normalizedAccount) {
+    return { email: "", merchantId: "" };
+  }
+  if (normalizedAccount.includes("@")) {
+    const identity = { email: normalizedAccount, merchantId: "" };
+    writeCachedAccountIdentity(account, identity);
+    return identity;
+  }
 
   if (isMerchantNumericId(normalizedAccount)) {
     const { data: merchant, error } = await supabase
@@ -158,7 +194,11 @@ async function resolveAccountEmail(supabase: AdminListUsersClient, account: stri
       merchant?.owner_email,
       merchant?.contact_email,
     );
-    if (email) return email;
+    if (email) {
+      const identity = { email, merchantId: normalizedAccount };
+      writeCachedAccountIdentity(account, identity);
+      return identity;
+    }
   }
 
   for (const merchantName of [account.trim(), normalizedAccount]) {
@@ -176,12 +216,24 @@ async function resolveAccountEmail(supabase: AdminListUsersClient, account: stri
       merchantByName?.owner_email,
       merchantByName?.contact_email,
     );
-    if (email) return email;
+    if (email) {
+      const identity = {
+        email,
+        merchantId: isMerchantNumericId(String(merchantByName?.id ?? "").trim()) ? String(merchantByName?.id ?? "").trim() : "",
+      };
+      writeCachedAccountIdentity(account, identity);
+      return identity;
+    }
   }
 
   const authUsers = await listAuthUsers(supabase);
   const matchedUser = authUsers.find((user) => readAccountKeys(user).includes(normalizedAccount));
-  return normalizeEmail(matchedUser?.email);
+  const identity = {
+    email: normalizeEmail(matchedUser?.email),
+    merchantId: "",
+  };
+  writeCachedAccountIdentity(account, identity);
+  return identity;
 }
 
 function readMerchantIdFromMetadata(...metadatas: AuthMetadata[]) {
@@ -317,7 +369,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "merchant_login_env_missing" }, { status: 503 });
     }
 
-    const email = await resolveAccountEmail(supabase, account);
+    const resolvedAccount = await resolveAccountIdentity(supabase, account);
+    const email = resolvedAccount.email;
     if (!email) {
       return NextResponse.json({ error: "invalid_credentials" }, { status: 401 });
     }
@@ -378,7 +431,7 @@ export async function POST(request: Request) {
       upstreamPayload?.user && typeof upstreamPayload.user === "object"
         ? (upstreamPayload.user as AuthUserSummary)
         : null;
-    let merchantId = await resolveMerchantId(supabase, account, email, authUser);
+    let merchantId = resolvedAccount.merchantId || (await resolveMerchantId(supabase, account, email, authUser));
     if (!merchantId) {
       merchantId = await tryAllocateSequentialMerchantId(supabase, authUser, email);
     }

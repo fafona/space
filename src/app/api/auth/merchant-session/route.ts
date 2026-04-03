@@ -27,6 +27,20 @@ type RefreshPayload = {
   user?: unknown;
 };
 
+type AuthenticatedMerchantSessionPayload = {
+  authenticated: true;
+  accessToken: string;
+  refreshToken: string | null;
+  expiresIn: number | null;
+  tokenType: string;
+  merchantId: string | null;
+  user: AuthUserSummary;
+};
+
+const MERCHANT_SESSION_CACHE_TTL_MS = 20_000;
+const merchantSessionCache = new Map<string, { expiresAt: number; payload: AuthenticatedMerchantSessionPayload }>();
+const merchantSessionInflight = new Map<string, Promise<AuthenticatedMerchantSessionPayload | null>>();
+
 function readEnv(name: string) {
   return (process.env[name] ?? "").trim();
 }
@@ -235,72 +249,146 @@ function noStoreJson(body: unknown, init?: ResponseInit) {
   return response;
 }
 
+function readMerchantSessionCache(accessToken: string, refreshToken: string) {
+  const keys = [refreshToken, accessToken].map((value) => String(value ?? "").trim()).filter(Boolean);
+  for (const key of keys) {
+    const cached = merchantSessionCache.get(key) ?? null;
+    if (!cached) continue;
+    if (cached.expiresAt <= Date.now()) {
+      merchantSessionCache.delete(key);
+      continue;
+    }
+    return cached.payload;
+  }
+  return null;
+}
+
+function writeMerchantSessionCache(payload: AuthenticatedMerchantSessionPayload) {
+  const keys = [payload.refreshToken, payload.accessToken].map((value) => String(value ?? "").trim()).filter(Boolean);
+  if (keys.length === 0) return;
+  const entry = {
+    expiresAt: Date.now() + MERCHANT_SESSION_CACHE_TTL_MS,
+    payload,
+  };
+  keys.forEach((key) => {
+    merchantSessionCache.set(key, entry);
+  });
+}
+
+function clearMerchantSessionCache(accessToken: string, refreshToken: string) {
+  [refreshToken, accessToken]
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean)
+    .forEach((key) => {
+      merchantSessionCache.delete(key);
+      merchantSessionInflight.delete(key);
+    });
+}
+
+function respondWithMerchantSession(payload: AuthenticatedMerchantSessionPayload) {
+  const response = noStoreJson(payload);
+  setMerchantAuthCookies(response, {
+    accessToken: payload.accessToken,
+    refreshToken: payload.refreshToken,
+    maxAgeSeconds: payload.expiresIn ?? undefined,
+  });
+  return response;
+}
+
 export async function GET(request: Request) {
   try {
+    const cookieAccessToken = readMerchantAuthCookie(request);
+    const cookieRefreshToken = readMerchantAuthRefreshCookie(request);
+    const cached = readMerchantSessionCache(cookieAccessToken, cookieRefreshToken);
+    if (cached) {
+      return respondWithMerchantSession(cached);
+    }
+
     const supabase = createServerSupabaseClient();
     const adminSupabase = createServiceRoleSupabaseClient();
     if (!supabase) {
       return noStoreJson({ error: "merchant_session_env_missing" }, { status: 503 });
     }
 
-    const cookieAccessToken = readMerchantAuthCookie(request);
-    const cookieRefreshToken = readMerchantAuthRefreshCookie(request);
-    let accessToken = cookieAccessToken;
-    let refreshToken = cookieRefreshToken;
-    let user: AuthUserSummary | null = null;
-    let expiresIn: number | null = null;
-    let tokenType = "bearer";
-
-    if (accessToken) {
-      const { data, error } = await supabase.auth.getUser(accessToken);
-      if (!error && data.user) {
-        user = data.user as AuthUserSummary;
+    const cacheKey = [cookieRefreshToken, cookieAccessToken].map((value) => String(value ?? "").trim()).find(Boolean) ?? "";
+    if (cacheKey) {
+      const inFlight = merchantSessionInflight.get(cacheKey);
+      if (inFlight) {
+        const payload = await inFlight;
+        if (payload) return respondWithMerchantSession(payload);
       }
     }
 
-    if (!user && refreshToken) {
-      const refreshed = await refreshMerchantSession(refreshToken);
-      if (refreshed) {
-        accessToken = refreshed.accessToken;
-        refreshToken = refreshed.refreshToken;
-        expiresIn = refreshed.expiresIn;
-        tokenType = refreshed.tokenType;
-        user = refreshed.user;
-        if (!user && accessToken) {
-          const { data, error } = await supabase.auth.getUser(accessToken);
-          if (!error && data.user) {
-            user = data.user as AuthUserSummary;
+    const task = (async () => {
+      let accessToken = cookieAccessToken;
+      let refreshToken = cookieRefreshToken;
+      let user: AuthUserSummary | null = null;
+      let expiresIn: number | null = null;
+      let tokenType = "bearer";
+
+      if (accessToken) {
+        const { data, error } = await supabase.auth.getUser(accessToken);
+        if (!error && data.user) {
+          user = data.user as AuthUserSummary;
+        }
+      }
+
+      if (!user && refreshToken) {
+        const refreshed = await refreshMerchantSession(refreshToken);
+        if (refreshed) {
+          accessToken = refreshed.accessToken;
+          refreshToken = refreshed.refreshToken;
+          expiresIn = refreshed.expiresIn;
+          tokenType = refreshed.tokenType;
+          user = refreshed.user;
+          if (!user && accessToken) {
+            const { data, error } = await supabase.auth.getUser(accessToken);
+            if (!error && data.user) {
+              user = data.user as AuthUserSummary;
+            }
           }
         }
       }
-    }
 
-    if (!accessToken || !user) {
-      const response = noStoreJson({ authenticated: false }, { status: 401 });
-      clearMerchantAuthCookies(response);
-      return response;
-    }
+      if (!accessToken || !user) {
+        clearMerchantSessionCache(cookieAccessToken, cookieRefreshToken);
+        return null;
+      }
 
-    let merchantId = await resolveMerchantIdForUser(adminSupabase, user);
-    if (!merchantId) {
-      merchantId = await tryAllocateSequentialMerchantId(adminSupabase, user);
-    }
+      let merchantId = await resolveMerchantIdForUser(adminSupabase, user);
+      if (!merchantId) {
+        merchantId = await tryAllocateSequentialMerchantId(adminSupabase, user);
+      }
 
-    const response = noStoreJson({
-      authenticated: true,
-      accessToken,
-      refreshToken: refreshToken || null,
-      expiresIn,
-      tokenType,
-      merchantId: merchantId || null,
-      user,
-    });
-    setMerchantAuthCookies(response, {
-      accessToken,
-      refreshToken,
-      maxAgeSeconds: expiresIn ?? undefined,
-    });
-    return response;
+      const payload = {
+        authenticated: true,
+        accessToken,
+        refreshToken: refreshToken || null,
+        expiresIn,
+        tokenType,
+        merchantId: merchantId || null,
+        user,
+      } satisfies AuthenticatedMerchantSessionPayload;
+      writeMerchantSessionCache(payload);
+      return payload;
+    })();
+
+    if (cacheKey) {
+      merchantSessionInflight.set(cacheKey, task);
+    }
+    try {
+      const payload = await task;
+      if (!payload) {
+        const response = noStoreJson({ authenticated: false }, { status: 401 });
+        clearMerchantAuthCookies(response);
+        return response;
+      }
+      return respondWithMerchantSession(payload);
+    } finally {
+      if (cacheKey && merchantSessionInflight.get(cacheKey) === task) {
+        merchantSessionInflight.delete(cacheKey);
+      }
+    }
   } catch {
     return noStoreJson({ authenticated: false, error: "merchant_session_unavailable" }, { status: 503 });
   }

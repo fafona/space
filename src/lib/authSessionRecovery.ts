@@ -19,8 +19,11 @@ type MerchantCookieSessionPayload = {
   refreshToken?: unknown;
   expiresIn?: unknown;
   tokenType?: unknown;
+  merchantId?: unknown;
   user?: Session["user"] | null;
 };
+
+let merchantSessionPayloadInFlight: Promise<MerchantCookieSessionPayload | null> | null = null;
 
 function getBrowserStorages(): Storage[] {
   if (typeof window === "undefined") return [];
@@ -245,40 +248,54 @@ function buildSyntheticSessionFromMerchantCookiePayload(payload: {
   } as Session;
 }
 
-async function readMerchantCookieSessionPayload(timeoutMs: number) {
+export async function readMerchantSessionPayload(timeoutMs = 4500): Promise<MerchantCookieSessionPayload | null> {
   if (typeof window === "undefined") return null;
-  try {
-    const response = await withTimeout(
-      fetch("/api/auth/merchant-session", {
-        method: "GET",
-        cache: "no-store",
-        credentials: "same-origin",
-        headers: {
-          accept: "application/json",
-        },
-      }),
-      Math.max(1200, timeoutMs),
-    );
-    if (!response.ok) return null;
-    const payload = (await response.json().catch(() => null)) as MerchantCookieSessionPayload | null;
-    const authenticated = payload?.authenticated === true;
-    const accessToken = typeof payload?.accessToken === "string" ? payload.accessToken.trim() : "";
-    const refreshToken = typeof payload?.refreshToken === "string" ? payload.refreshToken.trim() : "";
-    const tokenType = typeof payload?.tokenType === "string" ? payload.tokenType.trim() : "bearer";
-    const expiresIn =
-      typeof payload?.expiresIn === "number" && Number.isFinite(payload.expiresIn) ? payload.expiresIn : null;
-    const user = payload?.user ?? null;
-    if (!authenticated || !accessToken || !user) return null;
-    return {
-      accessToken,
-      refreshToken,
-      expiresIn,
-      tokenType,
-      user,
-    };
-  } catch {
-    return null;
-  }
+  if (merchantSessionPayloadInFlight) return merchantSessionPayloadInFlight;
+  let task: Promise<MerchantCookieSessionPayload | null> | null = null;
+  task = (async () => {
+    try {
+      const response = await withTimeout(
+        fetch("/api/auth/merchant-session", {
+          method: "GET",
+          cache: "no-store",
+          credentials: "same-origin",
+          headers: {
+            accept: "application/json",
+          },
+        }),
+        Math.max(1200, timeoutMs),
+      );
+      if (!response.ok) return null;
+      return (await response.json().catch(() => null)) as MerchantCookieSessionPayload | null;
+    } catch {
+      return null;
+    } finally {
+      if (task && merchantSessionPayloadInFlight === task) {
+        merchantSessionPayloadInFlight = null;
+      }
+    }
+  })();
+  merchantSessionPayloadInFlight = task;
+  return task;
+}
+
+async function readMerchantCookieSessionPayload(timeoutMs: number) {
+  const payload = await readMerchantSessionPayload(timeoutMs);
+  const authenticated = payload?.authenticated === true;
+  const accessToken = typeof payload?.accessToken === "string" ? payload.accessToken.trim() : "";
+  const refreshToken = typeof payload?.refreshToken === "string" ? payload.refreshToken.trim() : "";
+  const tokenType = typeof payload?.tokenType === "string" ? payload.tokenType.trim() : "bearer";
+  const expiresIn =
+    typeof payload?.expiresIn === "number" && Number.isFinite(payload.expiresIn) ? payload.expiresIn : null;
+  const user = payload?.user ?? null;
+  if (!authenticated || !accessToken || !user) return null;
+  return {
+    accessToken,
+    refreshToken,
+    expiresIn,
+    tokenType,
+    user,
+  };
 }
 
 export async function recoverBrowserSupabaseSessionViaMerchantCookies(timeoutMs = 4500): Promise<Session | null> {

@@ -66,6 +66,7 @@ import {
 import {
   clearStoredBrowserSupabaseSessionTokens,
   isTransientAuthValidationError,
+  readMerchantSessionPayload,
   recoverBrowserSupabaseSessionViaMerchantCookies,
   recoverBrowserSupabaseSessionWithRefresh,
   startMerchantSessionKeepAlive,
@@ -3006,6 +3007,29 @@ function writeCachedMerchantIds(sessionUserId: string | undefined, email: string
   }
 }
 
+function readMerchantIdsFromMetadata(...records: Array<Record<string, unknown> | null | undefined>) {
+  const ids: string[] = [];
+  const pushId = (value: unknown) => {
+    if (typeof value !== "string") return;
+    const trimmed = value.trim();
+    if (!trimmed || ids.includes(trimmed)) return;
+    ids.push(trimmed);
+  };
+
+  records.forEach((record) => {
+    if (!record || typeof record !== "object") return;
+    pushId(record.merchant_id);
+    pushId(record.merchantId);
+    pushId(record.merchantID);
+    pushId(record.store_id);
+    pushId(record.storeId);
+    pushId(record.shop_id);
+    pushId(record.shopId);
+  });
+
+  return ids;
+}
+
 async function resolveMerchantIds(sessionUserId?: string, email?: string, metadata?: Record<string, unknown>): Promise<string[]> {
   const ids: string[] = [];
   const cachedIds = readCachedMerchantIds(sessionUserId, email);
@@ -3017,13 +3041,7 @@ async function resolveMerchantIds(sessionUserId?: string, email?: string, metada
   };
 
   const metadataRecord = metadata ?? {};
-  pushId(metadataRecord.merchant_id);
-  pushId(metadataRecord.merchantId);
-  pushId(metadataRecord.merchantID);
-  pushId(metadataRecord.store_id);
-  pushId(metadataRecord.storeId);
-  pushId(metadataRecord.shop_id);
-  pushId(metadataRecord.shopId);
+  readMerchantIdsFromMetadata(metadataRecord).forEach(pushId);
   cachedIds.forEach(pushId);
 
   if (!sessionUserId) {
@@ -4008,26 +4026,8 @@ export default function AdminClient({
       let task: Promise<{ merchantId: string; email: string | null } | null> | null = null;
       task = (async () => {
         try {
-          const response = await withTimeout(
-            fetch("/api/auth/merchant-session", {
-              method: "GET",
-              cache: "no-store",
-              credentials: "same-origin",
-              headers: {
-                accept: "application/json",
-              },
-            }),
-            timeoutMs,
-            "商户身份识别超时，请稍后重试",
-          );
-          if (!response.ok) return null;
-          const payload = (await response.json().catch(() => null)) as
-            | {
-                authenticated?: boolean;
-                merchantId?: unknown;
-                user?: { email?: string | null } | null;
-              }
-            | null;
+          const payload = await withTimeout(readMerchantSessionPayload(timeoutMs), timeoutMs, "商户身份识别超时，请稍后重试");
+          if (!payload || payload.authenticated !== true) return null;
           const merchantId = typeof payload?.merchantId === "string" ? payload.merchantId.trim() : "";
           const email = typeof payload?.user?.email === "string" ? payload.user.email.trim() : "";
           if (!merchantId && !email) return null;
@@ -4060,32 +4060,8 @@ export default function AdminClient({
       if (isPlatformEditor || typeof window === "undefined") return null;
 
       try {
-        const response = await withTimeout(
-          fetch("/api/auth/merchant-session", {
-            method: "GET",
-            cache: "no-store",
-            credentials: "same-origin",
-            headers: {
-              accept: "application/json",
-            },
-          }),
-          timeoutMs,
-          "商户身份识别超时，请稍后重试",
-        );
-        const payload = (await response.json().catch(() => null)) as
-          | {
-              authenticated?: boolean;
-              merchantId?: unknown;
-              user?: { email?: string | null } | null;
-            }
-          | null;
-        if (!response.ok || payload?.authenticated !== true) {
-          if (response.status === 401 || response.status === 403) {
-            merchantSessionIdentityRef.current = {
-              merchantId: "",
-              email: null,
-            };
-          }
+        const payload = await withTimeout(readMerchantSessionPayload(timeoutMs), timeoutMs, "商户身份识别超时，请稍后重试");
+        if (!payload || payload.authenticated !== true) {
           return null;
         }
         const merchantId = typeof payload?.merchantId === "string" ? payload.merchantId.trim() : "";
@@ -5600,6 +5576,19 @@ export default function AdminClient({
                   (() => {
                     const scopedSiteId = getSiteIdFromStoreScope(storeScope).trim();
                     if (scopedSiteId) return Promise.resolve([scopedSiteId]);
+                    const hintedMerchantIds = mergePreferredMerchantIds([
+                      ...readMerchantIdsFromMetadata(
+                        activeSession.user.user_metadata as Record<string, unknown> | null | undefined,
+                        activeSession.user.app_metadata as Record<string, unknown> | null | undefined,
+                      ),
+                      cookieBackedMerchantIdentity?.merchantId ?? "",
+                      merchantSessionIdentityRef.current.merchantId,
+                      ...merchantIdsRef.current,
+                    ]);
+                    if (hintedMerchantIds.length > 0) {
+                      writeCachedMerchantIds(activeSession.user.id, activeSession.user.email ?? undefined, hintedMerchantIds);
+                      return Promise.resolve(hintedMerchantIds);
+                    }
                     return resolveMerchantIds(activeSession.user.id, activeSession.user.email, {
                       ...(activeSession.user.user_metadata ?? {}),
                       ...(activeSession.user.app_metadata ?? {}),
