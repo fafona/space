@@ -4302,8 +4302,6 @@ export default function SuperAdminClient() {
     { key: "logs", label: "日志", hint: "审计与告警记录" },
   ];
   const showMobileSupportThread = isMobileSupportOnlyMode && supportMobileView === "thread" && !!selectedSupportThread;
-  const mobileSupportHeaderTitle = showMobileSupportThread ? "在线处理" : "信息处理";
-  const mobileSupportHeaderSubtitle = showMobileSupportThread ? selectedSupportMerchantMeta : mobileSupportListSummary;
   function logoutSuperAdmin() {
     clearSuperAdminAuthenticated();
     window.location.href = `${buildSuperAdminLoginHref("/super-admin")}&loggedOut=1`;
@@ -4320,8 +4318,14 @@ export default function SuperAdminClient() {
   }
 
   return (
-    <main className={isMobileSupportOnlyMode ? "h-[100svh] overflow-hidden bg-slate-100" : "min-h-screen bg-slate-100"}>
-      <div className={isMobileSupportOnlyMode ? "flex h-full min-h-0 flex-col" : "flex min-h-screen"}>
+    <main
+      className={
+        isMobileSupportOnlyMode
+          ? "fixed inset-0 z-[120] h-[100dvh] overflow-hidden bg-slate-100 overscroll-none"
+          : "min-h-screen bg-slate-100"
+      }
+    >
+      <div className={isMobileSupportOnlyMode ? "flex h-full min-h-0 flex-col overflow-hidden" : "flex min-h-screen"}>
         {!isMobileSupportOnlyMode ? (
         <aside className="w-64 border-r bg-white">
           <div className="border-b px-5 py-4">
@@ -4350,28 +4354,7 @@ export default function SuperAdminClient() {
         ) : null}
 
         <div className={isMobileSupportOnlyMode ? "flex min-h-0 flex-1 flex-col" : "flex-1 min-h-0"}>
-          {isMobileSupportOnlyMode ? (
-            <header className="border-b border-slate-200/80 bg-white/90 px-4 py-3 backdrop-blur">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <div className="truncate text-base font-semibold text-slate-900">{mobileSupportHeaderTitle}</div>
-                    {!showMobileSupportThread && supportHasUnreadThreads ? (
-                      <span aria-label="有未读消息" className="inline-flex h-2.5 w-2.5 shrink-0 rounded-full bg-rose-500" />
-                    ) : null}
-                  </div>
-                  <div className="mt-1 truncate text-xs text-slate-500">{mobileSupportHeaderSubtitle}</div>
-                </div>
-                <button
-                  type="button"
-                  className="shrink-0 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
-                  onClick={logoutSuperAdmin}
-                >
-                  退出
-                </button>
-              </div>
-            </header>
-          ) : (
+          {!isMobileSupportOnlyMode ? (
           <header className="flex items-center justify-between border-b bg-white px-6 py-3">
             <div className="flex items-center gap-2 text-sm">
               <span className="text-slate-500">当前菜单</span>
@@ -4387,12 +4370,14 @@ export default function SuperAdminClient() {
               </button>
             </div>
           </header>
-          )}
+          ) : null}
 
           {tip ? (
             <div
-              className={`pointer-events-none fixed left-4 right-4 top-20 z-[130] ${
-                isMobileSupportOnlyMode ? "" : "md:left-72 md:right-auto md:w-[min(680px,calc(100vw-20rem))]"
+              className={`pointer-events-none fixed left-4 right-4 z-[130] ${
+                isMobileSupportOnlyMode
+                  ? "top-[calc(env(safe-area-inset-top)+0.75rem)]"
+                  : "top-20 md:left-72 md:right-auto md:w-[min(680px,calc(100vw-20rem))]"
               }`}
             >
               <div
@@ -4406,7 +4391,7 @@ export default function SuperAdminClient() {
             </div>
           ) : null}
 
-          <div className={isMobileSupportOnlyMode ? "flex-1 min-h-0 p-0" : "space-y-4 p-4"}>
+          <div className={isMobileSupportOnlyMode ? "flex-1 min-h-0 overflow-hidden p-0" : "space-y-4 p-4"}>
             {activeMenu === "site_editor" ? (
               <>
                 <section className="rounded-lg border bg-white p-4">
@@ -6364,10 +6349,10 @@ export default function SuperAdminClient() {
 
             {activeMenu === "support_messages" ? (
               isMobileSupportOnlyMode ? (
-                <section className="flex h-full min-h-0 flex-col overflow-hidden bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_48%,#f8fafc_100%)]">
+                <section className="relative flex h-full min-h-0 flex-col overflow-hidden bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_48%,#f8fafc_100%)]">
                   {showMobileSupportThread ? (
                     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-                      <div className="border-b border-slate-200/80 bg-white/90 px-3 pb-3 pt-2 shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
+                      <div className="shrink-0 border-b border-slate-200/80 bg-white/90 px-3 pb-3 pt-[calc(env(safe-area-inset-top)+0.55rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex min-w-0 items-center gap-3">
                             <button
@@ -6413,7 +6398,7 @@ export default function SuperAdminClient() {
                       {supportThreadsError ? (
                         <div className="border-b border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-600">{supportThreadsError}</div>
                       ) : null}
-                      <div ref={supportMessagesViewportRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-4">
+                      <div ref={supportMessagesViewportRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-4">
                         {selectedSupportThread && selectedSupportThread.messages.length > 0 ? (
                           <div className="space-y-3">
                             {selectedSupportThread.messages.map((message, index) => {
@@ -6501,7 +6486,7 @@ export default function SuperAdminClient() {
                     </div>
                   ) : (
                     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-                      <div className="border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-3 shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
+                      <div className="shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
                         <div className="flex items-center gap-3">
                           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm">
                             会话
@@ -6572,7 +6557,7 @@ export default function SuperAdminClient() {
                           </div>
                         ) : null}
                       </div>
-                      <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-3">
+                      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-3">
                         {supportListRows.length > 0 ? (
                           <div className="space-y-2.5">
                             {supportListRows.map(({ row, selectionKey, thread, lastMessage }) => {
