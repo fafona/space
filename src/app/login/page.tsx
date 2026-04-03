@@ -170,7 +170,10 @@ function LoginPageInner() {
   }, [normalizedLocale]);
   const passwordToggleLabels = useMemo(() => getPasswordToggleLabels(locale), [locale]);
   const authEmailRedirectOrigin = useMemo(() => resolveAuthEmailRedirectOrigin(), []);
-  const shouldShowResetCodePreferredHint = useMemo(() => shouldPreferResetCodeFlow(account), [account]);
+  const shouldShowResetCodePreferredHint = useMemo(
+    () => shouldPreferResetCodeFlow(pendingResetEmail || account),
+    [account, pendingResetEmail],
+  );
 
   useEffect(() => {
     const confirmed = (searchParams.get("confirmed") ?? "").trim();
@@ -920,7 +923,7 @@ function LoginPageInner() {
           {pendingAction === "forgot" ? t("common.sending") : t("login.forgot")}
         </button>
 
-        {shouldShowResetCodePreferredHint ? (
+        {pendingResetEmail && shouldShowResetCodePreferredHint ? (
           <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
             {resetCodePreferredHint}
           </div>
