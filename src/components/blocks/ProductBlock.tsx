@@ -834,7 +834,7 @@ export default function ProductBlock(props: ProductBlockProps) {
           >
             <button
               type="button"
-              className={`global-language-switcher-safe-offset absolute top-4 z-10 flex h-10 w-10 items-center justify-center rounded-full text-2xl leading-none ${detailFullImage ? "border border-slate-200 bg-white/90 text-slate-700 hover:bg-white" : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
+              className={`absolute right-4 top-4 z-10 flex h-10 w-10 items-center justify-center rounded-full text-2xl leading-none ${detailFullImage ? "border border-slate-200 bg-white/90 text-slate-700 hover:bg-white" : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
               onClick={() => setActiveProductId(null)}
               aria-label="关闭"
             >

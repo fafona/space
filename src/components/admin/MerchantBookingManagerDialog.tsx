@@ -329,7 +329,7 @@ export default function MerchantBookingManagerDialog({
         className="mx-auto flex h-full max-h-[calc(100vh-2rem)] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl"
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <div className="global-language-switcher-safe-pad flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4">
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4">
           <div className="space-y-1">
             <div className="text-lg font-semibold text-slate-900">预约管理</div>
             <div className="text-sm text-slate-500">{`查看并管理 ${siteName || siteId} 收到的预约记录。`}</div>

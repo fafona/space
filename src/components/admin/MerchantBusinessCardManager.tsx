@@ -2207,7 +2207,7 @@ export default function MerchantBusinessCardManager({
       {folderOpen ? overlay(
         <div className="fixed inset-0 z-[2147483000] bg-black/45 p-4" onMouseDown={() => setFolderOpen(false)}>
           <div className="mx-auto flex h-full max-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
-            <div className="global-language-switcher-safe-pad flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4"><div><div className="text-lg font-semibold text-slate-900">名片夹</div><div className="text-sm text-slate-500">查看已生成的图片名片或链接名片，可预览并继续操作。</div></div><div className="flex flex-wrap gap-2"><button type="button" className="rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50" onClick={openCreateEditorFromFolder} disabled={!canOpenCreateEditor}>生成名片</button><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => setFolderOpen(false)}>关闭</button></div></div>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4"><div><div className="text-lg font-semibold text-slate-900">名片夹</div><div className="text-sm text-slate-500">查看已生成的图片名片或链接名片，可预览并继续操作。</div></div><div className="flex flex-wrap gap-2"><button type="button" className="rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50" onClick={openCreateEditorFromFolder} disabled={!canOpenCreateEditor}>生成名片</button><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => setFolderOpen(false)}>关闭</button></div></div>
             <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
               {normalizedCards.length > 0 ? (
                 <div className="space-y-4">
@@ -2389,7 +2389,7 @@ export default function MerchantBusinessCardManager({
       {previewOpen ? overlay(
         <div className="fixed inset-0 z-[2147483100] bg-black/65 p-4" onMouseDown={() => { setPreviewOpen(false); setPreviewAsset(null); }}>
           <div className="mx-auto flex h-full max-h-[calc(100vh-2rem)] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
-            <div className="global-language-switcher-safe-pad flex items-center justify-between border-b px-5 py-4">
+            <div className="flex items-center justify-between border-b px-5 py-4">
               <div>
                 <div className="text-base font-semibold text-slate-900">{previewName}</div>
                 <div className="text-xs text-slate-500">

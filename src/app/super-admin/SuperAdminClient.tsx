@@ -4954,7 +4954,7 @@ export default function SuperAdminClient() {
                         />
                         <div className="fixed inset-0 z-[2147483401] flex items-center justify-center p-4">
                           <div className="w-full max-w-md rounded-2xl border bg-white shadow-2xl">
-                            <div className="global-language-switcher-safe-pad flex items-start justify-between gap-3 border-b px-5 py-4">
+                            <div className="flex items-start justify-between gap-3 border-b px-5 py-4">
                               <div>
                                 <div className="text-base font-semibold text-slate-900">新增用户</div>
                                 <div className="mt-1 text-xs text-slate-500">
@@ -5260,7 +5260,7 @@ export default function SuperAdminClient() {
                       />
                       <div className="fixed inset-0 z-[123] flex items-center justify-center p-4">
                         <div className="flex h-full max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl">
-                          <div className="global-language-switcher-safe-pad flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4">
+                          <div className="flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4">
                             <div className="space-y-1">
                               <div className="text-lg font-semibold text-slate-900">方案模板</div>
                               <div className="text-sm text-slate-500">
@@ -5512,7 +5512,7 @@ export default function SuperAdminClient() {
                           />
                           <div className="fixed inset-0 z-[125] flex items-center justify-center p-4">
                             <div className="flex h-full max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl">
-                              <div className="global-language-switcher-safe-pad flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4">
+                              <div className="flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4">
                                 <div className="space-y-1">
                                   <div className="text-lg font-semibold text-slate-900">应用方案模板</div>
                                   <div className="text-sm text-slate-500">
@@ -5560,7 +5560,7 @@ export default function SuperAdminClient() {
                                         needsPlanTemplatePreviewRefresh(planTemplateApplyTemplate)) ? (
                                           <button
                                             type="button"
-                                            className="global-language-switcher-safe-offset absolute top-3 rounded-full bg-black/55 px-3 py-1 text-xs text-white hover:bg-black/70"
+                                            className="absolute right-3 top-3 rounded-full bg-black/55 px-3 py-1 text-xs text-white hover:bg-black/70"
                                             onClick={() => void openPlanTemplatePreview(planTemplateApplyTemplate)}
                                             disabled={false}
                                           >
@@ -5766,7 +5766,7 @@ export default function SuperAdminClient() {
                               />
                               <div className="fixed inset-0 z-[2147483601] flex items-center justify-center p-4">
                                 <div className="max-h-[92vh] w-full max-w-5xl overflow-hidden rounded-2xl border bg-white shadow-2xl">
-                                  <div className="global-language-switcher-safe-pad flex items-center justify-between border-b px-5 py-4">
+                                  <div className="flex items-center justify-between border-b px-5 py-4">
                                     <div className="text-base font-semibold text-slate-900">{planTemplateCoverPreview.name}</div>
                                     <div className="flex flex-wrap items-center gap-2">
                                       <button
@@ -5833,7 +5833,7 @@ export default function SuperAdminClient() {
                       />
                       <div className="fixed inset-0 z-[121] flex items-center justify-center p-4">
                         <div className="max-h-[92vh] w-full max-w-5xl overflow-hidden rounded-lg border bg-white p-4 shadow-2xl">
-                    <div className="global-language-switcher-safe-pad flex items-center justify-between">
+                    <div className="flex items-center justify-between">
                       <h2 className="font-semibold">用户详情 / 配置</h2>
                       <div className="flex items-center gap-2 text-xs">
                         <button
@@ -6788,7 +6788,7 @@ export default function SuperAdminClient() {
                   <div className="min-h-0 overflow-hidden rounded-lg border bg-white">
                     {selectedSupportThread ? (
                       <div className="flex h-full min-h-0 flex-col">
-                        <div className="global-language-switcher-safe-pad flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4">
+                        <div className="flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4">
                           <div className="space-y-1">
                             <div className="text-base font-semibold text-slate-900">{selectedSupportDisplayLabel}</div>
                             <div className="text-xs text-slate-500">
