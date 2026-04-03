@@ -287,6 +287,30 @@ function formatSupportUrlLabel(value: string | null | undefined) {
   }
 }
 
+function isSupportIpOrLocalHost(value: string) {
+  return (
+    /^https?:\/\/(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?(?:\/|$)/i.test(value) ||
+    /^https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:\/|$)/i.test(value)
+  );
+}
+
+function hasSupportMerchantProfileCoverage(profile: MerchantListPublishedSite | null | undefined) {
+  if (!profile) return false;
+  const hasWebsite = Boolean(
+    normalizeSupportDisplayValue(profile.domainPrefix) ||
+      normalizeSupportDisplayValue(profile.domainSuffix) ||
+      normalizeSupportDisplayValue(profile.domain),
+  );
+  return Boolean(
+    normalizeSupportDisplayValue(profile.contactPhone) ||
+      normalizeSupportDisplayValue(profile.contactEmail) ||
+      normalizeSupportDisplayValue(profile.industry) ||
+      normalizeSupportDisplayValue(profile.location?.city) ||
+      hasWebsite ||
+      profile.chatBusinessCard,
+  );
+}
+
 function buildSupportThreadsDigest(threads: PlatformSupportThread[]) {
   return threads
     .map((thread) => {
@@ -1441,13 +1465,16 @@ export default function SuperAdminClient() {
   const [supportSending, setSupportSending] = useState(false);
   const [supportBusinessCardDialogOpen, setSupportBusinessCardDialogOpen] = useState(false);
   const [supportMerchantInfoSheetOpen, setSupportMerchantInfoSheetOpen] = useState(false);
-  const [supportMerchantProfile, setSupportMerchantProfile] = useState<MerchantListPublishedSite | null>(null);
+  const [supportMerchantProfilesByMerchantId, setSupportMerchantProfilesByMerchantId] = useState<
+    Record<string, MerchantListPublishedSite | null>
+  >({});
   const [supportLastReadMap, setSupportLastReadMap] = useState<Record<string, string>>({});
   const supportMessagesViewportRef = useRef<HTMLDivElement>(null);
   const supportReplyInputRef = useRef<HTMLTextAreaElement>(null);
   const supportLastMessageKeyRef = useRef("");
   const supportLastIncomingMerchantMessageKeyRef = useRef("");
   const supportMobileSwipeStartRef = useRef<{ x: number; y: number; fromEdge: boolean } | null>(null);
+  const supportMerchantProfileLoadingIdsRef = useRef(new Set<string>());
   const supportThreadsRequestIdRef = useRef(0);
   const supportThreadsDigestRef = useRef("");
   const supportThreadsLoadTaskRef = useRef<Promise<void> | null>(null);
@@ -2194,8 +2221,21 @@ export default function SuperAdminClient() {
     normalizeSupportDisplayValue(selectedSupportMerchantRow?.merchantId) ||
     normalizeSupportDisplayValue(selectedSupportThread?.merchantId) ||
     "-";
-  const selectedSupportProfile =
-    supportMerchantProfile && supportMerchantProfile.id === selectedSupportMerchantId ? supportMerchantProfile : null;
+  const localSupportSnapshotByMerchantId = useMemo(
+    () => new Map(platformMerchantSnapshotPayload.snapshot.map((site) => [site.id, site] as const)),
+    [platformMerchantSnapshotPayload],
+  );
+  const selectedSupportFetchedProfile = useMemo(() => {
+    if (!/^\d{8}$/.test(selectedSupportMerchantId)) return undefined;
+    return Object.prototype.hasOwnProperty.call(supportMerchantProfilesByMerchantId, selectedSupportMerchantId)
+      ? supportMerchantProfilesByMerchantId[selectedSupportMerchantId]
+      : undefined;
+  }, [selectedSupportMerchantId, supportMerchantProfilesByMerchantId]);
+  const selectedSupportLocalProfile = useMemo(
+    () => (/^\d{8}$/.test(selectedSupportMerchantId) ? localSupportSnapshotByMerchantId.get(selectedSupportMerchantId) ?? null : null),
+    [localSupportSnapshotByMerchantId, selectedSupportMerchantId],
+  );
+  const selectedSupportProfile = selectedSupportFetchedProfile ?? selectedSupportLocalProfile ?? null;
   const selectedSupportMerchantEmail =
     normalizeSupportDisplayValue(selectedSupportProfile?.contactEmail) ||
     normalizeSupportDisplayValue(selectedSupportMerchantRow?.userEmail) ||
@@ -2291,35 +2331,30 @@ export default function SuperAdminClient() {
       normalizeSupportDisplayValue(selectedSupportProfile?.domain) ||
       normalizeSupportDisplayValue(selectedSupportMerchantRow?.site.domain);
     if (selectedSupportMerchantId !== "-" && selectedSupportMerchantPrefix) {
-      const preferredHref = buildMerchantFrontendHref(
-        selectedSupportMerchantId,
-        selectedSupportMerchantPrefix,
-        publicBaseDomain || undefined,
+      const runtimeHref = normalizeSupportExternalUrl(
+        buildMerchantFrontendHref(selectedSupportMerchantId, selectedSupportMerchantPrefix),
       );
-      const normalizedPreferredHref = normalizeSupportExternalUrl(
-        preferredHref,
-        publicBaseDomain ? `https://${publicBaseDomain.replace(/^https?:\/\//i, "")}` : undefined,
-      );
-      if (normalizedPreferredHref) {
-        return normalizedPreferredHref;
+      if (runtimeHref && !isSupportIpOrLocalHost(runtimeHref)) {
+        return runtimeHref;
+      }
+      if (publicBaseDomain) {
+        const publicHref = normalizeSupportExternalUrl(
+          buildMerchantFrontendHref(selectedSupportMerchantId, selectedSupportMerchantPrefix, publicBaseDomain),
+          `https://${publicBaseDomain.replace(/^https?:\/\//i, "")}`,
+        );
+        if (publicHref) {
+          return publicHref;
+        }
       }
     }
-    if (explicitDomain) {
+    if (explicitDomain && !isSupportIpOrLocalHost(normalizeSupportExternalUrl(explicitDomain))) {
       return normalizeSupportExternalUrl(
         explicitDomain,
         publicBaseDomain ? `https://${publicBaseDomain.replace(/^https?:\/\//i, "")}` : undefined,
       );
     }
     if (selectedSupportMerchantId === "-") return "";
-    const fallbackHref = buildMerchantFrontendHref(
-      selectedSupportMerchantId,
-      selectedSupportMerchantPrefix,
-      publicBaseDomain || undefined,
-    );
-    return normalizeSupportExternalUrl(
-      fallbackHref,
-      publicBaseDomain ? `https://${publicBaseDomain.replace(/^https?:\/\//i, "")}` : undefined,
-    );
+    return normalizeSupportExternalUrl(explicitDomain);
   }, [
     selectedSupportMerchantId,
     selectedSupportMerchantPrefix,
@@ -2502,9 +2537,6 @@ export default function SuperAdminClient() {
       setSupportMerchantInfoSheetOpen(false);
     }
   }, [activeMenu, isMobileSupportOnlyMode, selectedSupportThread, supportMobileView]);
-  useEffect(() => {
-    setSupportMerchantProfile(null);
-  }, [selectedSupportMerchantId]);
   useEffect(() => {
     if (!hydrated || typeof window === "undefined") return;
     const nextLastReadMap = supportThreads.reduce<Record<string, string>>((accumulator, thread) => {
@@ -2902,10 +2934,18 @@ export default function SuperAdminClient() {
     [requestSuperAdminWithSessionRecovery],
   );
   useEffect(() => {
-    if (!authed || !hydrated || !supportMerchantInfoSheetOpen) return;
+    if (!authed || !hydrated || activeMenu !== "support_messages") return;
     const merchantId = selectedSupportMerchantId.trim();
     if (!/^\d{8}$/.test(merchantId)) return;
+    if (Object.prototype.hasOwnProperty.call(supportMerchantProfilesByMerchantId, merchantId)) return;
+    const localProfile = localSupportSnapshotByMerchantId.get(merchantId) ?? null;
+    const shouldWarmSupportMerchantProfile =
+      supportMerchantInfoSheetOpen || (isMobileSupportOnlyMode && supportMobileView === "thread" && !!selectedSupportThread);
+    if (!shouldWarmSupportMerchantProfile) return;
+    if (!supportMerchantInfoSheetOpen && hasSupportMerchantProfileCoverage(localProfile)) return;
+    if (supportMerchantProfileLoadingIdsRef.current.has(merchantId)) return;
     let cancelled = false;
+    supportMerchantProfileLoadingIdsRef.current.add(merchantId);
     void (async () => {
       try {
         const response = await requestSuperAdminWithSessionRecovery(
@@ -2921,15 +2961,32 @@ export default function SuperAdminClient() {
             }
           | null;
         if (cancelled || !response.ok) return;
-        setSupportMerchantProfile(payload?.profile ?? null);
+        setSupportMerchantProfilesByMerchantId((current) => ({
+          ...current,
+          [merchantId]: payload?.profile ?? null,
+        }));
       } catch {
         if (cancelled) return;
+      } finally {
+        supportMerchantProfileLoadingIdsRef.current.delete(merchantId);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [authed, hydrated, requestSuperAdminWithSessionRecovery, selectedSupportMerchantId, supportMerchantInfoSheetOpen]);
+  }, [
+    activeMenu,
+    authed,
+    hydrated,
+    localSupportSnapshotByMerchantId,
+    requestSuperAdminWithSessionRecovery,
+    selectedSupportMerchantId,
+    selectedSupportThread,
+    isMobileSupportOnlyMode,
+    supportMobileView,
+    supportMerchantInfoSheetOpen,
+    supportMerchantProfilesByMerchantId,
+  ]);
 
   async function loadSupportThreadsAction(options?: { silent?: boolean; suppressError?: boolean }) {
     if (supportThreadsLoadTaskRef.current) {
