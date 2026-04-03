@@ -6504,20 +6504,6 @@ export default function SuperAdminClient() {
                             <div className="mt-1 text-xs text-slate-500">{mobileSupportListSummary}</div>
                           </div>
                         </div>
-                        <div className="mt-4 grid grid-cols-3 gap-2">
-                          <div className="rounded-2xl bg-slate-900 px-3 py-3 text-white shadow-sm">
-                            <div className="text-lg font-semibold">{supportUnreadThreadCount}</div>
-                            <div className="mt-1 text-[11px] text-white/70">待处理</div>
-                          </div>
-                          <div className="rounded-2xl border border-slate-200 bg-white/80 px-3 py-3 text-slate-900 shadow-sm">
-                            <div className="text-lg font-semibold">{supportListRows.length}</div>
-                            <div className="mt-1 text-[11px] text-slate-500">当前列表</div>
-                          </div>
-                          <div className="rounded-2xl border border-slate-200 bg-white/80 px-3 py-3 text-slate-900 shadow-sm">
-                            <div className="text-lg font-semibold">{supportThreads.length}</div>
-                            <div className="mt-1 text-[11px] text-slate-500">有留言</div>
-                          </div>
-                        </div>
                         <div className="mt-4 inline-flex w-full rounded-full bg-slate-100 p-1">
                           <button
                             type="button"
@@ -6614,14 +6600,6 @@ export default function SuperAdminClient() {
                                       </div>
                                       <div className="mt-2 line-clamp-2 text-[13px] leading-5 text-slate-600">
                                         {lastMessage?.text || "暂无留言记录，点进来可以直接开始回复。"}
-                                      </div>
-                                      <div className="mt-3 flex items-center justify-between gap-3 text-[11px] text-slate-400">
-                                        <div className="truncate">ID {row.merchantId || thread?.merchantId || "-"}</div>
-                                        {hasUnread ? (
-                                          <span className="shrink-0 rounded-full bg-rose-50 px-2 py-1 text-rose-600">待回复</span>
-                                        ) : (
-                                          <span className="shrink-0">{thread ? `${thread.messages.length} 条消息` : "可开始会话"}</span>
-                                        )}
                                       </div>
                                     </div>
                                   </div>
