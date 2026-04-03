@@ -97,3 +97,21 @@ export function hasDirectResetPasswordRecoveryPayload(
   if (!payload) return false;
   return Boolean((payload.accessToken && payload.refreshToken) || payload.tokenHash);
 }
+
+export function buildResetPasswordRecoveryUrl(
+  target: string | URL,
+  payload: Partial<ResetPasswordRecoveryPayload> | null | undefined,
+) {
+  const url = typeof target === "string" ? new URL(target, "http://localhost") : new URL(target.toString());
+  const normalized = normalizeResetPasswordRecoveryPayload(payload);
+  if (!normalized) return url;
+
+  const hashParams = new URLSearchParams();
+  if (normalized.accessToken) hashParams.set("access_token", normalized.accessToken);
+  if (normalized.refreshToken) hashParams.set("refresh_token", normalized.refreshToken);
+  if (normalized.type) hashParams.set("type", normalized.type);
+  if (normalized.tokenHash) hashParams.set("token_hash", normalized.tokenHash);
+  if (normalized.code) hashParams.set("code", normalized.code);
+  url.hash = hashParams.toString();
+  return url;
+}

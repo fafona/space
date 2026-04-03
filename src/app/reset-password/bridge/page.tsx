@@ -4,6 +4,7 @@ import { createClient } from "@supabase/supabase-js";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useI18n } from "@/components/I18nProvider";
 import {
+  buildResetPasswordRecoveryUrl,
   type ResetPasswordRecoveryPayload,
   persistResetPasswordRecoveryPayload,
   readResetPasswordRecoveryPayloadFromUrl,
@@ -60,9 +61,13 @@ export default function ResetPasswordBridgePage() {
     });
   }, []);
 
-  const redirectToResetPage = useCallback(() => {
-    window.location.replace(nextUrl);
-  }, [nextUrl]);
+  const redirectToResetPage = useCallback(
+    (payload?: Partial<ResetPasswordRecoveryPayload> | null) => {
+      const targetUrl = buildResetPasswordRecoveryUrl(new URL(nextUrl, window.location.origin), payload);
+      window.location.replace(`${targetUrl.pathname}${targetUrl.search}${targetUrl.hash}`);
+    },
+    [nextUrl],
+  );
 
   const finalizeRecoverySession = useCallback(
     async (payload: ResetPasswordRecoveryPayload) => {
@@ -82,7 +87,12 @@ export default function ResetPasswordBridgePage() {
         accessToken,
         refreshToken,
       });
-      redirectToResetPage();
+      redirectToResetPage({
+        ...payload,
+        accessToken,
+        refreshToken,
+        type: "recovery",
+      });
     },
     [redirectToResetPage, t],
   );
