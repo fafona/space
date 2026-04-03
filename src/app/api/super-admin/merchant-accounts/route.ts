@@ -81,10 +81,27 @@ type AdminListUsersClient = {
   };
 };
 
+type MerchantAccountsCacheEntry = {
+  items: MerchantAccountItem[];
+  expiresAt: number;
+  staleUntil: number;
+};
+
+const AUTH_USERS_CACHE_TTL_MS = 60_000;
+const MERCHANT_ACCOUNTS_CACHE_TTL_MS = 30_000;
+const MERCHANT_ACCOUNTS_CACHE_STALE_TTL_MS = 5 * 60_000;
+const MERCHANT_ROWS_TIMEOUT_MS = 4500;
 const AUTH_USERS_TIMEOUT_MS = 2500;
 const SNAPSHOT_LOAD_TIMEOUT_MS = 1500;
 const PUBLISHED_SITE_INFO_TIMEOUT_MS = 1500;
 const PAGE_EVENTS_TIMEOUT_MS = 1500;
+let authUsersCache:
+  | {
+      expiresAt: number;
+      users: AuthUserSummary[];
+    }
+  | null = null;
+let merchantAccountsCache: MerchantAccountsCacheEntry | null = null;
 
 function parseCookieValue(cookieHeader: string, key: string) {
   return cookieHeader
@@ -165,6 +182,9 @@ function isDuplicateKeyError(error: unknown) {
 }
 
 async function listAuthUsers(supabase: AdminListUsersClient) {
+  if (authUsersCache && authUsersCache.expiresAt > Date.now()) {
+    return authUsersCache.users;
+  }
   const users: AuthUserSummary[] = [];
   let page = 1;
   while (true) {
@@ -183,6 +203,10 @@ async function listAuthUsers(supabase: AdminListUsersClient) {
     if (chunk.length < 200) break;
     page += 1;
   }
+  authUsersCache = {
+    expiresAt: Date.now() + AUTH_USERS_CACHE_TTL_MS,
+    users,
+  };
   return users;
 }
 
@@ -358,6 +382,12 @@ function envMissingJson() {
   return NextResponse.json({ error: "merchant_account_env_missing" }, { status: 503 });
 }
 
+function noStoreJson(body: unknown, init?: ResponseInit) {
+  const response = NextResponse.json(body, init);
+  response.headers.set("cache-control", "no-store");
+  return response;
+}
+
 function badRequestJson(error: string, message: string) {
   return NextResponse.json({ error, message }, { status: 400 });
 }
@@ -371,6 +401,24 @@ function ensureAuthorized(request: Request) {
   return parseCookieValue(cookieHeader, SUPER_ADMIN_SESSION_COOKIE) === SUPER_ADMIN_SESSION_VALUE;
 }
 
+function readFreshMerchantAccountsCache() {
+  if (!merchantAccountsCache || merchantAccountsCache.expiresAt <= Date.now()) return null;
+  return merchantAccountsCache.items;
+}
+
+function readStaleMerchantAccountsCache() {
+  if (!merchantAccountsCache || merchantAccountsCache.staleUntil <= Date.now()) return null;
+  return merchantAccountsCache.items;
+}
+
+function writeMerchantAccountsCache(items: MerchantAccountItem[]) {
+  merchantAccountsCache = {
+    items,
+    expiresAt: Date.now() + MERCHANT_ACCOUNTS_CACHE_TTL_MS,
+    staleUntil: Date.now() + MERCHANT_ACCOUNTS_CACHE_STALE_TTL_MS,
+  };
+}
+
 export async function GET(request: Request) {
   if (!ensureAuthorized(request)) {
     return unauthorizedJson();
@@ -381,13 +429,28 @@ export async function GET(request: Request) {
     return envMissingJson();
   }
 
+  const freshCache = readFreshMerchantAccountsCache();
+  if (freshCache) {
+    return noStoreJson({ items: freshCache });
+  }
+
   try {
     const [{ data: merchants, error: merchantError }, authUsers, snapshotByMerchantId] = await Promise.all([
-      supabase
-        .from("merchants")
-        .select("id,name,email,owner_email,contact_email,user_email,user_id,auth_user_id,created_at")
-        .order("created_at", { ascending: false })
-        .limit(500),
+      resolveWithin(
+        supabase
+          .from("merchants")
+          .select("id,name,email,owner_email,contact_email,user_email,user_id,auth_user_id,created_at")
+          .order("created_at", { ascending: false })
+          .limit(500),
+        MERCHANT_ROWS_TIMEOUT_MS,
+        {
+          count: null,
+          data: null,
+          error: { message: "merchants_timeout", details: "", hint: "", code: "timeout", name: "TimeoutError" },
+          status: 408,
+          statusText: "Request Timeout",
+        },
+      ),
       resolveWithin(listAuthUsers(supabase), AUTH_USERS_TIMEOUT_MS, [] as AuthUserSummary[]),
       resolveWithin(
         loadPlatformMerchantSnapshotByMerchantId(supabase as unknown as PlatformMerchantSnapshotStoreClient),
@@ -396,7 +459,13 @@ export async function GET(request: Request) {
       ),
     ]);
 
-    if (merchantError) throw merchantError;
+    if (merchantError && merchantError.message !== "merchants_timeout") throw merchantError;
+    if (merchantError?.message === "merchants_timeout") {
+      const staleCache = readStaleMerchantAccountsCache();
+      if (staleCache) {
+        return noStoreJson({ items: staleCache });
+      }
+    }
 
     const authById = new Map(authUsers.map((user) => [user.id, user] as const));
     const authByEmail = new Map(
@@ -567,9 +636,14 @@ export async function GET(request: Request) {
       }),
     );
 
-    return NextResponse.json({ items });
+    writeMerchantAccountsCache(items);
+    return noStoreJson({ items });
   } catch (error) {
-    return NextResponse.json(
+    const staleCache = readStaleMerchantAccountsCache();
+    if (staleCache) {
+      return noStoreJson({ items: staleCache });
+    }
+    return noStoreJson(
       {
         error: "merchant_account_load_failed",
         message: error instanceof Error ? error.message : "unknown_error",
