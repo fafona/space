@@ -1970,8 +1970,44 @@ export default function SuperAdminClient() {
         selectedSupportThread?.merchantName ||
         selectedSupportThread?.merchantId ||
         "-";
+  const selectedSupportBusinessCardSite = useMemo(() => {
+    const normalizedMerchantId = normalizeMerchantIdValue(
+      selectedSupportMerchantRow?.merchantId || selectedSupportThread?.merchantId || selectedSupportThread?.siteId,
+    );
+    const threadSiteId = String(selectedSupportThread?.siteId ?? "").trim();
+    const selectedRowSiteId = String(selectedSupportMerchantRow?.site.id ?? "").trim();
+    const selectedRowSite =
+      selectedSupportMerchantRow?.hasLocalSite && selectedRowSiteId
+        ? state.sites.find((site) => site.id === selectedRowSiteId) ?? selectedSupportMerchantRow.site
+        : selectedSupportMerchantRow?.site ?? null;
+    if (selectedRowSite?.businessCards?.length) return selectedRowSite;
+
+    if (threadSiteId) {
+      const exactThreadSite = state.sites.find((site) => site.id === threadSiteId) ?? null;
+      if (exactThreadSite?.businessCards?.length) return exactThreadSite;
+    }
+
+    if (normalizedMerchantId) {
+      const localMerchantRowSite =
+        merchantRows.find((row) => row.hasLocalSite && normalizeMerchantIdValue(row.merchantId) === normalizedMerchantId)?.site ?? null;
+      if (localMerchantRowSite?.businessCards?.length) return localMerchantRowSite;
+
+      const exactMerchantSite =
+        state.sites.find((site) => normalizeMerchantIdValue(site.id) === normalizedMerchantId) ?? null;
+      if (exactMerchantSite?.businessCards?.length) return exactMerchantSite;
+    }
+
+    const normalizedThreadPrefix = normalizePublishedSitePrefix(threadSiteId);
+    if (normalizedThreadPrefix) {
+      const prefixedSite =
+        state.sites.find((site) => normalizePublishedSitePrefix(site.domainPrefix ?? site.domainSuffix) === normalizedThreadPrefix) ?? null;
+      if (prefixedSite?.businessCards?.length) return prefixedSite;
+    }
+
+    return selectedRowSite;
+  }, [merchantRows, selectedSupportMerchantRow, selectedSupportThread, state.sites]);
   const selectedSupportBusinessCard = resolveMerchantBusinessCardForChatDisplay(
-    selectedSupportMerchantRow?.site.businessCards ?? [],
+    selectedSupportBusinessCardSite?.businessCards ?? [],
   );
   const selectedSupportLatestMessage = selectedSupportThread?.messages[selectedSupportThread.messages.length - 1] ?? null;
   const selectedSupportThreadMerchantId = selectedSupportThread?.merchantId?.trim() ?? "";
