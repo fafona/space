@@ -880,9 +880,15 @@ function LoginPageInner() {
             data-lpignore="true"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter") return;
+              event.preventDefault();
+              void signIn();
+            }}
             placeholder={t("login.passwordMin6")}
             showLabel={passwordToggleLabels.show}
             hideLabel={passwordToggleLabels.hide}
+            toggleButtonTabIndex={-1}
           />
         </div>
 

@@ -6,6 +6,7 @@ type PasswordFieldProps = Omit<InputHTMLAttributes<HTMLInputElement>, "type"> & 
   wrapperClassName?: string;
   showLabel?: string;
   hideLabel?: string;
+  toggleButtonTabIndex?: number;
 };
 
 function joinClassNames(...values: Array<string | undefined>) {
@@ -68,7 +69,14 @@ export function getPasswordToggleLabels(locale: string) {
 }
 
 const PasswordField = forwardRef<HTMLInputElement, PasswordFieldProps>(function PasswordField(
-  { className, wrapperClassName, showLabel = "Show password", hideLabel = "Hide password", ...props },
+  {
+    className,
+    wrapperClassName,
+    showLabel = "Show password",
+    hideLabel = "Hide password",
+    toggleButtonTabIndex,
+    ...props
+  },
   ref,
 ) {
   const [visible, setVisible] = useState(false);
@@ -86,6 +94,7 @@ const PasswordField = forwardRef<HTMLInputElement, PasswordFieldProps>(function 
         aria-label={toggleLabel}
         title={toggleLabel}
         aria-pressed={visible}
+        tabIndex={toggleButtonTabIndex}
         onMouseDown={handleMouseDown}
         onClick={() => setVisible((current) => !current)}
         disabled={props.disabled}
