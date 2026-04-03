@@ -7622,6 +7622,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   ].sort(compareSupportMessages);
   const supportOfficialName = "Faolla";
   const supportOfficialSiteLabel = "www.faolla.com";
+  const supportOfficialBadgeLabel = "官方";
   const selectedSupportPeerMerchantId = supportSelectedContactKey.startsWith("merchant:")
     ? supportSelectedContactKey.slice("merchant:".length).trim()
     : "";
@@ -7700,6 +7701,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY
       ? supportOfficialName
       : selectedSupportPeerContact?.merchantName || selectedSupportPeerMerchantId || "未选择联系人";
+  const selectedSupportIsOfficial = supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY;
   const selectedSupportSubtitle =
     supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY
       ? supportOfficialSiteLabel
@@ -7747,6 +7749,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     {
       key: SUPPORT_OFFICIAL_CONTACT_KEY,
       name: supportOfficialName,
+      badge: supportOfficialBadgeLabel,
       subtitle: supportOfficialSiteLabel,
       preview: latestOfficialVisibleSupportMessage?.text || "还没有留言记录，可以直接在右侧给 Faolla 留言。",
       updatedAt: latestOfficialVisibleSupportMessage?.createdAt || "",
@@ -9491,6 +9494,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                                   <div className="min-w-0">
                                     <div className="flex items-center gap-2">
                                       <div className="truncate text-sm font-medium text-slate-900">{contactRow.name}</div>
+                                      {contactRow.badge ? (
+                                        <span className="inline-flex shrink-0 items-center rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium leading-none text-white">
+                                          {contactRow.badge}
+                                        </span>
+                                      ) : null}
                                       {contactRow.unread ? (
                                         <span aria-label="有未读消息" className="inline-flex h-2.5 w-2.5 shrink-0 rounded-full bg-rose-500" />
                                       ) : null}
@@ -9519,7 +9527,14 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                   <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
                     <div className="flex min-w-0 items-center justify-between gap-3 border-b px-5 py-4">
                       <div className="min-w-0">
-                        <div className="truncate text-base font-semibold text-slate-900">{selectedSupportDisplayName}</div>
+                        <div className="flex items-center gap-2">
+                          <div className="truncate text-base font-semibold text-slate-900">{selectedSupportDisplayName}</div>
+                          {selectedSupportIsOfficial ? (
+                            <span className="inline-flex shrink-0 items-center rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium leading-none text-white">
+                              {supportOfficialBadgeLabel}
+                            </span>
+                          ) : null}
+                        </div>
                         <div className="truncate text-xs text-slate-500">{selectedSupportSubtitle}</div>
                       </div>
                       <div className="flex shrink-0 items-center gap-2">
