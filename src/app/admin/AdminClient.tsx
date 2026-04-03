@@ -206,6 +206,7 @@ import {
 } from "@/lib/buttonBlock";
 import { ensureMerchantIdentityForUser, isMerchantNumericId } from "@/lib/merchantIdentity";
 import {
+  buildMerchantBackendHref,
   buildMerchantDomain,
   buildMerchantFrontendHref,
   buildSiteStoreScope,
@@ -5264,6 +5265,22 @@ export default function AdminClient({
         }
       }
     };
+    const redirectToMerchantLogin = (merchantIdHint?: string) => {
+      if (isPlatformEditor || typeof window === "undefined") return;
+      const resolvedMerchantId =
+        [
+          merchantIdHint,
+          getSiteIdFromStoreScope(storeScope),
+          merchantSessionIdentityRef.current.merchantId,
+          ...merchantIdsRef.current,
+        ]
+          .map((item) => String(item ?? "").trim())
+          .find(Boolean) ?? "";
+      clearStoredBrowserSupabaseSessionTokens();
+      clearMerchantSignInBridge(resolvedMerchantId || undefined);
+      const targetHref = buildMerchantBackendHref(resolvedMerchantId);
+      window.location.replace(`/login?redirect=${encodeURIComponent(targetHref)}`);
+    };
     const attachAuthListener = () => {
       if (isPlatformEditor) return;
       if (authSubscription || !mounted) return;
@@ -5287,16 +5304,7 @@ export default function AdminClient({
             releaseCheckingScreen({ notice: null });
             return;
           }
-          if (justSignedIn) {
-            setRemoteContentVerified(false);
-            setHasEditorContent(true);
-            setBackendNotice("登录已断开，请重新登录后继续。");
-            return;
-          }
-          setRemoteContentVerified(false);
-          setHasEditorContent(true);
-          setBackendNotice("当前未登录，请重新登录后继续。");
-          releaseCheckingScreen({ notice: "当前未登录，请重新登录后继续。" });
+          redirectToMerchantLogin();
         })().catch(() => {
           // Ignore listener network failures; keep current editor session.
         });
@@ -5414,9 +5422,7 @@ export default function AdminClient({
               const restored = await tryLoadJustSignedInPublishedContent();
               if (!mounted) return;
               if (restored) return;
-              setRemoteContentVerified(false);
-              setHasEditorContent(true);
-              releaseCheckingScreen({ notice: "登录未完成，请重新登录后继续。" });
+              redirectToMerchantLogin();
               return;
             }
             if (cookieBackedMerchantIdentity) {
@@ -5425,10 +5431,8 @@ export default function AdminClient({
               setHasEditorContent(true);
               releaseCheckingScreen({ notice: null });
             } else {
-            setRemoteContentVerified(false);
-            setHasEditorContent(true);
-            releaseCheckingScreen({ notice: "当前未登录，请重新登录后继续。" });
-            return;
+              redirectToMerchantLogin();
+              return;
             }
           }
         }
