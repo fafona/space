@@ -3896,8 +3896,9 @@ export default function AdminClient({
   }, []);
   const closeMobileSupportThread = useCallback(() => {
     setSupportBusinessCardDialogOpen(false);
+    if (isMobileMerchantSupportOnlyMode) return;
     setSupportMobileView("list");
-  }, []);
+  }, [isMobileMerchantSupportOnlyMode]);
   const openSupportContactThread = useCallback((contactKey: string) => {
     setSupportSelectedContactKey(contactKey);
     setSupportMobileView("thread");
@@ -8266,16 +8267,22 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     supportScrollToLatestPendingRef.current = true;
     setSupportDataActivated(true);
     setSupportLoading(true);
+    setSupportSelectedContactKey(SUPPORT_OFFICIAL_CONTACT_KEY);
+    setSupportMobileView("thread");
   }, [isMobileMerchantSupportOnlyMode, isPlatformEditor]);
 
   useEffect(() => {
     if (isPlatformEditor || typeof window === "undefined" || !supportDataActivated) return;
 
     void loadSupportThread({ silent: !supportInterfaceOpen, suppressError: !supportInterfaceOpen });
-    void loadSupportPeerInbox({ silent: !supportInterfaceOpen, suppressError: !supportInterfaceOpen });
+    if (!isMobileMerchantSupportOnlyMode) {
+      void loadSupportPeerInbox({ silent: !supportInterfaceOpen, suppressError: !supportInterfaceOpen });
+    }
     const refreshSupportThread = () => {
       void loadSupportThread({ silent: true, suppressError: !supportInterfaceOpen });
-      void loadSupportPeerInbox({ silent: true, suppressError: !supportInterfaceOpen });
+      if (!isMobileMerchantSupportOnlyMode) {
+        void loadSupportPeerInbox({ silent: true, suppressError: !supportInterfaceOpen });
+      }
     };
 
     const timer = window.setInterval(() => {
@@ -8296,7 +8303,15 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       window.removeEventListener("focus", handleFocus);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [isDesktopEditorSidebar, isPlatformEditor, loadSupportPeerInbox, loadSupportThread, supportDataActivated, supportInterfaceOpen]);
+  }, [
+    isDesktopEditorSidebar,
+    isMobileMerchantSupportOnlyMode,
+    isPlatformEditor,
+    loadSupportPeerInbox,
+    loadSupportThread,
+    supportDataActivated,
+    supportInterfaceOpen,
+  ]);
 
   useEffect(() => {
     if (isPlatformEditor || typeof window === "undefined") return;
@@ -8350,13 +8365,13 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   useEffect(() => {
     if (supportInterfaceOpen) {
       if (!isDesktopEditorSidebar) {
-        setSupportMobileView("list");
+        setSupportMobileView(isMobileMerchantSupportOnlyMode ? "thread" : "list");
       }
       return;
     }
     supportMobileSwipeStartRef.current = null;
     setSupportMobileView("list");
-  }, [isDesktopEditorSidebar, supportInterfaceOpen]);
+  }, [isDesktopEditorSidebar, isMobileMerchantSupportOnlyMode, supportInterfaceOpen]);
 
   useEffect(() => {
     if (isPlatformEditor || !supportInterfaceOpen || !supportBusinessCardDialogOpen) return;
@@ -8961,7 +8976,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
   const supportMobileDialogContent = showMobileSupportThread ? (
     <div
-      className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_48%,#f8fafc_100%)]"
+      className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_48%,#f8fafc_100%)]"
       onTouchStart={handleSupportMobileThreadTouchStart}
       onTouchEnd={handleSupportMobileThreadTouchEnd}
       onTouchCancel={() => {
@@ -8971,22 +8986,24 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       <div className="shrink-0 border-b border-slate-200/80 bg-white/90 px-3 pb-3 pt-[calc(env(safe-area-inset-top)+0.55rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
-            <button
-              type="button"
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-slate-900 hover:bg-slate-100"
-              onClick={closeMobileSupportThread}
-              aria-label="返回会话列表"
-            >
-              <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" aria-hidden="true">
-                <path
-                  d="M19 12H7M12 7l-5 5 5 5"
-                  stroke="currentColor"
-                  strokeWidth="2.2"
-                  strokeLinecap="square"
-                  strokeLinejoin="miter"
-                />
-              </svg>
-            </button>
+            {!isMobileMerchantSupportOnlyMode ? (
+              <button
+                type="button"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-slate-900 hover:bg-slate-100"
+                onClick={closeMobileSupportThread}
+                aria-label="返回会话列表"
+              >
+                <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" aria-hidden="true">
+                  <path
+                    d="M19 12H7M12 7l-5 5 5 5"
+                    stroke="currentColor"
+                    strokeWidth="2.2"
+                    strokeLinecap="square"
+                    strokeLinejoin="miter"
+                  />
+                </svg>
+              </button>
+            ) : null}
             {selectedSupportIsOfficial ? (
               <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm">
                 {selectedSupportAvatarLabel}
@@ -9117,7 +9134,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       </div>
     </div>
   ) : (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_48%,#f8fafc_100%)]">
+    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_48%,#f8fafc_100%)]">
       <div className="shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
         <div className="flex items-center gap-3">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm">
@@ -9238,8 +9255,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   if (isMobileMerchantSupportOnlyMode) {
     return (
       <>
-        <main className="fixed inset-0 overflow-hidden bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_48%,#f8fafc_100%)]">
-          {supportMobileDialogContent}
+        <main className="fixed inset-0 z-[120] h-[100dvh] overflow-hidden overscroll-none bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_48%,#f8fafc_100%)]">
+          <div className="flex h-full min-h-0 flex-col overflow-hidden">
+            {supportMobileDialogContent}
+          </div>
         </main>
         <ChatBusinessCardDialog
           open={supportBusinessCardDialogOpen && supportInterfaceOpen && !isPlatformEditor}
