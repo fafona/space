@@ -4056,7 +4056,7 @@ export default function AdminClient({
   }, []);
   useEffect(() => {
     resizeSupportInputHeight();
-  }, [resizeSupportInputHeight, showMobileSupportThread, supportDraft, supportSelectedContactKey]);
+  }, [resizeSupportInputHeight, supportDraft, supportMobileView, supportSelectedContactKey]);
   const handleSupportMobileThreadTouchStart = useCallback((event: TouchEvent<HTMLDivElement>) => {
     const touch = event.touches[0];
     if (!touch) return;
