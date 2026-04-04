@@ -14,6 +14,7 @@ import {
 } from "@/lib/merchantPeerInboxStore";
 import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
+import { notifyMerchantPushSubscribers } from "@/lib/webPush";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -45,6 +46,11 @@ function normalizeMerchantId(value: unknown) {
 
 function normalizeSupportText(value: unknown) {
   return trimText(value).slice(0, 5000);
+}
+
+function buildPushPreview(text: string) {
+  const normalized = normalizeSupportText(text).replace(/\s+/g, " ").trim();
+  return normalized.length > 88 ? `${normalized.slice(0, 88)}…` : normalized;
 }
 
 function noStoreJson(body: unknown, init?: ResponseInit) {
@@ -331,6 +337,16 @@ export async function POST(request: Request) {
         { status: 500 },
       );
     }
+
+    await notifyMerchantPushSubscribers(supabase as unknown as MerchantPeerInboxStoreClient, {
+      merchantId: recipient.merchantId,
+      title: sender.merchantName || sender.merchantId,
+      body: buildPushPreview(text),
+      url: `/${recipient.merchantId}?support=merchant:${sender.merchantId}`,
+      tag: `peer:${recipient.merchantId}:${sender.merchantId}`,
+    }).catch(() => {
+      // Ignore notification delivery failures; the saved message should still succeed.
+    });
 
     return noStoreJson({
       ...buildInboxResponse(nextPayload, session.merchantId),

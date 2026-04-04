@@ -10,6 +10,7 @@ import {
 } from "@/lib/platformSupportInboxStore";
 import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import { SUPER_ADMIN_SESSION_COOKIE, SUPER_ADMIN_SESSION_VALUE } from "@/lib/superAdminSession";
+import { notifyMerchantPushSubscribers } from "@/lib/webPush";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -30,6 +31,11 @@ function trimText(value: unknown) {
 
 function normalizeSupportText(value: unknown) {
   return trimText(value).slice(0, 5000);
+}
+
+function buildPushPreview(text: string) {
+  const normalized = normalizeSupportText(text).replace(/\s+/g, " ").trim();
+  return normalized.length > 88 ? `${normalized.slice(0, 88)}…` : normalized;
 }
 
 function noStoreJson(body: unknown, init?: ResponseInit) {
@@ -106,6 +112,16 @@ export async function POST(request: Request) {
       { status: 500 },
     );
   }
+
+  await notifyMerchantPushSubscribers(supabase as unknown as PlatformSupportInboxStoreClient, {
+    merchantId,
+    title: "Faolla 官方",
+    body: buildPushPreview(text),
+    url: `/${merchantId}?support=official`,
+    tag: `support:${merchantId}`,
+  }).catch(() => {
+    // Ignore notification delivery failures; the saved reply should still succeed.
+  });
 
   return noStoreJson({
     ok: true,

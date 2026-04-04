@@ -4010,9 +4010,18 @@ type SupportContactRow = {
 type SupportMobileHomeTab = "conversations" | "business" | "faolla" | "self";
 
 const SUPPORT_EMPTY_SIGNATURE_TEXT = "这家伙很懒，什么都没有留下。";
+const SUPPORT_PUSH_SERVICE_WORKER_PATH = "/faolla-sw.js";
 
 function resolveSupportSignatureText(value: unknown) {
   return normalizeSupportDisplayValue(value) || SUPPORT_EMPTY_SIGNATURE_TEXT;
+}
+
+function normalizeSupportConversationDeepLink(value: unknown) {
+  const normalized = normalizeSupportDisplayValue(value);
+  if (!normalized) return "";
+  if (normalized === "official") return "official";
+  const merchantMatch = normalized.match(/^merchant:(\d{8})$/);
+  return merchantMatch ? `merchant:${merchantMatch[1]}` : "";
 }
 
 type SupportBadgingNavigator = Navigator & {
@@ -4040,6 +4049,44 @@ async function syncSupportAppBadge(unreadCount: number) {
   } catch {
     // Ignore unsupported browsers or temporarily blocked badge updates.
   }
+}
+
+function readSupportPushPublicKey() {
+  return String(process.env.NEXT_PUBLIC_WEB_PUSH_PUBLIC_KEY ?? "").trim();
+}
+
+function canUseSupportPushInBrowser() {
+  if (typeof window === "undefined" || typeof navigator === "undefined") return false;
+  return Boolean(
+    readSupportPushPublicKey() &&
+      "serviceWorker" in navigator &&
+      "PushManager" in window &&
+      "Notification" in window,
+  );
+}
+
+function isSupportStandaloneDisplayMode() {
+  if (typeof window === "undefined" || typeof navigator === "undefined") return false;
+  const navigatorWithStandalone = navigator as Navigator & { standalone?: boolean };
+  return window.matchMedia?.("(display-mode: standalone)").matches || navigatorWithStandalone.standalone === true;
+}
+
+function decodeSupportPushBase64(base64Value: string) {
+  const normalized = base64Value.replace(/-/g, "+").replace(/_/g, "/");
+  const padding = "=".repeat((4 - (normalized.length % 4 || 4)) % 4);
+  const binary = atob(`${normalized}${padding}`);
+  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
+}
+
+async function syncSupportServiceWorkerBadge(unreadCount: number) {
+  if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
+  const registration = await navigator.serviceWorker.getRegistration().catch(() => null);
+  const target = registration?.active ?? registration?.waiting ?? registration?.installing ?? navigator.serviceWorker.controller;
+  if (!target) return;
+  target.postMessage({
+    type: "SYNC_BADGE",
+    unreadCount,
+  });
 }
 
 type SupportAvatarBadgeProps = {
@@ -4448,6 +4495,19 @@ export default function AdminClient({
   const [supportSelfAvatarUploading, setSupportSelfAvatarUploading] = useState(false);
   const [supportSelfSignatureDraft, setSupportSelfSignatureDraft] = useState("");
   const [supportSelfSignatureDirty, setSupportSelfSignatureDirty] = useState(false);
+  const [supportPushPermission, setSupportPushPermission] = useState<NotificationPermission | "unsupported">(() =>
+    canUseSupportPushInBrowser() ? Notification.permission : "unsupported",
+  );
+  const [supportPushSubscribed, setSupportPushSubscribed] = useState(false);
+  const [supportPushEndpoint, setSupportPushEndpoint] = useState("");
+  const [supportPushBusy, setSupportPushBusy] = useState(false);
+  const [supportPushError, setSupportPushError] = useState("");
+  const [supportPushStandalone, setSupportPushStandalone] = useState(() => isSupportStandaloneDisplayMode());
+  const [supportPendingDeepLink, setSupportPendingDeepLink] = useState(() =>
+    typeof window === "undefined"
+      ? ""
+      : normalizeSupportConversationDeepLink(new URLSearchParams(window.location.search).get("support")),
+  );
   const [supportPeerBusinessCardByMerchantId, setSupportPeerBusinessCardByMerchantId] = useState<
     Record<string, MerchantBusinessCardAsset | null>
   >({});
@@ -9054,6 +9114,191 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     return response;
   }, [editingSite?.contactEmail, editingSiteId, merchantDisplayName, prefetchMerchantSessionIdentity, storeScope]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const updateSupportPushState = () => {
+      setSupportPushStandalone(isSupportStandaloneDisplayMode());
+      setSupportPushPermission(canUseSupportPushInBrowser() ? Notification.permission : "unsupported");
+    };
+    updateSupportPushState();
+    const displayModeQuery = window.matchMedia?.("(display-mode: standalone)");
+    const handleVisibilityChange = () => updateSupportPushState();
+    displayModeQuery?.addEventListener?.("change", updateSupportPushState);
+    window.addEventListener("focus", updateSupportPushState);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      displayModeQuery?.removeEventListener?.("change", updateSupportPushState);
+      window.removeEventListener("focus", updateSupportPushState);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, []);
+
+  const requestMerchantPushWithSessionRecovery = useCallback(
+    (init: RequestInit) => {
+      const params = new URLSearchParams();
+      const pushSiteId = (
+        editingSiteId ||
+        getSiteIdFromStoreScope(storeScope) ||
+        merchantSessionIdentityRef.current.merchantId ||
+        merchantIdsRef.current.find((item) => isMerchantNumericId(item)) ||
+        merchantIdsRef.current[0] ||
+        ""
+      ).trim();
+      const pushEmail =
+        ((editingSite?.contactEmail ?? "").trim() || String(merchantSessionIdentityRef.current.email ?? "").trim()) ??
+        "";
+      if (pushSiteId) {
+        params.set("siteId", pushSiteId);
+      }
+      if (pushEmail) {
+        params.set("merchantEmail", pushEmail);
+      }
+      if (merchantDisplayName) {
+        params.set("merchantName", merchantDisplayName);
+      }
+      const path = params.size > 0 ? `/api/merchant-push-subscriptions?${params.toString()}` : "/api/merchant-push-subscriptions";
+      let nextInit = init;
+      const method = String(init.method ?? "GET").trim().toUpperCase();
+      const contentType = new Headers(init.headers ?? undefined).get("content-type") ?? "";
+      if (method !== "GET" && typeof init.body === "string" && contentType.toLowerCase().includes("application/json")) {
+        try {
+          const parsed = JSON.parse(init.body) as Record<string, unknown>;
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            nextInit = {
+              ...init,
+              body: JSON.stringify({
+                ...parsed,
+                ...(pushSiteId ? { siteId: pushSiteId } : {}),
+                ...(pushEmail ? { merchantEmail: pushEmail } : {}),
+                ...(merchantDisplayName ? { merchantName: merchantDisplayName } : {}),
+              }),
+            };
+          }
+        } catch {
+          nextInit = init;
+        }
+      }
+      const sendDirectPushRequest = () => {
+        const headers = new Headers(nextInit.headers ?? undefined);
+        headers.set("accept", "application/json");
+        headers.delete("x-merchant-site-id");
+        headers.delete("x-merchant-email");
+        headers.delete("x-merchant-name");
+        headers.delete("x-merchant-access-token");
+        headers.delete("x-merchant-refresh-token");
+        headers.delete("x-merchant-expires-in");
+        return fetch(path, {
+          credentials: "same-origin" as const,
+          cache: "no-store" as const,
+          ...nextInit,
+          headers,
+        });
+      };
+      return requestMerchantChatWithSessionRecovery(path, nextInit)
+        .then((response) => {
+          if (response.ok) return response;
+          if (![401, 403, 503].includes(response.status)) return response;
+          return sendDirectPushRequest().catch(() => response);
+        })
+        .catch(() => sendDirectPushRequest());
+    },
+    [editingSite?.contactEmail, editingSiteId, merchantDisplayName, requestMerchantChatWithSessionRecovery, storeScope],
+  );
+
+  const sendSupportPushAction = useCallback(
+    async (payload: Record<string, unknown>) => {
+      const response = await requestMerchantPushWithSessionRecovery({
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+      const body = (await response.json().catch(() => null)) as
+        | { message?: string; error?: string; endpoint?: string }
+        | null;
+      if (!response.ok) {
+        throw new Error(body?.message || body?.error || "merchant_push_request_failed");
+      }
+      return body;
+    },
+    [requestMerchantPushWithSessionRecovery],
+  );
+
+  const registerSupportPushServiceWorker = useCallback(async () => {
+    if (!canUseSupportPushInBrowser()) return null;
+    const registration = await navigator.serviceWorker.register(SUPPORT_PUSH_SERVICE_WORKER_PATH, {
+      scope: "/",
+      updateViaCache: "none",
+    });
+    return navigator.serviceWorker.ready.catch(() => registration);
+  }, []);
+
+  const ensureSupportPushSubscription = useCallback(
+    async (options?: { requestPermission?: boolean }) => {
+      if (!canUseSupportPushInBrowser()) {
+        setSupportPushPermission("unsupported");
+        setSupportPushSubscribed(false);
+        setSupportPushEndpoint("");
+        return null;
+      }
+      const registration = await registerSupportPushServiceWorker();
+      if (!registration) return null;
+      let permissionState = Notification.permission;
+      if (options?.requestPermission && permissionState !== "granted") {
+        permissionState = await Notification.requestPermission();
+      }
+      setSupportPushPermission(permissionState);
+      if (permissionState !== "granted") {
+        const existingSubscription = await registration.pushManager.getSubscription().catch(() => null);
+        if (existingSubscription?.endpoint) {
+          setSupportPushEndpoint(existingSubscription.endpoint);
+        }
+        setSupportPushSubscribed(false);
+        return null;
+      }
+
+      const existingSubscription = await registration.pushManager.getSubscription().catch(() => null);
+      const subscription =
+        existingSubscription ??
+        (await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: decodeSupportPushBase64(readSupportPushPublicKey()),
+        }));
+      await sendSupportPushAction({
+        action: "subscribe",
+        permission: permissionState,
+        subscription: subscription.toJSON(),
+        userAgent: navigator.userAgent,
+      });
+      setSupportPushSubscribed(true);
+      setSupportPushEndpoint(subscription.endpoint);
+      setSupportPushError("");
+      return subscription;
+    },
+    [registerSupportPushServiceWorker, sendSupportPushAction],
+  );
+
+  const handleSupportPushEnable = useCallback(async () => {
+    if (supportPushBusy) return;
+    setSupportPushBusy(true);
+    setSupportPushError("");
+    try {
+      const subscription = await ensureSupportPushSubscription({ requestPermission: true });
+      if (!subscription) {
+        if (Notification.permission === "denied") {
+          setSupportPushError("系统通知未开启，请在浏览器或系统设置里允许通知。");
+        }
+        return;
+      }
+      showTip("已开启新消息通知和桌面角标");
+    } catch (error) {
+      setSupportPushError(error instanceof Error ? error.message : "消息通知开启失败，请稍后重试");
+    } finally {
+      setSupportPushBusy(false);
+    }
+  }, [ensureSupportPushSubscription, supportPushBusy]);
+
   const requestSupportWithSessionRecovery = useCallback(
     (init: RequestInit) => {
       const params = new URLSearchParams();
@@ -9544,6 +9789,55 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }, [selectedSupportPeerContact, supportSelectedContactKey]);
 
   useEffect(() => {
+    if (!supportPendingDeepLink || typeof window === "undefined") return;
+    const clearSupportDeepLink = () => {
+      try {
+        const url = new URL(window.location.href);
+        if (!url.searchParams.has("support")) return;
+        url.searchParams.delete("support");
+        window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+      } catch {
+        // Ignore URL cleanup failures.
+      }
+      setSupportPendingDeepLink("");
+    };
+
+    setSupportDataActivated(true);
+    setSupportLoading(true);
+    setSupportMobileHomeTab("conversations");
+
+    if (supportPendingDeepLink === "official") {
+      setSupportSelectedContactKey(SUPPORT_OFFICIAL_CONTACT_KEY);
+      if (isMobileSupportDialog) {
+        setSupportMobileView("thread");
+      }
+      clearSupportDeepLink();
+      return;
+    }
+
+    const targetMerchantId = supportPendingDeepLink.replace(/^merchant:/, "");
+    if (!/^\d{8}$/.test(targetMerchantId)) {
+      clearSupportDeepLink();
+      return;
+    }
+    if (!supportPeerContacts.some((item) => item.merchantId === targetMerchantId)) {
+      if (supportPeerLoading) return;
+      clearSupportDeepLink();
+      return;
+    }
+    setSupportSelectedContactKey(`merchant:${targetMerchantId}`);
+    if (isMobileSupportDialog) {
+      setSupportMobileView("thread");
+    }
+    clearSupportDeepLink();
+  }, [
+    isMobileSupportDialog,
+    supportPeerContacts,
+    supportPeerLoading,
+    supportPendingDeepLink,
+  ]);
+
+  useEffect(() => {
     if (!supportMerchantInfoSheetOpen) return;
     if (!supportInterfaceOpen || selectedSupportIsOfficial || !selectedSupportPeerMerchantId) {
       setSupportMerchantInfoSheetOpen(false);
@@ -9829,7 +10123,34 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   useEffect(() => {
     if (isPlatformEditor || !supportDataActivated) return;
     void syncSupportAppBadge(supportUnreadBadgeCount);
+    void syncSupportServiceWorkerBadge(supportUnreadBadgeCount);
   }, [isPlatformEditor, supportDataActivated, supportUnreadBadgeCount]);
+
+  useEffect(() => {
+    if (isPlatformEditor || !supportDataActivated) return;
+    void ensureSupportPushSubscription().catch(() => {
+      // Ignore background subscription refresh failures.
+    });
+  }, [ensureSupportPushSubscription, isPlatformEditor, supportDataActivated, supportPushPermission]);
+
+  useEffect(() => {
+    if (isPlatformEditor || !supportDataActivated || supportPushPermission !== "granted" || !supportPushEndpoint) return;
+    void sendSupportPushAction({
+      action: "sync-badge",
+      endpoint: supportPushEndpoint,
+      unreadCount: supportUnreadBadgeCount,
+      permission: supportPushPermission,
+    }).catch(() => {
+      // Ignore badge sync failures; local badge updates still continue.
+    });
+  }, [
+    isPlatformEditor,
+    sendSupportPushAction,
+    supportDataActivated,
+    supportPushEndpoint,
+    supportPushPermission,
+    supportUnreadBadgeCount,
+  ]);
 
   useEffect(() => {
     if (isPlatformEditor || !supportInterfaceOpen || !selectedSupportConversationVisible || typeof window === "undefined") return;
@@ -10953,6 +11274,21 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       href: supportSelfWebsiteHref || undefined,
     },
   ];
+  const supportPushAvailable = canUseSupportPushInBrowser();
+  const supportPushReady = supportPushPermission === "granted" && supportPushSubscribed;
+  const supportPushStatusText = !supportPushAvailable
+    ? "当前环境暂不支持系统通知。"
+    : !supportPushStandalone
+      ? "添加到主屏幕后可显示系统通知和角标。"
+      : supportPushPermission === "granted"
+        ? supportPushSubscribed
+          ? "已开启后台新消息通知和角标。"
+          : "通知权限已开启，正在连接当前设备。"
+        : supportPushPermission === "denied"
+          ? "通知已被系统拦截，请在浏览器或系统设置里重新允许。"
+          : "开启后，后台新消息会显示系统通知和桌面角标。";
+  const supportPushActionLabel =
+    supportPushPermission === "granted" ? (supportPushSubscribed ? "已开启" : "重新连接") : "开启通知";
 
   const supportMobileConversationsContent = (
     <>
@@ -11228,6 +11564,34 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           }}
         />
         <div className="space-y-4">
+          <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-slate-900">消息通知</div>
+                <div className="mt-1 text-xs leading-5 text-slate-500">{supportPushStatusText}</div>
+              </div>
+              <button
+                type="button"
+                className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                  supportPushReady
+                    ? "bg-slate-900 text-white"
+                    : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                }`}
+                onClick={() => {
+                  void handleSupportPushEnable();
+                }}
+                disabled={supportPushBusy || supportPushReady || !supportPushAvailable}
+              >
+                {supportPushBusy ? "连接中" : supportPushActionLabel}
+              </button>
+            </div>
+            {supportPushError ? (
+              <div className="border-t border-rose-100 bg-rose-50 px-5 py-3 text-xs leading-5 text-rose-600">
+                {supportPushError}
+              </div>
+            ) : null}
+          </section>
+
           <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
             <div className="border-b border-slate-100 px-5 py-4">
               <div className="text-sm font-semibold text-slate-900">我的资料</div>

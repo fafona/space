@@ -61,9 +61,12 @@ jobs:
           APP_NAME: ${{ secrets.APP_NAME }}
           APP_PORT: ${{ secrets.APP_PORT }}
           APP_BRANCH: ${{ env.DEPLOY_BRANCH }}
+          WEB_PUSH_PUBLIC_KEY: ${{ secrets.WEB_PUSH_PUBLIC_KEY }}
+          WEB_PUSH_PRIVATE_KEY: ${{ secrets.WEB_PUSH_PRIVATE_KEY }}
+          WEB_PUSH_SUBJECT: ${{ secrets.WEB_PUSH_SUBJECT }}
         run: |
           test -n "$SSH_USER"
           test -n "$APP_DIR"
           ssh -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" \
-            "APP_DIR='$APP_DIR' APP_NAME='${APP_NAME:-merchant-space}' APP_PORT='${APP_PORT:-3000}' APP_BRANCH='$APP_BRANCH' bash -s" \
+            "APP_DIR='$APP_DIR' APP_NAME='${APP_NAME:-merchant-space}' APP_PORT='${APP_PORT:-3000}' APP_BRANCH='$APP_BRANCH' WEB_PUSH_PUBLIC_KEY='${WEB_PUSH_PUBLIC_KEY:-}' WEB_PUSH_PRIVATE_KEY='${WEB_PUSH_PRIVATE_KEY:-}' WEB_PUSH_SUBJECT='${WEB_PUSH_SUBJECT:-}' bash -s" \
             < scripts/deploy.production.sh

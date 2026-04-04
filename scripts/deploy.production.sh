@@ -31,6 +31,27 @@ cd "$APP_DIR"
 echo "[deploy] working directory: $APP_DIR"
 echo "[deploy] branch: $APP_BRANCH"
 
+write_env_value() {
+  local key="$1"
+  local value="$2"
+  local file=".env.local"
+  if [ -z "$key" ] || [ -z "$value" ]; then
+    return 0
+  fi
+  local temp_file
+  temp_file="$(mktemp)"
+  if [ -f "$file" ]; then
+    grep -v "^${key}=" "$file" > "$temp_file" || true
+  fi
+  printf '%s=%s\n' "$key" "$value" >> "$temp_file"
+  mv "$temp_file" "$file"
+}
+
+write_env_value "WEB_PUSH_PUBLIC_KEY" "${WEB_PUSH_PUBLIC_KEY:-}"
+write_env_value "NEXT_PUBLIC_WEB_PUSH_PUBLIC_KEY" "${WEB_PUSH_PUBLIC_KEY:-}"
+write_env_value "WEB_PUSH_PRIVATE_KEY" "${WEB_PUSH_PRIVATE_KEY:-}"
+write_env_value "WEB_PUSH_SUBJECT" "${WEB_PUSH_SUBJECT:-}"
+
 git fetch origin "$APP_BRANCH" --prune
 git checkout "$APP_BRANCH"
 git reset --hard "origin/$APP_BRANCH"
