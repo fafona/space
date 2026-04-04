@@ -3857,6 +3857,7 @@ export default function AdminClient({
   const [supportPeerContacts, setSupportPeerContacts] = useState<MerchantPeerContactSummary[]>([]);
   const [supportPeerThreads, setSupportPeerThreads] = useState<MerchantPeerThread[]>([]);
   const [supportPeerLoading, setSupportPeerLoading] = useState(false);
+  const [supportPeerError, setSupportPeerError] = useState("");
   const [supportSearchLoading, setSupportSearchLoading] = useState(false);
   const [supportSearchError, setSupportSearchError] = useState("");
   const [supportSelectedContactKey, setSupportSelectedContactKey] = useState(SUPPORT_OFFICIAL_CONTACT_KEY);
@@ -8167,6 +8168,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     const requestId = ++supportPeerRequestIdRef.current;
     if (!silent) {
       setSupportPeerLoading(true);
+      setSupportPeerError("");
     }
     try {
       const response = await requestMerchantPeerWithSessionRecovery({
@@ -8182,16 +8184,17 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       if (requestId !== supportPeerRequestIdRef.current) return;
       if (!response.ok) {
         if (!suppressError) {
-          setSupportError(payload?.error === "unauthorized" ? "当前未登录，请重新登录后再聊天" : "商户联系人加载失败，请稍后重试");
+          setSupportPeerError(payload?.error === "unauthorized" ? "当前未登录，请重新登录后再聊天" : "商户联系人加载失败，请稍后重试");
         }
         return;
       }
+      setSupportPeerError("");
       setSupportPeerContacts(Array.isArray(payload?.contacts) ? payload.contacts : []);
       setSupportPeerThreads(Array.isArray(payload?.threads) ? payload.threads : []);
     } catch {
       if (requestId !== supportPeerRequestIdRef.current) return;
       if (!suppressError) {
-        setSupportError("商户联系人加载失败，请稍后重试");
+        setSupportPeerError("商户联系人加载失败，请稍后重试");
       }
     } finally {
       if (!silent) {
@@ -8267,21 +8270,23 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     setSupportDataActivated(true);
     setSupportLoading(true);
     setSupportSelectedContactKey(SUPPORT_OFFICIAL_CONTACT_KEY);
-    setSupportMobileView("thread");
+    setSupportMobileView("list");
   }, [isMobileMerchantSupportOnlyMode, isPlatformEditor]);
 
   useEffect(() => {
     if (isPlatformEditor || typeof window === "undefined" || !supportDataActivated) return;
 
     void loadSupportThread({ silent: !supportInterfaceOpen, suppressError: !supportInterfaceOpen });
-    if (!isMobileMerchantSupportOnlyMode) {
-      void loadSupportPeerInbox({ silent: !supportInterfaceOpen, suppressError: !supportInterfaceOpen });
-    }
+    void loadSupportPeerInbox({
+      silent: !supportInterfaceOpen,
+      suppressError: isMobileMerchantSupportOnlyMode || !supportInterfaceOpen,
+    });
     const refreshSupportThread = () => {
       void loadSupportThread({ silent: true, suppressError: !supportInterfaceOpen });
-      if (!isMobileMerchantSupportOnlyMode) {
-        void loadSupportPeerInbox({ silent: true, suppressError: !supportInterfaceOpen });
-      }
+      void loadSupportPeerInbox({
+        silent: true,
+        suppressError: isMobileMerchantSupportOnlyMode || !supportInterfaceOpen,
+      });
     };
 
     const timer = window.setInterval(() => {
@@ -8364,7 +8369,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   useEffect(() => {
     if (supportInterfaceOpen) {
       if (!isDesktopEditorSidebar) {
-        setSupportMobileView(isMobileMerchantSupportOnlyMode ? "thread" : "list");
+        setSupportMobileView("list");
       }
       return;
     }
@@ -8985,24 +8990,22 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       <div className="shrink-0 border-b border-slate-200/80 bg-white/90 px-3 pb-3 pt-[calc(env(safe-area-inset-top)+0.55rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
-            {!isMobileMerchantSupportOnlyMode ? (
-              <button
-                type="button"
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-slate-900 hover:bg-slate-100"
-                onClick={closeMobileSupportThread}
-                aria-label="返回会话列表"
-              >
-                <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" aria-hidden="true">
-                  <path
-                    d="M19 12H7M12 7l-5 5 5 5"
-                    stroke="currentColor"
-                    strokeWidth="2.2"
-                    strokeLinecap="square"
-                    strokeLinejoin="miter"
-                  />
-                </svg>
-              </button>
-            ) : null}
+            <button
+              type="button"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-slate-900 hover:bg-slate-100"
+              onClick={closeMobileSupportThread}
+              aria-label="返回会话列表"
+            >
+              <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" aria-hidden="true">
+                <path
+                  d="M19 12H7M12 7l-5 5 5 5"
+                  stroke="currentColor"
+                  strokeWidth="2.2"
+                  strokeLinecap="square"
+                  strokeLinejoin="miter"
+                />
+              </svg>
+            </button>
             {selectedSupportIsOfficial ? (
               <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm">
                 {selectedSupportAvatarLabel}
@@ -9194,6 +9197,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         {supportSearchError ? (
           <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-600">
             {supportSearchError}
+          </div>
+        ) : null}
+        {supportPeerError ? (
+          <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-600">
+            {supportPeerError}
           </div>
         ) : null}
       </div>
@@ -10320,6 +10328,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                       {supportSearchError ? (
                         <div className="mb-3 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-600">
                           {supportSearchError}
+                        </div>
+                      ) : null}
+                      {supportPeerError ? (
+                        <div className="mb-3 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-600">
+                          {supportPeerError}
                         </div>
                       ) : null}
                       {supportContactRows.length > 0 ? (
