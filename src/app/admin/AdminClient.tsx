@@ -3896,9 +3896,8 @@ export default function AdminClient({
   }, []);
   const closeMobileSupportThread = useCallback(() => {
     setSupportBusinessCardDialogOpen(false);
-    if (isMobileMerchantSupportOnlyMode) return;
     setSupportMobileView("list");
-  }, [isMobileMerchantSupportOnlyMode]);
+  }, []);
   const openSupportContactThread = useCallback((contactKey: string) => {
     setSupportSelectedContactKey(contactKey);
     setSupportMobileView("thread");
