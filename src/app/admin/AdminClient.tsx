@@ -8056,7 +8056,29 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         params.set("merchantName", merchantDisplayName);
       }
       const path = params.size > 0 ? `/api/support-messages?${params.toString()}` : "/api/support-messages";
-      return requestMerchantChatWithSessionRecovery(path, init);
+      const sendDirectSupportRequest = () => {
+        const headers = new Headers(init.headers ?? undefined);
+        headers.set("accept", "application/json");
+        headers.delete("x-merchant-site-id");
+        headers.delete("x-merchant-email");
+        headers.delete("x-merchant-name");
+        headers.delete("x-merchant-access-token");
+        headers.delete("x-merchant-refresh-token");
+        headers.delete("x-merchant-expires-in");
+        return fetch(path, {
+          credentials: "same-origin" as const,
+          cache: "no-store" as const,
+          ...init,
+          headers,
+        });
+      };
+      return requestMerchantChatWithSessionRecovery(path, init)
+        .then((response) => {
+          if (response.ok) return response;
+          if (![401, 403, 503].includes(response.status)) return response;
+          return sendDirectSupportRequest().catch(() => response);
+        })
+        .catch(() => sendDirectSupportRequest());
     },
     [editingSite?.contactEmail, editingSiteId, merchantDisplayName, requestMerchantChatWithSessionRecovery, storeScope],
   );
