@@ -11063,85 +11063,88 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           : supportMobileSelfContent;
 
   const supportMobileBottomNav = (
-    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[2] px-4 pb-[calc(env(safe-area-inset-bottom)+0.45rem)]">
-      <div className="pointer-events-auto mx-auto flex max-w-md items-center gap-1 rounded-[30px] border border-slate-200/80 bg-white/95 px-2 py-2 shadow-[0_20px_40px_rgba(15,23,42,0.12)] backdrop-blur">
-        {([
-          {
-            key: "conversations",
-            label: "会话",
-            icon: (
-              <path
-                d="M5 7.5A2.5 2.5 0 0 1 7.5 5h9A2.5 2.5 0 0 1 19 7.5v6A2.5 2.5 0 0 1 16.5 14H10l-3.8 3.2A.75.75 0 0 1 5 16.6V14.2A2.5 2.5 0 0 1 3 11.8v-4.3A2.5 2.5 0 0 1 5.5 5"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            ),
-          },
-          {
-            key: "business",
-            label: "生意",
-            icon: (
-              <path
-                d="M4 10.5 12 5l8 5.5V18a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18v-7.5ZM9 19.5v-5h6v5"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            ),
-          },
-          {
-            key: "faolla",
-            label: "Faolla",
-            icon: (
-              <path
-                d="M12 4 5.8 6.4v5.8c0 3.7 2.7 6.7 6.2 7.4 3.5-.7 6.2-3.7 6.2-7.4V6.4L12 4Zm0 4.1v4.4m0 0 2.3 2.2M12 12.5 9.7 14.7"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            ),
-          },
-          {
-            key: "self",
-            label: "自己",
-            icon: (
-              <>
-                <circle cx="12" cy="8.5" r="3.2" fill="none" stroke="currentColor" strokeWidth="1.8" />
+    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[2]">
+      <div className="absolute inset-x-0 bottom-0 h-[calc(env(safe-area-inset-bottom)+6.35rem)] bg-[linear-gradient(180deg,rgba(248,250,252,0)_0%,rgba(248,250,252,0.92)_24%,rgba(255,255,255,0.98)_100%)]" />
+      <div className="pointer-events-auto relative mx-auto max-w-md px-4 pb-[calc(env(safe-area-inset-bottom)+0.08rem)] pt-5">
+        <div className="flex items-center gap-1 rounded-[30px] border border-slate-200/80 bg-white/95 px-2 py-2 shadow-[0_20px_40px_rgba(15,23,42,0.12)] backdrop-blur">
+          {([
+            {
+              key: "conversations",
+              label: "会话",
+              icon: (
                 <path
-                  d="M6.2 18.2a5.8 5.8 0 0 1 11.6 0"
+                  d="M5 7.5A2.5 2.5 0 0 1 7.5 5h9A2.5 2.5 0 0 1 19 7.5v6A2.5 2.5 0 0 1 16.5 14H10l-3.8 3.2A.75.75 0 0 1 5 16.6V14.2A2.5 2.5 0 0 1 3 11.8v-4.3A2.5 2.5 0 0 1 5.5 5"
                   fill="none"
                   stroke="currentColor"
                   strokeWidth="1.8"
                   strokeLinecap="round"
+                  strokeLinejoin="round"
                 />
-              </>
-            ),
-          },
-        ] as const).map((item) => {
-          const active = supportMobileHomeTab === item.key;
-          return (
-            <button
-              key={item.key}
-              type="button"
-              className={`flex min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-[24px] px-2 py-2 text-[11px] font-medium transition ${
-                active ? "bg-slate-900 text-white shadow-sm" : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
-              }`}
-              onClick={() => setSupportMobileHomeTab(item.key)}
-            >
-              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
-                {item.icon}
-              </svg>
-              <span className="truncate">{item.label}</span>
-            </button>
-          );
-        })}
+              ),
+            },
+            {
+              key: "business",
+              label: "生意",
+              icon: (
+                <path
+                  d="M4 10.5 12 5l8 5.5V18a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18v-7.5ZM9 19.5v-5h6v5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              ),
+            },
+            {
+              key: "faolla",
+              label: "Faolla",
+              icon: (
+                <path
+                  d="M12 4 5.8 6.4v5.8c0 3.7 2.7 6.7 6.2 7.4 3.5-.7 6.2-3.7 6.2-7.4V6.4L12 4Zm0 4.1v4.4m0 0 2.3 2.2M12 12.5 9.7 14.7"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              ),
+            },
+            {
+              key: "self",
+              label: "自己",
+              icon: (
+                <>
+                  <circle cx="12" cy="8.5" r="3.2" fill="none" stroke="currentColor" strokeWidth="1.8" />
+                  <path
+                    d="M6.2 18.2a5.8 5.8 0 0 1 11.6 0"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                  />
+                </>
+              ),
+            },
+          ] as const).map((item) => {
+            const active = supportMobileHomeTab === item.key;
+            return (
+              <button
+                key={item.key}
+                type="button"
+                className={`flex min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-[24px] px-2 py-2 text-[11px] font-medium transition ${
+                  active ? "bg-slate-900 text-white shadow-sm" : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
+                }`}
+                onClick={() => setSupportMobileHomeTab(item.key)}
+              >
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+                  {item.icon}
+                </svg>
+                <span className="truncate">{item.label}</span>
+              </button>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
