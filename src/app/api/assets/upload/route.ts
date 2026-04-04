@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { parseCookieValue, readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
+import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
 import { SUPER_ADMIN_SESSION_COOKIE, SUPER_ADMIN_SESSION_VALUE } from "@/lib/superAdminSession";
 
 const BUCKET_CANDIDATES = ["page-assets", "assets", "uploads", "public"] as const;
@@ -66,6 +67,11 @@ function sanitizeMerchantHint(input: string) {
 async function isAuthorized(request: Request, supabaseUrl: string, serviceRoleKey: string) {
   const cookieHeader = request.headers.get("cookie") ?? "";
   if (parseCookieValue(cookieHeader, SUPER_ADMIN_SESSION_COOKIE) === SUPER_ADMIN_SESSION_VALUE) {
+    return true;
+  }
+
+  const resolvedSession = await resolveMerchantSessionFromRequest(request);
+  if (resolvedSession?.merchantId) {
     return true;
   }
 
@@ -149,7 +155,7 @@ export async function POST(request: Request) {
       {
         ok: false,
         code: "unsupported_asset",
-        message: "仅支持图片或音频 data URL。",
+        message: "仅支持图片、音频或常见文件 data URL。",
       },
       { status: 400 },
     );

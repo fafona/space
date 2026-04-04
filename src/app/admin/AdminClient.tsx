@@ -8285,7 +8285,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     ? ((editingSite?.merchantName ?? "").trim() || "未设置商户名称")
     : "";
   const currentMerchantChatBusinessCardSyncPayload =
-    !isPlatformEditor && editingSiteId
+    !isPlatformEditor && editingSiteId && Array.isArray(editingSite?.businessCards)
       ? JSON.stringify({
           merchantId: editingSiteId,
           chatBusinessCard: resolveMerchantBusinessCardForChatDisplay(editingSite?.businessCards ?? []),
@@ -8548,6 +8548,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       ? supportPeerProfilesByMerchantId[editingSiteId]
       : undefined;
   }, [editingSiteId, supportPeerProfilesByMerchantId]);
+  const supportSelfFetchedBusinessCard = useMemo(() => {
+    if (!/^\d{8}$/.test(editingSiteId)) return undefined;
+    return Object.prototype.hasOwnProperty.call(supportPeerBusinessCardByMerchantId, editingSiteId)
+      ? supportPeerBusinessCardByMerchantId[editingSiteId]
+      : undefined;
+  }, [editingSiteId, supportPeerBusinessCardByMerchantId]);
   const supportSelfLocalProfile = useMemo(
     () => (editingSite ? buildSupportPublishedProfileFromSite(editingSite) : null),
     [editingSite],
@@ -8555,17 +8561,18 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const supportSelfProfile = supportSelfFetchedProfile ?? supportSelfLocalProfile ?? null;
   const supportSelfBusinessCards = useMemo(() => {
     const localCards = Array.isArray(editingSite?.businessCards) ? normalizeMerchantBusinessCards(editingSite.businessCards) : [];
+    const remoteCard = supportSelfFetchedBusinessCard ?? supportSelfProfile?.chatBusinessCard ?? null;
     const normalizedCards =
       localCards.length > 0
         ? localCards
-        : normalizeMerchantBusinessCards(supportSelfProfile?.chatBusinessCard ? [supportSelfProfile.chatBusinessCard] : []);
+        : normalizeMerchantBusinessCards(remoteCard ? [remoteCard] : []);
     return [...normalizedCards].sort((left, right) => {
       const leftChat = left.showInChat !== false;
       const rightChat = right.showInChat !== false;
       if (leftChat !== rightChat) return leftChat ? -1 : 1;
       return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
     });
-  }, [editingSite?.businessCards, supportSelfProfile?.chatBusinessCard]);
+  }, [editingSite?.businessCards, supportSelfFetchedBusinessCard, supportSelfProfile?.chatBusinessCard]);
   const supportSelfContactVisibility =
     supportSelfProfile?.contactVisibility ??
     editingSite?.contactVisibility ??
@@ -10180,15 +10187,49 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
   }
 
-  function openSupportSelfCardPicker() {
-    if (!supportSelfBusinessCards.length) {
+  async function openSupportSelfCardPicker() {
+    if (supportSelfBusinessCards.length > 0) {
       setSupportAttachmentMenuOpen(false);
-      showTip("当前还没有可发送的名片，请先在商户资料里生成名片");
+      setSupportSelfCardPickerOpen(true);
+      supportInputRef.current?.blur();
       return;
     }
-    setSupportAttachmentMenuOpen(false);
-    setSupportSelfCardPickerOpen(true);
-    supportInputRef.current?.blur();
+
+    const merchantId = editingSiteId.trim();
+    if (/^\d{8}$/.test(merchantId)) {
+      setSupportAttachmentMenuOpen(false);
+      supportInputRef.current?.blur();
+      try {
+        const response = await requestMerchantChatBusinessCardById(merchantId, {
+          cache: "no-store",
+        });
+        const payload = (await response.json().catch(() => null)) as
+          | {
+              profile?: MerchantListPublishedSite | null;
+              chatBusinessCard?: MerchantBusinessCardAsset | null;
+            }
+          | null;
+        if (response.ok) {
+          setSupportPeerProfilesByMerchantId((current) => ({
+            ...current,
+            [merchantId]: payload?.profile ?? null,
+          }));
+          const nextCard = payload?.chatBusinessCard ?? payload?.profile?.chatBusinessCard ?? null;
+          setSupportPeerBusinessCardByMerchantId((current) => ({
+            ...current,
+            [merchantId]: nextCard,
+          }));
+          if (nextCard) {
+            setSupportSelfCardPickerOpen(true);
+            return;
+          }
+        }
+      } catch {
+        // Ignore and fall through to the empty-state tip.
+      }
+    }
+
+    showTip("当前还没有可发送的名片，请先在商户资料里生成名片");
   }
 
   async function handleSupportPhotoInputChange(event: ChangeEvent<HTMLInputElement>) {

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import type { MerchantListPublishedSite } from "@/data/homeBlocks";
 import { parseCookieValue, readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
 import { normalizeMerchantBusinessCards } from "@/lib/merchantBusinessCards";
 import { listMerchantPeerContactsForMerchant } from "@/lib/merchantPeerInbox";
@@ -16,6 +17,8 @@ import {
   savePlatformMerchantSnapshot,
   type PlatformMerchantSnapshotStoreClient,
 } from "@/lib/platformMerchantSnapshotStore";
+import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
+import { buildMerchantFrontendHref } from "@/lib/siteRouting";
 import { SUPER_ADMIN_SESSION_COOKIE, SUPER_ADMIN_SESSION_VALUE } from "@/lib/superAdminSession";
 
 export const dynamic = "force-dynamic";
@@ -70,6 +73,103 @@ function readFallbackAuthorizedMerchantIds(request: Request) {
     normalizeMerchantId(request.headers.get("x-merchant-site-id")),
     normalizeMerchantId(url.searchParams.get("siteId")),
   ].filter(Boolean))];
+}
+
+function normalizeExternalUrl(value: string | null | undefined) {
+  const normalized = normalizeText(value);
+  if (!normalized) return "";
+  if (/^https?:\/\//i.test(normalized)) return normalized;
+  return `https://${normalized.replace(/^\/+/, "")}`;
+}
+
+function isLocalOrIpHost(value: string) {
+  try {
+    const hostname = new URL(value).hostname.toLowerCase();
+    if (!hostname) return true;
+    if (hostname === "localhost" || hostname === "0.0.0.0") return true;
+    if (hostname === "::1" || hostname === "[::1]") return true;
+    if (/^127(?:\.\d{1,3}){3}$/.test(hostname)) return true;
+    if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(hostname)) return true;
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+function buildSnapshotWebsiteHref(site: MerchantListPublishedSite | null, merchantId: string) {
+  const explicitDomain = normalizeExternalUrl(site?.domain);
+  if (explicitDomain && !isLocalOrIpHost(explicitDomain)) {
+    return explicitDomain;
+  }
+
+  const domainPrefix = normalizeText(site?.domainPrefix || site?.domainSuffix);
+  const publicBaseDomain = normalizeText(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN);
+  const builtHref = normalizeExternalUrl(
+    buildMerchantFrontendHref(merchantId, domainPrefix || merchantId, publicBaseDomain || undefined),
+  );
+  if (builtHref && !isLocalOrIpHost(builtHref)) {
+    return builtHref;
+  }
+
+  return explicitDomain || builtHref;
+}
+
+function buildFallbackChatBusinessCard(site: MerchantListPublishedSite | null, merchantId: string) {
+  if (!site) return null;
+
+  const imageUrl = normalizeText(site.merchantCardImageUrl) || normalizeText(site.chatAvatarImageUrl);
+  const targetUrl = buildSnapshotWebsiteHref(site, merchantId);
+  if (!imageUrl && !targetUrl) {
+    return null;
+  }
+
+  const merchantName = normalizeText(site.merchantName) || normalizeText(site.name) || merchantId;
+  const phone = normalizeText(site.contactPhone);
+  const email = normalizeText(site.contactEmail);
+  const address = [
+    normalizeText(site.contactAddress),
+    normalizeText(site.location?.city),
+    normalizeText(site.location?.province),
+    normalizeText(site.location?.country),
+  ]
+    .filter(Boolean)
+    .join(" / ");
+
+  return (
+    normalizeMerchantBusinessCards([
+      {
+        id: `snapshot-fallback-${merchantId}`,
+        createdAt: normalizeText(site.createdAt) || new Date(0).toISOString(),
+        mode: targetUrl ? "link" : "image",
+        name: merchantName,
+        title: normalizeText(site.industry),
+        imageUrl: imageUrl || normalizeText(site.chatAvatarImageUrl),
+        shareImageUrl: imageUrl || undefined,
+        contactPagePublicImageUrl: imageUrl || undefined,
+        targetUrl,
+        showInChat: true,
+        contacts: {
+          contactName: normalizeText(site.contactName) || merchantName,
+          phone,
+          phones: phone ? [phone] : [],
+          email,
+          address,
+          wechat: "",
+          whatsapp: "",
+          twitter: "",
+          weibo: "",
+          telegram: "",
+          linkedin: "",
+          discord: "",
+          facebook: "",
+          instagram: "",
+          tiktok: "",
+          douyin: "",
+          xiaohongshu: "",
+        },
+      },
+    ])[0] ?? null
+  );
 }
 
 function normalizeChatBusinessCard(value: unknown) {
@@ -139,6 +239,14 @@ async function isAuthorizedForMerchant(
     return true;
   }
 
+  const resolvedSession = await resolveMerchantSessionFromRequest(request);
+  if (resolvedSession?.merchantId) {
+    authorizedMerchantIdSet.add(resolvedSession.merchantId);
+    if (resolvedSession.merchantId === merchantId) {
+      return true;
+    }
+  }
+
   const accessTokens = readMerchantRequestAccessTokens(request);
   for (const accessToken of accessTokens) {
     const authResult = await supabase.auth.getUser(accessToken);
@@ -205,12 +313,19 @@ export async function GET(request: Request) {
       supabase as unknown as PlatformMerchantSnapshotStoreClient,
     );
     const snapshotSite = snapshotPayload?.snapshot.find((site) => site.id === merchantId) ?? null;
+    const fallbackChatBusinessCard = buildFallbackChatBusinessCard(snapshotSite, merchantId);
+    const resolvedChatBusinessCard = snapshotSite?.chatBusinessCard ?? fallbackChatBusinessCard ?? null;
     return NextResponse.json({
       ok: true,
       merchantId,
-      profile: snapshotSite,
-      chatBusinessCard: snapshotSite?.chatBusinessCard ?? null,
-      hasChatBusinessCard: !!snapshotSite?.chatBusinessCard,
+      profile: snapshotSite
+        ? {
+            ...snapshotSite,
+            chatBusinessCard: resolvedChatBusinessCard,
+          }
+        : null,
+      chatBusinessCard: resolvedChatBusinessCard,
+      hasChatBusinessCard: !!resolvedChatBusinessCard,
     });
   } catch (error) {
     return NextResponse.json(
