@@ -3932,6 +3932,7 @@ export default function AdminClient({
   const topBarRef = useRef<HTMLDivElement>(null);
   const [topBarHeight, setTopBarHeight] = useState(0);
   const [isDesktopEditorSidebar, setIsDesktopEditorSidebar] = useState(false);
+  const isMobileMerchantSupportOnlyMode = !isPlatformEditor && !forceDesktopEditorSidebar && !isDesktopEditorSidebar;
   const [uploadCompressionPreset, setUploadCompressionPreset] = useState<UploadCompressionPreset>("high");
   const [themePreset, setThemePreset] = useState<ThemePresetKey>("none");
   const [planTemplateDialogOpen, setPlanTemplateDialogOpen] = useState(false);
@@ -5632,6 +5633,10 @@ export default function AdminClient({
         }
         setHasEditorContent(true);
         releaseCheckingScreen({ notice: null });
+        if (isMobileMerchantSupportOnlyMode) {
+          setRemoteContentVerified(false);
+          return;
+        }
         if (!isPlatformEditor) {
           const remoteDraft = await loadMerchantDraftSnapshotViaApi(resolvedMerchantIds);
           if (!mounted) return;
@@ -5743,6 +5748,7 @@ export default function AdminClient({
     };
   }, [
     defaultEditorBlocks,
+    isMobileMerchantSupportOnlyMode,
     isPlatformEditor,
     justSignedIn,
     platformSeedBlocks,
@@ -7845,7 +7851,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const supportCanSend =
     !!supportDraft.trim() &&
     (supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY || !!selectedSupportPeerContact);
-  const isMobileSupportDialog = supportDialogOpen && !isPlatformEditor && !isDesktopEditorSidebar;
+  const supportInterfaceOpen = supportDialogOpen || isMobileMerchantSupportOnlyMode;
+  const isMobileSupportDialog = supportInterfaceOpen && !isPlatformEditor && !isDesktopEditorSidebar;
   const selectedSupportConversationVisible = !isMobileSupportDialog || supportMobileView === "thread";
   const selectedSupportAvatarLabel = getSupportContactAvatarLabel(
     selectedSupportDisplayName,
@@ -8255,19 +8262,26 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }
 
   useEffect(() => {
+    if (isPlatformEditor || !isMobileMerchantSupportOnlyMode) return;
+    supportScrollToLatestPendingRef.current = true;
+    setSupportDataActivated(true);
+    setSupportLoading(true);
+  }, [isMobileMerchantSupportOnlyMode, isPlatformEditor]);
+
+  useEffect(() => {
     if (isPlatformEditor || typeof window === "undefined" || !supportDataActivated) return;
 
-    void loadSupportThread({ silent: !supportDialogOpen, suppressError: !supportDialogOpen });
-    void loadSupportPeerInbox({ silent: !supportDialogOpen, suppressError: !supportDialogOpen });
+    void loadSupportThread({ silent: !supportInterfaceOpen, suppressError: !supportInterfaceOpen });
+    void loadSupportPeerInbox({ silent: !supportInterfaceOpen, suppressError: !supportInterfaceOpen });
     const refreshSupportThread = () => {
-      void loadSupportThread({ silent: true, suppressError: !supportDialogOpen });
-      void loadSupportPeerInbox({ silent: true, suppressError: !supportDialogOpen });
+      void loadSupportThread({ silent: true, suppressError: !supportInterfaceOpen });
+      void loadSupportPeerInbox({ silent: true, suppressError: !supportInterfaceOpen });
     };
 
     const timer = window.setInterval(() => {
       if (document.visibilityState !== "visible") return;
       refreshSupportThread();
-    }, supportDialogOpen ? SUPPORT_THREAD_OPEN_POLL_INTERVAL_MS : SUPPORT_THREAD_POLL_INTERVAL_MS);
+    }, supportInterfaceOpen ? SUPPORT_THREAD_OPEN_POLL_INTERVAL_MS : SUPPORT_THREAD_POLL_INTERVAL_MS);
     const handleFocus = () => refreshSupportThread();
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") {
@@ -8282,7 +8296,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       window.removeEventListener("focus", handleFocus);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [isDesktopEditorSidebar, isPlatformEditor, loadSupportPeerInbox, loadSupportThread, supportDataActivated, supportDialogOpen]);
+  }, [isDesktopEditorSidebar, isPlatformEditor, loadSupportPeerInbox, loadSupportThread, supportDataActivated, supportInterfaceOpen]);
 
   useEffect(() => {
     if (isPlatformEditor || typeof window === "undefined") return;
@@ -8334,7 +8348,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }, [selectedSupportPeerContact, supportSelectedContactKey]);
 
   useEffect(() => {
-    if (supportDialogOpen) {
+    if (supportInterfaceOpen) {
       if (!isDesktopEditorSidebar) {
         setSupportMobileView("list");
       }
@@ -8342,10 +8356,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
     supportMobileSwipeStartRef.current = null;
     setSupportMobileView("list");
-  }, [isDesktopEditorSidebar, supportDialogOpen]);
+  }, [isDesktopEditorSidebar, supportInterfaceOpen]);
 
   useEffect(() => {
-    if (isPlatformEditor || !supportDialogOpen || !supportBusinessCardDialogOpen) return;
+    if (isPlatformEditor || !supportInterfaceOpen || !supportBusinessCardDialogOpen) return;
     if (supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY) {
       setSupportBusinessCardLoading(false);
       setSupportBusinessCardError("");
@@ -8407,7 +8421,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     selectedSupportFallbackBusinessCard,
     selectedSupportPeerMerchantId,
     supportBusinessCardDialogOpen,
-    supportDialogOpen,
+    supportInterfaceOpen,
     supportPeerBusinessCardByMerchantId,
     supportSelectedContactKey,
   ]);
@@ -8429,7 +8443,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }, [isPlatformEditor, latestIncomingPeerMessageKey, playNotificationSound]);
 
   useEffect(() => {
-    if (isPlatformEditor || !supportDialogOpen || !selectedSupportConversationVisible || typeof window === "undefined") return;
+    if (isPlatformEditor || !supportInterfaceOpen || !selectedSupportConversationVisible || typeof window === "undefined") return;
     if (supportSelectedContactKey !== SUPPORT_OFFICIAL_CONTACT_KEY) return;
     if (!supportReadMerchantId || !latestSupportAdminMessageAt) return;
     if (latestSupportAdminMessageAt === supportLastReadAt) return;
@@ -8439,14 +8453,14 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     isPlatformEditor,
     latestSupportAdminMessageAt,
     selectedSupportConversationVisible,
-    supportDialogOpen,
+    supportInterfaceOpen,
     supportLastReadAt,
     supportReadMerchantId,
     supportSelectedContactKey,
   ]);
 
   useEffect(() => {
-    if (isPlatformEditor || !supportDialogOpen || !selectedSupportConversationVisible || typeof window === "undefined") return;
+    if (isPlatformEditor || !supportInterfaceOpen || !selectedSupportConversationVisible || typeof window === "undefined") return;
     if (supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY) return;
     if (!currentSupportMerchantId || !selectedSupportPeerMerchantId || !latestSelectedSupportPeerIncomingMessageAt) return;
     const currentLastReadAt = normalizeSupportMessageTimestamp(supportPeerLastReadMap[selectedSupportPeerMerchantId]);
@@ -8469,28 +8483,28 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     latestSelectedSupportPeerIncomingMessageAt,
     selectedSupportConversationVisible,
     selectedSupportPeerMerchantId,
-    supportDialogOpen,
+    supportInterfaceOpen,
     supportPeerLastReadMap,
     supportSelectedContactKey,
   ]);
 
   useEffect(() => {
-    if (!supportDialogOpen) {
+    if (!supportInterfaceOpen) {
       supportLastVisibleMessageKeyRef.current = "";
       supportScrollToLatestPendingRef.current = false;
       setSupportBusinessCardDialogOpen(false);
       return;
     }
     supportScrollToLatestPendingRef.current = true;
-  }, [supportDialogOpen]);
+  }, [supportInterfaceOpen]);
 
   useEffect(() => {
-    if (!supportDialogOpen) return;
+    if (!supportInterfaceOpen) return;
     supportScrollToLatestPendingRef.current = true;
-  }, [supportDialogOpen, supportSelectedContactKey, supportMobileView]);
+  }, [supportInterfaceOpen, supportSelectedContactKey, supportMobileView]);
 
   useEffect(() => {
-    if (isPlatformEditor || !supportDialogOpen || !selectedSupportConversationVisible || typeof window === "undefined") return;
+    if (isPlatformEditor || !supportInterfaceOpen || !selectedSupportConversationVisible || typeof window === "undefined") return;
     if (selectedSupportLoading) return;
     const viewport = supportMessagesViewportRef.current;
     if (!viewport) return;
@@ -8507,12 +8521,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     return () => {
       window.clearTimeout(timer);
     };
-  }, [isPlatformEditor, latestVisibleSupportMessageKey, selectedSupportConversationVisible, selectedSupportLoading, supportDialogOpen]);
+  }, [isPlatformEditor, latestVisibleSupportMessageKey, selectedSupportConversationVisible, selectedSupportLoading, supportInterfaceOpen]);
 
   useEffect(() => {
-    if (isPlatformEditor || !supportDialogOpen || !selectedSupportConversationVisible || selectedSupportLoading || supportSending) return;
+    if (isPlatformEditor || !supportInterfaceOpen || !selectedSupportConversationVisible || selectedSupportLoading || supportSending) return;
     focusSupportInput();
-  }, [focusSupportInput, isPlatformEditor, selectedSupportConversationVisible, selectedSupportLoading, supportDialogOpen, supportSending]);
+  }, [focusSupportInput, isPlatformEditor, selectedSupportConversationVisible, selectedSupportLoading, supportInterfaceOpen, supportSending]);
 
   async function sendSupportMessage() {
     if (supportSending) return;
@@ -8915,7 +8929,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }, 0);
   const mobileFrontendPreviewPadding = Math.max(120, Math.max(0, maxBlockOffsetY) + 100);
   const shouldUseDesktopEditorSidebar = forceDesktopEditorSidebar || isPlatformEditor || isDesktopEditorSidebar;
-  const isMobileMerchantEditorShell = !isPlatformEditor && !shouldUseDesktopEditorSidebar;
+  const isMobileMerchantEditorShell = isMobileMerchantSupportOnlyMode;
   const merchantEditorAvatarLabel = !isPlatformEditor ? getSupportContactAvatarLabel(merchantDisplayName, "商") : "";
   const shouldShowPublishActions = showPublishActions ?? !isPlatformEditor;
   const planTemplateKeyword = planTemplateSearch.trim().toLowerCase();
@@ -8999,14 +9013,16 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               <div className="mt-1 line-clamp-2 text-[11px] leading-5 text-slate-500">{selectedSupportHeaderMeta}</div>
             </div>
           </div>
-          <button
-            type="button"
-            className="shrink-0 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-50"
-            onClick={() => setSupportDialogOpen(false)}
-            disabled={supportSending}
-          >
-            关闭
-          </button>
+          {!isMobileMerchantSupportOnlyMode ? (
+            <button
+              type="button"
+              className="shrink-0 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-50"
+              onClick={() => setSupportDialogOpen(false)}
+              disabled={supportSending}
+            >
+              关闭
+            </button>
+          ) : null}
         </div>
       </div>
       {supportError && supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY ? (
@@ -9122,14 +9138,16 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             <div className="text-[15px] font-semibold text-slate-900">聊天列表</div>
             <div className="mt-1 text-xs text-slate-500">{mobileSupportContactListSummary}</div>
           </div>
-          <button
-            type="button"
-            className="shrink-0 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-50"
-            onClick={() => setSupportDialogOpen(false)}
-            disabled={supportSending}
-          >
-            关闭
-          </button>
+          {!isMobileMerchantSupportOnlyMode ? (
+            <button
+              type="button"
+              className="shrink-0 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-50"
+              onClick={() => setSupportDialogOpen(false)}
+              disabled={supportSending}
+            >
+              关闭
+            </button>
+          ) : null}
         </div>
         <div className="mt-4 flex items-center gap-2">
           <div className="flex min-w-0 flex-1 items-center gap-3 rounded-[24px] border border-slate-200 bg-white px-4 py-3 shadow-sm">
@@ -9216,6 +9234,34 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       </div>
     </div>
   );
+
+  if (isMobileMerchantSupportOnlyMode) {
+    return (
+      <>
+        <main className="fixed inset-0 overflow-hidden bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_48%,#f8fafc_100%)]">
+          {supportMobileDialogContent}
+        </main>
+        <ChatBusinessCardDialog
+          open={supportBusinessCardDialogOpen && supportInterfaceOpen && !isPlatformEditor}
+          merchantName={selectedSupportDisplayName}
+          subtitle={selectedSupportSubtitle}
+          card={selectedSupportBusinessCard}
+          loading={supportBusinessCardLoading}
+          error={supportBusinessCardError}
+          onClose={() => {
+            setSupportBusinessCardDialogOpen(false);
+            setSupportBusinessCardLoading(false);
+            setSupportBusinessCardError("");
+          }}
+        />
+        {tip ? (
+          <div className="pointer-events-none fixed inset-0 z-[2147483500] flex items-center justify-center p-4">
+            <div className="rounded-lg bg-black/85 px-4 py-2 text-sm text-white shadow-lg">{tip}</div>
+          </div>
+        ) : null}
+      </>
+    );
+  }
 
   const editorMainClassName = `min-h-screen ${
     isMobileMerchantEditorShell
@@ -10426,7 +10472,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         : null}
 
       <ChatBusinessCardDialog
-        open={supportBusinessCardDialogOpen && supportDialogOpen && !isPlatformEditor}
+        open={supportBusinessCardDialogOpen && supportInterfaceOpen && !isPlatformEditor}
         merchantName={selectedSupportDisplayName}
         subtitle={selectedSupportSubtitle}
         card={selectedSupportBusinessCard}
