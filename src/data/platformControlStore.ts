@@ -118,6 +118,8 @@ export type MerchantConfigSnapshot = {
   permissionConfig: MerchantServicePermissionConfig;
   merchantCardImageUrl: string;
   merchantCardImageOpacity: number;
+  chatAvatarImageUrl: string;
+  contactVisibility: MerchantContactVisibility;
   sortConfig: MerchantSortConfig;
 };
 
@@ -128,6 +130,12 @@ export type MerchantConfigHistoryEntry = {
   summary: string;
   before: MerchantConfigSnapshot;
   after: MerchantConfigSnapshot;
+};
+
+export type MerchantContactVisibility = {
+  phoneHidden: boolean;
+  emailHidden: boolean;
+  businessCardHidden: boolean;
 };
 
 export type Site = {
@@ -154,6 +162,8 @@ export type Site = {
   permissionConfig?: MerchantServicePermissionConfig;
   merchantCardImageUrl?: string;
   merchantCardImageOpacity?: number;
+  chatAvatarImageUrl?: string;
+  contactVisibility?: MerchantContactVisibility;
   businessCards?: MerchantBusinessCardAsset[];
   sortConfig?: MerchantSortConfig;
   configHistory?: MerchantConfigHistoryEntry[];
@@ -497,9 +507,28 @@ function normalizeMerchantSortConfig(value: unknown): MerchantSortConfig {
   };
 }
 
+export function createDefaultMerchantContactVisibility(): MerchantContactVisibility {
+  return {
+    phoneHidden: false,
+    emailHidden: false,
+    businessCardHidden: false,
+  };
+}
+
 function normalizeUnitInterval(value: unknown, fallback = 1) {
   if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
   return Math.max(0, Math.min(1, value));
+}
+
+function normalizeMerchantContactVisibility(value: unknown): MerchantContactVisibility {
+  const source = value && typeof value === "object" ? (value as Partial<MerchantContactVisibility>) : {};
+  const fallback = createDefaultMerchantContactVisibility();
+  return {
+    phoneHidden: typeof source.phoneHidden === "boolean" ? source.phoneHidden : fallback.phoneHidden,
+    emailHidden: typeof source.emailHidden === "boolean" ? source.emailHidden : fallback.emailHidden,
+    businessCardHidden:
+      typeof source.businessCardHidden === "boolean" ? source.businessCardHidden : fallback.businessCardHidden,
+  };
 }
 
 function normalizeMerchantConfigSnapshot(value: unknown): MerchantConfigSnapshot {
@@ -512,6 +541,8 @@ function normalizeMerchantConfigSnapshot(value: unknown): MerchantConfigSnapshot
     permissionConfig: normalizeMerchantPermissionConfig(source.permissionConfig),
     merchantCardImageUrl: normalizeText(source.merchantCardImageUrl),
     merchantCardImageOpacity: normalizeUnitInterval(source.merchantCardImageOpacity, 1),
+    chatAvatarImageUrl: normalizeText((source as { chatAvatarImageUrl?: unknown }).chatAvatarImageUrl),
+    contactVisibility: normalizeMerchantContactVisibility((source as { contactVisibility?: unknown }).contactVisibility),
     sortConfig: normalizeMerchantSortConfig(source.sortConfig),
   };
 }
@@ -851,6 +882,8 @@ function createDefaultState(): PlatformState {
         permissionConfig: createDefaultMerchantPermissionConfig(),
         merchantCardImageUrl: "",
         merchantCardImageOpacity: 1,
+        chatAvatarImageUrl: "",
+        contactVisibility: createDefaultMerchantContactVisibility(),
         businessCards: [],
         sortConfig: createDefaultMerchantSortConfig(),
         configHistory: [],
@@ -886,6 +919,8 @@ function createDefaultState(): PlatformState {
         permissionConfig: createDefaultMerchantPermissionConfig(),
         merchantCardImageUrl: "",
         merchantCardImageOpacity: 1,
+        chatAvatarImageUrl: "",
+        contactVisibility: createDefaultMerchantContactVisibility(),
         businessCards: [],
         sortConfig: createDefaultMerchantSortConfig(),
         configHistory: [],
@@ -1105,6 +1140,8 @@ function normalizeState(input: PlatformState): PlatformState {
           permissionConfig: normalizeMerchantPermissionConfig((site as { permissionConfig?: unknown }).permissionConfig),
           merchantCardImageUrl: normalizeText((site as { merchantCardImageUrl?: unknown }).merchantCardImageUrl),
           merchantCardImageOpacity: normalizeUnitInterval((site as { merchantCardImageOpacity?: unknown }).merchantCardImageOpacity, 1),
+          chatAvatarImageUrl: normalizeText((site as { chatAvatarImageUrl?: unknown }).chatAvatarImageUrl),
+          contactVisibility: normalizeMerchantContactVisibility((site as { contactVisibility?: unknown }).contactVisibility),
           businessCards: normalizeMerchantBusinessCards((site as { businessCards?: unknown }).businessCards),
           sortConfig: normalizeMerchantSortConfig((site as { sortConfig?: unknown }).sortConfig),
           configHistory: normalizeMerchantConfigHistory((site as { configHistory?: unknown }).configHistory),
@@ -1349,6 +1386,8 @@ export function createSite(input: {
     permissionConfig: createDefaultMerchantPermissionConfig(),
     merchantCardImageUrl: "",
     merchantCardImageOpacity: 1,
+    chatAvatarImageUrl: "",
+    contactVisibility: createDefaultMerchantContactVisibility(),
     businessCards: [],
     sortConfig: createDefaultMerchantSortConfig(),
     configHistory: [],

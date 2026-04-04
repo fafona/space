@@ -31,6 +31,7 @@ import {
   createAlertRecord,
   createApprovalRecord,
   createAuditRecord,
+  createDefaultMerchantContactVisibility,
   createDefaultMerchantPermissionConfig,
   createDefaultMerchantSortConfig,
   createFeaturePackage,
@@ -1030,6 +1031,8 @@ function createMerchantConfigSnapshot(site: Site): MerchantConfigSnapshot {
     serviceExpiresAt: site.serviceExpiresAt ?? null,
     permissionConfig: site.permissionConfig ?? createDefaultMerchantPermissionConfig(),
     merchantCardImageUrl: (site.merchantCardImageUrl ?? "").trim(),
+    chatAvatarImageUrl: (site.chatAvatarImageUrl ?? "").trim(),
+    contactVisibility: site.contactVisibility ?? createDefaultMerchantContactVisibility(),
     merchantCardImageOpacity: normalizeUnitInterval(site.merchantCardImageOpacity, 1),
     sortConfig: site.sortConfig ?? createDefaultMerchantSortConfig(),
   };
@@ -4287,6 +4290,8 @@ export default function SuperAdminClient() {
         allowBookingBlock: configAllowBookingBlock,
       },
       merchantCardImageUrl: nextMerchantCardImage,
+      chatAvatarImageUrl: (selectedMerchantSite.chatAvatarImageUrl ?? "").trim(),
+      contactVisibility: selectedMerchantSite.contactVisibility ?? createDefaultMerchantContactVisibility(),
       merchantCardImageOpacity,
       sortConfig,
     };
@@ -4366,6 +4371,8 @@ export default function SuperAdminClient() {
       serviceExpiresAt: rollbackTarget.serviceExpiresAt ?? null,
       permissionConfig: rollbackTarget.permissionConfig ?? createDefaultMerchantPermissionConfig(),
       merchantCardImageUrl: rollbackMerchantCardImage,
+      chatAvatarImageUrl: (selectedMerchantSite.chatAvatarImageUrl ?? "").trim(),
+      contactVisibility: selectedMerchantSite.contactVisibility ?? createDefaultMerchantContactVisibility(),
       merchantCardImageOpacity: normalizeUnitInterval(rollbackTarget.merchantCardImageOpacity, 1),
       sortConfig: rollbackTarget.sortConfig ?? createDefaultMerchantSortConfig(),
     };

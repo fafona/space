@@ -3,6 +3,7 @@ import { normalizeMerchantBusinessCards, resolveMerchantBusinessCardForChatDispl
 import {
   MERCHANT_INDUSTRY_OPTIONS,
   MERCHANT_SORT_RULES,
+  createDefaultMerchantContactVisibility,
   createDefaultMerchantSortConfig,
   type MerchantIndustry,
   type MerchantSortConfig,
@@ -57,6 +58,17 @@ function normalizeMerchantSortConfig(value: unknown): MerchantSortConfig {
     industryCountryRank: normalizeNullableRank(input.industryCountryRank),
     industryProvinceRank: normalizeNullableRank(input.industryProvinceRank),
     industryCityRank: normalizeNullableRank(input.industryCityRank),
+  };
+}
+
+function normalizeMerchantContactVisibility(value: unknown) {
+  const fallback = createDefaultMerchantContactVisibility();
+  if (!value || typeof value !== "object") return fallback;
+  const input = value as Partial<typeof fallback>;
+  return {
+    phoneHidden: input.phoneHidden === true,
+    emailHidden: input.emailHidden === true,
+    businessCardHidden: input.businessCardHidden === true,
   };
 }
 
@@ -148,6 +160,8 @@ function normalizeSnapshotSite(input: unknown): MerchantListPublishedSite | null
     contactPhone: normalizeText(value.contactPhone),
     contactEmail: normalizeText(value.contactEmail),
     merchantCardImageUrl: normalizeText(value.merchantCardImageUrl),
+    chatAvatarImageUrl: normalizeText(value.chatAvatarImageUrl),
+    contactVisibility: normalizeMerchantContactVisibility(value.contactVisibility),
     merchantCardImageOpacity: normalizeUnitInterval(value.merchantCardImageOpacity, 1),
     chatBusinessCard: normalizeSnapshotChatBusinessCard(value.chatBusinessCard),
     status: normalizeSiteStatus(value.status),
@@ -209,6 +223,8 @@ export function buildPlatformMerchantSnapshotPayloadFromSites(
       contactPhone: normalizeText(site.contactPhone),
       contactEmail: normalizeText(site.contactEmail),
       merchantCardImageUrl: normalizeText(site.merchantCardImageUrl),
+      chatAvatarImageUrl: normalizeText(site.chatAvatarImageUrl),
+      contactVisibility: normalizeMerchantContactVisibility(site.contactVisibility),
       merchantCardImageOpacity: normalizeUnitInterval(site.merchantCardImageOpacity, 1),
       chatBusinessCard: compactSnapshotChatBusinessCard(resolveMerchantBusinessCardForChatDisplay(site.businessCards ?? [])),
       status: normalizeSiteStatus(site.status),
@@ -265,6 +281,8 @@ export function buildPlatformMerchantSnapshotSite(
     contactPhone?: string | null;
     contactEmail?: string | null;
     merchantCardImageUrl?: string | null;
+    chatAvatarImageUrl?: string | null;
+    contactVisibility?: Site["contactVisibility"] | null;
     merchantCardImageOpacity?: number | null;
     chatBusinessCard?: MerchantBusinessCardAsset | null;
     status?: SiteStatus | null;
@@ -289,6 +307,8 @@ export function buildPlatformMerchantSnapshotSite(
     contactPhone: input.contactPhone,
     contactEmail: input.contactEmail,
     merchantCardImageUrl: input.merchantCardImageUrl,
+    chatAvatarImageUrl: input.chatAvatarImageUrl,
+    contactVisibility: input.contactVisibility,
     merchantCardImageOpacity: input.merchantCardImageOpacity,
     chatBusinessCard: input.chatBusinessCard,
     status: input.status,

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import type { MerchantIndustry, SiteLocation } from "@/data/platformControlStore";
+import type { MerchantContactVisibility, MerchantIndustry, SiteLocation } from "@/data/platformControlStore";
 import { parseCookieValue, readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
 import { normalizeMerchantProfileBindingPayload } from "@/lib/merchantProfileBinding";
 import {
@@ -54,6 +54,8 @@ type DomainBindingBody = {
   contactEmail?: unknown;
   industry?: unknown;
   location?: unknown;
+  chatAvatarImageUrl?: unknown;
+  contactVisibility?: unknown;
 };
 
 function readEnv(name: string) {
@@ -90,6 +92,27 @@ function normalizeLocation(value: unknown): SiteLocation {
 
 function normalizeIndustry(value: unknown): MerchantIndustry {
   return normalizeText(value) as MerchantIndustry;
+}
+
+function normalizeContactVisibility(
+  value: unknown,
+  fallback?: {
+    phoneHidden?: boolean;
+    emailHidden?: boolean;
+    businessCardHidden?: boolean;
+  } | null,
+) {
+  return {
+    phoneHidden: value && typeof value === "object"
+      ? (value as { phoneHidden?: unknown }).phoneHidden === true
+      : fallback?.phoneHidden === true,
+    emailHidden: value && typeof value === "object"
+      ? (value as { emailHidden?: unknown }).emailHidden === true
+      : fallback?.emailHidden === true,
+    businessCardHidden: value && typeof value === "object"
+      ? (value as { businessCardHidden?: unknown }).businessCardHidden === true
+      : fallback?.businessCardHidden === true,
+  };
 }
 
 function isMissingSlugColumn(message: string) {
@@ -270,6 +293,8 @@ async function syncMerchantProfileSnapshot(
     contactEmail?: string;
     industry?: MerchantIndustry;
     location?: SiteLocation;
+    chatAvatarImageUrl?: string;
+    contactVisibility?: MerchantContactVisibility;
   },
 ) {
   const existingPayload = await loadStoredPlatformMerchantSnapshot(supabase);
@@ -277,17 +302,25 @@ async function syncMerchantProfileSnapshot(
   const snapshotSite = buildPlatformMerchantSnapshotSite({
     id: input.merchantId,
     merchantName: input.merchantName,
-    domainPrefix: input.domainPrefix,
-    domainSuffix: input.domainPrefix,
-    name: input.merchantName || input.merchantId,
-    domain: input.domain,
-    category: "",
-    industry: input.industry,
-    location: input.location,
-    contactAddress: input.contactAddress,
-    contactName: input.contactName,
-    contactPhone: input.contactPhone,
-    contactEmail: input.contactEmail,
+    domainPrefix: input.domainPrefix || existingSite?.domainPrefix || existingSite?.domainSuffix || "",
+    domainSuffix: input.domainPrefix || existingSite?.domainSuffix || existingSite?.domainPrefix || "",
+    name: input.merchantName || existingSite?.name || input.merchantId,
+    domain: input.domain || existingSite?.domain,
+    category: existingSite?.category ?? "",
+    industry: input.industry || existingSite?.industry || "",
+    location: input.location || existingSite?.location,
+    contactAddress: input.contactAddress || existingSite?.contactAddress || "",
+    contactName: input.contactName || existingSite?.contactName || "",
+    contactPhone: input.contactPhone || existingSite?.contactPhone || "",
+    contactEmail: input.contactEmail || existingSite?.contactEmail || "",
+    merchantCardImageUrl: existingSite?.merchantCardImageUrl || "",
+    chatAvatarImageUrl: input.chatAvatarImageUrl || existingSite?.chatAvatarImageUrl || "",
+    contactVisibility: input.contactVisibility || existingSite?.contactVisibility,
+    merchantCardImageOpacity: existingSite?.merchantCardImageOpacity ?? 1,
+    chatBusinessCard: existingSite?.chatBusinessCard ?? null,
+    status: existingSite?.status ?? "online",
+    serviceExpiresAt: existingSite?.serviceExpiresAt ?? null,
+    sortConfig: existingSite?.sortConfig ?? undefined,
     createdAt: existingSite?.createdAt ?? new Date().toISOString(),
   });
   if (!snapshotSite) {
@@ -332,6 +365,14 @@ export async function POST(request: Request) {
     contactEmail: normalizeText(body?.contactEmail),
     industry: normalizeIndustry(body?.industry),
     location: normalizeLocation(body?.location),
+    chatAvatarImageUrl:
+      body && Object.prototype.hasOwnProperty.call(body, "chatAvatarImageUrl")
+        ? normalizeText(body?.chatAvatarImageUrl)
+        : undefined,
+    contactVisibility:
+      body && Object.prototype.hasOwnProperty.call(body, "contactVisibility")
+        ? normalizeContactVisibility(body?.contactVisibility)
+        : undefined,
   };
 
   try {
@@ -381,6 +422,8 @@ export async function POST(request: Request) {
       contactEmail: normalizedProfile.contactEmail,
       industry: normalizedProfile.industry,
       location: normalizedProfile.location,
+      chatAvatarImageUrl: normalizedProfile.chatAvatarImageUrl,
+      contactVisibility: normalizedProfile.contactVisibility,
     });
     if (!snapshotResult.ok) {
       return NextResponse.json(

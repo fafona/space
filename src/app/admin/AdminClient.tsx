@@ -29,12 +29,14 @@ import {
 import {
   MERCHANT_INDUSTRY_OPTIONS,
   PLAN_TEMPLATE_CATEGORY_OPTIONS,
+  createDefaultMerchantContactVisibility,
   createDefaultMerchantSortConfig,
   createFeaturePackage,
   createDefaultMerchantPermissionConfig,
   loadPlatformState,
   savePlatformState,
   subscribePlatformState,
+  type MerchantContactVisibility,
   type MerchantSortRule,
   type PlanTemplate,
   type PlanTemplateCategory,
@@ -78,7 +80,12 @@ import { buildMerchantBusinessCardShareUrl, resolveMerchantBusinessCardShareOrig
 import { resolveCommonCanvasLayout } from "@/lib/commonCanvasLayout";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
 import ChatBusinessCardDialog from "@/components/admin/ChatBusinessCardDialog";
-import { resolveMerchantBusinessCardForChatDisplay, type MerchantBusinessCardAsset } from "@/lib/merchantBusinessCards";
+import {
+  normalizeMerchantBusinessCardChatDisplaySelection,
+  resolveMerchantBusinessCardForChatDisplay,
+  selectMerchantBusinessCardForChat,
+  type MerchantBusinessCardAsset,
+} from "@/lib/merchantBusinessCards";
 import { type PlatformSupportMessage, type PlatformSupportThread } from "@/lib/platformSupportInbox";
 import {
   findMerchantPeerThreadForMerchants,
@@ -3859,8 +3866,188 @@ type SupportContactRow = {
   updatedAt: string;
   unread: boolean;
   avatarLabel: string;
+  avatarImageUrl?: string;
   isOfficial: boolean;
 };
+
+type SupportMobileHomeTab = "conversations" | "business" | "faolla" | "self";
+
+type SupportAvatarBadgeProps = {
+  label: string;
+  imageUrl?: string | null;
+  className?: string;
+  labelClassName?: string;
+  imageAlt?: string;
+};
+
+function buildSupportPublishedProfileFromSite(site: Site): MerchantListPublishedSite {
+  return {
+    id: site.id,
+    merchantName: site.merchantName,
+    domainPrefix: site.domainPrefix,
+    domainSuffix: site.domainSuffix,
+    name: site.name,
+    domain: site.domain,
+    category: site.category,
+    industry: site.industry,
+    location: site.location,
+    contactAddress: site.contactAddress,
+    contactName: site.contactName,
+    contactPhone: site.contactPhone,
+    contactEmail: site.contactEmail,
+    merchantCardImageUrl: site.merchantCardImageUrl,
+    chatAvatarImageUrl: site.chatAvatarImageUrl,
+    contactVisibility: site.contactVisibility ?? createDefaultMerchantContactVisibility(),
+    merchantCardImageOpacity: site.merchantCardImageOpacity,
+    chatBusinessCard: resolveMerchantBusinessCardForChatDisplay(site.businessCards ?? []),
+    status: site.status,
+    serviceExpiresAt: site.serviceExpiresAt ?? null,
+    sortConfig: site.sortConfig ?? createDefaultMerchantSortConfig(),
+    createdAt: site.createdAt,
+  };
+}
+
+function SupportAvatarBadge({
+  label,
+  imageUrl,
+  className = "",
+  labelClassName = "",
+  imageAlt = "",
+}: SupportAvatarBadgeProps) {
+  const normalizedImageUrl = normalizePublicAssetUrl(imageUrl ?? "");
+  if (normalizedImageUrl) {
+    return (
+      <div className={`overflow-hidden bg-slate-100 ${className}`.trim()}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={normalizedImageUrl} alt={imageAlt || label} className="h-full w-full object-cover" />
+      </div>
+    );
+  }
+  return (
+    <div className={className}>
+      <span className={labelClassName}>{label}</span>
+    </div>
+  );
+}
+
+async function copySupportTextToClipboard(value: string) {
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+  if (typeof document === "undefined") {
+    throw new Error("clipboard_unavailable");
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-99999px";
+  textarea.style.top = "0";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  const copied = document.execCommand("copy");
+  textarea.remove();
+  if (!copied) {
+    throw new Error("clipboard_unavailable");
+  }
+}
+
+async function normalizeSupportClipboardImageBlob(sourceImageUrl: string) {
+  const response = await fetch(sourceImageUrl);
+  if (!response.ok) {
+    throw new Error("image_clipboard_unavailable");
+  }
+  const sourceBlob = await response.blob();
+  if (sourceBlob.type === "image/png") {
+    return sourceBlob;
+  }
+  return new Blob([await sourceBlob.arrayBuffer()], {
+    type: "image/png",
+  });
+}
+
+async function supportBlobToDataUrl(blob: Blob) {
+  return await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+    reader.onerror = () => reject(new Error("image_clipboard_unavailable"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function copySupportImageViaLegacyClipboard(blob: Blob) {
+  if (typeof document === "undefined") {
+    throw new Error("image_clipboard_unavailable");
+  }
+  const dataUrl = await supportBlobToDataUrl(blob);
+  await new Promise<void>((resolve, reject) => {
+    let handled = false;
+    const cleanup = () => {
+      document.removeEventListener("copy", handleCopy, true);
+    };
+    const fail = () => {
+      cleanup();
+      reject(new Error("image_clipboard_unavailable"));
+    };
+    const succeed = () => {
+      handled = true;
+      cleanup();
+      resolve();
+    };
+    const handleCopy = (event: ClipboardEvent) => {
+      const clipboardData = event.clipboardData;
+      if (!clipboardData) {
+        fail();
+        return;
+      }
+      event.preventDefault();
+      try {
+        clipboardData.setData(
+          "text/html",
+          `<img src="${dataUrl}" alt="business card" style="display:block;max-width:100%;" />`,
+        );
+        clipboardData.setData("text/plain", "");
+        succeed();
+      } catch {
+        fail();
+      }
+    };
+
+    document.addEventListener("copy", handleCopy, true);
+    const copied = document.execCommand("copy");
+    if (!copied && !handled) {
+      fail();
+      return;
+    }
+    window.setTimeout(() => {
+      if (!handled) fail();
+    }, 50);
+  });
+}
+
+async function copySupportImageToClipboard(sourceImageUrl: string) {
+  const blob = await normalizeSupportClipboardImageBlob(sourceImageUrl);
+  if (
+    typeof window !== "undefined" &&
+    typeof navigator !== "undefined" &&
+    navigator.clipboard?.write &&
+    typeof window.ClipboardItem === "function"
+  ) {
+    try {
+      await navigator.clipboard.write([
+        new window.ClipboardItem({
+          "image/png": blob,
+        }),
+      ]);
+      return;
+    } catch {
+      // Fall through to legacy clipboard path.
+    }
+  }
+  await copySupportImageViaLegacyClipboard(blob);
+}
 
 function compareSupportMessages(left: Pick<PlatformSupportMessage, "createdAt" | "id">, right: Pick<PlatformSupportMessage, "createdAt" | "id">) {
   const leftTs = new Date(left.createdAt).getTime();
@@ -4031,11 +4218,14 @@ export default function AdminClient({
   const [supportSearchError, setSupportSearchError] = useState("");
   const [supportSelectedContactKey, setSupportSelectedContactKey] = useState(SUPPORT_OFFICIAL_CONTACT_KEY);
   const [supportMobileView, setSupportMobileView] = useState<"list" | "thread">("list");
+  const [supportMobileHomeTab, setSupportMobileHomeTab] = useState<SupportMobileHomeTab>("conversations");
   const [supportPeerLocalMessages, setSupportPeerLocalMessages] = useState<LocalPeerSupportMessage[]>([]);
   const [supportBusinessCardDialogOpen, setSupportBusinessCardDialogOpen] = useState(false);
   const [supportMerchantInfoSheetOpen, setSupportMerchantInfoSheetOpen] = useState(false);
   const [supportBusinessCardLoading, setSupportBusinessCardLoading] = useState(false);
   const [supportBusinessCardError, setSupportBusinessCardError] = useState("");
+  const [supportSelfProfileSaving, setSupportSelfProfileSaving] = useState(false);
+  const [supportSelfAvatarUploading, setSupportSelfAvatarUploading] = useState(false);
   const [supportPeerBusinessCardByMerchantId, setSupportPeerBusinessCardByMerchantId] = useState<
     Record<string, MerchantBusinessCardAsset | null>
   >({});
@@ -4048,6 +4238,7 @@ export default function AdminClient({
   const supportSendingRef = useRef(false);
   const supportMessagesViewportRef = useRef<HTMLDivElement>(null);
   const supportInputRef = useRef<HTMLTextAreaElement>(null);
+  const supportSelfAvatarInputRef = useRef<HTMLInputElement>(null);
   const supportPhotoInputRef = useRef<HTMLInputElement>(null);
   const supportCameraInputRef = useRef<HTMLInputElement>(null);
   const supportFileInputRef = useRef<HTMLInputElement>(null);
@@ -7290,6 +7481,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       contactEmail?: string;
       industry?: string;
       location?: SiteLocation | null;
+      chatAvatarImageUrl?: string;
+      contactVisibility?: MerchantContactVisibility | null;
     },
   ) {
     const normalizedMerchantId = String(merchantId ?? "").trim();
@@ -7333,6 +7526,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         contactEmail: String(profile?.contactEmail ?? "").trim(),
         industry: String(profile?.industry ?? "").trim(),
         location: profile?.location ?? null,
+        ...(typeof profile?.chatAvatarImageUrl === "string"
+          ? { chatAvatarImageUrl: String(profile.chatAvatarImageUrl).trim() }
+          : {}),
+        ...(profile?.contactVisibility
+          ? { contactVisibility: profile.contactVisibility }
+          : {}),
       }),
     });
 
@@ -7974,10 +8173,20 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     });
     return map;
   }, [currentSupportMerchantId, supportPeerThreads]);
+  const supportPeerSiteByMerchantId = useMemo(() => {
+    const map = new Map<string, Site>();
+    if (!merchantPlatformState?.sites?.length) return map;
+    merchantPlatformState.sites.forEach((site) => {
+      const merchantId = String(site.id ?? "").trim();
+      if (/^\d{8}$/.test(merchantId)) {
+        map.set(merchantId, site);
+      }
+    });
+    return map;
+  }, [merchantPlatformState?.sites]);
   const selectedSupportPeerContact =
     supportPeerContacts.find((contact) => contact.merchantId === selectedSupportPeerMerchantId) ?? null;
-  const selectedSupportPeerSite =
-    merchantPlatformState?.sites.find((site) => site.id === selectedSupportPeerMerchantId) ?? null;
+  const selectedSupportPeerSite = supportPeerSiteByMerchantId.get(selectedSupportPeerMerchantId) ?? null;
   const selectedSupportFallbackBusinessCard =
     selectedSupportPeerContact?.chatBusinessCard ??
     resolveMerchantBusinessCardForChatDisplay(selectedSupportPeerSite?.businessCards ?? []);
@@ -7989,28 +8198,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }, [selectedSupportPeerMerchantId, supportPeerProfilesByMerchantId]);
   const selectedSupportLocalProfile = useMemo(() => {
     if (!/^\d{8}$/.test(selectedSupportPeerMerchantId) || !selectedSupportPeerSite) return null;
-    return {
-      id: selectedSupportPeerSite.id,
-      merchantName: selectedSupportPeerSite.merchantName,
-      domainPrefix: selectedSupportPeerSite.domainPrefix,
-      domainSuffix: selectedSupportPeerSite.domainSuffix,
-      name: selectedSupportPeerSite.name,
-      domain: selectedSupportPeerSite.domain,
-      category: selectedSupportPeerSite.category,
-      industry: selectedSupportPeerSite.industry,
-      location: selectedSupportPeerSite.location,
-      contactAddress: selectedSupportPeerSite.contactAddress,
-      contactName: selectedSupportPeerSite.contactName,
-      contactPhone: selectedSupportPeerSite.contactPhone,
-      contactEmail: selectedSupportPeerSite.contactEmail,
-      merchantCardImageUrl: selectedSupportPeerSite.merchantCardImageUrl,
-      merchantCardImageOpacity: selectedSupportPeerSite.merchantCardImageOpacity,
-      chatBusinessCard: resolveMerchantBusinessCardForChatDisplay(selectedSupportPeerSite.businessCards ?? []),
-      status: selectedSupportPeerSite.status,
-      serviceExpiresAt: selectedSupportPeerSite.serviceExpiresAt ?? null,
-      sortConfig: selectedSupportPeerSite.sortConfig ?? createDefaultMerchantSortConfig(),
-      createdAt: selectedSupportPeerSite.createdAt,
-    } satisfies MerchantListPublishedSite;
+    return buildSupportPublishedProfileFromSite(selectedSupportPeerSite);
   }, [selectedSupportPeerMerchantId, selectedSupportPeerSite]);
   const selectedSupportProfile = selectedSupportFetchedProfile ?? selectedSupportLocalProfile ?? null;
   const selectedSupportBusinessCard =
@@ -8065,19 +8253,32 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY
       ? supportOfficialName
       : selectedSupportPeerContact?.merchantName || selectedSupportPeerMerchantId || "未选择联系人";
-  const selectedSupportMerchantEmail =
+  const selectedSupportContactVisibility =
+    selectedSupportProfile?.contactVisibility ?? createDefaultMerchantContactVisibility();
+  const selectedSupportMerchantEmailRaw =
     normalizeSupportDisplayValue(selectedSupportProfile?.contactEmail) ||
-    normalizeSupportDisplayValue(selectedSupportPeerContact?.merchantEmail) ||
-    "-";
+    normalizeSupportDisplayValue(selectedSupportPeerContact?.merchantEmail);
+  const selectedSupportMerchantEmail = selectedSupportContactVisibility.emailHidden
+    ? "已隐藏"
+    : selectedSupportMerchantEmailRaw || "-";
   const selectedSupportMerchantIndustry =
     normalizeSupportDisplayValue(selectedSupportProfile?.industry) || "未设置行业";
   const selectedSupportMerchantCity =
     normalizeSupportDisplayValue(selectedSupportProfile?.location.city) || "-";
-  const selectedSupportMerchantPhone =
-    normalizeSupportDisplayValue(selectedSupportProfile?.contactPhone) || "-";
+  const selectedSupportMerchantPhoneRaw = normalizeSupportDisplayValue(selectedSupportProfile?.contactPhone);
+  const selectedSupportMerchantPhone = selectedSupportContactVisibility.phoneHidden
+    ? "已隐藏"
+    : selectedSupportMerchantPhoneRaw || "-";
   const selectedSupportMerchantPrefix =
     normalizeSupportDisplayValue(selectedSupportProfile?.domainPrefix) ||
     normalizeSupportDisplayValue(selectedSupportProfile?.domainSuffix);
+  const selectedSupportAvatarImageUrl =
+    supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY
+      ? ""
+      : normalizeSupportDisplayValue(selectedSupportProfile?.chatAvatarImageUrl) ||
+        normalizeSupportDisplayValue(selectedSupportProfile?.merchantCardImageUrl) ||
+        normalizeSupportDisplayValue(selectedSupportPeerSite?.chatAvatarImageUrl) ||
+        normalizeSupportDisplayValue(selectedSupportPeerSite?.merchantCardImageUrl);
   const selectedSupportResolvedBusinessCard = selectedSupportProfile?.chatBusinessCard ?? selectedSupportBusinessCard;
   const selectedSupportIsOfficial = supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY;
   const selectedSupportSubtitle =
@@ -8127,11 +8328,14 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const selectedSupportMerchantWebsiteLabel =
     selectedSupportMerchantWebsiteHref ? formatSupportUrlLabel(selectedSupportMerchantWebsiteHref) : "-";
   const selectedSupportMerchantCardHref = useMemo(
-    () => buildSupportMerchantCardLink(selectedSupportResolvedBusinessCard),
-    [selectedSupportResolvedBusinessCard],
+    () => (selectedSupportContactVisibility.businessCardHidden ? "" : buildSupportMerchantCardLink(selectedSupportResolvedBusinessCard)),
+    [selectedSupportContactVisibility.businessCardHidden, selectedSupportResolvedBusinessCard],
   );
-  const selectedSupportMerchantCardLabel =
-    selectedSupportMerchantCardHref ? formatSupportUrlLabel(selectedSupportMerchantCardHref) : "-";
+  const selectedSupportMerchantCardLabel = selectedSupportContactVisibility.businessCardHidden
+    ? "已隐藏"
+    : selectedSupportMerchantCardHref
+      ? formatSupportUrlLabel(selectedSupportMerchantCardHref)
+      : "-";
   const selectedSupportMerchantInfoItems = useMemo(
     () => [
       { label: "ID", value: selectedSupportPeerMerchantId || "-" },
@@ -8172,6 +8376,56 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         })
       : [];
   }, [editingSite?.businessCards]);
+  const supportSelfContactVisibility =
+    editingSite?.contactVisibility ?? createDefaultMerchantContactVisibility();
+  const supportSelfDisplayName =
+    normalizeSupportDisplayValue(editingSite?.merchantName) ||
+    normalizeSupportDisplayValue(editingSite?.name) ||
+    merchantDisplayName ||
+    editingSiteId ||
+    "我的资料";
+  const supportSelfAvatarLabel = getSupportContactAvatarLabel(supportSelfDisplayName, "我");
+  const supportSelfAvatarImageUrl =
+    normalizeSupportDisplayValue(editingSite?.chatAvatarImageUrl) ||
+    normalizeSupportDisplayValue(editingSite?.merchantCardImageUrl);
+  const supportSelfWebsiteHref = useMemo(() => {
+    const publicBaseDomain = normalizeSupportDisplayValue(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN);
+    const merchantId = normalizeSupportDisplayValue(editingSiteId);
+    const domainPrefix =
+      normalizeSupportDisplayValue(editingSite?.domainPrefix) ||
+      normalizeSupportDisplayValue(editingSite?.domainSuffix);
+    const explicitDomain = normalizeSupportDisplayValue(editingSite?.domain);
+    if (merchantId && domainPrefix) {
+      const runtimeHref = normalizeSupportExternalUrl(buildMerchantFrontendHref(merchantId, domainPrefix));
+      if (runtimeHref && !isSupportIpOrLocalHost(runtimeHref)) {
+        return runtimeHref;
+      }
+      if (publicBaseDomain) {
+        const publicHref = normalizeSupportExternalUrl(
+          buildMerchantFrontendHref(merchantId, domainPrefix, publicBaseDomain),
+          `https://${publicBaseDomain.replace(/^https?:\/\//i, "")}`,
+        );
+        if (publicHref) {
+          return publicHref;
+        }
+      }
+    }
+    if (explicitDomain && !isSupportIpOrLocalHost(normalizeSupportExternalUrl(explicitDomain))) {
+      return normalizeSupportExternalUrl(
+        explicitDomain,
+        publicBaseDomain ? `https://${publicBaseDomain.replace(/^https?:\/\//i, "")}` : undefined,
+      );
+    }
+    return normalizeSupportExternalUrl(explicitDomain);
+  }, [editingSite?.domain, editingSite?.domainPrefix, editingSite?.domainSuffix, editingSiteId]);
+  const supportSelfWebsiteLabel =
+    supportSelfWebsiteHref ? formatSupportUrlLabel(supportSelfWebsiteHref) : "-";
+  const supportSelfChatBusinessCard = resolveMerchantBusinessCardForChatDisplay(editingSite?.businessCards ?? []);
+  const supportSelfCardHref = useMemo(
+    () => buildSupportMerchantCardLink(supportSelfChatBusinessCard),
+    [supportSelfChatBusinessCard],
+  );
+  const supportSelfCardLabel = supportSelfCardHref ? formatSupportUrlLabel(supportSelfCardHref) : "-";
   const selectedSupportLoading =
     supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY ? supportLoading : supportPeerLoading;
   const selectedSupportEmptyStateText =
@@ -8230,19 +8484,36 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       updatedAt: latestOfficialVisibleSupportMessage?.createdAt || "",
       unread: supportHasUnreadOfficialMessages,
       avatarLabel: getSupportContactAvatarLabel(supportOfficialName, "FA"),
+      avatarImageUrl: "",
       isOfficial: true,
     },
-    ...supportPeerContacts.map((contact): SupportContactRow => ({
-      key: `merchant:${contact.merchantId}`,
-      name: contact.merchantName || contact.merchantId,
-      badge: undefined as string | undefined,
-      subtitle: [contact.merchantId, contact.merchantEmail].filter(Boolean).join(" | ") || contact.merchantId,
-      preview: contact.lastMessage?.text || "还没有聊天记录，可以直接开始对话。",
-      updatedAt: contact.updatedAt || contact.savedAt,
-      unread: supportPeerUnreadContactIds.has(contact.merchantId),
-      avatarLabel: getSupportContactAvatarLabel(contact.merchantName || contact.merchantId, "商"),
-      isOfficial: false,
-    })),
+    ...supportPeerContacts.map((contact): SupportContactRow => {
+      const localSite = supportPeerSiteByMerchantId.get(contact.merchantId) ?? null;
+      const localProfile = localSite ? buildSupportPublishedProfileFromSite(localSite) : null;
+      const fetchedProfile = Object.prototype.hasOwnProperty.call(supportPeerProfilesByMerchantId, contact.merchantId)
+        ? supportPeerProfilesByMerchantId[contact.merchantId]
+        : undefined;
+      const mergedProfile = fetchedProfile ?? localProfile ?? null;
+      const visibility = mergedProfile?.contactVisibility ?? createDefaultMerchantContactVisibility();
+      const subtitleEmail = visibility.emailHidden
+        ? "已隐藏"
+        : normalizeSupportDisplayValue(mergedProfile?.contactEmail) ||
+          normalizeSupportDisplayValue(contact.merchantEmail);
+      return {
+        key: `merchant:${contact.merchantId}`,
+        name: contact.merchantName || contact.merchantId,
+        badge: undefined as string | undefined,
+        subtitle: [contact.merchantId, subtitleEmail].filter(Boolean).join(" | ") || contact.merchantId,
+        preview: contact.lastMessage?.text || "还没有聊天记录，可以直接开始对话。",
+        updatedAt: contact.updatedAt || contact.savedAt,
+        unread: supportPeerUnreadContactIds.has(contact.merchantId),
+        avatarLabel: getSupportContactAvatarLabel(contact.merchantName || contact.merchantId, "商"),
+        avatarImageUrl:
+          normalizeSupportDisplayValue(mergedProfile?.chatAvatarImageUrl) ||
+          normalizeSupportDisplayValue(mergedProfile?.merchantCardImageUrl),
+        isOfficial: false,
+      };
+    }),
   ];
   const supportUnreadConversationCount =
     (supportHasUnreadOfficialMessages ? 1 : 0) + supportPeerUnreadContactIds.size;
@@ -9523,6 +9794,205 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     await handleSupportFileAttachment(file);
   }
 
+  async function saveSupportSelfSitePatch(
+    patch: {
+      chatAvatarImageUrl?: string;
+      contactVisibility?: MerchantContactVisibility;
+      businessCards?: MerchantBusinessCardAsset[];
+    },
+    options?: {
+      successTip?: string;
+      skipProfileSync?: boolean;
+    },
+  ) {
+    const targetSiteId = editingSiteId || (await ensureEditableMerchantSiteId());
+    if (!targetSiteId) {
+      showTip("未找到当前商户，暂时无法保存");
+      return false;
+    }
+
+    const fallbackEmail =
+      normalizeSupportDisplayValue(editingSite?.contactEmail) ||
+      normalizeSupportDisplayValue(merchantSessionIdentityRef.current.email);
+    ensureScopedMerchantSite(targetSiteId, fallbackEmail || null);
+    const platformState = loadPlatformState();
+    const currentSite = platformState.sites.find((item) => item.id === targetSiteId) ?? null;
+    if (!currentSite) {
+      showTip("未找到当前商户资料，暂时无法保存");
+      return false;
+    }
+
+    const nextBusinessCards = patch.businessCards
+      ? normalizeMerchantBusinessCardChatDisplaySelection(patch.businessCards)
+      : currentSite.businessCards ?? [];
+    const nextContactVisibility =
+      patch.contactVisibility ?? currentSite.contactVisibility ?? createDefaultMerchantContactVisibility();
+    const nextChatAvatarImageUrl =
+      typeof patch.chatAvatarImageUrl === "string"
+        ? patch.chatAvatarImageUrl
+        : normalizeSupportDisplayValue(currentSite.chatAvatarImageUrl);
+    const nextSite: Site = {
+      ...currentSite,
+      businessCards: nextBusinessCards,
+      chatAvatarImageUrl: nextChatAvatarImageUrl,
+      contactVisibility: nextContactVisibility,
+      updatedAt: new Date().toISOString(),
+    };
+
+    savePlatformState({
+      ...platformState,
+      sites: platformState.sites.map((item) => (item.id === targetSiteId ? nextSite : item)),
+    });
+
+    if (patch.businessCards) {
+      scheduleMerchantChatBusinessCardSync(targetSiteId, nextBusinessCards);
+    }
+
+    if (options?.skipProfileSync) {
+      if (options?.successTip) {
+        showTip(options.successTip);
+      }
+      return true;
+    }
+
+    setSupportSelfProfileSaving(true);
+    try {
+      const baseDomain =
+        resolveRuntimePortalBaseDomain(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "") ||
+        (platformState.sites.find((site) => site.id === "site-main")?.domain ?? "").trim() ||
+        normalizeSupportDisplayValue(nextSite.domain);
+      const normalizedDomainPrefix = normalizeDomainPrefixForMerchant(
+        nextSite.domainPrefix ?? nextSite.domainSuffix ?? targetSiteId,
+      );
+      const syncResult = await syncMerchantProfileBinding(
+        targetSiteId,
+        normalizedDomainPrefix,
+        normalizeSupportDisplayValue(nextSite.merchantName) ||
+          normalizeSupportDisplayValue(nextSite.name) ||
+          targetSiteId,
+        {
+          domain: buildMerchantDomainFromBase(baseDomain, normalizedDomainPrefix),
+          contactAddress: nextSite.contactAddress,
+          contactName: nextSite.contactName,
+          contactPhone: nextSite.contactPhone,
+          contactEmail: nextSite.contactEmail,
+          industry: nextSite.industry,
+          location: nextSite.location ?? null,
+          chatAvatarImageUrl: nextSite.chatAvatarImageUrl ?? "",
+          contactVisibility: nextSite.contactVisibility ?? createDefaultMerchantContactVisibility(),
+        },
+      );
+      if (!syncResult.ok) {
+        showTip("资料已保存到当前后台，但同步到超级后台失败，请稍后重试");
+        return false;
+      }
+      if (options?.successTip) {
+        showTip(options.successTip);
+      }
+      return true;
+    } finally {
+      setSupportSelfProfileSaving(false);
+    }
+  }
+
+  function openSupportSelfAvatarPicker() {
+    if (supportSelfAvatarUploading || supportSelfProfileSaving) return;
+    supportSelfAvatarInputRef.current?.click();
+  }
+
+  async function handleSupportSelfAvatarInputChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0] ?? null;
+    resetSupportPickerInputValue(event.target);
+    if (!file) return;
+    setSupportSelfAvatarUploading(true);
+    try {
+      const avatarCompressionOptions = {
+        maxSide: 320,
+        quality: 0.76,
+      };
+      const compressed = await compressImageFileWithinLimit(file, 10 * 1024, avatarCompressionOptions);
+      let avatarDataUrl = compressed.dataUrl;
+      if (!/^data:image\/webp/i.test(avatarDataUrl)) {
+        avatarDataUrl = await compressImageDataUrl(avatarDataUrl, avatarCompressionOptions);
+      }
+      if (estimateDataUrlBytes(avatarDataUrl) > 10 * 1024) {
+        throw new Error("头像压缩失败，请换一张更小的图片");
+      }
+      const uploadedUrl = await uploadImageDataUrlToSupabase(
+        avatarDataUrl,
+        buildSupportUploadMerchantHint(),
+      );
+      if (!uploadedUrl) {
+        throw new Error("头像上传失败，请稍后重试");
+      }
+      await saveSupportSelfSitePatch(
+        {
+          chatAvatarImageUrl: uploadedUrl,
+        },
+        {
+          successTip: "头像已更新",
+        },
+      );
+    } catch (error) {
+      showTip(error instanceof Error ? error.message : "头像上传失败，请稍后重试");
+    } finally {
+      setSupportSelfAvatarUploading(false);
+    }
+  }
+
+  async function handleSupportSelfVisibilityChange(
+    key: keyof MerchantContactVisibility,
+    hidden: boolean,
+  ) {
+    await saveSupportSelfSitePatch(
+      {
+        contactVisibility: {
+          ...supportSelfContactVisibility,
+          [key]: hidden,
+        },
+      },
+      {
+        successTip: hidden ? "已隐藏该资料" : "已恢复显示该资料",
+      },
+    );
+  }
+
+  async function handleSupportSelfChatDisplayChange(cardId: string) {
+    if (!editingSite?.businessCards?.length) return;
+    await saveSupportSelfSitePatch(
+      {
+        businessCards: selectMerchantBusinessCardForChat(editingSite.businessCards, cardId),
+      },
+      {
+        successTip: "聊天展示已更新",
+        skipProfileSync: true,
+      },
+    );
+  }
+
+  async function handleSupportSelfCopyCardImage(card: MerchantBusinessCardAsset) {
+    try {
+      await copySupportImageToClipboard(card.imageUrl);
+      showTip("名片图片已复制，可直接发送");
+    } catch {
+      showTip("复制失败，请稍后重试");
+    }
+  }
+
+  async function handleSupportSelfCopyCardLink(card: MerchantBusinessCardAsset) {
+    const shareUrl = buildSupportMerchantCardLink(card);
+    if (!shareUrl) {
+      showTip("当前名片没有可复制的联系卡");
+      return;
+    }
+    try {
+      await copySupportTextToClipboard(shareUrl);
+      showTip("联系卡已复制");
+    } catch {
+      showTip("复制失败，请稍后重试");
+    }
+  }
+
   if (checkingAuth) {
     if (!isPlatformEditor) {
       return (
@@ -9790,6 +10260,551 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     return createPortal(content, document.body);
   }
 
+  const supportSelfInfoItems = [
+    {
+      key: "name",
+      label: "名称",
+      value: supportSelfDisplayName,
+    },
+    {
+      key: "id",
+      label: "ID",
+      value: normalizeSupportDisplayValue(editingSiteId) || "-",
+    },
+    {
+      key: "phone",
+      label: "电话",
+      value: normalizeSupportDisplayValue(editingSite?.contactPhone) || "-",
+      hidden: supportSelfContactVisibility.phoneHidden,
+      visibilityKey: "phoneHidden" as const,
+    },
+    {
+      key: "email",
+      label: "邮箱",
+      value: normalizeSupportDisplayValue(editingSite?.contactEmail) || "-",
+      hidden: supportSelfContactVisibility.emailHidden,
+      visibilityKey: "emailHidden" as const,
+    },
+    {
+      key: "card",
+      label: "联系卡",
+      value: supportSelfCardLabel,
+      href: supportSelfCardHref || undefined,
+      hidden: supportSelfContactVisibility.businessCardHidden,
+      visibilityKey: "businessCardHidden" as const,
+    },
+    {
+      key: "industry",
+      label: "行业",
+      value: normalizeSupportDisplayValue(editingSite?.industry) || "未设置行业",
+    },
+    {
+      key: "city",
+      label: "城市",
+      value: normalizeSupportDisplayValue(editingSite?.location?.city) || "-",
+    },
+    {
+      key: "website",
+      label: "官网",
+      value: supportSelfWebsiteLabel,
+      href: supportSelfWebsiteHref || undefined,
+    },
+  ];
+
+  const supportMobileConversationsContent = (
+    <>
+      <div className="shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
+        <div className="flex items-center gap-3">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm">
+            会话
+          </div>
+          <button
+            type="button"
+            className="shrink-0 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
+            onClick={() => {
+              void loadSupportThread({ silent: false, suppressError: false });
+              void loadSupportPeerInbox({ silent: false, suppressError: false });
+            }}
+            disabled={supportLoading || supportPeerLoading}
+          >
+            {supportLoading || supportPeerLoading ? "刷新中" : "刷新"}
+          </button>
+          <div className="min-w-0 flex-1">
+            <div className="text-[15px] font-semibold text-slate-900">聊天列表</div>
+            <div className="mt-1 text-xs text-slate-500">{mobileSupportContactListSummary}</div>
+          </div>
+          {!isMobileMerchantSupportOnlyMode ? (
+            <button
+              type="button"
+              className="shrink-0 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-50"
+              onClick={() => setSupportDialogOpen(false)}
+              disabled={supportSending}
+            >
+              关闭
+            </button>
+          ) : null}
+        </div>
+        <div className="mt-4 flex items-center gap-2">
+          <div className="flex min-w-0 flex-1 items-center gap-3 rounded-[24px] border border-slate-200 bg-white px-4 py-3 shadow-sm">
+            <span className="shrink-0 text-sm text-slate-400">搜索</span>
+            <input
+              type="text"
+              className="min-w-0 flex-1 bg-transparent text-base text-slate-900 outline-none placeholder:text-slate-400"
+              placeholder="商户ID / 邮箱"
+              value={supportContactKeyword}
+              onChange={(event) => setSupportContactKeyword(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+                event.preventDefault();
+                void searchSupportPeerMerchant();
+              }}
+            />
+          </div>
+          <button
+            type="button"
+            className="shrink-0 rounded-full border border-slate-200 bg-white px-4 py-3 text-sm shadow-sm hover:bg-slate-50 disabled:opacity-50"
+            onClick={() => void searchSupportPeerMerchant()}
+            disabled={supportSearchLoading}
+          >
+            {supportSearchLoading ? "搜索中" : "搜索"}
+          </button>
+        </div>
+        <div className="mt-2 text-[11px] text-slate-500">只支持精确搜索 8 位商户ID或完整邮箱。</div>
+        {supportSearchError ? (
+          <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-600">
+            {supportSearchError}
+          </div>
+        ) : null}
+        {supportPeerError ? (
+          <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-600">
+            {supportPeerError}
+          </div>
+        ) : null}
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-[calc(env(safe-area-inset-bottom)+6.75rem)] pt-3">
+        <div className="space-y-2.5">
+          {supportContactRows.map((contactRow) => {
+            const active = supportSelectedContactKey === contactRow.key;
+            return (
+              <button
+                key={contactRow.key}
+                type="button"
+                className={`w-full rounded-[26px] border px-3 py-3.5 text-left shadow-[0_10px_24px_rgba(15,23,42,0.06)] transition ${
+                  active ? "border-slate-900 bg-white" : "border-slate-200 bg-white/90 hover:bg-white"
+                }`}
+                onClick={() => openSupportContactThread(contactRow.key)}
+              >
+                <div className="flex items-start gap-3">
+                  <SupportAvatarBadge
+                    label={contactRow.avatarLabel}
+                    imageUrl={contactRow.avatarImageUrl}
+                    imageAlt={contactRow.name}
+                    className={`mt-0.5 flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-sm font-semibold ${
+                      contactRow.isOfficial || contactRow.unread
+                        ? "bg-slate-900 text-white"
+                        : "bg-slate-100 text-slate-700"
+                    }`}
+                    labelClassName="text-sm font-semibold"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <div className="truncate text-sm font-semibold text-slate-900">{contactRow.name}</div>
+                          {contactRow.badge ? (
+                            <span className="inline-flex shrink-0 items-center rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium text-white">
+                              {contactRow.badge}
+                            </span>
+                          ) : null}
+                          {contactRow.unread ? (
+                            <span aria-label="有未读消息" className="inline-flex h-2.5 w-2.5 shrink-0 rounded-full bg-rose-500" />
+                          ) : null}
+                        </div>
+                        <div className="mt-1 truncate text-[11px] text-slate-500">{contactRow.subtitle}</div>
+                      </div>
+                      <div className="shrink-0 text-[11px] text-slate-400">
+                        {contactRow.updatedAt ? formatSupportConversationTime(contactRow.updatedAt) : "未开始"}
+                      </div>
+                    </div>
+                    <div className="mt-2 line-clamp-2 text-[13px] leading-5 text-slate-600">{contactRow.preview}</div>
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </>
+  );
+
+  const supportMobileBusinessContent = (
+    <>
+      <div className="shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
+        <div className="flex items-center gap-3">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-emerald-500 text-sm font-semibold text-white shadow-sm">
+            生意
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="text-[15px] font-semibold text-slate-900">预约管理</div>
+            <div className="mt-1 text-xs text-slate-500">这里直接接入你后台现有的预约管理。</div>
+          </div>
+        </div>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(env(safe-area-inset-bottom)+6.75rem)] pt-4">
+        <div className="space-y-3">
+          <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+            <div className="text-base font-semibold text-slate-900">管理预约、咨询和安排</div>
+            <div className="mt-2 text-sm leading-6 text-slate-500">
+              手机端这里保留一个轻量入口，点开后直接使用后台原有的预约管理弹窗。
+            </div>
+            <button
+              type="button"
+              className="mt-4 inline-flex items-center justify-center rounded-full bg-slate-900 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-50"
+              onClick={() => setMerchantBookingManagerOpen(true)}
+              disabled={!canUseBookingBlock}
+            >
+              {canUseBookingBlock ? "打开预约管理" : "当前套餐未开通预约管理"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+
+  const supportMobileFaollaContent = (
+    <>
+      <div className="shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
+        <div className="flex items-center gap-3">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm">
+            FA
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="text-[15px] font-semibold text-slate-900">Faolla</div>
+            <div className="mt-1 text-xs text-slate-500">手机端总站入口</div>
+          </div>
+        </div>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(env(safe-area-inset-bottom)+6.75rem)] pt-4">
+        <div className="rounded-[30px] border border-slate-200 bg-[linear-gradient(180deg,#0f172a_0%,#1e293b_100%)] p-6 text-white shadow-[0_18px_48px_rgba(15,23,42,0.24)]">
+          <div className="inline-flex items-center rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[11px] tracking-[0.16em] text-slate-100">
+            MOBILE PORTAL
+          </div>
+          <div className="mt-4 text-2xl font-semibold">Faolla.com</div>
+          <div className="mt-2 text-sm leading-6 text-slate-200/80">
+            这里可以快速打开手机端总站，查看前台展示效果或继续浏览 Faolla。
+          </div>
+          <div className="mt-5 flex gap-3">
+            <button
+              type="button"
+              className="inline-flex items-center justify-center rounded-full bg-white px-4 py-2.5 text-sm font-medium text-slate-900 shadow-sm transition hover:bg-slate-100"
+              onClick={() => {
+                if (typeof window === "undefined") return;
+                window.location.href = "/";
+              }}
+            >
+              打开总站
+            </button>
+            <button
+              type="button"
+              className="inline-flex items-center justify-center rounded-full border border-white/20 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-white/10"
+              onClick={() => {
+                if (typeof window === "undefined") return;
+                window.open("/", "_blank", "noopener,noreferrer");
+              }}
+            >
+              新窗口打开
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+
+  const supportMobileSelfContent = (
+    <>
+      <div className="shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            className="relative flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-[22px] bg-slate-900 text-base font-semibold text-white shadow-sm"
+            onClick={openSupportSelfAvatarPicker}
+            disabled={supportSelfAvatarUploading || supportSelfProfileSaving}
+            aria-label="上传头像"
+          >
+            <SupportAvatarBadge
+              label={supportSelfAvatarLabel}
+              imageUrl={supportSelfAvatarImageUrl}
+              imageAlt={supportSelfDisplayName}
+              className="flex h-full w-full items-center justify-center bg-slate-900 text-white"
+              labelClassName="text-base font-semibold text-white"
+            />
+            {(supportSelfAvatarUploading || supportSelfProfileSaving) ? (
+              <span className="absolute inset-0 flex items-center justify-center bg-slate-950/35">
+                <span className="h-5 w-5 rounded-full border-2 border-white/35 border-t-white animate-spin" />
+              </span>
+            ) : null}
+          </button>
+          <div className="min-w-0 flex-1">
+            <div className="text-[15px] font-semibold text-slate-900">自己</div>
+            <div className="mt-1 text-xs text-slate-500">头像、资料隐藏和聊天名片都在这里。</div>
+          </div>
+          <button
+            type="button"
+            className="shrink-0 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-50"
+            onClick={openSupportSelfAvatarPicker}
+            disabled={supportSelfAvatarUploading || supportSelfProfileSaving}
+          >
+            {supportSelfAvatarUploading ? "上传中" : "换头像"}
+          </button>
+        </div>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(env(safe-area-inset-bottom)+6.75rem)] pt-4">
+        <input
+          ref={supportSelfAvatarInputRef}
+          className="hidden"
+          type="file"
+          accept="image/*"
+          onChange={(event) => {
+            void handleSupportSelfAvatarInputChange(event);
+          }}
+        />
+        <div className="space-y-4">
+          <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+            <div className="border-b border-slate-100 px-5 py-4">
+              <div className="text-sm font-semibold text-slate-900">我的资料</div>
+              <div className="mt-1 text-xs text-slate-500">电话、邮箱和联系卡可以对其他商户隐藏。</div>
+            </div>
+            <div className="divide-y divide-slate-100">
+              {supportSelfInfoItems.map((item) => {
+                const canToggleHidden = "visibilityKey" in item;
+                return (
+                  <div key={item.key} className="px-5 py-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[11px] font-medium tracking-[0.08em] text-slate-400">{item.label}</div>
+                        <div className="mt-1 text-sm leading-6 text-slate-900">
+                          {item.href ? (
+                            <a
+                              href={item.href}
+                              target={item.key === "website" ? "_blank" : undefined}
+                              rel={item.key === "website" ? "noreferrer" : undefined}
+                              className="break-all underline decoration-slate-300 underline-offset-4"
+                            >
+                              {item.value}
+                            </a>
+                          ) : (
+                            <span>{item.value}</span>
+                          )}
+                        </div>
+                      </div>
+                      {canToggleHidden ? (
+                        <button
+                          type="button"
+                          className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                            item.hidden
+                              ? "bg-slate-900 text-white"
+                              : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                          }`}
+                          onClick={() => {
+                            if (!item.visibilityKey) return;
+                            void handleSupportSelfVisibilityChange(item.visibilityKey, !item.hidden);
+                          }}
+                          disabled={supportSelfProfileSaving}
+                        >
+                          {item.hidden ? "已隐藏" : "公开"}
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+
+          <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+            <div className="border-b border-slate-100 px-5 py-4">
+              <div className="text-sm font-semibold text-slate-900">名片夹</div>
+              <div className="mt-1 text-xs text-slate-500">这里可以调整聊天展示，并复制名片图片或联系卡。</div>
+            </div>
+            <div className="space-y-3 px-4 py-4">
+              {supportSelfBusinessCards.length ? (
+                supportSelfBusinessCards.map((card) => {
+                  const cardPreviewUrl =
+                    normalizeSupportDisplayValue(card.shareImageUrl) ||
+                    normalizeSupportDisplayValue(card.imageUrl);
+                  const cardLink = buildSupportMerchantCardLink(card);
+                  return (
+                    <article key={card.id} className="overflow-hidden rounded-[24px] border border-slate-200 bg-slate-50/80">
+                      <div className="flex gap-3 px-3 py-3">
+                        <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-slate-900 text-xs font-semibold text-white">
+                          {cardPreviewUrl ? (
+                            /* eslint-disable-next-line @next/next/no-img-element */
+                            <img src={cardPreviewUrl} alt={card.name} className="h-full w-full object-cover" />
+                          ) : (
+                            getSupportContactAvatarLabel(card.name || supportSelfDisplayName, "名")
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div className="truncate text-sm font-semibold text-slate-900">
+                              {card.name || "未命名名片"}
+                            </div>
+                            <span className="shrink-0 rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium text-white">
+                              {card.mode === "link" ? "链接" : "图片"}
+                            </span>
+                            {card.showInChat ? (
+                              <span className="shrink-0 rounded-full bg-emerald-600 px-2 py-0.5 text-[10px] font-medium text-white">
+                                当前聊天展示
+                              </span>
+                            ) : null}
+                          </div>
+                          <div className="mt-1 text-xs leading-5 text-slate-500">
+                            {card.mode === "link" ? "链接模式，可复制联系卡和名片图片。" : "图片模式，可复制名片图片。"}
+                          </div>
+                          <div className="mt-3 grid grid-cols-2 gap-2">
+                            <button
+                              type="button"
+                              className={`rounded-2xl px-3 py-2 text-xs font-medium transition ${
+                                card.showInChat
+                                  ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
+                                  : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                              }`}
+                              onClick={() => {
+                                void handleSupportSelfChatDisplayChange(card.id);
+                              }}
+                            >
+                              {card.showInChat ? "当前聊天展示" : "设为聊天展示"}
+                            </button>
+                            <button
+                              type="button"
+                              className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
+                              onClick={() => {
+                                void handleSupportSelfCopyCardImage(card);
+                              }}
+                            >
+                              复制名片图片
+                            </button>
+                            <button
+                              type="button"
+                              className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-45"
+                              onClick={() => {
+                                void handleSupportSelfCopyCardLink(card);
+                              }}
+                              disabled={!cardLink}
+                            >
+                              复制联系卡
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })
+              ) : (
+                <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+                  还没有可展示的名片，请先在 PC 端准备名片内容。
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
+      </div>
+    </>
+  );
+
+  const supportMobileListTabContent =
+    supportMobileHomeTab === "conversations"
+      ? supportMobileConversationsContent
+      : supportMobileHomeTab === "business"
+        ? supportMobileBusinessContent
+        : supportMobileHomeTab === "faolla"
+          ? supportMobileFaollaContent
+          : supportMobileSelfContent;
+
+  const supportMobileBottomNav = (
+    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[2] px-4 pb-[calc(env(safe-area-inset-bottom)+0.45rem)]">
+      <div className="pointer-events-auto mx-auto flex max-w-md items-center gap-1 rounded-[30px] border border-slate-200/80 bg-white/95 px-2 py-2 shadow-[0_20px_40px_rgba(15,23,42,0.12)] backdrop-blur">
+        {([
+          {
+            key: "conversations",
+            label: "会话",
+            icon: (
+              <path
+                d="M5 7.5A2.5 2.5 0 0 1 7.5 5h9A2.5 2.5 0 0 1 19 7.5v6A2.5 2.5 0 0 1 16.5 14H10l-3.8 3.2A.75.75 0 0 1 5 16.6V14.2A2.5 2.5 0 0 1 3 11.8v-4.3A2.5 2.5 0 0 1 5.5 5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            ),
+          },
+          {
+            key: "business",
+            label: "生意",
+            icon: (
+              <path
+                d="M4 10.5 12 5l8 5.5V18a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18v-7.5ZM9 19.5v-5h6v5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            ),
+          },
+          {
+            key: "faolla",
+            label: "Faolla",
+            icon: (
+              <path
+                d="M12 4 5.8 6.4v5.8c0 3.7 2.7 6.7 6.2 7.4 3.5-.7 6.2-3.7 6.2-7.4V6.4L12 4Zm0 4.1v4.4m0 0 2.3 2.2M12 12.5 9.7 14.7"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            ),
+          },
+          {
+            key: "self",
+            label: "自己",
+            icon: (
+              <>
+                <circle cx="12" cy="8.5" r="3.2" fill="none" stroke="currentColor" strokeWidth="1.8" />
+                <path
+                  d="M6.2 18.2a5.8 5.8 0 0 1 11.6 0"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                />
+              </>
+            ),
+          },
+        ] as const).map((item) => {
+          const active = supportMobileHomeTab === item.key;
+          return (
+            <button
+              key={item.key}
+              type="button"
+              className={`flex min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-[24px] px-2 py-2 text-[11px] font-medium transition ${
+                active ? "bg-slate-900 text-white shadow-sm" : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
+              }`}
+              onClick={() => setSupportMobileHomeTab(item.key)}
+            >
+              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+                {item.icon}
+              </svg>
+              <span className="truncate">{item.label}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+
   const supportMobileDialogContent = showMobileSupportThread ? (
     <div
       className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_48%,#f8fafc_100%)]"
@@ -9819,17 +10834,26 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               </svg>
             </button>
             {selectedSupportIsOfficial ? (
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm">
-                {selectedSupportAvatarLabel}
-              </div>
+              <SupportAvatarBadge
+                label={selectedSupportAvatarLabel}
+                imageAlt={selectedSupportDisplayName}
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm"
+                labelClassName="text-sm font-semibold text-white"
+              />
             ) : (
               <button
                 type="button"
-                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm transition hover:scale-[1.02]"
+                className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm transition hover:scale-[1.02]"
                 onClick={() => setSupportMerchantInfoSheetOpen(true)}
                 aria-label="查看商户资料"
               >
-                {selectedSupportAvatarLabel}
+                <SupportAvatarBadge
+                  label={selectedSupportAvatarLabel}
+                  imageUrl={selectedSupportAvatarImageUrl}
+                  imageAlt={selectedSupportDisplayName}
+                  className="flex h-full w-full items-center justify-center bg-slate-900 text-white"
+                  labelClassName="text-sm font-semibold text-white"
+                />
               </button>
             )}
             <div className="min-w-0">
@@ -10089,126 +11113,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       </div>
     </div>
   ) : (
-    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_48%,#f8fafc_100%)]">
-      <div className="shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
-        <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm">
-            会话
-          </div>
-          <button
-            type="button"
-            className="shrink-0 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
-            onClick={() => {
-              void loadSupportThread({ silent: false, suppressError: false });
-              void loadSupportPeerInbox({ silent: false, suppressError: false });
-            }}
-            disabled={supportLoading || supportPeerLoading}
-          >
-            {supportLoading || supportPeerLoading ? "刷新中" : "刷新"}
-          </button>
-          <div className="min-w-0 flex-1">
-            <div className="text-[15px] font-semibold text-slate-900">聊天列表</div>
-            <div className="mt-1 text-xs text-slate-500">{mobileSupportContactListSummary}</div>
-          </div>
-          {!isMobileMerchantSupportOnlyMode ? (
-            <button
-              type="button"
-              className="shrink-0 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-50"
-              onClick={() => setSupportDialogOpen(false)}
-              disabled={supportSending}
-            >
-              关闭
-            </button>
-          ) : null}
-        </div>
-        <div className="mt-4 flex items-center gap-2">
-          <div className="flex min-w-0 flex-1 items-center gap-3 rounded-[24px] border border-slate-200 bg-white px-4 py-3 shadow-sm">
-            <span className="shrink-0 text-sm text-slate-400">搜索</span>
-            <input
-              type="text"
-              className="min-w-0 flex-1 bg-transparent text-base text-slate-900 outline-none placeholder:text-slate-400"
-              placeholder="商户ID / 邮箱"
-              value={supportContactKeyword}
-              onChange={(event) => setSupportContactKeyword(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
-                event.preventDefault();
-                void searchSupportPeerMerchant();
-              }}
-            />
-          </div>
-          <button
-            type="button"
-            className="shrink-0 rounded-full border border-slate-200 bg-white px-4 py-3 text-sm shadow-sm hover:bg-slate-50 disabled:opacity-50"
-            onClick={() => void searchSupportPeerMerchant()}
-            disabled={supportSearchLoading}
-          >
-            {supportSearchLoading ? "搜索中" : "搜索"}
-          </button>
-        </div>
-        <div className="mt-2 text-[11px] text-slate-500">只支持精确搜索 8 位商户ID或完整邮箱。</div>
-        {supportSearchError ? (
-          <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-600">
-            {supportSearchError}
-          </div>
-        ) : null}
-        {supportPeerError ? (
-          <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-600">
-            {supportPeerError}
-          </div>
-        ) : null}
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-3">
-        <div className="space-y-2.5">
-          {supportContactRows.map((contactRow) => {
-            const active = supportSelectedContactKey === contactRow.key;
-            return (
-              <button
-                key={contactRow.key}
-                type="button"
-                className={`w-full rounded-[26px] border px-3 py-3.5 text-left shadow-[0_10px_24px_rgba(15,23,42,0.06)] transition ${
-                  active ? "border-slate-900 bg-white" : "border-slate-200 bg-white/90 hover:bg-white"
-                }`}
-                onClick={() => openSupportContactThread(contactRow.key)}
-              >
-                <div className="flex items-start gap-3">
-                  <div
-                    className={`mt-0.5 flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-sm font-semibold ${
-                      contactRow.isOfficial || contactRow.unread
-                        ? "bg-slate-900 text-white"
-                        : "bg-slate-100 text-slate-700"
-                    }`}
-                  >
-                    {contactRow.avatarLabel}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <div className="truncate text-sm font-semibold text-slate-900">{contactRow.name}</div>
-                          {contactRow.badge ? (
-                            <span className="inline-flex shrink-0 items-center rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium text-white">
-                              {contactRow.badge}
-                            </span>
-                          ) : null}
-                          {contactRow.unread ? (
-                            <span aria-label="有未读消息" className="inline-flex h-2.5 w-2.5 shrink-0 rounded-full bg-rose-500" />
-                          ) : null}
-                        </div>
-                        <div className="mt-1 truncate text-[11px] text-slate-500">{contactRow.subtitle}</div>
-                      </div>
-                      <div className="shrink-0 text-[11px] text-slate-400">
-                        {contactRow.updatedAt ? formatSupportConversationTime(contactRow.updatedAt) : "未开始"}
-                      </div>
-                    </div>
-                    <div className="mt-2 line-clamp-2 text-[13px] leading-5 text-slate-600">{contactRow.preview}</div>
-                  </div>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
+    <div className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_48%,#f8fafc_100%)]">
+      {supportMobileListTabContent}
+      {supportMobileBottomNav}
     </div>
   );
 
@@ -10309,9 +11216,13 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                 <div className="mx-auto h-1.5 w-12 rounded-full bg-slate-200" />
                 <div className="mt-4 flex items-start justify-between gap-3">
                   <div className="flex min-w-0 items-center gap-3">
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white">
-                      {selectedSupportAvatarLabel}
-                    </div>
+                    <SupportAvatarBadge
+                      label={selectedSupportAvatarLabel}
+                      imageUrl={selectedSupportAvatarImageUrl}
+                      imageAlt={selectedSupportDisplayName}
+                      className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white"
+                      labelClassName="text-sm font-semibold text-white"
+                    />
                     <div className="min-w-0">
                       <div className="truncate text-base font-semibold text-slate-900">{selectedSupportDisplayName}</div>
                       <div className="mt-1 text-xs text-slate-500">{selectedSupportMerchantHeaderIndustry}</div>

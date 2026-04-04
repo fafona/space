@@ -274,6 +274,8 @@ export async function POST(request: Request) {
       contactPhone: existingSite?.contactPhone ?? "",
       contactEmail: existingSite?.contactEmail ?? "",
       merchantCardImageUrl: existingSite?.merchantCardImageUrl ?? "",
+      chatAvatarImageUrl: existingSite?.chatAvatarImageUrl ?? "",
+      contactVisibility: existingSite?.contactVisibility,
       merchantCardImageOpacity: existingSite?.merchantCardImageOpacity ?? 1,
       status: existingSite?.status ?? "online",
       serviceExpiresAt: existingSite?.serviceExpiresAt ?? null,
