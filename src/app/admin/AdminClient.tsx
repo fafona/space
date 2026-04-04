@@ -4018,6 +4018,13 @@ export default function AdminClient({
       }
     });
   }, []);
+  const resizeSupportInputHeight = useCallback(() => {
+    const input = supportInputRef.current;
+    if (!input) return;
+    input.style.height = "0px";
+    const nextHeight = Math.min(Math.max(input.scrollHeight, 24), 112);
+    input.style.height = `${nextHeight}px`;
+  }, []);
   const closeMobileSupportThread = useCallback(() => {
     setSupportBusinessCardDialogOpen(false);
     setSupportMerchantInfoSheetOpen(false);
@@ -4047,6 +4054,9 @@ export default function AdminClient({
       window.visualViewport?.removeEventListener("scroll", syncMobileVisualViewportInsets);
     };
   }, []);
+  useEffect(() => {
+    resizeSupportInputHeight();
+  }, [resizeSupportInputHeight, showMobileSupportThread, supportDraft, supportSelectedContactKey]);
   const handleSupportMobileThreadTouchStart = useCallback((event: TouchEvent<HTMLDivElement>) => {
     const touch = event.touches[0];
     if (!touch) return;
@@ -9607,34 +9617,60 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           </div>
         )}
       </div>
-      <div className="border-t border-slate-200/80 bg-white/95 px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-3 shadow-[0_-8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
-        <div className="rounded-[28px] border border-slate-200 bg-white p-2 shadow-sm">
-          <textarea
-            ref={supportInputRef}
-            className="h-24 w-full resize-none bg-transparent px-3 py-2 text-base outline-none transition placeholder:text-slate-400"
-            placeholder={selectedSupportInputPlaceholder}
-            value={supportDraft}
-            onChange={(event) => setSupportDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key !== "Enter" || !event.ctrlKey || event.nativeEvent.isComposing) return;
-              event.preventDefault();
-              void sendSupportMessage();
-            }}
-            disabled={supportSending || (!selectedSupportPeerContact && supportSelectedContactKey !== SUPPORT_OFFICIAL_CONTACT_KEY)}
-          />
-          <div className="flex items-center justify-between gap-3 border-t border-slate-100 px-2 pb-1 pt-2">
-            <div className="text-[11px] leading-5 text-slate-500">
-              {selectedSupportIsOfficial ? "消息会同步到 Faolla 官方后台。" : "消息会直接发送给当前联系人。"}
-            </div>
-            <button
-              type="button"
-              className="shrink-0 rounded-full bg-slate-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
-              onClick={() => void sendSupportMessage()}
-              disabled={supportSending || !supportCanSend}
-            >
-              {supportSending ? "发送中..." : selectedSupportSendButtonLabel}
-            </button>
+      <div className="border-t border-slate-200/80 bg-[#edf1f7]/95 px-3 pb-[calc(env(safe-area-inset-bottom)+0.55rem)] pt-2 shadow-[0_-8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
+        <div className="flex items-end gap-2">
+          <button
+            type="button"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white text-slate-700 shadow-[0_8px_18px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/80 transition hover:bg-slate-50"
+            onClick={focusSupportInput}
+            aria-label="展开输入"
+          >
+            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+              <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+            </svg>
+          </button>
+          <div className="flex min-w-0 flex-1 items-end rounded-[28px] bg-white px-3 py-2 shadow-[0_8px_18px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/80">
+            <textarea
+              ref={supportInputRef}
+              rows={1}
+              className="min-h-[24px] max-h-28 w-full resize-none bg-transparent px-1 py-1 text-base leading-6 outline-none transition placeholder:text-slate-400"
+              placeholder={selectedSupportInputPlaceholder}
+              value={supportDraft}
+              onChange={(event) => setSupportDraft(event.target.value)}
+              onInput={() => resizeSupportInputHeight()}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" || !event.ctrlKey || event.nativeEvent.isComposing) return;
+                event.preventDefault();
+                void sendSupportMessage();
+              }}
+              disabled={supportSending || (!selectedSupportPeerContact && supportSelectedContactKey !== SUPPORT_OFFICIAL_CONTACT_KEY)}
+            />
           </div>
+          <button
+            type="button"
+            className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-white shadow-[0_10px_22px_rgba(34,197,94,0.28)] transition ${
+              supportSending || supportCanSend
+                ? "bg-emerald-500 hover:bg-emerald-600"
+                : "bg-slate-300 shadow-none"
+            }`}
+            onClick={() => void sendSupportMessage()}
+            disabled={supportSending || !supportCanSend}
+            aria-label={supportSending ? "发送中" : selectedSupportSendButtonLabel}
+          >
+            {supportSending ? (
+              <span className="h-4 w-4 rounded-full border-2 border-white/35 border-t-white animate-spin" />
+            ) : (
+              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+                <path
+                  d="M5 12.5 18.2 5.8c.7-.36 1.5.28 1.29 1.04l-2.84 10.2c-.18.66-.97.92-1.5.5l-3.7-2.94a1 1 0 0 1-.27-1.17l1.63-3.62-4.46 3.54a1 1 0 0 1-.84.2L5.64 13.2A.77.77 0 0 1 5 12.5Z"
+                  fill="currentColor"
+                />
+              </svg>
+            )}
+          </button>
+        </div>
+        <div className="px-1 pt-2 text-[11px] leading-5 text-slate-500">
+          {selectedSupportIsOfficial ? "消息会同步到 Faolla 官方后台。" : "消息会直接发送给当前联系人。"}
         </div>
       </div>
     </div>
