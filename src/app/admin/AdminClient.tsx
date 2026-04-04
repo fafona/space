@@ -2245,10 +2245,6 @@ async function uploadAudioDataUrlToSupabase(dataUrl: string, merchantHint = "pub
   return uploadDataUrlToSupabase(dataUrl, merchantHint, "merchant-audio");
 }
 
-async function uploadFileDataUrlToSupabase(dataUrl: string, merchantHint = "public"): Promise<string | null> {
-  return uploadDataUrlToSupabase(dataUrl, merchantHint, "merchant-files");
-}
-
 function formatSupportAttachmentFileSize(bytes: number) {
   const normalized = Number.isFinite(bytes) ? Math.max(0, bytes) : 0;
   if (normalized >= 1024 * 1024) {
@@ -10575,6 +10571,43 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     ).trim();
   }
 
+  async function uploadSupportAssetDataUrl(
+    dataUrl: string,
+    folder: "merchant-assets" | "merchant-files" | "merchant-audio" = "merchant-assets",
+  ) {
+    const response = await requestMerchantChatWithSessionRecovery("/api/assets/upload", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        dataUrl,
+        merchantHint: buildSupportUploadMerchantHint(),
+        folder,
+      }),
+    });
+    const payload = (await response.json().catch(() => null)) as
+      | {
+          ok?: boolean;
+          url?: unknown;
+          message?: unknown;
+        }
+      | null;
+    const uploadedUrl = typeof payload?.url === "string" ? payload.url.trim() : "";
+    if (response.ok && uploadedUrl) {
+      return {
+        ok: true as const,
+        url: uploadedUrl,
+        message: "",
+      };
+    }
+    return {
+      ok: false as const,
+      url: "",
+      message: typeof payload?.message === "string" ? payload.message.trim() : "",
+    };
+  }
+
   function buildSupportPhotoMessageText(label: "照片" | "拍照", fileName: string, url: string) {
     return [`${label}：${fileName || "图片"}`, url].filter(Boolean).join("\n");
   }
@@ -10831,14 +10864,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       if (uploadedBytes > 50 * 1024) {
         throw new Error(`${label}压缩失败，请换一张更小的图片`);
       }
-      const uploadedUrl = await uploadImageDataUrlToSupabase(
-        uploadedDataUrl,
-        buildSupportUploadMerchantHint(),
-      );
-      if (!uploadedUrl) {
-        throw new Error(`${label}上传失败，请稍后重试`);
+      const uploadResult = await uploadSupportAssetDataUrl(uploadedDataUrl, "merchant-assets");
+      if (!uploadResult.ok || !uploadResult.url) {
+        throw new Error(uploadResult.message || `${label}上传失败，请稍后重试`);
       }
-      await sendSupportTextPayload(buildSupportPhotoMessageText(label, file.name.trim() || `${label}.jpg`, uploadedUrl));
+      await sendSupportTextPayload(buildSupportPhotoMessageText(label, file.name.trim() || `${label}.jpg`, uploadResult.url));
     } catch (error) {
       showTip(error instanceof Error ? error.message : `${label}发送失败，请稍后重试`);
     } finally {
@@ -10853,14 +10883,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     setSupportSelfCardPickerOpen(false);
     supportInputRef.current?.blur();
     try {
-      const uploadedUrl = await uploadFileDataUrlToSupabase(
-        await fileToChatFileDataUrl(file),
-        buildSupportUploadMerchantHint(),
-      );
-      if (!uploadedUrl) {
-        throw new Error("文件上传失败，请稍后重试");
+      const uploadResult = await uploadSupportAssetDataUrl(await fileToChatFileDataUrl(file), "merchant-files");
+      if (!uploadResult.ok || !uploadResult.url) {
+        throw new Error(uploadResult.message || "文件上传失败，请稍后重试");
       }
-      await sendSupportTextPayload(buildSupportFileMessageText(file, uploadedUrl));
+      await sendSupportTextPayload(buildSupportFileMessageText(file, uploadResult.url));
     } catch (error) {
       showTip(error instanceof Error ? error.message : "文件发送失败，请稍后重试");
     } finally {
@@ -11227,16 +11254,13 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     setSupportSelfAvatarUploading(true);
     try {
       const { dataUrl: avatarDataUrl } = await compressSupportSelfAvatarFile(file);
-      const uploadedUrl = await uploadImageDataUrlToSupabase(
-        avatarDataUrl,
-        buildSupportUploadMerchantHint(),
-      );
-      if (!uploadedUrl) {
-        throw new Error("头像上传失败，请稍后重试");
+      const uploadResult = await uploadSupportAssetDataUrl(avatarDataUrl, "merchant-assets");
+      if (!uploadResult.ok || !uploadResult.url) {
+        throw new Error(uploadResult.message || "头像上传失败，请稍后重试");
       }
       await saveSupportSelfSitePatch(
         {
-          chatAvatarImageUrl: uploadedUrl,
+          chatAvatarImageUrl: uploadResult.url,
         },
         {
           successTip: "头像已更新",
