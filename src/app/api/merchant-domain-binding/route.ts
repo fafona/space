@@ -12,6 +12,7 @@ import {
   savePlatformMerchantSnapshot,
   type PlatformMerchantSnapshotStoreClient,
 } from "@/lib/platformMerchantSnapshotStore";
+import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
 import { SUPER_ADMIN_SESSION_COOKIE, SUPER_ADMIN_SESSION_VALUE } from "@/lib/superAdminSession";
 
 export const dynamic = "force-dynamic";
@@ -172,6 +173,11 @@ async function isAuthorizedForMerchant(
 ) {
   const cookieHeader = request.headers.get("cookie") ?? "";
   if (parseCookieValue(cookieHeader, SUPER_ADMIN_SESSION_COOKIE) === SUPER_ADMIN_SESSION_VALUE) {
+    return true;
+  }
+
+  const resolvedSession = await resolveMerchantSessionFromRequest(request);
+  if (resolvedSession?.merchantId === merchantId) {
     return true;
   }
 
