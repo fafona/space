@@ -2009,6 +2009,52 @@ async function compressImageFileWithinLimit(
   };
 }
 
+const SUPPORT_SELF_AVATAR_MAX_BYTES = 10 * 1024;
+const SUPPORT_SELF_AVATAR_COMPRESSION_STEPS = [
+  { maxSide: 256, quality: 0.74 },
+  { maxSide: 224, quality: 0.66 },
+  { maxSide: 192, quality: 0.58 },
+  { maxSide: 160, quality: 0.5 },
+  { maxSide: 128, quality: 0.42 },
+  { maxSide: 96, quality: 0.34 },
+  { maxSide: 72, quality: 0.26 },
+] as const;
+
+async function compressSupportSelfAvatarFile(file: File) {
+  let bestCandidate: { dataUrl: string; bytes: number } | null = null;
+  for (const step of SUPPORT_SELF_AVATAR_COMPRESSION_STEPS) {
+    await yieldToBrowser();
+    const compressed = await compressImageFileWithinLimit(file, SUPPORT_SELF_AVATAR_MAX_BYTES, step);
+    let nextDataUrl = compressed.dataUrl;
+    let nextBytes = compressed.bytes;
+
+    if (!/^data:image\/webp/i.test(nextDataUrl) || nextBytes > SUPPORT_SELF_AVATAR_MAX_BYTES) {
+      nextDataUrl = await compressImageDataUrl(nextDataUrl, step);
+      nextBytes = estimateDataUrlBytes(nextDataUrl);
+    }
+
+    if (!bestCandidate || nextBytes < bestCandidate.bytes) {
+      bestCandidate = {
+        dataUrl: nextDataUrl,
+        bytes: nextBytes,
+      };
+    }
+
+    if (nextBytes <= SUPPORT_SELF_AVATAR_MAX_BYTES) {
+      return {
+        dataUrl: nextDataUrl,
+        bytes: nextBytes,
+      };
+    }
+  }
+
+  throw new Error(
+    bestCandidate
+      ? `头像压缩后仍有 ${Math.ceil(bestCandidate.bytes / 1024)}KB，请换一张更小的图片`
+      : "头像压缩失败，请换一张更小的图片",
+  );
+}
+
 async function fileToOriginalImageDataUrl(
   file: File,
   options: { maxSide: number; quality: number } = IMAGE_COMPRESSION_OPTIONS.high,
@@ -3935,6 +3981,52 @@ function buildSupportPublishedProfileFromSite(site: Site): MerchantListPublished
     serviceExpiresAt: site.serviceExpiresAt ?? null,
     sortConfig: site.sortConfig ?? createDefaultMerchantSortConfig(),
     createdAt: site.createdAt,
+  };
+}
+
+function mergeSupportPublishedProfileIntoSite(
+  site: Site,
+  profile: MerchantListPublishedSite | null | undefined,
+): Site {
+  if (!profile) return site;
+
+  const nextIndustry = normalizeSupportDisplayValue(profile.industry);
+  const nextCategory = normalizeSupportDisplayValue(profile.category);
+  const nextLocation = profile.location;
+  const hasNextLocation =
+    !!nextLocation &&
+    [
+      nextLocation.countryCode,
+      nextLocation.country,
+      nextLocation.provinceCode,
+      nextLocation.province,
+      nextLocation.city,
+    ].some((value) => normalizeSupportDisplayValue(value));
+
+  return {
+    ...site,
+    merchantName: normalizeSupportDisplayValue(profile.merchantName) || site.merchantName,
+    domainPrefix: normalizeSupportDisplayValue(profile.domainPrefix) || site.domainPrefix,
+    domainSuffix: normalizeSupportDisplayValue(profile.domainSuffix) || site.domainSuffix,
+    name: normalizeSupportDisplayValue(profile.name) || site.name,
+    domain: normalizeSupportDisplayValue(profile.domain) || site.domain,
+    category: nextCategory || site.category,
+    industry: (nextIndustry || site.industry) as Site["industry"],
+    location: hasNextLocation ? nextLocation : site.location,
+    contactAddress: normalizeSupportDisplayValue(profile.contactAddress) || site.contactAddress,
+    contactName: normalizeSupportDisplayValue(profile.contactName) || site.contactName,
+    contactPhone: normalizeSupportDisplayValue(profile.contactPhone) || site.contactPhone,
+    contactEmail: normalizeSupportDisplayValue(profile.contactEmail) || site.contactEmail,
+    merchantCardImageUrl: normalizeSupportDisplayValue(profile.merchantCardImageUrl) || site.merchantCardImageUrl,
+    chatAvatarImageUrl: normalizeSupportDisplayValue(profile.chatAvatarImageUrl) || site.chatAvatarImageUrl,
+    contactVisibility: profile.contactVisibility ?? site.contactVisibility ?? createDefaultMerchantContactVisibility(),
+    merchantCardImageOpacity:
+      typeof profile.merchantCardImageOpacity === "number"
+        ? profile.merchantCardImageOpacity
+        : site.merchantCardImageOpacity,
+    serviceExpiresAt: profile.serviceExpiresAt ?? site.serviceExpiresAt ?? null,
+    sortConfig: profile.sortConfig ?? site.sortConfig ?? createDefaultMerchantSortConfig(),
+    createdAt: normalizeSupportDisplayValue(profile.createdAt) || site.createdAt,
   };
 }
 
@@ -8407,9 +8499,24 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         })
       : [];
   }, [editingSite?.businessCards]);
+  const supportSelfFetchedProfile = useMemo(() => {
+    if (!/^\d{8}$/.test(editingSiteId)) return undefined;
+    return Object.prototype.hasOwnProperty.call(supportPeerProfilesByMerchantId, editingSiteId)
+      ? supportPeerProfilesByMerchantId[editingSiteId]
+      : undefined;
+  }, [editingSiteId, supportPeerProfilesByMerchantId]);
+  const supportSelfLocalProfile = useMemo(
+    () => (editingSite ? buildSupportPublishedProfileFromSite(editingSite) : null),
+    [editingSite],
+  );
+  const supportSelfProfile = supportSelfFetchedProfile ?? supportSelfLocalProfile ?? null;
   const supportSelfContactVisibility =
-    editingSite?.contactVisibility ?? createDefaultMerchantContactVisibility();
+    supportSelfProfile?.contactVisibility ??
+    editingSite?.contactVisibility ??
+    createDefaultMerchantContactVisibility();
   const supportSelfDisplayName =
+    normalizeSupportDisplayValue(supportSelfProfile?.merchantName) ||
+    normalizeSupportDisplayValue(supportSelfProfile?.name) ||
     normalizeSupportDisplayValue(editingSite?.merchantName) ||
     normalizeSupportDisplayValue(editingSite?.name) ||
     merchantDisplayName ||
@@ -8417,15 +8524,21 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     "我的资料";
   const supportSelfAvatarLabel = getSupportContactAvatarLabel(supportSelfDisplayName, "我");
   const supportSelfAvatarImageUrl =
+    normalizeSupportDisplayValue(supportSelfProfile?.chatAvatarImageUrl) ||
+    normalizeSupportDisplayValue(supportSelfProfile?.merchantCardImageUrl) ||
     normalizeSupportDisplayValue(editingSite?.chatAvatarImageUrl) ||
     normalizeSupportDisplayValue(editingSite?.merchantCardImageUrl);
   const supportSelfWebsiteHref = useMemo(() => {
     const publicBaseDomain = normalizeSupportDisplayValue(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN);
     const merchantId = normalizeSupportDisplayValue(editingSiteId);
     const domainPrefix =
+      normalizeSupportDisplayValue(supportSelfProfile?.domainPrefix) ||
+      normalizeSupportDisplayValue(supportSelfProfile?.domainSuffix) ||
       normalizeSupportDisplayValue(editingSite?.domainPrefix) ||
       normalizeSupportDisplayValue(editingSite?.domainSuffix);
-    const explicitDomain = normalizeSupportDisplayValue(editingSite?.domain);
+    const explicitDomain =
+      normalizeSupportDisplayValue(supportSelfProfile?.domain) ||
+      normalizeSupportDisplayValue(editingSite?.domain);
     if (merchantId && domainPrefix) {
       const runtimeHref = normalizeSupportExternalUrl(buildMerchantFrontendHref(merchantId, domainPrefix));
       if (runtimeHref && !isSupportIpOrLocalHost(runtimeHref)) {
@@ -8448,10 +8561,21 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       );
     }
     return normalizeSupportExternalUrl(explicitDomain);
-  }, [editingSite?.domain, editingSite?.domainPrefix, editingSite?.domainSuffix, editingSiteId]);
+  }, [
+    editingSite?.domain,
+    editingSite?.domainPrefix,
+    editingSite?.domainSuffix,
+    editingSiteId,
+    supportSelfProfile?.domain,
+    supportSelfProfile?.domainPrefix,
+    supportSelfProfile?.domainSuffix,
+  ]);
   const supportSelfWebsiteLabel =
     supportSelfWebsiteHref ? formatSupportUrlLabel(supportSelfWebsiteHref) : "-";
-  const supportSelfChatBusinessCard = resolveMerchantBusinessCardForChatDisplay(editingSite?.businessCards ?? []);
+  const supportSelfChatBusinessCard =
+    resolveMerchantBusinessCardForChatDisplay(editingSite?.businessCards ?? []) ??
+    supportSelfProfile?.chatBusinessCard ??
+    null;
   const supportSelfCardHref = useMemo(
     () => buildSupportMerchantCardLink(supportSelfChatBusinessCard),
     [supportSelfChatBusinessCard],
@@ -9193,6 +9317,53 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     setSupportMerchantInfoSheetOpen(false);
     setSupportMobileView("list");
   }, [isDesktopEditorSidebar, isMobileMerchantSupportOnlyMode, supportInterfaceOpen]);
+
+  useEffect(() => {
+    if (isPlatformEditor || !supportInterfaceOpen || !isMobileSupportDialog || supportMobileHomeTab !== "self") return;
+    const merchantId = editingSiteId.trim();
+    if (!/^\d{8}$/.test(merchantId)) return;
+    if (Object.prototype.hasOwnProperty.call(supportPeerProfilesByMerchantId, merchantId)) return;
+    if (supportPeerProfileLoadingIdsRef.current.has(merchantId)) return;
+    let cancelled = false;
+    supportPeerProfileLoadingIdsRef.current.add(merchantId);
+    void (async () => {
+      try {
+        const response = await requestMerchantChatBusinessCardById(merchantId, {
+          cache: "no-store",
+        });
+        const payload = (await response.json().catch(() => null)) as
+          | {
+              profile?: MerchantListPublishedSite | null;
+              chatBusinessCard?: MerchantBusinessCardAsset | null;
+            }
+          | null;
+        if (cancelled || !response.ok) return;
+        setSupportPeerProfilesByMerchantId((current) => ({
+          ...current,
+          [merchantId]: payload?.profile ?? null,
+        }));
+        setSupportPeerBusinessCardByMerchantId((current) => ({
+          ...current,
+          [merchantId]: payload?.chatBusinessCard ?? payload?.profile?.chatBusinessCard ?? null,
+        }));
+      } catch {
+        if (cancelled) return;
+      } finally {
+        supportPeerProfileLoadingIdsRef.current.delete(merchantId);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    editingSiteId,
+    isMobileSupportDialog,
+    isPlatformEditor,
+    requestMerchantChatBusinessCardById,
+    supportInterfaceOpen,
+    supportMobileHomeTab,
+    supportPeerProfilesByMerchantId,
+  ]);
 
   useEffect(() => {
     if (isPlatformEditor || !supportInterfaceOpen || selectedSupportIsOfficial) return;
@@ -9977,27 +10148,38 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       return false;
     }
 
+    const baseSite = mergeSupportPublishedProfileIntoSite(currentSite, supportSelfProfile);
+
     const nextBusinessCards = patch.businessCards
       ? normalizeMerchantBusinessCardChatDisplaySelection(patch.businessCards)
-      : currentSite.businessCards ?? [];
+      : baseSite.businessCards ?? [];
     const nextContactVisibility =
-      patch.contactVisibility ?? currentSite.contactVisibility ?? createDefaultMerchantContactVisibility();
+      patch.contactVisibility ?? baseSite.contactVisibility ?? createDefaultMerchantContactVisibility();
     const nextChatAvatarImageUrl =
       typeof patch.chatAvatarImageUrl === "string"
         ? patch.chatAvatarImageUrl
-        : normalizeSupportDisplayValue(currentSite.chatAvatarImageUrl);
+        : normalizeSupportDisplayValue(baseSite.chatAvatarImageUrl);
     const nextSite: Site = {
-      ...currentSite,
+      ...baseSite,
       businessCards: nextBusinessCards,
       chatAvatarImageUrl: nextChatAvatarImageUrl,
       contactVisibility: nextContactVisibility,
       updatedAt: new Date().toISOString(),
     };
+    const nextProfile = buildSupportPublishedProfileFromSite(nextSite);
 
     savePlatformState({
       ...platformState,
       sites: platformState.sites.map((item) => (item.id === targetSiteId ? nextSite : item)),
     });
+    setSupportPeerProfilesByMerchantId((current) => ({
+      ...current,
+      [targetSiteId]: nextProfile,
+    }));
+    setSupportPeerBusinessCardByMerchantId((current) => ({
+      ...current,
+      [targetSiteId]: nextProfile.chatBusinessCard ?? null,
+    }));
 
     if (patch.businessCards) {
       scheduleMerchantChatBusinessCardSync(targetSiteId, nextBusinessCards);
@@ -10061,18 +10243,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     if (!file) return;
     setSupportSelfAvatarUploading(true);
     try {
-      const avatarCompressionOptions = {
-        maxSide: 320,
-        quality: 0.76,
-      };
-      const compressed = await compressImageFileWithinLimit(file, 10 * 1024, avatarCompressionOptions);
-      let avatarDataUrl = compressed.dataUrl;
-      if (!/^data:image\/webp/i.test(avatarDataUrl)) {
-        avatarDataUrl = await compressImageDataUrl(avatarDataUrl, avatarCompressionOptions);
-      }
-      if (estimateDataUrlBytes(avatarDataUrl) > 10 * 1024) {
-        throw new Error("头像压缩失败，请换一张更小的图片");
-      }
+      const { dataUrl: avatarDataUrl } = await compressSupportSelfAvatarFile(file);
       const uploadedUrl = await uploadImageDataUrlToSupabase(
         avatarDataUrl,
         buildSupportUploadMerchantHint(),
@@ -10429,14 +10600,18 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     {
       key: "phone",
       label: "电话",
-      value: normalizeSupportDisplayValue(editingSite?.contactPhone) || "-",
+      value: normalizeSupportDisplayValue(supportSelfProfile?.contactPhone) || "-",
       hidden: supportSelfContactVisibility.phoneHidden,
       visibilityKey: "phoneHidden" as const,
     },
     {
       key: "email",
       label: "邮箱",
-      value: normalizeSupportDisplayValue(editingSite?.contactEmail) || "-",
+      value:
+        normalizeSupportDisplayValue(supportSelfProfile?.contactEmail) ||
+        normalizeSupportDisplayValue(editingSite?.contactEmail) ||
+        normalizeSupportDisplayValue(merchantSessionIdentityRef.current.email) ||
+        "-",
       hidden: supportSelfContactVisibility.emailHidden,
       visibilityKey: "emailHidden" as const,
     },
@@ -10451,12 +10626,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     {
       key: "industry",
       label: "行业",
-      value: normalizeSupportDisplayValue(editingSite?.industry) || "未设置行业",
+      value: normalizeSupportDisplayValue(supportSelfProfile?.industry) || "未设置行业",
     },
     {
       key: "city",
       label: "城市",
-      value: normalizeSupportDisplayValue(editingSite?.location?.city) || "-",
+      value: normalizeSupportDisplayValue(supportSelfProfile?.location?.city) || "-",
     },
     {
       key: "website",
@@ -10681,7 +10856,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         <div className="flex items-center gap-3">
           <button
             type="button"
-            className="relative flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-[22px] bg-slate-900 text-base font-semibold text-white shadow-sm"
+            className="relative flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-[24px] bg-slate-900 text-base font-semibold text-white shadow-sm"
             onClick={openSupportSelfAvatarPicker}
             disabled={supportSelfAvatarUploading || supportSelfProfileSaving}
             aria-label="上传头像"
@@ -10697,20 +10872,31 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               <span className="absolute inset-0 flex items-center justify-center bg-slate-950/35">
                 <span className="h-5 w-5 rounded-full border-2 border-white/35 border-t-white animate-spin" />
               </span>
-            ) : null}
+            ) : (
+              <span className="absolute bottom-1.5 right-1.5 inline-flex h-6 w-6 items-center justify-center rounded-full border border-white/80 bg-white text-slate-900 shadow-[0_8px_20px_rgba(15,23,42,0.18)]">
+                <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" aria-hidden="true">
+                  <path
+                    d="M8.5 8.5 9.7 7h4.6l1.2 1.5H18A2 2 0 0 1 20 10.5v5A2.5 2.5 0 0 1 17.5 18h-11A2.5 2.5 0 0 1 4 15.5v-5A2 2 0 0 1 6 8.5h2.5Z"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  <path
+                    d="M12 14.7a2.4 2.4 0 1 0 0-4.8 2.4 2.4 0 0 0 0 4.8Z"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </span>
+            )}
           </button>
           <div className="min-w-0 flex-1">
             <div className="text-[15px] font-semibold text-slate-900">自己</div>
-            <div className="mt-1 text-xs text-slate-500">头像、资料隐藏和聊天名片都在这里。</div>
+            <div className="mt-1 text-xs text-slate-500">点击头像更换头像，资料隐藏和聊天名片都在这里。</div>
           </div>
-          <button
-            type="button"
-            className="shrink-0 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-50"
-            onClick={openSupportSelfAvatarPicker}
-            disabled={supportSelfAvatarUploading || supportSelfProfileSaving}
-          >
-            {supportSelfAvatarUploading ? "上传中" : "换头像"}
-          </button>
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(env(safe-area-inset-bottom)+6.75rem)] pt-4">
