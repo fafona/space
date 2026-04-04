@@ -9027,6 +9027,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   ]);
   const supportSelfWebsiteLabel =
     supportSelfWebsiteHref ? formatSupportUrlLabel(supportSelfWebsiteHref) : "-";
+  const supportMobileFaollaHref =
+    normalizeSupportExternalUrl(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "", typeof window !== "undefined" ? window.location.origin : "") ||
+    "/";
   const supportSelfSignature = normalizeSupportDisplayValue(supportSelfProfile?.signature);
   const supportSelfChatBusinessCard =
     resolveMerchantBusinessCardForChatDisplay(editingSite?.businessCards ?? []) ??
@@ -10485,6 +10488,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       // Ignore background subscription refresh failures.
     });
   }, [ensureSupportPushSubscription, isPlatformEditor, supportDataActivated, supportPushPermission]);
+
+  useEffect(() => {
+    if (!isMobileSupportDialog || supportMobileHomeTab !== "faolla" || typeof window === "undefined") return;
+    window.location.assign(supportMobileFaollaHref);
+  }, [isMobileSupportDialog, supportMobileFaollaHref, supportMobileHomeTab]);
 
   useEffect(() => {
     if (isPlatformEditor || !supportDataActivated || supportPushPermission !== "granted" || !supportPushEndpoint) return;
@@ -12205,7 +12213,14 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                 className={`relative flex min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-[24px] px-2 py-2 text-[11px] font-medium transition ${
                   active ? "bg-slate-900 text-white shadow-sm" : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
                 }`}
-                onClick={() => setSupportMobileHomeTab(item.key)}
+                onClick={() => {
+                  if (item.key === "faolla") {
+                    if (typeof window === "undefined") return;
+                    window.location.assign(supportMobileFaollaHref);
+                    return;
+                  }
+                  setSupportMobileHomeTab(item.key);
+                }}
               >
                 {item.key === "conversations" && supportUnreadBadgeCount > 0 ? (
                   <span className="absolute right-2 top-1.5 inline-flex min-w-[18px] items-center justify-center rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white shadow-[0_8px_18px_rgba(244,63,94,0.28)]">
