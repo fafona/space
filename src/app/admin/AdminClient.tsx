@@ -4745,6 +4745,7 @@ export default function AdminClient({
   const supportPhotoInputRef = useRef<HTMLInputElement>(null);
   const supportCameraInputRef = useRef<HTMLInputElement>(null);
   const supportFileInputRef = useRef<HTMLInputElement>(null);
+  const [supportSelfResolvedCardHref, setSupportSelfResolvedCardHref] = useState("");
   const supportSelfCardShareBundleRef = useRef<Record<string, { shareUrl: string; shareKey: string; imageUrl: string }>>(
     {},
   );
@@ -9035,53 +9036,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     resolveMerchantBusinessCardForChatDisplay(editingSite?.businessCards ?? []) ??
     supportSelfProfile?.chatBusinessCard ??
     null;
-  const supportSelfFallbackCardHref = useMemo(
-    () =>
-      buildSupportFallbackMerchantCardHref({
-        merchantId: editingSiteId,
-        merchantName: supportSelfDisplayName,
-        imageUrl: supportSelfAvatarImageUrl,
-        websiteHref: supportSelfWebsiteHref,
-        industry: normalizeSupportDisplayValue(supportSelfProfile?.industry) || normalizeSupportDisplayValue(editingSite?.industry),
-        contactName:
-          normalizeSupportDisplayValue(supportSelfProfile?.contactName) ||
-          normalizeSupportDisplayValue(editingSite?.contactName) ||
-          supportSelfDisplayName,
-        phone:
-          normalizeSupportDisplayValue(supportSelfProfile?.contactPhone) ||
-          normalizeSupportDisplayValue(editingSite?.contactPhone),
-        email:
-          normalizeSupportDisplayValue(supportSelfProfile?.contactEmail) ||
-          normalizeSupportDisplayValue(editingSite?.contactEmail) ||
-          normalizeSupportDisplayValue(merchantSessionIdentityRef.current.email),
-        contactAddress:
-          normalizeSupportDisplayValue(supportSelfProfile?.contactAddress) ||
-          normalizeSupportDisplayValue(editingSite?.contactAddress),
-        location: supportSelfProfile?.location ?? editingSite?.location,
-      }),
-    [
-      editingSite?.contactAddress,
-      editingSite?.contactEmail,
-      editingSite?.contactName,
-      editingSite?.contactPhone,
-      editingSite?.industry,
-      editingSite?.location,
-      editingSiteId,
-      supportSelfAvatarImageUrl,
-      supportSelfDisplayName,
-      supportSelfProfile?.contactAddress,
-      supportSelfProfile?.contactEmail,
-      supportSelfProfile?.contactName,
-      supportSelfProfile?.contactPhone,
-      supportSelfProfile?.industry,
-      supportSelfProfile?.location,
-      supportSelfWebsiteHref,
-    ],
-  );
-  const supportSelfCardHref = useMemo(
-    () => buildSupportMerchantCardLink(supportSelfChatBusinessCard) || supportSelfFallbackCardHref,
-    [supportSelfChatBusinessCard, supportSelfFallbackCardHref],
-  );
+  const supportSelfCardHref = useMemo(() => {
+    const resolvedCardHref = normalizeSupportDisplayValue(supportSelfResolvedCardHref);
+    if (resolvedCardHref) return resolvedCardHref;
+    return buildSupportMerchantCardLink(supportSelfChatBusinessCard);
+  }, [supportSelfChatBusinessCard, supportSelfResolvedCardHref]);
   const supportSelfCardLabel = supportSelfCardHref ? formatSupportUrlLabel(supportSelfCardHref) : "-";
   const selectedSupportLoading =
     supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY ? supportLoading : supportPeerLoading;
@@ -9829,6 +9788,29 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     },
     [editingSiteId, merchantDisplayName, requestMerchantChatWithSessionRecovery, supportReadMerchantId],
   );
+
+  useEffect(() => {
+    const activeCard = supportSelfChatBusinessCard;
+    if (!activeCard || activeCard.mode !== "link") {
+      setSupportSelfResolvedCardHref("");
+      return;
+    }
+    const builtHref = buildSupportMerchantCardLink(activeCard);
+    if (builtHref) {
+      setSupportSelfResolvedCardHref(builtHref);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const shareBundle = await ensureSupportBusinessCardShareBundle(activeCard).catch(() => null);
+      if (cancelled) return;
+      const nextHref = normalizeSupportDisplayValue(shareBundle?.shareUrl);
+      setSupportSelfResolvedCardHref(nextHref);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [ensureSupportBusinessCardShareBundle, supportSelfChatBusinessCard]);
 
   const scheduleMerchantChatBusinessCardSync = useCallback(
     (merchantId: string, cards: MerchantBusinessCardAsset[]) => {
@@ -11288,7 +11270,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
   async function handleSupportSelfCopyCardImage(card: MerchantBusinessCardAsset) {
     try {
-      await copySupportImageToClipboard(card.imageUrl);
+      const cardPreviewUrl = getSupportPreferredBusinessCardPreviewUrl(card);
+      if (!cardPreviewUrl) {
+        showTip("当前名片没有可复制的图片");
+        return;
+      }
+      await copySupportImageToClipboard(cardPreviewUrl);
       showTip("名片图片已复制，可直接发送");
     } catch {
       showTip("复制失败，请稍后重试");
