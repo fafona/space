@@ -10472,11 +10472,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }, [ensureSupportPushSubscription, isPlatformEditor, supportDataActivated, supportPushPermission]);
 
   useEffect(() => {
-    if (!isMobileSupportDialog || supportMobileHomeTab !== "faolla" || typeof window === "undefined") return;
-    window.location.assign(supportMobileFaollaHref);
-  }, [isMobileSupportDialog, supportMobileFaollaHref, supportMobileHomeTab]);
-
-  useEffect(() => {
     if (isPlatformEditor || !supportDataActivated || supportPushPermission !== "granted" || !supportPushEndpoint) return;
     void sendSupportPushAction({
       action: "sync-badge",
@@ -11807,41 +11802,17 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           </div>
           <div className="min-w-0 flex-1">
             <div className="text-[15px] font-semibold text-slate-900">Faolla</div>
-            <div className="mt-1 text-xs text-slate-500">手机端总站入口</div>
+            <div className="mt-1 text-xs text-slate-500">手机端总站</div>
           </div>
         </div>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(env(safe-area-inset-bottom)+6.75rem)] pt-4">
-        <div className="rounded-[30px] border border-slate-200 bg-[linear-gradient(180deg,#0f172a_0%,#1e293b_100%)] p-6 text-white shadow-[0_18px_48px_rgba(15,23,42,0.24)]">
-          <div className="inline-flex items-center rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[11px] tracking-[0.16em] text-slate-100">
-            MOBILE PORTAL
-          </div>
-          <div className="mt-4 text-2xl font-semibold">Faolla.com</div>
-          <div className="mt-2 text-sm leading-6 text-slate-200/80">
-            这里可以快速打开手机端总站，查看前台展示效果或继续浏览 Faolla。
-          </div>
-          <div className="mt-5 flex gap-3">
-            <button
-              type="button"
-              className="inline-flex items-center justify-center rounded-full bg-white px-4 py-2.5 text-sm font-medium text-slate-900 shadow-sm transition hover:bg-slate-100"
-              onClick={() => {
-                if (typeof window === "undefined") return;
-                window.location.href = "/";
-              }}
-            >
-              打开总站
-            </button>
-            <button
-              type="button"
-              className="inline-flex items-center justify-center rounded-full border border-white/20 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-white/10"
-              onClick={() => {
-                if (typeof window === "undefined") return;
-                window.open("/", "_blank", "noopener,noreferrer");
-              }}
-            >
-              新窗口打开
-            </button>
-          </div>
+      <div className="min-h-0 flex-1 overflow-hidden px-3 pb-[calc(env(safe-area-inset-bottom)+6.25rem)] pt-3">
+        <div className="h-full overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_18px_40px_rgba(15,23,42,0.08)]">
+          <iframe
+            title="Faolla.com"
+            src={supportMobileFaollaHref}
+            className="h-full w-full border-0 bg-white"
+          />
         </div>
       </div>
     </>
@@ -12200,14 +12171,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                 className={`relative flex min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-[24px] px-2 py-2 text-[11px] font-medium transition ${
                   active ? "bg-slate-900 text-white shadow-sm" : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
                 }`}
-                onClick={() => {
-                  if (item.key === "faolla") {
-                    if (typeof window === "undefined") return;
-                    window.location.assign(supportMobileFaollaHref);
-                    return;
-                  }
-                  setSupportMobileHomeTab(item.key);
-                }}
+                onClick={() => setSupportMobileHomeTab(item.key)}
               >
                 {item.key === "conversations" && supportUnreadBadgeCount > 0 ? (
                   <span className="absolute right-2 top-1.5 inline-flex min-w-[18px] items-center justify-center rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white shadow-[0_8px_18px_rgba(244,63,94,0.28)]">
