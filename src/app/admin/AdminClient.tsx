@@ -3963,6 +3963,33 @@ function resolveSupportSignatureText(value: unknown) {
   return normalizeSupportDisplayValue(value) || SUPPORT_EMPTY_SIGNATURE_TEXT;
 }
 
+type SupportBadgingNavigator = Navigator & {
+  setAppBadge?: (contents?: number) => Promise<void>;
+  clearAppBadge?: () => Promise<void>;
+};
+
+async function syncSupportAppBadge(unreadCount: number) {
+  if (typeof navigator === "undefined") return;
+  const badgingNavigator = navigator as SupportBadgingNavigator;
+  try {
+    if (unreadCount > 0) {
+      if (typeof badgingNavigator.setAppBadge === "function") {
+        await badgingNavigator.setAppBadge(unreadCount);
+      }
+      return;
+    }
+    if (typeof badgingNavigator.clearAppBadge === "function") {
+      await badgingNavigator.clearAppBadge();
+      return;
+    }
+    if (typeof badgingNavigator.setAppBadge === "function") {
+      await badgingNavigator.setAppBadge(0);
+    }
+  } catch {
+    // Ignore unsupported browsers or temporarily blocked badge updates.
+  }
+}
+
 type SupportAvatarBadgeProps = {
   label: string;
   imageUrl?: string | null;
@@ -8658,7 +8685,36 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     !!latestSupportAdminMessageAt &&
     !!supportReadMerchantId &&
     new Date(latestSupportAdminMessageAt).getTime() > new Date(supportLastReadAt || 0).getTime();
-  const supportHasUnreadMessages = supportHasUnreadOfficialMessages || supportPeerUnreadContactIds.size > 0;
+  const supportUnreadOfficialMessageCount = useMemo(() => {
+    if (!supportReadMerchantId) return 0;
+    const lastReadTimestamp = new Date(supportLastReadAt || 0).getTime();
+    return (supportThread?.messages ?? []).reduce((count, message) => {
+      if (message.sender !== "super_admin") return count;
+      const createdAt = new Date(normalizeSupportMessageTimestamp(message.createdAt) || 0).getTime();
+      return createdAt > lastReadTimestamp ? count + 1 : count;
+    }, 0);
+  }, [supportLastReadAt, supportReadMerchantId, supportThread?.messages]);
+  const supportUnreadPeerMessageCount = useMemo(() => {
+    if (!currentSupportMerchantId) return 0;
+    let unreadCount = 0;
+    supportPeerContacts.forEach((contact) => {
+      const thread = supportPeerThreadByContactMerchantId.get(contact.merchantId);
+      if (!thread) return;
+      const lastReadTimestamp = new Date(
+        normalizeSupportMessageTimestamp(supportPeerLastReadMap[contact.merchantId]) || 0,
+      ).getTime();
+      thread.messages.forEach((message) => {
+        if (message.senderMerchantId === currentSupportMerchantId) return;
+        const createdAt = new Date(normalizeSupportMessageTimestamp(message.createdAt) || 0).getTime();
+        if (createdAt > lastReadTimestamp) {
+          unreadCount += 1;
+        }
+      });
+    });
+    return unreadCount;
+  }, [currentSupportMerchantId, supportPeerContacts, supportPeerLastReadMap, supportPeerThreadByContactMerchantId]);
+  const supportUnreadBadgeCount = supportUnreadOfficialMessageCount + supportUnreadPeerMessageCount;
+  const supportHasUnreadMessages = supportUnreadBadgeCount > 0;
   const supportContactRows: SupportContactRow[] = [
     {
       key: SUPPORT_OFFICIAL_CONTACT_KEY,
@@ -8697,6 +8753,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   ];
   const supportUnreadConversationCount =
     (supportHasUnreadOfficialMessages ? 1 : 0) + supportPeerUnreadContactIds.size;
+  const supportUnreadBadgeLabel = supportUnreadBadgeCount > 99 ? "99+" : String(supportUnreadBadgeCount);
   const mobileSupportContactListSummary =
     supportUnreadConversationCount > 0
       ? `${supportUnreadConversationCount} 个会话有新消息`
@@ -9601,6 +9658,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     setSupportAttachmentMenuOpen(false);
     setSupportSelfCardPickerOpen(false);
   }, [supportInterfaceOpen, supportSelectedContactKey, supportMobileView]);
+
+  useEffect(() => {
+    if (isPlatformEditor || !supportDataActivated) return;
+    void syncSupportAppBadge(supportUnreadBadgeCount);
+  }, [isPlatformEditor, supportDataActivated, supportUnreadBadgeCount]);
 
   useEffect(() => {
     if (isPlatformEditor || !supportInterfaceOpen || !selectedSupportConversationVisible || typeof window === "undefined") return;
@@ -11216,11 +11278,16 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               <button
                 key={item.key}
                 type="button"
-                className={`flex min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-[24px] px-2 py-2 text-[11px] font-medium transition ${
+                className={`relative flex min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-[24px] px-2 py-2 text-[11px] font-medium transition ${
                   active ? "bg-slate-900 text-white shadow-sm" : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
                 }`}
                 onClick={() => setSupportMobileHomeTab(item.key)}
               >
+                {item.key === "conversations" && supportUnreadBadgeCount > 0 ? (
+                  <span className="absolute right-2 top-1.5 inline-flex min-w-[18px] items-center justify-center rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white shadow-[0_8px_18px_rgba(244,63,94,0.28)]">
+                    {supportUnreadBadgeLabel}
+                  </span>
+                ) : null}
                 <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
                   {item.icon}
                 </svg>
