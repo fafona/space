@@ -1,0 +1,522 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import BookingDateTimeInput from "@/components/booking/BookingDateTimeInput";
+import type { MerchantBookingEditableInput, MerchantBookingRecord, MerchantBookingStatus } from "@/lib/merchantBookings";
+import {
+  buildDefaultBookingItemOptions,
+  buildDefaultBookingStoreOptions,
+  buildDefaultBookingTitleOptions,
+  getMerchantBookingStatusLabel,
+  joinMerchantBookingDateTime,
+  normalizeBookingOptionList,
+  splitMerchantBookingDateTime,
+} from "@/lib/merchantBookings";
+
+type MerchantBookingMobilePanelProps = {
+  siteId: string;
+  siteName: string;
+  storeOptions?: string[];
+  itemOptions?: string[];
+  titleOptions?: string[];
+};
+
+type BookingFilter = "all" | MerchantBookingStatus;
+
+type MerchantBookingAdminDraft = {
+  store: string;
+  item: string;
+  appointmentDateInput: string;
+  appointmentTimeInput: string;
+  title: string;
+};
+
+function formatDateTime(value: string) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return value;
+  return date.toLocaleString("zh-CN", { hour12: false });
+}
+
+function matchesSearch(record: MerchantBookingRecord, query: string) {
+  const keyword = query.trim().toLowerCase();
+  if (!keyword) return true;
+  return [
+    record.id,
+    record.store,
+    record.item,
+    record.title,
+    record.customerName,
+    record.email,
+    record.phone,
+    record.note,
+  ]
+    .join("\n")
+    .toLowerCase()
+    .includes(keyword);
+}
+
+function createDraft(record: MerchantBookingRecord): MerchantBookingAdminDraft {
+  const appointmentParts = splitMerchantBookingDateTime(record.appointmentAt);
+  return {
+    store: record.store,
+    item: record.item,
+    appointmentDateInput: appointmentParts.date,
+    appointmentTimeInput: appointmentParts.time,
+    title: record.title,
+  };
+}
+
+function getStatusBadgeClass(status: MerchantBookingStatus) {
+  if (status === "cancelled") return "bg-slate-200 text-slate-700";
+  if (status === "confirmed") return "bg-sky-100 text-sky-700";
+  return "bg-amber-100 text-amber-700";
+}
+
+function MailIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
+      <path
+        d="M3 5.5A1.5 1.5 0 0 1 4.5 4h11A1.5 1.5 0 0 1 17 5.5v9A1.5 1.5 0 0 1 15.5 16h-11A1.5 1.5 0 0 1 3 14.5v-9Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      />
+      <path d="m4 6 6 4 6-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function PhoneIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
+      <path
+        d="M6.4 3.7c.3-.4.8-.6 1.2-.4l2 1a1 1 0 0 1 .5 1.2l-.6 2a1 1 0 0 0 .2.9l1.2 1.2a1 1 0 0 0 .9.2l2-.6a1 1 0 0 1 1.2.5l1 2a1.1 1.1 0 0 1-.4 1.3l-1.2.8c-.6.4-1.4.5-2 .2-2-.9-3.9-2.4-5.6-4.1-1.7-1.7-3.2-3.6-4.1-5.6a1.8 1.8 0 0 1 .2-2l.8-1.2Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+export default function MerchantBookingMobilePanel({
+  siteId,
+  siteName,
+  storeOptions = [],
+  itemOptions = [],
+  titleOptions = [],
+}: MerchantBookingMobilePanelProps) {
+  const [records, setRecords] = useState<MerchantBookingRecord[]>([]);
+  const [drafts, setDrafts] = useState<Record<string, MerchantBookingAdminDraft>>({});
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<BookingFilter>("all");
+  const [busyKey, setBusyKey] = useState("");
+
+  const loadBookings = useCallback(async () => {
+    if (!siteId) return;
+    setLoading(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/bookings?siteId=${encodeURIComponent(siteId)}`, {
+        cache: "no-store",
+      });
+      const json = (await response.json().catch(() => null)) as
+        | { ok?: boolean; bookings?: MerchantBookingRecord[]; message?: string }
+        | null;
+      if (!response.ok || !json?.ok || !Array.isArray(json.bookings)) {
+        throw new Error(json?.message || "预约记录读取失败");
+      }
+      setRecords(json.bookings);
+      setDrafts(Object.fromEntries(json.bookings.map((record) => [record.id, createDraft(record)])));
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "预约记录读取失败");
+    } finally {
+      setLoading(false);
+    }
+  }, [siteId]);
+
+  useEffect(() => {
+    void loadBookings();
+  }, [loadBookings]);
+
+  const counts = useMemo(() => {
+    const active = records.filter((item) => item.status === "active").length;
+    const confirmed = records.filter((item) => item.status === "confirmed").length;
+    const cancelled = records.filter((item) => item.status === "cancelled").length;
+    return {
+      total: records.length,
+      active,
+      confirmed,
+      cancelled,
+    };
+  }, [records]);
+
+  const filteredRecords = useMemo(
+    () =>
+      records.filter((item) => {
+        if (filter !== "all" && item.status !== filter) return false;
+        return matchesSearch(item, query);
+      }),
+    [filter, query, records],
+  );
+
+  const selectableStoreOptions = useMemo(
+    () =>
+      normalizeBookingOptionList(
+        [...storeOptions, ...records.map((record) => record.store)],
+        buildDefaultBookingStoreOptions(siteName),
+      ),
+    [records, siteName, storeOptions],
+  );
+
+  const selectableItemOptions = useMemo(
+    () =>
+      normalizeBookingOptionList(
+        [...itemOptions, ...records.map((record) => record.item)],
+        buildDefaultBookingItemOptions(),
+      ),
+    [itemOptions, records],
+  );
+
+  const selectableTitleOptions = useMemo(
+    () =>
+      normalizeBookingOptionList(
+        [...titleOptions, ...records.map((record) => record.title)],
+        buildDefaultBookingTitleOptions(),
+      ),
+    [records, titleOptions],
+  );
+
+  const patchBooking = useCallback(
+    async (
+      bookingId: string,
+      payload: {
+        status?: MerchantBookingStatus;
+        updates?: Partial<MerchantBookingEditableInput>;
+      },
+      busyLabel: string,
+    ) => {
+      setBusyKey(`${busyLabel}:${bookingId}`);
+      setError("");
+      try {
+        const response = await fetch("/api/bookings", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            siteId,
+            bookingId,
+            ...payload,
+          }),
+        });
+        const json = (await response.json().catch(() => null)) as
+          | { ok?: boolean; booking?: MerchantBookingRecord; message?: string }
+          | null;
+        if (!response.ok || !json?.ok || !json.booking) {
+          throw new Error(json?.message || "预约更新失败");
+        }
+        const nextBooking = json.booking;
+        setRecords((current) => current.map((item) => (item.id === nextBooking.id ? nextBooking : item)));
+        setDrafts((current) => ({
+          ...current,
+          [nextBooking.id]: createDraft(nextBooking),
+        }));
+      } catch (updateError) {
+        setError(updateError instanceof Error ? updateError.message : "预约更新失败");
+      } finally {
+        setBusyKey("");
+      }
+    },
+    [siteId],
+  );
+
+  const handleDraftChange = useCallback(
+    (bookingId: string, key: keyof MerchantBookingAdminDraft, value: string) => {
+      setDrafts((current) => ({
+        ...current,
+        [bookingId]: {
+          ...(current[bookingId] ?? {
+            store: "",
+            item: "",
+            appointmentDateInput: "",
+            appointmentTimeInput: "",
+            title: "",
+          }),
+          [key]: value,
+        },
+      }));
+    },
+    [],
+  );
+
+  const renderStatusActions = (record: MerchantBookingRecord) => {
+    if (record.status === "cancelled") {
+      return (
+        <button
+          type="button"
+          className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+          onClick={() => void patchBooking(record.id, { status: "active" }, "restore")}
+          disabled={busyKey === `restore:${record.id}`}
+        >
+          {busyKey === `restore:${record.id}` ? "处理中..." : "恢复预约"}
+        </button>
+      );
+    }
+
+    return (
+      <>
+        {record.status === "confirmed" ? (
+          <button
+            type="button"
+            className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+            onClick={() => void patchBooking(record.id, { status: "active" }, "unconfirm")}
+            disabled={busyKey === `unconfirm:${record.id}`}
+          >
+            {busyKey === `unconfirm:${record.id}` ? "处理中..." : "取消确认"}
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="rounded-full bg-slate-900 px-3 py-2 text-xs font-medium text-white transition hover:bg-slate-800 disabled:opacity-50"
+            onClick={() => void patchBooking(record.id, { status: "confirmed" }, "confirm")}
+            disabled={busyKey === `confirm:${record.id}`}
+          >
+            {busyKey === `confirm:${record.id}` ? "处理中..." : "确认预约"}
+          </button>
+        )}
+        <button
+          type="button"
+          className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+          onClick={() => void patchBooking(record.id, { status: "cancelled" }, "cancel")}
+          disabled={busyKey === `cancel:${record.id}`}
+        >
+          {busyKey === `cancel:${record.id}` ? "处理中..." : "取消预约"}
+        </button>
+      </>
+    );
+  };
+
+  if (!siteId) {
+    return (
+      <div className="rounded-[28px] border border-slate-200 bg-white px-5 py-6 text-sm text-slate-500 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+        当前商户信息未准备好，暂时无法读取预约管理。
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-3">
+        {[
+          { label: "全部", value: counts.total, tone: "bg-slate-900 text-white" },
+          { label: "待确认", value: counts.active, tone: "bg-amber-50 text-amber-700" },
+          { label: "已确认", value: counts.confirmed, tone: "bg-sky-50 text-sky-700" },
+          { label: "已取消", value: counts.cancelled, tone: "bg-slate-100 text-slate-600" },
+        ].map((item) => (
+          <div
+            key={item.label}
+            className={`rounded-[24px] px-4 py-4 shadow-[0_10px_24px_rgba(15,23,42,0.06)] ${item.tone}`}
+          >
+            <div className="text-2xl font-semibold">{item.value}</div>
+            <div className="mt-1 text-xs opacity-80">{item.label}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+        <div className="flex gap-2">
+          <input
+            className="min-w-0 flex-1 rounded-[20px] border border-slate-200 px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="搜索预约号 / 姓名 / 邮箱 / 电话"
+          />
+          <button
+            type="button"
+            className="shrink-0 rounded-[20px] border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+            onClick={() => void loadBookings()}
+            disabled={loading}
+          >
+            {loading ? "刷新中" : "刷新"}
+          </button>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {[
+            { key: "all" as const, label: `全部 ${counts.total}` },
+            { key: "active" as const, label: `待确认 ${counts.active}` },
+            { key: "confirmed" as const, label: `已确认 ${counts.confirmed}` },
+            { key: "cancelled" as const, label: `已取消 ${counts.cancelled}` },
+          ].map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              className={`rounded-full px-3 py-2 text-xs font-medium transition ${
+                filter === item.key
+                  ? "bg-slate-900 text-white"
+                  : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+              }`}
+              onClick={() => setFilter(item.key)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {error ? (
+        <div className="rounded-[24px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          {error}
+        </div>
+      ) : null}
+
+      {loading ? (
+        <div className="rounded-[28px] border border-slate-200 bg-white px-5 py-8 text-center text-sm text-slate-500 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+          正在读取预约记录...
+        </div>
+      ) : filteredRecords.length > 0 ? (
+        <div className="space-y-3">
+          {filteredRecords.map((record) => {
+            const draft = drafts[record.id] ?? createDraft(record);
+            return (
+              <article
+                key={record.id}
+                className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-[0_14px_34px_rgba(15,23,42,0.08)]"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="truncate text-base font-semibold text-slate-900">
+                        {record.customerName || "未命名预约"}
+                      </div>
+                      <span className={`rounded-full px-2 py-0.5 text-[11px] ${getStatusBadgeClass(record.status)}`}>
+                        {getMerchantBookingStatusLabel(record.status)}
+                      </span>
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500">预约编号 {record.id}</div>
+                    <div className="mt-1 text-xs text-slate-500">提交于 {formatDateTime(record.createdAt)}</div>
+                  </div>
+                </div>
+
+                <div className="mt-3 flex flex-wrap gap-2">{renderStatusActions(record)}</div>
+
+                <div className="mt-4 grid gap-3">
+                  <label className="space-y-1 text-sm text-slate-700">
+                    <span className="text-xs text-slate-500">店铺</span>
+                    <select
+                      className="w-full rounded-[18px] border border-slate-200 px-4 py-3 text-base text-slate-900 outline-none"
+                      value={draft.store}
+                      onChange={(event) => handleDraftChange(record.id, "store", event.target.value)}
+                    >
+                      {selectableStoreOptions.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="space-y-1 text-sm text-slate-700">
+                    <span className="text-xs text-slate-500">项目</span>
+                    <select
+                      className="w-full rounded-[18px] border border-slate-200 px-4 py-3 text-base text-slate-900 outline-none"
+                      value={draft.item}
+                      onChange={(event) => handleDraftChange(record.id, "item", event.target.value)}
+                    >
+                      {selectableItemOptions.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="space-y-1 text-sm text-slate-700">
+                    <span className="text-xs text-slate-500">预约时间</span>
+                    <BookingDateTimeInput
+                      dateValue={draft.appointmentDateInput}
+                      timeValue={draft.appointmentTimeInput}
+                      dateInputClassName="min-w-[180px] flex-1 rounded-[18px] border border-slate-200 px-4 py-3 text-base text-slate-900"
+                      timeInputClassName="w-[116px] shrink-0 rounded-[18px] border border-slate-200 px-4 py-3 text-base text-slate-900"
+                      onDateChange={(value) => handleDraftChange(record.id, "appointmentDateInput", value)}
+                      onTimeChange={(value) => handleDraftChange(record.id, "appointmentTimeInput", value)}
+                    />
+                  </label>
+                  <label className="space-y-1 text-sm text-slate-700">
+                    <span className="text-xs text-slate-500">称谓</span>
+                    <select
+                      className="w-full rounded-[18px] border border-slate-200 px-4 py-3 text-base text-slate-900 outline-none"
+                      value={draft.title}
+                      onChange={(event) => handleDraftChange(record.id, "title", event.target.value)}
+                    >
+                      {selectableTitleOptions.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                <button
+                  type="button"
+                  className="mt-4 inline-flex items-center justify-center rounded-full bg-slate-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-50"
+                  onClick={() =>
+                    void patchBooking(
+                      record.id,
+                      {
+                        updates: {
+                          store: draft.store,
+                          item: draft.item,
+                          appointmentAt: joinMerchantBookingDateTime(draft.appointmentDateInput, draft.appointmentTimeInput),
+                          title: draft.title,
+                        },
+                      },
+                      "save",
+                    )
+                  }
+                  disabled={busyKey === `save:${record.id}`}
+                >
+                  {busyKey === `save:${record.id}` ? "保存中..." : "保存修改"}
+                </button>
+
+                <div className="mt-4 rounded-[22px] bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                  <div>姓名：{record.customerName || "-"}</div>
+                  <div className="mt-2 flex items-center gap-2">
+                    <span className="min-w-0 flex-1 break-all">邮箱：{record.email || "-"}</span>
+                    {record.email ? (
+                      <a
+                        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700"
+                        href={`mailto:${record.email}`}
+                        title="发送邮件"
+                        aria-label="发送邮件"
+                      >
+                        <MailIcon />
+                      </a>
+                    ) : null}
+                  </div>
+                  <div className="mt-2 flex items-center gap-2">
+                    <span className="min-w-0 flex-1 break-all">电话：{record.phone || "-"}</span>
+                    {record.phone ? (
+                      <a
+                        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700"
+                        href={`tel:${record.phone}`}
+                        title="拨打电话"
+                        aria-label="拨打电话"
+                      >
+                        <PhoneIcon />
+                      </a>
+                    ) : null}
+                  </div>
+                  {record.note ? <div className="mt-2 whitespace-pre-wrap break-words">备注：{record.note}</div> : null}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="rounded-[28px] border border-dashed border-slate-300 bg-white px-5 py-8 text-center text-sm text-slate-500 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+          还没有匹配到预约记录。
+        </div>
+      )}
+    </div>
+  );
+}

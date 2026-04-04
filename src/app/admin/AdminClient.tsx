@@ -226,6 +226,7 @@ import { buildMerchantSiteLinker } from "@/lib/merchantSiteLinking";
 import BlockRenderer from "@/components/blocks/BlockRenderer";
 import BookingBlock from "@/components/blocks/BookingBlock";
 import MerchantBookingManagerDialog from "@/components/admin/MerchantBookingManagerDialog";
+import MerchantBookingMobilePanel from "@/components/admin/MerchantBookingMobilePanel";
 import MerchantProfileDialog from "@/components/admin/MerchantProfileDialog";
 import { useI18n } from "@/components/I18nProvider";
 import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
@@ -11655,27 +11656,27 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           </div>
           <div className="min-w-0 flex-1">
             <div className="text-[15px] font-semibold text-slate-900">预约管理</div>
-            <div className="mt-1 text-xs text-slate-500">这里直接接入你后台现有的预约管理。</div>
+            <div className="mt-1 text-xs text-slate-500">手机端这里直接查看和处理后台预约记录。</div>
           </div>
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(env(safe-area-inset-bottom)+6.75rem)] pt-4">
-        <div className="space-y-3">
+        {canUseBookingBlock ? (
+          <MerchantBookingMobilePanel
+            siteId={editingSiteId || ""}
+            siteName={merchantDisplayName}
+            storeOptions={merchantBookingManagerOptions.storeOptions}
+            itemOptions={merchantBookingManagerOptions.itemOptions}
+            titleOptions={merchantBookingManagerOptions.titleOptions}
+          />
+        ) : (
           <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
-            <div className="text-base font-semibold text-slate-900">管理预约、咨询和安排</div>
+            <div className="text-base font-semibold text-slate-900">当前套餐未开通预约管理</div>
             <div className="mt-2 text-sm leading-6 text-slate-500">
-              手机端这里保留一个轻量入口，点开后直接使用后台原有的预约管理弹窗。
+              这家商户还没有开通预约管理权限，开通后手机端会直接显示预约记录和处理入口。
             </div>
-            <button
-              type="button"
-              className="mt-4 inline-flex items-center justify-center rounded-full bg-slate-900 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-50"
-              onClick={() => setMerchantBookingManagerOpen(true)}
-              disabled={!canUseBookingBlock}
-            >
-              {canUseBookingBlock ? "打开预约管理" : "当前套餐未开通预约管理"}
-            </button>
           </div>
-        </div>
+        )}
       </div>
     </>
   );
