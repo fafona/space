@@ -8403,15 +8403,50 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   );
 
   const requestMerchantChatBusinessCardById = useCallback(
-    (merchantId: string, init?: RequestInit) =>
-      requestMerchantChatWithSessionRecovery(
-        `/api/merchant-chat-business-card?merchantId=${encodeURIComponent(merchantId)}`,
-        {
+    (merchantId: string, init?: RequestInit) => {
+      const params = new URLSearchParams();
+      params.set("merchantId", merchantId);
+      const cardSiteId = (
+        editingSiteId ||
+        getSiteIdFromStoreScope(storeScope) ||
+        merchantSessionIdentityRef.current.merchantId ||
+        merchantIdsRef.current.find((item) => isMerchantNumericId(item)) ||
+        merchantIdsRef.current[0] ||
+        ""
+      ).trim();
+      if (cardSiteId) {
+        params.set("siteId", cardSiteId);
+      }
+      const path = `/api/merchant-chat-business-card?${params.toString()}`;
+      const sendDirectBusinessCardRequest = () => {
+        const headers = new Headers(init?.headers ?? undefined);
+        headers.set("accept", "application/json");
+        headers.delete("x-merchant-site-id");
+        headers.delete("x-merchant-email");
+        headers.delete("x-merchant-name");
+        headers.delete("x-merchant-access-token");
+        headers.delete("x-merchant-refresh-token");
+        headers.delete("x-merchant-expires-in");
+        return fetch(path, {
+          credentials: "same-origin" as const,
+          cache: "no-store" as const,
           method: "GET",
           ...init,
-        },
-      ),
-    [requestMerchantChatWithSessionRecovery],
+          headers,
+        });
+      };
+      return requestMerchantChatWithSessionRecovery(path, {
+        method: "GET",
+        ...init,
+      })
+        .then((response) => {
+          if (response.ok) return response;
+          if (![401, 403, 503].includes(response.status)) return response;
+          return sendDirectBusinessCardRequest().catch(() => response);
+        })
+        .catch(() => sendDirectBusinessCardRequest());
+    },
+    [editingSiteId, requestMerchantChatWithSessionRecovery, storeScope],
   );
 
   const scheduleMerchantChatBusinessCardSync = useCallback(
