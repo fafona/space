@@ -9028,6 +9028,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   ]);
   const supportSelfWebsiteLabel =
     supportSelfWebsiteHref ? formatSupportUrlLabel(supportSelfWebsiteHref) : "-";
+  const supportMobileBookingSiteId = (
+    editingSiteId ||
+    merchantSessionIdentityRef.current.merchantId ||
+    getSiteIdFromStoreScope(storeScope) ||
+    ""
+  ).trim();
   const supportMobileFaollaHref =
     normalizeSupportExternalUrl(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "", typeof window !== "undefined" ? window.location.origin : "") ||
     "/";
@@ -11773,9 +11779,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(env(safe-area-inset-bottom)+6.75rem)] pt-4">
-        {canUseBookingBlock ? (
+        {supportMobileBookingSiteId ? (
           <MerchantBookingMobilePanel
-            siteId={editingSiteId || ""}
+            siteId={supportMobileBookingSiteId}
             siteName={merchantDisplayName}
             storeOptions={merchantBookingManagerOptions.storeOptions}
             itemOptions={merchantBookingManagerOptions.itemOptions}
@@ -11783,9 +11789,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           />
         ) : (
           <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
-            <div className="text-base font-semibold text-slate-900">当前套餐未开通预约管理</div>
+            <div className="text-base font-semibold text-slate-900">当前商户信息还没准备好</div>
             <div className="mt-2 text-sm leading-6 text-slate-500">
-              这家商户还没有开通预约管理权限，开通后手机端会直接显示预约记录和处理入口。
+              手机端暂时还没识别到当前商户，稍后刷新后会直接显示预约记录和处理入口。
             </div>
           </div>
         )}
