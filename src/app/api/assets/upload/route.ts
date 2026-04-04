@@ -4,7 +4,7 @@ import { parseCookieValue, readMerchantRequestAccessTokens } from "@/lib/merchan
 import { SUPER_ADMIN_SESSION_COOKIE, SUPER_ADMIN_SESSION_VALUE } from "@/lib/superAdminSession";
 
 const BUCKET_CANDIDATES = ["page-assets", "assets", "uploads", "public"] as const;
-const FOLDER_CANDIDATES = new Set(["merchant-assets", "merchant-audio"]);
+const FOLDER_CANDIDATES = new Set(["merchant-assets", "merchant-audio", "merchant-files"]);
 
 type AssetUploadRequestBody = {
   dataUrl?: string;
@@ -13,7 +13,7 @@ type AssetUploadRequestBody = {
 };
 
 function parseDataUrlMeta(dataUrl: string) {
-  const matched = dataUrl.match(/^data:((?:image|audio)\/[a-zA-Z0-9.+-]+);base64,/i);
+  const matched = dataUrl.match(/^data:([a-z0-9.+-]+\/[a-z0-9.+-]+);base64,/i);
   if (!matched) return null;
   const mime = matched[1].toLowerCase();
   const extension = (() => {
@@ -31,7 +31,23 @@ function parseDataUrlMeta(dataUrl: string) {
     if (mime === "audio/aac") return "aac";
     if (mime === "audio/webm") return "webm";
     if (mime === "audio/mp4") return "m4a";
-    return "bin";
+    if (mime === "application/pdf") return "pdf";
+    if (mime === "text/plain") return "txt";
+    if (mime === "text/csv") return "csv";
+    if (mime === "application/json") return "json";
+    if (mime === "application/zip") return "zip";
+    if (mime === "application/x-zip-compressed") return "zip";
+    if (mime === "application/x-rar-compressed") return "rar";
+    if (mime === "application/x-7z-compressed") return "7z";
+    if (mime === "application/msword") return "doc";
+    if (mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") return "docx";
+    if (mime === "application/vnd.ms-excel") return "xls";
+    if (mime === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") return "xlsx";
+    if (mime === "application/vnd.ms-powerpoint") return "ppt";
+    if (mime === "application/vnd.openxmlformats-officedocument.presentationml.presentation") return "pptx";
+    const subtype = mime.split("/")[1] ?? "";
+    const normalizedSubtype = subtype.split("+")[0]?.split(".").pop()?.replace(/[^a-z0-9]+/gi, "");
+    return normalizedSubtype || "bin";
   })();
   return { mime, extension };
 }

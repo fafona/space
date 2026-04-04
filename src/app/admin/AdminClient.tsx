@@ -552,6 +552,7 @@ const MAX_ORIGINAL_IMAGE_DATA_URL_LENGTH = 6_000_000;
 const MAX_AUDIO_DATA_URL_LENGTH = 4_000_000;
 const MAX_PUBLISH_PAYLOAD_BYTES = 30_000_000;
 const MAX_IMAGE_FILE_BYTES = 10_000_000;
+const MAX_CHAT_FILE_BYTES = 12_000_000;
 const EXTERNALIZE_MIN_IMAGE_BYTES = 300_000;
 type UploadCompressionPreset = "high" | "balanced" | "compact";
 type EditorImageUploadPurpose = "common" | "gallery";
@@ -1777,6 +1778,24 @@ async function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
+async function fileToChatFileDataUrl(file: File): Promise<string> {
+  if (file.size > MAX_CHAT_FILE_BYTES) {
+    throw new Error("文件过大，请选择 12MB 以内文件");
+  }
+  return await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result !== "string") {
+        reject(new Error("文件读取失败，请重新选择后重试"));
+        return;
+      }
+      resolve(reader.result);
+    };
+    reader.onerror = () => reject(new Error("文件读取失败，请重新选择后重试"));
+    reader.readAsDataURL(file);
+  });
+}
+
 async function loadImageFromDataUrl(dataUrl: string): Promise<HTMLImageElement> {
   return await new Promise((resolve, reject) => {
     const image = new Image();
@@ -2049,7 +2068,7 @@ async function fileToAudioDataUrl(file: File): Promise<string> {
 }
 
 function parseDataUrlMeta(dataUrl: string) {
-  const matched = dataUrl.match(/^data:((?:image|audio)\/[a-zA-Z0-9.+-]+);base64,/i);
+  const matched = dataUrl.match(/^data:([a-z0-9.+-]+\/[a-z0-9.+-]+);base64,/i);
   if (!matched) return null;
   const mime = matched[1].toLowerCase();
   const extension = (() => {
@@ -2067,7 +2086,23 @@ function parseDataUrlMeta(dataUrl: string) {
     if (mime === "audio/aac") return "aac";
     if (mime === "audio/webm") return "webm";
     if (mime === "audio/mp4") return "m4a";
-    return "img";
+    if (mime === "application/pdf") return "pdf";
+    if (mime === "text/plain") return "txt";
+    if (mime === "text/csv") return "csv";
+    if (mime === "application/json") return "json";
+    if (mime === "application/zip") return "zip";
+    if (mime === "application/x-zip-compressed") return "zip";
+    if (mime === "application/x-rar-compressed") return "rar";
+    if (mime === "application/x-7z-compressed") return "7z";
+    if (mime === "application/msword") return "doc";
+    if (mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") return "docx";
+    if (mime === "application/vnd.ms-excel") return "xls";
+    if (mime === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") return "xlsx";
+    if (mime === "application/vnd.ms-powerpoint") return "ppt";
+    if (mime === "application/vnd.openxmlformats-officedocument.presentationml.presentation") return "pptx";
+    const subtype = mime.split("/")[1] ?? "";
+    const normalizedSubtype = subtype.split("+")[0]?.split(".").pop()?.replace(/[^a-z0-9]+/gi, "");
+    return normalizedSubtype || "bin";
   })();
   return { mime, extension };
 }
@@ -2153,6 +2188,21 @@ async function uploadImageDataUrlToSupabase(dataUrl: string, merchantHint = "pub
 
 async function uploadAudioDataUrlToSupabase(dataUrl: string, merchantHint = "public"): Promise<string | null> {
   return uploadDataUrlToSupabase(dataUrl, merchantHint, "merchant-audio");
+}
+
+async function uploadFileDataUrlToSupabase(dataUrl: string, merchantHint = "public"): Promise<string | null> {
+  return uploadDataUrlToSupabase(dataUrl, merchantHint, "merchant-files");
+}
+
+function formatSupportAttachmentFileSize(bytes: number) {
+  const normalized = Number.isFinite(bytes) ? Math.max(0, bytes) : 0;
+  if (normalized >= 1024 * 1024) {
+    return `${(normalized / (1024 * 1024)).toFixed(normalized >= 10 * 1024 * 1024 ? 0 : 1)} MB`;
+  }
+  if (normalized >= 1024) {
+    return `${Math.max(1, Math.round(normalized / 1024))} KB`;
+  }
+  return `${normalized} B`;
 }
 
 type PageBackgroundPatch = Pick<
@@ -3755,10 +3805,9 @@ function readMobileVisualViewportInsets() {
   if (!visualViewport) {
     return { top: 0, bottom: 0 };
   }
-  const top = Number.isFinite(visualViewport.offsetTop) ? Math.max(0, Math.round(visualViewport.offsetTop)) : 0;
-  const bottomRaw = window.innerHeight - visualViewport.height - visualViewport.offsetTop;
+  const bottomRaw = window.innerHeight - visualViewport.height;
   const bottom = Number.isFinite(bottomRaw) ? Math.max(0, Math.round(bottomRaw)) : 0;
-  return { top, bottom };
+  return { top: 0, bottom };
 }
 
 function normalizeSupportMessageTimestamp(value: string | null | undefined) {
@@ -3967,6 +4016,9 @@ export default function AdminClient({
   const [supportSending, setSupportSending] = useState(false);
   const [supportError, setSupportError] = useState("");
   const [supportDraft, setSupportDraft] = useState("");
+  const [supportAttachmentBusy, setSupportAttachmentBusy] = useState(false);
+  const [supportAttachmentMenuOpen, setSupportAttachmentMenuOpen] = useState(false);
+  const [supportSelfCardPickerOpen, setSupportSelfCardPickerOpen] = useState(false);
   const [supportContactKeyword, setSupportContactKeyword] = useState("");
   const [supportLastReadAt, setSupportLastReadAt] = useState("");
   const [supportPeerLastReadMap, setSupportPeerLastReadMap] = useState<Record<string, string>>({});
@@ -3996,6 +4048,9 @@ export default function AdminClient({
   const supportSendingRef = useRef(false);
   const supportMessagesViewportRef = useRef<HTMLDivElement>(null);
   const supportInputRef = useRef<HTMLTextAreaElement>(null);
+  const supportPhotoInputRef = useRef<HTMLInputElement>(null);
+  const supportCameraInputRef = useRef<HTMLInputElement>(null);
+  const supportFileInputRef = useRef<HTMLInputElement>(null);
   const supportLastIncomingAdminMessageKeyRef = useRef("");
   const supportLastIncomingPeerMessageKeyRef = useRef("");
   const supportLastVisibleMessageKeyRef = useRef("");
@@ -4006,6 +4061,8 @@ export default function AdminClient({
   const supportPeerProfileLoadingIdsRef = useRef(new Set<string>());
   const focusSupportInput = useCallback(() => {
     if (typeof window === "undefined") return;
+    setSupportAttachmentMenuOpen(false);
+    setSupportSelfCardPickerOpen(false);
     window.requestAnimationFrame(() => {
       const input = supportInputRef.current;
       if (!input || input.disabled) return;
@@ -4021,9 +4078,13 @@ export default function AdminClient({
   const closeMobileSupportThread = useCallback(() => {
     setSupportBusinessCardDialogOpen(false);
     setSupportMerchantInfoSheetOpen(false);
+    setSupportAttachmentMenuOpen(false);
+    setSupportSelfCardPickerOpen(false);
     setSupportMobileView("list");
   }, []);
   const openSupportContactThread = useCallback((contactKey: string) => {
+    setSupportAttachmentMenuOpen(false);
+    setSupportSelfCardPickerOpen(false);
     setSupportSelectedContactKey(contactKey);
     setSupportMobileView("thread");
   }, []);
@@ -4039,12 +4100,10 @@ export default function AdminClient({
     window.addEventListener("resize", syncMobileVisualViewportInsets);
     window.addEventListener("orientationchange", syncMobileVisualViewportInsets);
     window.visualViewport?.addEventListener("resize", syncMobileVisualViewportInsets);
-    window.visualViewport?.addEventListener("scroll", syncMobileVisualViewportInsets);
     return () => {
       window.removeEventListener("resize", syncMobileVisualViewportInsets);
       window.removeEventListener("orientationchange", syncMobileVisualViewportInsets);
       window.visualViewport?.removeEventListener("resize", syncMobileVisualViewportInsets);
-      window.visualViewport?.removeEventListener("scroll", syncMobileVisualViewportInsets);
     };
   }, []);
   const handleSupportMobileThreadTouchStart = useCallback((event: TouchEvent<HTMLDivElement>) => {
@@ -8103,6 +8162,16 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       selectedSupportPeerMerchantId,
     ],
   );
+  const supportSelfBusinessCards = useMemo(() => {
+    return Array.isArray(editingSite?.businessCards)
+      ? [...editingSite.businessCards].sort((left, right) => {
+          const leftChat = left.showInChat !== false;
+          const rightChat = right.showInChat !== false;
+          if (leftChat !== rightChat) return leftChat ? -1 : 1;
+          return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
+        })
+      : [];
+  }, [editingSite?.businessCards]);
   const selectedSupportLoading =
     supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY ? supportLoading : supportPeerLoading;
   const selectedSupportEmptyStateText =
@@ -8117,9 +8186,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         : "请先在左侧精确搜索商户ID或邮箱，再开始聊天。";
   const selectedSupportSendButtonLabel =
     supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY ? "发送留言" : "发送消息";
-  const supportCanSend =
-    !!supportDraft.trim() &&
-    (supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY || !!selectedSupportPeerContact);
+  const supportComposerAvailable =
+    supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY || !!selectedSupportPeerContact;
+  const supportComposerBusy = supportSending || supportAttachmentBusy;
+  const supportCanSend = !!supportDraft.trim() && supportComposerAvailable;
   const supportInterfaceOpen = supportDialogOpen || isMobileMerchantSupportOnlyMode;
   const isMobileSupportDialog = supportInterfaceOpen && !isPlatformEditor && !isDesktopEditorSidebar;
   const selectedSupportConversationVisible = !isMobileSupportDialog || supportMobileView === "thread";
@@ -9015,6 +9085,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       supportLastVisibleMessageKeyRef.current = "";
       supportScrollToLatestPendingRef.current = false;
       setSupportBusinessCardDialogOpen(false);
+      setSupportAttachmentMenuOpen(false);
+      setSupportSelfCardPickerOpen(false);
       return;
     }
     supportScrollToLatestPendingRef.current = true;
@@ -9023,6 +9095,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   useEffect(() => {
     if (!supportInterfaceOpen) return;
     supportScrollToLatestPendingRef.current = true;
+    setSupportAttachmentMenuOpen(false);
+    setSupportSelfCardPickerOpen(false);
   }, [supportInterfaceOpen, supportSelectedContactKey, supportMobileView]);
 
   useEffect(() => {
@@ -9046,28 +9120,117 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }, [isPlatformEditor, latestVisibleSupportMessageKey, selectedSupportConversationVisible, selectedSupportLoading, supportInterfaceOpen]);
 
   useEffect(() => {
-    if (isPlatformEditor || !supportInterfaceOpen || !selectedSupportConversationVisible || selectedSupportLoading || supportSending) return;
+    if (
+      isPlatformEditor ||
+      !supportInterfaceOpen ||
+      !selectedSupportConversationVisible ||
+      selectedSupportLoading ||
+      supportComposerBusy
+    ) {
+      return;
+    }
     focusSupportInput();
-  }, [focusSupportInput, isPlatformEditor, selectedSupportConversationVisible, selectedSupportLoading, supportInterfaceOpen, supportSending]);
+  }, [
+    focusSupportInput,
+    isPlatformEditor,
+    selectedSupportConversationVisible,
+    selectedSupportLoading,
+    supportComposerBusy,
+    supportInterfaceOpen,
+  ]);
 
-  async function sendSupportMessage() {
-    if (supportSending) return;
-    const text = supportDraft.trim();
+  function resetSupportPickerInputValue(input: HTMLInputElement | null) {
+    if (!input) return;
+    input.value = "";
+  }
+
+  function buildSupportUploadMerchantHint() {
+    return (
+      editingSiteId ||
+      merchantSessionIdentityRef.current.merchantId ||
+      supportReadMerchantId ||
+      merchantDisplayName ||
+      "public"
+    ).trim();
+  }
+
+  function buildSupportPhotoMessageText(label: "照片" | "拍照", fileName: string, url: string) {
+    return [`${label}：${fileName || "图片"}`, url].filter(Boolean).join("\n");
+  }
+
+  function buildSupportLocationMessageText(latitude: number, longitude: number, accuracy: number | null) {
+    const lat = latitude.toFixed(6);
+    const lng = longitude.toFixed(6);
+    const accuracyLabel =
+      typeof accuracy === "number" && Number.isFinite(accuracy) && accuracy > 0
+        ? `（约 ${Math.round(accuracy)} 米）`
+        : "";
+    return [`位置：${lat}, ${lng}${accuracyLabel}`, `https://maps.google.com/?q=${lat},${lng}`].join("\n");
+  }
+
+  function buildSupportFileMessageText(file: File, url: string) {
+    const fileName = file.name.trim() || "文件";
+    return [`文件：${fileName} (${formatSupportAttachmentFileSize(file.size)})`, url].join("\n");
+  }
+
+  function buildSupportSelfBusinessCardMessageText(card: MerchantBusinessCardAsset) {
+    const lines = [`名片：${normalizeSupportDisplayValue(card.name) || "我的名片"}`];
+    const cardLink = buildSupportMerchantCardLink(card);
+    const targetUrl = normalizeSupportDisplayValue(card.targetUrl)
+      ? normalizeSupportExternalUrl(card.targetUrl)
+      : "";
+    const imageUrl =
+      normalizeSupportDisplayValue(card.shareImageUrl) ||
+      normalizeSupportDisplayValue(card.imageUrl);
+    const detailImageUrl =
+      normalizeSupportDisplayValue(card.contactPagePublicImageUrl) ||
+      normalizeSupportDisplayValue(card.contactPageImageUrl);
+    if (card.mode === "link") {
+      if (cardLink) {
+        lines.push(`联系卡：${cardLink}`);
+      }
+      if (targetUrl && targetUrl !== cardLink) {
+        lines.push(`链接：${targetUrl}`);
+      }
+      if (!cardLink && imageUrl) {
+        lines.push(`图片：${imageUrl}`);
+      }
+    } else {
+      if (imageUrl) {
+        lines.push(`图片：${imageUrl}`);
+      }
+      if (detailImageUrl && detailImageUrl !== imageUrl) {
+        lines.push(`详情：${detailImageUrl}`);
+      }
+      if (targetUrl) {
+        lines.push(`链接：${targetUrl}`);
+      }
+    }
+    return lines.join("\n");
+  }
+
+  async function sendSupportTextPayload(rawText: string, options?: { clearDraft?: boolean }) {
+    if (supportSending) return false;
+    const text = rawText.trim();
     if (!text) {
       showTip("请先填写留言内容");
-      return;
+      return false;
     }
     const isOfficialContact = supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY;
     if (!isOfficialContact && !selectedSupportPeerContact) {
       showTip("请先在左侧精确搜索商户ID或邮箱");
-      return;
+      return false;
     }
     const merchantId = supportReadMerchantId || editingSiteId || merchantSessionIdentityRef.current.merchantId || "default";
     const requestId = ++supportRequestIdRef.current;
     supportSendingRef.current = true;
     setSupportSending(true);
     setSupportError("");
-    setSupportDraft("");
+    setSupportAttachmentMenuOpen(false);
+    setSupportSelfCardPickerOpen(false);
+    if (options?.clearDraft) {
+      setSupportDraft("");
+    }
     if (isOfficialContact) {
       const localMessage: LocalSupportMessage = {
         id: `local-support-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
@@ -9115,13 +9278,14 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             ),
           );
           setSupportError(payload?.message || "留言发送失败，请稍后重试");
-          return;
+          return false;
         }
         setSupportLocalMessages((current) => current.filter((message) => message.id !== localMessage.id));
         setSupportError("");
         setSupportThread(payload?.thread ?? null);
+        return true;
       } catch {
-        if (requestId !== supportRequestIdRef.current) return;
+        if (requestId !== supportRequestIdRef.current) return false;
         setSupportLoading(false);
         setSupportLocalMessages((current) =>
           current.map((message) =>
@@ -9134,11 +9298,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           ),
         );
         setSupportError("留言发送失败，请稍后重试");
+        return false;
       } finally {
         supportSendingRef.current = false;
         setSupportSending(false);
       }
-      return;
+      return false;
     }
 
     const peerMerchantId = selectedSupportPeerContact?.merchantId || "";
@@ -9176,7 +9341,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             message?: string;
           }
         | null;
-      if (requestId !== supportRequestIdRef.current) return;
+      if (requestId !== supportRequestIdRef.current) return false;
       if (!response.ok) {
         setSupportPeerLocalMessages((current) =>
           current.map((message) =>
@@ -9189,14 +9354,15 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           ),
         );
         setSupportError(payload?.message || "消息发送失败，请稍后重试");
-        return;
+        return false;
       }
       setSupportPeerLocalMessages((current) => current.filter((message) => message.id !== localPeerMessage.id));
       setSupportPeerContacts(Array.isArray(payload?.contacts) ? payload.contacts : []);
       setSupportPeerThreads(Array.isArray(payload?.threads) ? payload.threads : []);
       setSupportError("");
+      return true;
     } catch {
-      if (requestId !== supportRequestIdRef.current) return;
+      if (requestId !== supportRequestIdRef.current) return false;
       setSupportPeerLocalMessages((current) =>
         current.map((message) =>
           message.id === localPeerMessage.id
@@ -9205,13 +9371,156 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                 status: "failed",
               }
             : message,
-          ),
+        ),
       );
       setSupportError("消息发送失败，请稍后重试");
+      return false;
     } finally {
       supportSendingRef.current = false;
       setSupportSending(false);
     }
+    return false;
+  }
+
+  async function sendSupportMessage() {
+    await sendSupportTextPayload(supportDraft, { clearDraft: true });
+  }
+
+  async function handleSupportImageAttachment(file: File, label: "照片" | "拍照") {
+    if (supportComposerBusy) return;
+    setSupportAttachmentBusy(true);
+    setSupportAttachmentMenuOpen(false);
+    setSupportSelfCardPickerOpen(false);
+    supportInputRef.current?.blur();
+    try {
+      const uploadedUrl = await uploadImageDataUrlToSupabase(
+        await fileToOptimizedImageDataUrl(file, imageCompressionOptions),
+        buildSupportUploadMerchantHint(),
+      );
+      if (!uploadedUrl) {
+        throw new Error(`${label}上传失败，请稍后重试`);
+      }
+      await sendSupportTextPayload(buildSupportPhotoMessageText(label, file.name.trim() || `${label}.jpg`, uploadedUrl));
+    } catch (error) {
+      showTip(error instanceof Error ? error.message : `${label}发送失败，请稍后重试`);
+    } finally {
+      setSupportAttachmentBusy(false);
+    }
+  }
+
+  async function handleSupportFileAttachment(file: File) {
+    if (supportComposerBusy) return;
+    setSupportAttachmentBusy(true);
+    setSupportAttachmentMenuOpen(false);
+    setSupportSelfCardPickerOpen(false);
+    supportInputRef.current?.blur();
+    try {
+      const uploadedUrl = await uploadFileDataUrlToSupabase(
+        await fileToChatFileDataUrl(file),
+        buildSupportUploadMerchantHint(),
+      );
+      if (!uploadedUrl) {
+        throw new Error("文件上传失败，请稍后重试");
+      }
+      await sendSupportTextPayload(buildSupportFileMessageText(file, uploadedUrl));
+    } catch (error) {
+      showTip(error instanceof Error ? error.message : "文件发送失败，请稍后重试");
+    } finally {
+      setSupportAttachmentBusy(false);
+    }
+  }
+
+  async function handleSupportLocationAttachment() {
+    if (supportComposerBusy) return;
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      showTip("当前设备不支持位置发送");
+      return;
+    }
+    setSupportAttachmentBusy(true);
+    setSupportAttachmentMenuOpen(false);
+    setSupportSelfCardPickerOpen(false);
+    supportInputRef.current?.blur();
+    try {
+      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          timeout: 12000,
+          maximumAge: 60000,
+        });
+      });
+      await sendSupportTextPayload(
+        buildSupportLocationMessageText(
+          position.coords.latitude,
+          position.coords.longitude,
+          position.coords.accuracy,
+        ),
+      );
+    } catch (error) {
+      const nextMessage =
+        error && typeof error === "object" && "code" in error && Number((error as { code?: unknown }).code) === 1
+          ? "定位权限被拒绝，请先允许浏览器访问位置"
+          : "位置发送失败，请稍后重试";
+      showTip(nextMessage);
+    } finally {
+      setSupportAttachmentBusy(false);
+    }
+  }
+
+  async function handleSupportBusinessCardAttachment(card: MerchantBusinessCardAsset) {
+    if (supportComposerBusy) return;
+    setSupportAttachmentBusy(true);
+    setSupportAttachmentMenuOpen(false);
+    setSupportSelfCardPickerOpen(false);
+    supportInputRef.current?.blur();
+    try {
+      await sendSupportTextPayload(buildSupportSelfBusinessCardMessageText(card));
+    } finally {
+      setSupportAttachmentBusy(false);
+    }
+  }
+
+  function toggleSupportAttachmentMenu() {
+    if (!supportComposerAvailable || supportComposerBusy) return;
+    const nextOpen = !supportAttachmentMenuOpen;
+    setSupportSelfCardPickerOpen(false);
+    setSupportAttachmentMenuOpen(nextOpen);
+    if (nextOpen) {
+      supportInputRef.current?.blur();
+    } else {
+      focusSupportInput();
+    }
+  }
+
+  function openSupportSelfCardPicker() {
+    if (!supportSelfBusinessCards.length) {
+      setSupportAttachmentMenuOpen(false);
+      showTip("当前还没有可发送的名片，请先在商户资料里生成名片");
+      return;
+    }
+    setSupportAttachmentMenuOpen(false);
+    setSupportSelfCardPickerOpen(true);
+    supportInputRef.current?.blur();
+  }
+
+  async function handleSupportPhotoInputChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0] ?? null;
+    resetSupportPickerInputValue(event.target);
+    if (!file) return;
+    await handleSupportImageAttachment(file, "照片");
+  }
+
+  async function handleSupportCameraInputChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0] ?? null;
+    resetSupportPickerInputValue(event.target);
+    if (!file) return;
+    await handleSupportImageAttachment(file, "拍照");
+  }
+
+  async function handleSupportFileInputChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0] ?? null;
+    resetSupportPickerInputValue(event.target);
+    if (!file) return;
+    await handleSupportFileAttachment(file);
   }
 
   if (checkingAuth) {
@@ -9601,25 +9910,139 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             })}
           </div>
         ) : (
-          <div className="rounded-[28px] border border-dashed border-slate-300 bg-white/90 px-5 py-8 text-center shadow-sm">
+          <div className="rounded-[28px] border border-dashed border-slate-300 bg-white/90 px-5 py-6 text-center shadow-sm">
             <div className="text-sm font-medium text-slate-900">还没有聊天记录</div>
-            <div className="mt-2 text-xs leading-6 text-slate-500">{selectedSupportEmptyStateText}</div>
+            <div className="mt-1.5 text-xs leading-6 text-slate-500">{selectedSupportEmptyStateText}</div>
           </div>
         )}
       </div>
-      <div className="shrink-0 border-t border-slate-200/80 bg-[#edf1f7]/95 px-3 pb-[calc(env(safe-area-inset-bottom)+0.5rem)] pt-2 shadow-[0_-8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
+      <div
+        className="shrink-0 overscroll-none border-t border-slate-200/80 bg-[#edf1f7]/95 px-3 pb-[calc(env(safe-area-inset-bottom)+0.35rem)] pt-1.5 shadow-[0_-8px_30px_rgba(15,23,42,0.06)] backdrop-blur"
+        onTouchMove={(event) => {
+          event.stopPropagation();
+        }}
+      >
+        <input
+          ref={supportPhotoInputRef}
+          className="hidden"
+          type="file"
+          accept="image/*"
+          onChange={(event) => {
+            void handleSupportPhotoInputChange(event);
+          }}
+        />
+        <input
+          ref={supportCameraInputRef}
+          className="hidden"
+          type="file"
+          accept="image/*"
+          capture="environment"
+          onChange={(event) => {
+            void handleSupportCameraInputChange(event);
+          }}
+        />
+        <input
+          ref={supportFileInputRef}
+          className="hidden"
+          type="file"
+          onChange={(event) => {
+            void handleSupportFileInputChange(event);
+          }}
+        />
+        {supportAttachmentMenuOpen ? (
+          <div className="mb-2 rounded-[28px] bg-white px-3 py-3 shadow-[0_12px_28px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/80">
+            <div className="grid grid-cols-5 gap-2">
+              <button
+                type="button"
+                className="flex flex-col items-center gap-2 rounded-2xl px-1 py-2 text-[11px] font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+                onClick={() => supportPhotoInputRef.current?.click()}
+                disabled={supportComposerBusy}
+              >
+                <span className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-50 text-blue-500">
+                  <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" aria-hidden="true">
+                    <path d="M6 8h2.3l1.2-1.7A1 1 0 0 1 10.3 6h3.4a1 1 0 0 1 .8.3L15.7 8H18a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2Z" stroke="currentColor" strokeWidth="1.8" />
+                    <circle cx="12" cy="13" r="3.1" stroke="currentColor" strokeWidth="1.8" />
+                  </svg>
+                </span>
+                <span>照片</span>
+              </button>
+              <button
+                type="button"
+                className="flex flex-col items-center gap-2 rounded-2xl px-1 py-2 text-[11px] font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+                onClick={() => supportCameraInputRef.current?.click()}
+                disabled={supportComposerBusy}
+              >
+                <span className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-700">
+                  <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" aria-hidden="true">
+                    <path d="M4 9a2 2 0 0 1 2-2h1.8l1.2-1.8A1 1 0 0 1 9.8 5h4.4a1 1 0 0 1 .8.2L16.2 7H18a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V9Z" stroke="currentColor" strokeWidth="1.8" />
+                    <circle cx="12" cy="12.5" r="3.1" stroke="currentColor" strokeWidth="1.8" />
+                  </svg>
+                </span>
+                <span>拍照</span>
+              </button>
+              <button
+                type="button"
+                className="flex flex-col items-center gap-2 rounded-2xl px-1 py-2 text-[11px] font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+                onClick={() => {
+                  void handleSupportLocationAttachment();
+                }}
+                disabled={supportComposerBusy}
+              >
+                <span className="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-50 text-emerald-500">
+                  <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" aria-hidden="true">
+                    <path d="M12 20s6-5.5 6-10a6 6 0 1 0-12 0c0 4.5 6 10 6 10Z" stroke="currentColor" strokeWidth="1.8" />
+                    <circle cx="12" cy="10" r="2.2" fill="currentColor" />
+                  </svg>
+                </span>
+                <span>位置</span>
+              </button>
+              <button
+                type="button"
+                className="flex flex-col items-center gap-2 rounded-2xl px-1 py-2 text-[11px] font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+                onClick={openSupportSelfCardPicker}
+                disabled={supportComposerBusy}
+              >
+                <span className="flex h-12 w-12 items-center justify-center rounded-full bg-violet-50 text-violet-500">
+                  <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" aria-hidden="true">
+                    <path d="M5 7.5A2.5 2.5 0 0 1 7.5 5h9A2.5 2.5 0 0 1 19 7.5v9a2.5 2.5 0 0 1-2.5 2.5h-9A2.5 2.5 0 0 1 5 16.5v-9Z" stroke="currentColor" strokeWidth="1.8" />
+                    <circle cx="12" cy="10" r="2.2" stroke="currentColor" strokeWidth="1.8" />
+                    <path d="M8.5 16a3.5 3.5 0 0 1 7 0" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                  </svg>
+                </span>
+                <span>名片</span>
+              </button>
+              <button
+                type="button"
+                className="flex flex-col items-center gap-2 rounded-2xl px-1 py-2 text-[11px] font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+                onClick={() => supportFileInputRef.current?.click()}
+                disabled={supportComposerBusy}
+              >
+                <span className="flex h-12 w-12 items-center justify-center rounded-full bg-amber-50 text-amber-500">
+                  <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" aria-hidden="true">
+                    <path d="M8 4.5h5.2L18 9.3V18a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V6.5a2 2 0 0 1 2-2Z" stroke="currentColor" strokeWidth="1.8" />
+                    <path d="M13 4.8V9h4.2" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+                  </svg>
+                </span>
+                <span>文件</span>
+              </button>
+            </div>
+          </div>
+        ) : null}
         <div className="flex items-end gap-2">
           <button
             type="button"
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white text-slate-700 shadow-[0_8px_18px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/80 transition hover:bg-slate-50"
-            onClick={focusSupportInput}
-            aria-label="展开输入"
+            className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-slate-700 shadow-[0_8px_18px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/80 transition ${
+              supportAttachmentMenuOpen ? "bg-slate-900 text-white" : "bg-white hover:bg-slate-50"
+            }`}
+            onClick={toggleSupportAttachmentMenu}
+            disabled={!supportComposerAvailable || supportComposerBusy}
+            aria-label="打开附件菜单"
           >
             <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
               <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
             </svg>
           </button>
-          <div className="flex h-11 min-w-0 flex-1 items-center rounded-[28px] bg-white px-3 shadow-[0_8px_18px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/80">
+          <div className="flex h-11 min-w-0 flex-1 items-center overflow-hidden rounded-[28px] bg-white px-3 shadow-[0_8px_18px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/80">
             <textarea
               ref={supportInputRef}
               rows={1}
@@ -9627,26 +10050,31 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               placeholder={selectedSupportInputPlaceholder}
               value={supportDraft}
               onChange={(event) => setSupportDraft(event.target.value)}
+              onFocus={() => {
+                setSupportAttachmentMenuOpen(false);
+                setSupportSelfCardPickerOpen(false);
+              }}
               onKeyDown={(event) => {
                 if (event.key !== "Enter" || !event.ctrlKey || event.nativeEvent.isComposing) return;
                 event.preventDefault();
                 void sendSupportMessage();
               }}
-              disabled={supportSending || (!selectedSupportPeerContact && supportSelectedContactKey !== SUPPORT_OFFICIAL_CONTACT_KEY)}
+              disabled={supportComposerBusy || !supportComposerAvailable}
+              style={{ touchAction: "manipulation" }}
             />
           </div>
           <button
             type="button"
             className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-white shadow-[0_10px_22px_rgba(34,197,94,0.28)] transition ${
-              supportSending || supportCanSend
+              supportComposerBusy || supportCanSend
                 ? "bg-emerald-500 hover:bg-emerald-600"
                 : "bg-slate-300 shadow-none"
             }`}
             onClick={() => void sendSupportMessage()}
-            disabled={supportSending || !supportCanSend}
-            aria-label={supportSending ? "发送中" : selectedSupportSendButtonLabel}
+            disabled={supportComposerBusy || !supportCanSend}
+            aria-label={supportComposerBusy ? "发送中" : selectedSupportSendButtonLabel}
           >
-            {supportSending ? (
+            {supportComposerBusy ? (
               <span className="h-4 w-4 rounded-full border-2 border-white/35 border-t-white animate-spin" />
             ) : (
               <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
@@ -9784,6 +10212,88 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     </div>
   );
 
+  const supportSelfCardPickerOverlay =
+    supportSelfCardPickerOpen && showMobileSupportThread
+      ? renderTopMostOverlay(
+          <>
+            <button
+              type="button"
+              className="fixed inset-0 z-[2147483398] bg-slate-950/40 backdrop-blur-[1px]"
+              onClick={() => setSupportSelfCardPickerOpen(false)}
+              aria-label="关闭名片夹"
+            />
+            <div className="fixed inset-x-0 bottom-0 z-[2147483399] px-3 pb-[calc(env(safe-area-inset-bottom)+0.5rem)]">
+              <div className="mx-auto w-full max-w-md overflow-hidden rounded-[30px] bg-white shadow-[0_24px_80px_rgba(15,23,42,0.2)]">
+                <div className="px-4 pb-3 pt-3">
+                  <div className="mx-auto h-1.5 w-12 rounded-full bg-slate-200" />
+                  <div className="mt-4 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-base font-semibold text-slate-900">我的名片夹</div>
+                      <div className="mt-1 text-xs text-slate-500">点一张直接发送到当前聊天。</div>
+                    </div>
+                    <button
+                      type="button"
+                      className="rounded-full border border-slate-200 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50"
+                      onClick={() => setSupportSelfCardPickerOpen(false)}
+                    >
+                      关闭
+                    </button>
+                  </div>
+                </div>
+                <div className="max-h-[58vh] space-y-2 overflow-y-auto px-3 pb-3">
+                  {supportSelfBusinessCards.length ? (
+                    supportSelfBusinessCards.map((card) => {
+                      const cardPreviewUrl =
+                        normalizeSupportDisplayValue(card.shareImageUrl) ||
+                        normalizeSupportDisplayValue(card.imageUrl);
+                      const cardSubtitle =
+                        card.mode === "link"
+                          ? "链接模式，发送后会附带联系卡和链接"
+                          : "图片模式，发送后会附带名片图片";
+                      return (
+                        <button
+                          key={card.id}
+                          type="button"
+                          className="flex w-full items-center gap-3 rounded-[24px] border border-slate-200 bg-slate-50/80 px-3 py-3 text-left transition hover:border-slate-300 hover:bg-white disabled:opacity-50"
+                          onClick={() => {
+                            void handleSupportBusinessCardAttachment(card);
+                          }}
+                          disabled={supportComposerBusy}
+                        >
+                          <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-slate-900 text-xs font-semibold text-white">
+                            {cardPreviewUrl ? (
+                              /* eslint-disable-next-line @next/next/no-img-element */
+                              <img src={cardPreviewUrl} alt={card.name} className="h-full w-full object-cover" />
+                            ) : (
+                              getSupportContactAvatarLabel(card.name || merchantDisplayName, "名")
+                            )}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <div className="truncate text-sm font-semibold text-slate-900">
+                                {card.name || "未命名名片"}
+                              </div>
+                              <span className="shrink-0 rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium text-white">
+                                {card.mode === "link" ? "链接" : "图片"}
+                              </span>
+                            </div>
+                            <div className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{cardSubtitle}</div>
+                          </div>
+                        </button>
+                      );
+                    })
+                  ) : (
+                    <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+                      当前还没有可发送的名片。
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </>,
+        )
+      : null;
+
   const supportMerchantInfoSheetOverlay =
     supportMerchantInfoSheetOpen && showMobileSupportThread && !selectedSupportIsOfficial
       ? renderTopMostOverlay(
@@ -9842,9 +10352,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         )
       : null;
   const mobileSupportViewportStyle: CSSProperties | undefined =
-    mobileVisualViewportInsets.top > 0 || mobileVisualViewportInsets.bottom > 0
+    mobileVisualViewportInsets.bottom > 0
       ? {
-          top: `${mobileVisualViewportInsets.top}px`,
           bottom: `${mobileVisualViewportInsets.bottom}px`,
         }
       : undefined;
@@ -9860,6 +10369,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             {supportMobileDialogContent}
           </div>
         </main>
+        {supportSelfCardPickerOverlay}
         {supportMerchantInfoSheetOverlay}
         <ChatBusinessCardDialog
           open={supportBusinessCardDialogOpen && supportInterfaceOpen && !isPlatformEditor}
@@ -11114,6 +11624,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       />
 
       {supportMerchantInfoSheetOverlay}
+      {supportSelfCardPickerOverlay}
 
       {merchantProfileDialogOpen && !isPlatformEditor ? (
         <MerchantProfileDialog
