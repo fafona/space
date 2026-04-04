@@ -12190,7 +12190,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     </div>
   );
   const supportMobileBottomNavOverlay =
-    isMobileSupportDialog && !isSupportMobileKeyboardVisible ? renderTopMostOverlay(supportMobileBottomNav) : null;
+    isMobileSupportDialog && !showMobileSupportThread && !isSupportMobileKeyboardVisible
+      ? renderTopMostOverlay(supportMobileBottomNav)
+      : null;
 
   const mobileSupportComposerStyle: CSSProperties | undefined =
     isSupportMobileKeyboardVisible
