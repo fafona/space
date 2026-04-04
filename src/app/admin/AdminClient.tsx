@@ -4030,6 +4030,8 @@ function hasSupportMerchantProfileCoverage(profile: MerchantListPublishedSite | 
   );
 }
 
+const SUPPORT_MERCHANT_PROFILE_REFRESH_TTL_MS = 1_000;
+
 function readMobileVisualViewportInsets() {
   if (typeof window === "undefined") {
     return { top: 0, bottom: 0 };
@@ -4757,6 +4759,7 @@ export default function AdminClient({
   const merchantChatBusinessCardSyncTimerRef = useRef<number | null>(null);
   const merchantChatBusinessCardSyncPayloadRef = useRef("");
   const supportPeerProfileLoadingIdsRef = useRef(new Set<string>());
+  const supportPeerProfileFetchedAtRef = useRef<Record<string, number>>({});
   const resizeSupportComposerInput = useCallback((target?: HTMLTextAreaElement | null) => {
     const input = target ?? supportInputRef.current;
     if (!input) return;
@@ -10227,7 +10230,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     if (isPlatformEditor || !supportInterfaceOpen || !isMobileSupportDialog || supportMobileHomeTab !== "self") return;
     const merchantId = editingSiteId.trim();
     if (!/^\d{8}$/.test(merchantId)) return;
-    if (Object.prototype.hasOwnProperty.call(supportPeerProfilesByMerchantId, merchantId)) return;
+    const lastFetchedAt = supportPeerProfileFetchedAtRef.current[merchantId] ?? 0;
+    if (Date.now() - lastFetchedAt < SUPPORT_MERCHANT_PROFILE_REFRESH_TTL_MS) return;
     if (supportPeerProfileLoadingIdsRef.current.has(merchantId)) return;
     let cancelled = false;
     supportPeerProfileLoadingIdsRef.current.add(merchantId);
@@ -10243,6 +10247,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             }
           | null;
         if (cancelled || !response.ok) return;
+        supportPeerProfileFetchedAtRef.current[merchantId] = Date.now();
         setSupportPeerProfilesByMerchantId((current) => ({
           ...current,
           [merchantId]: payload?.profile ?? null,
@@ -10267,7 +10272,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     requestMerchantChatBusinessCardById,
     supportInterfaceOpen,
     supportMobileHomeTab,
-    supportPeerProfilesByMerchantId,
   ]);
 
   useEffect(() => {
@@ -10279,13 +10283,15 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     if (isPlatformEditor || !supportInterfaceOpen || selectedSupportIsOfficial) return;
     const merchantId = selectedSupportPeerMerchantId.trim();
     if (!/^\d{8}$/.test(merchantId)) return;
-    if (Object.prototype.hasOwnProperty.call(supportPeerProfilesByMerchantId, merchantId)) return;
     const shouldWarmSupportMerchantProfile =
       supportMerchantInfoSheetOpen ||
       supportBusinessCardDialogOpen ||
       (isMobileSupportDialog && supportMobileView === "thread" && !!selectedSupportPeerContact);
     if (!shouldWarmSupportMerchantProfile) return;
-    if (!supportMerchantInfoSheetOpen && hasSupportMerchantProfileCoverage(selectedSupportLocalProfile)) return;
+    if (!supportMerchantInfoSheetOpen && hasSupportMerchantProfileCoverage(selectedSupportLocalProfile)) {
+      const lastFetchedAt = supportPeerProfileFetchedAtRef.current[merchantId] ?? 0;
+      if (Date.now() - lastFetchedAt < SUPPORT_MERCHANT_PROFILE_REFRESH_TTL_MS) return;
+    }
     if (supportPeerProfileLoadingIdsRef.current.has(merchantId)) return;
     let cancelled = false;
     supportPeerProfileLoadingIdsRef.current.add(merchantId);
@@ -10301,6 +10307,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             }
           | null;
         if (cancelled || !response.ok) return;
+        supportPeerProfileFetchedAtRef.current[merchantId] = Date.now();
         setSupportPeerProfilesByMerchantId((current) => ({
           ...current,
           [merchantId]: payload?.profile ?? null,
@@ -10330,7 +10337,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     supportInterfaceOpen,
     supportMerchantInfoSheetOpen,
     supportMobileView,
-    supportPeerProfilesByMerchantId,
   ]);
 
   useEffect(() => {
@@ -11147,6 +11153,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       ...platformState,
       sites: platformState.sites.map((item) => (item.id === targetSiteId ? nextSite : item)),
     });
+    supportPeerProfileFetchedAtRef.current[targetSiteId] = Date.now();
     setSupportPeerProfilesByMerchantId((current) => ({
       ...current,
       [targetSiteId]: nextProfile,
