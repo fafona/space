@@ -3747,6 +3747,20 @@ function hasSupportMerchantProfileCoverage(profile: MerchantListPublishedSite | 
   );
 }
 
+function readMobileVisualViewportInsets() {
+  if (typeof window === "undefined") {
+    return { top: 0, bottom: 0 };
+  }
+  const visualViewport = window.visualViewport;
+  if (!visualViewport) {
+    return { top: 0, bottom: 0 };
+  }
+  const top = Number.isFinite(visualViewport.offsetTop) ? Math.max(0, Math.round(visualViewport.offsetTop)) : 0;
+  const bottomRaw = window.innerHeight - visualViewport.height - visualViewport.offsetTop;
+  const bottom = Number.isFinite(bottomRaw) ? Math.max(0, Math.round(bottomRaw)) : 0;
+  return { top, bottom };
+}
+
 function normalizeSupportMessageTimestamp(value: string | null | undefined) {
   const normalized = String(value ?? "").trim();
   if (!normalized) return "";
@@ -3976,6 +3990,7 @@ export default function AdminClient({
   const [supportPeerProfilesByMerchantId, setSupportPeerProfilesByMerchantId] = useState<
     Record<string, MerchantListPublishedSite | null>
   >({});
+  const [mobileVisualViewportInsets, setMobileVisualViewportInsets] = useState(() => readMobileVisualViewportInsets());
   const supportRequestIdRef = useRef(0);
   const supportPeerRequestIdRef = useRef(0);
   const supportSendingRef = useRef(false);
@@ -4011,6 +4026,26 @@ export default function AdminClient({
   const openSupportContactThread = useCallback((contactKey: string) => {
     setSupportSelectedContactKey(contactKey);
     setSupportMobileView("thread");
+  }, []);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const syncMobileVisualViewportInsets = () => {
+      const nextInsets = readMobileVisualViewportInsets();
+      setMobileVisualViewportInsets((current) =>
+        current.top === nextInsets.top && current.bottom === nextInsets.bottom ? current : nextInsets,
+      );
+    };
+    syncMobileVisualViewportInsets();
+    window.addEventListener("resize", syncMobileVisualViewportInsets);
+    window.addEventListener("orientationchange", syncMobileVisualViewportInsets);
+    window.visualViewport?.addEventListener("resize", syncMobileVisualViewportInsets);
+    window.visualViewport?.addEventListener("scroll", syncMobileVisualViewportInsets);
+    return () => {
+      window.removeEventListener("resize", syncMobileVisualViewportInsets);
+      window.removeEventListener("orientationchange", syncMobileVisualViewportInsets);
+      window.visualViewport?.removeEventListener("resize", syncMobileVisualViewportInsets);
+      window.visualViewport?.removeEventListener("scroll", syncMobileVisualViewportInsets);
+    };
   }, []);
   const handleSupportMobileThreadTouchStart = useCallback((event: TouchEvent<HTMLDivElement>) => {
     const touch = event.touches[0];
@@ -9191,14 +9226,14 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             <div className="px-5 pb-8 pt-[calc(env(safe-area-inset-top)+1.5rem)] sm:px-6">
               <div className="inline-flex items-center gap-3 rounded-full border border-white/14 bg-white/10 px-4 py-2 text-xs font-medium uppercase tracking-[0.24em] text-cyan-50/90 backdrop-blur">
                 <span className="inline-flex h-2 w-2 rounded-full bg-emerald-300" />
-                Merchant Space
+                Faolla.com
               </div>
               <div className="mt-8 flex items-center gap-4">
                 <div className="flex h-16 w-16 items-center justify-center rounded-[24px] bg-white/14 text-2xl font-semibold tracking-[0.18em] text-white shadow-[0_16px_40px_rgba(8,17,33,0.28)] backdrop-blur">
-                  MS
+                  FA
                 </div>
                 <div>
-                  <div className="text-xs font-medium uppercase tracking-[0.28em] text-slate-200/72">Merchant Space</div>
+                  <div className="text-xs font-medium uppercase tracking-[0.28em] text-slate-200/72">Faolla.com</div>
                   <div className="mt-2 text-3xl font-semibold text-white">正在检查登录状态</div>
                 </div>
               </div>
@@ -9240,14 +9275,14 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             <div className="px-5 pb-8 pt-[calc(env(safe-area-inset-top)+1.5rem)] sm:px-6">
               <div className="inline-flex items-center gap-3 rounded-full border border-white/14 bg-white/10 px-4 py-2 text-xs font-medium uppercase tracking-[0.24em] text-cyan-50/90 backdrop-blur">
                 <span className="inline-flex h-2 w-2 rounded-full bg-emerald-300" />
-                Merchant Space
+                Faolla.com
               </div>
               <div className="mt-8 flex items-center gap-4">
                 <div className="flex h-16 w-16 items-center justify-center rounded-[24px] bg-white/14 text-2xl font-semibold tracking-[0.18em] text-white shadow-[0_16px_40px_rgba(8,17,33,0.28)] backdrop-blur">
-                  MS
+                  FA
                 </div>
                 <div>
-                  <div className="text-xs font-medium uppercase tracking-[0.28em] text-slate-200/72">Merchant Space</div>
+                  <div className="text-xs font-medium uppercase tracking-[0.28em] text-slate-200/72">Faolla.com</div>
                   <div className="mt-2 text-3xl font-semibold text-white">商户后台</div>
                 </div>
               </div>
@@ -9784,11 +9819,21 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           </>,
         )
       : null;
+  const mobileSupportViewportStyle: CSSProperties | undefined =
+    mobileVisualViewportInsets.top > 0 || mobileVisualViewportInsets.bottom > 0
+      ? {
+          top: `${mobileVisualViewportInsets.top}px`,
+          bottom: `${mobileVisualViewportInsets.bottom}px`,
+        }
+      : undefined;
 
   if (isMobileMerchantSupportOnlyMode) {
     return (
       <>
-        <main className="fixed inset-0 z-[120] h-[100dvh] overflow-hidden overscroll-none bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_48%,#f8fafc_100%)]">
+        <main
+          className="fixed inset-x-0 top-0 bottom-0 z-[120] overflow-hidden overscroll-none bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_48%,#f8fafc_100%)]"
+          style={mobileSupportViewportStyle}
+        >
           <div className="flex h-full min-h-0 flex-col overflow-hidden">
             {supportMobileDialogContent}
           </div>
@@ -10822,7 +10867,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                 }}
                 aria-label="关闭在线客服弹窗"
               />
-              <div className={`fixed inset-0 z-[2147483301] ${isMobileSupportDialog ? "" : "flex items-center justify-center p-4"}`}>
+              <div
+                className={`fixed inset-x-0 top-0 bottom-0 z-[2147483301] ${isMobileSupportDialog ? "" : "flex items-center justify-center p-4"}`}
+                style={isMobileSupportDialog ? mobileSupportViewportStyle : undefined}
+              >
                 {isMobileSupportDialog ? supportMobileDialogContent : (
                 <div className="flex h-full min-h-0 min-w-0 max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl md:grid md:grid-cols-[320px_minmax(0,1fr)]">
                   <div className="flex min-h-0 min-w-0 flex-col overflow-hidden border-b bg-white md:border-b-0 md:border-r">

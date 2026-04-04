@@ -10,6 +10,8 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
+  themeColor: "#081121",
+  interactiveWidget: "resizes-content",
 };
 
 const IGNORE_REJECTION_SCRIPT = `
@@ -70,6 +72,12 @@ export default function RootLayout({
       <head>
         <meta name="google" content="notranslate" />
         <meta httpEquiv="Content-Language" content="zh-CN,zh-TW,ja-JP,ko-KR,en-GB" />
+        <meta name="application-name" content="Faolla.com" />
+        <meta name="apple-mobile-web-app-title" content="Faolla.com" />
+        <meta name="mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+        <link rel="manifest" href="/manifest.webmanifest" />
       </head>
       <body>
         <Script id="i18n-pending" strategy="beforeInteractive">
