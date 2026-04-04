@@ -168,6 +168,27 @@ function LoginPageInner() {
     }
     return "QQ, Foxmail, Hotmail, Outlook, and Live mailboxes should use the email code to reset the password instead of the email link.";
   }, [normalizedLocale]);
+  const loginMethodPills = useMemo(() => {
+    if (normalizedLocale.startsWith("zh-tw")) return ["信箱", "使用者名稱", "8 位 ID"];
+    if (normalizedLocale.startsWith("ja")) return ["メール", "ユーザー名", "8 桁 ID"];
+    if (normalizedLocale.startsWith("ko")) return ["이메일", "사용자명", "8자리 ID"];
+    if (normalizedLocale.startsWith("zh")) return ["邮箱", "用户名", "8 位 ID"];
+    return ["Email", "Username", "8-digit ID"];
+  }, [normalizedLocale]);
+  const secureAccessLabel = useMemo(() => {
+    if (normalizedLocale.startsWith("zh-tw")) return "安全登入";
+    if (normalizedLocale.startsWith("ja")) return "安全ログイン";
+    if (normalizedLocale.startsWith("ko")) return "안전 로그인";
+    if (normalizedLocale.startsWith("zh")) return "安全登录";
+    return "Secure sign in";
+  }, [normalizedLocale]);
+  const continueLabel = useMemo(() => {
+    if (normalizedLocale.startsWith("zh-tw")) return "繼續進入商戶後台";
+    if (normalizedLocale.startsWith("ja")) return "管理画面に進む";
+    if (normalizedLocale.startsWith("ko")) return "상인 백엔드로 계속";
+    if (normalizedLocale.startsWith("zh")) return "继续进入商户后台";
+    return "Continue to dashboard";
+  }, [normalizedLocale]);
   const passwordToggleLabels = useMemo(() => getPasswordToggleLabels(locale), [locale]);
   const authEmailRedirectOrigin = useMemo(() => resolveAuthEmailRedirectOrigin(), []);
   const shouldShowResetCodePreferredHint = useMemo(
@@ -842,145 +863,213 @@ function LoginPageInner() {
     }
   }
 
+  const fieldClassName =
+    "w-full rounded-[22px] border border-slate-200 bg-white px-4 py-4 text-[16px] text-slate-900 shadow-[0_10px_28px_rgba(15,23,42,0.06)] outline-none transition placeholder:text-slate-400 focus:border-slate-900 focus:ring-4 focus:ring-slate-900/8";
+  const secondaryButtonClassName =
+    "rounded-[20px] border border-slate-200 bg-white/88 px-4 py-3 text-sm font-medium text-slate-700 shadow-[0_8px_24px_rgba(15,23,42,0.06)] transition hover:border-slate-300 hover:bg-white disabled:opacity-50";
+
   return (
-    <main className="flex min-h-screen items-center justify-center bg-gray-100 p-6 text-slate-900">
-      <div className="w-full max-w-md space-y-4 rounded-xl border bg-white p-6 text-slate-900">
-        <h1 className="text-xl font-bold text-slate-900">{t("login.title")}</h1>
-        <div className="text-xs text-gray-500">{loginAccountTip}</div>
+    <main className="relative min-h-screen overflow-hidden bg-[#081121] text-slate-900">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(56,189,248,0.22),_transparent_34%),radial-gradient(circle_at_85%_18%,_rgba(45,212,191,0.18),_transparent_26%),linear-gradient(180deg,_#081121_0%,_#101b33_56%,_#eaf1ff_100%)]" />
+      <div className="absolute -left-16 top-20 h-48 w-48 rounded-full bg-cyan-300/20 blur-3xl" />
+      <div className="absolute right-[-3rem] top-40 h-56 w-56 rounded-full bg-emerald-300/16 blur-3xl" />
+      <div className="absolute bottom-[-5rem] left-1/2 h-64 w-64 -translate-x-1/2 rounded-full bg-white/12 blur-3xl" />
 
-        <div className="space-y-2">
-          <div className="hidden" aria-hidden="true">
-            <input type="text" tabIndex={-1} autoComplete="username" />
-            <input type="password" tabIndex={-1} autoComplete="current-password" />
-          </div>
-          <div className="text-sm text-gray-600">{loginAccountLabel}</div>
-          <input
-            ref={accountInputRef}
-            className="w-full rounded border p-2 text-slate-900 placeholder:text-slate-300"
-            type="text"
-            name="merchant-login-account"
-            autoComplete="off"
-            autoCapitalize="none"
-            autoCorrect="off"
-            spellCheck={false}
-            data-lpignore="true"
-            value={account}
-            onChange={(e) => setAccount(e.target.value)}
-            placeholder={loginAccountPlaceholder}
-          />
-        </div>
-
-        <div className="space-y-2">
-          <div className="text-sm text-gray-600">{t("login.password")}</div>
-          <PasswordField
-            ref={passwordInputRef}
-            className="w-full rounded border p-2 text-slate-900 placeholder:text-slate-300"
-            name="merchant-login-password"
-            autoComplete="new-password"
-            data-lpignore="true"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            onKeyDown={(event) => {
-              if (event.key !== "Enter") return;
-              event.preventDefault();
-              void signIn();
-            }}
-            placeholder={t("login.passwordMin6")}
-            showLabel={passwordToggleLabels.show}
-            hideLabel={passwordToggleLabels.hide}
-            toggleButtonTabIndex={-1}
-          />
-        </div>
-
-        {msg ? <div className="text-sm text-red-600">{msg}</div> : null}
-
-        <div className="flex gap-2">
-          <button
-            className="flex-1 rounded bg-black px-3 py-2 text-white disabled:opacity-50"
-            onClick={signIn}
-            disabled={pendingAction !== null}
-          >
-            {pendingAction === "signin" ? t("login.signingIn") : t("login.signIn")}
-          </button>
-          <button
-            className="flex-1 rounded border bg-white px-3 py-2 text-slate-900 disabled:opacity-50"
-            onClick={signUp}
-            disabled={pendingAction !== null}
-          >
-            {pendingAction === "signup" ? t("login.signingUp") : t("login.signUp")}
-          </button>
-        </div>
-
-        {isDevelopment && gatewayReachable === false ? (
-          <button
-            className="w-full rounded border bg-amber-50 px-3 py-2 text-amber-900 hover:bg-amber-100"
-            onClick={() => (window.location.href = "/admin?offline=1")}
-            disabled={pendingAction !== null}
-          >
-            {t("login.offlineDev")}
-          </button>
-        ) : null}
-
-        <button
-          className="w-full rounded border bg-white px-3 py-2 text-slate-900 hover:bg-gray-50 disabled:opacity-50"
-          onClick={forgotPassword}
-          disabled={pendingAction !== null}
-        >
-          {pendingAction === "forgot" ? t("common.sending") : t("login.forgot")}
-        </button>
-
-        {pendingResetEmail && shouldShowResetCodePreferredHint ? (
-          <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-            {resetCodePreferredHint}
-          </div>
-        ) : null}
-
-        {pendingResetEmail ? (
-          <div className="space-y-2 rounded border border-slate-200 bg-slate-50 p-3">
-            <div className="text-sm text-gray-600">
-              {t("login.resetCodeLabel")}
-              {pendingResetEmailMasked ? <span className="ml-2 text-xs text-gray-500">{pendingResetEmailMasked}</span> : null}
+      <div className="relative mx-auto flex min-h-screen w-full max-w-6xl flex-col md:px-6 md:py-8">
+        <div className="flex min-h-screen w-full flex-col md:min-h-0 md:flex-1 md:flex-row md:overflow-hidden md:rounded-[34px] md:border md:border-white/14 md:bg-white/8 md:shadow-[0_32px_120px_rgba(8,17,33,0.4)]">
+          <section className="relative flex flex-col px-5 pb-8 pt-[calc(env(safe-area-inset-top)+1.5rem)] text-white sm:px-6 md:w-[44%] md:px-10 md:py-12">
+            <div className="inline-flex w-fit items-center gap-3 rounded-full border border-white/14 bg-white/10 px-4 py-2 text-xs font-medium tracking-[0.24em] text-cyan-50/90 uppercase backdrop-blur">
+              <span className="inline-flex h-2 w-2 rounded-full bg-emerald-300" />
+              {secureAccessLabel}
             </div>
-            <input
-              className="w-full rounded border p-2 text-slate-900 placeholder:text-slate-300"
-              value={resetCode}
-              onChange={(event) => setResetCode(event.target.value)}
-              placeholder={t("login.resetCodePlaceholder")}
-              autoCapitalize="none"
-              autoCorrect="off"
-              spellCheck={false}
-            />
-            <button
-              className="w-full rounded border bg-white px-3 py-2 text-slate-900 hover:bg-gray-50 disabled:opacity-50"
-              onClick={verifyResetCode}
-              disabled={pendingAction !== null}
-            >
-              {pendingAction === "verify_reset_code" ? t("login.verifyingResetCode") : t("login.verifyResetCode")}
-            </button>
+
+            <div className="mt-7 flex items-center gap-4">
+              <div className="flex h-16 w-16 items-center justify-center rounded-[24px] bg-white/14 text-2xl font-semibold tracking-[0.18em] text-white shadow-[0_16px_40px_rgba(8,17,33,0.28)] backdrop-blur">
+                MS
+              </div>
+              <div>
+                <div className="text-xs font-medium uppercase tracking-[0.28em] text-slate-200/72">Merchant Space</div>
+                <div className="mt-2 text-3xl font-semibold leading-none text-white md:text-4xl">{t("login.title")}</div>
+              </div>
+            </div>
+
+            <div className="mt-7 max-w-md text-sm leading-7 text-slate-100/82 md:text-[15px]">
+              {loginAccountTip}
+            </div>
+
+            <div className="mt-6 flex flex-wrap gap-2">
+              {loginMethodPills.map((pill) => (
+                <span
+                  key={pill}
+                  className="rounded-full border border-white/14 bg-white/10 px-3 py-1.5 text-xs font-medium text-slate-50/92 backdrop-blur"
+                >
+                  {pill}
+                </span>
+              ))}
+            </div>
+
+            <div className="mt-8 grid gap-3 md:mt-auto">
+              <div className="rounded-[26px] border border-white/12 bg-white/10 p-4 backdrop-blur">
+                <div className="text-xs uppercase tracking-[0.24em] text-cyan-100/70">Faolla</div>
+                <div className="mt-2 text-lg font-semibold text-white">{continueLabel}</div>
+                <div className="mt-1 text-sm leading-6 text-slate-100/72">
+                  {emailConfirmationRequired === false ? t("login.firstRegisterTipAutoConfirm") : t("login.firstRegisterTip")}
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="relative mt-auto flex-1 rounded-t-[32px] bg-[linear-gradient(180deg,_rgba(248,251,255,0.96)_0%,_#ffffff_34%,_#f8fbff_100%)] px-5 pb-[calc(env(safe-area-inset-bottom)+1.5rem)] pt-5 shadow-[0_-24px_60px_rgba(8,17,33,0.24)] sm:px-6 md:mt-0 md:rounded-none md:px-10 md:py-12 md:shadow-none">
+            <div className="mx-auto max-w-md">
+              <div className="mx-auto mb-5 h-1.5 w-14 rounded-full bg-slate-200 md:hidden" />
+
+              <div className="space-y-6">
+                <div className="space-y-2">
+                  <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">Account</div>
+                  <div className="text-2xl font-semibold tracking-tight text-slate-950">{t("login.title")}</div>
+                  <div className="text-sm leading-6 text-slate-500">
+                    {loggedOut ? t("login.signIn") : loginAccountTip}
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="hidden" aria-hidden="true">
+                    <input type="text" tabIndex={-1} autoComplete="username" />
+                    <input type="password" tabIndex={-1} autoComplete="current-password" />
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="px-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">{loginAccountLabel}</div>
+                    <input
+                      ref={accountInputRef}
+                      className={fieldClassName}
+                      type="text"
+                      name="merchant-login-account"
+                      autoComplete="off"
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
+                      data-lpignore="true"
+                      value={account}
+                      onChange={(e) => setAccount(e.target.value)}
+                      placeholder={loginAccountPlaceholder}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="px-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">{t("login.password")}</div>
+                    <PasswordField
+                      ref={passwordInputRef}
+                      className={fieldClassName}
+                      name="merchant-login-password"
+                      autoComplete="new-password"
+                      data-lpignore="true"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter") return;
+                        event.preventDefault();
+                        void signIn();
+                      }}
+                      placeholder={t("login.passwordMin6")}
+                      showLabel={passwordToggleLabels.show}
+                      hideLabel={passwordToggleLabels.hide}
+                      toggleButtonTabIndex={-1}
+                    />
+                  </div>
+                </div>
+
+                {msg ? (
+                  <div className="rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-700 shadow-[0_10px_28px_rgba(15,23,42,0.04)]">
+                    {msg}
+                  </div>
+                ) : null}
+
+                <div className="space-y-3">
+                  <button
+                    className="w-full rounded-[22px] bg-slate-950 px-4 py-4 text-[15px] font-semibold text-white shadow-[0_18px_40px_rgba(15,23,42,0.24)] transition hover:bg-slate-800 disabled:opacity-50"
+                    onClick={signIn}
+                    disabled={pendingAction !== null}
+                  >
+                    {pendingAction === "signin" ? t("login.signingIn") : t("login.signIn")}
+                  </button>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <button className={secondaryButtonClassName} onClick={signUp} disabled={pendingAction !== null}>
+                      {pendingAction === "signup" ? t("login.signingUp") : t("login.signUp")}
+                    </button>
+                    <button className={secondaryButtonClassName} onClick={forgotPassword} disabled={pendingAction !== null}>
+                      {pendingAction === "forgot" ? t("common.sending") : t("login.forgot")}
+                    </button>
+                  </div>
+
+                  {isDevelopment && gatewayReachable === false ? (
+                    <button
+                      className="w-full rounded-[20px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900 transition hover:bg-amber-100"
+                      onClick={() => (window.location.href = "/admin?offline=1")}
+                      disabled={pendingAction !== null}
+                    >
+                      {t("login.offlineDev")}
+                    </button>
+                  ) : null}
+
+                  {pendingResetEmail && shouldShowResetCodePreferredHint ? (
+                    <div className="rounded-[22px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
+                      {resetCodePreferredHint}
+                    </div>
+                  ) : null}
+
+                  {pendingResetEmail ? (
+                    <div className="space-y-3 rounded-[26px] border border-slate-200 bg-white/90 p-4 shadow-[0_14px_32px_rgba(15,23,42,0.05)]">
+                      <div className="text-sm font-medium text-slate-600">
+                        {t("login.resetCodeLabel")}
+                        {pendingResetEmailMasked ? <span className="ml-2 text-xs text-slate-400">{pendingResetEmailMasked}</span> : null}
+                      </div>
+                      <input
+                        className={fieldClassName}
+                        value={resetCode}
+                        onChange={(event) => setResetCode(event.target.value)}
+                        placeholder={t("login.resetCodePlaceholder")}
+                        autoCapitalize="none"
+                        autoCorrect="off"
+                        spellCheck={false}
+                      />
+                      <button
+                        className={secondaryButtonClassName}
+                        onClick={verifyResetCode}
+                        disabled={pendingAction !== null}
+                      >
+                        {pendingAction === "verify_reset_code" ? t("login.verifyingResetCode") : t("login.verifyResetCode")}
+                      </button>
+                    </div>
+                  ) : null}
+
+                  {needConfirmEmail ? (
+                    <button
+                      className={secondaryButtonClassName}
+                      onClick={resendConfirmationEmail}
+                      disabled={pendingAction !== null}
+                    >
+                      {pendingAction === "resend" ? t("common.sending") : t("login.resend")}
+                    </button>
+                  ) : null}
+
+                  <div className="px-1 text-xs leading-6 text-slate-400 md:hidden">
+                    {emailConfirmationRequired === false ? t("login.firstRegisterTipAutoConfirm") : t("login.firstRegisterTip")}
+                  </div>
+                </div>
+              </div>
+            </div>
+            </section>
           </div>
-        ) : null}
-
-        {needConfirmEmail ? (
-          <button
-            className="w-full rounded border bg-white px-3 py-2 text-slate-900 hover:bg-gray-50 disabled:opacity-50"
-            onClick={resendConfirmationEmail}
-            disabled={pendingAction !== null}
-          >
-            {pendingAction === "resend" ? t("common.sending") : t("login.resend")}
-          </button>
-        ) : null}
-
-        <div className="text-xs text-gray-500">
-          {emailConfirmationRequired === false ? t("login.firstRegisterTipAutoConfirm") : t("login.firstRegisterTip")}
         </div>
-      </div>
     </main>
   );
 }
 
 export default function LoginPage() {
   return (
-    <Suspense fallback={<main className="min-h-screen bg-gray-100" />}>
+    <Suspense fallback={<main className="min-h-screen bg-[#081121]" />}>
       <LoginPageInner />
     </Suspense>
   );
