@@ -10810,7 +10810,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                         {contactRow.updatedAt ? formatSupportConversationTime(contactRow.updatedAt) : "未开始"}
                       </div>
                     </div>
-                    <div className="mt-2 line-clamp-2 text-[13px] leading-5 text-slate-600">{contactRow.preview}</div>
+                    <div className="mt-2 truncate text-[13px] leading-5 text-slate-600">{contactRow.preview}</div>
                   </div>
                 </div>
               </button>
@@ -12821,7 +12821,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                                     {contactRow.updatedAt ? formatSupportMessageTime(contactRow.updatedAt) : "未聊天"}
                                   </div>
                                 </div>
-                                <div className="mt-2 line-clamp-2 text-xs leading-5 text-slate-600">
+                                <div className="mt-2 truncate text-xs leading-5 text-slate-600">
                                   {contactRow.preview}
                                 </div>
                               </button>
