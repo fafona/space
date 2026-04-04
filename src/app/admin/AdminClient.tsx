@@ -3841,6 +3841,85 @@ function buildSupportMerchantCardShareInput(card: MerchantBusinessCardAsset | nu
   };
 }
 
+function isSupportSnapshotFallbackBusinessCard(card: MerchantBusinessCardAsset | null | undefined) {
+  return normalizeSupportDetailText(card?.id).startsWith("snapshot-fallback-");
+}
+
+function escapeSupportSvgText(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function buildSupportFallbackBusinessCardPreviewDataUrl(card: MerchantBusinessCardAsset | null | undefined) {
+  if (!card) return "";
+  const displayName = normalizeSupportDetailText(card.name) || "商户名片";
+  const title = normalizeSupportDetailText(card.title);
+  const websiteUrl = normalizeSupportDetailText(card.targetUrl);
+  const websiteLabel = websiteUrl ? formatSupportUrlLabel(websiteUrl) : "";
+  const lineItems = [
+    normalizeSupportDetailText(card.contacts.contactName)
+      ? `联系人  ${normalizeSupportDetailText(card.contacts.contactName)}`
+      : "",
+    normalizeSupportDetailText(card.contacts.phone) ? `电话  ${normalizeSupportDetailText(card.contacts.phone)}` : "",
+    normalizeSupportDetailText(card.contacts.email) ? `邮箱  ${normalizeSupportDetailText(card.contacts.email)}` : "",
+    websiteLabel ? `官网  ${websiteLabel}` : "",
+  ].filter(Boolean);
+  const visibleLines = lineItems.slice(0, 3);
+  const initials = escapeSupportSvgText(getSupportContactAvatarLabel(displayName, "名").slice(0, 2));
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="720" height="432" viewBox="0 0 720 432">
+      <defs>
+        <linearGradient id="support-card-bg" x1="0%" x2="100%" y1="0%" y2="100%">
+          <stop offset="0%" stop-color="#f8fbff" />
+          <stop offset="100%" stop-color="#e9eefc" />
+        </linearGradient>
+      </defs>
+      <rect width="720" height="432" rx="36" fill="url(#support-card-bg)" />
+      <rect x="28" y="28" width="664" height="376" rx="30" fill="#ffffff" stroke="#dbe4f0" stroke-width="2" />
+      <rect x="48" y="48" width="624" height="104" rx="26" fill="#0f172a" />
+      <circle cx="112" cy="100" r="36" fill="#ffffff" fill-opacity="0.14" />
+      <text x="112" y="111" fill="#ffffff" font-family="Arial, sans-serif" font-size="28" font-weight="700" text-anchor="middle">${initials}</text>
+      <text x="168" y="98" fill="#ffffff" font-family="Arial, sans-serif" font-size="34" font-weight="700">${escapeSupportSvgText(displayName)}</text>
+      <text x="168" y="132" fill="#cbd5e1" font-family="Arial, sans-serif" font-size="22">${escapeSupportSvgText(title || "联系卡")}</text>
+      <text x="54" y="204" fill="#0f172a" font-family="Arial, sans-serif" font-size="24" font-weight="700">Faolla Contact</text>
+      ${visibleLines
+        .map(
+          (line, index) =>
+            `<text x="54" y="${252 + index * 46}" fill="#334155" font-family="Arial, sans-serif" font-size="24">${escapeSupportSvgText(line)}</text>`,
+        )
+        .join("")}
+      <rect x="48" y="340" width="624" height="44" rx="16" fill="#ecfdf5" />
+      <text x="68" y="369" fill="#059669" font-family="Arial, sans-serif" font-size="22">${escapeSupportSvgText(
+        websiteLabel || "点击查看联系卡",
+      )}</text>
+    </svg>
+  `.trim();
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+function getSupportPreferredBusinessCardPreviewUrl(card: MerchantBusinessCardAsset | null | undefined) {
+  if (!card) return "";
+  const shareImageUrl = normalizeSupportDetailText(card.shareImageUrl);
+  const imageUrl = normalizeSupportDetailText(card.imageUrl);
+  const detailImageUrl =
+    normalizeSupportDetailText(card.contactPagePublicImageUrl) || normalizeSupportDetailText(card.contactPageImageUrl);
+  if (card.mode === "link") {
+    if (shareImageUrl) return shareImageUrl;
+    if (!isSupportSnapshotFallbackBusinessCard(card) && imageUrl && imageUrl !== detailImageUrl) {
+      return imageUrl;
+    }
+    return buildSupportFallbackBusinessCardPreviewDataUrl(card);
+  }
+  if (imageUrl && !isSupportSnapshotFallbackBusinessCard(card)) {
+    return imageUrl;
+  }
+  return buildSupportFallbackBusinessCardPreviewDataUrl(card);
+}
+
 function buildSupportMerchantCardLink(card: MerchantBusinessCardAsset | null) {
   if (!card || card.mode !== "link") return "";
   const input = buildSupportMerchantCardShareInput(card);
@@ -9624,37 +9703,56 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const ensureSupportBusinessCardShareBundle = useCallback(
     async (card: MerchantBusinessCardAsset) => {
       const shareInput = buildSupportMerchantCardShareInput(card);
-      const imageUrl = normalizeSupportDetailText(shareInput?.imageUrl) || normalizeSupportDetailText(card.imageUrl);
       const cachedBundle = supportSelfCardShareBundleRef.current[card.id];
-      if (cachedBundle?.imageUrl && (card.mode !== "link" || cachedBundle.shareUrl)) {
+      if (normalizeSupportDetailText(cachedBundle?.imageUrl) && (card.mode !== "link" || normalizeSupportDetailText(cachedBundle?.shareUrl))) {
         return cachedBundle;
       }
 
+      let imageUrl = normalizeSupportDetailText(cachedBundle?.imageUrl);
+      if (!imageUrl) {
+        const preferredPreviewUrl = getSupportPreferredBusinessCardPreviewUrl(card);
+        if (preferredPreviewUrl && isSupportImageAssetUrl(preferredPreviewUrl)) {
+          imageUrl = preferredPreviewUrl;
+        } else if (preferredPreviewUrl && isInlineDataImageUrl(preferredPreviewUrl)) {
+          imageUrl =
+            (await uploadImageDataUrlToSupabase(
+              preferredPreviewUrl,
+              (
+                editingSiteId ||
+                merchantSessionIdentityRef.current.merchantId ||
+                supportReadMerchantId ||
+                merchantDisplayName ||
+                "public"
+              ).trim(),
+            )) ?? "";
+        }
+      }
+      if (!imageUrl) {
+        imageUrl = normalizeSupportDetailText(shareInput?.imageUrl) || normalizeSupportDetailText(card.imageUrl);
+      }
+
       if (card.mode !== "link") {
-        return {
+        const nextBundle = {
           shareUrl: "",
           shareKey: normalizeSupportDetailText(card.shareKey),
           imageUrl,
         };
-      }
-
-      const existingShareUrl = buildSupportMerchantCardLink(card);
-      if (imageUrl && isSupportShortMerchantCardLink(existingShareUrl)) {
-        const nextBundle = {
-          shareUrl: existingShareUrl,
-          shareKey: normalizeSupportDetailText(card.shareKey),
-          imageUrl,
-        };
-        supportSelfCardShareBundleRef.current[card.id] = nextBundle;
+        if (imageUrl) {
+          supportSelfCardShareBundleRef.current[card.id] = nextBundle;
+        }
         return nextBundle;
       }
 
       if (!shareInput?.targetUrl || !imageUrl) {
-        return {
+        const nextBundle = {
           shareUrl: "",
           shareKey: "",
           imageUrl,
         };
+        if (imageUrl) {
+          supportSelfCardShareBundleRef.current[card.id] = nextBundle;
+        }
+        return nextBundle;
       }
 
       try {
@@ -9690,19 +9788,23 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           shareKey,
           imageUrl,
         };
-        if (shareUrl) {
+        if (imageUrl || shareUrl) {
           supportSelfCardShareBundleRef.current[card.id] = nextBundle;
         }
         return nextBundle;
       } catch {
-        return {
+        const nextBundle = {
           shareUrl: "",
           shareKey: "",
           imageUrl,
         };
+        if (imageUrl) {
+          supportSelfCardShareBundleRef.current[card.id] = nextBundle;
+        }
+        return nextBundle;
       }
     },
-    [requestMerchantChatWithSessionRecovery],
+    [editingSiteId, merchantDisplayName, requestMerchantChatWithSessionRecovery, supportReadMerchantId],
   );
 
   const scheduleMerchantChatBusinessCardSync = useCallback(
@@ -11911,9 +12013,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             <div className="space-y-3 px-4 py-4">
               {supportSelfBusinessCards.length ? (
                 supportSelfBusinessCards.map((card) => {
-                  const cardPreviewUrl =
-                    normalizeSupportDisplayValue(card.shareImageUrl) ||
-                    normalizeSupportDisplayValue(card.imageUrl);
+                  const cardPreviewUrl = getSupportPreferredBusinessCardPreviewUrl(card);
                   const canCopyCardLink = card.mode === "link" && !!normalizeSupportDisplayValue(card.targetUrl);
                   return (
                     <article key={card.id} className="overflow-hidden rounded-[24px] border border-slate-200 bg-slate-50/80">
@@ -12006,13 +12106,16 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
   const supportMobileBottomNav = (
     <div
-      className={`pointer-events-none absolute inset-x-0 bottom-0 z-[2] transition duration-200 ${
+      className={`pointer-events-none fixed bottom-0 left-1/2 z-[2147483298] w-full max-w-md -translate-x-1/2 overscroll-none touch-none transition duration-200 ${
         isSupportMobileKeyboardVisible ? "translate-y-full opacity-0" : "opacity-100"
       }`}
       aria-hidden={isSupportMobileKeyboardVisible}
+      onTouchMove={(event) => {
+        event.stopPropagation();
+      }}
     >
       <div className="absolute inset-x-0 bottom-0 h-[calc(env(safe-area-inset-bottom)+6.35rem)] bg-[linear-gradient(180deg,rgba(248,250,252,0)_0%,rgba(248,250,252,0.92)_24%,rgba(255,255,255,0.98)_100%)]" />
-      <div className="pointer-events-auto relative mx-auto max-w-md px-4 pb-[calc(env(safe-area-inset-bottom)+0.08rem)] pt-5">
+      <div className="pointer-events-auto relative px-4 pb-[calc(env(safe-area-inset-bottom)+0.08rem)] pt-5 touch-manipulation">
         <div className="flex items-center gap-1 rounded-[30px] border border-slate-200/80 bg-white/95 px-2 py-2 shadow-[0_20px_40px_rgba(15,23,42,0.12)] backdrop-blur">
           {([
             {
@@ -12471,9 +12574,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                 <div className="max-h-[58vh] space-y-2 overflow-y-auto px-3 pb-3">
                   {supportSelfBusinessCards.length ? (
                     supportSelfBusinessCards.map((card) => {
-                      const cardPreviewUrl =
-                        normalizeSupportDisplayValue(card.shareImageUrl) ||
-                        normalizeSupportDisplayValue(card.imageUrl);
+                      const cardPreviewUrl = getSupportPreferredBusinessCardPreviewUrl(card);
                       const cardModeLabel = card.mode === "link" ? "链接模式" : "图片模式";
                       return (
                         <button

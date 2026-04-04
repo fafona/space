@@ -27,9 +27,13 @@ export function readBearerAccessToken(request: Request) {
   return tokenMatch?.[1]?.trim() ?? "";
 }
 
+export function readMerchantAccessTokenHeader(request: Request) {
+  return (request.headers.get("x-merchant-access-token") ?? "").trim();
+}
+
 export function readMerchantRequestAccessTokens(request: Request) {
   const tokens: string[] = [];
-  [readBearerAccessToken(request), readMerchantAuthCookie(request)].forEach((token) => {
+  [readBearerAccessToken(request), readMerchantAccessTokenHeader(request), readMerchantAuthCookie(request)].forEach((token) => {
     if (!token || tokens.includes(token)) return;
     tokens.push(token);
   });
