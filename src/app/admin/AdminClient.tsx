@@ -8955,10 +8955,27 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const supportSelfBusinessCards = useMemo(() => {
     const localCards = Array.isArray(editingSite?.businessCards) ? normalizeMerchantBusinessCards(editingSite.businessCards) : [];
     const remoteCard = supportSelfFetchedBusinessCard ?? supportSelfProfile?.chatBusinessCard ?? null;
-    const normalizedCards =
-      localCards.length > 0
-        ? localCards
-        : normalizeMerchantBusinessCards(remoteCard ? [remoteCard] : []);
+    const mergedCards = [...localCards];
+    if (remoteCard) {
+      const normalizedRemoteCards = normalizeMerchantBusinessCards([remoteCard]);
+      normalizedRemoteCards.forEach((card) => {
+        const matchIndex = mergedCards.findIndex(
+          (item) =>
+            item.id === card.id ||
+            (!!item.shareKey && !!card.shareKey && item.shareKey === card.shareKey) ||
+            (!!item.targetUrl && !!card.targetUrl && item.targetUrl === card.targetUrl),
+        );
+        if (matchIndex >= 0) {
+          mergedCards[matchIndex] = {
+            ...mergedCards[matchIndex],
+            ...card,
+          };
+        } else {
+          mergedCards.unshift(card);
+        }
+      });
+    }
+    const normalizedCards = mergedCards.length > 0 ? mergedCards : normalizeMerchantBusinessCards(remoteCard ? [remoteCard] : []);
     return [...normalizedCards].sort((left, right) => {
       const leftChat = left.showInChat !== false;
       const rightChat = right.showInChat !== false;
@@ -9039,6 +9056,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     "/";
   const supportSelfSignature = normalizeSupportDisplayValue(supportSelfProfile?.signature);
   const supportSelfChatBusinessCard =
+    supportSelfFetchedBusinessCard ??
     resolveMerchantBusinessCardForChatDisplay(editingSite?.businessCards ?? []) ??
     supportSelfProfile?.chatBusinessCard ??
     null;
