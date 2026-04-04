@@ -3796,11 +3796,38 @@ function normalizeSupportDisplayValue(value: unknown) {
   return normalized && normalized !== "-" ? normalized : "";
 }
 
-function buildSupportMerchantCardLink(card: MerchantBusinessCardAsset | null) {
-  if (!card || card.mode !== "link") return "";
+function buildSupportMerchantCardShareContact(card: MerchantBusinessCardAsset) {
+  return {
+    displayName: normalizeSupportDetailText(card.contacts.contactName) || normalizeSupportDetailText(card.name),
+    organization: normalizeSupportDetailText(card.name),
+    title: normalizeSupportDetailText(card.title),
+    phone: normalizeSupportDetailText(card.contacts.phone),
+    phones: Array.isArray(card.contacts.phones) ? card.contacts.phones.filter(Boolean) : [],
+    contactFieldOrder: card.contactFieldOrder,
+    contactOnlyFields: card.contactOnlyFields,
+    email: normalizeSupportDetailText(card.contacts.email),
+    address: normalizeSupportDetailText(card.contacts.address),
+    wechat: normalizeSupportDetailText(card.contacts.wechat),
+    whatsapp: normalizeSupportDetailText(card.contacts.whatsapp),
+    twitter: normalizeSupportDetailText(card.contacts.twitter),
+    weibo: normalizeSupportDetailText(card.contacts.weibo),
+    telegram: normalizeSupportDetailText(card.contacts.telegram),
+    linkedin: normalizeSupportDetailText(card.contacts.linkedin),
+    discord: normalizeSupportDetailText(card.contacts.discord),
+    facebook: normalizeSupportDetailText(card.contacts.facebook),
+    instagram: normalizeSupportDetailText(card.contacts.instagram),
+    tiktok: normalizeSupportDetailText(card.contacts.tiktok),
+    douyin: normalizeSupportDetailText(card.contacts.douyin),
+    xiaohongshu: normalizeSupportDetailText(card.contacts.xiaohongshu),
+    websiteUrl: normalizeSupportDetailText(card.targetUrl),
+  };
+}
+
+function buildSupportMerchantCardShareInput(card: MerchantBusinessCardAsset | null) {
+  if (!card) return null;
   const targetUrl = normalizeSupportDetailText(card.targetUrl);
-  if (!targetUrl) return "";
-  return buildMerchantBusinessCardShareUrl({
+  if (!targetUrl) return null;
+  return {
     origin: resolveMerchantBusinessCardShareOrigin(undefined, targetUrl),
     shareKey: normalizeSupportDetailText(card.shareKey),
     name: normalizeSupportDetailText(card.name),
@@ -3809,31 +3836,15 @@ function buildSupportMerchantCardLink(card: MerchantBusinessCardAsset | null) {
       normalizeSupportDetailText(card.contactPagePublicImageUrl) || normalizeSupportDetailText(card.contactPageImageUrl),
     detailImageHeight: card.contactPageImageHeight,
     targetUrl,
-    contact: {
-      displayName: normalizeSupportDetailText(card.contacts.contactName) || normalizeSupportDetailText(card.name),
-      organization: normalizeSupportDetailText(card.name),
-      title: normalizeSupportDetailText(card.title),
-      phone: normalizeSupportDetailText(card.contacts.phone),
-      phones: Array.isArray(card.contacts.phones) ? card.contacts.phones.filter(Boolean) : [],
-      contactFieldOrder: card.contactFieldOrder,
-      contactOnlyFields: card.contactOnlyFields,
-      email: normalizeSupportDetailText(card.contacts.email),
-      address: normalizeSupportDetailText(card.contacts.address),
-      wechat: normalizeSupportDetailText(card.contacts.wechat),
-      whatsapp: normalizeSupportDetailText(card.contacts.whatsapp),
-      twitter: normalizeSupportDetailText(card.contacts.twitter),
-      weibo: normalizeSupportDetailText(card.contacts.weibo),
-      telegram: normalizeSupportDetailText(card.contacts.telegram),
-      linkedin: normalizeSupportDetailText(card.contacts.linkedin),
-      discord: normalizeSupportDetailText(card.contacts.discord),
-      facebook: normalizeSupportDetailText(card.contacts.facebook),
-      instagram: normalizeSupportDetailText(card.contacts.instagram),
-      tiktok: normalizeSupportDetailText(card.contacts.tiktok),
-      douyin: normalizeSupportDetailText(card.contacts.douyin),
-      xiaohongshu: normalizeSupportDetailText(card.contacts.xiaohongshu),
-      websiteUrl: targetUrl,
-    },
-  });
+    contact: buildSupportMerchantCardShareContact(card),
+  };
+}
+
+function buildSupportMerchantCardLink(card: MerchantBusinessCardAsset | null) {
+  if (!card || card.mode !== "link") return "";
+  const input = buildSupportMerchantCardShareInput(card);
+  if (!input) return "";
+  return buildMerchantBusinessCardShareUrl(input);
 }
 
 function buildSupportFallbackMerchantCardHref(input: {
@@ -4346,6 +4357,92 @@ function normalizeSupportLinkHref(value: string) {
   }
 }
 
+function stripSupportMessagePrefix(value: string, prefixes: string[]) {
+  const trimmed = normalizeSupportDetailText(value);
+  for (const prefix of prefixes) {
+    if (trimmed.startsWith(prefix)) {
+      return normalizeSupportDetailText(trimmed.slice(prefix.length));
+    }
+  }
+  return trimmed;
+}
+
+function isSupportImageAssetUrl(value: string) {
+  const href = normalizeSupportLinkHref(value);
+  return href
+    ? /\.(?:avif|bmp|gif|heic|heif|jpe?g|png|svg|webp)(?:$|[?#])/i.test(href)
+    : false;
+}
+
+function extractSupportImageMessageUrl(value: string) {
+  const href = normalizeSupportLinkHref(
+    stripSupportMessagePrefix(value, ["图片：", "图片:", "照片：", "照片:", "拍照：", "拍照:"]),
+  );
+  return href && isSupportImageAssetUrl(href) ? href : "";
+}
+
+function extractSupportLinkMessageUrl(value: string) {
+  return normalizeSupportLinkHref(stripSupportMessagePrefix(value, ["联系卡：", "联系卡:", "链接：", "链接:"]));
+}
+
+function isSupportShortMerchantCardLink(value: string) {
+  const href = normalizeSupportLinkHref(value);
+  if (!href) return false;
+  try {
+    const parsed = new URL(href);
+    return /^\/card\/[a-z0-9][a-z0-9_-]{5,63}\/?$/i.test(parsed.pathname);
+  } catch {
+    return false;
+  }
+}
+
+type SupportMessageAttachmentPreview = {
+  imageUrl: string;
+  linkUrl: string;
+};
+
+function parseSupportMessageAttachmentPreview(value: string): SupportMessageAttachmentPreview | null {
+  const lines = String(value ?? "")
+    .split(/\r?\n/)
+    .map((line) => normalizeSupportDetailText(line))
+    .filter(Boolean);
+  if (lines.length === 0) return null;
+
+  const firstImageUrl = extractSupportImageMessageUrl(lines[0]);
+  if (firstImageUrl) {
+    const secondLineUrl = lines.length >= 2 ? extractSupportLinkMessageUrl(lines[1]) : "";
+    return {
+      imageUrl: firstImageUrl,
+      linkUrl: secondLineUrl && secondLineUrl !== firstImageUrl ? secondLineUrl : "",
+    };
+  }
+
+  if (lines.length === 2 && /^(?:照片|拍照|图片)\s*[：:]/.test(lines[0])) {
+    const secondImageUrl = extractSupportImageMessageUrl(lines[1]);
+    if (secondImageUrl) {
+      return {
+        imageUrl: secondImageUrl,
+        linkUrl: "",
+      };
+    }
+  }
+
+  return null;
+}
+
+function formatSupportConversationPreview(value: string | null | undefined) {
+  const text = String(value ?? "").trim();
+  if (!text) return "";
+  const attachmentPreview = parseSupportMessageAttachmentPreview(text);
+  if (attachmentPreview?.imageUrl && attachmentPreview.linkUrl) return "名片";
+  if (attachmentPreview?.imageUrl) return "图片";
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => normalizeSupportDetailText(line))
+    .filter(Boolean);
+  return lines[0] || text;
+}
+
 function renderSupportMessageText(value: string) {
   const text = String(value ?? "");
   if (!text) return text;
@@ -4386,6 +4483,50 @@ function renderSupportMessageText(value: string) {
     parts.push(text.slice(lastIndex));
   }
   return parts;
+}
+
+function renderSupportMessageContent(value: string, options?: { isSelf?: boolean }) {
+  const attachmentPreview = parseSupportMessageAttachmentPreview(value);
+  if (!attachmentPreview) {
+    return (
+      <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-[15px] leading-6">
+        {renderSupportMessageText(value)}
+      </div>
+    );
+  }
+
+  const normalizedImageUrl = normalizePublicAssetUrl(attachmentPreview.imageUrl);
+  const linkUrl = attachmentPreview.linkUrl;
+
+  return (
+    <div className="space-y-2">
+      <a
+        href={normalizedImageUrl}
+        target="_blank"
+        rel="noreferrer"
+        className="block overflow-hidden rounded-[18px] bg-white/10"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={normalizedImageUrl}
+          alt="名片图片"
+          className="block h-auto max-h-[18rem] w-full object-contain"
+        />
+      </a>
+      {linkUrl ? (
+        <a
+          href={linkUrl}
+          target="_blank"
+          rel="noreferrer"
+          className={`block break-all text-sm underline underline-offset-4 ${
+            options?.isSelf ? "text-white/90" : "text-slate-700"
+          }`}
+        >
+          {linkUrl}
+        </a>
+      ) : null}
+    </div>
+  );
 }
 
 export default function AdminClient({
@@ -4524,6 +4665,9 @@ export default function AdminClient({
   const supportPhotoInputRef = useRef<HTMLInputElement>(null);
   const supportCameraInputRef = useRef<HTMLInputElement>(null);
   const supportFileInputRef = useRef<HTMLInputElement>(null);
+  const supportSelfCardShareBundleRef = useRef<Record<string, { shareUrl: string; shareKey: string; imageUrl: string }>>(
+    {},
+  );
   const supportLastIncomingAdminMessageKeyRef = useRef("");
   const supportLastIncomingPeerMessageKeyRef = useRef("");
   const supportLastVisibleMessageKeyRef = useRef("");
@@ -8939,7 +9083,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       name: supportOfficialName,
       badge: supportOfficialBadgeLabel,
       subtitle: supportOfficialSiteLabel,
-      preview: latestOfficialVisibleSupportMessage?.text || "还没有留言记录，可以直接在右侧给 Faolla 留言。",
+      preview:
+        formatSupportConversationPreview(latestOfficialVisibleSupportMessage?.text) ||
+        "还没有留言记录，可以直接在右侧给 Faolla 留言。",
       updatedAt: latestOfficialVisibleSupportMessage?.createdAt || "",
       unread: supportHasUnreadOfficialMessages,
       avatarLabel: getSupportContactAvatarLabel(supportOfficialName, "FA"),
@@ -8958,7 +9104,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         name: contact.merchantName || contact.merchantId,
         badge: undefined as string | undefined,
         subtitle: contact.merchantId,
-        preview: contact.lastMessage?.text || "还没有聊天记录，可以直接开始对话。",
+        preview: formatSupportConversationPreview(contact.lastMessage?.text) || "还没有聊天记录，可以直接开始对话。",
         updatedAt: contact.updatedAt || contact.savedAt,
         unread: supportPeerUnreadContactIds.has(contact.merchantId),
         avatarLabel: getSupportContactAvatarLabel(contact.merchantName || contact.merchantId, "商"),
@@ -9472,6 +9618,90 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         .catch(() => sendDirectBusinessCardRequest());
     },
     [editingSiteId, requestMerchantChatWithSessionRecovery, storeScope],
+  );
+
+  const ensureSupportBusinessCardShareBundle = useCallback(
+    async (card: MerchantBusinessCardAsset) => {
+      const shareInput = buildSupportMerchantCardShareInput(card);
+      const imageUrl = normalizeSupportDetailText(shareInput?.imageUrl) || normalizeSupportDetailText(card.imageUrl);
+      const cachedBundle = supportSelfCardShareBundleRef.current[card.id];
+      if (cachedBundle?.imageUrl && (card.mode !== "link" || cachedBundle.shareUrl)) {
+        return cachedBundle;
+      }
+
+      if (card.mode !== "link") {
+        return {
+          shareUrl: "",
+          shareKey: normalizeSupportDetailText(card.shareKey),
+          imageUrl,
+        };
+      }
+
+      const existingShareUrl = buildSupportMerchantCardLink(card);
+      if (imageUrl && isSupportShortMerchantCardLink(existingShareUrl)) {
+        const nextBundle = {
+          shareUrl: existingShareUrl,
+          shareKey: normalizeSupportDetailText(card.shareKey),
+          imageUrl,
+        };
+        supportSelfCardShareBundleRef.current[card.id] = nextBundle;
+        return nextBundle;
+      }
+
+      if (!shareInput?.targetUrl || !imageUrl) {
+        return {
+          shareUrl: "",
+          shareKey: "",
+          imageUrl,
+        };
+      }
+
+      try {
+        const response = await requestMerchantChatWithSessionRecovery("/api/business-card-share", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            key: shareInput.shareKey,
+            name: shareInput.name,
+            imageUrl,
+            detailImageUrl: shareInput.detailImageUrl,
+            detailImageHeight:
+              typeof shareInput.detailImageHeight === "number"
+                ? Math.round(shareInput.detailImageHeight)
+                : undefined,
+            targetUrl: shareInput.targetUrl,
+            contact: shareInput.contact,
+          }),
+        });
+        const payload = (await response.json().catch(() => null)) as
+          | {
+              shareKey?: unknown;
+              shareUrl?: unknown;
+            }
+          | null;
+        const shareUrlRaw = typeof payload?.shareUrl === "string" ? payload.shareUrl.trim() : "";
+        const shareUrl = isSupportShortMerchantCardLink(shareUrlRaw) ? shareUrlRaw : "";
+        const shareKey = typeof payload?.shareKey === "string" ? payload.shareKey.trim() : "";
+        const nextBundle = {
+          shareUrl,
+          shareKey,
+          imageUrl,
+        };
+        if (shareUrl) {
+          supportSelfCardShareBundleRef.current[card.id] = nextBundle;
+        }
+        return nextBundle;
+      } catch {
+        return {
+          shareUrl: "",
+          shareKey: "",
+          imageUrl,
+        };
+      }
+    },
+    [requestMerchantChatWithSessionRecovery],
   );
 
   const scheduleMerchantChatBusinessCardSync = useCallback(
@@ -10232,40 +10462,22 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     return [`文件：${fileName} (${formatSupportAttachmentFileSize(file.size)})`, url].join("\n");
   }
 
-  function buildSupportSelfBusinessCardMessageText(card: MerchantBusinessCardAsset) {
-    const lines = [`名片：${normalizeSupportDisplayValue(card.name) || "我的名片"}`];
-    const cardLink = buildSupportMerchantCardLink(card);
-    const targetUrl = normalizeSupportDisplayValue(card.targetUrl)
-      ? normalizeSupportExternalUrl(card.targetUrl)
-      : "";
+  function buildSupportSelfBusinessCardMessageText(input: {
+    card: MerchantBusinessCardAsset;
+    imageUrl?: string;
+    shareUrl?: string;
+  }) {
     const imageUrl =
-      normalizeSupportDisplayValue(card.shareImageUrl) ||
-      normalizeSupportDisplayValue(card.imageUrl);
-    const detailImageUrl =
-      normalizeSupportDisplayValue(card.contactPagePublicImageUrl) ||
-      normalizeSupportDisplayValue(card.contactPageImageUrl);
-    if (card.mode === "link") {
-      if (cardLink) {
-        lines.push(`联系卡：${cardLink}`);
-      }
-      if (targetUrl && targetUrl !== cardLink) {
-        lines.push(`链接：${targetUrl}`);
-      }
-      if (!cardLink && imageUrl) {
-        lines.push(`图片：${imageUrl}`);
-      }
-    } else {
-      if (imageUrl) {
-        lines.push(`图片：${imageUrl}`);
-      }
-      if (detailImageUrl && detailImageUrl !== imageUrl) {
-        lines.push(`详情：${detailImageUrl}`);
-      }
-      if (targetUrl) {
-        lines.push(`链接：${targetUrl}`);
-      }
+      normalizeSupportDisplayValue(input.imageUrl) ||
+      normalizeSupportDisplayValue(input.card.shareImageUrl) ||
+      normalizeSupportDisplayValue(input.card.imageUrl);
+    const shareUrl = isSupportShortMerchantCardLink(input.shareUrl ?? "")
+      ? normalizeSupportDisplayValue(input.shareUrl)
+      : "";
+    if (input.card.mode === "link") {
+      return [imageUrl, shareUrl].filter(Boolean).join("\n");
     }
-    return lines.join("\n");
+    return imageUrl || shareUrl;
   }
 
   async function sendSupportTextPayload(rawText: string, options?: { clearDraft?: boolean }) {
@@ -10650,7 +10862,20 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     setSupportSelfCardPickerOpen(false);
     supportInputRef.current?.blur();
     try {
-      await sendSupportTextPayload(buildSupportSelfBusinessCardMessageText(card));
+      const shareBundle = await ensureSupportBusinessCardShareBundle(card);
+      const messageText = buildSupportSelfBusinessCardMessageText({
+        card,
+        imageUrl: shareBundle.imageUrl,
+        shareUrl: shareBundle.shareUrl,
+      });
+      if (!messageText) {
+        showTip("当前名片暂时无法发送，请稍后重试");
+        return;
+      }
+      const sent = await sendSupportTextPayload(messageText);
+      if (sent && card.mode === "link" && !shareBundle.shareUrl) {
+        showTip("联系卡短链暂时没生成成功，已先发送名片图片");
+      }
     } finally {
       setSupportAttachmentBusy(false);
     }
@@ -10940,7 +11165,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }
 
   async function handleSupportSelfCopyCardLink(card: MerchantBusinessCardAsset) {
-    const shareUrl = buildSupportMerchantCardLink(card);
+    const shareBundle = await ensureSupportBusinessCardShareBundle(card);
+    const shareUrl = normalizeSupportDisplayValue(shareBundle.shareUrl);
     if (!shareUrl) {
       showTip("当前名片没有可复制的联系卡");
       return;
@@ -11687,7 +11913,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                   const cardPreviewUrl =
                     normalizeSupportDisplayValue(card.shareImageUrl) ||
                     normalizeSupportDisplayValue(card.imageUrl);
-                  const cardLink = buildSupportMerchantCardLink(card);
+                  const canCopyCardLink = card.mode === "link" && !!normalizeSupportDisplayValue(card.targetUrl);
                   return (
                     <article key={card.id} className="overflow-hidden rounded-[24px] border border-slate-200 bg-slate-50/80">
                       <div className="flex gap-3 px-3 py-3">
@@ -11745,7 +11971,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                               onClick={() => {
                                 void handleSupportSelfCopyCardLink(card);
                               }}
-                              disabled={!cardLink}
+                              disabled={!canCopyCardLink}
                             >
                               复制联系卡
                             </button>
@@ -11994,9 +12220,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                           : "border border-slate-200 bg-white text-slate-900"
                       }`}
                     >
-                      <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-[15px] leading-6">
-                        {renderSupportMessageText(message.text)}
-                      </div>
+                      {renderSupportMessageContent(message.text, { isSelf: message.isSelf })}
                       <div
                         className={`mt-2 text-right text-[10px] ${
                           message.isSelf ? "text-white/70" : "text-slate-400"
@@ -13548,7 +13772,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                                       {message.senderLabel} | {formatSupportMessageTime(message.createdAt)}
                                     </div>
                                     <div className="mt-1 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-sm leading-6">
-                                      {renderSupportMessageText(message.text)}
+                                      {renderSupportMessageContent(message.text, { isSelf: message.isSelf })}
                                     </div>
                                   </div>
                                   {message.isSelf && message.localStatus === "failed" ? (
