@@ -7954,7 +7954,14 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
       const cachedMerchantId = merchantSessionIdentityRef.current.merchantId.trim();
       const cachedEmail = String(merchantSessionIdentityRef.current.email ?? "").trim();
-      const knownSiteId = (editingSiteId || cachedMerchantId || "").trim();
+      const knownSiteId = (
+        editingSiteId ||
+        getSiteIdFromStoreScope(storeScope) ||
+        merchantIdsRef.current.find((item) => isMerchantNumericId(item)) ||
+        merchantIdsRef.current[0] ||
+        cachedMerchantId ||
+        ""
+      ).trim();
       const knownEmail = ((editingSite?.contactEmail ?? "").trim() || cachedEmail) ?? "";
       const prefetchedIdentity =
         knownSiteId || knownEmail
@@ -8023,11 +8030,35 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     await syncMerchantSessionCookies(recoveredSession, Math.max(2200, Math.min(6000, AUTH_CHECK_TIMEOUT_MS)));
     response = await sendRequest(true);
     return response;
-  }, [editingSite?.contactEmail, editingSiteId, merchantDisplayName, prefetchMerchantSessionIdentity]);
+  }, [editingSite?.contactEmail, editingSiteId, merchantDisplayName, prefetchMerchantSessionIdentity, storeScope]);
 
   const requestSupportWithSessionRecovery = useCallback(
-    (init: RequestInit) => requestMerchantChatWithSessionRecovery("/api/support-messages", init),
-    [requestMerchantChatWithSessionRecovery],
+    (init: RequestInit) => {
+      const params = new URLSearchParams();
+      const supportSiteId = (
+        editingSiteId ||
+        getSiteIdFromStoreScope(storeScope) ||
+        merchantSessionIdentityRef.current.merchantId ||
+        merchantIdsRef.current.find((item) => isMerchantNumericId(item)) ||
+        merchantIdsRef.current[0] ||
+        ""
+      ).trim();
+      const supportEmail =
+        ((editingSite?.contactEmail ?? "").trim() || String(merchantSessionIdentityRef.current.email ?? "").trim()) ??
+        "";
+      if (supportSiteId) {
+        params.set("siteId", supportSiteId);
+      }
+      if (supportEmail) {
+        params.set("merchantEmail", supportEmail);
+      }
+      if (merchantDisplayName) {
+        params.set("merchantName", merchantDisplayName);
+      }
+      const path = params.size > 0 ? `/api/support-messages?${params.toString()}` : "/api/support-messages";
+      return requestMerchantChatWithSessionRecovery(path, init);
+    },
+    [editingSite?.contactEmail, editingSiteId, merchantDisplayName, requestMerchantChatWithSessionRecovery, storeScope],
   );
 
   const requestMerchantPeerWithSessionRecovery = useCallback(

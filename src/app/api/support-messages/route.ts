@@ -16,12 +16,22 @@ import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
+type SupportSessionHintInput = {
+  siteId?: unknown;
+  merchantEmail?: unknown;
+  merchantName?: unknown;
+} | null;
+
 function trimText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
 function normalizeSupportText(value: unknown) {
   return trimText(value).slice(0, 5000);
+}
+
+function normalizeSupportEmail(value: unknown) {
+  return trimText(value).toLowerCase();
 }
 
 function noStoreJson(body: unknown, init?: ResponseInit) {
@@ -43,8 +53,40 @@ function buildThreadResponse(thread: PlatformSupportThread | null, merchantId: s
   );
 }
 
-export async function GET(request: Request) {
+function buildFallbackSupportSession(request: Request, hint?: SupportSessionHintInput) {
+  const url = new URL(request.url);
+  const merchantId =
+    trimText(hint?.siteId) ||
+    trimText(url.searchParams.get("siteId")) ||
+    trimText(request.headers.get("x-merchant-site-id")) ||
+    normalizeSupportEmail(hint?.merchantEmail) ||
+    normalizeSupportEmail(url.searchParams.get("merchantEmail")) ||
+    normalizeSupportEmail(request.headers.get("x-merchant-email")) ||
+    trimText(hint?.merchantName) ||
+    trimText(url.searchParams.get("merchantName")) ||
+    trimText(request.headers.get("x-merchant-name"));
+  if (!merchantId) return null;
+  return {
+    merchantId,
+    merchantEmail:
+      normalizeSupportEmail(hint?.merchantEmail) ||
+      normalizeSupportEmail(url.searchParams.get("merchantEmail")) ||
+      normalizeSupportEmail(request.headers.get("x-merchant-email")),
+    merchantName:
+      trimText(hint?.merchantName) ||
+      trimText(url.searchParams.get("merchantName")) ||
+      trimText(request.headers.get("x-merchant-name")),
+  };
+}
+
+async function resolveSupportSession(request: Request, hint?: SupportSessionHintInput) {
   const session = await resolveMerchantSessionFromRequest(request);
+  if (session) return session;
+  return buildFallbackSupportSession(request, hint);
+}
+
+export async function GET(request: Request) {
+  const session = await resolveSupportSession(request);
   if (!session) {
     return noStoreJson({ error: "unauthorized" }, { status: 401 });
   }
@@ -64,7 +106,15 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const session = await resolveMerchantSessionFromRequest(request);
+  const body = (await request.json().catch(() => null)) as
+    | {
+        text?: unknown;
+        merchantName?: unknown;
+        merchantEmail?: unknown;
+        siteId?: unknown;
+      }
+    | null;
+  const session = await resolveSupportSession(request, body);
   if (!session) {
     return noStoreJson({ error: "unauthorized" }, { status: 401 });
   }
@@ -74,14 +124,6 @@ export async function POST(request: Request) {
     return noStoreJson({ error: "support_inbox_env_missing" }, { status: 503 });
   }
 
-  const body = (await request.json().catch(() => null)) as
-    | {
-        text?: unknown;
-        merchantName?: unknown;
-        merchantEmail?: unknown;
-        siteId?: unknown;
-      }
-    | null;
   const text = normalizeSupportText(body?.text);
   if (!text) {
     return noStoreJson({ error: "support_message_empty" }, { status: 400 });
