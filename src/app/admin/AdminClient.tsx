@@ -3947,9 +3947,11 @@ function readMobileVisualViewportInsets() {
   if (!visualViewport) {
     return { top: 0, bottom: 0 };
   }
-  const bottomRaw = window.innerHeight - visualViewport.height;
+  const topRaw = Number.isFinite(visualViewport.offsetTop) ? visualViewport.offsetTop : 0;
+  const top = Math.max(0, Math.round(topRaw));
+  const bottomRaw = window.innerHeight - (visualViewport.height + topRaw);
   const bottom = Number.isFinite(bottomRaw) ? Math.max(0, Math.round(bottomRaw)) : 0;
-  return { top: 0, bottom };
+  return { top, bottom };
 }
 
 function normalizeSupportMessageTimestamp(value: string | null | undefined) {
@@ -4470,6 +4472,15 @@ export default function AdminClient({
   const merchantChatBusinessCardSyncTimerRef = useRef<number | null>(null);
   const merchantChatBusinessCardSyncPayloadRef = useRef("");
   const supportPeerProfileLoadingIdsRef = useRef(new Set<string>());
+  const resizeSupportComposerInput = useCallback((target?: HTMLTextAreaElement | null) => {
+    const input = target ?? supportInputRef.current;
+    if (!input) return;
+    const maxHeight = 24 * 4;
+    input.style.height = "24px";
+    const nextHeight = Math.min(maxHeight, Math.max(24, input.scrollHeight));
+    input.style.height = `${nextHeight}px`;
+    input.style.overflowY = input.scrollHeight > maxHeight ? "auto" : "hidden";
+  }, []);
   const focusSupportInput = useCallback(() => {
     if (typeof window === "undefined") return;
     setSupportAttachmentMenuOpen(false);
@@ -4478,6 +4489,7 @@ export default function AdminClient({
       const input = supportInputRef.current;
       if (!input || input.disabled) return;
       input.focus({ preventScroll: true });
+      resizeSupportComposerInput(input);
       const caretPosition = input.value.length;
       try {
         input.setSelectionRange(caretPosition, caretPosition);
@@ -4485,7 +4497,7 @@ export default function AdminClient({
         // Ignore browsers that do not allow setting selection on this element state.
       }
     });
-  }, []);
+  }, [resizeSupportComposerInput]);
   const closeMobileSupportThread = useCallback(() => {
     setSupportBusinessCardDialogOpen(false);
     setSupportMerchantInfoSheetOpen(false);
@@ -4511,10 +4523,12 @@ export default function AdminClient({
     window.addEventListener("resize", syncMobileVisualViewportInsets);
     window.addEventListener("orientationchange", syncMobileVisualViewportInsets);
     window.visualViewport?.addEventListener("resize", syncMobileVisualViewportInsets);
+    window.visualViewport?.addEventListener("scroll", syncMobileVisualViewportInsets);
     return () => {
       window.removeEventListener("resize", syncMobileVisualViewportInsets);
       window.removeEventListener("orientationchange", syncMobileVisualViewportInsets);
       window.visualViewport?.removeEventListener("resize", syncMobileVisualViewportInsets);
+      window.visualViewport?.removeEventListener("scroll", syncMobileVisualViewportInsets);
     };
   }, []);
   const handleSupportMobileThreadTouchStart = useCallback((event: TouchEvent<HTMLDivElement>) => {
@@ -8906,6 +8920,15 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     isMobileSupportDialog &&
     supportMobileView === "thread" &&
     (supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY || !!selectedSupportPeerContact);
+  useEffect(() => {
+    if (!showMobileSupportThread) return;
+    const rafId = window.requestAnimationFrame(() => {
+      resizeSupportComposerInput();
+    });
+    return () => {
+      window.cancelAnimationFrame(rafId);
+    };
+  }, [resizeSupportComposerInput, showMobileSupportThread, supportDraft]);
   const latestIncomingPeerMessageKey = useMemo(() => {
     let latestKey = "";
     let latestTimestamp = 0;
@@ -11189,7 +11212,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           </button>
           <div className="min-w-0 flex-1">
             <div className="truncate text-[15px] font-semibold text-slate-900">{supportSelfDisplayName}</div>
-            <div className="mt-1 text-xs text-slate-500">点击头像更换头像，资料隐藏和聊天名片都在这里。</div>
           </div>
         </div>
       </div>
@@ -11199,6 +11221,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           className="hidden"
           type="file"
           accept="image/*"
+          tabIndex={-1}
+          aria-hidden="true"
           onChange={(event) => {
             void handleSupportSelfAvatarInputChange(event);
           }}
@@ -11207,7 +11231,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
             <div className="border-b border-slate-100 px-5 py-4">
               <div className="text-sm font-semibold text-slate-900">我的资料</div>
-              <div className="mt-1 text-xs text-slate-500">电话、邮箱和联系卡可以对其他商户隐藏，签名会显示在聊天头像旁边。</div>
             </div>
             <div className="border-b border-slate-100 px-5 py-4">
               <div className="text-[11px] font-medium tracking-[0.08em] text-slate-400">个性签名</div>
@@ -11216,6 +11239,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                 value={supportSelfSignatureDraft}
                 placeholder={SUPPORT_EMPTY_SIGNATURE_TEXT}
                 maxLength={80}
+                autoComplete="off"
+                autoCorrect="off"
+                spellCheck={false}
                 onChange={(event) => {
                   setSupportSelfSignatureDraft(event.target.value);
                   setSupportSelfSignatureDirty(event.target.value.trim() !== supportSelfSignature);
@@ -11385,9 +11411,15 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         : supportMobileHomeTab === "faolla"
           ? supportMobileFaollaContent
           : supportMobileSelfContent;
+  const isSupportMobileKeyboardVisible = mobileVisualViewportInsets.bottom > 0;
 
   const supportMobileBottomNav = (
-    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[2]">
+    <div
+      className={`pointer-events-none absolute inset-x-0 bottom-0 z-[2] transition duration-200 ${
+        isSupportMobileKeyboardVisible ? "translate-y-full opacity-0" : "opacity-100"
+      }`}
+      aria-hidden={isSupportMobileKeyboardVisible}
+    >
       <div className="absolute inset-x-0 bottom-0 h-[calc(env(safe-area-inset-bottom)+6.35rem)] bg-[linear-gradient(180deg,rgba(248,250,252,0)_0%,rgba(248,250,252,0.92)_24%,rgba(255,255,255,0.98)_100%)]" />
       <div className="pointer-events-auto relative mx-auto max-w-md px-4 pb-[calc(env(safe-area-inset-bottom)+0.08rem)] pt-5">
         <div className="flex items-center gap-1 rounded-[30px] border border-slate-200/80 bg-white/95 px-2 py-2 shadow-[0_20px_40px_rgba(15,23,42,0.12)] backdrop-blur">
@@ -11479,7 +11511,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   );
 
   const mobileSupportComposerStyle: CSSProperties | undefined =
-    mobileVisualViewportInsets.bottom > 0
+    isSupportMobileKeyboardVisible
       ? {
           transform: `translateY(-${mobileVisualViewportInsets.bottom}px)`,
           willChange: "transform",
@@ -11622,7 +11654,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         )}
       </div>
       <div
-        className="shrink-0 overscroll-none border-t border-slate-200/80 bg-[#edf1f7]/95 px-3 pb-[calc(env(safe-area-inset-bottom)+0.35rem)] pt-1.5 shadow-[0_-8px_30px_rgba(15,23,42,0.06)] backdrop-blur"
+        className="shrink-0 overscroll-none border-t border-slate-200/80 bg-[#edf1f7]/98 px-3 pb-[env(safe-area-inset-bottom)] pt-1 shadow-[0_-8px_30px_rgba(15,23,42,0.06)] backdrop-blur"
         style={mobileSupportComposerStyle}
         onTouchMove={(event) => {
           event.stopPropagation();
@@ -11633,6 +11665,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           className="hidden"
           type="file"
           accept={SUPPORT_PHOTO_PICKER_ACCEPT}
+          tabIndex={-1}
+          aria-hidden="true"
           onChange={(event) => {
             void handleSupportPhotoInputChange(event);
           }}
@@ -11643,6 +11677,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           type="file"
           accept={SUPPORT_PHOTO_PICKER_ACCEPT}
           capture="environment"
+          tabIndex={-1}
+          aria-hidden="true"
           onChange={(event) => {
             void handleSupportCameraInputChange(event);
           }}
@@ -11652,6 +11688,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           className="hidden"
           type="file"
           accept={SUPPORT_FILE_PICKER_ACCEPT}
+          tabIndex={-1}
+          aria-hidden="true"
           onChange={(event) => {
             void handleSupportFileInputChange(event);
           }}
@@ -11753,14 +11791,17 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
             </svg>
           </button>
-          <div className="flex h-11 min-w-0 flex-1 items-center overflow-hidden rounded-[28px] bg-white px-3 shadow-[0_8px_18px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/80">
+          <div className="flex min-h-11 min-w-0 flex-1 items-end overflow-hidden rounded-[28px] bg-white px-3 py-2 shadow-[0_8px_18px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/80">
             <textarea
               ref={supportInputRef}
               rows={1}
-              className="h-6 max-h-6 w-full resize-none overflow-hidden bg-transparent px-1 py-0 text-base leading-6 outline-none transition placeholder:text-slate-400"
+              className="min-h-[24px] w-full resize-none overflow-y-hidden bg-transparent px-1 py-0 text-base leading-6 outline-none transition placeholder:text-slate-400"
               placeholder={selectedSupportInputPlaceholder}
               value={supportDraft}
-              onChange={(event) => setSupportDraft(event.target.value)}
+              onChange={(event) => {
+                setSupportDraft(event.target.value);
+                resizeSupportComposerInput(event.target);
+              }}
               onFocus={() => {
                 setSupportAttachmentMenuOpen(false);
                 setSupportSelfCardPickerOpen(false);
@@ -11771,6 +11812,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                 void sendSupportMessage();
               }}
               disabled={supportComposerBusy || !supportComposerAvailable}
+              autoComplete="off"
+              autoCorrect="off"
+              spellCheck={false}
+              enterKeyHint="enter"
               style={{ touchAction: "manipulation" }}
             />
           </div>
