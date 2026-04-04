@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { parseCookieValue, readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
 import { normalizeMerchantBusinessCards } from "@/lib/merchantBusinessCards";
+import { listMerchantPeerContactsForMerchant } from "@/lib/merchantPeerInbox";
+import {
+  loadStoredMerchantPeerInbox,
+  type MerchantPeerInboxStoreClient,
+} from "@/lib/merchantPeerInboxStore";
 import {
   buildPlatformMerchantSnapshotSite,
   upsertPlatformMerchantSnapshotSite,
@@ -59,9 +64,30 @@ function normalizeMerchantId(value: unknown) {
   return /^\d{8}$/.test(normalized) ? normalized : "";
 }
 
+function readFallbackAuthorizedMerchantIds(request: Request) {
+  const url = new URL(request.url);
+  return [...new Set([
+    normalizeMerchantId(request.headers.get("x-merchant-site-id")),
+    normalizeMerchantId(url.searchParams.get("siteId")),
+  ].filter(Boolean))];
+}
+
 function normalizeChatBusinessCard(value: unknown) {
   if (!value || typeof value !== "object") return null;
   return normalizeMerchantBusinessCards([value])[0] ?? null;
+}
+
+async function hasPeerMerchantAccess(
+  supabase: LooseSupabaseClient,
+  authorizedMerchantIds: Iterable<string>,
+  merchantId: string,
+) {
+  const ownerMerchantIds = [...new Set(Array.from(authorizedMerchantIds).map((value) => normalizeMerchantId(value)).filter(Boolean))];
+  if (ownerMerchantIds.length === 0) return false;
+  const peerInbox = await loadStoredMerchantPeerInbox(supabase as unknown as MerchantPeerInboxStoreClient);
+  return ownerMerchantIds.some((authorizedMerchantId) =>
+    listMerchantPeerContactsForMerchant(peerInbox, authorizedMerchantId).some((contact) => contact.merchantId === merchantId),
+  );
 }
 
 async function getAuthorizedMerchantIds(
@@ -108,6 +134,11 @@ async function isAuthorizedForMerchant(
     return true;
   }
 
+  const authorizedMerchantIdSet = new Set<string>(readFallbackAuthorizedMerchantIds(request));
+  if (authorizedMerchantIdSet.has(merchantId)) {
+    return true;
+  }
+
   const accessTokens = readMerchantRequestAccessTokens(request);
   for (const accessToken of accessTokens) {
     const authResult = await supabase.auth.getUser(accessToken);
@@ -118,12 +149,19 @@ async function isAuthorizedForMerchant(
       String(authResult.data.user.id ?? "").trim(),
       normalizeEmail(authResult.data.user.email),
     );
+    authorizedMerchantIds.forEach((authorizedMerchantId) => {
+      authorizedMerchantIdSet.add(authorizedMerchantId);
+    });
     if (authorizedMerchantIds.includes(merchantId)) {
       return true;
     }
   }
 
-  return false;
+  if (authorizedMerchantIdSet.size === 0) {
+    return false;
+  }
+
+  return hasPeerMerchantAccess(supabase, authorizedMerchantIdSet, merchantId);
 }
 
 async function resolveMerchantName(supabase: LooseSupabaseClient, merchantId: string) {

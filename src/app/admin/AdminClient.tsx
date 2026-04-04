@@ -74,6 +74,7 @@ import {
 } from "@/lib/authSessionRecovery";
 import { clearMerchantSignInBridge } from "@/lib/merchantSignInBridge";
 import { buildPublishedMerchantProfilePatch } from "@/lib/merchantProfileBinding";
+import { buildMerchantBusinessCardShareUrl, resolveMerchantBusinessCardShareOrigin } from "@/lib/merchantBusinessCardShare";
 import { resolveCommonCanvasLayout } from "@/lib/commonCanvasLayout";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
 import ChatBusinessCardDialog from "@/components/admin/ChatBusinessCardDialog";
@@ -3644,6 +3645,108 @@ function getSupportContactAvatarLabel(value: string | null | undefined, fallback
   return compact.slice(0, 2).toUpperCase();
 }
 
+function normalizeSupportDetailText(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeSupportDisplayValue(value: unknown) {
+  const normalized = normalizeSupportDetailText(value);
+  return normalized && normalized !== "-" ? normalized : "";
+}
+
+function buildSupportMerchantCardLink(card: MerchantBusinessCardAsset | null) {
+  if (!card || card.mode !== "link") return "";
+  const targetUrl = normalizeSupportDetailText(card.targetUrl);
+  if (!targetUrl) return "";
+  return buildMerchantBusinessCardShareUrl({
+    origin: resolveMerchantBusinessCardShareOrigin(undefined, targetUrl),
+    shareKey: normalizeSupportDetailText(card.shareKey),
+    name: normalizeSupportDetailText(card.name),
+    imageUrl: normalizeSupportDetailText(card.shareImageUrl) || normalizeSupportDetailText(card.imageUrl),
+    detailImageUrl:
+      normalizeSupportDetailText(card.contactPagePublicImageUrl) || normalizeSupportDetailText(card.contactPageImageUrl),
+    detailImageHeight: card.contactPageImageHeight,
+    targetUrl,
+    contact: {
+      displayName: normalizeSupportDetailText(card.contacts.contactName) || normalizeSupportDetailText(card.name),
+      organization: normalizeSupportDetailText(card.name),
+      title: normalizeSupportDetailText(card.title),
+      phone: normalizeSupportDetailText(card.contacts.phone),
+      phones: Array.isArray(card.contacts.phones) ? card.contacts.phones.filter(Boolean) : [],
+      contactFieldOrder: card.contactFieldOrder,
+      contactOnlyFields: card.contactOnlyFields,
+      email: normalizeSupportDetailText(card.contacts.email),
+      address: normalizeSupportDetailText(card.contacts.address),
+      wechat: normalizeSupportDetailText(card.contacts.wechat),
+      whatsapp: normalizeSupportDetailText(card.contacts.whatsapp),
+      twitter: normalizeSupportDetailText(card.contacts.twitter),
+      weibo: normalizeSupportDetailText(card.contacts.weibo),
+      telegram: normalizeSupportDetailText(card.contacts.telegram),
+      linkedin: normalizeSupportDetailText(card.contacts.linkedin),
+      discord: normalizeSupportDetailText(card.contacts.discord),
+      facebook: normalizeSupportDetailText(card.contacts.facebook),
+      instagram: normalizeSupportDetailText(card.contacts.instagram),
+      tiktok: normalizeSupportDetailText(card.contacts.tiktok),
+      douyin: normalizeSupportDetailText(card.contacts.douyin),
+      xiaohongshu: normalizeSupportDetailText(card.contacts.xiaohongshu),
+      websiteUrl: targetUrl,
+    },
+  });
+}
+
+function normalizeSupportExternalUrl(value: string | null | undefined, fallbackOrigin?: string | null) {
+  const normalized = normalizeSupportDetailText(value);
+  if (!normalized) return "";
+  if (/^https?:\/\//i.test(normalized)) return normalized;
+  if (normalized.startsWith("/")) {
+    const baseOrigin =
+      normalizeSupportDetailText(fallbackOrigin) ||
+      (typeof window !== "undefined" ? normalizeSupportDetailText(window.location.origin) : "");
+    if (!baseOrigin) return normalized;
+    try {
+      return new URL(normalized, baseOrigin).toString();
+    } catch {
+      return normalized;
+    }
+  }
+  return `https://${normalized}`;
+}
+
+function formatSupportUrlLabel(value: string | null | undefined) {
+  const normalized = normalizeSupportDetailText(value);
+  if (!normalized) return "-";
+  try {
+    const url = new URL(normalizeSupportExternalUrl(normalized));
+    return `${url.host}${url.pathname === "/" ? "" : url.pathname}`.replace(/\/+$/g, "") || normalized;
+  } catch {
+    return normalized.replace(/^https?:\/\//i, "").replace(/\/+$/g, "") || normalized;
+  }
+}
+
+function isSupportIpOrLocalHost(value: string) {
+  return (
+    /^https?:\/\/(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?(?:\/|$)/i.test(value) ||
+    /^https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:\/|$)/i.test(value)
+  );
+}
+
+function hasSupportMerchantProfileCoverage(profile: MerchantListPublishedSite | null | undefined) {
+  if (!profile) return false;
+  const hasWebsite = Boolean(
+    normalizeSupportDisplayValue(profile.domainPrefix) ||
+      normalizeSupportDisplayValue(profile.domainSuffix) ||
+      normalizeSupportDisplayValue(profile.domain),
+  );
+  return Boolean(
+    normalizeSupportDisplayValue(profile.contactPhone) ||
+      normalizeSupportDisplayValue(profile.contactEmail) ||
+      normalizeSupportDisplayValue(profile.industry) ||
+      normalizeSupportDisplayValue(profile.location?.city) ||
+      hasWebsite ||
+      profile.chatBusinessCard,
+  );
+}
+
 function normalizeSupportMessageTimestamp(value: string | null | undefined) {
   const normalized = String(value ?? "").trim();
   if (!normalized) return "";
@@ -3864,10 +3967,14 @@ export default function AdminClient({
   const [supportMobileView, setSupportMobileView] = useState<"list" | "thread">("list");
   const [supportPeerLocalMessages, setSupportPeerLocalMessages] = useState<LocalPeerSupportMessage[]>([]);
   const [supportBusinessCardDialogOpen, setSupportBusinessCardDialogOpen] = useState(false);
+  const [supportMerchantInfoSheetOpen, setSupportMerchantInfoSheetOpen] = useState(false);
   const [supportBusinessCardLoading, setSupportBusinessCardLoading] = useState(false);
   const [supportBusinessCardError, setSupportBusinessCardError] = useState("");
   const [supportPeerBusinessCardByMerchantId, setSupportPeerBusinessCardByMerchantId] = useState<
     Record<string, MerchantBusinessCardAsset | null>
+  >({});
+  const [supportPeerProfilesByMerchantId, setSupportPeerProfilesByMerchantId] = useState<
+    Record<string, MerchantListPublishedSite | null>
   >({});
   const supportRequestIdRef = useRef(0);
   const supportPeerRequestIdRef = useRef(0);
@@ -3881,6 +3988,7 @@ export default function AdminClient({
   const supportMobileSwipeStartRef = useRef<{ x: number; y: number; fromEdge: boolean } | null>(null);
   const merchantChatBusinessCardSyncTimerRef = useRef<number | null>(null);
   const merchantChatBusinessCardSyncPayloadRef = useRef("");
+  const supportPeerProfileLoadingIdsRef = useRef(new Set<string>());
   const focusSupportInput = useCallback(() => {
     if (typeof window === "undefined") return;
     window.requestAnimationFrame(() => {
@@ -3897,6 +4005,7 @@ export default function AdminClient({
   }, []);
   const closeMobileSupportThread = useCallback(() => {
     setSupportBusinessCardDialogOpen(false);
+    setSupportMerchantInfoSheetOpen(false);
     setSupportMobileView("list");
   }, []);
   const openSupportContactThread = useCallback((contactKey: string) => {
@@ -7778,6 +7887,38 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const selectedSupportFallbackBusinessCard =
     selectedSupportPeerContact?.chatBusinessCard ??
     resolveMerchantBusinessCardForChatDisplay(selectedSupportPeerSite?.businessCards ?? []);
+  const selectedSupportFetchedProfile = useMemo(() => {
+    if (!/^\d{8}$/.test(selectedSupportPeerMerchantId)) return undefined;
+    return Object.prototype.hasOwnProperty.call(supportPeerProfilesByMerchantId, selectedSupportPeerMerchantId)
+      ? supportPeerProfilesByMerchantId[selectedSupportPeerMerchantId]
+      : undefined;
+  }, [selectedSupportPeerMerchantId, supportPeerProfilesByMerchantId]);
+  const selectedSupportLocalProfile = useMemo(() => {
+    if (!/^\d{8}$/.test(selectedSupportPeerMerchantId) || !selectedSupportPeerSite) return null;
+    return {
+      id: selectedSupportPeerSite.id,
+      merchantName: selectedSupportPeerSite.merchantName,
+      domainPrefix: selectedSupportPeerSite.domainPrefix,
+      domainSuffix: selectedSupportPeerSite.domainSuffix,
+      name: selectedSupportPeerSite.name,
+      domain: selectedSupportPeerSite.domain,
+      category: selectedSupportPeerSite.category,
+      industry: selectedSupportPeerSite.industry,
+      location: selectedSupportPeerSite.location,
+      contactAddress: selectedSupportPeerSite.contactAddress,
+      contactName: selectedSupportPeerSite.contactName,
+      contactPhone: selectedSupportPeerSite.contactPhone,
+      contactEmail: selectedSupportPeerSite.contactEmail,
+      merchantCardImageUrl: selectedSupportPeerSite.merchantCardImageUrl,
+      merchantCardImageOpacity: selectedSupportPeerSite.merchantCardImageOpacity,
+      chatBusinessCard: resolveMerchantBusinessCardForChatDisplay(selectedSupportPeerSite.businessCards ?? []),
+      status: selectedSupportPeerSite.status,
+      serviceExpiresAt: selectedSupportPeerSite.serviceExpiresAt ?? null,
+      sortConfig: selectedSupportPeerSite.sortConfig ?? createDefaultMerchantSortConfig(),
+      createdAt: selectedSupportPeerSite.createdAt,
+    } satisfies MerchantListPublishedSite;
+  }, [selectedSupportPeerMerchantId, selectedSupportPeerSite]);
+  const selectedSupportProfile = selectedSupportFetchedProfile ?? selectedSupportLocalProfile ?? null;
   const selectedSupportBusinessCard =
     supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY
       ? null
@@ -7830,11 +7971,103 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY
       ? supportOfficialName
       : selectedSupportPeerContact?.merchantName || selectedSupportPeerMerchantId || "未选择联系人";
+  const selectedSupportMerchantEmail =
+    normalizeSupportDisplayValue(selectedSupportProfile?.contactEmail) ||
+    normalizeSupportDisplayValue(selectedSupportPeerContact?.merchantEmail) ||
+    "-";
+  const selectedSupportMerchantIndustry =
+    normalizeSupportDisplayValue(selectedSupportProfile?.industry) || "未设置行业";
+  const selectedSupportMerchantCity =
+    normalizeSupportDisplayValue(selectedSupportProfile?.location.city) || "-";
+  const selectedSupportMerchantPhone =
+    normalizeSupportDisplayValue(selectedSupportProfile?.contactPhone) || "-";
+  const selectedSupportMerchantPrefix =
+    normalizeSupportDisplayValue(selectedSupportProfile?.domainPrefix) ||
+    normalizeSupportDisplayValue(selectedSupportProfile?.domainSuffix);
+  const selectedSupportResolvedBusinessCard = selectedSupportProfile?.chatBusinessCard ?? selectedSupportBusinessCard;
   const selectedSupportIsOfficial = supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY;
   const selectedSupportSubtitle =
     supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY
       ? supportOfficialSiteLabel
-      : [selectedSupportPeerMerchantId, selectedSupportPeerContact?.merchantEmail].filter(Boolean).join(" | ") || "-";
+      : [selectedSupportPeerMerchantId, selectedSupportMerchantEmail !== "-" ? selectedSupportMerchantEmail : ""]
+          .filter(Boolean)
+          .join(" | ") || "-";
+  const selectedSupportMerchantHeaderIndustry =
+    selectedSupportMerchantIndustry !== "-" ? selectedSupportMerchantIndustry : "未设置行业";
+  const selectedSupportMerchantWebsiteHref = useMemo(() => {
+    const publicBaseDomain = normalizeSupportDisplayValue(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN);
+    const explicitDomain =
+      normalizeSupportDisplayValue(selectedSupportProfile?.domain) ||
+      normalizeSupportDisplayValue(selectedSupportPeerSite?.domain);
+    if (selectedSupportPeerMerchantId && selectedSupportMerchantPrefix) {
+      const runtimeHref = normalizeSupportExternalUrl(
+        buildMerchantFrontendHref(selectedSupportPeerMerchantId, selectedSupportMerchantPrefix),
+      );
+      if (runtimeHref && !isSupportIpOrLocalHost(runtimeHref)) {
+        return runtimeHref;
+      }
+      if (publicBaseDomain) {
+        const publicHref = normalizeSupportExternalUrl(
+          buildMerchantFrontendHref(selectedSupportPeerMerchantId, selectedSupportMerchantPrefix, publicBaseDomain),
+          `https://${publicBaseDomain.replace(/^https?:\/\//i, "")}`,
+        );
+        if (publicHref) {
+          return publicHref;
+        }
+      }
+    }
+    if (explicitDomain && !isSupportIpOrLocalHost(normalizeSupportExternalUrl(explicitDomain))) {
+      return normalizeSupportExternalUrl(
+        explicitDomain,
+        publicBaseDomain ? `https://${publicBaseDomain.replace(/^https?:\/\//i, "")}` : undefined,
+      );
+    }
+    if (!selectedSupportPeerMerchantId) return "";
+    return normalizeSupportExternalUrl(explicitDomain);
+  }, [
+    selectedSupportMerchantPrefix,
+    selectedSupportPeerMerchantId,
+    selectedSupportPeerSite?.domain,
+    selectedSupportProfile?.domain,
+  ]);
+  const selectedSupportMerchantWebsiteLabel =
+    selectedSupportMerchantWebsiteHref ? formatSupportUrlLabel(selectedSupportMerchantWebsiteHref) : "-";
+  const selectedSupportMerchantCardHref = useMemo(
+    () => buildSupportMerchantCardLink(selectedSupportResolvedBusinessCard),
+    [selectedSupportResolvedBusinessCard],
+  );
+  const selectedSupportMerchantCardLabel =
+    selectedSupportMerchantCardHref ? formatSupportUrlLabel(selectedSupportMerchantCardHref) : "-";
+  const selectedSupportMerchantInfoItems = useMemo(
+    () => [
+      { label: "ID", value: selectedSupportPeerMerchantId || "-" },
+      { label: "电话", value: selectedSupportMerchantPhone },
+      { label: "邮箱", value: selectedSupportMerchantEmail },
+      {
+        label: "联系卡",
+        value: selectedSupportMerchantCardLabel,
+        href: selectedSupportMerchantCardHref,
+        openInNewTab: false,
+      },
+      { label: "城市", value: selectedSupportMerchantCity },
+      {
+        label: "官网",
+        value: selectedSupportMerchantWebsiteLabel,
+        href: selectedSupportMerchantWebsiteHref,
+        openInNewTab: true,
+      },
+    ],
+    [
+      selectedSupportMerchantCardHref,
+      selectedSupportMerchantCardLabel,
+      selectedSupportMerchantCity,
+      selectedSupportMerchantEmail,
+      selectedSupportMerchantPhone,
+      selectedSupportMerchantWebsiteHref,
+      selectedSupportMerchantWebsiteLabel,
+      selectedSupportPeerMerchantId,
+    ],
+  );
   const selectedSupportLoading =
     supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY ? supportLoading : supportPeerLoading;
   const selectedSupportEmptyStateText =
@@ -8496,6 +8729,18 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }, [selectedSupportPeerContact, supportSelectedContactKey]);
 
   useEffect(() => {
+    if (!supportMerchantInfoSheetOpen) return;
+    if (!supportInterfaceOpen || selectedSupportIsOfficial || !selectedSupportPeerMerchantId) {
+      setSupportMerchantInfoSheetOpen(false);
+    }
+  }, [
+    selectedSupportIsOfficial,
+    selectedSupportPeerMerchantId,
+    supportInterfaceOpen,
+    supportMerchantInfoSheetOpen,
+  ]);
+
+  useEffect(() => {
     if (supportInterfaceOpen) {
       if (!isDesktopEditorSidebar) {
         setSupportMobileView("list");
@@ -8503,8 +8748,67 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       return;
     }
     supportMobileSwipeStartRef.current = null;
+    setSupportMerchantInfoSheetOpen(false);
     setSupportMobileView("list");
   }, [isDesktopEditorSidebar, isMobileMerchantSupportOnlyMode, supportInterfaceOpen]);
+
+  useEffect(() => {
+    if (isPlatformEditor || !supportInterfaceOpen || selectedSupportIsOfficial) return;
+    const merchantId = selectedSupportPeerMerchantId.trim();
+    if (!/^\d{8}$/.test(merchantId)) return;
+    if (Object.prototype.hasOwnProperty.call(supportPeerProfilesByMerchantId, merchantId)) return;
+    const shouldWarmSupportMerchantProfile =
+      supportMerchantInfoSheetOpen ||
+      supportBusinessCardDialogOpen ||
+      (isMobileSupportDialog && supportMobileView === "thread" && !!selectedSupportPeerContact);
+    if (!shouldWarmSupportMerchantProfile) return;
+    if (!supportMerchantInfoSheetOpen && hasSupportMerchantProfileCoverage(selectedSupportLocalProfile)) return;
+    if (supportPeerProfileLoadingIdsRef.current.has(merchantId)) return;
+    let cancelled = false;
+    supportPeerProfileLoadingIdsRef.current.add(merchantId);
+    void (async () => {
+      try {
+        const response = await requestMerchantChatBusinessCardById(merchantId, {
+          cache: "no-store",
+        });
+        const payload = (await response.json().catch(() => null)) as
+          | {
+              profile?: MerchantListPublishedSite | null;
+              chatBusinessCard?: MerchantBusinessCardAsset | null;
+            }
+          | null;
+        if (cancelled || !response.ok) return;
+        setSupportPeerProfilesByMerchantId((current) => ({
+          ...current,
+          [merchantId]: payload?.profile ?? null,
+        }));
+        setSupportPeerBusinessCardByMerchantId((current) => ({
+          ...current,
+          [merchantId]: payload?.chatBusinessCard ?? payload?.profile?.chatBusinessCard ?? null,
+        }));
+      } catch {
+        if (cancelled) return;
+      } finally {
+        supportPeerProfileLoadingIdsRef.current.delete(merchantId);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    isMobileSupportDialog,
+    isPlatformEditor,
+    requestMerchantChatBusinessCardById,
+    selectedSupportIsOfficial,
+    selectedSupportLocalProfile,
+    selectedSupportPeerContact,
+    selectedSupportPeerMerchantId,
+    supportBusinessCardDialogOpen,
+    supportInterfaceOpen,
+    supportMerchantInfoSheetOpen,
+    supportMobileView,
+    supportPeerProfilesByMerchantId,
+  ]);
 
   useEffect(() => {
     if (isPlatformEditor || !supportInterfaceOpen || !supportBusinessCardDialogOpen) return;
@@ -9143,8 +9447,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               <button
                 type="button"
                 className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm transition hover:scale-[1.02]"
-                onClick={() => setSupportBusinessCardDialogOpen(true)}
-                aria-label="查看聊天名片"
+                onClick={() => setSupportMerchantInfoSheetOpen(true)}
+                aria-label="查看商户资料"
               >
                 {selectedSupportAvatarLabel}
               </button>
@@ -9388,6 +9692,64 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     </div>
   );
 
+  const supportMerchantInfoSheetOverlay =
+    supportMerchantInfoSheetOpen && showMobileSupportThread && !selectedSupportIsOfficial
+      ? renderTopMostOverlay(
+          <>
+            <button
+              type="button"
+              className="fixed inset-0 z-[2147483400] bg-slate-950/40 backdrop-blur-[1px]"
+              onClick={() => setSupportMerchantInfoSheetOpen(false)}
+              aria-label="关闭商户资料"
+            />
+            <div className="fixed inset-x-0 bottom-0 z-[2147483401] px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)]">
+              <div className="mx-auto w-full max-w-md rounded-[30px] bg-white px-4 pb-4 pt-3 shadow-[0_24px_80px_rgba(15,23,42,0.2)]">
+                <div className="mx-auto h-1.5 w-12 rounded-full bg-slate-200" />
+                <div className="mt-4 flex items-start justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white">
+                      {selectedSupportAvatarLabel}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="truncate text-base font-semibold text-slate-900">{selectedSupportDisplayName}</div>
+                      <div className="mt-1 text-xs text-slate-500">{selectedSupportMerchantHeaderIndustry}</div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="rounded-full border border-slate-200 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50"
+                    onClick={() => setSupportMerchantInfoSheetOpen(false)}
+                  >
+                    关闭
+                  </button>
+                </div>
+                <div className="mt-4 divide-y divide-slate-100 overflow-hidden rounded-[24px] border border-slate-100 bg-slate-50/70">
+                  {selectedSupportMerchantInfoItems.map((item) => (
+                    <div key={item.label} className="px-4 py-3">
+                      <div className="text-[11px] font-medium tracking-[0.08em] text-slate-400">{item.label}</div>
+                      <div className="mt-1 text-sm leading-6 text-slate-900">
+                        {item.href ? (
+                          <a
+                            href={item.href}
+                            target={item.openInNewTab ? "_blank" : undefined}
+                            rel={item.openInNewTab ? "noreferrer" : undefined}
+                            className="break-all text-slate-900 underline decoration-slate-300 underline-offset-4"
+                          >
+                            {item.value}
+                          </a>
+                        ) : (
+                          <span>{item.value}</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </>,
+        )
+      : null;
+
   if (isMobileMerchantSupportOnlyMode) {
     return (
       <>
@@ -9396,6 +9758,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             {supportMobileDialogContent}
           </div>
         </main>
+        {supportMerchantInfoSheetOverlay}
         <ChatBusinessCardDialog
           open={supportBusinessCardDialogOpen && supportInterfaceOpen && !isPlatformEditor}
           merchantName={selectedSupportDisplayName}
@@ -10644,6 +11007,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           setSupportBusinessCardError("");
         }}
       />
+
+      {supportMerchantInfoSheetOverlay}
 
       {merchantProfileDialogOpen && !isPlatformEditor ? (
         <MerchantProfileDialog
