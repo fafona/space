@@ -9106,6 +9106,26 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     selectedSupportIsOfficial ? "FA" : "商",
   );
   const selectedSupportHeaderMeta = selectedSupportSignature;
+  useEffect(() => {
+    if (!isMobileSupportDialog || typeof document === "undefined") return () => {};
+    const html = document.documentElement;
+    const body = document.body;
+    const previousHtmlOverflow = html.style.overflow;
+    const previousHtmlOverscrollBehavior = html.style.overscrollBehavior;
+    const previousBodyOverflow = body.style.overflow;
+    const previousBodyOverscrollBehavior = body.style.overscrollBehavior;
+    html.style.overflow = "hidden";
+    html.style.overscrollBehavior = "none";
+    body.style.overflow = "hidden";
+    body.style.overscrollBehavior = "none";
+    return () => {
+      html.style.overflow = previousHtmlOverflow;
+      html.style.overscrollBehavior = previousHtmlOverscrollBehavior;
+      body.style.overflow = previousBodyOverflow;
+      body.style.overscrollBehavior = previousBodyOverscrollBehavior;
+    };
+  }, [isMobileSupportDialog]);
+
   const supportPeerUnreadContactIds = useMemo(() => {
     const unreadContactIds = new Set<string>();
     if (!currentSupportMerchantId) return unreadContactIds;
@@ -12203,6 +12223,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       </div>
     </div>
   );
+  const supportMobileBottomNavOverlay =
+    isMobileSupportDialog && !isSupportMobileKeyboardVisible ? renderTopMostOverlay(supportMobileBottomNav) : null;
 
   const mobileSupportComposerStyle: CSSProperties | undefined =
     isSupportMobileKeyboardVisible
@@ -12539,7 +12561,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   ) : (
     <div className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_48%,#f8fafc_100%)]">
       {supportMobileListTabContent}
-      {supportMobileBottomNav}
     </div>
   );
 
@@ -12690,6 +12711,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             {supportMobileDialogContent}
           </div>
         </main>
+        {supportMobileBottomNavOverlay}
         {supportSelfCardPickerOverlay}
         {supportMerchantInfoSheetOverlay}
         <ChatBusinessCardDialog
@@ -13723,7 +13745,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               <div
                 className={`fixed inset-x-0 top-0 bottom-0 z-[2147483301] ${isMobileSupportDialog ? "" : "flex items-center justify-center p-4"}`}
               >
-                {isMobileSupportDialog ? supportMobileDialogContent : (
+                {isMobileSupportDialog ? (
+                  <>
+                    {supportMobileDialogContent}
+                    {supportMobileBottomNavOverlay}
+                  </>
+                ) : (
                 <div className="flex h-full min-h-0 min-w-0 max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl md:grid md:grid-cols-[320px_minmax(0,1fr)]">
                   <div className="flex min-h-0 min-w-0 flex-col overflow-hidden border-b bg-white md:border-b-0 md:border-r">
                     <div className="border-b px-4 py-3">
