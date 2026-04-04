@@ -3836,6 +3836,56 @@ function buildSupportMerchantCardLink(card: MerchantBusinessCardAsset | null) {
   });
 }
 
+function buildSupportFallbackMerchantCardHref(input: {
+  merchantId?: string | null;
+  merchantName?: string | null;
+  imageUrl?: string | null;
+  websiteHref?: string | null;
+  industry?: string | null;
+  contactName?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  contactAddress?: string | null;
+  location?: Partial<SiteLocation> | null;
+}) {
+  const targetUrl = normalizeSupportExternalUrl(input.websiteHref);
+  if (!targetUrl) return "";
+
+  const merchantName =
+    normalizeSupportDetailText(input.merchantName) ||
+    normalizeSupportDetailText(input.merchantId) ||
+    "商户";
+  const imageUrl = normalizeSupportDetailText(input.imageUrl);
+  const phone = normalizeSupportDetailText(input.phone);
+  const email = normalizeSupportDetailText(input.email);
+  const address = [
+    normalizeSupportDetailText(input.contactAddress),
+    normalizeSupportDetailText(input.location?.city),
+    normalizeSupportDetailText(input.location?.province),
+    normalizeSupportDetailText(input.location?.country),
+  ]
+    .filter(Boolean)
+    .join(" / ");
+
+  return buildMerchantBusinessCardShareUrl({
+    origin: resolveMerchantBusinessCardShareOrigin(undefined, targetUrl),
+    name: merchantName,
+    imageUrl: imageUrl || undefined,
+    detailImageUrl: imageUrl || undefined,
+    targetUrl,
+    contact: {
+      displayName: normalizeSupportDetailText(input.contactName) || merchantName,
+      organization: merchantName,
+      title: normalizeSupportDetailText(input.industry),
+      phone,
+      phones: phone ? [phone] : [],
+      email,
+      address,
+      websiteUrl: targetUrl,
+    },
+  });
+}
+
 function normalizeSupportExternalUrl(value: string | null | undefined, fallbackOrigin?: string | null) {
   const normalized = normalizeSupportDetailText(value);
   if (!normalized) return "";
@@ -8503,9 +8553,53 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   ]);
   const selectedSupportMerchantWebsiteLabel =
     selectedSupportMerchantWebsiteHref ? formatSupportUrlLabel(selectedSupportMerchantWebsiteHref) : "-";
+  const selectedSupportFallbackCardHref = useMemo(
+    () =>
+      buildSupportFallbackMerchantCardHref({
+        merchantId: selectedSupportPeerMerchantId,
+        merchantName: selectedSupportDisplayName,
+        imageUrl: selectedSupportAvatarImageUrl,
+        websiteHref: selectedSupportMerchantWebsiteHref,
+        industry: selectedSupportMerchantIndustry,
+        contactName:
+          normalizeSupportDisplayValue(selectedSupportProfile?.contactName) ||
+          normalizeSupportDisplayValue(selectedSupportPeerSite?.contactName) ||
+          selectedSupportDisplayName,
+        phone:
+          normalizeSupportDisplayValue(selectedSupportProfile?.contactPhone) ||
+          normalizeSupportDisplayValue(selectedSupportPeerSite?.contactPhone),
+        email:
+          normalizeSupportDisplayValue(selectedSupportProfile?.contactEmail) ||
+          normalizeSupportDisplayValue(selectedSupportPeerContact?.merchantEmail),
+        contactAddress:
+          normalizeSupportDisplayValue(selectedSupportProfile?.contactAddress) ||
+          normalizeSupportDisplayValue(selectedSupportPeerSite?.contactAddress),
+        location: selectedSupportProfile?.location ?? selectedSupportPeerSite?.location,
+      }),
+    [
+      selectedSupportAvatarImageUrl,
+      selectedSupportDisplayName,
+      selectedSupportMerchantIndustry,
+      selectedSupportMerchantWebsiteHref,
+      selectedSupportPeerContact?.merchantEmail,
+      selectedSupportPeerMerchantId,
+      selectedSupportPeerSite?.contactAddress,
+      selectedSupportPeerSite?.contactName,
+      selectedSupportPeerSite?.contactPhone,
+      selectedSupportPeerSite?.location,
+      selectedSupportProfile?.contactAddress,
+      selectedSupportProfile?.contactName,
+      selectedSupportProfile?.contactPhone,
+      selectedSupportProfile?.contactEmail,
+      selectedSupportProfile?.location,
+    ],
+  );
   const selectedSupportMerchantCardHref = useMemo(
-    () => (selectedSupportContactVisibility.businessCardHidden ? "" : buildSupportMerchantCardLink(selectedSupportResolvedBusinessCard)),
-    [selectedSupportContactVisibility.businessCardHidden, selectedSupportResolvedBusinessCard],
+    () =>
+      selectedSupportContactVisibility.businessCardHidden
+        ? ""
+        : buildSupportMerchantCardLink(selectedSupportResolvedBusinessCard) || selectedSupportFallbackCardHref,
+    [selectedSupportContactVisibility.businessCardHidden, selectedSupportFallbackCardHref, selectedSupportResolvedBusinessCard],
   );
   const selectedSupportMerchantCardLabel = selectedSupportContactVisibility.businessCardHidden
     ? "已隐藏"
@@ -8640,9 +8734,52 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     resolveMerchantBusinessCardForChatDisplay(editingSite?.businessCards ?? []) ??
     supportSelfProfile?.chatBusinessCard ??
     null;
+  const supportSelfFallbackCardHref = useMemo(
+    () =>
+      buildSupportFallbackMerchantCardHref({
+        merchantId: editingSiteId,
+        merchantName: supportSelfDisplayName,
+        imageUrl: supportSelfAvatarImageUrl,
+        websiteHref: supportSelfWebsiteHref,
+        industry: normalizeSupportDisplayValue(supportSelfProfile?.industry) || normalizeSupportDisplayValue(editingSite?.industry),
+        contactName:
+          normalizeSupportDisplayValue(supportSelfProfile?.contactName) ||
+          normalizeSupportDisplayValue(editingSite?.contactName) ||
+          supportSelfDisplayName,
+        phone:
+          normalizeSupportDisplayValue(supportSelfProfile?.contactPhone) ||
+          normalizeSupportDisplayValue(editingSite?.contactPhone),
+        email:
+          normalizeSupportDisplayValue(supportSelfProfile?.contactEmail) ||
+          normalizeSupportDisplayValue(editingSite?.contactEmail) ||
+          normalizeSupportDisplayValue(merchantSessionIdentityRef.current.email),
+        contactAddress:
+          normalizeSupportDisplayValue(supportSelfProfile?.contactAddress) ||
+          normalizeSupportDisplayValue(editingSite?.contactAddress),
+        location: supportSelfProfile?.location ?? editingSite?.location,
+      }),
+    [
+      editingSite?.contactAddress,
+      editingSite?.contactEmail,
+      editingSite?.contactName,
+      editingSite?.contactPhone,
+      editingSite?.industry,
+      editingSite?.location,
+      editingSiteId,
+      supportSelfAvatarImageUrl,
+      supportSelfDisplayName,
+      supportSelfProfile?.contactAddress,
+      supportSelfProfile?.contactEmail,
+      supportSelfProfile?.contactName,
+      supportSelfProfile?.contactPhone,
+      supportSelfProfile?.industry,
+      supportSelfProfile?.location,
+      supportSelfWebsiteHref,
+    ],
+  );
   const supportSelfCardHref = useMemo(
-    () => buildSupportMerchantCardLink(supportSelfChatBusinessCard),
-    [supportSelfChatBusinessCard],
+    () => buildSupportMerchantCardLink(supportSelfChatBusinessCard) || supportSelfFallbackCardHref,
+    [supportSelfChatBusinessCard, supportSelfFallbackCardHref],
   );
   const supportSelfCardLabel = supportSelfCardHref ? formatSupportUrlLabel(supportSelfCardHref) : "-";
   const selectedSupportLoading =
