@@ -8676,16 +8676,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         ? supportPeerProfilesByMerchantId[contact.merchantId]
         : undefined;
       const mergedProfile = fetchedProfile ?? localProfile ?? null;
-      const visibility = mergedProfile?.contactVisibility ?? createDefaultMerchantContactVisibility();
-      const subtitleEmail = visibility.emailHidden
-        ? "已隐藏"
-        : normalizeSupportDisplayValue(mergedProfile?.contactEmail) ||
-          normalizeSupportDisplayValue(contact.merchantEmail);
       return {
         key: `merchant:${contact.merchantId}`,
         name: contact.merchantName || contact.merchantId,
         badge: undefined as string | undefined,
-        subtitle: [contact.merchantId, subtitleEmail].filter(Boolean).join(" | ") || contact.merchantId,
+        subtitle: contact.merchantId,
         preview: contact.lastMessage?.text || "还没有聊天记录，可以直接开始对话。",
         updatedAt: contact.updatedAt || contact.savedAt,
         unread: supportPeerUnreadContactIds.has(contact.merchantId),
@@ -10793,6 +10788,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
                           <div className="truncate text-sm font-semibold text-slate-900">{contactRow.name}</div>
+                          {!contactRow.isOfficial ? (
+                            <span className="truncate text-[11px] font-medium text-slate-400">{contactRow.subtitle}</span>
+                          ) : null}
                           {contactRow.badge ? (
                             <span className="inline-flex shrink-0 items-center rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium text-white">
                               {contactRow.badge}
@@ -10802,7 +10800,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                             <span aria-label="有未读消息" className="inline-flex h-2.5 w-2.5 shrink-0 rounded-full bg-rose-500" />
                           ) : null}
                         </div>
-                        <div className="mt-1 truncate text-[11px] text-slate-500">{contactRow.subtitle}</div>
+                        {contactRow.isOfficial ? (
+                          <div className="mt-1 truncate text-[11px] text-slate-500">{contactRow.subtitle}</div>
+                        ) : null}
                       </div>
                       <div className="shrink-0 text-[11px] text-slate-400">
                         {contactRow.updatedAt ? formatSupportConversationTime(contactRow.updatedAt) : "未开始"}
@@ -12802,6 +12802,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                                   <div className="min-w-0">
                                     <div className="flex items-center gap-2">
                                       <div className="truncate text-sm font-medium text-slate-900">{contactRow.name}</div>
+                                      {!contactRow.isOfficial ? (
+                                        <span className="truncate text-[11px] font-medium text-slate-400">{contactRow.subtitle}</span>
+                                      ) : null}
                                       {contactRow.badge ? (
                                         <span className="inline-flex shrink-0 items-center rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium leading-none text-white">
                                           {contactRow.badge}
@@ -12811,7 +12814,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                                         <span aria-label="有未读消息" className="inline-flex h-2.5 w-2.5 shrink-0 rounded-full bg-rose-500" />
                                       ) : null}
                                     </div>
-                                    <div className="truncate text-[11px] text-slate-500">{contactRow.subtitle}</div>
+                                    {contactRow.isOfficial ? (
+                                      <div className="truncate text-[11px] text-slate-500">{contactRow.subtitle}</div>
+                                    ) : null}
                                   </div>
                                   <div className="shrink-0 text-[11px] text-slate-400">
                                     {contactRow.updatedAt ? formatSupportMessageTime(contactRow.updatedAt) : "未聊天"}
