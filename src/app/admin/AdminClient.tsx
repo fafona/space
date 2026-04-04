@@ -8915,6 +8915,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }, 0);
   const mobileFrontendPreviewPadding = Math.max(120, Math.max(0, maxBlockOffsetY) + 100);
   const shouldUseDesktopEditorSidebar = forceDesktopEditorSidebar || isPlatformEditor || isDesktopEditorSidebar;
+  const isMobileMerchantEditorShell = !isPlatformEditor && !shouldUseDesktopEditorSidebar;
+  const merchantEditorAvatarLabel = !isPlatformEditor ? getSupportContactAvatarLabel(merchantDisplayName, "商") : "";
   const shouldShowPublishActions = showPublishActions ?? !isPlatformEditor;
   const planTemplateKeyword = planTemplateSearch.trim().toLowerCase();
   const filteredPlanTemplates = planTemplates.filter((template) => {
@@ -9215,27 +9217,45 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     </div>
   );
 
-  const editorMainClassName = `min-h-screen bg-gray-100 ${!topBarCollapsed && shouldUseDesktopEditorSidebar ? "pl-[320px]" : ""}`;
+  const editorMainClassName = `min-h-screen ${
+    isMobileMerchantEditorShell
+      ? "overflow-x-hidden bg-[radial-gradient(circle_at_top,_rgba(103,232,249,0.16),_transparent_28%),linear-gradient(180deg,_#eef6ff_0%,_#f8fbff_34%,_#e8f1ff_100%)]"
+      : "bg-gray-100"
+  } ${!topBarCollapsed && shouldUseDesktopEditorSidebar ? "pl-[320px]" : ""}`;
   const toolbarWrapperClassName = topBarCollapsed
     ? "hidden"
     : shouldUseDesktopEditorSidebar
       ? "fixed inset-y-0 left-0 z-[15000] w-[320px] overflow-y-auto border-r bg-white shadow-sm"
-      : "fixed inset-x-0 top-0 z-[15000] border-b bg-white shadow-sm";
+      : "fixed inset-x-0 top-0 z-[15000] border-b border-white/70 bg-[rgba(248,251,255,0.88)] shadow-[0_22px_48px_rgba(15,23,42,0.10)] backdrop-blur-xl";
   const toolbarContentClassName = shouldUseDesktopEditorSidebar
     ? "mx-0 flex max-w-none flex-col items-stretch justify-start gap-3 px-4 py-4"
-    : "mx-auto flex max-w-6xl items-center justify-between gap-3 px-6 py-3";
+    : "mx-auto flex max-w-[460px] flex-col items-stretch gap-4 px-4 pb-4 pt-[calc(env(safe-area-inset-top)+0.9rem)]";
   const toolbarHeaderClassName = shouldUseDesktopEditorSidebar
     ? "flex flex-col items-stretch gap-3"
-    : "flex items-center gap-3";
+    : "flex flex-col gap-4";
   const toolbarActionsClassName = shouldUseDesktopEditorSidebar
     ? "grid grid-cols-2 gap-2"
-    : "flex items-center gap-2";
+    : "grid grid-cols-2 gap-3";
   const supportButtonClassName = shouldUseDesktopEditorSidebar
     ? `col-span-2 relative px-3 py-2 rounded text-white ${supportHasUnreadMessages ? "bg-rose-700 hover:bg-rose-800" : "bg-black hover:bg-slate-800"}`
-    : `relative px-3 py-2 rounded text-white ${supportHasUnreadMessages ? "bg-rose-700 hover:bg-rose-800" : "bg-black hover:bg-slate-800"}`;
+    : `col-span-2 relative min-h-[52px] rounded-[22px] px-4 py-3 text-[15px] font-semibold text-white shadow-[0_16px_36px_rgba(15,23,42,0.18)] ${
+        supportHasUnreadMessages ? "bg-rose-700 hover:bg-rose-800" : "bg-slate-950 hover:bg-slate-800"
+      }`;
   const publishActionsClassName = shouldUseDesktopEditorSidebar
     ? "grid grid-cols-2 gap-2"
-    : "flex items-center gap-2 flex-wrap";
+    : "grid grid-cols-2 gap-3";
+  const merchantMobileToolbarCardClassName =
+    "rounded-[28px] border border-white/70 bg-white/90 p-4 shadow-[0_18px_40px_rgba(15,23,42,0.08)] backdrop-blur";
+  const merchantMobileToolbarSectionLabelClassName = "text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400";
+  const merchantMobileToolbarButtonClassName =
+    "min-h-[50px] w-full rounded-[20px] border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-800 shadow-[0_10px_24px_rgba(15,23,42,0.06)] transition active:scale-[0.99] hover:border-slate-300 hover:bg-white";
+  const merchantMobileToolbarIconButtonClassName =
+    "flex min-h-[54px] w-full items-center justify-center rounded-[20px] border border-slate-200 bg-white px-4 py-3 text-slate-900 shadow-[0_10px_24px_rgba(15,23,42,0.06)] transition active:scale-[0.99] hover:border-slate-300 hover:bg-white disabled:opacity-50";
+  const merchantMobileToolbarSelectClassName =
+    "w-full rounded-[20px] border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900 shadow-[0_10px_24px_rgba(15,23,42,0.06)] outline-none";
+  const merchantMobileToolbarSegmentClassName = "grid grid-cols-2 gap-3 rounded-[24px] border border-slate-200 bg-slate-50/90 p-1.5";
+  const merchantMobileToolbarSegmentButtonBaseClassName =
+    "min-h-[48px] rounded-[18px] px-3 py-2 text-sm font-semibold transition active:scale-[0.99]";
 
   return (
     <main
@@ -9248,8 +9268,14 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       data-force-desktop-sidebar={forceDesktopEditorSidebar ? "1" : "0"}
     >
       {!topBarCollapsed && backendNotice ? (
-        <div className="max-w-6xl mx-auto px-6 pb-3">
-          <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-800">
+        <div className={isMobileMerchantEditorShell ? "mx-auto max-w-[460px] px-4 pb-4" : "max-w-6xl mx-auto px-6 pb-3"}>
+          <div
+            className={
+              isMobileMerchantEditorShell
+                ? "rounded-[22px] border border-amber-200 bg-amber-50/92 px-4 py-3 text-sm text-amber-800 shadow-[0_12px_28px_rgba(245,158,11,0.12)]"
+                : "rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-800"
+            }
+          >
             {backendNotice}
           </div>
         </div>
@@ -9260,7 +9286,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             ? topBarCollapsed
               ? "left-0 top-6"
               : "left-[320px] top-6"
-            : "left-0 top-3"
+            : isMobileMerchantEditorShell
+              ? `left-4 ${topBarCollapsed ? "top-[calc(env(safe-area-inset-top)+1rem)]" : "top-[calc(env(safe-area-inset-top)+1.1rem)]"}`
+              : "left-0 top-3"
         }`}
       >
         <button
@@ -9268,13 +9296,15 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           className={`flex items-center justify-center border bg-white text-base leading-none shadow-sm transition-colors hover:bg-gray-50 ${
             shouldUseDesktopEditorSidebar
               ? "h-12 w-7 rounded-r-lg border-l-0"
-              : "h-10 w-7 rounded-r-lg border-l-0"
+              : isMobileMerchantEditorShell
+                ? "h-11 w-11 rounded-full border-white/70 bg-white/92 text-slate-700 shadow-[0_18px_40px_rgba(15,23,42,0.14)]"
+                : "h-10 w-7 rounded-r-lg border-l-0"
           }`}
           onClick={() => setTopBarCollapsed((prev) => !prev)}
           title={topBarCollapsed ? "展开侧栏" : "收起侧栏"}
           aria-label={topBarCollapsed ? "展开编辑侧栏" : "收起编辑侧栏"}
         >
-          {topBarCollapsed ? "›" : "‹"}
+          {isMobileMerchantEditorShell ? (topBarCollapsed ? "≡" : "×") : topBarCollapsed ? "›" : "‹"}
         </button>
       </div>
       <div
@@ -9287,21 +9317,53 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             <div className={toolbarHeaderClassName}>
               {isPlatformEditor ? <div className="text-lg font-bold">{editorTitle}</div> : null}
               {!isPlatformEditor ? (
-                <div className="flex items-center justify-between gap-3 rounded border border-slate-300 bg-slate-50 px-3 py-1">
-                  <div className="min-w-0">
-                    <div className="text-[11px] leading-4 text-slate-500">当前商户</div>
-                    <div className="max-w-[180px] truncate text-sm font-semibold text-slate-900" title={merchantDisplayName}>
-                      {merchantDisplayName}
+                isMobileMerchantEditorShell ? (
+                  <div className="rounded-[30px] border border-white/75 bg-[linear-gradient(135deg,_rgba(8,17,33,0.96)_0%,_rgba(15,23,42,0.92)_50%,_rgba(15,118,110,0.84)_100%)] p-5 text-white shadow-[0_22px_55px_rgba(8,17,33,0.28)]">
+                    <div className="flex items-start gap-4">
+                      <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-[24px] bg-white/12 text-xl font-semibold tracking-[0.18em] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.16)]">
+                        {merchantEditorAvatarLabel}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/10 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.24em] text-cyan-50/90">
+                          <span className="inline-flex h-2 w-2 rounded-full bg-emerald-300" />
+                          Merchant Space
+                        </div>
+                        <div className="mt-4 flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-[11px] font-medium uppercase tracking-[0.28em] text-slate-200/72">当前商户</div>
+                            <div className="mt-2 truncate text-[28px] font-semibold tracking-tight text-white" title={merchantDisplayName}>
+                              {merchantDisplayName}
+                            </div>
+                            <div className="mt-2 text-sm leading-6 text-slate-200/84">手机上也能像 app 一样编辑站点内容。</div>
+                          </div>
+                          <button
+                            className="shrink-0 rounded-[18px] border border-white/16 bg-white/10 px-4 py-3 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(8,17,33,0.18)] transition hover:bg-white/16 disabled:opacity-50"
+                            onClick={logout}
+                            disabled={loggingOut}
+                          >
+                            {loggingOut ? "退出中..." : "退出"}
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   </div>
-                  <button
-                    className="shrink-0 rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-50"
-                    onClick={logout}
-                    disabled={loggingOut}
-                  >
-                    {loggingOut ? "退出中..." : "退出登录"}
-                  </button>
-                </div>
+                ) : (
+                  <div className="flex items-center justify-between gap-3 rounded border border-slate-300 bg-slate-50 px-3 py-1">
+                    <div className="min-w-0">
+                      <div className="text-[11px] leading-4 text-slate-500">当前商户</div>
+                      <div className="max-w-[180px] truncate text-sm font-semibold text-slate-900" title={merchantDisplayName}>
+                        {merchantDisplayName}
+                      </div>
+                    </div>
+                    <button
+                      className="shrink-0 rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-50"
+                      onClick={logout}
+                      disabled={loggingOut}
+                    >
+                      {loggingOut ? "退出中..." : "退出登录"}
+                    </button>
+                  </div>
+                )
               ) : null}
               {isPlatformEditor && storeScope !== "default" ? (
                 <div className="rounded border border-blue-300 bg-blue-50 px-2 py-1 text-xs text-blue-700">
@@ -9311,7 +9373,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             </div>
             <div className={toolbarActionsClassName}>
               <button
-                className="px-3 py-2 rounded border bg-white hover:bg-gray-50"
+                className={
+                  isMobileMerchantEditorShell
+                    ? merchantMobileToolbarButtonClassName
+                    : "px-3 py-2 rounded border bg-white hover:bg-gray-50"
+                }
                 onClick={() => {
                   if (!isPlatformEditor) {
                     // reuse precomputed profile completeness for guard
@@ -9334,11 +9400,19 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               {!isPlatformEditor ? (
                 <button
                   ref={merchantProfileButtonRef}
-                  className={`px-3 py-2 rounded border transition-colors ${
-                    merchantProfileAttention
-                      ? "border-rose-500 bg-rose-50 text-rose-700 hover:bg-rose-100"
-                      : "bg-white hover:bg-gray-50"
-                  }`}
+                  className={
+                    isMobileMerchantEditorShell
+                      ? `${merchantMobileToolbarButtonClassName} ${
+                          merchantProfileAttention
+                            ? "border-rose-300 bg-rose-50 text-rose-700 shadow-[0_12px_28px_rgba(244,63,94,0.12)]"
+                            : ""
+                        }`
+                      : `px-3 py-2 rounded border transition-colors ${
+                          merchantProfileAttention
+                            ? "border-rose-500 bg-rose-50 text-rose-700 hover:bg-rose-100"
+                            : "bg-white hover:bg-gray-50"
+                        }`
+                  }
                   onClick={async () => {
                     const resolvedSiteId = await ensureEditableMerchantSiteId();
                     if (!resolvedSiteId) {
@@ -9352,14 +9426,22 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                 </button>
               ) : null}
               <button
-                className="px-3 py-2 rounded border bg-white hover:bg-gray-50"
+                className={
+                  isMobileMerchantEditorShell
+                    ? merchantMobileToolbarButtonClassName
+                    : "px-3 py-2 rounded border bg-white hover:bg-gray-50"
+                }
                 onClick={() => void showAnalyticsSummary()}
               >
                 {"数据统计"}
               </button>
               {!isPlatformEditor && canUseBookingBlock ? (
                 <button
-                  className="px-3 py-2 rounded border bg-white hover:bg-gray-50 disabled:opacity-50"
+                  className={
+                    isMobileMerchantEditorShell
+                      ? merchantMobileToolbarButtonClassName
+                      : "px-3 py-2 rounded border bg-white hover:bg-gray-50 disabled:opacity-50"
+                  }
                   onClick={() => setMerchantBookingManagerOpen(true)}
                   disabled={!editingSiteId}
                 >
@@ -9385,21 +9467,46 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           </div>
         {!topBarCollapsed ? (
           <>
-            <div className="border-t">
-              <div className="max-w-6xl mx-auto px-6 py-3 lg:mx-0 lg:max-w-none lg:px-4 lg:py-4">
-                <div className="flex items-center gap-2 flex-wrap lg:flex-col lg:items-stretch lg:gap-4">
-                  <div className="flex items-center gap-2 flex-wrap lg:flex-col lg:items-stretch">
+            <div className={isMobileMerchantEditorShell ? "border-t border-white/70" : "border-t"}>
+              <div
+                className={
+                  isMobileMerchantEditorShell
+                    ? "mx-auto max-w-[460px] px-4 py-4"
+                    : "max-w-6xl mx-auto px-6 py-3 lg:mx-0 lg:max-w-none lg:px-4 lg:py-4"
+                }
+              >
+                <div
+                  className={
+                    isMobileMerchantEditorShell
+                      ? "grid gap-4"
+                      : "flex items-center gap-2 flex-wrap lg:flex-col lg:items-stretch lg:gap-4"
+                  }
+                >
+                  <div
+                    className={
+                      isMobileMerchantEditorShell
+                        ? `${merchantMobileToolbarCardClassName} grid gap-3`
+                        : "flex items-center gap-2 flex-wrap lg:flex-col lg:items-stretch"
+                    }
+                  >
+                    {isMobileMerchantEditorShell ? (
+                      <div className={merchantMobileToolbarSectionLabelClassName}>页面设置</div>
+                    ) : null}
                     {isPlatformEditor ? (
                       <button
                         type="button"
-                        className="rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50 lg:w-full"
+                        className={
+                          isMobileMerchantEditorShell
+                            ? merchantMobileToolbarButtonClassName
+                            : "rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50 lg:w-full"
+                        }
                         onClick={() => setPlanTemplateDialogOpen(true)}
                       >
                         方案模板
                       </button>
                     ) : null}
                     <select
-                      className="border p-2 rounded min-w-[140px] lg:w-full"
+                      className={isMobileMerchantEditorShell ? merchantMobileToolbarSelectClassName : "border p-2 rounded min-w-[140px] lg:w-full"}
                       value={editingPlanId}
                       onChange={(e) => switchEditingPlan(e.target.value as PlanId)}
                       title="选择要编辑的方案"
@@ -9414,7 +9521,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                       })}
                     </select>
                     <select
-                      className="border p-2 rounded min-w-[140px] lg:w-full"
+                      className={isMobileMerchantEditorShell ? merchantMobileToolbarSelectClassName : "border p-2 rounded min-w-[140px] lg:w-full"}
                       value={editingPageId}
                       onChange={(e) => switchEditingPage(e.target.value)}
                       title="选择要编辑的页面"
@@ -9427,7 +9534,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                     </select>
                     <button
                       type="button"
-                      className="rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50 lg:w-full"
+                      className={
+                        isMobileMerchantEditorShell
+                          ? merchantMobileToolbarButtonClassName
+                          : "rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50 lg:w-full"
+                      }
                       onClick={openPageCopyDialog}
                     >
                       复制
@@ -9436,33 +9547,62 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
                   <div className="h-px w-full bg-gray-200 hidden lg:block" />
 
-                  <div className="flex items-center gap-2 flex-wrap lg:flex-col lg:items-stretch">
-                    <div className="inline-flex items-center rounded border overflow-hidden lg:w-full">
+                  <div
+                    className={
+                      isMobileMerchantEditorShell
+                        ? `${merchantMobileToolbarCardClassName} grid gap-3`
+                        : "flex items-center gap-2 flex-wrap lg:flex-col lg:items-stretch"
+                    }
+                  >
+                    {isMobileMerchantEditorShell ? (
+                      <div className={merchantMobileToolbarSectionLabelClassName}>预览视图</div>
+                    ) : null}
+                    <div className={isMobileMerchantEditorShell ? merchantMobileToolbarSegmentClassName : "inline-flex items-center rounded border overflow-hidden lg:w-full"}>
                       <button
                         type="button"
-                        className={`px-3 py-2 text-sm lg:flex-1 ${previewViewport === "desktop" ? "bg-black text-white" : "bg-white hover:bg-gray-50"}`}
+                        className={
+                          isMobileMerchantEditorShell
+                            ? `${merchantMobileToolbarSegmentButtonBaseClassName} ${
+                                previewViewport === "desktop" ? "bg-slate-950 text-white shadow-sm" : "bg-transparent text-slate-600 hover:bg-white"
+                              }`
+                            : `px-3 py-2 text-sm lg:flex-1 ${previewViewport === "desktop" ? "bg-black text-white" : "bg-white hover:bg-gray-50"}`
+                        }
                         onClick={() => switchPreviewViewport("desktop")}
                       >
                         PC
                       </button>
                       <button
                         type="button"
-                        className={`px-3 py-2 text-sm border-l lg:flex-1 ${previewViewport === "mobile" ? "bg-black text-white" : "bg-white hover:bg-gray-50"}`}
+                        className={
+                          isMobileMerchantEditorShell
+                            ? `${merchantMobileToolbarSegmentButtonBaseClassName} ${
+                                previewViewport === "mobile" ? "bg-slate-950 text-white shadow-sm" : "bg-transparent text-slate-600 hover:bg-white"
+                              }`
+                            : `px-3 py-2 text-sm border-l lg:flex-1 ${previewViewport === "mobile" ? "bg-black text-white" : "bg-white hover:bg-gray-50"}`
+                        }
                         onClick={() => switchPreviewViewport("mobile")}
                       >
                         手机
                       </button>
                     </div>
-                    <div className="flex items-center gap-2 flex-wrap lg:grid lg:grid-cols-2">
+                    <div className={isMobileMerchantEditorShell ? "grid grid-cols-2 gap-3" : "flex items-center gap-2 flex-wrap lg:grid lg:grid-cols-2"}>
                       <button
-                        className="px-2 py-2 rounded border bg-white hover:bg-gray-50 text-xs lg:w-full"
+                        className={
+                          isMobileMerchantEditorShell
+                            ? merchantMobileToolbarButtonClassName
+                            : "px-2 py-2 rounded border bg-white hover:bg-gray-50 text-xs lg:w-full"
+                        }
                         onClick={() => copySelectedBlockStyleToViewport("mobile")}
                         title="将当前选中区块样式复制到手机端"
                       >
                         {"样式->手机"}
                       </button>
                       <button
-                        className="px-2 py-2 rounded border bg-white hover:bg-gray-50 text-xs lg:w-full"
+                        className={
+                          isMobileMerchantEditorShell
+                            ? merchantMobileToolbarButtonClassName
+                            : "px-2 py-2 rounded border bg-white hover:bg-gray-50 text-xs lg:w-full"
+                        }
                         onClick={() => copySelectedBlockStyleToViewport("desktop")}
                         title="将当前选中区块样式复制到PC端"
                       >
@@ -9472,7 +9612,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                     {previewViewport === "mobile" ? (
                       <button
                         type="button"
-                        className="hidden lg:block px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm"
+                        className={
+                          isMobileMerchantEditorShell
+                            ? merchantMobileToolbarButtonClassName
+                            : "hidden lg:block px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm"
+                        }
                         onClick={() => void readDesktopIntoMobile()}
                       >
                         读取PC
@@ -9482,9 +9626,22 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
                   <div className="h-px w-full bg-gray-200 hidden lg:block" />
 
-                  <div className="flex items-center gap-2 flex-wrap lg:grid lg:grid-cols-3">
+                  <div
+                    className={
+                      isMobileMerchantEditorShell
+                        ? `${merchantMobileToolbarCardClassName} grid grid-cols-3 gap-3`
+                        : "flex items-center gap-2 flex-wrap lg:grid lg:grid-cols-3"
+                    }
+                  >
+                    {isMobileMerchantEditorShell ? (
+                      <div className={`col-span-3 ${merchantMobileToolbarSectionLabelClassName}`}>编辑历史</div>
+                    ) : null}
                     <button
-                      className="px-3 py-2 rounded bg-black text-white disabled:opacity-50 lg:w-full"
+                      className={
+                        isMobileMerchantEditorShell
+                          ? merchantMobileToolbarIconButtonClassName.replace("bg-white", "bg-slate-950").replace("text-slate-900", "text-white")
+                          : "px-3 py-2 rounded bg-black text-white disabled:opacity-50 lg:w-full"
+                      }
                       onClick={saveDraft}
                       title="保存草稿"
                       aria-label="保存草稿"
@@ -9496,7 +9653,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                       </svg>
                     </button>
                     <button
-                      className="px-3 py-2 rounded border bg-white hover:bg-gray-50 disabled:opacity-50 lg:w-full"
+                      className={
+                        isMobileMerchantEditorShell
+                          ? merchantMobileToolbarIconButtonClassName
+                          : "px-3 py-2 rounded border bg-white hover:bg-gray-50 disabled:opacity-50 lg:w-full"
+                      }
                       onClick={undoEdit}
                       disabled={!canUndo}
                       title="撤销"
@@ -9508,7 +9669,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                       </svg>
                     </button>
                     <button
-                      className="px-3 py-2 rounded border bg-white hover:bg-gray-50 disabled:opacity-50 lg:w-full"
+                      className={
+                        isMobileMerchantEditorShell
+                          ? merchantMobileToolbarIconButtonClassName
+                          : "px-3 py-2 rounded border bg-white hover:bg-gray-50 disabled:opacity-50 lg:w-full"
+                      }
                       onClick={redoEdit}
                       disabled={!canRedo}
                       title="重复"
@@ -9523,12 +9688,27 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
                   <div className="h-px w-full bg-gray-200 hidden lg:block" />
 
-                  <div className="flex items-center gap-2 flex-wrap lg:flex-col lg:items-stretch">
-                    <div className="grid gap-2 lg:grid-cols-2">
+                  <div
+                    className={
+                      isMobileMerchantEditorShell
+                        ? `${merchantMobileToolbarCardClassName} grid gap-3`
+                        : "flex items-center gap-2 flex-wrap lg:flex-col lg:items-stretch"
+                    }
+                  >
+                    {isMobileMerchantEditorShell ? (
+                      <div className={merchantMobileToolbarSectionLabelClassName}>页面风格</div>
+                    ) : null}
+                    <div className={isMobileMerchantEditorShell ? "grid grid-cols-2 gap-3" : "grid gap-2 lg:grid-cols-2"}>
                       <button
-                        className={`px-3 py-2 rounded border lg:w-full ${
-                          canUseInsertBackground ? "bg-white hover:bg-gray-50" : "bg-gray-100 text-gray-400 cursor-not-allowed"
-                        }`}
+                        className={
+                          isMobileMerchantEditorShell
+                            ? `${merchantMobileToolbarButtonClassName} ${
+                                canUseInsertBackground ? "" : "bg-gray-100 text-gray-400 cursor-not-allowed"
+                              }`
+                            : `px-3 py-2 rounded border lg:w-full ${
+                                canUseInsertBackground ? "bg-white hover:bg-gray-50" : "bg-gray-100 text-gray-400 cursor-not-allowed"
+                              }`
+                        }
                         onClick={canUseInsertBackgroundByPermission ? insertPageImage : undefined}
                         disabled={!canUseInsertBackgroundByPermission}
                         title={!canUseInsertBackgroundByPermission ? "当前权限未开通插入背景" : undefined}
@@ -9536,16 +9716,26 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                         {"插入背景"}
                       </button>
                       <button
-                        className="px-3 py-2 rounded border bg-white hover:bg-gray-50 lg:w-full"
+                        className={
+                          isMobileMerchantEditorShell
+                            ? merchantMobileToolbarButtonClassName
+                            : "px-3 py-2 rounded border bg-white hover:bg-gray-50 lg:w-full"
+                        }
                         onClick={() => void editPageImageSettings()}
                       >
                         {"背景参数"}
                       </button>
                     </div>
                     <select
-                      className={`border p-2 rounded min-w-[130px] lg:w-full ${
-                        canUseThemeEffects ? "" : "bg-gray-100 text-gray-400 cursor-not-allowed"
-                      }`}
+                      className={
+                        isMobileMerchantEditorShell
+                          ? `${merchantMobileToolbarSelectClassName} ${
+                              canUseThemeEffects ? "" : "bg-gray-100 text-gray-400 cursor-not-allowed"
+                            }`
+                          : `border p-2 rounded min-w-[130px] lg:w-full ${
+                              canUseThemeEffects ? "" : "bg-gray-100 text-gray-400 cursor-not-allowed"
+                            }`
+                      }
                       value={themePreset}
                       disabled={!canUseThemeEffects}
                       title={!canUseThemeEffects ? "当前权限未开通主题效果" : "风格"}
@@ -9565,9 +9755,19 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
                   <div className="h-px w-full bg-gray-200 hidden lg:block" />
 
-                  <div className="grid grid-cols-[minmax(0,1fr)_56px] items-start gap-2">
+                  <div
+                    className={
+                      isMobileMerchantEditorShell
+                        ? `${merchantMobileToolbarCardClassName} grid gap-3`
+                        : "grid grid-cols-[minmax(0,1fr)_56px] items-start gap-2"
+                    }
+                  >
+                    {isMobileMerchantEditorShell ? (
+                      <div className={merchantMobileToolbarSectionLabelClassName}>新增区块</div>
+                    ) : null}
+                    <div className={isMobileMerchantEditorShell ? "grid grid-cols-[minmax(0,1fr)_72px] items-start gap-3" : "grid grid-cols-[minmax(0,1fr)_56px] items-start gap-2"}>
                     <select
-                      className="border p-2 rounded min-w-0 w-full"
+                      className={isMobileMerchantEditorShell ? merchantMobileToolbarSelectClassName : "border p-2 rounded min-w-0 w-full"}
                       value={newBlockType}
                       onChange={(e) => setNewBlockType(e.target.value as Block["type"])}
                     >
@@ -9585,9 +9785,15 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                     </select>
                     <div className="relative">
                       <button
-                        className={`px-3 py-2 rounded border w-full ${
-                          isCurrentBlockTypeLocked ? "bg-gray-100 text-gray-400 cursor-not-allowed" : "bg-white hover:bg-gray-50"
-                        }`}
+                        className={
+                          isMobileMerchantEditorShell
+                            ? `${merchantMobileToolbarIconButtonClassName} ${
+                                isCurrentBlockTypeLocked ? "bg-gray-100 text-gray-400 cursor-not-allowed" : ""
+                              }`
+                            : `px-3 py-2 rounded border w-full ${
+                                isCurrentBlockTypeLocked ? "bg-gray-100 text-gray-400 cursor-not-allowed" : "bg-white hover:bg-gray-50"
+                              }`
+                        }
                         onClick={addBlock}
                         title="新增区块"
                         aria-label="新增区块"
@@ -9615,27 +9821,49 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                       accept="image/*"
                       onChange={handlePageImageUpload}
                     />
+                    </div>
                   </div>
 
                   {shouldShowPublishActions ? (
                     <>
                       <div className="h-px w-full bg-gray-200 hidden lg:block" />
-                      <div className="flex items-center gap-2 flex-wrap lg:flex-col lg:items-stretch">
+                      <div
+                        className={
+                          isMobileMerchantEditorShell
+                            ? `${merchantMobileToolbarCardClassName} grid gap-3`
+                            : "flex items-center gap-2 flex-wrap lg:flex-col lg:items-stretch"
+                        }
+                      >
+                        {isMobileMerchantEditorShell ? (
+                          <div className={merchantMobileToolbarSectionLabelClassName}>发布操作</div>
+                        ) : null}
                         <div className={publishActionsClassName}>
                           <button
-                            className="px-3 py-2 rounded border bg-white hover:bg-gray-50"
+                            className={
+                              isMobileMerchantEditorShell
+                                ? merchantMobileToolbarButtonClassName
+                                : "px-3 py-2 rounded border bg-white hover:bg-gray-50"
+                            }
                             onClick={rollbackToLastSuccessfulPublished}
                           >
                             {"回滚发布"}
                           </button>
                           <button
-                            className="px-3 py-2 rounded border bg-white hover:bg-gray-50"
+                            className={
+                              isMobileMerchantEditorShell
+                                ? merchantMobileToolbarButtonClassName
+                                : "px-3 py-2 rounded border bg-white hover:bg-gray-50"
+                            }
                             onClick={restoreLatestSavedDraft}
                           >
                             {"恢复草稿"}
                           </button>
                           <button
-                            className={`px-3 py-2 rounded bg-black text-white disabled:opacity-50 ${shouldUseDesktopEditorSidebar ? "col-span-2" : ""}`}
+                            className={
+                              isMobileMerchantEditorShell
+                                ? "col-span-2 min-h-[52px] rounded-[22px] bg-slate-950 px-4 py-3 text-[15px] font-semibold text-white shadow-[0_18px_40px_rgba(15,23,42,0.18)] disabled:opacity-50"
+                                : `px-3 py-2 rounded bg-black text-white disabled:opacity-50 ${shouldUseDesktopEditorSidebar ? "col-span-2" : ""}`
+                            }
                             onClick={publishToFrontend}
                             disabled={
                               publishing ||
@@ -9659,7 +9887,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                 </div>
               </div>
             </div>
-            {previewViewport === "mobile" ? (
+            {previewViewport === "mobile" && !isMobileMerchantEditorShell ? (
               <div className="border-t lg:hidden">
                 <div className="max-w-6xl mx-auto px-6 py-2">
                   <button
@@ -9677,8 +9905,20 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       </div>
 
       {previewViewport === "mobile" ? (
-        <div className="min-h-screen bg-gray-200 py-6">
-          <div className="mx-auto flex w-full max-w-[1280px] items-start justify-center gap-20 px-3 lg:mx-0 lg:max-w-[980px] lg:justify-start lg:gap-12 lg:px-4">
+        <div
+          className={
+            isMobileMerchantEditorShell
+              ? "min-h-screen pb-[calc(env(safe-area-inset-bottom)+2rem)] pt-5"
+              : "min-h-screen bg-gray-200 py-6"
+          }
+        >
+          <div
+            className={
+              isMobileMerchantEditorShell
+                ? "mx-auto flex w-full max-w-[460px] flex-col items-center gap-6 px-4"
+                : "mx-auto flex w-full max-w-[1280px] items-start justify-center gap-20 px-3 lg:mx-0 lg:max-w-[980px] lg:justify-start lg:gap-12 lg:px-4"
+            }
+          >
             <div className="hidden lg:block w-[422px] shrink-0">
               <div className="sticky" style={{ top: `${Math.max(topBarHeight + 16, 72)}px` }}>
                 <div className="rounded-[36px] border-8 border-gray-900 bg-black p-2 shadow-2xl">
@@ -9704,7 +9944,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                 </div>
               </div>
             </div>
-            <div className="w-full max-w-[422px] px-1">
+            <div className={isMobileMerchantEditorShell ? "w-full max-w-[422px]" : "w-full max-w-[422px] px-1"}>
               <div className="rounded-[36px] border-8 border-gray-900 bg-black p-2 shadow-2xl">
                 <div
                   ref={backgroundLayerRef}
