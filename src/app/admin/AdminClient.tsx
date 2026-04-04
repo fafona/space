@@ -2468,6 +2468,7 @@ function buildMerchantDomainFromBase(baseDomain: string, prefix: string) {
 
 type ScopedMerchantSitePatch = {
   merchantName?: string | null;
+  signature?: string | null;
   domainPrefix?: string | null;
   contactEmail?: string | null;
   name?: string | null;
@@ -2487,6 +2488,8 @@ function ensureScopedMerchantSite(siteId: string, userEmail?: string | null, pat
     normalizeBaseDomainForMerchant(mainSite?.domain ?? "") ||
     "localhost:3000";
   const normalizedMerchantName = String(patch?.merchantName ?? "").trim();
+  const hasSignaturePatch = Boolean(patch && Object.prototype.hasOwnProperty.call(patch, "signature"));
+  const normalizedSignature = String(patch?.signature ?? "").trim();
   const normalizedDomainPrefix = normalizeDomainPrefixForMerchant(patch?.domainPrefix ?? "");
   const normalizedContactEmail =
     String(patch?.contactEmail ?? userEmail ?? "")
@@ -2501,6 +2504,7 @@ function ensureScopedMerchantSite(siteId: string, userEmail?: string | null, pat
   const nextPatchedServiceExpiresAt = hasServiceExpiresAtPatch ? patch?.serviceExpiresAt ?? null : undefined;
   const applyPatch = (site: Site): Site => {
     const nextMerchantName = normalizedMerchantName || String(site.merchantName ?? "").trim();
+    const nextSignature = hasSignaturePatch ? normalizedSignature : String(site.signature ?? "").trim();
     const nextDomainPrefix = normalizedDomainPrefix || normalizeDomainPrefixForMerchant(site.domainPrefix ?? site.domainSuffix ?? "");
     const nextContactEmail = normalizedContactEmail || String(site.contactEmail ?? "").trim().toLowerCase();
     const nextName = normalizedName || nextMerchantName || String(site.name ?? "").trim() || `商户 ${normalizedSiteId}`;
@@ -2512,6 +2516,7 @@ function ensureScopedMerchantSite(siteId: string, userEmail?: string | null, pat
     const nextServiceExpiresAt = hasServiceExpiresAtPatch ? nextPatchedServiceExpiresAt ?? null : site.serviceExpiresAt;
     const changed =
       nextMerchantName !== String(site.merchantName ?? "").trim() ||
+      nextSignature !== String(site.signature ?? "").trim() ||
       nextDomainPrefix !== normalizeDomainPrefixForMerchant(site.domainPrefix ?? site.domainSuffix ?? "") ||
       nextContactEmail !== String(site.contactEmail ?? "").trim().toLowerCase() ||
       nextName !== String(site.name ?? "").trim() ||
@@ -2521,6 +2526,7 @@ function ensureScopedMerchantSite(siteId: string, userEmail?: string | null, pat
     return {
       ...site,
       merchantName: nextMerchantName,
+      signature: nextSignature,
       domainPrefix: nextDomainPrefix,
       domainSuffix: nextDomainPrefix,
       contactEmail: nextContactEmail,
@@ -2556,6 +2562,7 @@ function ensureScopedMerchantSite(siteId: string, userEmail?: string | null, pat
     id: normalizedSiteId,
     tenantId,
     merchantName: normalizedMerchantName,
+    signature: hasSignaturePatch ? normalizedSignature : "",
     domainPrefix: normalizedDomainPrefix,
     domainSuffix: normalizedDomainPrefix,
     contactAddress: "",
@@ -3949,6 +3956,12 @@ type SupportContactRow = {
 
 type SupportMobileHomeTab = "conversations" | "business" | "faolla" | "self";
 
+const SUPPORT_EMPTY_SIGNATURE_TEXT = "这家伙很懒，什么都没有留下。";
+
+function resolveSupportSignatureText(value: unknown) {
+  return normalizeSupportDisplayValue(value) || SUPPORT_EMPTY_SIGNATURE_TEXT;
+}
+
 type SupportAvatarBadgeProps = {
   label: string;
   imageUrl?: string | null;
@@ -3961,6 +3974,7 @@ function buildSupportPublishedProfileFromSite(site: Site): MerchantListPublished
   return {
     id: site.id,
     merchantName: site.merchantName,
+    signature: site.signature,
     domainPrefix: site.domainPrefix,
     domainSuffix: site.domainSuffix,
     name: site.name,
@@ -4006,6 +4020,9 @@ function mergeSupportPublishedProfileIntoSite(
   return {
     ...site,
     merchantName: normalizeSupportDisplayValue(profile.merchantName) || site.merchantName,
+    signature:
+      normalizeSupportDisplayValue(profile.signature) ||
+      normalizeSupportDisplayValue(site.signature),
     domainPrefix: normalizeSupportDisplayValue(profile.domainPrefix) || site.domainPrefix,
     domainSuffix: normalizeSupportDisplayValue(profile.domainSuffix) || site.domainSuffix,
     name: normalizeSupportDisplayValue(profile.name) || site.name,
@@ -4349,6 +4366,8 @@ export default function AdminClient({
   const [supportBusinessCardError, setSupportBusinessCardError] = useState("");
   const [supportSelfProfileSaving, setSupportSelfProfileSaving] = useState(false);
   const [supportSelfAvatarUploading, setSupportSelfAvatarUploading] = useState(false);
+  const [supportSelfSignatureDraft, setSupportSelfSignatureDraft] = useState("");
+  const [supportSelfSignatureDirty, setSupportSelfSignatureDirty] = useState(false);
   const [supportPeerBusinessCardByMerchantId, setSupportPeerBusinessCardByMerchantId] = useState<
     Record<string, MerchantBusinessCardAsset | null>
   >({});
@@ -7598,6 +7617,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     merchantName: string,
     profile?: {
       domain?: string;
+      signature?: string;
       contactAddress?: string;
       contactName?: string;
       contactPhone?: string;
@@ -7642,6 +7662,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         merchantId: normalizedMerchantId,
         domainPrefix: normalizedPrefix,
         merchantName: normalizedMerchantName,
+        ...(typeof profile?.signature === "string" ? { signature: String(profile.signature).trim() } : {}),
         domain: String(profile?.domain ?? "").trim(),
         contactAddress: String(profile?.contactAddress ?? "").trim(),
         contactName: String(profile?.contactName ?? "").trim(),
@@ -8404,6 +8425,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         normalizeSupportDisplayValue(selectedSupportPeerSite?.merchantCardImageUrl);
   const selectedSupportResolvedBusinessCard = selectedSupportProfile?.chatBusinessCard ?? selectedSupportBusinessCard;
   const selectedSupportIsOfficial = supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY;
+  const selectedSupportSignature =
+    selectedSupportIsOfficial
+      ? supportOfficialSiteLabel
+      : resolveSupportSignatureText(selectedSupportProfile?.signature);
   const selectedSupportSubtitle =
     supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY
       ? supportOfficialSiteLabel
@@ -8572,6 +8597,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   ]);
   const supportSelfWebsiteLabel =
     supportSelfWebsiteHref ? formatSupportUrlLabel(supportSelfWebsiteHref) : "-";
+  const supportSelfSignature = normalizeSupportDisplayValue(supportSelfProfile?.signature);
+  const supportSelfSignaturePreview = resolveSupportSignatureText(supportSelfSignature);
   const supportSelfChatBusinessCard =
     resolveMerchantBusinessCardForChatDisplay(editingSite?.businessCards ?? []) ??
     supportSelfProfile?.chatBusinessCard ??
@@ -8606,7 +8633,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     selectedSupportDisplayName,
     selectedSupportIsOfficial ? "FA" : "商",
   );
-  const selectedSupportHeaderMeta = selectedSupportSubtitle;
+  const selectedSupportHeaderMeta = selectedSupportSignature;
   const supportPeerUnreadContactIds = useMemo(() => {
     const unreadContactIds = new Set<string>();
     if (!currentSupportMerchantId) return unreadContactIds;
@@ -9366,6 +9393,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   ]);
 
   useEffect(() => {
+    setSupportSelfSignatureDraft(supportSelfSignature);
+    setSupportSelfSignatureDirty(false);
+  }, [editingSiteId, supportSelfSignature]);
+
+  useEffect(() => {
     if (isPlatformEditor || !supportInterfaceOpen || selectedSupportIsOfficial) return;
     const merchantId = selectedSupportPeerMerchantId.trim();
     if (!/^\d{8}$/.test(merchantId)) return;
@@ -10123,6 +10155,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   async function saveSupportSelfSitePatch(
     patch: {
       chatAvatarImageUrl?: string;
+      signature?: string;
       contactVisibility?: MerchantContactVisibility;
       businessCards?: MerchantBusinessCardAsset[];
     },
@@ -10159,10 +10192,13 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       typeof patch.chatAvatarImageUrl === "string"
         ? patch.chatAvatarImageUrl
         : normalizeSupportDisplayValue(baseSite.chatAvatarImageUrl);
+    const nextSignature =
+      typeof patch.signature === "string" ? normalizeSupportDisplayValue(patch.signature) : normalizeSupportDisplayValue(baseSite.signature);
     const nextSite: Site = {
       ...baseSite,
       businessCards: nextBusinessCards,
       chatAvatarImageUrl: nextChatAvatarImageUrl,
+      signature: nextSignature,
       contactVisibility: nextContactVisibility,
       updatedAt: new Date().toISOString(),
     };
@@ -10208,6 +10244,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           normalizeSupportDisplayValue(nextSite.name) ||
           targetSiteId,
         {
+          signature: normalizeSupportDisplayValue(nextSite.signature),
           domain: buildMerchantDomainFromBase(baseDomain, normalizedDomainPrefix),
           contactAddress: nextSite.contactAddress,
           contactName: nextSite.contactName,
@@ -10281,6 +10318,21 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         successTip: hidden ? "已隐藏该资料" : "已恢复显示该资料",
       },
     );
+  }
+
+  async function handleSupportSelfSignatureSave() {
+    const normalizedSignature = supportSelfSignatureDraft.trim();
+    const saved = await saveSupportSelfSitePatch(
+      {
+        signature: normalizedSignature,
+      },
+      {
+        successTip: normalizedSignature ? "个性签名已更新" : "已恢复默认签名",
+      },
+    );
+    if (saved) {
+      setSupportSelfSignatureDirty(false);
+    }
   }
 
   async function handleSupportSelfChatDisplayChange(cardId: string) {
@@ -10913,7 +10965,39 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
             <div className="border-b border-slate-100 px-5 py-4">
               <div className="text-sm font-semibold text-slate-900">我的资料</div>
-              <div className="mt-1 text-xs text-slate-500">电话、邮箱和联系卡可以对其他商户隐藏。</div>
+              <div className="mt-1 text-xs text-slate-500">电话、邮箱和联系卡可以对其他商户隐藏，签名会显示在聊天头像旁边。</div>
+            </div>
+            <div className="border-b border-slate-100 px-5 py-4">
+              <div className="text-[11px] font-medium tracking-[0.08em] text-slate-400">个性签名</div>
+              <textarea
+                className="mt-2 h-24 w-full resize-none rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-300 focus:bg-white"
+                value={supportSelfSignatureDraft}
+                placeholder={SUPPORT_EMPTY_SIGNATURE_TEXT}
+                maxLength={80}
+                onChange={(event) => {
+                  setSupportSelfSignatureDraft(event.target.value);
+                  setSupportSelfSignatureDirty(event.target.value.trim() !== supportSelfSignature);
+                }}
+                disabled={supportSelfProfileSaving}
+              />
+              <div className="mt-2 flex items-center justify-between gap-3 text-[11px] text-slate-500">
+                <span className="line-clamp-2 min-w-0 flex-1">当前展示：{supportSelfSignaturePreview}</span>
+                <button
+                  type="button"
+                  className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                    supportSelfSignatureDirty
+                      ? "bg-slate-900 text-white shadow-sm"
+                      : "border border-slate-200 bg-white text-slate-400"
+                  }`}
+                  onClick={() => {
+                    void handleSupportSelfSignatureSave();
+                  }}
+                  disabled={supportSelfProfileSaving || !supportSelfSignatureDirty}
+                >
+                  {supportSelfProfileSaving ? "保存中" : "保存签名"}
+                </button>
+              </div>
+              <div className="mt-2 text-[11px] text-slate-400">留空后会显示默认签名。</div>
             </div>
             <div className="divide-y divide-slate-100">
               {supportSelfInfoItems.map((item) => {
@@ -12759,7 +12843,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                             </span>
                           ) : null}
                         </div>
-                        <div className="truncate text-xs text-slate-500">{selectedSupportSubtitle}</div>
+                        <div className="truncate text-xs text-slate-500">{selectedSupportHeaderMeta}</div>
                       </div>
                       <div className="flex shrink-0 items-center gap-2">
                         <button

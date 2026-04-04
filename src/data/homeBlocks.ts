@@ -88,6 +88,7 @@ type MerchantListIndustry = "all" | Exclude<MerchantIndustry, "">;
 export type MerchantListPublishedSite = {
   id: string;
   merchantName?: string;
+  signature?: string;
   domainPrefix?: string;
   domainSuffix?: string;
   name: string;

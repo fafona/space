@@ -47,6 +47,7 @@ type DomainBindingBody = {
   merchantId?: unknown;
   domainPrefix?: unknown;
   merchantName?: unknown;
+  signature?: unknown;
   domain?: unknown;
   contactAddress?: unknown;
   contactName?: unknown;
@@ -286,6 +287,7 @@ async function syncMerchantProfileSnapshot(
     merchantId: string;
     merchantName: string;
     domainPrefix: string;
+    signature?: string;
     domain?: string;
     contactAddress?: string;
     contactName?: string;
@@ -302,10 +304,11 @@ async function syncMerchantProfileSnapshot(
   const snapshotSite = buildPlatformMerchantSnapshotSite({
     id: input.merchantId,
     merchantName: input.merchantName,
-    domainPrefix: input.domainPrefix || existingSite?.domainPrefix || existingSite?.domainSuffix || "",
-    domainSuffix: input.domainPrefix || existingSite?.domainSuffix || existingSite?.domainPrefix || "",
-    name: input.merchantName || existingSite?.name || input.merchantId,
-    domain: input.domain || existingSite?.domain,
+      domainPrefix: input.domainPrefix || existingSite?.domainPrefix || existingSite?.domainSuffix || "",
+      domainSuffix: input.domainPrefix || existingSite?.domainSuffix || existingSite?.domainPrefix || "",
+      name: input.merchantName || existingSite?.name || input.merchantId,
+      signature: typeof input.signature === "string" ? input.signature : existingSite?.signature ?? "",
+      domain: input.domain || existingSite?.domain,
     category: existingSite?.category ?? "",
     industry: input.industry || existingSite?.industry || "",
     location: input.location || existingSite?.location,
@@ -358,6 +361,10 @@ export async function POST(request: Request) {
   }
   const { merchantId, domainPrefix, merchantName } = normalizedPayload;
   const normalizedProfile = {
+    signature:
+      body && Object.prototype.hasOwnProperty.call(body, "signature")
+        ? normalizeText(body?.signature)
+        : undefined,
     domain: normalizeText(body?.domain),
     contactAddress: normalizeText(body?.contactAddress),
     contactName: normalizeText(body?.contactName),
@@ -415,6 +422,7 @@ export async function POST(request: Request) {
       merchantId,
       merchantName,
       domainPrefix,
+      signature: normalizedProfile.signature,
       domain: normalizedProfile.domain,
       contactAddress: normalizedProfile.contactAddress,
       contactName: normalizedProfile.contactName,

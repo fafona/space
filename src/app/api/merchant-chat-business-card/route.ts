@@ -262,6 +262,7 @@ export async function POST(request: Request) {
     const snapshotSite = buildPlatformMerchantSnapshotSite({
       id: merchantId,
       merchantName,
+      signature: existingSite?.signature ?? "",
       domainPrefix: existingSite?.domainPrefix ?? existingSite?.domainSuffix ?? "",
       domainSuffix: existingSite?.domainSuffix ?? existingSite?.domainPrefix ?? "",
       name: existingSite?.name ?? merchantName,

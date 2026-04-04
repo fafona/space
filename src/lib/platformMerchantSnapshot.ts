@@ -142,12 +142,14 @@ function normalizeSnapshotSite(input: unknown): MerchantListPublishedSite | null
   const id = normalizeMerchantId(value.id);
   if (!id) return null;
   const merchantName = normalizeText(value.merchantName);
+  const signature = normalizeText(value.signature);
   const name = normalizeText(value.name) || merchantName || id;
   const domainPrefix = normalizeText(value.domainPrefix).toLowerCase();
   const domainSuffix = normalizeText(value.domainSuffix).toLowerCase();
   return {
     id,
     merchantName,
+    signature,
     domainPrefix,
     domainSuffix,
     name,
@@ -211,6 +213,7 @@ export function buildPlatformMerchantSnapshotPayloadFromSites(
     snapshotItems.push({
       id,
       merchantName,
+      signature: normalizeText(site.signature),
       domainPrefix,
       domainSuffix,
       name: normalizeText(site.name) || merchantName || id,
@@ -270,6 +273,7 @@ export function buildPlatformMerchantSnapshotSite(
   input: Partial<Site> & {
     id: string;
     merchantName?: string | null;
+    signature?: string | null;
     domainPrefix?: string | null;
     domainSuffix?: string | null;
     domain?: string | null;
@@ -295,6 +299,7 @@ export function buildPlatformMerchantSnapshotSite(
   return normalizeSnapshotSite({
     id: input.id,
     merchantName: input.merchantName,
+    signature: input.signature,
     domainPrefix: input.domainPrefix,
     domainSuffix: input.domainSuffix,
     name: input.name,

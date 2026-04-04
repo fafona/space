@@ -142,6 +142,7 @@ export type Site = {
   id: string;
   tenantId: string;
   merchantName?: string;
+  signature?: string;
   domainPrefix?: string;
   domainSuffix?: string;
   contactAddress?: string;
@@ -1114,6 +1115,7 @@ function normalizeState(input: PlatformState): PlatformState {
             })(),
             ...site,
             merchantName: normalizeText((site as { merchantName?: unknown }).merchantName),
+            signature: normalizeText((site as { signature?: unknown }).signature),
             domainPrefix: normalizeText(
               (site as { domainPrefix?: unknown }).domainPrefix ?? (site as { domainSuffix?: unknown }).domainSuffix,
             ).toLowerCase(),
@@ -1366,6 +1368,7 @@ export function createSite(input: {
     id: nextId("site"),
     tenantId: input.tenantId,
     merchantName: normalizeText(input.merchantName),
+    signature: "",
     domainPrefix: normalizedDomainPrefix,
     domainSuffix: normalizedDomainPrefix,
     contactAddress: normalizeText(input.contactAddress),
