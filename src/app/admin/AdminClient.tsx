@@ -8020,15 +8020,24 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       return response;
     }
 
-    const recoveredSession = await recoverBrowserSupabaseSessionWithRefresh(
-      Math.max(2600, Math.min(7000, AUTH_CHECK_TIMEOUT_MS)),
-    );
+    let recoveredSession: Awaited<ReturnType<typeof recoverBrowserSupabaseSessionWithRefresh>> | null = null;
+    try {
+      recoveredSession = await recoverBrowserSupabaseSessionWithRefresh(
+        Math.max(2600, Math.min(7000, AUTH_CHECK_TIMEOUT_MS)),
+      );
+    } catch {
+      return response;
+    }
     if (!recoveredSession) {
       return response;
     }
 
     await syncMerchantSessionCookies(recoveredSession, Math.max(2200, Math.min(6000, AUTH_CHECK_TIMEOUT_MS)));
-    response = await sendRequest(true);
+    try {
+      response = await sendRequest(true);
+    } catch {
+      return response;
+    }
     return response;
   }, [editingSite?.contactEmail, editingSiteId, merchantDisplayName, prefetchMerchantSessionIdentity, storeScope]);
 
@@ -8084,8 +8093,75 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   );
 
   const requestMerchantPeerWithSessionRecovery = useCallback(
-    (init: RequestInit) => requestMerchantChatWithSessionRecovery("/api/merchant-peer-messages", init),
-    [requestMerchantChatWithSessionRecovery],
+    (init: RequestInit) => {
+      const params = new URLSearchParams();
+      const peerSiteId = (
+        editingSiteId ||
+        getSiteIdFromStoreScope(storeScope) ||
+        merchantSessionIdentityRef.current.merchantId ||
+        merchantIdsRef.current.find((item) => isMerchantNumericId(item)) ||
+        merchantIdsRef.current[0] ||
+        ""
+      ).trim();
+      const peerEmail =
+        ((editingSite?.contactEmail ?? "").trim() || String(merchantSessionIdentityRef.current.email ?? "").trim()) ??
+        "";
+      if (peerSiteId) {
+        params.set("siteId", peerSiteId);
+      }
+      if (peerEmail) {
+        params.set("merchantEmail", peerEmail);
+      }
+      if (merchantDisplayName) {
+        params.set("merchantName", merchantDisplayName);
+      }
+      const path = params.size > 0 ? `/api/merchant-peer-messages?${params.toString()}` : "/api/merchant-peer-messages";
+      let nextInit = init;
+      const method = String(init.method ?? "GET").trim().toUpperCase();
+      const contentType = new Headers(init.headers ?? undefined).get("content-type") ?? "";
+      if (method !== "GET" && typeof init.body === "string" && contentType.toLowerCase().includes("application/json")) {
+        try {
+          const parsed = JSON.parse(init.body) as Record<string, unknown>;
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            nextInit = {
+              ...init,
+              body: JSON.stringify({
+                ...parsed,
+                ...(peerSiteId ? { siteId: peerSiteId } : {}),
+                ...(peerEmail ? { merchantEmail: peerEmail } : {}),
+                ...(merchantDisplayName ? { merchantName: merchantDisplayName } : {}),
+              }),
+            };
+          }
+        } catch {
+          nextInit = init;
+        }
+      }
+      const sendDirectPeerRequest = () => {
+        const headers = new Headers(nextInit.headers ?? undefined);
+        headers.set("accept", "application/json");
+        headers.delete("x-merchant-site-id");
+        headers.delete("x-merchant-email");
+        headers.delete("x-merchant-name");
+        headers.delete("x-merchant-access-token");
+        headers.delete("x-merchant-refresh-token");
+        headers.delete("x-merchant-expires-in");
+        return fetch(path, {
+          credentials: "same-origin" as const,
+          cache: "no-store" as const,
+          ...nextInit,
+          headers,
+        });
+      };
+      return requestMerchantChatWithSessionRecovery(path, nextInit)
+        .then((response) => {
+          if (response.ok) return response;
+          if (![401, 403, 503].includes(response.status)) return response;
+          return sendDirectPeerRequest().catch(() => response);
+        })
+        .catch(() => sendDirectPeerRequest());
+    },
+    [editingSite?.contactEmail, editingSiteId, merchantDisplayName, requestMerchantChatWithSessionRecovery, storeScope],
   );
 
   const requestMerchantChatBusinessCardSync = useCallback(

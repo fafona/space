@@ -24,6 +24,12 @@ type ResolvedMerchantRecord = {
   merchantEmail: string;
 };
 
+type MerchantPeerSessionHintInput = {
+  siteId?: unknown;
+  merchantEmail?: unknown;
+  merchantName?: unknown;
+} | null;
+
 function trimText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -45,6 +51,38 @@ function noStoreJson(body: unknown, init?: ResponseInit) {
   const response = NextResponse.json(body, init);
   response.headers.set("cache-control", "no-store");
   return response;
+}
+
+function buildFallbackMerchantPeerSession(request: Request, hint?: MerchantPeerSessionHintInput) {
+  const url = new URL(request.url);
+  const merchantId =
+    normalizeMerchantId(hint?.siteId) ||
+    normalizeMerchantId(url.searchParams.get("siteId")) ||
+    normalizeMerchantId(request.headers.get("x-merchant-site-id")) ||
+    normalizeEmail(hint?.merchantEmail) ||
+    normalizeEmail(url.searchParams.get("merchantEmail")) ||
+    normalizeEmail(request.headers.get("x-merchant-email")) ||
+    trimText(hint?.merchantName) ||
+    trimText(url.searchParams.get("merchantName")) ||
+    trimText(request.headers.get("x-merchant-name"));
+  if (!merchantId) return null;
+  return {
+    merchantId,
+    merchantEmail:
+      normalizeEmail(hint?.merchantEmail) ||
+      normalizeEmail(url.searchParams.get("merchantEmail")) ||
+      normalizeEmail(request.headers.get("x-merchant-email")),
+    merchantName:
+      trimText(hint?.merchantName) ||
+      trimText(url.searchParams.get("merchantName")) ||
+      trimText(request.headers.get("x-merchant-name")),
+  };
+}
+
+async function resolveMerchantPeerSession(request: Request, hint?: MerchantPeerSessionHintInput) {
+  const session = await resolveMerchantSessionFromRequest(request);
+  if (session) return session;
+  return buildFallbackMerchantPeerSession(request, hint);
 }
 
 function readResolvedMerchantEmail(record: Record<string, unknown> | null | undefined) {
@@ -161,7 +199,7 @@ function buildInboxResponse(
 }
 
 export async function GET(request: Request) {
-  const session = await resolveMerchantSessionFromRequest(request);
+  const session = await resolveMerchantPeerSession(request);
   if (!session) {
     return noStoreJson({ error: "unauthorized" }, { status: 401 });
   }
@@ -180,7 +218,18 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const session = await resolveMerchantSessionFromRequest(request);
+  const body = (await request.json().catch(() => null)) as
+    | {
+        action?: unknown;
+        query?: unknown;
+        text?: unknown;
+        recipientMerchantId?: unknown;
+        merchantName?: unknown;
+        merchantEmail?: unknown;
+        siteId?: unknown;
+      }
+    | null;
+  const session = await resolveMerchantPeerSession(request, body);
   if (!session) {
     return noStoreJson({ error: "unauthorized" }, { status: 401 });
   }
@@ -190,16 +239,6 @@ export async function POST(request: Request) {
     return noStoreJson({ error: "merchant_peer_inbox_env_missing" }, { status: 503 });
   }
 
-  const body = (await request.json().catch(() => null)) as
-    | {
-        action?: unknown;
-        query?: unknown;
-        text?: unknown;
-        recipientMerchantId?: unknown;
-        merchantName?: unknown;
-        merchantEmail?: unknown;
-      }
-    | null;
   const action = trimText(body?.action);
 
   if (action === "search") {
@@ -209,7 +248,7 @@ export async function POST(request: Request) {
     }
     if (resolved.error === "search_requires_exact_id_or_email") {
       return noStoreJson(
-        { error: "search_requires_exact_id_or_email", message: "仅支持精确搜索 8 位商户ID或完整邮箱。" },
+        { error: "search_requires_exact_id_or_email", message: "只支持精确搜索 8 位商户ID或完整邮箱。" },
         { status: 400 },
       );
     }
@@ -223,7 +262,10 @@ export async function POST(request: Request) {
       return noStoreJson({ error: "merchant_not_found", message: "没有找到匹配的商户。" }, { status: 404 });
     }
     if (resolved.record.merchantId === session.merchantId) {
-      return noStoreJson({ error: "cannot_chat_with_self", message: "不能搜索自己，请输入其他商户的ID或邮箱。" }, { status: 400 });
+      return noStoreJson(
+        { error: "cannot_chat_with_self", message: "不能搜索自己，请输入其他商户的ID或邮箱。" },
+        { status: 400 },
+      );
     }
 
     const payload = await loadStoredMerchantPeerInbox(supabase as unknown as MerchantPeerInboxStoreClient);
