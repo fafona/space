@@ -9,9 +9,11 @@ import type { Viewport } from "next";
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
   viewportFit: "cover",
   themeColor: "#081121",
-  interactiveWidget: "resizes-content",
+  interactiveWidget: "overlays-content",
 };
 
 const IGNORE_REJECTION_SCRIPT = `

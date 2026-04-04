@@ -8602,7 +8602,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const supportSelfWebsiteLabel =
     supportSelfWebsiteHref ? formatSupportUrlLabel(supportSelfWebsiteHref) : "-";
   const supportSelfSignature = normalizeSupportDisplayValue(supportSelfProfile?.signature);
-  const supportSelfSignaturePreview = resolveSupportSignatureText(supportSelfSignature);
   const supportSelfChatBusinessCard =
     resolveMerchantBusinessCardForChatDisplay(editingSite?.businessCards ?? []) ??
     supportSelfProfile?.chatBusinessCard ??
@@ -10973,7 +10972,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             <div className="border-b border-slate-100 px-5 py-4">
               <div className="text-[11px] font-medium tracking-[0.08em] text-slate-400">个性签名</div>
               <textarea
-                className="mt-2 h-24 w-full resize-none rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-300 focus:bg-white"
+                className="mt-2 h-24 w-full resize-none rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-3 text-base leading-7 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-300 focus:bg-white"
                 value={supportSelfSignatureDraft}
                 placeholder={SUPPORT_EMPTY_SIGNATURE_TEXT}
                 maxLength={80}
@@ -10983,8 +10982,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                 }}
                 disabled={supportSelfProfileSaving}
               />
-              <div className="mt-2 flex items-center justify-between gap-3 text-[11px] text-slate-500">
-                <span className="line-clamp-2 min-w-0 flex-1">当前展示：{supportSelfSignaturePreview}</span>
+              <div className="mt-2 flex items-center justify-end gap-3 text-[11px] text-slate-500">
                 <button
                   type="button"
                   className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition ${
@@ -11000,7 +10998,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                   {supportSelfProfileSaving ? "保存中" : "保存签名"}
                 </button>
               </div>
-              <div className="mt-2 text-[11px] text-slate-400">留空后会显示默认签名。</div>
             </div>
             <div className="divide-y divide-slate-100">
               {supportSelfInfoItems.map((item) => {
@@ -11236,6 +11233,14 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     </div>
   );
 
+  const mobileSupportComposerStyle: CSSProperties | undefined =
+    mobileVisualViewportInsets.bottom > 0
+      ? {
+          transform: `translateY(-${mobileVisualViewportInsets.bottom}px)`,
+          willChange: "transform",
+        }
+      : undefined;
+
   const supportMobileDialogContent = showMobileSupportThread ? (
     <div
       className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_48%,#f8fafc_100%)]"
@@ -11373,6 +11378,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       </div>
       <div
         className="shrink-0 overscroll-none border-t border-slate-200/80 bg-[#edf1f7]/95 px-3 pb-[calc(env(safe-area-inset-bottom)+0.35rem)] pt-1.5 shadow-[0_-8px_30px_rgba(15,23,42,0.06)] backdrop-blur"
+        style={mobileSupportComposerStyle}
         onTouchMove={(event) => {
           event.stopPropagation();
         }}
@@ -11694,19 +11700,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           </>,
         )
       : null;
-  const mobileSupportViewportStyle: CSSProperties | undefined =
-    mobileVisualViewportInsets.bottom > 0
-      ? {
-          bottom: `${mobileVisualViewportInsets.bottom}px`,
-        }
-      : undefined;
-
   if (isMobileMerchantSupportOnlyMode) {
     return (
       <>
         <main
-          className="fixed inset-x-0 top-0 bottom-0 z-[120] overflow-hidden overscroll-none bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_48%,#f8fafc_100%)]"
-          style={mobileSupportViewportStyle}
+          className="fixed inset-x-0 top-0 bottom-0 z-[120] overflow-hidden overscroll-none bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_48%,#f8fafc_100%)] touch-manipulation [&_input]:!text-base [&_select]:!text-base [&_textarea]:!text-base"
         >
           <div className="flex h-full min-h-0 flex-col overflow-hidden">
             {supportMobileDialogContent}
@@ -12744,7 +12742,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               />
               <div
                 className={`fixed inset-x-0 top-0 bottom-0 z-[2147483301] ${isMobileSupportDialog ? "" : "flex items-center justify-center p-4"}`}
-                style={isMobileSupportDialog ? mobileSupportViewportStyle : undefined}
               >
                 {isMobileSupportDialog ? supportMobileDialogContent : (
                 <div className="flex h-full min-h-0 min-w-0 max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl md:grid md:grid-cols-[320px_minmax(0,1fr)]">
