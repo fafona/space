@@ -3702,6 +3702,37 @@ function getSupportContactAvatarLabel(value: string | null | undefined, fallback
   return compact.slice(0, 2).toUpperCase();
 }
 
+const SUPPORT_PHOTO_PICKER_ACCEPT =
+  "image/png,image/jpeg,image/webp,image/heic,image/heif,image/gif";
+const SUPPORT_FILE_PICKER_ACCEPT = [
+  ".pdf",
+  ".txt",
+  ".csv",
+  ".json",
+  ".zip",
+  ".rar",
+  ".7z",
+  ".doc",
+  ".docx",
+  ".xls",
+  ".xlsx",
+  ".ppt",
+  ".pptx",
+  "application/pdf",
+  "text/plain",
+  "text/csv",
+  "application/json",
+  "application/zip",
+  "application/x-7z-compressed",
+  "application/x-rar-compressed",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+].join(",");
+
 function normalizeSupportDetailText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -9429,6 +9460,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     return [`${label}：${fileName || "图片"}`, url].filter(Boolean).join("\n");
   }
 
+  function buildSupportLocationMapPreviewUrl(latitude: number, longitude: number) {
+    const lat = latitude.toFixed(6);
+    const lng = longitude.toFixed(6);
+    return `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+  }
+
   function buildSupportLocationMessageText(latitude: number, longitude: number, accuracy: number | null) {
     const lat = latitude.toFixed(6);
     const lng = longitude.toFixed(6);
@@ -9436,7 +9473,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       typeof accuracy === "number" && Number.isFinite(accuracy) && accuracy > 0
         ? `（约 ${Math.round(accuracy)} 米）`
         : "";
-    return [`位置：${lat}, ${lng}${accuracyLabel}`, `https://maps.google.com/?q=${lat},${lng}`].join("\n");
+    return [`位置：${lat}, ${lng}${accuracyLabel}`, buildSupportLocationMapPreviewUrl(latitude, longitude)].join("\n");
   }
 
   function buildSupportFileMessageText(file: File, url: string) {
@@ -9664,8 +9701,37 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     setSupportSelfCardPickerOpen(false);
     supportInputRef.current?.blur();
     try {
+      const imageCompression = {
+        maxSide: 1440,
+        quality: 0.76,
+      };
+      const originalDataUrl = await fileToDataUrl(file);
+      let uploadedDataUrl = await compressImageDataUrl(originalDataUrl, imageCompression);
+      let uploadedBytes = estimateDataUrlBytes(uploadedDataUrl);
+      if (uploadedBytes > 50 * 1024) {
+        const compressed = await compressImageFileWithinLimit(file, 50 * 1024, imageCompression);
+        uploadedDataUrl = compressed.dataUrl;
+        uploadedBytes = compressed.bytes;
+      }
+      if (!/^data:image\/webp/i.test(uploadedDataUrl)) {
+        uploadedDataUrl = await compressImageDataUrl(uploadedDataUrl, {
+          maxSide: 1280,
+          quality: 0.7,
+        });
+        uploadedBytes = estimateDataUrlBytes(uploadedDataUrl);
+      }
+      if (uploadedBytes > 50 * 1024) {
+        uploadedDataUrl = await compressImageDataUrl(uploadedDataUrl, {
+          maxSide: 1080,
+          quality: 0.62,
+        });
+        uploadedBytes = estimateDataUrlBytes(uploadedDataUrl);
+      }
+      if (uploadedBytes > 50 * 1024) {
+        throw new Error(`${label}压缩失败，请换一张更小的图片`);
+      }
       const uploadedUrl = await uploadImageDataUrlToSupabase(
-        await fileToOptimizedImageDataUrl(file, imageCompressionOptions),
+        uploadedDataUrl,
         buildSupportUploadMerchantHint(),
       );
       if (!uploadedUrl) {
@@ -9701,6 +9767,88 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
   }
 
+  async function openSupportPhotoPicker() {
+    if (supportComposerBusy) return;
+    setSupportAttachmentMenuOpen(false);
+    setSupportSelfCardPickerOpen(false);
+    supportInputRef.current?.blur();
+    const pickerWindow = window as Window & {
+      showOpenFilePicker?: (options?: unknown) => Promise<Array<{ getFile: () => Promise<File> }>>;
+    };
+    if (typeof pickerWindow.showOpenFilePicker === "function") {
+      try {
+        const handles = await pickerWindow.showOpenFilePicker({
+          multiple: false,
+          excludeAcceptAllOption: true,
+          types: [
+            {
+              description: "照片",
+              accept: {
+                "image/*": [".png", ".jpg", ".jpeg", ".webp", ".heic", ".heif", ".gif"],
+              },
+            },
+          ],
+        });
+        const file = await handles?.[0]?.getFile?.();
+        if (!file) return;
+        await handleSupportImageAttachment(file, "照片");
+        return;
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+      }
+    }
+    supportPhotoInputRef.current?.click();
+  }
+
+  async function openSupportFilePicker() {
+    if (supportComposerBusy) return;
+    setSupportAttachmentMenuOpen(false);
+    setSupportSelfCardPickerOpen(false);
+    supportInputRef.current?.blur();
+    const pickerWindow = window as Window & {
+      showOpenFilePicker?: (options?: unknown) => Promise<Array<{ getFile: () => Promise<File> }>>;
+    };
+    if (typeof pickerWindow.showOpenFilePicker === "function") {
+      try {
+        const handles = await pickerWindow.showOpenFilePicker({
+          multiple: false,
+          excludeAcceptAllOption: true,
+          types: [
+            {
+              description: "文件",
+              accept: {
+                "application/pdf": [".pdf"],
+                "text/plain": [".txt"],
+                "text/csv": [".csv"],
+                "application/json": [".json"],
+                "application/zip": [".zip"],
+                "application/x-rar-compressed": [".rar"],
+                "application/x-7z-compressed": [".7z"],
+                "application/msword": [".doc"],
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"],
+                "application/vnd.ms-excel": [".xls"],
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
+                "application/vnd.ms-powerpoint": [".ppt"],
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation": [".pptx"],
+              },
+            },
+          ],
+        });
+        const file = await handles?.[0]?.getFile?.();
+        if (!file) return;
+        await handleSupportFileAttachment(file);
+        return;
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+      }
+    }
+    supportFileInputRef.current?.click();
+  }
+
   async function handleSupportLocationAttachment() {
     if (supportComposerBusy) return;
     if (typeof navigator === "undefined" || !navigator.geolocation) {
@@ -9719,13 +9867,20 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           maximumAge: 60000,
         });
       });
-      await sendSupportTextPayload(
+      const mapPreviewUrl = buildSupportLocationMapPreviewUrl(
+        position.coords.latitude,
+        position.coords.longitude,
+      );
+      const sent = await sendSupportTextPayload(
         buildSupportLocationMessageText(
           position.coords.latitude,
           position.coords.longitude,
           position.coords.accuracy,
         ),
       );
+      if (sent && typeof window !== "undefined") {
+        window.open(mapPreviewUrl, "_blank", "noopener,noreferrer");
+      }
     } catch (error) {
       const nextMessage =
         error && typeof error === "object" && "code" in error && Number((error as { code?: unknown }).code) === 1
@@ -10950,7 +11105,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           ref={supportPhotoInputRef}
           className="hidden"
           type="file"
-          accept="image/*"
+          accept={SUPPORT_PHOTO_PICKER_ACCEPT}
           onChange={(event) => {
             void handleSupportPhotoInputChange(event);
           }}
@@ -10959,7 +11114,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           ref={supportCameraInputRef}
           className="hidden"
           type="file"
-          accept="image/*"
+          accept={SUPPORT_PHOTO_PICKER_ACCEPT}
           capture="environment"
           onChange={(event) => {
             void handleSupportCameraInputChange(event);
@@ -10969,6 +11124,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           ref={supportFileInputRef}
           className="hidden"
           type="file"
+          accept={SUPPORT_FILE_PICKER_ACCEPT}
           onChange={(event) => {
             void handleSupportFileInputChange(event);
           }}
@@ -10979,7 +11135,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               <button
                 type="button"
                 className="flex flex-col items-center gap-2 rounded-2xl px-1 py-2 text-[11px] font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
-                onClick={() => supportPhotoInputRef.current?.click()}
+                onClick={() => {
+                  void openSupportPhotoPicker();
+                }}
                 disabled={supportComposerBusy}
               >
                 <span className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-50 text-blue-500">
@@ -11038,7 +11196,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               <button
                 type="button"
                 className="flex flex-col items-center gap-2 rounded-2xl px-1 py-2 text-[11px] font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
-                onClick={() => supportFileInputRef.current?.click()}
+                onClick={() => {
+                  void openSupportFilePicker();
+                }}
                 disabled={supportComposerBusy}
               >
                 <span className="flex h-12 w-12 items-center justify-center rounded-full bg-amber-50 text-amber-500">
@@ -11136,7 +11296,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                   <div className="mt-4 flex items-center justify-between gap-3">
                     <div>
                       <div className="text-base font-semibold text-slate-900">我的名片夹</div>
-                      <div className="mt-1 text-xs text-slate-500">点一张直接发送到当前聊天。</div>
+                      <div className="mt-1 text-xs text-slate-500">选择一张直接发送到当前聊天。</div>
                     </div>
                     <button
                       type="button"
@@ -11153,21 +11313,18 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                       const cardPreviewUrl =
                         normalizeSupportDisplayValue(card.shareImageUrl) ||
                         normalizeSupportDisplayValue(card.imageUrl);
-                      const cardSubtitle =
-                        card.mode === "link"
-                          ? "链接模式，发送后会附带联系卡和链接"
-                          : "图片模式，发送后会附带名片图片";
+                      const cardModeLabel = card.mode === "link" ? "链接模式" : "图片模式";
                       return (
                         <button
                           key={card.id}
                           type="button"
-                          className="flex w-full items-center gap-3 rounded-[24px] border border-slate-200 bg-slate-50/80 px-3 py-3 text-left transition hover:border-slate-300 hover:bg-white disabled:opacity-50"
+                          className="flex w-full items-center gap-3 rounded-[22px] border border-slate-200 bg-slate-50/80 px-3 py-3 text-left transition hover:border-slate-300 hover:bg-white disabled:opacity-50"
                           onClick={() => {
                             void handleSupportBusinessCardAttachment(card);
                           }}
                           disabled={supportComposerBusy}
                         >
-                          <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-slate-900 text-xs font-semibold text-white">
+                          <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-slate-900 text-xs font-semibold text-white">
                             {cardPreviewUrl ? (
                               /* eslint-disable-next-line @next/next/no-img-element */
                               <img src={cardPreviewUrl} alt={card.name} className="h-full w-full object-cover" />
@@ -11181,10 +11338,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
                                 {card.name || "未命名名片"}
                               </div>
                               <span className="shrink-0 rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium text-white">
-                                {card.mode === "link" ? "链接" : "图片"}
+                                {cardModeLabel}
                               </span>
                             </div>
-                            <div className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{cardSubtitle}</div>
                           </div>
                         </button>
                       );
