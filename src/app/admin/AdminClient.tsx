@@ -4018,13 +4018,6 @@ export default function AdminClient({
       }
     });
   }, []);
-  const resizeSupportInputHeight = useCallback(() => {
-    const input = supportInputRef.current;
-    if (!input) return;
-    input.style.height = "0px";
-    const nextHeight = Math.min(Math.max(input.scrollHeight, 24), 112);
-    input.style.height = `${nextHeight}px`;
-  }, []);
   const closeMobileSupportThread = useCallback(() => {
     setSupportBusinessCardDialogOpen(false);
     setSupportMerchantInfoSheetOpen(false);
@@ -4054,9 +4047,6 @@ export default function AdminClient({
       window.visualViewport?.removeEventListener("scroll", syncMobileVisualViewportInsets);
     };
   }, []);
-  useEffect(() => {
-    resizeSupportInputHeight();
-  }, [resizeSupportInputHeight, supportDraft, supportMobileView, supportSelectedContactKey]);
   const handleSupportMobileThreadTouchStart = useCallback((event: TouchEvent<HTMLDivElement>) => {
     const touch = event.touches[0];
     if (!touch) return;
@@ -9617,7 +9607,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           </div>
         )}
       </div>
-      <div className="border-t border-slate-200/80 bg-[#edf1f7]/95 px-3 pb-[calc(env(safe-area-inset-bottom)+0.55rem)] pt-2 shadow-[0_-8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
+      <div className="shrink-0 border-t border-slate-200/80 bg-[#edf1f7]/95 px-3 pb-[calc(env(safe-area-inset-bottom)+0.5rem)] pt-2 shadow-[0_-8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
         <div className="flex items-end gap-2">
           <button
             type="button"
@@ -9629,15 +9619,14 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
             </svg>
           </button>
-          <div className="flex min-w-0 flex-1 items-end rounded-[28px] bg-white px-3 py-2 shadow-[0_8px_18px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/80">
+          <div className="flex h-11 min-w-0 flex-1 items-center rounded-[28px] bg-white px-3 shadow-[0_8px_18px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/80">
             <textarea
               ref={supportInputRef}
               rows={1}
-              className="min-h-[24px] max-h-28 w-full resize-none bg-transparent px-1 py-1 text-base leading-6 outline-none transition placeholder:text-slate-400"
+              className="h-6 max-h-6 w-full resize-none overflow-hidden bg-transparent px-1 py-0 text-base leading-6 outline-none transition placeholder:text-slate-400"
               placeholder={selectedSupportInputPlaceholder}
               value={supportDraft}
               onChange={(event) => setSupportDraft(event.target.value)}
-              onInput={() => resizeSupportInputHeight()}
               onKeyDown={(event) => {
                 if (event.key !== "Enter" || !event.ctrlKey || event.nativeEvent.isComposing) return;
                 event.preventDefault();
@@ -9668,9 +9657,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               </svg>
             )}
           </button>
-        </div>
-        <div className="px-1 pt-2 text-[11px] leading-5 text-slate-500">
-          {selectedSupportIsOfficial ? "消息会同步到 Faolla 官方后台。" : "消息会直接发送给当前联系人。"}
         </div>
       </div>
     </div>
