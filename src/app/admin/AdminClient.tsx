@@ -81,6 +81,7 @@ import { resolveCommonCanvasLayout } from "@/lib/commonCanvasLayout";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
 import ChatBusinessCardDialog from "@/components/admin/ChatBusinessCardDialog";
 import {
+  normalizeMerchantBusinessCards,
   normalizeMerchantBusinessCardChatDisplaySelection,
   resolveMerchantBusinessCardForChatDisplay,
   selectMerchantBusinessCardForChat,
@@ -8514,16 +8515,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       selectedSupportPeerMerchantId,
     ],
   );
-  const supportSelfBusinessCards = useMemo(() => {
-    return Array.isArray(editingSite?.businessCards)
-      ? [...editingSite.businessCards].sort((left, right) => {
-          const leftChat = left.showInChat !== false;
-          const rightChat = right.showInChat !== false;
-          if (leftChat !== rightChat) return leftChat ? -1 : 1;
-          return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
-        })
-      : [];
-  }, [editingSite?.businessCards]);
   const supportSelfFetchedProfile = useMemo(() => {
     if (!/^\d{8}$/.test(editingSiteId)) return undefined;
     return Object.prototype.hasOwnProperty.call(supportPeerProfilesByMerchantId, editingSiteId)
@@ -8535,6 +8526,19 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     [editingSite],
   );
   const supportSelfProfile = supportSelfFetchedProfile ?? supportSelfLocalProfile ?? null;
+  const supportSelfBusinessCards = useMemo(() => {
+    const localCards = Array.isArray(editingSite?.businessCards) ? normalizeMerchantBusinessCards(editingSite.businessCards) : [];
+    const normalizedCards =
+      localCards.length > 0
+        ? localCards
+        : normalizeMerchantBusinessCards(supportSelfProfile?.chatBusinessCard ? [supportSelfProfile.chatBusinessCard] : []);
+    return [...normalizedCards].sort((left, right) => {
+      const leftChat = left.showInChat !== false;
+      const rightChat = right.showInChat !== false;
+      if (leftChat !== rightChat) return leftChat ? -1 : 1;
+      return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
+    });
+  }, [editingSite?.businessCards, supportSelfProfile?.chatBusinessCard]);
   const supportSelfContactVisibility =
     supportSelfProfile?.contactVisibility ??
     editingSite?.contactVisibility ??
@@ -10946,7 +10950,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             )}
           </button>
           <div className="min-w-0 flex-1">
-            <div className="text-[15px] font-semibold text-slate-900">自己</div>
+            <div className="truncate text-[15px] font-semibold text-slate-900">{supportSelfDisplayName}</div>
             <div className="mt-1 text-xs text-slate-500">点击头像更换头像，资料隐藏和聊天名片都在这里。</div>
           </div>
         </div>
