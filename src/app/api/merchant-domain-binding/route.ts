@@ -325,6 +325,7 @@ async function syncMerchantProfileSnapshot(
     merchantCardImageUrl: existingSite?.merchantCardImageUrl || "",
     chatAvatarImageUrl: input.chatAvatarImageUrl || existingSite?.chatAvatarImageUrl || "",
     contactVisibility: input.contactVisibility || existingSite?.contactVisibility,
+    businessCards: existingSite?.businessCards ?? [],
     merchantCardImageOpacity: existingSite?.merchantCardImageOpacity ?? 1,
     chatBusinessCard: existingSite?.chatBusinessCard ?? null,
     status: existingSite?.status ?? "online",

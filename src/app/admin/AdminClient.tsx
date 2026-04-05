@@ -3916,6 +3916,75 @@ function getSupportPreferredBusinessCardPreviewUrl(card: MerchantBusinessCardAss
   return buildSupportFallbackBusinessCardPreviewDataUrl(card);
 }
 
+function normalizeSupportBusinessCardComparableUrl(value: string) {
+  const normalized = normalizeSupportDetailText(value);
+  if (!normalized) return "";
+  try {
+    const url = new URL(normalized);
+    url.hash = "";
+    if (url.pathname !== "/") {
+      url.pathname = url.pathname.replace(/\/+$/, "");
+    }
+    return url.toString();
+  } catch {
+    return normalized.replace(/\/+$/, "");
+  }
+}
+
+function buildSupportBusinessCardIdentityKeys(card: MerchantBusinessCardAsset | null | undefined) {
+  if (!card) return [];
+  const keys = new Set<string>();
+  const id = normalizeSupportDetailText(card.id);
+  const shareKey = normalizeSupportDetailText(card.shareKey);
+  const previewUrl = normalizeSupportBusinessCardComparableUrl(
+    normalizeSupportDetailText(card.shareImageUrl) || normalizeSupportDetailText(card.imageUrl),
+  );
+  const detailUrl = normalizeSupportBusinessCardComparableUrl(
+    normalizeSupportDetailText(card.contactPagePublicImageUrl) || normalizeSupportDetailText(card.contactPageImageUrl),
+  );
+  if (shareKey) keys.add(`share:${shareKey}`);
+  if (id) keys.add(`id:${id}`);
+  if (previewUrl || detailUrl) {
+    keys.add(`asset:${card.mode}|${previewUrl}|${detailUrl}`);
+  }
+  return [...keys];
+}
+
+function mergeSupportBusinessCardCandidates(
+  primary: MerchantBusinessCardAsset,
+  secondary: MerchantBusinessCardAsset,
+): MerchantBusinessCardAsset {
+  const primaryScore = Number(Boolean(primary.shareKey)) + Number(Boolean(primary.shareImageUrl)) + Number(Boolean(primary.contactPagePublicImageUrl));
+  const secondaryScore =
+    Number(Boolean(secondary.shareKey)) + Number(Boolean(secondary.shareImageUrl)) + Number(Boolean(secondary.contactPagePublicImageUrl));
+  if (secondaryScore > primaryScore) {
+    return {
+      ...primary,
+      ...secondary,
+    };
+  }
+  return {
+    ...secondary,
+    ...primary,
+  };
+}
+
+function dedupeSupportBusinessCards(cards: MerchantBusinessCardAsset[]) {
+  return cards.reduce<MerchantBusinessCardAsset[]>((accumulator, card) => {
+    const cardKeys = buildSupportBusinessCardIdentityKeys(card);
+    const duplicateIndex = accumulator.findIndex((item) => {
+      const itemKeys = buildSupportBusinessCardIdentityKeys(item);
+      return cardKeys.some((key) => itemKeys.includes(key));
+    });
+    if (duplicateIndex >= 0) {
+      accumulator[duplicateIndex] = mergeSupportBusinessCardCandidates(accumulator[duplicateIndex], card);
+    } else {
+      accumulator.push(card);
+    }
+    return accumulator;
+  }, []);
+}
+
 function buildSupportMerchantCardLink(card: MerchantBusinessCardAsset | null) {
   if (!card || card.mode !== "link") return "";
   const input = buildSupportMerchantCardShareInput(card);
@@ -8958,11 +9027,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const supportSelfProfile = supportSelfFetchedProfile ?? supportSelfLocalProfile ?? null;
   const supportSelfBusinessCards = useMemo(() => {
     const localCards = Array.isArray(editingSite?.businessCards) ? normalizeMerchantBusinessCards(editingSite.businessCards) : [];
-    const remoteCards = normalizeMerchantBusinessCards([
+    const remoteCards = dedupeSupportBusinessCards(normalizeMerchantBusinessCards([
       ...(Array.isArray(supportSelfFetchedProfile?.businessCards) ? supportSelfFetchedProfile.businessCards : []),
       ...(supportSelfFetchedBusinessCard ? [supportSelfFetchedBusinessCard] : []),
       ...(supportSelfProfile?.chatBusinessCard ? [supportSelfProfile.chatBusinessCard] : []),
-    ]);
+    ]));
     if (remoteCards.length === 0) {
       return localCards;
     }
@@ -8972,52 +9041,19 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     const mergedCards = [...remoteCards];
     localCards.forEach((card) => {
       const matchIndex = mergedCards.findIndex(
-        (item) =>
-          item.id === card.id ||
-          (!!item.shareKey && !!card.shareKey && item.shareKey === card.shareKey) ||
-          (!!item.targetUrl && !!card.targetUrl && item.targetUrl === card.targetUrl),
+        (item) => {
+          const itemKeys = buildSupportBusinessCardIdentityKeys(item);
+          const cardKeys = buildSupportBusinessCardIdentityKeys(card);
+          return cardKeys.some((key) => itemKeys.includes(key));
+        },
       );
       if (matchIndex >= 0) {
-        mergedCards[matchIndex] = {
-          ...card,
-          ...mergedCards[matchIndex],
-        };
+        mergedCards[matchIndex] = mergeSupportBusinessCardCandidates(mergedCards[matchIndex], card);
       } else {
         mergedCards.push(card);
       }
     });
-    const deduplicatedCards = [...mergedCards].reduce<MerchantBusinessCardAsset[]>((accumulator, card) => {
-      const cardKey = [
-        normalizeSupportDisplayValue(card.shareKey),
-        normalizeSupportDisplayValue(card.targetUrl),
-        normalizeSupportDisplayValue(card.shareImageUrl || card.imageUrl),
-        normalizeSupportDisplayValue(card.contactPagePublicImageUrl || card.contactPageImageUrl),
-        card.mode,
-      ]
-        .filter(Boolean)
-        .join("|");
-      const duplicateIndex = accumulator.findIndex((item) => {
-        const itemKey = [
-          normalizeSupportDisplayValue(item.shareKey),
-          normalizeSupportDisplayValue(item.targetUrl),
-          normalizeSupportDisplayValue(item.shareImageUrl || item.imageUrl),
-          normalizeSupportDisplayValue(item.contactPagePublicImageUrl || item.contactPageImageUrl),
-          item.mode,
-        ]
-          .filter(Boolean)
-          .join("|");
-        return itemKey && itemKey === cardKey;
-      });
-      if (duplicateIndex >= 0) {
-        accumulator[duplicateIndex] = {
-          ...accumulator[duplicateIndex],
-          ...card,
-        };
-      } else {
-        accumulator.push(card);
-      }
-      return accumulator;
-    }, []);
+    const deduplicatedCards = dedupeSupportBusinessCards(mergedCards);
     return deduplicatedCards.sort((left, right) => {
       const leftChat = left.showInChat !== false;
       const rightChat = right.showInChat !== false;
