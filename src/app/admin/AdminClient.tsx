@@ -8719,7 +8719,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     ? ((editingSite?.merchantName ?? "").trim() || "未设置商户名称")
     : "";
   const currentMerchantChatBusinessCardSyncPayload =
-    !isPlatformEditor && editingSiteId && Array.isArray(editingSite?.businessCards)
+    !isPlatformEditor && editingSiteId && Array.isArray(editingSite?.businessCards) && editingSite.businessCards.length > 0
       ? JSON.stringify({
           merchantId: editingSiteId,
           businessCards: normalizeMerchantBusinessCards(editingSite?.businessCards ?? []),
@@ -9038,6 +9038,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     [editingSite],
   );
   const supportSelfProfile = supportSelfFetchedProfile ?? supportSelfLocalProfile ?? null;
+  const shouldWarmCurrentMerchantProfile =
+    merchantProfileDialogOpen ||
+    merchantBookingManagerOpen ||
+    !hasSupportMerchantProfileCoverage(supportSelfLocalProfile) ||
+    !Array.isArray(editingSite?.businessCards) ||
+    editingSite.businessCards.length === 0;
   const supportSelfBusinessCards = useMemo(() => {
     const localCards = Array.isArray(editingSite?.businessCards) ? normalizeMerchantBusinessCards(editingSite.businessCards) : [];
     const remoteCards = dedupeSupportBusinessCards(normalizeMerchantBusinessCards([
@@ -9164,6 +9170,20 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     return resolvedCardHref || buildSupportMerchantCardLink(supportSelfChatBusinessCard);
   }, [supportSelfChatBusinessCard, supportSelfResolvedCardHref, supportSelfResolvedCardId]);
   const supportSelfCardLabel = supportSelfCardHref ? formatSupportUrlLabel(supportSelfCardHref) : "-";
+  const effectiveEditingSite = useMemo(() => {
+    if (!editingSite) return null;
+    const mergedSite = mergeSupportPublishedProfileIntoSite(editingSite, supportSelfFetchedProfile ?? supportSelfProfile);
+    return {
+      ...mergedSite,
+      businessCards:
+        supportSelfBusinessCards.length > 0
+          ? supportSelfBusinessCards
+          : normalizeMerchantBusinessCards(mergedSite.businessCards ?? []),
+    };
+  }, [editingSite, supportSelfBusinessCards, supportSelfFetchedProfile, supportSelfProfile]);
+  const effectiveMerchantDisplayName = !isPlatformEditor
+    ? ((effectiveEditingSite?.merchantName ?? "").trim() || merchantDisplayName)
+    : "";
   const selectedSupportLoading =
     supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY ? supportLoading : supportPeerLoading;
   const selectedSupportEmptyStateText =
@@ -9798,6 +9818,56 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     },
     [editingSiteId, requestMerchantChatWithSessionRecovery, storeScope],
   );
+
+  useEffect(() => {
+    if (isPlatformEditor || !shouldWarmCurrentMerchantProfile) return;
+    const merchantId = editingSiteId.trim();
+    if (!/^\d{8}$/.test(merchantId)) return;
+    const lastFetchedAt = supportPeerProfileFetchedAtRef.current[merchantId] ?? 0;
+    if (Date.now() - lastFetchedAt < SUPPORT_MERCHANT_PROFILE_REFRESH_TTL_MS) return;
+    if (supportPeerProfileLoadingIdsRef.current.has(merchantId)) return;
+    let cancelled = false;
+    supportPeerProfileLoadingIdsRef.current.add(merchantId);
+    void (async () => {
+      try {
+        const response = await requestMerchantChatBusinessCardById(merchantId, {
+          cache: "no-store",
+        });
+        const payload = (await response.json().catch(() => null)) as
+          | {
+              profile?: MerchantListPublishedSite | null;
+              chatBusinessCard?: MerchantBusinessCardAsset | null;
+            }
+          | null;
+        if (cancelled || !response.ok) return;
+        supportPeerProfileFetchedAtRef.current[merchantId] = Date.now();
+        setSupportPeerProfilesByMerchantId((current) => ({
+          ...current,
+          [merchantId]: payload?.profile ?? null,
+        }));
+        setSupportPeerBusinessCardByMerchantId((current) => ({
+          ...current,
+          [merchantId]: payload?.chatBusinessCard ?? payload?.profile?.chatBusinessCard ?? null,
+        }));
+      } catch {
+        if (cancelled) return;
+      } finally {
+        supportPeerProfileLoadingIdsRef.current.delete(merchantId);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    editingSite?.businessCards,
+    editingSiteId,
+    isPlatformEditor,
+    merchantBookingManagerOpen,
+    merchantProfileDialogOpen,
+    requestMerchantChatBusinessCardById,
+    shouldWarmCurrentMerchantProfile,
+    supportSelfLocalProfile,
+  ]);
 
   const ensureSupportBusinessCardShareBundle = useCallback(
     async (card: MerchantBusinessCardAsset) => {
@@ -11658,7 +11728,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   const merchantBookingManagerOptions = {
     storeOptions: normalizeBookingOptionList(
       [...activeBookingOptions.storeOptions, ...otherBookingOptions.storeOptions],
-      buildDefaultBookingStoreOptions(merchantDisplayName),
+      buildDefaultBookingStoreOptions(effectiveMerchantDisplayName || merchantDisplayName),
     ),
     itemOptions: normalizeBookingOptionList(
       [...activeBookingOptions.itemOptions, ...otherBookingOptions.itemOptions],
@@ -11669,8 +11739,14 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       buildDefaultBookingTitleOptions(),
     ),
   };
+  const merchantHasBookingBlockConfigured = planConfig.plans.some((plan) => {
+    const planBlocks = Array.isArray(plan.blocks) ? plan.blocks : [];
+    if (planBlocks.some((block) => block.type === "booking")) return true;
+    const pages = Array.isArray(plan.pages) ? plan.pages : [];
+    return pages.some((page) => Array.isArray(page.blocks) && page.blocks.some((block) => block.type === "booking"));
+  });
   const merchantPermissionConfig = !isPlatformEditor
-    ? (editingSite?.permissionConfig ?? createDefaultMerchantPermissionConfig())
+    ? (effectiveEditingSite?.permissionConfig ?? editingSite?.permissionConfig ?? createDefaultMerchantPermissionConfig())
     : null;
   const merchantPlanLimit = isPlatformEditor
     ? planConfig.plans.length
@@ -11678,14 +11754,14 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   const merchantPageLimit = isPlatformEditor
     ? 12
     : Math.max(1, Math.min(12, merchantPermissionConfig?.pageLimit ?? 1));
-  const missingMerchantProfileFields = !isPlatformEditor ? getMissingMerchantProfileFields(editingSite) : [];
+  const missingMerchantProfileFields = !isPlatformEditor ? getMissingMerchantProfileFields(effectiveEditingSite ?? editingSite) : [];
   const canUseInsertBackgroundByPermission = isPlatformEditor || Boolean(merchantPermissionConfig?.allowInsertBackground);
   const canUseInsertBackground = canUseInsertBackgroundByPermission;
   const canUseThemeEffects = isPlatformEditor || Boolean(merchantPermissionConfig?.allowThemeEffects);
   const canUseGalleryBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowGalleryBlock);
   const canUseMusicBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowMusicBlock);
   const canUseProductBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowProductBlock);
-  const canUseBookingBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowBookingBlock);
+  const canUseBookingBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowBookingBlock) || merchantHasBookingBlockConfigured;
   const canUseButtonBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowButtonBlock);
   const isCurrentBlockTypeLocked =
     (!canUseButtonBlock && newBlockType === "button") ||
@@ -11698,7 +11774,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     ? Math.max(1, Math.round(merchantPermissionConfig?.publishSizeLimitMb ?? 1)) * 1024 * 1024
     : null;
   const effectiveFrontendHref = !isPlatformEditor
-    ? buildMerchantFrontendHref(editingSiteId || "site-main", editingSite?.domainPrefix ?? editingSite?.domainSuffix)
+    ? buildMerchantFrontendHref(
+        editingSiteId || "site-main",
+        effectiveEditingSite?.domainPrefix ?? effectiveEditingSite?.domainSuffix ?? editingSite?.domainPrefix ?? editingSite?.domainSuffix,
+      )
     : frontendHref;
   const maxBlockOffsetY = blocks.reduce((max, block) => {
     const value =
@@ -11710,7 +11789,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   const mobileFrontendPreviewPadding = Math.max(120, Math.max(0, maxBlockOffsetY) + 100);
   const shouldUseDesktopEditorSidebar = forceDesktopEditorSidebar || isPlatformEditor || isDesktopEditorSidebar;
   const isMobileMerchantEditorShell = isMobileMerchantSupportOnlyMode;
-  const merchantEditorAvatarLabel = !isPlatformEditor ? getSupportContactAvatarLabel(merchantDisplayName, "商") : "";
+  const merchantEditorAvatarLabel = !isPlatformEditor ? getSupportContactAvatarLabel(effectiveMerchantDisplayName || merchantDisplayName, "商") : "";
   const shouldShowPublishActions = showPublishActions ?? !isPlatformEditor;
   const planTemplateKeyword = planTemplateSearch.trim().toLowerCase();
   const filteredPlanTemplates = planTemplates.filter((template) => {
@@ -13088,6 +13167,32 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       showTip("正在初始化商户资料，请稍后重试");
                       return;
                     }
+                    if (/^\d{8}$/.test(resolvedSiteId)) {
+                      try {
+                        const response = await requestMerchantChatBusinessCardById(resolvedSiteId, {
+                          cache: "no-store",
+                        });
+                        const payload = (await response.json().catch(() => null)) as
+                          | {
+                              profile?: MerchantListPublishedSite | null;
+                              chatBusinessCard?: MerchantBusinessCardAsset | null;
+                            }
+                          | null;
+                        if (response.ok) {
+                          supportPeerProfileFetchedAtRef.current[resolvedSiteId] = Date.now();
+                          setSupportPeerProfilesByMerchantId((current) => ({
+                            ...current,
+                            [resolvedSiteId]: payload?.profile ?? null,
+                          }));
+                          setSupportPeerBusinessCardByMerchantId((current) => ({
+                            ...current,
+                            [resolvedSiteId]: payload?.chatBusinessCard ?? payload?.profile?.chatBusinessCard ?? null,
+                          }));
+                        }
+                      } catch {
+                        // Ignore and let the dialog fall back to local cached data.
+                      }
+                    }
                     setMerchantProfileDialogOpen(true);
                   }}
                 >
@@ -14135,36 +14240,50 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             const platformState = loadPlatformState();
             const baseFromEnv = resolveRuntimePortalBaseDomain(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "");
             const baseFromMainSite = (platformState.sites.find((item) => item.id === "site-main")?.domain ?? "").trim();
-            const fallback = (editingSite?.domain ?? "").trim();
+            const fallback = (effectiveEditingSite?.domain ?? editingSite?.domain ?? "").trim();
             return normalizeBaseDomainForMerchant(baseFromEnv || baseFromMainSite || fallback);
           })()}
-          initialServiceExpiresAt={editingSite?.serviceExpiresAt ?? null}
-          initialDomainPrefix={editingSite?.domainPrefix ?? editingSite?.domainSuffix ?? ""}
+          initialServiceExpiresAt={effectiveEditingSite?.serviceExpiresAt ?? editingSite?.serviceExpiresAt ?? null}
+          initialDomainPrefix={
+            effectiveEditingSite?.domainPrefix ??
+            effectiveEditingSite?.domainSuffix ??
+            editingSite?.domainPrefix ??
+            editingSite?.domainSuffix ??
+            ""
+          }
           takenDomainPrefixes={loadPlatformState()
             .sites.filter((item) => item.id !== editingSiteId)
             .map((item) => item.domainPrefix ?? item.domainSuffix ?? "")}
-          initialMerchantName={editingSite?.merchantName ?? ""}
-          initialContactAddress={editingSite?.contactAddress ?? ""}
-          initialContactName={editingSite?.contactName ?? ""}
-          initialContactPhone={editingSite?.contactPhone ?? ""}
-          initialContactEmail={editingSite?.contactEmail ?? ""}
-          initialLocation={editingSite?.location ?? null}
-          initialIndustry={editingSite?.industry ?? null}
-          initialBusinessCards={editingSite?.businessCards ?? []}
-          businessCardLimit={editingSite?.permissionConfig?.businessCardLimit ?? createDefaultMerchantPermissionConfig().businessCardLimit}
+          initialMerchantName={effectiveEditingSite?.merchantName ?? editingSite?.merchantName ?? ""}
+          initialContactAddress={effectiveEditingSite?.contactAddress ?? editingSite?.contactAddress ?? ""}
+          initialContactName={effectiveEditingSite?.contactName ?? editingSite?.contactName ?? ""}
+          initialContactPhone={effectiveEditingSite?.contactPhone ?? editingSite?.contactPhone ?? ""}
+          initialContactEmail={effectiveEditingSite?.contactEmail ?? editingSite?.contactEmail ?? ""}
+          initialLocation={effectiveEditingSite?.location ?? editingSite?.location ?? null}
+          initialIndustry={effectiveEditingSite?.industry ?? editingSite?.industry ?? null}
+          initialBusinessCards={effectiveEditingSite?.businessCards ?? editingSite?.businessCards ?? []}
+          businessCardLimit={
+            effectiveEditingSite?.permissionConfig?.businessCardLimit ??
+            editingSite?.permissionConfig?.businessCardLimit ??
+            createDefaultMerchantPermissionConfig().businessCardLimit
+          }
           allowBusinessCardLinkMode={
+            effectiveEditingSite?.permissionConfig?.allowBusinessCardLinkMode ??
             editingSite?.permissionConfig?.allowBusinessCardLinkMode ??
             createDefaultMerchantPermissionConfig().allowBusinessCardLinkMode
           }
           businessCardBackgroundImageLimitKb={
+            effectiveEditingSite?.permissionConfig?.businessCardBackgroundImageLimitKb ??
             editingSite?.permissionConfig?.businessCardBackgroundImageLimitKb ??
             createDefaultMerchantPermissionConfig().businessCardBackgroundImageLimitKb
           }
           businessCardContactImageLimitKb={
+            effectiveEditingSite?.permissionConfig?.businessCardContactImageLimitKb ??
             editingSite?.permissionConfig?.businessCardContactImageLimitKb ??
             createDefaultMerchantPermissionConfig().businessCardContactImageLimitKb
           }
           businessCardExportImageLimitKb={
+            effectiveEditingSite?.permissionConfig?.businessCardExportImageLimitKb ??
             editingSite?.permissionConfig?.businessCardExportImageLimitKb ??
             createDefaultMerchantPermissionConfig().businessCardExportImageLimitKb
           }
@@ -14246,7 +14365,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         <MerchantBookingManagerDialog
           open={merchantBookingManagerOpen}
           siteId={editingSiteId || ""}
-          siteName={merchantDisplayName}
+          siteName={effectiveMerchantDisplayName || merchantDisplayName}
           storeOptions={merchantBookingManagerOptions.storeOptions}
           itemOptions={merchantBookingManagerOptions.itemOptions}
           titleOptions={merchantBookingManagerOptions.titleOptions}
