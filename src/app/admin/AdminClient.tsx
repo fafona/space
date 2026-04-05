@@ -9031,9 +9031,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       ...(Array.isArray(supportSelfFetchedProfile?.businessCards) ? supportSelfFetchedProfile.businessCards : []),
       ...(supportSelfFetchedBusinessCard ? [supportSelfFetchedBusinessCard] : []),
       ...(supportSelfProfile?.chatBusinessCard ? [supportSelfProfile.chatBusinessCard] : []),
-    ]));
+    ]).filter((card) => !isSupportSnapshotFallbackBusinessCard(card)));
     if (remoteCards.length === 0) {
-      return localCards;
+      return localCards.filter((card) => !isSupportSnapshotFallbackBusinessCard(card));
     }
     if (localCards.length === 0) {
       return remoteCards;
