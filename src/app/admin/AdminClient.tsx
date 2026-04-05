@@ -10720,26 +10720,29 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     return [`文件：${fileName} (${formatSupportAttachmentFileSize(file.size)})`, url].join("\n");
   }
 
-function buildSupportSelfBusinessCardMessageText(input: {
+function buildSupportSelfBusinessCardImageMessageText(input: {
   card: MerchantBusinessCardAsset;
   imageUrl?: string;
+}) {
+  const imageUrl =
+    normalizeSupportDisplayValue(input.imageUrl) ||
+    normalizeSupportDisplayValue(input.card.shareImageUrl) ||
+    normalizeSupportDisplayValue(input.card.imageUrl);
+  return imageUrl;
+}
+
+function buildSupportSelfBusinessCardLinkMessageText(input: {
+  card: MerchantBusinessCardAsset;
   shareUrl?: string;
 }) {
-    const imageUrl =
-      normalizeSupportDisplayValue(input.imageUrl) ||
-      normalizeSupportDisplayValue(input.card.shareImageUrl) ||
-      normalizeSupportDisplayValue(input.card.imageUrl);
   const fallbackShareUrl = buildSupportMerchantCardLink(input.card);
   const shareUrl = isSupportShortMerchantCardLink(input.shareUrl ?? "")
     ? normalizeSupportDisplayValue(input.shareUrl)
     : isSupportShortMerchantCardLink(fallbackShareUrl)
       ? normalizeSupportDisplayValue(fallbackShareUrl)
       : "";
-    if (input.card.mode === "link") {
-      return [imageUrl, shareUrl].filter(Boolean).join("\n");
-    }
-    return imageUrl || shareUrl;
-  }
+  return shareUrl ? ["联系卡", shareUrl].join("\n") : "";
+}
 
   async function sendSupportTextPayload(rawText: string, options?: { clearDraft?: boolean }) {
     if (supportSending) return false;
@@ -11118,18 +11121,31 @@ function buildSupportSelfBusinessCardMessageText(input: {
     supportInputRef.current?.blur();
     try {
       const shareBundle = await ensureSupportBusinessCardShareBundle(card);
-      const messageText = buildSupportSelfBusinessCardMessageText({
+      const imageMessageText = buildSupportSelfBusinessCardImageMessageText({
         card,
         imageUrl: shareBundle.imageUrl,
-        shareUrl: shareBundle.shareUrl,
       });
-      if (!messageText) {
+      if (!imageMessageText) {
         showTip("当前名片暂时无法发送，请稍后重试");
         return;
       }
-      const sent = await sendSupportTextPayload(messageText);
-      if (sent && card.mode === "link" && !shareBundle.shareUrl) {
-        showTip("联系卡短链暂时没生成成功，已先发送名片图片");
+      const sentImage = await sendSupportTextPayload(imageMessageText);
+      if (!sentImage) {
+        return;
+      }
+      if (card.mode === "link") {
+        const linkMessageText = buildSupportSelfBusinessCardLinkMessageText({
+          card,
+          shareUrl: shareBundle.shareUrl,
+        });
+        if (!linkMessageText) {
+          showTip("联系卡短链暂时没生成成功，已先发送名片图片");
+          return;
+        }
+        const sentLink = await sendSupportTextPayload(linkMessageText);
+        if (!sentLink) {
+          showTip("名片图已发送，但联系卡短链发送失败，请稍后重试");
+        }
       }
     } finally {
       setSupportAttachmentBusy(false);
