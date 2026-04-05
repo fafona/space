@@ -2406,11 +2406,17 @@ export default function MerchantBusinessCardManager({
             <div className="flex-1 overflow-auto bg-black p-4">
               {previewMode === "link" ? (
                 <div className="mx-auto grid min-h-full max-w-[1400px] items-start gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(380px,430px)]">
-                  <div className="flex min-h-full items-center justify-center rounded-3xl border border-white/10 bg-white/5 p-4">
+                  <div className="flex min-h-full items-center justify-center rounded-3xl border border-slate-200/70 bg-slate-100 p-6">
                     {previewAsset ? (
-                      /* 预览的是用户刚生成或上传的实际图片资源，这里需要原样展示。 */
-                      /* eslint-disable-next-line @next/next/no-img-element */
-                      <img src={previewAsset.imageUrl} alt={previewAsset.name} className="block h-auto max-w-full bg-transparent object-contain" />
+                      <div className="overflow-hidden rounded-[32px] bg-white p-3 shadow-[0_18px_48px_rgba(15,23,42,.16)]">
+                        {/* 预览的是用户刚生成或上传的实际图片资源，这里需要按原样显示，但背后补白底避免透明区域被黑底压暗。 */}
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={previewAsset.imageUrl}
+                          alt={previewAsset.name}
+                          className="block h-auto max-h-[calc(100vh-12rem)] max-w-full bg-white object-contain"
+                        />
+                      </div>
                     ) : (
                       <CardSurface draft={draft} websiteUrl={websiteUrl} qrCodeUrl={qrCodeUrl} scale={fullScale} />
                     )}
@@ -2427,11 +2433,17 @@ export default function MerchantBusinessCardManager({
                   </div>
                 </div>
               ) : (
-                <div className="mx-auto flex min-h-full items-center justify-center">
+                <div className="mx-auto flex min-h-full w-full items-center justify-center rounded-3xl border border-slate-200/70 bg-slate-100 p-6">
                   {previewAsset ? (
-                    /* 预览的是用户刚生成或上传的实际图片资源，这里需要原样展示。 */
-                    /* eslint-disable-next-line @next/next/no-img-element */
-                    <img src={previewAsset.imageUrl} alt={previewAsset.name} className="block h-auto max-w-full bg-transparent object-contain" />
+                    <div className="overflow-hidden rounded-[32px] bg-white p-3 shadow-[0_18px_48px_rgba(15,23,42,.16)]">
+                      {/* 预览的是用户刚生成或上传的实际图片资源，这里需要按原样显示，但背后补白底避免透明区域被黑底压暗。 */}
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={previewAsset.imageUrl}
+                        alt={previewAsset.name}
+                        className="block h-auto max-h-[calc(100vh-12rem)] max-w-full bg-white object-contain"
+                      />
+                    </div>
                   ) : (
                     <CardSurface draft={draft} websiteUrl={websiteUrl} qrCodeUrl={qrCodeUrl} scale={fullScale} />
                   )}
