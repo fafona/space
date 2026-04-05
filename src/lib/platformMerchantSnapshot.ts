@@ -146,6 +146,7 @@ function normalizeSnapshotSite(input: unknown): MerchantListPublishedSite | null
   const name = normalizeText(value.name) || merchantName || id;
   const domainPrefix = normalizeText(value.domainPrefix).toLowerCase();
   const domainSuffix = normalizeText(value.domainSuffix).toLowerCase();
+  const businessCards = normalizeMerchantBusinessCards(value.businessCards);
   return {
     id,
     merchantName,
@@ -165,7 +166,10 @@ function normalizeSnapshotSite(input: unknown): MerchantListPublishedSite | null
     chatAvatarImageUrl: normalizeText(value.chatAvatarImageUrl),
     contactVisibility: normalizeMerchantContactVisibility(value.contactVisibility),
     merchantCardImageOpacity: normalizeUnitInterval(value.merchantCardImageOpacity, 1),
-    chatBusinessCard: normalizeSnapshotChatBusinessCard(value.chatBusinessCard),
+    businessCards,
+    chatBusinessCard:
+      compactSnapshotChatBusinessCard(resolveMerchantBusinessCardForChatDisplay(businessCards)) ??
+      normalizeSnapshotChatBusinessCard(value.chatBusinessCard),
     status: normalizeSiteStatus(value.status),
     serviceExpiresAt: normalizeServiceExpiresAt(value.serviceExpiresAt),
     sortConfig: normalizeMerchantSortConfig(value.sortConfig),
@@ -229,6 +233,7 @@ export function buildPlatformMerchantSnapshotPayloadFromSites(
       chatAvatarImageUrl: normalizeText(site.chatAvatarImageUrl),
       contactVisibility: normalizeMerchantContactVisibility(site.contactVisibility),
       merchantCardImageOpacity: normalizeUnitInterval(site.merchantCardImageOpacity, 1),
+      businessCards: normalizeMerchantBusinessCards(site.businessCards),
       chatBusinessCard: compactSnapshotChatBusinessCard(resolveMerchantBusinessCardForChatDisplay(site.businessCards ?? [])),
       status: normalizeSiteStatus(site.status),
       serviceExpiresAt: normalizeServiceExpiresAt(site.serviceExpiresAt),
@@ -287,6 +292,7 @@ export function buildPlatformMerchantSnapshotSite(
     merchantCardImageUrl?: string | null;
     chatAvatarImageUrl?: string | null;
     contactVisibility?: Site["contactVisibility"] | null;
+    businessCards?: MerchantBusinessCardAsset[] | null;
     merchantCardImageOpacity?: number | null;
     chatBusinessCard?: MerchantBusinessCardAsset | null;
     status?: SiteStatus | null;
@@ -314,6 +320,7 @@ export function buildPlatformMerchantSnapshotSite(
     merchantCardImageUrl: input.merchantCardImageUrl,
     chatAvatarImageUrl: input.chatAvatarImageUrl,
     contactVisibility: input.contactVisibility,
+    businessCards: input.businessCards,
     merchantCardImageOpacity: input.merchantCardImageOpacity,
     chatBusinessCard: input.chatBusinessCard,
     status: input.status,

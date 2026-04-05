@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import type { MerchantListPublishedSite } from "@/data/homeBlocks";
 import { parseCookieValue, readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
-import { normalizeMerchantBusinessCards } from "@/lib/merchantBusinessCards";
+import { normalizeMerchantBusinessCards, resolveMerchantBusinessCardForChatDisplay } from "@/lib/merchantBusinessCards";
 import { listMerchantPeerContactsForMerchant } from "@/lib/merchantPeerInbox";
 import {
   loadStoredMerchantPeerInbox,
@@ -314,7 +314,11 @@ export async function GET(request: Request) {
     );
     const snapshotSite = snapshotPayload?.snapshot.find((site) => site.id === merchantId) ?? null;
     const fallbackChatBusinessCard = buildFallbackChatBusinessCard(snapshotSite, merchantId);
-    const resolvedChatBusinessCard = snapshotSite?.chatBusinessCard ?? fallbackChatBusinessCard ?? null;
+    const resolvedChatBusinessCard =
+      resolveMerchantBusinessCardForChatDisplay(snapshotSite?.businessCards ?? []) ??
+      snapshotSite?.chatBusinessCard ??
+      fallbackChatBusinessCard ??
+      null;
     return NextResponse.json({
       ok: true,
       merchantId,
@@ -348,6 +352,7 @@ export async function POST(request: Request) {
   const body = (await request.json().catch(() => null)) as
     | {
         merchantId?: unknown;
+        businessCards?: unknown;
         chatBusinessCard?: unknown;
       }
     | null;
@@ -374,6 +379,9 @@ export async function POST(request: Request) {
     const existingPayload = await loadStoredPlatformMerchantSnapshot(snapshotStore);
     const existingSite = existingPayload?.snapshot.find((site) => site.id === merchantId) ?? null;
     const merchantName = existingSite?.merchantName || (await resolveMerchantName(supabase, merchantId));
+    const normalizedBusinessCards = Object.prototype.hasOwnProperty.call(body ?? {}, "businessCards")
+      ? normalizeMerchantBusinessCards(body?.businessCards)
+      : normalizeMerchantBusinessCards(existingSite?.businessCards);
     const snapshotSite = buildPlatformMerchantSnapshotSite({
       id: merchantId,
       merchantName,
@@ -392,12 +400,17 @@ export async function POST(request: Request) {
       merchantCardImageUrl: existingSite?.merchantCardImageUrl ?? "",
       chatAvatarImageUrl: existingSite?.chatAvatarImageUrl ?? "",
       contactVisibility: existingSite?.contactVisibility,
+      businessCards: normalizedBusinessCards,
       merchantCardImageOpacity: existingSite?.merchantCardImageOpacity ?? 1,
       status: existingSite?.status ?? "online",
       serviceExpiresAt: existingSite?.serviceExpiresAt ?? null,
       sortConfig: existingSite?.sortConfig ?? undefined,
       createdAt: existingSite?.createdAt ?? new Date().toISOString(),
-      chatBusinessCard: normalizeChatBusinessCard(body?.chatBusinessCard),
+      chatBusinessCard:
+        resolveMerchantBusinessCardForChatDisplay(normalizedBusinessCards) ??
+        normalizeChatBusinessCard(body?.chatBusinessCard) ??
+        existingSite?.chatBusinessCard ??
+        null,
     });
     if (!snapshotSite) {
       return NextResponse.json({ error: "merchant_chat_business_card_invalid" }, { status: 400 });

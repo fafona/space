@@ -404,6 +404,10 @@ export function injectPublishedMerchantSnapshotIntoBlocks(
   defaultSortRule: MerchantSortRule = "created_desc",
   options?: { forceReplace?: boolean },
 ): Block[] {
+  const publicSnapshot = snapshot.map((site) => ({
+    ...site,
+    businessCards: undefined,
+  }));
   return blocks.map((block) => {
     const nextProps = { ...(block.props ?? {}) } as Record<string, unknown>;
     let changed = false;
@@ -412,8 +416,8 @@ export function injectPublishedMerchantSnapshotIntoBlocks(
       if (options?.forceReplace || !Array.isArray(existingSnapshot) || existingSnapshot.length === 0) {
         nextProps.publishedMerchantSnapshot =
           options?.forceReplace && Array.isArray(existingSnapshot) && existingSnapshot.length > 0
-            ? mergePublishedMerchantSnapshots(snapshot, existingSnapshot as MerchantListPublishedSite[])
-            : snapshot;
+            ? mergePublishedMerchantSnapshots(publicSnapshot, existingSnapshot as MerchantListPublishedSite[])
+            : publicSnapshot;
         if (
           options?.forceReplace ||
           typeof nextProps.publishedMerchantDefaultSortRule !== "string" ||
@@ -427,7 +431,7 @@ export function injectPublishedMerchantSnapshotIntoBlocks(
     if ("pagePlanConfig" in nextProps) {
       const patched = injectPublishedMerchantSnapshotIntoPlanConfig(
         nextProps.pagePlanConfig,
-        snapshot,
+        publicSnapshot,
         defaultSortRule,
         options,
       );
@@ -439,7 +443,7 @@ export function injectPublishedMerchantSnapshotIntoBlocks(
     if ("pagePlanConfigMobile" in nextProps) {
       const patched = injectPublishedMerchantSnapshotIntoPlanConfig(
         nextProps.pagePlanConfigMobile,
-        snapshot,
+        publicSnapshot,
         defaultSortRule,
         options,
       );

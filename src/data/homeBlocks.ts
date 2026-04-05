@@ -104,6 +104,7 @@ export type MerchantListPublishedSite = {
   merchantCardImageOpacity?: number;
   chatAvatarImageUrl?: string;
   contactVisibility?: MerchantContactVisibility;
+  businessCards?: MerchantBusinessCardAsset[];
   chatBusinessCard?: MerchantBusinessCardAsset | null;
   status?: SiteStatus;
   serviceExpiresAt?: string | null;

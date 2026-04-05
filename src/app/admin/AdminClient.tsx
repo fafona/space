@@ -5220,7 +5220,10 @@ export default function AdminClient({
   } {
     const payload = buildPlatformMerchantSnapshotPayloadFromState(loadPlatformState());
     return {
-      sites: payload.snapshot,
+      sites: payload.snapshot.map((site) => ({
+        ...site,
+        businessCards: undefined,
+      })),
       defaultSortRule: payload.defaultSortRule,
     };
   }
@@ -8637,6 +8640,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     !isPlatformEditor && editingSiteId && Array.isArray(editingSite?.businessCards)
       ? JSON.stringify({
           merchantId: editingSiteId,
+          businessCards: normalizeMerchantBusinessCards(editingSite?.businessCards ?? []),
           chatBusinessCard: resolveMerchantBusinessCardForChatDisplay(editingSite?.businessCards ?? []),
         })
       : "";
@@ -8954,35 +8958,46 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const supportSelfProfile = supportSelfFetchedProfile ?? supportSelfLocalProfile ?? null;
   const supportSelfBusinessCards = useMemo(() => {
     const localCards = Array.isArray(editingSite?.businessCards) ? normalizeMerchantBusinessCards(editingSite.businessCards) : [];
-    const remoteCard = supportSelfFetchedBusinessCard ?? supportSelfProfile?.chatBusinessCard ?? null;
+    const remoteCards = normalizeMerchantBusinessCards([
+      ...(Array.isArray(supportSelfFetchedProfile?.businessCards) ? supportSelfFetchedProfile.businessCards : []),
+      ...(supportSelfFetchedBusinessCard ? [supportSelfFetchedBusinessCard] : []),
+      ...(supportSelfProfile?.chatBusinessCard ? [supportSelfProfile.chatBusinessCard] : []),
+    ]);
+    if (remoteCards.length === 0) {
+      return localCards;
+    }
     if (localCards.length === 0) {
-      return normalizeMerchantBusinessCards(remoteCard ? [remoteCard] : []);
+      return remoteCards;
     }
-    const mergedCards = [...localCards];
-    if (remoteCard) {
-      const normalizedRemoteCards = normalizeMerchantBusinessCards([remoteCard]);
-      normalizedRemoteCards.forEach((card) => {
-        const matchIndex = mergedCards.findIndex(
-          (item) =>
-            item.id === card.id ||
-            (!!item.shareKey && !!card.shareKey && item.shareKey === card.shareKey) ||
-            (!!item.targetUrl && !!card.targetUrl && item.targetUrl === card.targetUrl),
-        );
-        if (matchIndex >= 0) {
-          mergedCards[matchIndex] = {
-            ...mergedCards[matchIndex],
-            ...card,
-          };
-        }
-      });
-    }
+    const mergedCards = [...remoteCards];
+    localCards.forEach((card) => {
+      const matchIndex = mergedCards.findIndex(
+        (item) =>
+          item.id === card.id ||
+          (!!item.shareKey && !!card.shareKey && item.shareKey === card.shareKey) ||
+          (!!item.targetUrl && !!card.targetUrl && item.targetUrl === card.targetUrl),
+      );
+      if (matchIndex >= 0) {
+        mergedCards[matchIndex] = {
+          ...card,
+          ...mergedCards[matchIndex],
+        };
+      } else {
+        mergedCards.push(card);
+      }
+    });
     return [...mergedCards].sort((left, right) => {
       const leftChat = left.showInChat !== false;
       const rightChat = right.showInChat !== false;
       if (leftChat !== rightChat) return leftChat ? -1 : 1;
       return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
     });
-  }, [editingSite?.businessCards, supportSelfFetchedBusinessCard, supportSelfProfile?.chatBusinessCard]);
+  }, [
+    editingSite?.businessCards,
+    supportSelfFetchedBusinessCard,
+    supportSelfFetchedProfile?.businessCards,
+    supportSelfProfile?.chatBusinessCard,
+  ]);
   const supportSelfContactVisibility =
     supportSelfProfile?.contactVisibility ??
     editingSite?.contactVisibility ??
@@ -9823,17 +9838,17 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       setSupportSelfResolvedCardId("");
       return;
     }
-    const builtHref = buildSupportMerchantCardLink(activeCard);
-    if (isSupportShortMerchantCardLink(builtHref)) {
-      setSupportSelfResolvedCardHref(builtHref);
-      setSupportSelfResolvedCardId(activeCard.id);
-      return;
-    }
     let cancelled = false;
     void (async () => {
+      const builtHref = buildSupportMerchantCardLink(activeCard);
+      const fallbackHref = normalizeSupportDisplayValue(builtHref);
+      if (isSupportShortMerchantCardLink(fallbackHref)) {
+        setSupportSelfResolvedCardHref(fallbackHref);
+        setSupportSelfResolvedCardId(activeCard.id);
+      }
       const shareBundle = await ensureSupportBusinessCardShareBundle(activeCard).catch(() => null);
       if (cancelled) return;
-      const nextHref = normalizeSupportDisplayValue(shareBundle?.shareUrl);
+      const nextHref = normalizeSupportDisplayValue(shareBundle?.shareUrl) || fallbackHref;
       setSupportSelfResolvedCardHref(nextHref);
       setSupportSelfResolvedCardId(nextHref ? activeCard.id : "");
     })();
@@ -9847,9 +9862,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       if (isPlatformEditor || typeof window === "undefined") return;
       const normalizedMerchantId = String(merchantId ?? "").trim();
       if (!normalizedMerchantId) return;
+      const normalizedCards = normalizeMerchantBusinessCards(cards);
       const body = JSON.stringify({
         merchantId: normalizedMerchantId,
-        chatBusinessCard: resolveMerchantBusinessCardForChatDisplay(cards),
+        businessCards: normalizedCards,
+        chatBusinessCard: resolveMerchantBusinessCardForChatDisplay(normalizedCards),
       });
       if (merchantChatBusinessCardSyncTimerRef.current) {
         clearTimeout(merchantChatBusinessCardSyncTimerRef.current);
