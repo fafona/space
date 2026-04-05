@@ -57,6 +57,23 @@ test("setMerchantAuthCookies writes browser-session cookies", () => {
     maxAgeSeconds: 3600,
   });
 
-  assert.equal(response.cookies.get(MERCHANT_AUTH_COOKIE)?.maxAge, undefined);
-  assert.equal(response.cookies.get(MERCHANT_AUTH_REFRESH_COOKIE)?.maxAge, undefined);
+  assert.equal(response.cookies.get(MERCHANT_AUTH_COOKIE)?.maxAge, 3600);
+  assert.equal(response.cookies.get(MERCHANT_AUTH_REFRESH_COOKIE)?.maxAge, 30 * 24 * 60 * 60);
+});
+
+test("setMerchantAuthCookies shares cookies across faolla subdomains", () => {
+  const response = NextResponse.json({ ok: true });
+  const request = new Request("https://fafona.faolla.com/api/auth/merchant-login");
+  setMerchantAuthCookies(
+    response,
+    {
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      maxAgeSeconds: 3600,
+    },
+    request,
+  );
+
+  assert.equal(response.cookies.get(MERCHANT_AUTH_COOKIE)?.domain, "faolla.com");
+  assert.equal(response.cookies.get(MERCHANT_AUTH_REFRESH_COOKIE)?.domain, "faolla.com");
 });

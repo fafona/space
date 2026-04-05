@@ -325,13 +325,13 @@ function clearMerchantSessionCache(accessToken: string, refreshToken: string) {
     });
 }
 
-function respondWithMerchantSession(payload: AuthenticatedMerchantSessionPayload) {
+function respondWithMerchantSession(request: Request, payload: AuthenticatedMerchantSessionPayload) {
   const response = noStoreJson(payload);
   setMerchantAuthCookies(response, {
     accessToken: payload.accessToken,
     refreshToken: payload.refreshToken,
     maxAgeSeconds: payload.expiresIn ?? undefined,
-  });
+  }, request);
   return response;
 }
 
@@ -341,7 +341,7 @@ export async function GET(request: Request) {
     const cookieRefreshToken = readMerchantAuthRefreshCookie(request);
     const cached = readMerchantSessionCache(cookieAccessToken, cookieRefreshToken);
     if (cached) {
-      return respondWithMerchantSession(cached);
+      return respondWithMerchantSession(request, cached);
     }
 
     const supabase = createServerSupabaseClient();
@@ -355,7 +355,7 @@ export async function GET(request: Request) {
       const inFlight = merchantSessionInflight.get(cacheKey);
       if (inFlight) {
         const payload = await inFlight;
-        if (payload) return respondWithMerchantSession(payload);
+        if (payload) return respondWithMerchantSession(request, payload);
       }
     }
 
@@ -430,10 +430,10 @@ export async function GET(request: Request) {
       const payload = await task;
       if (!payload) {
         const response = noStoreJson({ authenticated: false }, { status: 401 });
-        clearMerchantAuthCookies(response);
+        clearMerchantAuthCookies(response, request);
         return response;
       }
-      return respondWithMerchantSession(payload);
+      return respondWithMerchantSession(request, payload);
     } finally {
       if (cacheKey && merchantSessionInflight.get(cacheKey) === task) {
         merchantSessionInflight.delete(cacheKey);
@@ -465,7 +465,7 @@ export async function POST(request: Request) {
 
     if (!accessToken) {
       const response = noStoreJson({ ok: false, error: "merchant_session_missing_access_token" }, { status: 400 });
-      clearMerchantAuthCookies(response);
+      clearMerchantAuthCookies(response, request);
       return response;
     }
 
@@ -502,7 +502,7 @@ export async function POST(request: Request) {
 
     if (!user) {
       const response = noStoreJson({ ok: false, error: "merchant_session_invalid_access_token" }, { status: 401 });
-      clearMerchantAuthCookies(response);
+      clearMerchantAuthCookies(response, request);
       return response;
     }
 
@@ -518,7 +518,7 @@ export async function POST(request: Request) {
       accessToken: verifiedAccessToken,
       refreshToken: verifiedRefreshToken,
       maxAgeSeconds: verifiedExpiresIn,
-    });
+    }, request);
     return response;
   } catch {
     return noStoreJson({ ok: false, error: "merchant_session_sync_unavailable" }, { status: 503 });

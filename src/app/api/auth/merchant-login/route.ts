@@ -446,7 +446,7 @@ export async function POST(request: Request) {
       accessToken,
       refreshToken,
       maxAgeSeconds: upstreamPayload?.expires_in,
-    });
+    }, request);
     return response;
   } catch {
     return NextResponse.json({ error: "merchant_login_failed" }, { status: 503 });
