@@ -8,14 +8,19 @@ import {
   upsertSuperAdminTrustedDevice,
 } from "@/lib/superAdminTrustedDevices";
 import {
+  SUPER_ADMIN_DEVICE_COOKIE_MAX_AGE_SECONDS,
+  SUPER_ADMIN_DEVICE_ID_COOKIE,
   SUPER_ADMIN_SESSION_COOKIE,
+  SUPER_ADMIN_SESSION_COOKIE_MAX_AGE_SECONDS,
   SUPER_ADMIN_SESSION_VALUE,
+  SUPER_ADMIN_TRUSTED_DEVICE_COOKIE_MAX_AGE_SECONDS,
   SUPER_ADMIN_TRUSTED_DEVICE_COOKIE,
+  resolveSuperAdminCookieDomain,
 } from "@/lib/superAdminSession";
 
 export async function finalizeSuperAdminLogin(
   challengePayload: SuperAdminChallengePayload,
-  options?: { loginIp?: string | null },
+  options?: { loginIp?: string | null; request?: Request },
 ) {
   const trustedDeviceToken = createSuperAdminTrustedDeviceToken({
     deviceId: challengePayload.deviceId,
@@ -57,18 +62,28 @@ export async function finalizeSuperAdminLogin(
     nextPath: challengePayload.nextPath,
     deviceLabel: challengePayload.deviceLabel,
   });
+  const cookieDomain = resolveSuperAdminCookieDomain(options?.request);
   response.cookies.set(SUPER_ADMIN_SESSION_COOKIE, SUPER_ADMIN_SESSION_VALUE, {
     path: "/",
-    maxAge: 60 * 60 * 12,
+    maxAge: SUPER_ADMIN_SESSION_COOKIE_MAX_AGE_SECONDS,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
+    ...(cookieDomain ? { domain: cookieDomain } : {}),
+  });
+  response.cookies.set(SUPER_ADMIN_DEVICE_ID_COOKIE, challengePayload.deviceId, {
+    path: "/",
+    maxAge: SUPER_ADMIN_DEVICE_COOKIE_MAX_AGE_SECONDS,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    ...(cookieDomain ? { domain: cookieDomain } : {}),
   });
   response.cookies.set(SUPER_ADMIN_TRUSTED_DEVICE_COOKIE, trustedDeviceToken, {
     path: "/",
-    maxAge: 60 * 60 * 24 * 180,
+    maxAge: SUPER_ADMIN_TRUSTED_DEVICE_COOKIE_MAX_AGE_SECONDS,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     httpOnly: true,
+    ...(cookieDomain ? { domain: cookieDomain } : {}),
   });
   return response;
 }

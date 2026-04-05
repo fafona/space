@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { POST } from "@/app/api/super-admin/auth/complete/route";
+import {
+  SUPER_ADMIN_DEVICE_ID_COOKIE,
+  SUPER_ADMIN_SESSION_COOKIE,
+  SUPER_ADMIN_TRUSTED_DEVICE_COOKIE,
+} from "@/lib/superAdminSession";
 import { createSuperAdminChallengeToken, createSuperAdminEmailProofToken } from "@/lib/superAdminVerification";
 
 test("super-admin auth complete rejects device mismatch", async () => {
@@ -57,4 +62,32 @@ test("super-admin auth complete accepts matching verified device", async () => {
     nextPath: "/super-admin/editor",
     deviceLabel: "Windows / Chrome",
   });
+});
+
+test("super-admin auth complete shares session and trusted-device cookies across faolla subdomains", async () => {
+  const challenge = createSuperAdminChallengeToken({
+    deviceId: "device-12345678",
+    deviceLabel: "Windows / Chrome",
+    nextPath: "/super-admin/editor",
+  });
+  const proof = createSuperAdminEmailProofToken(challenge);
+
+  const response = await POST(
+    new Request("https://www.faolla.com/api/super-admin/auth/complete", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        challenge,
+        proof,
+        deviceId: "device-12345678",
+      }),
+    }),
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(response.cookies.get(SUPER_ADMIN_SESSION_COOKIE)?.domain, "faolla.com");
+  assert.equal(response.cookies.get(SUPER_ADMIN_DEVICE_ID_COOKIE)?.domain, "faolla.com");
+  assert.equal(response.cookies.get(SUPER_ADMIN_TRUSTED_DEVICE_COOKIE)?.domain, "faolla.com");
 });

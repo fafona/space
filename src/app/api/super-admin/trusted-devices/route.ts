@@ -6,7 +6,12 @@ import {
   removeSuperAdminTrustedDevice,
   saveSuperAdminTrustedDevicesToStore,
 } from "@/lib/superAdminTrustedDevices";
-import { SUPER_ADMIN_SESSION_COOKIE, SUPER_ADMIN_SESSION_VALUE, SUPER_ADMIN_TRUSTED_DEVICE_COOKIE } from "@/lib/superAdminSession";
+import {
+  SUPER_ADMIN_SESSION_COOKIE,
+  SUPER_ADMIN_SESSION_VALUE,
+  SUPER_ADMIN_TRUSTED_DEVICE_COOKIE,
+  resolveSuperAdminCookieDomain,
+} from "@/lib/superAdminSession";
 import { readSuperAdminTrustedDeviceToken } from "@/lib/superAdminVerification";
 
 export const dynamic = "force-dynamic";
@@ -82,12 +87,14 @@ export async function DELETE(request: Request) {
     const currentDeviceToken = parseCookieValue(request.headers.get("cookie") ?? "", SUPER_ADMIN_TRUSTED_DEVICE_COOKIE);
     const currentDevice = readSuperAdminTrustedDeviceToken(currentDeviceToken);
     if (currentDevice?.deviceId === deviceId) {
+      const cookieDomain = resolveSuperAdminCookieDomain(request);
       response.cookies.set(SUPER_ADMIN_TRUSTED_DEVICE_COOKIE, "", {
         path: "/",
         maxAge: 0,
         sameSite: "lax",
         secure: process.env.NODE_ENV === "production",
         httpOnly: true,
+        ...(cookieDomain ? { domain: cookieDomain } : {}),
       });
     }
     return response;

@@ -35,6 +35,7 @@ export async function POST(request: Request) {
 
     return finalizeSuperAdminLogin(challengePayload, {
       loginIp: readRequestClientIp(request),
+      request,
     });
   } catch {
     return NextResponse.json({ error: "super_admin_verification_failed" }, { status: 503 });

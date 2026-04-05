@@ -1,14 +1,19 @@
 "use client";
 
 import {
+  SUPER_ADMIN_DEVICE_COOKIE_MAX_AGE_SECONDS,
+  SUPER_ADMIN_DEVICE_ID_COOKIE,
   SUPER_ADMIN_DEVICE_ID_KEY,
   SUPER_ADMIN_LOGIN_PATH,
   SUPER_ADMIN_SESSION_COOKIE,
+  SUPER_ADMIN_SESSION_COOKIE_MAX_AGE_SECONDS,
   SUPER_ADMIN_SESSION_KEY,
   SUPER_ADMIN_SESSION_VALUE,
+  resolveSuperAdminCookieDomainFromHostname,
 } from "@/lib/superAdminSession";
 
 export {
+  SUPER_ADMIN_DEVICE_ID_COOKIE,
   SUPER_ADMIN_DEVICE_ID_KEY,
   SUPER_ADMIN_LOGIN_PATH,
   SUPER_ADMIN_SESSION_COOKIE,
@@ -16,18 +21,54 @@ export {
   SUPER_ADMIN_SESSION_VALUE,
 };
 
-function readSuperAdminCookie() {
-  if (typeof document === "undefined") return false;
+function readCookieValue(key: string) {
+  if (typeof document === "undefined") return "";
   return document.cookie
     .split(";")
     .map((part) => part.trim())
-    .some((part) => part === `${SUPER_ADMIN_SESSION_COOKIE}=${SUPER_ADMIN_SESSION_VALUE}`);
+    .find((part) => part.startsWith(`${key}=`))
+    ?.slice(key.length + 1) ?? "";
+}
+
+function buildCookieDomainPart() {
+  if (typeof window === "undefined") return "";
+  const cookieDomain = resolveSuperAdminCookieDomainFromHostname(window.location.hostname);
+  return cookieDomain ? `; Domain=${cookieDomain}` : "";
+}
+
+function clearHostOnlyCookie(key: string) {
+  if (typeof document === "undefined") return;
+  document.cookie = `${key}=; Path=/; Max-Age=0; SameSite=Lax`;
+}
+
+function readSuperAdminCookie() {
+  return readCookieValue(SUPER_ADMIN_SESSION_COOKIE) === SUPER_ADMIN_SESSION_VALUE;
 }
 
 function writeSuperAdminCookie(enabled: boolean) {
   if (typeof document === "undefined") return;
-  const maxAge = enabled ? 60 * 60 * 12 : 0;
-  document.cookie = `${SUPER_ADMIN_SESSION_COOKIE}=${enabled ? SUPER_ADMIN_SESSION_VALUE : ""}; Path=/; Max-Age=${maxAge}; SameSite=Lax`;
+  const maxAge = enabled ? SUPER_ADMIN_SESSION_COOKIE_MAX_AGE_SECONDS : 0;
+  const cookieDomainPart = buildCookieDomainPart();
+  if (cookieDomainPart) {
+    clearHostOnlyCookie(SUPER_ADMIN_SESSION_COOKIE);
+  }
+  document.cookie = `${SUPER_ADMIN_SESSION_COOKIE}=${enabled ? SUPER_ADMIN_SESSION_VALUE : ""}; Path=/; Max-Age=${maxAge}; SameSite=Lax${cookieDomainPart}`;
+}
+
+function readSuperAdminDeviceIdCookie() {
+  return readCookieValue(SUPER_ADMIN_DEVICE_ID_COOKIE).trim();
+}
+
+function writeSuperAdminDeviceIdCookie(deviceId: string) {
+  if (typeof document === "undefined") return;
+  const normalizedDeviceId = String(deviceId ?? "").trim();
+  const cookieDomainPart = buildCookieDomainPart();
+  if (cookieDomainPart) {
+    clearHostOnlyCookie(SUPER_ADMIN_DEVICE_ID_COOKIE);
+  }
+  document.cookie = `${SUPER_ADMIN_DEVICE_ID_COOKIE}=${normalizedDeviceId}; Path=/; Max-Age=${
+    normalizedDeviceId ? SUPER_ADMIN_DEVICE_COOKIE_MAX_AGE_SECONDS : 0
+  }; SameSite=Lax${cookieDomainPart}`;
 }
 
 export function isSuperAdminAuthenticated() {
@@ -65,12 +106,23 @@ export function buildSuperAdminLoginHref(nextPath = "/super-admin") {
 export function getOrCreateSuperAdminDeviceId() {
   if (typeof window === "undefined") return "";
   const existing = localStorage.getItem(SUPER_ADMIN_DEVICE_ID_KEY)?.trim() ?? "";
-  if (existing) return existing;
+  if (existing) {
+    if (readSuperAdminDeviceIdCookie() !== existing) {
+      writeSuperAdminDeviceIdCookie(existing);
+    }
+    return existing;
+  }
+  const sharedCookieDeviceId = readSuperAdminDeviceIdCookie();
+  if (sharedCookieDeviceId) {
+    localStorage.setItem(SUPER_ADMIN_DEVICE_ID_KEY, sharedCookieDeviceId);
+    return sharedCookieDeviceId;
+  }
   const nextId =
     typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
       ? crypto.randomUUID()
       : `device-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   localStorage.setItem(SUPER_ADMIN_DEVICE_ID_KEY, nextId);
+  writeSuperAdminDeviceIdCookie(nextId);
   return nextId;
 }
 
