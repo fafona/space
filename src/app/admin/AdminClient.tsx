@@ -9090,12 +9090,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY
       ? "还没有留言记录，可以直接在下方给 Faolla 留言。"
       : "还没有聊天记录，可以直接在下方发送第一条消息。";
-  const selectedSupportInputPlaceholder =
-    supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY
-      ? "请输入你想留言的内容，例如遇到的问题、需要协助的事项或希望 Faolla 处理的内容。"
-      : selectedSupportPeerContact
-        ? `请输入要发送给 ${selectedSupportPeerContact.merchantName} 的内容。`
-        : "请先在左侧精确搜索商户ID或邮箱，再开始聊天。";
+  const selectedSupportInputPlaceholder = "";
   const selectedSupportSendButtonLabel =
     supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY ? "发送留言" : "发送消息";
   const supportComposerAvailable =
