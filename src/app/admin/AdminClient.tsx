@@ -3904,10 +3904,10 @@ function getSupportPreferredBusinessCardPreviewUrl(card: MerchantBusinessCardAss
   const detailImageUrl =
     normalizeSupportDetailText(card.contactPagePublicImageUrl) || normalizeSupportDetailText(card.contactPageImageUrl);
   if (card.mode === "link") {
-    if (shareImageUrl) return shareImageUrl;
     if (!isSupportSnapshotFallbackBusinessCard(card) && imageUrl && imageUrl !== detailImageUrl) {
       return imageUrl;
     }
+    if (shareImageUrl) return shareImageUrl;
     return buildSupportFallbackBusinessCardPreviewDataUrl(card);
   }
   if (imageUrl && !isSupportSnapshotFallbackBusinessCard(card)) {
@@ -3983,6 +3983,15 @@ function dedupeSupportBusinessCards(cards: MerchantBusinessCardAsset[]) {
     }
     return accumulator;
   }, []);
+}
+
+function sortSupportBusinessCardsForDisplay(cards: MerchantBusinessCardAsset[]) {
+  return [...cards].sort((left, right) => {
+    const leftChat = left.showInChat !== false;
+    const rightChat = right.showInChat !== false;
+    if (leftChat !== rightChat) return leftChat ? -1 : 1;
+    return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
+  });
 }
 
 function buildSupportMerchantCardLink(card: MerchantBusinessCardAsset | null) {
@@ -4275,6 +4284,7 @@ function buildSupportPublishedProfileFromSite(site: Site): MerchantListPublished
     chatAvatarImageUrl: site.chatAvatarImageUrl,
     contactVisibility: site.contactVisibility ?? createDefaultMerchantContactVisibility(),
     merchantCardImageOpacity: site.merchantCardImageOpacity,
+    businessCards: normalizeMerchantBusinessCards(site.businessCards ?? []),
     chatBusinessCard: resolveMerchantBusinessCardForChatDisplay(site.businessCards ?? []),
     status: site.status,
     serviceExpiresAt: site.serviceExpiresAt ?? null,
@@ -4326,6 +4336,9 @@ function mergeSupportPublishedProfileIntoSite(
       typeof profile.merchantCardImageOpacity === "number"
         ? profile.merchantCardImageOpacity
         : site.merchantCardImageOpacity,
+    businessCards: Array.isArray(profile.businessCards)
+      ? normalizeMerchantBusinessCards(profile.businessCards)
+      : site.businessCards,
     serviceExpiresAt: profile.serviceExpiresAt ?? site.serviceExpiresAt ?? null,
     sortConfig: profile.sortConfig ?? site.sortConfig ?? createDefaultMerchantSortConfig(),
     createdAt: normalizeSupportDisplayValue(profile.createdAt) || site.createdAt,
@@ -4651,13 +4664,13 @@ function renderSupportMessageContent(value: string, options?: { isSelf?: boolean
         href={normalizedImageUrl}
         target="_blank"
         rel="noreferrer"
-        className="block overflow-hidden rounded-[18px] bg-white/10"
+        className="block overflow-hidden rounded-[20px] bg-white p-1 shadow-[0_10px_24px_rgba(15,23,42,0.08)]"
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={normalizedImageUrl}
           alt="名片图片"
-          className="block h-auto max-h-[18rem] w-full object-contain"
+          className="block h-auto max-h-[18rem] w-full rounded-[16px] bg-white object-contain"
         />
       </a>
       {linkUrl ? (
@@ -4761,6 +4774,7 @@ export default function AdminClient({
   const [supportAttachmentBusy, setSupportAttachmentBusy] = useState(false);
   const [supportAttachmentMenuOpen, setSupportAttachmentMenuOpen] = useState(false);
   const [supportSelfCardPickerOpen, setSupportSelfCardPickerOpen] = useState(false);
+  const [supportSelfCardPickerCards, setSupportSelfCardPickerCards] = useState<MerchantBusinessCardAsset[] | null>(null);
   const [supportContactKeyword, setSupportContactKeyword] = useState("");
   const [supportLastReadAt, setSupportLastReadAt] = useState("");
   const [supportPeerLastReadMap, setSupportPeerLastReadMap] = useState<Record<string, string>>({});
@@ -9054,18 +9068,17 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       }
     });
     const deduplicatedCards = dedupeSupportBusinessCards(mergedCards);
-    return deduplicatedCards.sort((left, right) => {
-      const leftChat = left.showInChat !== false;
-      const rightChat = right.showInChat !== false;
-      if (leftChat !== rightChat) return leftChat ? -1 : 1;
-      return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
-    });
+    return sortSupportBusinessCardsForDisplay(deduplicatedCards);
   }, [
     editingSite?.businessCards,
     supportSelfFetchedBusinessCard,
     supportSelfFetchedProfile?.businessCards,
     supportSelfProfile?.chatBusinessCard,
   ]);
+  const supportSelfCardPickerChoices = supportSelfCardPickerCards ?? supportSelfBusinessCards;
+  useEffect(() => {
+    setSupportSelfCardPickerCards(null);
+  }, [editingSiteId]);
   const supportSelfContactVisibility =
     supportSelfProfile?.contactVisibility ??
     editingSite?.contactVisibility ??
@@ -11165,17 +11178,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   }
 
   async function openSupportSelfCardPicker() {
-    if (supportSelfBusinessCards.length > 0) {
-      setSupportAttachmentMenuOpen(false);
-      setSupportSelfCardPickerOpen(true);
-      supportInputRef.current?.blur();
-      return;
-    }
-
+    setSupportAttachmentMenuOpen(false);
+    supportInputRef.current?.blur();
     const merchantId = editingSiteId.trim();
     if (/^\d{8}$/.test(merchantId)) {
-      setSupportAttachmentMenuOpen(false);
-      supportInputRef.current?.blur();
       try {
         const response = await requestMerchantChatBusinessCardById(merchantId, {
           cache: "no-store",
@@ -11187,6 +11193,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             }
           | null;
         if (response.ok) {
+          supportPeerProfileFetchedAtRef.current[merchantId] = Date.now();
           setSupportPeerProfilesByMerchantId((current) => ({
             ...current,
             [merchantId]: payload?.profile ?? null,
@@ -11196,7 +11203,13 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             ...current,
             [merchantId]: nextCard,
           }));
-          if (nextCard) {
+          const fetchedCards = sortSupportBusinessCardsForDisplay(
+            normalizeMerchantBusinessCards(
+              Array.isArray(payload?.profile?.businessCards) ? payload?.profile?.businessCards : [],
+            ).filter((card) => !isSupportSnapshotFallbackBusinessCard(card)),
+          );
+          setSupportSelfCardPickerCards(fetchedCards);
+          if (fetchedCards.length > 0) {
             setSupportSelfCardPickerOpen(true);
             return;
           }
@@ -11206,6 +11219,13 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       }
     }
 
+    if (supportSelfBusinessCards.length > 0) {
+      setSupportSelfCardPickerCards(supportSelfBusinessCards);
+      setSupportSelfCardPickerOpen(true);
+      return;
+    }
+
+    setSupportSelfCardPickerCards([]);
     showTip("当前还没有可发送的名片，请先在商户资料里生成名片");
   }
 
@@ -12165,10 +12185,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                   return (
                     <article key={card.id} className="overflow-hidden rounded-[24px] border border-slate-200 bg-slate-50/80">
                       <div className="flex gap-3 px-3 py-3">
-                        <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-slate-900 text-xs font-semibold text-white">
+                        <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-white p-1 text-xs font-semibold text-slate-700 shadow-sm">
                           {cardPreviewUrl ? (
                             /* eslint-disable-next-line @next/next/no-img-element */
-                            <img src={cardPreviewUrl} alt={card.name} className="h-full w-full object-cover" />
+                            <img src={cardPreviewUrl} alt={card.name} className="h-full w-full rounded-[14px] bg-white object-contain" />
                           ) : (
                             getSupportContactAvatarLabel(card.name || supportSelfDisplayName, "名")
                           )}
@@ -12469,10 +12489,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                   ) : null}
                   <div className={`flex ${message.isSelf ? "justify-end" : "justify-start"}`}>
                     <div
-                      className={`max-w-[84%] min-w-0 rounded-[24px] px-4 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.08)] ${
-                        message.isSelf
-                          ? "bg-slate-900 text-white"
-                          : "border border-slate-200 bg-white text-slate-900"
+                      className={`max-w-[84%] min-w-0 rounded-[24px] shadow-[0_10px_24px_rgba(15,23,42,0.08)] ${
+                        parseSupportMessageAttachmentPreview(message.text)
+                          ? "border border-transparent bg-transparent px-0 py-0"
+                          : message.isSelf
+                            ? "bg-slate-900 px-4 py-3 text-white"
+                            : "border border-slate-200 bg-white px-4 py-3 text-slate-900"
                       }`}
                     >
                       {renderSupportMessageContent(message.text, { isSelf: message.isSelf })}
@@ -12722,8 +12744,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                   </div>
                 </div>
                 <div className="max-h-[58vh] space-y-2 overflow-y-auto px-3 pb-3">
-                  {supportSelfBusinessCards.length ? (
-                    supportSelfBusinessCards.map((card) => {
+                  {supportSelfCardPickerChoices.length ? (
+                    supportSelfCardPickerChoices.map((card) => {
                       const cardPreviewUrl = getSupportPreferredBusinessCardPreviewUrl(card);
                       const cardModeLabel = card.mode === "link" ? "链接模式" : "图片模式";
                       return (
@@ -12736,10 +12758,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                           }}
                           disabled={supportComposerBusy}
                         >
-                          <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-slate-900 text-xs font-semibold text-white">
+                          <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-white p-1 text-xs font-semibold text-slate-700 shadow-sm">
                             {cardPreviewUrl ? (
                               /* eslint-disable-next-line @next/next/no-img-element */
-                              <img src={cardPreviewUrl} alt={card.name} className="h-full w-full object-cover" />
+                              <img src={cardPreviewUrl} alt={card.name} className="h-full w-full rounded-[12px] bg-white object-contain" />
                             ) : (
                               getSupportContactAvatarLabel(card.name || merchantDisplayName, "名")
                             )}
