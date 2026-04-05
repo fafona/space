@@ -34,6 +34,11 @@ function normalizeSupportEmail(value: unknown) {
   return trimText(value).toLowerCase();
 }
 
+function normalizeMerchantId(value: unknown) {
+  const normalized = trimText(value);
+  return /^\d{8}$/.test(normalized) ? normalized : "";
+}
+
 function noStoreJson(body: unknown, init?: ResponseInit) {
   const response = NextResponse.json(body, init);
   response.headers.set("cache-control", "no-store");
@@ -53,36 +58,12 @@ function buildThreadResponse(thread: PlatformSupportThread | null, merchantId: s
   );
 }
 
-function buildFallbackSupportSession(request: Request, hint?: SupportSessionHintInput) {
-  const url = new URL(request.url);
-  const merchantId =
-    trimText(hint?.siteId) ||
-    trimText(url.searchParams.get("siteId")) ||
-    trimText(request.headers.get("x-merchant-site-id")) ||
-    normalizeSupportEmail(hint?.merchantEmail) ||
-    normalizeSupportEmail(url.searchParams.get("merchantEmail")) ||
-    normalizeSupportEmail(request.headers.get("x-merchant-email")) ||
-    trimText(hint?.merchantName) ||
-    trimText(url.searchParams.get("merchantName")) ||
-    trimText(request.headers.get("x-merchant-name"));
-  if (!merchantId) return null;
-  return {
-    merchantId,
-    merchantEmail:
-      normalizeSupportEmail(hint?.merchantEmail) ||
-      normalizeSupportEmail(url.searchParams.get("merchantEmail")) ||
-      normalizeSupportEmail(request.headers.get("x-merchant-email")),
-    merchantName:
-      trimText(hint?.merchantName) ||
-      trimText(url.searchParams.get("merchantName")) ||
-      trimText(request.headers.get("x-merchant-name")),
-  };
-}
-
 async function resolveSupportSession(request: Request, hint?: SupportSessionHintInput) {
-  const session = await resolveMerchantSessionFromRequest(request);
-  if (session) return session;
-  return buildFallbackSupportSession(request, hint);
+  return resolveMerchantSessionFromRequest(request, {
+    hintedMerchantId: normalizeMerchantId(hint?.siteId),
+    hintedMerchantEmail: normalizeSupportEmail(hint?.merchantEmail),
+    hintedMerchantName: trimText(hint?.merchantName),
+  });
 }
 
 export async function GET(request: Request) {

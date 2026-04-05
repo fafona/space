@@ -19,6 +19,19 @@ const RESERVED_PATH_SEGMENTS = new Set([
   "super-admin",
 ]);
 const INTERNAL_MERCHANT_REWRITE_PARAM = "__merchantInternalRewrite";
+const HTTPS_REDIRECT_STATUS = 308;
+const FORWARDED_PROTO_HEADER = "x-forwarded-proto";
+const FORWARDED_HOST_HEADER = "x-forwarded-host";
+const PROXY_HINT_HEADERS = [
+  FORWARDED_HOST_HEADER,
+  "x-forwarded-for",
+  "x-forwarded-port",
+  "x-real-ip",
+  "cf-connecting-ip",
+  "true-client-ip",
+  "forwarded",
+  "via",
+];
 
 type SiteResolveRow = {
   merchant_id?: string | null;
@@ -46,6 +59,93 @@ function getFallbackPrefixFromHost(host: string) {
 
 function readEnv(name: string) {
   return String(process.env[name] ?? "").trim();
+}
+
+function readForwardedHeaderValue(headers: Headers, name: string) {
+  return (headers.get(name) ?? "")
+    .split(",")[0]
+    ?.trim() ?? "";
+}
+
+function normalizeRequestHostname(value: string) {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) return "";
+
+  try {
+    const candidate = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+    return new URL(candidate).hostname.trim().toLowerCase().replace(/^\[|\]$/g, "");
+  } catch {
+    return trimmed
+      .toLowerCase()
+      .replace(/^[a-z][a-z0-9+.-]*:\/\//i, "")
+      .replace(/\/.*$/, "")
+      .replace(/:\d+$/, "")
+      .replace(/^\[|\]$/g, "");
+  }
+}
+
+function parseRequestHost(value: string) {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) return { hostname: "", port: "" };
+
+  try {
+    const candidate = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+    const url = new URL(candidate);
+    return {
+      hostname: url.hostname.trim().toLowerCase(),
+      port: url.port.trim(),
+    };
+  } catch {
+    return {
+      hostname: normalizeRequestHostname(trimmed),
+      port: "",
+    };
+  }
+}
+
+export function isLocalLikeRequestHostname(value: string) {
+  const hostname = normalizeRequestHostname(value);
+  return (
+    !hostname ||
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    /^\d+\.\d+\.\d+\.\d+$/.test(hostname) ||
+    hostname.includes(":")
+  );
+}
+
+function readRequestPublicHost(headers: Headers, requestUrl: URL) {
+  return readForwardedHeaderValue(headers, FORWARDED_HOST_HEADER) || (headers.get("host") ?? "").trim() || requestUrl.host;
+}
+
+function hasProxyHints(headers: Headers) {
+  return PROXY_HINT_HEADERS.some((name) => (headers.get(name) ?? "").trim().length > 0);
+}
+
+export function resolveHttpsRedirectUrl(requestUrl: URL, headers: Headers) {
+  const publicHost = readRequestPublicHost(headers, requestUrl);
+  if (isLocalLikeRequestHostname(publicHost || requestUrl.hostname)) return null;
+
+  const forwardedProto = readForwardedHeaderValue(headers, FORWARDED_PROTO_HEADER).toLowerCase();
+  if (forwardedProto && forwardedProto !== "http") return null;
+  if (!forwardedProto && hasProxyHints(headers)) return null;
+
+  const requestProtocol = forwardedProto || requestUrl.protocol.replace(/:$/, "").trim().toLowerCase();
+  if (requestProtocol !== "http") return null;
+
+  const redirectUrl = new URL(requestUrl.toString());
+  redirectUrl.protocol = "https:";
+  if (publicHost) {
+    try {
+      const { hostname, port } = parseRequestHost(publicHost);
+      if (hostname) redirectUrl.hostname = hostname;
+      redirectUrl.port = port;
+    } catch {
+      return redirectUrl;
+    }
+  }
+  return redirectUrl;
 }
 
 function toTimestamp(value: string | null | undefined) {
@@ -117,6 +217,11 @@ async function resolveSiteIdByPrefix(prefix: string, request: NextRequest) {
 }
 
 export async function middleware(request: NextRequest) {
+  const httpsRedirectUrl = resolveHttpsRedirectUrl(request.nextUrl, request.headers);
+  if (httpsRedirectUrl) {
+    return NextResponse.redirect(httpsRedirectUrl, HTTPS_REDIRECT_STATUS);
+  }
+
   const pathname = request.nextUrl.pathname;
   const segments = pathname.split("/").filter(Boolean);
 
@@ -158,5 +263,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/", "/((?!api|_next/static|_next/image|favicon.ico|icon.svg|.*\\..*).*)"],
+  matcher: ["/", "/((?!_next/static|_next/image|favicon.ico|icon.svg|.*\\..*).*)"],
 };

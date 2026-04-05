@@ -1,5 +1,9 @@
 import { createServerSupabaseAuthClient, createServerSupabaseServiceClient } from "@/lib/superAdminServer";
-import { readMerchantAuthCookie, readMerchantAuthRefreshCookie } from "@/lib/merchantAuthSession";
+import {
+  readBearerAccessToken,
+  readMerchantAuthCookie,
+  readMerchantAuthRefreshCookie,
+} from "@/lib/merchantAuthSession";
 
 type AuthUserSummary = {
   id?: string | null;
@@ -12,6 +16,12 @@ type CachedMerchantSession = {
   merchantId: string;
   merchantEmail: string;
   merchantName: string;
+};
+
+type MerchantSessionHintInput = {
+  hintedMerchantId?: string | null;
+  hintedMerchantEmail?: string | null;
+  hintedMerchantName?: string | null;
 };
 
 type RefreshPayload = {
@@ -65,12 +75,14 @@ function readMerchantIdFromMetadata(user: AuthUserSummary | null) {
   return /^\d{8}$/.test(candidate) ? candidate : "";
 }
 
-function buildCacheKey(accessToken: string, refreshToken: string) {
-  return accessToken || refreshToken;
+function buildCacheKey(accessToken: string, refreshToken: string, hintedMerchantId: string) {
+  const authKey = accessToken || refreshToken;
+  if (!authKey) return "";
+  return `${authKey}::${hintedMerchantId || "default"}`;
 }
 
-function readCachedSession(accessToken: string, refreshToken: string) {
-  const cacheKey = buildCacheKey(accessToken, refreshToken);
+function readCachedSession(accessToken: string, refreshToken: string, hintedMerchantId: string) {
+  const cacheKey = buildCacheKey(accessToken, refreshToken, hintedMerchantId);
   if (!cacheKey) return null;
   const cached = merchantSessionCache.get(cacheKey) ?? null;
   if (!cached) return null;
@@ -81,8 +93,13 @@ function readCachedSession(accessToken: string, refreshToken: string) {
   return cached.session;
 }
 
-function writeCachedSession(accessToken: string, refreshToken: string, session: CachedMerchantSession) {
-  const cacheKey = buildCacheKey(accessToken, refreshToken);
+function writeCachedSession(
+  accessToken: string,
+  refreshToken: string,
+  hintedMerchantId: string,
+  session: CachedMerchantSession,
+) {
+  const cacheKey = buildCacheKey(accessToken, refreshToken, hintedMerchantId);
   if (!cacheKey) return;
   merchantSessionCache.set(cacheKey, {
     expiresAt: Date.now() + MERCHANT_SESSION_CACHE_TTL_MS,
@@ -170,21 +187,96 @@ async function resolveMerchantIdForUser(user: AuthUserSummary | null) {
   return candidates[0] ?? "";
 }
 
-export async function resolveMerchantSessionFromRequest(request: Request): Promise<ResolvedMerchantSession | null> {
-  const hintedSiteId = trimText(request.headers.get("x-merchant-site-id"));
-  const hintedEmail = normalizeEmail(request.headers.get("x-merchant-email"));
-  const hintedName = trimText(request.headers.get("x-merchant-name"));
-  const hintedMerchantId = normalizeMerchantId(hintedSiteId);
-  const accessToken = trimText(request.headers.get("x-merchant-access-token")) || readMerchantAuthCookie(request);
-  const refreshToken = trimText(request.headers.get("x-merchant-refresh-token")) || readMerchantAuthRefreshCookie(request);
-  const fallbackMerchantId = hintedSiteId || hintedEmail || hintedName;
+async function listAuthorizedMerchantIdsForUser(user: AuthUserSummary | null) {
+  if (!user) return [];
 
-  const cached = readCachedSession(accessToken, refreshToken);
+  const merchantIds: string[] = [];
+  const push = (value: unknown) => {
+    const normalized = normalizeMerchantId(value);
+    if (!normalized || merchantIds.includes(normalized)) return;
+    merchantIds.push(normalized);
+  };
+
+  push(readMerchantIdFromMetadata(user));
+
+  const supabase = createServerSupabaseServiceClient();
+  if (!supabase) return merchantIds;
+
+  const userId = trimText(user.id);
+  const email = normalizeEmail(user.email);
+  const lookupTasks: Array<PromiseLike<{ data?: unknown; error?: { message?: string } | null }>> = [];
+
+  if (userId) {
+    [
+      "user_id",
+      "auth_user_id",
+      "owner_user_id",
+      "owner_id",
+      "auth_id",
+      "created_by",
+      "created_by_user_id",
+    ].forEach((column) => {
+      lookupTasks.push(supabase.from("merchants").select("id").eq(column, userId).limit(20));
+    });
+  }
+
+  if (email) {
+    ["email", "owner_email", "contact_email", "user_email"].forEach((column) => {
+      lookupTasks.push(supabase.from("merchants").select("id").eq(column, email).limit(20));
+    });
+  }
+
+  const settled = await Promise.allSettled(lookupTasks);
+  settled.forEach((result) => {
+    if (result.status !== "fulfilled" || result.value.error) return;
+    const rows = Array.isArray(result.value.data) ? result.value.data : [];
+    rows.forEach((row) => {
+      push((row as { id?: unknown } | null)?.id);
+    });
+  });
+
+  return merchantIds;
+}
+
+function readMerchantSessionHints(request: Request, hintInput?: MerchantSessionHintInput) {
+  const requestUrl = new URL(request.url);
+  const hintedSiteId =
+    trimText(hintInput?.hintedMerchantId) ||
+    trimText(request.headers.get("x-merchant-site-id")) ||
+    trimText(requestUrl.searchParams.get("siteId"));
+  const hintedEmail =
+    normalizeEmail(hintInput?.hintedMerchantEmail) ||
+    normalizeEmail(request.headers.get("x-merchant-email")) ||
+    normalizeEmail(requestUrl.searchParams.get("merchantEmail"));
+  const hintedName =
+    trimText(hintInput?.hintedMerchantName) ||
+    trimText(request.headers.get("x-merchant-name")) ||
+    trimText(requestUrl.searchParams.get("merchantName"));
+
+  return {
+    hintedMerchantId: normalizeMerchantId(hintedSiteId),
+    hintedEmail,
+    hintedName,
+  };
+}
+
+export async function resolveMerchantSessionFromRequest(
+  request: Request,
+  hintInput?: MerchantSessionHintInput,
+): Promise<ResolvedMerchantSession | null> {
+  const { hintedMerchantId, hintedEmail, hintedName } = readMerchantSessionHints(request, hintInput);
+  const accessToken =
+    trimText(request.headers.get("x-merchant-access-token")) ||
+    readBearerAccessToken(request) ||
+    readMerchantAuthCookie(request);
+  const refreshToken = trimText(request.headers.get("x-merchant-refresh-token")) || readMerchantAuthRefreshCookie(request);
+
+  const cached = readCachedSession(accessToken, refreshToken, hintedMerchantId);
   if (cached) {
     return {
       merchantId: cached.merchantId,
       merchantEmail: cached.merchantEmail || hintedEmail,
-      merchantName: cached.merchantName || hintedName,
+      merchantName: hintedName || cached.merchantName,
     };
   }
 
@@ -216,19 +308,15 @@ export async function resolveMerchantSessionFromRequest(request: Request): Promi
   }
 
   if (!user) {
-    if (!fallbackMerchantId) return null;
-    return {
-      merchantId: fallbackMerchantId,
-      merchantEmail: hintedEmail,
-      merchantName: hintedName,
-    };
+    return null;
   }
 
+  const authorizedMerchantIds = await listAuthorizedMerchantIdsForUser(user);
   const merchantId =
-    hintedMerchantId ||
+    (hintedMerchantId && authorizedMerchantIds.includes(hintedMerchantId) ? hintedMerchantId : "") ||
+    authorizedMerchantIds[0] ||
     (await resolveMerchantIdForUser(user)) ||
-    normalizeMerchantId(user.email) ||
-    fallbackMerchantId;
+    normalizeMerchantId(user.email);
   if (!merchantId) return null;
 
   const resolved = {
@@ -236,6 +324,6 @@ export async function resolveMerchantSessionFromRequest(request: Request): Promi
     merchantEmail: normalizeEmail(user.email, hintedEmail),
     merchantName: hintedName,
   } satisfies CachedMerchantSession;
-  writeCachedSession(validatedAccessToken, validatedRefreshToken, resolved);
+  writeCachedSession(validatedAccessToken, validatedRefreshToken, hintedMerchantId, resolved);
   return resolved;
 }

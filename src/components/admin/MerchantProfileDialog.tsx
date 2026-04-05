@@ -862,6 +862,7 @@ export default function MerchantProfileDialog({
         </div>
 
         <MerchantBusinessCardManager
+          merchantId={siteId}
           siteBaseDomain={siteBaseDomain}
           profile={liveProfile}
           cards={businessCards}

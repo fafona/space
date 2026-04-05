@@ -48,6 +48,7 @@ import { buildMerchantDomain } from "@/lib/siteRouting";
 import { supabase } from "@/lib/supabase";
 
 type MerchantBusinessCardManagerProps = {
+  merchantId?: string | null;
   siteBaseDomain: string;
   profile: MerchantBusinessCardProfileInput;
   cards: MerchantBusinessCardAsset[];
@@ -873,6 +874,7 @@ function ImageFilePicker({
 }
 
 export default function MerchantBusinessCardManager({
+  merchantId,
   siteBaseDomain,
   profile,
   cards,
@@ -883,6 +885,7 @@ export default function MerchantBusinessCardManager({
   exportImageLimitKb = 400,
   onCardsChange,
 }: MerchantBusinessCardManagerProps) {
+  const normalizedMerchantId = normalizeText(merchantId);
   const [draft, setDraft] = useState(() => createDefaultMerchantBusinessCardDraft(profile));
   const [draftShareCode, setDraftShareCode] = useState(() => createMerchantBusinessCardShareKeyCode());
   const [editorOpen, setEditorOpen] = useState(false);
@@ -1374,6 +1377,9 @@ export default function MerchantBusinessCardManager({
         const headers: Record<string, string> = {
           "content-type": "application/json",
         };
+        if (normalizedMerchantId) {
+          headers["x-merchant-site-id"] = normalizedMerchantId;
+        }
         if (accessToken) {
           headers.Authorization = `Bearer ${accessToken}`;
         }
@@ -1385,6 +1391,7 @@ export default function MerchantBusinessCardManager({
             headers,
             credentials: "same-origin",
             body: JSON.stringify({
+              ...(normalizedMerchantId ? { merchantId: normalizedMerchantId } : {}),
               ...(shareKey ? { key: shareKey } : {}),
               ...(legacyPayload ? { legacyPayload } : {}),
             }),
@@ -2865,6 +2872,9 @@ export default function MerchantBusinessCardManager({
         const headers: Record<string, string> = {
           "content-type": "application/json",
         };
+        if (normalizedMerchantId) {
+          headers["x-merchant-site-id"] = normalizedMerchantId;
+        }
         if (accessToken) {
           headers.Authorization = `Bearer ${accessToken}`;
         }
@@ -2873,6 +2883,7 @@ export default function MerchantBusinessCardManager({
           headers,
           credentials: "same-origin",
           body: JSON.stringify({
+            ...(normalizedMerchantId ? { merchantId: normalizedMerchantId } : {}),
             key: normalizeText(input.shareKey),
             name: input.cardName,
             imageUrl: shareImageUrl,

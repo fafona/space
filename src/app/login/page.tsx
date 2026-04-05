@@ -422,50 +422,20 @@ function LoginPageInner() {
     return /user already registered/i.test(message);
   }
 
-  function getRegisteredAccountMessage(confirmed: boolean) {
+  function getRegisteredAccountMessage() {
     if (normalizedLocale.startsWith("zh-tw")) {
-      return confirmed
-        ? "此信箱已註冊，請直接登入。"
-        : "此信箱已註冊，但尚未完成信箱驗證。請先驗證信箱，或點擊下方「重發驗證郵件」。";
+      return "此信箱可能已註冊。請先直接登入；如果還沒有完成信箱驗證，可以使用下方的「重發驗證郵件」。";
     }
     if (normalizedLocale.startsWith("ja")) {
-      return confirmed
-        ? "このメールアドレスは既に登録されています。直接ログインしてください。"
-        : "このメールアドレスは既に登録されていますが、メール確認が未完了です。先に確認するか、下の確認メール再送を使ってください。";
+      return "このメールアドレスは既に登録済みの可能性があります。まずは直接ログインを試し、未確認の場合は下の確認メール再送を使ってください。";
     }
     if (normalizedLocale.startsWith("ko")) {
-      return confirmed
-        ? "이 이메일은 이미 등록되어 있습니다. 바로 로그인해 주세요."
-        : "이 이메일은 이미 등록되어 있지만 이메일 인증이 아직 끝나지 않았습니다. 먼저 인증하거나 아래의 인증 메일 재전송을 눌러 주세요.";
+      return "이 이메일은 이미 등록되어 있을 수 있습니다. 먼저 바로 로그인해 보시고, 아직 이메일 인증이 끝나지 않았다면 아래의 인증 메일 재전송을 눌러 주세요.";
     }
     if (normalizedLocale.startsWith("zh")) {
-      return confirmed
-        ? "该邮箱已注册，请直接登录。"
-        : "该邮箱已注册，但还没完成邮箱验证。请先验证邮箱，或点击下方“重发验证邮件”。";
+      return "该邮箱可能已注册。请先直接登录；如果还没有完成邮箱验证，可以使用下方的“重发验证邮件”。";
     }
-    return confirmed
-      ? "This email is already registered. Please sign in."
-      : "This email is already registered but not verified yet. Verify your email first, or use resend verification below.";
-  }
-
-  async function readRegistrationStatus(emailValue: string) {
-    try {
-      const response = await fetch("/api/auth/status", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ email: emailValue.trim() }),
-      });
-      if (!response.ok) return null;
-      const payload = (await response.json()) as { exists?: unknown; confirmed?: unknown };
-      return {
-        exists: payload.exists === true,
-        confirmed: payload.confirmed === true,
-      };
-    } catch {
-      return null;
-    }
+    return "This email may already be registered. Try signing in first. If the address is still waiting for verification, you can resend the verification email below.";
   }
 
   function normalizeError(message: string) {
@@ -662,10 +632,8 @@ function LoginPageInner() {
       );
       if (error) {
         if (isUserAlreadyRegistered(error.message, (error as { code?: string }).code)) {
-          const status = await readRegistrationStatus(account);
-          const confirmed = status?.exists ? status.confirmed : true;
-          setNeedConfirmEmail(!confirmed);
-          return setMsg(getRegisteredAccountMessage(confirmed));
+          setNeedConfirmEmail(true);
+          return setMsg(getRegisteredAccountMessage());
         }
         return setMsg(normalizeError(error.message));
       }

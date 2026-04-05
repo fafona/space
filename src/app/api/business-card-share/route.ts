@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import {
+  buildMerchantBusinessCardShareLegacyFingerprint,
   buildMerchantBusinessCardShareManifestObjectPath,
+  buildMerchantBusinessCardShareManifestPublicUrls,
   buildMerchantBusinessCardShareRevocationByKeyObjectPath,
   buildMerchantBusinessCardShareRevocationByLegacyPayloadObjectPath,
   createMerchantBusinessCardShareKey,
@@ -12,14 +14,42 @@ import {
   normalizeMerchantBusinessCardShareImageUrl,
   normalizeMerchantBusinessCardShareKey,
   normalizeMerchantBusinessCardShareTargetUrl,
+  type MerchantBusinessCardShareContact,
+  type MerchantBusinessCardSharePayload,
 } from "@/lib/merchantBusinessCardShare";
-import { parseCookieValue, readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
+import {
+  normalizeMerchantBusinessCardContactFieldOrder,
+  type MerchantBusinessCardAsset,
+  type MerchantBusinessCardContactDisplayKey,
+  type MerchantBusinessCardContactOnlyFields,
+} from "@/lib/merchantBusinessCards";
+import { type PlatformMerchantSnapshotPayload } from "@/lib/platformMerchantSnapshot";
+import { loadStoredPlatformMerchantSnapshot, type PlatformMerchantSnapshotStoreClient } from "@/lib/platformMerchantSnapshotStore";
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
-import { SUPER_ADMIN_SESSION_COOKIE, SUPER_ADMIN_SESSION_VALUE } from "@/lib/superAdminSession";
+import { isSuperAdminRequestAuthorized } from "@/lib/superAdminRequestAuth";
 
 const BUCKET_CANDIDATES = ["page-assets", "assets", "uploads", "public"] as const;
+const SNAPSHOT_CONTACT_FIELD_LABELS: Record<MerchantBusinessCardContactDisplayKey, string> = {
+  contactName: "联系人",
+  phone: "电话",
+  email: "邮箱",
+  address: "地址",
+  wechat: "微信",
+  whatsapp: "WhatsApp",
+  twitter: "Twitter",
+  weibo: "微博",
+  telegram: "Telegram",
+  linkedin: "LinkedIn",
+  discord: "Discord",
+  facebook: "Facebook",
+  instagram: "Instagram",
+  tiktok: "TikTok",
+  douyin: "抖音",
+  xiaohongshu: "小红书",
+};
 
 type BusinessCardShareRequestBody = {
+  merchantId?: unknown;
   key?: unknown;
   name?: unknown;
   imageUrl?: unknown;
@@ -32,6 +62,7 @@ type BusinessCardShareRequestBody = {
 };
 
 type BusinessCardShareDeleteRequestBody = {
+  merchantId?: unknown;
   key?: unknown;
   legacyPayload?: unknown;
 };
@@ -53,19 +84,47 @@ type PublicStorageBucketClient = {
   remove: (paths: string[]) => Promise<{ error: StorageOperationError }>;
 };
 
-type PublicStorageClient = {
+type PublicStorageClient = PlatformMerchantSnapshotStoreClient & {
   storage: {
     from: (bucket: string) => PublicStorageBucketClient;
   };
 };
 
+type StoredShareManifest = MerchantBusinessCardSharePayload & {
+  ownerMerchantId?: string;
+};
+
+type ShareActorContext =
+  | {
+      kind: "merchant";
+      merchantId: string;
+    }
+  | {
+      kind: "super-admin";
+      merchantId: string;
+    };
+
 function normalizeText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeMerchantId(value: unknown) {
+  const normalized = normalizeText(value);
+  return /^\d{8}$/.test(normalized) ? normalized : "";
 }
 
 function normalizeImageDimension(value: unknown) {
   const normalized = typeof value === "number" && Number.isFinite(value) ? Math.round(value) : 0;
   return normalized >= 120 && normalized <= 4096 ? normalized : 0;
+}
+
+function normalizePhoneList(value: unknown) {
+  return Array.isArray(value)
+    ? value
+        .map((item) => normalizeText(item))
+        .filter(Boolean)
+        .slice(0, 2)
+    : [];
 }
 
 function createShareKey(body?: BusinessCardShareRequestBody | null) {
@@ -80,6 +139,86 @@ function createShareKey(body?: BusinessCardShareRequestBody | null) {
 
 function createJsonBlob(value: unknown) {
   return new Blob([JSON.stringify(value)], { type: "application/json; charset=utf-8" });
+}
+
+function countShareContactFields(contact?: MerchantBusinessCardShareContact | null) {
+  if (!contact) return 0;
+  let count = 0;
+  [
+    "displayName",
+    "organization",
+    "title",
+    "phone",
+    "email",
+    "address",
+    "wechat",
+    "whatsapp",
+    "twitter",
+    "weibo",
+    "telegram",
+    "linkedin",
+    "discord",
+    "facebook",
+    "instagram",
+    "tiktok",
+    "douyin",
+    "xiaohongshu",
+    "websiteUrl",
+    "note",
+  ].forEach((key) => {
+    if (normalizeText((contact as Record<string, unknown>)[key])) {
+      count += 1;
+    }
+  });
+  count += normalizePhoneList(contact.phones).length;
+  count += Array.isArray(contact.contactFieldOrder) ? contact.contactFieldOrder.filter(Boolean).length : 0;
+  count += contact.contactOnlyFields ? Object.values(contact.contactOnlyFields).filter(Boolean).length : 0;
+  return count;
+}
+
+function normalizeStoredShareManifest(value: unknown, preferredOrigin: string) {
+  if (!value || typeof value !== "object") return null;
+  const payload = normalizeMerchantBusinessCardSharePayload(value as Record<string, unknown>, preferredOrigin);
+  if (!payload) return null;
+  return {
+    ...payload,
+    ...(normalizeMerchantId((value as { ownerMerchantId?: unknown }).ownerMerchantId)
+      ? { ownerMerchantId: normalizeMerchantId((value as { ownerMerchantId?: unknown }).ownerMerchantId) }
+      : {}),
+  } satisfies StoredShareManifest;
+}
+
+async function loadStoredShareManifest(shareKey: string, preferredOrigin: string) {
+  const normalizedShareKey = normalizeMerchantBusinessCardShareKey(shareKey);
+  if (!normalizedShareKey) return null;
+
+  const candidates: StoredShareManifest[] = [];
+  for (const url of buildMerchantBusinessCardShareManifestPublicUrls(normalizedShareKey, preferredOrigin)) {
+    try {
+      const response = await fetch(url, {
+        cache: "no-store",
+        next: { revalidate: 0 },
+      });
+      if (!response.ok) continue;
+      const payload = normalizeStoredShareManifest(await response.json().catch(() => null), preferredOrigin);
+      if (payload) {
+        candidates.push(payload);
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  if (candidates.length === 0) return null;
+
+  const [latest] = [...candidates].sort((left, right) => {
+    const ownerDiff = Number(Boolean(right.ownerMerchantId)) - Number(Boolean(left.ownerMerchantId));
+    if (ownerDiff !== 0) return ownerDiff;
+    const updatedAtDiff = Date.parse(right.updatedAt ?? "") - Date.parse(left.updatedAt ?? "");
+    if (Number.isFinite(updatedAtDiff) && updatedAtDiff !== 0) return updatedAtDiff;
+    return countShareContactFields(right.contact) - countShareContactFields(left.contact);
+  });
+  return latest ?? candidates[0] ?? null;
 }
 
 export function isStorageObjectMissingError(message: string) {
@@ -155,34 +294,156 @@ async function removePublicObject(
   };
 }
 
-async function isAuthorized(request: Request, supabaseUrl: string, serviceRoleKey: string) {
-  const cookieHeader = request.headers.get("cookie") ?? "";
-  if (parseCookieValue(cookieHeader, SUPER_ADMIN_SESSION_COOKIE) === SUPER_ADMIN_SESSION_VALUE) {
-    return true;
-  }
+function normalizeSnapshotCardContactOnlyFields(value: unknown) {
+  if (!value || typeof value !== "object") return undefined;
+  const source = value as Partial<MerchantBusinessCardContactOnlyFields>;
+  const enabledEntries = Object.entries(source).filter(([, enabled]) => enabled === true);
+  if (enabledEntries.length === 0) return undefined;
+  return Object.fromEntries(enabledEntries) as Partial<MerchantBusinessCardContactOnlyFields>;
+}
 
-  const resolvedSession = await resolveMerchantSessionFromRequest(request).catch(() => null);
-  if (resolvedSession?.merchantId) {
-    return true;
-  }
+function buildSnapshotCardSharePayload(card: MerchantBusinessCardAsset, preferredOrigin: string) {
+  const orderedKeys = normalizeMerchantBusinessCardContactFieldOrder(card.contactFieldOrder);
+  const phones = normalizePhoneList(card.contacts?.phones ?? []);
+  const extraPhoneLines = phones
+    .slice(1)
+    .map((value, index) => `${index === 0 ? "工作" : `工作${index + 1}`}: ${value}`);
+  const socialLines = orderedKeys
+    .filter((key) => key !== "contactName" && key !== "phone" && key !== "email" && key !== "address")
+    .map((key) => {
+      const normalizedValue = normalizeText(card.contacts?.[key]);
+      return normalizedValue ? `${SNAPSHOT_CONTACT_FIELD_LABELS[key]}: ${normalizedValue}` : "";
+    })
+    .filter(Boolean);
+  const primaryPhone = phones[0] || normalizeText(card.contacts?.phone);
 
-  const accessTokens = readMerchantRequestAccessTokens(request);
-  if (accessTokens.length === 0) return false;
-
-  const authClient = createClient(supabaseUrl, serviceRoleKey, {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-      detectSessionInUrl: false,
+  return normalizeMerchantBusinessCardSharePayload(
+    {
+      name: normalizeText(card.name),
+      imageUrl: normalizeText(card.shareImageUrl) || normalizeText(card.imageUrl),
+      detailImageUrl: normalizeText(card.contactPagePublicImageUrl) || normalizeText(card.contactPageImageUrl),
+      detailImageHeight:
+        typeof card.contactPageImageHeight === "number" ? Math.round(card.contactPageImageHeight) : undefined,
+      targetUrl: normalizeText(card.targetUrl),
+      imageWidth: typeof card.width === "number" ? Math.round(card.width) : undefined,
+      imageHeight: typeof card.height === "number" ? Math.round(card.height) : undefined,
+      contact: {
+        displayName: normalizeText(card.contacts?.contactName) || normalizeText(card.name),
+        organization: normalizeText(card.name),
+        title: normalizeText(card.title),
+        phone: primaryPhone,
+        phones,
+        email: normalizeText(card.contacts?.email),
+        address: normalizeText(card.contacts?.address),
+        wechat: normalizeText(card.contacts?.wechat),
+        whatsapp: normalizeText(card.contacts?.whatsapp),
+        twitter: normalizeText(card.contacts?.twitter),
+        weibo: normalizeText(card.contacts?.weibo),
+        telegram: normalizeText(card.contacts?.telegram),
+        linkedin: normalizeText(card.contacts?.linkedin),
+        discord: normalizeText(card.contacts?.discord),
+        facebook: normalizeText(card.contacts?.facebook),
+        instagram: normalizeText(card.contacts?.instagram),
+        tiktok: normalizeText(card.contacts?.tiktok),
+        douyin: normalizeText(card.contacts?.douyin),
+        xiaohongshu: normalizeText(card.contacts?.xiaohongshu),
+        contactFieldOrder: orderedKeys,
+        ...(normalizeSnapshotCardContactOnlyFields(card.contactOnlyFields)
+          ? { contactOnlyFields: normalizeSnapshotCardContactOnlyFields(card.contactOnlyFields) }
+          : {}),
+        websiteUrl: normalizeText(card.targetUrl),
+        note: [...extraPhoneLines, ...socialLines].join("\n"),
+      },
     },
-  });
-  for (const accessToken of accessTokens) {
-    const { data, error } = await authClient.auth.getUser(accessToken);
-    if (!error && data.user) {
-      return true;
+    preferredOrigin,
+  );
+}
+
+export function findShareOwnerMerchantIdInSnapshotPayload(
+  snapshotPayload: PlatformMerchantSnapshotPayload | null,
+  input: {
+    shareKey?: string;
+    legacyPayload?: MerchantBusinessCardSharePayload | null;
+    preferredOrigin: string;
+  },
+) {
+  const normalizedShareKey = normalizeMerchantBusinessCardShareKey(input.shareKey);
+  const legacyFingerprint = input.legacyPayload
+    ? buildMerchantBusinessCardShareLegacyFingerprint(input.legacyPayload, input.preferredOrigin)
+    : "";
+  if (!normalizedShareKey && !legacyFingerprint) return "";
+
+  if (!snapshotPayload) return "";
+
+  for (const site of snapshotPayload.snapshot) {
+    const merchantId = normalizeMerchantId(site.id);
+    if (!merchantId) continue;
+    const cards = Array.isArray(site.businessCards) ? site.businessCards : [];
+    if (
+      normalizedShareKey &&
+      cards.some((card) => normalizeMerchantBusinessCardShareKey(card.shareKey) === normalizedShareKey)
+    ) {
+      return merchantId;
+    }
+    if (!legacyFingerprint) continue;
+    const matchedLegacyCard = cards.some((card) => {
+      const payload = buildSnapshotCardSharePayload(card, input.preferredOrigin);
+      if (!payload) return false;
+      return buildMerchantBusinessCardShareLegacyFingerprint(payload, input.preferredOrigin) === legacyFingerprint;
+    });
+    if (matchedLegacyCard) {
+      return merchantId;
     }
   }
-  return false;
+
+  return "";
+}
+
+async function findSnapshotShareOwnerMerchantId(
+  supabase: PublicStorageClient,
+  input: {
+    shareKey?: string;
+    legacyPayload?: MerchantBusinessCardSharePayload | null;
+    preferredOrigin: string;
+  },
+) {
+  const snapshotPayload = await loadStoredPlatformMerchantSnapshot(supabase as unknown as PlatformMerchantSnapshotStoreClient);
+  return findShareOwnerMerchantIdInSnapshotPayload(snapshotPayload, input);
+}
+
+async function resolveShareActorContext(request: Request, hintedMerchantId: string) {
+  if (isSuperAdminRequestAuthorized(request)) {
+    return {
+      kind: "super-admin",
+      merchantId: hintedMerchantId,
+    } satisfies ShareActorContext;
+  }
+
+  const session = await resolveMerchantSessionFromRequest(request, {
+    hintedMerchantId,
+  }).catch(() => null);
+  if (!session?.merchantId) return null;
+
+  return {
+    kind: "merchant",
+    merchantId: session.merchantId,
+  } satisfies ShareActorContext;
+}
+
+function canActorManageShare(actor: ShareActorContext, ownerMerchantId: string) {
+  if (actor.kind === "super-admin") return true;
+  return actor.merchantId === ownerMerchantId;
+}
+
+function jsonError(status: number, error: string, extra?: Record<string, unknown>) {
+  return NextResponse.json(
+    {
+      ok: false,
+      error,
+      ...(extra ?? {}),
+    },
+    { status },
+  );
 }
 
 export async function POST(request: Request) {
@@ -192,18 +453,20 @@ export async function POST(request: Request) {
     (process.env.NEXT_SUPABASE_SERVICE_ROLE_KEY ?? "").trim();
 
   if (!supabaseUrl || !serviceRoleKey) {
-    return NextResponse.json({ ok: false, error: "share_service_unavailable" }, { status: 503 });
-  }
-
-  if (!(await isAuthorized(request, supabaseUrl, serviceRoleKey))) {
-    return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+    return jsonError(503, "share_service_unavailable");
   }
 
   let body: BusinessCardShareRequestBody | null = null;
   try {
     body = (await request.json()) as BusinessCardShareRequestBody;
   } catch {
-    return NextResponse.json({ ok: false, error: "invalid_json" }, { status: 400 });
+    return jsonError(400, "invalid_json");
+  }
+
+  const hintedMerchantId = normalizeMerchantId(body?.merchantId);
+  const actor = await resolveShareActorContext(request, hintedMerchantId);
+  if (!actor) {
+    return jsonError(401, "unauthorized");
   }
 
   const shareKey = normalizeMerchantBusinessCardShareKey(normalizeText(body?.key)) || createShareKey(body);
@@ -223,7 +486,34 @@ export async function POST(request: Request) {
     targetUrl,
   );
   if (!shareKey || !imageUrl || !targetUrl || !shareOrigin) {
-    return NextResponse.json({ ok: false, error: "invalid_payload" }, { status: 400 });
+    return jsonError(400, "invalid_payload");
+  }
+
+  const objectPath = buildMerchantBusinessCardShareManifestObjectPath(shareKey);
+  if (!objectPath) {
+    return jsonError(400, "invalid_payload");
+  }
+
+  const supabase = createClient(supabaseUrl, serviceRoleKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+  }) as unknown as PublicStorageClient;
+  const existingManifest = await loadStoredShareManifest(shareKey, request.url);
+  const existingOwnerMerchantId =
+    existingManifest?.ownerMerchantId ||
+    (await findSnapshotShareOwnerMerchantId(supabase, {
+      shareKey,
+      preferredOrigin: request.url,
+    }));
+
+  if (existingManifest && existingOwnerMerchantId && !canActorManageShare(actor, existingOwnerMerchantId)) {
+    return jsonError(403, "share_forbidden", { shareKey });
+  }
+  if (existingManifest && !existingOwnerMerchantId && actor.kind !== "super-admin") {
+    return jsonError(403, "share_owner_not_found", { shareKey });
   }
 
   const payload = {
@@ -236,19 +526,11 @@ export async function POST(request: Request) {
     ...(imageWidth ? { imageWidth } : {}),
     ...(imageHeight ? { imageHeight } : {}),
     ...(contact ? { contact } : {}),
-  };
-  const objectPath = buildMerchantBusinessCardShareManifestObjectPath(shareKey);
-  if (!objectPath) {
-    return NextResponse.json({ ok: false, error: "invalid_payload" }, { status: 400 });
-  }
+    ...((existingOwnerMerchantId || actor.merchantId)
+      ? { ownerMerchantId: existingOwnerMerchantId || actor.merchantId }
+      : {}),
+  } satisfies StoredShareManifest;
 
-  const supabase = createClient(supabaseUrl, serviceRoleKey, {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-      detectSessionInUrl: false,
-    },
-  });
   const blob = createJsonBlob(payload);
   const revocationKeyObjectPath = buildMerchantBusinessCardShareRevocationByKeyObjectPath(shareKey);
   if (revocationKeyObjectPath) {
@@ -294,14 +576,7 @@ export async function POST(request: Request) {
     });
   }
 
-  return NextResponse.json(
-    {
-      ok: false,
-      error: "share_manifest_upload_failed",
-      failedBuckets,
-    },
-    { status: 409 },
-  );
+  return jsonError(409, "share_manifest_upload_failed", { failedBuckets });
 }
 
 export async function DELETE(request: Request) {
@@ -311,18 +586,20 @@ export async function DELETE(request: Request) {
     (process.env.NEXT_SUPABASE_SERVICE_ROLE_KEY ?? "").trim();
 
   if (!supabaseUrl || !serviceRoleKey) {
-    return NextResponse.json({ ok: false, error: "share_service_unavailable" }, { status: 503 });
-  }
-
-  if (!(await isAuthorized(request, supabaseUrl, serviceRoleKey))) {
-    return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+    return jsonError(503, "share_service_unavailable");
   }
 
   let body: BusinessCardShareDeleteRequestBody | null = null;
   try {
     body = (await request.json()) as BusinessCardShareDeleteRequestBody;
   } catch {
-    return NextResponse.json({ ok: false, error: "invalid_json" }, { status: 400 });
+    return jsonError(400, "invalid_json");
+  }
+
+  const hintedMerchantId = normalizeMerchantId(body?.merchantId);
+  const actor = await resolveShareActorContext(request, hintedMerchantId);
+  if (!actor) {
+    return jsonError(401, "unauthorized");
   }
 
   const shareKey = normalizeMerchantBusinessCardShareKey(normalizeText(body?.key));
@@ -339,7 +616,7 @@ export async function DELETE(request: Request) {
     request.url,
   );
   if (!objectPath && !legacyRevocationObjectPath) {
-    return NextResponse.json({ ok: false, error: "invalid_payload" }, { status: 400 });
+    return jsonError(400, "invalid_payload");
   }
 
   const supabase = createClient(supabaseUrl, serviceRoleKey, {
@@ -348,7 +625,22 @@ export async function DELETE(request: Request) {
       autoRefreshToken: false,
       detectSessionInUrl: false,
     },
-  });
+  }) as unknown as PublicStorageClient;
+  const existingManifest = shareKey ? await loadStoredShareManifest(shareKey, request.url) : null;
+  const resolvedOwnerMerchantId =
+    existingManifest?.ownerMerchantId ||
+    (await findSnapshotShareOwnerMerchantId(supabase, {
+      shareKey,
+      legacyPayload,
+      preferredOrigin: request.url,
+    }));
+
+  if (resolvedOwnerMerchantId && !canActorManageShare(actor, resolvedOwnerMerchantId)) {
+    return jsonError(403, "share_forbidden", { shareKey });
+  }
+  if (!resolvedOwnerMerchantId && actor.kind !== "super-admin") {
+    return jsonError(403, "share_owner_not_found", { shareKey });
+  }
 
   const keyRevocation =
     keyRevocationObjectPath
@@ -356,18 +648,14 @@ export async function DELETE(request: Request) {
           revokedAt: new Date().toISOString(),
           type: "share_key",
           shareKey,
+          ...(resolvedOwnerMerchantId ? { ownerMerchantId: resolvedOwnerMerchantId } : {}),
         })
       : null;
   if (keyRevocation && !keyRevocation.ok) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: "share_revocation_upload_failed",
-        shareKey,
-        failedBuckets: keyRevocation.failedBuckets,
-      },
-      { status: 409 },
-    );
+    return jsonError(409, "share_revocation_upload_failed", {
+      shareKey,
+      failedBuckets: keyRevocation.failedBuckets,
+    });
   }
 
   const legacyRevocation =
@@ -375,31 +663,22 @@ export async function DELETE(request: Request) {
       ? await uploadPublicJsonObject(supabase, legacyRevocationObjectPath, {
           revokedAt: new Date().toISOString(),
           type: "legacy_payload",
+          ...(resolvedOwnerMerchantId ? { ownerMerchantId: resolvedOwnerMerchantId } : {}),
         })
       : null;
   if (legacyRevocation && !legacyRevocation.ok) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: "share_revocation_upload_failed",
-        shareKey,
-        failedBuckets: legacyRevocation.failedBuckets,
-      },
-      { status: 409 },
-    );
+    return jsonError(409, "share_revocation_upload_failed", {
+      shareKey,
+      failedBuckets: legacyRevocation.failedBuckets,
+    });
   }
 
   const manifestRemoval = objectPath ? await removePublicObject(supabase, objectPath) : null;
   if (manifestRemoval && manifestRemoval.failedBuckets.length > 0) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: "share_manifest_delete_failed",
-        shareKey,
-        failedBuckets: manifestRemoval.failedBuckets,
-      },
-      { status: 409 },
-    );
+    return jsonError(409, "share_manifest_delete_failed", {
+      shareKey,
+      failedBuckets: manifestRemoval.failedBuckets,
+    });
   }
 
   return NextResponse.json({

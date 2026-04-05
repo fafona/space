@@ -80,30 +80,12 @@ function noStoreJson(body: unknown, init?: ResponseInit) {
   return response;
 }
 
-function buildFallbackMerchantPushSession(request: Request, hint?: MerchantPushSessionHintInput) {
-  const url = new URL(request.url);
-  const merchantId =
-    normalizeMerchantId(hint?.siteId) ||
-    normalizeMerchantId(url.searchParams.get("siteId")) ||
-    normalizeMerchantId(request.headers.get("x-merchant-site-id"));
-  if (!merchantId) return null;
-  return {
-    merchantId,
-    merchantEmail:
-      normalizeEmail(hint?.merchantEmail) ||
-      normalizeEmail(url.searchParams.get("merchantEmail")) ||
-      normalizeEmail(request.headers.get("x-merchant-email")),
-    merchantName:
-      trimText(hint?.merchantName) ||
-      trimText(url.searchParams.get("merchantName")) ||
-      trimText(request.headers.get("x-merchant-name")),
-  };
-}
-
 async function resolveMerchantPushSession(request: Request, hint?: MerchantPushSessionHintInput) {
-  const session = await resolveMerchantSessionFromRequest(request);
-  if (session) return session;
-  return buildFallbackMerchantPushSession(request, hint);
+  return resolveMerchantSessionFromRequest(request, {
+    hintedMerchantId: normalizeMerchantId(hint?.siteId),
+    hintedMerchantEmail: normalizeEmail(hint?.merchantEmail),
+    hintedMerchantName: trimText(hint?.merchantName),
+  });
 }
 
 export async function GET(request: Request) {

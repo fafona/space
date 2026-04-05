@@ -3,9 +3,11 @@ import assert from "node:assert/strict";
 import {
   createSuperAdminChallengeToken,
   createSuperAdminEmailProofToken,
+  createSuperAdminSessionToken,
   createSuperAdminTrustedDeviceToken,
   normalizeSuperAdminNextPath,
   readSuperAdminChallengeToken,
+  readSuperAdminSessionToken,
   readSuperAdminTrustedDeviceToken,
   verifySuperAdminEmailProofToken,
 } from "@/lib/superAdminVerification";
@@ -46,4 +48,14 @@ test("trusted device token preserves device identity", () => {
   const payload = readSuperAdminTrustedDeviceToken(token);
   assert.equal(payload?.deviceId, "device-abcdef12");
   assert.equal(payload?.deviceLabel, "Windows / Edge");
+});
+
+test("session token preserves device identity", () => {
+  const token = createSuperAdminSessionToken({
+    deviceId: "device-session-1234",
+    deviceLabel: "Mac / Safari",
+  });
+  const payload = readSuperAdminSessionToken(token);
+  assert.equal(payload?.deviceId, "device-session-1234");
+  assert.equal(payload?.deviceLabel, "Mac / Safari");
 });

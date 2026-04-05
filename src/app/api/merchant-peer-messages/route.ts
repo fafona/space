@@ -59,36 +59,12 @@ function noStoreJson(body: unknown, init?: ResponseInit) {
   return response;
 }
 
-function buildFallbackMerchantPeerSession(request: Request, hint?: MerchantPeerSessionHintInput) {
-  const url = new URL(request.url);
-  const merchantId =
-    normalizeMerchantId(hint?.siteId) ||
-    normalizeMerchantId(url.searchParams.get("siteId")) ||
-    normalizeMerchantId(request.headers.get("x-merchant-site-id")) ||
-    normalizeEmail(hint?.merchantEmail) ||
-    normalizeEmail(url.searchParams.get("merchantEmail")) ||
-    normalizeEmail(request.headers.get("x-merchant-email")) ||
-    trimText(hint?.merchantName) ||
-    trimText(url.searchParams.get("merchantName")) ||
-    trimText(request.headers.get("x-merchant-name"));
-  if (!merchantId) return null;
-  return {
-    merchantId,
-    merchantEmail:
-      normalizeEmail(hint?.merchantEmail) ||
-      normalizeEmail(url.searchParams.get("merchantEmail")) ||
-      normalizeEmail(request.headers.get("x-merchant-email")),
-    merchantName:
-      trimText(hint?.merchantName) ||
-      trimText(url.searchParams.get("merchantName")) ||
-      trimText(request.headers.get("x-merchant-name")),
-  };
-}
-
 async function resolveMerchantPeerSession(request: Request, hint?: MerchantPeerSessionHintInput) {
-  const session = await resolveMerchantSessionFromRequest(request);
-  if (session) return session;
-  return buildFallbackMerchantPeerSession(request, hint);
+  return resolveMerchantSessionFromRequest(request, {
+    hintedMerchantId: normalizeMerchantId(hint?.siteId),
+    hintedMerchantEmail: normalizeEmail(hint?.merchantEmail),
+    hintedMerchantName: trimText(hint?.merchantName),
+  });
 }
 
 function readResolvedMerchantEmail(record: Record<string, unknown> | null | undefined) {

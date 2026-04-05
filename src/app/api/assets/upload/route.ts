@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { parseCookieValue, readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
+import { readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
-import { SUPER_ADMIN_SESSION_COOKIE, SUPER_ADMIN_SESSION_VALUE } from "@/lib/superAdminSession";
+import { isSuperAdminRequestAuthorized } from "@/lib/superAdminRequestAuth";
 
 const BUCKET_CANDIDATES = ["page-assets", "assets", "uploads", "public"] as const;
 const FOLDER_CANDIDATES = new Set(["merchant-assets", "merchant-audio", "merchant-files"]);
@@ -65,8 +65,7 @@ function sanitizeMerchantHint(input: string) {
 }
 
 async function isAuthorized(request: Request, supabaseUrl: string, serviceRoleKey: string) {
-  const cookieHeader = request.headers.get("cookie") ?? "";
-  if (parseCookieValue(cookieHeader, SUPER_ADMIN_SESSION_COOKIE) === SUPER_ADMIN_SESSION_VALUE) {
+  if (isSuperAdminRequestAuthorized(request)) {
     return true;
   }
 

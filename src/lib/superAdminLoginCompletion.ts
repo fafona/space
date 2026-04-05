@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
-import { createSuperAdminTrustedDeviceToken, type SuperAdminChallengePayload } from "@/lib/superAdminVerification";
+import {
+  createSuperAdminSessionToken,
+  createSuperAdminTrustedDeviceToken,
+  type SuperAdminChallengePayload,
+} from "@/lib/superAdminVerification";
 import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import {
   canRegisterAnotherSuperAdminDevice,
@@ -12,7 +16,6 @@ import {
   SUPER_ADMIN_DEVICE_ID_COOKIE,
   SUPER_ADMIN_SESSION_COOKIE,
   SUPER_ADMIN_SESSION_COOKIE_MAX_AGE_SECONDS,
-  SUPER_ADMIN_SESSION_VALUE,
   SUPER_ADMIN_TRUSTED_DEVICE_COOKIE_MAX_AGE_SECONDS,
   SUPER_ADMIN_TRUSTED_DEVICE_COOKIE,
   resolveSuperAdminCookieDomain,
@@ -22,6 +25,10 @@ export async function finalizeSuperAdminLogin(
   challengePayload: SuperAdminChallengePayload,
   options?: { loginIp?: string | null; request?: Request },
 ) {
+  const sessionToken = createSuperAdminSessionToken({
+    deviceId: challengePayload.deviceId,
+    deviceLabel: challengePayload.deviceLabel,
+  });
   const trustedDeviceToken = createSuperAdminTrustedDeviceToken({
     deviceId: challengePayload.deviceId,
     deviceLabel: challengePayload.deviceLabel,
@@ -63,7 +70,7 @@ export async function finalizeSuperAdminLogin(
     deviceLabel: challengePayload.deviceLabel,
   });
   const cookieDomain = resolveSuperAdminCookieDomain(options?.request);
-  response.cookies.set(SUPER_ADMIN_SESSION_COOKIE, SUPER_ADMIN_SESSION_VALUE, {
+  response.cookies.set(SUPER_ADMIN_SESSION_COOKIE, sessionToken, {
     path: "/",
     maxAge: SUPER_ADMIN_SESSION_COOKIE_MAX_AGE_SECONDS,
     sameSite: "lax",

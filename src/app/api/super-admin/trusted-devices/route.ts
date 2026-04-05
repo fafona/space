@@ -7,11 +7,10 @@ import {
   saveSuperAdminTrustedDevicesToStore,
 } from "@/lib/superAdminTrustedDevices";
 import {
-  SUPER_ADMIN_SESSION_COOKIE,
-  SUPER_ADMIN_SESSION_VALUE,
   SUPER_ADMIN_TRUSTED_DEVICE_COOKIE,
   resolveSuperAdminCookieDomain,
 } from "@/lib/superAdminSession";
+import { isSuperAdminRequestAuthorized } from "@/lib/superAdminRequestAuth";
 import { readSuperAdminTrustedDeviceToken } from "@/lib/superAdminVerification";
 
 export const dynamic = "force-dynamic";
@@ -30,8 +29,7 @@ function unauthorizedJson() {
 }
 
 function ensureAuthorized(request: Request) {
-  const cookieHeader = request.headers.get("cookie") ?? "";
-  return parseCookieValue(cookieHeader, SUPER_ADMIN_SESSION_COOKIE) === SUPER_ADMIN_SESSION_VALUE;
+  return isSuperAdminRequestAuthorized(request);
 }
 
 export async function GET(request: Request) {

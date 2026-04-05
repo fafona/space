@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { SUPER_ADMIN_SESSION_COOKIE, SUPER_ADMIN_SESSION_VALUE } from "@/lib/superAdminSession";
 import {
   normalizePlatformMerchantSnapshotPayload,
   type PlatformMerchantSnapshotPayload,
@@ -11,6 +10,7 @@ import {
   savePlatformMerchantSnapshot,
   type PlatformMerchantSnapshotStoreClient,
 } from "@/lib/platformMerchantSnapshotStore";
+import { isSuperAdminRequestAuthorized } from "@/lib/superAdminRequestAuth";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -30,16 +30,6 @@ type LooseQueryBuilder = PromiseLike<{ data?: unknown; error: SaveErrorLike }> &
 type LooseSupabaseClient = {
   from: (table: string) => LooseQueryBuilder;
 };
-
-function parseCookieValue(cookieHeader: string, key: string) {
-  return (
-    cookieHeader
-      .split(";")
-      .map((part) => part.trim())
-      .find((part) => part.startsWith(`${key}=`))
-      ?.slice(key.length + 1) ?? ""
-  );
-}
 
 function readEnv(name: string) {
   return String(process.env[name] ?? "").trim();
@@ -74,8 +64,7 @@ function mergePlatformMerchantSnapshotPayloads(
 }
 
 export async function POST(request: Request) {
-  const cookieHeader = request.headers.get("cookie") ?? "";
-  if (parseCookieValue(cookieHeader, SUPER_ADMIN_SESSION_COOKIE) !== SUPER_ADMIN_SESSION_VALUE) {
+  if (!isSuperAdminRequestAuthorized(request)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 

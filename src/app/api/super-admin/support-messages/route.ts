@@ -9,21 +9,11 @@ import {
   type PlatformSupportInboxStoreClient,
 } from "@/lib/platformSupportInboxStore";
 import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
-import { SUPER_ADMIN_SESSION_COOKIE, SUPER_ADMIN_SESSION_VALUE } from "@/lib/superAdminSession";
+import { isSuperAdminRequestAuthorized } from "@/lib/superAdminRequestAuth";
 import { notifyMerchantPushSubscribers } from "@/lib/webPush";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
-
-function parseCookieValue(cookieHeader: string, key: string) {
-  return (
-    cookieHeader
-      .split(";")
-      .map((part) => part.trim())
-      .find((part) => part.startsWith(`${key}=`))
-      ?.slice(key.length + 1) ?? ""
-  );
-}
 
 function trimText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
@@ -45,8 +35,7 @@ function noStoreJson(body: unknown, init?: ResponseInit) {
 }
 
 function isAuthorized(request: Request) {
-  const cookieHeader = request.headers.get("cookie") ?? "";
-  return parseCookieValue(cookieHeader, SUPER_ADMIN_SESSION_COOKIE) === SUPER_ADMIN_SESSION_VALUE;
+  return isSuperAdminRequestAuthorized(request);
 }
 
 export async function GET(request: Request) {

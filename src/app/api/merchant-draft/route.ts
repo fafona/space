@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import type { Block } from "@/data/homeBlocks";
-import { parseCookieValue, readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
+import { readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
 import { loadStoredMerchantDraft, saveStoredMerchantDraft, type MerchantDraftStoreClient } from "@/lib/merchantDraftStore";
-import { SUPER_ADMIN_SESSION_COOKIE, SUPER_ADMIN_SESSION_VALUE } from "@/lib/superAdminSession";
+import { isSuperAdminRequestAuthorized } from "@/lib/superAdminRequestAuth";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -122,8 +122,7 @@ async function isAuthorizedForMerchant(
   supabase: LooseSupabaseClient,
   merchantId: string,
 ) {
-  const cookieHeader = request.headers.get("cookie") ?? "";
-  if (parseCookieValue(cookieHeader, SUPER_ADMIN_SESSION_COOKIE) === SUPER_ADMIN_SESSION_VALUE) {
+  if (isSuperAdminRequestAuthorized(request)) {
     return true;
   }
 

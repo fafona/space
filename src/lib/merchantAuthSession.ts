@@ -28,6 +28,11 @@ function normalizeCookieBaseDomain(value: string | null | undefined) {
   }
 }
 
+function isLocalLikeHostname(value: string) {
+  const hostname = String(value ?? "").trim().toLowerCase();
+  return !hostname || hostname === "localhost" || /^\d+\.\d+\.\d+\.\d+$/.test(hostname);
+}
+
 function resolveMerchantCookieDomain(request?: Request) {
   if (!request) return undefined;
   const requestHost = (() => {
@@ -37,7 +42,7 @@ function resolveMerchantCookieDomain(request?: Request) {
       return "";
     }
   })();
-  if (!requestHost || requestHost === "localhost" || /^\d+\.\d+\.\d+\.\d+$/.test(requestHost)) {
+  if (isLocalLikeHostname(requestHost)) {
     return undefined;
   }
   const configuredBaseDomain = normalizeCookieBaseDomain(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN);
@@ -48,6 +53,19 @@ function resolveMerchantCookieDomain(request?: Request) {
     return undefined;
   }
   return baseDomain;
+}
+
+function resolveMerchantCookieSecureFlag(request?: Request) {
+  if (!request) return false;
+  const requestHost = (() => {
+    try {
+      return new URL(request.url).hostname.trim().toLowerCase();
+    } catch {
+      return "";
+    }
+  })();
+  // Public merchant auth cookies should not be sent over cleartext transport.
+  return !isLocalLikeHostname(requestHost);
 }
 
 export function parseCookieValue(cookieHeader: string, key: string) {
@@ -101,6 +119,7 @@ export function setMerchantAuthCookies(
     MERCHANT_AUTH_ACCESS_COOKIE_FALLBACK_MAX_AGE_SECONDS,
   );
   const cookieDomain = resolveMerchantCookieDomain(request);
+  const secure = resolveMerchantCookieSecureFlag(request);
   if (!normalizedAccessToken) {
     clearMerchantAuthCookies(response, request);
     return;
@@ -109,9 +128,7 @@ export function setMerchantAuthCookies(
   response.cookies.set(MERCHANT_AUTH_COOKIE, normalizedAccessToken, {
     httpOnly: true,
     sameSite: "lax",
-    // The merchant backend is still accessed over both http:// and https:// in production.
-    // Keeping this cookie non-secure avoids dropping the session on the http admin entry.
-    secure: false,
+    secure,
     path: "/",
     maxAge: accessCookieMaxAge,
     ...(cookieDomain ? { domain: cookieDomain } : {}),
@@ -121,7 +138,7 @@ export function setMerchantAuthCookies(
     response.cookies.set(MERCHANT_AUTH_REFRESH_COOKIE, normalizedRefreshToken, {
       httpOnly: true,
       sameSite: "lax",
-      secure: false,
+      secure,
       path: "/",
       maxAge: MERCHANT_AUTH_REFRESH_COOKIE_MAX_AGE_SECONDS,
       ...(cookieDomain ? { domain: cookieDomain } : {}),
@@ -130,7 +147,7 @@ export function setMerchantAuthCookies(
     response.cookies.set(MERCHANT_AUTH_REFRESH_COOKIE, "", {
       httpOnly: true,
       sameSite: "lax",
-      secure: false,
+      secure,
       path: "/",
       maxAge: 0,
       ...(cookieDomain ? { domain: cookieDomain } : {}),
@@ -144,10 +161,11 @@ export function clearMerchantAuthCookie(response: NextResponse, request?: Reques
 
 export function clearMerchantAuthCookies(response: NextResponse, request?: Request) {
   const cookieDomain = resolveMerchantCookieDomain(request);
+  const secure = resolveMerchantCookieSecureFlag(request);
   response.cookies.set(MERCHANT_AUTH_COOKIE, "", {
     httpOnly: true,
     sameSite: "lax",
-    secure: false,
+    secure,
     path: "/",
     maxAge: 0,
     ...(cookieDomain ? { domain: cookieDomain } : {}),
@@ -155,7 +173,7 @@ export function clearMerchantAuthCookies(response: NextResponse, request?: Reque
   response.cookies.set(MERCHANT_AUTH_REFRESH_COOKIE, "", {
     httpOnly: true,
     sameSite: "lax",
-    secure: false,
+    secure,
     path: "/",
     maxAge: 0,
     ...(cookieDomain ? { domain: cookieDomain } : {}),

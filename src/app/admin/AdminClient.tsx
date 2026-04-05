@@ -8535,7 +8535,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           "占用大的区块",
           ...(breakdown.blockTotals.length > 0
             ? breakdown.blockTotals.map((item) => `- ${item.path}: ${formatBytes(item.bytes)}`)
-            : ["- 鏃?"]),
+            : ["- 暂无"]),
         ];
         await openAlert(lines.join("\n"), "发布体积明细");
         const nextPreset = await openCompressionPresetDialog(
@@ -9934,6 +9934,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
+            merchantId: (
+              editingSiteId ||
+              merchantSessionIdentityRef.current.merchantId ||
+              supportReadMerchantId ||
+              ""
+            ).trim(),
             key: shareInput.shareKey,
             name: shareInput.name,
             imageUrl,

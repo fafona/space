@@ -5,7 +5,7 @@ import { loadMerchantIdRulesFromStore } from "@/lib/merchantIdRuleStore";
 import { findBlockingMerchantIdRule } from "@/lib/merchantIdRules";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { loadStoredPlatformMerchantSnapshot, type PlatformMerchantSnapshotStoreClient } from "@/lib/platformMerchantSnapshotStore";
-import { SUPER_ADMIN_SESSION_COOKIE, SUPER_ADMIN_SESSION_VALUE } from "@/lib/superAdminSession";
+import { isSuperAdminRequestAuthorized } from "@/lib/superAdminRequestAuth";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -92,14 +92,6 @@ type AdminListUsersClient = {
     };
   };
 };
-
-function parseCookieValue(cookieHeader: string, key: string) {
-  return cookieHeader
-    .split(";")
-    .map((part) => part.trim())
-    .find((part) => part.startsWith(`${key}=`))
-    ?.slice(key.length + 1) ?? "";
-}
 
 function readEnv(name: string) {
   return (process.env[name] ?? "").trim();
@@ -420,8 +412,7 @@ function buildSupportScopeItems(merchants: MerchantRow[]) {
 }
 
 function ensureAuthorized(request: Request) {
-  const cookieHeader = request.headers.get("cookie") ?? "";
-  return parseCookieValue(cookieHeader, SUPER_ADMIN_SESSION_COOKIE) === SUPER_ADMIN_SESSION_VALUE;
+  return isSuperAdminRequestAuthorized(request);
 }
 
 export async function GET(request: Request) {

@@ -6,7 +6,12 @@ import {
   SUPER_ADMIN_SESSION_COOKIE,
   SUPER_ADMIN_TRUSTED_DEVICE_COOKIE,
 } from "@/lib/superAdminSession";
-import { createSuperAdminChallengeToken, createSuperAdminEmailProofToken } from "@/lib/superAdminVerification";
+import {
+  createSuperAdminChallengeToken,
+  createSuperAdminEmailProofToken,
+  readSuperAdminSessionToken,
+  readSuperAdminTrustedDeviceToken,
+} from "@/lib/superAdminVerification";
 
 test("super-admin auth complete rejects device mismatch", async () => {
   const challenge = createSuperAdminChallengeToken({
@@ -62,6 +67,14 @@ test("super-admin auth complete accepts matching verified device", async () => {
     nextPath: "/super-admin/editor",
     deviceLabel: "Windows / Chrome",
   });
+  assert.equal(
+    readSuperAdminSessionToken(response.cookies.get(SUPER_ADMIN_SESSION_COOKIE)?.value ?? "")?.deviceId,
+    "device-12345678",
+  );
+  assert.equal(
+    readSuperAdminTrustedDeviceToken(response.cookies.get(SUPER_ADMIN_TRUSTED_DEVICE_COOKIE)?.value ?? "")?.deviceId,
+    "device-12345678",
+  );
 });
 
 test("super-admin auth complete shares session and trusted-device cookies across faolla subdomains", async () => {

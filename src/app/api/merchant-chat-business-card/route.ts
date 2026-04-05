@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import type { MerchantListPublishedSite } from "@/data/homeBlocks";
-import { parseCookieValue, readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
+import { readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
 import { normalizeMerchantBusinessCards, resolveMerchantBusinessCardForChatDisplay } from "@/lib/merchantBusinessCards";
 import { listMerchantPeerContactsForMerchant } from "@/lib/merchantPeerInbox";
 import {
@@ -19,7 +19,7 @@ import {
 } from "@/lib/platformMerchantSnapshotStore";
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
 import { buildMerchantFrontendHref } from "@/lib/siteRouting";
-import { SUPER_ADMIN_SESSION_COOKIE, SUPER_ADMIN_SESSION_VALUE } from "@/lib/superAdminSession";
+import { isSuperAdminRequestAuthorized } from "@/lib/superAdminRequestAuth";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -65,14 +65,6 @@ function normalizeEmail(value: string | null | undefined) {
 function normalizeMerchantId(value: unknown) {
   const normalized = normalizeText(value);
   return /^\d{8}$/.test(normalized) ? normalized : "";
-}
-
-function readFallbackAuthorizedMerchantIds(request: Request) {
-  const url = new URL(request.url);
-  return [...new Set([
-    normalizeMerchantId(request.headers.get("x-merchant-site-id")),
-    normalizeMerchantId(url.searchParams.get("siteId")),
-  ].filter(Boolean))];
 }
 
 function normalizeExternalUrl(value: string | null | undefined) {
@@ -229,15 +221,11 @@ async function isAuthorizedForMerchant(
   supabase: LooseSupabaseClient,
   merchantId: string,
 ) {
-  const cookieHeader = request.headers.get("cookie") ?? "";
-  if (parseCookieValue(cookieHeader, SUPER_ADMIN_SESSION_COOKIE) === SUPER_ADMIN_SESSION_VALUE) {
+  if (isSuperAdminRequestAuthorized(request)) {
     return true;
   }
 
-  const authorizedMerchantIdSet = new Set<string>(readFallbackAuthorizedMerchantIds(request));
-  if (authorizedMerchantIdSet.has(merchantId)) {
-    return true;
-  }
+  const authorizedMerchantIdSet = new Set<string>();
 
   const resolvedSession = await resolveMerchantSessionFromRequest(request);
   if (resolvedSession?.merchantId) {

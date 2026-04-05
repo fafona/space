@@ -76,4 +76,23 @@ test("setMerchantAuthCookies shares cookies across faolla subdomains", () => {
 
   assert.equal(response.cookies.get(MERCHANT_AUTH_COOKIE)?.domain, "faolla.com");
   assert.equal(response.cookies.get(MERCHANT_AUTH_REFRESH_COOKIE)?.domain, "faolla.com");
+  assert.equal(response.cookies.get(MERCHANT_AUTH_COOKIE)?.secure, true);
+  assert.equal(response.cookies.get(MERCHANT_AUTH_REFRESH_COOKIE)?.secure, true);
+});
+
+test("setMerchantAuthCookies keeps localhost cookies non-secure for local development", () => {
+  const response = NextResponse.json({ ok: true });
+  const request = new Request("http://localhost:3000/api/auth/merchant-login");
+  setMerchantAuthCookies(
+    response,
+    {
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      maxAgeSeconds: 3600,
+    },
+    request,
+  );
+
+  assert.equal(response.cookies.get(MERCHANT_AUTH_COOKIE)?.secure, false);
+  assert.equal(response.cookies.get(MERCHANT_AUTH_REFRESH_COOKIE)?.secure, false);
 });

@@ -1,11 +1,13 @@
 import { createHash, createHmac } from "node:crypto";
 import { readSuperAdminVerificationSecret } from "@/lib/superAdminServer";
+import { SUPER_ADMIN_SESSION_COOKIE_MAX_AGE_SECONDS } from "@/lib/superAdminSession";
 
 const SUPER_ADMIN_CHALLENGE_TTL_MS = 10 * 60 * 1000;
 const SUPER_ADMIN_EMAIL_PROOF_TTL_MS = 15 * 60 * 1000;
+const SUPER_ADMIN_SESSION_TTL_MS = SUPER_ADMIN_SESSION_COOKIE_MAX_AGE_SECONDS * 1000;
 const SUPER_ADMIN_TRUSTED_DEVICE_TTL_MS = 180 * 24 * 60 * 60 * 1000;
 
-type SuperAdminTokenKind = "challenge" | "email-proof" | "trusted-device";
+type SuperAdminTokenKind = "challenge" | "email-proof" | "session" | "trusted-device";
 
 type SignedSuperAdminTokenPayload = {
   kind: SuperAdminTokenKind;
@@ -23,6 +25,12 @@ export type SuperAdminChallengePayload = SignedSuperAdminTokenPayload & {
 type SuperAdminEmailProofPayload = SignedSuperAdminTokenPayload & {
   kind: "email-proof";
   challengeHash: string;
+};
+
+type SuperAdminSessionPayload = SignedSuperAdminTokenPayload & {
+  kind: "session";
+  deviceId: string;
+  deviceLabel: string;
 };
 
 type SuperAdminTrustedDevicePayload = SignedSuperAdminTokenPayload & {
@@ -114,6 +122,23 @@ export function verifySuperAdminEmailProofToken(proofToken: string, challengeTok
   const payload = readSignedTokenPayload<SuperAdminEmailProofPayload>(proofToken, "email-proof");
   if (!payload) return false;
   return payload.challengeHash === hashValue(challengeToken);
+}
+
+export function createSuperAdminSessionToken(input: { deviceId: string; deviceLabel: string }) {
+  const issuedAt = Date.now();
+  const payload: SuperAdminSessionPayload = {
+    kind: "session",
+    issuedAt,
+    expiresAt: issuedAt + SUPER_ADMIN_SESSION_TTL_MS,
+    deviceId: String(input.deviceId ?? "").trim(),
+    deviceLabel: String(input.deviceLabel ?? "").trim() || "褰撳墠璁惧",
+  };
+  if (!payload.deviceId) return "";
+  return signTokenPayload(payload);
+}
+
+export function readSuperAdminSessionToken(token: string) {
+  return readSignedTokenPayload<SuperAdminSessionPayload>(token, "session");
 }
 
 export function createSuperAdminTrustedDeviceToken(input: { deviceId: string; deviceLabel: string }) {

@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import type { Block } from "@/data/homeBlocks";
+import { readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
 import { sanitizeBlocksForRuntime } from "@/lib/blocksSanitizer";
 import { saveStoredMerchantDraft, type MerchantDraftStoreClient } from "@/lib/merchantDraftStore";
 import { normalizeDomainPrefix } from "@/lib/merchantIdentity";
 import { loadPublishedMerchantServiceStatesBySiteIds } from "@/lib/publishedMerchantService";
 import { getInlinePublishPayloadViolation } from "@/lib/publishPayloadValidation";
+import { isSuperAdminRequestAuthorized } from "@/lib/superAdminRequestAuth";
 
 type SaveErrorLike = { message: string } | null;
 
@@ -38,12 +40,29 @@ type LooseQueryBuilder = PromiseLike<LoosePostgrestResponse> & {
 
 type LooseSupabaseClient = {
   from: (table: string) => LooseQueryBuilder;
+  auth: {
+    getUser: (token: string) => Promise<{
+      data: {
+        user: {
+          id?: string;
+          email?: string | null;
+          user_metadata?: Record<string, unknown> | null;
+          app_metadata?: Record<string, unknown> | null;
+        } | null;
+      };
+      error: { message?: string } | null;
+    }>;
+  };
 };
 
 type GlobalPageRecord = {
   id?: string | number | null;
   blocks?: unknown;
 } | null;
+
+type MerchantRow = {
+  id?: string | null;
+};
 
 type PublishCachedResult = {
   at: number;
@@ -104,6 +123,111 @@ function normalizeMerchantIds(merchantIds: unknown, isPlatformEditor: boolean) {
     .map((item) => (typeof item === "string" ? item.trim() : ""))
     .filter((item) => item.length > 0);
   return [...new Set(ids)];
+}
+
+function normalizeEmail(value: string | null | undefined) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function readMetadataMerchantIds(user: {
+  user_metadata?: Record<string, unknown> | null;
+  app_metadata?: Record<string, unknown> | null;
+} | null) {
+  const merchantIds: string[] = [];
+  const metadata = {
+    ...(user?.user_metadata ?? {}),
+    ...(user?.app_metadata ?? {}),
+  } as Record<string, unknown>;
+  const push = (value: unknown) => {
+    if (typeof value !== "string") return;
+    const trimmed = value.trim();
+    if (!trimmed || merchantIds.includes(trimmed)) return;
+    merchantIds.push(trimmed);
+  };
+  push(metadata.merchant_id);
+  push(metadata.merchantId);
+  push(metadata.merchantID);
+  push(metadata.site_id);
+  push(metadata.siteId);
+  push(metadata.shop_id);
+  push(metadata.shopId);
+  return merchantIds;
+}
+
+async function getAuthorizedMerchantIds(
+  supabase: LooseSupabaseClient,
+  userId: string,
+  email: string,
+) {
+  const lookups: LooseQueryBuilder[] = [];
+
+  if (userId) {
+    ["user_id", "auth_user_id", "owner_user_id", "owner_id", "auth_id", "created_by", "created_by_user_id"].forEach(
+      (column) => {
+        lookups.push(supabase.from("merchants").select("id").eq(column, userId).limit(20));
+      },
+    );
+  }
+
+  if (email) {
+    ["email", "owner_email", "contact_email", "user_email"].forEach((column) => {
+      lookups.push(supabase.from("merchants").select("id").eq(column, email).limit(20));
+    });
+  }
+
+  const settled = await Promise.allSettled(lookups);
+  const merchantIds: string[] = [];
+  settled.forEach((result) => {
+    if (result.status !== "fulfilled") return;
+    if (result.value.error) return;
+    ((result.value.data ?? []) as MerchantRow[]).forEach((row) => {
+      const merchantId = String(row.id ?? "").trim();
+      if (!merchantId || merchantIds.includes(merchantId)) return;
+      merchantIds.push(merchantId);
+    });
+  });
+  return merchantIds;
+}
+
+async function isAuthorizedForMerchantIds(
+  request: Request,
+  supabase: LooseSupabaseClient,
+  merchantIds: string[],
+) {
+  if (isSuperAdminRequestAuthorized(request)) {
+    return true;
+  }
+
+  const targetMerchantIds = [...new Set(merchantIds.map((item) => item.trim()).filter(Boolean))];
+  if (targetMerchantIds.length === 0) {
+    return false;
+  }
+
+  const authorizedMerchantIds = new Set<string>();
+  const accessTokens = readMerchantRequestAccessTokens(request);
+  for (const accessToken of accessTokens) {
+    const authResult = await supabase.auth.getUser(accessToken);
+    if (authResult.error || !authResult.data.user) continue;
+
+    readMetadataMerchantIds(authResult.data.user).forEach((merchantId) => {
+      authorizedMerchantIds.add(merchantId);
+    });
+
+    const linkedMerchantIds = await getAuthorizedMerchantIds(
+      supabase,
+      String(authResult.data.user.id ?? "").trim(),
+      normalizeEmail(authResult.data.user.email),
+    );
+    linkedMerchantIds.forEach((merchantId) => {
+      authorizedMerchantIds.add(merchantId);
+    });
+  }
+
+  if (authorizedMerchantIds.size === 0) {
+    return false;
+  }
+
+  return targetMerchantIds.every((merchantId) => authorizedMerchantIds.has(merchantId));
 }
 
 function isTransientSaveError(message: string) {
@@ -422,6 +546,56 @@ export async function POST(request: Request) {
     const isPlatformEditor = body.isPlatformEditor === true;
     const merchantIds = normalizeMerchantIds(body.merchantIds, isPlatformEditor);
     const merchantSlug = isPlatformEditor ? "home" : normalizeDomainPrefix(body.merchantSlug);
+    if (!isPlatformEditor && merchantIds.length === 0) {
+      const status = 400;
+      const responseBody = {
+        ok: false,
+        code: "invalid_merchant_scope",
+        message: "缂哄皯鍙彂甯冪殑鍟嗘埛鑼冨洿銆?",
+        requestId,
+      };
+      resultCache.set(requestId, { at: Date.now(), status, body: responseBody });
+      return makeCachedResponse(status, responseBody);
+    }
+
+    const supabase = createClient(supabaseUrl, serviceRoleKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+      },
+      global: {
+        fetch: fetch.bind(globalThis),
+      },
+    }) as unknown as LooseSupabaseClient;
+
+    if (isPlatformEditor) {
+      if (!isSuperAdminRequestAuthorized(request)) {
+        const status = 401;
+        const responseBody = {
+          ok: false,
+          code: "unauthorized",
+          message: "褰撳墠浼氳瘽鏃犳潈鍙戝竷骞冲彴鍐呭銆?",
+          requestId,
+        };
+        resultCache.set(requestId, { at: Date.now(), status, body: responseBody });
+        return makeCachedResponse(status, responseBody);
+      }
+    } else {
+      const authorized = await isAuthorizedForMerchantIds(request, supabase, merchantIds);
+      if (!authorized) {
+        const status = 401;
+        const responseBody = {
+          ok: false,
+          code: "unauthorized",
+          message: "褰撳墠浼氳瘽鏃犳潈鍙戝竷璇ュ晢鎴峰唴瀹广€?",
+          requestId,
+        };
+        resultCache.set(requestId, { at: Date.now(), status, body: responseBody });
+        return makeCachedResponse(status, responseBody);
+      }
+    }
+
     if (!isPlatformEditor && merchantIds.length > 0) {
       const serviceStates = await loadPublishedMerchantServiceStatesBySiteIds(merchantIds).catch(
         () => new Map<string, { maintenance?: boolean; reason?: "expired" | "paused" | null }>(),
@@ -442,19 +616,8 @@ export async function POST(request: Request) {
       }
     }
 
-    const supabase = createClient(supabaseUrl, serviceRoleKey, {
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false,
-        detectSessionInUrl: false,
-      },
-      global: {
-        fetch: fetch.bind(globalThis),
-      },
-    });
-
     const saveError = await saveWithRetry(
-      supabase as unknown as LooseSupabaseClient,
+      supabase,
       {
         blocks: payloadBlocks,
         updated_at: normalizedUpdatedAt,
