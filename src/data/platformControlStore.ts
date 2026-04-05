@@ -434,7 +434,7 @@ function normalizeNullableRank(value: unknown) {
   return Math.max(1, Math.round(num));
 }
 
-function normalizeMerchantPermissionConfig(value: unknown): MerchantServicePermissionConfig {
+export function normalizeMerchantPermissionConfig(value: unknown): MerchantServicePermissionConfig {
   const source = value && typeof value === "object" ? (value as Partial<MerchantServicePermissionConfig>) : {};
   const fallback = createDefaultMerchantPermissionConfig();
   return {

@@ -4283,6 +4283,7 @@ function buildSupportPublishedProfileFromSite(site: Site): MerchantListPublished
     merchantCardImageUrl: site.merchantCardImageUrl,
     chatAvatarImageUrl: site.chatAvatarImageUrl,
     contactVisibility: site.contactVisibility ?? createDefaultMerchantContactVisibility(),
+    permissionConfig: site.permissionConfig ?? createDefaultMerchantPermissionConfig(),
     merchantCardImageOpacity: site.merchantCardImageOpacity,
     businessCards: normalizeMerchantBusinessCards(site.businessCards ?? []),
     chatBusinessCard: resolveMerchantBusinessCardForChatDisplay(site.businessCards ?? []),
@@ -4332,6 +4333,7 @@ function mergeSupportPublishedProfileIntoSite(
     merchantCardImageUrl: normalizeSupportDisplayValue(profile.merchantCardImageUrl) || site.merchantCardImageUrl,
     chatAvatarImageUrl: normalizeSupportDisplayValue(profile.chatAvatarImageUrl) || site.chatAvatarImageUrl,
     contactVisibility: profile.contactVisibility ?? site.contactVisibility ?? createDefaultMerchantContactVisibility(),
+    permissionConfig: profile.permissionConfig ?? site.permissionConfig ?? createDefaultMerchantPermissionConfig(),
     merchantCardImageOpacity:
       typeof profile.merchantCardImageOpacity === "number"
         ? profile.merchantCardImageOpacity
@@ -5306,6 +5308,7 @@ export default function AdminClient({
       sites: payload.snapshot.map((site) => ({
         ...site,
         businessCards: undefined,
+        permissionConfig: undefined,
       })),
       defaultSortRule: payload.defaultSortRule,
     };

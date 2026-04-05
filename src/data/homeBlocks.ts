@@ -4,6 +4,7 @@ import type { MerchantBusinessCardAsset } from "@/lib/merchantBusinessCards";
 import type {
   MerchantContactVisibility,
   MerchantIndustry,
+  MerchantServicePermissionConfig,
   MerchantSortConfig,
   MerchantSortRule,
   SiteLocation,
@@ -104,6 +105,7 @@ export type MerchantListPublishedSite = {
   merchantCardImageOpacity?: number;
   chatAvatarImageUrl?: string;
   contactVisibility?: MerchantContactVisibility;
+  permissionConfig?: MerchantServicePermissionConfig;
   businessCards?: MerchantBusinessCardAsset[];
   chatBusinessCard?: MerchantBusinessCardAsset | null;
   status?: SiteStatus;

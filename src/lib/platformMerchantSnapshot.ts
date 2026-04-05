@@ -5,6 +5,7 @@ import {
   MERCHANT_SORT_RULES,
   createDefaultMerchantContactVisibility,
   createDefaultMerchantSortConfig,
+  normalizeMerchantPermissionConfig,
   type MerchantIndustry,
   type MerchantSortConfig,
   type MerchantSortRule,
@@ -165,6 +166,7 @@ function normalizeSnapshotSite(input: unknown): MerchantListPublishedSite | null
     merchantCardImageUrl: normalizeText(value.merchantCardImageUrl),
     chatAvatarImageUrl: normalizeText(value.chatAvatarImageUrl),
     contactVisibility: normalizeMerchantContactVisibility(value.contactVisibility),
+    permissionConfig: normalizeMerchantPermissionConfig((value as { permissionConfig?: unknown }).permissionConfig),
     merchantCardImageOpacity: normalizeUnitInterval(value.merchantCardImageOpacity, 1),
     businessCards,
     chatBusinessCard:
@@ -232,6 +234,7 @@ export function buildPlatformMerchantSnapshotPayloadFromSites(
       merchantCardImageUrl: normalizeText(site.merchantCardImageUrl),
       chatAvatarImageUrl: normalizeText(site.chatAvatarImageUrl),
       contactVisibility: normalizeMerchantContactVisibility(site.contactVisibility),
+      permissionConfig: normalizeMerchantPermissionConfig(site.permissionConfig),
       merchantCardImageOpacity: normalizeUnitInterval(site.merchantCardImageOpacity, 1),
       businessCards: normalizeMerchantBusinessCards(site.businessCards),
       chatBusinessCard: compactSnapshotChatBusinessCard(resolveMerchantBusinessCardForChatDisplay(site.businessCards ?? [])),
@@ -292,6 +295,7 @@ export function buildPlatformMerchantSnapshotSite(
     merchantCardImageUrl?: string | null;
     chatAvatarImageUrl?: string | null;
     contactVisibility?: Site["contactVisibility"] | null;
+    permissionConfig?: Site["permissionConfig"] | null;
     businessCards?: MerchantBusinessCardAsset[] | null;
     merchantCardImageOpacity?: number | null;
     chatBusinessCard?: MerchantBusinessCardAsset | null;
@@ -320,6 +324,7 @@ export function buildPlatformMerchantSnapshotSite(
     merchantCardImageUrl: input.merchantCardImageUrl,
     chatAvatarImageUrl: input.chatAvatarImageUrl,
     contactVisibility: input.contactVisibility,
+    permissionConfig: input.permissionConfig,
     businessCards: input.businessCards,
     merchantCardImageOpacity: input.merchantCardImageOpacity,
     chatBusinessCard: input.chatBusinessCard,

@@ -1,6 +1,10 @@
 import { createClient } from "@supabase/supabase-js";
 import type { Block, MerchantListPublishedSite } from "@/data/homeBlocks";
-import { createDefaultMerchantSortConfig, type MerchantSortRule } from "@/data/platformControlStore";
+import {
+  createDefaultMerchantPermissionConfig,
+  createDefaultMerchantSortConfig,
+  type MerchantSortRule,
+} from "@/data/platformControlStore";
 import { sanitizeBlocksForRuntime } from "@/lib/blocksSanitizer";
 import {
   PLATFORM_MERCHANT_SNAPSHOT_SLUG,
@@ -180,6 +184,10 @@ function mergePublishedMerchantSnapshotSite(
     merchantCardImageOpacity: nextImageUrl
       ? (preferredImageUrl ? preferredOpacity : fallbackOpacity)
       : preferredOpacity,
+    permissionConfig:
+      preferred.permissionConfig ??
+      fallback.permissionConfig ??
+      createDefaultMerchantPermissionConfig(),
     chatBusinessCard: preferred.chatBusinessCard ?? fallback.chatBusinessCard ?? null,
     status: (pickPreferredText(preferred.status, fallback.status) || "online") as MerchantListPublishedSite["status"],
     serviceExpiresAt: preferred.serviceExpiresAt ?? fallback.serviceExpiresAt ?? null,

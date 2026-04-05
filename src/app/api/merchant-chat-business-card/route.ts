@@ -400,6 +400,7 @@ export async function POST(request: Request) {
       merchantCardImageUrl: existingSite?.merchantCardImageUrl ?? "",
       chatAvatarImageUrl: existingSite?.chatAvatarImageUrl ?? "",
       contactVisibility: existingSite?.contactVisibility,
+      permissionConfig: existingSite?.permissionConfig ?? undefined,
       businessCards: normalizedBusinessCards,
       merchantCardImageOpacity: existingSite?.merchantCardImageOpacity ?? 1,
       status: existingSite?.status ?? "online",
