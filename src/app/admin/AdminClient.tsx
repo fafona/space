@@ -6229,6 +6229,14 @@ export default function AdminClient({
         setCheckingAuth(false);
       }
     };
+    const releaseMerchantUnauthenticatedState = (notice: string) => {
+      if (!mounted) return;
+      merchantIdsRef.current = [];
+      setRemoteContentVerified(false);
+      setHasEditorContent(false);
+      setSelectedId("");
+      releaseCheckingScreen({ notice });
+    };
     const getCandidateStoreScopes = () =>
       storeScope !== "default"
         ? [storeScope]
@@ -6404,15 +6412,10 @@ export default function AdminClient({
             return;
           }
           if (justSignedIn) {
-            setRemoteContentVerified(false);
-            setHasEditorContent(true);
-            setBackendNotice("登录已断开，请重新登录后继续。");
+            releaseMerchantUnauthenticatedState("登录已断开，请重新登录后继续。");
             return;
           }
-          setRemoteContentVerified(false);
-          setHasEditorContent(true);
-          setBackendNotice("当前未登录，请重新登录后继续。");
-          releaseCheckingScreen({ notice: "当前未登录，请重新登录后继续。" });
+          releaseMerchantUnauthenticatedState("当前未登录，请重新登录后继续。");
         })().catch(() => {
           // Ignore listener network failures; keep current editor session.
         });
@@ -6530,9 +6533,7 @@ export default function AdminClient({
               const restored = await tryLoadJustSignedInPublishedContent();
               if (!mounted) return;
               if (restored) return;
-              setRemoteContentVerified(false);
-              setHasEditorContent(true);
-              releaseCheckingScreen({ notice: "登录未完成，请重新登录后继续。" });
+              releaseMerchantUnauthenticatedState("登录未完成，请重新登录后继续。");
               return;
             }
             if (cookieBackedMerchantIdentity) {
@@ -6541,10 +6542,8 @@ export default function AdminClient({
               setHasEditorContent(true);
               releaseCheckingScreen({ notice: null });
             } else {
-            setRemoteContentVerified(false);
-            setHasEditorContent(true);
-            releaseCheckingScreen({ notice: "当前未登录，请重新登录后继续。" });
-            return;
+              releaseMerchantUnauthenticatedState("当前未登录，请重新登录后继续。");
+              return;
             }
           }
         }
