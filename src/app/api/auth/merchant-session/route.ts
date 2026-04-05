@@ -27,6 +27,22 @@ type RefreshPayload = {
   user?: unknown;
 };
 
+type MerchantRefreshResult =
+  | {
+      status: "ok";
+      accessToken: string;
+      refreshToken: string;
+      expiresIn: number | null;
+      tokenType: string;
+      user: AuthUserSummary | null;
+    }
+  | {
+      status: "invalid";
+    }
+  | {
+      status: "unavailable";
+    };
+
 type AuthenticatedMerchantSessionPayload = {
   authenticated: true;
   accessToken: string;
@@ -43,6 +59,17 @@ const merchantSessionInflight = new Map<string, Promise<AuthenticatedMerchantSes
 
 function readEnv(name: string) {
   return (process.env[name] ?? "").trim();
+}
+
+function isTransientMerchantSessionError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const record = error as { message?: unknown; name?: unknown; status?: unknown; code?: unknown };
+  const message = typeof record.message === "string" ? record.message : "";
+  const name = typeof record.name === "string" ? record.name : "";
+  const code = typeof record.code === "string" ? record.code : "";
+  if (name === "AbortError") return true;
+  if (Number(record.status) === 0) return true;
+  return /timeout|temporarily|connection|network|fetch|load failed|unavailable|cooldown/i.test(message + code);
 }
 
 function createServerSupabaseClient() {
@@ -207,40 +234,53 @@ async function tryAllocateSequentialMerchantId(
   return "";
 }
 
-async function refreshMerchantSession(refreshToken: string) {
+async function refreshMerchantSession(refreshToken: string): Promise<MerchantRefreshResult> {
   const supabaseUrl = readEnv("NEXT_PUBLIC_SUPABASE_URL");
   const anonKey = readEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY");
-  if (!supabaseUrl || !anonKey || !refreshToken) return null;
+  if (!supabaseUrl || !anonKey || !refreshToken) return { status: "invalid" };
 
-  const response = await fetch(`${supabaseUrl.replace(/\/+$/, "")}/auth/v1/token?grant_type=refresh_token`, {
-    method: "POST",
-    headers: {
-      apikey: anonKey,
-      Authorization: `Bearer ${anonKey}`,
-      "Content-Type": "application/json",
-    },
-    cache: "no-store",
-    body: JSON.stringify({
-      refresh_token: refreshToken,
-    }),
-  });
+  try {
+    const response = await fetch(`${supabaseUrl.replace(/\/+$/, "")}/auth/v1/token?grant_type=refresh_token`, {
+      method: "POST",
+      headers: {
+        apikey: anonKey,
+        Authorization: `Bearer ${anonKey}`,
+        "Content-Type": "application/json",
+      },
+      cache: "no-store",
+      body: JSON.stringify({
+        refresh_token: refreshToken,
+      }),
+    });
 
-  if (!response.ok) return null;
-  const payload = (await response.json().catch(() => null)) as RefreshPayload | null;
-  const accessToken = typeof payload?.access_token === "string" ? payload.access_token.trim() : "";
-  const nextRefreshToken = typeof payload?.refresh_token === "string" ? payload.refresh_token.trim() : "";
-  if (!accessToken || !nextRefreshToken) return null;
+    if (!response.ok) {
+      if (response.status >= 500 || response.status === 429) {
+        return { status: "unavailable" };
+      }
+      return { status: "invalid" };
+    }
+    const payload = (await response.json().catch(() => null)) as RefreshPayload | null;
+    const accessToken = typeof payload?.access_token === "string" ? payload.access_token.trim() : "";
+    const nextRefreshToken = typeof payload?.refresh_token === "string" ? payload.refresh_token.trim() : "";
+    if (!accessToken || !nextRefreshToken) return { status: "invalid" };
 
-  return {
-    accessToken,
-    refreshToken: nextRefreshToken,
-    expiresIn: typeof payload?.expires_in === "number" ? payload.expires_in : null,
-    tokenType: typeof payload?.token_type === "string" ? payload.token_type : "bearer",
-    user:
-      payload?.user && typeof payload.user === "object"
-        ? (payload.user as AuthUserSummary)
-        : null,
-  };
+    return {
+      status: "ok",
+      accessToken,
+      refreshToken: nextRefreshToken,
+      expiresIn: typeof payload?.expires_in === "number" ? payload.expires_in : null,
+      tokenType: typeof payload?.token_type === "string" ? payload.token_type : "bearer",
+      user:
+        payload?.user && typeof payload.user === "object"
+          ? (payload.user as AuthUserSummary)
+          : null,
+    };
+  } catch (error) {
+    if (isTransientMerchantSessionError(error)) {
+      return { status: "unavailable" };
+    }
+    return { status: "invalid" };
+  }
 }
 
 function noStoreJson(body: unknown, init?: ResponseInit) {
@@ -325,17 +365,20 @@ export async function GET(request: Request) {
       let user: AuthUserSummary | null = null;
       let expiresIn: number | null = null;
       let tokenType = "bearer";
+      let authUnavailable = false;
 
       if (accessToken) {
         const { data, error } = await supabase.auth.getUser(accessToken);
         if (!error && data.user) {
           user = data.user as AuthUserSummary;
+        } else if (error && isTransientMerchantSessionError(error)) {
+          authUnavailable = true;
         }
       }
 
       if (!user && refreshToken) {
         const refreshed = await refreshMerchantSession(refreshToken);
-        if (refreshed) {
+        if (refreshed.status === "ok") {
           accessToken = refreshed.accessToken;
           refreshToken = refreshed.refreshToken;
           expiresIn = refreshed.expiresIn;
@@ -345,12 +388,19 @@ export async function GET(request: Request) {
             const { data, error } = await supabase.auth.getUser(accessToken);
             if (!error && data.user) {
               user = data.user as AuthUserSummary;
+            } else if (error && isTransientMerchantSessionError(error)) {
+              authUnavailable = true;
             }
           }
+        } else if (refreshed.status === "unavailable") {
+          authUnavailable = true;
         }
       }
 
       if (!accessToken || !user) {
+        if (authUnavailable) {
+          throw new Error("merchant_session_transient_unavailable");
+        }
         clearMerchantSessionCache(cookieAccessToken, cookieRefreshToken);
         return null;
       }
@@ -419,8 +469,38 @@ export async function POST(request: Request) {
       return response;
     }
 
+    let verifiedAccessToken = accessToken;
+    let verifiedRefreshToken = refreshToken;
+    let verifiedExpiresIn = expiresIn;
+    let user: AuthUserSummary | null = null;
+
     const { data, error } = await supabase.auth.getUser(accessToken);
-    if (error || !data.user) {
+    if (!error && data.user) {
+      user = data.user as AuthUserSummary;
+    } else if (error && isTransientMerchantSessionError(error)) {
+      return noStoreJson({ ok: false, error: "merchant_session_sync_unavailable" }, { status: 503 });
+    } else if (refreshToken) {
+      const refreshed = await refreshMerchantSession(refreshToken);
+      if (refreshed.status === "unavailable") {
+        return noStoreJson({ ok: false, error: "merchant_session_sync_unavailable" }, { status: 503 });
+      }
+      if (refreshed.status === "ok") {
+        verifiedAccessToken = refreshed.accessToken;
+        verifiedRefreshToken = refreshed.refreshToken;
+        verifiedExpiresIn = refreshed.expiresIn ?? expiresIn;
+        user = refreshed.user;
+        if (!user) {
+          const retried = await supabase.auth.getUser(verifiedAccessToken);
+          if (!retried.error && retried.data.user) {
+            user = retried.data.user as AuthUserSummary;
+          } else if (retried.error && isTransientMerchantSessionError(retried.error)) {
+            return noStoreJson({ ok: false, error: "merchant_session_sync_unavailable" }, { status: 503 });
+          }
+        }
+      }
+    }
+
+    if (!user) {
       const response = noStoreJson({ ok: false, error: "merchant_session_invalid_access_token" }, { status: 401 });
       clearMerchantAuthCookies(response);
       return response;
@@ -429,15 +509,15 @@ export async function POST(request: Request) {
     const response = noStoreJson({
       ok: true,
       authenticated: true,
-      accessToken,
-      refreshToken: refreshToken || null,
-      expiresIn: expiresIn ?? null,
-      user: data.user,
+      accessToken: verifiedAccessToken,
+      refreshToken: verifiedRefreshToken || null,
+      expiresIn: verifiedExpiresIn ?? null,
+      user,
     });
     setMerchantAuthCookies(response, {
-      accessToken,
-      refreshToken,
-      maxAgeSeconds: expiresIn,
+      accessToken: verifiedAccessToken,
+      refreshToken: verifiedRefreshToken,
+      maxAgeSeconds: verifiedExpiresIn,
     });
     return response;
   } catch {
