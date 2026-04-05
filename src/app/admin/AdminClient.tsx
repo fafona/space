@@ -4744,6 +4744,7 @@ export default function AdminClient({
   const supportCameraInputRef = useRef<HTMLInputElement>(null);
   const supportFileInputRef = useRef<HTMLInputElement>(null);
   const [supportSelfResolvedCardHref, setSupportSelfResolvedCardHref] = useState("");
+  const [supportSelfResolvedCardId, setSupportSelfResolvedCardId] = useState("");
   const supportSelfCardShareBundleRef = useRef<Record<string, { shareUrl: string; shareKey: string; imageUrl: string }>>(
     {},
   );
@@ -8954,6 +8955,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const supportSelfBusinessCards = useMemo(() => {
     const localCards = Array.isArray(editingSite?.businessCards) ? normalizeMerchantBusinessCards(editingSite.businessCards) : [];
     const remoteCard = supportSelfFetchedBusinessCard ?? supportSelfProfile?.chatBusinessCard ?? null;
+    if (localCards.length === 0) {
+      return normalizeMerchantBusinessCards(remoteCard ? [remoteCard] : []);
+    }
     const mergedCards = [...localCards];
     if (remoteCard) {
       const normalizedRemoteCards = normalizeMerchantBusinessCards([remoteCard]);
@@ -8969,13 +8973,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             ...mergedCards[matchIndex],
             ...card,
           };
-        } else {
-          mergedCards.unshift(card);
         }
       });
     }
-    const normalizedCards = mergedCards.length > 0 ? mergedCards : normalizeMerchantBusinessCards(remoteCard ? [remoteCard] : []);
-    return [...normalizedCards].sort((left, right) => {
+    return [...mergedCards].sort((left, right) => {
       const leftChat = left.showInChat !== false;
       const rightChat = right.showInChat !== false;
       if (leftChat !== rightChat) return leftChat ? -1 : 1;
@@ -9055,15 +9056,18 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     "/";
   const supportSelfSignature = normalizeSupportDisplayValue(supportSelfProfile?.signature);
   const supportSelfChatBusinessCard =
+    resolveMerchantBusinessCardForChatDisplay(supportSelfBusinessCards) ??
     supportSelfFetchedBusinessCard ??
-    resolveMerchantBusinessCardForChatDisplay(editingSite?.businessCards ?? []) ??
     supportSelfProfile?.chatBusinessCard ??
     null;
   const supportSelfCardHref = useMemo(() => {
-    const resolvedCardHref = normalizeSupportDisplayValue(supportSelfResolvedCardHref);
-    if (resolvedCardHref) return resolvedCardHref;
-    return buildSupportMerchantCardLink(supportSelfChatBusinessCard);
-  }, [supportSelfChatBusinessCard, supportSelfResolvedCardHref]);
+    const activeCardId = normalizeSupportDisplayValue(supportSelfChatBusinessCard?.id);
+    const resolvedCardHref =
+      activeCardId && activeCardId === normalizeSupportDisplayValue(supportSelfResolvedCardId)
+        ? normalizeSupportDisplayValue(supportSelfResolvedCardHref)
+        : "";
+    return resolvedCardHref || buildSupportMerchantCardLink(supportSelfChatBusinessCard);
+  }, [supportSelfChatBusinessCard, supportSelfResolvedCardHref, supportSelfResolvedCardId]);
   const supportSelfCardLabel = supportSelfCardHref ? formatSupportUrlLabel(supportSelfCardHref) : "-";
   const selectedSupportLoading =
     supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY ? supportLoading : supportPeerLoading;
@@ -9816,11 +9820,13 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     const activeCard = supportSelfChatBusinessCard;
     if (!activeCard || activeCard.mode !== "link") {
       setSupportSelfResolvedCardHref("");
+      setSupportSelfResolvedCardId("");
       return;
     }
     const builtHref = buildSupportMerchantCardLink(activeCard);
-    if (builtHref) {
+    if (isSupportShortMerchantCardLink(builtHref)) {
       setSupportSelfResolvedCardHref(builtHref);
+      setSupportSelfResolvedCardId(activeCard.id);
       return;
     }
     let cancelled = false;
@@ -9829,6 +9835,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       if (cancelled) return;
       const nextHref = normalizeSupportDisplayValue(shareBundle?.shareUrl);
       setSupportSelfResolvedCardHref(nextHref);
+      setSupportSelfResolvedCardId(nextHref ? activeCard.id : "");
     })();
     return () => {
       cancelled = true;
