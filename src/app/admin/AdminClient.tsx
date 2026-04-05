@@ -8986,7 +8986,39 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         mergedCards.push(card);
       }
     });
-    return [...mergedCards].sort((left, right) => {
+    const deduplicatedCards = [...mergedCards].reduce<MerchantBusinessCardAsset[]>((accumulator, card) => {
+      const cardKey = [
+        normalizeSupportDisplayValue(card.shareKey),
+        normalizeSupportDisplayValue(card.targetUrl),
+        normalizeSupportDisplayValue(card.shareImageUrl || card.imageUrl),
+        normalizeSupportDisplayValue(card.contactPagePublicImageUrl || card.contactPageImageUrl),
+        card.mode,
+      ]
+        .filter(Boolean)
+        .join("|");
+      const duplicateIndex = accumulator.findIndex((item) => {
+        const itemKey = [
+          normalizeSupportDisplayValue(item.shareKey),
+          normalizeSupportDisplayValue(item.targetUrl),
+          normalizeSupportDisplayValue(item.shareImageUrl || item.imageUrl),
+          normalizeSupportDisplayValue(item.contactPagePublicImageUrl || item.contactPageImageUrl),
+          item.mode,
+        ]
+          .filter(Boolean)
+          .join("|");
+        return itemKey && itemKey === cardKey;
+      });
+      if (duplicateIndex >= 0) {
+        accumulator[duplicateIndex] = {
+          ...accumulator[duplicateIndex],
+          ...card,
+        };
+      } else {
+        accumulator.push(card);
+      }
+      return accumulator;
+    }, []);
+    return deduplicatedCards.sort((left, right) => {
       const leftChat = left.showInChat !== false;
       const rightChat = right.showInChat !== false;
       if (leftChat !== rightChat) return leftChat ? -1 : 1;
@@ -10652,17 +10684,20 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     return [`文件：${fileName} (${formatSupportAttachmentFileSize(file.size)})`, url].join("\n");
   }
 
-  function buildSupportSelfBusinessCardMessageText(input: {
-    card: MerchantBusinessCardAsset;
-    imageUrl?: string;
-    shareUrl?: string;
-  }) {
+function buildSupportSelfBusinessCardMessageText(input: {
+  card: MerchantBusinessCardAsset;
+  imageUrl?: string;
+  shareUrl?: string;
+}) {
     const imageUrl =
       normalizeSupportDisplayValue(input.imageUrl) ||
       normalizeSupportDisplayValue(input.card.shareImageUrl) ||
       normalizeSupportDisplayValue(input.card.imageUrl);
-    const shareUrl = isSupportShortMerchantCardLink(input.shareUrl ?? "")
-      ? normalizeSupportDisplayValue(input.shareUrl)
+  const fallbackShareUrl = buildSupportMerchantCardLink(input.card);
+  const shareUrl = isSupportShortMerchantCardLink(input.shareUrl ?? "")
+    ? normalizeSupportDisplayValue(input.shareUrl)
+    : isSupportShortMerchantCardLink(fallbackShareUrl)
+      ? normalizeSupportDisplayValue(fallbackShareUrl)
       : "";
     if (input.card.mode === "link") {
       return [imageUrl, shareUrl].filter(Boolean).join("\n");

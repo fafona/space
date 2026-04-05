@@ -14,6 +14,7 @@ import {
   normalizeMerchantBusinessCardShareTargetUrl,
 } from "@/lib/merchantBusinessCardShare";
 import { parseCookieValue, readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
+import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
 import { SUPER_ADMIN_SESSION_COOKIE, SUPER_ADMIN_SESSION_VALUE } from "@/lib/superAdminSession";
 
 const BUCKET_CANDIDATES = ["page-assets", "assets", "uploads", "public"] as const;
@@ -157,6 +158,11 @@ async function removePublicObject(
 async function isAuthorized(request: Request, supabaseUrl: string, serviceRoleKey: string) {
   const cookieHeader = request.headers.get("cookie") ?? "";
   if (parseCookieValue(cookieHeader, SUPER_ADMIN_SESSION_COOKIE) === SUPER_ADMIN_SESSION_VALUE) {
+    return true;
+  }
+
+  const resolvedSession = await resolveMerchantSessionFromRequest(request).catch(() => null);
+  if (resolvedSession?.merchantId) {
     return true;
   }
 
