@@ -10,6 +10,7 @@ import {
   hasStoredBrowserSupabaseSessionTokens,
   isTransientAuthValidationError,
   persistBrowserSupabaseSessionSnapshot,
+  readMerchantSessionPayload,
   recoverBrowserSupabaseSession,
 } from "@/lib/authSessionRecovery";
 import { ensureMerchantIdentityForUser, isMerchantNumericId } from "@/lib/merchantIdentity";
@@ -347,6 +348,26 @@ function LoginPageInner() {
     }
   }
 
+  async function readValidatedCookieBackedSession() {
+    const payload = await readMerchantSessionPayload(2600).catch(() => null);
+    if (!payload || payload.authenticated !== true || !payload.user) return null;
+    const accessToken = typeof payload.accessToken === "string" ? payload.accessToken.trim() : "";
+    const refreshToken = typeof payload.refreshToken === "string" ? payload.refreshToken.trim() : "";
+    if (accessToken && refreshToken) {
+      void establishBrowserSupabaseSession(
+        {
+          access_token: accessToken,
+          refresh_token: refreshToken,
+        },
+        2200,
+      ).catch(() => null);
+    }
+    return {
+      user: payload.user as LoginAuthUser,
+      merchantId: typeof payload.merchantId === "string" ? payload.merchantId.trim() : "",
+    };
+  }
+
   useEffect(() => {
     let mounted = true;
     const gatewayProbe = canReachSupabaseGateway(2200)
@@ -370,18 +391,28 @@ function LoginPageInner() {
         });
     });
 
-    if (hasStoredBrowserSupabaseSessionTokens()) {
-      void readValidatedSessionUser()
-        .then((user) => {
+    void (async () => {
+      try {
+        if (hasStoredBrowserSupabaseSessionTokens()) {
+          const user = await readValidatedSessionUser();
           if (!mounted) return;
           if (user) {
-            void redirectToMerchantBackend(user);
+            await redirectToMerchantBackend(user);
+            return;
           }
-        })
-        .catch(() => {
-          // Ignore transient auth bootstrap errors to avoid runtime abort overlay.
-        });
-    }
+        }
+
+        const cookieBackedSession = await readValidatedCookieBackedSession();
+        if (!mounted) return;
+        if (cookieBackedSession?.user) {
+          await redirectToMerchantBackend(cookieBackedSession.user, cookieBackedSession.merchantId, {
+            withSignInBridge: false,
+          });
+        }
+      } catch {
+        // Ignore transient auth bootstrap errors to avoid runtime abort overlay.
+      }
+    })();
 
     return () => {
       mounted = false;
