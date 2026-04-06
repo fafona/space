@@ -86,7 +86,7 @@ test("publish rejects merchant requests without an authorized session", async ()
     assert.deepEqual(await response.json(), {
       ok: false,
       code: "unauthorized",
-      message: "褰撳墠浼氳瘽鏃犳潈鍙戝竷璇ュ晢鎴峰唴瀹广€?",
+      message: "??????????????",
       requestId: "merchant-unauthorized",
     });
   } finally {
@@ -145,7 +145,7 @@ test("publish rejects platform requests without a verified super-admin session",
     assert.deepEqual(await response.json(), {
       ok: false,
       code: "unauthorized",
-      message: "褰撳墠浼氳瘽鏃犳潈鍙戝竷骞冲彴鍐呭銆?",
+      message: "?????????????",
       requestId: "platform-unauthorized",
     });
   } finally {

@@ -131,7 +131,7 @@ export function createSuperAdminSessionToken(input: { deviceId: string; deviceLa
     issuedAt,
     expiresAt: issuedAt + SUPER_ADMIN_SESSION_TTL_MS,
     deviceId: String(input.deviceId ?? "").trim(),
-    deviceLabel: String(input.deviceLabel ?? "").trim() || "褰撳墠璁惧",
+    deviceLabel: String(input.deviceLabel ?? "").trim() || "????",
   };
   if (!payload.deviceId) return "";
   return signTokenPayload(payload);

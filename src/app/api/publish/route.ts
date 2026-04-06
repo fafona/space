@@ -551,7 +551,7 @@ export async function POST(request: Request) {
       const responseBody = {
         ok: false,
         code: "invalid_merchant_scope",
-        message: "缂哄皯鍙彂甯冪殑鍟嗘埛鑼冨洿銆?",
+        message: "???????????",
         requestId,
       };
       resultCache.set(requestId, { at: Date.now(), status, body: responseBody });
@@ -575,7 +575,7 @@ export async function POST(request: Request) {
         const responseBody = {
           ok: false,
           code: "unauthorized",
-          message: "褰撳墠浼氳瘽鏃犳潈鍙戝竷骞冲彴鍐呭銆?",
+          message: "?????????????",
           requestId,
         };
         resultCache.set(requestId, { at: Date.now(), status, body: responseBody });
@@ -588,7 +588,7 @@ export async function POST(request: Request) {
         const responseBody = {
           ok: false,
           code: "unauthorized",
-          message: "褰撳墠浼氳瘽鏃犳潈鍙戝竷璇ュ晢鎴峰唴瀹广€?",
+          message: "??????????????",
           requestId,
         };
         resultCache.set(requestId, { at: Date.now(), status, body: responseBody });
