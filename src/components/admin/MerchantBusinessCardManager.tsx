@@ -86,6 +86,17 @@ const CONTACT_FIELD_LABELS = Object.fromEntries(CONTACT_FIELDS.map((item) => [it
   string
 >;
 
+const INVOICE_FIELDS = [
+  { key: "name", label: "名称", summaryLabel: "开票名称", placeholder: "请输入开票名称" },
+  { key: "taxNumber", label: "税号", summaryLabel: "税号", placeholder: "请输入税号" },
+  { key: "address", label: "地址", summaryLabel: "开票地址", placeholder: "请输入开票地址" },
+] as const satisfies ReadonlyArray<{
+  key: keyof MerchantBusinessCardDraft["invoice"];
+  label: string;
+  summaryLabel: string;
+  placeholder: string;
+}>;
+
 const TEXT_LAYOUT_FIELDS: Array<{ key: MerchantBusinessCardFieldKey; label: string }> = [
   { key: "merchantName", label: "商户名称" },
   { key: "title", label: "职位" },
@@ -752,10 +763,21 @@ function buildContactPreviewRows(
     });
 }
 
+function buildInvoicePreviewRows(invoice: MerchantBusinessCardDraft["invoice"]) {
+  const rows: Array<{ label: string; value: string }> = [];
+  for (const { key, summaryLabel } of INVOICE_FIELDS) {
+    const value = normalizeText(invoice[key]);
+    if (!value) continue;
+    rows.push({ label: summaryLabel, value });
+  }
+  return rows;
+}
+
 function ContactCardSurface({
   name,
   targetUrl,
   contacts,
+  invoice,
   contactFieldOrder,
   imageUrl,
   imageHeight,
@@ -763,11 +785,12 @@ function ContactCardSurface({
   name: string;
   targetUrl: string;
   contacts: MerchantBusinessCardDraft["contacts"];
+  invoice: MerchantBusinessCardDraft["invoice"];
   contactFieldOrder: MerchantBusinessCardDraft["contactFieldOrder"];
   imageUrl?: string;
   imageHeight: number;
 }) {
-  const rows = buildContactPreviewRows(name, contacts, contactFieldOrder);
+  const rows = [...buildContactPreviewRows(name, contacts, contactFieldOrder), ...buildInvoicePreviewRows(invoice)];
   const displayName = normalizeText(name) || "未命名名片";
   const hasImage = Boolean(normalizeText(imageUrl));
   const domainLabel = normalizeText(targetUrl).replace(/^https?:\/\//i, "");
@@ -813,7 +836,7 @@ function ContactCardSurface({
           type="button"
           className="rounded-full border border-slate-300 bg-white px-5 py-3 text-base font-medium text-slate-900"
         >
-          打开网页
+          进入官网
         </button>
       </div>
 
@@ -1047,12 +1070,13 @@ export default function MerchantBusinessCardManager({
         name: draft.name,
         title: draft.title,
         contacts: draft.contacts,
+        invoice: draft.invoice,
         contactFieldOrder: draft.contactFieldOrder,
         contactOnlyFields: draft.contactOnlyFields,
         targetUrl: websiteUrl,
       }),
     });
-  }, [activeLinkShareKey, draft.contactFieldOrder, draft.contactOnlyFields, draft.contacts, draft.mode, draft.name, draft.title, websiteUrl]);
+  }, [activeLinkShareKey, draft.contactFieldOrder, draft.contactOnlyFields, draft.contacts, draft.invoice, draft.mode, draft.name, draft.title, websiteUrl]);
   const qrTargetUrl = draft.mode === "link" ? draftLinkUrl || websiteUrl : websiteUrl;
 
   useEffect(() => {
@@ -1351,6 +1375,7 @@ export default function MerchantBusinessCardManager({
         name: card.name,
         title: card.title,
         contacts: card.contacts,
+        invoice: card.invoice,
         contactFieldOrder: card.contactFieldOrder,
         contactOnlyFields: card.contactOnlyFields,
         targetUrl,
@@ -1950,6 +1975,36 @@ export default function MerchantBusinessCardManager({
                     </div>
                   </section>
                   <section className="space-y-2.5 rounded-xl border bg-slate-50 p-3 xl:col-span-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="text-sm font-semibold text-slate-900">开票信息</div>
+                      <div className="text-[11px] text-slate-500">联系卡中会显示复制按钮，方便客户直接复制。</div>
+                    </div>
+                    <div className="space-y-2">
+                      {INVOICE_FIELDS.map(({ key, label, placeholder }) => (
+                        <div
+                          key={key}
+                          className="flex flex-col gap-2 rounded-xl border bg-white px-3 py-2.5 text-xs text-slate-600 md:grid md:grid-cols-[88px_minmax(0,1fr)] md:items-center"
+                        >
+                          <div className="text-xs font-medium text-slate-700">{label}</div>
+                          <input
+                            className="min-w-0 rounded border bg-white px-3 py-2 text-sm"
+                            value={draft.invoice[key]}
+                            onChange={(event) =>
+                              applyDraft((current) => ({
+                                ...current,
+                                invoice: {
+                                  ...current.invoice,
+                                  [key]: event.target.value,
+                                },
+                              }))
+                            }
+                            placeholder={placeholder}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                  <section className="space-y-2.5 rounded-xl border bg-slate-50 p-3 xl:col-span-2">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div className="text-sm font-semibold text-slate-900">自定义文本</div>
                       <button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={addCustomText}>新增文本</button>
@@ -2192,6 +2247,7 @@ export default function MerchantBusinessCardManager({
                           name={normalizeText(draft.name) || "名片预览"}
                           targetUrl={websiteUrl}
                           contacts={draft.contacts}
+                          invoice={draft.invoice}
                           contactFieldOrder={draft.contactFieldOrder}
                           imageUrl={normalizeText(draft.contactPageImageUrl) || undefined}
                           imageHeight={draft.contactPageImageHeight}
@@ -2433,6 +2489,7 @@ export default function MerchantBusinessCardManager({
                       name={previewName}
                       targetUrl={previewTargetUrl}
                       contacts={previewContacts}
+                      invoice={previewAsset?.invoice || draft.invoice}
                       contactFieldOrder={previewContactFieldOrder}
                       imageUrl={previewContactImageUrl}
                       imageHeight={previewContactImageHeight}
@@ -2991,6 +3048,7 @@ export default function MerchantBusinessCardManager({
             name: nextDraft.name,
             title: nextDraft.title,
             contacts: nextDraft.contacts,
+            invoice: nextDraft.invoice,
             contactFieldOrder: nextDraft.contactFieldOrder,
             contactOnlyFields: nextDraft.contactOnlyFields,
             targetUrl: websiteUrl,
@@ -3067,6 +3125,7 @@ export default function MerchantBusinessCardManager({
           name: card.name,
           title: card.title,
           contacts: card.contacts,
+          invoice: card.invoice,
           contactFieldOrder: card.contactFieldOrder,
           contactOnlyFields: card.contactOnlyFields,
           targetUrl,
@@ -3083,6 +3142,7 @@ export default function MerchantBusinessCardManager({
     name: string;
     title: string;
     contacts: MerchantBusinessCardDraft["contacts"];
+    invoice: MerchantBusinessCardDraft["invoice"];
     contactFieldOrder: MerchantBusinessCardDraft["contactFieldOrder"];
     contactOnlyFields: MerchantBusinessCardDraft["contactOnlyFields"];
     targetUrl: string;
@@ -3112,6 +3172,9 @@ export default function MerchantBusinessCardManager({
       phones: normalizePhoneList(input.contacts.phones ?? []),
       email: normalizeText(input.contacts.email),
       address: normalizeText(input.contacts.address),
+      invoiceName: normalizeText(input.invoice.name),
+      invoiceTaxNumber: normalizeText(input.invoice.taxNumber),
+      invoiceAddress: normalizeText(input.invoice.address),
       wechat: normalizeText(input.contacts.wechat),
       whatsapp: normalizeText(input.contacts.whatsapp),
       twitter: normalizeText(input.contacts.twitter),

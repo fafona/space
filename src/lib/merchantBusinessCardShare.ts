@@ -44,6 +44,9 @@ export type MerchantBusinessCardShareContact = {
   contactOnlyFields?: Partial<MerchantBusinessCardContactOnlyFields>;
   email?: string;
   address?: string;
+  invoiceName?: string;
+  invoiceTaxNumber?: string;
+  invoiceAddress?: string;
   wechat?: string;
   whatsapp?: string;
   twitter?: string;
@@ -412,6 +415,15 @@ export function normalizeMerchantBusinessCardShareContact(
     ...(clampContactText(source.address, 240)
       ? { address: clampContactText(source.address, 240) }
       : {}),
+    ...(clampContactText(source.invoiceName, 160)
+      ? { invoiceName: clampContactText(source.invoiceName, 160) }
+      : {}),
+    ...(clampContactText(source.invoiceTaxNumber, 120)
+      ? { invoiceTaxNumber: clampContactText(source.invoiceTaxNumber, 120) }
+      : {}),
+    ...(clampContactText(source.invoiceAddress, 240)
+      ? { invoiceAddress: clampContactText(source.invoiceAddress, 240) }
+      : {}),
     ...(clampContactText(source.wechat, 120)
       ? { wechat: clampContactText(source.wechat, 120) }
       : {}),
@@ -549,6 +561,9 @@ export function buildMerchantBusinessCardShareLegacyFingerprint(
       : ""),
     contact.email ?? "",
     contact.address ?? "",
+    contact.invoiceName ?? "",
+    contact.invoiceTaxNumber ?? "",
+    contact.invoiceAddress ?? "",
     contact.wechat ?? "",
     contact.whatsapp ?? "",
     contact.twitter ?? "",
@@ -701,6 +716,15 @@ export function buildMerchantBusinessCardShareUrl(input: {
   if (payload.contact?.address) {
     shareUrl.searchParams.set("address", payload.contact.address);
   }
+  if (payload.contact?.invoiceName) {
+    shareUrl.searchParams.set("invoiceName", payload.contact.invoiceName);
+  }
+  if (payload.contact?.invoiceTaxNumber) {
+    shareUrl.searchParams.set("invoiceTaxNumber", payload.contact.invoiceTaxNumber);
+  }
+  if (payload.contact?.invoiceAddress) {
+    shareUrl.searchParams.set("invoiceAddress", payload.contact.invoiceAddress);
+  }
   if (payload.contact?.wechat) {
     shareUrl.searchParams.set("wechat", payload.contact.wechat);
   }
@@ -803,6 +827,9 @@ export function parseMerchantBusinessCardShareParams(
         ) as Partial<MerchantBusinessCardContactOnlyFields>,
         email: readSearchParam(searchParams, "email"),
         address: readSearchParam(searchParams, "address"),
+        invoiceName: readSearchParam(searchParams, "invoiceName"),
+        invoiceTaxNumber: readSearchParam(searchParams, "invoiceTaxNumber"),
+        invoiceAddress: readSearchParam(searchParams, "invoiceAddress"),
         wechat: readSearchParam(searchParams, "wechat"),
         whatsapp: readSearchParam(searchParams, "whatsapp"),
         twitter: readSearchParam(searchParams, "twitter"),
@@ -970,6 +997,9 @@ export function buildMerchantBusinessCardLegacyContactDownloadUrl(input: {
   }
   if (payload.contact?.email) url.searchParams.set("email", payload.contact.email);
   if (payload.contact?.address) url.searchParams.set("address", payload.contact.address);
+  if (payload.contact?.invoiceName) url.searchParams.set("invoiceName", payload.contact.invoiceName);
+  if (payload.contact?.invoiceTaxNumber) url.searchParams.set("invoiceTaxNumber", payload.contact.invoiceTaxNumber);
+  if (payload.contact?.invoiceAddress) url.searchParams.set("invoiceAddress", payload.contact.invoiceAddress);
   if (payload.contact?.wechat) url.searchParams.set("wechat", payload.contact.wechat);
   if (payload.contact?.whatsapp) url.searchParams.set("whatsapp", payload.contact.whatsapp);
   if (payload.contact?.twitter) url.searchParams.set("twitter", payload.contact.twitter);
@@ -992,6 +1022,16 @@ export function buildMerchantBusinessCardVCard(payload: MerchantBusinessCardShar
   const displayName = contact?.displayName || normalizeText(payload.name) || "Business Card";
   const organization = contact?.organization || normalizeText(payload.name);
   const structuredAddress = parseStructuredAddress(contact?.address || "");
+  const noteLines = [
+    contact?.note || "",
+    contact?.invoiceName ? `开票名称: ${contact.invoiceName}` : "",
+    contact?.invoiceTaxNumber ? `税号: ${contact.invoiceTaxNumber}` : "",
+    contact?.invoiceAddress ? `开票地址: ${contact.invoiceAddress}` : "",
+  ]
+    .flatMap((value) => String(value || "").split("\n"))
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line, index, lines) => lines.indexOf(line) === index);
   const lines = [
     "BEGIN:VCARD",
     "VERSION:3.0",
@@ -1026,8 +1066,8 @@ export function buildMerchantBusinessCardVCard(payload: MerchantBusinessCardShar
   if (contact?.websiteUrl) {
     lines.push(`URL:${escapeVCardValue(contact.websiteUrl)}`);
   }
-  if (contact?.note) {
-    lines.push(`NOTE:${escapeVCardValue(contact.note)}`);
+  if (noteLines.length > 0) {
+    lines.push(`NOTE:${escapeVCardValue(noteLines.join("\n"))}`);
   }
 
   lines.push("END:VCARD");
@@ -1055,6 +1095,9 @@ function countShareContactFields(contact?: MerchantBusinessCardShareContact | nu
     "phone",
     "email",
     "address",
+    "invoiceName",
+    "invoiceTaxNumber",
+    "invoiceAddress",
     "wechat",
     "whatsapp",
     "twitter",

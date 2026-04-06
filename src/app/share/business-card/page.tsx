@@ -43,12 +43,18 @@ function renderContactSummary(payload: NonNullable<Awaited<ReturnType<typeof res
     payload.contact?.email || "",
     payload.contact?.address || "",
   ].filter(Boolean);
+  const invoiceRows = [
+    payload.contact?.invoiceName ? `开票名称: ${payload.contact.invoiceName}` : "",
+    payload.contact?.invoiceTaxNumber ? `税号: ${payload.contact.invoiceTaxNumber}` : "",
+    payload.contact?.invoiceAddress ? `开票地址: ${payload.contact.invoiceAddress}` : "",
+  ].filter(Boolean);
   const extraRows = (payload.contact?.note || "")
     .split("\n")
     .map((row) => row.trim())
     .filter(Boolean);
+  const mergedExtraRows = [...invoiceRows, ...extraRows].filter((row, index, rows) => rows.indexOf(row) === index);
 
-  if (primaryRows.length === 0 && extraRows.length === 0) return null;
+  if (primaryRows.length === 0 && mergedExtraRows.length === 0) return null;
 
   return (
     <div
@@ -65,9 +71,9 @@ function renderContactSummary(payload: NonNullable<Awaited<ReturnType<typeof res
           </div>
         ))}
 
-        {extraRows.length > 0 ? (
+        {mergedExtraRows.length > 0 ? (
           <div className="grid gap-x-6 gap-y-2 pt-1 text-sm leading-7 text-slate-700 sm:grid-cols-2">
-            {extraRows.map((row) => (
+            {mergedExtraRows.map((row) => (
               <div key={row}>{row}</div>
             ))}
           </div>
@@ -275,7 +281,7 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
                 href={payload.targetUrl}
                 className="rounded-full border border-slate-300 bg-white px-5 py-3 text-center text-base font-medium text-slate-900 transition hover:bg-slate-50"
               >
-                打开网页
+                进入官网
               </a>
             </div>
             <div className="mt-3 text-xs leading-6 text-slate-500">
@@ -304,7 +310,7 @@ export default async function ShareBusinessCardPage({ searchParams }: ShareBusin
                 href={payload.targetUrl}
                 className="rounded-full bg-slate-900 px-5 py-3 text-center text-base font-semibold text-white transition hover:bg-slate-700"
               >
-                打开网页
+                进入官网
               </a>
               {shareUrl ? (
                 <a

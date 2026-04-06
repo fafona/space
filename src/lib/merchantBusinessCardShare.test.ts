@@ -235,6 +235,9 @@ test("normalizeMerchantBusinessCardShareContact keeps useful contact fields and 
         organization: " fafona ",
         phone: " 633130577 ",
         phones: [" 633130577 ", " 666888999 ", " 777000111 "],
+        invoiceName: " Fafona Trading ",
+        invoiceTaxNumber: " ESB12345678 ",
+        invoiceAddress: " Sevilla, Spain ",
         douyin: " fafona_douyin ",
         contactOnlyFields: {
           douyin: true,
@@ -249,6 +252,9 @@ test("normalizeMerchantBusinessCardShareContact keeps useful contact fields and 
       organization: "fafona",
       phone: "633130577",
       phones: ["633130577", "666888999"],
+      invoiceName: "Fafona Trading",
+      invoiceTaxNumber: "ESB12345678",
+      invoiceAddress: "Sevilla, Spain",
       douyin: "fafona_douyin",
       contactOnlyFields: {
         douyin: true,
@@ -274,6 +280,28 @@ test("share helpers preserve douyin contact params", () => {
 
   const parsed = parseMerchantBusinessCardShareParams(new URL(shareUrl).searchParams, "https://faolla.com");
   assert.equal(parsed?.contact?.douyin, "fafona_douyin");
+});
+
+test("share helpers preserve invoice contact params", () => {
+  const shareUrl = buildMerchantBusinessCardShareUrl({
+    origin: "https://faolla.com",
+    name: "fafona",
+    targetUrl: "https://fafona.faolla.com",
+    contact: {
+      displayName: "Felix",
+      invoiceName: "Fafona Trading",
+      invoiceTaxNumber: "ESB12345678",
+      invoiceAddress: "Sevilla, Spain",
+    },
+  });
+
+  assert.match(shareUrl, /invoiceName=Fafona\+Trading|invoiceName=Fafona%20Trading/);
+  assert.match(shareUrl, /invoiceTaxNumber=ESB12345678/);
+
+  const parsed = parseMerchantBusinessCardShareParams(new URL(shareUrl).searchParams, "https://faolla.com");
+  assert.equal(parsed?.contact?.invoiceName, "Fafona Trading");
+  assert.equal(parsed?.contact?.invoiceTaxNumber, "ESB12345678");
+  assert.equal(parsed?.contact?.invoiceAddress, "Sevilla, Spain");
 });
 
 test("share helpers preserve explicit contact field order", () => {

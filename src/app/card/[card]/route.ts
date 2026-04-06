@@ -77,11 +77,14 @@ function buildAddressHref(rawAddress?: string) {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
 }
 
-function buildInlineSvgIcon(kind: "phone" | "map") {
+function buildInlineSvgIcon(kind: "phone" | "map" | "copy") {
   if (kind === "phone") {
     return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.62 10.79a15.53 15.53 0 0 0 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1C10.4 21 3 13.6 3 4c0-.55.45-1 1-1h3.49c.55 0 1 .45 1 1 0 1.24.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.19 2.2z"/></svg>`;
   }
-  return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a7 7 0 0 0-7 7c0 4.74 6.14 11.84 6.4 12.14a.8.8 0 0 0 1.2 0C12.86 20.84 19 13.74 19 9a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5z"/></svg>`;
+  if (kind === "map") {
+    return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a7 7 0 0 0-7 7c0 4.74 6.14 11.84 6.4 12.14a.8.8 0 0 0 1.2 0C12.86 20.84 19 13.74 19 9a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5z"/></svg>`;
+  }
+  return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 9a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-7a2 2 0 0 1-2-2V9zm-5 6V6a2 2 0 0 1 2-2h8v2H6v9H4z"/></svg>`;
 }
 
 function buildSocialHref(label: string, rawValue?: string) {
@@ -168,6 +171,14 @@ function buildDiscordActionHtml(rawValue?: string) {
 }
 
 type SummaryRow = { label: string; value: string; actionHtml: string };
+
+function buildCopyActionHtml(rawValue: string, label: string) {
+  const normalizedValue = normalizeText(rawValue);
+  if (!normalizedValue) return "";
+  return `<button class="inline-action inline-action-button" type="button" aria-label="复制${escapeHtml(label)}" title="复制${escapeHtml(label)}" style="background:#0f172a" data-copy-value="${escapeHtml(normalizedValue)}" data-copy-label="${escapeHtml(label)}">
+    ${buildInlineSvgIcon("copy")}
+  </button>`;
+}
 
 function buildSummaryActionHtmlFromKey(key: MerchantBusinessCardContactDisplayKey, label: string, value: string) {
   const normalizedValue = normalizeText(value);
@@ -904,6 +915,20 @@ function buildInlineI18nScript() {
       });
     });
 
+    const copyButtons = Array.from(document.querySelectorAll("[data-copy-value]"));
+    copyButtons.forEach((button) => {
+      button.addEventListener("click", async (event) => {
+        event.preventDefault();
+        const target = event.currentTarget;
+        if (!(target instanceof HTMLElement)) return;
+        const copyValue = String(target.dataset.copyValue || "").trim();
+        const copyLabel = String(target.dataset.copyLabel || "").trim() || "内容";
+        if (!copyValue) return;
+        const copied = await copyWechatId(copyValue);
+        showWechatToast(copied ? "已复制" + copyLabel : "请手动复制" + copyLabel + "：" + copyValue);
+      });
+    });
+
     const openTargetButtons = Array.from(document.querySelectorAll("[data-open-target-url]"));
     openTargetButtons.forEach((button) => {
       button.addEventListener("click", (event) => {
@@ -980,6 +1005,27 @@ function buildContactSummaryHtmlLegacy(input: {
             iconSvg: buildInlineSvgIcon("map"),
             bgColor: "#EA4335",
           }),
+        }
+      : null,
+    input.contact?.invoiceName
+      ? {
+          label: "开票名称",
+          value: input.contact.invoiceName,
+          actionHtml: buildCopyActionHtml(input.contact.invoiceName, "开票名称"),
+        }
+      : null,
+    input.contact?.invoiceTaxNumber
+      ? {
+          label: "税号",
+          value: input.contact.invoiceTaxNumber,
+          actionHtml: buildCopyActionHtml(input.contact.invoiceTaxNumber, "税号"),
+        }
+      : null,
+    input.contact?.invoiceAddress
+      ? {
+          label: "开票地址",
+          value: input.contact.invoiceAddress,
+          actionHtml: buildCopyActionHtml(input.contact.invoiceAddress, "开票地址"),
         }
       : null,
     input.contact?.wechat
@@ -1153,6 +1199,29 @@ function buildOrderedContactSummaryHtml(input: {
     }) || "";
   const orderedKeys = normalizeMerchantBusinessCardContactFieldOrder(contact.contactFieldOrder);
   const rowsByKey: Partial<Record<MerchantBusinessCardContactDisplayKey, SummaryRow[]>> = {};
+  const invoiceRows = [
+    contact.invoiceName
+      ? {
+          label: "开票名称",
+          value: contact.invoiceName,
+          actionHtml: buildCopyActionHtml(contact.invoiceName, "开票名称"),
+        }
+      : null,
+    contact.invoiceTaxNumber
+      ? {
+          label: "税号",
+          value: contact.invoiceTaxNumber,
+          actionHtml: buildCopyActionHtml(contact.invoiceTaxNumber, "税号"),
+        }
+      : null,
+    contact.invoiceAddress
+      ? {
+          label: "开票地址",
+          value: contact.invoiceAddress,
+          actionHtml: buildCopyActionHtml(contact.invoiceAddress, "开票地址"),
+        }
+      : null,
+  ].filter((item): item is SummaryRow => !!item);
 
   const pushRow = (key: MerchantBusinessCardContactDisplayKey, row: SummaryRow | null) => {
     if (!row) return;
@@ -1397,6 +1466,7 @@ function buildOrderedContactSummaryHtml(input: {
 
   const fallbackRowsByKey = buildContactNoteFallbackRows(contact.note);
   const rows: SummaryRow[] = [];
+  let appendedInvoiceRows = false;
   if (contact.title) {
     rows.push({
       label: "职位",
@@ -1413,6 +1483,14 @@ function buildOrderedContactSummaryHtml(input: {
       mergedRows.push(fallbackRow);
     }
     rows.push(...mergedRows);
+    if (key === "address" && invoiceRows.length > 0) {
+      rows.push(...invoiceRows);
+      appendedInvoiceRows = true;
+    }
+  }
+
+  if (!appendedInvoiceRows && invoiceRows.length > 0) {
+    rows.push(...invoiceRows);
   }
 
   if (rows.length === 0) {
@@ -1713,7 +1791,7 @@ function buildShareCardHtml(input: {
               ? `<a class="button" href="${escapeHtml(input.contactUrl)}">一键保存到通讯录</a>`
               : ""
           }
-          <button class="button secondary" type="button" data-open-target-url="${targetUrl}">打开网页</button>
+          <button class="button secondary" type="button" data-open-target-url="${targetUrl}">进入官网</button>
         </div>
         <div class="footer">
           名片服务由 <a href="https://www.faolla.com" target="_blank" rel="noopener noreferrer" data-no-translate="1">www.faolla.com</a> 提供

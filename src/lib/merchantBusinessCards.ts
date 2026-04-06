@@ -79,6 +79,12 @@ export type MerchantBusinessCardContacts = {
   xiaohongshu: string;
 };
 
+export type MerchantBusinessCardInvoiceInfo = {
+  name: string;
+  taxNumber: string;
+  address: string;
+};
+
 export type MerchantBusinessCardContactDisplayKey = Exclude<keyof MerchantBusinessCardContacts, "phones">;
 
 export const MERCHANT_BUSINESS_CARD_CONTACT_FIELD_KEYS = [
@@ -124,6 +130,7 @@ export type MerchantBusinessCardDraft = {
   showWebsiteUrl: boolean;
   showQr: boolean;
   contacts: MerchantBusinessCardContacts;
+  invoice: MerchantBusinessCardInvoiceInfo;
   contactFieldOrder: MerchantBusinessCardContactDisplayKey[];
   contactOnlyFields: MerchantBusinessCardContactOnlyFields;
   customTexts: MerchantBusinessCardCustomText[];
@@ -456,6 +463,11 @@ export function createDefaultMerchantBusinessCardDraft(
       douyin: "",
       xiaohongshu: "",
     },
+    invoice: {
+      name: "",
+      taxNumber: "",
+      address: "",
+    },
     contactFieldOrder,
     contactOnlyFields: createDefaultContactOnlyFields(),
     customTexts: [],
@@ -581,6 +593,11 @@ export function normalizeMerchantBusinessCardDraft(value: unknown): MerchantBusi
       tiktok: normalizeText(source.contacts?.tiktok),
       douyin: normalizeText((source.contacts as { douyin?: unknown } | undefined)?.douyin),
       xiaohongshu: normalizeText(source.contacts?.xiaohongshu),
+    },
+    invoice: {
+      name: normalizeText((source.invoice as { name?: unknown } | undefined)?.name),
+      taxNumber: normalizeText((source.invoice as { taxNumber?: unknown } | undefined)?.taxNumber),
+      address: normalizeText((source.invoice as { address?: unknown } | undefined)?.address),
     },
     contactFieldOrder,
     contactOnlyFields: {

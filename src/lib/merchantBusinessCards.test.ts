@@ -56,6 +56,11 @@ test("default business card draft prefills merchant profile fields", () => {
   assert.equal(draft.contacts.email, "caimin00x@gmail.com");
   assert.equal(draft.contacts.address, "C. Transporte, 12 / Sevilla / Sevilla / Spain");
   assert.equal(draft.contacts.douyin, "");
+  assert.deepEqual(draft.invoice, {
+    name: "",
+    taxNumber: "",
+    address: "",
+  });
   assert.deepEqual(draft.contactFieldOrder.slice(0, 4), ["contactName", "phone", "email", "address"]);
   assert.deepEqual(draft.textLayout.douyin, { x: 360, y: 310 });
   assert.equal(draft.contactOnlyFields.phone, false);
@@ -144,6 +149,22 @@ test("normalizeMerchantBusinessCardDraft preserves douyin and contact-only setti
   assert.equal(draft.contactOnlyFields.phone, true);
   assert.equal(draft.contactOnlyFields.douyin, true);
   assert.equal(draft.contactOnlyFields.tiktok, false);
+});
+
+test("normalizeMerchantBusinessCardDraft preserves invoice info", () => {
+  const draft = normalizeMerchantBusinessCardDraft({
+    invoice: {
+      name: "Fafona Trading",
+      taxNumber: "ESB12345678",
+      address: "Sevilla, Spain",
+    },
+  });
+
+  assert.deepEqual(draft.invoice, {
+    name: "Fafona Trading",
+    taxNumber: "ESB12345678",
+    address: "Sevilla, Spain",
+  });
 });
 
 test("normalizeMerchantBusinessCardDraft supports hiding website url and custom texts", () => {
