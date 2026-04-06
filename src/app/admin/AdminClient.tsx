@@ -8999,6 +8999,15 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       return normalized;
     }
   }, [locale, supportMobileFaollaHref]);
+  const supportMobileFaollaContent = (
+    <div className="min-h-0 flex-1 overflow-hidden bg-white pb-[calc(env(safe-area-inset-bottom)+6.25rem)]">
+      <iframe
+        title="Faolla.com"
+        src={supportMobileFaollaTargetHref}
+        className="h-full w-full border-0 bg-white"
+      />
+    </div>
+  );
   const supportSelfSignature = normalizeSupportDisplayValue(supportSelfProfile?.signature);
   const supportSelfChatBusinessCard =
     resolveMerchantBusinessCardForChatDisplay(supportSelfBusinessCards) ??
@@ -12274,7 +12283,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       : supportMobileHomeTab === "business"
         ? supportMobileBusinessContent
         : supportMobileHomeTab === "faolla"
-          ? supportMobileConversationsContent
+          ? supportMobileFaollaContent
           : supportMobileSelfContent;
   const isSupportMobileKeyboardVisible = mobileVisualViewportInsets.bottom > 0;
 
@@ -12323,7 +12332,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             {
               key: "faolla",
               label: "Faolla",
-              targetHref: supportMobileFaollaTargetHref,
               icon: (
                 <path
                   d="M12 4 5.8 6.4v5.8c0 3.7 2.7 6.7 6.2 7.4 3.5-.7 6.2-3.7 6.2-7.4V6.4L12 4Zm0 4.1v4.4m0 0 2.3 2.2M12 12.5 9.7 14.7"
@@ -12352,7 +12360,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               ),
             },
           ] as const).map((item) => {
-            const active = !("targetHref" in item) && supportMobileHomeTab === item.key;
+            const active = supportMobileHomeTab === item.key;
             return (
               <button
                 key={item.key}
@@ -12360,13 +12368,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 className={`relative flex min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-[24px] px-2 py-2 text-[11px] font-medium transition ${
                   active ? "bg-slate-900 text-white shadow-sm" : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
                 }`}
-                onClick={() => {
-                  if ("targetHref" in item) {
-                    window.location.assign(item.targetHref);
-                    return;
-                  }
-                  setSupportMobileHomeTab(item.key);
-                }}
+                onClick={() => setSupportMobileHomeTab(item.key)}
               >
                 {item.key === "conversations" && supportUnreadBadgeCount > 0 ? (
                   <span className="absolute right-2 top-1.5 inline-flex min-w-[18px] items-center justify-center rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white shadow-[0_8px_18px_rgba(244,63,94,0.28)]">
