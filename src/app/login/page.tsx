@@ -52,6 +52,12 @@ type ServerSignInResult = {
   needsJustSignedInBridge: boolean;
 };
 
+type LoginVisualViewportState = {
+  width: number;
+  height: number;
+  bottom: number;
+};
+
 function trimTrailingSlash(value: string) {
   return value.replace(/\/+$/g, "");
 }
@@ -100,6 +106,31 @@ function resolveAuthEmailRedirectOrigin() {
   return "";
 }
 
+function readLoginVisualViewportState(): LoginVisualViewportState {
+  if (typeof window === "undefined") {
+    return { width: 0, height: 0, bottom: 0 };
+  }
+  const visualViewport = window.visualViewport;
+  const widthRaw =
+    visualViewport && Number.isFinite(visualViewport.width) && visualViewport.width > 0
+      ? visualViewport.width
+      : window.innerWidth;
+  const heightRaw =
+    visualViewport && Number.isFinite(visualViewport.height) && visualViewport.height > 0
+      ? visualViewport.height
+      : window.innerHeight;
+  const topRaw =
+    visualViewport && Number.isFinite(visualViewport.offsetTop)
+      ? visualViewport.offsetTop
+      : 0;
+  const bottomRaw = window.innerHeight - (heightRaw + topRaw);
+  return {
+    width: Math.max(0, Math.round(widthRaw)),
+    height: Math.max(0, Math.round(heightRaw)),
+    bottom: Number.isFinite(bottomRaw) ? Math.max(0, Math.round(bottomRaw)) : 0,
+  };
+}
+
 function LoginPageInner() {
   const { locale, t } = useI18n();
   const searchParams = useSearchParams();
@@ -118,6 +149,9 @@ function LoginPageInner() {
   const [pendingAction, setPendingAction] = useState<
     "signin" | "signup" | "forgot" | "resend" | "verify_reset_code" | null
   >(null);
+  const [visualViewportState, setVisualViewportState] = useState<LoginVisualViewportState>(() =>
+    readLoginVisualViewportState(),
+  );
   const requestedRedirectPath = useMemo(() => {
     const raw = (searchParams.get("redirect") ?? "").trim();
     if (!raw.startsWith("/") || raw.startsWith("//")) return "";
@@ -238,6 +272,29 @@ function LoginPageInner() {
       timers.forEach((timer) => window.clearTimeout(timer));
     };
   }, [loggedOut]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const syncVisualViewportState = () => {
+      const next = readLoginVisualViewportState();
+      setVisualViewportState((current) =>
+        current.width === next.width && current.height === next.height && current.bottom === next.bottom
+          ? current
+          : next,
+      );
+    };
+    syncVisualViewportState();
+    window.addEventListener("resize", syncVisualViewportState);
+    window.addEventListener("orientationchange", syncVisualViewportState);
+    window.visualViewport?.addEventListener("resize", syncVisualViewportState);
+    window.visualViewport?.addEventListener("scroll", syncVisualViewportState);
+    return () => {
+      window.removeEventListener("resize", syncVisualViewportState);
+      window.removeEventListener("orientationchange", syncVisualViewportState);
+      window.visualViewport?.removeEventListener("resize", syncVisualViewportState);
+      window.visualViewport?.removeEventListener("scroll", syncVisualViewportState);
+    };
+  }, []);
 
   const redirectToMerchantBackend = useCallback(
     async (
@@ -835,9 +892,21 @@ function LoginPageInner() {
     "w-full rounded-[20px] border border-slate-200 bg-white px-4 py-3.5 text-[16px] text-slate-900 shadow-[0_10px_28px_rgba(15,23,42,0.06)] outline-none transition placeholder:text-slate-400 focus:border-slate-900 focus:ring-4 focus:ring-slate-900/8 md:rounded-[22px] md:py-4";
   const secondaryButtonClassName =
     "rounded-[18px] border border-slate-200 bg-white/88 px-4 py-3 text-sm font-medium text-slate-700 shadow-[0_8px_24px_rgba(15,23,42,0.06)] transition hover:border-slate-300 hover:bg-white disabled:opacity-50 md:rounded-[20px]";
+  const isMobileViewport = visualViewportState.width > 0 && visualViewportState.width < 768;
+  const isMobileKeyboardOpen = isMobileViewport && visualViewportState.bottom >= 120;
+  const mobileViewportStyle =
+    isMobileViewport && visualViewportState.height > 0
+      ? {
+          height: `${visualViewportState.height}px`,
+          minHeight: `${visualViewportState.height}px`,
+        }
+      : undefined;
 
   return (
-    <main className="relative h-[100dvh] min-h-screen overflow-hidden overscroll-none bg-[#081121] text-slate-900">
+    <main
+      className="relative h-[100dvh] min-h-screen overflow-hidden overscroll-none bg-[#081121] text-slate-900"
+      style={mobileViewportStyle}
+    >
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(56,189,248,0.22),_transparent_34%),radial-gradient(circle_at_85%_18%,_rgba(45,212,191,0.18),_transparent_26%),linear-gradient(180deg,_#081121_0%,_#101b33_56%,_#eaf1ff_100%)]" />
       <div className="absolute -left-16 top-20 h-48 w-48 rounded-full bg-cyan-300/20 blur-3xl" />
       <div className="absolute right-[-3rem] top-40 h-56 w-56 rounded-full bg-emerald-300/16 blur-3xl" />
@@ -845,7 +914,11 @@ function LoginPageInner() {
 
       <div className="relative mx-auto flex h-full w-full max-w-6xl flex-col md:min-h-screen md:px-6 md:py-8">
         <div className="flex h-full w-full flex-col overflow-hidden md:min-h-0 md:flex-1 md:flex-row md:rounded-[34px] md:border md:border-white/14 md:bg-white/8 md:shadow-[0_32px_120px_rgba(8,17,33,0.4)]">
-          <section className="relative shrink-0 px-5 pb-4 pt-[calc(env(safe-area-inset-top)+0.875rem)] text-white sm:px-6 md:flex md:w-[44%] md:flex-col md:px-10 md:py-12">
+          <section
+            className={`relative shrink-0 px-5 pb-4 pt-[calc(env(safe-area-inset-top)+0.875rem)] text-white sm:px-6 md:flex md:w-[44%] md:flex-col md:px-10 md:py-12 ${
+              isMobileKeyboardOpen ? "hidden md:flex" : ""
+            }`}
+          >
             <div className="inline-flex w-fit items-center gap-3 rounded-full border border-white/14 bg-white/10 px-4 py-2 text-xs font-medium tracking-[0.24em] text-cyan-50/90 uppercase backdrop-blur">
               <span className="inline-flex h-2 w-2 rounded-full bg-emerald-300" />
               {secureAccessLabel}
@@ -887,8 +960,18 @@ function LoginPageInner() {
             </div>
           </section>
 
-          <section className="relative flex min-h-0 flex-1 flex-col rounded-t-[28px] bg-[linear-gradient(180deg,_rgba(248,251,255,0.96)_0%,_#ffffff_34%,_#f8fbff_100%)] px-5 pb-[calc(env(safe-area-inset-bottom)+0.9rem)] pt-4 shadow-[0_-24px_60px_rgba(8,17,33,0.24)] sm:px-6 md:rounded-none md:px-10 md:py-12 md:shadow-none">
-            <div className="mx-auto flex h-full min-h-0 w-full max-w-md flex-col justify-center">
+          <section
+            className={`relative flex min-h-0 flex-1 flex-col bg-[linear-gradient(180deg,_rgba(248,251,255,0.96)_0%,_#ffffff_34%,_#f8fbff_100%)] px-5 pb-[calc(env(safe-area-inset-bottom)+0.9rem)] sm:px-6 md:rounded-none md:px-10 md:py-12 md:shadow-none ${
+              isMobileKeyboardOpen
+                ? "pt-[calc(env(safe-area-inset-top)+0.85rem)] shadow-none"
+                : "rounded-t-[28px] pt-4 shadow-[0_-24px_60px_rgba(8,17,33,0.24)]"
+            }`}
+          >
+            <div
+              className={`mx-auto flex h-full min-h-0 w-full max-w-md flex-col ${
+                isMobileKeyboardOpen ? "justify-start pt-1" : "justify-center"
+              }`}
+            >
               <div className="space-y-4 md:space-y-6">
                 <div className="space-y-1.5 md:space-y-2">
                   <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">Account</div>
