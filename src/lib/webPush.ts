@@ -174,7 +174,7 @@ export async function notifyMerchantPushSubscribers(
         url: input.url,
         tag: input.tag,
         badgeCount: record.badgeCount,
-        icon: trimText(input.icon) || "/faolla-app-icon.svg",
+        icon: trimText(input.icon) || "/faolla-app-icon-192.png",
       });
       if (result.ok) {
         delivered += 1;

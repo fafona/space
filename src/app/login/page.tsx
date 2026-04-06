@@ -852,8 +852,15 @@ function LoginPageInner() {
             </div>
 
             <div className="mt-4 flex items-center gap-3 md:mt-7 md:gap-4">
-              <div className="flex h-12 w-12 items-center justify-center rounded-[18px] bg-white/14 text-lg font-semibold tracking-[0.18em] text-white shadow-[0_16px_40px_rgba(8,17,33,0.28)] backdrop-blur md:h-16 md:w-16 md:rounded-[24px] md:text-2xl">
-                MS
+              <div className="h-12 w-12 overflow-hidden rounded-[18px] shadow-[0_16px_40px_rgba(8,17,33,0.28)] md:h-16 md:w-16 md:rounded-[24px]">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src="/faolla-login-logo.png"
+                  alt="Faolla logo"
+                  className="h-full w-full object-cover"
+                  loading="eager"
+                  decoding="async"
+                />
               </div>
               <div>
                 <div className="text-xs font-medium uppercase tracking-[0.28em] text-slate-200/72">Merchant Space</div>
