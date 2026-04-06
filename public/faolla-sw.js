@@ -1,6 +1,6 @@
 const FAOLLA_BADGE_CACHE = "faolla-badge-state-v1";
 const FAOLLA_BADGE_STATE_URL = "/__faolla_badge_state__";
-const FAOLLA_DEFAULT_ICON = "/faolla-app-icon-192.png";
+const FAOLLA_DEFAULT_ICON = "/faolla-app-icon.svg";
 
 self.addEventListener("install", (event) => {
   event.waitUntil(self.skipWaiting());
