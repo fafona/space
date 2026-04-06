@@ -86,6 +86,14 @@ const STANDALONE_LAUNCH_SCRIPT = `
   if (typeof window === "undefined" || typeof navigator === "undefined") return;
   const standalone = window.matchMedia?.("(display-mode: standalone)")?.matches || navigator.standalone === true;
   if (!standalone) return;
+  try {
+    const currentParams = new URLSearchParams(window.location.search || "");
+    if ((currentParams.get("appShell") || "").trim().toLowerCase() === "faolla") {
+      return;
+    }
+  } catch {
+    // Ignore search param parsing failures and continue normal launch bootstrap.
+  }
   if ((window.location.pathname || "/") !== "/") return;
   try {
     const raw =

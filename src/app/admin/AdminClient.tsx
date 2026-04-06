@@ -9047,8 +9047,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     const normalized = normalizeSupportExternalUrl(supportMobileFaollaHref, typeof window !== "undefined" ? window.location.origin : "");
     if (!normalized) return "/";
     try {
-      const url = new URL(normalized);
+      const url = new URL(
+        normalized,
+        typeof window !== "undefined" && window.location.origin ? window.location.origin : "https://faolla.com",
+      );
       url.searchParams.set(I18N_URL_PARAM, locale);
+      url.searchParams.set("appShell", "faolla");
       return url.toString();
     } catch {
       return normalized;

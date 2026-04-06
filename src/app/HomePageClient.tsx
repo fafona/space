@@ -37,6 +37,15 @@ function isStandaloneDisplayMode() {
   return window.matchMedia?.("(display-mode: standalone)").matches || navigatorWithStandalone.standalone === true;
 }
 
+function shouldSuppressStandaloneLaunchRedirect() {
+  if (typeof window === "undefined") return false;
+  try {
+    return (new URLSearchParams(window.location.search || "").get("appShell") ?? "").trim().toLowerCase() === "faolla";
+  } catch {
+    return false;
+  }
+}
+
 function getEmbeddedMobilePlanConfig(sourceBlocks: Block[]) {
   const carrier = sourceBlocks.find(
     (block) => !!(block?.props as { pagePlanConfigMobile?: unknown } | undefined)?.pagePlanConfigMobile,
@@ -72,8 +81,11 @@ export default function HomePageClient({
   const { t } = useI18n();
   const [platformState, setPlatformState] = useState(() => loadPlatformState());
   const [isMobileViewport, setIsMobileViewport] = useState(initialIsMobileViewport);
+  const [suppressStandaloneLaunchRedirect] = useState(() =>
+    typeof window !== "undefined" ? shouldSuppressStandaloneLaunchRedirect() : false,
+  );
   const [standaloneSessionBooting] = useState(() =>
-    typeof window !== "undefined" ? isStandaloneDisplayMode() : false,
+    typeof window !== "undefined" ? isStandaloneDisplayMode() && !shouldSuppressStandaloneLaunchRedirect() : false,
   );
   const [remoteHostLookup, setRemoteHostLookup] = useState<{ prefix: string; siteId: string }>({
     prefix: "",
@@ -179,6 +191,7 @@ export default function HomePageClient({
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    if (suppressStandaloneLaunchRedirect) return;
     if (!isStandaloneDisplayMode()) return;
 
     let mounted = true;
@@ -213,7 +226,7 @@ export default function HomePageClient({
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [suppressStandaloneLaunchRedirect]);
 
   if (hostMatchedSite) {
     return <SitePageClient forcedSiteId={hostMatchedSite.id} initialIsMobileViewport={isMobileViewport} />;
