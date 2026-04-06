@@ -37,6 +37,22 @@ type BarcodeDetectorLike = {
 
 type BarcodeDetectorConstructorLike = new (options?: { formats?: string[] }) => BarcodeDetectorLike;
 
+type LoadedQrImageSource = ImageBitmap | HTMLImageElement;
+
+type LoadedQrImage = {
+  source: LoadedQrImageSource;
+  width: number;
+  height: number;
+  cleanup: () => void;
+};
+
+type QrDecodeRegion = {
+  sx: number;
+  sy: number;
+  sw: number;
+  sh: number;
+};
+
 const LONG_PRESS_DELAY_MS = 420;
 
 function sanitizeFileNamePart(value: string) {
@@ -79,47 +95,152 @@ async function downloadImageToDevice(imageUrl: string, title?: string) {
   }
 }
 
-async function detectQrCodeValueFromImage(imageUrl: string) {
-  if (typeof window === "undefined" || typeof createImageBitmap !== "function") {
-    throw new Error("当前浏览器暂不支持二维码识别");
+async function loadImageElementFromBlob(blob: Blob) {
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const nextImage = new Image();
+      nextImage.decoding = "async";
+      nextImage.onload = () => resolve(nextImage);
+      nextImage.onerror = () => reject(new Error("当前图片暂时无法识别二维码"));
+      nextImage.src = objectUrl;
+    });
+    return {
+      source: image,
+      width: image.naturalWidth || image.width,
+      height: image.naturalHeight || image.height,
+      cleanup: () => {
+        URL.revokeObjectURL(objectUrl);
+      },
+    } satisfies LoadedQrImage;
+  } catch (error) {
+    URL.revokeObjectURL(objectUrl);
+    throw error;
+  }
+}
+
+async function loadQrImageSource(blob: Blob): Promise<LoadedQrImage> {
+  if (typeof createImageBitmap === "function") {
+    const bitmap = await createImageBitmap(blob);
+    return {
+      source: bitmap,
+      width: bitmap.width,
+      height: bitmap.height,
+      cleanup: () => {
+        (bitmap as ImageBitmap & { close?: () => void }).close?.();
+      },
+    };
   }
 
+  return loadImageElementFromBlob(blob);
+}
+
+async function detectQrWithBarcodeDetector(source: LoadedQrImageSource) {
+  if (typeof window === "undefined") return "";
   const detectorCtor = (window as unknown as { BarcodeDetector?: BarcodeDetectorConstructorLike }).BarcodeDetector;
-  if (typeof detectorCtor !== "function") {
-    throw new Error("当前浏览器暂不支持二维码识别");
+  if (typeof detectorCtor !== "function") return "";
+
+  try {
+    const detector = new detectorCtor({
+      formats: ["qr_code"],
+    });
+    const results = await detector.detect(source);
+    return String(results[0]?.rawValue ?? "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function buildQrDecodeRegions(width: number, height: number) {
+  const regions: QrDecodeRegion[] = [];
+  const seen = new Set<string>();
+
+  const pushRegion = (sxRatio: number, syRatio: number, swRatio: number, shRatio: number) => {
+    const sx = Math.max(0, Math.round(width * sxRatio));
+    const sy = Math.max(0, Math.round(height * syRatio));
+    const sw = Math.min(width - sx, Math.max(96, Math.round(width * swRatio)));
+    const sh = Math.min(height - sy, Math.max(96, Math.round(height * shRatio)));
+    if (sw < 96 || sh < 96) return;
+    const key = `${sx}:${sy}:${sw}:${sh}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    regions.push({ sx, sy, sw, sh });
+  };
+
+  pushRegion(0, 0, 1, 1);
+  pushRegion(0.15, 0.15, 0.7, 0.7);
+  pushRegion(0, 0, 0.72, 0.72);
+  pushRegion(0.28, 0, 0.72, 0.72);
+  pushRegion(0, 0.28, 0.72, 0.72);
+  pushRegion(0.28, 0.28, 0.72, 0.72);
+  pushRegion(0, 0, 0.5, 0.5);
+  pushRegion(0.5, 0, 0.5, 0.5);
+  pushRegion(0, 0.5, 0.5, 0.5);
+  pushRegion(0.5, 0.5, 0.5, 0.5);
+  pushRegion(0.45, 0.45, 0.55, 0.55);
+  pushRegion(0.58, 0.58, 0.42, 0.42);
+
+  return regions;
+}
+
+async function detectQrWithJsQr(source: LoadedQrImageSource, width: number, height: number) {
+  if (typeof document === "undefined") return "";
+  const { default: jsQR } = await import("jsqr");
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) return "";
+
+  const regions = buildQrDecodeRegions(width, height);
+  for (const region of regions) {
+    const longestEdge = Math.max(region.sw, region.sh);
+    const targetLongestEdge = longestEdge >= 1200 ? longestEdge : Math.min(1800, longestEdge * 3);
+    const scale = Math.max(1, targetLongestEdge / longestEdge);
+    const targetWidth = Math.max(96, Math.round(region.sw * scale));
+    const targetHeight = Math.max(96, Math.round(region.sh * scale));
+
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+    context.clearRect(0, 0, targetWidth, targetHeight);
+    context.imageSmoothingEnabled = false;
+    context.drawImage(source, region.sx, region.sy, region.sw, region.sh, 0, 0, targetWidth, targetHeight);
+
+    const imageData = context.getImageData(0, 0, targetWidth, targetHeight);
+    const result = jsQR(imageData.data, targetWidth, targetHeight, {
+      inversionAttempts: "attemptBoth",
+    });
+    const value = String(result?.data ?? "").trim();
+    if (value) {
+      return value;
+    }
   }
 
+  return "";
+}
+
+async function detectQrCodeValueFromImage(imageUrl: string, fallbackLinkUrl = "") {
+  const normalizedFallbackLinkUrl = normalizeSupportLinkHref(fallbackLinkUrl);
   const response = await fetch(imageUrl, {
     method: "GET",
     cache: "no-store",
   });
   if (!response.ok) {
+    if (normalizedFallbackLinkUrl) return normalizedFallbackLinkUrl;
     throw new Error("当前图片暂时无法识别二维码");
   }
 
   const blob = await response.blob();
-  const bitmap = await createImageBitmap(blob);
-  const canvas = document.createElement("canvas");
+  const loadedImage = await loadQrImageSource(blob);
   try {
-    canvas.width = bitmap.width;
-    canvas.height = bitmap.height;
-    const context = canvas.getContext("2d");
-    if (!context) {
-      throw new Error("当前浏览器暂不支持二维码识别");
-    }
+    const barcodeDetectorValue = await detectQrWithBarcodeDetector(loadedImage.source);
+    if (barcodeDetectorValue) return barcodeDetectorValue;
 
-    context.drawImage(bitmap, 0, 0);
-    const detector = new detectorCtor({
-      formats: ["qr_code"],
-    });
-    const results = await detector.detect(canvas);
-    const value = String(results[0]?.rawValue ?? "").trim();
-    if (!value) {
-      throw new Error("这张图片里没有识别到二维码");
-    }
-    return value;
+    const jsQrValue = await detectQrWithJsQr(loadedImage.source, loadedImage.width, loadedImage.height);
+    if (jsQrValue) return jsQrValue;
+
+    if (normalizedFallbackLinkUrl) return normalizedFallbackLinkUrl;
+    throw new Error("这张图片里没有识别到二维码");
   } finally {
-    (bitmap as ImageBitmap & { close?: () => void }).close?.();
+    loadedImage.cleanup();
   }
 }
 
@@ -151,10 +272,8 @@ export default function SupportMessageImagePreviewOverlay({
 
   const normalizedImageUrl = useMemo(() => normalizePublicAssetUrl(imageUrl), [imageUrl]);
   const normalizedLinkUrl = useMemo(() => normalizeSupportLinkHref(linkUrl), [linkUrl]);
-  const supportsQrDetection =
-    typeof window !== "undefined" &&
-    typeof (window as unknown as { BarcodeDetector?: BarcodeDetectorConstructorLike }).BarcodeDetector === "function";
   const hasActionSheet = Boolean(normalizedImageUrl);
+  const canScanQrCode = Boolean(normalizedImageUrl);
 
   useEffect(() => {
     setMounted(true);
@@ -277,14 +396,14 @@ export default function SupportMessageImagePreviewOverlay({
   }
 
   async function handleScanQrCode() {
-    if (!supportsQrDetection) {
-      onNotice?.("当前浏览器暂不支持二维码识别");
+    if (!canScanQrCode) {
+      onNotice?.("当前图片暂时无法识别二维码");
       return;
     }
 
     setQrScanBusy(true);
     try {
-      const value = await detectQrCodeValueFromImage(normalizedImageUrl);
+      const value = await detectQrCodeValueFromImage(normalizedImageUrl, normalizedLinkUrl);
       setQrValue(value);
       setActionSheetOpen(false);
     } catch (error) {
@@ -419,7 +538,7 @@ export default function SupportMessageImagePreviewOverlay({
                     <span className="text-xs text-slate-400">按 ID 或邮箱</span>
                   </button>
                 ) : null}
-                {supportsQrDetection ? (
+                {canScanQrCode ? (
                   <button
                     type="button"
                     className="flex w-full items-center justify-between rounded-2xl px-4 py-3 text-left text-sm font-medium text-slate-900 transition hover:bg-slate-50 disabled:opacity-50"
