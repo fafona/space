@@ -9000,11 +9000,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
   }, [locale, supportMobileFaollaHref]);
   const supportMobileFaollaContent = (
-    <div className="min-h-0 flex-1 overflow-hidden bg-white pb-[calc(env(safe-area-inset-bottom)+6.25rem)]">
+    <div className="relative min-h-0 flex-1 overflow-hidden">
       <iframe
         title="Faolla.com"
         src={supportMobileFaollaTargetHref}
-        className="h-full w-full border-0 bg-white"
+        className="absolute inset-0 h-full w-full border-0 bg-transparent"
       />
     </div>
   );
