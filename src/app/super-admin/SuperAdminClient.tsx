@@ -87,12 +87,18 @@ import {
 } from "@/lib/planTemplatePreviewCapture";
 import { buildPlatformMerchantSnapshotPayloadFromSites } from "@/lib/platformMerchantSnapshot";
 import ChatBusinessCardDialog from "@/components/admin/ChatBusinessCardDialog";
+import SupportMessageContent, { type SupportMessageImageActivatePayload } from "@/components/support/SupportMessageContent";
+import SupportMessageImagePreviewOverlay from "@/components/support/SupportMessageImagePreviewOverlay";
 import { resolveMerchantBusinessCardForChatDisplay, type MerchantBusinessCardAsset } from "@/lib/merchantBusinessCards";
 import { type PlatformSupportMessage, type PlatformSupportThread } from "@/lib/platformSupportInbox";
 import { getMerchantServiceState } from "@/lib/merchantServiceStatus";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
 import { buildMerchantFrontendHref, buildPlatformHomeHref, buildSiteStoreScope, PLATFORM_EDITOR_SCOPE } from "@/lib/siteRouting";
 import { getPagePlanConfigFromBlocks } from "@/lib/pagePlans";
+import {
+  formatSupportConversationPreview,
+  parseSupportMessageAttachmentPreview,
+} from "@/lib/supportMessageAttachments";
 import {
   buildSuperAdminLoginHref,
   clearSuperAdminAuthenticated,
@@ -1320,6 +1326,13 @@ type MerchantUserRow = {
   statusKey: "active" | "paused" | "linked" | "unlinked";
 };
 
+type SupportForwardTarget = {
+  merchantId: string;
+  siteId: string;
+  merchantName: string;
+  merchantEmail: string;
+};
+
 type BackendMerchantAccount = {
   merchantId: string;
   merchantName: string;
@@ -1468,6 +1481,12 @@ export default function SuperAdminClient() {
   const [supportSending, setSupportSending] = useState(false);
   const [supportBusinessCardDialogOpen, setSupportBusinessCardDialogOpen] = useState(false);
   const [supportMerchantInfoSheetOpen, setSupportMerchantInfoSheetOpen] = useState(false);
+  const [supportImagePreview, setSupportImagePreview] = useState<{
+    rawText: string;
+    imageUrl: string;
+    linkUrl: string;
+    title: string;
+  } | null>(null);
   const [supportMerchantProfilesByMerchantId, setSupportMerchantProfilesByMerchantId] = useState<
     Record<string, MerchantListPublishedSite | null>
   >({});
@@ -2270,10 +2289,38 @@ export default function SuperAdminClient() {
   const selectedSupportResolvedBusinessCard = selectedSupportProfile?.chatBusinessCard ?? selectedSupportBusinessCard;
   const selectedSupportLatestMessage = selectedSupportThread?.messages[selectedSupportThread.messages.length - 1] ?? null;
   const selectedSupportThreadMerchantId = selectedSupportThread?.merchantId?.trim() ?? "";
+  const selectedSupportForwardTarget = useMemo<SupportForwardTarget | null>(() => {
+    const merchantId =
+      normalizeMerchantIdValue(selectedSupportMerchantRow?.merchantId) ||
+      normalizeMerchantIdValue(selectedSupportThread?.merchantId) ||
+      normalizeMerchantIdValue(selectedSupportThread?.siteId);
+    if (!merchantId) return null;
+    return {
+      merchantId,
+      siteId: String(selectedSupportMerchantRow?.site.id ?? selectedSupportThread?.siteId ?? merchantId).trim() || merchantId,
+      merchantName: pickPreferredText(
+        selectedSupportMerchantRow?.merchantName,
+        selectedSupportThread?.merchantName,
+        merchantId,
+      ),
+      merchantEmail: normalizeEmailValue(
+        pickPreferredText(
+          selectedSupportMerchantRow?.userEmail,
+          selectedSupportThread?.merchantEmail,
+          selectedSupportMerchantRow?.loginAccount,
+        ),
+      ),
+    };
+  }, [selectedSupportMerchantRow, selectedSupportThread]);
   const selectedSupportLatestMessageKey =
     selectedSupportThread && selectedSupportLatestMessage
       ? `${selectedSupportThread.merchantId}:${selectedSupportLatestMessage.id}:${selectedSupportLatestMessage.createdAt}`
       : "";
+  useEffect(() => {
+    if (activeMenu === "support_messages") return;
+    setSupportImagePreview(null);
+  }, [activeMenu]);
+
   const latestIncomingMerchantMessageKey = useMemo(() => {
     let latestKey = "";
     let latestTimestamp = 0;
@@ -3090,6 +3137,131 @@ export default function SuperAdminClient() {
     } finally {
       setSupportSending(false);
     }
+  }
+
+  const handleSupportMessageImageActivate = useCallback((payload: SupportMessageImageActivatePayload) => {
+    setSupportImagePreview({
+      rawText: payload.rawText,
+      imageUrl: payload.imageUrl,
+      linkUrl: payload.linkUrl,
+      title: payload.linkUrl ? "名片预览" : "图片预览",
+    });
+  }, []);
+
+  function buildSupportForwardTargetFromListEntry(entry: (typeof supportBaseRows)[number] | null | undefined) {
+    if (!entry) return null;
+    const merchantId =
+      normalizeMerchantIdValue(entry.row.merchantId) ||
+      normalizeMerchantIdValue(entry.thread?.merchantId) ||
+      normalizeMerchantIdValue(entry.row.site.id) ||
+      normalizeMerchantIdValue(entry.thread?.siteId);
+    if (!merchantId) return null;
+    return {
+      merchantId,
+      siteId: String(entry.row.site.id || entry.thread?.siteId || merchantId).trim() || merchantId,
+      merchantName: pickPreferredText(entry.row.merchantName, entry.thread?.merchantName, merchantId),
+      merchantEmail: normalizeEmailValue(
+        pickPreferredText(entry.row.userEmail, entry.thread?.merchantEmail, entry.row.loginAccount),
+      ),
+    } satisfies SupportForwardTarget;
+  }
+
+  function resolveSupportForwardTargetByQuery(query: string) {
+    const normalizedQuery = query.trim();
+    if (!normalizedQuery) {
+      throw new Error("请输入完整的商户ID或邮箱");
+    }
+
+    const merchantIdQuery = normalizeMerchantIdValue(normalizedQuery);
+    if (merchantIdQuery) {
+      const matchedEntry =
+        supportBaseRows.find(
+          (entry) =>
+            normalizeMerchantIdValue(entry.row.merchantId) === merchantIdQuery ||
+            normalizeMerchantIdValue(entry.thread?.merchantId) === merchantIdQuery ||
+            normalizeMerchantIdValue(entry.row.site.id) === merchantIdQuery ||
+            normalizeMerchantIdValue(entry.thread?.siteId) === merchantIdQuery,
+        ) ?? null;
+      const target = buildSupportForwardTargetFromListEntry(matchedEntry);
+      if (!target) {
+        throw new Error("没有找到匹配的商户");
+      }
+      return target;
+    }
+
+    const emailQuery = normalizeEmailValue(normalizedQuery);
+    const matchedTargets = new Map<string, SupportForwardTarget>();
+    supportBaseRows.forEach((entry) => {
+      const lookupValues = [
+        normalizeEmailValue(entry.row.userEmail),
+        normalizeEmailValue(entry.row.loginAccount),
+        normalizeEmailValue(entry.row.backendAccount?.loginId),
+        normalizeEmailValue(entry.row.backendAccount?.username),
+        normalizeEmailValue(entry.row.site.contactEmail),
+        normalizeEmailValue(entry.thread?.merchantEmail),
+      ].filter(Boolean);
+      if (!lookupValues.includes(emailQuery)) return;
+      const target = buildSupportForwardTargetFromListEntry(entry);
+      if (!target) return;
+      matchedTargets.set(`${target.merchantId}:${target.siteId}`, target);
+    });
+
+    const targets = [...matchedTargets.values()];
+    if (targets.length === 0) {
+      throw new Error("没有找到匹配的商户");
+    }
+    if (targets.length > 1) {
+      throw new Error("这个邮箱对应多个商户，请改用商户ID");
+    }
+    return targets[0];
+  }
+
+  async function sendSupportAttachmentToMerchantTarget(rawText: string, target: SupportForwardTarget, recipientLabel?: string) {
+    if (supportSending) {
+      throw new Error("当前正在发送消息，请稍后重试");
+    }
+
+    const text = rawText.trim();
+    if (!text || !target.merchantId) {
+      throw new Error("当前图片消息内容不完整，暂时无法转发");
+    }
+
+    setSupportSending(true);
+    setSupportThreadsError("");
+    try {
+      const response = await requestSupportThreadsWithSessionRecovery({
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          merchantId: target.merchantId,
+          siteId: target.siteId || target.merchantId,
+          merchantName: target.merchantName,
+          merchantEmail: target.merchantEmail,
+          text,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | {
+            threads?: PlatformSupportThread[];
+            error?: string;
+            message?: string;
+          }
+        | null;
+      if (!response.ok) {
+        throw new Error(payload?.message || "转发失败，请稍后重试");
+      }
+      applySupportThreadsState(Array.isArray(payload?.threads) ? payload.threads : []);
+      setTip(`已转发给 ${recipientLabel || target.merchantName || target.merchantId}`);
+    } finally {
+      setSupportSending(false);
+    }
+  }
+
+  async function forwardSupportAttachmentToSpecifiedMerchant(query: string, rawText: string) {
+    const target = resolveSupportForwardTargetByQuery(query);
+    await sendSupportAttachmentToMerchantTarget(rawText, target, target.merchantName || target.merchantId);
   }
 
   function ensureLocalMerchantSiteFromRow(row: MerchantUserRow) {
@@ -6729,6 +6901,7 @@ export default function SuperAdminClient() {
                               const showDateDivider =
                                 !previousMessage || !isSameSupportCalendarDay(previousMessage.createdAt, message.createdAt);
                               const isMerchantMessage = message.sender === "merchant";
+                              const hasAttachment = Boolean(parseSupportMessageAttachmentPreview(message.text));
                               return (
                                 <div key={message.id} className="space-y-3">
                                   {showDateDivider ? (
@@ -6740,15 +6913,19 @@ export default function SuperAdminClient() {
                                   ) : null}
                                   <div className={`flex ${isMerchantMessage ? "justify-start" : "justify-end"}`}>
                                     <div
-                                      className={`max-w-[84%] min-w-0 rounded-[24px] px-4 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.08)] ${
-                                        isMerchantMessage
-                                          ? "border border-slate-200 bg-white text-slate-900"
-                                          : "bg-slate-900 text-white"
+                                      className={`max-w-[84%] min-w-0 rounded-[24px] shadow-[0_10px_24px_rgba(15,23,42,0.08)] ${
+                                        hasAttachment
+                                          ? "border border-transparent bg-transparent px-0 py-0"
+                                          : isMerchantMessage
+                                            ? "border border-slate-200 bg-white px-4 py-3 text-slate-900"
+                                            : "bg-slate-900 px-4 py-3 text-white"
                                       }`}
                                     >
-                                      <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-[15px] leading-6">
-                                        {message.text}
-                                      </div>
+                                      <SupportMessageContent
+                                        value={message.text}
+                                        isSelf={!isMerchantMessage}
+                                        onImageActivate={handleSupportMessageImageActivate}
+                                      />
                                       <div
                                         className={`mt-2 text-right text-[10px] ${
                                           isMerchantMessage ? "text-slate-400" : "text-white/70"
@@ -6892,7 +7069,7 @@ export default function SuperAdminClient() {
                                         </div>
                                       </div>
                                       <div className="mt-2 line-clamp-2 text-[13px] leading-5 text-slate-600">
-                                        {lastMessage?.text || "暂无留言记录，点进来可以直接开始回复。"}
+                                        {formatSupportConversationPreview(lastMessage?.text) || "暂无留言记录，点进来可以直接开始回复。"}
                                       </div>
                                     </div>
                                   </div>
@@ -7001,7 +7178,7 @@ export default function SuperAdminClient() {
                                   </div>
                                 </div>
                                 <div className="mt-2 line-clamp-2 text-xs leading-5 text-slate-600">
-                                  {lastMessage?.text || "暂无留言记录"}
+                                  {formatSupportConversationPreview(lastMessage?.text) || "暂无留言记录"}
                                 </div>
                               </button>
                             );
@@ -7057,19 +7234,28 @@ export default function SuperAdminClient() {
                             <div className="space-y-3">
                               {selectedSupportThread.messages.map((message) => {
                                 const isMerchantMessage = message.sender === "merchant";
+                                const hasAttachment = Boolean(parseSupportMessageAttachmentPreview(message.text));
                                 return (
                                   <div key={message.id} className={`flex ${isMerchantMessage ? "justify-start" : "justify-end"}`}>
                                     <div
-                                      className={`max-w-[82%] rounded-2xl px-4 py-3 shadow-sm ${
-                                        isMerchantMessage
-                                          ? "border bg-white text-slate-900"
-                                          : "bg-slate-900 text-white"
+                                      className={`max-w-[82%] rounded-2xl shadow-sm ${
+                                        hasAttachment
+                                          ? "border border-transparent bg-transparent px-0 py-0"
+                                          : isMerchantMessage
+                                            ? "border bg-white px-4 py-3 text-slate-900"
+                                            : "bg-slate-900 px-4 py-3 text-white"
                                       }`}
                                     >
                                       <div className="text-[11px] opacity-70">
                                         {isMerchantMessage ? "商户" : "超级后台"} | {formatSupportMessageTime(message.createdAt)}
                                       </div>
-                                      <div className="mt-1 whitespace-pre-wrap break-words text-sm leading-6">{message.text}</div>
+                                      <div className="mt-1">
+                                        <SupportMessageContent
+                                          value={message.text}
+                                          isSelf={!isMerchantMessage}
+                                          onImageActivate={handleSupportMessageImageActivate}
+                                        />
+                                      </div>
                                     </div>
                                   </div>
                                 );
@@ -7188,6 +7374,36 @@ export default function SuperAdminClient() {
                 .join(" | ")}
               card={selectedSupportBusinessCard}
               onClose={() => setSupportBusinessCardDialogOpen(false)}
+            />
+            <SupportMessageImagePreviewOverlay
+              open={activeMenu === "support_messages" && !!supportImagePreview}
+              imageUrl={supportImagePreview?.imageUrl ?? ""}
+              linkUrl={supportImagePreview?.linkUrl ?? ""}
+              title={supportImagePreview?.title ?? "图片预览"}
+              onClose={() => setSupportImagePreview(null)}
+              onNotice={setTip}
+              currentForwardAction={
+                supportImagePreview && selectedSupportForwardTarget
+                  ? {
+                      label: `转发给 ${selectedSupportForwardTarget.merchantName || selectedSupportForwardTarget.merchantId}`,
+                      onForward: () =>
+                        sendSupportAttachmentToMerchantTarget(
+                          supportImagePreview.rawText,
+                          selectedSupportForwardTarget,
+                          selectedSupportForwardTarget.merchantName || selectedSupportForwardTarget.merchantId,
+                        ),
+                    }
+                  : null
+              }
+              queryForwardAction={
+                supportImagePreview
+                  ? {
+                      label: "转发给指定商户",
+                      placeholder: "例如：10000000 或 owner@example.com",
+                      onForward: (query) => forwardSupportAttachmentToSpecifiedMerchant(query, supportImagePreview.rawText),
+                    }
+                  : null
+              }
             />
 
             {activeMenu === "merchant_id_rules" ? (

@@ -80,6 +80,8 @@ import { buildMerchantBusinessCardShareUrl, resolveMerchantBusinessCardShareOrig
 import { resolveCommonCanvasLayout } from "@/lib/commonCanvasLayout";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
 import ChatBusinessCardDialog from "@/components/admin/ChatBusinessCardDialog";
+import SupportMessageContent, { type SupportMessageImageActivatePayload } from "@/components/support/SupportMessageContent";
+import SupportMessageImagePreviewOverlay from "@/components/support/SupportMessageImagePreviewOverlay";
 import {
   normalizeMerchantBusinessCards,
   normalizeMerchantBusinessCardChatDisplaySelection,
@@ -94,6 +96,11 @@ import {
   type MerchantPeerMessage,
   type MerchantPeerThread,
 } from "@/lib/merchantPeerInbox";
+import {
+  formatSupportConversationPreview,
+  isSupportShortMerchantCardLink,
+  parseSupportMessageAttachmentPreview,
+} from "@/lib/supportMessageAttachments";
 import { BLOCK_BORDER_STYLE_OPTIONS, getBlockBorderClass, getBlockBorderInlineStyle } from "@/components/blocks/borderStyle";
 import { stripInlineTextColorStylesFromHtml, toRichHtml } from "@/components/blocks/richText";
 import {
@@ -3793,6 +3800,16 @@ function normalizeSupportDisplayValue(value: unknown) {
   return normalized && normalized !== "-" ? normalized : "";
 }
 
+function isSupportImageAssetUrl(value: string) {
+  const normalized = normalizeSupportDisplayValue(value);
+  if (!normalized || isInlineDataImageUrl(normalized)) return false;
+  return (
+    /\.(?:png|jpe?g|gif|webp|bmp|svg)(?:$|[?#])/i.test(normalized) ||
+    /^https?:\/\/[^?#]+\/storage\/v1\/object\/public\//i.test(normalized) ||
+    /^\/storage\/v1\/object\/public\//i.test(normalized)
+  );
+}
+
 function buildSupportMerchantCardShareContact(card: MerchantBusinessCardAsset) {
   return {
     displayName: normalizeSupportDetailText(card.contacts.contactName) || normalizeSupportDetailText(card.name),
@@ -4496,201 +4513,6 @@ function compareSupportMessages(left: Pick<PlatformSupportMessage, "createdAt" |
   return left.id.localeCompare(right.id, "en");
 }
 
-function splitSupportLinkToken(value: string) {
-  let link = value;
-  let trailing = "";
-  while (/[.,!?;:)}\]>\u3002\uff0c\uff1b\uff1a\uff01\uff1f]$/.test(link)) {
-    trailing = link.slice(-1) + trailing;
-    link = link.slice(0, -1);
-  }
-  return { link, trailing };
-}
-
-function normalizeSupportLinkHref(value: string) {
-  const trimmed = value.trim();
-  if (!trimmed) return "";
-  const candidate = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
-  try {
-    const parsed = new URL(candidate);
-    if (!/^https?:$/i.test(parsed.protocol)) return "";
-    return parsed.toString();
-  } catch {
-    return "";
-  }
-}
-
-function stripSupportMessagePrefix(value: string, prefixes: string[]) {
-  const trimmed = normalizeSupportDetailText(value);
-  for (const prefix of prefixes) {
-    if (trimmed.startsWith(prefix)) {
-      return normalizeSupportDetailText(trimmed.slice(prefix.length));
-    }
-  }
-  return trimmed;
-}
-
-function isSupportImageAssetUrl(value: string) {
-  const href = normalizeSupportLinkHref(value);
-  return href
-    ? /\.(?:avif|bmp|gif|heic|heif|jpe?g|png|svg|webp)(?:$|[?#])/i.test(href)
-    : false;
-}
-
-function extractSupportImageMessageUrl(value: string) {
-  const href = normalizeSupportLinkHref(
-    stripSupportMessagePrefix(value, ["图片：", "图片:", "照片：", "照片:", "拍照：", "拍照:"]),
-  );
-  return href && isSupportImageAssetUrl(href) ? href : "";
-}
-
-function extractSupportLinkMessageUrl(value: string) {
-  return normalizeSupportLinkHref(stripSupportMessagePrefix(value, ["联系卡：", "联系卡:", "链接：", "链接:"]));
-}
-
-function isSupportShortMerchantCardLink(value: string) {
-  const href = normalizeSupportLinkHref(value);
-  if (!href) return false;
-  try {
-    const parsed = new URL(href);
-    return /^\/card\/[a-z0-9][a-z0-9_-]{5,63}\/?$/i.test(parsed.pathname);
-  } catch {
-    return false;
-  }
-}
-
-type SupportMessageAttachmentPreview = {
-  imageUrl: string;
-  linkUrl: string;
-};
-
-function parseSupportMessageAttachmentPreview(value: string): SupportMessageAttachmentPreview | null {
-  const lines = String(value ?? "")
-    .split(/\r?\n/)
-    .map((line) => normalizeSupportDetailText(line))
-    .filter(Boolean);
-  if (lines.length === 0) return null;
-
-  const firstImageUrl = extractSupportImageMessageUrl(lines[0]);
-  if (firstImageUrl) {
-    const secondLineUrl = lines.length >= 2 ? extractSupportLinkMessageUrl(lines[1]) : "";
-    return {
-      imageUrl: firstImageUrl,
-      linkUrl: secondLineUrl && secondLineUrl !== firstImageUrl ? secondLineUrl : "",
-    };
-  }
-
-  if (lines.length === 2 && /^(?:照片|拍照|图片)\s*[：:]/.test(lines[0])) {
-    const secondImageUrl = extractSupportImageMessageUrl(lines[1]);
-    if (secondImageUrl) {
-      return {
-        imageUrl: secondImageUrl,
-        linkUrl: "",
-      };
-    }
-  }
-
-  return null;
-}
-
-function formatSupportConversationPreview(value: string | null | undefined) {
-  const text = String(value ?? "").trim();
-  if (!text) return "";
-  const attachmentPreview = parseSupportMessageAttachmentPreview(text);
-  if (attachmentPreview?.imageUrl && attachmentPreview.linkUrl) return "名片";
-  if (attachmentPreview?.imageUrl) return "图片";
-  const lines = text
-    .split(/\r?\n/)
-    .map((line) => normalizeSupportDetailText(line))
-    .filter(Boolean);
-  return lines[0] || text;
-}
-
-function renderSupportMessageText(value: string) {
-  const text = String(value ?? "");
-  if (!text) return text;
-  const parts: ReactNode[] = [];
-  const pattern = /((?:https?:\/\/|www\.)[^\s]+)/gi;
-  let lastIndex = 0;
-  let match: RegExpExecArray | null = pattern.exec(text);
-  while (match) {
-    const matched = match[0] ?? "";
-    const startIndex = match.index;
-    if (startIndex > lastIndex) {
-      parts.push(text.slice(lastIndex, startIndex));
-    }
-    const { link, trailing } = splitSupportLinkToken(matched);
-    const href = normalizeSupportLinkHref(link);
-    if (href) {
-      parts.push(
-        <a
-          key={`support-link-${startIndex}-${link}`}
-          className="underline underline-offset-4 break-all"
-          href={href}
-          target="_blank"
-          rel="noreferrer"
-        >
-          {link}
-        </a>,
-      );
-      if (trailing) {
-        parts.push(trailing);
-      }
-    } else {
-      parts.push(matched);
-    }
-    lastIndex = startIndex + matched.length;
-    match = pattern.exec(text);
-  }
-  if (lastIndex < text.length) {
-    parts.push(text.slice(lastIndex));
-  }
-  return parts;
-}
-
-function renderSupportMessageContent(value: string, options?: { isSelf?: boolean }) {
-  const attachmentPreview = parseSupportMessageAttachmentPreview(value);
-  if (!attachmentPreview) {
-    return (
-      <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-[15px] leading-6">
-        {renderSupportMessageText(value)}
-      </div>
-    );
-  }
-
-  const normalizedImageUrl = normalizePublicAssetUrl(attachmentPreview.imageUrl);
-  const linkUrl = attachmentPreview.linkUrl;
-
-  return (
-    <div className="space-y-2">
-      <a
-        href={normalizedImageUrl}
-        target="_blank"
-        rel="noreferrer"
-        className="block overflow-hidden rounded-[20px] bg-white p-1 shadow-[0_10px_24px_rgba(15,23,42,0.08)]"
-      >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={normalizedImageUrl}
-          alt="名片图片"
-          className="block h-auto max-h-[18rem] w-full rounded-[16px] bg-white object-contain"
-        />
-      </a>
-      {linkUrl ? (
-        <a
-          href={linkUrl}
-          target="_blank"
-          rel="noreferrer"
-          className={`block break-all text-sm underline underline-offset-4 ${
-            options?.isSelf ? "text-white/90" : "text-slate-700"
-          }`}
-        >
-          {linkUrl}
-        </a>
-      ) : null}
-    </div>
-  );
-}
-
 export default function AdminClient({
   forcedScope,
   editorTitle = "页面编辑",
@@ -4795,6 +4617,12 @@ export default function AdminClient({
   const [supportMerchantInfoSheetOpen, setSupportMerchantInfoSheetOpen] = useState(false);
   const [supportBusinessCardLoading, setSupportBusinessCardLoading] = useState(false);
   const [supportBusinessCardError, setSupportBusinessCardError] = useState("");
+  const [supportImagePreview, setSupportImagePreview] = useState<{
+    rawText: string;
+    imageUrl: string;
+    linkUrl: string;
+    title: string;
+  } | null>(null);
   const [supportSelfProfileSaving, setSupportSelfProfileSaving] = useState(false);
   const [supportSelfAvatarUploading, setSupportSelfAvatarUploading] = useState(false);
   const [supportSelfSignatureDraft, setSupportSelfSignatureDraft] = useState("");
@@ -9209,6 +9037,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   );
   const selectedSupportHeaderMeta = selectedSupportSignature;
   useEffect(() => {
+    if (supportInterfaceOpen) return;
+    setSupportImagePreview(null);
+  }, [supportInterfaceOpen]);
+
+  useEffect(() => {
     if (!isMobileSupportDialog || typeof document === "undefined") return () => {};
     const html = document.documentElement;
     const body = document.body;
@@ -9774,6 +9607,105 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     (init: RequestInit) => requestMerchantChatWithSessionRecovery("/api/merchant-chat-business-card", init),
     [requestMerchantChatWithSessionRecovery],
   );
+
+  const handleSupportMessageImageActivate = useCallback((payload: SupportMessageImageActivatePayload) => {
+    setSupportImagePreview({
+      rawText: payload.rawText,
+      imageUrl: payload.imageUrl,
+      linkUrl: payload.linkUrl,
+      title: payload.linkUrl ? "名片预览" : "图片预览",
+    });
+  }, []);
+
+  async function sendSupportAttachmentToPeerRecipient(
+    recipientMerchantId: string,
+    rawText: string,
+    recipientLabel?: string,
+  ) {
+    if (isPlatformEditor) {
+      throw new Error("当前模式暂不支持转发");
+    }
+    if (supportSendingRef.current) {
+      throw new Error("当前正在发送消息，请稍后重试");
+    }
+    const text = rawText.trim();
+    if (!recipientMerchantId || !text) {
+      throw new Error("当前图片消息内容不完整，暂时无法转发");
+    }
+
+    const response = await requestMerchantPeerWithSessionRecovery({
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        action: "send",
+        recipientMerchantId,
+        text,
+        merchantName: merchantDisplayName,
+        merchantEmail:
+          (editingSite?.contactEmail ?? "").trim() ||
+          merchantSessionIdentityRef.current.email ||
+          "",
+      }),
+    });
+    const payload = (await response.json().catch(() => null)) as
+      | {
+          contacts?: MerchantPeerContactSummary[];
+          threads?: MerchantPeerThread[];
+          message?: string;
+        }
+      | null;
+    if (!response.ok) {
+      throw new Error(payload?.message || "转发失败，请稍后重试");
+    }
+
+    setSupportPeerContacts(Array.isArray(payload?.contacts) ? payload.contacts : []);
+    setSupportPeerThreads(Array.isArray(payload?.threads) ? payload.threads : []);
+    setSupportError("");
+    showTip(`已转发给 ${recipientLabel || recipientMerchantId}`);
+  }
+
+  async function forwardSupportAttachmentToSpecifiedMerchant(query: string, rawText: string) {
+    if (isPlatformEditor) {
+      throw new Error("当前模式暂不支持转发");
+    }
+    const normalizedQuery = query.trim();
+    if (!normalizedQuery) {
+      throw new Error("请输入完整的商户ID或邮箱");
+    }
+
+    const searchResponse = await requestMerchantPeerWithSessionRecovery({
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        action: "search",
+        query: normalizedQuery,
+      }),
+    });
+    const searchPayload = (await searchResponse.json().catch(() => null)) as
+      | {
+          contacts?: MerchantPeerContactSummary[];
+          threads?: MerchantPeerThread[];
+          contact?: { merchantId?: string; merchantName?: string } | null;
+          message?: string;
+        }
+      | null;
+    if (!searchResponse.ok) {
+      throw new Error(searchPayload?.message || "没有找到匹配的商户");
+    }
+
+    setSupportPeerContacts(Array.isArray(searchPayload?.contacts) ? searchPayload.contacts : []);
+    setSupportPeerThreads(Array.isArray(searchPayload?.threads) ? searchPayload.threads : []);
+    const recipientMerchantId = String(searchPayload?.contact?.merchantId ?? "").trim();
+    if (!recipientMerchantId) {
+      throw new Error("没有找到匹配的商户");
+    }
+    const recipientLabel = String(searchPayload?.contact?.merchantName ?? "").trim() || recipientMerchantId;
+    await sendSupportAttachmentToPeerRecipient(recipientMerchantId, rawText, recipientLabel);
+  }
 
   const requestMerchantChatBusinessCardById = useCallback(
     (merchantId: string, init?: RequestInit) => {
@@ -12584,7 +12516,11 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                             : "border border-slate-200 bg-white px-4 py-3 text-slate-900"
                       }`}
                     >
-                      {renderSupportMessageContent(message.text, { isSelf: message.isSelf })}
+                      <SupportMessageContent
+                        value={message.text}
+                        isSelf={message.isSelf}
+                        onImageActivate={handleSupportMessageImageActivate}
+                      />
                       <div
                         className={`mt-2 text-right text-[10px] ${
                           message.isSelf ? "text-white/70" : "text-slate-400"
@@ -12964,6 +12900,36 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             setSupportBusinessCardLoading(false);
             setSupportBusinessCardError("");
           }}
+        />
+        <SupportMessageImagePreviewOverlay
+          open={!!supportImagePreview}
+          imageUrl={supportImagePreview?.imageUrl ?? ""}
+          linkUrl={supportImagePreview?.linkUrl ?? ""}
+          title={supportImagePreview?.title ?? "图片预览"}
+          onClose={() => setSupportImagePreview(null)}
+          onNotice={showTip}
+          currentForwardAction={
+            selectedSupportPeerContact && supportImagePreview
+              ? {
+                  label: `转发给 ${selectedSupportPeerContact.merchantName || selectedSupportPeerContact.merchantId}`,
+                  onForward: () =>
+                    sendSupportAttachmentToPeerRecipient(
+                      selectedSupportPeerContact.merchantId,
+                      supportImagePreview.rawText,
+                      selectedSupportPeerContact.merchantName || selectedSupportPeerContact.merchantId,
+                    ),
+                }
+              : null
+          }
+          queryForwardAction={
+            supportImagePreview
+              ? {
+                  label: "转发给指定商户",
+                  placeholder: "例如：10000000 或 owner@example.com",
+                  onForward: (query) => forwardSupportAttachmentToSpecifiedMerchant(query, supportImagePreview.rawText),
+                }
+              : null
+          }
         />
         {tip ? (
           <div className="pointer-events-none fixed inset-0 z-[2147483500] flex items-center justify-center p-4">
@@ -14154,20 +14120,26 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                                 className={`flex min-w-0 ${message.isSelf ? "justify-end" : "justify-start"}`}
                               >
                                 <div className={`flex max-w-[82%] min-w-0 items-end ${message.isSelf ? "flex-row" : "flex-row-reverse"}`}>
-                                  <div
-                                    className={`min-w-0 rounded-2xl px-4 py-3 shadow-sm ${
-                                      message.isSelf
-                                        ? "bg-slate-900 text-white"
-                                        : "border bg-white text-slate-900"
-                                    }`}
-                                  >
-                                    <div className="text-[11px] opacity-70">
-                                      {message.senderLabel} | {formatSupportMessageTime(message.createdAt)}
-                                    </div>
-                                    <div className="mt-1 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-sm leading-6">
-                                      {renderSupportMessageContent(message.text, { isSelf: message.isSelf })}
-                                    </div>
-                                  </div>
+                              <div
+                                className={`min-w-0 rounded-2xl shadow-sm ${
+                                  parseSupportMessageAttachmentPreview(message.text)
+                                    ? "border border-transparent bg-transparent px-0 py-0"
+                                    : message.isSelf
+                                      ? "bg-slate-900 px-4 py-3 text-white"
+                                      : "border bg-white px-4 py-3 text-slate-900"
+                                }`}
+                              >
+                                <div className="text-[11px] opacity-70">
+                                  {message.senderLabel} | {formatSupportMessageTime(message.createdAt)}
+                                </div>
+                                <div className="mt-1">
+                                  <SupportMessageContent
+                                    value={message.text}
+                                    isSelf={message.isSelf}
+                                    onImageActivate={handleSupportMessageImageActivate}
+                                  />
+                                </div>
+                              </div>
                                   {message.isSelf && message.localStatus === "failed" ? (
                                     <span
                                       aria-label="发送失败"
@@ -14236,6 +14208,36 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           setSupportBusinessCardLoading(false);
           setSupportBusinessCardError("");
         }}
+      />
+      <SupportMessageImagePreviewOverlay
+        open={!!supportImagePreview}
+        imageUrl={supportImagePreview?.imageUrl ?? ""}
+        linkUrl={supportImagePreview?.linkUrl ?? ""}
+        title={supportImagePreview?.title ?? "图片预览"}
+        onClose={() => setSupportImagePreview(null)}
+        onNotice={showTip}
+        currentForwardAction={
+          selectedSupportPeerContact && supportImagePreview
+            ? {
+                label: `转发给 ${selectedSupportPeerContact.merchantName || selectedSupportPeerContact.merchantId}`,
+                onForward: () =>
+                  sendSupportAttachmentToPeerRecipient(
+                    selectedSupportPeerContact.merchantId,
+                    supportImagePreview.rawText,
+                    selectedSupportPeerContact.merchantName || selectedSupportPeerContact.merchantId,
+                  ),
+              }
+            : null
+        }
+        queryForwardAction={
+          supportImagePreview
+            ? {
+                label: "转发给指定商户",
+                placeholder: "例如：10000000 或 owner@example.com",
+                onForward: (query) => forwardSupportAttachmentToSpecifiedMerchant(query, supportImagePreview.rawText),
+              }
+            : null
+        }
       />
 
       {supportMerchantInfoSheetOverlay}
