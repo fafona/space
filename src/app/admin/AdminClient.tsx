@@ -12297,7 +12297,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         event.stopPropagation();
       }}
     >
-      <div className="absolute inset-x-0 bottom-0 h-[calc(env(safe-area-inset-bottom)+6.35rem)] bg-[linear-gradient(180deg,rgba(248,250,252,0)_0%,rgba(248,250,252,0.92)_24%,rgba(255,255,255,0.98)_100%)]" />
+      {supportMobileHomeTab === "faolla" ? null : (
+        <div className="absolute inset-x-0 bottom-0 h-[calc(env(safe-area-inset-bottom)+6.35rem)] bg-[linear-gradient(180deg,rgba(248,250,252,0)_0%,rgba(248,250,252,0.92)_24%,rgba(255,255,255,0.98)_100%)]" />
+      )}
       <div className="pointer-events-auto relative px-4 pb-[calc(env(safe-area-inset-bottom)+0.08rem)] pt-5 touch-manipulation">
         <div className="flex items-center gap-1 rounded-[30px] border border-slate-200/80 bg-white/95 px-2 py-2 shadow-[0_20px_40px_rgba(15,23,42,0.12)] backdrop-blur">
           {([
