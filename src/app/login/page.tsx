@@ -101,6 +101,20 @@ function resolveAuthEmailRedirectOrigin() {
   return "";
 }
 
+function isAndroidBrowser() {
+  if (typeof navigator === "undefined") return false;
+  return /android/i.test(String(navigator.userAgent ?? ""));
+}
+
+function readAndroidKeyboardInset() {
+  if (typeof window === "undefined") return 0;
+  const visualViewport = window.visualViewport;
+  if (!visualViewport) return 0;
+  const topRaw = Number.isFinite(visualViewport.offsetTop) ? visualViewport.offsetTop : 0;
+  const bottomRaw = window.innerHeight - (visualViewport.height + topRaw);
+  return Number.isFinite(bottomRaw) ? Math.max(0, Math.round(bottomRaw)) : 0;
+}
+
 function LoginPageInner() {
   const { locale, t } = useI18n();
   const searchParams = useSearchParams();
@@ -108,8 +122,11 @@ function LoginPageInner() {
   const [account, setAccount] = useState("");
   const [password, setPassword] = useState("");
   const [resetCode, setResetCode] = useState("");
+  const formViewportRef = useRef<HTMLDivElement>(null);
   const accountInputRef = useRef<HTMLInputElement>(null);
   const passwordInputRef = useRef<HTMLInputElement>(null);
+  const isAndroid = useMemo(() => isAndroidBrowser(), []);
+  const [androidKeyboardInset, setAndroidKeyboardInset] = useState(0);
   const [msg, setMsg] = useState<string>("");
   const [gatewayReachable, setGatewayReachable] = useState<boolean | null>(null);
   const [needConfirmEmail, setNeedConfirmEmail] = useState(false);
@@ -239,6 +256,64 @@ function LoginPageInner() {
       timers.forEach((timer) => window.clearTimeout(timer));
     };
   }, [loggedOut]);
+
+  useEffect(() => {
+    if (!isAndroid || typeof window === "undefined" || typeof document === "undefined") return;
+
+    let scrollTimer = 0;
+    const scrollFocusedFieldIntoView = (delay = 0) => {
+      window.clearTimeout(scrollTimer);
+      scrollTimer = window.setTimeout(() => {
+        const activeElement = document.activeElement;
+        const viewport = formViewportRef.current;
+        if (!(activeElement instanceof HTMLElement) || !viewport || !viewport.contains(activeElement)) return;
+        activeElement.scrollIntoView({
+          behavior: delay === 0 ? "auto" : "smooth",
+          block: "center",
+          inline: "nearest",
+        });
+      }, delay);
+    };
+
+    const syncKeyboardInset = (options?: { scrollDelay?: number }) => {
+      const nextInset = readAndroidKeyboardInset();
+      setAndroidKeyboardInset((current) => (current === nextInset ? current : nextInset));
+      scrollFocusedFieldIntoView(options?.scrollDelay ?? 120);
+    };
+
+    const handleFocusIn = (event: FocusEvent) => {
+      const target = event.target;
+      const viewport = formViewportRef.current;
+      if (!(target instanceof HTMLElement) || !viewport || !viewport.contains(target)) return;
+      syncKeyboardInset({ scrollDelay: 180 });
+      scrollFocusedFieldIntoView(320);
+    };
+
+    const handleFocusOut = () => {
+      window.setTimeout(() => {
+        setAndroidKeyboardInset(readAndroidKeyboardInset());
+      }, 120);
+    };
+
+    const handleViewportResize = () => {
+      syncKeyboardInset();
+    };
+
+    syncKeyboardInset({ scrollDelay: 0 });
+    document.addEventListener("focusin", handleFocusIn);
+    document.addEventListener("focusout", handleFocusOut);
+    window.addEventListener("resize", handleViewportResize);
+    window.visualViewport?.addEventListener("resize", handleViewportResize);
+    window.visualViewport?.addEventListener("scroll", handleViewportResize);
+    return () => {
+      window.clearTimeout(scrollTimer);
+      document.removeEventListener("focusin", handleFocusIn);
+      document.removeEventListener("focusout", handleFocusOut);
+      window.removeEventListener("resize", handleViewportResize);
+      window.visualViewport?.removeEventListener("resize", handleViewportResize);
+      window.visualViewport?.removeEventListener("scroll", handleViewportResize);
+    };
+  }, [isAndroid]);
 
   const redirectToMerchantBackend = useCallback(
     async (
@@ -866,6 +941,13 @@ function LoginPageInner() {
     "w-full rounded-[20px] border border-slate-200 bg-white px-4 py-3.5 text-[16px] text-slate-900 shadow-[0_10px_28px_rgba(15,23,42,0.06)] outline-none transition placeholder:text-slate-400 focus:border-slate-900 focus:ring-4 focus:ring-slate-900/8 md:rounded-[22px] md:py-4";
   const secondaryButtonClassName =
     "rounded-[18px] border border-slate-200 bg-white/88 px-4 py-3 text-sm font-medium text-slate-700 shadow-[0_8px_24px_rgba(15,23,42,0.06)] transition hover:border-slate-300 hover:bg-white disabled:opacity-50 md:rounded-[20px]";
+  const androidKeyboardOpen = isAndroid && androidKeyboardInset >= 100;
+  const mobileFormSectionStyle =
+    androidKeyboardInset > 0
+      ? {
+          paddingBottom: `calc(env(safe-area-inset-bottom) + 0.9rem + ${androidKeyboardInset}px)`,
+        }
+      : undefined;
 
   return (
     <main className="relative h-[100dvh] min-h-screen overflow-hidden overscroll-none bg-[#081121] text-slate-900">
@@ -876,7 +958,11 @@ function LoginPageInner() {
 
       <div className="relative mx-auto flex h-full w-full max-w-6xl flex-col md:min-h-screen md:px-6 md:py-8">
         <div className="flex h-full w-full flex-col overflow-hidden md:min-h-0 md:flex-1 md:flex-row md:rounded-[34px] md:border md:border-white/14 md:bg-white/8 md:shadow-[0_32px_120px_rgba(8,17,33,0.4)]">
-          <section className="relative shrink-0 px-5 pb-4 pt-[calc(env(safe-area-inset-top)+0.875rem)] text-white sm:px-6 md:flex md:w-[44%] md:flex-col md:px-10 md:py-12">
+          <section
+            className={`relative shrink-0 px-5 pb-4 pt-[calc(env(safe-area-inset-top)+0.875rem)] text-white sm:px-6 md:flex md:w-[44%] md:flex-col md:px-10 md:py-12 ${
+              androidKeyboardOpen ? "hidden md:flex" : ""
+            }`}
+          >
             <div className="inline-flex w-fit items-center gap-3 rounded-full border border-white/14 bg-white/10 px-4 py-2 text-xs font-medium tracking-[0.24em] text-cyan-50/90 uppercase backdrop-blur">
               <span className="inline-flex h-2 w-2 rounded-full bg-emerald-300" />
               {secureAccessLabel}
@@ -925,8 +1011,18 @@ function LoginPageInner() {
             </div>
           </section>
 
-          <section className="relative flex min-h-0 flex-1 flex-col rounded-t-[28px] bg-[linear-gradient(180deg,_rgba(248,251,255,0.96)_0%,_#ffffff_34%,_#f8fbff_100%)] px-5 pb-[calc(env(safe-area-inset-bottom)+0.9rem)] pt-4 shadow-[0_-24px_60px_rgba(8,17,33,0.24)] sm:px-6 md:rounded-none md:px-10 md:py-12 md:shadow-none">
-            <div className="mx-auto flex h-full min-h-0 w-full max-w-md flex-col justify-center">
+          <section
+            className={`relative flex min-h-0 flex-1 flex-col bg-[linear-gradient(180deg,_rgba(248,251,255,0.96)_0%,_#ffffff_34%,_#f8fbff_100%)] px-5 pt-4 sm:px-6 md:rounded-none md:px-10 md:py-12 md:shadow-none ${
+              androidKeyboardOpen ? "rounded-t-none shadow-none" : "rounded-t-[28px] shadow-[0_-24px_60px_rgba(8,17,33,0.24)]"
+            }`}
+            style={mobileFormSectionStyle}
+          >
+            <div
+              ref={formViewportRef}
+              className={`mx-auto flex h-full min-h-0 w-full max-w-md flex-col overflow-y-auto overscroll-contain ${
+                androidKeyboardOpen ? "justify-start pt-2" : "justify-center"
+              } md:overflow-visible`}
+            >
               <div className="space-y-4 md:space-y-6">
                 <div className="space-y-1.5 md:space-y-2">
                   <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">Account</div>

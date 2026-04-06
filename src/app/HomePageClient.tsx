@@ -2,18 +2,19 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import SitePageClient from "@/app/site/[siteId]/SitePageClient";
 import BlockRenderer from "@/components/blocks/BlockRenderer";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
-import SitePageClient from "@/app/site/[siteId]/SitePageClient";
+import { useI18n } from "@/components/I18nProvider";
 import { homeBlocks, type Block } from "@/data/homeBlocks";
 import { loadPlatformState, subscribePlatformState } from "@/data/platformControlStore";
-import { useI18n } from "@/components/I18nProvider";
 import { trackPageView } from "@/lib/analytics";
+import { readMerchantSessionPayload } from "@/lib/authSessionRecovery";
 import { MOBILE_BREAKPOINT } from "@/lib/deviceViewport";
-import { normalizeDomainPrefix } from "@/lib/merchantIdentity";
+import { ensureMerchantIdentityForUser, isMerchantNumericId, normalizeDomainPrefix } from "@/lib/merchantIdentity";
 import { cloneBlocks, getPagePlanConfigFromBlocks } from "@/lib/pagePlans";
 import { resolvePublishedSiteByPrefix } from "@/lib/publishedSiteLookup";
-import { extractMerchantPrefixFromHost, resolveRuntimePortalBaseDomain } from "@/lib/siteRouting";
+import { buildMerchantBackendHref, extractMerchantPrefixFromHost, resolveRuntimePortalBaseDomain } from "@/lib/siteRouting";
 import { useMobileHorizontalScrollLock } from "@/lib/useMobileHorizontalScrollLock";
 
 function readViewportWidth() {
@@ -27,6 +28,12 @@ function readViewportWidth() {
     return documentWidth;
   }
   return window.innerWidth;
+}
+
+function isStandaloneDisplayMode() {
+  if (typeof window === "undefined" || typeof navigator === "undefined") return false;
+  const navigatorWithStandalone = navigator as Navigator & { standalone?: boolean };
+  return window.matchMedia?.("(display-mode: standalone)").matches || navigatorWithStandalone.standalone === true;
 }
 
 function getEmbeddedMobilePlanConfig(sourceBlocks: Block[]) {
@@ -64,6 +71,9 @@ export default function HomePageClient({
   const { t } = useI18n();
   const [platformState, setPlatformState] = useState(() => loadPlatformState());
   const [isMobileViewport, setIsMobileViewport] = useState(initialIsMobileViewport);
+  const [standaloneSessionBooting, setStandaloneSessionBooting] = useState(() =>
+    typeof window !== "undefined" ? isStandaloneDisplayMode() : false,
+  );
   const [remoteHostLookup, setRemoteHostLookup] = useState<{ prefix: string; siteId: string }>({
     prefix: "",
     siteId: "",
@@ -113,10 +123,7 @@ export default function HomePageClient({
     if (typeof window === "undefined") return null;
     const mainSite = platformState.sites.find((site) => site.id === "site-main") ?? platformState.sites[0] ?? null;
     const portalBaseDomain = resolveRuntimePortalBaseDomain(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? mainSite?.domain ?? "");
-    const hostPrefix = extractMerchantPrefixFromHost(
-      window.location.host,
-      portalBaseDomain,
-    );
+    const hostPrefix = extractMerchantPrefixFromHost(window.location.host, portalBaseDomain);
     if (!hostPrefix) return null;
     return (
       platformState.sites.find(
@@ -130,11 +137,9 @@ export default function HomePageClient({
     if (typeof window === "undefined") return "";
     const mainSite = platformState.sites.find((site) => site.id === "site-main") ?? platformState.sites[0] ?? null;
     const portalBaseDomain = resolveRuntimePortalBaseDomain(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? mainSite?.domain ?? "");
-    return extractMerchantPrefixFromHost(
-      window.location.host,
-      portalBaseDomain,
-    );
+    return extractMerchantPrefixFromHost(window.location.host, portalBaseDomain);
   }, [platformState]);
+
   useEffect(() => {
     if (typeof window === "undefined" || hostMatchedSite || !hostPrefix) return;
 
@@ -150,6 +155,7 @@ export default function HomePageClient({
       mounted = false;
     };
   }, [hostMatchedSite, hostPrefix]);
+
   const resolvedHostSiteId = !hostMatchedSite && hostPrefix && remoteHostLookup.prefix === hostPrefix ? remoteHostLookup.siteId : "";
   const pageBackgroundSource = activeBlocks[0]?.props;
   const pageBackgroundStyle = getBackgroundStyle({
@@ -170,6 +176,40 @@ export default function HomePageClient({
   }, 0);
   const backgroundExtendPadding = Math.max(0, maxBlockOffsetY) + 160;
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!isStandaloneDisplayMode()) return;
+
+    let mounted = true;
+    setStandaloneSessionBooting(true);
+    void (async () => {
+      try {
+        const payload = await readMerchantSessionPayload(2600).catch(() => null);
+        if (!mounted) return;
+        if (payload?.authenticated === true) {
+          let merchantId = typeof payload.merchantId === "string" ? payload.merchantId.trim() : "";
+          if (!isMerchantNumericId(merchantId) && payload.user) {
+            const resolvedIdentity = await ensureMerchantIdentityForUser(payload.user).catch(() => null);
+            if (!mounted) return;
+            merchantId = String(resolvedIdentity?.merchantId ?? "").trim();
+          }
+          if (isMerchantNumericId(merchantId)) {
+            window.location.replace(buildMerchantBackendHref(merchantId));
+            return;
+          }
+        }
+        window.location.replace("/login");
+      } catch {
+        if (!mounted) return;
+        window.location.replace("/login");
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   if (hostMatchedSite) {
     return <SitePageClient forcedSiteId={hostMatchedSite.id} initialIsMobileViewport={isMobileViewport} />;
   }
@@ -178,12 +218,25 @@ export default function HomePageClient({
     return <SitePageClient forcedSiteId={resolvedHostSiteId} initialIsMobileViewport={isMobileViewport} />;
   }
 
+  if (standaloneSessionBooting) {
+    return (
+      <main className="min-h-screen bg-[#081121] text-white">
+        <div className="mx-auto flex min-h-screen max-w-md items-center justify-center px-6 text-center">
+          <div>
+            <div className="text-lg font-semibold">正在进入商户后台</div>
+            <div className="mt-2 text-sm text-white/70">请稍等，我们正在恢复你的登录状态。</div>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main
       className="min-h-screen w-full overflow-x-hidden bg-gray-50 py-8"
       style={{ ...pageBackgroundStyle, paddingBottom: `calc(2rem + ${backgroundExtendPadding}px)` }}
     >
-      <div className="max-w-6xl mx-auto px-6 mb-4 flex items-center justify-end gap-2">
+      <div className="max-w-6xl mx-auto mb-4 flex items-center justify-end gap-2 px-6">
         <Link
           href="/login"
           className="inline-flex items-center rounded-lg border bg-white px-4 py-2 text-sm font-medium hover:bg-gray-100"
