@@ -1,13 +1,14 @@
 "use client";
 
 import { useParams, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import AdminClient from "@/app/admin/AdminClient";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
 import { loadPlatformState, subscribePlatformState } from "@/data/platformControlStore";
 import {
   hasStoredBrowserSupabaseSessionTokens,
   isTransientAuthValidationError,
+  readMerchantSessionPayload,
   recoverBrowserSupabaseSession,
 } from "@/lib/authSessionRecovery";
 import { buildMerchantSiteLinker } from "@/lib/merchantSiteLinking";
@@ -50,6 +51,15 @@ export default function MerchantNumericEntryPageClient() {
     });
     return matched?.id || merchantEntry;
   }, [matchMerchantSite, merchantEntry, numericSessionEmail]);
+
+  const readCookieBackedMerchantIdentity = useCallback(async (timeoutMs = 4500) => {
+    const payload = await readMerchantSessionPayload(timeoutMs).catch(() => null);
+    if (!payload || payload.authenticated !== true) return null;
+    return {
+      merchantId: typeof payload.merchantId === "string" ? payload.merchantId.trim() : "",
+      email: typeof payload.user?.email === "string" ? payload.user.email.trim().toLowerCase() : "",
+    };
+  }, []);
 
   useEffect(
     () =>
@@ -97,6 +107,14 @@ export default function MerchantNumericEntryPageClient() {
       let session = await recoverBrowserSupabaseSession(4500);
       if (!mounted) return;
       if (!session?.user) {
+        const cookieBackedIdentity = await readCookieBackedMerchantIdentity(4500);
+        if (!mounted) return;
+        if (cookieBackedIdentity) {
+          setNumericSessionEmail(cookieBackedIdentity.email);
+          setNumericAdminAuthenticated(true);
+          setNumericAdminAuthReady(true);
+          return;
+        }
         if (hasStoredBrowserSupabaseSessionTokens()) {
           setNumericAdminAuthenticated(true);
           setNumericAdminAuthReady(true);
@@ -118,6 +136,14 @@ export default function MerchantNumericEntryPageClient() {
           session = await recoverBrowserSupabaseSession(2200);
           if (!mounted) return;
           if (!session?.user) {
+            const cookieBackedIdentity = await readCookieBackedMerchantIdentity(3200);
+            if (!mounted) return;
+            if (cookieBackedIdentity) {
+              setNumericSessionEmail(cookieBackedIdentity.email);
+              setNumericAdminAuthenticated(true);
+              setNumericAdminAuthReady(true);
+              return;
+            }
             if (hasStoredBrowserSupabaseSessionTokens()) {
               setNumericAdminAuthenticated(true);
               setNumericAdminAuthReady(true);
@@ -137,16 +163,30 @@ export default function MerchantNumericEntryPageClient() {
         return;
       }
 
+      setNumericSessionEmail(String(session.user.email ?? "").trim().toLowerCase());
       setNumericAdminAuthenticated(true);
       setNumericAdminAuthReady(true);
     })().catch(() => {
-      redirectToLogin();
+      void readCookieBackedMerchantIdentity(3200)
+        .then((cookieBackedIdentity) => {
+          if (!mounted) return;
+          if (cookieBackedIdentity) {
+            setNumericSessionEmail(cookieBackedIdentity.email);
+            setNumericAdminAuthenticated(true);
+            setNumericAdminAuthReady(true);
+            return;
+          }
+          redirectToLogin();
+        })
+        .catch(() => {
+          redirectToLogin();
+        });
     });
 
     return () => {
       mounted = false;
     };
-  }, [hydrated, merchantEntry, recentSignInBridgeActive, skipEntrySessionCheck]);
+  }, [hydrated, merchantEntry, readCookieBackedMerchantIdentity, recentSignInBridgeActive, skipEntrySessionCheck]);
 
   useEffect(() => {
     if (!hydrated || !merchantEntry || !isSupabaseEnabled) return;
@@ -163,9 +203,16 @@ export default function MerchantNumericEntryPageClient() {
         setNumericSessionLookupDone(false);
         return recoverBrowserSupabaseSession(2200);
       })
-      .then((session) => {
+      .then(async (session) => {
         if (!mounted) return;
-        setNumericSessionEmail(String(session?.user?.email ?? "").trim().toLowerCase());
+        const sessionEmail = String(session?.user?.email ?? "").trim().toLowerCase();
+        if (sessionEmail) {
+          setNumericSessionEmail(sessionEmail);
+          return;
+        }
+        const cookieBackedIdentity = await readCookieBackedMerchantIdentity(2200);
+        if (!mounted) return;
+        setNumericSessionEmail(cookieBackedIdentity?.email ?? "");
       })
       .catch(() => {
         if (!mounted) return;
@@ -179,7 +226,7 @@ export default function MerchantNumericEntryPageClient() {
     return () => {
       mounted = false;
     };
-  }, [hydrated, merchantEntry, skipEntrySessionCheck]);
+  }, [hydrated, merchantEntry, readCookieBackedMerchantIdentity, skipEntrySessionCheck]);
 
   useEffect(() => {
     if (!recentSignInBridgeActive) return;

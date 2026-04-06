@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { createMirroredBrowserAuthStorageAdapter } from "@/lib/browserAuthStorage";
 
 const REQUIRED_SUPABASE_ENV_KEYS = ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY"] as const;
 const rawUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
@@ -28,26 +29,7 @@ const fallbackUrl = isSupabaseFallbackMode ? "http://127.0.0.1:54321" : "https:/
 const fallbackAnon = "fallback-anon-key";
 const configuredSupabaseUrl = rawUrl || fallbackUrl;
 
-function getBrowserSessionStorage() {
-  if (typeof window === "undefined") return null;
-  try {
-    return window.sessionStorage;
-  } catch {
-    return null;
-  }
-}
-
-const supabaseSessionStorageAdapter = {
-  getItem(key: string) {
-    return getBrowserSessionStorage()?.getItem(key) ?? null;
-  },
-  setItem(key: string, value: string) {
-    getBrowserSessionStorage()?.setItem(key, value);
-  },
-  removeItem(key: string) {
-    getBrowserSessionStorage()?.removeItem(key);
-  },
-};
+const supabaseSessionStorageAdapter = createMirroredBrowserAuthStorageAdapter();
 
 export function resolveBrowserSupabaseProxyUrl(browserOrigin: string, upstreamUrl: string) {
   const normalizedBrowserOrigin = String(browserOrigin ?? "").trim();
