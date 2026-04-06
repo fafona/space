@@ -1,5 +1,7 @@
 export const I18N_STORAGE_KEY = "merchant-space:locale:v1";
 export const I18N_GEO_LOCALE_CACHE_KEY = "merchant-space:locale:geo:v1";
+export const I18N_COOKIE_KEY = "merchant-space-locale-v1";
+const I18N_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
 
 export type LanguageOption = {
   code: string;
@@ -526,13 +528,105 @@ export function getLocaleBundle(locale: string): TranslationBundle {
   return EN_BUNDLE;
 }
 
+function parseCookieValue(cookie: string | null | undefined, key: string) {
+  const source = String(cookie ?? "");
+  if (!source) return null;
+  const pairs = source.split(";");
+  for (const pair of pairs) {
+    const [rawName, ...rest] = pair.split("=");
+    if (!rawName) continue;
+    if (rawName.trim() !== key) continue;
+    const rawValue = rest.join("=").trim();
+    if (!rawValue) return null;
+    try {
+      return decodeURIComponent(rawValue);
+    } catch {
+      return rawValue;
+    }
+  }
+  return null;
+}
+
+export function readStoredLocaleCookieFromString(cookie: string | null | undefined) {
+  const raw = parseCookieValue(cookie, I18N_COOKIE_KEY);
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const resolved = resolveSupportedLocale(trimmed);
+  if (resolved !== DEFAULT_LOCALE) return resolved;
+  const lowered = trimmed.toLowerCase();
+  if (lowered === "zh" || lowered === "zh-cn" || lowered === "zh-hans") {
+    return DEFAULT_LOCALE;
+  }
+  return null;
+}
+
+export function resolveLocaleCookieDomainFromHost(host: string | null | undefined) {
+  const normalized = String(host ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/\/.*$/, "");
+  if (!normalized) return "";
+  const hostname = normalized.startsWith("[")
+    ? normalized.replace(/^\[|\](?::\d+)?$/g, "")
+    : normalized.replace(/:\d+$/, "");
+  if (!hostname) return "";
+  if (
+    hostname === "localhost" ||
+    hostname === "::1" ||
+    hostname === "[::1]" ||
+    hostname.endsWith(".localhost") ||
+    /^\d{1,3}(?:\.\d{1,3}){3}$/.test(hostname)
+  ) {
+    return "";
+  }
+  const labels = hostname.split(".").filter(Boolean);
+  if (labels.length < 2) return "";
+  return labels.slice(-2).join(".");
+}
+
+function readStoredLocaleCookie() {
+  if (typeof document === "undefined") return null;
+  try {
+    return readStoredLocaleCookieFromString(document.cookie);
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredLocaleCookie(locale: string) {
+  if (typeof document === "undefined" || typeof window === "undefined") return;
+  try {
+    const resolved = resolveSupportedLocale(locale);
+    const parts = [
+      `${I18N_COOKIE_KEY}=${encodeURIComponent(resolved)}`,
+      "Path=/",
+      `Max-Age=${I18N_COOKIE_MAX_AGE_SECONDS}`,
+      "SameSite=Lax",
+    ];
+    if (window.location.protocol === "https:") {
+      parts.push("Secure");
+    }
+    const domain = resolveLocaleCookieDomainFromHost(window.location.host);
+    if (domain) {
+      parts.push(`Domain=${domain}`);
+    }
+    document.cookie = parts.join("; ");
+  } catch {
+    // Ignore cookie write failures.
+  }
+}
+
 export function readStoredLocale() {
   if (typeof window === "undefined") return DEFAULT_LOCALE;
   try {
-    return resolveSupportedLocale(window.localStorage.getItem(I18N_STORAGE_KEY));
+    const stored = window.localStorage.getItem(I18N_STORAGE_KEY);
+    if (stored) return resolveSupportedLocale(stored);
   } catch {
-    return DEFAULT_LOCALE;
+    // Ignore localStorage read failures.
   }
+  return readStoredLocaleCookie() ?? DEFAULT_LOCALE;
 }
 
 export function detectPreferredLocale() {
@@ -543,6 +637,8 @@ export function detectPreferredLocale() {
   } catch {
     // Ignore storage read failures.
   }
+  const cookieStored = readStoredLocaleCookie();
+  if (cookieStored) return cookieStored;
   const geoCached = readGeoCachedLocale();
   if (geoCached) return geoCached;
   const navigatorLanguages = Array.isArray(window.navigator.languages) && window.navigator.languages.length > 0
@@ -556,22 +652,27 @@ export function detectPreferredLocale() {
 }
 
 export function writeStoredLocale(locale: string) {
+  const resolved = resolveSupportedLocale(locale);
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(I18N_STORAGE_KEY, resolveSupportedLocale(locale));
+    window.localStorage.setItem(I18N_STORAGE_KEY, resolved);
   } catch {
     // Ignore write failures.
   }
+  writeStoredLocaleCookie(resolved);
 }
 
 export function hasStoredLocalePreference() {
-  if (typeof window === "undefined") return false;
+  if (typeof window === "undefined" && typeof document === "undefined") return false;
   try {
-    const raw = window.localStorage.getItem(I18N_STORAGE_KEY);
-    return Boolean(raw && raw.trim());
+    if (typeof window !== "undefined") {
+      const raw = window.localStorage.getItem(I18N_STORAGE_KEY);
+      if (raw && raw.trim()) return true;
+    }
   } catch {
-    return false;
+    // Ignore localStorage read failures.
   }
+  return Boolean(readStoredLocaleCookie());
 }
 
 export async function detectGeoLocale() {

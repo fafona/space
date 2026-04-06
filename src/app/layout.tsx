@@ -48,9 +48,16 @@ const I18N_PENDING_SCRIPT = `
   if (typeof window === "undefined") return;
   try {
     const key = "merchant-space:locale:v1";
+    const cookieKey = "merchant-space-locale-v1";
     const geoKey = "merchant-space:locale:geo:v1";
+    const cookieValue = document.cookie
+      .split(";")
+      .map((item) => item.trim())
+      .find((item) => item.startsWith(cookieKey + "="))
+      ?.slice(cookieKey.length + 1) || "";
     const raw = (
       window.localStorage.getItem(key) ||
+      cookieValue ||
       window.localStorage.getItem(geoKey) ||
       ""
     ).trim().toLowerCase();
