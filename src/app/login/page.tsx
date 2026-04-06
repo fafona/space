@@ -644,37 +644,21 @@ function LoginPageInner() {
       };
     }
 
-    const snapshotStored = persistSessionSnapshot(session);
-
-    const establishedSession = await establishBrowserSupabaseSession(
+    const snapshotStored = persistSessionSnapshot(session) || hasStoredBrowserSupabaseSessionTokens();
+    void establishBrowserSupabaseSession(
       {
         access_token: accessToken,
         refresh_token: refreshToken,
       },
-      900,
+      2600,
     ).catch(() => null);
-    if (establishedSession?.user) {
-      return {
-        browserSessionReady: true,
-        snapshotStored,
-      };
-    }
 
-    if (snapshotStored) {
-      void establishBrowserSupabaseSession(
-        {
-          access_token: accessToken,
-          refresh_token: refreshToken,
-        },
-        2600,
-      ).catch(() => null);
-      return {
-        browserSessionReady: false,
-        snapshotStored,
-      };
-    }
-
-    const recoveredSession = await recoverBrowserSupabaseSession(900).catch(() => null);
+    const recoveredSession = await Promise.race([
+      supabase.auth.getSession().then(({ data }) => data.session ?? null).catch(() => null),
+      new Promise<null>((resolve) => {
+        setTimeout(() => resolve(null), 180);
+      }),
+    ]);
     return {
       browserSessionReady: Boolean(recoveredSession?.user),
       snapshotStored,
@@ -728,10 +712,6 @@ function LoginPageInner() {
       browserSessionReady: false,
       snapshotStored: false,
     }));
-    const hasStoredTokens = stabilization.snapshotStored || hasStoredBrowserSupabaseSessionTokens();
-    if (!stabilization.browserSessionReady && !hasStoredTokens) {
-      throw new Error("browser_session_not_ready");
-    }
 
     return {
       user: (payload?.user ?? session?.user ?? null) as LoginAuthUser | null,

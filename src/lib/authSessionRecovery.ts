@@ -85,6 +85,17 @@ async function pollSession(timeoutMs: number): Promise<Session | null> {
   return null;
 }
 
+async function readCurrentBrowserSession(timeoutMs: number): Promise<Session | null> {
+  try {
+    const {
+      data: { session },
+    } = await withTimeout(supabase.auth.getSession(), Math.max(300, Math.min(1500, timeoutMs)));
+    return session ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function isInvalidRefreshTokenMessage(message: string) {
   return /invalid refresh token|already used/i.test(String(message ?? ""));
 }
@@ -304,31 +315,37 @@ export async function recoverBrowserSupabaseSessionViaMerchantCookies(timeoutMs 
       currentSession: syntheticSession,
       session: syntheticSession,
     });
-    try {
-      const { data } = await withTimeout(
-        supabase.auth.setSession({
-          access_token: payload.accessToken,
-          refresh_token: payload.refreshToken,
-        }),
-        Math.max(1800, timeoutMs),
-      );
-      if (data.session) return data.session;
-    } catch {
-      // Fall back to the validated cookie-backed session shape below.
-    }
+    void withTimeout(
+      supabase.auth.setSession({
+        access_token: payload.accessToken,
+        refresh_token: payload.refreshToken,
+      }),
+      Math.max(1800, timeoutMs),
+    )
+      .then(({ data }) => {
+        if (!data.session) return;
+        persistBrowserSupabaseSessionSnapshot({
+          currentSession: data.session,
+          session: data.session,
+        });
+      })
+      .catch(() => {
+        // Keep the synthetic cookie-backed session available while browser auth catches up.
+      });
   }
 
   return syntheticSession;
 }
 
 export async function recoverBrowserSupabaseSession(timeoutMs = 4500): Promise<Session | null> {
-  const direct = await pollSession(timeoutMs);
+  const direct = await readCurrentBrowserSession(Math.min(900, timeoutMs));
   if (direct) return direct;
-  const fromStored = await tryRecoverSessionFromStoredToken(timeoutMs);
+  const recoveryTimeoutMs = Math.max(1200, Math.min(3200, timeoutMs));
+  const fromStored = await tryRecoverSessionFromStoredToken(recoveryTimeoutMs);
   if (fromStored) return fromStored;
-  const fromMerchantCookies = await recoverBrowserSupabaseSessionViaMerchantCookies(timeoutMs);
+  const fromMerchantCookies = await recoverBrowserSupabaseSessionViaMerchantCookies(recoveryTimeoutMs);
   if (fromMerchantCookies) return fromMerchantCookies;
-  return pollSession(1200);
+  return pollSession(Math.max(600, Math.min(1400, timeoutMs)));
 }
 
 export async function recoverBrowserSupabaseSessionWithRefresh(timeoutMs = 4500): Promise<Session | null> {
