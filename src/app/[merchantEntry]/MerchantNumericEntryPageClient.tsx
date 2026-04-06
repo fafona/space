@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import AdminClient from "@/app/admin/AdminClient";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
 import { loadPlatformState, subscribePlatformState } from "@/data/platformControlStore";
+import { readRecentMerchantLaunchMerchantId } from "@/lib/merchantLaunchState";
 import {
   hasStoredBrowserSupabaseSessionTokens,
   isTransientAuthValidationError,
@@ -13,7 +14,7 @@ import {
 } from "@/lib/authSessionRecovery";
 import { buildMerchantSiteLinker } from "@/lib/merchantSiteLinking";
 import { clearMerchantSignInBridge, hasMerchantSignInBridge } from "@/lib/merchantSignInBridge";
-import { isSupabaseEnabled, supabase } from "@/lib/supabase";
+import { canReachSupabaseGateway, isSupabaseEnabled, supabase } from "@/lib/supabase";
 import { useHydrated } from "@/lib/useHydrated";
 
 export default function MerchantNumericEntryPageClient() {
@@ -26,6 +27,10 @@ export default function MerchantNumericEntryPageClient() {
     if (typeof window === "undefined") return false;
     return hasStoredBrowserSupabaseSessionTokens();
   });
+  const hasRecentLaunchEntry = useMemo(() => {
+    if (!hydrated || typeof window === "undefined") return false;
+    return readRecentMerchantLaunchMerchantId() === merchantEntry;
+  }, [hydrated, merchantEntry]);
   const skipEntrySessionCheck = useMemo(
     () => hydrated && (justSignedIn || hasStoredSessionTokens),
     [hasStoredSessionTokens, hydrated, justSignedIn],
@@ -103,6 +108,15 @@ export default function MerchantNumericEntryPageClient() {
       window.location.replace(`/login?redirect=${encodeURIComponent(`/${merchantEntry}`)}`);
     };
 
+    const allowTransientResumeRecovery = async () => {
+      if (!hasRecentLaunchEntry) return false;
+      const gatewayReady = await canReachSupabaseGateway(1800).catch(() => null);
+      if (!mounted || gatewayReady !== false) return false;
+      setNumericAdminAuthenticated(true);
+      setNumericAdminAuthReady(true);
+      return true;
+    };
+
     void (async () => {
       let session = await recoverBrowserSupabaseSession(4500);
       if (!mounted) return;
@@ -118,6 +132,9 @@ export default function MerchantNumericEntryPageClient() {
         if (hasStoredBrowserSupabaseSessionTokens()) {
           setNumericAdminAuthenticated(true);
           setNumericAdminAuthReady(true);
+          return;
+        }
+        if (await allowTransientResumeRecovery()) {
           return;
         }
         redirectToLogin();
@@ -149,6 +166,9 @@ export default function MerchantNumericEntryPageClient() {
               setNumericAdminAuthReady(true);
               return;
             }
+            if (await allowTransientResumeRecovery()) {
+              return;
+            }
             await supabase.auth.signOut({ scope: "local" }).catch(() => {
               // Ignore local cleanup failure.
             });
@@ -168,7 +188,7 @@ export default function MerchantNumericEntryPageClient() {
       setNumericAdminAuthReady(true);
     })().catch(() => {
       void readCookieBackedMerchantIdentity(3200)
-        .then((cookieBackedIdentity) => {
+        .then(async (cookieBackedIdentity) => {
           if (!mounted) return;
           if (cookieBackedIdentity) {
             setNumericSessionEmail(cookieBackedIdentity.email);
@@ -176,17 +196,30 @@ export default function MerchantNumericEntryPageClient() {
             setNumericAdminAuthReady(true);
             return;
           }
+          if (await allowTransientResumeRecovery()) {
+            return;
+          }
           redirectToLogin();
         })
         .catch(() => {
-          redirectToLogin();
+          void allowTransientResumeRecovery().then((preserved) => {
+            if (preserved) return;
+            redirectToLogin();
+          });
         });
     });
 
     return () => {
       mounted = false;
     };
-  }, [hydrated, merchantEntry, readCookieBackedMerchantIdentity, recentSignInBridgeActive, skipEntrySessionCheck]);
+  }, [
+    hasRecentLaunchEntry,
+    hydrated,
+    merchantEntry,
+    readCookieBackedMerchantIdentity,
+    recentSignInBridgeActive,
+    skipEntrySessionCheck,
+  ]);
 
   useEffect(() => {
     if (!hydrated || !merchantEntry || !isSupabaseEnabled) return;

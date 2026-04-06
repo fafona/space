@@ -74,7 +74,10 @@ import {
   startMerchantSessionKeepAlive,
   syncMerchantSessionCookies,
 } from "@/lib/authSessionRecovery";
-import { clearRecentMerchantLaunchState, persistRecentMerchantLaunchState } from "@/lib/merchantLaunchState";
+import {
+  clearRecentMerchantLaunchState,
+  persistRecentMerchantLaunchState,
+} from "@/lib/merchantLaunchState";
 import { clearMerchantSignInBridge } from "@/lib/merchantSignInBridge";
 import { buildPublishedMerchantProfilePatch } from "@/lib/merchantProfileBinding";
 import { buildMerchantBusinessCardShareUrl, resolveMerchantBusinessCardShareOrigin } from "@/lib/merchantBusinessCardShare";
@@ -4802,6 +4805,8 @@ export default function AdminClient({
     merchantId: "",
     email: null,
   });
+  const lastMerchantBackgroundedAtRef = useRef(0);
+  const lastMerchantResumeAtRef = useRef(0);
   const playNotificationSound = useNotificationSound();
   const merchantSessionIdentityTaskRef = useRef<Promise<{ merchantId: string; email: string | null } | null> | null>(null);
   const themeBaseBlocksByPageRef = useRef<Map<string, Block[]>>(new Map());
@@ -6071,6 +6076,11 @@ export default function AdminClient({
       setSelectedId("");
       releaseCheckingScreen({ notice });
     };
+    const shouldPreserveMerchantSessionDuringResume = () => {
+      if (isPlatformEditor || typeof document === "undefined") return false;
+      if (document.visibilityState !== "visible") return true;
+      return Date.now() - lastMerchantResumeAtRef.current <= 12_000;
+    };
     const getCandidateStoreScopes = () =>
       storeScope !== "default"
         ? [storeScope]
@@ -6243,6 +6253,9 @@ export default function AdminClient({
             setHasEditorContent(true);
             setBackendNotice(null);
             releaseCheckingScreen({ notice: null });
+            return;
+          }
+          if (shouldPreserveMerchantSessionDuringResume()) {
             return;
           }
           if (justSignedIn) {
@@ -8557,6 +8570,39 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     if (!isMerchantNumericId(editingSiteId)) return;
     persistRecentMerchantLaunchState(editingSiteId);
   }, [editingSiteId, isPlatformEditor]);
+
+  useEffect(() => {
+    if (isPlatformEditor || typeof window === "undefined" || typeof document === "undefined") return;
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        lastMerchantBackgroundedAtRef.current = Date.now();
+        return;
+      }
+      if (
+        document.visibilityState === "visible" &&
+        lastMerchantBackgroundedAtRef.current > 0 &&
+        Date.now() - lastMerchantBackgroundedAtRef.current <= 10 * 60 * 1000
+      ) {
+        lastMerchantResumeAtRef.current = Date.now();
+      }
+    };
+    const handleForeground = () => {
+      if (
+        lastMerchantBackgroundedAtRef.current > 0 &&
+        Date.now() - lastMerchantBackgroundedAtRef.current <= 10 * 60 * 1000
+      ) {
+        lastMerchantResumeAtRef.current = Date.now();
+      }
+    };
+    window.addEventListener("focus", handleForeground);
+    window.addEventListener("pageshow", handleForeground);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.removeEventListener("focus", handleForeground);
+      window.removeEventListener("pageshow", handleForeground);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [isPlatformEditor]);
   const merchantDisplayName = !isPlatformEditor
     ? ((editingSite?.merchantName ?? "").trim() || "未设置商户名称")
     : "";
