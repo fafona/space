@@ -12327,6 +12327,38 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               )}
             </div>
           </section>
+
+          <section className="overflow-hidden rounded-[28px] border border-rose-200/80 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+            <button
+              type="button"
+              className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left transition hover:bg-rose-50/70 disabled:opacity-50"
+              onClick={logout}
+              disabled={loggingOut}
+            >
+              <div>
+                <div className="text-sm font-semibold text-rose-600">{loggingOut ? "退出中..." : "退出登录"}</div>
+                <div className="mt-1 text-xs leading-5 text-slate-500">退出当前商户后台，返回登录界面。</div>
+              </div>
+              <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-rose-50 text-rose-600">
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+                  <path
+                    d="M14 7h2a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  <path
+                    d="M10 8 6 12l4 4M7 12h9"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </span>
+            </button>
+          </section>
         </div>
       </div>
     </>
