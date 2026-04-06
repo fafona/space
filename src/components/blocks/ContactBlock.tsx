@@ -125,6 +125,39 @@ function buildSocialHref(label: string, rawValue?: string) {
   return null;
 }
 
+function isEmbeddedFaollaShell() {
+  if (typeof window === "undefined") return false;
+  if (window.parent === window) return false;
+  try {
+    return (new URLSearchParams(window.location.search || "").get("appShell") ?? "").trim().toLowerCase() === "faolla";
+  } catch {
+    return false;
+  }
+}
+
+function isHttpLikeHref(value: string | null | undefined) {
+  return /^https?:\/\//i.test(String(value ?? "").trim());
+}
+
+function tryOpenHrefFromTopFrame(href: string) {
+  const normalized = String(href ?? "").trim();
+  if (!normalized || typeof window === "undefined") return false;
+  try {
+    if (window.top && window.top !== window) {
+      window.top.location.href = normalized;
+      return true;
+    }
+  } catch {
+    // Fall through to window.open below.
+  }
+  try {
+    window.open(normalized, "_top");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function getSocialIconUrl(label: string) {
   if (label === "Email") return "/social-icons/maildotru.svg";
   if (label === "WhatsApp") return "/social-icons/whatsapp.svg";
@@ -476,7 +509,8 @@ export default function ContactBlock(props: ContactBlockProps) {
     if (item.key === "address") {
       return renderAddressRows();
     }
-    const opensInNewTab = !!item.href && /^https?:\/\//i.test(item.href);
+    const opensInNewTab = !!item.href && isHttpLikeHref(item.href);
+    const opensInTopFrame = !!item.href && !opensInNewTab;
     return (
       <>
         <span className="min-w-0 flex-1 break-all whitespace-pre-wrap" style={contactTypographyStyle}>
@@ -485,10 +519,10 @@ export default function ContactBlock(props: ContactBlockProps) {
         {item.href ? (
           <a
             href={item.href}
-            target={opensInNewTab ? "_blank" : undefined}
+            target={opensInNewTab ? "_blank" : opensInTopFrame ? "_top" : undefined}
             rel={opensInNewTab ? "noreferrer noopener" : undefined}
             className={item.buttonClass}
-            onClick={() => {
+            onClick={(event) => {
               trackContactClick(item.key);
               if (item.key === "wechat") {
                 void navigator.clipboard?.writeText(item.value).then(
@@ -499,6 +533,9 @@ export default function ContactBlock(props: ContactBlockProps) {
                     showTemporaryContactNotice(`请在微信中搜索：${item.value}`);
                   },
                 );
+              }
+              if (item.href && opensInTopFrame && isEmbeddedFaollaShell() && tryOpenHrefFromTopFrame(item.href)) {
+                event.preventDefault();
               }
             }}
             aria-label={item.key === "wechat" ? `打开微信并复制${item.label}` : `打开${item.label}`}
