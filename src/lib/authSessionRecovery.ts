@@ -25,10 +25,11 @@ type MerchantCookieSessionPayload = {
 
 let merchantSessionPayloadInFlight: Promise<MerchantCookieSessionPayload | null> | null = null;
 
-function getBrowserStorages(): Storage[] {
+function collectUsableBrowserStorages(candidates: Array<Storage | null | undefined>) {
   if (typeof window === "undefined") return [];
   const storages: Storage[] = [];
-  for (const candidate of [window.sessionStorage]) {
+  for (const candidate of candidates) {
+    if (!candidate || storages.includes(candidate)) continue;
     try {
       const probeKey = "__merchant_storage_probe__";
       candidate.setItem(probeKey, "1");
@@ -41,20 +42,18 @@ function getBrowserStorages(): Storage[] {
   return storages;
 }
 
-function getLegacyPersistentBrowserStorages(): Storage[] {
+function getEphemeralBrowserStorages() {
   if (typeof window === "undefined") return [];
-  const storages: Storage[] = [];
-  for (const candidate of [window.localStorage]) {
-    try {
-      const probeKey = "__merchant_storage_probe__";
-      candidate.setItem(probeKey, "1");
-      candidate.removeItem(probeKey);
-      storages.push(candidate);
-    } catch {
-      // Ignore unavailable browser storage.
-    }
-  }
-  return storages;
+  return collectUsableBrowserStorages([window.sessionStorage]);
+}
+
+function getPersistentBrowserStorages() {
+  if (typeof window === "undefined") return [];
+  return collectUsableBrowserStorages([window.localStorage]);
+}
+
+function getRecoveryBrowserStorages() {
+  return [...getEphemeralBrowserStorages(), ...getPersistentBrowserStorages()];
 }
 
 async function withTimeout<T>(task: Promise<T>, timeoutMs: number): Promise<T> {
@@ -113,7 +112,7 @@ async function tryRecoverSessionFromStoredToken(timeoutMs: number): Promise<Sess
   const storageKeys = [resolvedSupabaseAuthStorageKey, legacySupabaseAuthStorageKey].filter(
     (value, index, list) => value && list.indexOf(value) === index,
   );
-  for (const storage of getBrowserStorages()) {
+  for (const storage of getRecoveryBrowserStorages()) {
     for (const storageKey of storageKeys) {
       try {
         const raw = storage.getItem(storageKey);
@@ -143,7 +142,7 @@ export function persistBrowserSupabaseSessionSnapshot(session: BrowserSessionSna
     (value, index, list) => value && list.indexOf(value) === index,
   );
   if (storageKeys.length === 0) return false;
-  const storages = getBrowserStorages();
+  const storages = getRecoveryBrowserStorages();
   if (storages.length === 0) return false;
 
   const snapshot = JSON.stringify(session);
@@ -155,15 +154,6 @@ export function persistBrowserSupabaseSessionSnapshot(session: BrowserSessionSna
         stored = true;
       } catch {
         // Ignore browser storage write failures and keep trying others.
-      }
-    }
-  }
-  for (const storage of getLegacyPersistentBrowserStorages()) {
-    for (const storageKey of storageKeys) {
-      try {
-        storage.removeItem(storageKey);
-      } catch {
-        // Ignore browser storage cleanup failures.
       }
     }
   }
@@ -186,7 +176,13 @@ export async function establishBrowserSupabaseSession(
       }),
       Math.max(3000, timeoutMs),
     );
-    if (!error && data.session) return data.session;
+    if (!error && data.session) {
+      persistBrowserSupabaseSessionSnapshot({
+        currentSession: data.session,
+        session: data.session,
+      });
+      return data.session;
+    }
   } catch {
     // Fall through to storage and poll-based recovery.
   }
@@ -198,7 +194,7 @@ export function hasStoredBrowserSupabaseSessionTokens(): boolean {
   const storageKeys = [resolvedSupabaseAuthStorageKey, legacySupabaseAuthStorageKey].filter(
     (value, index, list) => value && list.indexOf(value) === index,
   );
-  for (const storage of getBrowserStorages()) {
+  for (const storage of getRecoveryBrowserStorages()) {
     for (const storageKey of storageKeys) {
       try {
         const raw = storage.getItem(storageKey);
@@ -217,7 +213,7 @@ export function clearStoredBrowserSupabaseSessionTokens() {
   const storageKeys = [resolvedSupabaseAuthStorageKey, legacySupabaseAuthStorageKey].filter(
     (value, index, list) => value && list.indexOf(value) === index,
   );
-  for (const storage of [...getBrowserStorages(), ...getLegacyPersistentBrowserStorages()]) {
+  for (const storage of getRecoveryBrowserStorages()) {
     for (const storageKey of storageKeys) {
       try {
         storage.removeItem(storageKey);
@@ -344,7 +340,13 @@ export async function recoverBrowserSupabaseSessionWithRefresh(timeoutMs = 4500)
       supabase.auth.refreshSession(),
       Math.max(3200, Math.min(9000, timeoutMs + 2000)),
     );
-    if (data.session) return data.session;
+    if (data.session) {
+      persistBrowserSupabaseSessionSnapshot({
+        currentSession: data.session,
+        session: data.session,
+      });
+      return data.session;
+    }
   } catch {
     // Ignore refresh failures and fall back to one final short poll.
   }
@@ -432,6 +434,10 @@ export function startMerchantSessionKeepAlive(options?: MerchantSessionKeepAlive
           ? await recoverBrowserSupabaseSessionWithRefresh(timeoutMs)
           : currentSession;
         if (!activeSession) return null;
+        persistBrowserSupabaseSessionSnapshot({
+          currentSession: activeSession,
+          session: activeSession,
+        });
         await syncMerchantSessionCookies(activeSession, timeoutMs);
         return activeSession;
       } catch {
