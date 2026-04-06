@@ -1,6 +1,7 @@
 export const I18N_STORAGE_KEY = "merchant-space:locale:v1";
 export const I18N_GEO_LOCALE_CACHE_KEY = "merchant-space:locale:geo:v1";
 export const I18N_COOKIE_KEY = "merchant-space-locale-v1";
+export const I18N_URL_PARAM = "uiLocale";
 const I18N_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
 
 export type LanguageOption = {
@@ -547,10 +548,8 @@ function parseCookieValue(cookie: string | null | undefined, key: string) {
   return null;
 }
 
-export function readStoredLocaleCookieFromString(cookie: string | null | undefined) {
-  const raw = parseCookieValue(cookie, I18N_COOKIE_KEY);
-  if (!raw) return null;
-  const trimmed = raw.trim();
+function resolveExplicitLocaleValue(rawValue: string | null | undefined) {
+  const trimmed = String(rawValue ?? "").trim();
   if (!trimmed) return null;
   const resolved = resolveSupportedLocale(trimmed);
   if (resolved !== DEFAULT_LOCALE) return resolved;
@@ -559,6 +558,11 @@ export function readStoredLocaleCookieFromString(cookie: string | null | undefin
     return DEFAULT_LOCALE;
   }
   return null;
+}
+
+export function readStoredLocaleCookieFromString(cookie: string | null | undefined) {
+  const raw = parseCookieValue(cookie, I18N_COOKIE_KEY);
+  return resolveExplicitLocaleValue(raw);
 }
 
 export function resolveLocaleCookieDomainFromHost(host: string | null | undefined) {
@@ -584,6 +588,17 @@ export function resolveLocaleCookieDomainFromHost(host: string | null | undefine
   const labels = hostname.split(".").filter(Boolean);
   if (labels.length < 2) return "";
   return labels.slice(-2).join(".");
+}
+
+export function readRequestedLocaleFromSearch(search: string | null | undefined) {
+  const normalized = String(search ?? "").trim();
+  if (!normalized) return null;
+  try {
+    const params = new URLSearchParams(normalized.startsWith("?") ? normalized : `?${normalized}`);
+    return resolveExplicitLocaleValue(params.get(I18N_URL_PARAM));
+  } catch {
+    return null;
+  }
 }
 
 function readStoredLocaleCookie() {
@@ -620,6 +635,8 @@ function writeStoredLocaleCookie(locale: string) {
 
 export function readStoredLocale() {
   if (typeof window === "undefined") return DEFAULT_LOCALE;
+  const requested = readRequestedLocaleFromSearch(window.location.search);
+  if (requested) return requested;
   try {
     const stored = window.localStorage.getItem(I18N_STORAGE_KEY);
     if (stored) return resolveSupportedLocale(stored);
@@ -631,6 +648,8 @@ export function readStoredLocale() {
 
 export function detectPreferredLocale() {
   if (typeof window === "undefined") return DEFAULT_LOCALE;
+  const requested = readRequestedLocaleFromSearch(window.location.search);
+  if (requested) return requested;
   try {
     const storedRaw = window.localStorage.getItem(I18N_STORAGE_KEY);
     if (storedRaw) return resolveSupportedLocale(storedRaw);

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  readRequestedLocaleFromSearch,
   readStoredLocaleCookieFromString,
   resolveLocaleCookieDomainFromHost,
 } from "@/lib/i18n";
@@ -27,4 +28,11 @@ test("avoids shared locale cookie domain for local development hosts", () => {
   assert.equal(resolveLocaleCookieDomainFromHost("localhost:3000"), "");
   assert.equal(resolveLocaleCookieDomainFromHost("127.0.0.1:3000"), "");
   assert.equal(resolveLocaleCookieDomainFromHost("demo.localhost:3000"), "");
+});
+
+test("reads requested locale from query string", () => {
+  assert.equal(readRequestedLocaleFromSearch("?uiLocale=en-GB"), "en-GB");
+  assert.equal(readRequestedLocaleFromSearch("uiLocale=en"), "en-GB");
+  assert.equal(readRequestedLocaleFromSearch("?uiLocale=english"), null);
+  assert.equal(readRequestedLocaleFromSearch("?foo=bar"), null);
 });

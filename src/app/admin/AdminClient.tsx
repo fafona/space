@@ -236,6 +236,7 @@ import MerchantBookingManagerDialog from "@/components/admin/MerchantBookingMana
 import MerchantBookingMobilePanel from "@/components/admin/MerchantBookingMobilePanel";
 import MerchantProfileDialog from "@/components/admin/MerchantProfileDialog";
 import { useI18n } from "@/components/I18nProvider";
+import { I18N_URL_PARAM } from "@/lib/i18n";
 import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
 import { getMerchantServiceState } from "@/lib/merchantServiceStatus";
 
@@ -4525,6 +4526,7 @@ export default function AdminClient({
   startInLoadingState = false,
 }: AdminClientProps = {}) {
   const [storeScope] = useState<string>(() => readBlocksStoreScopeFromLocation(forcedScope));
+  const { locale } = useI18n();
   const [justSignedIn] = useState<boolean>(() => {
     if (typeof window === "undefined") return initialJustSignedIn;
     try {
@@ -8986,6 +8988,17 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const supportMobileFaollaHref =
     normalizeSupportExternalUrl(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "", typeof window !== "undefined" ? window.location.origin : "") ||
     "/";
+  const supportMobileFaollaTargetHref = useMemo(() => {
+    const normalized = normalizeSupportExternalUrl(supportMobileFaollaHref, typeof window !== "undefined" ? window.location.origin : "");
+    if (!normalized) return "/";
+    try {
+      const url = new URL(normalized);
+      url.searchParams.set(I18N_URL_PARAM, locale);
+      return url.toString();
+    } catch {
+      return normalized;
+    }
+  }, [locale, supportMobileFaollaHref]);
   const supportSelfSignature = normalizeSupportDisplayValue(supportSelfProfile?.signature);
   const supportSelfChatBusinessCard =
     resolveMerchantBusinessCardForChatDisplay(supportSelfBusinessCards) ??
@@ -11993,31 +12006,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     </>
   );
 
-  const supportMobileFaollaContent = (
-    <>
-      <div className="shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
-        <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm">
-            FA
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="text-[15px] font-semibold text-slate-900">Faolla</div>
-            <div className="mt-1 text-xs text-slate-500">手机端总站</div>
-          </div>
-        </div>
-      </div>
-      <div className="min-h-0 flex-1 overflow-hidden px-3 pb-[calc(env(safe-area-inset-bottom)+6.25rem)] pt-3">
-        <div className="h-full overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_18px_40px_rgba(15,23,42,0.08)]">
-          <iframe
-            title="Faolla.com"
-            src={supportMobileFaollaHref}
-            className="h-full w-full border-0 bg-white"
-          />
-        </div>
-      </div>
-    </>
-  );
-
   const supportMobileSelfContent = (
     <>
       <div className="shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
@@ -12286,7 +12274,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       : supportMobileHomeTab === "business"
         ? supportMobileBusinessContent
         : supportMobileHomeTab === "faolla"
-          ? supportMobileFaollaContent
+          ? supportMobileConversationsContent
           : supportMobileSelfContent;
   const isSupportMobileKeyboardVisible = mobileVisualViewportInsets.bottom > 0;
 
@@ -12335,6 +12323,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             {
               key: "faolla",
               label: "Faolla",
+              targetHref: supportMobileFaollaTargetHref,
               icon: (
                 <path
                   d="M12 4 5.8 6.4v5.8c0 3.7 2.7 6.7 6.2 7.4 3.5-.7 6.2-3.7 6.2-7.4V6.4L12 4Zm0 4.1v4.4m0 0 2.3 2.2M12 12.5 9.7 14.7"
@@ -12363,7 +12352,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               ),
             },
           ] as const).map((item) => {
-            const active = supportMobileHomeTab === item.key;
+            const active = !("targetHref" in item) && supportMobileHomeTab === item.key;
             return (
               <button
                 key={item.key}
@@ -12371,7 +12360,13 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 className={`relative flex min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-[24px] px-2 py-2 text-[11px] font-medium transition ${
                   active ? "bg-slate-900 text-white shadow-sm" : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
                 }`}
-                onClick={() => setSupportMobileHomeTab(item.key)}
+                onClick={() => {
+                  if ("targetHref" in item) {
+                    window.location.assign(item.targetHref);
+                    return;
+                  }
+                  setSupportMobileHomeTab(item.key);
+                }}
               >
                 {item.key === "conversations" && supportUnreadBadgeCount > 0 ? (
                   <span className="absolute right-2 top-1.5 inline-flex min-w-[18px] items-center justify-center rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white shadow-[0_8px_18px_rgba(244,63,94,0.28)]">

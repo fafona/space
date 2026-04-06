@@ -50,12 +50,18 @@ const I18N_PENDING_SCRIPT = `
     const key = "merchant-space:locale:v1";
     const cookieKey = "merchant-space-locale-v1";
     const geoKey = "merchant-space:locale:geo:v1";
+    const urlLocaleKey = "uiLocale";
+    const requestedRaw = (new URLSearchParams(window.location.search).get(urlLocaleKey) || "").trim();
+    if (requestedRaw) {
+      window.localStorage.setItem(key, requestedRaw);
+    }
     const cookieValue = document.cookie
       .split(";")
       .map((item) => item.trim())
       .find((item) => item.startsWith(cookieKey + "="))
       ?.slice(cookieKey.length + 1) || "";
     const raw = (
+      requestedRaw ||
       window.localStorage.getItem(key) ||
       cookieValue ||
       window.localStorage.getItem(geoKey) ||

@@ -61,12 +61,11 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
     if (typeof window === "undefined") return;
     try {
       const storedRaw = window.localStorage.getItem(I18N_STORAGE_KEY);
-      if (!storedRaw) return;
-      if (resolveSupportedLocale(storedRaw) !== locale || storedRaw.trim() !== locale) {
+      if (!storedRaw || resolveSupportedLocale(storedRaw) !== locale || storedRaw.trim() !== locale) {
         writeStoredLocale(locale);
       }
     } catch {
-      // Ignore locale storage normalization failures.
+      writeStoredLocale(locale);
     }
   }, [locale]);
 
