@@ -12,6 +12,7 @@ import { trackPageView } from "@/lib/analytics";
 import { readMerchantSessionPayload } from "@/lib/authSessionRecovery";
 import { MOBILE_BREAKPOINT } from "@/lib/deviceViewport";
 import { ensureMerchantIdentityForUser, isMerchantNumericId, normalizeDomainPrefix } from "@/lib/merchantIdentity";
+import { readRecentMerchantLaunchMerchantId } from "@/lib/merchantLaunchState";
 import { cloneBlocks, getPagePlanConfigFromBlocks } from "@/lib/pagePlans";
 import { resolvePublishedSiteByPrefix } from "@/lib/publishedSiteLookup";
 import { buildMerchantBackendHref, extractMerchantPrefixFromHost, resolveRuntimePortalBaseDomain } from "@/lib/siteRouting";
@@ -71,7 +72,7 @@ export default function HomePageClient({
   const { t } = useI18n();
   const [platformState, setPlatformState] = useState(() => loadPlatformState());
   const [isMobileViewport, setIsMobileViewport] = useState(initialIsMobileViewport);
-  const [standaloneSessionBooting, setStandaloneSessionBooting] = useState(() =>
+  const [standaloneSessionBooting] = useState(() =>
     typeof window !== "undefined" ? isStandaloneDisplayMode() : false,
   );
   const [remoteHostLookup, setRemoteHostLookup] = useState<{ prefix: string; siteId: string }>({
@@ -181,9 +182,13 @@ export default function HomePageClient({
     if (!isStandaloneDisplayMode()) return;
 
     let mounted = true;
-    setStandaloneSessionBooting(true);
     void (async () => {
       try {
+        const recentMerchantId = readRecentMerchantLaunchMerchantId();
+        if (isMerchantNumericId(recentMerchantId)) {
+          window.location.replace("/launch");
+          return;
+        }
         const payload = await readMerchantSessionPayload(2600).catch(() => null);
         if (!mounted) return;
         if (payload?.authenticated === true) {

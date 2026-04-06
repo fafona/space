@@ -5,7 +5,7 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "Faolla.com",
     short_name: "Faolla",
     description: "Faolla.com mobile workspace",
-    start_url: "/",
+    start_url: "/launch",
     scope: "/",
     display: "standalone",
     orientation: "portrait",

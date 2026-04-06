@@ -22,6 +22,11 @@ import {
   buildResetPasswordRecoveryUrl,
   persistResetPasswordRecoveryPayload,
 } from "@/lib/resetPasswordRecoveryPayload";
+import {
+  clearRecentMerchantLaunchState,
+  persistRecentMerchantLaunchState,
+  readRecentMerchantLaunchMerchantId,
+} from "@/lib/merchantLaunchState";
 import { clearMerchantSignInBridge, setMerchantSignInBridge } from "@/lib/merchantSignInBridge";
 import { buildMerchantBackendHref } from "@/lib/siteRouting";
 import {
@@ -106,6 +111,12 @@ function isAndroidBrowser() {
   return /android/i.test(String(navigator.userAgent ?? ""));
 }
 
+function isStandaloneDisplayMode() {
+  if (typeof window === "undefined" || typeof navigator === "undefined") return false;
+  const navigatorWithStandalone = navigator as Navigator & { standalone?: boolean };
+  return window.matchMedia?.("(display-mode: standalone)").matches || navigatorWithStandalone.standalone === true;
+}
+
 function readAndroidKeyboardInset() {
   if (typeof window === "undefined") return 0;
   const visualViewport = window.visualViewport;
@@ -142,6 +153,7 @@ function LoginPageInner() {
     return raw;
   }, [searchParams]);
   const loggedOut = useMemo(() => (searchParams.get("loggedOut") ?? "").trim() === "1", [searchParams]);
+  const launchRetry = useMemo(() => (searchParams.get("launchRetry") ?? "").trim() === "1", [searchParams]);
   const normalizedLocale = useMemo(() => locale.trim().toLowerCase(), [locale]);
   const loginAccountLabel = useMemo(() => {
     if (normalizedLocale.startsWith("zh-tw")) return "登入帳號";
@@ -234,6 +246,7 @@ function LoginPageInner() {
     clearStoredBrowserSupabaseSessionTokens();
     clearStoredResetPasswordEmailRequest();
     clearMerchantSignInBridge();
+    clearRecentMerchantLaunchState();
     setAccount("");
     setPassword("");
     setResetCode("");
@@ -256,6 +269,15 @@ function LoginPageInner() {
       timers.forEach((timer) => window.clearTimeout(timer));
     };
   }, [loggedOut]);
+
+  useEffect(() => {
+    if (loggedOut || launchRetry || typeof window === "undefined") return;
+    if (!isStandaloneDisplayMode()) return;
+    if (hasStoredBrowserSupabaseSessionTokens()) return;
+    const recentMerchantId = readRecentMerchantLaunchMerchantId();
+    if (!isMerchantNumericId(recentMerchantId)) return;
+    window.location.replace("/launch");
+  }, [launchRetry, loggedOut]);
 
   useEffect(() => {
     if (!isAndroid || typeof window === "undefined" || typeof document === "undefined") return;
@@ -339,6 +361,9 @@ function LoginPageInner() {
           if (isMerchantNumericId(targetMerchantId)) {
             clearMerchantSignInBridge(targetMerchantId);
           }
+        }
+        if (isMerchantNumericId(targetMerchantId)) {
+          persistRecentMerchantLaunchState(targetMerchantId);
         }
         return `${url.pathname}${url.search}${url.hash}`;
       };

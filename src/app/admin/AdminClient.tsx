@@ -74,6 +74,7 @@ import {
   startMerchantSessionKeepAlive,
   syncMerchantSessionCookies,
 } from "@/lib/authSessionRecovery";
+import { clearRecentMerchantLaunchState, persistRecentMerchantLaunchState } from "@/lib/merchantLaunchState";
 import { clearMerchantSignInBridge } from "@/lib/merchantSignInBridge";
 import { buildPublishedMerchantProfilePatch } from "@/lib/merchantProfileBinding";
 import { buildMerchantBusinessCardShareUrl, resolveMerchantBusinessCardShareOrigin } from "@/lib/merchantBusinessCardShare";
@@ -8506,6 +8507,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     if (!isSupabaseEnabled) {
       clearStoredBrowserSupabaseSessionTokens();
       clearMerchantSignInBridge();
+      clearRecentMerchantLaunchState();
       window.location.href = "/login?loggedOut=1";
       return;
     }
@@ -8526,6 +8528,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       }
       clearStoredBrowserSupabaseSessionTokens();
       clearMerchantSignInBridge();
+      clearRecentMerchantLaunchState();
       window.location.href = "/login?loggedOut=1";
     } catch (error) {
       setTip(error instanceof Error ? error.message : "退出失败，请稍后重试");
@@ -8548,6 +8551,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     editingSiteId && merchantPlatformState
       ? merchantPlatformState.sites.find((item) => item.id === editingSiteId) ?? null
       : null;
+
+  useEffect(() => {
+    if (isPlatformEditor || typeof window === "undefined") return;
+    if (!isMerchantNumericId(editingSiteId)) return;
+    persistRecentMerchantLaunchState(editingSiteId);
+  }, [editingSiteId, isPlatformEditor]);
   const merchantDisplayName = !isPlatformEditor
     ? ((editingSite?.merchantName ?? "").trim() || "未设置商户名称")
     : "";

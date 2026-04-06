@@ -3,8 +3,10 @@ import test from "node:test";
 import { NextResponse } from "next/server";
 import {
   MERCHANT_AUTH_COOKIE,
+  MERCHANT_AUTH_MERCHANT_ID_COOKIE,
   MERCHANT_AUTH_REFRESH_COOKIE,
   parseCookieValue,
+  readMerchantAuthMerchantIdCookie,
   readMerchantAuthRefreshCookie,
   readMerchantRequestAccessTokens,
   setMerchantAuthCookies,
@@ -55,10 +57,12 @@ test("setMerchantAuthCookies writes browser-session cookies", () => {
     accessToken: "access-token",
     refreshToken: "refresh-token",
     maxAgeSeconds: 3600,
+    merchantId: "12345678",
   });
 
   assert.equal(response.cookies.get(MERCHANT_AUTH_COOKIE)?.maxAge, 3600);
   assert.equal(response.cookies.get(MERCHANT_AUTH_REFRESH_COOKIE)?.maxAge, 30 * 24 * 60 * 60);
+  assert.equal(response.cookies.get(MERCHANT_AUTH_MERCHANT_ID_COOKIE)?.value, "12345678");
 });
 
 test("setMerchantAuthCookies shares cookies across faolla subdomains", () => {
@@ -70,14 +74,17 @@ test("setMerchantAuthCookies shares cookies across faolla subdomains", () => {
       accessToken: "access-token",
       refreshToken: "refresh-token",
       maxAgeSeconds: 3600,
+      merchantId: "12345678",
     },
     request,
   );
 
   assert.equal(response.cookies.get(MERCHANT_AUTH_COOKIE)?.domain, "faolla.com");
   assert.equal(response.cookies.get(MERCHANT_AUTH_REFRESH_COOKIE)?.domain, "faolla.com");
+  assert.equal(response.cookies.get(MERCHANT_AUTH_MERCHANT_ID_COOKIE)?.domain, "faolla.com");
   assert.equal(response.cookies.get(MERCHANT_AUTH_COOKIE)?.secure, true);
   assert.equal(response.cookies.get(MERCHANT_AUTH_REFRESH_COOKIE)?.secure, true);
+  assert.equal(response.cookies.get(MERCHANT_AUTH_MERCHANT_ID_COOKIE)?.secure, true);
 });
 
 test("setMerchantAuthCookies keeps localhost cookies non-secure for local development", () => {
@@ -89,10 +96,22 @@ test("setMerchantAuthCookies keeps localhost cookies non-secure for local develo
       accessToken: "access-token",
       refreshToken: "refresh-token",
       maxAgeSeconds: 3600,
+      merchantId: "12345678",
     },
     request,
   );
 
   assert.equal(response.cookies.get(MERCHANT_AUTH_COOKIE)?.secure, false);
   assert.equal(response.cookies.get(MERCHANT_AUTH_REFRESH_COOKIE)?.secure, false);
+  assert.equal(response.cookies.get(MERCHANT_AUTH_MERCHANT_ID_COOKIE)?.secure, false);
+});
+
+test("readMerchantAuthMerchantIdCookie reads the merchant id cookie", () => {
+  const request = new Request("http://localhost/api/business-card-share", {
+    headers: {
+      cookie: `${MERCHANT_AUTH_MERCHANT_ID_COOKIE}=12345678`,
+    },
+  });
+
+  assert.equal(readMerchantAuthMerchantIdCookie(request), "12345678");
 });

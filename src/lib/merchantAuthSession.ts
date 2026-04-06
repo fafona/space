@@ -2,8 +2,14 @@ import type { NextResponse } from "next/server";
 
 export const MERCHANT_AUTH_COOKIE = "merchant-space-merchant-auth";
 export const MERCHANT_AUTH_REFRESH_COOKIE = "merchant-space-merchant-refresh";
+export const MERCHANT_AUTH_MERCHANT_ID_COOKIE = "merchant-space-merchant-id";
 export const MERCHANT_AUTH_ACCESS_COOKIE_FALLBACK_MAX_AGE_SECONDS = 60 * 60;
 export const MERCHANT_AUTH_REFRESH_COOKIE_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
+
+function normalizeMerchantId(value: unknown) {
+  const normalized = String(value ?? "").trim();
+  return /^\d{8}$/.test(normalized) ? normalized : "";
+}
 
 function normalizeCookieMaxAge(value: unknown, fallback: number) {
   const parsed =
@@ -84,6 +90,10 @@ export function readMerchantAuthRefreshCookie(request: Request) {
   return parseCookieValue(request.headers.get("cookie") ?? "", MERCHANT_AUTH_REFRESH_COOKIE).trim();
 }
 
+export function readMerchantAuthMerchantIdCookie(request: Request) {
+  return normalizeMerchantId(parseCookieValue(request.headers.get("cookie") ?? "", MERCHANT_AUTH_MERCHANT_ID_COOKIE));
+}
+
 export function readBearerAccessToken(request: Request) {
   const authHeader = request.headers.get("authorization") ?? "";
   const tokenMatch = authHeader.match(/^Bearer\s+(.+)$/i);
@@ -109,11 +119,12 @@ export function setMerchantAuthCookie(response: NextResponse, accessToken: strin
 
 export function setMerchantAuthCookies(
   response: NextResponse,
-  input: { accessToken: string; refreshToken?: string | null; maxAgeSeconds?: unknown },
+  input: { accessToken: string; refreshToken?: string | null; maxAgeSeconds?: unknown; merchantId?: string | null },
   request?: Request,
 ) {
   const normalizedAccessToken = String(input.accessToken ?? "").trim();
   const normalizedRefreshToken = String(input.refreshToken ?? "").trim();
+  const normalizedMerchantId = normalizeMerchantId(input.merchantId);
   const accessCookieMaxAge = normalizeCookieMaxAge(
     input.maxAgeSeconds,
     MERCHANT_AUTH_ACCESS_COOKIE_FALLBACK_MAX_AGE_SECONDS,
@@ -153,6 +164,26 @@ export function setMerchantAuthCookies(
       ...(cookieDomain ? { domain: cookieDomain } : {}),
     });
   }
+
+  if (normalizedMerchantId) {
+    response.cookies.set(MERCHANT_AUTH_MERCHANT_ID_COOKIE, normalizedMerchantId, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure,
+      path: "/",
+      maxAge: MERCHANT_AUTH_REFRESH_COOKIE_MAX_AGE_SECONDS,
+      ...(cookieDomain ? { domain: cookieDomain } : {}),
+    });
+  } else {
+    response.cookies.set(MERCHANT_AUTH_MERCHANT_ID_COOKIE, "", {
+      httpOnly: true,
+      sameSite: "lax",
+      secure,
+      path: "/",
+      maxAge: 0,
+      ...(cookieDomain ? { domain: cookieDomain } : {}),
+    });
+  }
 }
 
 export function clearMerchantAuthCookie(response: NextResponse, request?: Request) {
@@ -171,6 +202,14 @@ export function clearMerchantAuthCookies(response: NextResponse, request?: Reque
     ...(cookieDomain ? { domain: cookieDomain } : {}),
   });
   response.cookies.set(MERCHANT_AUTH_REFRESH_COOKIE, "", {
+    httpOnly: true,
+    sameSite: "lax",
+    secure,
+    path: "/",
+    maxAge: 0,
+    ...(cookieDomain ? { domain: cookieDomain } : {}),
+  });
+  response.cookies.set(MERCHANT_AUTH_MERCHANT_ID_COOKIE, "", {
     httpOnly: true,
     sameSite: "lax",
     secure,

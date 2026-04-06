@@ -446,6 +446,7 @@ export async function POST(request: Request) {
       accessToken,
       refreshToken,
       maxAgeSeconds: upstreamPayload?.expires_in,
+      merchantId,
     }, request);
     return response;
   } catch {

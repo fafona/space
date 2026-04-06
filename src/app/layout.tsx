@@ -4,6 +4,10 @@ import ClientDomTranslator from "@/components/ClientDomTranslator";
 import GlobalLanguageSwitcher from "@/components/GlobalLanguageSwitcher";
 import { I18nProvider } from "@/components/I18nProvider";
 import UnhandledRejectionGuard from "@/components/UnhandledRejectionGuard";
+import {
+  RECENT_MERCHANT_LAUNCH_MAX_AGE_MS,
+  RECENT_MERCHANT_LAUNCH_STORAGE_KEY,
+} from "@/lib/merchantLaunchState";
 import type { Viewport } from "next";
 
 export const viewport: Viewport = {
@@ -77,6 +81,30 @@ const I18N_PENDING_SCRIPT = `
 })();
 `;
 
+const STANDALONE_LAUNCH_SCRIPT = `
+(() => {
+  if (typeof window === "undefined" || typeof navigator === "undefined") return;
+  const standalone = window.matchMedia?.("(display-mode: standalone)")?.matches || navigator.standalone === true;
+  if (!standalone) return;
+  if ((window.location.pathname || "/") !== "/") return;
+  try {
+    const raw =
+      window.sessionStorage.getItem(${JSON.stringify(RECENT_MERCHANT_LAUNCH_STORAGE_KEY)}) ||
+      window.localStorage.getItem(${JSON.stringify(RECENT_MERCHANT_LAUNCH_STORAGE_KEY)}) ||
+      "";
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    const merchantId = typeof parsed?.merchantId === "string" ? parsed.merchantId.trim() : "";
+    const updatedAt = Number(parsed?.updatedAt ?? 0);
+    if (!/^\\d{8}$/.test(merchantId) || !Number.isFinite(updatedAt)) return;
+    if (Date.now() - updatedAt > ${RECENT_MERCHANT_LAUNCH_MAX_AGE_MS}) return;
+    window.location.replace("/launch");
+  } catch {
+    // Ignore launch bootstrap storage failures.
+  }
+})();
+`;
+
 export default function RootLayout({
   children,
 }: {
@@ -96,6 +124,9 @@ export default function RootLayout({
         <link rel="manifest" href="/manifest.webmanifest" />
       </head>
       <body>
+        <Script id="standalone-launch" strategy="beforeInteractive">
+          {STANDALONE_LAUNCH_SCRIPT}
+        </Script>
         <Script id="i18n-pending" strategy="beforeInteractive">
           {I18N_PENDING_SCRIPT}
         </Script>

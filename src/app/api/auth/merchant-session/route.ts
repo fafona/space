@@ -331,6 +331,7 @@ function respondWithMerchantSession(request: Request, payload: AuthenticatedMerc
     accessToken: payload.accessToken,
     refreshToken: payload.refreshToken,
     maxAgeSeconds: payload.expiresIn ?? undefined,
+    merchantId: payload.merchantId,
   }, request);
   return response;
 }
@@ -447,6 +448,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const supabase = createServerSupabaseClient();
+    const adminSupabase = createServiceRoleSupabaseClient();
     if (!supabase) {
       return noStoreJson({ error: "merchant_session_env_missing" }, { status: 503 });
     }
@@ -506,18 +508,25 @@ export async function POST(request: Request) {
       return response;
     }
 
+    let merchantId = await resolveMerchantIdForUser(adminSupabase, user);
+    if (!merchantId) {
+      merchantId = await tryAllocateSequentialMerchantId(adminSupabase, user);
+    }
+
     const response = noStoreJson({
       ok: true,
       authenticated: true,
       accessToken: verifiedAccessToken,
       refreshToken: verifiedRefreshToken || null,
       expiresIn: verifiedExpiresIn ?? null,
+      merchantId: merchantId || null,
       user,
     });
     setMerchantAuthCookies(response, {
       accessToken: verifiedAccessToken,
       refreshToken: verifiedRefreshToken,
       maxAgeSeconds: verifiedExpiresIn,
+      merchantId,
     }, request);
     return response;
   } catch {
