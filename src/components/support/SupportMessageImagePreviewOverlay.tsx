@@ -462,14 +462,14 @@ export default function SupportMessageImagePreviewOverlay({
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-auto px-3 py-4">
-          <div className="flex min-h-full items-center justify-center">
-            <div className="w-full max-w-5xl">
+        <div className="min-h-0 flex-1 overflow-hidden px-2 py-2">
+          <div className="flex h-full w-full items-center justify-center overflow-hidden">
+            <div className="h-[calc(100svh-8.75rem)] w-[calc(100vw-1rem)] max-w-5xl">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={normalizedImageUrl}
                 alt={title}
-                className="mx-auto max-h-[calc(100svh-10rem)] w-auto max-w-full rounded-[28px] bg-white object-contain shadow-[0_24px_80px_rgba(15,23,42,0.35)]"
+                className="h-full w-full rounded-[28px] bg-white object-contain shadow-[0_24px_80px_rgba(15,23,42,0.35)]"
                 onTouchStart={handleImageTouchStart}
                 onTouchEnd={handleImageTouchEnd}
                 onTouchCancel={handleImageTouchEnd}
