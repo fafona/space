@@ -12335,10 +12335,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               onClick={logout}
               disabled={loggingOut}
             >
-              <div>
-                <div className="text-sm font-semibold text-rose-600">{loggingOut ? "退出中..." : "退出登录"}</div>
-                <div className="mt-1 text-xs leading-5 text-slate-500">退出当前商户后台，返回登录界面。</div>
-              </div>
+              <div className="text-sm font-semibold text-rose-600">{loggingOut ? "退出中..." : "退出登录"}</div>
               <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-rose-50 text-rose-600">
                 <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
                   <path
