@@ -52,6 +52,7 @@ type MerchantBusinessCardManagerProps = {
   siteBaseDomain: string;
   profile: MerchantBusinessCardProfileInput;
   cards: MerchantBusinessCardAsset[];
+  folderViewMode?: "overlay" | "page";
   cardLimit?: number;
   allowLinkMode?: boolean;
   backgroundImageLimitKb?: number;
@@ -901,6 +902,7 @@ export default function MerchantBusinessCardManager({
   siteBaseDomain,
   profile,
   cards,
+  folderViewMode = "overlay",
   cardLimit = 1,
   allowLinkMode = true,
   backgroundImageLimitKb = 200,
@@ -908,6 +910,7 @@ export default function MerchantBusinessCardManager({
   exportImageLimitKb = 400,
   onCardsChange,
 }: MerchantBusinessCardManagerProps) {
+  const isPageFolderView = folderViewMode === "page";
   const normalizedMerchantId = normalizeText(merchantId);
   const [draft, setDraft] = useState(() => createDefaultMerchantBusinessCardDraft(profile));
   const [draftShareCode, setDraftShareCode] = useState(() => createMerchantBusinessCardShareKeyCode());
@@ -1535,40 +1538,237 @@ export default function MerchantBusinessCardManager({
     "已上传联系卡图片，可重新选择",
   );
   const contactPageImagePickerDetail = isContactPageImageProcessing ? "压缩中..." : contactPageImageFileDetail;
+  const folderGridContent =
+    normalizedCards.length > 0 ? (
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border bg-slate-50 px-4 py-3">
+          <div className="text-sm text-slate-600">
+            聊天展示名片：
+            <span className="ml-1 font-medium text-slate-900">
+              {selectedChatDisplayCard ? selectedChatDisplayCard.name : "已关闭"}
+            </span>
+          </div>
+          <button
+            type="button"
+            className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+            onClick={disableChatDisplayForAllCards}
+          >
+            关闭聊天展示
+          </button>
+        </div>
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {normalizedCards.map((card) => (
+            <article key={card.id} className="overflow-hidden rounded-2xl border bg-slate-50 shadow-sm">
+              <div className="space-y-4 p-4">
+                <button
+                  type="button"
+                  className="block w-full overflow-hidden rounded-2xl border bg-transparent text-left"
+                  onClick={() => {
+                    setPreviewAsset(card);
+                    setPreviewOpen(true);
+                  }}
+                >
+                  {/* 名片夹封面来自用户已生成内容，保留原始地址和比例比 next/image 更稳。 */}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={card.imageUrl} alt={card.name} className="block h-auto w-full object-cover bg-transparent" />
+                </button>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <div className="text-base font-semibold text-slate-900">{card.name}</div>
+                    <span className="rounded-full bg-slate-900 px-2 py-0.5 text-[10px] text-white">
+                      {getCardModeLabel(card.mode)}
+                    </span>
+                    {card.showInChat ? (
+                      <span className="rounded-full bg-emerald-600 px-2 py-0.5 text-[10px] text-white">
+                        聊天展示中
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="text-xs text-slate-500">
+                    {new Date(card.createdAt).toLocaleString("zh-CN", { hour12: false })}
+                  </div>
+                  {card.mode === "link" ? (
+                    <div className="mt-1 text-xs text-slate-500">手机打开联系卡链接后可直接保存联系人。</div>
+                  ) : null}
+                </div>
+                {card.mode === "link" ? (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                        onClick={() => {
+                          setPreviewAsset(card);
+                          setPreviewOpen(true);
+                        }}
+                      >
+                        预览
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800"
+                        onClick={() => void copyCardLink(card)}
+                      >
+                        复制联系卡链接
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        onClick={() => openDuplicateEditorForCard(card)}
+                        disabled={!canCreate || cardLimitReached}
+                      >
+                        生成新名片
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                        onClick={() => void copyCardImage(card)}
+                      >
+                        复制名片图片
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        className={`rounded border px-3 py-2 text-sm ${
+                          card.showInChat ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "bg-white hover:bg-slate-50"
+                        }`}
+                        onClick={() => markCardAsChatDisplay(card.id)}
+                      >
+                        {card.showInChat ? "当前聊天展示" : "设为聊天展示"}
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                        onClick={() => openEditorForCard(card)}
+                      >
+                        修改
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded border border-rose-200 bg-white px-3 py-2 text-sm text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        onClick={() => void deleteCard(card)}
+                        disabled={deletingCardId === card.id}
+                      >
+                        {deletingCardId === card.id ? "删除中..." : "删除"}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                      onClick={() => {
+                        setPreviewAsset(card);
+                        setPreviewOpen(true);
+                      }}
+                    >
+                      预览
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800"
+                      onClick={() => void saveCard(card)}
+                    >
+                      保存
+                    </button>
+                    <button
+                      type="button"
+                      className={`rounded border px-3 py-2 text-sm ${
+                        card.showInChat ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "bg-white hover:bg-slate-50"
+                      }`}
+                      onClick={() => markCardAsChatDisplay(card.id)}
+                    >
+                      {card.showInChat ? "当前聊天展示" : "设为聊天展示"}
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                      onClick={() => openEditorForCard(card)}
+                    >
+                      修改
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded border border-rose-200 bg-white px-3 py-2 text-sm text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      onClick={() => void deleteCard(card)}
+                      disabled={deletingCardId === card.id}
+                    >
+                      {deletingCardId === card.id ? "删除中..." : "删除"}
+                    </button>
+                  </div>
+                )}
+              </div>
+            </article>
+          ))}
+        </div>
+      </div>
+    ) : (
+      <div className="flex min-h-[240px] items-center justify-center rounded-2xl border border-dashed bg-slate-50 px-6 text-center text-sm text-slate-500">
+        还没有生成名片。请先在上方点击“生成名片”制作一张。
+      </div>
+    );
+  const folderPageSurface = (
+    <div className="flex min-h-[calc(100vh-14rem)] flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_16px_36px_rgba(15,23,42,0.08)]">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b px-6 py-5">
+        <div>
+          <div className="text-lg font-semibold text-slate-900">名片夹</div>
+          <div className="text-sm text-slate-500">查看已生成的图片名片或链接名片，可预览并继续操作。</div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            className="rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+            onClick={openCreateEditorFromFolder}
+            disabled={!canOpenCreateEditor}
+          >
+            生成名片
+          </button>
+        </div>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">{folderGridContent}</div>
+    </div>
+  );
 
   return (
-    <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
-      <div className="flex">
-        <button
-          type="button"
-          className="group inline-flex w-full max-w-[460px] items-center gap-4 rounded-2xl border-2 border-slate-800 bg-[linear-gradient(180deg,#ffffff_0%,#f3f4f6_100%)] px-4 py-3 text-left text-slate-900 shadow-[0_10px_24px_rgba(15,23,42,0.14)] transition hover:-translate-y-px hover:bg-[linear-gradient(180deg,#ffffff_0%,#e9edf3_100%)]"
-          onClick={() => setFolderOpen(true)}
-        >
-          <svg
-            aria-hidden="true"
-            viewBox="0 0 72 56"
-            className="h-12 w-16 shrink-0 text-slate-900 transition group-hover:scale-[1.03]"
-            fill="none"
+    <div className={isPageFolderView ? "space-y-4" : "space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4"}>
+      {!isPageFolderView ? (
+        <div className="flex">
+          <button
+            type="button"
+            className="group inline-flex w-full max-w-[460px] items-center gap-4 rounded-2xl border-2 border-slate-800 bg-[linear-gradient(180deg,#ffffff_0%,#f3f4f6_100%)] px-4 py-3 text-left text-slate-900 shadow-[0_10px_24px_rgba(15,23,42,0.14)] transition hover:-translate-y-px hover:bg-[linear-gradient(180deg,#ffffff_0%,#e9edf3_100%)]"
+            onClick={() => setFolderOpen(true)}
           >
-            <rect x="18" y="5" width="38" height="24" rx="5" stroke="currentColor" strokeWidth="3" />
-            <path d="M25 13h21" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-            <path d="M25 20h16" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-            <path d="M11 22h50a6 6 0 0 1 6 6v15a6 6 0 0 1-6 6H11a6 6 0 0 1-6-6V28a6 6 0 0 1 6-6Z" stroke="currentColor" strokeWidth="3" />
-            <path d="M7 27 29 40a10 10 0 0 0 10 0l22-13" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-          <span className="min-w-0 flex-1">
-            <span className="flex items-baseline gap-2 leading-none">
-              <span className="text-base font-semibold tracking-[0.02em]">名片夹</span>
-              <span className="text-sm font-medium text-slate-500">{`${normalizedCards.length}/${normalizedCardLimit}`}</span>
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 72 56"
+              className="h-12 w-16 shrink-0 text-slate-900 transition group-hover:scale-[1.03]"
+              fill="none"
+            >
+              <rect x="18" y="5" width="38" height="24" rx="5" stroke="currentColor" strokeWidth="3" />
+              <path d="M25 13h21" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+              <path d="M25 20h16" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+              <path d="M11 22h50a6 6 0 0 1 6 6v15a6 6 0 0 1-6 6H11a6 6 0 0 1-6-6V28a6 6 0 0 1 6-6Z" stroke="currentColor" strokeWidth="3" />
+              <path d="M7 27 29 40a10 10 0 0 0 10 0l22-13" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <span className="min-w-0 flex-1">
+              <span className="flex items-baseline gap-2 leading-none">
+                <span className="text-base font-semibold tracking-[0.02em]">名片夹</span>
+                <span className="text-sm font-medium text-slate-500">{`${normalizedCards.length}/${normalizedCardLimit}`}</span>
+              </span>
+              <span className="mt-1.5 block text-xs leading-5 text-slate-500">
+                完善商户信息后可生成名片。链接模式会生成联系卡链接，对方手机打开后可保存联系人。
+              </span>
             </span>
-            <span className="mt-1.5 block text-xs leading-5 text-slate-500">
-              完善商户信息后可生成名片。链接模式会生成联系卡链接，对方手机打开后可保存联系人。
-            </span>
-          </span>
-        </button>
-      </div>
+          </button>
+        </div>
+      ) : null}
       {!canCreate ? <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">{`需先完善以下商户信息后才能生成名片：${missingFields.join(" / ")}`}</div> : null}
       {canCreate && cardLimitReached ? <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">{`名片夹已达到上限（${normalizedCardLimit} 张），请先删除旧名片，或到超级后台调整名片夹数量限制。`}</div> : null}
+      {isPageFolderView ? folderPageSurface : null}
       <div className="pointer-events-none fixed left-[-20000px] top-0"><div ref={hiddenPreviewRef}><CardSurface draft={draft} websiteUrl={websiteUrl} qrCodeUrl={qrCodeUrl} scale={1} renderMode="export" /></div></div>
 
       {editorOpen ? overlay(
@@ -2267,183 +2467,12 @@ export default function MerchantBusinessCardManager({
         </div>,
       ) : null}
 
-      {folderOpen ? overlay(
+      {!isPageFolderView && folderOpen ? overlay(
         <div className="fixed inset-0 z-[2147483000] bg-black/45 p-4" onMouseDown={() => setFolderOpen(false)}>
           <div className="mx-auto flex h-full max-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
             <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4"><div><div className="text-lg font-semibold text-slate-900">名片夹</div><div className="text-sm text-slate-500">查看已生成的图片名片或链接名片，可预览并继续操作。</div></div><div className="flex flex-wrap gap-2"><button type="button" className="rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50" onClick={openCreateEditorFromFolder} disabled={!canOpenCreateEditor}>生成名片</button><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => setFolderOpen(false)}>关闭</button></div></div>
             <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
-              {normalizedCards.length > 0 ? (
-                <div className="space-y-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border bg-slate-50 px-4 py-3">
-                    <div className="text-sm text-slate-600">
-                      聊天展示名片：
-                      <span className="ml-1 font-medium text-slate-900">
-                        {selectedChatDisplayCard ? selectedChatDisplayCard.name : "已关闭"}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
-                      onClick={disableChatDisplayForAllCards}
-                    >
-                      关闭聊天展示
-                    </button>
-                  </div>
-                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                  {normalizedCards.map((card) => (
-                    <article key={card.id} className="overflow-hidden rounded-2xl border bg-slate-50 shadow-sm">
-                      <div className="space-y-4 p-4">
-                        <button
-                          type="button"
-                          className="block w-full overflow-hidden rounded-2xl border bg-transparent text-left"
-                          onClick={() => {
-                            setPreviewAsset(card);
-                            setPreviewOpen(true);
-                          }}
-                        >
-                          {/* 名片夹封面来自用户已生成内容，保留原始地址和比例比 next/image 更稳。 */}
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={card.imageUrl} alt={card.name} className="block h-auto w-full object-cover bg-transparent" />
-                        </button>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <div className="text-base font-semibold text-slate-900">{card.name}</div>
-                            <span className="rounded-full bg-slate-900 px-2 py-0.5 text-[10px] text-white">
-                              {getCardModeLabel(card.mode)}
-                            </span>
-                            {card.showInChat ? (
-                              <span className="rounded-full bg-emerald-600 px-2 py-0.5 text-[10px] text-white">
-                                聊天展示中
-                              </span>
-                            ) : null}
-                          </div>
-                          <div className="text-xs text-slate-500">
-                            {new Date(card.createdAt).toLocaleString("zh-CN", { hour12: false })}
-                          </div>
-                          {card.mode === "link" ? (
-                            <div className="mt-1 text-xs text-slate-500">手机打开联系卡链接后可直接保存联系人。</div>
-                          ) : null}
-                        </div>
-                        {card.mode === "link" ? (
-                          <div className="space-y-2">
-                            <div className="grid grid-cols-2 gap-2">
-                              <button
-                                type="button"
-                                className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
-                                onClick={() => {
-                                  setPreviewAsset(card);
-                                  setPreviewOpen(true);
-                                }}
-                              >
-                                预览
-                              </button>
-                              <button
-                                type="button"
-                                className="rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800"
-                                onClick={() => void copyCardLink(card)}
-                              >
-                                复制联系卡链接
-                              </button>
-                            </div>
-                            <div className="grid grid-cols-2 gap-2">
-                              <button
-                                type="button"
-                                className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                                onClick={() => openDuplicateEditorForCard(card)}
-                                disabled={!canCreate || cardLimitReached}
-                              >
-                                生成新名片
-                              </button>
-                              <button
-                                type="button"
-                                className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
-                                onClick={() => void copyCardImage(card)}
-                              >
-                                复制名片图片
-                              </button>
-                            </div>
-                            <div className="grid grid-cols-2 gap-2">
-                              <button
-                                type="button"
-                                className={`rounded border px-3 py-2 text-sm ${
-                                  card.showInChat ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "bg-white hover:bg-slate-50"
-                                }`}
-                                onClick={() => markCardAsChatDisplay(card.id)}
-                              >
-                                {card.showInChat ? "当前聊天展示" : "设为聊天展示"}
-                              </button>
-                              <button
-                                type="button"
-                                className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
-                                onClick={() => openEditorForCard(card)}
-                              >
-                                修改
-                              </button>
-                              <button
-                                type="button"
-                                className="rounded border border-rose-200 bg-white px-3 py-2 text-sm text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
-                                onClick={() => void deleteCard(card)}
-                                disabled={deletingCardId === card.id}
-                              >
-                                {deletingCardId === card.id ? "删除中..." : "删除"}
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="grid grid-cols-2 gap-2">
-                            <button
-                              type="button"
-                              className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
-                              onClick={() => {
-                                setPreviewAsset(card);
-                                setPreviewOpen(true);
-                              }}
-                            >
-                              预览
-                            </button>
-                            <button
-                              type="button"
-                              className="rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800"
-                              onClick={() => void saveCard(card)}
-                            >
-                              保存
-                            </button>
-                            <button
-                              type="button"
-                              className={`rounded border px-3 py-2 text-sm ${
-                                card.showInChat ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "bg-white hover:bg-slate-50"
-                              }`}
-                              onClick={() => markCardAsChatDisplay(card.id)}
-                            >
-                              {card.showInChat ? "当前聊天展示" : "设为聊天展示"}
-                            </button>
-                            <button
-                              type="button"
-                              className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
-                              onClick={() => openEditorForCard(card)}
-                            >
-                              修改
-                            </button>
-                            <button
-                              type="button"
-                              className="rounded border border-rose-200 bg-white px-3 py-2 text-sm text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
-                              onClick={() => void deleteCard(card)}
-                              disabled={deletingCardId === card.id}
-                            >
-                              {deletingCardId === card.id ? "删除中..." : "删除"}
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </article>
-                  ))}
-                </div>
-                </div>
-              ) : (
-                <div className="flex min-h-[240px] items-center justify-center rounded-2xl border border-dashed bg-slate-50 px-6 text-center text-sm text-slate-500">
-                  还没有生成名片。请先在上方点击“生成名片”制作一张。
-                </div>
-              )}
+              {folderGridContent}
             </div>
           </div>
         </div>,

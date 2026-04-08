@@ -14342,9 +14342,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               className="min-h-[calc(100vh-14rem)]"
             />
           ) : merchantDesktopSection === "cards" && merchantBusinessCardManagerCommonProps ? (
-            <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_16px_36px_rgba(15,23,42,0.08)]">
-              <MerchantBusinessCardManager {...merchantBusinessCardManagerCommonProps} />
-            </div>
+            <MerchantBusinessCardManager {...merchantBusinessCardManagerCommonProps} folderViewMode="page" />
           ) : merchantDesktopSection === "booking" && merchantBookingManagerDialogCommonProps ? (
             <MerchantBookingManagerDialog
               {...merchantBookingManagerDialogCommonProps}
