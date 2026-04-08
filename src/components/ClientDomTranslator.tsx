@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import { useLayoutEffect, useRef } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
 import { useI18n } from "@/components/I18nProvider";
 import {
   ensureDomTranslations,
@@ -242,9 +243,12 @@ function refreshMutationSource(mutation: MutationRecord) {
 
 export default function ClientDomTranslator() {
   const { locale } = useI18n();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const applyVersionRef = useRef(0);
   const mutationGuardRef = useRef<TranslatorMutationGuard | null>(null);
   const previousLocaleRef = useRef<string>("zh-CN");
+  const previousRouteKeyRef = useRef<string | null>(null);
 
   if (!mutationGuardRef.current) {
     const translatedTextNodes = new WeakSet<MerchantTextNode>();
@@ -279,12 +283,16 @@ export default function ClientDomTranslator() {
 
     const normalizedLocale = normalizeDomLocale(locale);
     const isZhCn = normalizedLocale.toLowerCase() === "zh-cn";
+    const routeKey = `${pathname ?? ""}?${searchParams?.toString() ?? ""}`;
+    const routeChanged = previousRouteKeyRef.current !== null && previousRouteKeyRef.current !== routeKey;
+    previousRouteKeyRef.current = routeKey;
     const previousLocale = previousLocaleRef.current;
     const sourceRecoveryLocale =
       isZhCn && previousLocale.toLowerCase() !== "zh-cn" ? previousLocale : null;
     previousLocaleRef.current = normalizedLocale;
     const shouldBlockFirstPaint =
-      document.documentElement.getAttribute("data-i18n-pending") === "1" && !isZhCn;
+      !isZhCn &&
+      (document.documentElement.getAttribute("data-i18n-pending") === "1" || routeChanged);
 
     let disposed = false;
     let applying = false;
@@ -381,7 +389,7 @@ export default function ClientDomTranslator() {
       queueMicrotask(flush);
     };
 
-    queueApply(document.body, shouldBlockFirstPaint);
+    void runApply([document.body], shouldBlockFirstPaint);
 
     const observer = new MutationObserver((mutations) => {
       if (disposed || applying) return;
@@ -425,7 +433,7 @@ export default function ClientDomTranslator() {
       disposed = true;
       observer.disconnect();
     };
-  }, [locale]);
+  }, [locale, pathname, searchParams]);
 
   return null;
 }

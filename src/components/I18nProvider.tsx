@@ -1,6 +1,7 @@
 "use client";
 
-import { createContext, useContext, useEffect, useLayoutEffect, useSyncExternalStore } from "react";
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useSyncExternalStore } from "react";
+import { ensureDomTranslations, hasTranslatableText, isDomTranslationCached } from "@/lib/domTranslations";
 import {
   DEFAULT_LOCALE,
   detectGeoLocale,
@@ -26,6 +27,8 @@ const I18nContext = createContext<I18nContextValue>({
 });
 
 const LOCALE_CHANGE_EVENT = "merchant-space:locale-change";
+const TRANSLATABLE_ATTRS = ["placeholder", "title", "aria-label"] as const;
+const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT"]);
 
 function subscribeLocale(onStoreChange: () => void) {
   if (typeof window === "undefined") return () => undefined;
@@ -45,6 +48,69 @@ function getLocaleClientSnapshot() {
   return detectPreferredLocale();
 }
 
+function isEditableWarmupElement(element: Element | null) {
+  if (!element) return false;
+  if (element instanceof HTMLInputElement) {
+    return !["button", "submit", "reset", "checkbox", "radio", "file", "color", "range"].includes(element.type);
+  }
+  if (element instanceof HTMLTextAreaElement) return true;
+  if (element instanceof HTMLSelectElement) return true;
+  if (element instanceof HTMLElement && element.isContentEditable) return true;
+  return false;
+}
+
+function collectPageMissingTranslations(locale: string) {
+  if (typeof document === "undefined") return new Set<string>();
+  const missing = new Set<string>();
+
+  const walk = (node: Node, skipSubtree = false) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const text = node.nodeValue ?? "";
+      const parentElement = node.parentElement;
+      const shouldSkip =
+        skipSubtree ||
+        Boolean(parentElement?.closest("[data-no-translate='1']")) ||
+        isEditableWarmupElement(parentElement);
+      if (!shouldSkip && hasTranslatableText(text, locale) && !isDomTranslationCached(text, locale)) {
+        missing.add(text);
+      }
+      return;
+    }
+
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+
+    const element = node as Element;
+    const shouldSkipElement =
+      skipSubtree ||
+      Boolean(element.closest("[data-no-translate='1']")) ||
+      element.getAttribute("data-no-translate") === "1" ||
+      SKIP_TAGS.has(element.tagName.toUpperCase());
+    const shouldSkipChildren =
+      shouldSkipElement || (isEditableWarmupElement(element) && !(element instanceof HTMLSelectElement));
+
+    if (!shouldSkipElement) {
+      for (const attr of TRANSLATABLE_ATTRS) {
+        const value = element.getAttribute(attr) ?? "";
+        if (value && hasTranslatableText(value, locale) && !isDomTranslationCached(value, locale)) {
+          missing.add(value);
+        }
+      }
+
+      if (element instanceof HTMLInputElement && ["button", "submit", "reset"].includes(element.type)) {
+        const value = element.value ?? "";
+        if (value && hasTranslatableText(value, locale) && !isDomTranslationCached(value, locale)) {
+          missing.add(value);
+        }
+      }
+    }
+
+    Array.from(element.childNodes).forEach((child) => walk(child, shouldSkipChildren));
+  };
+
+  walk(document.body);
+  return missing;
+}
+
 export function I18nProvider({
   children,
   initialLocale = DEFAULT_LOCALE,
@@ -53,6 +119,7 @@ export function I18nProvider({
   initialLocale?: string;
 }) {
   const resolvedInitialLocale = resolveSupportedLocale(initialLocale);
+  const localeSwitchVersionRef = useRef(0);
   const rawLocale = useSyncExternalStore(
     subscribeLocale,
     getLocaleClientSnapshot,
@@ -109,17 +176,38 @@ export function I18nProvider({
     locale,
     setLocale: (nextLocale) => {
       const resolved = resolveSupportedLocale(nextLocale);
-      if (typeof document !== "undefined") {
-        if (resolved.toLowerCase() === "zh-cn") {
+      if (resolved === locale) return;
+
+      const applyLocale = () => {
+        if (typeof document !== "undefined" && resolved.toLowerCase() === "zh-cn") {
           document.documentElement.removeAttribute("data-i18n-pending");
-        } else {
-          document.documentElement.setAttribute("data-i18n-pending", "1");
         }
+        writeStoredLocale(resolved);
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new Event(LOCALE_CHANGE_EVENT));
+        }
+      };
+
+      if (resolved.toLowerCase() === "zh-cn" || typeof window === "undefined" || typeof document === "undefined") {
+        applyLocale();
+        return;
       }
-      writeStoredLocale(resolved);
-      if (typeof window !== "undefined") {
-        window.dispatchEvent(new Event(LOCALE_CHANGE_EVENT));
-      }
+
+      const currentVersion = localeSwitchVersionRef.current + 1;
+      localeSwitchVersionRef.current = currentVersion;
+
+      void (async () => {
+        try {
+          const missing = collectPageMissingTranslations(resolved);
+          if (missing.size > 0) {
+            await ensureDomTranslations(missing, resolved);
+          }
+        } catch {
+          // Ignore translation warm-up failures and switch locale anyway.
+        }
+        if (localeSwitchVersionRef.current !== currentVersion) return;
+        applyLocale();
+      })();
     },
     t: (key) => bundle[key] ?? key,
   };
