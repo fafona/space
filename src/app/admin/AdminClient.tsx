@@ -36,6 +36,7 @@ import {
   loadPlatformState,
   savePlatformState,
   subscribePlatformState,
+  type MerchantIndustry,
   type MerchantContactVisibility,
   type MerchantSortRule,
   type PlanTemplate,
@@ -148,6 +149,7 @@ import {
   readPageViewDailyStats,
   readPublishEvents,
   readRemoteAnalyticsSummary,
+  type RemoteAnalyticsSummary,
   trackPublishEvent,
 } from "@/lib/analytics";
 import {
@@ -1163,6 +1165,7 @@ const GALLERY_FRAME_WIDTH_LABELS: Record<CustomGalleryFrameWidth, string> = {
   "2/3": "2/3",
 };
 type ViewportKey = "desktop" | "mobile";
+type MerchantDesktopSection = "editor" | "profile" | "booking" | "analytics" | "support";
 type ProductSettingsSectionKey = "basic" | "typography" | "tags" | "card" | "detail";
 type ProductTypographyRole = "code" | "name" | "description" | "price";
 const MOBILE_SIZE_SCALE = 0.82;
@@ -2690,6 +2693,22 @@ function formatBytes(bytes: number) {
   if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(2)}MB`;
   if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)}KB`;
   return `${bytes}B`;
+}
+
+function formatSuccessRate(total: number, success: number) {
+  if (total <= 0) return "暂无";
+  return `${Math.round((success / total) * 100)}%`;
+}
+
+function getMerchantDesktopMenuButtonClassName(active: boolean, tone: "default" | "alert" = "default") {
+  if (active) {
+    return tone === "alert"
+      ? "relative rounded-xl border border-rose-600 bg-rose-600 px-3 py-2.5 text-sm font-semibold text-white shadow-sm"
+      : "relative rounded-xl border border-slate-950 bg-slate-950 px-3 py-2.5 text-sm font-semibold text-white shadow-sm";
+  }
+  return tone === "alert"
+    ? "relative rounded-xl border border-rose-200 bg-white px-3 py-2.5 text-sm font-semibold text-rose-700 transition hover:bg-rose-50"
+    : "relative rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50";
 }
 
 type LargeStringField = {
@@ -4594,6 +4613,10 @@ export default function AdminClient({
   const [remoteContentVerified, setRemoteContentVerified] = useState<boolean>(!isSupabaseEnabled || isSupabaseFallbackMode);
   const [publishing, setPublishing] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [merchantDesktopSection, setMerchantDesktopSection] = useState<MerchantDesktopSection>("editor");
+  const [merchantAnalyticsRemoteSummary, setMerchantAnalyticsRemoteSummary] = useState<RemoteAnalyticsSummary | null>(null);
+  const [merchantAnalyticsLoading, setMerchantAnalyticsLoading] = useState(false);
+  const [merchantAnalyticsError, setMerchantAnalyticsError] = useState("");
   const [merchantProfileDialogOpen, setMerchantProfileDialogOpen] = useState(false);
   const [merchantSiteIdOverride, setMerchantSiteIdOverride] = useState("");
   const [merchantBookingManagerOpen, setMerchantBookingManagerOpen] = useState(false);
@@ -10230,6 +10253,61 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
   }
 
+  async function openMerchantProfilePanel() {
+    const resolvedSiteId = await ensureEditableMerchantSiteId();
+    if (!resolvedSiteId) {
+      showTip("正在初始化商户资料，请稍后重试");
+      return;
+    }
+    setMerchantSiteIdOverride(resolvedSiteId);
+    if (/^\d{8}$/.test(resolvedSiteId)) {
+      try {
+        const response = await requestMerchantChatBusinessCardById(resolvedSiteId, {
+          cache: "no-store",
+        });
+        const payload = (await response.json().catch(() => null)) as
+          | {
+              profile?: MerchantListPublishedSite | null;
+              chatBusinessCard?: MerchantBusinessCardAsset | null;
+            }
+          | null;
+        if (response.ok) {
+          supportPeerProfileFetchedAtRef.current[resolvedSiteId] = Date.now();
+          setSupportPeerProfilesByMerchantId((current) => ({
+            ...current,
+            [resolvedSiteId]: payload?.profile ?? null,
+          }));
+          setSupportPeerBusinessCardByMerchantId((current) => ({
+            ...current,
+            [resolvedSiteId]: payload?.chatBusinessCard ?? payload?.profile?.chatBusinessCard ?? null,
+          }));
+        }
+      } catch {
+        // Ignore and let the panel fall back to local cached data.
+      }
+    }
+    setMerchantDesktopSection("profile");
+  }
+
+  async function openMerchantBookingPanel() {
+    const resolvedSiteId = editingSiteId || (await ensureEditableMerchantSiteId());
+    if (!resolvedSiteId) {
+      showTip("当前商户还没准备好预约资料，请稍后重试");
+      return;
+    }
+    setMerchantSiteIdOverride(resolvedSiteId);
+    setMerchantDesktopSection("booking");
+  }
+
+  function openMerchantAnalyticsPanel() {
+    setMerchantDesktopSection("analytics");
+  }
+
+  function openMerchantSupportPanel() {
+    setMerchantDesktopSection("support");
+    openSupportDialog();
+  }
+
   function openSupportDialog() {
     if (isPlatformEditor) return;
     supportScrollToLatestPendingRef.current = true;
@@ -10240,6 +10318,41 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
     setSupportDialogOpen(true);
   }
+
+  const desktopMerchantWorkspaceActive = !isPlatformEditor && (forceDesktopEditorSidebar || isDesktopEditorSidebar);
+
+  useEffect(() => {
+    if (!desktopMerchantWorkspaceActive) {
+      setMerchantDesktopSection("editor");
+      return;
+    }
+    if (merchantDesktopSection !== "support" && supportDialogOpen) {
+      setSupportDialogOpen(false);
+    }
+  }, [desktopMerchantWorkspaceActive, merchantDesktopSection, supportDialogOpen]);
+
+  useEffect(() => {
+    if (!desktopMerchantWorkspaceActive || merchantDesktopSection !== "analytics") return;
+    let cancelled = false;
+    setMerchantAnalyticsLoading(true);
+    setMerchantAnalyticsError("");
+    void readRemoteAnalyticsSummary(30)
+      .then((summary) => {
+        if (cancelled) return;
+        setMerchantAnalyticsRemoteSummary(summary);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setMerchantAnalyticsError(error instanceof Error ? error.message : "数据统计加载失败");
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setMerchantAnalyticsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [desktopMerchantWorkspaceActive, merchantDesktopSection]);
 
   useEffect(() => {
     if (isPlatformEditor || !isMobileMerchantSupportOnlyMode) return;
@@ -11816,6 +11929,59 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   const isMobileMerchantEditorShell = isMobileMerchantSupportOnlyMode;
   const merchantEditorAvatarLabel = !isPlatformEditor ? getSupportContactAvatarLabel(effectiveMerchantDisplayName || merchantDisplayName, "商") : "";
   const shouldShowPublishActions = showPublishActions ?? !isPlatformEditor;
+  const isDesktopMerchantWorkspace = desktopMerchantWorkspaceActive;
+  const showDesktopMerchantSupportPanel = isDesktopMerchantWorkspace && merchantDesktopSection === "support";
+  const merchantAnalyticsSnapshot = (() => {
+    const desktopConfig = previewViewport === "desktop" ? planConfig : viewportStatesRef.current.desktop.planConfig;
+    const mobileConfig = previewViewport === "mobile" ? planConfig : viewportStatesRef.current.mobile.planConfig;
+    const combinedBlocks = buildCombinedPersistedBlocks(desktopConfig, mobileConfig);
+    const payloadBytes = estimateUtf8Size(JSON.stringify(combinedBlocks));
+    const diffSummary = computePublishDiffSummary(
+      combinedBlocks,
+      loadPublishedBlocksFromStorage(defaultEditorBlocks, storeScope),
+    );
+    const byType = new Map<string, number>();
+    blocks.forEach((item) => {
+      byType.set(item.type, (byType.get(item.type) ?? 0) + 1);
+    });
+    const clickStats = readContactClickStats();
+    const clickDaily = readContactClickDailyStats();
+    const clickPairs = Object.entries(clickStats).sort((a, b) => b[1] - a[1]);
+    const viewDailyByPath = readPageViewDailyStats();
+    const mergedViewDaily: Record<string, number> = {};
+    Object.values(viewDailyByPath).forEach((daily) => {
+      Object.entries(daily).forEach(([day, count]) => {
+        mergedViewDaily[day] = (mergedViewDaily[day] ?? 0) + count;
+      });
+    });
+    const publishEvents = readPublishEvents();
+    const nowMs = Date.now();
+    const inLastDays = (iso: string, days: number) => {
+      const at = new Date(iso).getTime();
+      if (!Number.isFinite(at)) return false;
+      return nowMs - at <= days * 24 * 60 * 60 * 1000;
+    };
+    const publish7d = publishEvents.filter((item) => inLastDays(item.at, 7));
+    const publish30d = publishEvents.filter((item) => inLastDays(item.at, 30));
+    return {
+      blockCount: blocks.length,
+      payloadBytes,
+      diffSummary,
+      byType: Array.from(byType.entries()).sort((a, b) => b[1] - a[1]),
+      visit1d: sumDailyValues(mergedViewDaily, 1),
+      visit7d: sumDailyValues(mergedViewDaily, 7),
+      visit30d: sumDailyValues(mergedViewDaily, 30),
+      clickPairs,
+      topClick7d: Object.entries(clickDaily)
+        .map(([channel, daily]) => ({ channel, count: sumDailyValues(daily, 7) }))
+        .filter((item) => item.count > 0)
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 5),
+      publish7d,
+      publish30d,
+      failureSnapshots: readPublishFailureSnapshots(storeScope),
+    };
+  })();
   const planTemplateKeyword = planTemplateSearch.trim().toLowerCase();
   const filteredPlanTemplates = planTemplates.filter((template) => {
     if (!matchPlanTemplateCategory(template, planTemplateFilter)) return false;
@@ -13066,6 +13232,619 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   const merchantMobileToolbarSegmentClassName = "grid grid-cols-2 gap-3 rounded-[24px] border border-slate-200 bg-slate-50/90 p-1.5";
   const merchantMobileToolbarSegmentButtonBaseClassName =
     "min-h-[48px] rounded-[18px] px-3 py-2 text-sm font-semibold transition active:scale-[0.99]";
+  const merchantProfileDialogCommonProps = !isPlatformEditor
+    ? {
+        siteId: editingSiteId,
+        siteBaseDomain: (() => {
+          const platformState = loadPlatformState();
+          const baseFromEnv = resolveRuntimePortalBaseDomain(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "");
+          const baseFromMainSite = (platformState.sites.find((item) => item.id === "site-main")?.domain ?? "").trim();
+          const fallback = (effectiveEditingSite?.domain ?? editingSite?.domain ?? "").trim();
+          return normalizeBaseDomainForMerchant(baseFromEnv || baseFromMainSite || fallback);
+        })(),
+        initialServiceExpiresAt: effectiveEditingSite?.serviceExpiresAt ?? editingSite?.serviceExpiresAt ?? null,
+        initialDomainPrefix:
+          effectiveEditingSite?.domainPrefix ??
+          effectiveEditingSite?.domainSuffix ??
+          editingSite?.domainPrefix ??
+          editingSite?.domainSuffix ??
+          "",
+        takenDomainPrefixes: loadPlatformState()
+          .sites.filter((item) => item.id !== editingSiteId)
+          .map((item) => item.domainPrefix ?? item.domainSuffix ?? ""),
+        initialMerchantName: effectiveEditingSite?.merchantName ?? editingSite?.merchantName ?? "",
+        initialContactAddress: effectiveEditingSite?.contactAddress ?? editingSite?.contactAddress ?? "",
+        initialContactName: effectiveEditingSite?.contactName ?? editingSite?.contactName ?? "",
+        initialContactPhone: effectiveEditingSite?.contactPhone ?? editingSite?.contactPhone ?? "",
+        initialContactEmail: effectiveEditingSite?.contactEmail ?? editingSite?.contactEmail ?? "",
+        initialLocation: effectiveEditingSite?.location ?? editingSite?.location ?? null,
+        initialIndustry: effectiveEditingSite?.industry ?? editingSite?.industry ?? null,
+        initialBusinessCards: effectiveEditingSite?.businessCards ?? editingSite?.businessCards ?? [],
+        businessCardLimit:
+          effectiveEditingSite?.permissionConfig?.businessCardLimit ??
+          editingSite?.permissionConfig?.businessCardLimit ??
+          createDefaultMerchantPermissionConfig().businessCardLimit,
+        allowBusinessCardLinkMode:
+          effectiveEditingSite?.permissionConfig?.allowBusinessCardLinkMode ??
+          editingSite?.permissionConfig?.allowBusinessCardLinkMode ??
+          createDefaultMerchantPermissionConfig().allowBusinessCardLinkMode,
+        businessCardBackgroundImageLimitKb:
+          effectiveEditingSite?.permissionConfig?.businessCardBackgroundImageLimitKb ??
+          editingSite?.permissionConfig?.businessCardBackgroundImageLimitKb ??
+          createDefaultMerchantPermissionConfig().businessCardBackgroundImageLimitKb,
+        businessCardContactImageLimitKb:
+          effectiveEditingSite?.permissionConfig?.businessCardContactImageLimitKb ??
+          editingSite?.permissionConfig?.businessCardContactImageLimitKb ??
+          createDefaultMerchantPermissionConfig().businessCardContactImageLimitKb,
+        businessCardExportImageLimitKb:
+          effectiveEditingSite?.permissionConfig?.businessCardExportImageLimitKb ??
+          editingSite?.permissionConfig?.businessCardExportImageLimitKb ??
+          createDefaultMerchantPermissionConfig().businessCardExportImageLimitKb,
+        onClose: () => {
+          setMerchantProfileDialogOpen(false);
+          if (isDesktopMerchantWorkspace) {
+            setMerchantDesktopSection("editor");
+          }
+        },
+        onCardsChange: (cards: MerchantBusinessCardAsset[]) => {
+          if (!editingSiteId) return;
+          const platformState = loadPlatformState();
+          savePlatformState({
+            ...platformState,
+            sites: platformState.sites.map((item) =>
+              item.id === editingSiteId
+                ? {
+                    ...item,
+                    businessCards: cards,
+                    updatedAt: new Date().toISOString(),
+                  }
+                : item,
+            ),
+          });
+          scheduleMerchantChatBusinessCardSync(editingSiteId, cards);
+        },
+        onSave: async ({
+          merchantName,
+          domainPrefix,
+          contactAddress,
+          contactName,
+          contactPhone,
+          contactEmail,
+          location,
+          industry,
+        }: {
+          merchantName: string;
+          domainPrefix: string;
+          contactAddress: string;
+          contactName: string;
+          contactPhone: string;
+          contactEmail: string;
+          location: SiteLocation;
+          industry: MerchantIndustry;
+        }) => {
+          const targetSiteId = editingSiteId || (await ensureEditableMerchantSiteId());
+          if (!targetSiteId) {
+            showTip("未找到可编辑的商户站点，无法保存");
+            return;
+          }
+          setMerchantSiteIdOverride(targetSiteId);
+          ensureScopedMerchantSite(targetSiteId, contactEmail || null);
+          const platformState = loadPlatformState();
+          const target = platformState.sites.find((item) => item.id === targetSiteId) ?? null;
+          const normalizedDomainPrefix = normalizeDomainPrefixForMerchant(domainPrefix);
+          const baseDomain =
+            resolveRuntimePortalBaseDomain(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "") ||
+            (platformState.sites.find((site) => site.id === "site-main")?.domain ?? "").trim() ||
+            (target?.domain ?? "");
+          savePlatformState({
+            ...platformState,
+            sites: platformState.sites.map((item) =>
+              item.id === targetSiteId
+                ? {
+                    ...item,
+                    merchantName,
+                    domainPrefix: normalizedDomainPrefix,
+                    domainSuffix: normalizedDomainPrefix,
+                    contactAddress,
+                    contactName,
+                    contactPhone,
+                    contactEmail,
+                    domain: buildMerchantDomainFromBase(baseDomain, domainPrefix),
+                    location,
+                    industry,
+                    updatedAt: new Date().toISOString(),
+                  }
+                : item,
+            ),
+          });
+          const syncResult = await syncMerchantProfileBinding(targetSiteId, normalizedDomainPrefix, merchantName, {
+            domain: buildMerchantDomainFromBase(baseDomain, domainPrefix),
+            contactAddress,
+            contactName,
+            contactPhone,
+            contactEmail,
+            industry,
+            location,
+          });
+          if (!syncResult.ok) {
+            showTip("商户信息已保存到当前后台，但同步到超级后台失败，请稍后重新保存");
+            return;
+          }
+          if (!isDesktopMerchantWorkspace) {
+            setMerchantProfileDialogOpen(false);
+          }
+          setMerchantProfileAttention(false);
+          showTip("商户信息已保存");
+        },
+      }
+    : null;
+  const merchantBookingManagerDialogCommonProps =
+    !isPlatformEditor && canUseBookingBlock
+      ? {
+          siteId: editingSiteId || "",
+          siteName: effectiveMerchantDisplayName || merchantDisplayName,
+          storeOptions: merchantBookingManagerOptions.storeOptions,
+          itemOptions: merchantBookingManagerOptions.itemOptions,
+          titleOptions: merchantBookingManagerOptions.titleOptions,
+          onClose: () => {
+            setMerchantBookingManagerOpen(false);
+            if (isDesktopMerchantWorkspace) {
+              setMerchantDesktopSection("editor");
+            }
+          },
+        }
+      : null;
+  const merchantAnalyticsSuccessRate7d = formatSuccessRate(
+    merchantAnalyticsSnapshot.publish7d.length,
+    merchantAnalyticsSnapshot.publish7d.filter((item) => item.success).length,
+  );
+  const merchantAnalyticsSuccessRate30d = formatSuccessRate(
+    merchantAnalyticsSnapshot.publish30d.length,
+    merchantAnalyticsSnapshot.publish30d.filter((item) => item.success).length,
+  );
+  const merchantAnalyticsRemoteSuccessRate7d = merchantAnalyticsRemoteSummary
+    ? formatSuccessRate(merchantAnalyticsRemoteSummary.publishTotal7d, merchantAnalyticsRemoteSummary.publishSuccess7d)
+    : "暂无";
+  const merchantAnalyticsRemoteSuccessRate30d = merchantAnalyticsRemoteSummary
+    ? formatSuccessRate(merchantAnalyticsRemoteSummary.publishTotal30d, merchantAnalyticsRemoteSummary.publishSuccess30d)
+    : "暂无";
+  const merchantAnalyticsPanelContent = (
+    <div className="space-y-4">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {[
+          { label: "当前页区块", value: `${merchantAnalyticsSnapshot.blockCount} 个`, helper: "基于当前正在编辑的页面" },
+          { label: "发布体积", value: formatBytes(merchantAnalyticsSnapshot.payloadBytes), helper: "桌面+手机合并估算" },
+          {
+            label: "本地访问 7 日",
+            value: `${merchantAnalyticsSnapshot.visit7d}`,
+            helper: `今日 ${merchantAnalyticsSnapshot.visit1d} / 30日 ${merchantAnalyticsSnapshot.visit30d}`,
+          },
+          {
+            label: "本地发布成功率",
+            value: merchantAnalyticsSuccessRate30d,
+            helper: `7日 ${merchantAnalyticsSuccessRate7d} / 30日 ${merchantAnalyticsSnapshot.publish30d.length} 次`,
+          },
+          {
+            label: "远端访问 7 日",
+            value: merchantAnalyticsRemoteSummary ? `${merchantAnalyticsRemoteSummary.pageView7d}` : merchantAnalyticsLoading ? "加载中..." : "暂无",
+            helper: merchantAnalyticsRemoteSummary
+              ? `今日 ${merchantAnalyticsRemoteSummary.pageView1d} / 30日 ${merchantAnalyticsRemoteSummary.pageView30d}`
+              : merchantAnalyticsError || "Supabase 统计未返回",
+          },
+          {
+            label: "远端发布成功率",
+            value: merchantAnalyticsRemoteSummary ? merchantAnalyticsRemoteSuccessRate30d : merchantAnalyticsLoading ? "加载中..." : "暂无",
+            helper: merchantAnalyticsRemoteSummary
+              ? `7日 ${merchantAnalyticsRemoteSuccessRate7d} / 30日 ${merchantAnalyticsRemoteSummary.publishTotal30d} 次`
+              : "基于远端事件统计",
+          },
+        ].map((item) => (
+          <section key={item.label} className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400">{item.label}</div>
+            <div className="mt-3 text-2xl font-semibold text-slate-900">{item.value}</div>
+            <div className="mt-2 text-sm text-slate-500">{item.helper}</div>
+          </section>
+        ))}
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+        <section className="rounded-2xl border border-slate-200 bg-white px-5 py-5 shadow-sm">
+          <div className="text-lg font-semibold text-slate-900">发布概览</div>
+          <div className="mt-1 text-sm text-slate-500">这里汇总当前编辑页相对已发布版本的差异，以及最近发布表现。</div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+              <div className="text-xs text-slate-500">改动区块</div>
+              <div className="mt-1 text-xl font-semibold text-slate-900">{merchantAnalyticsSnapshot.diffSummary.changedCount}</div>
+            </div>
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+              <div className="text-xs text-emerald-700">新增区块</div>
+              <div className="mt-1 text-xl font-semibold text-emerald-700">{merchantAnalyticsSnapshot.diffSummary.addedCount}</div>
+            </div>
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+              <div className="text-xs text-amber-700">删除区块</div>
+              <div className="mt-1 text-xl font-semibold text-amber-700">{merchantAnalyticsSnapshot.diffSummary.removedCount}</div>
+            </div>
+          </div>
+          <div className="mt-5 grid gap-4 lg:grid-cols-2">
+            <div className="rounded-2xl border border-slate-200 px-4 py-4">
+              <div className="text-sm font-semibold text-slate-900">本地最近发布</div>
+              <div className="mt-3 space-y-2 text-sm text-slate-600">
+                <div className="flex items-center justify-between gap-3">
+                  <span>7 日内发布次数</span>
+                  <span className="font-semibold text-slate-900">{merchantAnalyticsSnapshot.publish7d.length}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span>30 日内发布次数</span>
+                  <span className="font-semibold text-slate-900">{merchantAnalyticsSnapshot.publish30d.length}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span>7 日成功率</span>
+                  <span className="font-semibold text-slate-900">{merchantAnalyticsSuccessRate7d}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span>30 日成功率</span>
+                  <span className="font-semibold text-slate-900">{merchantAnalyticsSuccessRate30d}</span>
+                </div>
+              </div>
+            </div>
+            <div className="rounded-2xl border border-slate-200 px-4 py-4">
+              <div className="text-sm font-semibold text-slate-900">远端事件统计</div>
+              {merchantAnalyticsLoading ? (
+                <div className="mt-3 text-sm text-slate-500">正在加载远端统计...</div>
+              ) : merchantAnalyticsError ? (
+                <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-600">
+                  {merchantAnalyticsError}
+                </div>
+              ) : merchantAnalyticsRemoteSummary ? (
+                <div className="mt-3 space-y-2 text-sm text-slate-600">
+                  <div className="flex items-center justify-between gap-3">
+                    <span>7 日发布次数</span>
+                    <span className="font-semibold text-slate-900">{merchantAnalyticsRemoteSummary.publishTotal7d}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span>30 日发布次数</span>
+                    <span className="font-semibold text-slate-900">{merchantAnalyticsRemoteSummary.publishTotal30d}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span>7 日成功率</span>
+                    <span className="font-semibold text-slate-900">{merchantAnalyticsRemoteSuccessRate7d}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span>30 日成功率</span>
+                    <span className="font-semibold text-slate-900">{merchantAnalyticsRemoteSuccessRate30d}</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-3 text-sm text-slate-500">还没有远端统计数据。</div>
+              )}
+            </div>
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-slate-200 bg-white px-5 py-5 shadow-sm">
+          <div className="text-lg font-semibold text-slate-900">区块分布</div>
+          <div className="mt-1 text-sm text-slate-500">按当前页面区块类型统计，方便快速判断页面结构。</div>
+          <div className="mt-4 space-y-3">
+            {merchantAnalyticsSnapshot.byType.length > 0 ? (
+              merchantAnalyticsSnapshot.byType.map(([type, count]) => (
+                <div key={type} className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-sm font-medium text-slate-700">{type}</span>
+                    <span className="text-sm font-semibold text-slate-900">{count}</span>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="rounded-xl border border-dashed border-slate-300 px-4 py-5 text-sm text-slate-500">当前页面还没有可统计的区块。</div>
+            )}
+          </div>
+        </section>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
+        <section className="rounded-2xl border border-slate-200 bg-white px-5 py-5 shadow-sm">
+          <div className="text-lg font-semibold text-slate-900">联系方式点击</div>
+          <div className="mt-1 text-sm text-slate-500">本设备会记录联系方式点击次数；远端统计会汇总最近 7 日的真实访问。</div>
+          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+            <div className="rounded-2xl border border-slate-200 px-4 py-4">
+              <div className="text-sm font-semibold text-slate-900">本设备累计</div>
+              <div className="mt-3 space-y-2">
+                {merchantAnalyticsSnapshot.clickPairs.length > 0 ? (
+                  merchantAnalyticsSnapshot.clickPairs.map(([key, count]) => (
+                    <div key={key} className="flex items-center justify-between gap-3 text-sm text-slate-600">
+                      <span className="truncate">{key}</span>
+                      <span className="font-semibold text-slate-900">{count}</span>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-sm text-slate-500">暂无点击记录</div>
+                )}
+              </div>
+            </div>
+            <div className="rounded-2xl border border-slate-200 px-4 py-4">
+              <div className="text-sm font-semibold text-slate-900">最近 7 日</div>
+              <div className="mt-3 space-y-2">
+                {merchantAnalyticsRemoteSummary?.contactTop7d?.length ? (
+                  merchantAnalyticsRemoteSummary.contactTop7d.map((item) => (
+                    <div key={item.channel} className="flex items-center justify-between gap-3 text-sm text-slate-600">
+                      <span className="truncate">{item.channel}</span>
+                      <span className="font-semibold text-slate-900">{item.count}</span>
+                    </div>
+                  ))
+                ) : merchantAnalyticsSnapshot.topClick7d.length > 0 ? (
+                  merchantAnalyticsSnapshot.topClick7d.map((item) => (
+                    <div key={item.channel} className="flex items-center justify-between gap-3 text-sm text-slate-600">
+                      <span className="truncate">{item.channel}</span>
+                      <span className="font-semibold text-slate-900">{item.count}</span>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-sm text-slate-500">最近 7 日暂无点击趋势</div>
+                )}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-slate-200 bg-white px-5 py-5 shadow-sm">
+          <div className="text-lg font-semibold text-slate-900">发布失败记录</div>
+          <div className="mt-1 text-sm text-slate-500">这里保留最近的本地发布失败快照，方便回溯问题。</div>
+          <div className="mt-4 space-y-3">
+            {merchantAnalyticsSnapshot.failureSnapshots.length > 0 ? (
+              merchantAnalyticsSnapshot.failureSnapshots.slice(0, 5).map((item) => (
+                <article key={`${item.at}:${item.reason}`} className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-semibold text-rose-700">{item.reason}</div>
+                      <div className="mt-1 text-xs text-rose-600">{item.at}</div>
+                    </div>
+                    <div className="shrink-0 rounded-full bg-white px-2 py-1 text-[11px] font-medium text-rose-600 ring-1 ring-rose-200">
+                      {formatBytes(item.bytes)}
+                    </div>
+                  </div>
+                </article>
+              ))
+            ) : (
+              <div className="rounded-xl border border-dashed border-slate-300 px-4 py-5 text-sm text-slate-500">最近没有发布失败记录。</div>
+            )}
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+  const supportDesktopSurfaceContent = (
+    <div
+      className={`flex min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border bg-white ${
+        showDesktopMerchantSupportPanel
+          ? "min-h-[calc(100vh-15rem)] shadow-sm md:grid md:grid-cols-[320px_minmax(0,1fr)]"
+          : "h-full max-h-[88vh] w-full max-w-5xl shadow-2xl md:grid md:grid-cols-[320px_minmax(0,1fr)]"
+      }`}
+    >
+      <div className="flex min-h-0 min-w-0 flex-col overflow-hidden border-b bg-white md:border-b-0 md:border-r">
+        <div className="border-b px-4 py-3">
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              className="min-w-0 flex-1 rounded border px-3 py-2 text-sm outline-none transition focus:border-slate-400"
+              placeholder="精确搜索商户ID或邮箱"
+              value={supportContactKeyword}
+              onChange={(event) => setSupportContactKeyword(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+                event.preventDefault();
+                void searchSupportPeerMerchant();
+              }}
+            />
+            <button
+              type="button"
+              className="shrink-0 rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+              onClick={() => void searchSupportPeerMerchant()}
+              disabled={supportSearchLoading}
+            >
+              {supportSearchLoading ? "搜索中..." : "搜索"}
+            </button>
+          </div>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50 p-3">
+          {supportSearchError ? (
+            <div className="mb-3 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-600">{supportSearchError}</div>
+          ) : null}
+          {supportPeerError ? (
+            <div className="mb-3 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-600">{supportPeerError}</div>
+          ) : null}
+          {supportContactRows.length > 0 ? (
+            <div className="space-y-2">
+              {supportContactRows.map((contactRow) => {
+                const active = supportSelectedContactKey === contactRow.key;
+                return (
+                  <button
+                    key={contactRow.key}
+                    type="button"
+                    className={`w-full rounded-2xl border px-3 py-3 text-left transition ${
+                      active ? "border-blue-300 bg-blue-50" : "bg-white hover:bg-slate-50"
+                    }`}
+                    onClick={() => {
+                      setSupportSelectedContactKey(contactRow.key);
+                      focusSupportInput();
+                    }}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <div className="truncate text-sm font-medium text-slate-900">{contactRow.name}</div>
+                          {!contactRow.isOfficial ? (
+                            <span className="truncate text-[11px] font-medium text-slate-400">{contactRow.subtitle}</span>
+                          ) : null}
+                          {contactRow.badge ? (
+                            <span className="inline-flex shrink-0 items-center rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium leading-none text-white">
+                              {contactRow.badge}
+                            </span>
+                          ) : null}
+                          {contactRow.unread ? (
+                            <span aria-label="有未读消息" className="inline-flex h-2.5 w-2.5 shrink-0 rounded-full bg-rose-500" />
+                          ) : null}
+                        </div>
+                        {contactRow.isOfficial ? <div className="truncate text-[11px] text-slate-500">{contactRow.subtitle}</div> : null}
+                      </div>
+                      <div className="shrink-0 text-[11px] text-slate-400">
+                        {contactRow.updatedAt ? formatSupportMessageTime(contactRow.updatedAt) : "未聊天"}
+                      </div>
+                    </div>
+                    <div className="mt-2 truncate text-xs leading-5 text-slate-600">{contactRow.preview}</div>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="rounded border border-dashed px-3 py-4 text-xs text-slate-500">还没有联系人，请先精确搜索商户ID或邮箱。</div>
+          )}
+        </div>
+      </div>
+
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <div className="flex min-w-0 items-center justify-between gap-3 border-b px-5 py-4">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <div className="truncate text-base font-semibold text-slate-900">{selectedSupportDisplayName}</div>
+              {selectedSupportIsOfficial ? (
+                <span className="inline-flex shrink-0 items-center rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium leading-none text-white">
+                  {supportOfficialBadgeLabel}
+                </span>
+              ) : null}
+            </div>
+            <div className="truncate text-xs text-slate-500">{selectedSupportHeaderMeta}</div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+              onClick={() => setSupportBusinessCardDialogOpen(true)}
+              disabled={supportSending}
+            >
+              名片
+            </button>
+            <button
+              type="button"
+              className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+              onClick={() => {
+                if (showDesktopMerchantSupportPanel) {
+                  setMerchantDesktopSection("editor");
+                }
+                setSupportDialogOpen(false);
+              }}
+              disabled={supportSending}
+            >
+              {showDesktopMerchantSupportPanel ? "返回编辑网站" : "关闭"}
+            </button>
+          </div>
+        </div>
+
+        <div ref={supportMessagesViewportRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-slate-50 px-5 py-5">
+          {selectedSupportLoading ? (
+            <div className="rounded-2xl border border-dashed bg-white px-4 py-6 text-center text-sm text-slate-500">正在加载聊天记录...</div>
+          ) : visibleSupportMessages.length ? (
+            <div className="min-w-0 space-y-3">
+              {visibleSupportMessages.map((message) => {
+                return (
+                  <div key={message.id} className={`flex min-w-0 ${message.isSelf ? "justify-end" : "justify-start"}`}>
+                    <div className={`flex max-w-[82%] min-w-0 items-end ${message.isSelf ? "flex-row" : "flex-row-reverse"}`}>
+                      <div
+                        className={`min-w-0 rounded-2xl shadow-sm ${
+                          parseSupportMessageAttachmentPreview(message.text)
+                            ? "border border-transparent bg-transparent px-0 py-0"
+                            : message.isSelf
+                              ? "bg-slate-900 px-4 py-3 text-white"
+                              : "border bg-white px-4 py-3 text-slate-900"
+                        }`}
+                      >
+                        <div className="text-[11px] opacity-70">
+                          {message.senderLabel} | {formatSupportMessageTime(message.createdAt)}
+                        </div>
+                        <div className="mt-1">
+                          <SupportMessageContent
+                            value={message.text}
+                            isSelf={message.isSelf}
+                            onImageActivate={handleSupportMessageImageActivate}
+                          />
+                        </div>
+                      </div>
+                      {message.isSelf && message.localStatus === "failed" ? (
+                        <span
+                          aria-label="发送失败"
+                          className="mb-1 ml-2 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-rose-500 bg-white text-[12px] font-semibold leading-none text-rose-600"
+                        >
+                          !
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-dashed bg-white px-4 py-6 text-center text-sm text-slate-500">
+              {selectedSupportEmptyStateText}
+            </div>
+          )}
+        </div>
+
+        <div className="min-w-0 shrink-0 space-y-3 border-t px-5 py-4">
+          {supportError && supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY ? (
+            <div className="text-sm text-rose-600">{supportError}</div>
+          ) : null}
+          <textarea
+            ref={supportInputRef}
+            className="h-32 w-full max-w-full min-w-0 resize-none rounded-2xl border px-4 py-3 text-sm outline-none transition focus:border-slate-400"
+            placeholder={selectedSupportInputPlaceholder}
+            value={supportDraft}
+            onChange={(event) => setSupportDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" || !event.ctrlKey || event.nativeEvent.isComposing) return;
+              event.preventDefault();
+              void sendSupportMessage();
+            }}
+            disabled={supportSending || (!selectedSupportPeerContact && supportSelectedContactKey !== SUPPORT_OFFICIAL_CONTACT_KEY)}
+          />
+          <div className="flex min-w-0 justify-end">
+            <button
+              type="button"
+              className="shrink-0 rounded bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50"
+              onClick={() => void sendSupportMessage()}
+              disabled={supportSending || !supportCanSend}
+            >
+              {supportSending ? "发送中..." : selectedSupportSendButtonLabel}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+  const desktopMerchantWorkspaceContent =
+    isDesktopMerchantWorkspace && merchantDesktopSection !== "editor" ? (
+      <div className="min-h-screen bg-slate-50/70">
+        <div className="mx-auto max-w-6xl px-4 pb-8">
+          {merchantDesktopSection === "profile" && merchantProfileDialogCommonProps ? (
+            <MerchantProfileDialog
+              {...merchantProfileDialogCommonProps}
+              open
+              mode="inline"
+              showCloseButton={false}
+            />
+          ) : merchantDesktopSection === "booking" && merchantBookingManagerDialogCommonProps ? (
+            <MerchantBookingManagerDialog
+              {...merchantBookingManagerDialogCommonProps}
+              open
+              mode="inline"
+              showCloseButton={false}
+            />
+          ) : merchantDesktopSection === "analytics" ? (
+            merchantAnalyticsPanelContent
+          ) : merchantDesktopSection === "support" ? (
+            supportDesktopSurfaceContent
+          ) : null}
+        </div>
+      </div>
+    ) : null;
 
   return (
     <main
@@ -13181,16 +13960,73 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 </div>
               ) : null}
             </div>
-            <div className={toolbarActionsClassName}>
-              <button
-                className={
-                  isMobileMerchantEditorShell
-                    ? merchantMobileToolbarButtonClassName
-                    : "px-3 py-2 rounded border bg-white hover:bg-gray-50"
-                }
-                onClick={() => {
-                  if (!isPlatformEditor) {
-                    // reuse precomputed profile completeness for guard
+            {isDesktopMerchantWorkspace ? (
+              <div className="grid gap-3">
+                <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400">后台菜单</div>
+                  <div className="mt-3 grid gap-2">
+                    <button
+                      type="button"
+                      className={getMerchantDesktopMenuButtonClassName(merchantDesktopSection === "editor")}
+                      onClick={() => setMerchantDesktopSection("editor")}
+                    >
+                      编辑网站
+                    </button>
+                    <button
+                      ref={merchantProfileButtonRef}
+                      type="button"
+                      className={getMerchantDesktopMenuButtonClassName(
+                        merchantDesktopSection === "profile",
+                        merchantProfileAttention ? "alert" : "default",
+                      )}
+                      onClick={() => {
+                        void openMerchantProfilePanel();
+                      }}
+                    >
+                      商户信息
+                    </button>
+                    {canUseBookingBlock ? (
+                      <button
+                        type="button"
+                        className={getMerchantDesktopMenuButtonClassName(merchantDesktopSection === "booking")}
+                        onClick={() => {
+                          void openMerchantBookingPanel();
+                        }}
+                      >
+                        预约管理
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className={getMerchantDesktopMenuButtonClassName(merchantDesktopSection === "analytics")}
+                      onClick={openMerchantAnalyticsPanel}
+                    >
+                      数据统计
+                    </button>
+                    <button
+                      type="button"
+                      className={getMerchantDesktopMenuButtonClassName(
+                        merchantDesktopSection === "support",
+                        supportHasUnreadMessages ? "alert" : "default",
+                      )}
+                      onClick={openMerchantSupportPanel}
+                      aria-label={supportHasUnreadMessages ? "联系我们，有新消息" : "联系我们"}
+                    >
+                      <span className="relative inline-flex items-center">
+                        联系我们
+                        {supportHasUnreadMessages ? (
+                          <span
+                            aria-hidden="true"
+                            className="absolute -right-3 -top-1 h-2.5 w-2.5 rounded-full bg-rose-500 ring-2 ring-white"
+                          />
+                        ) : null}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+                <button
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                  onClick={() => {
                     const missingFields = missingMerchantProfileFields;
                     if (missingFields.length > 0) {
                       setTopBarCollapsed(false);
@@ -13198,110 +14034,132 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       showTip(`请先完善商户信息后再去前台（缺少：${missingFields.join("、")}）`);
                       return;
                     }
-                  }
-                  const opened = window.open(effectiveFrontendHref, "_blank", "noopener,noreferrer");
-                  if (!opened) {
-                    showTip("浏览器拦截了新窗口，请允许弹窗后重试");
-                  }
-                }}
-              >
-                {"去前台"}
-              </button>
-              {!isPlatformEditor ? (
-                <button
-                  ref={merchantProfileButtonRef}
-                  className={
-                    isMobileMerchantEditorShell
-                      ? `${merchantMobileToolbarButtonClassName} ${
-                          merchantProfileAttention
-                            ? "border-rose-300 bg-rose-50 text-rose-700 shadow-[0_12px_28px_rgba(244,63,94,0.12)]"
-                            : ""
-                        }`
-                      : `px-3 py-2 rounded border transition-colors ${
-                          merchantProfileAttention
-                            ? "border-rose-500 bg-rose-50 text-rose-700 hover:bg-rose-100"
-                            : "bg-white hover:bg-gray-50"
-                        }`
-                  }
-                  onClick={async () => {
-                    const resolvedSiteId = await ensureEditableMerchantSiteId();
-                    if (!resolvedSiteId) {
-                      showTip("正在初始化商户资料，请稍后重试");
-                      return;
+                    const opened = window.open(effectiveFrontendHref, "_blank", "noopener,noreferrer");
+                    if (!opened) {
+                      showTip("浏览器拦截了新窗口，请允许弹窗后重试");
                     }
-                    if (/^\d{8}$/.test(resolvedSiteId)) {
-                      try {
-                        const response = await requestMerchantChatBusinessCardById(resolvedSiteId, {
-                          cache: "no-store",
-                        });
-                        const payload = (await response.json().catch(() => null)) as
-                          | {
-                              profile?: MerchantListPublishedSite | null;
-                              chatBusinessCard?: MerchantBusinessCardAsset | null;
-                            }
-                          | null;
-                        if (response.ok) {
-                          supportPeerProfileFetchedAtRef.current[resolvedSiteId] = Date.now();
-                          setSupportPeerProfilesByMerchantId((current) => ({
-                            ...current,
-                            [resolvedSiteId]: payload?.profile ?? null,
-                          }));
-                          setSupportPeerBusinessCardByMerchantId((current) => ({
-                            ...current,
-                            [resolvedSiteId]: payload?.chatBusinessCard ?? payload?.profile?.chatBusinessCard ?? null,
-                          }));
-                        }
-                      } catch {
-                        // Ignore and let the dialog fall back to local cached data.
-                      }
-                    }
-                    setMerchantProfileDialogOpen(true);
                   }}
                 >
-                  {"商户信息"}
+                  去前台
                 </button>
-              ) : null}
-              <button
-                className={
-                  isMobileMerchantEditorShell
-                    ? merchantMobileToolbarButtonClassName
-                    : "px-3 py-2 rounded border bg-white hover:bg-gray-50"
-                }
-                onClick={() => void showAnalyticsSummary()}
-              >
-                {"数据统计"}
-              </button>
-              {!isPlatformEditor && canUseBookingBlock ? (
+              </div>
+            ) : (
+              <div className={toolbarActionsClassName}>
                 <button
                   className={
                     isMobileMerchantEditorShell
                       ? merchantMobileToolbarButtonClassName
-                      : "px-3 py-2 rounded border bg-white hover:bg-gray-50 disabled:opacity-50"
+                      : "px-3 py-2 rounded border bg-white hover:bg-gray-50"
                   }
-                  onClick={() => setMerchantBookingManagerOpen(true)}
-                  disabled={!editingSiteId}
+                  onClick={() => {
+                    if (!isPlatformEditor) {
+                      const missingFields = missingMerchantProfileFields;
+                      if (missingFields.length > 0) {
+                        setTopBarCollapsed(false);
+                        triggerMerchantProfileAttention();
+                        showTip(`请先完善商户信息后再去前台（缺少：${missingFields.join("、")}）`);
+                        return;
+                      }
+                    }
+                    const opened = window.open(effectiveFrontendHref, "_blank", "noopener,noreferrer");
+                    if (!opened) {
+                      showTip("浏览器拦截了新窗口，请允许弹窗后重试");
+                    }
+                  }}
                 >
-                  {"预约管理"}
+                  {"去前台"}
                 </button>
-              ) : null}
-              <button
-                className={supportButtonClassName}
-                onClick={openSupportDialog}
-                aria-label={supportHasUnreadMessages ? "联系我们，有新消息" : "联系我们"}
-              >
-                <span className="relative inline-flex items-center">
-                  {"联系我们"}
-                  {supportHasUnreadMessages ? (
-                    <span
-                      aria-hidden="true"
-                      className="absolute -right-3 -top-1 h-2.5 w-2.5 rounded-full bg-rose-500 ring-2 ring-white"
-                    />
-                  ) : null}
-                </span>
-              </button>
-            </div>
+                {!isPlatformEditor ? (
+                  <button
+                    ref={merchantProfileButtonRef}
+                    className={
+                      isMobileMerchantEditorShell
+                        ? `${merchantMobileToolbarButtonClassName} ${
+                            merchantProfileAttention
+                              ? "border-rose-300 bg-rose-50 text-rose-700 shadow-[0_12px_28px_rgba(244,63,94,0.12)]"
+                              : ""
+                          }`
+                        : `px-3 py-2 rounded border transition-colors ${
+                            merchantProfileAttention
+                              ? "border-rose-500 bg-rose-50 text-rose-700 hover:bg-rose-100"
+                              : "bg-white hover:bg-gray-50"
+                          }`
+                    }
+                    onClick={() => {
+                      void openMerchantProfilePanel();
+                    }}
+                  >
+                    {"商户信息"}
+                  </button>
+                ) : null}
+                <button
+                  className={
+                    isMobileMerchantEditorShell
+                      ? merchantMobileToolbarButtonClassName
+                      : "px-3 py-2 rounded border bg-white hover:bg-gray-50"
+                  }
+                  onClick={() => void showAnalyticsSummary()}
+                >
+                  {"数据统计"}
+                </button>
+                {!isPlatformEditor && canUseBookingBlock ? (
+                  <button
+                    className={
+                      isMobileMerchantEditorShell
+                        ? merchantMobileToolbarButtonClassName
+                        : "px-3 py-2 rounded border bg-white hover:bg-gray-50 disabled:opacity-50"
+                    }
+                    onClick={() => setMerchantBookingManagerOpen(true)}
+                    disabled={!editingSiteId}
+                  >
+                    {"预约管理"}
+                  </button>
+                ) : null}
+                <button
+                  className={supportButtonClassName}
+                  onClick={openSupportDialog}
+                  aria-label={supportHasUnreadMessages ? "联系我们，有新消息" : "联系我们"}
+                >
+                  <span className="relative inline-flex items-center">
+                    {"联系我们"}
+                    {supportHasUnreadMessages ? (
+                      <span
+                        aria-hidden="true"
+                        className="absolute -right-3 -top-1 h-2.5 w-2.5 rounded-full bg-rose-500 ring-2 ring-white"
+                      />
+                    ) : null}
+                  </span>
+                </button>
+              </div>
+            )}
           </div>
         {!topBarCollapsed ? (
+          isDesktopMerchantWorkspace && merchantDesktopSection !== "editor" ? (
+            <div className="border-t">
+              <div className="max-w-6xl px-4 py-4">
+                <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+                  <div className="text-base font-semibold text-slate-900">
+                    {merchantDesktopSection === "profile"
+                      ? "商户信息"
+                      : merchantDesktopSection === "booking"
+                        ? "预约管理"
+                        : merchantDesktopSection === "analytics"
+                          ? "数据统计"
+                          : "联系我们"}
+                  </div>
+                  <div className="mt-1 text-sm text-slate-500">
+                    {merchantDesktopSection === "profile"
+                      ? "这里集中维护商户资料、域名前缀和名片信息。"
+                      : merchantDesktopSection === "booking"
+                        ? "这里集中查看和处理当前商户收到的预约记录。"
+                        : merchantDesktopSection === "analytics"
+                          ? "这里集中查看访问、发布和联系方式点击等统计。"
+                          : "这里集中处理官方客服和商户聊天消息。"}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
           <>
             <div className={isMobileMerchantEditorShell ? "border-t border-white/70" : "border-t"}>
               <div
@@ -13737,10 +14595,13 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               </div>
             ) : null}
           </>
+          )
         ) : null}
       </div>
 
-      {previewViewport === "mobile" ? (
+      {desktopMerchantWorkspaceContent ? (
+        desktopMerchantWorkspaceContent
+      ) : previewViewport === "mobile" ? (
         <div
           className={
             isMobileMerchantEditorShell
@@ -14047,7 +14908,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       )
         : null}
 
-      {supportDialogOpen && !isPlatformEditor
+      {supportDialogOpen && !isPlatformEditor && !showDesktopMerchantSupportPanel
         ? renderTopMostOverlay(
             <>
               <button
@@ -14067,217 +14928,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     {supportMobileDialogContent}
                     {supportMobileBottomNavOverlay}
                   </>
-                ) : (
-                <div className="flex h-full min-h-0 min-w-0 max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl md:grid md:grid-cols-[320px_minmax(0,1fr)]">
-                  <div className="flex min-h-0 min-w-0 flex-col overflow-hidden border-b bg-white md:border-b-0 md:border-r">
-                    <div className="border-b px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="text"
-                          className="min-w-0 flex-1 rounded border px-3 py-2 text-sm outline-none transition focus:border-slate-400"
-                          placeholder="精确搜索商户ID或邮箱"
-                          value={supportContactKeyword}
-                          onChange={(event) => setSupportContactKeyword(event.target.value)}
-                          onKeyDown={(event) => {
-                            if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
-                            event.preventDefault();
-                            void searchSupportPeerMerchant();
-                          }}
-                        />
-                        <button
-                          type="button"
-                          className="shrink-0 rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
-                          onClick={() => void searchSupportPeerMerchant()}
-                          disabled={supportSearchLoading}
-                        >
-                          {supportSearchLoading ? "搜索中..." : "搜索"}
-                        </button>
-                      </div>
-                    </div>
-                    <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50 p-3">
-                      {supportSearchError ? (
-                        <div className="mb-3 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-600">
-                          {supportSearchError}
-                        </div>
-                      ) : null}
-                      {supportPeerError ? (
-                        <div className="mb-3 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-600">
-                          {supportPeerError}
-                        </div>
-                      ) : null}
-                      {supportContactRows.length > 0 ? (
-                        <div className="space-y-2">
-                          {supportContactRows.map((contactRow) => {
-                            const active = supportSelectedContactKey === contactRow.key;
-                            return (
-                              <button
-                                key={contactRow.key}
-                                type="button"
-                                className={`w-full rounded-2xl border px-3 py-3 text-left transition ${
-                                  active ? "border-blue-300 bg-blue-50" : "bg-white hover:bg-slate-50"
-                                }`}
-                                onClick={() => {
-                                  setSupportSelectedContactKey(contactRow.key);
-                                  focusSupportInput();
-                                }}
-                              >
-                                <div className="flex items-start justify-between gap-2">
-                                  <div className="min-w-0">
-                                    <div className="flex items-center gap-2">
-                                      <div className="truncate text-sm font-medium text-slate-900">{contactRow.name}</div>
-                                      {!contactRow.isOfficial ? (
-                                        <span className="truncate text-[11px] font-medium text-slate-400">{contactRow.subtitle}</span>
-                                      ) : null}
-                                      {contactRow.badge ? (
-                                        <span className="inline-flex shrink-0 items-center rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium leading-none text-white">
-                                          {contactRow.badge}
-                                        </span>
-                                      ) : null}
-                                      {contactRow.unread ? (
-                                        <span aria-label="有未读消息" className="inline-flex h-2.5 w-2.5 shrink-0 rounded-full bg-rose-500" />
-                                      ) : null}
-                                    </div>
-                                    {contactRow.isOfficial ? (
-                                      <div className="truncate text-[11px] text-slate-500">{contactRow.subtitle}</div>
-                                    ) : null}
-                                  </div>
-                                  <div className="shrink-0 text-[11px] text-slate-400">
-                                    {contactRow.updatedAt ? formatSupportMessageTime(contactRow.updatedAt) : "未聊天"}
-                                  </div>
-                                </div>
-                                <div className="mt-2 truncate text-xs leading-5 text-slate-600">
-                                  {contactRow.preview}
-                                </div>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        <div className="rounded border border-dashed px-3 py-4 text-xs text-slate-500">
-                          还没有联系人，请先精确搜索商户ID或邮箱。
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-                    <div className="flex min-w-0 items-center justify-between gap-3 border-b px-5 py-4">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <div className="truncate text-base font-semibold text-slate-900">{selectedSupportDisplayName}</div>
-                          {selectedSupportIsOfficial ? (
-                            <span className="inline-flex shrink-0 items-center rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium leading-none text-white">
-                              {supportOfficialBadgeLabel}
-                            </span>
-                          ) : null}
-                        </div>
-                        <div className="truncate text-xs text-slate-500">{selectedSupportHeaderMeta}</div>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-2">
-                        <button
-                          type="button"
-                          className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
-                          onClick={() => setSupportBusinessCardDialogOpen(true)}
-                          disabled={supportSending}
-                        >
-                          名片
-                        </button>
-                        <button
-                          type="button"
-                          className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
-                          onClick={() => setSupportDialogOpen(false)}
-                          disabled={supportSending}
-                        >
-                          关闭
-                        </button>
-                      </div>
-                    </div>
-
-                    <div ref={supportMessagesViewportRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-slate-50 px-5 py-5">
-                      {selectedSupportLoading ? (
-                        <div className="rounded-2xl border border-dashed bg-white px-4 py-6 text-center text-sm text-slate-500">
-                          正在加载聊天记录...
-                        </div>
-                      ) : visibleSupportMessages.length ? (
-                        <div className="min-w-0 space-y-3">
-                          {visibleSupportMessages.map((message) => {
-                            return (
-                              <div
-                                key={message.id}
-                                className={`flex min-w-0 ${message.isSelf ? "justify-end" : "justify-start"}`}
-                              >
-                                <div className={`flex max-w-[82%] min-w-0 items-end ${message.isSelf ? "flex-row" : "flex-row-reverse"}`}>
-                              <div
-                                className={`min-w-0 rounded-2xl shadow-sm ${
-                                  parseSupportMessageAttachmentPreview(message.text)
-                                    ? "border border-transparent bg-transparent px-0 py-0"
-                                    : message.isSelf
-                                      ? "bg-slate-900 px-4 py-3 text-white"
-                                      : "border bg-white px-4 py-3 text-slate-900"
-                                }`}
-                              >
-                                <div className="text-[11px] opacity-70">
-                                  {message.senderLabel} | {formatSupportMessageTime(message.createdAt)}
-                                </div>
-                                <div className="mt-1">
-                                  <SupportMessageContent
-                                    value={message.text}
-                                    isSelf={message.isSelf}
-                                    onImageActivate={handleSupportMessageImageActivate}
-                                  />
-                                </div>
-                              </div>
-                                  {message.isSelf && message.localStatus === "failed" ? (
-                                    <span
-                                      aria-label="发送失败"
-                                      className="mb-1 ml-2 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-rose-500 bg-white text-[12px] font-semibold leading-none text-rose-600"
-                                    >
-                                      !
-                                    </span>
-                                  ) : null}
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        <div className="rounded-2xl border border-dashed bg-white px-4 py-6 text-center text-sm text-slate-500">
-                          {selectedSupportEmptyStateText}
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="min-w-0 shrink-0 space-y-3 border-t px-5 py-4">
-                      {supportError && supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY ? (
-                        <div className="text-sm text-rose-600">{supportError}</div>
-                      ) : null}
-                      <textarea
-                        ref={supportInputRef}
-                        className="h-32 w-full max-w-full min-w-0 resize-none rounded-2xl border px-4 py-3 text-sm outline-none transition focus:border-slate-400"
-                        placeholder={selectedSupportInputPlaceholder}
-                        value={supportDraft}
-                        onChange={(event) => setSupportDraft(event.target.value)}
-                        onKeyDown={(event) => {
-                          if (event.key !== "Enter" || !event.ctrlKey || event.nativeEvent.isComposing) return;
-                          event.preventDefault();
-                          void sendSupportMessage();
-                        }}
-                        disabled={supportSending || (!selectedSupportPeerContact && supportSelectedContactKey !== SUPPORT_OFFICIAL_CONTACT_KEY)}
-                      />
-                      <div className="flex min-w-0 justify-end">
-                        <button
-                          type="button"
-                          className="shrink-0 rounded bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50"
-                          onClick={() => void sendSupportMessage()}
-                          disabled={supportSending || !supportCanSend}
-                        >
-                          {supportSending ? "发送中..." : selectedSupportSendButtonLabel}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                )}
+                ) : supportDesktopSurfaceContent}
               </div>
             </>,
           )
@@ -14330,144 +14981,17 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       {supportMerchantInfoSheetOverlay}
       {supportSelfCardPickerOverlay}
 
-      {merchantProfileDialogOpen && !isPlatformEditor ? (
+      {merchantProfileDialogOpen && merchantProfileDialogCommonProps ? (
         <MerchantProfileDialog
+          {...merchantProfileDialogCommonProps}
           open={merchantProfileDialogOpen}
-          siteId={editingSiteId}
-          siteBaseDomain={(() => {
-            const platformState = loadPlatformState();
-            const baseFromEnv = resolveRuntimePortalBaseDomain(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "");
-            const baseFromMainSite = (platformState.sites.find((item) => item.id === "site-main")?.domain ?? "").trim();
-            const fallback = (effectiveEditingSite?.domain ?? editingSite?.domain ?? "").trim();
-            return normalizeBaseDomainForMerchant(baseFromEnv || baseFromMainSite || fallback);
-          })()}
-          initialServiceExpiresAt={effectiveEditingSite?.serviceExpiresAt ?? editingSite?.serviceExpiresAt ?? null}
-          initialDomainPrefix={
-            effectiveEditingSite?.domainPrefix ??
-            effectiveEditingSite?.domainSuffix ??
-            editingSite?.domainPrefix ??
-            editingSite?.domainSuffix ??
-            ""
-          }
-          takenDomainPrefixes={loadPlatformState()
-            .sites.filter((item) => item.id !== editingSiteId)
-            .map((item) => item.domainPrefix ?? item.domainSuffix ?? "")}
-          initialMerchantName={effectiveEditingSite?.merchantName ?? editingSite?.merchantName ?? ""}
-          initialContactAddress={effectiveEditingSite?.contactAddress ?? editingSite?.contactAddress ?? ""}
-          initialContactName={effectiveEditingSite?.contactName ?? editingSite?.contactName ?? ""}
-          initialContactPhone={effectiveEditingSite?.contactPhone ?? editingSite?.contactPhone ?? ""}
-          initialContactEmail={effectiveEditingSite?.contactEmail ?? editingSite?.contactEmail ?? ""}
-          initialLocation={effectiveEditingSite?.location ?? editingSite?.location ?? null}
-          initialIndustry={effectiveEditingSite?.industry ?? editingSite?.industry ?? null}
-          initialBusinessCards={effectiveEditingSite?.businessCards ?? editingSite?.businessCards ?? []}
-          businessCardLimit={
-            effectiveEditingSite?.permissionConfig?.businessCardLimit ??
-            editingSite?.permissionConfig?.businessCardLimit ??
-            createDefaultMerchantPermissionConfig().businessCardLimit
-          }
-          allowBusinessCardLinkMode={
-            effectiveEditingSite?.permissionConfig?.allowBusinessCardLinkMode ??
-            editingSite?.permissionConfig?.allowBusinessCardLinkMode ??
-            createDefaultMerchantPermissionConfig().allowBusinessCardLinkMode
-          }
-          businessCardBackgroundImageLimitKb={
-            effectiveEditingSite?.permissionConfig?.businessCardBackgroundImageLimitKb ??
-            editingSite?.permissionConfig?.businessCardBackgroundImageLimitKb ??
-            createDefaultMerchantPermissionConfig().businessCardBackgroundImageLimitKb
-          }
-          businessCardContactImageLimitKb={
-            effectiveEditingSite?.permissionConfig?.businessCardContactImageLimitKb ??
-            editingSite?.permissionConfig?.businessCardContactImageLimitKb ??
-            createDefaultMerchantPermissionConfig().businessCardContactImageLimitKb
-          }
-          businessCardExportImageLimitKb={
-            effectiveEditingSite?.permissionConfig?.businessCardExportImageLimitKb ??
-            editingSite?.permissionConfig?.businessCardExportImageLimitKb ??
-            createDefaultMerchantPermissionConfig().businessCardExportImageLimitKb
-          }
-          onClose={() => setMerchantProfileDialogOpen(false)}
-          onCardsChange={(cards) => {
-            if (!editingSiteId) return;
-            const platformState = loadPlatformState();
-            savePlatformState({
-              ...platformState,
-              sites: platformState.sites.map((item) =>
-                item.id === editingSiteId
-                  ? {
-                      ...item,
-                      businessCards: cards,
-                      updatedAt: new Date().toISOString(),
-                    }
-                  : item,
-              ),
-            });
-            scheduleMerchantChatBusinessCardSync(editingSiteId, cards);
-          }}
-          onSave={async ({ merchantName, domainPrefix, contactAddress, contactName, contactPhone, contactEmail, location, industry }) => {
-            const targetSiteId = editingSiteId || (await ensureEditableMerchantSiteId());
-            if (!targetSiteId) {
-              showTip("未找到可编辑的商户站点，无法保存");
-              return;
-            }
-            setMerchantSiteIdOverride(targetSiteId);
-            ensureScopedMerchantSite(targetSiteId, contactEmail || null);
-            const platformState = loadPlatformState();
-            const target = platformState.sites.find((item) => item.id === targetSiteId) ?? null;
-            const normalizedDomainPrefix = normalizeDomainPrefixForMerchant(domainPrefix);
-            const baseDomain =
-              resolveRuntimePortalBaseDomain(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "") ||
-              (platformState.sites.find((site) => site.id === "site-main")?.domain ?? "").trim() ||
-              (target?.domain ?? "");
-            savePlatformState({
-              ...platformState,
-              sites: platformState.sites.map((item) =>
-                item.id === targetSiteId
-                  ? {
-                      ...item,
-                      merchantName,
-                      domainPrefix: normalizedDomainPrefix,
-                      domainSuffix: normalizedDomainPrefix,
-                      contactAddress,
-                      contactName,
-                      contactPhone,
-                      contactEmail,
-                      domain: buildMerchantDomainFromBase(baseDomain, domainPrefix),
-                      location,
-                      industry,
-                      updatedAt: new Date().toISOString(),
-                    }
-                  : item,
-              ),
-            });
-            const syncResult = await syncMerchantProfileBinding(targetSiteId, normalizedDomainPrefix, merchantName, {
-              domain: buildMerchantDomainFromBase(baseDomain, domainPrefix),
-              contactAddress,
-              contactName,
-              contactPhone,
-              contactEmail,
-              industry,
-              location,
-            });
-            if (!syncResult.ok) {
-              showTip("商户信息已保存到当前后台，但同步到超级后台失败，请稍后重新保存");
-              return;
-            }
-            setMerchantProfileDialogOpen(false);
-            setMerchantProfileAttention(false);
-            showTip("商户信息已保存");
-          }}
         />
       ) : null}
 
-      {merchantBookingManagerOpen && !isPlatformEditor && canUseBookingBlock ? (
+      {merchantBookingManagerOpen && merchantBookingManagerDialogCommonProps ? (
         <MerchantBookingManagerDialog
+          {...merchantBookingManagerDialogCommonProps}
           open={merchantBookingManagerOpen}
-          siteId={editingSiteId || ""}
-          siteName={effectiveMerchantDisplayName || merchantDisplayName}
-          storeOptions={merchantBookingManagerOptions.storeOptions}
-          itemOptions={merchantBookingManagerOptions.itemOptions}
-          titleOptions={merchantBookingManagerOptions.titleOptions}
-          onClose={() => setMerchantBookingManagerOpen(false)}
         />
       ) : null}
 

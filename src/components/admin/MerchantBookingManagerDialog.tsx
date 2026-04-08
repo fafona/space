@@ -16,6 +16,9 @@ import {
 
 type MerchantBookingManagerDialogProps = {
   open: boolean;
+  mode?: "dialog" | "inline";
+  showCloseButton?: boolean;
+  className?: string;
   siteId: string;
   siteName: string;
   storeOptions?: string[];
@@ -109,6 +112,9 @@ function PhoneIcon() {
 
 export default function MerchantBookingManagerDialog({
   open,
+  mode = "dialog",
+  showCloseButton,
+  className,
   siteId,
   siteName,
   storeOptions = [],
@@ -116,6 +122,8 @@ export default function MerchantBookingManagerDialog({
   titleOptions = [],
   onClose,
 }: MerchantBookingManagerDialogProps) {
+  const isInline = mode === "inline";
+  const resolvedShowCloseButton = showCloseButton ?? !isInline;
   const [records, setRecords] = useState<MerchantBookingRecord[]>([]);
   const [drafts, setDrafts] = useState<Record<string, MerchantBookingAdminDraft>>({});
   const [loading, setLoading] = useState(false);
@@ -318,29 +326,37 @@ export default function MerchantBookingManagerDialog({
 
   if (!open) return null;
 
-  return overlay(
+  const content = (
     <div
-      className="fixed inset-0 z-[2147482800] bg-black/45 p-4"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
+      className={isInline ? "w-full" : "fixed inset-0 z-[2147482800] bg-black/45 p-4"}
+      onMouseDown={
+        isInline
+          ? undefined
+          : (event) => {
+              if (event.target === event.currentTarget) onClose();
+            }
+      }
     >
       <div
-        className="mx-auto flex h-full max-h-[calc(100vh-2rem)] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl"
-        onMouseDown={(event) => event.stopPropagation()}
+        className={`mx-auto flex w-full flex-col overflow-hidden rounded-2xl border bg-white ${
+          isInline ? "max-w-none shadow-sm" : "h-full max-h-[calc(100vh-2rem)] max-w-6xl shadow-2xl"
+        }${className ? ` ${className}` : ""}`}
+        onMouseDown={isInline ? undefined : (event) => event.stopPropagation()}
       >
         <div className="flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4">
           <div className="space-y-1">
             <div className="text-lg font-semibold text-slate-900">预约管理</div>
             <div className="text-sm text-slate-500">{`查看并管理 ${siteName || siteId} 收到的预约记录。`}</div>
           </div>
-          <button
-            type="button"
-            className="rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50"
-            onClick={onClose}
-          >
-            关闭
-          </button>
+          {resolvedShowCloseButton ? (
+            <button
+              type="button"
+              className="rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50"
+              onClick={onClose}
+            >
+              关闭
+            </button>
+          ) : null}
         </div>
 
         <div className="space-y-3 border-b px-5 py-4">
@@ -525,6 +541,10 @@ export default function MerchantBookingManagerDialog({
           )}
         </div>
       </div>
-    </div>,
+    </div>
   );
+
+  if (isInline) return content;
+
+  return overlay(content);
 }

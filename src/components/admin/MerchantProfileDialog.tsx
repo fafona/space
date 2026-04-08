@@ -19,6 +19,9 @@ import MerchantBusinessCardManager from "@/components/admin/MerchantBusinessCard
 
 type MerchantProfileDialogProps = {
   open: boolean;
+  mode?: "dialog" | "inline";
+  showCloseButton?: boolean;
+  className?: string;
   siteId?: string | null;
   siteBaseDomain: string;
   initialServiceExpiresAt?: string | null;
@@ -220,6 +223,9 @@ function buildInitialState(
 
 export default function MerchantProfileDialog({
   open,
+  mode = "dialog",
+  showCloseButton,
+  className,
   siteId,
   siteBaseDomain,
   initialServiceExpiresAt,
@@ -243,6 +249,8 @@ export default function MerchantProfileDialog({
   onSave,
 }: MerchantProfileDialogProps) {
   const countryOptions = useMemo(() => getEuropeCountryOptions(), []);
+  const isInline = mode === "inline";
+  const resolvedShowCloseButton = showCloseButton ?? !isInline;
   const initialState = useMemo(
     () =>
       buildInitialState(
@@ -472,13 +480,13 @@ export default function MerchantProfileDialog({
   );
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || isInline) return;
     const onEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onEscape);
     return () => window.removeEventListener("keydown", onEscape);
-  }, [open, onClose]);
+  }, [isInline, onClose, open]);
 
   const selectCountryCode = (nextCountryCode: string) => {
     const nextCountry = countryOptions.find((item) => item.code === nextCountryCode);
@@ -556,15 +564,13 @@ export default function MerchantProfileDialog({
 
   if (!open) return null;
 
-  return renderDialogOverlay(
+  const content = (
     <div
-      className="fixed inset-0 z-[2147482500] flex items-start justify-center overflow-y-auto bg-black/40 p-4"
-      onMouseDown={onClose}
+      className={`w-full space-y-4 rounded-xl border bg-white p-4 shadow-xl ${
+        isInline ? "max-w-none shadow-sm" : "my-4 max-h-[calc(100vh-2rem)] max-w-2xl overflow-y-auto"
+      }${className ? ` ${className}` : ""}`}
+      onMouseDown={isInline ? undefined : (event) => event.stopPropagation()}
     >
-      <div
-        className="my-4 max-h-[calc(100vh-2rem)] w-full max-w-2xl space-y-4 overflow-y-auto rounded-xl border bg-white p-4 shadow-xl"
-        onMouseDown={(event) => event.stopPropagation()}
-      >
         <div>
           <h2 className="text-base font-semibold">商户信息</h2>
           <div className="mt-1 text-xs text-slate-500">
@@ -878,14 +884,16 @@ export default function MerchantProfileDialog({
         />
 
         <div className="flex justify-end gap-2">
-          <button
-            type="button"
-            className="rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
-            onClick={onClose}
-            disabled={savePending}
-          >
-            取消
-          </button>
+          {resolvedShowCloseButton ? (
+            <button
+              type="button"
+              className="rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+              onClick={onClose}
+              disabled={savePending}
+            >
+              取消
+            </button>
+          ) : null}
           <button
             type="button"
             className="rounded bg-black px-3 py-2 text-sm text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
@@ -940,6 +948,16 @@ export default function MerchantProfileDialog({
           </button>
         </div>
       </div>
+  );
+
+  if (isInline) return content;
+
+  return renderDialogOverlay(
+    <div
+      className="fixed inset-0 z-[2147482500] flex items-start justify-center overflow-y-auto bg-black/40 p-4"
+      onMouseDown={onClose}
+    >
+      {content}
     </div>,
   );
 }
