@@ -4219,9 +4219,71 @@ type SupportContactRow = {
 };
 
 type SupportMobileHomeTab = "conversations" | "business" | "faolla" | "self";
+type SupportSelfSectionView = "home" | "profile" | "cards" | "notifications";
+type SupportNotificationPreferences = {
+  systemNotificationsEnabled: boolean;
+  messageSoundEnabled: boolean;
+  vibrationEnabled: boolean;
+};
 
 const SUPPORT_EMPTY_SIGNATURE_TEXT = "这家伙很懒，什么都没有留下。";
 const SUPPORT_PUSH_SERVICE_WORKER_PATH = "/faolla-sw.js";
+const DEFAULT_SUPPORT_NOTIFICATION_PREFERENCES: SupportNotificationPreferences = {
+  systemNotificationsEnabled: true,
+  messageSoundEnabled: true,
+  vibrationEnabled: true,
+};
+
+function buildSupportNotificationPreferencesStorageKey(siteId?: string | null) {
+  const normalizedSiteId = String(siteId ?? "").trim() || "default";
+  return `merchant-space:support-notification-preferences:v1:${normalizedSiteId}`;
+}
+
+function sanitizeSupportNotificationPreferences(value: unknown): SupportNotificationPreferences {
+  if (!value || typeof value !== "object") {
+    return DEFAULT_SUPPORT_NOTIFICATION_PREFERENCES;
+  }
+  const source = value as Partial<SupportNotificationPreferences>;
+  return {
+    systemNotificationsEnabled:
+      typeof source.systemNotificationsEnabled === "boolean"
+        ? source.systemNotificationsEnabled
+        : DEFAULT_SUPPORT_NOTIFICATION_PREFERENCES.systemNotificationsEnabled,
+    messageSoundEnabled:
+      typeof source.messageSoundEnabled === "boolean"
+        ? source.messageSoundEnabled
+        : DEFAULT_SUPPORT_NOTIFICATION_PREFERENCES.messageSoundEnabled,
+    vibrationEnabled:
+      typeof source.vibrationEnabled === "boolean"
+        ? source.vibrationEnabled
+        : DEFAULT_SUPPORT_NOTIFICATION_PREFERENCES.vibrationEnabled,
+  };
+}
+
+function readSupportNotificationPreferences(siteId?: string | null) {
+  if (typeof window === "undefined") {
+    return DEFAULT_SUPPORT_NOTIFICATION_PREFERENCES;
+  }
+  try {
+    const raw = window.localStorage.getItem(buildSupportNotificationPreferencesStorageKey(siteId));
+    if (!raw) return DEFAULT_SUPPORT_NOTIFICATION_PREFERENCES;
+    return sanitizeSupportNotificationPreferences(JSON.parse(raw));
+  } catch {
+    return DEFAULT_SUPPORT_NOTIFICATION_PREFERENCES;
+  }
+}
+
+function writeSupportNotificationPreferences(siteId: string | null | undefined, value: SupportNotificationPreferences) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      buildSupportNotificationPreferencesStorageKey(siteId),
+      JSON.stringify(sanitizeSupportNotificationPreferences(value)),
+    );
+  } catch {
+    // Ignore storage failures.
+  }
+}
 
 function resolveSupportSignatureText(value: unknown) {
   return normalizeSupportDisplayValue(value) || SUPPORT_EMPTY_SIGNATURE_TEXT;
@@ -4618,6 +4680,7 @@ export default function AdminClient({
   const [merchantAnalyticsLoading, setMerchantAnalyticsLoading] = useState(false);
   const [merchantAnalyticsError, setMerchantAnalyticsError] = useState("");
   const [merchantProfileDialogOpen, setMerchantProfileDialogOpen] = useState(false);
+  const [merchantProfileDialogShowBusinessCards, setMerchantProfileDialogShowBusinessCards] = useState(true);
   const [merchantSiteIdOverride, setMerchantSiteIdOverride] = useState("");
   const [merchantBookingManagerOpen, setMerchantBookingManagerOpen] = useState(false);
   const [supportDialogOpen, setSupportDialogOpen] = useState(false);
@@ -4644,6 +4707,7 @@ export default function AdminClient({
   const [supportSelectedContactKey, setSupportSelectedContactKey] = useState(SUPPORT_OFFICIAL_CONTACT_KEY);
   const [supportMobileView, setSupportMobileView] = useState<"list" | "thread">("list");
   const [supportMobileHomeTab, setSupportMobileHomeTab] = useState<SupportMobileHomeTab>("conversations");
+  const [supportSelfSectionView, setSupportSelfSectionView] = useState<SupportSelfSectionView>("home");
   const [supportPeerLocalMessages, setSupportPeerLocalMessages] = useState<LocalPeerSupportMessage[]>([]);
   const [supportBusinessCardDialogOpen, setSupportBusinessCardDialogOpen] = useState(false);
   const [supportMerchantInfoSheetOpen, setSupportMerchantInfoSheetOpen] = useState(false);
@@ -4667,6 +4731,15 @@ export default function AdminClient({
   const [supportPushBusy, setSupportPushBusy] = useState(false);
   const [supportPushError, setSupportPushError] = useState("");
   const [supportPushStandalone, setSupportPushStandalone] = useState(() => isSupportStandaloneDisplayMode());
+  const [supportSystemNotificationsEnabled, setSupportSystemNotificationsEnabled] = useState(
+    DEFAULT_SUPPORT_NOTIFICATION_PREFERENCES.systemNotificationsEnabled,
+  );
+  const [supportMessageSoundEnabled, setSupportMessageSoundEnabled] = useState(
+    DEFAULT_SUPPORT_NOTIFICATION_PREFERENCES.messageSoundEnabled,
+  );
+  const [supportVibrationEnabled, setSupportVibrationEnabled] = useState(
+    DEFAULT_SUPPORT_NOTIFICATION_PREFERENCES.vibrationEnabled,
+  );
   const [supportPendingDeepLink, setSupportPendingDeepLink] = useState(() =>
     typeof window === "undefined"
       ? ""
@@ -4702,6 +4775,7 @@ export default function AdminClient({
   const merchantChatBusinessCardSyncPayloadRef = useRef("");
   const supportPeerProfileLoadingIdsRef = useRef(new Set<string>());
   const supportPeerProfileFetchedAtRef = useRef<Record<string, number>>({});
+  const supportNotificationPreferencesKeyRef = useRef("");
   const resizeSupportComposerInput = useCallback((target?: HTMLTextAreaElement | null) => {
     const input = target ?? supportInputRef.current;
     if (!input) return;
@@ -8905,8 +8979,21 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     : selectedSupportMerchantCardHref
       ? formatSupportUrlLabel(selectedSupportMerchantCardHref)
       : "-";
-  const selectedSupportMerchantInfoItems = useMemo(
-    () => [
+  const selectedSupportMerchantInfoItems = useMemo(() => {
+    if (selectedSupportIsOfficial) {
+      const officialWebsiteHref = normalizeSupportExternalUrl(supportOfficialSiteLabel, "https://www.faolla.com") || "https://www.faolla.com";
+      return [
+        { label: "身份", value: supportOfficialBadgeLabel },
+        { label: "名称", value: selectedSupportDisplayName },
+        {
+          label: "官网",
+          value: supportOfficialSiteLabel,
+          href: officialWebsiteHref,
+          openInNewTab: true,
+        },
+      ];
+    }
+    return [
       { label: "ID", value: selectedSupportPeerMerchantId || "-" },
       { label: "电话", value: selectedSupportMerchantPhone },
       { label: "邮箱", value: selectedSupportMerchantEmail },
@@ -8923,18 +9010,21 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         href: selectedSupportMerchantWebsiteHref,
         openInNewTab: true,
       },
-    ],
-    [
-      selectedSupportMerchantCardHref,
-      selectedSupportMerchantCardLabel,
-      selectedSupportMerchantCity,
-      selectedSupportMerchantEmail,
-      selectedSupportMerchantPhone,
-      selectedSupportMerchantWebsiteHref,
-      selectedSupportMerchantWebsiteLabel,
-      selectedSupportPeerMerchantId,
-    ],
-  );
+    ];
+  }, [
+    selectedSupportDisplayName,
+    selectedSupportIsOfficial,
+    selectedSupportMerchantCardHref,
+    selectedSupportMerchantCardLabel,
+    selectedSupportMerchantCity,
+    selectedSupportMerchantEmail,
+    selectedSupportMerchantPhone,
+    selectedSupportMerchantWebsiteHref,
+    selectedSupportMerchantWebsiteLabel,
+    selectedSupportPeerMerchantId,
+    supportOfficialBadgeLabel,
+    supportOfficialSiteLabel,
+  ]);
   const supportSelfFetchedProfile = useMemo(() => {
     if (!/^\d{8}$/.test(editingSiteId)) return undefined;
     return Object.prototype.hasOwnProperty.call(supportPeerProfilesByMerchantId, editingSiteId)
@@ -9421,6 +9511,34 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     };
   }, []);
 
+  useEffect(() => {
+    const preferences = readSupportNotificationPreferences(editingSiteId);
+    supportNotificationPreferencesKeyRef.current = buildSupportNotificationPreferencesStorageKey(editingSiteId);
+    setSupportSystemNotificationsEnabled(preferences.systemNotificationsEnabled);
+    setSupportMessageSoundEnabled(preferences.messageSoundEnabled);
+    setSupportVibrationEnabled(preferences.vibrationEnabled);
+  }, [editingSiteId]);
+
+  useEffect(() => {
+    if (supportNotificationPreferencesKeyRef.current !== buildSupportNotificationPreferencesStorageKey(editingSiteId)) return;
+    writeSupportNotificationPreferences(editingSiteId, {
+      systemNotificationsEnabled: supportSystemNotificationsEnabled,
+      messageSoundEnabled: supportMessageSoundEnabled,
+      vibrationEnabled: supportVibrationEnabled,
+    });
+  }, [
+    editingSiteId,
+    supportMessageSoundEnabled,
+    supportSystemNotificationsEnabled,
+    supportVibrationEnabled,
+  ]);
+
+  useEffect(() => {
+    if (supportMobileHomeTab !== "self") {
+      setSupportSelfSectionView("home");
+    }
+  }, [supportMobileHomeTab]);
+
   const requestMerchantPushWithSessionRecovery = useCallback(
     (init: RequestInit) => {
       const params = new URLSearchParams();
@@ -9567,25 +9685,90 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     [registerSupportPushServiceWorker, sendSupportPushAction],
   );
 
-  const handleSupportPushEnable = useCallback(async () => {
-    if (supportPushBusy) return;
-    setSupportPushBusy(true);
+  const disableSupportPushNotifications = useCallback(async () => {
+    if (!canUseSupportPushInBrowser()) {
+      setSupportPushSubscribed(false);
+      setSupportPushEndpoint("");
+      return;
+    }
+    const registration = await registerSupportPushServiceWorker().catch(() => null);
+    const existingSubscription = await registration?.pushManager.getSubscription().catch(() => null);
+    const endpoint = existingSubscription?.endpoint || supportPushEndpoint;
+    if (endpoint) {
+      await sendSupportPushAction({
+        action: "unsubscribe",
+        endpoint,
+        permission: supportPushPermission === "unsupported" ? "default" : supportPushPermission,
+      }).catch(() => null);
+    }
+    if (existingSubscription) {
+      await existingSubscription.unsubscribe().catch(() => null);
+    }
+    setSupportPushSubscribed(false);
+    setSupportPushEndpoint("");
     setSupportPushError("");
-    try {
-      const subscription = await ensureSupportPushSubscription({ requestPermission: true });
-      if (!subscription) {
-        if (Notification.permission === "denied") {
-          setSupportPushError("系统通知未开启，请在浏览器或系统设置里允许通知。");
+  }, [registerSupportPushServiceWorker, sendSupportPushAction, supportPushEndpoint, supportPushPermission]);
+
+  const handleSupportSystemNotificationsToggle = useCallback(
+    async (nextEnabled: boolean) => {
+      if (supportPushBusy) return;
+      setSupportSystemNotificationsEnabled(nextEnabled);
+      setSupportPushError("");
+      if (!nextEnabled) {
+        setSupportPushBusy(true);
+        try {
+          await disableSupportPushNotifications();
+          showTip("已关闭系统消息通知");
+        } catch (error) {
+          setSupportSystemNotificationsEnabled(true);
+          setSupportPushError(error instanceof Error ? error.message : "关闭系统消息通知失败");
+        } finally {
+          setSupportPushBusy(false);
         }
         return;
       }
-      showTip("已开启新消息通知和桌面角标");
-    } catch (error) {
-      setSupportPushError(error instanceof Error ? error.message : "消息通知开启失败，请稍后重试");
-    } finally {
-      setSupportPushBusy(false);
+      if (!canUseSupportPushInBrowser()) {
+        setSupportSystemNotificationsEnabled(false);
+        setSupportPushError("当前环境暂不支持系统通知。");
+        return;
+      }
+      setSupportPushBusy(true);
+      try {
+        const subscription = await ensureSupportPushSubscription({ requestPermission: true });
+        if (!subscription) {
+          setSupportSystemNotificationsEnabled(false);
+          if (Notification.permission === "denied") {
+            setSupportPushError("系统通知未开启，请在浏览器或系统设置里允许通知。");
+          }
+          return;
+        }
+        showTip("已开启系统消息通知");
+      } catch (error) {
+        setSupportSystemNotificationsEnabled(false);
+        setSupportPushError(error instanceof Error ? error.message : "系统消息通知开启失败，请稍后重试");
+      } finally {
+        setSupportPushBusy(false);
+      }
+    },
+    [
+      disableSupportPushNotifications,
+      ensureSupportPushSubscription,
+      supportPushBusy,
+    ],
+  );
+
+  const triggerSupportNotificationFeedback = useCallback(async () => {
+    if (supportMessageSoundEnabled) {
+      await playNotificationSound();
     }
-  }, [ensureSupportPushSubscription, supportPushBusy]);
+    if (
+      supportVibrationEnabled &&
+      typeof navigator !== "undefined" &&
+      typeof navigator.vibrate === "function"
+    ) {
+      navigator.vibrate(35);
+    }
+  }, [playNotificationSound, supportMessageSoundEnabled, supportVibrationEnabled]);
 
   const requestSupportWithSessionRecovery = useCallback(
     (init: RequestInit) => {
@@ -10286,7 +10469,19 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         // Ignore and let the panel fall back to local cached data.
       }
     }
+    setMerchantProfileDialogShowBusinessCards(true);
     setMerchantDesktopSection("profile");
+  }
+
+  async function openMerchantProfileSettingsDialog(options?: { showBusinessCards?: boolean }) {
+    const resolvedSiteId = editingSiteId || (await ensureEditableMerchantSiteId());
+    if (!resolvedSiteId) {
+      showTip("正在初始化商户资料，请稍后重试");
+      return;
+    }
+    setMerchantSiteIdOverride(resolvedSiteId);
+    setMerchantProfileDialogShowBusinessCards(options?.showBusinessCards ?? true);
+    setMerchantProfileDialogOpen(true);
   }
 
   async function openMerchantBookingPanel() {
@@ -10715,16 +10910,16 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     const previousKey = supportLastIncomingAdminMessageKeyRef.current;
     supportLastIncomingAdminMessageKeyRef.current = latestSupportAdminMessageKey;
     if (!previousKey || previousKey === latestSupportAdminMessageKey) return;
-    void playNotificationSound();
-  }, [isPlatformEditor, latestSupportAdminMessageKey, playNotificationSound]);
+    void triggerSupportNotificationFeedback();
+  }, [isPlatformEditor, latestSupportAdminMessageKey, triggerSupportNotificationFeedback]);
 
   useEffect(() => {
     if (isPlatformEditor || !latestIncomingPeerMessageKey) return;
     const previousKey = supportLastIncomingPeerMessageKeyRef.current;
     supportLastIncomingPeerMessageKeyRef.current = latestIncomingPeerMessageKey;
     if (!previousKey || previousKey === latestIncomingPeerMessageKey) return;
-    void playNotificationSound();
-  }, [isPlatformEditor, latestIncomingPeerMessageKey, playNotificationSound]);
+    void triggerSupportNotificationFeedback();
+  }, [isPlatformEditor, latestIncomingPeerMessageKey, triggerSupportNotificationFeedback]);
 
   useEffect(() => {
     if (isPlatformEditor || !supportInterfaceOpen || !selectedSupportConversationVisible || typeof window === "undefined") return;
@@ -10798,14 +10993,28 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }, [isPlatformEditor, supportDataActivated, supportUnreadBadgeCount]);
 
   useEffect(() => {
-    if (isPlatformEditor || !supportDataActivated) return;
+    if (isPlatformEditor || !supportDataActivated || !supportSystemNotificationsEnabled) return;
     void ensureSupportPushSubscription().catch(() => {
       // Ignore background subscription refresh failures.
     });
-  }, [ensureSupportPushSubscription, isPlatformEditor, supportDataActivated, supportPushPermission]);
+  }, [
+    ensureSupportPushSubscription,
+    isPlatformEditor,
+    supportDataActivated,
+    supportPushPermission,
+    supportSystemNotificationsEnabled,
+  ]);
 
   useEffect(() => {
-    if (isPlatformEditor || !supportDataActivated || supportPushPermission !== "granted" || !supportPushEndpoint) return;
+    if (
+      isPlatformEditor ||
+      !supportDataActivated ||
+      !supportSystemNotificationsEnabled ||
+      supportPushPermission !== "granted" ||
+      !supportPushEndpoint
+    ) {
+      return;
+    }
     void sendSupportPushAction({
       action: "sync-badge",
       endpoint: supportPushEndpoint,
@@ -10820,6 +11029,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     supportDataActivated,
     supportPushEndpoint,
     supportPushPermission,
+    supportSystemNotificationsEnabled,
     supportUnreadBadgeCount,
   ]);
 
@@ -12009,32 +12219,75 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     return createPortal(content, document.body);
   }
 
-  const supportSelfInfoItems = [
-    {
-      key: "name",
-      label: "名称",
-      value: supportSelfDisplayName,
-    },
-    {
-      key: "id",
-      label: "ID",
-      value: normalizeSupportDisplayValue(editingSiteId) || "-",
-    },
+  const supportSelfDomainPrefix =
+    normalizeSupportDisplayValue(supportSelfProfile?.domainPrefix) ||
+    normalizeSupportDisplayValue(supportSelfProfile?.domainSuffix) ||
+    normalizeSupportDisplayValue(editingSite?.domainPrefix) ||
+    normalizeSupportDisplayValue(editingSite?.domainSuffix) ||
+    "-";
+  const supportSelfCountry =
+    normalizeSupportDisplayValue(supportSelfProfile?.location?.country) ||
+    normalizeSupportDisplayValue(editingSite?.location?.country) ||
+    "-";
+  const supportSelfProvince =
+    normalizeSupportDisplayValue(supportSelfProfile?.location?.province) ||
+    normalizeSupportDisplayValue(editingSite?.location?.province) ||
+    "-";
+  const supportSelfCity =
+    normalizeSupportDisplayValue(supportSelfProfile?.location?.city) ||
+    normalizeSupportDisplayValue(editingSite?.location?.city) ||
+    "-";
+  const supportSelfAddress =
+    normalizeSupportDisplayValue(supportSelfProfile?.contactAddress) ||
+    normalizeSupportDisplayValue(editingSite?.contactAddress) ||
+    "-";
+  const supportSelfContactName =
+    normalizeSupportDisplayValue(supportSelfProfile?.contactName) ||
+    normalizeSupportDisplayValue(editingSite?.contactName) ||
+    "-";
+  const supportSelfPhone =
+    normalizeSupportDisplayValue(supportSelfProfile?.contactPhone) ||
+    normalizeSupportDisplayValue(editingSite?.contactPhone) ||
+    "-";
+  const supportSelfEmail =
+    normalizeSupportDisplayValue(supportSelfProfile?.contactEmail) ||
+    normalizeSupportDisplayValue(editingSite?.contactEmail) ||
+    normalizeSupportDisplayValue(merchantSessionIdentityRef.current.email) ||
+    "-";
+  const supportSelfLocationSummary = [supportSelfCountry, supportSelfProvince, supportSelfCity].filter((item) => item && item !== "-").join(" / ");
+  const supportSelfProfileSummary = [
+    supportSelfDomainPrefix !== "-" ? `前缀 ${supportSelfDomainPrefix}` : "",
+    supportSelfLocationSummary,
+    supportSelfContactName !== "-" ? `联系人 ${supportSelfContactName}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ") || "同步维护名称、前缀、地址和联系人";
+  const supportSelfPrimaryChatCard = resolveMerchantBusinessCardForChatDisplay(supportSelfBusinessCards);
+  const supportSelfCardsSummary =
+    supportSelfBusinessCards.length > 0
+      ? `共 ${supportSelfBusinessCards.length} 张，当前展示：${supportSelfPrimaryChatCard?.name || "未命名名片"}`
+      : "还没有名片，可在这里设置聊天展示与复制";
+  const supportSelfProfileRows = [
+    { key: "name", label: "名称", value: supportSelfDisplayName },
+    { key: "prefix", label: "前缀", value: supportSelfDomainPrefix },
+    { key: "country", label: "国家", value: supportSelfCountry },
+    { key: "province", label: "省份", value: supportSelfProvince },
+    { key: "city", label: "城市", value: supportSelfCity },
+    { key: "address", label: "地址", value: supportSelfAddress },
+    { key: "contactName", label: "联系人", value: supportSelfContactName },
+  ];
+  const supportSelfVisibilityItems = [
     {
       key: "phone",
       label: "电话",
-      value: normalizeSupportDisplayValue(supportSelfProfile?.contactPhone) || "-",
+      value: supportSelfPhone,
       hidden: supportSelfContactVisibility.phoneHidden,
       visibilityKey: "phoneHidden" as const,
     },
     {
       key: "email",
       label: "邮箱",
-      value:
-        normalizeSupportDisplayValue(supportSelfProfile?.contactEmail) ||
-        normalizeSupportDisplayValue(editingSite?.contactEmail) ||
-        normalizeSupportDisplayValue(merchantSessionIdentityRef.current.email) ||
-        "-",
+      value: supportSelfEmail,
       hidden: supportSelfContactVisibility.emailHidden,
       visibilityKey: "emailHidden" as const,
     },
@@ -12047,16 +12300,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       visibilityKey: "businessCardHidden" as const,
     },
     {
-      key: "industry",
-      label: "行业",
-      value: normalizeSupportDisplayValue(supportSelfProfile?.industry) || "未设置行业",
-    },
-    {
-      key: "city",
-      label: "城市",
-      value: normalizeSupportDisplayValue(supportSelfProfile?.location?.city) || "-",
-    },
-    {
       key: "website",
       label: "官网",
       value: supportSelfWebsiteLabel,
@@ -12064,20 +12307,28 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     },
   ];
   const supportPushAvailable = canUseSupportPushInBrowser();
-  const supportPushReady = supportPushPermission === "granted" && supportPushSubscribed;
   const supportPushStatusText = !supportPushAvailable
     ? "当前环境暂不支持系统通知。"
-    : !supportPushStandalone
-      ? "添加到主屏幕后可显示系统通知和角标。"
-      : supportPushPermission === "granted"
-        ? supportPushSubscribed
-          ? "已开启后台新消息通知和角标。"
-          : "通知权限已开启，正在连接当前设备。"
-        : supportPushPermission === "denied"
-          ? "通知已被系统拦截，请在浏览器或系统设置里重新允许。"
-          : "开启后，后台新消息会显示系统通知和桌面角标。";
-  const supportPushActionLabel =
-    supportPushPermission === "granted" ? (supportPushSubscribed ? "已开启" : "重新连接") : "开启通知";
+    : !supportSystemNotificationsEnabled
+      ? "系统消息通知已关闭。"
+      : !supportPushStandalone
+        ? "添加到主屏幕后可显示系统通知和角标。"
+        : supportPushPermission === "granted"
+          ? supportPushSubscribed
+            ? "已开启后台新消息通知和角标。"
+            : "通知权限已开启，正在连接当前设备。"
+          : supportPushPermission === "denied"
+            ? "通知已被系统拦截，请在浏览器或系统设置里重新允许。"
+            : "开启后，后台新消息会显示系统通知和桌面角标。";
+  const supportSelfNotificationSummary = [
+    !supportPushAvailable
+      ? "系统通知不可用"
+      : supportSystemNotificationsEnabled
+        ? "系统通知已开"
+        : "系统通知已关",
+    supportMessageSoundEnabled ? "提示音已开" : "提示音已关",
+    supportVibrationEnabled ? "震动已开" : "震动已关",
+  ].join(" · ");
 
   const supportMobileConversationsContent = (
     <>
@@ -12246,50 +12497,88 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   const supportMobileSelfContent = (
     <>
       <div className="shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            className="relative flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-[24px] bg-slate-900 text-base font-semibold text-white shadow-sm"
-            onClick={openSupportSelfAvatarPicker}
-            disabled={supportSelfAvatarUploading || supportSelfProfileSaving}
-            aria-label="上传头像"
-          >
-            <SupportAvatarBadge
-              label={supportSelfAvatarLabel}
-              imageUrl={supportSelfAvatarImageUrl}
-              imageAlt={supportSelfDisplayName}
-              className="flex h-full w-full items-center justify-center bg-slate-900 text-white"
-              labelClassName="text-base font-semibold text-white"
-            />
-            {(supportSelfAvatarUploading || supportSelfProfileSaving) ? (
-              <span className="absolute inset-0 flex items-center justify-center bg-slate-950/35">
-                <span className="h-5 w-5 rounded-full border-2 border-white/35 border-t-white animate-spin" />
-              </span>
-            ) : (
-              <span className="absolute bottom-1.5 right-1.5 inline-flex h-6 w-6 items-center justify-center rounded-full border border-white/80 bg-white text-slate-900 shadow-[0_8px_20px_rgba(15,23,42,0.18)]">
-                <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" aria-hidden="true">
-                  <path
-                    d="M8.5 8.5 9.7 7h4.6l1.2 1.5H18A2 2 0 0 1 20 10.5v5A2.5 2.5 0 0 1 17.5 18h-11A2.5 2.5 0 0 1 4 15.5v-5A2 2 0 0 1 6 8.5h2.5Z"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                  <path
-                    d="M12 14.7a2.4 2.4 0 1 0 0-4.8 2.4 2.4 0 0 0 0 4.8Z"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </span>
-            )}
-          </button>
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-[15px] font-semibold text-slate-900">{supportSelfDisplayName}</div>
+        {supportSelfSectionView === "home" ? (
+          <div className="flex flex-col items-center text-center">
+            <button
+              type="button"
+              className="relative flex h-24 w-24 items-center justify-center overflow-hidden rounded-[30px] bg-slate-900 text-xl font-semibold text-white shadow-[0_18px_40px_rgba(15,23,42,0.16)]"
+              onClick={openSupportSelfAvatarPicker}
+              disabled={supportSelfAvatarUploading || supportSelfProfileSaving}
+              aria-label="上传头像"
+            >
+              <SupportAvatarBadge
+                label={supportSelfAvatarLabel}
+                imageUrl={supportSelfAvatarImageUrl}
+                imageAlt={supportSelfDisplayName}
+                className="flex h-full w-full items-center justify-center bg-slate-900 text-white"
+                labelClassName="text-xl font-semibold text-white"
+              />
+              {(supportSelfAvatarUploading || supportSelfProfileSaving) ? (
+                <span className="absolute inset-0 flex items-center justify-center bg-slate-950/35">
+                  <span className="h-6 w-6 animate-spin rounded-full border-2 border-white/35 border-t-white" />
+                </span>
+              ) : (
+                <span className="absolute bottom-2 right-2 inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/80 bg-white text-slate-900 shadow-[0_8px_20px_rgba(15,23,42,0.18)]">
+                  <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" aria-hidden="true">
+                    <path
+                      d="M8.5 8.5 9.7 7h4.6l1.2 1.5H18A2 2 0 0 1 20 10.5v5A2.5 2.5 0 0 1 17.5 18h-11A2.5 2.5 0 0 1 4 15.5v-5A2 2 0 0 1 6 8.5h2.5Z"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                    <path
+                      d="M12 14.7a2.4 2.4 0 1 0 0-4.8 2.4 2.4 0 0 0 0 4.8Z"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </span>
+              )}
+            </button>
+            <div className="mt-4 truncate text-[28px] font-semibold leading-none text-slate-950">{supportSelfDisplayName}</div>
+            <div className="mt-2 max-w-full truncate text-sm text-slate-500">
+              {supportSelfWebsiteLabel !== "-" ? supportSelfWebsiteLabel : normalizeSupportDisplayValue(editingSiteId) || "点击头像上传资料照片"}
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-slate-900 hover:bg-slate-100"
+              onClick={() => setSupportSelfSectionView("home")}
+              aria-label="返回自己主页"
+            >
+              <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" aria-hidden="true">
+                <path
+                  d="M19 12H7M12 7l-5 5 5 5"
+                  stroke="currentColor"
+                  strokeWidth="2.2"
+                  strokeLinecap="square"
+                  strokeLinejoin="miter"
+                />
+              </svg>
+            </button>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-[16px] font-semibold text-slate-900">
+                {supportSelfSectionView === "profile"
+                  ? "我的资料"
+                  : supportSelfSectionView === "cards"
+                    ? "名片夹"
+                    : "通知"}
+              </div>
+              <div className="mt-1 truncate text-xs text-slate-500">
+                {supportSelfSectionView === "profile"
+                  ? "手机端与电脑端共用同一份商户资料。"
+                  : supportSelfSectionView === "cards"
+                    ? "这里统一管理聊天展示名片与复制能力。"
+                    : "这里控制系统消息通知、提示音和震动。"}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(env(safe-area-inset-bottom)+6.75rem)] pt-4">
         <input
@@ -12303,233 +12592,367 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             void handleSupportSelfAvatarInputChange(event);
           }}
         />
-        <div className="space-y-4">
-          <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
-            <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
-              <div className="min-w-0">
-                <div className="text-sm font-semibold text-slate-900">消息通知</div>
-                <div className="mt-1 text-xs leading-5 text-slate-500">{supportPushStatusText}</div>
+        {supportSelfSectionView === "home" ? (
+          <div className="space-y-4">
+            <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+              <div className="border-b border-slate-100 px-5 py-4">
+                <div className="text-sm font-semibold text-slate-900">设置</div>
               </div>
+              <div className="divide-y divide-slate-100">
+                {[
+                  {
+                    key: "profile",
+                    label: "我的资料",
+                    summary: supportSelfProfileSummary,
+                    icon: (
+                      <>
+                        <circle cx="12" cy="8.5" r="3.2" fill="none" stroke="currentColor" strokeWidth="1.8" />
+                        <path d="M6.2 18.2a5.8 5.8 0 0 1 11.6 0" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                      </>
+                    ),
+                    onClick: () => setSupportSelfSectionView("profile" as const),
+                  },
+                  {
+                    key: "cards",
+                    label: "名片夹",
+                    summary: supportSelfCardsSummary,
+                    icon: (
+                      <>
+                        <rect x="4.5" y="6" width="15" height="12" rx="2.5" stroke="currentColor" strokeWidth="1.8" />
+                        <circle cx="9" cy="12" r="1.8" stroke="currentColor" strokeWidth="1.8" />
+                        <path d="M13 10.2h3.5M13 13h3.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                      </>
+                    ),
+                    onClick: () => setSupportSelfSectionView("cards" as const),
+                  },
+                  {
+                    key: "notifications",
+                    label: "通知",
+                    summary: supportSelfNotificationSummary,
+                    icon: (
+                      <>
+                        <path
+                          d="M12 4.5a4.5 4.5 0 0 0-4.5 4.5v2.1c0 .6-.2 1.2-.6 1.7L5.8 14a1 1 0 0 0 .8 1.6h10.8a1 1 0 0 0 .8-1.6l-1.1-1.2c-.4-.5-.6-1.1-.6-1.7V9A4.5 4.5 0 0 0 12 4.5Z"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                          strokeLinejoin="round"
+                        />
+                        <path d="M10.3 18a1.9 1.9 0 0 0 3.4 0" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                      </>
+                    ),
+                    onClick: () => setSupportSelfSectionView("notifications" as const),
+                  },
+                ].map((item) => (
+                  <button
+                    key={item.key}
+                    type="button"
+                    className="flex w-full items-center gap-4 px-5 py-4 text-left transition hover:bg-slate-50"
+                    onClick={item.onClick}
+                  >
+                    <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-100 text-slate-700">
+                      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+                        {item.icon}
+                      </svg>
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-semibold text-slate-900">{item.label}</span>
+                      <span className="mt-1 block truncate text-xs leading-5 text-slate-500">{item.summary}</span>
+                    </span>
+                    <span className="text-slate-300">
+                      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+                        <path d="m9 6 6 6-6 6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <section className="overflow-hidden rounded-[28px] border border-rose-200/80 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
               <button
                 type="button"
-                className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition ${
-                  supportPushReady
-                    ? "bg-slate-900 text-white"
-                    : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                }`}
-                onClick={() => {
-                  void handleSupportPushEnable();
-                }}
-                disabled={supportPushBusy || supportPushReady || !supportPushAvailable}
+                className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left transition hover:bg-rose-50/70 disabled:opacity-50"
+                onClick={logout}
+                disabled={loggingOut}
               >
-                {supportPushBusy ? "连接中" : supportPushActionLabel}
+                <div className="text-sm font-semibold text-rose-600">{loggingOut ? "退出中..." : "退出登录"}</div>
+                <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-rose-50 text-rose-600">
+                  <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+                    <path d="M14 7h2a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d="M10 8 6 12l4 4M7 12h9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </span>
               </button>
-            </div>
-            {supportPushError ? (
-              <div className="border-t border-rose-100 bg-rose-50 px-5 py-3 text-xs leading-5 text-rose-600">
-                {supportPushError}
-              </div>
-            ) : null}
-          </section>
-
-          <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
-            <div className="border-b border-slate-100 px-5 py-4">
-              <div className="text-sm font-semibold text-slate-900">我的资料</div>
-            </div>
-            <div className="border-b border-slate-100 px-5 py-4">
-              <div className="text-[11px] font-medium tracking-[0.08em] text-slate-400">个性签名</div>
-              <textarea
-                className="mt-2 h-24 w-full resize-none rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-3 text-base leading-7 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-300 focus:bg-white"
-                value={supportSelfSignatureDraft}
-                placeholder={SUPPORT_EMPTY_SIGNATURE_TEXT}
-                maxLength={80}
-                autoComplete="off"
-                autoCorrect="off"
-                spellCheck={false}
-                onChange={(event) => {
-                  setSupportSelfSignatureDraft(event.target.value);
-                  setSupportSelfSignatureDirty(event.target.value.trim() !== supportSelfSignature);
-                }}
-                disabled={supportSelfProfileSaving}
-              />
-              <div className="mt-2 flex items-center justify-end gap-3 text-[11px] text-slate-500">
+            </section>
+          </div>
+        ) : supportSelfSectionView === "profile" ? (
+          <div className="space-y-4">
+            <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+              <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold text-slate-900">商户资料</div>
+                  <div className="mt-1 text-xs text-slate-500">这里显示后台商户信息，手机端和电脑端会同步保存。</div>
+                </div>
                 <button
                   type="button"
-                  className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition ${
-                    supportSelfSignatureDirty
-                      ? "bg-slate-900 text-white shadow-sm"
-                      : "border border-slate-200 bg-white text-slate-400"
-                  }`}
+                  className="shrink-0 rounded-full bg-slate-900 px-3 py-1.5 text-xs font-medium text-white shadow-sm"
                   onClick={() => {
-                    void handleSupportSelfSignatureSave();
+                    void openMerchantProfileSettingsDialog({ showBusinessCards: false });
                   }}
-                  disabled={supportSelfProfileSaving || !supportSelfSignatureDirty}
                 >
-                  {supportSelfProfileSaving ? "保存中" : "保存签名"}
+                  编辑
                 </button>
               </div>
-            </div>
-            <div className="divide-y divide-slate-100">
-              {supportSelfInfoItems.map((item) => {
-                const canToggleHidden = "visibilityKey" in item;
-                return (
+              <div className="divide-y divide-slate-100">
+                {supportSelfProfileRows.map((item) => (
                   <div key={item.key} className="px-5 py-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0 flex-1">
-                        <div className="text-[11px] font-medium tracking-[0.08em] text-slate-400">{item.label}</div>
-                        <div className="mt-1 text-sm leading-6 text-slate-900">
-                          {item.href ? (
-                            <a
-                              href={item.href}
-                              target={item.key === "website" ? "_blank" : undefined}
-                              rel={item.key === "website" ? "noreferrer" : undefined}
-                              className="break-all underline decoration-slate-300 underline-offset-4"
-                            >
-                              {item.value}
-                            </a>
-                          ) : (
-                            <span>{item.value}</span>
-                          )}
-                        </div>
-                      </div>
-                      {canToggleHidden ? (
-                        <button
-                          type="button"
-                          className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition ${
-                            item.hidden
-                              ? "bg-slate-900 text-white"
-                              : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                          }`}
-                          onClick={() => {
-                            if (!item.visibilityKey) return;
-                            void handleSupportSelfVisibilityChange(item.visibilityKey, !item.hidden);
-                          }}
-                          disabled={supportSelfProfileSaving}
-                        >
-                          {item.hidden ? "已隐藏" : "公开"}
-                        </button>
-                      ) : null}
-                    </div>
+                    <div className="text-[11px] font-medium tracking-[0.08em] text-slate-400">{item.label}</div>
+                    <div className="mt-1 text-sm leading-6 text-slate-900">{item.value}</div>
                   </div>
-                );
-              })}
-            </div>
-          </section>
+                ))}
+              </div>
+            </section>
 
-          <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
-            <div className="border-b border-slate-100 px-5 py-4">
-              <div className="text-sm font-semibold text-slate-900">名片夹</div>
-              <div className="mt-1 text-xs text-slate-500">这里可以调整聊天展示，并复制名片图片或联系卡。</div>
-            </div>
-            <div className="space-y-3 px-4 py-4">
-              {supportSelfBusinessCards.length ? (
-                supportSelfBusinessCards.map((card) => {
-                  const cardPreviewUrl = getSupportPreferredBusinessCardPreviewUrl(card);
-                  const canCopyCardLink = card.mode === "link" && !!normalizeSupportDisplayValue(card.targetUrl);
-                  return (
-                    <article key={card.id} className="overflow-hidden rounded-[24px] border border-slate-200 bg-slate-50/80">
-                      <div className="flex gap-3 px-3 py-3">
-                        <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-white p-1 text-xs font-semibold text-slate-700 shadow-sm">
-                          {cardPreviewUrl ? (
-                            /* eslint-disable-next-line @next/next/no-img-element */
-                            <img src={cardPreviewUrl} alt={card.name} className="h-full w-full rounded-[14px] bg-white object-contain" />
-                          ) : (
-                            getSupportContactAvatarLabel(card.name || supportSelfDisplayName, "名")
-                          )}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <div className="truncate text-sm font-semibold text-slate-900">
-                              {card.name || "未命名名片"}
-                            </div>
-                            <span className="shrink-0 rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium text-white">
-                              {card.mode === "link" ? "链接" : "图片"}
-                            </span>
-                            {card.showInChat ? (
-                              <span className="shrink-0 rounded-full bg-emerald-600 px-2 py-0.5 text-[10px] font-medium text-white">
-                                当前聊天展示
-                              </span>
-                            ) : null}
-                          </div>
-                          <div className="mt-1 text-xs leading-5 text-slate-500">
-                            {card.mode === "link" ? "链接模式，可复制联系卡和名片图片。" : "图片模式，可复制名片图片。"}
-                          </div>
-                          <div className="mt-3 grid grid-cols-2 gap-2">
-                            <button
-                              type="button"
-                              className={`rounded-2xl px-3 py-2 text-xs font-medium transition ${
-                                card.showInChat
-                                  ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
-                                  : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                              }`}
-                              onClick={() => {
-                                void handleSupportSelfChatDisplayChange(card.id);
-                              }}
-                            >
-                              {card.showInChat ? "当前聊天展示" : "设为聊天展示"}
-                            </button>
-                            <button
-                              type="button"
-                              className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
-                              onClick={() => {
-                                void handleSupportSelfCopyCardImage(card);
-                              }}
-                            >
-                              复制名片图片
-                            </button>
-                            <button
-                              type="button"
-                              className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-45"
-                              onClick={() => {
-                                void handleSupportSelfCopyCardLink(card);
-                              }}
-                              disabled={!canCopyCardLink}
-                            >
-                              复制联系卡
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    </article>
-                  );
-                })
-              ) : (
-                <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
-                  还没有可展示的名片，请先在 PC 端准备名片内容。
+            <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+              <div className="border-b border-slate-100 px-5 py-4">
+                <div className="text-sm font-semibold text-slate-900">聊天资料</div>
+              </div>
+              <div className="border-b border-slate-100 px-5 py-4">
+                <div className="text-[11px] font-medium tracking-[0.08em] text-slate-400">个性签名</div>
+                <textarea
+                  className="mt-2 h-24 w-full resize-none rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-3 text-base leading-7 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-300 focus:bg-white"
+                  value={supportSelfSignatureDraft}
+                  placeholder={SUPPORT_EMPTY_SIGNATURE_TEXT}
+                  maxLength={80}
+                  autoComplete="off"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  onChange={(event) => {
+                    setSupportSelfSignatureDraft(event.target.value);
+                    setSupportSelfSignatureDirty(event.target.value.trim() !== supportSelfSignature);
+                  }}
+                  disabled={supportSelfProfileSaving}
+                />
+                <div className="mt-2 flex items-center justify-end gap-3 text-[11px] text-slate-500">
+                  <button
+                    type="button"
+                    className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                      supportSelfSignatureDirty
+                        ? "bg-slate-900 text-white shadow-sm"
+                        : "border border-slate-200 bg-white text-slate-400"
+                    }`}
+                    onClick={() => {
+                      void handleSupportSelfSignatureSave();
+                    }}
+                    disabled={supportSelfProfileSaving || !supportSelfSignatureDirty}
+                  >
+                    {supportSelfProfileSaving ? "保存中" : "保存签名"}
+                  </button>
                 </div>
-              )}
-            </div>
-          </section>
-
-          <section className="overflow-hidden rounded-[28px] border border-rose-200/80 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
-            <button
-              type="button"
-              className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left transition hover:bg-rose-50/70 disabled:opacity-50"
-              onClick={logout}
-              disabled={loggingOut}
-            >
-              <div className="text-sm font-semibold text-rose-600">{loggingOut ? "退出中..." : "退出登录"}</div>
-              <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-rose-50 text-rose-600">
-                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
-                  <path
-                    d="M14 7h2a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                  <path
-                    d="M10 8 6 12l4 4M7 12h9"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </span>
-            </button>
-          </section>
-        </div>
+              </div>
+              <div className="divide-y divide-slate-100">
+                {supportSelfVisibilityItems.map((item) => {
+                  const canToggleHidden = "visibilityKey" in item;
+                  return (
+                    <div key={item.key} className="px-5 py-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="text-[11px] font-medium tracking-[0.08em] text-slate-400">{item.label}</div>
+                          <div className="mt-1 text-sm leading-6 text-slate-900">
+                            {item.href ? (
+                              <a
+                                href={item.href}
+                                target={item.key === "website" ? "_blank" : undefined}
+                                rel={item.key === "website" ? "noreferrer" : undefined}
+                                className="break-all underline decoration-slate-300 underline-offset-4"
+                              >
+                                {item.value}
+                              </a>
+                            ) : (
+                              <span>{item.value}</span>
+                            )}
+                          </div>
+                        </div>
+                        {canToggleHidden ? (
+                          <button
+                            type="button"
+                            className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                              item.hidden
+                                ? "bg-slate-900 text-white"
+                                : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                            }`}
+                            onClick={() => {
+                              if (!item.visibilityKey) return;
+                              void handleSupportSelfVisibilityChange(item.visibilityKey, !item.hidden);
+                            }}
+                            disabled={supportSelfProfileSaving}
+                          >
+                            {item.hidden ? "已隐藏" : "公开"}
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          </div>
+        ) : supportSelfSectionView === "cards" ? (
+          <div className="space-y-4">
+            <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+              <div className="border-b border-slate-100 px-5 py-4">
+                <div className="text-sm font-semibold text-slate-900">名片夹</div>
+                <div className="mt-1 text-xs text-slate-500">这里可以调整聊天展示，并复制名片图片或联系卡。</div>
+              </div>
+              <div className="space-y-3 px-4 py-4">
+                {supportSelfBusinessCards.length ? (
+                  supportSelfBusinessCards.map((card) => {
+                    const cardPreviewUrl = getSupportPreferredBusinessCardPreviewUrl(card);
+                    const canCopyCardLink = card.mode === "link" && !!normalizeSupportDisplayValue(card.targetUrl);
+                    return (
+                      <article key={card.id} className="overflow-hidden rounded-[24px] border border-slate-200 bg-slate-50/80">
+                        <div className="flex gap-3 px-3 py-3">
+                          <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-white p-1 text-xs font-semibold text-slate-700 shadow-sm">
+                            {cardPreviewUrl ? (
+                              /* eslint-disable-next-line @next/next/no-img-element */
+                              <img src={cardPreviewUrl} alt={card.name} className="h-full w-full rounded-[14px] bg-white object-contain" />
+                            ) : (
+                              getSupportContactAvatarLabel(card.name || supportSelfDisplayName, "名")
+                            )}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <div className="truncate text-sm font-semibold text-slate-900">{card.name || "未命名名片"}</div>
+                              <span className="shrink-0 rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium text-white">
+                                {card.mode === "link" ? "链接" : "图片"}
+                              </span>
+                              {card.showInChat ? (
+                                <span className="shrink-0 rounded-full bg-emerald-600 px-2 py-0.5 text-[10px] font-medium text-white">
+                                  当前聊天展示
+                                </span>
+                              ) : null}
+                            </div>
+                            <div className="mt-1 text-xs leading-5 text-slate-500">
+                              {card.mode === "link" ? "链接模式，可复制联系卡和名片图片。" : "图片模式，可复制名片图片。"}
+                            </div>
+                            <div className="mt-3 grid grid-cols-2 gap-2">
+                              <button
+                                type="button"
+                                className={`rounded-2xl px-3 py-2 text-xs font-medium transition ${
+                                  card.showInChat
+                                    ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
+                                    : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                                }`}
+                                onClick={() => {
+                                  void handleSupportSelfChatDisplayChange(card.id);
+                                }}
+                              >
+                                {card.showInChat ? "当前聊天展示" : "设为聊天展示"}
+                              </button>
+                              <button
+                                type="button"
+                                className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
+                                onClick={() => {
+                                  void handleSupportSelfCopyCardImage(card);
+                                }}
+                              >
+                                复制名片图片
+                              </button>
+                              <button
+                                type="button"
+                                className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-45"
+                                onClick={() => {
+                                  void handleSupportSelfCopyCardLink(card);
+                                }}
+                                disabled={!canCopyCardLink}
+                              >
+                                复制联系卡
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </article>
+                    );
+                  })
+                ) : (
+                  <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+                    还没有可展示的名片，请先在电脑端准备名片内容。
+                  </div>
+                )}
+              </div>
+            </section>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+              <div className="border-b border-slate-100 px-5 py-4">
+                <div className="text-sm font-semibold text-slate-900">通知</div>
+                <div className="mt-1 text-xs text-slate-500">{supportPushStatusText}</div>
+              </div>
+              <div className="divide-y divide-slate-100">
+                {[
+                  {
+                    key: "system",
+                    label: "系统消息通知",
+                    description: supportPushStatusText,
+                    checked: supportSystemNotificationsEnabled,
+                    disabled: supportPushBusy || (!supportPushAvailable && !supportSystemNotificationsEnabled),
+                    onToggle: () => {
+                      void handleSupportSystemNotificationsToggle(!supportSystemNotificationsEnabled);
+                    },
+                  },
+                  {
+                    key: "sound",
+                    label: "消息提示音",
+                    description: "新消息到达时播放提示音。",
+                    checked: supportMessageSoundEnabled,
+                    disabled: false,
+                    onToggle: () => setSupportMessageSoundEnabled((current) => !current),
+                  },
+                  {
+                    key: "vibration",
+                    label: "震动",
+                    description:
+                      typeof navigator !== "undefined" && typeof navigator.vibrate === "function"
+                        ? "新消息到达时使用设备震动提醒。"
+                        : "当前设备或浏览器暂不支持震动提醒。",
+                    checked: supportVibrationEnabled,
+                    disabled: typeof navigator === "undefined" || typeof navigator.vibrate !== "function",
+                    onToggle: () => setSupportVibrationEnabled((current) => !current),
+                  },
+                ].map((item) => (
+                  <div key={item.key} className="flex items-center gap-3 px-5 py-4">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-semibold text-slate-900">{item.label}</div>
+                      <div className="mt-1 text-xs leading-5 text-slate-500">{item.description}</div>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={item.checked}
+                      className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition ${
+                        item.checked ? "bg-slate-900" : "bg-slate-200"
+                      } ${item.disabled ? "opacity-45" : ""}`}
+                      onClick={item.onToggle}
+                      disabled={item.disabled}
+                    >
+                      <span
+                        className={`inline-block h-5 w-5 rounded-full bg-white shadow-sm transition ${
+                          item.checked ? "translate-x-6" : "translate-x-1"
+                        }`}
+                      />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              {supportPushError ? (
+                <div className="border-t border-rose-100 bg-rose-50 px-5 py-3 text-xs leading-5 text-rose-600">
+                  {supportPushError}
+                </div>
+              ) : null}
+            </section>
+          </div>
+        )}
       </div>
     </>
   );
@@ -13068,7 +13491,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       : null;
 
   const supportMerchantInfoSheetOverlay =
-    supportMerchantInfoSheetOpen && showMobileSupportThread && !selectedSupportIsOfficial
+    supportMerchantInfoSheetOpen && (showMobileSupportThread || showDesktopMerchantSupportPanel)
       ? renderTopMostOverlay(
           <>
             <button
@@ -13077,54 +13500,111 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               onClick={() => setSupportMerchantInfoSheetOpen(false)}
               aria-label="关闭商户资料"
             />
-            <div className="fixed inset-x-0 bottom-0 z-[2147483401] px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)]">
-              <div className="mx-auto w-full max-w-md rounded-[30px] bg-white px-4 pb-4 pt-3 shadow-[0_24px_80px_rgba(15,23,42,0.2)]">
-                <div className="mx-auto h-1.5 w-12 rounded-full bg-slate-200" />
-                <div className="mt-4 flex items-start justify-between gap-3">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <SupportAvatarBadge
-                      label={selectedSupportAvatarLabel}
-                      imageUrl={selectedSupportAvatarImageUrl}
-                      imageAlt={selectedSupportDisplayName}
-                      className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white"
-                      labelClassName="text-sm font-semibold text-white"
-                    />
-                    <div className="min-w-0">
-                      <div className="truncate text-base font-semibold text-slate-900">{selectedSupportDisplayName}</div>
-                      <div className="mt-1 text-xs text-slate-500">{selectedSupportMerchantHeaderIndustry}</div>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    className="rounded-full border border-slate-200 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50"
-                    onClick={() => setSupportMerchantInfoSheetOpen(false)}
-                  >
-                    关闭
-                  </button>
-                </div>
-                <div className="mt-4 divide-y divide-slate-100 overflow-hidden rounded-[24px] border border-slate-100 bg-slate-50/70">
-                  {selectedSupportMerchantInfoItems.map((item) => (
-                    <div key={item.label} className="px-4 py-3">
-                      <div className="text-[11px] font-medium tracking-[0.08em] text-slate-400">{item.label}</div>
-                      <div className="mt-1 text-sm leading-6 text-slate-900">
-                        {item.href ? (
-                          <a
-                            href={item.href}
-                            target={item.openInNewTab ? "_blank" : undefined}
-                            rel={item.openInNewTab ? "noreferrer" : undefined}
-                            className="break-all text-slate-900 underline decoration-slate-300 underline-offset-4"
-                          >
-                            {item.value}
-                          </a>
-                        ) : (
-                          <span>{item.value}</span>
-                        )}
+            {showMobileSupportThread ? (
+              <div className="fixed inset-x-0 bottom-0 z-[2147483401] px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)]">
+                <div className="mx-auto w-full max-w-md rounded-[30px] bg-white px-4 pb-4 pt-3 shadow-[0_24px_80px_rgba(15,23,42,0.2)]">
+                  <div className="mx-auto h-1.5 w-12 rounded-full bg-slate-200" />
+                  <div className="mt-4 flex items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <SupportAvatarBadge
+                        label={selectedSupportAvatarLabel}
+                        imageUrl={selectedSupportAvatarImageUrl}
+                        imageAlt={selectedSupportDisplayName}
+                        className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white"
+                        labelClassName="text-sm font-semibold text-white"
+                      />
+                      <div className="min-w-0">
+                        <div className="truncate text-base font-semibold text-slate-900">{selectedSupportDisplayName}</div>
+                        <div className="mt-1 text-xs text-slate-500">{selectedSupportMerchantHeaderIndustry}</div>
                       </div>
                     </div>
-                  ))}
+                    <button
+                      type="button"
+                      className="rounded-full border border-slate-200 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50"
+                      onClick={() => setSupportMerchantInfoSheetOpen(false)}
+                    >
+                      关闭
+                    </button>
+                  </div>
+                  <div className="mt-4 divide-y divide-slate-100 overflow-hidden rounded-[24px] border border-slate-100 bg-slate-50/70">
+                    {selectedSupportMerchantInfoItems.map((item) => (
+                      <div key={item.label} className="px-4 py-3">
+                        <div className="text-[11px] font-medium tracking-[0.08em] text-slate-400">{item.label}</div>
+                        <div className="mt-1 text-sm leading-6 text-slate-900">
+                          {item.href ? (
+                            <a
+                              href={item.href}
+                              target={item.openInNewTab ? "_blank" : undefined}
+                              rel={item.openInNewTab ? "noreferrer" : undefined}
+                              className="break-all text-slate-900 underline decoration-slate-300 underline-offset-4"
+                            >
+                              {item.value}
+                            </a>
+                          ) : (
+                            <span>{item.value}</span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
-            </div>
+            ) : (
+              <div className="fixed inset-0 z-[2147483401] flex items-center justify-center p-4">
+                <div className="w-full max-w-xl rounded-[30px] bg-white px-6 py-5 shadow-[0_24px_80px_rgba(15,23,42,0.22)]">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex min-w-0 items-center gap-4">
+                      <SupportAvatarBadge
+                        label={selectedSupportAvatarLabel}
+                        imageUrl={selectedSupportAvatarImageUrl}
+                        imageAlt={selectedSupportDisplayName}
+                        className="flex h-16 w-16 shrink-0 items-center justify-center rounded-[22px] bg-slate-900 text-base font-semibold text-white shadow-sm"
+                        labelClassName="text-base font-semibold text-white"
+                      />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <div className="truncate text-lg font-semibold text-slate-900">{selectedSupportDisplayName}</div>
+                          {selectedSupportIsOfficial ? (
+                            <span className="inline-flex shrink-0 items-center rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium leading-none text-white">
+                              {supportOfficialBadgeLabel}
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="mt-1 text-sm text-slate-500">{selectedSupportHeaderMeta}</div>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="rounded-full border border-slate-200 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50"
+                      onClick={() => setSupportMerchantInfoSheetOpen(false)}
+                    >
+                      关闭
+                    </button>
+                  </div>
+                  <div className="mt-5 divide-y divide-slate-100 overflow-hidden rounded-[24px] border border-slate-100 bg-slate-50/80">
+                    {selectedSupportMerchantInfoItems.map((item) => (
+                      <div key={item.label} className="px-5 py-4">
+                        <div className="text-[11px] font-medium tracking-[0.08em] text-slate-400">{item.label}</div>
+                        <div className="mt-1 text-sm leading-6 text-slate-900">
+                          {item.href ? (
+                            <a
+                              href={item.href}
+                              target={item.openInNewTab ? "_blank" : undefined}
+                              rel={item.openInNewTab ? "noreferrer" : undefined}
+                              className="break-all text-slate-900 underline decoration-slate-300 underline-offset-4"
+                            >
+                              {item.value}
+                            </a>
+                          ) : (
+                            <span>{item.value}</span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
           </>,
         )
       : null;
@@ -13234,6 +13714,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     "min-h-[48px] rounded-[18px] px-3 py-2 text-sm font-semibold transition active:scale-[0.99]";
   const merchantProfileDialogCommonProps = !isPlatformEditor
     ? {
+        showBusinessCardManager: merchantProfileDialogShowBusinessCards,
         siteId: editingSiteId,
         siteBaseDomain: (() => {
           const platformState = loadPlatformState();
@@ -13281,6 +13762,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           editingSite?.permissionConfig?.businessCardExportImageLimitKb ??
           createDefaultMerchantPermissionConfig().businessCardExportImageLimitKb,
         onClose: () => {
+          setMerchantProfileDialogShowBusinessCards(true);
           setMerchantProfileDialogOpen(false);
           if (isDesktopMerchantWorkspace) {
             setMerchantDesktopSection("editor");
@@ -13409,7 +13891,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     ? formatSuccessRate(merchantAnalyticsRemoteSummary.publishTotal30d, merchantAnalyticsRemoteSummary.publishSuccess30d)
     : "暂无";
   const merchantAnalyticsPanelContent = (
-    <div className="space-y-4">
+    <div className="min-h-[calc(100vh-14rem)] space-y-4">
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {[
           { label: "当前页区块", value: `${merchantAnalyticsSnapshot.blockCount} 个`, helper: "基于当前正在编辑的页面" },
@@ -13614,7 +14096,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   );
   const supportDesktopSurfaceContent = (
     <div
-      className={`flex min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border bg-white ${
+      className={`flex min-h-0 min-w-0 w-full flex-col overflow-hidden rounded-2xl border bg-white ${
         showDesktopMerchantSupportPanel
           ? "min-h-[calc(100vh-15rem)] shadow-sm md:grid md:grid-cols-[320px_minmax(0,1fr)]"
           : "h-full max-h-[88vh] w-full max-w-5xl shadow-2xl md:grid md:grid-cols-[320px_minmax(0,1fr)]"
@@ -13703,40 +14185,60 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <div className="flex min-w-0 items-center justify-between gap-3 border-b px-5 py-4">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <div className="truncate text-base font-semibold text-slate-900">{selectedSupportDisplayName}</div>
-              {selectedSupportIsOfficial ? (
-                <span className="inline-flex shrink-0 items-center rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium leading-none text-white">
-                  {supportOfficialBadgeLabel}
-                </span>
-              ) : null}
+          <div className="flex min-w-0 items-center gap-3">
+            {showDesktopMerchantSupportPanel ? (
+              <button
+                type="button"
+                className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm transition hover:scale-[1.02]"
+                onClick={() => setSupportMerchantInfoSheetOpen(true)}
+                aria-label="查看商户资料"
+              >
+                <SupportAvatarBadge
+                  label={selectedSupportAvatarLabel}
+                  imageUrl={selectedSupportAvatarImageUrl}
+                  imageAlt={selectedSupportDisplayName}
+                  className="flex h-full w-full items-center justify-center bg-slate-900 text-white"
+                  labelClassName="text-sm font-semibold text-white"
+                />
+              </button>
+            ) : null}
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <div className="truncate text-base font-semibold text-slate-900">{selectedSupportDisplayName}</div>
+                {selectedSupportIsOfficial ? (
+                  <span className="inline-flex shrink-0 items-center rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium leading-none text-white">
+                    {supportOfficialBadgeLabel}
+                  </span>
+                ) : null}
+              </div>
+              <div className="truncate text-xs text-slate-500">{selectedSupportHeaderMeta}</div>
             </div>
-            <div className="truncate text-xs text-slate-500">{selectedSupportHeaderMeta}</div>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <button
-              type="button"
-              className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
-              onClick={() => setSupportBusinessCardDialogOpen(true)}
-              disabled={supportSending}
-            >
-              名片
-            </button>
-            <button
-              type="button"
-              className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
-              onClick={() => {
-                if (showDesktopMerchantSupportPanel) {
-                  setMerchantDesktopSection("editor");
-                }
-                setSupportDialogOpen(false);
-              }}
-              disabled={supportSending}
-            >
-              {showDesktopMerchantSupportPanel ? "返回编辑网站" : "关闭"}
-            </button>
-          </div>
+          {!showDesktopMerchantSupportPanel ? (
+            <div className="flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+                onClick={() => setSupportBusinessCardDialogOpen(true)}
+                disabled={supportSending}
+              >
+                名片
+              </button>
+              <button
+                type="button"
+                className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+                onClick={() => {
+                  if (showDesktopMerchantSupportPanel) {
+                    setMerchantDesktopSection("editor");
+                  }
+                  setSupportDialogOpen(false);
+                }}
+                disabled={supportSending}
+              >
+                关闭
+              </button>
+            </div>
+          ) : null}
         </div>
 
         <div ref={supportMessagesViewportRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-slate-50 px-5 py-5">
@@ -13822,13 +14324,14 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   const desktopMerchantWorkspaceContent =
     isDesktopMerchantWorkspace && merchantDesktopSection !== "editor" ? (
       <div className="min-h-screen bg-slate-50/70">
-        <div className="mx-auto max-w-6xl px-4 pb-8">
+        <div className="w-full px-6 pb-8">
           {merchantDesktopSection === "profile" && merchantProfileDialogCommonProps ? (
             <MerchantProfileDialog
               {...merchantProfileDialogCommonProps}
               open
               mode="inline"
               showCloseButton={false}
+              className="min-h-[calc(100vh-14rem)]"
             />
           ) : merchantDesktopSection === "booking" && merchantBookingManagerDialogCommonProps ? (
             <MerchantBookingManagerDialog
@@ -13836,6 +14339,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               open
               mode="inline"
               showCloseButton={false}
+              className="min-h-[calc(100vh-14rem)]"
             />
           ) : merchantDesktopSection === "analytics" ? (
             merchantAnalyticsPanelContent
@@ -13963,8 +14467,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             {isDesktopMerchantWorkspace ? (
               <div className="grid gap-3">
                 <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400">后台菜单</div>
-                  <div className="mt-3 grid gap-2">
+                  <div className="grid gap-2">
                     <button
                       type="button"
                       className={getMerchantDesktopMenuButtonClassName(merchantDesktopSection === "editor")}
@@ -14136,7 +14639,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         {!topBarCollapsed ? (
           isDesktopMerchantWorkspace && merchantDesktopSection !== "editor" ? (
             <div className="border-t">
-              <div className="max-w-6xl px-4 py-4">
+              <div className="w-full px-6 py-4">
                 <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
                   <div className="text-base font-semibold text-slate-900">
                     {merchantDesktopSection === "profile"

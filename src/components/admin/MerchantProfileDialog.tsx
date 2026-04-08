@@ -21,6 +21,7 @@ type MerchantProfileDialogProps = {
   open: boolean;
   mode?: "dialog" | "inline";
   showCloseButton?: boolean;
+  showBusinessCardManager?: boolean;
   className?: string;
   siteId?: string | null;
   siteBaseDomain: string;
@@ -225,6 +226,7 @@ export default function MerchantProfileDialog({
   open,
   mode = "dialog",
   showCloseButton,
+  showBusinessCardManager = true,
   className,
   siteId,
   siteBaseDomain,
@@ -867,21 +869,23 @@ export default function MerchantProfileDialog({
           </div>
         </div>
 
-        <MerchantBusinessCardManager
-          merchantId={siteId}
-          siteBaseDomain={siteBaseDomain}
-          profile={liveProfile}
-          cards={businessCards}
-          cardLimit={businessCardLimit}
-          allowLinkMode={allowBusinessCardLinkMode}
-          backgroundImageLimitKb={businessCardBackgroundImageLimitKb}
-          contactPageImageLimitKb={businessCardContactImageLimitKb}
-          exportImageLimitKb={businessCardExportImageLimitKb}
-          onCardsChange={(cards) => {
-            setBusinessCards(cards);
-            onCardsChange?.(cards);
-          }}
-        />
+        {showBusinessCardManager ? (
+          <MerchantBusinessCardManager
+            merchantId={siteId}
+            siteBaseDomain={siteBaseDomain}
+            profile={liveProfile}
+            cards={businessCards}
+            cardLimit={businessCardLimit}
+            allowLinkMode={allowBusinessCardLinkMode}
+            backgroundImageLimitKb={businessCardBackgroundImageLimitKb}
+            contactPageImageLimitKb={businessCardContactImageLimitKb}
+            exportImageLimitKb={businessCardExportImageLimitKb}
+            onCardsChange={(cards) => {
+              setBusinessCards(cards);
+              onCardsChange?.(cards);
+            }}
+          />
+        ) : null}
 
         <div className="flex justify-end gap-2">
           {resolvedShowCloseButton ? (
