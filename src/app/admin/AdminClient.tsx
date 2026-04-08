@@ -85,6 +85,7 @@ import { buildMerchantBusinessCardShareUrl, resolveMerchantBusinessCardShareOrig
 import { resolveCommonCanvasLayout } from "@/lib/commonCanvasLayout";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
 import ChatBusinessCardDialog from "@/components/admin/ChatBusinessCardDialog";
+import MerchantBusinessCardManager from "@/components/admin/MerchantBusinessCardManager";
 import SupportMessageContent, { type SupportMessageImageActivatePayload } from "@/components/support/SupportMessageContent";
 import SupportMessageImagePreviewOverlay from "@/components/support/SupportMessageImagePreviewOverlay";
 import {
@@ -93,6 +94,7 @@ import {
   resolveMerchantBusinessCardForChatDisplay,
   selectMerchantBusinessCardForChat,
   type MerchantBusinessCardAsset,
+  type MerchantBusinessCardProfileInput,
 } from "@/lib/merchantBusinessCards";
 import { type PlatformSupportMessage, type PlatformSupportThread } from "@/lib/platformSupportInbox";
 import {
@@ -1165,7 +1167,7 @@ const GALLERY_FRAME_WIDTH_LABELS: Record<CustomGalleryFrameWidth, string> = {
   "2/3": "2/3",
 };
 type ViewportKey = "desktop" | "mobile";
-type MerchantDesktopSection = "editor" | "profile" | "booking" | "analytics" | "support";
+type MerchantDesktopSection = "editor" | "profile" | "cards" | "booking" | "analytics" | "support";
 type ProductSettingsSectionKey = "basic" | "typography" | "tags" | "card" | "detail";
 type ProductTypographyRole = "code" | "name" | "description" | "price";
 const MOBILE_SIZE_SCALE = 0.82;
@@ -8650,6 +8652,13 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
   }
 
+  async function requestLogout() {
+    if (loggingOut) return;
+    const confirmed = await openConfirm("确认退出当前商户后台吗？", "退出登录");
+    if (!confirmed) return;
+    await logout();
+  }
+
   const merchantPlatformState = !isPlatformEditor ? loadPlatformState() : null;
   const scopedSiteId = !isPlatformEditor ? getSiteIdFromStoreScope(storeScope) : "";
   const fallbackMerchantSiteId =
@@ -10469,19 +10478,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         // Ignore and let the panel fall back to local cached data.
       }
     }
-    setMerchantProfileDialogShowBusinessCards(true);
+    setMerchantProfileDialogShowBusinessCards(false);
     setMerchantDesktopSection("profile");
   }
 
-  async function openMerchantProfileSettingsDialog(options?: { showBusinessCards?: boolean }) {
-    const resolvedSiteId = editingSiteId || (await ensureEditableMerchantSiteId());
-    if (!resolvedSiteId) {
-      showTip("正在初始化商户资料，请稍后重试");
-      return;
-    }
-    setMerchantSiteIdOverride(resolvedSiteId);
-    setMerchantProfileDialogShowBusinessCards(options?.showBusinessCards ?? true);
-    setMerchantProfileDialogOpen(true);
+  function openMerchantCardsPanel() {
+    setMerchantDesktopSection("cards");
   }
 
   async function openMerchantBookingPanel() {
@@ -12237,10 +12239,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     normalizeSupportDisplayValue(supportSelfProfile?.location?.city) ||
     normalizeSupportDisplayValue(editingSite?.location?.city) ||
     "-";
-  const supportSelfAddress =
-    normalizeSupportDisplayValue(supportSelfProfile?.contactAddress) ||
-    normalizeSupportDisplayValue(editingSite?.contactAddress) ||
-    "-";
   const supportSelfContactName =
     normalizeSupportDisplayValue(supportSelfProfile?.contactName) ||
     normalizeSupportDisplayValue(editingSite?.contactName) ||
@@ -12262,20 +12260,182 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   ]
     .filter(Boolean)
     .join(" · ") || "同步维护名称、前缀、地址和联系人";
+  const merchantProfileDialogCommonProps = !isPlatformEditor
+    ? {
+        showBusinessCardManager: merchantProfileDialogShowBusinessCards,
+        siteId: editingSiteId,
+        siteBaseDomain: (() => {
+          const platformState = loadPlatformState();
+          const baseFromEnv = resolveRuntimePortalBaseDomain(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "");
+          const baseFromMainSite = (platformState.sites.find((item) => item.id === "site-main")?.domain ?? "").trim();
+          const fallback = (effectiveEditingSite?.domain ?? editingSite?.domain ?? "").trim();
+          return normalizeBaseDomainForMerchant(baseFromEnv || baseFromMainSite || fallback);
+        })(),
+        initialServiceExpiresAt: effectiveEditingSite?.serviceExpiresAt ?? editingSite?.serviceExpiresAt ?? null,
+        initialDomainPrefix:
+          effectiveEditingSite?.domainPrefix ??
+          effectiveEditingSite?.domainSuffix ??
+          editingSite?.domainPrefix ??
+          editingSite?.domainSuffix ??
+          "",
+        takenDomainPrefixes: loadPlatformState()
+          .sites.filter((item) => item.id !== editingSiteId)
+          .map((item) => item.domainPrefix ?? item.domainSuffix ?? ""),
+        initialMerchantName: effectiveEditingSite?.merchantName ?? editingSite?.merchantName ?? "",
+        initialContactAddress: effectiveEditingSite?.contactAddress ?? editingSite?.contactAddress ?? "",
+        initialContactName: effectiveEditingSite?.contactName ?? editingSite?.contactName ?? "",
+        initialContactPhone: effectiveEditingSite?.contactPhone ?? editingSite?.contactPhone ?? "",
+        initialContactEmail: effectiveEditingSite?.contactEmail ?? editingSite?.contactEmail ?? "",
+        initialLocation: effectiveEditingSite?.location ?? editingSite?.location ?? null,
+        initialIndustry: effectiveEditingSite?.industry ?? editingSite?.industry ?? null,
+        initialBusinessCards: effectiveEditingSite?.businessCards ?? editingSite?.businessCards ?? [],
+        businessCardLimit:
+          effectiveEditingSite?.permissionConfig?.businessCardLimit ??
+          editingSite?.permissionConfig?.businessCardLimit ??
+          createDefaultMerchantPermissionConfig().businessCardLimit,
+        allowBusinessCardLinkMode:
+          effectiveEditingSite?.permissionConfig?.allowBusinessCardLinkMode ??
+          editingSite?.permissionConfig?.allowBusinessCardLinkMode ??
+          createDefaultMerchantPermissionConfig().allowBusinessCardLinkMode,
+        businessCardBackgroundImageLimitKb:
+          effectiveEditingSite?.permissionConfig?.businessCardBackgroundImageLimitKb ??
+          editingSite?.permissionConfig?.businessCardBackgroundImageLimitKb ??
+          createDefaultMerchantPermissionConfig().businessCardBackgroundImageLimitKb,
+        businessCardContactImageLimitKb:
+          effectiveEditingSite?.permissionConfig?.businessCardContactImageLimitKb ??
+          editingSite?.permissionConfig?.businessCardContactImageLimitKb ??
+          createDefaultMerchantPermissionConfig().businessCardContactImageLimitKb,
+        businessCardExportImageLimitKb:
+          effectiveEditingSite?.permissionConfig?.businessCardExportImageLimitKb ??
+          editingSite?.permissionConfig?.businessCardExportImageLimitKb ??
+          createDefaultMerchantPermissionConfig().businessCardExportImageLimitKb,
+        onClose: () => {
+          setMerchantProfileDialogShowBusinessCards(true);
+          setMerchantProfileDialogOpen(false);
+          if (isDesktopMerchantWorkspace) {
+            setMerchantDesktopSection("editor");
+          }
+        },
+        onCardsChange: (cards: MerchantBusinessCardAsset[]) => {
+          if (!editingSiteId) return;
+          const platformState = loadPlatformState();
+          savePlatformState({
+            ...platformState,
+            sites: platformState.sites.map((item) =>
+              item.id === editingSiteId
+                ? {
+                    ...item,
+                    businessCards: cards,
+                    updatedAt: new Date().toISOString(),
+                  }
+                : item,
+            ),
+          });
+          scheduleMerchantChatBusinessCardSync(editingSiteId, cards);
+        },
+        onSave: async ({
+          merchantName,
+          domainPrefix,
+          contactAddress,
+          contactName,
+          contactPhone,
+          contactEmail,
+          location,
+          industry,
+        }: {
+          merchantName: string;
+          domainPrefix: string;
+          contactAddress: string;
+          contactName: string;
+          contactPhone: string;
+          contactEmail: string;
+          location: SiteLocation;
+          industry: MerchantIndustry;
+        }) => {
+          const targetSiteId = editingSiteId || (await ensureEditableMerchantSiteId());
+          if (!targetSiteId) {
+            showTip("未找到可编辑的商户站点，无法保存");
+            return;
+          }
+          setMerchantSiteIdOverride(targetSiteId);
+          ensureScopedMerchantSite(targetSiteId, contactEmail || null);
+          const platformState = loadPlatformState();
+          const target = platformState.sites.find((item) => item.id === targetSiteId) ?? null;
+          const normalizedDomainPrefix = normalizeDomainPrefixForMerchant(domainPrefix);
+          const baseDomain =
+            resolveRuntimePortalBaseDomain(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "") ||
+            (platformState.sites.find((site) => site.id === "site-main")?.domain ?? "").trim() ||
+            (target?.domain ?? "");
+          savePlatformState({
+            ...platformState,
+            sites: platformState.sites.map((item) =>
+              item.id === targetSiteId
+                ? {
+                    ...item,
+                    merchantName,
+                    domainPrefix: normalizedDomainPrefix,
+                    domainSuffix: normalizedDomainPrefix,
+                    contactAddress,
+                    contactName,
+                    contactPhone,
+                    contactEmail,
+                    domain: buildMerchantDomainFromBase(baseDomain, domainPrefix),
+                    location,
+                    industry,
+                    updatedAt: new Date().toISOString(),
+                  }
+                : item,
+            ),
+          });
+          const syncResult = await syncMerchantProfileBinding(targetSiteId, normalizedDomainPrefix, merchantName, {
+            domain: buildMerchantDomainFromBase(baseDomain, domainPrefix),
+            contactAddress,
+            contactName,
+            contactPhone,
+            contactEmail,
+            industry,
+            location,
+          });
+          if (!syncResult.ok) {
+            showTip("商户信息已保存到当前后台，但同步到超级后台失败，请稍后重新保存");
+            return;
+          }
+          if (!isDesktopMerchantWorkspace) {
+            setMerchantProfileDialogOpen(false);
+          }
+          setMerchantProfileAttention(false);
+          showTip("商户信息已保存");
+        },
+      }
+    : null;
   const supportSelfPrimaryChatCard = resolveMerchantBusinessCardForChatDisplay(supportSelfBusinessCards);
   const supportSelfCardsSummary =
     supportSelfBusinessCards.length > 0
       ? `共 ${supportSelfBusinessCards.length} 张，当前展示：${supportSelfPrimaryChatCard?.name || "未命名名片"}`
       : "还没有名片，可在这里设置聊天展示与复制";
-  const supportSelfProfileRows = [
-    { key: "name", label: "名称", value: supportSelfDisplayName },
-    { key: "prefix", label: "前缀", value: supportSelfDomainPrefix },
-    { key: "country", label: "国家", value: supportSelfCountry },
-    { key: "province", label: "省份", value: supportSelfProvince },
-    { key: "city", label: "城市", value: supportSelfCity },
-    { key: "address", label: "地址", value: supportSelfAddress },
-    { key: "contactName", label: "联系人", value: supportSelfContactName },
-  ];
+  const merchantBusinessCardManagerCommonProps = merchantProfileDialogCommonProps
+    ? {
+        merchantId: merchantProfileDialogCommonProps.siteId,
+        siteBaseDomain: merchantProfileDialogCommonProps.siteBaseDomain,
+        profile: {
+          merchantName: merchantProfileDialogCommonProps.initialMerchantName,
+          domainPrefix: merchantProfileDialogCommonProps.initialDomainPrefix,
+          contactAddress: merchantProfileDialogCommonProps.initialContactAddress,
+          contactName: merchantProfileDialogCommonProps.initialContactName,
+          contactPhone: merchantProfileDialogCommonProps.initialContactPhone,
+          contactEmail: merchantProfileDialogCommonProps.initialContactEmail,
+          location: merchantProfileDialogCommonProps.initialLocation,
+          industry: merchantProfileDialogCommonProps.initialIndustry ?? undefined,
+        } satisfies MerchantBusinessCardProfileInput,
+        cards: supportSelfBusinessCards,
+        cardLimit: merchantProfileDialogCommonProps.businessCardLimit,
+        allowLinkMode: merchantProfileDialogCommonProps.allowBusinessCardLinkMode,
+        backgroundImageLimitKb: merchantProfileDialogCommonProps.businessCardBackgroundImageLimitKb,
+        contactPageImageLimitKb: merchantProfileDialogCommonProps.businessCardContactImageLimitKb,
+        exportImageLimitKb: merchantProfileDialogCommonProps.businessCardExportImageLimitKb,
+        onCardsChange: merchantProfileDialogCommonProps.onCardsChange,
+      }
+    : null;
   const supportSelfVisibilityItems = [
     {
       key: "phone",
@@ -12595,9 +12755,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         {supportSelfSectionView === "home" ? (
           <div className="space-y-4">
             <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
-              <div className="border-b border-slate-100 px-5 py-4">
-                <div className="text-sm font-semibold text-slate-900">设置</div>
-              </div>
               <div className="divide-y divide-slate-100">
                 {[
                   {
@@ -12672,7 +12829,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               <button
                 type="button"
                 className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left transition hover:bg-rose-50/70 disabled:opacity-50"
-                onClick={logout}
+                onClick={() => {
+                  void requestLogout();
+                }}
                 disabled={loggingOut}
               >
                 <div className="text-sm font-semibold text-rose-600">{loggingOut ? "退出中..." : "退出登录"}</div>
@@ -12687,31 +12846,23 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           </div>
         ) : supportSelfSectionView === "profile" ? (
           <div className="space-y-4">
-            <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
-              <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold text-slate-900">商户资料</div>
-                  <div className="mt-1 text-xs text-slate-500">这里显示后台商户信息，手机端和电脑端会同步保存。</div>
+            {merchantProfileDialogCommonProps ? (
+              <MerchantProfileDialog
+                {...merchantProfileDialogCommonProps}
+                open
+                mode="inline"
+                showCloseButton={false}
+                showBusinessCardManager={false}
+                className="rounded-[28px] border-slate-200 shadow-[0_14px_34px_rgba(15,23,42,0.08)]"
+              />
+            ) : (
+              <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+                <div className="px-5 py-4">
+                  <div className="text-sm font-semibold text-slate-900">商户资料暂未准备好</div>
+                  <div className="mt-1 text-xs leading-5 text-slate-500">稍后刷新后，这里会直接显示和电脑端同一套商户资料编辑表单。</div>
                 </div>
-                <button
-                  type="button"
-                  className="shrink-0 rounded-full bg-slate-900 px-3 py-1.5 text-xs font-medium text-white shadow-sm"
-                  onClick={() => {
-                    void openMerchantProfileSettingsDialog({ showBusinessCards: false });
-                  }}
-                >
-                  编辑
-                </button>
-              </div>
-              <div className="divide-y divide-slate-100">
-                {supportSelfProfileRows.map((item) => (
-                  <div key={item.key} className="px-5 py-4">
-                    <div className="text-[11px] font-medium tracking-[0.08em] text-slate-400">{item.label}</div>
-                    <div className="mt-1 text-sm leading-6 text-slate-900">{item.value}</div>
-                  </div>
-                ))}
-              </div>
-            </section>
+              </section>
+            )}
 
             <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
               <div className="border-b border-slate-100 px-5 py-4">
@@ -13712,154 +13863,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   const merchantMobileToolbarSegmentClassName = "grid grid-cols-2 gap-3 rounded-[24px] border border-slate-200 bg-slate-50/90 p-1.5";
   const merchantMobileToolbarSegmentButtonBaseClassName =
     "min-h-[48px] rounded-[18px] px-3 py-2 text-sm font-semibold transition active:scale-[0.99]";
-  const merchantProfileDialogCommonProps = !isPlatformEditor
-    ? {
-        showBusinessCardManager: merchantProfileDialogShowBusinessCards,
-        siteId: editingSiteId,
-        siteBaseDomain: (() => {
-          const platformState = loadPlatformState();
-          const baseFromEnv = resolveRuntimePortalBaseDomain(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "");
-          const baseFromMainSite = (platformState.sites.find((item) => item.id === "site-main")?.domain ?? "").trim();
-          const fallback = (effectiveEditingSite?.domain ?? editingSite?.domain ?? "").trim();
-          return normalizeBaseDomainForMerchant(baseFromEnv || baseFromMainSite || fallback);
-        })(),
-        initialServiceExpiresAt: effectiveEditingSite?.serviceExpiresAt ?? editingSite?.serviceExpiresAt ?? null,
-        initialDomainPrefix:
-          effectiveEditingSite?.domainPrefix ??
-          effectiveEditingSite?.domainSuffix ??
-          editingSite?.domainPrefix ??
-          editingSite?.domainSuffix ??
-          "",
-        takenDomainPrefixes: loadPlatformState()
-          .sites.filter((item) => item.id !== editingSiteId)
-          .map((item) => item.domainPrefix ?? item.domainSuffix ?? ""),
-        initialMerchantName: effectiveEditingSite?.merchantName ?? editingSite?.merchantName ?? "",
-        initialContactAddress: effectiveEditingSite?.contactAddress ?? editingSite?.contactAddress ?? "",
-        initialContactName: effectiveEditingSite?.contactName ?? editingSite?.contactName ?? "",
-        initialContactPhone: effectiveEditingSite?.contactPhone ?? editingSite?.contactPhone ?? "",
-        initialContactEmail: effectiveEditingSite?.contactEmail ?? editingSite?.contactEmail ?? "",
-        initialLocation: effectiveEditingSite?.location ?? editingSite?.location ?? null,
-        initialIndustry: effectiveEditingSite?.industry ?? editingSite?.industry ?? null,
-        initialBusinessCards: effectiveEditingSite?.businessCards ?? editingSite?.businessCards ?? [],
-        businessCardLimit:
-          effectiveEditingSite?.permissionConfig?.businessCardLimit ??
-          editingSite?.permissionConfig?.businessCardLimit ??
-          createDefaultMerchantPermissionConfig().businessCardLimit,
-        allowBusinessCardLinkMode:
-          effectiveEditingSite?.permissionConfig?.allowBusinessCardLinkMode ??
-          editingSite?.permissionConfig?.allowBusinessCardLinkMode ??
-          createDefaultMerchantPermissionConfig().allowBusinessCardLinkMode,
-        businessCardBackgroundImageLimitKb:
-          effectiveEditingSite?.permissionConfig?.businessCardBackgroundImageLimitKb ??
-          editingSite?.permissionConfig?.businessCardBackgroundImageLimitKb ??
-          createDefaultMerchantPermissionConfig().businessCardBackgroundImageLimitKb,
-        businessCardContactImageLimitKb:
-          effectiveEditingSite?.permissionConfig?.businessCardContactImageLimitKb ??
-          editingSite?.permissionConfig?.businessCardContactImageLimitKb ??
-          createDefaultMerchantPermissionConfig().businessCardContactImageLimitKb,
-        businessCardExportImageLimitKb:
-          effectiveEditingSite?.permissionConfig?.businessCardExportImageLimitKb ??
-          editingSite?.permissionConfig?.businessCardExportImageLimitKb ??
-          createDefaultMerchantPermissionConfig().businessCardExportImageLimitKb,
-        onClose: () => {
-          setMerchantProfileDialogShowBusinessCards(true);
-          setMerchantProfileDialogOpen(false);
-          if (isDesktopMerchantWorkspace) {
-            setMerchantDesktopSection("editor");
-          }
-        },
-        onCardsChange: (cards: MerchantBusinessCardAsset[]) => {
-          if (!editingSiteId) return;
-          const platformState = loadPlatformState();
-          savePlatformState({
-            ...platformState,
-            sites: platformState.sites.map((item) =>
-              item.id === editingSiteId
-                ? {
-                    ...item,
-                    businessCards: cards,
-                    updatedAt: new Date().toISOString(),
-                  }
-                : item,
-            ),
-          });
-          scheduleMerchantChatBusinessCardSync(editingSiteId, cards);
-        },
-        onSave: async ({
-          merchantName,
-          domainPrefix,
-          contactAddress,
-          contactName,
-          contactPhone,
-          contactEmail,
-          location,
-          industry,
-        }: {
-          merchantName: string;
-          domainPrefix: string;
-          contactAddress: string;
-          contactName: string;
-          contactPhone: string;
-          contactEmail: string;
-          location: SiteLocation;
-          industry: MerchantIndustry;
-        }) => {
-          const targetSiteId = editingSiteId || (await ensureEditableMerchantSiteId());
-          if (!targetSiteId) {
-            showTip("未找到可编辑的商户站点，无法保存");
-            return;
-          }
-          setMerchantSiteIdOverride(targetSiteId);
-          ensureScopedMerchantSite(targetSiteId, contactEmail || null);
-          const platformState = loadPlatformState();
-          const target = platformState.sites.find((item) => item.id === targetSiteId) ?? null;
-          const normalizedDomainPrefix = normalizeDomainPrefixForMerchant(domainPrefix);
-          const baseDomain =
-            resolveRuntimePortalBaseDomain(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "") ||
-            (platformState.sites.find((site) => site.id === "site-main")?.domain ?? "").trim() ||
-            (target?.domain ?? "");
-          savePlatformState({
-            ...platformState,
-            sites: platformState.sites.map((item) =>
-              item.id === targetSiteId
-                ? {
-                    ...item,
-                    merchantName,
-                    domainPrefix: normalizedDomainPrefix,
-                    domainSuffix: normalizedDomainPrefix,
-                    contactAddress,
-                    contactName,
-                    contactPhone,
-                    contactEmail,
-                    domain: buildMerchantDomainFromBase(baseDomain, domainPrefix),
-                    location,
-                    industry,
-                    updatedAt: new Date().toISOString(),
-                  }
-                : item,
-            ),
-          });
-          const syncResult = await syncMerchantProfileBinding(targetSiteId, normalizedDomainPrefix, merchantName, {
-            domain: buildMerchantDomainFromBase(baseDomain, domainPrefix),
-            contactAddress,
-            contactName,
-            contactPhone,
-            contactEmail,
-            industry,
-            location,
-          });
-          if (!syncResult.ok) {
-            showTip("商户信息已保存到当前后台，但同步到超级后台失败，请稍后重新保存");
-            return;
-          }
-          if (!isDesktopMerchantWorkspace) {
-            setMerchantProfileDialogOpen(false);
-          }
-          setMerchantProfileAttention(false);
-          showTip("商户信息已保存");
-        },
-      }
-    : null;
   const merchantBookingManagerDialogCommonProps =
     !isPlatformEditor && canUseBookingBlock
       ? {
@@ -14335,8 +14338,13 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               open
               mode="inline"
               showCloseButton={false}
+              showBusinessCardManager={false}
               className="min-h-[calc(100vh-14rem)]"
             />
+          ) : merchantDesktopSection === "cards" && merchantBusinessCardManagerCommonProps ? (
+            <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_16px_36px_rgba(15,23,42,0.08)]">
+              <MerchantBusinessCardManager {...merchantBusinessCardManagerCommonProps} />
+            </div>
           ) : merchantDesktopSection === "booking" && merchantBookingManagerDialogCommonProps ? (
             <MerchantBookingManagerDialog
               {...merchantBookingManagerDialogCommonProps}
@@ -14435,7 +14443,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                           </div>
                           <button
                             className="shrink-0 rounded-[18px] border border-white/16 bg-white/10 px-4 py-3 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(8,17,33,0.18)] transition hover:bg-white/16 disabled:opacity-50"
-                            onClick={logout}
+                            onClick={() => {
+                              void requestLogout();
+                            }}
                             disabled={loggingOut}
                           >
                             {loggingOut ? "退出中..." : "退出"}
@@ -14446,19 +14456,42 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                   </div>
                 ) : (
                   <div className="flex items-center justify-between gap-3 rounded border border-slate-300 bg-slate-50 px-3 py-1">
-                    <div className="min-w-0">
-                      <div className="text-[11px] leading-4 text-slate-500">当前商户</div>
-                      <div className="max-w-[180px] truncate text-sm font-semibold text-slate-900" title={merchantDisplayName}>
+                    <div className="min-w-0 flex-1">
+                      <div className="max-w-[160px] truncate text-sm font-semibold text-slate-900" title={merchantDisplayName}>
                         {merchantDisplayName}
                       </div>
                     </div>
-                    <button
-                      className="shrink-0 rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-50"
-                      onClick={logout}
-                      disabled={loggingOut}
-                    >
-                      {loggingOut ? "退出中..." : "退出登录"}
-                    </button>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <button
+                        ref={merchantProfileButtonRef}
+                        type="button"
+                        className={`rounded border px-3 py-2 text-sm transition-colors disabled:opacity-50 ${
+                          merchantProfileAttention
+                            ? "border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100"
+                            : "bg-white text-slate-900 hover:bg-gray-50"
+                        }`}
+                        onClick={() => {
+                          void openMerchantProfilePanel();
+                        }}
+                      >
+                        商户信息
+                      </button>
+                      <button
+                        type="button"
+                        className="inline-flex h-10 w-10 items-center justify-center rounded border bg-white text-rose-600 transition hover:bg-rose-50 disabled:opacity-50"
+                        onClick={() => {
+                          void requestLogout();
+                        }}
+                        disabled={loggingOut}
+                        title={loggingOut ? "退出中..." : "退出登录"}
+                        aria-label={loggingOut ? "退出中..." : "退出登录"}
+                      >
+                        <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+                          <path d="M14 7h2a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                          <path d="M10 8 6 12l4 4M7 12h9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </button>
+                    </div>
                   </div>
                 )
               ) : null}
@@ -14480,17 +14513,11 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       编辑网站
                     </button>
                     <button
-                      ref={merchantProfileButtonRef}
                       type="button"
-                      className={getMerchantDesktopMenuButtonClassName(
-                        merchantDesktopSection === "profile",
-                        merchantProfileAttention ? "alert" : "default",
-                      )}
-                      onClick={() => {
-                        void openMerchantProfilePanel();
-                      }}
+                      className={getMerchantDesktopMenuButtonClassName(merchantDesktopSection === "cards")}
+                      onClick={openMerchantCardsPanel}
                     >
-                      商户信息
+                      名片夹
                     </button>
                     {canUseBookingBlock ? (
                       <button
@@ -14630,6 +14657,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                   <div className="text-base font-semibold text-slate-900">
                     {merchantDesktopSection === "profile"
                       ? "商户信息"
+                      : merchantDesktopSection === "cards"
+                        ? "名片夹"
                       : merchantDesktopSection === "booking"
                         ? "预约管理"
                         : merchantDesktopSection === "analytics"
@@ -14638,7 +14667,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                   </div>
                   <div className="mt-1 text-sm text-slate-500">
                     {merchantDesktopSection === "profile"
-                      ? "这里集中维护商户资料、域名前缀和名片信息。"
+                      ? "这里集中维护商户资料、域名前缀和地址联系人。"
+                      : merchantDesktopSection === "cards"
+                        ? "这里集中管理聊天展示名片与联系卡复制内容。"
                       : merchantDesktopSection === "booking"
                         ? "这里集中查看和处理当前商户收到的预约记录。"
                         : merchantDesktopSection === "analytics"
@@ -15508,6 +15539,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         <MerchantProfileDialog
           {...merchantProfileDialogCommonProps}
           open={merchantProfileDialogOpen}
+          showBusinessCardManager={false}
         />
       ) : null}
 
