@@ -2028,7 +2028,7 @@ async function compressImageFileWithinLimit(
   };
 }
 
-const SUPPORT_SELF_AVATAR_MAX_BYTES = 10 * 1024;
+const SUPPORT_SELF_AVATAR_MAX_BYTES = 30 * 1024;
 const SUPPORT_SELF_AVATAR_COMPRESSION_STEPS = [
   { maxSide: 256, quality: 0.74 },
   { maxSide: 224, quality: 0.66 },

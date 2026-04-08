@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  readPreferredLocaleFromAcceptLanguage,
   readRequestedLocaleFromSearch,
   readStoredLocaleCookieFromString,
   resolveLocaleCookieDomainFromHost,
@@ -35,4 +36,12 @@ test("reads requested locale from query string", () => {
   assert.equal(readRequestedLocaleFromSearch("uiLocale=en"), "en-GB");
   assert.equal(readRequestedLocaleFromSearch("?uiLocale=english"), null);
   assert.equal(readRequestedLocaleFromSearch("?foo=bar"), null);
+});
+
+test("reads preferred locale from accept-language", () => {
+  assert.equal(readPreferredLocaleFromAcceptLanguage("es-ES,es;q=0.9,en;q=0.8"), "es-ES");
+  assert.equal(readPreferredLocaleFromAcceptLanguage("en-US,en;q=0.9,zh-CN;q=0.8"), "en-GB");
+  assert.equal(readPreferredLocaleFromAcceptLanguage("pt-BR,pt;q=0.9"), "pt-PT");
+  assert.equal(readPreferredLocaleFromAcceptLanguage("xx-YY,zz;q=0.9"), null);
+  assert.equal(readPreferredLocaleFromAcceptLanguage(""), null);
 });

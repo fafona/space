@@ -18,7 +18,6 @@ import {
   MERCHANT_BUSINESS_CARD_PHONE_LIMIT,
   applyMerchantBusinessCardContactFieldOrderToTextLayout,
   createDefaultMerchantBusinessCardDraft,
-  disableMerchantBusinessCardChatDisplay,
   getMerchantBusinessCardRequiredFields,
   normalizeMerchantBusinessCardChatDisplaySelection,
   normalizeMerchantBusinessCardDraft,
@@ -1031,6 +1030,7 @@ export default function MerchantBusinessCardManager({
     () => resolveMerchantBusinessCardForChatDisplay(normalizedCards),
     [normalizedCards],
   );
+  const cardFolderCountLabel = `${normalizedCards.length}/${normalizedCardLimit}`;
   const cardLimitReached = !editingCardId && normalizedCards.length >= normalizedCardLimit;
   const canOpenCreateEditor = canCreate && !cardLimitReached;
   const normalizedBackgroundImageLimitKb = useMemo(
@@ -1126,6 +1126,21 @@ export default function MerchantBusinessCardManager({
     setDraft((current) => normalizeMerchantBusinessCardDraft({ ...current, mode: "image" }));
     setPreviewAsset(null);
   }, [canUseDraftLinkMode, draft.mode]);
+
+  useEffect(() => {
+    if (normalizedCards.length === 0) return;
+    const hasManualDisabledState = normalizedCards.some((card) => card.chatDisplayDisabled);
+    if (!hasManualDisabledState) return;
+    onCardsChange(
+      normalizeMerchantBusinessCardChatDisplaySelection(
+        normalizedCards.map((card) => ({
+          ...card,
+          showInChat: false,
+          chatDisplayDisabled: false,
+        })),
+      ),
+    );
+  }, [normalizedCards, onCardsChange]);
 
   const applyDraft = (recipe: (current: MerchantBusinessCardDraft) => MerchantBusinessCardDraft) => {
     setDraft((current) => normalizeMerchantBusinessCardDraft(recipe(current)));
@@ -1472,10 +1487,7 @@ export default function MerchantBusinessCardManager({
     try {
       await deleteCardShare(card);
 
-      let nextCards = normalizedCards.filter((item) => item.id !== card.id);
-      if (card.chatDisplayDisabled && nextCards.length > 0) {
-        nextCards = disableMerchantBusinessCardChatDisplay(nextCards);
-      }
+      const nextCards = normalizedCards.filter((item) => item.id !== card.id);
       onCardsChange(normalizeMerchantBusinessCardChatDisplaySelection(nextCards));
       if (previewAsset?.id === card.id) {
         setPreviewAsset(null);
@@ -1507,12 +1519,6 @@ export default function MerchantBusinessCardManager({
     setTip("这张名片会在聊天模块中展示");
   };
 
-  const disableChatDisplayForAllCards = () => {
-    if (normalizedCards.length === 0) return;
-    onCardsChange(disableMerchantBusinessCardChatDisplay(normalizedCards));
-    setTip("聊天模块中的名片展示已关闭");
-  };
-
   const previewMode = previewAsset?.mode || draft.mode;
   const previewTargetUrl = normalizeText(previewAsset?.targetUrl) || websiteUrl;
   const previewName = normalizeText(previewAsset?.name) || normalizeText(draft.name) || "名片预览";
@@ -1541,20 +1547,11 @@ export default function MerchantBusinessCardManager({
   const folderGridContent =
     normalizedCards.length > 0 ? (
       <div className="space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border bg-slate-50 px-4 py-3">
-          <div className="text-sm text-slate-600">
-            聊天展示名片：
-            <span className="ml-1 font-medium text-slate-900">
-              {selectedChatDisplayCard ? selectedChatDisplayCard.name : "已关闭"}
-            </span>
-          </div>
-          <button
-            type="button"
-            className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
-            onClick={disableChatDisplayForAllCards}
-          >
-            关闭聊天展示
-          </button>
+        <div className="rounded-2xl border bg-slate-50 px-4 py-3 text-sm text-slate-600">
+          聊天展示名片：
+          <span className="ml-1 font-medium text-slate-900">
+            {selectedChatDisplayCard ? selectedChatDisplayCard.name : "暂无"}
+          </span>
         </div>
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {normalizedCards.map((card) => (
@@ -1715,18 +1712,19 @@ export default function MerchantBusinessCardManager({
     <div className="flex min-h-[calc(100vh-14rem)] flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_16px_36px_rgba(15,23,42,0.08)]">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b px-6 py-5">
         <div>
-          <div className="text-lg font-semibold text-slate-900">名片夹</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="text-lg font-semibold text-slate-900">名片夹</div>
+            <div className="text-sm font-medium text-slate-500">（{cardFolderCountLabel}）</div>
+            <button
+              type="button"
+              className="rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={openCreateEditorFromFolder}
+              disabled={!canOpenCreateEditor}
+            >
+              生成名片
+            </button>
+          </div>
           <div className="text-sm text-slate-500">查看已生成的图片名片或链接名片，可预览并继续操作。</div>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            className="rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-            onClick={openCreateEditorFromFolder}
-            disabled={!canOpenCreateEditor}
-          >
-            生成名片
-          </button>
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">{folderGridContent}</div>
@@ -1757,7 +1755,7 @@ export default function MerchantBusinessCardManager({
             <span className="min-w-0 flex-1">
               <span className="flex items-baseline gap-2 leading-none">
                 <span className="text-base font-semibold tracking-[0.02em]">名片夹</span>
-                <span className="text-sm font-medium text-slate-500">{`${normalizedCards.length}/${normalizedCardLimit}`}</span>
+                <span className="text-sm font-medium text-slate-500">{cardFolderCountLabel}</span>
               </span>
               <span className="mt-1.5 block text-xs leading-5 text-slate-500">
                 完善商户信息后可生成名片。链接模式会生成联系卡链接，对方手机打开后可保存联系人。
@@ -2470,7 +2468,7 @@ export default function MerchantBusinessCardManager({
       {!isPageFolderView && folderOpen ? overlay(
         <div className="fixed inset-0 z-[2147483000] bg-black/45 p-4" onMouseDown={() => setFolderOpen(false)}>
           <div className="mx-auto flex h-full max-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4"><div><div className="text-lg font-semibold text-slate-900">名片夹</div><div className="text-sm text-slate-500">查看已生成的图片名片或链接名片，可预览并继续操作。</div></div><div className="flex flex-wrap gap-2"><button type="button" className="rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50" onClick={openCreateEditorFromFolder} disabled={!canOpenCreateEditor}>生成名片</button><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => setFolderOpen(false)}>关闭</button></div></div>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4"><div><div className="flex flex-wrap items-center gap-2"><div className="text-lg font-semibold text-slate-900">名片夹</div><div className="text-sm font-medium text-slate-500">（{cardFolderCountLabel}）</div><button type="button" className="rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50" onClick={openCreateEditorFromFolder} disabled={!canOpenCreateEditor}>生成名片</button></div><div className="text-sm text-slate-500">查看已生成的图片名片或链接名片，可预览并继续操作。</div></div><div className="flex flex-wrap gap-2"><button type="button" className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50" onClick={() => setFolderOpen(false)}>关闭</button></div></div>
             <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
               {folderGridContent}
             </div>

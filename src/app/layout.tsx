@@ -1,4 +1,4 @@
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import type { Viewport } from "next";
 import Script from "next/script";
 import ClientDomTranslator from "@/components/ClientDomTranslator";
@@ -6,7 +6,7 @@ import GlobalLanguageSwitcher from "@/components/GlobalLanguageSwitcher";
 import { I18nProvider } from "@/components/I18nProvider";
 import UnhandledRejectionGuard from "@/components/UnhandledRejectionGuard";
 import "./globals.css";
-import { DEFAULT_LOCALE, I18N_COOKIE_KEY, resolveSupportedLocale } from "@/lib/i18n";
+import { DEFAULT_LOCALE, I18N_COOKIE_KEY, readPreferredLocaleFromAcceptLanguage, resolveSupportedLocale } from "@/lib/i18n";
 import {
   RECENT_MERCHANT_LAUNCH_MAX_AGE_MS,
   RECENT_MERCHANT_LAUNCH_STORAGE_KEY,
@@ -73,8 +73,17 @@ const I18N_PENDING_SCRIPT = `
       window.localStorage.getItem(geoKey) ||
       ""
     ).trim().toLowerCase();
+    const current = (
+      document.documentElement.getAttribute("data-ui-locale") ||
+      document.documentElement.lang ||
+      ""
+    ).trim().toLowerCase();
     if (!raw) return;
-    if (raw !== "zh-cn") {
+    const rawLanguage = raw.split("-")[0] || "";
+    const currentLanguage = current.split("-")[0] || "";
+    const sameResolvedLocale = Boolean(current) && raw === current;
+    const sameNonChineseLanguage = Boolean(currentLanguage) && rawLanguage === currentLanguage && rawLanguage !== "zh";
+    if (raw !== "zh-cn" && !sameResolvedLocale && !sameNonChineseLanguage) {
       document.documentElement.setAttribute("data-i18n-pending", "1");
     }
   } catch {
@@ -121,7 +130,10 @@ export default async function RootLayout({
   children: React.ReactNode;
 }) {
   const cookieStore = await cookies();
-  const initialLocale = resolveSupportedLocale(cookieStore.get(I18N_COOKIE_KEY)?.value ?? DEFAULT_LOCALE);
+  const headerStore = await headers();
+  const cookieLocale = cookieStore.get(I18N_COOKIE_KEY)?.value ?? "";
+  const acceptLanguageLocale = readPreferredLocaleFromAcceptLanguage(headerStore.get("accept-language"));
+  const initialLocale = resolveSupportedLocale(cookieLocale || acceptLanguageLocale || DEFAULT_LOCALE);
 
   return (
     <html lang={initialLocale} data-ui-locale={initialLocale} suppressHydrationWarning>

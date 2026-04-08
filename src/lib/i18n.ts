@@ -482,11 +482,16 @@ const KO_BUNDLE: TranslationBundle = {
 };
 
 export function resolveSupportedLocale(input: string | null | undefined) {
+  const resolved = resolveSupportedLocaleCandidate(input);
+  return resolved ?? DEFAULT_LOCALE;
+}
+
+function resolveSupportedLocaleCandidate(input: string | null | undefined) {
   const normalized = String(input ?? "").trim();
-  if (!normalized) return DEFAULT_LOCALE;
+  if (!normalized) return null;
   if (supportedLocaleSet.has(normalized)) return normalized;
   const language = normalized.toLowerCase().split("-")[0] ?? "";
-  return languageSubtagDefault[language] ?? DEFAULT_LOCALE;
+  return languageSubtagDefault[language] ?? null;
 }
 
 function resolveLocaleByCountryCode(countryCode: string | null | undefined) {
@@ -599,6 +604,18 @@ export function readRequestedLocaleFromSearch(search: string | null | undefined)
   } catch {
     return null;
   }
+}
+
+export function readPreferredLocaleFromAcceptLanguage(header: string | null | undefined) {
+  const normalized = String(header ?? "").trim();
+  if (!normalized) return null;
+  const candidates = normalized.split(",");
+  for (const candidate of candidates) {
+    const token = candidate.split(";")[0]?.trim() ?? "";
+    const resolved = resolveSupportedLocaleCandidate(token);
+    if (resolved) return resolved;
+  }
+  return null;
 }
 
 function readStoredLocaleCookie() {
