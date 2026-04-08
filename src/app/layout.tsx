@@ -1,14 +1,16 @@
-﻿import Script from "next/script";
-import "./globals.css";
+import { cookies } from "next/headers";
+import type { Viewport } from "next";
+import Script from "next/script";
 import ClientDomTranslator from "@/components/ClientDomTranslator";
 import GlobalLanguageSwitcher from "@/components/GlobalLanguageSwitcher";
 import { I18nProvider } from "@/components/I18nProvider";
 import UnhandledRejectionGuard from "@/components/UnhandledRejectionGuard";
+import "./globals.css";
+import { DEFAULT_LOCALE, I18N_COOKIE_KEY, resolveSupportedLocale } from "@/lib/i18n";
 import {
   RECENT_MERCHANT_LAUNCH_MAX_AGE_MS,
   RECENT_MERCHANT_LAUNCH_STORAGE_KEY,
 } from "@/lib/merchantLaunchState";
-import type { Viewport } from "next";
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -113,13 +115,16 @@ const STANDALONE_LAUNCH_SCRIPT = `
 })();
 `;
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const cookieStore = await cookies();
+  const initialLocale = resolveSupportedLocale(cookieStore.get(I18N_COOKIE_KEY)?.value ?? DEFAULT_LOCALE);
+
   return (
-    <html lang="zh-CN" suppressHydrationWarning>
+    <html lang={initialLocale} data-ui-locale={initialLocale} suppressHydrationWarning>
       <head>
         <meta name="google" content="notranslate" />
         <meta httpEquiv="Content-Language" content="zh-CN,zh-TW,ja-JP,ko-KR,en-GB" />
@@ -141,7 +146,7 @@ export default function RootLayout({
         <Script id="ignore-unhandled-rejection" strategy="beforeInteractive">
           {IGNORE_REJECTION_SCRIPT}
         </Script>
-        <I18nProvider>
+        <I18nProvider initialLocale={initialLocale}>
           <ClientDomTranslator />
           <UnhandledRejectionGuard />
           <GlobalLanguageSwitcher />

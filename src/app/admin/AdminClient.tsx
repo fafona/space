@@ -14098,7 +14098,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     <div
       className={`flex min-h-0 min-w-0 w-full flex-col overflow-hidden rounded-2xl border bg-white ${
         showDesktopMerchantSupportPanel
-          ? "min-h-[calc(100vh-15rem)] shadow-sm md:grid md:grid-cols-[320px_minmax(0,1fr)]"
+          ? "h-[calc(100vh-12rem)] max-h-[calc(100vh-12rem)] shadow-sm md:grid md:grid-cols-[320px_minmax(0,1fr)]"
           : "h-full max-h-[88vh] w-full max-w-5xl shadow-2xl md:grid md:grid-cols-[320px_minmax(0,1fr)]"
       }`}
     >
@@ -14290,7 +14290,11 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           )}
         </div>
 
-        <div className="min-w-0 shrink-0 space-y-3 border-t px-5 py-4">
+        <div
+          className={`min-w-0 shrink-0 space-y-3 border-t px-5 py-4 ${
+            showDesktopMerchantSupportPanel ? "sticky bottom-0 bg-white" : ""
+          }`}
+        >
           {supportError && supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY ? (
             <div className="text-sm text-rose-600">{supportError}</div>
           ) : null}
@@ -14527,24 +14531,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     </button>
                   </div>
                 </div>
-                <button
-                  className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                  onClick={() => {
-                    const missingFields = missingMerchantProfileFields;
-                    if (missingFields.length > 0) {
-                      setTopBarCollapsed(false);
-                      triggerMerchantProfileAttention();
-                      showTip(`请先完善商户信息后再去前台（缺少：${missingFields.join("、")}）`);
-                      return;
-                    }
-                    const opened = window.open(effectiveFrontendHref, "_blank", "noopener,noreferrer");
-                    if (!opened) {
-                      showTip("浏览器拦截了新窗口，请允许弹窗后重试");
-                    }
-                  }}
-                >
-                  去前台
-                </button>
               </div>
             ) : (
               <div className={toolbarActionsClassName}>
@@ -14717,32 +14703,52 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         );
                       })}
                     </select>
-                    <select
-                      className={isMobileMerchantEditorShell ? merchantMobileToolbarSelectClassName : "border p-2 rounded min-w-[140px] lg:w-full"}
-                      value={editingPageId}
-                      onChange={(e) => switchEditingPage(e.target.value)}
-                      title="选择要编辑的页面"
-                    >
-                      {editingPages.map((page) => (
-                        <option key={page.id} value={page.id}>
-                          {toPlainText(page.name, page.id)}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      className={
-                        isMobileMerchantEditorShell
-                          ? merchantMobileToolbarButtonClassName
-                          : "rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50 lg:w-full"
-                      }
-                      onClick={openPageCopyDialog}
-                    >
-                      复制
-                    </button>
+                    {isMobileMerchantEditorShell ? (
+                      <>
+                        <select
+                          className={merchantMobileToolbarSelectClassName}
+                          value={editingPageId}
+                          onChange={(e) => switchEditingPage(e.target.value)}
+                          title="选择要编辑的页面"
+                        >
+                          {editingPages.map((page) => (
+                            <option key={page.id} value={page.id}>
+                              {toPlainText(page.name, page.id)}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          className={merchantMobileToolbarButtonClassName}
+                          onClick={openPageCopyDialog}
+                        >
+                          复制
+                        </button>
+                      </>
+                    ) : (
+                      <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_72px] items-center gap-2">
+                        <select
+                          className="w-full min-w-0 rounded border p-2"
+                          value={editingPageId}
+                          onChange={(e) => switchEditingPage(e.target.value)}
+                          title="选择要编辑的页面"
+                        >
+                          {editingPages.map((page) => (
+                            <option key={page.id} value={page.id}>
+                              {toPlainText(page.name, page.id)}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          className="rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50"
+                          onClick={openPageCopyDialog}
+                        >
+                          复制
+                        </button>
+                      </div>
+                    )}
                   </div>
-
-                  <div className="h-px w-full bg-gray-200 hidden lg:block" />
 
                   <div
                     className={
@@ -14821,8 +14827,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     ) : null}
                   </div>
 
-                  <div className="h-px w-full bg-gray-200 hidden lg:block" />
-
                   <div
                     className={
                       isMobileMerchantEditorShell
@@ -14882,8 +14886,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       </svg>
                     </button>
                   </div>
-
-                  <div className="h-px w-full bg-gray-200 hidden lg:block" />
 
                   <div
                     className={
@@ -14950,80 +14952,77 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     </select>
                   </div>
 
-                  <div className="h-px w-full bg-gray-200 hidden lg:block" />
-
                   <div
                     className={
                       isMobileMerchantEditorShell
                         ? `${merchantMobileToolbarCardClassName} grid gap-3`
-                        : "grid grid-cols-[minmax(0,1fr)_56px] items-start gap-2"
+                        : "flex flex-col gap-2"
                     }
                   >
                     {isMobileMerchantEditorShell ? (
                       <div className={merchantMobileToolbarSectionLabelClassName}>新增区块</div>
                     ) : null}
-                    <div className={isMobileMerchantEditorShell ? "grid grid-cols-[minmax(0,1fr)_72px] items-start gap-3" : "grid grid-cols-[minmax(0,1fr)_56px] items-start gap-2"}>
-                    <select
-                      className={isMobileMerchantEditorShell ? merchantMobileToolbarSelectClassName : "border p-2 rounded min-w-0 w-full"}
-                      value={newBlockType}
-                      onChange={(e) => setNewBlockType(e.target.value as Block["type"])}
-                    >
-                      <option value="common">{"通用"}</option>
-                      <option value="button" disabled={!canUseButtonBlock}>{"按钮"}{!canUseButtonBlock ? "（未开通）" : ""}</option>
-                      <option value="gallery" disabled={!canUseGalleryBlock}>{"相册"}{!canUseGalleryBlock ? "（未开通）" : ""}</option>
-                      <option value="chart">{"图表"}</option>
-                      <option value="nav">{"导航"}</option>
-                      <option value="music" disabled={!canUseMusicBlock}>{"音乐"}{!canUseMusicBlock ? "（未开通）" : ""}</option>
-                      <option value="product" disabled={!canUseProductBlock}>{"产品"}{!canUseProductBlock ? "（未开通）" : ""}</option>
-                      <option value="booking" disabled={!canUseBookingBlock}>{"预约"}{!canUseBookingBlock ? "（未开通）" : ""}</option>
-                      <option value="contact">{"联系方式"}</option>
-                      {isPlatformEditor ? <option value="search-bar">{"搜索"}</option> : null}
-                      {isPlatformEditor ? <option value="merchant-list">{"商户列表"}</option> : null}
-                    </select>
-                    <div className="relative">
-                      <button
-                        className={
-                          isMobileMerchantEditorShell
-                            ? `${merchantMobileToolbarIconButtonClassName} ${
-                                isCurrentBlockTypeLocked ? "bg-gray-100 text-gray-400 cursor-not-allowed" : ""
-                              }`
-                            : `px-3 py-2 rounded border w-full ${
-                                isCurrentBlockTypeLocked ? "bg-gray-100 text-gray-400 cursor-not-allowed" : "bg-white hover:bg-gray-50"
-                              }`
-                        }
-                        onClick={addBlock}
-                        title="新增区块"
-                        aria-label="新增区块"
-                        disabled={isCurrentBlockTypeLocked}
+                    <div className={isMobileMerchantEditorShell ? "grid grid-cols-[minmax(0,1fr)_72px] items-start gap-3" : "grid w-full grid-cols-[minmax(0,1fr)_56px] items-start gap-2"}>
+                      <select
+                        className={isMobileMerchantEditorShell ? merchantMobileToolbarSelectClassName : "border p-2 rounded min-w-0 w-full"}
+                        value={newBlockType}
+                        onChange={(e) => setNewBlockType(e.target.value as Block["type"])}
                       >
-                        <svg viewBox="0 0 24 24" className="h-5 w-5 mx-auto" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-                          <path d="M12 5v14" />
-                          <path d="M5 12h14" />
-                        </svg>
-                      </button>
-                      {showAddBlockGuide ? (
-                        <div className="absolute left-1/2 top-full z-20 mt-2 -translate-x-1/2 animate-pulse">
-                          <div className="relative whitespace-nowrap rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 shadow-sm">
-                            <span className="font-medium">在此处增加区块</span>
-                            <span className="absolute left-1/2 -top-2 -translate-x-1/2 block w-0 h-0 border-l-[6px] border-r-[6px] border-b-[8px] border-l-transparent border-r-transparent border-b-amber-200" />
-                            <span className="absolute left-1/2 -top-[7px] -translate-x-1/2 block w-0 h-0 border-l-[5px] border-r-[5px] border-b-[7px] border-l-transparent border-r-transparent border-b-amber-50" />
+                        <option value="common">{"通用"}</option>
+                        <option value="button" disabled={!canUseButtonBlock}>{"按钮"}{!canUseButtonBlock ? "（未开通）" : ""}</option>
+                        <option value="gallery" disabled={!canUseGalleryBlock}>{"相册"}{!canUseGalleryBlock ? "（未开通）" : ""}</option>
+                        <option value="chart">{"图表"}</option>
+                        <option value="nav">{"导航"}</option>
+                        <option value="music" disabled={!canUseMusicBlock}>{"音乐"}{!canUseMusicBlock ? "（未开通）" : ""}</option>
+                        <option value="product" disabled={!canUseProductBlock}>{"产品"}{!canUseProductBlock ? "（未开通）" : ""}</option>
+                        <option value="booking" disabled={!canUseBookingBlock}>{"预约"}{!canUseBookingBlock ? "（未开通）" : ""}</option>
+                        <option value="contact">{"联系方式"}</option>
+                        {isPlatformEditor ? <option value="search-bar">{"搜索"}</option> : null}
+                        {isPlatformEditor ? <option value="merchant-list">{"商户列表"}</option> : null}
+                      </select>
+                      <div className="relative">
+                        <button
+                          className={
+                            isMobileMerchantEditorShell
+                              ? `${merchantMobileToolbarIconButtonClassName} ${
+                                  isCurrentBlockTypeLocked ? "bg-gray-100 text-gray-400 cursor-not-allowed" : ""
+                                }`
+                              : `px-3 py-2 rounded border w-full ${
+                                  isCurrentBlockTypeLocked ? "bg-gray-100 text-gray-400 cursor-not-allowed" : "bg-white hover:bg-gray-50"
+                                }`
+                          }
+                          onClick={addBlock}
+                          title="新增区块"
+                          aria-label="新增区块"
+                          disabled={isCurrentBlockTypeLocked}
+                        >
+                          <svg viewBox="0 0 24 24" className="h-5 w-5 mx-auto" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                            <path d="M12 5v14" />
+                            <path d="M5 12h14" />
+                          </svg>
+                        </button>
+                        {showAddBlockGuide ? (
+                          <div className="absolute left-1/2 top-full z-20 mt-2 -translate-x-1/2 animate-pulse">
+                            <div className="relative whitespace-nowrap rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 shadow-sm">
+                              <span className="font-medium">在此处增加区块</span>
+                              <span className="absolute left-1/2 -top-2 -translate-x-1/2 block w-0 h-0 border-l-[6px] border-r-[6px] border-b-[8px] border-l-transparent border-r-transparent border-b-amber-200" />
+                              <span className="absolute left-1/2 -top-[7px] -translate-x-1/2 block w-0 h-0 border-l-[5px] border-r-[5px] border-b-[7px] border-l-transparent border-r-transparent border-b-amber-50" />
+                            </div>
                           </div>
-                        </div>
-                      ) : null}
-                    </div>
-                    <input
-                      ref={pageImageInputRef}
-                      className="hidden"
-                      type="file"
-                      accept="image/*"
-                      onChange={handlePageImageUpload}
-                    />
+                        ) : null}
+                      </div>
+                      <input
+                        ref={pageImageInputRef}
+                        className="hidden"
+                        type="file"
+                        accept="image/*"
+                        onChange={handlePageImageUpload}
+                      />
                     </div>
                   </div>
 
                   {shouldShowPublishActions ? (
                     <>
-                      <div className="h-px w-full bg-gray-200 hidden lg:block" />
                       <div
                         className={
                           isMobileMerchantEditorShell
@@ -15078,6 +15077,27 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                             {publishing ? "发布中..." : "发布"}
                           </button>
                         </div>
+                        {!isMobileMerchantEditorShell ? (
+                          <button
+                            type="button"
+                            className="rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50"
+                            onClick={() => {
+                              const missingFields = missingMerchantProfileFields;
+                              if (missingFields.length > 0) {
+                                setTopBarCollapsed(false);
+                                triggerMerchantProfileAttention();
+                                showTip(`请先完善商户信息后再去前台（缺少：${missingFields.join("、")}）`);
+                                return;
+                              }
+                              const opened = window.open(effectiveFrontendHref, "_blank", "noopener,noreferrer");
+                              if (!opened) {
+                                showTip("浏览器拦截了新窗口，请允许弹窗后重试");
+                              }
+                            }}
+                          >
+                            去前台
+                          </button>
+                        ) : null}
                       </div>
                     </>
                   ) : null}

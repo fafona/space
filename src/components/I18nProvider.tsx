@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useSyncExternalStore } from "react";
+import { createContext, useContext, useEffect, useLayoutEffect, useSyncExternalStore } from "react";
 import {
   DEFAULT_LOCALE,
   detectGeoLocale,
@@ -41,19 +41,22 @@ function subscribeLocale(onStoreChange: () => void) {
   };
 }
 
-function getLocaleServerSnapshot() {
-  return DEFAULT_LOCALE;
-}
-
 function getLocaleClientSnapshot() {
   return detectPreferredLocale();
 }
 
-export function I18nProvider({ children }: { children: React.ReactNode }) {
+export function I18nProvider({
+  children,
+  initialLocale = DEFAULT_LOCALE,
+}: {
+  children: React.ReactNode;
+  initialLocale?: string;
+}) {
+  const resolvedInitialLocale = resolveSupportedLocale(initialLocale);
   const rawLocale = useSyncExternalStore(
     subscribeLocale,
     getLocaleClientSnapshot,
-    getLocaleServerSnapshot,
+    () => resolvedInitialLocale,
   );
   const locale = resolveSupportedLocale(rawLocale);
 
@@ -69,7 +72,7 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
     }
   }, [locale]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (typeof document === "undefined") return;
     document.documentElement.lang = locale;
     document.documentElement.setAttribute("data-ui-locale", locale);
@@ -106,6 +109,13 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
     locale,
     setLocale: (nextLocale) => {
       const resolved = resolveSupportedLocale(nextLocale);
+      if (typeof document !== "undefined") {
+        if (resolved.toLowerCase() === "zh-cn") {
+          document.documentElement.removeAttribute("data-i18n-pending");
+        } else {
+          document.documentElement.setAttribute("data-i18n-pending", "1");
+        }
+      }
       writeStoredLocale(resolved);
       if (typeof window !== "undefined") {
         window.dispatchEvent(new Event(LOCALE_CHANGE_EVENT));
