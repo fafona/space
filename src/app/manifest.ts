@@ -2,6 +2,7 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
+    id: "/launch",
     name: "Faolla.com",
     short_name: "Faolla",
     description: "Faolla.com mobile workspace",
