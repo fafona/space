@@ -14487,6 +14487,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   );
   const supportDesktopSurfaceContent = (
     <div
+      data-editor-overlay
       className={`flex min-h-0 min-w-0 w-full flex-col overflow-hidden rounded-2xl border bg-white ${
         showDesktopMerchantSupportPanel
           ? "h-screen max-h-screen rounded-none border-x-0 border-y-0 shadow-none md:grid md:grid-cols-[320px_minmax(0,1fr)]"
@@ -14748,9 +14749,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           <textarea
             ref={supportInputRef}
             rows={4}
-            className="w-full max-w-full min-w-0 resize-none rounded-2xl border px-4 py-3 text-sm outline-none transition focus:border-slate-400"
+            className="w-full max-w-full min-w-0 resize-none rounded-2xl border bg-white px-4 py-3 text-sm text-slate-900 caret-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-400"
             placeholder={selectedSupportInputPlaceholder}
             value={supportDraft}
+            style={{ WebkitTextFillColor: "#0f172a" }}
             onChange={(event) => setSupportDraft(event.target.value)}
             onKeyDown={(event) => {
               if (event.key !== "Enter" || !event.ctrlKey || event.nativeEvent.isComposing) return;
