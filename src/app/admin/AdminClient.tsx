@@ -11946,12 +11946,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       return (
         <LoadingProgressScreen
           locale={locale}
-          statusTitle={locale.startsWith("zh") ? "正在进入商户后台" : "Opening your merchant workspace"}
-          statusDescription={
+          statusTitle={
             locale.startsWith("zh")
-              ? "请稍等，我们正在恢复网站、联系卡与会话展示。"
-              : "Please wait while we restore your site, contact cards, and conversation showcase."
+              ? "欢迎使用 FAOLLA 愿您生意兴隆！"
+              : "Welcome to FAOLLA. Wishing you a thriving business!"
           }
+          statusDescription=""
         />
       );
     }

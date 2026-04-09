@@ -241,26 +241,13 @@ export default function HomePageClient({
     return (
       <LoadingProgressScreen
         locale={locale}
-        statusTitle={locale.startsWith("zh") ? "正在进入商户后台" : "Opening your merchant workspace"}
-        statusDescription={
+        statusTitle={
           locale.startsWith("zh")
-            ? "请稍等，我们正在恢复网站、名片与会话展示。"
-            : "Please wait while we restore your site, cards, and conversation showcase."
+            ? "欢迎使用 FAOLLA 愿您生意兴隆！"
+            : "Welcome to FAOLLA. Wishing you a thriving business!"
         }
+        statusDescription=""
       />
-    );
-  }
-
-  if (standaloneSessionBooting) {
-    return (
-      <main className="min-h-screen bg-[#081121] text-white">
-        <div className="mx-auto flex min-h-screen max-w-md items-center justify-center px-6 text-center">
-          <div>
-            <div className="text-lg font-semibold">正在进入商户后台</div>
-            <div className="mt-2 text-sm text-white/70">请稍等，我们正在恢复你的登录状态。</div>
-          </div>
-        </div>
-      </main>
     );
   }
 

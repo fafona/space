@@ -95,7 +95,7 @@ function resolveLoadingCopy(props: LoadingProgressScreenProps): LoadingCopy {
     badge: "Faolla.com",
     heroSubtitle: isChinese ? "电话、WhatsApp、TikTok、Twitter、地图，一步直达" : "Call, WhatsApp, TikTok, Twitter, and maps in one tap",
     statusTitle: props.statusTitle?.trim() || phase.title,
-    statusLine: props.statusDescription?.trim() || phase.line,
+    statusLine: props.statusDescription === undefined ? phase.line : props.statusDescription.trim(),
     previewLabel: isChinese ? "名片预览" : "Card preview",
     previewMerchant: "faolla",
     previewContactName: "Felix",
@@ -288,9 +288,8 @@ export default function LoadingProgressScreen(props: LoadingProgressScreenProps)
                   <Image src="/faolla-login-logo.png" alt="Faolla logo" fill sizes="56px" className="object-cover" priority />
                 </div>
                 <div className="min-w-0">
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-cyan-100/76">Faolla</div>
-                  <div className="mt-1 text-xl font-semibold leading-tight text-white sm:text-2xl">{copy.statusTitle}</div>
-                  <div className="mt-1 text-xs font-medium text-slate-200/74 sm:text-sm">{copy.statusLine}</div>
+                  <div className="text-xl font-semibold leading-tight text-white sm:text-2xl">{copy.statusTitle}</div>
+                  {copy.statusLine ? <div className="mt-1 text-xs font-medium text-slate-200/74 sm:text-sm">{copy.statusLine}</div> : null}
                 </div>
               </div>
 
