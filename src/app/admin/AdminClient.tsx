@@ -10701,9 +10701,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
   useEffect(() => {
     if (isPlatformEditor || supportDataActivated) return;
-    if (checkingAuth || !hasEditorContent || backendNotice) return;
+    if (checkingAuth) return;
     setSupportDataActivated(true);
-  }, [backendNotice, checkingAuth, hasEditorContent, isPlatformEditor, supportDataActivated]);
+  }, [checkingAuth, isPlatformEditor, supportDataActivated]);
 
   useEffect(() => {
     if (isPlatformEditor || !isMobileMerchantSupportOnlyMode) return;
