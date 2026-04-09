@@ -4792,6 +4792,7 @@ export default function AdminClient({
   const supportLastVisibleMessageKeyRef = useRef("");
   const supportScrollToLatestPendingRef = useRef(false);
   const supportMobileSwipeStartRef = useRef<{ x: number; y: number; fromEdge: boolean } | null>(null);
+  const supportSelfSwipeStartRef = useRef<{ x: number; y: number; fromEdge: boolean } | null>(null);
   const merchantChatBusinessCardSyncTimerRef = useRef<number | null>(null);
   const merchantChatBusinessCardSyncPayloadRef = useRef("");
   const supportPeerProfileLoadingIdsRef = useRef(new Set<string>());
@@ -4879,6 +4880,34 @@ export default function AdminClient({
       }
     },
     [closeMobileSupportThread],
+  );
+  const handleSupportSelfSectionTouchStart = useCallback(
+    (event: TouchEvent<HTMLDivElement>) => {
+      if (supportSelfSectionView === "home") return;
+      const touch = event.touches[0];
+      if (!touch) return;
+      supportSelfSwipeStartRef.current = {
+        x: touch.clientX,
+        y: touch.clientY,
+        fromEdge: touch.clientX <= 36,
+      };
+    },
+    [supportSelfSectionView],
+  );
+  const handleSupportSelfSectionTouchEnd = useCallback(
+    (event: TouchEvent<HTMLDivElement>) => {
+      const start = supportSelfSwipeStartRef.current;
+      supportSelfSwipeStartRef.current = null;
+      if (!start?.fromEdge || supportSelfSectionView === "home") return;
+      const touch = event.changedTouches[0];
+      if (!touch) return;
+      const deltaX = touch.clientX - start.x;
+      const deltaY = touch.clientY - start.y;
+      if (deltaX >= 72 && Math.abs(deltaY) <= 64 && deltaX > Math.abs(deltaY) * 1.2) {
+        setSupportSelfSectionView("home");
+      }
+    },
+    [supportSelfSectionView],
   );
   const [merchantProfileAttention, setMerchantProfileAttention] = useState(false);
   const merchantProfileButtonRef = useRef<HTMLButtonElement>(null);
@@ -12674,7 +12703,14 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   );
 
   const supportMobileSelfContent = (
-    <>
+    <div
+      className="flex h-full min-h-0 flex-1 flex-col overflow-hidden"
+      onTouchStart={handleSupportSelfSectionTouchStart}
+      onTouchEnd={handleSupportSelfSectionTouchEnd}
+      onTouchCancel={() => {
+        supportSelfSwipeStartRef.current = null;
+      }}
+    >
       <div className="shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
         {supportSelfSectionView === "home" ? (
           <div className="flex flex-col items-center text-center">
@@ -13124,7 +13160,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           </div>
         )}
       </div>
-    </>
+    </div>
   );
 
   const supportMobileListTabContent =
