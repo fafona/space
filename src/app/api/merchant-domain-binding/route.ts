@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import type { MerchantContactVisibility, MerchantIndustry, SiteLocation } from "@/data/platformControlStore";
 import { readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
-import { normalizeMerchantProfileBindingPayload } from "@/lib/merchantProfileBinding";
+import {
+  getMerchantProfileContactNameError,
+  validateMerchantProfileBindingPayload,
+} from "@/lib/merchantProfileBinding";
 import {
   buildPlatformMerchantSnapshotSite,
   upsertPlatformMerchantSnapshotSite,
@@ -394,11 +397,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "invalid_json" }, { status: 400 });
   }
 
-  const normalizedPayload = normalizeMerchantProfileBindingPayload(body);
-  if (!normalizedPayload) {
-    return NextResponse.json({ error: "invalid_payload" }, { status: 400 });
+  const bindingValidation = validateMerchantProfileBindingPayload(body);
+  if (!bindingValidation.ok) {
+    return NextResponse.json({ error: "invalid_payload", message: bindingValidation.message }, { status: 400 });
   }
-  const { merchantId, domainPrefix, merchantName } = normalizedPayload;
+  const { merchantId, domainPrefix, merchantName } = bindingValidation.payload;
+  const contactName = normalizeText(body?.contactName);
+  const contactNameError = getMerchantProfileContactNameError(contactName);
+  if (contactNameError) {
+    return NextResponse.json({ error: "invalid_payload", message: contactNameError }, { status: 400 });
+  }
   const normalizedProfile = {
     signature:
       body && Object.prototype.hasOwnProperty.call(body, "signature")
@@ -406,7 +414,7 @@ export async function POST(request: Request) {
         : undefined,
     domain: normalizeText(body?.domain),
     contactAddress: normalizeText(body?.contactAddress),
-    contactName: normalizeText(body?.contactName),
+    contactName,
     contactPhone: normalizeText(body?.contactPhone),
     contactEmail: normalizeText(body?.contactEmail),
     industry: normalizeIndustry(body?.industry),

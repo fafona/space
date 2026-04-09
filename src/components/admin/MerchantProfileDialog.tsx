@@ -14,6 +14,17 @@ import {
   getEuropeProvinceOptions,
 } from "@/lib/europeLocationOptions";
 import { normalizeMerchantBusinessCards, type MerchantBusinessCardAsset } from "@/lib/merchantBusinessCards";
+import {
+  getMerchantProfileContactNameError,
+  getMerchantProfileDomainPrefixError,
+  getMerchantProfileMerchantNameError,
+  getUtf8ByteLength,
+  MERCHANT_PROFILE_CONTACT_NAME_MAX_BYTES,
+  MERCHANT_PROFILE_DOMAIN_PREFIX_MAX_BYTES,
+  MERCHANT_PROFILE_MERCHANT_NAME_MAX_BYTES,
+  normalizeMerchantProfileDomainPrefixInput,
+  truncateUtf8ByBytes,
+} from "@/lib/merchantProfileBinding";
 import { buildMerchantDomain, resolveMerchantRootHost } from "@/lib/siteRouting";
 import MerchantBusinessCardManager from "@/components/admin/MerchantBusinessCardManager";
 
@@ -329,15 +340,6 @@ export default function MerchantProfileDialog({
     return buildMerchantDomain(merchantRootHost, domainPrefixConfirmed)?.replace(/^https?:\/\//i, "") ?? merchantRootHost;
   }, [merchantRootHost, domainPrefixConfirmed]);
 
-  function normalizeDomainPrefix(value: string) {
-    return String(value ?? "")
-      .trim()
-      .toLowerCase()
-      .replace(/^\/+|\/+$/g, "")
-      .replace(/\s+/g, "-")
-      .replace(/[^a-z0-9_-]/g, "");
-  }
-
   const computeDomainSubmitCooldownLeftSec = useCallback(() => {
     const lastSubmitAt = readDomainSuffixLastSubmitAt(siteId);
     if (!lastSubmitAt) return 0;
@@ -371,15 +373,11 @@ export default function MerchantProfileDialog({
       setDomainPrefixMessage("");
       return;
     }
-    const normalized = normalizeDomainPrefix(domainPrefixInput);
-    if (!normalized) {
-      setDomainPrefixError("请输入有效前缀（仅支持字母、数字、-、_）");
-      setDomainPrefixMessage("");
-      setDomainPrefixConfirmed("");
-      return;
-    }
-    if (/^\d{8}$/.test(normalized)) {
-      setDomainPrefixError("前缀不能使用 8 位纯数字（该格式保留给后台地址）");
+    const normalized = normalizeMerchantProfileDomainPrefixInput(domainPrefixInput);
+    const prefixError = getMerchantProfileDomainPrefixError(normalized);
+    if (prefixError) {
+      setDomainPrefixInput(normalized);
+      setDomainPrefixError(prefixError);
       setDomainPrefixMessage("");
       setDomainPrefixConfirmed("");
       return;
@@ -467,6 +465,11 @@ export default function MerchantProfileDialog({
     () => provinceSelectOptions.find((item) => item.code === provinceCode)?.name ?? customProvinceName,
     [provinceSelectOptions, provinceCode, customProvinceName],
   );
+  const merchantNameBytes = useMemo(() => getUtf8ByteLength(merchantName.trim()), [merchantName]);
+  const merchantNameError = useMemo(() => getMerchantProfileMerchantNameError(merchantName), [merchantName]);
+  const domainPrefixBytes = useMemo(() => getUtf8ByteLength(domainPrefixInput.trim().toLowerCase()), [domainPrefixInput]);
+  const contactNameBytes = useMemo(() => getUtf8ByteLength(contactName.trim()), [contactName]);
+  const contactNameError = useMemo(() => getMerchantProfileContactNameError(contactName), [contactName]);
   const liveProfile = useMemo(
     () => ({
       merchantName: merchantName.trim(),
@@ -633,9 +636,19 @@ export default function MerchantProfileDialog({
           <input
             value={merchantName}
             placeholder="请输入商户名称"
-            onChange={(event) => setMerchantName(event.target.value)}
+            onChange={(event) =>
+              setMerchantName(truncateUtf8ByBytes(event.target.value, MERCHANT_PROFILE_MERCHANT_NAME_MAX_BYTES))
+            }
             className="w-full rounded border bg-white px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-200"
           />
+          <div className="mt-1 flex items-center justify-between gap-3 text-xs">
+            <span className={merchantNameError ? "text-rose-600" : "text-slate-500"}>
+              {merchantNameError || `最多 ${MERCHANT_PROFILE_MERCHANT_NAME_MAX_BYTES} 字节`}
+            </span>
+            <span className={merchantNameError ? "text-rose-600" : "text-slate-400"}>
+              {merchantNameBytes}/{MERCHANT_PROFILE_MERCHANT_NAME_MAX_BYTES}
+            </span>
+          </div>
         </div>
 
         <div>
@@ -643,10 +656,10 @@ export default function MerchantProfileDialog({
           <div className="flex items-center gap-2">
             <input
               value={domainPrefixInput}
-              placeholder="例如 merchant-a"
+              placeholder="例如 merchant01"
               onChange={(event) => {
-                setDomainPrefixInput(event.target.value);
-                const normalized = normalizeDomainPrefix(event.target.value);
+                const normalized = normalizeMerchantProfileDomainPrefixInput(event.target.value);
+                setDomainPrefixInput(normalized);
                 if (normalized !== domainPrefixConfirmed) {
                   setDomainPrefixMessage("");
                   setDomainPrefixError("");
@@ -668,6 +681,10 @@ export default function MerchantProfileDialog({
           {merchantRootHost ? (
             <div className="mt-1 text-xs text-slate-500">{`主域名：${merchantRootHost}`}</div>
           ) : null}
+          <div className="mt-1 flex items-center justify-between gap-3 text-xs text-slate-500">
+            <span>{`仅支持字母和数字，最多 ${MERCHANT_PROFILE_DOMAIN_PREFIX_MAX_BYTES} 字节`}</span>
+            <span>{domainPrefixBytes}/{MERCHANT_PROFILE_DOMAIN_PREFIX_MAX_BYTES}</span>
+          </div>
           {domainPrefixError ? <div className="mt-1 text-xs text-rose-600">{domainPrefixError}</div> : null}
           {domainPrefixMessage ? <div className="mt-1 text-xs text-emerald-600">{domainPrefixMessage}</div> : null}
         </div>
@@ -891,9 +908,19 @@ export default function MerchantProfileDialog({
             <input
               value={contactName}
               placeholder="请输入联系人"
-              onChange={(event) => setContactName(event.target.value)}
+              onChange={(event) =>
+                setContactName(truncateUtf8ByBytes(event.target.value, MERCHANT_PROFILE_CONTACT_NAME_MAX_BYTES))
+              }
               className="w-full rounded border bg-white px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-200"
             />
+            <div className="mt-1 flex items-center justify-between gap-3 text-xs">
+              <span className={contactNameError ? "text-rose-600" : "text-slate-500"}>
+                {contactNameError || `最多 ${MERCHANT_PROFILE_CONTACT_NAME_MAX_BYTES} 字节`}
+              </span>
+              <span className={contactNameError ? "text-rose-600" : "text-slate-400"}>
+                {contactNameBytes}/{MERCHANT_PROFILE_CONTACT_NAME_MAX_BYTES}
+              </span>
+            </div>
           </div>
           <div>
             <div className="mb-1 text-xs text-slate-600">电话</div>
@@ -949,8 +976,17 @@ export default function MerchantProfileDialog({
             className="rounded bg-black px-3 py-2 text-sm text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
             onClick={async () => {
               if (savePending) return;
+              if (merchantNameError || contactNameError) {
+                return;
+              }
               if (!domainPrefixConfirmed) {
                 setDomainPrefixError("请先提交并通过前缀校验");
+                setDomainPrefixMessage("");
+                return;
+              }
+              const confirmedDomainPrefixError = getMerchantProfileDomainPrefixError(domainPrefixConfirmed);
+              if (confirmedDomainPrefixError) {
+                setDomainPrefixError(confirmedDomainPrefixError);
                 setDomainPrefixMessage("");
                 return;
               }
@@ -992,7 +1028,7 @@ export default function MerchantProfileDialog({
                 setSavePending(false);
               }
             }}
-            disabled={savePending}
+            disabled={savePending || Boolean(merchantNameError) || Boolean(contactNameError)}
           >
             {savePending ? "保存中..." : "保存"}
           </button>
