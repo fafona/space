@@ -2416,6 +2416,7 @@ export default function SuperAdminClient() {
   }, [supportLastReadMap, supportThreads]);
   const supportHasUnreadThreads = supportUnreadMerchantIds.size > 0;
   const supportUnreadThreadCount = supportUnreadMerchantIds.size;
+  const superAdminTabBaseTitle = "Super Admin · FAOLLA";
   const selectedSupportMerchantMeta =
     [
       selectedSupportMerchantId !== "-" ? `ID ${selectedSupportMerchantId}` : "",
@@ -2505,6 +2506,16 @@ export default function SuperAdminClient() {
     : supportUnreadThreadCount > 0
       ? `${supportUnreadThreadCount} 个会话待处理`
       : `全部 ${supportListRows.length} 个会话已处理`;
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const nextTitle =
+      supportUnreadThreadCount > 0
+        ? `(${supportUnreadThreadCount}) ${superAdminTabBaseTitle}`
+        : superAdminTabBaseTitle;
+    if (document.title !== nextTitle) {
+      document.title = nextTitle;
+    }
+  }, [supportUnreadThreadCount]);
   const selectedMerchantDisplaySite = selectedMerchantRow?.site ?? null;
   const selectedMerchantSite =
     selectedMerchantRow?.hasLocalSite

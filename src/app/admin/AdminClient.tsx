@@ -9431,6 +9431,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     supportUnreadConversationCount > 0
       ? `${supportUnreadConversationCount} 个会话有新消息`
       : `全部 ${supportContactRows.length} 个会话已读`;
+  const merchantTabBaseTitle =
+    `${normalizeSupportDisplayValue(effectiveMerchantDisplayName || merchantDisplayName) || normalizeSupportDisplayValue(editingSiteId) || "FAOLLA"} · FAOLLA`;
   const showMobileSupportThread =
     isMobileSupportDialog &&
     supportMobileView === "thread" &&
@@ -9444,6 +9446,16 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       window.cancelAnimationFrame(rafId);
     };
   }, [resizeSupportComposerInput, showMobileSupportThread, supportDraft]);
+  useEffect(() => {
+    if (typeof document === "undefined" || isPlatformEditor) return;
+    const nextTitle =
+      supportUnreadConversationCount > 0
+        ? `(${supportUnreadConversationCount}) ${merchantTabBaseTitle}`
+        : merchantTabBaseTitle;
+    if (document.title !== nextTitle) {
+      document.title = nextTitle;
+    }
+  }, [isPlatformEditor, merchantTabBaseTitle, supportUnreadConversationCount]);
   const latestIncomingPeerMessageKey = useMemo(() => {
     let latestKey = "";
     let latestTimestamp = 0;
@@ -10681,6 +10693,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       cancelled = true;
     };
   }, [desktopMerchantWorkspaceActive, merchantDesktopSection]);
+
+  useEffect(() => {
+    if (isPlatformEditor || supportDataActivated) return;
+    setSupportDataActivated(true);
+  }, [isPlatformEditor, supportDataActivated]);
 
   useEffect(() => {
     if (isPlatformEditor || !isMobileMerchantSupportOnlyMode) return;
