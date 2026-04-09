@@ -12589,6 +12589,95 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     return createPortal(content, document.body);
   }
 
+  const dialogOverlay = dialog
+    ? renderTopMostOverlay(
+        <div data-editor-overlay className="fixed inset-0 z-[2147483650] bg-black/40 flex items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-xl border bg-white p-4 shadow-xl space-y-3">
+            <div className="text-base font-semibold">{dialog.title}</div>
+            <div className="text-sm text-gray-700 whitespace-pre-wrap">{dialog.message}</div>
+            <div className="flex justify-end gap-2 flex-wrap">
+              {dialog.type === "compression-preset" ? (
+                <>
+                  <button
+                    type="button"
+                    className={`px-3 py-2 rounded border text-sm ${
+                      dialog.currentPreset === "high" ? "bg-black text-white border-black" : "bg-white hover:bg-gray-50"
+                    }`}
+                    onClick={() => {
+                      if (dialog.type === "compression-preset") dialog.resolve("high");
+                      setDialog(null);
+                    }}
+                  >
+                    {"高质"}
+                  </button>
+                  <button
+                    type="button"
+                    className={`px-3 py-2 rounded border text-sm ${
+                      dialog.currentPreset === "balanced" ? "bg-black text-white border-black" : "bg-white hover:bg-gray-50"
+                    }`}
+                    onClick={() => {
+                      if (dialog.type === "compression-preset") dialog.resolve("balanced");
+                      setDialog(null);
+                    }}
+                  >
+                    {"平衡"}
+                  </button>
+                  <button
+                    type="button"
+                    className={`px-3 py-2 rounded border text-sm ${
+                      dialog.currentPreset === "compact" ? "bg-black text-white border-black" : "bg-white hover:bg-gray-50"
+                    }`}
+                    onClick={() => {
+                      if (dialog.type === "compression-preset") dialog.resolve("compact");
+                      setDialog(null);
+                    }}
+                  >
+                    {"压缩优先"}
+                  </button>
+                </>
+              ) : null}
+              {dialog.type === "confirm" ? (
+                <button
+                  type="button"
+                  className="px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm"
+                  onClick={() => {
+                    if (dialog.type === "confirm") dialog.resolve(false);
+                    setDialog(null);
+                  }}
+                >
+                  {"取消"}
+                </button>
+              ) : null}
+              {dialog.type === "compression-preset" ? (
+                <button
+                  type="button"
+                  className="px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm"
+                  onClick={() => {
+                    if (dialog.type === "compression-preset") dialog.resolve(null);
+                    setDialog(null);
+                  }}
+                >
+                  {"暂不切换"}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="px-3 py-2 rounded bg-black text-white text-sm"
+                onClick={() => {
+                  if (dialog.type === "alert") dialog.resolve();
+                  if (dialog.type === "confirm") dialog.resolve(true);
+                  if (dialog.type === "compression-preset") dialog.resolve(dialog.currentPreset);
+                  setDialog(null);
+                }}
+              >
+                {"确定"}
+              </button>
+            </div>
+          </div>
+        </div>,
+      )
+    : null;
+
   const supportSelfDomainPrefix =
     normalizeSupportDisplayValue(supportSelfProfile?.domainPrefix) ||
     normalizeSupportDisplayValue(supportSelfProfile?.domainSuffix) ||
@@ -14203,6 +14292,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               : null
           }
         />
+        {dialogOverlay}
         {tip ? (
           <div className="pointer-events-none fixed inset-0 z-[2147483500] flex items-center justify-center p-4">
             <div className="rounded-lg bg-black/85 px-4 py-2 text-sm text-white shadow-lg">{tip}</div>
@@ -15108,7 +15198,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             )}
           </div>
         {!topBarCollapsed ? (
-          isDesktopMerchantWorkspace && merchantDesktopSection !== "editor" && merchantDesktopSection !== "support" ? (
+          isDesktopMerchantWorkspace && merchantDesktopSection !== "editor" ? (
             <div className="border-t">
               <div className="w-full px-6 py-4">
                 <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
@@ -16503,94 +16593,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           )
         : null}
 
-      {dialog
-        ? renderTopMostOverlay(
-            <div data-editor-overlay className="fixed inset-0 z-[2147483650] bg-black/40 flex items-center justify-center p-4">
-              <div className="w-full max-w-md rounded-xl border bg-white p-4 shadow-xl space-y-3">
-                <div className="text-base font-semibold">{dialog.title}</div>
-                <div className="text-sm text-gray-700 whitespace-pre-wrap">{dialog.message}</div>
-                <div className="flex justify-end gap-2 flex-wrap">
-                  {dialog.type === "compression-preset" ? (
-                    <>
-                      <button
-                        type="button"
-                        className={`px-3 py-2 rounded border text-sm ${
-                          dialog.currentPreset === "high" ? "bg-black text-white border-black" : "bg-white hover:bg-gray-50"
-                        }`}
-                        onClick={() => {
-                          if (dialog.type === "compression-preset") dialog.resolve("high");
-                          setDialog(null);
-                        }}
-                      >
-                        {"高质"}
-                      </button>
-                      <button
-                        type="button"
-                        className={`px-3 py-2 rounded border text-sm ${
-                          dialog.currentPreset === "balanced" ? "bg-black text-white border-black" : "bg-white hover:bg-gray-50"
-                        }`}
-                        onClick={() => {
-                          if (dialog.type === "compression-preset") dialog.resolve("balanced");
-                          setDialog(null);
-                        }}
-                      >
-                        {"平衡"}
-                      </button>
-                      <button
-                        type="button"
-                        className={`px-3 py-2 rounded border text-sm ${
-                          dialog.currentPreset === "compact" ? "bg-black text-white border-black" : "bg-white hover:bg-gray-50"
-                        }`}
-                        onClick={() => {
-                          if (dialog.type === "compression-preset") dialog.resolve("compact");
-                          setDialog(null);
-                        }}
-                      >
-                        {"压缩优先"}
-                      </button>
-                    </>
-                  ) : null}
-                  {dialog.type === "confirm" ? (
-                    <button
-                      type="button"
-                      className="px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm"
-                      onClick={() => {
-                        if (dialog.type === "confirm") dialog.resolve(false);
-                        setDialog(null);
-                      }}
-                    >
-                      {"取消"}
-                    </button>
-                  ) : null}
-                  {dialog.type === "compression-preset" ? (
-                    <button
-                      type="button"
-                      className="px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm"
-                      onClick={() => {
-                        if (dialog.type === "compression-preset") dialog.resolve(null);
-                        setDialog(null);
-                      }}
-                    >
-                      {"暂不切换"}
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    className="px-3 py-2 rounded bg-black text-white text-sm"
-                    onClick={() => {
-                      if (dialog.type === "alert") dialog.resolve();
-                      if (dialog.type === "confirm") dialog.resolve(true);
-                      if (dialog.type === "compression-preset") dialog.resolve(dialog.currentPreset);
-                      setDialog(null);
-                    }}
-                  >
-                    {"确定"}
-                  </button>
-                </div>
-              </div>
-            </div>,
-          )
-        : null}
+      {dialogOverlay}
       {tip ? (
         <div className="fixed inset-0 z-[2147483500] pointer-events-none flex items-center justify-center p-4">
           <div className="px-4 py-2 rounded-lg bg-black/85 text-white text-sm shadow-lg">{tip}</div>
