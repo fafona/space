@@ -1,10 +1,10 @@
-﻿"use client";
+"use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { usePathname } from "next/navigation";
 import { useI18n } from "@/components/I18nProvider";
-import { resolveSupportedLocale } from "@/lib/i18n";
-import { LANGUAGE_OPTIONS } from "@/lib/i18n";
+import { LANGUAGE_OPTIONS, resolveSupportedLocale } from "@/lib/i18n";
 import { useHydrated } from "@/lib/useHydrated";
 
 function flagImageUrl(countryCode: string) {
@@ -16,7 +16,9 @@ export default function GlobalLanguageSwitcher() {
   const pathname = usePathname();
   const { locale, setLocale, t } = useI18n();
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
+  const [menuStyle, setMenuStyle] = useState<CSSProperties | null>(null);
   const inEditor = pathname.startsWith("/admin") || pathname.startsWith("/super-admin/editor");
   const resolvedLocale = useMemo(() => resolveSupportedLocale(locale), [locale]);
 
@@ -25,23 +27,21 @@ export default function GlobalLanguageSwitcher() {
     [resolvedLocale],
   );
   const asianOptions = useMemo(() => LANGUAGE_OPTIONS.filter((item) => item.region === "asia"), []);
-  const europeanOptions = useMemo(
-    () => {
-      const preferredCodes = ["en-GB", "es-ES"];
-      const europe = LANGUAGE_OPTIONS.filter((item) => item.region === "europe");
-      const preferred = preferredCodes
-        .map((code) => europe.find((item) => item.code === code))
-        .filter((item): item is (typeof LANGUAGE_OPTIONS)[number] => Boolean(item));
-      const rest = europe.filter((item) => !preferredCodes.includes(item.code));
-      return [...preferred, ...rest];
-    },
-    [],
-  );
+  const europeanOptions = useMemo(() => {
+    const preferredCodes = ["en-GB", "es-ES"];
+    const europe = LANGUAGE_OPTIONS.filter((item) => item.region === "europe");
+    const preferred = preferredCodes
+      .map((code) => europe.find((item) => item.code === code))
+      .filter((item): item is (typeof LANGUAGE_OPTIONS)[number] => Boolean(item));
+    const rest = europe.filter((item) => !preferredCodes.includes(item.code));
+    return [...preferred, ...rest];
+  }, []);
 
   useEffect(() => {
     if (!open) return;
     const onPointerDown = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) {
+      const target = event.target as Node;
+      if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) {
         setOpen(false);
       }
     };
@@ -56,37 +56,52 @@ export default function GlobalLanguageSwitcher() {
     };
   }, [open]);
 
+  useEffect(() => {
+    if (!open || !rootRef.current || typeof window === "undefined") return;
+
+    const updateMenuStyle = () => {
+      const triggerRect = rootRef.current?.getBoundingClientRect();
+      if (!triggerRect) return;
+
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+      const horizontalGap = viewportWidth >= 768 ? 20 : 12;
+      const verticalGap = 12;
+      const desiredWidth = Math.min(272, Math.max(220, viewportWidth - horizontalGap * 2));
+      const availableBelow = viewportHeight - triggerRect.bottom - verticalGap;
+      const availableAbove = triggerRect.top - verticalGap;
+      const openUpward = availableBelow < 260 && availableAbove > availableBelow;
+
+      setMenuStyle({
+        position: "fixed",
+        top: openUpward ? undefined : Math.max(verticalGap, triggerRect.bottom + 8),
+        bottom: openUpward ? Math.max(verticalGap, viewportHeight - triggerRect.top + 8) : undefined,
+        right: Math.max(horizontalGap, viewportWidth - triggerRect.right),
+        width: `${desiredWidth}px`,
+        maxHeight: `${Math.max(220, openUpward ? availableAbove : availableBelow)}px`,
+        zIndex: 2147483600,
+      });
+    };
+
+    updateMenuStyle();
+    window.addEventListener("resize", updateMenuStyle);
+    window.addEventListener("scroll", updateMenuStyle, true);
+    return () => {
+      window.removeEventListener("resize", updateMenuStyle);
+      window.removeEventListener("scroll", updateMenuStyle, true);
+    };
+  }, [open]);
+
   if (!hydrated) return null;
 
-  return (
-    <div
-      data-no-translate="1"
-      className={`pointer-events-none fixed right-3 z-[20010] md:right-5 ${
-        inEditor ? "top-[4.25rem] md:top-[4.5rem]" : "top-3 md:top-5"
-      }`}
-    >
-      <div ref={rootRef} className="pointer-events-auto relative">
-        <button
-          type="button"
-          className="flex items-center gap-0 rounded-lg border border-slate-300 bg-white/95 px-2 py-1.5 text-xs text-slate-800 shadow-md backdrop-blur hover:bg-white md:gap-2"
-          onClick={() => setOpen((prev) => !prev)}
-          aria-label={t("lang.placeholder")}
-          aria-expanded={open}
-        >
-          {/* 国旗来自第三方静态 CDN，小图标原样请求比接入 next/image 配置更轻。 */}
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={flagImageUrl(selected.countryCode)}
-            alt={selected.label}
-            width={16}
-            height={12}
-            className="rounded-[2px] border border-slate-200 object-cover"
-            loading="eager"
-          />
-          <span className="hidden md:inline">{selected.label}</span>
-        </button>
-        {open ? (
-          <div className="absolute right-0 mt-1 max-h-[60vh] w-[17rem] overflow-y-auto rounded-lg border border-slate-300 bg-white p-2 text-xs shadow-lg">
+  const menuContent =
+    open && menuStyle
+      ? createPortal(
+          <div
+            ref={menuRef}
+            style={menuStyle}
+            className="overflow-y-auto overscroll-contain rounded-xl border border-slate-300 bg-white p-2 text-xs shadow-[0_22px_60px_rgba(15,23,42,0.22)]"
+          >
             <div className="mb-1 px-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Asia</div>
             <div className="space-y-1">
               {asianOptions.map((item) => (
@@ -101,7 +116,6 @@ export default function GlobalLanguageSwitcher() {
                     setOpen(false);
                   }}
                 >
-                  {/* 国旗来自第三方静态 CDN，小图标原样请求比接入 next/image 配置更轻。 */}
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={flagImageUrl(item.countryCode)}
@@ -129,7 +143,6 @@ export default function GlobalLanguageSwitcher() {
                     setOpen(false);
                   }}
                 >
-                  {/* 国旗来自第三方静态 CDN，小图标原样请求比接入 next/image 配置更轻。 */}
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={flagImageUrl(item.countryCode)}
@@ -143,9 +156,39 @@ export default function GlobalLanguageSwitcher() {
                 </button>
               ))}
             </div>
-          </div>
-        ) : null}
+          </div>,
+          document.body,
+        )
+      : null;
+
+  return (
+    <div
+      data-no-translate="1"
+      className={`pointer-events-none fixed right-3 z-[20010] md:right-5 ${
+        inEditor ? "top-[4.25rem] md:top-[4.5rem]" : "top-3 md:top-5"
+      }`}
+    >
+      <div ref={rootRef} className="pointer-events-auto relative">
+        <button
+          type="button"
+          className="flex items-center gap-0 rounded-lg border border-slate-300 bg-white/95 px-2 py-1.5 text-xs text-slate-800 shadow-md backdrop-blur hover:bg-white md:gap-2"
+          onClick={() => setOpen((prev) => !prev)}
+          aria-label={t("lang.placeholder")}
+          aria-expanded={open}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={flagImageUrl(selected.countryCode)}
+            alt={selected.label}
+            width={16}
+            height={12}
+            className="rounded-[2px] border border-slate-200 object-cover"
+            loading="eager"
+          />
+          <span className="hidden md:inline">{selected.label}</span>
+        </button>
       </div>
+      {menuContent}
     </div>
   );
 }
