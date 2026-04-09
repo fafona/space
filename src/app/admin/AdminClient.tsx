@@ -9698,6 +9698,23 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     return navigator.serviceWorker.ready.catch(() => registration);
   }, []);
 
+  const syncCurrentSupportPushSubscriptionState = useCallback(async () => {
+    if (!canUseSupportPushInBrowser()) {
+      setSupportPushPermission("unsupported");
+      setSupportPushSubscribed(false);
+      setSupportPushEndpoint("");
+      return null;
+    }
+    const registration = await registerSupportPushServiceWorker();
+    if (!registration) return null;
+    const permissionState = Notification.permission;
+    const existingSubscription = await registration.pushManager.getSubscription().catch(() => null);
+    setSupportPushPermission(permissionState);
+    setSupportPushEndpoint(existingSubscription?.endpoint ?? "");
+    setSupportPushSubscribed(permissionState === "granted" && Boolean(existingSubscription?.endpoint));
+    return existingSubscription;
+  }, [registerSupportPushServiceWorker]);
+
   const ensureSupportPushSubscription = useCallback(
     async (options?: { requestPermission?: boolean }) => {
       if (!canUseSupportPushInBrowser()) {
@@ -11044,14 +11061,20 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }, [isPlatformEditor, supportDataActivated, supportUnreadBadgeCount]);
 
   useEffect(() => {
-    if (isPlatformEditor || !supportDataActivated || !supportSystemNotificationsEnabled) return;
+    if (isPlatformEditor) return;
+    void syncCurrentSupportPushSubscriptionState().catch(() => {
+      // Ignore push bootstrap failures during initial app load.
+    });
+  }, [isPlatformEditor, syncCurrentSupportPushSubscriptionState]);
+
+  useEffect(() => {
+    if (isPlatformEditor || !supportSystemNotificationsEnabled) return;
     void ensureSupportPushSubscription().catch(() => {
       // Ignore background subscription refresh failures.
     });
   }, [
     ensureSupportPushSubscription,
     isPlatformEditor,
-    supportDataActivated,
     supportPushPermission,
     supportSystemNotificationsEnabled,
   ]);
