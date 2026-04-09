@@ -13,7 +13,14 @@ type LoadingAction = {
   key: string;
   label: string;
   bgColor: string;
-  helper: string;
+  iconKind: "phone" | "map" | "image";
+  iconSrc?: string;
+};
+
+type LoadingContactRow = {
+  label: string;
+  value: string;
+  action?: LoadingAction;
 };
 
 type LoadingCopy = {
@@ -23,8 +30,8 @@ type LoadingCopy = {
   statusLine: string;
   previewLabel: string;
   previewMerchant: string;
-  previewMeta: string[];
-  actions: LoadingAction[];
+  previewContactName: string;
+  previewRows: LoadingContactRow[];
 };
 
 function isChineseLocale(locale?: string | null) {
@@ -86,33 +93,111 @@ function resolveLoadingCopy(props: LoadingProgressScreenProps): LoadingCopy {
 
   return {
     badge: "Faolla.com",
-    heroSubtitle: isChinese ? "电话、WhatsApp、地图，一步直达" : "Call, WhatsApp, and maps in one tap",
+    heroSubtitle: isChinese ? "电话、WhatsApp、TikTok、Twitter、地图，一步直达" : "Call, WhatsApp, TikTok, Twitter, and maps in one tap",
     statusTitle: props.statusTitle?.trim() || phase.title,
     statusLine: props.statusDescription?.trim() || phase.line,
     previewLabel: isChinese ? "名片预览" : "Card preview",
     previewMerchant: "faolla",
-    previewMeta: isChinese
-      ? ["联系人: Felix", "电话: +34 633130577", "地址: Sevilla / Spain"]
-      : ["Contact: Felix", "Phone: +34 633130577", "Sevilla / Spain"],
-    actions: isChinese
+    previewContactName: "Felix",
+    previewRows: isChinese
       ? [
-          { key: "phone", label: "电话", bgColor: "#007AFF", helper: "+34 633..." },
-          { key: "whatsapp", label: "打开 WhatsApp", bgColor: "#25D366", helper: "WhatsApp" },
-          { key: "map", label: "导航", bgColor: "#EA4335", helper: "Sevilla" },
+          {
+            label: "电话",
+            value: "+34 633130577",
+            action: { key: "phone", label: "拨号", bgColor: "#007AFF", iconKind: "phone" },
+          },
+          {
+            label: "WhatsApp",
+            value: "+34 633130577",
+            action: {
+              key: "whatsapp",
+              label: "打开 WhatsApp",
+              bgColor: "#25D366",
+              iconKind: "image",
+              iconSrc: "/social-icons/whatsapp.svg",
+            },
+          },
+          {
+            label: "TikTok",
+            value: "@faolla",
+            action: {
+              key: "tiktok",
+              label: "打开 TikTok",
+              bgColor: "#161823",
+              iconKind: "image",
+              iconSrc: "/social-icons/tiktok.svg",
+            },
+          },
+          {
+            label: "Twitter",
+            value: "@faolla",
+            action: {
+              key: "twitter",
+              label: "打开 Twitter",
+              bgColor: "#111827",
+              iconKind: "image",
+              iconSrc: "/social-icons/twitter.svg",
+            },
+          },
+          {
+            label: "地址",
+            value: "Sevilla / Spain",
+            action: { key: "map", label: "导航", bgColor: "#EA4335", iconKind: "map" },
+          },
         ]
       : [
-          { key: "phone", label: "Call", bgColor: "#007AFF", helper: "+34 633..." },
-          { key: "whatsapp", label: "Open WhatsApp", bgColor: "#25D366", helper: "WhatsApp" },
-          { key: "map", label: "Navigate", bgColor: "#EA4335", helper: "Sevilla" },
+          {
+            label: "Phone",
+            value: "+34 633130577",
+            action: { key: "phone", label: "Call", bgColor: "#007AFF", iconKind: "phone" },
+          },
+          {
+            label: "WhatsApp",
+            value: "+34 633130577",
+            action: {
+              key: "whatsapp",
+              label: "Open WhatsApp",
+              bgColor: "#25D366",
+              iconKind: "image",
+              iconSrc: "/social-icons/whatsapp.svg",
+            },
+          },
+          {
+            label: "TikTok",
+            value: "@faolla",
+            action: {
+              key: "tiktok",
+              label: "Open TikTok",
+              bgColor: "#161823",
+              iconKind: "image",
+              iconSrc: "/social-icons/tiktok.svg",
+            },
+          },
+          {
+            label: "Twitter",
+            value: "@faolla",
+            action: {
+              key: "twitter",
+              label: "Open Twitter",
+              bgColor: "#111827",
+              iconKind: "image",
+              iconSrc: "/social-icons/twitter.svg",
+            },
+          },
+          {
+            label: "Address",
+            value: "Sevilla / Spain",
+            action: { key: "map", label: "Navigate", bgColor: "#EA4335", iconKind: "map" },
+          },
         ],
   };
 }
 
-function ActionIcon(props: { actionKey: string }) {
-  if (props.actionKey === "whatsapp") {
+function ActionIcon(props: { action: LoadingAction }) {
+  if (props.action.iconKind === "image" && props.action.iconSrc) {
     return (
       <Image
-        src="/social-icons/whatsapp.svg"
+        src={props.action.iconSrc}
         alt=""
         width={18}
         height={18}
@@ -121,7 +206,7 @@ function ActionIcon(props: { actionKey: string }) {
     );
   }
 
-  if (props.actionKey === "map") {
+  if (props.action.iconKind === "map") {
     return (
       <svg viewBox="0 0 24 24" aria-hidden="true" className="h-[18px] w-[18px] fill-white">
         <path d="M12 2a7 7 0 0 0-7 7c0 4.74 6.14 11.84 6.4 12.14a.8.8 0 0 0 1.2 0C12.86 20.84 19 13.74 19 9a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5z" />
@@ -151,24 +236,27 @@ function LoadingCardPreview(props: { copy: LoadingCopy }) {
         </div>
       </div>
 
-      <div className="mt-4 space-y-1.5 text-sm leading-6 text-slate-700">
-        {copy.previewMeta.map((line) => (
-          <div key={line}>{line}</div>
-        ))}
+      <div className="mt-4 text-sm leading-6 text-slate-700">
+        <div className="text-slate-900">联系人: {copy.previewContactName}</div>
       </div>
 
-      <div className="mt-5 flex flex-wrap gap-3">
-        {copy.actions.map((action) => (
-          <div key={action.key} className="inline-flex items-center gap-2">
-            <div
-              aria-label={action.label}
-              title={action.label}
-              className="inline-flex h-[34px] w-[34px] items-center justify-center rounded-full shadow-[0_8px_20px_rgba(15,23,42,0.14)]"
-              style={{ background: action.bgColor }}
-            >
-              <ActionIcon actionKey={action.key} />
+      <div className="mt-4 space-y-3">
+        {copy.previewRows.map((row) => (
+          <div key={`${row.label}-${row.value}`} className="flex items-center justify-between gap-3">
+            <div className="min-w-0 text-sm leading-6 text-slate-700">
+              <span className="font-medium text-slate-900">{row.label}: </span>
+              <span className="break-all">{row.value}</span>
             </div>
-            <div className="text-[11px] font-medium text-slate-500">{action.helper}</div>
+            {row.action ? (
+              <div
+                aria-label={row.action.label}
+                title={row.action.label}
+                className="inline-flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-full shadow-[0_8px_20px_rgba(15,23,42,0.14)]"
+                style={{ background: row.action.bgColor }}
+              >
+                <ActionIcon action={row.action} />
+              </div>
+            ) : null}
           </div>
         ))}
       </div>
@@ -193,7 +281,7 @@ export default function LoadingProgressScreen(props: LoadingProgressScreenProps)
         </div>
 
         <div className="flex flex-1 items-center py-4 sm:py-6">
-          <div className="w-full rounded-[28px] border border-white/14 bg-[linear-gradient(180deg,_rgba(8,17,33,0.54)_0%,_rgba(15,23,42,0.34)_100%)] p-5 shadow-[0_24px_60px_rgba(8,17,33,0.26)] backdrop-blur sm:p-6 lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(320px,380px)] lg:gap-8 lg:items-center">
+          <div className="w-full rounded-[28px] border border-white/14 bg-[linear-gradient(180deg,_rgba(8,17,33,0.54)_0%,_rgba(15,23,42,0.34)_100%)] p-5 shadow-[0_24px_60px_rgba(8,17,33,0.26)] backdrop-blur sm:p-6 lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(320px,400px)] lg:gap-8 lg:items-center">
             <div>
               <div className="flex items-center gap-3">
                 <div className="relative h-14 w-14 overflow-hidden rounded-[20px] border border-white/16 bg-white/14 shadow-[0_16px_40px_rgba(8,17,33,0.28)]">
