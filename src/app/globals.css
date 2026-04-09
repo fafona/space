@@ -170,3 +170,18 @@ html[data-i18n-pending="1"] body {
 .support-mobile-sheet.support-mobile-dark textarea::placeholder {
   color: #64748b !important;
 }
+
+.support-mobile-shell.support-mobile-dark .support-mobile-switch-track[aria-checked="true"] {
+  background-color: #22c55e !important;
+}
+
+.support-mobile-shell.support-mobile-dark .support-mobile-switch-track[aria-checked="false"] {
+  background-color: #475569 !important;
+}
+
+.support-mobile-shell.support-mobile-dark .support-mobile-switch-thumb {
+  background-color: #ffffff !important;
+  box-shadow:
+    0 2px 8px rgba(15, 23, 42, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9) !important;
+}

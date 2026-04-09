@@ -13382,14 +13382,14 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       type="button"
                       role="switch"
                       aria-checked={item.checked}
-                      className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition ${
+                      className={`support-mobile-switch-track relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition ${
                         item.checked ? "bg-slate-900" : "bg-slate-200"
                       } ${item.disabled ? "opacity-45" : ""}`}
                       onClick={item.onToggle}
                       disabled={item.disabled}
                     >
                       <span
-                        className={`inline-block h-5 w-5 rounded-full bg-white shadow-sm transition ${
+                        className={`support-mobile-switch-thumb inline-block h-5 w-5 rounded-full bg-white shadow-sm transition ${
                           item.checked ? "translate-x-6" : "translate-x-1"
                         }`}
                       />
