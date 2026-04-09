@@ -4170,6 +4170,14 @@ function hasSupportMerchantProfileCoverage(profile: MerchantListPublishedSite | 
   );
 }
 
+function hasSupportMerchantAvatarCoverage(profile: MerchantListPublishedSite | null | undefined) {
+  if (!profile) return false;
+  return Boolean(
+    normalizeSupportDisplayValue(profile.chatAvatarImageUrl) ||
+      normalizeSupportDisplayValue(profile.merchantCardImageUrl),
+  );
+}
+
 const SUPPORT_MERCHANT_PROFILE_REFRESH_TTL_MS = 1_000;
 
 function readMobileVisualViewportInsets() {
@@ -10848,6 +10856,73 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     setSupportMerchantInfoSheetOpen(false);
     setSupportMobileView("list");
   }, [isDesktopEditorSidebar, isMobileMerchantSupportOnlyMode, supportInterfaceOpen]);
+
+  useEffect(() => {
+    if (isPlatformEditor || !supportInterfaceOpen || supportPeerContacts.length === 0) return;
+    const merchantIdsToWarm = Array.from(
+      new Set(
+        supportPeerContacts
+          .map((contact) => contact.merchantId.trim())
+          .filter((merchantId) => /^\d{8}$/.test(merchantId)),
+      ),
+    ).filter((merchantId) => {
+      const localSite = supportPeerSiteByMerchantId.get(merchantId) ?? null;
+      const localProfile = localSite ? buildSupportPublishedProfileFromSite(localSite) : null;
+      const fetchedProfile = Object.prototype.hasOwnProperty.call(supportPeerProfilesByMerchantId, merchantId)
+        ? supportPeerProfilesByMerchantId[merchantId]
+        : undefined;
+      const mergedProfile = fetchedProfile ?? localProfile ?? null;
+      if (hasSupportMerchantAvatarCoverage(mergedProfile)) return false;
+      const lastFetchedAt = supportPeerProfileFetchedAtRef.current[merchantId] ?? 0;
+      if (Date.now() - lastFetchedAt < SUPPORT_MERCHANT_PROFILE_REFRESH_TTL_MS) return false;
+      if (supportPeerProfileLoadingIdsRef.current.has(merchantId)) return false;
+      return true;
+    });
+    if (merchantIdsToWarm.length === 0) return;
+
+    let cancelled = false;
+    merchantIdsToWarm.forEach((merchantId) => {
+      supportPeerProfileLoadingIdsRef.current.add(merchantId);
+      void (async () => {
+        try {
+          const response = await requestMerchantChatBusinessCardById(merchantId, {
+            cache: "no-store",
+          });
+          const payload = (await response.json().catch(() => null)) as
+            | {
+                profile?: MerchantListPublishedSite | null;
+                chatBusinessCard?: MerchantBusinessCardAsset | null;
+              }
+            | null;
+          if (cancelled || !response.ok) return;
+          supportPeerProfileFetchedAtRef.current[merchantId] = Date.now();
+          setSupportPeerProfilesByMerchantId((current) => ({
+            ...current,
+            [merchantId]: payload?.profile ?? null,
+          }));
+          setSupportPeerBusinessCardByMerchantId((current) => ({
+            ...current,
+            [merchantId]: payload?.chatBusinessCard ?? payload?.profile?.chatBusinessCard ?? null,
+          }));
+        } catch {
+          if (cancelled) return;
+        } finally {
+          supportPeerProfileLoadingIdsRef.current.delete(merchantId);
+        }
+      })();
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    isPlatformEditor,
+    requestMerchantChatBusinessCardById,
+    supportInterfaceOpen,
+    supportPeerContacts,
+    supportPeerProfilesByMerchantId,
+    supportPeerSiteByMerchantId,
+  ]);
 
   useEffect(() => {
     if (isPlatformEditor || !supportInterfaceOpen || !isMobileSupportDialog || supportMobileHomeTab !== "self") return;
