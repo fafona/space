@@ -4839,6 +4839,7 @@ export default function AdminClient({
   const supportScrollToLatestPendingRef = useRef(false);
   const supportMobileSwipeStartRef = useRef<{ x: number; y: number; fromEdge: boolean } | null>(null);
   const supportSelfSwipeStartRef = useRef<{ x: number; y: number; fromEdge: boolean } | null>(null);
+  const supportSelfScrollContainerRef = useRef<HTMLDivElement>(null);
   const merchantChatBusinessCardSyncTimerRef = useRef<number | null>(null);
   const merchantChatBusinessCardSyncPayloadRef = useRef("");
   const supportPeerProfileLoadingIdsRef = useRef(new Set<string>());
@@ -9742,6 +9743,17 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
   }, [supportMobileHomeTab]);
 
+  useEffect(() => {
+    const container = supportSelfScrollContainerRef.current;
+    if (!container) return;
+    const frame = window.requestAnimationFrame(() => {
+      container.scrollTop = 0;
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [supportSelfSectionView]);
+
   const requestMerchantPushWithSessionRecovery = useCallback(
     (init: RequestInit) => {
       const params = new URLSearchParams();
@@ -13212,7 +13224,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           </div>
         )}
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(env(safe-area-inset-bottom)+6.75rem)] pt-4">
+      <div
+        ref={supportSelfScrollContainerRef}
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(env(safe-area-inset-bottom)+6.75rem)] pt-4"
+      >
         <input
           ref={supportSelfAvatarInputRef}
           className="hidden"
