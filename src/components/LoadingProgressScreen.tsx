@@ -27,7 +27,7 @@ export default function LoadingProgressScreen(props: LoadingProgressScreenProps)
           src={desktopSrc}
           alt={alt}
           draggable={false}
-          className="h-full w-full select-none object-contain"
+          className="h-full w-full select-none object-cover"
         />
       </picture>
     </main>
