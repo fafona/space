@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import type { ReactNode } from "react";
 
 type LoadingProgressScreenProps = {
@@ -23,8 +24,54 @@ function isChineseLocale(locale?: string | null) {
   return (locale ?? "").trim().toLowerCase().startsWith("zh");
 }
 
-function isEnglishLocale(locale?: string | null) {
-  return (locale ?? "").trim().toLowerCase().startsWith("en");
+function resolveWelcomeHeadline(locale?: string | null, fallback?: string) {
+  const normalized = (locale ?? "").trim().toLowerCase();
+  const byLanguage: Record<string, string> = {
+    zh: "欢迎使用 FAOLLA 愿您生意兴隆！",
+    ja: "FAOLLAへようこそ ご商売の繁盛をお祈りします！",
+    ko: "FAOLLA에 오신 것을 환영합니다. 번창을 기원합니다!",
+    en: "Welcome to FAOLLA. Wishing you a thriving business!",
+    es: "Bienvenido a FAOLLA. ¡Que tu negocio prospere!",
+    fr: "Bienvenue sur FAOLLA. Nous vous souhaitons une activité prospère !",
+    de: "Willkommen bei FAOLLA. Viel Erfolg für Ihr Geschäft!",
+    tr: "FAOLLA'ya hoş geldiniz. İşinizin gelişmesini dileriz!",
+    it: "Benvenuto su FAOLLA. Ti auguriamo un'attività prospera!",
+    pl: "Witamy w FAOLLA. Życzymy pomyślnego rozwoju Twojego biznesu!",
+    uk: "Ласкаво просимо до FAOLLA. Бажаємо процвітання вашому бізнесу!",
+    nl: "Welkom bij FAOLLA. We wensen je veel succes met je bedrijf!",
+    ro: "Bine ai venit la FAOLLA. Îți dorim o afacere prosperă!",
+    pt: "Bem-vindo à FAOLLA. Desejamos muito sucesso ao seu negócio!",
+    ru: "Добро пожаловать в FAOLLA. Желаем процветания вашему бизнесу!",
+    el: "Καλώς ήρθατε στη FAOLLA. Ευχόμαστε ευημερία στην επιχείρησή σας!",
+    cs: "Vítejte ve FAOLLA. Přejeme vašemu podnikání mnoho úspěchů!",
+    sv: "Välkommen till FAOLLA. Vi önskar ditt företag stor framgång!",
+    hu: "Üdvözöljük a FAOLLA oldalán. Sok sikert kívánunk vállalkozásához!",
+    be: "Сардэчна запрашаем у FAOLLA. Жадаем росквіту вашаму бізнесу!",
+    bg: "Добре дошли във FAOLLA. Пожелаваме успех на вашия бизнес!",
+    sr: "Dobro došli na FAOLLA. Želimo vam uspešno poslovanje!",
+    da: "Velkommen til FAOLLA. Vi ønsker din forretning stor succes!",
+    fi: "Tervetuloa FAOLLAan. Toivotamme yrityksellesi menestystä!",
+    sk: "Vitajte vo FAOLLA. Prajeme vášmu podnikaniu veľa úspechov!",
+    no: "Velkommen til FAOLLA. Vi ønsker bedriften din stor suksess!",
+    hr: "Dobro došli u FAOLLA. Želimo vam uspješno poslovanje!",
+    bs: "Dobro došli na FAOLLA. Želimo vam uspješno poslovanje!",
+    sq: "Mirë se vini në FAOLLA. Ju urojmë mbarësi në biznesin tuaj!",
+    lt: "Sveiki atvykę į FAOLLA. Linkime jūsų verslui klestėjimo!",
+    sl: "Dobrodošli v FAOLLA. Želimo vam uspešno poslovanje!",
+    lv: "Laipni lūdzam FAOLLA. Vēlam jūsu biznesam izaugsmi!",
+    et: "Tere tulemast FAOLLA-sse. Soovime teie ettevõttele edu!",
+    mk: "Добредојдовте во FAOLLA. Ви посакуваме успешен бизнис!",
+    ca: "Benvingut a FAOLLA. Et desitgem molta prosperitat!",
+    eu: "Ongi etorri FAOLLAra. Zure negozioari oparotasuna opa dizugu!",
+    gl: "Benvido a FAOLLA. Desexámosche un negocio próspero!",
+    cy: "Croeso i FAOLLA. Dymunwn fusnes lwyddiannus i chi!",
+    is: "Velkomin til FAOLLA. Við óskum fyrirtækinu þínu mikillar velgengni!",
+    ga: "Fáilte go FAOLLA. Guímid rath ar do ghnó!",
+    mt: "Merħba f'FAOLLA. Nawguraw prosperità lin-negozju tiegħek!",
+    lb: "Wëllkomm bei FAOLLA. Mir wënschen Ärem Geschäft vill Erfolleg!",
+  };
+  const subtag = normalized.split("-")[0] ?? "";
+  return byLanguage[subtag] ?? fallback?.trim() ?? byLanguage.en;
 }
 
 function PhoneGlyph() {
@@ -46,12 +93,10 @@ function MapGlyph() {
 export default function LoadingProgressScreen(props: LoadingProgressScreenProps) {
   const locale = (props.locale ?? "").trim().toLowerCase();
   const isChinese = isChineseLocale(locale);
-  const isEnglish = isEnglishLocale(locale);
   const desktopSrc = isChinese ? "/loading-progress-desktop-zh.webp" : "/loading-progress-desktop-en.webp";
   const mobileSrc = isChinese ? "/loading-progress-mobile-zh.webp" : "/loading-progress-mobile-en.webp";
   const alt = "FAOLLA merchant workspace welcome poster";
-  const headline = props.statusTitle?.trim();
-  const showHeadline = Boolean(headline) && (isChinese || isEnglish);
+  const headline = resolveWelcomeHeadline(locale, props.statusTitle);
   const contactItems: ContactPreviewItem[] = [
     { key: "phone", value: "+34 633130577", iconColor: "#1B78FF", iconNode: <PhoneGlyph /> },
     { key: "whatsapp", value: "+34 633130577", iconSrc: "/social-icons/whatsapp.svg", iconColor: "#25D366" },
@@ -62,19 +107,22 @@ export default function LoadingProgressScreen(props: LoadingProgressScreenProps)
 
   return (
     <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#081121]">
-      <picture className="block h-screen w-screen">
-        <source media="(max-width: 768px)" srcSet={mobileSrc} />
-        <img
-          src={desktopSrc}
-          alt={alt}
-          draggable={false}
-          className="h-full w-full select-none object-cover"
-        />
-      </picture>
+      <div className="absolute inset-0 overflow-hidden">
+        <picture className="block h-screen w-screen opacity-28 blur-[2px] saturate-[0.92]">
+          <source media="(max-width: 768px)" srcSet={mobileSrc} />
+          <img
+            src={desktopSrc}
+            alt={alt}
+            draggable={false}
+            className="h-full w-full scale-[1.02] select-none object-cover"
+          />
+        </picture>
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(103,232,249,0.16),_transparent_26%),radial-gradient(circle_at_82%_18%,_rgba(45,212,191,0.12),_transparent_24%),linear-gradient(180deg,rgba(8,17,33,0.52)_0%,rgba(8,17,33,0.62)_42%,rgba(7,16,33,0.78)_100%)]" />
+      </div>
 
       <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-4 sm:p-6">
         <div className="grid w-full max-w-[1620px] gap-4 lg:grid-cols-[minmax(0,1.08fr)_minmax(460px,0.92fr)] lg:gap-8">
-          <div className="hidden rounded-[36px] border border-white/12 bg-[#0d1830]/80 p-8 text-white shadow-[0_24px_64px_rgba(8,17,33,0.22)] backdrop-blur-sm lg:flex lg:min-h-[470px] lg:flex-col lg:justify-between">
+          <div className="hidden rounded-[36px] border border-white/12 bg-[#0d1830]/92 p-8 text-white shadow-[0_24px_64px_rgba(8,17,33,0.22)] backdrop-blur-sm lg:flex lg:min-h-[470px] lg:flex-col lg:justify-between">
             <div className="inline-flex items-center gap-3 rounded-full border border-white/12 bg-white/8 px-4 py-2 text-[12px] font-semibold uppercase tracking-[0.26em] text-cyan-50/88">
               <span className="h-2 w-2 rounded-full bg-emerald-300" />
               FAOLLA.COM
@@ -82,15 +130,11 @@ export default function LoadingProgressScreen(props: LoadingProgressScreenProps)
             <div className="space-y-6">
               <div className="flex items-center gap-5">
                 <div className="flex h-[88px] w-[88px] items-center justify-center overflow-hidden rounded-[28px] bg-white/12 shadow-[0_22px_46px_rgba(8,17,33,0.24)] backdrop-blur">
-                  <img src="/faolla-app-icon-192.png" alt="" className="h-full w-full object-cover" />
+                  <Image src="/faolla-app-icon-192.png" alt="" width={88} height={88} className="h-full w-full object-cover" unoptimized />
                 </div>
                 <div className="space-y-3">
                   <div className="text-sm font-semibold uppercase tracking-[0.34em] text-cyan-50/62">FAOLLA</div>
-                  {showHeadline ? (
-                    <div className="max-w-[34rem] text-4xl font-semibold leading-tight text-white">{headline}</div>
-                  ) : (
-                    <div className="text-4xl font-semibold tracking-tight text-white">FAOLLA</div>
-                  )}
+                  <div className="max-w-[34rem] text-4xl font-semibold leading-tight text-white">{headline}</div>
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-3">
@@ -111,7 +155,7 @@ export default function LoadingProgressScreen(props: LoadingProgressScreenProps)
             </div>
           </div>
 
-          <div className="hidden rounded-[36px] border border-white/18 bg-[rgba(247,250,255,0.96)] p-8 text-slate-900 shadow-[0_30px_70px_rgba(8,17,33,0.22)] backdrop-blur lg:flex lg:min-h-[470px] lg:flex-col">
+          <div className="hidden rounded-[36px] border border-white/18 bg-[rgba(247,250,255,0.985)] p-8 text-slate-900 shadow-[0_30px_70px_rgba(8,17,33,0.22)] backdrop-blur lg:flex lg:min-h-[470px] lg:flex-col">
             <div className="flex items-start justify-between gap-6">
               <div className="space-y-4">
                 <div className="text-[15px] font-semibold uppercase tracking-[0.22em] text-slate-300">faolla</div>
@@ -119,7 +163,7 @@ export default function LoadingProgressScreen(props: LoadingProgressScreenProps)
                 <div className="text-2xl font-medium text-slate-700">Felix</div>
               </div>
               <div className="flex h-[78px] w-[78px] items-center justify-center overflow-hidden rounded-[24px] bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(235,244,255,0.88))] shadow-[0_18px_40px_rgba(15,23,42,0.12)]">
-                <img src="/faolla-app-icon-192.png" alt="" className="h-full w-full object-cover" />
+                <Image src="/faolla-app-icon-192.png" alt="" width={78} height={78} className="h-full w-full object-cover" unoptimized />
               </div>
             </div>
             <div className="mt-8 flex-1 space-y-5">
@@ -149,21 +193,17 @@ export default function LoadingProgressScreen(props: LoadingProgressScreenProps)
             </div>
           </div>
 
-          <div className="rounded-[30px] border border-white/12 bg-[#0d1830]/82 p-5 text-white shadow-[0_24px_54px_rgba(8,17,33,0.24)] backdrop-blur lg:hidden">
+          <div className="rounded-[30px] border border-white/12 bg-[#0d1830]/94 p-5 text-white shadow-[0_24px_54px_rgba(8,17,33,0.24)] backdrop-blur lg:hidden">
             <div className="flex items-center gap-4">
               <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-[20px] bg-white/12 shadow-[0_16px_32px_rgba(8,17,33,0.2)]">
-                <img src="/faolla-app-icon-192.png" alt="" className="h-full w-full object-cover" />
+                <Image src="/faolla-app-icon-192.png" alt="" width={64} height={64} className="h-full w-full object-cover" unoptimized />
               </div>
               <div className="min-w-0 flex-1">
                 <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-cyan-50/65">FAOLLA</div>
-                {showHeadline ? (
-                  <div className="mt-2 text-[26px] font-semibold leading-[1.15] text-white">{headline}</div>
-                ) : (
-                  <div className="mt-2 text-[26px] font-semibold tracking-tight text-white">FAOLLA</div>
-                )}
+                <div className="mt-2 text-[26px] font-semibold leading-[1.15] text-white">{headline}</div>
               </div>
             </div>
-            <div className="mt-5 rounded-[26px] border border-white/16 bg-[rgba(247,250,255,0.96)] p-4 text-slate-900 shadow-[0_22px_40px_rgba(8,17,33,0.2)]">
+            <div className="mt-5 rounded-[26px] border border-white/16 bg-[rgba(247,250,255,0.985)] p-4 text-slate-900 shadow-[0_22px_40px_rgba(8,17,33,0.2)]">
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-300">faolla</div>
@@ -171,7 +211,7 @@ export default function LoadingProgressScreen(props: LoadingProgressScreenProps)
                   <div className="mt-2 text-lg font-medium text-slate-700">Felix</div>
                 </div>
                 <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-[18px] bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(235,244,255,0.88))] shadow-[0_12px_24px_rgba(15,23,42,0.12)]">
-                  <img src="/faolla-app-icon-192.png" alt="" className="h-full w-full object-cover" />
+                  <Image src="/faolla-app-icon-192.png" alt="" width={56} height={56} className="h-full w-full object-cover" unoptimized />
                 </div>
               </div>
               <div className="mt-5 space-y-3">
