@@ -1,6 +1,8 @@
 const FAOLLA_BADGE_CACHE = "faolla-badge-state-v1";
 const FAOLLA_BADGE_STATE_URL = "/__faolla_badge_state__";
+const FAOLLA_VISIBILITY_STATE_URL = "/__faolla_visibility_state__";
 const FAOLLA_DEFAULT_ICON = "/faolla-app-icon-192.png";
+const FAOLLA_VISIBLE_STATE_TTL_MS = 20_000;
 
 self.addEventListener("install", (event) => {
   event.waitUntil(self.skipWaiting());
@@ -43,6 +45,43 @@ async function writeBadgeCount(count) {
   }
 }
 
+async function readVisibilityState() {
+  try {
+    const cache = await caches.open(FAOLLA_BADGE_CACHE);
+    const response = await cache.match(FAOLLA_VISIBILITY_STATE_URL);
+    if (!response) return null;
+    const payload = await response.json().catch(() => null);
+    if (!payload || typeof payload !== "object") return null;
+    const visible = payload.visible === true;
+    const updatedAt = Number(payload.updatedAt ?? 0);
+    if (!Number.isFinite(updatedAt) || updatedAt <= 0) return null;
+    return { visible, updatedAt };
+  } catch {
+    return null;
+  }
+}
+
+async function writeVisibilityState(visible) {
+  try {
+    const cache = await caches.open(FAOLLA_BADGE_CACHE);
+    const payload = JSON.stringify({
+      visible: visible === true,
+      updatedAt: Date.now(),
+    });
+    await cache.put(
+      FAOLLA_VISIBILITY_STATE_URL,
+      new Response(payload, {
+        headers: {
+          "content-type": "application/json",
+          "cache-control": "no-store",
+        },
+      }),
+    );
+  } catch {
+    // Ignore visibility state persistence failures.
+  }
+}
+
 async function applyBadgeCount(count) {
   const nextCount = Math.max(0, Math.min(999, Math.round(Number(count) || 0)));
   const workerNavigator = self.navigator;
@@ -78,10 +117,18 @@ self.addEventListener("message", (event) => {
   }
   if (data.type === "CLEAR_BADGE") {
     event.waitUntil(syncBadgeCount(0));
+    return;
+  }
+  if (data.type === "SYNC_VISIBILITY") {
+    event.waitUntil(writeVisibilityState(data.visible));
   }
 });
 
 async function shouldShowNotification() {
+  const visibilityState = await readVisibilityState();
+  if (visibilityState && Date.now() - visibilityState.updatedAt <= FAOLLA_VISIBLE_STATE_TTL_MS) {
+    return !visibilityState.visible;
+  }
   try {
     const clients = await self.clients.matchAll({
       type: "window",

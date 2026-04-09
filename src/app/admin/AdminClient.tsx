@@ -4384,6 +4384,17 @@ async function syncSupportServiceWorkerBadge(unreadCount: number) {
   });
 }
 
+async function syncSupportServiceWorkerVisibility(visible: boolean) {
+  if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
+  const registration = await navigator.serviceWorker.getRegistration().catch(() => null);
+  const target = registration?.active ?? registration?.waiting ?? registration?.installing ?? navigator.serviceWorker.controller;
+  if (!target) return;
+  target.postMessage({
+    type: "SYNC_VISIBILITY",
+    visible,
+  });
+}
+
 type SupportAvatarBadgeProps = {
   label: string;
   imageUrl?: string | null;
@@ -9568,6 +9579,52 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || isPlatformEditor || !canUseSupportPushInBrowser()) return;
+
+    let heartbeatTimer: number | null = null;
+
+    const syncVisibility = () => {
+      const visible = document.visibilityState === "visible";
+      void syncSupportServiceWorkerVisibility(visible);
+      if (heartbeatTimer) {
+        window.clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+      }
+      if (visible) {
+        heartbeatTimer = window.setInterval(() => {
+          void syncSupportServiceWorkerVisibility(document.visibilityState === "visible");
+        }, 10_000);
+      }
+    };
+
+    syncVisibility();
+    const handleVisibilityChange = () => syncVisibility();
+    const handlePageHide = () => {
+      void syncSupportServiceWorkerVisibility(false);
+      if (heartbeatTimer) {
+        window.clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("focus", handleVisibilityChange);
+    window.addEventListener("blur", handleVisibilityChange);
+    window.addEventListener("pagehide", handlePageHide);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("focus", handleVisibilityChange);
+      window.removeEventListener("blur", handleVisibilityChange);
+      window.removeEventListener("pagehide", handlePageHide);
+      if (heartbeatTimer) {
+        window.clearInterval(heartbeatTimer);
+      }
+      void syncSupportServiceWorkerVisibility(false);
+    };
+  }, [isPlatformEditor]);
 
   useEffect(() => {
     const preferences = readSupportNotificationPreferences(editingSiteId);
