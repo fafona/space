@@ -145,10 +145,10 @@ export default async function RootLayout({
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-        <link rel="icon" href="/faolla-app-icon-192.png" sizes="192x192" type="image/png" />
-        <link rel="icon" href="/faolla-app-icon-512.png" sizes="512x512" type="image/png" />
-        <link rel="shortcut icon" href="/faolla-app-icon-192.png" />
-        <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+        <link rel="icon" href="/faolla-app-icon-192.png?v=20260409b" sizes="192x192" type="image/png" />
+        <link rel="icon" href="/faolla-app-icon-512.png?v=20260409b" sizes="512x512" type="image/png" />
+        <link rel="shortcut icon" href="/faolla-app-icon-192.png?v=20260409b" />
+        <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=20260409b" />
         <link rel="manifest" href="/manifest.webmanifest" />
       </head>
       <body>
