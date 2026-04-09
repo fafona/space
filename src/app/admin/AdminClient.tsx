@@ -12361,6 +12361,43 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   const shouldShowPublishActions = showPublishActions ?? !isPlatformEditor;
   const isDesktopMerchantWorkspace = desktopMerchantWorkspaceActive;
   const showDesktopMerchantSupportPanel = isDesktopMerchantWorkspace && merchantDesktopSection === "support";
+  const toggleTopBarCollapsed = useCallback(() => {
+    setTopBarCollapsed((prev) => !prev);
+  }, []);
+  const toggleDesktopEditorSidebar = useCallback(() => {
+    if (!shouldUseDesktopEditorSidebar) return;
+    toggleTopBarCollapsed();
+  }, [shouldUseDesktopEditorSidebar, toggleTopBarCollapsed]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !shouldUseDesktopEditorSidebar) return;
+    const isTypingTarget = (target: EventTarget | null) => {
+      if (!(target instanceof HTMLElement)) return false;
+      if (target.isContentEditable) return true;
+      if (target.closest('[contenteditable="true"]')) return true;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement
+      ) {
+        return true;
+      }
+      return false;
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      if (event.key.toLowerCase() !== "s") return;
+      if (isTypingTarget(event.target)) return;
+      event.preventDefault();
+      toggleDesktopEditorSidebar();
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+    };
+  }, [shouldUseDesktopEditorSidebar, toggleDesktopEditorSidebar]);
+
   const merchantAnalyticsSnapshot = (() => {
     const desktopConfig = previewViewport === "desktop" ? planConfig : viewportStatesRef.current.desktop.planConfig;
     const mobileConfig = previewViewport === "mobile" ? planConfig : viewportStatesRef.current.mobile.planConfig;
@@ -14414,7 +14451,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                                 ) : null}
                               </div>
                               <div className="shrink-0 text-[11px] text-slate-400">
-                                {contactRow.updatedAt ? formatSupportMessageTime(contactRow.updatedAt) : "未聊天"}
+                                {contactRow.updatedAt ? formatSupportConversationTime(contactRow.updatedAt) : "未聊天"}
                               </div>
                             </div>
                             <div className="mt-2 truncate text-xs leading-5 text-slate-600">{contactRow.preview}</div>
@@ -14657,18 +14694,31 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       >
         <button
           type="button"
-          className={`flex items-center justify-center border bg-white text-base leading-none shadow-sm transition-colors hover:bg-gray-50 ${
+          className={`group flex items-center justify-center border text-base leading-none transition-all ${
             shouldUseDesktopEditorSidebar
-              ? "h-12 w-7 rounded-r-lg border-l-0"
+              ? "h-12 w-4 rounded-r-[16px] border-l-0 border-slate-200/90 bg-[linear-gradient(180deg,_rgba(255,255,255,0.98),_rgba(241,245,249,0.94))] text-slate-500 shadow-[0_16px_34px_rgba(15,23,42,0.12)] backdrop-blur hover:border-slate-300 hover:text-slate-700"
               : isMobileMerchantEditorShell
                 ? "h-11 w-11 rounded-full border-white/70 bg-white/92 text-slate-700 shadow-[0_18px_40px_rgba(15,23,42,0.14)]"
-                : "h-10 w-7 rounded-r-lg border-l-0"
+                : "h-10 w-7 rounded-r-lg border-l-0 bg-white text-slate-700 shadow-sm hover:bg-gray-50"
           }`}
-          onClick={() => setTopBarCollapsed((prev) => !prev)}
-          title={topBarCollapsed ? "展开侧栏" : "收起侧栏"}
+          onClick={toggleTopBarCollapsed}
+          title={shouldUseDesktopEditorSidebar ? `${topBarCollapsed ? "展开侧栏" : "收起侧栏"} (Alt+S)` : topBarCollapsed ? "展开侧栏" : "收起侧栏"}
           aria-label={topBarCollapsed ? "展开编辑侧栏" : "收起编辑侧栏"}
+          aria-keyshortcuts={shouldUseDesktopEditorSidebar ? "Alt+S" : undefined}
         >
-          {isMobileMerchantEditorShell ? (topBarCollapsed ? "≡" : "×") : topBarCollapsed ? "›" : "‹"}
+          {isMobileMerchantEditorShell ? (
+            topBarCollapsed ? "≡" : "×"
+          ) : shouldUseDesktopEditorSidebar ? (
+            <span className="pointer-events-none flex h-8 w-2.5 items-center justify-center rounded-full bg-slate-100/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-transform group-hover:scale-[1.03]">
+              <span className={`text-[11px] font-semibold transition-transform ${topBarCollapsed ? "translate-x-[1px]" : "-translate-x-[1px]"}`}>
+                {topBarCollapsed ? ">" : "<"}
+              </span>
+            </span>
+          ) : topBarCollapsed ? (
+            ">"
+          ) : (
+            "<"
+          )}
         </button>
       </div>
       <div
