@@ -14185,7 +14185,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             </button>
           </div>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50 p-3">
+        <div className="min-h-0 flex-1 overflow-y-auto bg-white p-3">
           {supportSearchError ? (
             <div className="mb-3 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-600">{supportSearchError}</div>
           ) : null}
@@ -14299,7 +14299,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           ) : null}
         </div>
 
-        <div ref={supportMessagesViewportRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-slate-50 px-5 py-5">
+        <div ref={supportMessagesViewportRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-white px-5 py-5">
           {selectedSupportLoading ? (
             <div className="rounded-2xl border border-dashed bg-white px-4 py-6 text-center text-sm text-slate-500">正在加载聊天记录...</div>
           ) : visibleSupportMessages.length ? (
