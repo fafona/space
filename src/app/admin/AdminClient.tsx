@@ -4324,6 +4324,11 @@ type SupportBadgingNavigator = Navigator & {
   clearAppBadge?: () => Promise<void>;
 };
 
+type SupportPushSubscriptionSnapshot = {
+  endpoint: string;
+  badgeCount: number;
+};
+
 async function syncSupportAppBadge(unreadCount: number) {
   if (typeof navigator === "undefined") return;
   const badgingNavigator = navigator as SupportBadgingNavigator;
@@ -4393,6 +4398,28 @@ async function syncSupportServiceWorkerVisibility(visible: boolean) {
     type: "SYNC_VISIBILITY",
     visible,
   });
+}
+
+function normalizeSupportPushSubscriptionSnapshotList(
+  value: unknown,
+): SupportPushSubscriptionSnapshot[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const source = item as { endpoint?: unknown; badgeCount?: unknown };
+      const endpoint = typeof source.endpoint === "string" ? source.endpoint.trim() : "";
+      if (!endpoint) return null;
+      const badgeCount =
+        typeof source.badgeCount === "number" && Number.isFinite(source.badgeCount)
+          ? Math.max(0, Math.min(999, Math.round(source.badgeCount)))
+          : Number.parseInt(String(source.badgeCount ?? "").trim(), 10);
+      return {
+        endpoint,
+        badgeCount: Number.isFinite(badgeCount) ? Math.max(0, Math.min(999, badgeCount)) : 0,
+      } satisfies SupportPushSubscriptionSnapshot;
+    })
+    .filter((item): item is SupportPushSubscriptionSnapshot => Boolean(item));
 }
 
 type SupportAvatarBadgeProps = {
@@ -4763,6 +4790,8 @@ export default function AdminClient({
   const [supportPushEndpoint, setSupportPushEndpoint] = useState("");
   const [supportPushBusy, setSupportPushBusy] = useState(false);
   const [supportPushError, setSupportPushError] = useState("");
+  const [supportRemoteBadgeCount, setSupportRemoteBadgeCount] = useState(0);
+  const [supportPushBadgeHydrated, setSupportPushBadgeHydrated] = useState(false);
   const [supportPushStandalone, setSupportPushStandalone] = useState(() => isSupportStandaloneDisplayMode());
   const [prefersSystemDarkMode, setPrefersSystemDarkMode] = useState(() =>
     typeof window !== "undefined" && typeof window.matchMedia === "function"
@@ -9418,6 +9447,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     return unreadCount;
   }, [currentSupportMerchantId, supportPeerContacts, supportPeerLastReadMap, supportPeerThreadByContactMerchantId]);
   const supportUnreadBadgeCount = supportUnreadOfficialMessageCount + supportUnreadPeerMessageCount;
+  const supportEffectiveBadgeCount =
+    supportUnreadBadgeCount > 0
+      ? supportUnreadBadgeCount
+      : supportPushBadgeHydrated
+        ? supportRemoteBadgeCount
+        : 0;
   const supportHasUnreadMessages = supportUnreadBadgeCount > 0;
   const supportContactRows: SupportContactRow[] = [
     {
@@ -9799,6 +9834,22 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     [requestMerchantPushWithSessionRecovery],
   );
 
+  const readSupportPushBadgeSnapshot = useCallback(async () => {
+    const response = await requestMerchantPushWithSessionRecovery({
+      method: "GET",
+      headers: {
+        accept: "application/json",
+      },
+    });
+    const body = (await response.json().catch(() => null)) as
+      | { subscriptions?: unknown; message?: string; error?: string }
+      | null;
+    if (!response.ok) {
+      throw new Error(body?.message || body?.error || "merchant_push_state_request_failed");
+    }
+    return normalizeSupportPushSubscriptionSnapshotList(body?.subscriptions);
+  }, [requestMerchantPushWithSessionRecovery]);
+
   const registerSupportPushServiceWorker = useCallback(async () => {
     if (!canUseSupportPushInBrowser()) return null;
     const registration = await navigator.serviceWorker.register(SUPPORT_PUSH_SERVICE_WORKER_PATH, {
@@ -9813,17 +9864,36 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       setSupportPushPermission("unsupported");
       setSupportPushSubscribed(false);
       setSupportPushEndpoint("");
+      setSupportRemoteBadgeCount(0);
+      setSupportPushBadgeHydrated(true);
       return null;
     }
     const registration = await registerSupportPushServiceWorker();
-    if (!registration) return null;
+    if (!registration) {
+      setSupportPushBadgeHydrated(true);
+      return null;
+    }
     const permissionState = Notification.permission;
     const existingSubscription = await registration.pushManager.getSubscription().catch(() => null);
     setSupportPushPermission(permissionState);
     setSupportPushEndpoint(existingSubscription?.endpoint ?? "");
     setSupportPushSubscribed(permissionState === "granted" && Boolean(existingSubscription?.endpoint));
+    try {
+      const snapshots = await readSupportPushBadgeSnapshot();
+      const matchedSnapshot =
+        (existingSubscription?.endpoint
+          ? snapshots.find((item) => item.endpoint === existingSubscription.endpoint)
+          : null) ??
+        snapshots[0] ??
+        null;
+      setSupportRemoteBadgeCount(matchedSnapshot?.badgeCount ?? 0);
+    } catch {
+      setSupportRemoteBadgeCount(0);
+    } finally {
+      setSupportPushBadgeHydrated(true);
+    }
     return existingSubscription;
-  }, [registerSupportPushServiceWorker]);
+  }, [readSupportPushBadgeSnapshot, registerSupportPushServiceWorker]);
 
   const ensureSupportPushSubscription = useCallback(
     async (options?: { requestPermission?: boolean }) => {
@@ -9874,6 +9944,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     if (!canUseSupportPushInBrowser()) {
       setSupportPushSubscribed(false);
       setSupportPushEndpoint("");
+      setSupportRemoteBadgeCount(0);
+      setSupportPushBadgeHydrated(true);
       return;
     }
     const registration = await registerSupportPushServiceWorker().catch(() => null);
@@ -9891,6 +9963,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
     setSupportPushSubscribed(false);
     setSupportPushEndpoint("");
+    setSupportRemoteBadgeCount(0);
+    setSupportPushBadgeHydrated(true);
     setSupportPushError("");
   }, [registerSupportPushServiceWorker, sendSupportPushAction, supportPushEndpoint, supportPushPermission]);
 
@@ -11239,9 +11313,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
   useEffect(() => {
     if (isPlatformEditor || !supportDataActivated) return;
-    void syncSupportAppBadge(supportUnreadBadgeCount);
-    void syncSupportServiceWorkerBadge(supportUnreadBadgeCount);
-  }, [isPlatformEditor, supportDataActivated, supportUnreadBadgeCount]);
+    if (!supportPushBadgeHydrated && supportEffectiveBadgeCount <= 0) return;
+    void syncSupportAppBadge(supportEffectiveBadgeCount);
+    void syncSupportServiceWorkerBadge(supportEffectiveBadgeCount);
+  }, [isPlatformEditor, supportDataActivated, supportEffectiveBadgeCount, supportPushBadgeHydrated]);
 
   useEffect(() => {
     if (isPlatformEditor) return;
@@ -11266,6 +11341,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     if (
       isPlatformEditor ||
       !supportDataActivated ||
+      !supportPushBadgeHydrated ||
       !supportSystemNotificationsEnabled ||
       supportPushPermission !== "granted" ||
       !supportPushEndpoint
@@ -11275,19 +11351,24 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     void sendSupportPushAction({
       action: "sync-badge",
       endpoint: supportPushEndpoint,
-      unreadCount: supportUnreadBadgeCount,
+      unreadCount: supportEffectiveBadgeCount,
       permission: supportPushPermission,
-    }).catch(() => {
+    })
+      .then(() => {
+        setSupportRemoteBadgeCount(supportEffectiveBadgeCount);
+      })
+      .catch(() => {
       // Ignore badge sync failures; local badge updates still continue.
     });
   }, [
     isPlatformEditor,
     sendSupportPushAction,
     supportDataActivated,
+    supportEffectiveBadgeCount,
     supportPushEndpoint,
+    supportPushBadgeHydrated,
     supportPushPermission,
     supportSystemNotificationsEnabled,
-    supportUnreadBadgeCount,
   ]);
 
   useEffect(() => {
