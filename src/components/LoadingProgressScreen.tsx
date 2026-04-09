@@ -153,21 +153,6 @@ export default function LoadingProgressScreen(props: LoadingProgressScreenProps)
                 <div className="max-w-[34rem] text-4xl font-semibold leading-tight text-white">{headline}</div>
                 <div className="text-xl font-medium text-cyan-50/78">{quickAccessTagline}</div>
               </div>
-              <div className="flex flex-wrap items-center gap-3">
-                {contactItems.map((item) => (
-                  <span
-                    key={item.key}
-                    className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-white/9 shadow-[0_16px_30px_rgba(8,17,33,0.18)] backdrop-blur"
-                    style={{ color: item.iconColor }}
-                  >
-                    {item.iconSrc ? (
-                      <img src={item.iconSrc} alt="" className={item.iconClassName ?? "h-5 w-5"} />
-                    ) : (
-                      item.iconNode
-                    )}
-                  </span>
-                ))}
-              </div>
             </div>
           </div>
 

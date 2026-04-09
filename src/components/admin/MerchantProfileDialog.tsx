@@ -301,6 +301,7 @@ export default function MerchantProfileDialog({
   const [industry, setIndustry] = useState<MerchantIndustry>(initialState.industry);
   const [businessCards, setBusinessCards] = useState<MerchantBusinessCardAsset[]>(() => normalizeMerchantBusinessCards(initialBusinessCards ?? []));
   const [domainSubmitCooldownLeftSec, setDomainSubmitCooldownLeftSec] = useState(0);
+  const [domainPrefixPending, setDomainPrefixPending] = useState(false);
   const [savePending, setSavePending] = useState(false);
   const normalizedTakenPrefixes = useMemo(
     () =>
@@ -357,10 +358,14 @@ export default function MerchantProfileDialog({
   }, [computeDomainSubmitCooldownLeftSec, open]);
 
   useEffect(() => {
-    if (!open) setSavePending(false);
+    if (!open) {
+      setSavePending(false);
+      setDomainPrefixPending(false);
+    }
   }, [open]);
 
-  function submitDomainPrefix() {
+  async function submitDomainPrefix() {
+    if (domainPrefixPending) return;
     if (domainSubmitCooldownLeftSec > 0) {
       setDomainPrefixError(`域名前缀提交后需等待 1 分钟，剩余 ${domainSubmitCooldownLeftSec} 秒`);
       setDomainPrefixMessage("");
@@ -385,13 +390,52 @@ export default function MerchantProfileDialog({
       setDomainPrefixConfirmed("");
       return;
     }
-    setDomainPrefixInput(normalized);
-    setDomainPrefixConfirmed(normalized);
-    setDomainPrefixError("");
-    setDomainPrefixMessage("前缀可用，地址已更新");
-    const now = Date.now();
-    writeDomainSuffixLastSubmitAt(siteId, now);
-    setDomainSubmitCooldownLeftSec(Math.ceil(DOMAIN_SUFFIX_SUBMIT_COOLDOWN_MS / 1000));
+    setDomainPrefixPending(true);
+    try {
+      const response = await fetch(`/api/site-resolve?prefix=${encodeURIComponent(normalized)}`, {
+        method: "GET",
+        cache: "no-store",
+        credentials: "same-origin",
+      });
+      const data = (await response.json().catch(() => null)) as { siteId?: unknown } | null;
+      if (response.ok) {
+        const currentSiteId = String(siteId ?? "").trim();
+        const resolvedSiteId = String(data?.siteId ?? "").trim();
+        if (!resolvedSiteId || (currentSiteId && resolvedSiteId === currentSiteId)) {
+          setDomainPrefixInput(normalized);
+          setDomainPrefixConfirmed(normalized);
+          setDomainPrefixError("");
+          setDomainPrefixMessage("前缀可用，地址已更新");
+          const now = Date.now();
+          writeDomainSuffixLastSubmitAt(siteId, now);
+          setDomainSubmitCooldownLeftSec(Math.ceil(DOMAIN_SUFFIX_SUBMIT_COOLDOWN_MS / 1000));
+          return;
+        }
+        setDomainPrefixError("该前缀已被使用，请更换后重新提交");
+        setDomainPrefixMessage("");
+        setDomainPrefixConfirmed("");
+        return;
+      }
+      if (response.status === 404) {
+        setDomainPrefixInput(normalized);
+        setDomainPrefixConfirmed(normalized);
+        setDomainPrefixError("");
+        setDomainPrefixMessage("前缀可用，地址已更新");
+        const now = Date.now();
+        writeDomainSuffixLastSubmitAt(siteId, now);
+        setDomainSubmitCooldownLeftSec(Math.ceil(DOMAIN_SUFFIX_SUBMIT_COOLDOWN_MS / 1000));
+        return;
+      }
+      setDomainPrefixError("暂时无法校验前缀，请稍后重试");
+      setDomainPrefixMessage("");
+      setDomainPrefixConfirmed("");
+    } catch {
+      setDomainPrefixError("暂时无法校验前缀，请稍后重试");
+      setDomainPrefixMessage("");
+      setDomainPrefixConfirmed("");
+    } finally {
+      setDomainPrefixPending(false);
+    }
   }
 
   const provinceOptions = useMemo(() => getEuropeProvinceOptions(countryCode), [countryCode]);
@@ -613,10 +657,12 @@ export default function MerchantProfileDialog({
             <button
               type="button"
               className="shrink-0 rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-              onClick={submitDomainPrefix}
-              disabled={domainSubmitCooldownLeftSec > 0}
+              onClick={() => {
+                void submitDomainPrefix();
+              }}
+              disabled={domainSubmitCooldownLeftSec > 0 || domainPrefixPending}
             >
-              {domainSubmitCooldownLeftSec > 0 ? `提交前缀 (${domainSubmitCooldownLeftSec}s)` : "提交前缀"}
+              {domainPrefixPending ? "检查中..." : domainSubmitCooldownLeftSec > 0 ? `提交前缀 (${domainSubmitCooldownLeftSec}s)` : "提交前缀"}
             </button>
           </div>
           {merchantRootHost ? (

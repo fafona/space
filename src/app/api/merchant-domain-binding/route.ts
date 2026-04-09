@@ -44,6 +44,20 @@ type MerchantRow = {
   id?: string | null;
 };
 
+type PageSlugRow = {
+  id?: string | number | null;
+  merchant_id?: string | null;
+  slug?: string | null;
+};
+
+export function hasConflictingMerchantSlug(rows: PageSlugRow[], merchantId: string) {
+  const normalizedMerchantId = String(merchantId ?? "").trim();
+  return rows.some((row) => {
+    const rowMerchantId = String(row.merchant_id ?? "").trim();
+    return Boolean(rowMerchantId) && rowMerchantId !== normalizedMerchantId;
+  });
+}
+
 type DomainBindingBody = {
   merchantId?: unknown;
   domainPrefix?: unknown;
@@ -203,6 +217,24 @@ async function updateMerchantSlug(
   merchantId: string,
   slug: string,
 ) {
+  const { data: duplicatedRows, error: duplicatedRowsError } = await supabase
+    .from("pages")
+    .select("id,merchant_id,slug")
+    .eq("slug", slug)
+    .limit(20);
+
+  if (duplicatedRowsError) {
+    const duplicatedRowsMessage = String(duplicatedRowsError.message ?? "");
+    if (isMissingSlugColumn(duplicatedRowsMessage)) {
+      return { ok: false, status: 503, message: "pages.slug column missing" };
+    }
+    return { ok: false, status: 409, message: duplicatedRowsMessage };
+  }
+
+  if (hasConflictingMerchantSlug((duplicatedRows ?? []) as PageSlugRow[], merchantId)) {
+    return { ok: false, status: 409, message: "该前缀已被使用，请更换后重新提交" };
+  }
+
   const { data: existing, error: existingError } = await supabase
     .from("pages")
     .select("id")

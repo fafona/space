@@ -12625,7 +12625,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             resolveRuntimePortalBaseDomain(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "") ||
             (platformState.sites.find((site) => site.id === "site-main")?.domain ?? "").trim() ||
             (target?.domain ?? "");
-          savePlatformState({
+          const nextUpdatedAt = new Date().toISOString();
+          const nextDomain = buildMerchantDomainFromBase(baseDomain, domainPrefix);
+          const nextPlatformState = {
             ...platformState,
             sites: platformState.sites.map((item) =>
               item.id === targetSiteId
@@ -12638,16 +12640,16 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     contactName,
                     contactPhone,
                     contactEmail,
-                    domain: buildMerchantDomainFromBase(baseDomain, domainPrefix),
+                    domain: nextDomain,
                     location,
                     industry,
-                    updatedAt: new Date().toISOString(),
+                    updatedAt: nextUpdatedAt,
                   }
                 : item,
             ),
-          });
+          };
           const syncResult = await syncMerchantProfileBinding(targetSiteId, normalizedDomainPrefix, merchantName, {
-            domain: buildMerchantDomainFromBase(baseDomain, domainPrefix),
+            domain: nextDomain,
             contactAddress,
             contactName,
             contactPhone,
@@ -12656,9 +12658,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             location,
           });
           if (!syncResult.ok) {
-            showTip("商户信息已保存到当前后台，但同步到超级后台失败，请稍后重新保存");
+            showTip(syncResult.message || "商户信息同步失败，请稍后重新保存");
             return;
           }
+          savePlatformState(nextPlatformState);
           if (!isDesktopMerchantWorkspace) {
             setMerchantProfileDialogOpen(false);
           }
