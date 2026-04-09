@@ -4764,6 +4764,11 @@ export default function AdminClient({
   const [supportPushBusy, setSupportPushBusy] = useState(false);
   const [supportPushError, setSupportPushError] = useState("");
   const [supportPushStandalone, setSupportPushStandalone] = useState(() => isSupportStandaloneDisplayMode());
+  const [prefersSystemDarkMode, setPrefersSystemDarkMode] = useState(() =>
+    typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia("(prefers-color-scheme: dark)").matches
+      : false,
+  );
   const [supportSystemNotificationsEnabled, setSupportSystemNotificationsEnabled] = useState(
     DEFAULT_SUPPORT_NOTIFICATION_PREFERENCES.systemNotificationsEnabled,
   );
@@ -6988,6 +6993,19 @@ export default function AdminClient({
     updateLayoutMode();
     media.addEventListener("change", updateLayoutMode);
     return () => media.removeEventListener("change", updateLayoutMode);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const updatePreferredColorScheme = () => setPrefersSystemDarkMode(media.matches);
+    updatePreferredColorScheme();
+    if (typeof media.addEventListener === "function") {
+      media.addEventListener("change", updatePreferredColorScheme);
+      return () => media.removeEventListener("change", updatePreferredColorScheme);
+    }
+    media.addListener(updatePreferredColorScheme);
+    return () => media.removeListener(updatePreferredColorScheme);
   }, []);
 
   useEffect(() => {
@@ -12760,6 +12778,11 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     supportMessageSoundEnabled ? "提示音已开" : "提示音已关",
     supportVibrationEnabled ? "震动已开" : "震动已关",
   ].join(" · ");
+  const supportMobileDarkMode = prefersSystemDarkMode;
+  const supportMobileShellClassName = supportMobileDarkMode ? "support-mobile-shell support-mobile-dark" : "support-mobile-shell";
+  const supportMobileBackgroundClassName = supportMobileDarkMode
+    ? "bg-[linear-gradient(180deg,#020617_0%,#0f172a_42%,#111827_100%)] text-slate-100"
+    : "bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_48%,#f8fafc_100%)]";
 
   const supportMobileConversationsContent = (
     <>
@@ -13398,7 +13421,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
 
   const supportMobileBottomNav = (
     <div
-      className={`pointer-events-none fixed bottom-0 left-1/2 z-[2147483298] w-full max-w-md -translate-x-1/2 overscroll-none touch-none transition duration-200 ${
+      className={`${supportMobileDarkMode ? "support-mobile-dark " : ""}support-mobile-nav-shell pointer-events-none fixed bottom-0 left-1/2 z-[2147483298] w-full max-w-md -translate-x-1/2 overscroll-none touch-none transition duration-200 ${
         isSupportMobileKeyboardVisible ? "translate-y-full opacity-0" : "opacity-100"
       }`}
       aria-hidden={isSupportMobileKeyboardVisible}
@@ -13509,7 +13532,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
 
   const supportMobileDialogContent = showMobileSupportThread ? (
     <div
-      className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_48%,#f8fafc_100%)]"
+      className={`${supportMobileShellClassName} flex h-full min-h-0 flex-1 flex-col overflow-hidden ${supportMobileBackgroundClassName}`}
       onTouchStart={handleSupportMobileThreadTouchStart}
       onTouchEnd={handleSupportMobileThreadTouchEnd}
       onTouchCancel={() => {
@@ -13838,7 +13861,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       </div>
     </div>
   ) : (
-    <div className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_48%,#f8fafc_100%)]">
+    <div className={`${supportMobileShellClassName} relative flex h-full min-h-0 flex-1 flex-col overflow-hidden ${supportMobileBackgroundClassName}`}>
       {supportMobileListTabContent}
     </div>
   );
@@ -13854,7 +13877,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               aria-label="关闭名片夹"
             />
             <div className="fixed inset-x-0 bottom-0 z-[2147483399] px-3 pb-[calc(env(safe-area-inset-bottom)+0.5rem)]">
-              <div className="mx-auto w-full max-w-md overflow-hidden rounded-[30px] bg-white shadow-[0_24px_80px_rgba(15,23,42,0.2)]">
+              <div
+                className={`${supportMobileDarkMode ? "support-mobile-dark " : ""}support-mobile-sheet mx-auto w-full max-w-md overflow-hidden rounded-[30px] bg-white shadow-[0_24px_80px_rgba(15,23,42,0.2)]`}
+              >
                 <div className="px-4 pb-3 pt-3">
                   <div className="mx-auto h-1.5 w-12 rounded-full bg-slate-200" />
                   <div className="mt-4 flex items-center justify-between gap-3">
@@ -13931,7 +13956,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             />
             {showMobileSupportThread ? (
               <div className="fixed inset-x-0 bottom-0 z-[2147483401] px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)]">
-                <div className="mx-auto w-full max-w-md rounded-[30px] bg-white px-4 pb-4 pt-3 shadow-[0_24px_80px_rgba(15,23,42,0.2)]">
+                <div
+                  className={`${supportMobileDarkMode ? "support-mobile-dark " : ""}support-mobile-sheet mx-auto w-full max-w-md rounded-[30px] bg-white px-4 pb-4 pt-3 shadow-[0_24px_80px_rgba(15,23,42,0.2)]`}
+                >
                   <div className="mx-auto h-1.5 w-12 rounded-full bg-slate-200" />
                   <div className="mt-4 flex items-start justify-between gap-3">
                     <div className="flex min-w-0 items-center gap-3">
@@ -14041,7 +14068,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     return (
       <>
         <main
-          className="fixed inset-x-0 top-0 bottom-0 z-[120] overflow-hidden overscroll-none bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_48%,#f8fafc_100%)] touch-manipulation [&_input]:!text-base [&_select]:!text-base [&_textarea]:!text-base"
+          className={`${supportMobileShellClassName} fixed inset-x-0 top-0 bottom-0 z-[120] overflow-hidden overscroll-none ${supportMobileBackgroundClassName} touch-manipulation [&_input]:!text-base [&_select]:!text-base [&_textarea]:!text-base`}
         >
           <div className="flex h-full min-h-0 flex-col overflow-hidden">
             {supportMobileDialogContent}
@@ -14637,7 +14664,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           ) : null}
           <textarea
             ref={supportInputRef}
-            className="h-32 w-full max-w-full min-w-0 resize-none rounded-2xl border px-4 py-3 text-sm outline-none transition focus:border-slate-400"
+            rows={4}
+            className="w-full max-w-full min-w-0 resize-none rounded-2xl border px-4 py-3 text-sm outline-none transition focus:border-slate-400"
             placeholder={selectedSupportInputPlaceholder}
             value={supportDraft}
             onChange={(event) => setSupportDraft(event.target.value)}

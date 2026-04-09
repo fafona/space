@@ -81,3 +81,92 @@ html[data-i18n-pending="1"] body {
     font-size: max(16px, var(--mobile-safe-font-size, 16px)) !important;
   }
 }
+
+.support-mobile-shell.support-mobile-dark,
+.support-mobile-sheet.support-mobile-dark,
+.support-mobile-nav-shell.support-mobile-dark {
+  color-scheme: dark;
+}
+
+.support-mobile-shell.support-mobile-dark [class*="bg-white"],
+.support-mobile-sheet.support-mobile-dark [class*="bg-white"],
+.support-mobile-nav-shell.support-mobile-dark [class*="bg-white"] {
+  background-color: rgba(15, 23, 42, 0.88) !important;
+}
+
+.support-mobile-shell.support-mobile-dark [class*="bg-slate-50"],
+.support-mobile-shell.support-mobile-dark [class*="bg-slate-100"],
+.support-mobile-sheet.support-mobile-dark [class*="bg-slate-50"],
+.support-mobile-sheet.support-mobile-dark [class*="bg-slate-100"],
+.support-mobile-nav-shell.support-mobile-dark [class*="bg-slate-50"],
+.support-mobile-nav-shell.support-mobile-dark [class*="bg-slate-100"],
+.support-mobile-shell.support-mobile-dark [class*="bg-[#edf1f7]"],
+.support-mobile-shell.support-mobile-dark [class*="bg-[#edf1f7]"] {
+  background-color: rgba(30, 41, 59, 0.88) !important;
+}
+
+.support-mobile-shell.support-mobile-dark [class*="border-slate-100"],
+.support-mobile-shell.support-mobile-dark [class*="border-slate-200"],
+.support-mobile-shell.support-mobile-dark [class*="border-slate-300"],
+.support-mobile-sheet.support-mobile-dark [class*="border-slate-100"],
+.support-mobile-sheet.support-mobile-dark [class*="border-slate-200"],
+.support-mobile-sheet.support-mobile-dark [class*="border-slate-300"],
+.support-mobile-nav-shell.support-mobile-dark [class*="border-slate-100"],
+.support-mobile-nav-shell.support-mobile-dark [class*="border-slate-200"],
+.support-mobile-nav-shell.support-mobile-dark [class*="border-slate-300"] {
+  border-color: rgba(71, 85, 105, 0.9) !important;
+}
+
+.support-mobile-shell.support-mobile-dark [class*="divide-slate-100"] > :not([hidden]) ~ :not([hidden]),
+.support-mobile-sheet.support-mobile-dark [class*="divide-slate-100"] > :not([hidden]) ~ :not([hidden]) {
+  border-color: rgba(51, 65, 85, 0.9) !important;
+}
+
+.support-mobile-shell.support-mobile-dark .text-slate-950,
+.support-mobile-shell.support-mobile-dark .text-slate-900,
+.support-mobile-sheet.support-mobile-dark .text-slate-950,
+.support-mobile-sheet.support-mobile-dark .text-slate-900,
+.support-mobile-nav-shell.support-mobile-dark .text-slate-950,
+.support-mobile-nav-shell.support-mobile-dark .text-slate-900 {
+  color: #f8fafc !important;
+}
+
+.support-mobile-shell.support-mobile-dark .text-slate-700,
+.support-mobile-shell.support-mobile-dark .text-slate-600,
+.support-mobile-shell.support-mobile-dark .text-slate-500,
+.support-mobile-shell.support-mobile-dark .text-slate-400,
+.support-mobile-shell.support-mobile-dark .text-slate-300,
+.support-mobile-sheet.support-mobile-dark .text-slate-700,
+.support-mobile-sheet.support-mobile-dark .text-slate-600,
+.support-mobile-sheet.support-mobile-dark .text-slate-500,
+.support-mobile-sheet.support-mobile-dark .text-slate-400,
+.support-mobile-sheet.support-mobile-dark .text-slate-300,
+.support-mobile-nav-shell.support-mobile-dark .text-slate-700,
+.support-mobile-nav-shell.support-mobile-dark .text-slate-600,
+.support-mobile-nav-shell.support-mobile-dark .text-slate-500,
+.support-mobile-nav-shell.support-mobile-dark .text-slate-400,
+.support-mobile-nav-shell.support-mobile-dark .text-slate-300 {
+  color: #94a3b8 !important;
+}
+
+.support-mobile-shell.support-mobile-dark [class*="shadow-"],
+.support-mobile-sheet.support-mobile-dark [class*="shadow-"],
+.support-mobile-nav-shell.support-mobile-dark [class*="shadow-"] {
+  box-shadow: 0 18px 44px rgba(2, 6, 23, 0.34) !important;
+}
+
+.support-mobile-shell.support-mobile-dark input,
+.support-mobile-shell.support-mobile-dark textarea,
+.support-mobile-shell.support-mobile-dark select,
+.support-mobile-sheet.support-mobile-dark input,
+.support-mobile-sheet.support-mobile-dark textarea,
+.support-mobile-sheet.support-mobile-dark select {
+  color: #f8fafc !important;
+}
+
+.support-mobile-shell.support-mobile-dark input::placeholder,
+.support-mobile-shell.support-mobile-dark textarea::placeholder,
+.support-mobile-sheet.support-mobile-dark input::placeholder,
+.support-mobile-sheet.support-mobile-dark textarea::placeholder {
+  color: #64748b !important;
+}
