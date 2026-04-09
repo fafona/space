@@ -1,11 +1,15 @@
 import { NextResponse } from "next/server";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
+import { buildMerchantBookingPushNotification } from "@/lib/merchantPushEvents";
 import {
   createMerchantBooking,
   listMerchantBookings,
   updateMerchantBooking,
   updateMerchantBookingBySite,
 } from "@/lib/merchantBookings.server";
+import type { MerchantPushSubscriptionStoreClient } from "@/lib/merchantPushSubscriptionStore";
+import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
+import { notifyMerchantPushSubscribers } from "@/lib/webPush";
 import type {
   MerchantBookingActionInput,
   MerchantBookingCreateInput,
@@ -54,6 +58,21 @@ export async function POST(request: Request) {
       phone: String(body.phone ?? ""),
       note: String(body.note ?? ""),
     });
+
+    const supabase = createServerSupabaseServiceClient();
+    if (supabase) {
+      const notification = buildMerchantBookingPushNotification({
+        siteId,
+        booking: created.booking,
+      });
+      await notifyMerchantPushSubscribers(supabase as unknown as MerchantPushSubscriptionStoreClient, {
+        merchantId: siteId,
+        ...notification,
+      }).catch(() => {
+        // Ignore notification delivery failures; the booking itself should still succeed.
+      });
+    }
+
     return NextResponse.json({ ok: true, ...created });
   } catch (error) {
     return NextResponse.json(
