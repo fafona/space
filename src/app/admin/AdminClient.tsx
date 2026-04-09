@@ -7290,6 +7290,15 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   function handleEditorMouseDownCapture(event: ReactMouseEvent<HTMLElement>) {
     const target = event.target as HTMLElement | null;
     if (!target) return;
+    if (
+      target.isContentEditable ||
+      target.closest('[contenteditable="true"]') ||
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement ||
+      target instanceof HTMLSelectElement
+    ) {
+      return;
+    }
     if (target.closest("[data-editor-toolbar]")) return;
     if (target.closest("[data-editor-overlay]")) return;
     if (target.closest("[data-block-id]")) return;
