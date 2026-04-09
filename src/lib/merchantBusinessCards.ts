@@ -375,16 +375,7 @@ function resolveTextLayoutEntry(
 
 export function getMerchantBusinessCardRequiredFields(profile: MerchantBusinessCardProfileInput) {
   const missing: string[] = [];
-  if (!normalizeText(profile.merchantName)) missing.push("商户名称");
   if (!normalizeText(profile.domainPrefix)) missing.push("域名前缀");
-  if (!normalizeText(profile.contactAddress)) missing.push("地址");
-  if (!normalizeText(profile.contactName)) missing.push("联系人");
-  if (!normalizeText(profile.contactPhone)) missing.push("电话");
-  if (!normalizeText(profile.contactEmail)) missing.push("邮箱");
-  if (!normalizeText(profile.industry)) missing.push("行业");
-  if (!normalizeText(profile.location?.country)) missing.push("国家");
-  if (!normalizeText(profile.location?.province)) missing.push("省份");
-  if (!normalizeText(profile.location?.city)) missing.push("城市");
   return missing;
 }
 

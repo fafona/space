@@ -10,7 +10,7 @@ import {
   selectMerchantBusinessCardForChat,
 } from "./merchantBusinessCards";
 
-test("business card generation requires complete merchant profile", () => {
+test("business card generation only requires merchant domain prefix", () => {
   const missing = getMerchantBusinessCardRequiredFields({
     merchantName: "",
     domainPrefix: "",
@@ -26,8 +26,7 @@ test("business card generation requires complete merchant profile", () => {
     },
   });
 
-  assert.equal(missing.length, 10);
-  assert.ok(missing.every((item) => typeof item === "string" && item.length > 0));
+  assert.deepEqual(missing, ["域名前缀"]);
 });
 
 test("default business card draft prefills merchant profile fields", () => {
