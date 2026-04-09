@@ -15,9 +15,19 @@ function normalizeCookieBaseDomain(value: string | null | undefined) {
   try {
     const candidate = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
     const hostname = new URL(candidate).hostname.trim().toLowerCase();
-    return hostname.replace(/^\.+/, "");
+    const cleaned = hostname.replace(/^\.+/, "");
+    const labels = cleaned.split(".").filter(Boolean);
+    if (labels.length >= 3 && labels[0] === "www") {
+      return labels.slice(-2).join(".");
+    }
+    return cleaned;
   } catch {
-    return trimmed.replace(/^https?:\/\//i, "").replace(/\/.*$/, "").replace(/^\.+/, "");
+    const cleaned = trimmed.replace(/^https?:\/\//i, "").replace(/\/.*$/, "").replace(/^\.+/, "");
+    const labels = cleaned.split(".").filter(Boolean);
+    if (labels.length >= 3 && labels[0] === "www") {
+      return labels.slice(-2).join(".");
+    }
+    return cleaned;
   }
 }
 
@@ -38,6 +48,15 @@ export function resolveSuperAdminCookieDomainFromHostname(hostname: string | nul
 
 export function resolveSuperAdminCookieDomain(request?: Request) {
   if (!request) return undefined;
+  const forwardedHost = (request.headers.get("x-forwarded-host") ?? "")
+    .split(",")[0]
+    ?.trim()
+    .toLowerCase();
+  const hostHeader = (request.headers.get("host") ?? "").trim().toLowerCase();
+  const publicHost = forwardedHost || hostHeader;
+  if (publicHost) {
+    return resolveSuperAdminCookieDomainFromHostname(publicHost);
+  }
   try {
     return resolveSuperAdminCookieDomainFromHostname(new URL(request.url).hostname);
   } catch {

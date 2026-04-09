@@ -1,0 +1,35 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  resolveSuperAdminCookieDomain,
+  resolveSuperAdminCookieDomainFromHostname,
+} from "./superAdminSession";
+
+test("resolveSuperAdminCookieDomainFromHostname folds www portal config back to root domain", () => {
+  const previousBaseDomain = process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN;
+  process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN = "https://www.faolla.com";
+  try {
+    assert.equal(resolveSuperAdminCookieDomainFromHostname("faolla.com"), "faolla.com");
+    assert.equal(resolveSuperAdminCookieDomainFromHostname("www.faolla.com"), "faolla.com");
+    assert.equal(resolveSuperAdminCookieDomainFromHostname("ops.faolla.com"), "faolla.com");
+  } finally {
+    process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN = previousBaseDomain;
+  }
+});
+
+test("resolveSuperAdminCookieDomain prefers forwarded host over internal request url", () => {
+  const previousBaseDomain = process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN;
+  process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN = "https://www.faolla.com";
+  try {
+    const request = new Request("https://www.faolla.com/api/super-admin/auth/complete", {
+      headers: {
+        host: "faolla.com",
+        "x-forwarded-host": "faolla.com",
+      },
+    });
+    assert.equal(resolveSuperAdminCookieDomain(request), "faolla.com");
+  } finally {
+    process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN = previousBaseDomain;
+  }
+});
+
