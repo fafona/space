@@ -244,6 +244,7 @@ import MerchantBookingManagerDialog from "@/components/admin/MerchantBookingMana
 import MerchantBookingMobilePanel from "@/components/admin/MerchantBookingMobilePanel";
 import MerchantProfileDialog from "@/components/admin/MerchantProfileDialog";
 import { useI18n } from "@/components/I18nProvider";
+import LoadingProgressScreen from "@/components/LoadingProgressScreen";
 import { I18N_URL_PARAM } from "@/lib/i18n";
 import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
 import { getMerchantServiceState } from "@/lib/merchantServiceStatus";
@@ -11941,6 +11942,20 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   }
 
   if (checkingAuth) {
+    if (!isPlatformEditor) {
+      return (
+        <LoadingProgressScreen
+          locale={locale}
+          statusTitle={locale.startsWith("zh") ? "正在进入商户后台" : "Opening your merchant workspace"}
+          statusDescription={
+            locale.startsWith("zh")
+              ? "请稍等，我们正在恢复网站、联系卡与会话展示。"
+              : "Please wait while we restore your site, contact cards, and conversation showcase."
+          }
+        />
+      );
+    }
+
     if (!isPlatformEditor) {
       return (
         <main className="relative min-h-screen overflow-hidden bg-[#081121] text-white">

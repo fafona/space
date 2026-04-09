@@ -6,6 +6,7 @@ import SitePageClient from "@/app/site/[siteId]/SitePageClient";
 import BlockRenderer from "@/components/blocks/BlockRenderer";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
 import { useI18n } from "@/components/I18nProvider";
+import LoadingProgressScreen from "@/components/LoadingProgressScreen";
 import { homeBlocks, type Block } from "@/data/homeBlocks";
 import { loadPlatformState, subscribePlatformState } from "@/data/platformControlStore";
 import { trackPageView } from "@/lib/analytics";
@@ -78,7 +79,7 @@ export default function HomePageClient({
   initialBlocks,
   initialIsMobileViewport = false,
 }: HomePageClientProps) {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   const [platformState, setPlatformState] = useState(() => loadPlatformState());
   const [isMobileViewport, setIsMobileViewport] = useState(initialIsMobileViewport);
   const [suppressStandaloneLaunchRedirect] = useState(() =>
@@ -234,6 +235,20 @@ export default function HomePageClient({
 
   if (resolvedHostSiteId) {
     return <SitePageClient forcedSiteId={resolvedHostSiteId} initialIsMobileViewport={isMobileViewport} />;
+  }
+
+  if (standaloneSessionBooting) {
+    return (
+      <LoadingProgressScreen
+        locale={locale}
+        statusTitle={locale.startsWith("zh") ? "正在进入商户后台" : "Opening your merchant workspace"}
+        statusDescription={
+          locale.startsWith("zh")
+            ? "请稍等，我们正在恢复网站、名片与会话展示。"
+            : "Please wait while we restore your site, cards, and conversation showcase."
+        }
+      />
+    );
   }
 
   if (standaloneSessionBooting) {
