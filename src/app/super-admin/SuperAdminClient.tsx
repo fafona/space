@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent, type ReactNode, type TouchEvent } from "react";
 import { createPortal } from "react-dom";
+import { useTabNotificationBadge } from "@/components/TabNotificationBadge";
 import { buildMerchantBusinessCardShareUrl, resolveMerchantBusinessCardShareOrigin } from "@/lib/merchantBusinessCardShare";
 import {
   getBlocksSnapshot,
@@ -2417,6 +2418,7 @@ export default function SuperAdminClient() {
   const supportHasUnreadThreads = supportUnreadMerchantIds.size > 0;
   const supportUnreadThreadCount = supportUnreadMerchantIds.size;
   const superAdminTabBaseTitle = "Super Admin · FAOLLA";
+  useTabNotificationBadge({ count: supportUnreadThreadCount });
   const selectedSupportMerchantMeta =
     [
       selectedSupportMerchantId !== "-" ? `ID ${selectedSupportMerchantId}` : "",
@@ -2508,14 +2510,10 @@ export default function SuperAdminClient() {
       : `全部 ${supportListRows.length} 个会话已处理`;
   useEffect(() => {
     if (typeof document === "undefined") return;
-    const nextTitle =
-      supportUnreadThreadCount > 0
-        ? `(${supportUnreadThreadCount}) ${superAdminTabBaseTitle}`
-        : superAdminTabBaseTitle;
-    if (document.title !== nextTitle) {
-      document.title = nextTitle;
+    if (document.title !== superAdminTabBaseTitle) {
+      document.title = superAdminTabBaseTitle;
     }
-  }, [supportUnreadThreadCount]);
+  }, [superAdminTabBaseTitle]);
   const selectedMerchantDisplaySite = selectedMerchantRow?.site ?? null;
   const selectedMerchantSite =
     selectedMerchantRow?.hasLocalSite

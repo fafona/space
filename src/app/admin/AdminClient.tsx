@@ -14,6 +14,7 @@ import {
 } from "react";
 import NextImage from "next/image";
 import { createPortal } from "react-dom";
+import { useTabNotificationBadge } from "@/components/TabNotificationBadge";
 import {
   homeBlocks,
   type BlockBorderStyle,
@@ -9438,6 +9439,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       : `全部 ${supportContactRows.length} 个会话已读`;
   const merchantTabBaseTitle =
     `${normalizeSupportDisplayValue(effectiveMerchantDisplayName || merchantDisplayName) || normalizeSupportDisplayValue(editingSiteId) || "FAOLLA"} · FAOLLA`;
+  useTabNotificationBadge({ count: supportUnreadConversationCount });
   const showMobileSupportThread =
     isMobileSupportDialog &&
     supportMobileView === "thread" &&
@@ -9453,14 +9455,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }, [resizeSupportComposerInput, showMobileSupportThread, supportDraft]);
   useEffect(() => {
     if (typeof document === "undefined" || isPlatformEditor) return;
-    const nextTitle =
-      supportUnreadConversationCount > 0
-        ? `(${supportUnreadConversationCount}) ${merchantTabBaseTitle}`
-        : merchantTabBaseTitle;
-    if (document.title !== nextTitle) {
-      document.title = nextTitle;
+    if (document.title !== merchantTabBaseTitle) {
+      document.title = merchantTabBaseTitle;
     }
-  }, [isPlatformEditor, merchantTabBaseTitle, supportUnreadConversationCount]);
+  }, [isPlatformEditor, merchantTabBaseTitle]);
   const latestIncomingPeerMessageKey = useMemo(() => {
     let latestKey = "";
     let latestTimestamp = 0;
