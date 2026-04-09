@@ -3712,14 +3712,6 @@ function getMerchantIdentityNotice(merchantIds: string[]) {
   return trySaveWithPayload({ blocks: sanitizedBlocks });
 }
 
-function formatSupportMessageTime(value: string | null | undefined) {
-  const normalized = String(value ?? "").trim();
-  if (!normalized) return "-";
-  const timestamp = new Date(normalized).getTime();
-  if (!Number.isFinite(timestamp)) return normalized;
-  return new Date(timestamp).toLocaleString("zh-CN", { hour12: false });
-}
-
 function formatSupportClockTime(value: string | null | undefined) {
   const normalized = String(value ?? "").trim();
   if (!normalized) return "-";
@@ -14565,38 +14557,58 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             <div className="rounded-2xl border border-dashed bg-white px-4 py-6 text-center text-sm text-slate-500">正在加载聊天记录...</div>
           ) : visibleSupportMessages.length ? (
             <div className="min-w-0 space-y-3">
-              {visibleSupportMessages.map((message) => {
+              {visibleSupportMessages.map((message, index) => {
+                const previousMessage = index > 0 ? visibleSupportMessages[index - 1] : null;
+                const showDateDivider =
+                  !previousMessage || !isSameSupportCalendarDay(previousMessage.createdAt, message.createdAt);
+                const messageMeta =
+                  message.localStatus === "pending"
+                    ? "发送中"
+                    : message.localStatus === "failed"
+                      ? "发送失败"
+                      : formatSupportClockTime(message.createdAt);
                 return (
-                  <div key={message.id} className={`flex min-w-0 ${message.isSelf ? "justify-end" : "justify-start"}`}>
-                    <div className={`flex max-w-[82%] min-w-0 items-end ${message.isSelf ? "flex-row" : "flex-row-reverse"}`}>
-                      <div
-                        className={`min-w-0 rounded-2xl shadow-sm ${
-                          parseSupportMessageAttachmentPreview(message.text)
-                            ? "border border-transparent bg-transparent px-0 py-0"
-                            : message.isSelf
-                              ? "bg-slate-900 px-4 py-3 text-white"
-                              : "border bg-white px-4 py-3 text-slate-900"
-                        }`}
-                      >
-                        <div className="text-[11px] opacity-70">
-                          {message.senderLabel} | {formatSupportMessageTime(message.createdAt)}
-                        </div>
-                        <div className="mt-1">
+                  <div key={message.id} className="space-y-3">
+                    {showDateDivider ? (
+                      <div className="flex justify-center">
+                        <span className="rounded-full bg-white/90 px-3 py-1 text-[11px] text-slate-500 shadow-sm">
+                          {formatSupportThreadDateLabel(message.createdAt)}
+                        </span>
+                      </div>
+                    ) : null}
+                    <div className={`flex min-w-0 ${message.isSelf ? "justify-end" : "justify-start"}`}>
+                      <div className={`flex max-w-[82%] min-w-0 items-end ${message.isSelf ? "flex-row" : "flex-row-reverse"}`}>
+                        <div
+                          className={`min-w-0 rounded-2xl shadow-sm ${
+                            parseSupportMessageAttachmentPreview(message.text)
+                              ? "border border-transparent bg-transparent px-0 py-0"
+                              : message.isSelf
+                                ? "bg-slate-900 px-4 py-3 text-white"
+                                : "border bg-white px-4 py-3 text-slate-900"
+                          }`}
+                        >
                           <SupportMessageContent
                             value={message.text}
                             isSelf={message.isSelf}
                             onImageActivate={handleSupportMessageImageActivate}
                           />
+                          <div
+                            className={`mt-2 text-right text-[10px] ${
+                              message.isSelf ? "text-white/70" : "text-slate-400"
+                            }`}
+                          >
+                            {messageMeta}
+                          </div>
                         </div>
+                        {message.isSelf && message.localStatus === "failed" ? (
+                          <span
+                            aria-label="发送失败"
+                            className="mb-1 ml-2 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-rose-500 bg-white text-[12px] font-semibold leading-none text-rose-600"
+                          >
+                            !
+                          </span>
+                        ) : null}
                       </div>
-                      {message.isSelf && message.localStatus === "failed" ? (
-                        <span
-                          aria-label="发送失败"
-                          className="mb-1 ml-2 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-rose-500 bg-white text-[12px] font-semibold leading-none text-rose-600"
-                        >
-                          !
-                        </span>
-                      ) : null}
                     </div>
                   </div>
                 );
