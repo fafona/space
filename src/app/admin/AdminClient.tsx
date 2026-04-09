@@ -12209,70 +12209,51 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
 
   if (!hasEditorContent && backendNotice) {
     if (!isPlatformEditor) {
+      const authNotice = /未登录|登录/.test(backendNotice);
       return (
-        <main className="relative min-h-screen overflow-hidden bg-[#081121] text-white">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(56,189,248,0.22),_transparent_34%),radial-gradient(circle_at_85%_18%,_rgba(45,212,191,0.18),_transparent_26%),linear-gradient(180deg,_#081121_0%,_#101b33_56%,_#eaf1ff_100%)]" />
-          <div className="absolute -left-16 top-20 h-48 w-48 rounded-full bg-cyan-300/20 blur-3xl" />
-          <div className="absolute right-[-3rem] top-40 h-56 w-56 rounded-full bg-emerald-300/16 blur-3xl" />
-          <div className="absolute bottom-[-5rem] left-1/2 h-64 w-64 -translate-x-1/2 rounded-full bg-white/12 blur-3xl" />
-          <div className="relative flex min-h-screen flex-col">
-            <div className="px-5 pb-8 pt-[calc(env(safe-area-inset-top)+1.5rem)] sm:px-6">
-              <div className="inline-flex items-center gap-3 rounded-full border border-white/14 bg-white/10 px-4 py-2 text-xs font-medium uppercase tracking-[0.24em] text-cyan-50/90 backdrop-blur">
-                <span className="inline-flex h-2 w-2 rounded-full bg-emerald-300" />
-                Faolla.com
-              </div>
-              <div className="mt-8 flex items-center gap-4">
-                <div className="flex h-16 w-16 items-center justify-center rounded-[24px] bg-white/14 text-2xl font-semibold tracking-[0.18em] text-white shadow-[0_16px_40px_rgba(8,17,33,0.28)] backdrop-blur">
-                  FA
-                </div>
-                <div>
-                  <div className="text-xs font-medium uppercase tracking-[0.28em] text-slate-200/72">Faolla.com</div>
-                  <div className="mt-2 text-3xl font-semibold text-white">商户后台</div>
-                </div>
-              </div>
+        <LoadingProgressScreen locale={locale}>
+          <div className="rounded-[28px] border border-white/70 bg-white/92 p-5 text-slate-900 shadow-[0_18px_40px_rgba(15,23,42,0.18)] backdrop-blur sm:p-6">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-400">
+              {locale.startsWith("zh") ? "状态" : "Status"}
             </div>
-            <div className="mt-auto rounded-t-[32px] bg-[linear-gradient(180deg,_rgba(248,251,255,0.96)_0%,_#ffffff_34%,_#f8fbff_100%)] px-5 pb-[calc(env(safe-area-inset-bottom)+1.5rem)] pt-6 text-slate-900 shadow-[0_-24px_60px_rgba(8,17,33,0.24)] sm:px-6">
-              <div className="mx-auto max-w-md">
-                <div className="mx-auto mb-5 h-1.5 w-14 rounded-full bg-slate-200" />
-                <div className="rounded-[28px] border border-white/70 bg-white/92 p-6 shadow-[0_18px_40px_rgba(15,23,42,0.10)]">
-                  <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">Status</div>
-                  <div className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">未加载到可编辑页面</div>
-                  <p className="mt-3 text-sm leading-6 text-slate-500">{backendNotice}</p>
-                  <div className="mt-6 space-y-3">
-                    <button
-                      type="button"
-                      className="w-full rounded-[22px] bg-slate-950 px-4 py-4 text-[15px] font-semibold text-white shadow-[0_18px_40px_rgba(15,23,42,0.24)] transition hover:bg-slate-800"
-                      onClick={() => window.location.reload()}
-                    >
-                      重新加载
-                    </button>
-                    <div className="grid grid-cols-2 gap-3">
-                      <button
-                        type="button"
-                        className="rounded-[20px] border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 shadow-[0_8px_24px_rgba(15,23,42,0.06)] transition hover:border-slate-300 hover:bg-white"
-                        onClick={() => {
-                          setHasEditorContent(true);
-                          setBackendNotice("当前使用空白模板继续编辑");
-                        }}
-                      >
-                        空白模板
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded-[20px] border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 shadow-[0_8px_24px_rgba(15,23,42,0.06)] transition hover:border-slate-300 hover:bg-white"
-                        onClick={() => {
-                          window.location.href = "/login";
-                        }}
-                      >
-                        重新登录
-                      </button>
-                    </div>
-                  </div>
-                </div>
+            <div className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">
+              {authNotice
+                ? (locale.startsWith("zh") ? "请重新登录继续" : "Sign in again to continue")
+                : (locale.startsWith("zh") ? "内容暂未恢复" : "Content is not ready yet")}
+            </div>
+            <p className="mt-3 text-sm leading-6 text-slate-500">{backendNotice}</p>
+            <div className="mt-6 space-y-3">
+              <button
+                type="button"
+                className="w-full rounded-[22px] bg-slate-950 px-4 py-4 text-[15px] font-semibold text-white shadow-[0_18px_40px_rgba(15,23,42,0.24)] transition hover:bg-slate-800"
+                onClick={() => window.location.reload()}
+              >
+                {locale.startsWith("zh") ? "重新加载" : "Reload"}
+              </button>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  className="rounded-[20px] border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 shadow-[0_8px_24px_rgba(15,23,42,0.06)] transition hover:border-slate-300 hover:bg-white"
+                  onClick={() => {
+                    setHasEditorContent(true);
+                    setBackendNotice("当前使用空白模板继续编辑");
+                  }}
+                >
+                  {locale.startsWith("zh") ? "空白模板" : "Blank template"}
+                </button>
+                <button
+                  type="button"
+                  className="rounded-[20px] border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 shadow-[0_8px_24px_rgba(15,23,42,0.06)] transition hover:border-slate-300 hover:bg-white"
+                  onClick={() => {
+                    window.location.href = "/login";
+                  }}
+                >
+                  {locale.startsWith("zh") ? "重新登录" : "Sign in again"}
+                </button>
               </div>
             </div>
           </div>
-        </main>
+        </LoadingProgressScreen>
       );
     }
     return (

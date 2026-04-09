@@ -1,10 +1,13 @@
 "use client";
 
+import type { ReactNode } from "react";
+
 type LoadingProgressScreenProps = {
   message?: string;
   locale?: string | null;
   statusTitle?: string;
   statusDescription?: string;
+  children?: ReactNode;
 };
 
 function isChineseLocale(locale?: string | null) {
@@ -20,7 +23,7 @@ export default function LoadingProgressScreen(props: LoadingProgressScreenProps)
     : "FAOLLA merchant workspace welcome poster";
 
   return (
-    <main className="flex min-h-screen items-center justify-center overflow-hidden bg-[#081121]">
+    <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#081121]">
       <picture className="block h-screen w-screen">
         <source media="(max-width: 768px)" srcSet={mobileSrc} />
         <img
@@ -30,6 +33,11 @@ export default function LoadingProgressScreen(props: LoadingProgressScreenProps)
           className="h-full w-full select-none object-cover"
         />
       </picture>
+      {props.children ? (
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center px-4 pb-[max(env(safe-area-inset-bottom),1.25rem)]">
+          <div className="pointer-events-auto w-full max-w-md">{props.children}</div>
+        </div>
+      ) : null}
     </main>
   );
 }
