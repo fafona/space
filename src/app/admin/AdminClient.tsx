@@ -14156,7 +14156,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     <div
       className={`flex min-h-0 min-w-0 w-full flex-col overflow-hidden rounded-2xl border bg-white ${
         showDesktopMerchantSupportPanel
-          ? "h-[calc(100vh-7rem)] max-h-[calc(100vh-7rem)] rounded-none border-x-0 border-b-0 shadow-none md:grid md:grid-cols-[320px_minmax(0,1fr)]"
+          ? "h-screen max-h-screen rounded-none border-x-0 border-y-0 shadow-none md:grid md:grid-cols-[320px_minmax(0,1fr)]"
           : "h-full max-h-[88vh] w-full max-w-5xl shadow-2xl md:grid md:grid-cols-[320px_minmax(0,1fr)]"
       }`}
     >
@@ -14385,7 +14385,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   );
   const desktopMerchantWorkspaceContent =
     isDesktopMerchantWorkspace && merchantDesktopSection !== "editor" ? (
-      <div className="min-h-screen bg-slate-50/70">
+      <div className={merchantDesktopSection === "support" ? "min-h-screen bg-white" : "min-h-screen bg-slate-50/70"}>
         <div className={merchantDesktopSection === "support" ? "w-full" : "w-full px-6 pb-8"}>
           {merchantDesktopSection === "profile" && merchantProfileDialogCommonProps ? (
             <MerchantProfileDialog
