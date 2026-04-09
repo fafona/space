@@ -12096,6 +12096,44 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     }
   }
 
+  const shouldUseDesktopEditorSidebar = forceDesktopEditorSidebar || isPlatformEditor || isDesktopEditorSidebar;
+  const toggleTopBarCollapsed = useCallback(() => {
+    setTopBarCollapsed((prev) => !prev);
+  }, []);
+  const toggleDesktopEditorSidebar = useCallback(() => {
+    if (!shouldUseDesktopEditorSidebar) return;
+    toggleTopBarCollapsed();
+  }, [shouldUseDesktopEditorSidebar, toggleTopBarCollapsed]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !shouldUseDesktopEditorSidebar) return;
+    const isTypingTarget = (target: EventTarget | null) => {
+      if (!(target instanceof HTMLElement)) return false;
+      if (target.isContentEditable) return true;
+      if (target.closest('[contenteditable="true"]')) return true;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement
+      ) {
+        return true;
+      }
+      return false;
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      if (event.key.toLowerCase() !== "s") return;
+      if (isTypingTarget(event.target)) return;
+      event.preventDefault();
+      toggleDesktopEditorSidebar();
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+    };
+  }, [shouldUseDesktopEditorSidebar, toggleDesktopEditorSidebar]);
+
   if (checkingAuth) {
     if (!isPlatformEditor) {
       return (
@@ -12355,49 +12393,11 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     return Math.max(max, value);
   }, 0);
   const mobileFrontendPreviewPadding = Math.max(120, Math.max(0, maxBlockOffsetY) + 100);
-  const shouldUseDesktopEditorSidebar = forceDesktopEditorSidebar || isPlatformEditor || isDesktopEditorSidebar;
   const isMobileMerchantEditorShell = isMobileMerchantSupportOnlyMode;
   const merchantEditorAvatarLabel = !isPlatformEditor ? getSupportContactAvatarLabel(effectiveMerchantDisplayName || merchantDisplayName, "商") : "";
   const shouldShowPublishActions = showPublishActions ?? !isPlatformEditor;
   const isDesktopMerchantWorkspace = desktopMerchantWorkspaceActive;
   const showDesktopMerchantSupportPanel = isDesktopMerchantWorkspace && merchantDesktopSection === "support";
-  const toggleTopBarCollapsed = useCallback(() => {
-    setTopBarCollapsed((prev) => !prev);
-  }, []);
-  const toggleDesktopEditorSidebar = useCallback(() => {
-    if (!shouldUseDesktopEditorSidebar) return;
-    toggleTopBarCollapsed();
-  }, [shouldUseDesktopEditorSidebar, toggleTopBarCollapsed]);
-
-  useEffect(() => {
-    if (typeof window === "undefined" || !shouldUseDesktopEditorSidebar) return;
-    const isTypingTarget = (target: EventTarget | null) => {
-      if (!(target instanceof HTMLElement)) return false;
-      if (target.isContentEditable) return true;
-      if (target.closest('[contenteditable="true"]')) return true;
-      if (
-        target instanceof HTMLInputElement ||
-        target instanceof HTMLTextAreaElement ||
-        target instanceof HTMLSelectElement
-      ) {
-        return true;
-      }
-      return false;
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return;
-      if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-      if (event.key.toLowerCase() !== "s") return;
-      if (isTypingTarget(event.target)) return;
-      event.preventDefault();
-      toggleDesktopEditorSidebar();
-    };
-    window.addEventListener("keydown", onKeyDown, true);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown, true);
-    };
-  }, [shouldUseDesktopEditorSidebar, toggleDesktopEditorSidebar]);
-
   const merchantAnalyticsSnapshot = (() => {
     const desktopConfig = previewViewport === "desktop" ? planConfig : viewportStatesRef.current.desktop.planConfig;
     const mobileConfig = previewViewport === "mobile" ? planConfig : viewportStatesRef.current.mobile.planConfig;
