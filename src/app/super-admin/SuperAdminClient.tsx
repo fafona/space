@@ -109,6 +109,7 @@ import {
 import { type SuperAdminTrustedDeviceRecord } from "@/lib/superAdminTrustedDevices";
 import { useHydrated } from "@/lib/useHydrated";
 import { uploadImageDataUrlToPublicStorage } from "@/lib/publicAssetUpload";
+import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import { useNotificationSound } from "@/lib/useNotificationSound";
 
 const SUPPORT_THREADS_OPEN_POLL_INTERVAL_MS = 1200;
@@ -223,6 +224,45 @@ function normalizeSupportDetailText(value: unknown) {
 function normalizeSupportDisplayValue(value: unknown) {
   const normalized = normalizeSupportDetailText(value);
   return normalized && normalized !== "-" ? normalized : "";
+}
+
+function resolveSupportAvatarImageUrl(...values: unknown[]) {
+  for (const value of values) {
+    const normalized = normalizeSupportDisplayValue(value);
+    if (normalized) return normalized;
+  }
+  return "";
+}
+
+type SupportAvatarBadgeProps = {
+  label: string;
+  imageUrl?: string | null;
+  className?: string;
+  labelClassName?: string;
+  imageAlt?: string;
+};
+
+function SupportAvatarBadge({
+  label,
+  imageUrl,
+  className = "",
+  labelClassName = "",
+  imageAlt = "",
+}: SupportAvatarBadgeProps) {
+  const normalizedImageUrl = normalizePublicAssetUrl(imageUrl ?? "");
+  if (normalizedImageUrl) {
+    return (
+      <div className={`overflow-hidden bg-slate-100 ${className}`.trim()}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={normalizedImageUrl} alt={imageAlt || label} className="h-full w-full object-cover" />
+      </div>
+    );
+  }
+  return (
+    <div className={className}>
+      <span className={labelClassName}>{label}</span>
+    </div>
+  );
 }
 
 function buildSupportMerchantCardLink(card: MerchantBusinessCardAsset | null) {
@@ -2286,6 +2326,14 @@ export default function SuperAdminClient() {
     normalizeSupportDisplayValue(selectedSupportMerchantRow?.site.domainPrefix) ||
     normalizeSupportDisplayValue(selectedSupportMerchantRow?.site.domainSuffix) ||
     normalizeSupportDisplayValue(selectedSupportMerchantRow?.prefix);
+  const selectedSupportAvatarImageUrl = resolveSupportAvatarImageUrl(
+    selectedSupportProfile?.chatAvatarImageUrl,
+    selectedSupportProfile?.merchantCardImageUrl,
+    selectedSupportMerchantRow?.backendAccount?.profileSnapshot?.chatAvatarImageUrl,
+    selectedSupportMerchantRow?.backendAccount?.profileSnapshot?.merchantCardImageUrl,
+    selectedSupportMerchantRow?.site.chatAvatarImageUrl,
+    selectedSupportMerchantRow?.site.merchantCardImageUrl,
+  );
   const selectedSupportBusinessCard = resolveMerchantBusinessCardForChatDisplay(
     selectedSupportMerchantRow?.site.businessCards ?? [],
   );
@@ -6880,11 +6928,17 @@ export default function SuperAdminClient() {
                             </button>
                             <button
                               type="button"
-                              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm transition hover:scale-[1.02]"
+                              className="shrink-0 rounded-2xl shadow-sm transition hover:scale-[1.02]"
                               onClick={() => setSupportMerchantInfoSheetOpen(true)}
                               aria-label="查看商户信息"
                             >
-                              {getSupportAvatarLabel(selectedSupportDisplayLabel, "商")}
+                              <SupportAvatarBadge
+                                label={getSupportAvatarLabel(selectedSupportDisplayLabel, "商")}
+                                imageUrl={selectedSupportAvatarImageUrl}
+                                imageAlt={selectedSupportDisplayLabel}
+                                className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white"
+                                labelClassName="text-sm font-semibold"
+                              />
                             </button>
                             <div className="min-w-0">
                               <div className="truncate text-[15px] font-semibold text-slate-900">{selectedSupportDisplayLabel}</div>
@@ -7024,6 +7078,12 @@ export default function SuperAdminClient() {
                           <div className="space-y-2.5">
                             {supportListRows.map(({ row, selectionKey, thread, lastMessage }) => {
                               const displayLabel = row.merchantName || thread?.merchantName || row.merchantId || thread?.merchantId || selectionKey;
+                              const avatarImageUrl = resolveSupportAvatarImageUrl(
+                                row.backendAccount?.profileSnapshot?.chatAvatarImageUrl,
+                                row.backendAccount?.profileSnapshot?.merchantCardImageUrl,
+                                row.site.chatAvatarImageUrl,
+                                row.site.merchantCardImageUrl,
+                              );
                               const subtitle = [
                                 row.backendAccount?.loginId || row.backendAccount?.username || "",
                                 row.userEmail || row.loginAccount || thread?.merchantEmail || "",
@@ -7047,13 +7107,15 @@ export default function SuperAdminClient() {
                                   }}
                                 >
                                   <div className="flex items-start gap-3">
-                                    <div
+                                    <SupportAvatarBadge
+                                      label={getSupportAvatarLabel(displayLabel || row.merchantId || selectionKey, "商")}
+                                      imageUrl={avatarImageUrl}
+                                      imageAlt={displayLabel || row.merchantId || selectionKey}
                                       className={`mt-0.5 flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-sm font-semibold ${
                                         hasUnread ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700"
                                       }`}
-                                    >
-                                      {getSupportAvatarLabel(displayLabel || row.merchantId || selectionKey, "商")}
-                                    </div>
+                                      labelClassName="text-sm font-semibold"
+                                    />
                                     <div className="min-w-0 flex-1">
                                       <div className="flex items-start justify-between gap-3">
                                         <div className="min-w-0">
@@ -7149,6 +7211,12 @@ export default function SuperAdminClient() {
                         <div className="space-y-2">
                           {supportListRows.map(({ row, selectionKey, thread, lastMessage }) => {
                             const displayLabel = row.merchantName || thread?.merchantName || row.merchantId || thread?.merchantId || selectionKey;
+                            const avatarImageUrl = resolveSupportAvatarImageUrl(
+                              row.backendAccount?.profileSnapshot?.chatAvatarImageUrl,
+                              row.backendAccount?.profileSnapshot?.merchantCardImageUrl,
+                              row.site.chatAvatarImageUrl,
+                              row.site.merchantCardImageUrl,
+                            );
                             const subtitle = [
                               row.backendAccount?.loginId || row.backendAccount?.username || "",
                               row.userEmail || row.loginAccount || thread?.merchantEmail || "",
@@ -7161,27 +7229,40 @@ export default function SuperAdminClient() {
                               <button
                                 key={selectionKey}
                                 type="button"
-                                className={`w-full rounded-2xl border px-3 py-3 text-left transition ${
+                              className={`w-full rounded-2xl border px-3 py-3 text-left transition ${
                                   active ? "border-blue-300 bg-blue-50" : "bg-white hover:bg-slate-50"
                                 }`}
                                 onClick={() => setSupportSelectedMerchantId(selectionKey)}
                               >
-                                <div className="flex items-start justify-between gap-2">
-                                  <div className="min-w-0">
-                                    <div className="flex items-center gap-2">
-                                      <div className="truncate text-sm font-medium text-slate-900">{displayLabel}</div>
-                                      {hasUnread ? (
-                                        <span aria-label="有未读消息" className="inline-flex h-2.5 w-2.5 shrink-0 rounded-full bg-rose-500" />
-                                      ) : null}
+                                <div className="flex items-start gap-3">
+                                  <SupportAvatarBadge
+                                    label={getSupportAvatarLabel(displayLabel || row.merchantId || selectionKey, "商")}
+                                    imageUrl={avatarImageUrl}
+                                    imageAlt={displayLabel || row.merchantId || selectionKey}
+                                    className={`mt-0.5 flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-sm font-semibold ${
+                                      hasUnread ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700"
+                                    }`}
+                                    labelClassName="text-sm font-semibold"
+                                  />
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-start justify-between gap-2">
+                                      <div className="min-w-0">
+                                        <div className="flex items-center gap-2">
+                                          <div className="truncate text-sm font-medium text-slate-900">{displayLabel}</div>
+                                          {hasUnread ? (
+                                            <span aria-label="有未读消息" className="inline-flex h-2.5 w-2.5 shrink-0 rounded-full bg-rose-500" />
+                                          ) : null}
+                                        </div>
+                                        <div className="truncate text-[11px] text-slate-500">{subtitle}</div>
+                                      </div>
+                                      <div className="shrink-0 text-[11px] text-slate-400">
+                                        {thread ? formatSupportMessageTime(thread.updatedAt) : "未留言"}
+                                      </div>
                                     </div>
-                                    <div className="truncate text-[11px] text-slate-500">{subtitle}</div>
+                                    <div className="mt-2 line-clamp-2 text-xs leading-5 text-slate-600">
+                                      {formatSupportConversationPreview(lastMessage?.text) || "暂无留言记录"}
+                                    </div>
                                   </div>
-                                  <div className="shrink-0 text-[11px] text-slate-400">
-                                    {thread ? formatSupportMessageTime(thread.updatedAt) : "未留言"}
-                                  </div>
-                                </div>
-                                <div className="mt-2 line-clamp-2 text-xs leading-5 text-slate-600">
-                                  {formatSupportConversationPreview(lastMessage?.text) || "暂无留言记录"}
                                 </div>
                               </button>
                             );
@@ -7205,12 +7286,21 @@ export default function SuperAdminClient() {
                     {selectedSupportThread ? (
                       <div className="flex h-full min-h-0 flex-col">
                         <div className="flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4">
-                          <div className="space-y-1">
-                            <div className="text-base font-semibold text-slate-900">{selectedSupportDisplayLabel}</div>
-                            <div className="text-xs text-slate-500">
-                              ID：{selectedSupportThread.merchantId}
-                              {selectedSupportMerchantRow?.loginAccount ? ` | 账号：${selectedSupportMerchantRow.loginAccount}` : ""}
-                              {selectedSupportMerchantRow?.userEmail ? ` | 邮箱：${selectedSupportMerchantRow.userEmail}` : ""}
+                          <div className="flex min-w-0 items-start gap-3">
+                            <SupportAvatarBadge
+                              label={getSupportAvatarLabel(selectedSupportDisplayLabel, "商")}
+                              imageUrl={selectedSupportAvatarImageUrl}
+                              imageAlt={selectedSupportDisplayLabel}
+                              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white"
+                              labelClassName="text-sm font-semibold"
+                            />
+                            <div className="min-w-0 space-y-1">
+                              <div className="truncate text-base font-semibold text-slate-900">{selectedSupportDisplayLabel}</div>
+                              <div className="text-xs text-slate-500">
+                                ID：{selectedSupportThread.merchantId}
+                                {selectedSupportMerchantRow?.loginAccount ? ` | 账号：${selectedSupportMerchantRow.loginAccount}` : ""}
+                                {selectedSupportMerchantRow?.userEmail ? ` | 邮箱：${selectedSupportMerchantRow.userEmail}` : ""}
+                              </div>
                             </div>
                           </div>
                           <div className="flex flex-wrap gap-2">
@@ -7323,9 +7413,13 @@ export default function SuperAdminClient() {
                         <div className="mx-auto h-1.5 w-12 rounded-full bg-slate-200" />
                         <div className="mt-4 flex items-start justify-between gap-3">
                           <div className="flex min-w-0 items-center gap-3">
-                            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white">
-                              {getSupportAvatarLabel(selectedSupportDisplayLabel, "商")}
-                            </div>
+                            <SupportAvatarBadge
+                              label={getSupportAvatarLabel(selectedSupportDisplayLabel, "商")}
+                              imageUrl={selectedSupportAvatarImageUrl}
+                              imageAlt={selectedSupportDisplayLabel}
+                              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white"
+                              labelClassName="text-sm font-semibold"
+                            />
                             <div className="min-w-0">
                               <div className="truncate text-base font-semibold text-slate-900">{selectedSupportDisplayLabel}</div>
                               <div className="mt-1 text-xs text-slate-500">{selectedSupportMerchantHeaderIndustry}</div>

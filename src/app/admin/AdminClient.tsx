@@ -14101,7 +14101,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     <div
       className={`flex min-h-0 min-w-0 w-full flex-col overflow-hidden rounded-2xl border bg-white ${
         showDesktopMerchantSupportPanel
-          ? "h-[calc(100vh-12rem)] max-h-[calc(100vh-12rem)] shadow-sm md:grid md:grid-cols-[320px_minmax(0,1fr)]"
+          ? "h-[calc(100vh-7rem)] max-h-[calc(100vh-7rem)] rounded-none border-x-0 border-b-0 shadow-none md:grid md:grid-cols-[320px_minmax(0,1fr)]"
           : "h-full max-h-[88vh] w-full max-w-5xl shadow-2xl md:grid md:grid-cols-[320px_minmax(0,1fr)]"
       }`}
     >
@@ -14331,7 +14331,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   const desktopMerchantWorkspaceContent =
     isDesktopMerchantWorkspace && merchantDesktopSection !== "editor" ? (
       <div className="min-h-screen bg-slate-50/70">
-        <div className="w-full px-6 pb-8">
+        <div className={merchantDesktopSection === "support" ? "w-full" : "w-full px-6 pb-8"}>
           {merchantDesktopSection === "profile" && merchantProfileDialogCommonProps ? (
             <MerchantProfileDialog
               {...merchantProfileDialogCommonProps}
@@ -14542,10 +14542,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         supportHasUnreadMessages ? "alert" : "default",
                       )}
                       onClick={openMerchantSupportPanel}
-                      aria-label={supportHasUnreadMessages ? "联系我们，有新消息" : "联系我们"}
+                      aria-label={supportHasUnreadMessages ? "会话，有新消息" : "会话"}
                     >
                       <span className="relative inline-flex items-center">
-                        联系我们
+                        会话
                         {supportHasUnreadMessages ? (
                           <span
                             aria-hidden="true"
@@ -14632,10 +14632,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 <button
                   className={supportButtonClassName}
                   onClick={openSupportDialog}
-                  aria-label={supportHasUnreadMessages ? "联系我们，有新消息" : "联系我们"}
+                  aria-label={supportHasUnreadMessages ? "会话，有新消息" : "会话"}
                 >
                   <span className="relative inline-flex items-center">
-                    {"联系我们"}
+                    {"会话"}
                     {supportHasUnreadMessages ? (
                       <span
                         aria-hidden="true"
@@ -14648,7 +14648,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             )}
           </div>
         {!topBarCollapsed ? (
-          isDesktopMerchantWorkspace && merchantDesktopSection !== "editor" ? (
+          isDesktopMerchantWorkspace && merchantDesktopSection !== "editor" && merchantDesktopSection !== "support" ? (
             <div className="border-t">
               <div className="w-full px-6 py-4">
                 <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
@@ -14659,9 +14659,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         ? "名片夹"
                       : merchantDesktopSection === "booking"
                         ? "预约管理"
-                        : merchantDesktopSection === "analytics"
+                      : merchantDesktopSection === "analytics"
                           ? "数据统计"
-                          : "联系我们"}
+                          : "会话"}
                   </div>
                   <div className="mt-1 text-sm text-slate-500">
                     {merchantDesktopSection === "profile"
@@ -14670,7 +14670,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         ? "这里集中管理聊天展示名片与联系卡复制内容。"
                       : merchantDesktopSection === "booking"
                         ? "这里集中查看和处理当前商户收到的预约记录。"
-                        : merchantDesktopSection === "analytics"
+                      : merchantDesktopSection === "analytics"
                           ? "这里集中查看访问、发布和联系方式点击等统计。"
                           : "这里集中处理官方客服和商户聊天消息。"}
                   </div>
