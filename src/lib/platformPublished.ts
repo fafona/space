@@ -156,6 +156,9 @@ function mergePublishedMerchantSnapshotSite(
   const preferredImageUrl = normalizeText(preferred.merchantCardImageUrl);
   const fallbackImageUrl = normalizeText(fallback.merchantCardImageUrl);
   const nextImageUrl = preferredImageUrl || fallbackImageUrl;
+  const preferredAvatarImageUrl = normalizeText(preferred.chatAvatarImageUrl);
+  const fallbackAvatarImageUrl = normalizeText(fallback.chatAvatarImageUrl);
+  const nextAvatarImageUrl = preferredAvatarImageUrl || fallbackAvatarImageUrl;
   const fallbackOpacity =
     typeof fallback.merchantCardImageOpacity === "number" && Number.isFinite(fallback.merchantCardImageOpacity)
       ? fallback.merchantCardImageOpacity
@@ -181,6 +184,7 @@ function mergePublishedMerchantSnapshotSite(
     contactPhone: pickPreferredText(preferred.contactPhone, fallback.contactPhone),
     contactEmail: pickPreferredText(preferred.contactEmail, fallback.contactEmail),
     merchantCardImageUrl: nextImageUrl,
+    chatAvatarImageUrl: nextAvatarImageUrl,
     merchantCardImageOpacity: nextImageUrl
       ? (preferredImageUrl ? preferredOpacity : fallbackOpacity)
       : preferredOpacity,

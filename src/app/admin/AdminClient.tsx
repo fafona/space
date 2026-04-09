@@ -2030,27 +2030,35 @@ async function compressImageFileWithinLimit(
 
 const SUPPORT_SELF_AVATAR_MAX_BYTES = 40 * 1024;
 const SUPPORT_SELF_AVATAR_COMPRESSION_STEPS = [
-  { maxSide: 256, quality: 0.74 },
-  { maxSide: 224, quality: 0.66 },
-  { maxSide: 192, quality: 0.58 },
-  { maxSide: 160, quality: 0.5 },
-  { maxSide: 128, quality: 0.42 },
-  { maxSide: 96, quality: 0.34 },
-  { maxSide: 72, quality: 0.26 },
+  { maxSide: 384, quality: 0.9 },
+  { maxSide: 320, quality: 0.86 },
+  { maxSide: 288, quality: 0.82 },
+  { maxSide: 256, quality: 0.78 },
+  { maxSide: 224, quality: 0.72 },
+  { maxSide: 192, quality: 0.66 },
+  { maxSide: 160, quality: 0.6 },
+  { maxSide: 128, quality: 0.52 },
 ] as const;
 
 async function compressSupportSelfAvatarFile(file: File) {
+  if (file.size > 0 && file.size <= SUPPORT_SELF_AVATAR_MAX_BYTES) {
+    return {
+      dataUrl: await fileToDataUrl(file),
+      bytes: file.size,
+    };
+  }
+
+  const image = await loadImageFromBlob(file);
+  const longestSide = Math.max(image.naturalWidth || image.width, image.naturalHeight || image.height, 1);
   let bestCandidate: { dataUrl: string; bytes: number } | null = null;
   for (const step of SUPPORT_SELF_AVATAR_COMPRESSION_STEPS) {
     await yieldToBrowser();
-    const compressed = await compressImageFileWithinLimit(file, SUPPORT_SELF_AVATAR_MAX_BYTES, step);
-    let nextDataUrl = compressed.dataUrl;
-    let nextBytes = compressed.bytes;
-
-    if (!/^data:image\/webp/i.test(nextDataUrl) || nextBytes > SUPPORT_SELF_AVATAR_MAX_BYTES) {
-      nextDataUrl = await compressImageDataUrl(nextDataUrl, step);
-      nextBytes = estimateDataUrlBytes(nextDataUrl);
-    }
+    const scale = Math.min(1, step.maxSide / longestSide);
+    const finalized = await finalizeCompressedImageCandidate(
+      await renderCompressedImageCandidate(image, scale, step.quality),
+    );
+    const nextDataUrl = finalized.dataUrl;
+    const nextBytes = finalized.bytes;
 
     if (!bestCandidate || nextBytes < bestCandidate.bytes) {
       bestCandidate = {
@@ -2065,6 +2073,17 @@ async function compressSupportSelfAvatarFile(file: File) {
         bytes: nextBytes,
       };
     }
+  }
+
+  const genericCompressed = await compressImageFileWithinLimit(file, SUPPORT_SELF_AVATAR_MAX_BYTES, {
+    maxSide: SUPPORT_SELF_AVATAR_COMPRESSION_STEPS[0].maxSide,
+    quality: SUPPORT_SELF_AVATAR_COMPRESSION_STEPS[0].quality,
+  });
+  if (genericCompressed.bytes <= SUPPORT_SELF_AVATAR_MAX_BYTES) {
+    return {
+      dataUrl: genericCompressed.dataUrl,
+      bytes: genericCompressed.bytes,
+    };
   }
 
   throw new Error(

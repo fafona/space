@@ -217,6 +217,7 @@ test("injectPublishedMerchantSnapshotIntoBlocks can replace stale merchant snaps
           city: "Sevilla",
         },
         merchantCardImageUrl: "https://example.com/card.webp",
+        chatAvatarImageUrl: "https://example.com/card-avatar.webp",
         merchantCardImageOpacity: 0.45,
         sortConfig: {
           recommendedCountryRank: null,
@@ -238,6 +239,7 @@ test("injectPublishedMerchantSnapshotIntoBlocks can replace stale merchant snaps
       industry?: string;
       location?: { city?: string };
       merchantCardImageUrl?: string;
+      chatAvatarImageUrl?: string;
       merchantCardImageOpacity?: number;
     }>;
     publishedMerchantDefaultSortRule?: string;
@@ -245,6 +247,7 @@ test("injectPublishedMerchantSnapshotIntoBlocks can replace stale merchant snaps
   assert.equal(rootProps.publishedMerchantSnapshot?.[0]?.industry, "娱乐");
   assert.equal(rootProps.publishedMerchantSnapshot?.[0]?.location?.city, "Sevilla");
   assert.equal(rootProps.publishedMerchantSnapshot?.[0]?.merchantCardImageUrl, "https://example.com/card.webp");
+  assert.equal(rootProps.publishedMerchantSnapshot?.[0]?.chatAvatarImageUrl, "https://example.com/card-avatar.webp");
   assert.equal(rootProps.publishedMerchantSnapshot?.[0]?.merchantCardImageOpacity, 0.45);
   assert.equal(rootProps.publishedMerchantDefaultSortRule, "monthly_views_desc");
 });
@@ -278,6 +281,7 @@ test("injectPublishedMerchantSnapshotIntoBlocks keeps richer existing merchant c
             contactPhone: "633130577",
             contactEmail: "fafona.felix@gmail.com",
             merchantCardImageUrl: "https://example.com/abc.webp",
+            chatAvatarImageUrl: "https://example.com/abc-avatar.webp",
             merchantCardImageOpacity: 0.57,
             sortConfig: {
               recommendedCountryRank: null,
@@ -310,6 +314,7 @@ test("injectPublishedMerchantSnapshotIntoBlocks keeps richer existing merchant c
             contactPhone: "633130577",
             contactEmail: "caimin00x@gmail.com",
             merchantCardImageUrl: "https://example.com/fafona.webp",
+            chatAvatarImageUrl: "https://example.com/fafona-avatar.webp",
             merchantCardImageOpacity: 0.5,
             sortConfig: {
               recommendedCountryRank: null,
@@ -347,6 +352,7 @@ test("injectPublishedMerchantSnapshotIntoBlocks keeps richer existing merchant c
           city: "",
         },
         merchantCardImageUrl: "",
+        chatAvatarImageUrl: "",
         merchantCardImageOpacity: 1,
         sortConfig: {
           recommendedCountryRank: null,
@@ -375,6 +381,7 @@ test("injectPublishedMerchantSnapshotIntoBlocks keeps richer existing merchant c
           city: "",
         },
         merchantCardImageUrl: "",
+        chatAvatarImageUrl: "",
         merchantCardImageOpacity: 1,
         sortConfig: {
           recommendedCountryRank: null,
@@ -403,6 +410,7 @@ test("injectPublishedMerchantSnapshotIntoBlocks keeps richer existing merchant c
           city: "",
         },
         merchantCardImageUrl: "",
+        chatAvatarImageUrl: "",
         merchantCardImageOpacity: 1,
         sortConfig: {
           recommendedCountryRank: null,
@@ -426,9 +434,11 @@ test("injectPublishedMerchantSnapshotIntoBlocks keeps richer existing merchant c
   assert.equal(rootProps.publishedMerchantSnapshot?.length, 3);
   const byId = new Map((rootProps.publishedMerchantSnapshot ?? []).map((item) => [item.id, item] as const));
   assert.equal(byId.get("10909091")?.merchantCardImageUrl, "https://example.com/abc.webp");
+  assert.equal(byId.get("10909091")?.chatAvatarImageUrl, "https://example.com/abc-avatar.webp");
   assert.equal(byId.get("10909091")?.category, "品牌官网");
   assert.equal(byId.get("10909091")?.industry, "零售");
   assert.equal(byId.get("10000000")?.merchantCardImageUrl, "https://example.com/fafona.webp");
+  assert.equal(byId.get("10000000")?.chatAvatarImageUrl, "https://example.com/fafona-avatar.webp");
   assert.equal(byId.get("10000001")?.merchantName, "20889576");
   assert.equal(rootProps.publishedMerchantDefaultSortRule, "monthly_views_desc");
 });
