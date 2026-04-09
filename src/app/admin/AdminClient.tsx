@@ -14303,29 +14303,50 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       focusSupportInput();
                     }}
                   >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
+                    <div className="flex items-start gap-3">
+                      <SupportAvatarBadge
+                        label={contactRow.avatarLabel}
+                        imageUrl={contactRow.avatarImageUrl}
+                        imageAlt={contactRow.name}
+                        className={`mt-0.5 flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-sm font-semibold shadow-sm ${
+                          contactRow.isOfficial || contactRow.unread
+                            ? "bg-slate-900 text-white"
+                            : "bg-slate-100 text-slate-700"
+                        }`}
+                        labelClassName="text-sm font-semibold"
+                      />
+                      <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
-                          <div className="truncate text-sm font-medium text-slate-900">{contactRow.name}</div>
-                          {!contactRow.isOfficial ? (
-                            <span className="truncate text-[11px] font-medium text-slate-400">{contactRow.subtitle}</span>
-                          ) : null}
-                          {contactRow.badge ? (
-                            <span className="inline-flex shrink-0 items-center rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium leading-none text-white">
-                              {contactRow.badge}
-                            </span>
-                          ) : null}
-                          {contactRow.unread ? (
-                            <span aria-label="有未读消息" className="inline-flex h-2.5 w-2.5 shrink-0 rounded-full bg-rose-500" />
-                          ) : null}
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <div className="truncate text-sm font-medium text-slate-900">{contactRow.name}</div>
+                                  {!contactRow.isOfficial ? (
+                                    <span className="truncate text-[11px] font-medium text-slate-400">{contactRow.subtitle}</span>
+                                  ) : null}
+                                  {contactRow.badge ? (
+                                    <span className="inline-flex shrink-0 items-center rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium leading-none text-white">
+                                      {contactRow.badge}
+                                    </span>
+                                  ) : null}
+                                  {contactRow.unread ? (
+                                    <span aria-label="有未读消息" className="inline-flex h-2.5 w-2.5 shrink-0 rounded-full bg-rose-500" />
+                                  ) : null}
+                                </div>
+                                {contactRow.isOfficial ? (
+                                  <div className="truncate text-[11px] text-slate-500">{contactRow.subtitle}</div>
+                                ) : null}
+                              </div>
+                              <div className="shrink-0 text-[11px] text-slate-400">
+                                {contactRow.updatedAt ? formatSupportMessageTime(contactRow.updatedAt) : "未聊天"}
+                              </div>
+                            </div>
+                            <div className="mt-2 truncate text-xs leading-5 text-slate-600">{contactRow.preview}</div>
+                          </div>
                         </div>
-                        {contactRow.isOfficial ? <div className="truncate text-[11px] text-slate-500">{contactRow.subtitle}</div> : null}
-                      </div>
-                      <div className="shrink-0 text-[11px] text-slate-400">
-                        {contactRow.updatedAt ? formatSupportMessageTime(contactRow.updatedAt) : "未聊天"}
                       </div>
                     </div>
-                    <div className="mt-2 truncate text-xs leading-5 text-slate-600">{contactRow.preview}</div>
                   </button>
                 );
               })}
@@ -14339,7 +14360,14 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <div className="flex min-w-0 items-center justify-between gap-3 border-b px-5 py-4">
           <div className="flex min-w-0 items-center gap-3">
-            {showDesktopMerchantSupportPanel ? (
+            {selectedSupportIsOfficial ? (
+              <SupportAvatarBadge
+                label={selectedSupportAvatarLabel}
+                imageAlt={selectedSupportDisplayName}
+                className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm"
+                labelClassName="text-sm font-semibold text-white"
+              />
+            ) : showDesktopMerchantSupportPanel ? (
               <button
                 type="button"
                 className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm transition hover:scale-[1.02]"
@@ -14354,7 +14382,15 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                   labelClassName="text-sm font-semibold text-white"
                 />
               </button>
-            ) : null}
+            ) : (
+              <SupportAvatarBadge
+                label={selectedSupportAvatarLabel}
+                imageUrl={selectedSupportAvatarImageUrl}
+                imageAlt={selectedSupportDisplayName}
+                className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm"
+                labelClassName="text-sm font-semibold text-white"
+              />
+            )}
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <div className="truncate text-base font-semibold text-slate-900">{selectedSupportDisplayName}</div>
