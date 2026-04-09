@@ -74,6 +74,25 @@ function resolveWelcomeHeadline(locale?: string | null, fallback?: string) {
   return byLanguage[subtag] ?? fallback?.trim() ?? byLanguage.en;
 }
 
+function resolveQuickAccessTagline(locale?: string | null) {
+  const normalized = (locale ?? "").trim().toLowerCase();
+  const byLanguage: Record<string, string> = {
+    zh: "电话、WhatsApp、TikTok、Twitter、地图，一键直达",
+    ja: "電話、WhatsApp、TikTok、Twitter、地図へワンタップ",
+    ko: "전화, WhatsApp, TikTok, Twitter, 지도까지 한 번에",
+    en: "Call, WhatsApp, TikTok, Twitter, and maps in one tap",
+    es: "Llamadas, WhatsApp, TikTok, Twitter y mapa, todo en un toque",
+    fr: "Appels, WhatsApp, TikTok, Twitter et carte, tout en un geste",
+    de: "Anruf, WhatsApp, TikTok, Twitter und Karte mit einem Klick",
+    tr: "Arama, WhatsApp, TikTok, Twitter ve harita, tek dokunuşla",
+    it: "Chiamate, WhatsApp, TikTok, Twitter e mappa, tutto in un tocco",
+    pt: "Chamadas, WhatsApp, TikTok, Twitter e mapa, tudo em um toque",
+    ru: "Звонок, WhatsApp, TikTok, Twitter и карта — в одно касание",
+  };
+  const subtag = normalized.split("-")[0] ?? "";
+  return byLanguage[subtag] ?? byLanguage.en;
+}
+
 function PhoneGlyph() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5 fill-current">
@@ -97,6 +116,7 @@ export default function LoadingProgressScreen(props: LoadingProgressScreenProps)
   const mobileSrc = isChinese ? "/loading-progress-mobile-zh.webp" : "/loading-progress-mobile-en.webp";
   const alt = "FAOLLA merchant workspace welcome poster";
   const headline = resolveWelcomeHeadline(locale, props.statusTitle);
+  const quickAccessTagline = resolveQuickAccessTagline(locale);
   const contactItems: ContactPreviewItem[] = [
     { key: "phone", value: "+34 633130577", iconColor: "#1B78FF", iconNode: <PhoneGlyph /> },
     { key: "whatsapp", value: "+34 633130577", iconSrc: "/social-icons/whatsapp.svg", iconColor: "#25D366" },
@@ -128,14 +148,10 @@ export default function LoadingProgressScreen(props: LoadingProgressScreenProps)
               FAOLLA.COM
             </div>
             <div className="space-y-6">
-              <div className="flex items-center gap-5">
-                <div className="flex h-[88px] w-[88px] items-center justify-center overflow-hidden rounded-[28px] bg-white/12 shadow-[0_22px_46px_rgba(8,17,33,0.24)] backdrop-blur">
-                  <Image src="/faolla-app-icon-192.png" alt="" width={88} height={88} className="h-full w-full object-cover" unoptimized />
-                </div>
-                <div className="space-y-3">
-                  <div className="text-sm font-semibold uppercase tracking-[0.34em] text-cyan-50/62">FAOLLA</div>
-                  <div className="max-w-[34rem] text-4xl font-semibold leading-tight text-white">{headline}</div>
-                </div>
+              <div className="space-y-3">
+                <div className="text-sm font-semibold uppercase tracking-[0.34em] text-cyan-50/62">FAOLLA</div>
+                <div className="max-w-[34rem] text-4xl font-semibold leading-tight text-white">{headline}</div>
+                <div className="text-xl font-medium text-cyan-50/78">{quickAccessTagline}</div>
               </div>
               <div className="flex flex-wrap items-center gap-3">
                 {contactItems.map((item) => (
@@ -194,14 +210,10 @@ export default function LoadingProgressScreen(props: LoadingProgressScreenProps)
           </div>
 
           <div className="rounded-[30px] border border-white/12 bg-[#0d1830]/94 p-5 text-white shadow-[0_24px_54px_rgba(8,17,33,0.24)] backdrop-blur lg:hidden">
-            <div className="flex items-center gap-4">
-              <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-[20px] bg-white/12 shadow-[0_16px_32px_rgba(8,17,33,0.2)]">
-                <Image src="/faolla-app-icon-192.png" alt="" width={64} height={64} className="h-full w-full object-cover" unoptimized />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-cyan-50/65">FAOLLA</div>
-                <div className="mt-2 text-[26px] font-semibold leading-[1.15] text-white">{headline}</div>
-              </div>
+            <div className="min-w-0">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-cyan-50/65">FAOLLA</div>
+              <div className="mt-2 text-[26px] font-semibold leading-[1.15] text-white">{headline}</div>
+              <div className="mt-3 text-[15px] font-medium leading-6 text-cyan-50/78">{quickAccessTagline}</div>
             </div>
             <div className="mt-5 rounded-[26px] border border-white/16 bg-[rgba(247,250,255,0.985)] p-4 text-slate-900 shadow-[0_22px_40px_rgba(8,17,33,0.2)]">
               <div className="flex items-start justify-between gap-4">
