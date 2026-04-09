@@ -14,11 +14,76 @@ const dirtyLocales = new Set<string>();
 
 let persistTimer: number | null = null;
 
+const MANUAL_DOM_TRANSLATIONS: Record<string, Record<string, string>> = {
+  商户信息: {
+    "zh-cn": "商户信息",
+    "zh-tw": "商戶資訊",
+    en: "Profile",
+    es: "Perfil",
+    fr: "Profil",
+    de: "Profil",
+    it: "Profilo",
+    pt: "Perfil",
+    ru: "Профиль",
+    uk: "Профіль",
+    pl: "Profil",
+    tr: "Profil",
+    nl: "Profiel",
+    ro: "Profil",
+    cs: "Profil",
+    sv: "Profil",
+    hu: "Profil",
+    da: "Profil",
+    fi: "Profiili",
+    no: "Profil",
+    sk: "Profil",
+    hr: "Profil",
+    bs: "Profil",
+    sr: "Profil",
+    bg: "Профил",
+    el: "Προφίλ",
+    sq: "Profil",
+    lt: "Profilis",
+    sl: "Profil",
+    lv: "Profils",
+    et: "Profiil",
+    mk: "Профил",
+    ca: "Perfil",
+    eu: "Profila",
+    gl: "Perfil",
+    cy: "Proffil",
+    is: "Prófíll",
+    ga: "Próifíl",
+    mt: "Profil",
+    lb: "Profil",
+    ja: "店舗情報",
+    ko: "상점정보",
+  },
+};
+
 function toApiTarget(locale: string) {
   const normalized = resolveSupportedLocale(locale).toLowerCase();
   if (normalized === "zh-cn") return "zh-CN";
   if (normalized === "zh-tw") return "zh-TW";
   return normalized.split("-")[0] || "en";
+}
+
+function getManualDomTranslation(source: string, locale: string) {
+  const entry = MANUAL_DOM_TRANSLATIONS[source];
+  if (!entry) return null;
+  const normalized = normalizeDomLocale(locale).toLowerCase();
+  const language = normalized.split("-")[0] || normalized;
+  return entry[normalized] ?? entry[language] ?? null;
+}
+
+function getManualDomReverseSource(translated: string, locale: string) {
+  const normalized = normalizeDomLocale(locale).toLowerCase();
+  const language = normalized.split("-")[0] || normalized;
+  for (const [source, entry] of Object.entries(MANUAL_DOM_TRANSLATIONS)) {
+    const candidate = entry[normalized] ?? entry[language];
+    if (candidate === translated) return source;
+  }
+  return null;
 }
 
 export function normalizeDomLocale(locale: string | null | undefined): DomLocale {
@@ -211,6 +276,7 @@ export function isDomTranslationCached(input: string, locale: string) {
   if (toApiTarget(normalized) === "zh-CN") return true;
   const { core } = splitOuterWhitespace(input);
   if (!shouldTranslateCoreText(core, normalized)) return true;
+  if (getManualDomTranslation(core, normalized)) return true;
   return getLocaleCache(normalized).has(core);
 }
 
@@ -220,6 +286,11 @@ export function translateDomText(input: string, locale: string) {
 
   const { leading, core, trailing } = splitOuterWhitespace(input);
   if (!shouldTranslateCoreText(core, normalized)) return input;
+
+  const manual = getManualDomTranslation(core, normalized);
+  if (manual) {
+    return `${leading}${manual}${trailing}`;
+  }
 
   const cache = getLocaleCache(normalized);
   const translated = cache.get(core);
@@ -236,8 +307,11 @@ export function reverseTranslateDomText(input: string, locale: string) {
 
   const reverse = getReverseLocaleCache(normalized);
   const source = reverse.get(core);
-  if (!source) return null;
-  return `${leading}${source}${trailing}`;
+  if (source) return `${leading}${source}${trailing}`;
+
+  const manualSource = getManualDomReverseSource(core, normalized);
+  if (!manualSource) return null;
+  return `${leading}${manualSource}${trailing}`;
 }
 
 export async function ensureDomTranslations(texts: Iterable<string>, locale: string, concurrency = DEFAULT_CONCURRENCY) {
@@ -249,6 +323,7 @@ export async function ensureDomTranslations(texts: Iterable<string>, locale: str
     const { core } = splitOuterWhitespace(sourceText);
     if (!core) continue;
     if (!shouldTranslateCoreText(core, normalized)) continue;
+    if (getManualDomTranslation(core, normalized)) continue;
     if (getLocaleCache(normalized).has(core)) continue;
     unique.add(core);
   }
