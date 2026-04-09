@@ -12,19 +12,18 @@ type LoadingProgressScreenProps = {
 type LoadingAction = {
   key: string;
   label: string;
-  accentClassName: string;
+  bgColor: string;
+  helper: string;
 };
 
 type LoadingCopy = {
   badge: string;
-  heroTitle: string;
   heroSubtitle: string;
   statusTitle: string;
   statusLine: string;
   previewLabel: string;
   previewMerchant: string;
   previewMeta: string[];
-  actionTitle: string;
   actions: LoadingAction[];
 };
 
@@ -87,8 +86,7 @@ function resolveLoadingCopy(props: LoadingProgressScreenProps): LoadingCopy {
 
   return {
     badge: "Faolla.com",
-    heroTitle: isChinese ? "一张名片，连起网站与会话" : "One card for your site and chat",
-    heroSubtitle: isChinese ? "电话、WhatsApp、地图，一步直达" : "Call, WhatsApp, and map in one tap",
+    heroSubtitle: isChinese ? "电话、WhatsApp、地图，一步直达" : "Call, WhatsApp, and maps in one tap",
     statusTitle: props.statusTitle?.trim() || phase.title,
     statusLine: props.statusDescription?.trim() || phase.line,
     previewLabel: isChinese ? "名片预览" : "Card preview",
@@ -96,51 +94,46 @@ function resolveLoadingCopy(props: LoadingProgressScreenProps): LoadingCopy {
     previewMeta: isChinese
       ? ["联系人: Felix", "电话: +34 633130577", "地址: Sevilla / Spain"]
       : ["Contact: Felix", "Phone: +34 633130577", "Sevilla / Spain"],
-    actionTitle: isChinese ? "一键联系" : "Quick actions",
     actions: isChinese
       ? [
-          { key: "phone", label: "电话", accentClassName: "from-cyan-400/24 to-blue-400/10" },
-          { key: "whatsapp", label: "WhatsApp", accentClassName: "from-emerald-400/26 to-green-400/10" },
-          { key: "map", label: "地图", accentClassName: "from-amber-300/26 to-orange-400/10" },
+          { key: "phone", label: "电话", bgColor: "#007AFF", helper: "+34 633..." },
+          { key: "whatsapp", label: "打开 WhatsApp", bgColor: "#25D366", helper: "WhatsApp" },
+          { key: "map", label: "导航", bgColor: "#EA4335", helper: "Sevilla" },
         ]
       : [
-          { key: "phone", label: "Call", accentClassName: "from-cyan-400/24 to-blue-400/10" },
-          { key: "whatsapp", label: "WhatsApp", accentClassName: "from-emerald-400/26 to-green-400/10" },
-          { key: "map", label: "Map", accentClassName: "from-amber-300/26 to-orange-400/10" },
+          { key: "phone", label: "Call", bgColor: "#007AFF", helper: "+34 633..." },
+          { key: "whatsapp", label: "Open WhatsApp", bgColor: "#25D366", helper: "WhatsApp" },
+          { key: "map", label: "Navigate", bgColor: "#EA4335", helper: "Sevilla" },
         ],
   };
 }
 
-function PhoneIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M5.6 4.9c.6-.6 1.6-.8 2.3-.4l2 1.1c.8.4 1.2 1.4.9 2.3l-.6 1.7a2 2 0 0 0 .5 2l1.9 1.9a2 2 0 0 0 2 .5l1.7-.6c.9-.3 1.9.1 2.3.9l1.1 2c.4.7.2 1.7-.4 2.3l-1 1c-1.2 1.2-3 1.7-4.7 1.2-3.6-1-7.1-4.5-8.1-8.1-.5-1.7 0-3.5 1.2-4.7z" />
-    </svg>
-  );
-}
-
-function WhatsAppIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M20 11.6A8 8 0 0 1 8.4 19l-3.4.8.9-3.2A8 8 0 1 1 20 11.6z" />
-      <path d="M9.2 8.9c.2-.4.4-.4.7-.4h.6c.2 0 .4 0 .5.4l.7 1.6c.1.3.1.4 0 .6l-.5.6c-.1.1-.2.3 0 .6.3.6 1.3 1.7 2.9 2.3.3.1.5 0 .6-.1l.7-.8c.2-.2.4-.2.6-.1l1.5.7c.3.1.5.2.5.4v.5c0 .3-.2.8-.6 1.2-.3.3-.8.5-1.5.5-1 0-2.3-.4-3.8-1.5-1.6-1.1-2.6-2.5-3-3.7-.4-1.1-.3-2 .1-2.8z" />
-    </svg>
-  );
-}
-
-function MapPinIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 21s6-5.5 6-11a6 6 0 1 0-12 0c0 5.5 6 11 6 11z" />
-      <circle cx="12" cy="10" r="2.3" />
-    </svg>
-  );
-}
-
 function ActionIcon(props: { actionKey: string }) {
-  if (props.actionKey === "phone") return <PhoneIcon />;
-  if (props.actionKey === "whatsapp") return <WhatsAppIcon />;
-  return <MapPinIcon />;
+  if (props.actionKey === "whatsapp") {
+    return (
+      <Image
+        src="/social-icons/whatsapp.svg"
+        alt=""
+        width={18}
+        height={18}
+        className="h-[18px] w-[18px] object-contain"
+      />
+    );
+  }
+
+  if (props.actionKey === "map") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true" className="h-[18px] w-[18px] fill-white">
+        <path d="M12 2a7 7 0 0 0-7 7c0 4.74 6.14 11.84 6.4 12.14a.8.8 0 0 0 1.2 0C12.86 20.84 19 13.74 19 9a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5z" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-[18px] w-[18px] fill-white">
+      <path d="M6.62 10.79a15.53 15.53 0 0 0 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1C10.4 21 3 13.6 3 4c0-.55.45-1 1-1h3.49c.55 0 1 .45 1 1 0 1.24.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.19 2.2z" />
+    </svg>
+  );
 }
 
 function LoadingCardPreview(props: { copy: LoadingCopy }) {
@@ -164,21 +157,20 @@ function LoadingCardPreview(props: { copy: LoadingCopy }) {
         ))}
       </div>
 
-      <div className="mt-5 rounded-[20px] border border-slate-200/80 bg-white/84 px-3 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.06)]">
-        <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{copy.actionTitle}</div>
-        <div className="mt-3 grid grid-cols-3 gap-2">
-          {copy.actions.map((action) => (
+      <div className="mt-5 flex flex-wrap gap-3">
+        {copy.actions.map((action) => (
+          <div key={action.key} className="inline-flex items-center gap-2">
             <div
-              key={action.key}
-              className={`rounded-[18px] border border-slate-200/80 bg-gradient-to-br ${action.accentClassName} px-2 py-3 text-center text-slate-900`}
+              aria-label={action.label}
+              title={action.label}
+              className="inline-flex h-[34px] w-[34px] items-center justify-center rounded-full shadow-[0_8px_20px_rgba(15,23,42,0.14)]"
+              style={{ background: action.bgColor }}
             >
-              <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-white shadow-[0_8px_18px_rgba(15,23,42,0.08)]">
-                <ActionIcon actionKey={action.key} />
-              </div>
-              <div className="mt-2 text-[11px] font-semibold">{action.label}</div>
+              <ActionIcon actionKey={action.key} />
             </div>
-          ))}
-        </div>
+            <div className="text-[11px] font-medium text-slate-500">{action.helper}</div>
+          </div>
+        ))}
       </div>
     </div>
   );
