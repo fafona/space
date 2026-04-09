@@ -4818,6 +4818,7 @@ export default function AdminClient({
   const resizeSupportComposerInput = useCallback((target?: HTMLTextAreaElement | null) => {
     const input = target ?? supportInputRef.current;
     if (!input) return;
+    if (input.dataset.supportAutoResize !== "mobile") return;
     const maxHeight = 24 * 4;
     input.style.height = "24px";
     const nextHeight = Math.min(maxHeight, Math.max(24, input.scrollHeight));
@@ -13811,6 +13812,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             <textarea
               ref={supportInputRef}
               rows={1}
+              data-support-auto-resize="mobile"
               className="min-h-[24px] w-full resize-none overflow-y-hidden bg-transparent px-1 py-0 text-base leading-6 outline-none transition placeholder:text-slate-400"
               placeholder={selectedSupportInputPlaceholder}
               value={supportDraft}
