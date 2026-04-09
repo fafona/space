@@ -4685,7 +4685,7 @@ export default function AdminClient({
   const [hasAddedExtraBlock, setHasAddedExtraBlock] = useState(
     () => initialBlocks.length > 1 || initialBlocks.some((item) => item.type !== "nav"),
   );
-  const [selectedId, setSelectedId] = useState<string>(initialBlocks[0]?.id ?? "");
+  const [selectedId, setSelectedId] = useState<string>("");
   const [draggingBlockId, setDraggingBlockId] = useState<string | null>(null);
   const dragStartRef = useRef<{
     blockId: string;
@@ -4983,7 +4983,7 @@ export default function AdminClient({
       editingPlanId: initialEditingPlanId,
       editingPageId: initialEditingPageId,
       blocks: cloneBlocks(initialBlocks),
-      selectedId: initialBlocks[0]?.id ?? "",
+      selectedId: "",
     },
     mobile: {
       planConfig: JSON.parse(JSON.stringify(initialMobilePlanConfig)) as PagePlanConfig,
@@ -4997,12 +4997,7 @@ export default function AdminClient({
           initialMobilePlanConfig.plans.find((plan) => plan.id === initialMobilePlanConfig.activePlanId)?.activePageId ?? "page-1",
         ),
       ),
-      selectedId:
-        getBlocksForPage(
-          initialMobilePlanConfig.plans.find((plan) => plan.id === initialMobilePlanConfig.activePlanId) ??
-            initialMobilePlanConfig.plans[0],
-          initialMobilePlanConfig.plans.find((plan) => plan.id === initialMobilePlanConfig.activePlanId)?.activePageId ?? "page-1",
-      )[0]?.id ?? "",
+      selectedId: "",
     },
   });
   const syncPlatformMerchantSnapshotToServerRef = useRef<() => Promise<boolean>>(async () => false);
@@ -5409,14 +5404,14 @@ export default function AdminClient({
       editingPlanId: loadedEditingPlanId,
       editingPageId: loadedEditingPageId,
       blocks: cloneBlocks(desktopBlocks),
-      selectedId: desktopBlocks[0]?.id ?? "",
+      selectedId: "",
     };
     viewportStatesRef.current.mobile = {
       planConfig: clonePlanConfig(loadedMobilePlanConfig),
       editingPlanId: mobilePlanId,
       editingPageId: mobilePageId,
       blocks: cloneBlocks(mobileBlocks),
-      selectedId: mobileBlocks[0]?.id ?? "",
+      selectedId: "",
     };
 
     const target = previewViewport === "desktop" ? viewportStatesRef.current.desktop : viewportStatesRef.current.mobile;
@@ -5424,7 +5419,7 @@ export default function AdminClient({
     setEditingPlanId(target.editingPlanId);
     setEditingPageId(target.editingPageId);
     setBlocks(cloneBlocks(target.blocks));
-    setSelectedId(target.selectedId || target.blocks[0]?.id || "");
+    setSelectedId(target.selectedId || "");
 
     const combinedLoaded = buildCombinedPersistedBlocks(loadedPlanConfig, loadedMobilePlanConfig);
     saveBlocksToStorage(combinedLoaded, storeScope);
@@ -5740,7 +5735,7 @@ export default function AdminClient({
     setEditingPlanId(target.editingPlanId);
     setEditingPageId(target.editingPageId);
     setBlocks(cloneBlocks(target.blocks));
-    setSelectedId(target.selectedId || target.blocks[0]?.id || "");
+    setSelectedId(target.selectedId || "");
   }
 
   async function readDesktopIntoMobile() {
@@ -5938,7 +5933,7 @@ export default function AdminClient({
     setEditingPlanId(target.editingPlanId);
     setEditingPageId(target.editingPageId);
     setBlocks(cloneBlocks(target.blocks));
-    setSelectedId(target.selectedId || target.blocks[0]?.id || "");
+    setSelectedId(target.selectedId || "");
     saveBlocksToStorage(buildCombinedPersistedBlocks(clonedStates.desktop.planConfig, clonedStates.mobile.planConfig), storeScope);
   }
 
