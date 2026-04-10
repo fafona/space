@@ -122,6 +122,7 @@ import {
 import { buildPublicBlockId } from "@/lib/blockPublicId";
 import { countInlineAssets, hasInlineAssets } from "@/lib/inlineAssetStats";
 import { useNotificationSound } from "@/lib/useNotificationSound";
+import usePullToRefresh from "@/lib/usePullToRefresh";
 import {
   PLAN_TEMPLATE_FILTER_OPTIONS,
   type PlanTemplateFilterCategory,
@@ -4827,6 +4828,7 @@ export default function AdminClient({
   const supportPeerRequestIdRef = useRef(0);
   const supportSendingRef = useRef(false);
   const supportMessagesViewportRef = useRef<HTMLDivElement>(null);
+  const supportMobileConversationsViewportRef = useRef<HTMLDivElement>(null);
   const supportInputRef = useRef<HTMLTextAreaElement>(null);
   const supportSelfAvatarInputRef = useRef<HTMLInputElement>(null);
   const supportPhotoInputRef = useRef<HTMLInputElement>(null);
@@ -10670,6 +10672,24 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
   }, [isPlatformEditor, requestMerchantPeerWithSessionRecovery]);
 
+  const refreshSupportMobileConversations = useCallback(async () => {
+    await Promise.all([
+      loadSupportThread({ silent: false, suppressError: false }),
+      loadSupportPeerInbox({ silent: false, suppressError: false }),
+    ]);
+  }, [loadSupportPeerInbox, loadSupportThread]);
+
+  const {
+    pullDistance: supportMobileConversationPullDistance,
+    readyToRefresh: supportMobileConversationReadyToRefresh,
+    refreshing: supportMobileConversationRefreshing,
+    bind: supportMobileConversationPullBind,
+  } = usePullToRefresh({
+    disabled: supportLoading || supportPeerLoading || supportSearchLoading,
+    getScrollElement: () => supportMobileConversationsViewportRef.current,
+    onRefresh: refreshSupportMobileConversations,
+  });
+
   async function searchSupportPeerMerchant() {
     if (isPlatformEditor || supportSearchLoading) return;
     const query = supportContactKeyword.trim();
@@ -12987,17 +13007,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm">
             会话
           </div>
-          <button
-            type="button"
-            className="shrink-0 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
-            onClick={() => {
-              void loadSupportThread({ silent: false, suppressError: false });
-              void loadSupportPeerInbox({ silent: false, suppressError: false });
-            }}
-            disabled={supportLoading || supportPeerLoading}
-          >
-            {supportLoading || supportPeerLoading ? "刷新中" : "刷新"}
-          </button>
           <div className="min-w-0 flex-1">
             <div className="text-[15px] font-semibold text-slate-900">聊天列表</div>
             <div className="mt-1 text-xs text-slate-500">{mobileSupportContactListSummary}</div>
@@ -13012,6 +13021,27 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               关闭
             </button>
           ) : null}
+        </div>
+        <div
+          className="overflow-hidden transition-[max-height,opacity,padding] duration-150"
+          style={{
+            maxHeight:
+              supportMobileConversationPullDistance > 0 || supportMobileConversationRefreshing
+                ? `${Math.max(36, Math.round(supportMobileConversationPullDistance))}px`
+                : "0px",
+            opacity: supportMobileConversationPullDistance > 0 || supportMobileConversationRefreshing ? 1 : 0,
+            paddingTop: supportMobileConversationPullDistance > 0 || supportMobileConversationRefreshing ? "0.75rem" : "0px",
+          }}
+        >
+          <div className="flex justify-center">
+            <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-medium text-slate-500 shadow-sm">
+              {supportMobileConversationRefreshing
+                ? "刷新中..."
+                : supportMobileConversationReadyToRefresh
+                  ? "松开刷新"
+                  : "下拉刷新"}
+            </span>
+          </div>
         </div>
         <div className="mt-4 flex items-center gap-2">
           <div className="flex min-w-0 flex-1 items-center gap-3 rounded-[24px] border border-slate-200 bg-white px-4 py-3 shadow-sm">
@@ -13049,7 +13079,11 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           </div>
         ) : null}
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-[calc(env(safe-area-inset-bottom)+6.75rem)] pt-3">
+      <div
+        ref={supportMobileConversationsViewportRef}
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-[calc(env(safe-area-inset-bottom)+6.75rem)] pt-3"
+        {...supportMobileConversationPullBind}
+      >
         <div className="space-y-2.5">
           {supportContactRows.map((contactRow) => {
             const active = supportSelectedContactKey === contactRow.key;
@@ -13131,6 +13165,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             storeOptions={merchantBookingManagerOptions.storeOptions}
             itemOptions={merchantBookingManagerOptions.itemOptions}
             titleOptions={merchantBookingManagerOptions.titleOptions}
+            darkMode={supportMobileDarkMode}
           />
         ) : (
           <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import BookingDateTimeInput from "@/components/booking/BookingDateTimeInput";
 import type { MerchantBookingEditableInput, MerchantBookingRecord, MerchantBookingStatus } from "@/lib/merchantBookings";
@@ -15,6 +15,7 @@ import {
   normalizeBookingOptionList,
   splitMerchantBookingDateTime,
 } from "@/lib/merchantBookings";
+import usePullToRefresh from "@/lib/usePullToRefresh";
 
 type MerchantBookingMobilePanelProps = {
   siteId: string;
@@ -22,6 +23,7 @@ type MerchantBookingMobilePanelProps = {
   storeOptions?: string[];
   itemOptions?: string[];
   titleOptions?: string[];
+  darkMode?: boolean;
 };
 
 type BookingFilter = "all" | MerchantBookingStatus;
@@ -222,7 +224,9 @@ export default function MerchantBookingMobilePanel({
   storeOptions = [],
   itemOptions = [],
   titleOptions = [],
+  darkMode = false,
 }: MerchantBookingMobilePanelProps) {
+  const rootRef = useRef<HTMLDivElement>(null);
   const [records, setRecords] = useState<MerchantBookingRecord[]>([]);
   const [drafts, setDrafts] = useState<Record<string, MerchantBookingAdminDraft>>({});
   const [loading, setLoading] = useState(false);
@@ -258,6 +262,17 @@ export default function MerchantBookingMobilePanel({
   useEffect(() => {
     void loadBookings();
   }, [loadBookings]);
+
+  const {
+    pullDistance,
+    readyToRefresh,
+    refreshing: pullRefreshing,
+    bind: pullToRefreshBind,
+  } = usePullToRefresh({
+    disabled: loading || Boolean(detailBookingId),
+    getScrollElement: () => (rootRef.current?.parentElement instanceof HTMLElement ? rootRef.current.parentElement : null),
+    onRefresh: loadBookings,
+  });
 
   const counts = useMemo(() => {
     const active = records.filter((item) => item.status === "active").length;
@@ -645,23 +660,41 @@ export default function MerchantBookingMobilePanel({
 
   return (
     <>
-      <div className="space-y-3">
-        <div className="sticky top-0 z-20 space-y-3 bg-[rgba(15,23,42,0.96)] pb-3 backdrop-blur supports-[backdrop-filter]:bg-[rgba(15,23,42,0.9)]">
-          <div className="flex gap-2">
+      <div ref={rootRef} className="space-y-3" {...pullToRefreshBind}>
+        <div
+          className={`sticky top-0 z-20 space-y-3 pb-3 backdrop-blur ${
+            darkMode
+              ? "bg-[rgba(15,23,42,0.96)] supports-[backdrop-filter]:bg-[rgba(15,23,42,0.9)]"
+              : "bg-[rgba(248,250,252,0.96)] supports-[backdrop-filter]:bg-[rgba(248,250,252,0.9)]"
+          }`}
+        >
+          <div
+            className="overflow-hidden transition-[max-height,opacity,padding] duration-150"
+            style={{
+              maxHeight: pullDistance > 0 || pullRefreshing ? `${Math.max(36, Math.round(pullDistance))}px` : "0px",
+              opacity: pullDistance > 0 || pullRefreshing ? 1 : 0,
+              paddingTop: pullDistance > 0 || pullRefreshing ? "0.25rem" : "0px",
+            }}
+          >
+            <div className="flex justify-center">
+              <span
+                className={`inline-flex items-center rounded-full px-3 py-1 text-[11px] font-medium shadow-sm ${
+                  darkMode
+                    ? "border border-slate-700/70 bg-slate-900/80 text-slate-200"
+                    : "border border-slate-200 bg-white/95 text-slate-500"
+                }`}
+              >
+                {pullRefreshing ? "刷新中..." : readyToRefresh ? "松开刷新" : "下拉刷新"}
+              </span>
+            </div>
+          </div>
+          <div className="flex">
             <input
               className="min-w-0 flex-1 rounded-[20px] border border-slate-200 px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="搜索预约号 / 姓名 / 邮箱 / 电话"
             />
-            <button
-              type="button"
-              className="shrink-0 rounded-[20px] border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
-              onClick={() => void loadBookings()}
-              disabled={loading}
-            >
-              {loading ? "刷新中..." : "刷新"}
-            </button>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
             {[

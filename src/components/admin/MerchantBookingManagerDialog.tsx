@@ -668,8 +668,8 @@ export default function MerchantBookingManagerDialog({
       }
     >
       <div
-        className={`mx-auto flex w-full flex-col overflow-hidden rounded-2xl border bg-white ${
-          isInline ? "max-w-none shadow-sm" : "h-full max-h-[calc(100vh-2rem)] max-w-6xl shadow-2xl"
+        className={`mx-auto flex w-full flex-col rounded-2xl border bg-white ${
+          isInline ? "max-w-none overflow-visible shadow-sm" : "h-full max-h-[calc(100vh-2rem)] max-w-6xl overflow-hidden shadow-2xl"
         }${className ? ` ${className}` : ""}`}
         onMouseDown={isInline ? undefined : (event) => event.stopPropagation()}
       >
