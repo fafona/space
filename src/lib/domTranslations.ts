@@ -1,5 +1,7 @@
 ﻿import { resolveSupportedLocale } from "@/lib/i18n";
 
+import { findUiGlossarySource, getUiGlossaryText } from "@/lib/uiGlossary";
+
 export type DomLocale = string;
 
 const CACHE_PREFIX = "merchant-space:dom-i18n-cache:v3:";
@@ -59,6 +61,21 @@ const MANUAL_DOM_TRANSLATIONS: Record<string, Record<string, string>> = {
     ja: "店舗情報",
     ko: "상점정보",
   },
+  名片夹: {
+    es: "Tarjetero",
+  },
+  我的名片夹: {
+    es: "Mi tarjetero",
+  },
+  会话: {
+    es: "Chat",
+  },
+  "会话，有新消息": {
+    es: "Chat, con mensajes nuevos",
+  },
+  数据统计: {
+    es: "Estadísticas",
+  },
 };
 
 function toApiTarget(locale: string) {
@@ -69,6 +86,8 @@ function toApiTarget(locale: string) {
 }
 
 function getManualDomTranslation(source: string, locale: string) {
+  const glossaryTranslation = getUiGlossaryText(source, locale);
+  if (glossaryTranslation !== source) return glossaryTranslation;
   const entry = MANUAL_DOM_TRANSLATIONS[source];
   if (!entry) return null;
   const normalized = normalizeDomLocale(locale).toLowerCase();
@@ -77,6 +96,8 @@ function getManualDomTranslation(source: string, locale: string) {
 }
 
 function getManualDomReverseSource(translated: string, locale: string) {
+  const glossarySource = findUiGlossarySource(translated, locale);
+  if (glossarySource) return glossarySource;
   const normalized = normalizeDomLocale(locale).toLowerCase();
   const language = normalized.split("-")[0] || normalized;
   for (const [source, entry] of Object.entries(MANUAL_DOM_TRANSLATIONS)) {

@@ -13044,11 +13044,14 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           </div>
         </div>
         <div className="mt-4 flex items-center gap-2">
-          <div className="flex min-w-0 flex-1 items-center gap-3 rounded-[24px] border border-slate-200 bg-white px-4 py-3 shadow-sm">
-            <span className="shrink-0 text-sm text-slate-400">搜索</span>
+          <div className="flex min-w-0 flex-1 items-center gap-3 rounded-[22px] border border-slate-200 bg-[#f3f4f6] px-4 py-2.5 shadow-sm">
+            <svg viewBox="0 0 24 24" className="h-[18px] w-[18px] shrink-0 text-slate-400" fill="none" aria-hidden="true">
+              <circle cx="11" cy="11" r="6.5" stroke="currentColor" strokeWidth="1.9" />
+              <path d="m16 16 4 4" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+            </svg>
             <input
               type="text"
-              className="min-w-0 flex-1 bg-transparent text-base text-slate-900 outline-none placeholder:text-slate-400"
+              className="min-w-0 flex-1 bg-transparent text-[15px] leading-6 text-slate-900 outline-none placeholder:text-slate-400"
               placeholder="商户ID / 邮箱"
               value={supportContactKeyword}
               onChange={(event) => setSupportContactKeyword(event.target.value)}
@@ -13061,7 +13064,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           </div>
           <button
             type="button"
-            className="shrink-0 rounded-full border border-slate-200 bg-white px-4 py-3 text-sm shadow-sm hover:bg-slate-50 disabled:opacity-50"
+            className="shrink-0 rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm shadow-sm hover:bg-slate-50 disabled:opacity-50"
             onClick={() => void searchSupportPeerMerchant()}
             disabled={supportSearchLoading}
           >
@@ -13081,7 +13084,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       </div>
       <div
         ref={supportMobileConversationsViewportRef}
-        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-[calc(env(safe-area-inset-bottom)+6.75rem)] pt-3"
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-[calc(env(safe-area-inset-bottom)+5.85rem)] pt-3"
         {...supportMobileConversationPullBind}
       >
         <div className="space-y-2.5">
@@ -13157,7 +13160,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           </div>
         </div>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(env(safe-area-inset-bottom)+6.75rem)] pt-4">
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(env(safe-area-inset-bottom)+5.85rem)] pt-4">
         {supportMobileBookingSiteId ? (
           <MerchantBookingMobilePanel
             siteId={supportMobileBookingSiteId}
@@ -13274,7 +13277,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       </div>
       <div
         ref={supportSelfScrollContainerRef}
-        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(env(safe-area-inset-bottom)+6.75rem)] pt-4"
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(env(safe-area-inset-bottom)+5.85rem)] pt-4"
       >
         <input
           ref={supportSelfAvatarInputRef}
@@ -13663,8 +13666,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         event.stopPropagation();
       }}
     >
-      <div className="pointer-events-auto relative px-4 pb-[calc(env(safe-area-inset-bottom)+0.08rem)] pt-5 touch-manipulation">
-        <div className="flex items-center gap-1 rounded-[30px] border border-slate-200/80 bg-white/95 px-2 py-2 shadow-[0_20px_40px_rgba(15,23,42,0.12)] backdrop-blur">
+      <div className="pointer-events-auto relative px-4 pb-[calc(env(safe-area-inset-bottom)+0.18rem)] pt-3 touch-manipulation">
+        <div className="flex items-center gap-1 rounded-[28px] border border-slate-200/80 bg-white/95 px-1.5 py-1.5 shadow-[0_18px_36px_rgba(15,23,42,0.12)] backdrop-blur">
           {([
             {
               key: "conversations",
@@ -13730,13 +13733,13 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               <button
                 key={item.key}
                 type="button"
-                className={`relative flex min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-[24px] px-2 py-2 text-[11px] font-medium transition ${
+                className={`relative flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-[22px] px-2 py-1.5 text-[10.5px] font-medium transition ${
                   active ? "bg-slate-900 text-white shadow-sm" : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
                 }`}
                 onClick={() => setSupportMobileHomeTab(item.key)}
               >
                 {item.key === "conversations" && supportUnreadBadgeCount > 0 ? (
-                  <span className="absolute right-2 top-1.5 inline-flex min-w-[18px] items-center justify-center rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white shadow-[0_8px_18px_rgba(244,63,94,0.28)]">
+                  <span className="absolute right-2 top-1 inline-flex min-w-[18px] items-center justify-center rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white shadow-[0_8px_18px_rgba(244,63,94,0.28)]">
                     {supportUnreadBadgeLabel}
                   </span>
                 ) : null}

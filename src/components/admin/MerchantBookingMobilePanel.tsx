@@ -2,19 +2,29 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { useI18n } from "@/components/I18nProvider";
 import BookingDateTimeInput from "@/components/booking/BookingDateTimeInput";
 import type { MerchantBookingEditableInput, MerchantBookingRecord, MerchantBookingStatus } from "@/lib/merchantBookings";
 import {
   buildDefaultBookingItemOptions,
   buildDefaultBookingStoreOptions,
   buildDefaultBookingTitleOptions,
-  getMerchantBookingStatusLabel,
   joinMerchantBookingDateTime,
   normalizeMerchantBookingCustomerNameInput,
   normalizeMerchantBookingNoteInput,
   normalizeBookingOptionList,
   splitMerchantBookingDateTime,
 } from "@/lib/merchantBookings";
+import {
+  formatMerchantBookingDateTime,
+  formatMerchantBookingDisplayName,
+  getMerchantBookingActionText,
+  getMerchantBookingDayLabel,
+  getMerchantBookingFieldText,
+  getMerchantBookingFilterText,
+  getMerchantBookingStatusText,
+  type MerchantBookingFilter,
+} from "@/lib/merchantBookingLocale";
 import usePullToRefresh from "@/lib/usePullToRefresh";
 
 type MerchantBookingMobilePanelProps = {
@@ -25,8 +35,6 @@ type MerchantBookingMobilePanelProps = {
   titleOptions?: string[];
   darkMode?: boolean;
 };
-
-type BookingFilter = "all" | MerchantBookingStatus;
 
 type MerchantBookingAdminDraft = {
   store: string;
@@ -43,38 +51,6 @@ type MerchantBookingAdminDraft = {
 function overlay(children: ReactNode) {
   if (typeof document === "undefined") return null;
   return createPortal(children, document.body);
-}
-
-function formatDateTime(value: string) {
-  const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) return value;
-  return date.toLocaleString("zh-CN", { hour12: false });
-}
-
-function padDateUnit(value: number) {
-  return String(value).padStart(2, "0");
-}
-
-function getTodayDateKey() {
-  const now = new Date();
-  return `${now.getFullYear()}-${padDateUnit(now.getMonth() + 1)}-${padDateUnit(now.getDate())}`;
-}
-
-function getAppointmentDayLabel(dateValue: string) {
-  const normalized = String(dateValue ?? "").trim();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) return "";
-  if (normalized === getTodayDateKey()) return "今天";
-  const [year, month, day] = normalized.split("-").map((item) => Number.parseInt(item, 10));
-  const date = new Date(year, month - 1, day);
-  if (
-    !Number.isFinite(date.getTime()) ||
-    date.getFullYear() !== year ||
-    date.getMonth() !== month - 1 ||
-    date.getDate() !== day
-  ) {
-    return "";
-  }
-  return ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][date.getDay()] ?? "";
 }
 
 function matchesSearch(record: MerchantBookingRecord, query: string) {
@@ -117,7 +93,7 @@ function getStatusBadgeClass(status: MerchantBookingStatus) {
   return "bg-amber-100 text-amber-700";
 }
 
-function getFilterChipClass(filter: BookingFilter, key: BookingFilter) {
+function getFilterChipClass(filter: MerchantBookingFilter, key: MerchantBookingFilter) {
   const isActive = filter === key;
   if (key === "active") {
     return isActive
@@ -186,12 +162,14 @@ function SummaryAppointmentField({
   dateValue,
   timeValue,
   action,
+  locale,
 }: {
   dateValue: string;
   timeValue: string;
   action?: ReactNode;
+  locale: string;
 }) {
-  const dayLabel = getAppointmentDayLabel(dateValue);
+  const dayLabel = getMerchantBookingDayLabel(dateValue, locale);
   const hasValue = Boolean(dateValue || timeValue);
 
   return (
@@ -226,13 +204,16 @@ export default function MerchantBookingMobilePanel({
   titleOptions = [],
   darkMode = false,
 }: MerchantBookingMobilePanelProps) {
+  const { locale } = useI18n();
   const rootRef = useRef<HTMLDivElement>(null);
+  const loadFailedText = locale.startsWith("es") ? "No se pudieron cargar las citas." : "预约记录读取失败";
+  const updateFailedText = locale.startsWith("es") ? "No se pudo actualizar la cita." : "预约更新失败";
   const [records, setRecords] = useState<MerchantBookingRecord[]>([]);
   const [drafts, setDrafts] = useState<Record<string, MerchantBookingAdminDraft>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<BookingFilter>("all");
+  const [filter, setFilter] = useState<MerchantBookingFilter>("all");
   const [busyKey, setBusyKey] = useState("");
   const [detailBookingId, setDetailBookingId] = useState<string | null>(null);
 
@@ -248,16 +229,16 @@ export default function MerchantBookingMobilePanel({
         | { ok?: boolean; bookings?: MerchantBookingRecord[]; message?: string }
         | null;
       if (!response.ok || !json?.ok || !Array.isArray(json.bookings)) {
-        throw new Error(json?.message || "预约记录读取失败");
+        throw new Error(json?.message || loadFailedText);
       }
       setRecords(json.bookings);
       setDrafts(Object.fromEntries(json.bookings.map((record) => [record.id, createDraft(record)])));
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "预约记录读取失败");
+      setError(loadError instanceof Error ? loadError.message : loadFailedText);
     } finally {
       setLoading(false);
     }
-  }, [siteId]);
+  }, [loadFailedText, siteId]);
 
   useEffect(() => {
     void loadBookings();
@@ -349,7 +330,7 @@ export default function MerchantBookingMobilePanel({
           | { ok?: boolean; booking?: MerchantBookingRecord; message?: string }
           | null;
         if (!response.ok || !json?.ok || !json.booking) {
-          throw new Error(json?.message || "预约更新失败");
+          throw new Error(json?.message || updateFailedText);
         }
         const nextBooking = json.booking;
         setRecords((current) => current.map((item) => (item.id === nextBooking.id ? nextBooking : item)));
@@ -359,13 +340,13 @@ export default function MerchantBookingMobilePanel({
         }));
         return nextBooking;
       } catch (updateError) {
-        setError(updateError instanceof Error ? updateError.message : "预约更新失败");
+        setError(updateError instanceof Error ? updateError.message : updateFailedText);
         return null;
       } finally {
         setBusyKey("");
       }
     },
-    [siteId],
+    [siteId, updateFailedText],
   );
 
   const handleDraftChange = useCallback(
@@ -444,7 +425,9 @@ export default function MerchantBookingMobilePanel({
           onClick={() => void patchBooking(record.id, { status: "active" }, "restore")}
           disabled={busyKey === `restore:${record.id}`}
         >
-          {busyKey === `restore:${record.id}` ? "处理中..." : "恢复预约"}
+          {busyKey === `restore:${record.id}`
+            ? getMerchantBookingActionText("processing", locale)
+            : getMerchantBookingActionText("restore", locale)}
         </button>
       );
     }
@@ -458,7 +441,9 @@ export default function MerchantBookingMobilePanel({
             onClick={() => void patchBooking(record.id, { status: "confirmed" }, "uncomplete")}
             disabled={busyKey === `uncomplete:${record.id}`}
           >
-            {busyKey === `uncomplete:${record.id}` ? "处理中..." : "取消完成"}
+            {busyKey === `uncomplete:${record.id}`
+              ? getMerchantBookingActionText("processing", locale)
+              : getMerchantBookingActionText("uncomplete", locale)}
           </button>
         ) : record.status === "confirmed" ? (
           <button
@@ -467,7 +452,9 @@ export default function MerchantBookingMobilePanel({
             onClick={() => void patchBooking(record.id, { status: "active" }, "unconfirm")}
             disabled={busyKey === `unconfirm:${record.id}`}
           >
-            {busyKey === `unconfirm:${record.id}` ? "处理中..." : "取消确认"}
+            {busyKey === `unconfirm:${record.id}`
+              ? getMerchantBookingActionText("processing", locale)
+              : getMerchantBookingActionText("unconfirm", locale)}
           </button>
         ) : (
           <button
@@ -476,7 +463,9 @@ export default function MerchantBookingMobilePanel({
             onClick={() => void patchBooking(record.id, { status: "confirmed" }, "confirm")}
             disabled={busyKey === `confirm:${record.id}`}
           >
-            {busyKey === `confirm:${record.id}` ? "处理中..." : "确认预约"}
+            {busyKey === `confirm:${record.id}`
+              ? getMerchantBookingActionText("processing", locale)
+              : getMerchantBookingActionText("confirm", locale)}
           </button>
         )}
         {record.status !== "completed" ? (
@@ -486,7 +475,9 @@ export default function MerchantBookingMobilePanel({
             onClick={() => void patchBooking(record.id, { status: "completed" }, "complete")}
             disabled={busyKey === `complete:${record.id}`}
           >
-            {busyKey === `complete:${record.id}` ? "处理中..." : "完成预约"}
+            {busyKey === `complete:${record.id}`
+              ? getMerchantBookingActionText("processing", locale)
+              : getMerchantBookingActionText("complete", locale)}
           </button>
         ) : null}
         <button
@@ -495,7 +486,9 @@ export default function MerchantBookingMobilePanel({
           onClick={() => void patchBooking(record.id, { status: "cancelled" }, "cancel")}
           disabled={busyKey === `cancel:${record.id}`}
         >
-          {busyKey === `cancel:${record.id}` ? "处理中..." : "取消预约"}
+          {busyKey === `cancel:${record.id}`
+            ? getMerchantBookingActionText("processing", locale)
+            : getMerchantBookingActionText("cancel", locale)}
         </button>
       </>
     );
@@ -518,12 +511,18 @@ export default function MerchantBookingMobilePanel({
             >
               <div className="flex items-start justify-between gap-3 border-b px-4 py-4">
                 <div className="space-y-1">
-                  <div className="text-base font-semibold text-slate-900">预约详情</div>
+                  <div className="text-base font-semibold text-slate-900">{getMerchantBookingFieldText("detailTitle", locale)}</div>
                   <div className="text-sm text-slate-500">
-                    {`${detailDraft.customerName || detailRecord.customerName || "未命名预约"} ${detailDraft.title || detailRecord.title || ""}`.trim()}
+                    {formatMerchantBookingDisplayName(
+                      detailDraft.customerName || detailRecord.customerName,
+                      detailDraft.title || detailRecord.title,
+                      locale,
+                    )}
                   </div>
-                  <div className="text-xs text-slate-500">{`预约编号：${detailRecord.id}`}</div>
-                  <div className="text-xs text-slate-500">{`提交时间：${formatDateTime(detailRecord.createdAt)}`}</div>
+                  <div className="text-xs text-slate-500">{`${getMerchantBookingFieldText("bookingId", locale)}: ${detailRecord.id}`}</div>
+                  <div className="text-xs text-slate-500">
+                    {`${getMerchantBookingFieldText("submittedAt", locale)}: ${formatMerchantBookingDateTime(detailRecord.createdAt, locale)}`}
+                  </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   <button
@@ -531,7 +530,7 @@ export default function MerchantBookingMobilePanel({
                     className="rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50"
                     onClick={closeDetailDialog}
                   >
-                    关闭
+                    {getMerchantBookingActionText("close", locale)}
                   </button>
                   <button
                     type="button"
@@ -541,7 +540,9 @@ export default function MerchantBookingMobilePanel({
                     }}
                     disabled={busyKey === `save:${detailRecord.id}`}
                   >
-                    {busyKey === `save:${detailRecord.id}` ? "保存中..." : "保存"}
+                    {busyKey === `save:${detailRecord.id}`
+                      ? getMerchantBookingActionText("processing", locale)
+                      : getMerchantBookingActionText("save", locale)}
                   </button>
                 </div>
               </div>
@@ -549,7 +550,7 @@ export default function MerchantBookingMobilePanel({
               <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
                 <div className="grid gap-3">
                   <label className="space-y-1 text-sm text-slate-700">
-                    <span className="text-xs text-slate-500">店铺</span>
+                    <span className="text-xs text-slate-500">{getMerchantBookingFieldText("store", locale)}</span>
                     <select
                       className="w-full rounded-[18px] border border-slate-200 px-4 py-3 text-base text-slate-900 outline-none"
                       value={detailDraft.store}
@@ -564,7 +565,7 @@ export default function MerchantBookingMobilePanel({
                   </label>
 
                   <label className="space-y-1 text-sm text-slate-700">
-                    <span className="text-xs text-slate-500">项目</span>
+                    <span className="text-xs text-slate-500">{getMerchantBookingFieldText("item", locale)}</span>
                     <select
                       className="w-full rounded-[18px] border border-slate-200 px-4 py-3 text-base text-slate-900 outline-none"
                       value={detailDraft.item}
@@ -579,7 +580,7 @@ export default function MerchantBookingMobilePanel({
                   </label>
 
                   <label className="space-y-1 text-sm text-slate-700">
-                    <span className="text-xs text-slate-500">预约时间</span>
+                    <span className="text-xs text-slate-500">{getMerchantBookingFieldText("appointmentAt", locale)}</span>
                     <BookingDateTimeInput
                       dateValue={detailDraft.appointmentDateInput}
                       timeValue={detailDraft.appointmentTimeInput}
@@ -591,7 +592,7 @@ export default function MerchantBookingMobilePanel({
                   </label>
 
                   <label className="space-y-1 text-sm text-slate-700">
-                    <span className="text-xs text-slate-500">称谓</span>
+                    <span className="text-xs text-slate-500">{getMerchantBookingFieldText("title", locale)}</span>
                     <select
                       className="w-full rounded-[18px] border border-slate-200 px-4 py-3 text-base text-slate-900 outline-none"
                       value={detailDraft.title}
@@ -606,7 +607,7 @@ export default function MerchantBookingMobilePanel({
                   </label>
 
                   <label className="space-y-1 text-sm text-slate-700">
-                    <span className="text-xs text-slate-500">姓名</span>
+                    <span className="text-xs text-slate-500">{getMerchantBookingFieldText("customerName", locale)}</span>
                     <input
                       type="text"
                       className="w-full rounded-[18px] border border-slate-200 px-4 py-3 text-base text-slate-900 outline-none"
@@ -616,7 +617,7 @@ export default function MerchantBookingMobilePanel({
                   </label>
 
                   <label className="space-y-1 text-sm text-slate-700">
-                    <span className="text-xs text-slate-500">邮箱</span>
+                    <span className="text-xs text-slate-500">{getMerchantBookingFieldText("email", locale)}</span>
                     <input
                       type="email"
                       className="w-full rounded-[18px] border border-slate-200 px-4 py-3 text-base text-slate-900 outline-none"
@@ -626,7 +627,7 @@ export default function MerchantBookingMobilePanel({
                   </label>
 
                   <label className="space-y-1 text-sm text-slate-700">
-                    <span className="text-xs text-slate-500">电话</span>
+                    <span className="text-xs text-slate-500">{getMerchantBookingFieldText("phone", locale)}</span>
                     <input
                       type="text"
                       className="w-full rounded-[18px] border border-slate-200 px-4 py-3 text-base text-slate-900 outline-none"
@@ -636,7 +637,7 @@ export default function MerchantBookingMobilePanel({
                   </label>
 
                   <label className="space-y-1 text-sm text-slate-700">
-                    <span className="text-xs text-slate-500">备注</span>
+                    <span className="text-xs text-slate-500">{getMerchantBookingFieldText("note", locale)}</span>
                     <textarea
                       className="min-h-[120px] w-full rounded-[18px] border border-slate-200 px-4 py-3 text-base text-slate-900 outline-none"
                       value={detailDraft.note}
@@ -653,7 +654,7 @@ export default function MerchantBookingMobilePanel({
   if (!siteId) {
     return (
       <div className="rounded-[28px] border border-slate-200 bg-white px-5 py-6 text-sm text-slate-500 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
-        当前商户信息未准备好，暂时无法读取预约管理。
+        {getMerchantBookingFieldText("missingSite", locale)}
       </div>
     );
   }
@@ -684,25 +685,29 @@ export default function MerchantBookingMobilePanel({
                     : "border border-slate-200 bg-white/95 text-slate-500"
                 }`}
               >
-                {pullRefreshing ? "刷新中..." : readyToRefresh ? "松开刷新" : "下拉刷新"}
+                {pullRefreshing
+                  ? getMerchantBookingActionText("refreshing", locale)
+                  : readyToRefresh
+                    ? getMerchantBookingActionText("releaseToRefresh", locale)
+                    : getMerchantBookingActionText("pullToRefresh", locale)}
               </span>
             </div>
           </div>
           <div className="flex">
             <input
-              className="min-w-0 flex-1 rounded-[20px] border border-slate-200 px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900"
+              className="min-w-0 flex-1 rounded-[22px] border border-slate-200 bg-white px-4 py-2.5 text-[15px] leading-6 text-slate-900 outline-none transition focus:border-slate-900"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="搜索预约号 / 姓名 / 邮箱 / 电话"
+              placeholder={getMerchantBookingFieldText("searchMobile", locale)}
             />
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
             {[
-              { key: "all" as const, label: `全部 ${counts.total}` },
-              { key: "active" as const, label: `待确认 ${counts.active}` },
-              { key: "confirmed" as const, label: `已确认 ${counts.confirmed}` },
-              { key: "completed" as const, label: `已完成 ${counts.completed}` },
-              { key: "cancelled" as const, label: `已取消 ${counts.cancelled}` },
+              { key: "all" as const, label: getMerchantBookingFilterText("all", counts.total, locale) },
+              { key: "active" as const, label: getMerchantBookingFilterText("active", counts.active, locale) },
+              { key: "confirmed" as const, label: getMerchantBookingFilterText("confirmed", counts.confirmed, locale) },
+              { key: "completed" as const, label: getMerchantBookingFilterText("completed", counts.completed, locale) },
+              { key: "cancelled" as const, label: getMerchantBookingFilterText("cancelled", counts.cancelled, locale) },
             ].map((item) => (
               <button
                 key={item.key}
@@ -724,14 +729,13 @@ export default function MerchantBookingMobilePanel({
 
         {loading ? (
           <div className="rounded-[28px] border border-slate-200 bg-white px-5 py-8 text-center text-sm text-slate-500 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
-            正在读取预约记录...
+            {getMerchantBookingFieldText("managementLoading", locale)}
           </div>
         ) : filteredRecords.length > 0 ? (
           <div className="space-y-3">
             {filteredRecords.map((record) => {
               const appointmentParts = splitMerchantBookingDateTime(record.appointmentAt);
-              const displayName = record.customerName || "未命名预约";
-              const displayTitle = record.title || "";
+              const displayName = formatMerchantBookingDisplayName(record.customerName, record.title, locale);
               return (
                 <article
                   key={record.id}
@@ -741,10 +745,10 @@ export default function MerchantBookingMobilePanel({
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className={`rounded-full px-2 py-0.5 text-[11px] ${getStatusBadgeClass(record.status)}`}>
-                          {getMerchantBookingStatusLabel(record.status)}
+                          {getMerchantBookingStatusText(record.status, locale)}
                         </span>
                         <div className="truncate text-base font-semibold text-slate-900">
-                          {displayTitle ? `${displayName} ${displayTitle}` : displayName}
+                          {displayName}
                         </div>
                       </div>
                     </div>
@@ -754,8 +758,8 @@ export default function MerchantBookingMobilePanel({
                           <a
                             className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
                             href={`mailto:${record.email}`}
-                            title="发送邮件"
-                            aria-label="发送邮件"
+                            title={getMerchantBookingFieldText("replyEmail", locale)}
+                            aria-label={getMerchantBookingFieldText("replyEmail", locale)}
                           >
                             <MailIcon />
                           </a>
@@ -764,8 +768,8 @@ export default function MerchantBookingMobilePanel({
                           <a
                             className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#007AFF] text-white shadow-sm transition hover:bg-[#0066D6]"
                             href={`tel:${record.phone}`}
-                            title="拨打电话"
-                            aria-label="拨打电话"
+                            title={getMerchantBookingFieldText("callPhone", locale)}
+                            aria-label={getMerchantBookingFieldText("callPhone", locale)}
                           >
                             <PhoneIcon />
                           </a>
@@ -780,14 +784,14 @@ export default function MerchantBookingMobilePanel({
                     <div className="grid content-start gap-1">
                       <SummaryField value={record.store} />
                       <SummaryField value={record.item} />
-                      <SummaryAppointmentField dateValue={appointmentParts.date} timeValue={appointmentParts.time} />
+                      <SummaryAppointmentField dateValue={appointmentParts.date} timeValue={appointmentParts.time} locale={locale} />
                     </div>
                     <div className="relative flex items-end self-end">
                       {record.note ? (
                         <span
                           className="pointer-events-none absolute bottom-full right-0 mb-1 inline-flex h-8 w-8 items-center justify-center rounded-full bg-amber-50 text-amber-700"
-                          title="有备注"
-                          aria-label="有备注"
+                          title={getMerchantBookingFieldText("hasNote", locale)}
+                          aria-label={getMerchantBookingFieldText("hasNote", locale)}
                         >
                           <NoteIcon />
                         </span>
@@ -797,7 +801,7 @@ export default function MerchantBookingMobilePanel({
                         className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
                         onClick={() => openDetailDialog(record)}
                       >
-                        详情
+                        {getMerchantBookingActionText("detail", locale)}
                       </button>
                     </div>
                   </div>
@@ -807,7 +811,7 @@ export default function MerchantBookingMobilePanel({
           </div>
         ) : (
           <div className="rounded-[28px] border border-dashed border-slate-300 bg-white px-5 py-8 text-center text-sm text-slate-500 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
-            还没有匹配到预约记录。
+            {getMerchantBookingFieldText("managementEmpty", locale)}
           </div>
         )}
       </div>
