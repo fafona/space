@@ -118,6 +118,31 @@ function getStatusBadgeClass(status: MerchantBookingStatus) {
   return "bg-amber-100 text-amber-700";
 }
 
+function getFilterChipClass(filter: BookingFilter, key: BookingFilter) {
+  const isActive = filter === key;
+  if (key === "active") {
+    return isActive
+      ? "border border-amber-300 bg-amber-100 text-amber-800"
+      : "border border-amber-200 bg-amber-50 text-amber-700";
+  }
+  if (key === "confirmed") {
+    return isActive
+      ? "border border-sky-300 bg-sky-100 text-sky-800"
+      : "border border-sky-200 bg-sky-50 text-sky-700";
+  }
+  if (key === "completed") {
+    return isActive
+      ? "border border-emerald-300 bg-emerald-100 text-emerald-800"
+      : "border border-emerald-200 bg-emerald-50 text-emerald-700";
+  }
+  if (key === "cancelled") {
+    return isActive
+      ? "border border-slate-300 bg-slate-200 text-slate-800"
+      : "border border-slate-200 bg-slate-100 text-slate-600";
+  }
+  return isActive ? "bg-slate-900 text-white" : "border border-slate-200 bg-white text-slate-600";
+}
+
 function MailIcon() {
   return (
     <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
@@ -413,7 +438,7 @@ export default function MerchantBookingManagerDialog({
       return (
         <button
           type="button"
-          className="rounded border bg-white px-3 py-1.5 text-[13px] leading-5 hover:bg-slate-50 disabled:opacity-50"
+          className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
           onClick={() => void patchBooking(record.id, { status: "active" }, "restore")}
           disabled={busyKey === `restore:${record.id}`}
         >
@@ -427,7 +452,7 @@ export default function MerchantBookingManagerDialog({
         {record.status === "completed" ? (
           <button
             type="button"
-            className="rounded border bg-white px-3 py-1.5 text-[13px] leading-5 hover:bg-slate-50 disabled:opacity-50"
+            className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
             onClick={() => void patchBooking(record.id, { status: "confirmed" }, "uncomplete")}
             disabled={busyKey === `uncomplete:${record.id}`}
           >
@@ -436,7 +461,7 @@ export default function MerchantBookingManagerDialog({
         ) : record.status === "confirmed" ? (
           <button
             type="button"
-            className="rounded border bg-white px-3 py-1.5 text-[13px] leading-5 hover:bg-slate-50 disabled:opacity-50"
+            className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
             onClick={() => void patchBooking(record.id, { status: "active" }, "unconfirm")}
             disabled={busyKey === `unconfirm:${record.id}`}
           >
@@ -445,7 +470,7 @@ export default function MerchantBookingManagerDialog({
         ) : (
           <button
             type="button"
-            className="rounded border bg-black px-3 py-1.5 text-[13px] leading-5 text-white hover:bg-slate-800 disabled:opacity-50"
+            className="rounded border border-sky-300 bg-sky-100 px-3 py-1.5 text-[13px] leading-5 text-sky-800 hover:bg-sky-200 disabled:opacity-50"
             onClick={() => void patchBooking(record.id, { status: "confirmed" }, "confirm")}
             disabled={busyKey === `confirm:${record.id}`}
           >
@@ -455,7 +480,7 @@ export default function MerchantBookingManagerDialog({
         {record.status !== "completed" ? (
           <button
             type="button"
-            className="rounded border bg-emerald-600 px-3 py-1.5 text-[13px] leading-5 text-white hover:bg-emerald-700 disabled:opacity-50"
+            className="rounded border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-[13px] leading-5 text-white hover:bg-emerald-700 disabled:opacity-50"
             onClick={() => void patchBooking(record.id, { status: "completed" }, "complete")}
             disabled={busyKey === `complete:${record.id}`}
           >
@@ -464,7 +489,7 @@ export default function MerchantBookingManagerDialog({
         ) : null}
         <button
           type="button"
-          className="rounded border bg-white px-3 py-1.5 text-[13px] leading-5 hover:bg-slate-50 disabled:opacity-50"
+          className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
           onClick={() => void patchBooking(record.id, { status: "cancelled" }, "cancel")}
           disabled={busyKey === `cancel:${record.id}`}
         >
@@ -675,9 +700,7 @@ export default function MerchantBookingManagerDialog({
                 <button
                   key={item.key}
                   type="button"
-                  className={`rounded-full border px-3 py-2 text-sm transition-colors ${
-                    filter === item.key ? "border-black bg-black text-white" : "bg-white text-slate-700 hover:bg-slate-50"
-                  }`}
+                  className={`rounded-full px-3 py-2 text-sm transition-colors ${getFilterChipClass(filter, item.key)}`}
                   onClick={() => setFilter(item.key)}
                 >
                   {item.label}

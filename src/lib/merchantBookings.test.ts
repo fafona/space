@@ -116,16 +116,16 @@ test("validateMerchantBookingInput rejects impossible calendar dates", () => {
   assert.deepEqual(issues, ["预约日期时间格式无效"]);
 });
 
-test("buildMerchantBookingId uses merchant id + date + 5-digit sequence", () => {
+test("buildMerchantBookingId uses R + merchant id + date + 4-digit sequence", () => {
   const createdAt = "2026-03-19T10:30:00.000Z";
   assert.equal(formatMerchantBookingIdDate(createdAt), "20260319");
   assert.equal(
     buildMerchantBookingId("10000000", createdAt, [
-      "100000002026031900001",
-      "100000002026031900002",
-      "100000012026031900001",
+      "R10000000202603190001",
+      "R10000000202603190002",
+      "R10000001202603190001",
     ]),
-    "100000002026031900003",
+    "R10000000202603190003",
   );
 });
 

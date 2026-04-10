@@ -175,7 +175,7 @@ export function formatMerchantBookingDateTime(value: string) {
 }
 
 function padBookingSequence(value: number) {
-  return String(Math.max(0, Math.trunc(value))).padStart(5, "0");
+  return String(Math.max(0, Math.trunc(value))).padStart(4, "0");
 }
 
 export function formatMerchantBookingIdDate(value: Date | string) {
@@ -193,7 +193,7 @@ export function buildMerchantBookingId(siteId: string, createdAt: Date | string,
   if (!normalizedSiteId || !datePart) {
     return "";
   }
-  const prefix = `${normalizedSiteId}${datePart}`;
+  const prefix = `R${normalizedSiteId}${datePart}`;
   const maxSequence = existingIds.reduce((highest, currentId) => {
     if (!currentId.startsWith(prefix)) return highest;
     const sequence = Number.parseInt(currentId.slice(prefix.length), 10);

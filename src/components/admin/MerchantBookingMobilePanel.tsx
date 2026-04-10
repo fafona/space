@@ -434,7 +434,7 @@ export default function MerchantBookingMobilePanel({
         ) : (
           <button
             type="button"
-            className="rounded-full bg-slate-900 px-3 py-2 text-xs font-medium text-white transition hover:bg-slate-800 disabled:opacity-50"
+            className="rounded-full border border-sky-300 bg-sky-100 px-3 py-2 text-xs font-medium text-sky-800 transition hover:bg-sky-200 disabled:opacity-50"
             onClick={() => void patchBooking(record.id, { status: "confirmed" }, "confirm")}
             disabled={busyKey === `confirm:${record.id}`}
           >
@@ -467,14 +467,14 @@ export default function MerchantBookingMobilePanel({
     detailRecord && detailDraft
         ? overlay(
           <div
-            className="fixed inset-0 z-[2147482950] overflow-y-auto bg-black/45 p-4 pb-32"
+            className="fixed inset-0 z-[2147482950] overflow-y-auto bg-black/45 p-4 pb-36"
             onMouseDown={(event) => {
               if (event.target === event.currentTarget) closeDetailDialog();
             }}
           >
             <div
               className="mx-auto my-2 flex w-full max-w-xl min-h-0 flex-col overflow-hidden rounded-[28px] border bg-white shadow-2xl"
-              style={{ maxHeight: "calc(100vh - env(safe-area-inset-bottom, 0px) - 8rem)" }}
+              style={{ maxHeight: "calc(100vh - env(safe-area-inset-bottom, 0px) - 10rem)" }}
               onMouseDown={(event) => event.stopPropagation()}
             >
               <div className="flex items-start justify-between gap-3 border-b px-4 py-4">
@@ -597,7 +597,7 @@ export default function MerchantBookingMobilePanel({
 
               <div
                 className="flex justify-end gap-2 border-t bg-white px-4 pt-4"
-                style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 3rem)" }}
+                style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 4.5rem)" }}
               >
                 <button
                   type="button"

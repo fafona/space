@@ -123,9 +123,24 @@ export default function BookingDateTimeInput({
   const openNativePicker = (input: HTMLInputElement | null, fallback: HTMLInputElement | null) => {
     if (!input || disabled) return;
     const pickerInput = input as HTMLInputElement & { showPicker?: () => void };
+    try {
+      pickerInput.focus({ preventScroll: true });
+    } catch {
+      pickerInput.focus();
+    }
     if (typeof pickerInput.showPicker === "function") {
-      pickerInput.showPicker();
+      try {
+        pickerInput.showPicker();
+        return;
+      } catch {
+        // Fallback to click/focus below when the browser blocks showPicker.
+      }
+    }
+    try {
+      pickerInput.click();
       return;
+    } catch {
+      // Fallback to the visible text field when native picker click is unavailable.
     }
     fallback?.focus();
   };
@@ -157,7 +172,7 @@ export default function BookingDateTimeInput({
           type="date"
           tabIndex={-1}
           aria-hidden="true"
-          className="pointer-events-none absolute h-px w-px overflow-hidden whitespace-nowrap opacity-0"
+          className="absolute right-2 top-1/2 z-10 h-8 w-8 -translate-y-1/2 cursor-pointer opacity-0 disabled:cursor-not-allowed"
           value={/^\d{4}-\d{2}-\d{2}$/.test(dateValue) ? dateValue : ""}
           disabled={disabled}
           onChange={(event) => onDateChange(event.target.value)}
@@ -189,7 +204,7 @@ export default function BookingDateTimeInput({
           step={60}
           tabIndex={-1}
           aria-hidden="true"
-          className="pointer-events-none absolute h-px w-px overflow-hidden whitespace-nowrap opacity-0"
+          className="absolute right-2 top-1/2 z-10 h-8 w-8 -translate-y-1/2 cursor-pointer opacity-0 disabled:cursor-not-allowed"
           value={/^\d{2}:\d{2}$/.test(timeValue) ? timeValue : ""}
           disabled={disabled}
           onChange={(event) => onTimeChange(event.target.value)}
