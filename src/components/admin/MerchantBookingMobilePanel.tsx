@@ -698,12 +698,12 @@ export default function MerchantBookingMobilePanel({
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <div className="truncate text-base font-semibold text-slate-900">
-                          {displayTitle ? `${displayName} ${displayTitle}` : displayName}
-                        </div>
                         <span className={`rounded-full px-2 py-0.5 text-[11px] ${getStatusBadgeClass(record.status)}`}>
                           {getMerchantBookingStatusLabel(record.status)}
                         </span>
+                        <div className="truncate text-base font-semibold text-slate-900">
+                          {displayTitle ? `${displayName} ${displayTitle}` : displayName}
+                        </div>
                       </div>
                     </div>
                     {record.email || record.phone ? (
@@ -734,33 +734,30 @@ export default function MerchantBookingMobilePanel({
 
                   <div className="mt-3 flex flex-wrap gap-2">{renderStatusActions(record)}</div>
 
-                  <div className="mt-4 grid gap-2">
-                    <SummaryField value={record.store} />
-                    <SummaryField value={record.item} />
-                    <SummaryAppointmentField
-                      dateValue={appointmentParts.date}
-                      timeValue={appointmentParts.time}
-                      action={
-                        <div className="flex flex-col items-end gap-2">
-                          {record.note ? (
-                            <span
-                              className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-amber-50 text-amber-700"
-                              title="有备注"
-                              aria-label="有备注"
-                            >
-                              <NoteIcon />
-                            </span>
-                          ) : null}
-                          <button
-                            type="button"
-                            className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-                            onClick={() => openDetailDialog(record)}
-                          >
-                            详情
-                          </button>
-                        </div>
-                      }
-                    />
+                  <div className="mt-4 grid grid-cols-[minmax(0,1fr)_auto] gap-x-3">
+                    <div className="grid content-start gap-1.5">
+                      <SummaryField value={record.store} />
+                      <SummaryField value={record.item} />
+                      <SummaryAppointmentField dateValue={appointmentParts.date} timeValue={appointmentParts.time} />
+                    </div>
+                    <div className="relative flex min-h-[104px] items-end self-stretch">
+                      {record.note ? (
+                        <span
+                          className="absolute bottom-14 right-0 inline-flex h-8 w-8 items-center justify-center rounded-full bg-amber-50 text-amber-700"
+                          title="有备注"
+                          aria-label="有备注"
+                        >
+                          <NoteIcon />
+                        </span>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                        onClick={() => openDetailDialog(record)}
+                      >
+                        详情
+                      </button>
+                    </div>
                   </div>
                 </article>
               );

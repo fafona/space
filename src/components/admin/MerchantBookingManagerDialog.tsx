@@ -730,12 +730,12 @@ export default function MerchantBookingManagerDialog({
                       <div className="flex min-w-0 flex-1 flex-wrap items-start gap-x-5 gap-y-2">
                         <div className="min-w-[240px] flex-1">
                           <div className="flex flex-wrap items-center gap-2">
-                            <div className="truncate text-base font-semibold text-slate-900">
-                              {displayTitle ? `${displayName} ${displayTitle}` : displayName}
-                            </div>
                             <span className={`rounded-full px-2 py-0.5 text-[11px] ${getStatusBadgeClass(record.status)}`}>
                               {getMerchantBookingStatusLabel(record.status)}
                             </span>
+                            <div className="truncate text-base font-semibold text-slate-900">
+                              {displayTitle ? `${displayName} ${displayTitle}` : displayName}
+                            </div>
                           </div>
                           <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
                             <span>{`预约编号：${record.id}`}</span>
