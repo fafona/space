@@ -1752,18 +1752,17 @@ function buildShareCardHtml(input: {
         text-decoration: none;
         font-weight: 600;
       }
+      @media (max-width: 767px) {
+        .lang-switcher {
+          display: none;
+        }
+      }
       @media (max-width: 520px) {
         main {
           padding: 70px 12px 12px;
         }
         article {
           padding: 16px;
-        }
-        .lang-switcher {
-          top: 12px;
-          right: 12px;
-          width: 40px;
-          height: 40px;
         }
         .summary-row {
           align-items: flex-start;

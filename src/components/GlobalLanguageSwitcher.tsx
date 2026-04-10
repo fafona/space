@@ -19,6 +19,12 @@ export default function GlobalLanguageSwitcher() {
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
   const [menuStyle, setMenuStyle] = useState<CSSProperties | null>(null);
+  const [isMobileViewport, setIsMobileViewport] = useState(() =>
+    typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia("(max-width: 767px)").matches
+      : false,
+  );
+  const [allowMobileAdminSwitcher, setAllowMobileAdminSwitcher] = useState(false);
   const inEditor = pathname.startsWith("/admin") || pathname.startsWith("/super-admin/editor");
   const resolvedLocale = useMemo(() => resolveSupportedLocale(locale), [locale]);
 
@@ -35,6 +41,37 @@ export default function GlobalLanguageSwitcher() {
       .filter((item): item is (typeof LANGUAGE_OPTIONS)[number] => Boolean(item));
     const rest = europe.filter((item) => !preferredCodes.includes(item.code));
     return [...preferred, ...rest];
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const mediaQuery = window.matchMedia("(max-width: 767px)");
+    const handleChange = () => setIsMobileViewport(mediaQuery.matches);
+    handleChange();
+    mediaQuery.addEventListener("change", handleChange);
+    return () => {
+      mediaQuery.removeEventListener("change", handleChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof document === "undefined") return;
+    const readVisibility = () => {
+      setAllowMobileAdminSwitcher(document.documentElement.getAttribute("data-mobile-language-switcher") === "show");
+    };
+    const handleVisibilityChange = (event: Event) => {
+      const customEvent = event as CustomEvent<{ visible?: boolean }>;
+      if (typeof customEvent.detail?.visible === "boolean") {
+        setAllowMobileAdminSwitcher(customEvent.detail.visible);
+        return;
+      }
+      readVisibility();
+    };
+    readVisibility();
+    window.addEventListener("merchant-mobile-language-switcher-change", handleVisibilityChange as EventListener);
+    return () => {
+      window.removeEventListener("merchant-mobile-language-switcher-change", handleVisibilityChange as EventListener);
+    };
   }, []);
 
   useEffect(() => {
@@ -93,6 +130,11 @@ export default function GlobalLanguageSwitcher() {
   }, [open]);
 
   if (!hydrated) return null;
+
+  const isLoginPage = pathname === "/login";
+  const isAdminPage = pathname.startsWith("/admin");
+  const showOnMobile = isLoginPage || (isAdminPage && allowMobileAdminSwitcher);
+  if (isMobileViewport && !showOnMobile) return null;
 
   const menuContent =
     open && menuStyle

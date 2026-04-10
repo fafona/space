@@ -9512,6 +9512,27 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     supportMobileView === "thread" &&
     (supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY || !!selectedSupportPeerContact);
   useEffect(() => {
+    if (typeof window === "undefined" || typeof document === "undefined") return;
+    const visible = isMobileSupportDialog && supportMobileHomeTab === "self";
+    document.documentElement.setAttribute("data-mobile-language-switcher", visible ? "show" : "hide");
+    window.dispatchEvent(
+      new CustomEvent("merchant-mobile-language-switcher-change", {
+        detail: { visible },
+      }),
+    );
+  }, [isMobileSupportDialog, supportMobileHomeTab]);
+  useEffect(() => {
+    return () => {
+      if (typeof window === "undefined" || typeof document === "undefined") return;
+      document.documentElement.removeAttribute("data-mobile-language-switcher");
+      window.dispatchEvent(
+        new CustomEvent("merchant-mobile-language-switcher-change", {
+          detail: { visible: false },
+        }),
+      );
+    };
+  }, []);
+  useEffect(() => {
     if (!showMobileSupportThread) return;
     const rafId = window.requestAnimationFrame(() => {
       resizeSupportComposerInput();
@@ -13044,7 +13065,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           </div>
         </div>
         <div className="mt-4 flex items-center gap-2">
-          <div className="flex min-w-0 flex-1 items-center gap-2.5 rounded-[20px] border border-slate-200 bg-[#f3f4f6] px-3.5 py-2 shadow-sm">
+          <div className="flex min-h-[41px] min-w-0 flex-1 items-center gap-2.5 rounded-[20px] border border-slate-200 bg-[#f3f4f6] px-3.5 py-2 shadow-sm">
             <svg viewBox="0 0 24 24" className="h-[17px] w-[17px] shrink-0 text-slate-400" fill="none" aria-hidden="true">
               <circle cx="11" cy="11" r="6.5" stroke="currentColor" strokeWidth="1.9" />
               <path d="m16 16 4 4" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
@@ -13064,7 +13085,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           </div>
           <button
             type="button"
-            className="shrink-0 rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm shadow-sm hover:bg-slate-50 disabled:opacity-50"
+            className="inline-flex h-[41px] shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white px-4 text-sm shadow-sm hover:bg-slate-50 disabled:opacity-50"
             onClick={() => void searchSupportPeerMerchant()}
             disabled={supportSearchLoading}
           >

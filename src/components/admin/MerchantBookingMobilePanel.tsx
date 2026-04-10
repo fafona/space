@@ -695,7 +695,7 @@ export default function MerchantBookingMobilePanel({
           </div>
           <div className="flex">
             <input
-              className="min-w-0 flex-1 rounded-[22px] border border-slate-200 bg-white px-4 py-2.5 text-[15px] leading-6 text-slate-900 outline-none transition focus:border-slate-900"
+              className="min-h-[41px] min-w-0 flex-1 rounded-[20px] border border-slate-200 bg-white px-3.5 py-2 text-[14px] leading-5 text-slate-900 outline-none transition focus:border-slate-900"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder={getMerchantBookingFieldText("searchMobile", locale)}
