@@ -6,7 +6,11 @@ import {
   formatMerchantBookingIdDate,
   getMerchantBookingStatusLabel,
   joinMerchantBookingDateTime,
+  MERCHANT_BOOKING_CUSTOMER_NAME_MAX_BYTES,
+  MERCHANT_BOOKING_NOTE_MAX_BYTES,
   normalizeBookingOptionList,
+  normalizeMerchantBookingCustomerNameInput,
+  normalizeMerchantBookingNoteInput,
   sanitizeMerchantBookingEditableInput,
   shouldSendMerchantBookingConfirmationEmail,
   splitMerchantBookingDateTime,
@@ -16,43 +20,54 @@ import {
 
 test("normalizeBookingOptionList trims blanks and removes duplicates", () => {
   assert.deepEqual(
-    normalizeBookingOptionList([" 主店 ", "", "分店A", "主店", "分店A "]),
-    ["主店", "分店A"],
+    normalizeBookingOptionList([" \u4e3b\u5e97 ", "", "\u5206\u5e97A", "\u4e3b\u5e97", "\u5206\u5e97A "]),
+    ["\u4e3b\u5e97", "\u5206\u5e97A"],
   );
 
   assert.deepEqual(
-    normalizeBookingOptionList("主店\n\n分店A\n主店"),
-    ["主店", "分店A"],
+    normalizeBookingOptionList("\u4e3b\u5e97\n\n\u5206\u5e97A\n\u4e3b\u5e97"),
+    ["\u4e3b\u5e97", "\u5206\u5e97A"],
   );
 });
 
 test("buildDefaultBookingStoreOptions falls back to 主店", () => {
-  assert.deepEqual(buildDefaultBookingStoreOptions(""), ["主店"]);
+  assert.deepEqual(buildDefaultBookingStoreOptions(""), ["\u4e3b\u5e97"]);
   assert.deepEqual(buildDefaultBookingStoreOptions("Faolla"), ["Faolla"]);
 });
 
 test("sanitizeMerchantBookingEditableInput normalizes email and note", () => {
   const sanitized = sanitizeMerchantBookingEditableInput({
-    store: " 主店 ",
-    item: " 咨询预约 ",
+    store: " \u4e3b\u5e97 ",
+    item: " \u54a8\u8be2\u9884\u7ea6 ",
     appointmentAt: " 2026-03-19T10:30 ",
-    title: " 先生 ",
+    title: " \u5148\u751f ",
     customerName: " Felix ",
     email: " TEST@EXAMPLE.COM ",
     phone: " 123456 ",
-    note: " 第一行\r\n第二行 ",
+    note: " \u7b2c\u4e00\u884c\r\n\u7b2c\u4e8c\u884c ",
   });
 
   assert.deepEqual(sanitized, {
-    store: "主店",
-    item: "咨询预约",
+    store: "\u4e3b\u5e97",
+    item: "\u54a8\u8be2\u9884\u7ea6",
     appointmentAt: "2026-03-19T10:30",
-    title: "先生",
+    title: "\u5148\u751f",
     customerName: "Felix",
     email: "test@example.com",
     phone: "123456",
-    note: "第一行\n第二行",
+    note: "\u7b2c\u4e00\u884c\n\u7b2c\u4e8c\u884c",
   });
+});
+
+test("booking byte-limit helpers truncate customer name and note safely", () => {
+  assert.equal(
+    normalizeMerchantBookingCustomerNameInput(`${"a".repeat(MERCHANT_BOOKING_CUSTOMER_NAME_MAX_BYTES - 1)}张`),
+    "a".repeat(MERCHANT_BOOKING_CUSTOMER_NAME_MAX_BYTES - 1),
+  );
+  assert.equal(
+    normalizeMerchantBookingNoteInput(`${"b".repeat(MERCHANT_BOOKING_NOTE_MAX_BYTES - 1)}张`),
+    "b".repeat(MERCHANT_BOOKING_NOTE_MAX_BYTES - 1),
+  );
 });
 
 test("split and join merchant booking date time keeps stable values", () => {
@@ -78,13 +93,13 @@ test("validateMerchantBookingInput returns friendly issues", () => {
   });
 
   assert.deepEqual(issues, [
-    "请选择预约店铺",
-    "请选择预约项目",
-    "预约日期时间格式无效",
-    "请选择称谓",
-    "请填写称谓或姓名",
-    "邮箱格式无效",
-    "请填写电话",
+    "\u8bf7\u9009\u62e9\u9884\u7ea6\u5e97\u94fa",
+    "\u8bf7\u9009\u62e9\u9884\u7ea6\u9879\u76ee",
+    "\u9884\u7ea6\u65e5\u671f\u65f6\u95f4\u683c\u5f0f\u65e0\u6548",
+    "\u8bf7\u9009\u62e9\u79f0\u8c13",
+    "\u8bf7\u586b\u5199\u79f0\u8c13\u6216\u59d3\u540d",
+    "\u90ae\u7bb1\u683c\u5f0f\u65e0\u6548",
+    "\u8bf7\u586b\u5199\u7535\u8bdd",
   ]);
 });
 
@@ -100,7 +115,7 @@ test("validateMerchantBookingInput rejects partial appointment values", () => {
     note: "",
   });
 
-  assert.deepEqual(issues, ["预约日期时间格式无效"]);
+  assert.deepEqual(issues, ["\u9884\u7ea6\u65e5\u671f\u65f6\u95f4\u683c\u5f0f\u65e0\u6548"]);
 });
 
 test("validateMerchantBookingInput rejects impossible calendar dates", () => {
@@ -115,7 +130,25 @@ test("validateMerchantBookingInput rejects impossible calendar dates", () => {
     note: "",
   });
 
-  assert.deepEqual(issues, ["预约日期时间格式无效"]);
+  assert.deepEqual(issues, ["\u9884\u7ea6\u65e5\u671f\u65f6\u95f4\u683c\u5f0f\u65e0\u6548"]);
+});
+
+test("validateMerchantBookingInput rejects customer name and note beyond byte limits", () => {
+  const issues = validateMerchantBookingInput({
+    store: "Main",
+    item: "Consultation",
+    appointmentAt: "2026-03-19T10:30",
+    title: "Mr",
+    customerName: "a".repeat(MERCHANT_BOOKING_CUSTOMER_NAME_MAX_BYTES + 1),
+    email: "test@example.com",
+    phone: "123456",
+    note: "b".repeat(MERCHANT_BOOKING_NOTE_MAX_BYTES + 1),
+  });
+
+  assert.deepEqual(issues, [
+    `\u59d3\u540d\u6700\u591a ${MERCHANT_BOOKING_CUSTOMER_NAME_MAX_BYTES} \u5b57\u8282`,
+    `\u5907\u6ce8\u6700\u591a ${MERCHANT_BOOKING_NOTE_MAX_BYTES} \u5b57\u8282`,
+  ]);
 });
 
 test("buildMerchantBookingId uses R + merchant id + date + 4-digit sequence", () => {
@@ -201,8 +234,8 @@ test("withoutMerchantBookingToken removes internal email delivery metadata", () 
 });
 
 test("getMerchantBookingStatusLabel returns readable labels", () => {
-  assert.equal(getMerchantBookingStatusLabel("active"), "待确认");
-  assert.equal(getMerchantBookingStatusLabel("confirmed"), "已确认");
-  assert.equal(getMerchantBookingStatusLabel("completed"), "已完成");
-  assert.equal(getMerchantBookingStatusLabel("cancelled"), "已取消");
+  assert.equal(getMerchantBookingStatusLabel("active"), "\u5f85\u786e\u8ba4");
+  assert.equal(getMerchantBookingStatusLabel("confirmed"), "\u5df2\u786e\u8ba4");
+  assert.equal(getMerchantBookingStatusLabel("completed"), "\u5df2\u5b8c\u6210");
+  assert.equal(getMerchantBookingStatusLabel("cancelled"), "\u5df2\u53d6\u6d88");
 });

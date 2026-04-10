@@ -10,6 +10,8 @@ import {
   createEmptyMerchantBookingInput,
   formatMerchantBookingDateTime,
   joinMerchantBookingDateTime,
+  normalizeMerchantBookingCustomerNameInput,
+  normalizeMerchantBookingNoteInput,
   normalizeBookingOptionList,
   sanitizeMerchantBookingEditableInput,
   splitMerchantBookingDateTime,
@@ -160,7 +162,13 @@ export default function BookingBlock({
       : undefined;
 
   const handleFieldChange = (key: keyof typeof draft, value: string) => {
-    setDraft((current) => ({ ...current, [key]: value }));
+    const nextValue =
+      key === "customerName"
+        ? normalizeMerchantBookingCustomerNameInput(value)
+        : key === "note"
+          ? normalizeMerchantBookingNoteInput(value)
+          : value;
+    setDraft((current) => ({ ...current, [key]: nextValue }));
   };
 
   const submitBooking = async () => {

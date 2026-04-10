@@ -10,6 +10,8 @@ import {
   buildDefaultBookingTitleOptions,
   getMerchantBookingStatusLabel,
   joinMerchantBookingDateTime,
+  normalizeMerchantBookingCustomerNameInput,
+  normalizeMerchantBookingNoteInput,
   normalizeBookingOptionList,
   splitMerchantBookingDateTime,
 } from "@/lib/merchantBookings";
@@ -376,6 +378,12 @@ export default function MerchantBookingManagerDialog({
     key: keyof MerchantBookingAdminDraft,
     value: string,
   ) => {
+    const nextValue =
+      key === "customerName"
+        ? normalizeMerchantBookingCustomerNameInput(value)
+        : key === "note"
+          ? normalizeMerchantBookingNoteInput(value)
+          : value;
     setDrafts((current) => ({
       ...current,
       [bookingId]: {
@@ -390,7 +398,7 @@ export default function MerchantBookingManagerDialog({
           phone: "",
           note: "",
         }),
-        [key]: value,
+        [key]: nextValue,
       },
     }));
   };
@@ -681,7 +689,13 @@ export default function MerchantBookingManagerDialog({
           ) : null}
         </div>
 
-        <div className="space-y-3 border-b px-5 py-4">
+        <div
+          className={`space-y-3 border-b px-5 py-4 ${
+            isInline
+              ? "sticky top-0 z-20 bg-white/95 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-white/90"
+              : ""
+          }`}
+        >
           <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
             <input
               className="w-full rounded border px-3 py-2 text-sm"

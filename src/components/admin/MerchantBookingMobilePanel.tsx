@@ -10,6 +10,8 @@ import {
   buildDefaultBookingTitleOptions,
   getMerchantBookingStatusLabel,
   joinMerchantBookingDateTime,
+  normalizeMerchantBookingCustomerNameInput,
+  normalizeMerchantBookingNoteInput,
   normalizeBookingOptionList,
   splitMerchantBookingDateTime,
 } from "@/lib/merchantBookings";
@@ -353,6 +355,12 @@ export default function MerchantBookingMobilePanel({
 
   const handleDraftChange = useCallback(
     (bookingId: string, key: keyof MerchantBookingAdminDraft, value: string) => {
+      const nextValue =
+        key === "customerName"
+          ? normalizeMerchantBookingCustomerNameInput(value)
+          : key === "note"
+            ? normalizeMerchantBookingNoteInput(value)
+            : value;
       setDrafts((current) => ({
         ...current,
         [bookingId]: {
@@ -367,7 +375,7 @@ export default function MerchantBookingMobilePanel({
             phone: "",
             note: "",
           }),
-          [key]: value,
+          [key]: nextValue,
         },
       }));
     },
@@ -638,7 +646,7 @@ export default function MerchantBookingMobilePanel({
   return (
     <>
       <div className="space-y-3">
-        <div className="space-y-3">
+        <div className="sticky top-0 z-20 space-y-3 bg-[rgba(15,23,42,0.96)] pb-3 backdrop-blur supports-[backdrop-filter]:bg-[rgba(15,23,42,0.9)]">
           <div className="flex gap-2">
             <input
               className="min-w-0 flex-1 rounded-[20px] border border-slate-200 px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900"
