@@ -12381,12 +12381,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         <LoadingProgressScreen locale={locale}>
           <div className="rounded-[28px] border border-white/70 bg-white/92 p-5 text-slate-900 shadow-[0_18px_40px_rgba(15,23,42,0.18)] backdrop-blur sm:p-6">
             <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-400">
-              {locale.startsWith("zh") ? "状态" : "Status"}
+              状态
             </div>
             <div className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">
               {authNotice
-                ? (locale.startsWith("zh") ? "请重新登录继续" : "Sign in again to continue")
-                : (locale.startsWith("zh") ? "内容暂未恢复" : "Content is not ready yet")}
+                ? "请重新登录继续"
+                : "内容暂未恢复"}
             </div>
             <p className="mt-3 text-sm leading-6 text-slate-500">{backendNotice}</p>
             <div className="mt-6 space-y-3">
@@ -12395,7 +12395,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 className="w-full rounded-[22px] bg-slate-950 px-4 py-4 text-[15px] font-semibold text-white shadow-[0_18px_40px_rgba(15,23,42,0.24)] transition hover:bg-slate-800"
                 onClick={() => window.location.reload()}
               >
-                {locale.startsWith("zh") ? "重新加载" : "Reload"}
+                重新加载
               </button>
               <div className="grid grid-cols-2 gap-3">
                 <button
@@ -12406,7 +12406,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     setBackendNotice("当前使用空白模板继续编辑");
                   }}
                 >
-                  {locale.startsWith("zh") ? "空白模板" : "Blank template"}
+                  空白模板
                 </button>
                 <button
                   type="button"
@@ -12415,7 +12415,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     window.location.href = "/login";
                   }}
                 >
-                  {locale.startsWith("zh") ? "重新登录" : "Sign in again"}
+                  重新登录
                 </button>
               </div>
             </div>
@@ -13666,7 +13666,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         event.stopPropagation();
       }}
     >
-      <div className="pointer-events-auto relative px-4 pb-[calc(env(safe-area-inset-bottom)+0.18rem)] pt-3 touch-manipulation">
+      <div className="pointer-events-auto relative px-4 pb-[calc(env(safe-area-inset-bottom)+0.06rem)] pt-3 touch-manipulation">
         <div className="flex items-center gap-1 rounded-[28px] border border-slate-200/80 bg-white/95 px-1.5 py-1.5 shadow-[0_18px_36px_rgba(15,23,42,0.12)] backdrop-blur">
           {([
             {
