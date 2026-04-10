@@ -282,7 +282,7 @@ export default function MerchantBookingManagerDialog({
       return (
         <button
           type="button"
-          className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+          className="rounded border bg-white px-3 py-1.5 text-[13px] leading-5 hover:bg-slate-50 disabled:opacity-50"
           onClick={() => void patchBooking(record.id, { status: "active" }, "restore")}
           disabled={busyKey === `restore:${record.id}`}
         >
@@ -296,7 +296,7 @@ export default function MerchantBookingManagerDialog({
         {record.status === "confirmed" ? (
           <button
             type="button"
-            className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+            className="rounded border bg-white px-3 py-1.5 text-[13px] leading-5 hover:bg-slate-50 disabled:opacity-50"
             onClick={() => void patchBooking(record.id, { status: "active" }, "unconfirm")}
             disabled={busyKey === `unconfirm:${record.id}`}
           >
@@ -305,7 +305,7 @@ export default function MerchantBookingManagerDialog({
         ) : (
           <button
             type="button"
-            className="rounded border bg-black px-3 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50"
+            className="rounded border bg-black px-3 py-1.5 text-[13px] leading-5 text-white hover:bg-slate-800 disabled:opacity-50"
             onClick={() => void patchBooking(record.id, { status: "confirmed" }, "confirm")}
             disabled={busyKey === `confirm:${record.id}`}
           >
@@ -314,7 +314,7 @@ export default function MerchantBookingManagerDialog({
         )}
         <button
           type="button"
-          className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+          className="rounded border bg-white px-3 py-1.5 text-[13px] leading-5 hover:bg-slate-50 disabled:opacity-50"
           onClick={() => void patchBooking(record.id, { status: "cancelled" }, "cancel")}
           disabled={busyKey === `cancel:${record.id}`}
         >
@@ -402,8 +402,8 @@ export default function MerchantBookingManagerDialog({
               {filteredRecords.map((record) => {
                 const draft = drafts[record.id] ?? createDraft(record);
                 return (
-                  <article key={record.id} className="rounded-2xl border bg-slate-50 p-4 shadow-sm">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
+                  <article key={record.id} className="rounded-2xl border bg-slate-50 p-3.5 shadow-sm">
+                    <div className="flex flex-wrap items-start justify-between gap-2.5">
                       <div className="space-y-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <div className="text-base font-semibold text-slate-900">{record.customerName || "未命名预约"}</div>
@@ -414,14 +414,14 @@ export default function MerchantBookingManagerDialog({
                         <div className="text-xs text-slate-500">{`预约编号：${record.id}`}</div>
                         <div className="text-xs text-slate-500">{`创建时间：${formatDateTime(record.createdAt)}`}</div>
                       </div>
-                      <div className="flex flex-wrap gap-2">{renderStatusActions(record)}</div>
+                      <div className="flex flex-wrap gap-1.5">{renderStatusActions(record)}</div>
                     </div>
 
-                    <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5 [&>label:nth-child(3)]:md:col-span-2 [&>label:nth-child(3)]:xl:col-span-2">
-                      <label className="space-y-1 text-sm text-slate-700">
+                    <div className="mt-3 grid gap-2.5 md:grid-cols-2 xl:grid-cols-5 [&>label:nth-child(3)]:md:col-span-2 [&>label:nth-child(3)]:xl:col-span-2">
+                      <label className="space-y-0.5 text-sm text-slate-700">
                         <span className="text-xs text-slate-500">店铺</span>
                         <select
-                          className="w-full rounded border px-3 py-2"
+                          className="w-full rounded border px-3 py-1.5"
                           value={draft.store}
                           onChange={(event) => handleDraftChange(record.id, "store", event.target.value)}
                         >
@@ -432,10 +432,10 @@ export default function MerchantBookingManagerDialog({
                           ))}
                         </select>
                       </label>
-                      <label className="space-y-1 text-sm text-slate-700">
+                      <label className="space-y-0.5 text-sm text-slate-700">
                         <span className="text-xs text-slate-500">项目</span>
                         <select
-                          className="w-full rounded border px-3 py-2"
+                          className="w-full rounded border px-3 py-1.5"
                           value={draft.item}
                           onChange={(event) => handleDraftChange(record.id, "item", event.target.value)}
                         >
@@ -446,21 +446,21 @@ export default function MerchantBookingManagerDialog({
                           ))}
                         </select>
                       </label>
-                      <label className="space-y-1 text-sm text-slate-700">
+                      <label className="space-y-0.5 text-sm text-slate-700">
                         <span className="text-xs text-slate-500">预约时间</span>
                         <BookingDateTimeInput
                           dateValue={draft.appointmentDateInput}
                           timeValue={draft.appointmentTimeInput}
-                          dateInputClassName="min-w-[180px] flex-1 rounded border px-3 py-2"
-                          timeInputClassName="w-[112px] shrink-0 rounded border px-3 py-2"
+                          dateInputClassName="min-w-[180px] flex-1 rounded border px-3 py-1.5"
+                          timeInputClassName="w-[112px] shrink-0 rounded border px-3 py-1.5"
                           onDateChange={(value) => handleDraftChange(record.id, "appointmentDateInput", value)}
                           onTimeChange={(value) => handleDraftChange(record.id, "appointmentTimeInput", value)}
                         />
                       </label>
-                      <label className="space-y-1 text-sm text-slate-700">
+                      <label className="space-y-0.5 text-sm text-slate-700">
                         <span className="text-xs text-slate-500">称谓</span>
                         <select
-                          className="w-full rounded border px-3 py-2"
+                          className="w-full rounded border px-3 py-1.5"
                           value={draft.title}
                           onChange={(event) => handleDraftChange(record.id, "title", event.target.value)}
                         >
@@ -473,10 +473,10 @@ export default function MerchantBookingManagerDialog({
                       </label>
                     </div>
 
-                    <div className="mt-3 flex flex-wrap gap-2">
+                    <div className="mt-2.5 flex flex-wrap gap-1.5">
                       <button
                         type="button"
-                        className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+                        className="rounded border bg-white px-3 py-1.5 text-[13px] leading-5 hover:bg-slate-50 disabled:opacity-50"
                         onClick={() =>
                           void patchBooking(
                             record.id,
@@ -500,7 +500,7 @@ export default function MerchantBookingManagerDialog({
                       </button>
                     </div>
 
-                    <div className="mt-4 grid gap-3 text-sm text-slate-700 md:grid-cols-2 xl:grid-cols-3">
+                    <div className="mt-3 grid gap-2 text-[13px] leading-5 text-slate-700 md:grid-cols-2 xl:grid-cols-3">
                       <div>{`姓名：${record.customerName}`}</div>
                       <div className="flex items-center gap-2">
                         <span className="min-w-0 truncate">{`邮箱：${record.email}`}</span>

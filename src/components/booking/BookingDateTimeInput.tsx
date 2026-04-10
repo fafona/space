@@ -140,7 +140,7 @@ export default function BookingDateTimeInput({
           autoComplete="off"
           placeholder="YYYY-MM-DD"
           maxLength={10}
-          className={`${dateInputClassName} pr-12`}
+          className={`w-full ${dateInputClassName} pr-12`}
           value={dateValue}
           disabled={disabled}
           onChange={(event) => onDateChange(normalizeDateText(event.target.value))}
@@ -171,7 +171,7 @@ export default function BookingDateTimeInput({
           autoComplete="off"
           placeholder="HH:MM"
           maxLength={5}
-          className={`${timeInputClassName} pr-12`}
+          className={`w-full ${timeInputClassName} pr-12`}
           value={timeValue}
           disabled={disabled}
           onChange={(event) => onTimeChange(normalizeTimeText(event.target.value))}
