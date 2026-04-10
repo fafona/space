@@ -417,7 +417,7 @@ export default function MerchantBookingManagerDialog({
                       <div className="flex flex-wrap gap-2">{renderStatusActions(record)}</div>
                     </div>
 
-                    <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                    <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5 [&>label:nth-child(3)]:md:col-span-2 [&>label:nth-child(3)]:xl:col-span-2">
                       <label className="space-y-1 text-sm text-slate-700">
                         <span className="text-xs text-slate-500">店铺</span>
                         <select

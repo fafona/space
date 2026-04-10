@@ -1,5 +1,7 @@
 "use client";
 
+import { useRef, type ReactNode } from "react";
+
 type BookingDateTimeInputProps = {
   dateValue: string;
   timeValue: string;
@@ -79,6 +81,30 @@ function ClockIcon() {
   );
 }
 
+function PickerButton({
+  ariaLabel,
+  disabled,
+  onClick,
+  children,
+}: {
+  ariaLabel: string;
+  disabled: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      className="absolute inset-y-0 right-2 inline-flex items-center justify-center rounded-md px-1 text-slate-500 transition hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={ariaLabel}
+    >
+      {children}
+    </button>
+  );
+}
+
 export default function BookingDateTimeInput({
   dateValue,
   timeValue,
@@ -89,54 +115,81 @@ export default function BookingDateTimeInput({
   timeInputClassName = "",
   containerClassName = "",
 }: BookingDateTimeInputProps) {
+  const dateTextInputRef = useRef<HTMLInputElement>(null);
+  const timeTextInputRef = useRef<HTMLInputElement>(null);
+  const dateNativeInputRef = useRef<HTMLInputElement>(null);
+  const timeNativeInputRef = useRef<HTMLInputElement>(null);
+
+  const openNativePicker = (input: HTMLInputElement | null, fallback: HTMLInputElement | null) => {
+    if (!input || disabled) return;
+    const pickerInput = input as HTMLInputElement & { showPicker?: () => void };
+    if (typeof pickerInput.showPicker === "function") {
+      pickerInput.showPicker();
+      return;
+    }
+    fallback?.focus();
+  };
+
   return (
     <div className={`flex flex-wrap gap-2 ${containerClassName}`.trim()}>
       <div className="relative min-w-[180px] flex-1">
         <input
+          ref={dateTextInputRef}
           type="text"
           inputMode="numeric"
           autoComplete="off"
           placeholder="YYYY-MM-DD"
           maxLength={10}
-          className={`${dateInputClassName} pr-10`}
+          className={`${dateInputClassName} pr-12`}
           value={dateValue}
           disabled={disabled}
           onChange={(event) => onDateChange(normalizeDateText(event.target.value))}
         />
-        <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-slate-500">
+        <PickerButton
+          ariaLabel="选择日期"
+          disabled={disabled}
+          onClick={() => openNativePicker(dateNativeInputRef.current, dateTextInputRef.current)}
+        >
           <CalendarIcon />
-        </div>
+        </PickerButton>
         <input
+          ref={dateNativeInputRef}
           type="date"
           tabIndex={-1}
-          aria-label="选择日期"
-          className="absolute inset-y-1 right-1 w-9 cursor-pointer opacity-0 disabled:cursor-not-allowed"
+          aria-hidden="true"
+          className="pointer-events-none absolute h-px w-px overflow-hidden whitespace-nowrap opacity-0"
           value={/^\d{4}-\d{2}-\d{2}$/.test(dateValue) ? dateValue : ""}
           disabled={disabled}
           onChange={(event) => onDateChange(event.target.value)}
         />
       </div>
-      <div className="relative w-[112px] shrink-0">
+      <div className="relative shrink-0">
         <input
+          ref={timeTextInputRef}
           type="text"
           inputMode="numeric"
           autoComplete="off"
           placeholder="HH:MM"
           maxLength={5}
-          className={`${timeInputClassName} pr-10`}
+          className={`${timeInputClassName} pr-12`}
           value={timeValue}
           disabled={disabled}
           onChange={(event) => onTimeChange(normalizeTimeText(event.target.value))}
         />
-        <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-slate-500">
+        <PickerButton
+          ariaLabel="选择时间"
+          disabled={disabled}
+          onClick={() => openNativePicker(timeNativeInputRef.current, timeTextInputRef.current)}
+        >
           <ClockIcon />
-        </div>
+        </PickerButton>
         <input
+          ref={timeNativeInputRef}
           type="time"
           step={60}
           tabIndex={-1}
-          aria-label="选择时间"
-          className="absolute inset-y-1 right-1 w-9 cursor-pointer opacity-0 disabled:cursor-not-allowed"
+          aria-hidden="true"
+          className="pointer-events-none absolute h-px w-px overflow-hidden whitespace-nowrap opacity-0"
           value={/^\d{2}:\d{2}$/.test(timeValue) ? timeValue : ""}
           disabled={disabled}
           onChange={(event) => onTimeChange(event.target.value)}
