@@ -8,8 +8,10 @@ import {
   joinMerchantBookingDateTime,
   normalizeBookingOptionList,
   sanitizeMerchantBookingEditableInput,
+  shouldSendMerchantBookingConfirmationEmail,
   splitMerchantBookingDateTime,
   validateMerchantBookingInput,
+  withoutMerchantBookingToken,
 } from "./merchantBookings";
 
 test("normalizeBookingOptionList trims blanks and removes duplicates", () => {
@@ -127,6 +129,75 @@ test("buildMerchantBookingId uses R + merchant id + date + 4-digit sequence", ()
     ]),
     "R10000000202603190003",
   );
+});
+
+test("shouldSendMerchantBookingConfirmationEmail only allows the first transition to confirmed", () => {
+  assert.equal(
+    shouldSendMerchantBookingConfirmationEmail({
+      currentStatus: "active",
+      nextStatus: "confirmed",
+      confirmationEmailLastAttemptAt: "",
+    }),
+    true,
+  );
+  assert.equal(
+    shouldSendMerchantBookingConfirmationEmail({
+      currentStatus: "confirmed",
+      nextStatus: "confirmed",
+      confirmationEmailLastAttemptAt: "",
+    }),
+    false,
+  );
+  assert.equal(
+    shouldSendMerchantBookingConfirmationEmail({
+      currentStatus: "cancelled",
+      nextStatus: "confirmed",
+      confirmationEmailLastAttemptAt: "2026-03-19T10:31:00.000Z",
+    }),
+    false,
+  );
+});
+
+test("withoutMerchantBookingToken removes internal email delivery metadata", () => {
+  const publicRecord = withoutMerchantBookingToken({
+    id: "R10000000202603190001",
+    siteId: "10000000",
+    siteName: "Faolla",
+    store: "Main",
+    item: "Consultation",
+    appointmentAt: "2026-03-19T10:30",
+    title: "Mr",
+    customerName: "Felix",
+    email: "test@example.com",
+    phone: "123456",
+    note: "",
+    status: "confirmed",
+    createdAt: "2026-03-19T10:00:00.000Z",
+    updatedAt: "2026-03-19T10:30:00.000Z",
+    editToken: "secret",
+    confirmationEmailLastAttemptAt: "2026-03-19T10:31:00.000Z",
+    confirmationEmailStatus: "sent",
+    confirmationEmailSentAt: "2026-03-19T10:31:00.000Z",
+    confirmationEmailMessageId: "email-id-1",
+    confirmationEmailError: "failed",
+  });
+
+  assert.deepEqual(publicRecord, {
+    id: "R10000000202603190001",
+    siteId: "10000000",
+    siteName: "Faolla",
+    store: "Main",
+    item: "Consultation",
+    appointmentAt: "2026-03-19T10:30",
+    title: "Mr",
+    customerName: "Felix",
+    email: "test@example.com",
+    phone: "123456",
+    note: "",
+    status: "confirmed",
+    createdAt: "2026-03-19T10:00:00.000Z",
+    updatedAt: "2026-03-19T10:30:00.000Z",
+  });
 });
 
 test("getMerchantBookingStatusLabel returns readable labels", () => {

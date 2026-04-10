@@ -4,6 +4,7 @@ import path from "node:path";
 import {
   buildMerchantBookingId,
   sanitizeMerchantBookingEditableInput,
+  shouldSendMerchantBookingConfirmationEmail,
   type MerchantBookingActionInput,
   type MerchantBookingCreateInput,
   type MerchantBookingRecord,
@@ -12,6 +13,7 @@ import {
   validateMerchantBookingInput,
   withoutMerchantBookingToken,
 } from "./merchantBookings";
+import { sendMerchantBookingConfirmationEmail } from "./merchantBookingEmails";
 
 type MerchantBookingStoreFile = {
   version: 1;
@@ -204,11 +206,33 @@ export async function updateMerchantBookingStatusBySite(input: {
     if (!current) {
       throw new Error("未找到对应预约记录");
     }
-    const next: MerchantBookingStoredRecord = {
+    const nextStatus = input.status;
+    let next: MerchantBookingStoredRecord = {
       ...current,
-      status: input.status,
+      status: nextStatus,
       updatedAt: new Date().toISOString(),
     };
+    if (
+      shouldSendMerchantBookingConfirmationEmail({
+        currentStatus: current.status,
+        nextStatus,
+        confirmationEmailLastAttemptAt: current.confirmationEmailLastAttemptAt,
+      })
+    ) {
+      const emailResult = await sendMerchantBookingConfirmationEmail(next);
+      if (emailResult.attempted) {
+        next = {
+          ...next,
+          confirmationEmailLastAttemptAt: emailResult.attemptedAt,
+          confirmationEmailStatus: emailResult.status,
+          confirmationEmailSentAt:
+            emailResult.status === "sent" ? emailResult.attemptedAt : current.confirmationEmailSentAt,
+          confirmationEmailMessageId:
+            emailResult.status === "sent" ? emailResult.messageId : current.confirmationEmailMessageId,
+          confirmationEmailError: emailResult.status === "failed" ? emailResult.error : undefined,
+        };
+      }
+    }
     store.records[targetIndex] = next;
     await writeMerchantBookingStore(store);
     return withoutMerchantBookingToken(next);
@@ -246,12 +270,34 @@ export async function updateMerchantBookingBySite(input: {
       throw new Error(issues[0]);
     }
 
-    const next: MerchantBookingStoredRecord = {
+    const nextStatus = input.status ?? current.status;
+    let next: MerchantBookingStoredRecord = {
       ...current,
       ...nextEditable,
-      status: input.status ?? current.status,
+      status: nextStatus,
       updatedAt: new Date().toISOString(),
     };
+    if (
+      shouldSendMerchantBookingConfirmationEmail({
+        currentStatus: current.status,
+        nextStatus,
+        confirmationEmailLastAttemptAt: current.confirmationEmailLastAttemptAt,
+      })
+    ) {
+      const emailResult = await sendMerchantBookingConfirmationEmail(next);
+      if (emailResult.attempted) {
+        next = {
+          ...next,
+          confirmationEmailLastAttemptAt: emailResult.attemptedAt,
+          confirmationEmailStatus: emailResult.status,
+          confirmationEmailSentAt:
+            emailResult.status === "sent" ? emailResult.attemptedAt : current.confirmationEmailSentAt,
+          confirmationEmailMessageId:
+            emailResult.status === "sent" ? emailResult.messageId : current.confirmationEmailMessageId,
+          confirmationEmailError: emailResult.status === "failed" ? emailResult.error : undefined,
+        };
+      }
+    }
     store.records[targetIndex] = next;
     await writeMerchantBookingStore(store);
     return withoutMerchantBookingToken(next);

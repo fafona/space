@@ -482,14 +482,15 @@ export default function MerchantBookingMobilePanel({
     detailRecord && detailDraft
         ? overlay(
           <div
-            className="fixed inset-0 z-[2147482950] overflow-y-auto bg-black/45 p-4 pb-20"
+            className="fixed inset-0 z-[2147482950] overflow-y-auto bg-black/45 px-4 pt-4"
+            style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 7rem)" }}
             onMouseDown={(event) => {
               if (event.target === event.currentTarget) closeDetailDialog();
             }}
           >
             <div
               className="mx-auto my-2 flex w-full max-w-xl min-h-0 flex-col overflow-hidden rounded-[28px] border bg-white shadow-2xl"
-              style={{ maxHeight: "calc(100vh - env(safe-area-inset-bottom, 0px) - 6rem)" }}
+              style={{ maxHeight: "calc(100vh - env(safe-area-inset-bottom, 0px) - 8.5rem)" }}
               onMouseDown={(event) => event.stopPropagation()}
             >
               <div className="flex items-start justify-between gap-3 border-b px-4 py-4">
@@ -734,16 +735,16 @@ export default function MerchantBookingMobilePanel({
 
                   <div className="mt-3 flex flex-wrap gap-2">{renderStatusActions(record)}</div>
 
-                  <div className="mt-4 grid grid-cols-[minmax(0,1fr)_auto] gap-x-3">
-                    <div className="grid content-start gap-1.5">
+                  <div className="mt-4 grid grid-cols-[minmax(0,1fr)_auto] items-end gap-x-3">
+                    <div className="grid content-start gap-1">
                       <SummaryField value={record.store} />
                       <SummaryField value={record.item} />
                       <SummaryAppointmentField dateValue={appointmentParts.date} timeValue={appointmentParts.time} />
                     </div>
-                    <div className="relative flex min-h-[104px] items-end self-stretch">
+                    <div className="relative flex items-end self-end">
                       {record.note ? (
                         <span
-                          className="absolute bottom-14 right-0 inline-flex h-8 w-8 items-center justify-center rounded-full bg-amber-50 text-amber-700"
+                          className="pointer-events-none absolute bottom-full right-0 mb-1 inline-flex h-8 w-8 items-center justify-center rounded-full bg-amber-50 text-amber-700"
                           title="有备注"
                           aria-label="有备注"
                         >

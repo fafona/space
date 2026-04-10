@@ -568,8 +568,8 @@ export default function MerchantBookingManagerDialog({
                     <BookingDateTimeInput
                       dateValue={detailDraft.appointmentDateInput}
                       timeValue={detailDraft.appointmentTimeInput}
-                      dateInputClassName="min-w-[180px] flex-1 rounded border px-3 py-2"
-                      timeInputClassName="w-[120px] shrink-0 rounded border px-3 py-2"
+                      dateInputClassName="min-w-[180px] flex-1 rounded-[18px] border border-slate-200 px-4 py-3 text-base text-slate-900"
+                      timeInputClassName="w-[116px] shrink-0 rounded-[18px] border border-slate-200 px-4 py-3 text-base text-slate-900"
                       onDateChange={(value) => handleDraftChange(detailRecord.id, "appointmentDateInput", value)}
                       onTimeChange={(value) => handleDraftChange(detailRecord.id, "appointmentTimeInput", value)}
                     />
@@ -795,8 +795,7 @@ export default function MerchantBookingManagerDialog({
                     </div>
                     {record.note ? (
                       <div className="mt-3 rounded-xl border border-slate-200 bg-white px-3 py-2.5">
-                        <div className="text-xs text-slate-500">备注</div>
-                        <div className="mt-1 whitespace-pre-wrap break-words text-sm text-slate-700">{record.note}</div>
+                        <div className="whitespace-pre-wrap break-words text-sm text-slate-700">{record.note}</div>
                       </div>
                     ) : null}
                   </article>

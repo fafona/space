@@ -27,8 +27,15 @@ export type MerchantBookingRecord = MerchantBookingEditableInput & {
   updatedAt: string;
 };
 
+export type MerchantBookingConfirmationEmailStatus = "sent" | "failed";
+
 export type MerchantBookingStoredRecord = MerchantBookingRecord & {
   editToken: string;
+  confirmationEmailLastAttemptAt?: string;
+  confirmationEmailStatus?: MerchantBookingConfirmationEmailStatus;
+  confirmationEmailSentAt?: string;
+  confirmationEmailMessageId?: string;
+  confirmationEmailError?: string;
 };
 
 export type MerchantBookingUpdateAction = "update" | "cancel";
@@ -202,6 +209,18 @@ export function buildMerchantBookingId(siteId: string, createdAt: Date | string,
   return `${prefix}${padBookingSequence(maxSequence + 1)}`;
 }
 
+export function shouldSendMerchantBookingConfirmationEmail(input: {
+  currentStatus: MerchantBookingStatus;
+  nextStatus: MerchantBookingStatus;
+  confirmationEmailLastAttemptAt?: string | null;
+}) {
+  return (
+    input.currentStatus !== "confirmed" &&
+    input.nextStatus === "confirmed" &&
+    !normalizeSingleLineText(input.confirmationEmailLastAttemptAt ?? "")
+  );
+}
+
 export function getMerchantBookingStatusLabel(status: MerchantBookingStatus) {
   if (status === "confirmed") return "已确认";
   if (status === "completed") return "已完成";
@@ -210,7 +229,20 @@ export function getMerchantBookingStatusLabel(status: MerchantBookingStatus) {
 }
 
 export function withoutMerchantBookingToken(record: MerchantBookingStoredRecord): MerchantBookingRecord {
-  const { editToken, ...publicRecord } = record;
+  const {
+    editToken,
+    confirmationEmailLastAttemptAt,
+    confirmationEmailStatus,
+    confirmationEmailSentAt,
+    confirmationEmailMessageId,
+    confirmationEmailError,
+    ...publicRecord
+  } = record;
   void editToken;
+  void confirmationEmailLastAttemptAt;
+  void confirmationEmailStatus;
+  void confirmationEmailSentAt;
+  void confirmationEmailMessageId;
+  void confirmationEmailError;
   return publicRecord;
 }
