@@ -108,6 +108,10 @@ export async function PATCH(request: Request) {
               item: String(body.updates.item ?? ""),
               appointmentAt: String(body.updates.appointmentAt ?? ""),
               title: String(body.updates.title ?? ""),
+              customerName: String(body.updates.customerName ?? ""),
+              email: String(body.updates.email ?? ""),
+              phone: String(body.updates.phone ?? ""),
+              note: String(body.updates.note ?? ""),
             }
           : undefined,
       });

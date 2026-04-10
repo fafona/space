@@ -35,6 +35,10 @@ type MerchantBookingAdminDraft = {
   appointmentDateInput: string;
   appointmentTimeInput: string;
   title: string;
+  customerName: string;
+  email: string;
+  phone: string;
+  note: string;
 };
 
 function overlay(children: ReactNode) {
@@ -74,6 +78,10 @@ function createDraft(record: MerchantBookingRecord): MerchantBookingAdminDraft {
     appointmentDateInput: appointmentParts.date,
     appointmentTimeInput: appointmentParts.time,
     title: record.title,
+    customerName: record.customerName,
+    email: record.email,
+    phone: record.phone,
+    note: record.note,
   };
 }
 
@@ -110,6 +118,25 @@ function PhoneIcon() {
   );
 }
 
+function ReadOnlyBookingField({
+  label,
+  value,
+  className = "",
+}: {
+  label: string;
+  value: string;
+  className?: string;
+}) {
+  return (
+    <div className={`space-y-0.5 ${className}`.trim()}>
+      <div className="text-xs text-slate-500">{label}</div>
+      <div className="flex min-h-[36px] items-center rounded border bg-white px-3 py-1.5 text-sm text-slate-900">
+        <span className="min-w-0 truncate">{value || "-"}</span>
+      </div>
+    </div>
+  );
+}
+
 export default function MerchantBookingManagerDialog({
   open,
   mode = "dialog",
@@ -131,6 +158,7 @@ export default function MerchantBookingManagerDialog({
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<BookingFilter>("all");
   const [busyKey, setBusyKey] = useState("");
+  const [detailBookingId, setDetailBookingId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open || !siteId) return;
@@ -150,9 +178,7 @@ export default function MerchantBookingManagerDialog({
         }
         if (!cancelled) {
           setRecords(json.bookings);
-          setDrafts(
-            Object.fromEntries(json.bookings.map((record) => [record.id, createDraft(record)])),
-          );
+          setDrafts(Object.fromEntries(json.bookings.map((record) => [record.id, createDraft(record)])));
         }
       } catch (loadError) {
         if (!cancelled) {
@@ -243,15 +269,15 @@ export default function MerchantBookingManagerDialog({
         throw new Error(json?.message || "预约更新失败");
       }
       const nextBooking = json.booking;
-      setRecords((current) =>
-        current.map((item) => (item.id === nextBooking.id ? nextBooking : item)),
-      );
+      setRecords((current) => current.map((item) => (item.id === nextBooking.id ? nextBooking : item)));
       setDrafts((current) => ({
         ...current,
         [nextBooking.id]: createDraft(nextBooking),
       }));
+      return nextBooking;
     } catch (updateError) {
       setError(updateError instanceof Error ? updateError.message : "预约更新失败");
+      return null;
     } finally {
       setBusyKey("");
     }
@@ -271,10 +297,52 @@ export default function MerchantBookingManagerDialog({
           appointmentDateInput: "",
           appointmentTimeInput: "",
           title: "",
+          customerName: "",
+          email: "",
+          phone: "",
+          note: "",
         }),
         [key]: value,
       },
     }));
+  };
+
+  const openDetailDialog = (record: MerchantBookingRecord) => {
+    setDrafts((current) => ({
+      ...current,
+      [record.id]: createDraft(record),
+    }));
+    setDetailBookingId(record.id);
+  };
+
+  const closeDetailDialog = () => {
+    setDetailBookingId(null);
+  };
+
+  const detailRecord = detailBookingId ? records.find((item) => item.id === detailBookingId) ?? null : null;
+  const detailDraft = detailRecord ? drafts[detailRecord.id] ?? createDraft(detailRecord) : null;
+
+  const saveDetailDialog = async () => {
+    if (!detailRecord || !detailDraft) return;
+    const nextBooking = await patchBooking(
+      detailRecord.id,
+      {
+        updates: {
+          store: detailDraft.store,
+          item: detailDraft.item,
+          appointmentAt: joinMerchantBookingDateTime(detailDraft.appointmentDateInput, detailDraft.appointmentTimeInput),
+          title: detailDraft.title,
+          customerName: detailDraft.customerName,
+          email: detailDraft.email,
+          phone: detailDraft.phone,
+          note: detailDraft.note,
+        },
+      },
+      "save",
+    );
+    if (nextBooking) {
+      setDetailBookingId(null);
+    }
   };
 
   const renderStatusActions = (record: MerchantBookingRecord) => {
@@ -325,6 +393,153 @@ export default function MerchantBookingManagerDialog({
   };
 
   if (!open) return null;
+
+  const detailDialog =
+    detailRecord && detailDraft
+      ? overlay(
+          <div
+            className="fixed inset-0 z-[2147482950] bg-black/45 p-4"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) closeDetailDialog();
+            }}
+          >
+            <div
+              className="mx-auto flex h-full max-h-[calc(100vh-2rem)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border bg-white shadow-2xl"
+              onMouseDown={(event) => event.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-3 border-b px-5 py-4">
+                <div className="space-y-1">
+                  <div className="text-lg font-semibold text-slate-900">预约详情</div>
+                  <div className="text-sm text-slate-500">
+                    {`${detailDraft.customerName || detailRecord.customerName || "未命名预约"} ${detailDraft.title || detailRecord.title || ""}`.trim()}
+                  </div>
+                  <div className="text-xs text-slate-500">{`预约编号：${detailRecord.id}`}</div>
+                </div>
+                <button
+                  type="button"
+                  className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                  onClick={closeDetailDialog}
+                >
+                  关闭
+                </button>
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+                <div className="grid gap-3 md:grid-cols-2">
+                  <label className="space-y-1 text-sm text-slate-700">
+                    <span className="text-xs text-slate-500">店铺</span>
+                    <select
+                      className="w-full rounded border px-3 py-2"
+                      value={detailDraft.store}
+                      onChange={(event) => handleDraftChange(detailRecord.id, "store", event.target.value)}
+                    >
+                      {selectableStoreOptions.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="space-y-1 text-sm text-slate-700">
+                    <span className="text-xs text-slate-500">项目</span>
+                    <select
+                      className="w-full rounded border px-3 py-2"
+                      value={detailDraft.item}
+                      onChange={(event) => handleDraftChange(detailRecord.id, "item", event.target.value)}
+                    >
+                      {selectableItemOptions.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="space-y-1 text-sm text-slate-700 md:col-span-2">
+                    <span className="text-xs text-slate-500">预约时间</span>
+                    <BookingDateTimeInput
+                      dateValue={detailDraft.appointmentDateInput}
+                      timeValue={detailDraft.appointmentTimeInput}
+                      dateInputClassName="min-w-[180px] flex-1 rounded border px-3 py-2"
+                      timeInputClassName="w-[120px] shrink-0 rounded border px-3 py-2"
+                      onDateChange={(value) => handleDraftChange(detailRecord.id, "appointmentDateInput", value)}
+                      onTimeChange={(value) => handleDraftChange(detailRecord.id, "appointmentTimeInput", value)}
+                    />
+                  </label>
+
+                  <label className="space-y-1 text-sm text-slate-700">
+                    <span className="text-xs text-slate-500">称谓</span>
+                    <select
+                      className="w-full rounded border px-3 py-2"
+                      value={detailDraft.title}
+                      onChange={(event) => handleDraftChange(detailRecord.id, "title", event.target.value)}
+                    >
+                      {selectableTitleOptions.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="space-y-1 text-sm text-slate-700">
+                    <span className="text-xs text-slate-500">姓名</span>
+                    <input
+                      type="text"
+                      className="w-full rounded border px-3 py-2"
+                      value={detailDraft.customerName}
+                      onChange={(event) => handleDraftChange(detailRecord.id, "customerName", event.target.value)}
+                    />
+                  </label>
+
+                  <label className="space-y-1 text-sm text-slate-700">
+                    <span className="text-xs text-slate-500">邮箱</span>
+                    <input
+                      type="email"
+                      className="w-full rounded border px-3 py-2"
+                      value={detailDraft.email}
+                      onChange={(event) => handleDraftChange(detailRecord.id, "email", event.target.value)}
+                    />
+                  </label>
+
+                  <label className="space-y-1 text-sm text-slate-700">
+                    <span className="text-xs text-slate-500">电话</span>
+                    <input
+                      type="text"
+                      className="w-full rounded border px-3 py-2"
+                      value={detailDraft.phone}
+                      onChange={(event) => handleDraftChange(detailRecord.id, "phone", event.target.value)}
+                    />
+                  </label>
+
+                  <label className="space-y-1 text-sm text-slate-700 md:col-span-2">
+                    <span className="text-xs text-slate-500">备注</span>
+                    <textarea
+                      className="min-h-[120px] w-full rounded border px-3 py-2"
+                      value={detailDraft.note}
+                      onChange={(event) => handleDraftChange(detailRecord.id, "note", event.target.value)}
+                    />
+                  </label>
+                </div>
+              </div>
+
+              <div className="flex justify-end border-t px-5 py-4">
+                <button
+                  type="button"
+                  className="rounded border bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50"
+                  onClick={() => {
+                    void saveDetailDialog();
+                  }}
+                  disabled={busyKey === `save:${detailRecord.id}`}
+                >
+                  {busyKey === `save:${detailRecord.id}` ? "保存中..." : "保存"}
+                </button>
+              </div>
+            </div>
+          </div>,
+        )
+      : null;
 
   const content = (
     <div
@@ -400,135 +615,77 @@ export default function MerchantBookingManagerDialog({
           ) : filteredRecords.length > 0 ? (
             <div className="space-y-4">
               {filteredRecords.map((record) => {
-                const draft = drafts[record.id] ?? createDraft(record);
+                const appointmentParts = splitMerchantBookingDateTime(record.appointmentAt);
+                const displayName = record.customerName || "未命名预约";
+                const displayTitle = record.title || "";
                 return (
                   <article key={record.id} className="rounded-2xl border bg-slate-50 p-3.5 shadow-sm">
-                    <div className="flex flex-wrap items-start justify-between gap-2.5">
-                      <div className="space-y-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <div className="text-base font-semibold text-slate-900">{record.customerName || "未命名预约"}</div>
-                          <span className={`rounded-full px-2 py-0.5 text-[11px] ${getStatusBadgeClass(record.status)}`}>
-                            {getMerchantBookingStatusLabel(record.status)}
-                          </span>
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="flex min-w-0 flex-1 flex-wrap items-start gap-x-5 gap-y-2">
+                        <div className="min-w-[240px] flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div className="truncate text-base font-semibold text-slate-900">
+                              {displayTitle ? `${displayName} ${displayTitle}` : displayName}
+                            </div>
+                            <span className={`rounded-full px-2 py-0.5 text-[11px] ${getStatusBadgeClass(record.status)}`}>
+                              {getMerchantBookingStatusLabel(record.status)}
+                            </span>
+                          </div>
+                          <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+                            <span>{`预约编号：${record.id}`}</span>
+                            <span>{`创建时间：${formatDateTime(record.createdAt)}`}</span>
+                          </div>
                         </div>
-                        <div className="text-xs text-slate-500">{`预约编号：${record.id}`}</div>
-                        <div className="text-xs text-slate-500">{`创建时间：${formatDateTime(record.createdAt)}`}</div>
+
+                        <div className="flex min-w-[280px] items-center gap-2 text-[13px] leading-5 text-slate-700">
+                          <span className="min-w-0 flex-1 truncate">{`邮箱：${record.email || "-"}`}</span>
+                          {record.email ? (
+                            <a
+                              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded border bg-white text-slate-700 hover:bg-slate-50"
+                              href={`mailto:${record.email}`}
+                              title="回复邮箱"
+                              aria-label="回复邮箱"
+                            >
+                              <MailIcon />
+                            </a>
+                          ) : null}
+                        </div>
+
+                        <div className="flex min-w-[240px] items-center gap-2 text-[13px] leading-5 text-slate-700">
+                          <span className="min-w-0 flex-1 truncate">{`电话：${record.phone || "-"}`}</span>
+                          {record.phone ? (
+                            <a
+                              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded border bg-white text-slate-700 hover:bg-slate-50"
+                              href={`tel:${record.phone}`}
+                              title="拨打电话"
+                              aria-label="拨打电话"
+                            >
+                              <PhoneIcon />
+                            </a>
+                          ) : null}
+                        </div>
                       </div>
+
                       <div className="flex flex-wrap gap-1.5">{renderStatusActions(record)}</div>
                     </div>
 
-                    <div className="mt-3 grid gap-2.5 md:grid-cols-2 xl:grid-cols-5 [&>label:nth-child(3)]:md:col-span-2 [&>label:nth-child(3)]:xl:col-span-2">
-                      <label className="space-y-0.5 text-sm text-slate-700">
-                        <span className="text-xs text-slate-500">店铺</span>
-                        <select
-                          className="w-full rounded border px-3 py-1.5"
-                          value={draft.store}
-                          onChange={(event) => handleDraftChange(record.id, "store", event.target.value)}
+                    <div className="mt-3 grid gap-2.5 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_160px_auto]">
+                      <ReadOnlyBookingField label="店铺" value={record.store} />
+                      <ReadOnlyBookingField label="项目" value={record.item} />
+                      <ReadOnlyBookingField
+                        label="预约时间"
+                        value={[appointmentParts.date || "-", appointmentParts.time || "-"].join(" ")}
+                      />
+                      <ReadOnlyBookingField label="称谓" value={displayTitle || "-"} />
+                      <div className="flex items-end justify-end">
+                        <button
+                          type="button"
+                          className="rounded border bg-white px-3 py-1.5 text-[13px] leading-5 hover:bg-slate-50"
+                          onClick={() => openDetailDialog(record)}
                         >
-                          {selectableStoreOptions.map((option) => (
-                            <option key={option} value={option}>
-                              {option}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="space-y-0.5 text-sm text-slate-700">
-                        <span className="text-xs text-slate-500">项目</span>
-                        <select
-                          className="w-full rounded border px-3 py-1.5"
-                          value={draft.item}
-                          onChange={(event) => handleDraftChange(record.id, "item", event.target.value)}
-                        >
-                          {selectableItemOptions.map((option) => (
-                            <option key={option} value={option}>
-                              {option}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="space-y-0.5 text-sm text-slate-700">
-                        <span className="text-xs text-slate-500">预约时间</span>
-                        <BookingDateTimeInput
-                          dateValue={draft.appointmentDateInput}
-                          timeValue={draft.appointmentTimeInput}
-                          dateInputClassName="min-w-[180px] flex-1 rounded border px-3 py-1.5"
-                          timeInputClassName="w-[112px] shrink-0 rounded border px-3 py-1.5"
-                          onDateChange={(value) => handleDraftChange(record.id, "appointmentDateInput", value)}
-                          onTimeChange={(value) => handleDraftChange(record.id, "appointmentTimeInput", value)}
-                        />
-                      </label>
-                      <label className="space-y-0.5 text-sm text-slate-700">
-                        <span className="text-xs text-slate-500">称谓</span>
-                        <select
-                          className="w-full rounded border px-3 py-1.5"
-                          value={draft.title}
-                          onChange={(event) => handleDraftChange(record.id, "title", event.target.value)}
-                        >
-                          {selectableTitleOptions.map((option) => (
-                            <option key={option} value={option}>
-                              {option}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    </div>
-
-                    <div className="mt-2.5 flex flex-wrap gap-1.5">
-                      <button
-                        type="button"
-                        className="rounded border bg-white px-3 py-1.5 text-[13px] leading-5 hover:bg-slate-50 disabled:opacity-50"
-                        onClick={() =>
-                          void patchBooking(
-                            record.id,
-                            {
-                              updates: {
-                                store: draft.store,
-                                item: draft.item,
-                                appointmentAt: joinMerchantBookingDateTime(
-                                  draft.appointmentDateInput,
-                                  draft.appointmentTimeInput,
-                                ),
-                                title: draft.title,
-                              },
-                            },
-                            "save",
-                          )
-                        }
-                        disabled={busyKey === `save:${record.id}`}
-                      >
-                        {busyKey === `save:${record.id}` ? "保存中..." : "保存修改"}
-                      </button>
-                    </div>
-
-                    <div className="mt-3 grid gap-2 text-[13px] leading-5 text-slate-700 md:grid-cols-2 xl:grid-cols-3">
-                      <div>{`姓名：${record.customerName}`}</div>
-                      <div className="flex items-center gap-2">
-                        <span className="min-w-0 truncate">{`邮箱：${record.email}`}</span>
-                        {record.email ? (
-                          <a
-                            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded border bg-white text-slate-700 hover:bg-slate-50"
-                            href={`mailto:${record.email}`}
-                            title="回复邮箱"
-                            aria-label="回复邮箱"
-                          >
-                            <MailIcon />
-                          </a>
-                        ) : null}
+                          详情
+                        </button>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <span className="min-w-0 truncate">{`电话：${record.phone}`}</span>
-                        {record.phone ? (
-                          <a
-                            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded border bg-white text-slate-700 hover:bg-slate-50"
-                            href={`tel:${record.phone}`}
-                            title="拨打电话"
-                            aria-label="拨打电话"
-                          >
-                            <PhoneIcon />
-                          </a>
-                        ) : null}
-                      </div>
-                      {record.note ? <div className="md:col-span-2 xl:col-span-3">{`备注：${record.note}`}</div> : null}
                     </div>
                   </article>
                 );
@@ -541,6 +698,7 @@ export default function MerchantBookingManagerDialog({
           )}
         </div>
       </div>
+      {detailDialog}
     </div>
   );
 

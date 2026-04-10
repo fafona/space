@@ -4792,6 +4792,10 @@ export default function AdminClient({
   const [supportPushError, setSupportPushError] = useState("");
   const [supportRemoteBadgeCount, setSupportRemoteBadgeCount] = useState(0);
   const [supportPushBadgeHydrated, setSupportPushBadgeHydrated] = useState(false);
+  const [supportUnreadHydrationState, setSupportUnreadHydrationState] = useState({
+    official: false,
+    peer: false,
+  });
   const [supportPushStandalone, setSupportPushStandalone] = useState(() => isSupportStandaloneDisplayMode());
   const [prefersSystemDarkMode, setPrefersSystemDarkMode] = useState(() =>
     typeof window !== "undefined" && typeof window.matchMedia === "function"
@@ -9448,12 +9452,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     return unreadCount;
   }, [currentSupportMerchantId, supportPeerContacts, supportPeerLastReadMap, supportPeerThreadByContactMerchantId]);
   const supportUnreadBadgeCount = supportUnreadOfficialMessageCount + supportUnreadPeerMessageCount;
+  const supportUnreadStateHydrated = supportUnreadHydrationState.official && supportUnreadHydrationState.peer;
   const supportEffectiveBadgeCount =
-    supportUnreadBadgeCount > 0
+    supportUnreadStateHydrated
       ? supportUnreadBadgeCount
-      : supportPushBadgeHydrated
-        ? supportRemoteBadgeCount
-        : 0;
+      : Math.max(supportUnreadBadgeCount, supportPushBadgeHydrated ? supportRemoteBadgeCount : 0);
   const supportHasUnreadMessages = supportUnreadBadgeCount > 0;
   const supportContactRows: SupportContactRow[] = [
     {
@@ -9742,6 +9745,14 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       setSupportSelfSectionView("home");
     }
   }, [supportMobileHomeTab]);
+
+  useEffect(() => {
+    if (isPlatformEditor) return;
+    setSupportUnreadHydrationState({
+      official: false,
+      peer: false,
+    });
+  }, [editingSiteId, isPlatformEditor]);
 
   useEffect(() => {
     const container = supportSelfScrollContainerRef.current;
@@ -10603,6 +10614,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         setSupportError("");
       }
       setSupportThread(payload?.thread ?? null);
+      setSupportUnreadHydrationState((current) => (current.official ? current : { ...current, official: true }));
     } catch {
       if (requestId !== supportRequestIdRef.current) return;
       if (!suppressError) {
@@ -10645,6 +10657,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       setSupportPeerError("");
       setSupportPeerContacts(Array.isArray(payload?.contacts) ? payload.contacts : []);
       setSupportPeerThreads(Array.isArray(payload?.threads) ? payload.threads : []);
+      setSupportUnreadHydrationState((current) => (current.peer ? current : { ...current, peer: true }));
     } catch {
       if (requestId !== supportPeerRequestIdRef.current) return;
       if (!suppressError) {
