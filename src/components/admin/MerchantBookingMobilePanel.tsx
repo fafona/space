@@ -663,7 +663,7 @@ export default function MerchantBookingMobilePanel({
     <>
       <div ref={rootRef} className="space-y-3" {...pullToRefreshBind}>
         <div
-          className={`sticky top-0 z-20 space-y-3 pb-3 backdrop-blur ${
+          className={`sticky top-0 z-20 -mx-4 space-y-3 border-b border-slate-200/80 px-4 pb-3 pt-[calc(env(safe-area-inset-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur ${
             darkMode
               ? "bg-[rgba(15,23,42,0.96)] supports-[backdrop-filter]:bg-[rgba(15,23,42,0.9)]"
               : "bg-[rgba(248,250,252,0.96)] supports-[backdrop-filter]:bg-[rgba(248,250,252,0.9)]"
@@ -693,7 +693,10 @@ export default function MerchantBookingMobilePanel({
               </span>
             </div>
           </div>
-          <div className="flex">
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-emerald-500 text-[13px] font-semibold text-white shadow-sm">
+              预约
+            </div>
             <input
               className="min-h-[41px] min-w-0 flex-1 rounded-[20px] border border-slate-200 bg-white px-3.5 py-2 text-[14px] leading-5 text-slate-900 outline-none transition focus:border-slate-900"
               value={query}
@@ -701,7 +704,7 @@ export default function MerchantBookingMobilePanel({
               placeholder={getMerchantBookingFieldText("searchMobile", locale)}
             />
           </div>
-          <div className="mt-3 flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2">
             {[
               { key: "all" as const, label: getMerchantBookingFilterText("all", counts.total, locale) },
               { key: "active" as const, label: getMerchantBookingFilterText("active", counts.active, locale) },

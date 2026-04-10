@@ -9513,14 +9513,14 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     (supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY || !!selectedSupportPeerContact);
   useEffect(() => {
     if (typeof window === "undefined" || typeof document === "undefined") return;
-    const visible = isMobileSupportDialog && supportMobileHomeTab === "self";
+    const visible = !isPlatformEditor && !isDesktopEditorSidebar && supportMobileHomeTab === "self";
     document.documentElement.setAttribute("data-mobile-language-switcher", visible ? "show" : "hide");
     window.dispatchEvent(
       new CustomEvent("merchant-mobile-language-switcher-change", {
         detail: { visible },
       }),
     );
-  }, [isMobileSupportDialog, supportMobileHomeTab]);
+  }, [isDesktopEditorSidebar, isPlatformEditor, supportMobileHomeTab]);
   useEffect(() => {
     return () => {
       if (typeof window === "undefined" || typeof document === "undefined") return;
@@ -13170,18 +13170,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
 
   const supportMobileBusinessContent = (
     <>
-      <div className="shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
-        <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-emerald-500 text-sm font-semibold text-white shadow-sm">
-            生意
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="text-[15px] font-semibold text-slate-900">预约管理</div>
-            <div className="mt-1 text-xs text-slate-500">手机端这里直接查看和处理后台预约记录。</div>
-          </div>
-        </div>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(env(safe-area-inset-bottom)+5.85rem)] pt-4">
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(env(safe-area-inset-bottom)+5.85rem)] pt-0">
         {supportMobileBookingSiteId ? (
           <MerchantBookingMobilePanel
             siteId={supportMobileBookingSiteId}
@@ -13192,12 +13181,21 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             darkMode={supportMobileDarkMode}
           />
         ) : (
-          <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
-            <div className="text-base font-semibold text-slate-900">当前商户信息还没准备好</div>
-            <div className="mt-2 text-sm leading-6 text-slate-500">
-              手机端暂时还没识别到当前商户，稍后刷新后会直接显示预约记录和处理入口。
+          <>
+            <div className="sticky top-0 z-20 -mx-4 border-b border-slate-200/80 bg-[rgba(248,250,252,0.96)] px-4 pb-3 pt-[calc(env(safe-area-inset-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur supports-[backdrop-filter]:bg-[rgba(248,250,252,0.9)]">
+              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-500 text-[13px] font-semibold text-white shadow-sm">
+                预约
+              </div>
             </div>
-          </div>
+            <div className="pt-4">
+              <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+                <div className="text-base font-semibold text-slate-900">当前商户信息还没准备好</div>
+                <div className="mt-2 text-sm leading-6 text-slate-500">
+                  手机端暂时还没识别到当前商户，稍后刷新后会直接显示预约记录和处理入口。
+                </div>
+              </div>
+            </div>
+          </>
         )}
       </div>
     </>
