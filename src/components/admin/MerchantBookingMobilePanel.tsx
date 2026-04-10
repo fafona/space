@@ -159,36 +159,26 @@ function PhoneIcon() {
   );
 }
 
-function SummaryField({
-  label,
-  value,
-}: {
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="space-y-1">
-      <div className="text-xs text-slate-500">{label}</div>
-      <div className="text-sm text-slate-900">{value || "-"}</div>
-    </div>
-  );
+function SummaryField({ value }: { value: string }) {
+  return <div className="text-sm text-slate-900">{value || "-"}</div>;
 }
 
 function SummaryAppointmentField({
   dateValue,
   timeValue,
+  action,
 }: {
   dateValue: string;
   timeValue: string;
+  action?: ReactNode;
 }) {
   const dayLabel = getAppointmentDayLabel(dateValue);
   const hasValue = Boolean(dateValue || timeValue);
 
   return (
-    <div className="space-y-1">
-      <div className="text-xs text-slate-500">预约时间</div>
+    <div className="flex items-center justify-between gap-3">
       {hasValue ? (
-        <div className="flex flex-wrap items-center gap-2 text-sm text-slate-900">
+        <div className="min-w-0 flex flex-wrap items-center gap-2 text-sm text-slate-900">
           <span>{dateValue || "-"}</span>
           {dayLabel ? (
             <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
@@ -204,6 +194,7 @@ function SummaryAppointmentField({
       ) : (
         <div className="text-sm text-slate-900">-</div>
       )}
+      {action ? <div className="shrink-0">{action}</div> : null}
     </div>
   );
 }
@@ -476,14 +467,14 @@ export default function MerchantBookingMobilePanel({
     detailRecord && detailDraft
         ? overlay(
           <div
-            className="fixed inset-0 z-[2147482950] overflow-y-auto bg-black/45 p-4 pb-24"
+            className="fixed inset-0 z-[2147482950] overflow-y-auto bg-black/45 p-4 pb-32"
             onMouseDown={(event) => {
               if (event.target === event.currentTarget) closeDetailDialog();
             }}
           >
             <div
               className="mx-auto my-2 flex w-full max-w-xl min-h-0 flex-col overflow-hidden rounded-[28px] border bg-white shadow-2xl"
-              style={{ maxHeight: "calc(100vh - env(safe-area-inset-bottom, 0px) - 6rem)" }}
+              style={{ maxHeight: "calc(100vh - env(safe-area-inset-bottom, 0px) - 8rem)" }}
               onMouseDown={(event) => event.stopPropagation()}
             >
               <div className="flex items-start justify-between gap-3 border-b px-4 py-4">
@@ -606,7 +597,7 @@ export default function MerchantBookingMobilePanel({
 
               <div
                 className="flex justify-end gap-2 border-t bg-white px-4 pt-4"
-                style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 1rem)" }}
+                style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 3rem)" }}
               >
                 <button
                   type="button"
@@ -711,49 +702,51 @@ export default function MerchantBookingMobilePanel({
                         </span>
                       </div>
                     </div>
+                    {record.email || record.phone ? (
+                      <div className="flex shrink-0 items-center gap-2">
+                        {record.email ? (
+                          <a
+                            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
+                            href={`mailto:${record.email}`}
+                            title="发送邮件"
+                            aria-label="发送邮件"
+                          >
+                            <MailIcon />
+                          </a>
+                        ) : null}
+                        {record.phone ? (
+                          <a
+                            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#007AFF] text-white shadow-sm transition hover:bg-[#0066D6]"
+                            href={`tel:${record.phone}`}
+                            title="拨打电话"
+                            aria-label="拨打电话"
+                          >
+                            <PhoneIcon />
+                          </a>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
 
                   <div className="mt-3 flex flex-wrap gap-2">{renderStatusActions(record)}</div>
 
-                  <div className="mt-4 grid gap-3">
-                    <SummaryField label="店铺" value={record.store} />
-                    <SummaryField label="项目" value={record.item} />
-                    <SummaryAppointmentField dateValue={appointmentParts.date} timeValue={appointmentParts.time} />
-                    <div className="flex justify-end">
-                      <button
-                        type="button"
-                        className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-                        onClick={() => openDetailDialog(record)}
-                      >
-                        详情
-                      </button>
-                    </div>
+                  <div className="mt-4 grid gap-2">
+                    <SummaryField value={record.store} />
+                    <SummaryField value={record.item} />
+                    <SummaryAppointmentField
+                      dateValue={appointmentParts.date}
+                      timeValue={appointmentParts.time}
+                      action={
+                        <button
+                          type="button"
+                          className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                          onClick={() => openDetailDialog(record)}
+                        >
+                          详情
+                        </button>
+                      }
+                    />
                   </div>
-
-                  {record.email || record.phone ? (
-                    <div className="mt-4 flex justify-end gap-3">
-                      {record.email ? (
-                        <a
-                          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
-                          href={`mailto:${record.email}`}
-                          title="发送邮件"
-                          aria-label="发送邮件"
-                        >
-                          <MailIcon />
-                        </a>
-                      ) : null}
-                      {record.phone ? (
-                        <a
-                          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#007AFF] text-white shadow-sm transition hover:bg-[#0066D6]"
-                          href={`tel:${record.phone}`}
-                          title="拨打电话"
-                          aria-label="拨打电话"
-                        >
-                          <PhoneIcon />
-                        </a>
-                      ) : null}
-                    </div>
-                  ) : null}
                 </article>
               );
             })}
