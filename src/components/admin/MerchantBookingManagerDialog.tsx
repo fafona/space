@@ -793,6 +793,12 @@ export default function MerchantBookingManagerDialog({
                         </button>
                       </div>
                     </div>
+                    {record.note ? (
+                      <div className="mt-3 rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+                        <div className="text-xs text-slate-500">备注</div>
+                        <div className="mt-1 whitespace-pre-wrap break-words text-sm text-slate-700">{record.note}</div>
+                      </div>
+                    ) : null}
                   </article>
                 );
               })}

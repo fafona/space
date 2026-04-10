@@ -159,6 +159,21 @@ function PhoneIcon() {
   );
 }
 
+function NoteIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
+      <path
+        d="M6 3.75h5.75L15.25 7v9.25H6A1.25 1.25 0 0 1 4.75 15V5A1.25 1.25 0 0 1 6 3.75Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+      <path d="M11.75 3.75V7h3.25" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+      <path d="M7.5 10h5M7.5 12.75h5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function SummaryField({ value }: { value: string }) {
   return <div className="text-sm text-slate-900">{value || "-"}</div>;
 }
@@ -467,14 +482,14 @@ export default function MerchantBookingMobilePanel({
     detailRecord && detailDraft
         ? overlay(
           <div
-            className="fixed inset-0 z-[2147482950] overflow-y-auto bg-black/45 p-4 pb-36"
+            className="fixed inset-0 z-[2147482950] overflow-y-auto bg-black/45 p-4 pb-20"
             onMouseDown={(event) => {
               if (event.target === event.currentTarget) closeDetailDialog();
             }}
           >
             <div
               className="mx-auto my-2 flex w-full max-w-xl min-h-0 flex-col overflow-hidden rounded-[28px] border bg-white shadow-2xl"
-              style={{ maxHeight: "calc(100vh - env(safe-area-inset-bottom, 0px) - 10rem)" }}
+              style={{ maxHeight: "calc(100vh - env(safe-area-inset-bottom, 0px) - 6rem)" }}
               onMouseDown={(event) => event.stopPropagation()}
             >
               <div className="flex items-start justify-between gap-3 border-b px-4 py-4">
@@ -486,13 +501,25 @@ export default function MerchantBookingMobilePanel({
                   <div className="text-xs text-slate-500">{`预约编号：${detailRecord.id}`}</div>
                   <div className="text-xs text-slate-500">{`提交时间：${formatDateTime(detailRecord.createdAt)}`}</div>
                 </div>
-                <button
-                  type="button"
-                  className="rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50"
-                  onClick={closeDetailDialog}
-                >
-                  关闭
-                </button>
+                <div className="flex shrink-0 items-center gap-2">
+                  <button
+                    type="button"
+                    className="rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50"
+                    onClick={closeDetailDialog}
+                  >
+                    关闭
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-full bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-50"
+                    onClick={() => {
+                      void saveDetailDialog();
+                    }}
+                    disabled={busyKey === `save:${detailRecord.id}`}
+                  >
+                    {busyKey === `save:${detailRecord.id}` ? "保存中..." : "保存"}
+                  </button>
+                </div>
               </div>
 
               <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
@@ -593,29 +620,6 @@ export default function MerchantBookingMobilePanel({
                     />
                   </label>
                 </div>
-              </div>
-
-              <div
-                className="flex justify-end gap-2 border-t bg-white px-4 pt-4"
-                style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 4.5rem)" }}
-              >
-                <button
-                  type="button"
-                  className="rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-                  onClick={closeDetailDialog}
-                >
-                  取消
-                </button>
-                <button
-                  type="button"
-                  className="rounded-full bg-slate-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-50"
-                  onClick={() => {
-                    void saveDetailDialog();
-                  }}
-                  disabled={busyKey === `save:${detailRecord.id}`}
-                >
-                  {busyKey === `save:${detailRecord.id}` ? "保存中..." : "保存"}
-                </button>
               </div>
             </div>
           </div>,
@@ -737,13 +741,24 @@ export default function MerchantBookingMobilePanel({
                       dateValue={appointmentParts.date}
                       timeValue={appointmentParts.time}
                       action={
-                        <button
-                          type="button"
-                          className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-                          onClick={() => openDetailDialog(record)}
-                        >
-                          详情
-                        </button>
+                        <div className="flex flex-col items-end gap-2">
+                          {record.note ? (
+                            <span
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-amber-50 text-amber-700"
+                              title="有备注"
+                              aria-label="有备注"
+                            >
+                              <NoteIcon />
+                            </span>
+                          ) : null}
+                          <button
+                            type="button"
+                            className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                            onClick={() => openDetailDialog(record)}
+                          >
+                            详情
+                          </button>
+                        </div>
                       }
                     />
                   </div>
