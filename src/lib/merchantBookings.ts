@@ -1,4 +1,4 @@
-export const MERCHANT_BOOKING_STATUSES = ["active", "confirmed", "cancelled"] as const;
+export const MERCHANT_BOOKING_STATUSES = ["active", "confirmed", "completed", "cancelled"] as const;
 
 export type MerchantBookingStatus = (typeof MERCHANT_BOOKING_STATUSES)[number];
 
@@ -204,6 +204,7 @@ export function buildMerchantBookingId(siteId: string, createdAt: Date | string,
 
 export function getMerchantBookingStatusLabel(status: MerchantBookingStatus) {
   if (status === "confirmed") return "已确认";
+  if (status === "completed") return "已完成";
   if (status === "cancelled") return "已取消";
   return "待确认";
 }

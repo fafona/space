@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  buildMerchantBookingId,
   buildDefaultBookingStoreOptions,
+  buildMerchantBookingId,
   formatMerchantBookingIdDate,
   getMerchantBookingStatusLabel,
   joinMerchantBookingDateTime,
@@ -132,5 +132,6 @@ test("buildMerchantBookingId uses merchant id + date + 5-digit sequence", () => 
 test("getMerchantBookingStatusLabel returns readable labels", () => {
   assert.equal(getMerchantBookingStatusLabel("active"), "待确认");
   assert.equal(getMerchantBookingStatusLabel("confirmed"), "已确认");
+  assert.equal(getMerchantBookingStatusLabel("completed"), "已完成");
   assert.equal(getMerchantBookingStatusLabel("cancelled"), "已取消");
 });

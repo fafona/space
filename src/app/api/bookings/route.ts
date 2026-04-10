@@ -96,7 +96,15 @@ export async function PATCH(request: Request) {
 
     const maybeSiteId = String(body?.siteId ?? "").trim();
     const maybeStatus =
-      body?.status === "cancelled" ? "cancelled" : body?.status === "active" ? "active" : body?.status === "confirmed" ? "confirmed" : null;
+      body?.status === "cancelled"
+        ? "cancelled"
+        : body?.status === "active"
+          ? "active"
+          : body?.status === "confirmed"
+            ? "confirmed"
+            : body?.status === "completed"
+              ? "completed"
+              : null;
     if (isMerchantNumericId(maybeSiteId)) {
       const booking = await updateMerchantBookingBySite({
         siteId: maybeSiteId,

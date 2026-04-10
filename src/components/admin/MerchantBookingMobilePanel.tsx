@@ -68,6 +68,7 @@ function createDraft(record: MerchantBookingRecord): MerchantBookingAdminDraft {
 
 function getStatusBadgeClass(status: MerchantBookingStatus) {
   if (status === "cancelled") return "bg-slate-200 text-slate-700";
+  if (status === "completed") return "bg-emerald-100 text-emerald-700";
   if (status === "confirmed") return "bg-sky-100 text-sky-700";
   return "bg-amber-100 text-amber-700";
 }
@@ -144,11 +145,13 @@ export default function MerchantBookingMobilePanel({
   const counts = useMemo(() => {
     const active = records.filter((item) => item.status === "active").length;
     const confirmed = records.filter((item) => item.status === "confirmed").length;
+    const completed = records.filter((item) => item.status === "completed").length;
     const cancelled = records.filter((item) => item.status === "cancelled").length;
     return {
       total: records.length,
       active,
       confirmed,
+      completed,
       cancelled,
     };
   }, [records]);
@@ -266,7 +269,16 @@ export default function MerchantBookingMobilePanel({
 
     return (
       <>
-        {record.status === "confirmed" ? (
+        {record.status === "completed" ? (
+          <button
+            type="button"
+            className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+            onClick={() => void patchBooking(record.id, { status: "confirmed" }, "uncomplete")}
+            disabled={busyKey === `uncomplete:${record.id}`}
+          >
+            {busyKey === `uncomplete:${record.id}` ? "处理中..." : "取消完成"}
+          </button>
+        ) : record.status === "confirmed" ? (
           <button
             type="button"
             className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
@@ -285,6 +297,18 @@ export default function MerchantBookingMobilePanel({
             {busyKey === `confirm:${record.id}` ? "处理中..." : "确认预约"}
           </button>
         )}
+
+        {record.status !== "completed" ? (
+          <button
+            type="button"
+            className="rounded-full bg-emerald-600 px-3 py-2 text-xs font-medium text-white transition hover:bg-emerald-700 disabled:opacity-50"
+            onClick={() => void patchBooking(record.id, { status: "completed" }, "complete")}
+            disabled={busyKey === `complete:${record.id}`}
+          >
+            {busyKey === `complete:${record.id}` ? "处理中..." : "完成预约"}
+          </button>
+        ) : null}
+
         <button
           type="button"
           className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
@@ -312,6 +336,7 @@ export default function MerchantBookingMobilePanel({
           { label: "全部", value: counts.total, tone: "bg-slate-900 text-white" },
           { label: "待确认", value: counts.active, tone: "bg-amber-50 text-amber-700" },
           { label: "已确认", value: counts.confirmed, tone: "bg-sky-50 text-sky-700" },
+          { label: "已完成", value: counts.completed, tone: "bg-emerald-50 text-emerald-700" },
           { label: "已取消", value: counts.cancelled, tone: "bg-slate-100 text-slate-600" },
         ].map((item) => (
           <div
@@ -338,7 +363,7 @@ export default function MerchantBookingMobilePanel({
             onClick={() => void loadBookings()}
             disabled={loading}
           >
-            {loading ? "刷新中" : "刷新"}
+            {loading ? "刷新中..." : "刷新"}
           </button>
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
@@ -346,6 +371,7 @@ export default function MerchantBookingMobilePanel({
             { key: "all" as const, label: `全部 ${counts.total}` },
             { key: "active" as const, label: `待确认 ${counts.active}` },
             { key: "confirmed" as const, label: `已确认 ${counts.confirmed}` },
+            { key: "completed" as const, label: `已完成 ${counts.completed}` },
             { key: "cancelled" as const, label: `已取消 ${counts.cancelled}` },
           ].map((item) => (
             <button
@@ -415,6 +441,7 @@ export default function MerchantBookingMobilePanel({
                       ))}
                     </select>
                   </label>
+
                   <label className="space-y-1 text-sm text-slate-700">
                     <span className="text-xs text-slate-500">项目</span>
                     <select
@@ -429,6 +456,7 @@ export default function MerchantBookingMobilePanel({
                       ))}
                     </select>
                   </label>
+
                   <label className="space-y-1 text-sm text-slate-700">
                     <span className="text-xs text-slate-500">预约时间</span>
                     <BookingDateTimeInput
@@ -440,6 +468,7 @@ export default function MerchantBookingMobilePanel({
                       onTimeChange={(value) => handleDraftChange(record.id, "appointmentTimeInput", value)}
                     />
                   </label>
+
                   <label className="space-y-1 text-sm text-slate-700">
                     <span className="text-xs text-slate-500">称谓</span>
                     <select

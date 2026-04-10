@@ -87,6 +87,7 @@ function createDraft(record: MerchantBookingRecord): MerchantBookingAdminDraft {
 
 function getStatusBadgeClass(status: MerchantBookingStatus) {
   if (status === "cancelled") return "bg-slate-200 text-slate-700";
+  if (status === "completed") return "bg-emerald-100 text-emerald-700";
   if (status === "confirmed") return "bg-sky-100 text-sky-700";
   return "bg-amber-100 text-amber-700";
 }
@@ -121,18 +122,15 @@ function PhoneIcon() {
 function ReadOnlyBookingField({
   label,
   value,
-  className = "",
 }: {
   label: string;
   value: string;
-  className?: string;
 }) {
+  if (label === "绉拌皳" || label === "称谓") return null;
   return (
-    <div className={`space-y-0.5 ${className}`.trim()}>
+    <div className="space-y-0.5">
       <div className="text-xs text-slate-500">{label}</div>
-      <div className="flex min-h-[36px] items-center rounded border bg-white px-3 py-1.5 text-sm text-slate-900">
-        <span className="min-w-0 truncate">{value || "-"}</span>
-      </div>
+      <div className="text-sm text-slate-900">{value || "-"}</div>
     </div>
   );
 }
@@ -197,11 +195,13 @@ export default function MerchantBookingManagerDialog({
   const counts = useMemo(() => {
     const active = records.filter((item) => item.status === "active").length;
     const confirmed = records.filter((item) => item.status === "confirmed").length;
+    const completed = records.filter((item) => item.status === "completed").length;
     const cancelled = records.filter((item) => item.status === "cancelled").length;
     return {
       total: records.length,
       active,
       confirmed,
+      completed,
       cancelled,
     };
   }, [records]);
@@ -361,7 +361,16 @@ export default function MerchantBookingManagerDialog({
 
     return (
       <>
-        {record.status === "confirmed" ? (
+        {record.status === "completed" ? (
+          <button
+            type="button"
+            className="rounded border bg-white px-3 py-1.5 text-[13px] leading-5 hover:bg-slate-50 disabled:opacity-50"
+            onClick={() => void patchBooking(record.id, { status: "confirmed" }, "uncomplete")}
+            disabled={busyKey === `uncomplete:${record.id}`}
+          >
+            {busyKey === `uncomplete:${record.id}` ? "处理中..." : "取消完成"}
+          </button>
+        ) : record.status === "confirmed" ? (
           <button
             type="button"
             className="rounded border bg-white px-3 py-1.5 text-[13px] leading-5 hover:bg-slate-50 disabled:opacity-50"
@@ -380,6 +389,16 @@ export default function MerchantBookingManagerDialog({
             {busyKey === `confirm:${record.id}` ? "处理中..." : "确认预约"}
           </button>
         )}
+        {record.status !== "completed" ? (
+          <button
+            type="button"
+            className="rounded border bg-emerald-600 px-3 py-1.5 text-[13px] leading-5 text-white hover:bg-emerald-700 disabled:opacity-50"
+            onClick={() => void patchBooking(record.id, { status: "completed" }, "complete")}
+            disabled={busyKey === `complete:${record.id}`}
+          >
+            {busyKey === `complete:${record.id}` ? "处理中..." : "完成预约"}
+          </button>
+        ) : null}
         <button
           type="button"
           className="rounded border bg-white px-3 py-1.5 text-[13px] leading-5 hover:bg-slate-50 disabled:opacity-50"
@@ -587,6 +606,7 @@ export default function MerchantBookingManagerDialog({
                 { key: "all" as const, label: `全部 ${counts.total}` },
                 { key: "active" as const, label: `待确认 ${counts.active}` },
                 { key: "confirmed" as const, label: `已确认 ${counts.confirmed}` },
+                { key: "completed" as const, label: `已完成 ${counts.completed}` },
                 { key: "cancelled" as const, label: `已取消 ${counts.cancelled}` },
               ].map((item) => (
                 <button
@@ -641,7 +661,7 @@ export default function MerchantBookingManagerDialog({
                           <span className="min-w-0 flex-1 truncate">{`邮箱：${record.email || "-"}`}</span>
                           {record.email ? (
                             <a
-                              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded border bg-white text-slate-700 hover:bg-slate-50"
+                              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-50"
                               href={`mailto:${record.email}`}
                               title="回复邮箱"
                               aria-label="回复邮箱"
@@ -655,7 +675,7 @@ export default function MerchantBookingManagerDialog({
                           <span className="min-w-0 flex-1 truncate">{`电话：${record.phone || "-"}`}</span>
                           {record.phone ? (
                             <a
-                              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded border bg-white text-slate-700 hover:bg-slate-50"
+                              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-50"
                               href={`tel:${record.phone}`}
                               title="拨打电话"
                               aria-label="拨打电话"
@@ -669,7 +689,7 @@ export default function MerchantBookingManagerDialog({
                       <div className="flex flex-wrap gap-1.5">{renderStatusActions(record)}</div>
                     </div>
 
-                    <div className="mt-3 grid gap-2.5 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_160px_auto]">
+                    <div className="mt-3 grid gap-2.5 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
                       <ReadOnlyBookingField label="店铺" value={record.store} />
                       <ReadOnlyBookingField label="项目" value={record.item} />
                       <ReadOnlyBookingField
