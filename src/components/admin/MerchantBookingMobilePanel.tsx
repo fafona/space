@@ -113,6 +113,31 @@ function getStatusBadgeClass(status: MerchantBookingStatus) {
   return "bg-amber-100 text-amber-700";
 }
 
+function getFilterChipClass(filter: BookingFilter, key: BookingFilter) {
+  const isActive = filter === key;
+  if (key === "active") {
+    return isActive
+      ? "border border-amber-300 bg-amber-100 text-amber-800"
+      : "border border-amber-200 bg-amber-50 text-amber-700";
+  }
+  if (key === "confirmed") {
+    return isActive
+      ? "border border-sky-300 bg-sky-100 text-sky-800"
+      : "border border-sky-200 bg-sky-50 text-sky-700";
+  }
+  if (key === "completed") {
+    return isActive
+      ? "border border-emerald-300 bg-emerald-100 text-emerald-800"
+      : "border border-emerald-200 bg-emerald-50 text-emerald-700";
+  }
+  if (key === "cancelled") {
+    return isActive
+      ? "border border-slate-300 bg-slate-200 text-slate-800"
+      : "border border-slate-200 bg-slate-100 text-slate-600";
+  }
+  return isActive ? "bg-slate-900 text-white" : "border border-slate-200 bg-white text-slate-600";
+}
+
 function MailIcon() {
   return (
     <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
@@ -449,15 +474,16 @@ export default function MerchantBookingMobilePanel({
 
   const detailDialog =
     detailRecord && detailDraft
-      ? overlay(
+        ? overlay(
           <div
-            className="fixed inset-0 z-[2147482950] bg-black/45 p-4"
+            className="fixed inset-0 z-[2147482950] overflow-y-auto bg-black/45 p-4 pb-24"
             onMouseDown={(event) => {
               if (event.target === event.currentTarget) closeDetailDialog();
             }}
           >
             <div
-              className="mx-auto flex h-full max-h-[calc(100vh-2rem)] w-full max-w-xl flex-col overflow-hidden rounded-[28px] border bg-white shadow-2xl"
+              className="mx-auto my-2 flex w-full max-w-xl min-h-0 flex-col overflow-hidden rounded-[28px] border bg-white shadow-2xl"
+              style={{ maxHeight: "calc(100vh - env(safe-area-inset-bottom, 0px) - 6rem)" }}
               onMouseDown={(event) => event.stopPropagation()}
             >
               <div className="flex items-start justify-between gap-3 border-b px-4 py-4">
@@ -467,6 +493,7 @@ export default function MerchantBookingMobilePanel({
                     {`${detailDraft.customerName || detailRecord.customerName || "未命名预约"} ${detailDraft.title || detailRecord.title || ""}`.trim()}
                   </div>
                   <div className="text-xs text-slate-500">{`预约编号：${detailRecord.id}`}</div>
+                  <div className="text-xs text-slate-500">{`提交时间：${formatDateTime(detailRecord.createdAt)}`}</div>
                 </div>
                 <button
                   type="button"
@@ -577,7 +604,10 @@ export default function MerchantBookingMobilePanel({
                 </div>
               </div>
 
-              <div className="flex justify-end gap-2 border-t px-4 py-4">
+              <div
+                className="flex justify-end gap-2 border-t bg-white px-4 pt-4"
+                style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 1rem)" }}
+              >
                 <button
                   type="button"
                   className="rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
@@ -612,25 +642,7 @@ export default function MerchantBookingMobilePanel({
   return (
     <>
       <div className="space-y-3">
-        <div className="grid grid-cols-2 gap-3">
-          {[
-            { label: "全部", value: counts.total, tone: "bg-slate-900 text-white" },
-            { label: "待确认", value: counts.active, tone: "bg-amber-50 text-amber-700" },
-            { label: "已确认", value: counts.confirmed, tone: "bg-sky-50 text-sky-700" },
-            { label: "已完成", value: counts.completed, tone: "bg-emerald-50 text-emerald-700" },
-            { label: "已取消", value: counts.cancelled, tone: "bg-slate-100 text-slate-600" },
-          ].map((item) => (
-            <div
-              key={item.label}
-              className={`rounded-[24px] px-4 py-4 shadow-[0_10px_24px_rgba(15,23,42,0.06)] ${item.tone}`}
-            >
-              <div className="text-2xl font-semibold">{item.value}</div>
-              <div className="mt-1 text-xs opacity-80">{item.label}</div>
-            </div>
-          ))}
-        </div>
-
-        <div className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+        <div className="space-y-3">
           <div className="flex gap-2">
             <input
               className="min-w-0 flex-1 rounded-[20px] border border-slate-200 px-4 py-3 text-base text-slate-900 outline-none transition focus:border-slate-900"
@@ -658,11 +670,7 @@ export default function MerchantBookingMobilePanel({
               <button
                 key={item.key}
                 type="button"
-                className={`rounded-full px-3 py-2 text-xs font-medium transition ${
-                  filter === item.key
-                    ? "bg-slate-900 text-white"
-                    : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                }`}
+                className={`rounded-full px-3 py-2 text-xs font-medium transition ${getFilterChipClass(filter, item.key)}`}
                 onClick={() => setFilter(item.key)}
               >
                 {item.label}
@@ -702,8 +710,6 @@ export default function MerchantBookingMobilePanel({
                           {getMerchantBookingStatusLabel(record.status)}
                         </span>
                       </div>
-                      <div className="mt-1 text-xs text-slate-500">预约编号 {record.id}</div>
-                      <div className="mt-1 text-xs text-slate-500">提交于 {formatDateTime(record.createdAt)}</div>
                     </div>
                   </div>
 
@@ -724,13 +730,11 @@ export default function MerchantBookingMobilePanel({
                     </div>
                   </div>
 
-                  <div className="mt-4 rounded-[22px] bg-slate-50 px-4 py-3 text-sm text-slate-700">
-                    <div>姓名：{record.customerName || "-"}</div>
-                    <div className="mt-2 flex items-center gap-2">
-                      <span className="min-w-0 flex-1 break-all">邮箱：{record.email || "-"}</span>
+                  {record.email || record.phone ? (
+                    <div className="mt-4 flex justify-end gap-3">
                       {record.email ? (
                         <a
-                          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
+                          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
                           href={`mailto:${record.email}`}
                           title="发送邮件"
                           aria-label="发送邮件"
@@ -738,12 +742,9 @@ export default function MerchantBookingMobilePanel({
                           <MailIcon />
                         </a>
                       ) : null}
-                    </div>
-                    <div className="mt-2 flex items-center gap-2">
-                      <span className="min-w-0 flex-1 break-all">电话：{record.phone || "-"}</span>
                       {record.phone ? (
                         <a
-                          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#007AFF] text-white shadow-sm transition hover:bg-[#0066D6]"
+                          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#007AFF] text-white shadow-sm transition hover:bg-[#0066D6]"
                           href={`tel:${record.phone}`}
                           title="拨打电话"
                           aria-label="拨打电话"
@@ -752,8 +753,7 @@ export default function MerchantBookingMobilePanel({
                         </a>
                       ) : null}
                     </div>
-                    {record.note ? <div className="mt-2 whitespace-pre-wrap break-words">备注：{record.note}</div> : null}
-                  </div>
+                  ) : null}
                 </article>
               );
             })}
