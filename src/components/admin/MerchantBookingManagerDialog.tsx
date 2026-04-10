@@ -673,6 +673,13 @@ export default function MerchantBookingManagerDialog({
         }${className ? ` ${className}` : ""}`}
         onMouseDown={isInline ? undefined : (event) => event.stopPropagation()}
       >
+        <div
+          className={`${
+            isInline
+              ? "sticky top-0 z-20 bg-white/95 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-white/90"
+              : ""
+          }`}
+        >
         <div className="flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4">
           <div className="space-y-1">
             <div className="text-lg font-semibold text-slate-900">预约管理</div>
@@ -689,13 +696,7 @@ export default function MerchantBookingManagerDialog({
           ) : null}
         </div>
 
-        <div
-          className={`space-y-3 border-b px-5 py-4 ${
-            isInline
-              ? "sticky top-0 z-20 bg-white/95 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-white/90"
-              : ""
-          }`}
-        >
+        <div className="space-y-3 border-b px-5 py-4">
           <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
             <input
               className="w-full rounded border px-3 py-2 text-sm"
@@ -725,6 +726,7 @@ export default function MerchantBookingManagerDialog({
           {error ? (
             <div className="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>
           ) : null}
+        </div>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
