@@ -13044,14 +13044,14 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           </div>
         </div>
         <div className="mt-4 flex items-center gap-2">
-          <div className="flex min-w-0 flex-1 items-center gap-3 rounded-[22px] border border-slate-200 bg-[#f3f4f6] px-4 py-2.5 shadow-sm">
-            <svg viewBox="0 0 24 24" className="h-[18px] w-[18px] shrink-0 text-slate-400" fill="none" aria-hidden="true">
+          <div className="flex min-w-0 flex-1 items-center gap-2.5 rounded-[20px] border border-slate-200 bg-[#f3f4f6] px-3.5 py-2 shadow-sm">
+            <svg viewBox="0 0 24 24" className="h-[17px] w-[17px] shrink-0 text-slate-400" fill="none" aria-hidden="true">
               <circle cx="11" cy="11" r="6.5" stroke="currentColor" strokeWidth="1.9" />
               <path d="m16 16 4 4" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
             </svg>
             <input
               type="text"
-              className="min-w-0 flex-1 bg-transparent text-[15px] leading-6 text-slate-900 outline-none placeholder:text-slate-400"
+              className="min-w-0 flex-1 bg-transparent text-[14px] leading-5 text-slate-900 outline-none placeholder:text-slate-400"
               placeholder="商户ID / 邮箱"
               value={supportContactKeyword}
               onChange={(event) => setSupportContactKeyword(event.target.value)}
@@ -13666,7 +13666,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         event.stopPropagation();
       }}
     >
-      <div className="pointer-events-auto relative px-4 pb-[calc(env(safe-area-inset-bottom)+0.06rem)] pt-3 touch-manipulation">
+      <div
+        className="pointer-events-auto relative px-4 pt-3 touch-manipulation"
+        style={{ paddingBottom: "calc((env(safe-area-inset-bottom) / 2) + 0.03rem)" }}
+      >
         <div className="flex items-center gap-1 rounded-[28px] border border-slate-200/80 bg-white/95 px-1.5 py-1.5 shadow-[0_18px_36px_rgba(15,23,42,0.12)] backdrop-blur">
           {([
             {
