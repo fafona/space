@@ -52,6 +52,32 @@ function formatDateTime(value: string) {
   return date.toLocaleString("zh-CN", { hour12: false });
 }
 
+function padDateUnit(value: number) {
+  return String(value).padStart(2, "0");
+}
+
+function getTodayDateKey() {
+  const now = new Date();
+  return `${now.getFullYear()}-${padDateUnit(now.getMonth() + 1)}-${padDateUnit(now.getDate())}`;
+}
+
+function getAppointmentDayLabel(dateValue: string) {
+  const normalized = String(dateValue ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) return "";
+  if (normalized === getTodayDateKey()) return "\u4eca\u5929";
+  const [year, month, day] = normalized.split("-").map((item) => Number.parseInt(item, 10));
+  const date = new Date(year, month - 1, day);
+  if (
+    !Number.isFinite(date.getTime()) ||
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return "";
+  }
+  return ["\u5468\u65e5", "\u5468\u4e00", "\u5468\u4e8c", "\u5468\u4e09", "\u5468\u56db", "\u5468\u4e94", "\u5468\u516d"][date.getDay()] ?? "";
+}
+
 function matchesSearch(record: MerchantBookingRecord, query: string) {
   const keyword = query.trim().toLowerCase();
   if (!keyword) return true;
@@ -107,14 +133,8 @@ function MailIcon() {
 
 function PhoneIcon() {
   return (
-    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
-      <path
-        d="M6.4 3.7c.3-.4.8-.6 1.2-.4l2 1a1 1 0 0 1 .5 1.2l-.6 2a1 1 0 0 0 .2.9l1.2 1.2a1 1 0 0 0 .9.2l2-.6a1 1 0 0 1 1.2.5l1 2a1.1 1.1 0 0 1-.4 1.3l-1.2.8c-.6.4-1.4.5-2 .2-2-.9-3.9-2.4-5.6-4.1-1.7-1.7-3.2-3.6-4.1-5.6a1.8 1.8 0 0 1 .2-2l.8-1.2Z"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+    <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" aria-hidden="true">
+      <path d="M6.62 10.79a15.53 15.53 0 0 0 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1C10.4 21 3 13.6 3 4c0-.55.45-1 1-1h3.49c.55 0 1 .45 1 1 0 1.24.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.19 2.2z" />
     </svg>
   );
 }
@@ -126,11 +146,54 @@ function ReadOnlyBookingField({
   label: string;
   value: string;
 }) {
-  if (label === "绉拌皳" || label === "称谓") return null;
+  if (label === "\u79f0\u8c13") return null;
+  const appointmentMatch = value.match(/^(\d{4}-\d{2}-\d{2}|-)\s+(\d{2}:\d{2}|-)$/);
+  if (appointmentMatch) {
+    return (
+      <AppointmentSummaryField
+        dateValue={appointmentMatch[1] === "-" ? "" : appointmentMatch[1]}
+        timeValue={appointmentMatch[2] === "-" ? "" : appointmentMatch[2]}
+      />
+    );
+  }
   return (
     <div className="space-y-0.5">
       <div className="text-xs text-slate-500">{label}</div>
       <div className="text-sm text-slate-900">{value || "-"}</div>
+    </div>
+  );
+}
+
+function AppointmentSummaryField({
+  dateValue,
+  timeValue,
+}: {
+  dateValue: string;
+  timeValue: string;
+}) {
+  const dayLabel = getAppointmentDayLabel(dateValue);
+  const hasValue = Boolean(dateValue || timeValue);
+
+  return (
+    <div className="space-y-0.5">
+      <div className="text-xs text-slate-500">{"\u9884\u7ea6\u65f6\u95f4"}</div>
+      {hasValue ? (
+        <div className="flex flex-wrap items-center gap-2 text-sm text-slate-900">
+          <span>{dateValue || "-"}</span>
+          {dayLabel ? (
+            <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+              {dayLabel}
+            </span>
+          ) : null}
+          {timeValue ? (
+            <span className="rounded-full bg-sky-100 px-2.5 py-0.5 text-[11px] font-semibold text-sky-700">
+              {timeValue}
+            </span>
+          ) : null}
+        </div>
+      ) : (
+        <div className="text-sm text-slate-900">-</div>
+      )}
     </div>
   );
 }
@@ -661,7 +724,7 @@ export default function MerchantBookingManagerDialog({
                           <span className="min-w-0 flex-1 truncate">{`邮箱：${record.email || "-"}`}</span>
                           {record.email ? (
                             <a
-                              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-50"
+                              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
                               href={`mailto:${record.email}`}
                               title="回复邮箱"
                               aria-label="回复邮箱"
@@ -675,7 +738,7 @@ export default function MerchantBookingManagerDialog({
                           <span className="min-w-0 flex-1 truncate">{`电话：${record.phone || "-"}`}</span>
                           {record.phone ? (
                             <a
-                              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-50"
+                              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#007AFF] text-white shadow-sm transition hover:bg-[#0066D6]"
                               href={`tel:${record.phone}`}
                               title="拨打电话"
                               aria-label="拨打电话"

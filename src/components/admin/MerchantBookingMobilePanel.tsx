@@ -88,14 +88,8 @@ function MailIcon() {
 
 function PhoneIcon() {
   return (
-    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
-      <path
-        d="M6.4 3.7c.3-.4.8-.6 1.2-.4l2 1a1 1 0 0 1 .5 1.2l-.6 2a1 1 0 0 0 .2.9l1.2 1.2a1 1 0 0 0 .9.2l2-.6a1 1 0 0 1 1.2.5l1 2a1.1 1.1 0 0 1-.4 1.3l-1.2.8c-.6.4-1.4.5-2 .2-2-.9-3.9-2.4-5.6-4.1-1.7-1.7-3.2-3.6-4.1-5.6a1.8 1.8 0 0 1 .2-2l.8-1.2Z"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+    <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" aria-hidden="true">
+      <path d="M6.62 10.79a15.53 15.53 0 0 0 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1C10.4 21 3 13.6 3 4c0-.55.45-1 1-1h3.49c.55 0 1 .45 1 1 0 1.24.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.19 2.2z" />
     </svg>
   );
 }
@@ -513,7 +507,7 @@ export default function MerchantBookingMobilePanel({
                     <span className="min-w-0 flex-1 break-all">邮箱：{record.email || "-"}</span>
                     {record.email ? (
                       <a
-                        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700"
+                        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
                         href={`mailto:${record.email}`}
                         title="发送邮件"
                         aria-label="发送邮件"
@@ -526,7 +520,7 @@ export default function MerchantBookingMobilePanel({
                     <span className="min-w-0 flex-1 break-all">电话：{record.phone || "-"}</span>
                     {record.phone ? (
                       <a
-                        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700"
+                        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#007AFF] text-white shadow-sm transition hover:bg-[#0066D6]"
                         href={`tel:${record.phone}`}
                         title="拨打电话"
                         aria-label="拨打电话"
