@@ -217,6 +217,7 @@ import {
   buildDefaultBookingStoreOptions,
   buildDefaultBookingTitleOptions,
   normalizeBookingOptionList,
+  normalizeMerchantBookingTimeRangeOptions,
 } from "@/lib/merchantBookings";
 import {
   mergeImportedProductImages,
@@ -7757,6 +7758,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             editingSite?.merchantName ?? editingSite?.name ?? merchantDisplayName,
           ),
           bookingItemOptions: buildDefaultBookingItemOptions(),
+          bookingAvailableTimeRanges: [],
           bookingTitleOptions: buildDefaultBookingTitleOptions(),
           bookingSubmitLabel: "提交预约",
           bookingUpdateLabel: "修改预约",
@@ -12877,8 +12879,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         }) => {
           const targetSiteId = editingSiteId || (await ensureEditableMerchantSiteId());
           if (!targetSiteId) {
-            showTip("未找到可编辑的商户站点，无法保存");
-            return;
+            throw new Error("未找到可编辑的商户站点，无法保存");
           }
           setMerchantSiteIdOverride(targetSiteId);
           ensureScopedMerchantSite(targetSiteId, contactEmail || null);
@@ -12922,10 +12923,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             location,
           });
           if (!syncResult.ok) {
-            showTip(syncResult.message || "商户信息同步失败，请稍后重新保存");
-            return;
+            throw new Error(syncResult.message || "商户信息同步失败，请稍后重新保存");
           }
-          savePlatformState(nextPlatformState);
+          const saved = savePlatformState(nextPlatformState);
+          if (!saved) {
+            throw new Error("商户信息保存失败，请稍后重试");
+          }
           if (!isDesktopMerchantWorkspace) {
             setMerchantProfileDialogOpen(false);
           }
@@ -13179,6 +13182,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             itemOptions={merchantBookingManagerOptions.itemOptions}
             titleOptions={merchantBookingManagerOptions.titleOptions}
             darkMode={supportMobileDarkMode}
+            allowBookingEmailPrefill={Boolean(merchantPermissionConfig?.allowBookingEmailPrefill)}
           />
         ) : (
           <>
@@ -14437,6 +14441,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           storeOptions: merchantBookingManagerOptions.storeOptions,
           itemOptions: merchantBookingManagerOptions.itemOptions,
           titleOptions: merchantBookingManagerOptions.titleOptions,
+          allowBookingEmailPrefill: Boolean(merchantPermissionConfig?.allowBookingEmailPrefill),
           onClose: () => {
             setMerchantBookingManagerOpen(false);
             if (isDesktopMerchantWorkspace) {
@@ -26123,6 +26128,7 @@ type GalleryEditorImage = {
   if (block.type === "booking") {
     const bookingStoreOptionsText = normalizeBookingOptionList(block.props.bookingStoreOptions).join("\n");
     const bookingItemOptionsText = normalizeBookingOptionList(block.props.bookingItemOptions).join("\n");
+    const bookingAvailableTimeRangesText = normalizeMerchantBookingTimeRangeOptions(block.props.bookingAvailableTimeRanges).join("\n");
     const bookingTitleOptionsText = normalizeBookingOptionList(block.props.bookingTitleOptions).join("\n");
     const bookingPreview = (
       <BookingBlock
@@ -26233,6 +26239,17 @@ type GalleryEditorImage = {
                     value={bookingTitleOptionsText}
                     placeholder={"每行一个称谓，例如：\n先生\n女士"}
                     onChange={(event) => onChange({ bookingTitleOptions: normalizeBookingOptionList(event.target.value) })}
+                  />
+                </label>
+                <label className="space-y-1 text-sm text-gray-700">
+                  <span className="block text-gray-600">可预约时段</span>
+                  <textarea
+                    className="min-h-[96px] w-full rounded border px-3 py-2"
+                    value={bookingAvailableTimeRangesText}
+                    placeholder={"每行一个时间点或时间段，例如：\n09:00-12:00\n14:00-18:00\n19:30"}
+                    onChange={(event) =>
+                      onChange({ bookingAvailableTimeRanges: normalizeMerchantBookingTimeRangeOptions(event.target.value) })
+                    }
                   />
                 </label>
                 <div className="grid gap-3 md:grid-cols-2">

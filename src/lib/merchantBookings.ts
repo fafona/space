@@ -74,6 +74,76 @@ export function normalizeBookingOptionList(value: unknown, fallback: string[] = 
   return next;
 }
 
+function normalizeBookingTimeValue(value: unknown) {
+  const normalized = normalizeSingleLineText(value);
+  const matched = normalized.match(/^(\d{1,2}):(\d{2})$/);
+  if (!matched) return "";
+  const hour = Number.parseInt(matched[1] ?? "", 10);
+  const minute = Number.parseInt(matched[2] ?? "", 10);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    return "";
+  }
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function toBookingTimeMinutes(value: string) {
+  const normalized = normalizeBookingTimeValue(value);
+  if (!normalized) return Number.NaN;
+  const [hourText, minuteText] = normalized.split(":");
+  return Number.parseInt(hourText ?? "", 10) * 60 + Number.parseInt(minuteText ?? "", 10);
+}
+
+export function normalizeMerchantBookingTimeRangeOptions(value: unknown, fallback: string[] = []) {
+  const source = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(/\r?\n/)
+      : fallback;
+  const next: string[] = [];
+  source.forEach((item) => {
+    const normalized = normalizeSingleLineText(item)
+      .replace(/[~～—–－至]+/gu, "-")
+      .replace(/\s*-\s*/g, "-");
+    if (!normalized) return;
+    if (/^\d{1,2}:\d{2}$/.test(normalized)) {
+      const exact = normalizeBookingTimeValue(normalized);
+      if (exact && !next.includes(exact)) next.push(exact);
+      return;
+    }
+    const matched = normalized.match(/^(\d{1,2}:\d{2})-(\d{1,2}:\d{2})$/);
+    if (!matched) return;
+    const start = normalizeBookingTimeValue(matched[1] ?? "");
+    const end = normalizeBookingTimeValue(matched[2] ?? "");
+    if (!start || !end) return;
+    const startMinutes = toBookingTimeMinutes(start);
+    const endMinutes = toBookingTimeMinutes(end);
+    if (!Number.isFinite(startMinutes) || !Number.isFinite(endMinutes) || startMinutes > endMinutes) return;
+    const range = `${start}-${end}`;
+    if (!next.includes(range)) next.push(range);
+  });
+  return next;
+}
+
+export function isMerchantBookingTimeAllowed(timeValue: string, configuredRanges: unknown) {
+  const normalizedTime = normalizeBookingTimeValue(timeValue);
+  const ranges = normalizeMerchantBookingTimeRangeOptions(configuredRanges);
+  if (ranges.length === 0) return true;
+  if (!normalizedTime) return false;
+  const currentMinutes = toBookingTimeMinutes(normalizedTime);
+  return ranges.some((item) => {
+    if (!item.includes("-")) return item === normalizedTime;
+    const [start, end] = item.split("-");
+    const startMinutes = toBookingTimeMinutes(start ?? "");
+    const endMinutes = toBookingTimeMinutes(end ?? "");
+    return (
+      Number.isFinite(startMinutes) &&
+      Number.isFinite(endMinutes) &&
+      currentMinutes >= startMinutes &&
+      currentMinutes <= endMinutes
+    );
+  });
+}
+
 export function buildDefaultBookingStoreOptions(siteName?: string) {
   const normalizedSiteName = normalizeSingleLineText(siteName);
   return normalizedSiteName ? [normalizedSiteName] : ["\u4e3b\u5e97"];

@@ -26,6 +26,7 @@ import {
   getMerchantBookingStatusText,
   type MerchantBookingFilter,
 } from "@/lib/merchantBookingLocale";
+import { buildMerchantBookingMailtoHref } from "@/lib/merchantBookingMailto";
 
 type MerchantBookingManagerDialogProps = {
   open: boolean;
@@ -37,6 +38,7 @@ type MerchantBookingManagerDialogProps = {
   storeOptions?: string[];
   itemOptions?: string[];
   titleOptions?: string[];
+  allowBookingEmailPrefill?: boolean;
   onClose: () => void;
 };
 
@@ -218,6 +220,7 @@ export default function MerchantBookingManagerDialog({
   storeOptions = [],
   itemOptions = [],
   titleOptions = [],
+  allowBookingEmailPrefill = false,
   onClose,
 }: MerchantBookingManagerDialogProps) {
   const { locale } = useI18n();
@@ -767,7 +770,7 @@ export default function MerchantBookingManagerDialog({
                           {record.email ? (
                             <a
                               className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
-                              href={`mailto:${record.email}`}
+                              href={buildMerchantBookingMailtoHref(record, locale, allowBookingEmailPrefill)}
                               title={getMerchantBookingFieldText("replyEmail", locale)}
                               aria-label={getMerchantBookingFieldText("replyEmail", locale)}
                             >

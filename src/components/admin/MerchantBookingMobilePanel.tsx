@@ -25,6 +25,7 @@ import {
   getMerchantBookingStatusText,
   type MerchantBookingFilter,
 } from "@/lib/merchantBookingLocale";
+import { buildMerchantBookingMailtoHref } from "@/lib/merchantBookingMailto";
 import usePullToRefresh from "@/lib/usePullToRefresh";
 
 type MerchantBookingMobilePanelProps = {
@@ -34,6 +35,7 @@ type MerchantBookingMobilePanelProps = {
   itemOptions?: string[];
   titleOptions?: string[];
   darkMode?: boolean;
+  allowBookingEmailPrefill?: boolean;
 };
 
 type MerchantBookingAdminDraft = {
@@ -203,6 +205,7 @@ export default function MerchantBookingMobilePanel({
   itemOptions = [],
   titleOptions = [],
   darkMode = false,
+  allowBookingEmailPrefill = false,
 }: MerchantBookingMobilePanelProps) {
   const { locale } = useI18n();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -760,7 +763,7 @@ export default function MerchantBookingMobilePanel({
                         {record.email ? (
                           <a
                             className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
-                            href={`mailto:${record.email}`}
+                            href={buildMerchantBookingMailtoHref(record, locale, allowBookingEmailPrefill)}
                             title={getMerchantBookingFieldText("replyEmail", locale)}
                             aria-label={getMerchantBookingFieldText("replyEmail", locale)}
                           >

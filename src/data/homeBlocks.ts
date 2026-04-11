@@ -365,6 +365,7 @@ export type BookingProps = BackgroundEditableProps &
     bookingItemLabel?: string;
     bookingStoreOptions?: string[];
     bookingItemOptions?: string[];
+    bookingAvailableTimeRanges?: string[];
     bookingTitleOptions?: string[];
     bookingSubmitLabel?: string;
     bookingUpdateLabel?: string;

@@ -9,10 +9,12 @@ import {
   buildDefaultBookingTitleOptions,
   createEmptyMerchantBookingInput,
   formatMerchantBookingDateTime,
+  isMerchantBookingTimeAllowed,
   joinMerchantBookingDateTime,
   normalizeMerchantBookingCustomerNameInput,
   normalizeMerchantBookingNoteInput,
   normalizeBookingOptionList,
+  normalizeMerchantBookingTimeRangeOptions,
   sanitizeMerchantBookingEditableInput,
   splitMerchantBookingDateTime,
   type MerchantBookingEditableInput,
@@ -112,6 +114,10 @@ export default function BookingBlock({
     () => normalizeBookingOptionList(props.bookingTitleOptions, buildDefaultBookingTitleOptions()).map((item) => localizeSystemDefaultText(item, locale)),
     [locale, props.bookingTitleOptions],
   );
+  const availableTimeRanges = useMemo(
+    () => normalizeMerchantBookingTimeRangeOptions(props.bookingAvailableTimeRanges),
+    [props.bookingAvailableTimeRanges],
+  );
   const [draft, setDraft] = useState(() => buildInitialDraft(storeOptions, itemOptions, titleOptions));
   const [submittedState, setSubmittedState] = useState<SubmittedBookingState | null>(null);
   const [mode, setMode] = useState<"form" | "success">("form");
@@ -176,6 +182,9 @@ export default function BookingBlock({
     setSubmitting(true);
     setError("");
     try {
+      if (!isMerchantBookingTimeAllowed(draft.appointmentTimeInput, availableTimeRanges)) {
+        throw new Error("预约时间需在可预约时段内");
+      }
       const payload = sanitizeMerchantBookingEditableInput({
         ...draft,
         appointmentAt: joinMerchantBookingDateTime(draft.appointmentDateInput, draft.appointmentTimeInput),
@@ -362,6 +371,18 @@ export default function BookingBlock({
                 onDateChange={(value) => handleFieldChange("appointmentDateInput", value)}
                 onTimeChange={(value) => handleFieldChange("appointmentTimeInput", value)}
               />
+              {availableTimeRanges.length > 0 ? (
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {availableTimeRanges.map((item) => (
+                    <span
+                      key={item}
+                      className="rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-[11px] font-medium text-sky-700"
+                    >
+                      {item}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
             </label>
             <label className="space-y-1 text-sm text-slate-700">
               <span>称谓</span>

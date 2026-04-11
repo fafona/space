@@ -11,7 +11,9 @@ import {
   normalizeBookingOptionList,
   normalizeMerchantBookingCustomerNameInput,
   normalizeMerchantBookingNoteInput,
+  normalizeMerchantBookingTimeRangeOptions,
   sanitizeMerchantBookingEditableInput,
+  isMerchantBookingTimeAllowed,
   shouldSendMerchantBookingConfirmationEmail,
   splitMerchantBookingDateTime,
   validateMerchantBookingInput,
@@ -78,6 +80,22 @@ test("split and join merchant booking date time keeps stable values", () => {
   assert.equal(joinMerchantBookingDateTime("2026-03-19", "10:30"), "2026-03-19T10:30");
   assert.equal(joinMerchantBookingDateTime("2026-03-19", ""), "2026-03-19");
   assert.equal(joinMerchantBookingDateTime("", "10:30"), "10:30");
+});
+
+test("normalizeMerchantBookingTimeRangeOptions normalizes exact times and ranges", () => {
+  assert.deepEqual(
+    normalizeMerchantBookingTimeRangeOptions("9:00-12:00\n14:00 ～ 18:00\n09:30\n09:30\nbad"),
+    ["09:00-12:00", "14:00-18:00", "09:30"],
+  );
+});
+
+test("isMerchantBookingTimeAllowed respects configured booking time ranges", () => {
+  const ranges = ["09:00-12:00", "14:00-18:00", "19:30"];
+  assert.equal(isMerchantBookingTimeAllowed("09:00", ranges), true);
+  assert.equal(isMerchantBookingTimeAllowed("11:45", ranges), true);
+  assert.equal(isMerchantBookingTimeAllowed("19:30", ranges), true);
+  assert.equal(isMerchantBookingTimeAllowed("12:30", ranges), false);
+  assert.equal(isMerchantBookingTimeAllowed("19:00", ranges), false);
 });
 
 test("validateMerchantBookingInput returns friendly issues", () => {

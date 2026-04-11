@@ -1233,6 +1233,7 @@ function describePermissionValue(
 ) {
   if (
     key === "allowBusinessCardLinkMode" ||
+    key === "allowBookingEmailPrefill" ||
     key === "allowInsertBackground" ||
     key === "allowThemeEffects" ||
     key === "allowButtonBlock" ||
@@ -1273,6 +1274,7 @@ function buildMerchantConfigDiffLines(current: MerchantConfigSnapshot, target: M
     { key: "pageLimit", label: "页面上限" },
     { key: "businessCardLimit", label: "名片夹上限" },
     { key: "allowBusinessCardLinkMode", label: "可链接模式名片" },
+    { key: "allowBookingEmailPrefill", label: "邮件自动带入预约信息" },
     { key: "businessCardBackgroundImageLimitKb", label: "名片背景图上限(KB)" },
     { key: "businessCardContactImageLimitKb", label: "联系卡展示图上限(KB)" },
     { key: "businessCardExportImageLimitKb", label: "导出名片图片上限(KB)" },
@@ -1484,6 +1486,7 @@ export default function SuperAdminClient() {
   const [configPageLimit, setConfigPageLimit] = useState("3");
   const [configBusinessCardLimit, setConfigBusinessCardLimit] = useState("1");
   const [configAllowBusinessCardLinkMode, setConfigAllowBusinessCardLinkMode] = useState(false);
+  const [configAllowBookingEmailPrefill, setConfigAllowBookingEmailPrefill] = useState(false);
   const [configBusinessCardBackgroundImageLimitKb, setConfigBusinessCardBackgroundImageLimitKb] = useState("200");
   const [configBusinessCardContactImageLimitKb, setConfigBusinessCardContactImageLimitKb] = useState("200");
   const [configBusinessCardExportImageLimitKb, setConfigBusinessCardExportImageLimitKb] = useState("400");
@@ -2980,6 +2983,7 @@ export default function SuperAdminClient() {
     setConfigPageLimit(`${permission.pageLimit}`);
     setConfigBusinessCardLimit(`${permission.businessCardLimit}`);
     setConfigAllowBusinessCardLinkMode(permission.allowBusinessCardLinkMode);
+    setConfigAllowBookingEmailPrefill(permission.allowBookingEmailPrefill);
     setConfigBusinessCardBackgroundImageLimitKb(`${permission.businessCardBackgroundImageLimitKb}`);
     setConfigBusinessCardContactImageLimitKb(`${permission.businessCardContactImageLimitKb}`);
     setConfigBusinessCardExportImageLimitKb(`${permission.businessCardExportImageLimitKb}`);
@@ -4417,6 +4421,11 @@ export default function SuperAdminClient() {
         `链接模式名片：${formatBool(prevPermission.allowBusinessCardLinkMode)} -> ${formatBool(configAllowBusinessCardLinkMode)}`,
       );
     }
+    if (prevPermission.allowBookingEmailPrefill !== configAllowBookingEmailPrefill) {
+      pendingChanges.push(
+        `邮件自动带入预约信息：${formatBool(prevPermission.allowBookingEmailPrefill)} -> ${formatBool(configAllowBookingEmailPrefill)}`,
+      );
+    }
     if (prevPermission.businessCardBackgroundImageLimitKb !== businessCardBackgroundImageLimitKb) {
       pendingChanges.push(
         `名片背景图上限：${prevPermission.businessCardBackgroundImageLimitKb}KB -> ${businessCardBackgroundImageLimitKb}KB`,
@@ -4509,6 +4518,7 @@ export default function SuperAdminClient() {
         pageLimit,
         businessCardLimit,
         allowBusinessCardLinkMode: configAllowBusinessCardLinkMode,
+        allowBookingEmailPrefill: configAllowBookingEmailPrefill,
         businessCardBackgroundImageLimitKb,
         businessCardContactImageLimitKb,
         businessCardExportImageLimitKb,
@@ -6524,6 +6534,14 @@ export default function SuperAdminClient() {
                                     onChange={(e) => setConfigAllowBusinessCardLinkMode(e.target.checked)}
                                   />
                                   链接模式名片
+                                </label>
+                                <label className="flex items-center gap-2 rounded border bg-white px-3 py-2">
+                                  <input
+                                    type="checkbox"
+                                    checked={configAllowBookingEmailPrefill}
+                                    onChange={(e) => setConfigAllowBookingEmailPrefill(e.target.checked)}
+                                  />
+                                  邮件自动带入预约信息
                                 </label>
                                 <label className="space-y-1">
                                   <div className="text-slate-500">名片背景图上限(KB)</div>

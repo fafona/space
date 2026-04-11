@@ -314,6 +314,7 @@ export default function MerchantProfileDialog({
   const [domainSubmitCooldownLeftSec, setDomainSubmitCooldownLeftSec] = useState(0);
   const [domainPrefixPending, setDomainPrefixPending] = useState(false);
   const [savePending, setSavePending] = useState(false);
+  const [saveError, setSaveError] = useState("");
   const normalizedTakenPrefixes = useMemo(
     () =>
       new Set(
@@ -363,6 +364,7 @@ export default function MerchantProfileDialog({
     if (!open) {
       setSavePending(false);
       setDomainPrefixPending(false);
+      setSaveError("");
     }
   }, [open]);
 
@@ -961,6 +963,7 @@ export default function MerchantProfileDialog({
         ) : null}
 
         <div className="flex justify-end gap-2">
+          {saveError ? <div className="mr-auto self-center text-sm text-rose-600">{saveError}</div> : null}
           {resolvedShowCloseButton ? (
             <button
               type="button"
@@ -976,6 +979,7 @@ export default function MerchantProfileDialog({
             className="rounded bg-black px-3 py-2 text-sm text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
             onClick={async () => {
               if (savePending) return;
+              setSaveError("");
               if (merchantNameError || contactNameError) {
                 return;
               }
@@ -1009,7 +1013,7 @@ export default function MerchantProfileDialog({
                     provinceCode: "",
                     province: "",
                     city: "",
-                  };
+              };
               setSavePending(true);
               try {
                 await Promise.resolve(
@@ -1024,6 +1028,8 @@ export default function MerchantProfileDialog({
                     industry,
                   }),
                 );
+              } catch (error) {
+                setSaveError(error instanceof Error ? error.message : "保存失败，请稍后重试");
               } finally {
                 setSavePending(false);
               }
