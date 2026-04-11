@@ -27,9 +27,10 @@ export default function GlobalLanguageSwitcher() {
   const [allowMobileAdminSwitcher, setAllowMobileAdminSwitcher] = useState(false);
   const inEditor = pathname.startsWith("/admin") || pathname.startsWith("/super-admin/editor");
   const isAdminPage = pathname.startsWith("/admin");
-  const isMobileAdminPage = isMobileViewport && isAdminPage;
+  const isMobileAdminSwitcherVisible = isMobileViewport && allowMobileAdminSwitcher;
+  const isMobileAdminPage = isMobileViewport && (isAdminPage || allowMobileAdminSwitcher);
   const mobileAdminTopClassName =
-    isMobileAdminPage && allowMobileAdminSwitcher
+    isMobileAdminSwitcherVisible
       ? "top-[calc(env(safe-area-inset-top)+0.75rem)]"
       : inEditor
         ? "top-[4.25rem] md:top-[4.5rem]"
@@ -148,7 +149,7 @@ export default function GlobalLanguageSwitcher() {
   if (!hydrated) return null;
 
   const isLoginPage = pathname === "/login";
-  const showOnMobile = isLoginPage || (isAdminPage && allowMobileAdminSwitcher);
+  const showOnMobile = isLoginPage || allowMobileAdminSwitcher;
   if (isMobileViewport && !showOnMobile) return null;
 
   const menuContent =

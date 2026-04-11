@@ -14008,7 +14008,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
 
   const supportMobileDialogContent = showMobileSupportThread ? (
     <div
-      className={`${supportMobileShellClassName} flex h-full min-h-0 flex-1 flex-col overflow-hidden ${supportMobileBackgroundClassName}`}
+      className={`${supportMobileShellClassName} relative flex h-full min-h-0 flex-1 flex-col overflow-hidden ${supportMobileBackgroundClassName}`}
       onTouchStart={handleSupportMobileThreadTouchStart}
       onTouchEnd={handleSupportMobileThreadTouchEnd}
       onTouchCancel={() => {
@@ -14084,7 +14084,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       {supportError && supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY ? (
         <div className="border-b border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-600">{supportError}</div>
       ) : null}
-      <div ref={supportMessagesViewportRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-4">
+      <div
+        ref={supportMessagesViewportRef}
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-[calc(env(safe-area-inset-bottom)+5.9rem)] pt-4"
+      >
         {selectedSupportLoading ? (
           <div className="rounded-[28px] border border-dashed border-slate-300 bg-white/90 px-5 py-8 text-center text-sm text-slate-500 shadow-sm">
             正在加载聊天记录...
@@ -14146,7 +14149,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         )}
       </div>
       <div
-        className="shrink-0 overscroll-none border-t border-slate-200/80 bg-[#edf1f7]/98 px-3 pb-[env(safe-area-inset-bottom)] pt-1 shadow-[0_-8px_30px_rgba(15,23,42,0.06)] backdrop-blur"
+        className="absolute inset-x-0 bottom-0 z-10 overscroll-none border-t border-slate-200/80 bg-[#edf1f7]/98 px-3 pb-[env(safe-area-inset-bottom)] pt-1 shadow-[0_-8px_30px_rgba(15,23,42,0.06)] backdrop-blur"
         onTouchMove={(event) => {
           event.stopPropagation();
         }}
