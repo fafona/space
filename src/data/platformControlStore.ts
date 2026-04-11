@@ -129,6 +129,7 @@ export type MerchantConfigHistoryEntry = {
   at: string;
   operator: string;
   summary: string;
+  changes: string[];
   before: MerchantConfigSnapshot;
   after: MerchantConfigSnapshot;
 };
@@ -316,12 +317,12 @@ export type PlatformState = {
 };
 
 const STORAGE_KEY = "merchant-space:platform-control-center:v1";
+const MERCHANT_CONFIG_HISTORY_STORAGE_KEY = "merchant-space:platform-control-center:merchant-config-history:v1";
 const STORE_EVENT = "merchant-space:platform-control-center:changed";
 const MAX_AUDIT_RECORDS = 1200;
 const MAX_ALERT_RECORDS = 400;
 const MAX_PUBLISH_RECORDS = 600;
 const MAX_APPROVAL_RECORDS = 500;
-const MAX_MERCHANT_CONFIG_HISTORY = 30;
 
 export const PERMISSION_CATALOG: PermissionMeta[] = [
   { key: "dashboard.view", label: "查看总览", description: "查看平台总览指标与统计。" },
@@ -554,6 +555,33 @@ function normalizeMerchantConfigSnapshot(value: unknown): MerchantConfigSnapshot
   };
 }
 
+function normalizeMerchantConfigHistoryChanges(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => normalizeText(item)).filter(Boolean);
+}
+
+function merchantConfigHistoryTimestamp(value: string) {
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function mergeMerchantConfigHistoryEntries(
+  ...groups: Array<MerchantConfigHistoryEntry[] | undefined>
+): MerchantConfigHistoryEntry[] {
+  const rows = new Map<string, MerchantConfigHistoryEntry>();
+  groups.forEach((group) => {
+    if (!Array.isArray(group)) return;
+    group.forEach((entry) => {
+      if (!entry?.id) return;
+      const existing = rows.get(entry.id);
+      if (!existing || merchantConfigHistoryTimestamp(entry.at) >= merchantConfigHistoryTimestamp(existing.at)) {
+        rows.set(entry.id, entry);
+      }
+    });
+  });
+  return [...rows.values()].sort((a, b) => merchantConfigHistoryTimestamp(b.at) - merchantConfigHistoryTimestamp(a.at));
+}
+
 function normalizeMerchantConfigHistory(value: unknown): MerchantConfigHistoryEntry[] {
   if (!Array.isArray(value)) return [];
   const rows: MerchantConfigHistoryEntry[] = [];
@@ -568,13 +596,98 @@ function normalizeMerchantConfigHistory(value: unknown): MerchantConfigHistoryEn
       at,
       operator: normalizeText(row.operator) || "未知操作人",
       summary: normalizeText(row.summary) || "配置更新",
+      changes: normalizeMerchantConfigHistoryChanges((row as { changes?: unknown }).changes),
       before: normalizeMerchantConfigSnapshot(row.before),
       after: normalizeMerchantConfigSnapshot(row.after),
     });
   });
-  return rows
-    .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
-    .slice(0, MAX_MERCHANT_CONFIG_HISTORY);
+  return mergeMerchantConfigHistoryEntries(rows);
+}
+
+type MerchantConfigHistoryStore = Record<string, MerchantConfigHistoryEntry[]>;
+
+function normalizeMerchantConfigHistoryStore(value: unknown): MerchantConfigHistoryStore {
+  if (!value || typeof value !== "object") return {};
+  const source = value as Record<string, unknown>;
+  const rows: MerchantConfigHistoryStore = {};
+  Object.entries(source).forEach(([siteId, history]) => {
+    const normalizedSiteId = normalizeText(siteId);
+    if (!normalizedSiteId) return;
+    const normalizedHistory = normalizeMerchantConfigHistory(history);
+    if (normalizedHistory.length > 0) {
+      rows[normalizedSiteId] = normalizedHistory;
+    }
+  });
+  return rows;
+}
+
+function loadMerchantConfigHistoryStore(): MerchantConfigHistoryStore {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(MERCHANT_CONFIG_HISTORY_STORAGE_KEY);
+    if (!raw) return {};
+    return normalizeMerchantConfigHistoryStore(JSON.parse(raw));
+  } catch {
+    return {};
+  }
+}
+
+function buildMerchantConfigHistoryStore(
+  state: PlatformState,
+  existingStore: MerchantConfigHistoryStore = {},
+): MerchantConfigHistoryStore {
+  const nextStore: MerchantConfigHistoryStore = { ...existingStore };
+  state.sites.forEach((site) => {
+    const siteId = normalizeText(site.id);
+    if (!siteId) return;
+    const mergedHistory = mergeMerchantConfigHistoryEntries(existingStore[siteId], site.configHistory);
+    if (mergedHistory.length > 0) {
+      nextStore[siteId] = mergedHistory;
+    }
+  });
+  return nextStore;
+}
+
+function applyMerchantConfigHistoryStore(state: PlatformState, historyStore: MerchantConfigHistoryStore): PlatformState {
+  return {
+    ...state,
+    sites: state.sites.map((site) => {
+      const siteId = normalizeText(site.id);
+      const mergedHistory = mergeMerchantConfigHistoryEntries(historyStore[siteId], site.configHistory);
+      return {
+        ...site,
+        configHistory: mergedHistory,
+      };
+    }),
+  };
+}
+
+function stripMerchantConfigHistoryForStorage(state: PlatformState): PlatformState {
+  return {
+    ...state,
+    sites: state.sites.map((site) => ({
+      ...site,
+      configHistory: [],
+    })),
+  };
+}
+
+function persistPlatformState(
+  state: PlatformState,
+  historyStore: MerchantConfigHistoryStore,
+  options: { emitEvent?: boolean } = {},
+) {
+  if (typeof window === "undefined") return false;
+  try {
+    localStorage.setItem(MERCHANT_CONFIG_HISTORY_STORAGE_KEY, JSON.stringify(historyStore));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(stripMerchantConfigHistoryForStorage(state)));
+    if (options.emitEvent !== false) {
+      window.dispatchEvent(new Event(STORE_EVENT));
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function stableHash(value: string) {
@@ -1183,7 +1296,16 @@ export function loadPlatformState(): PlatformState {
       savePlatformState(seeded);
       return seeded;
     }
-    return normalizeState(parsed);
+    const normalized = normalizeState(parsed);
+    const storedHistory = loadMerchantConfigHistoryStore();
+    const mergedHistoryStore = buildMerchantConfigHistoryStore(normalized, storedHistory);
+    const nextState = applyMerchantConfigHistoryStore(normalized, mergedHistoryStore);
+    const hasInlineHistory = normalized.sites.some((site) => (site.configHistory?.length ?? 0) > 0);
+    const hasStoredHistoryKey = localStorage.getItem(MERCHANT_CONFIG_HISTORY_STORAGE_KEY) !== null;
+    if (hasInlineHistory || (!hasStoredHistoryKey && Object.keys(mergedHistoryStore).length > 0)) {
+      persistPlatformState(nextState, mergedHistoryStore, { emitEvent: false });
+    }
+    return nextState;
   } catch {
     const seeded = createDefaultState();
     savePlatformState(seeded);
@@ -1193,20 +1315,17 @@ export function loadPlatformState(): PlatformState {
 
 export function savePlatformState(state: PlatformState) {
   if (typeof window === "undefined") return false;
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizeState(state)));
-    window.dispatchEvent(new Event(STORE_EVENT));
-    return true;
-  } catch {
-    // ignore storage write failures
-    return false;
-  }
+  const normalized = normalizeState(state);
+  const currentHistoryStore = loadMerchantConfigHistoryStore();
+  const nextHistoryStore = buildMerchantConfigHistoryStore(normalized, currentHistoryStore);
+  const nextState = applyMerchantConfigHistoryStore(normalized, nextHistoryStore);
+  return persistPlatformState(nextState, nextHistoryStore, { emitEvent: true });
 }
 
 export function subscribePlatformState(onChange: () => void): () => void {
   if (typeof window === "undefined") return () => {};
   const onStorage = (event: StorageEvent) => {
-    if (event.key === STORAGE_KEY) onChange();
+    if (event.key === STORAGE_KEY || event.key === MERCHANT_CONFIG_HISTORY_STORAGE_KEY) onChange();
   };
   const onCustom = () => onChange();
   window.addEventListener("storage", onStorage);

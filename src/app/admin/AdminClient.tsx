@@ -16958,6 +16958,7 @@ type GalleryEditorImage = {
   const [productPreviewTagByBlockId, setProductPreviewTagByBlockId] = useState<Record<string, string | null>>({});
   const [productPreviewSearchByBlockId, setProductPreviewSearchByBlockId] = useState<Record<string, string>>({});
   const [productTagOptionsDraftByBlockId, setProductTagOptionsDraftByBlockId] = useState<Record<string, string>>({});
+  const [bookingAvailableTimeRangesDraftByBlockId, setBookingAvailableTimeRangesDraftByBlockId] = useState<Record<string, string>>({});
   const [productDetailPreview, setProductDetailPreview] = useState<{ blockId: string; itemId: string } | null>(null);
   const [productSettingsCollapsedByBlockId, setProductSettingsCollapsedByBlockId] = useState<
     Record<string, Partial<Record<ProductSettingsSectionKey, boolean>>>
@@ -16989,10 +16990,23 @@ type GalleryEditorImage = {
     startHeight: number;
   } | null>(null);
   const galleryLayoutDefs: Array<{ id: GalleryLayoutPreset }> = GALLERY_LAYOUT_PRESETS.map((id) => ({ id }));
+  const bookingAvailableTimeRangesValue = block.type === "booking" ? block.props.bookingAvailableTimeRanges : null;
 
   useEffect(() => {
     setPreviewNavPageId(currentPageId);
   }, [currentPageId, block.id]);
+
+  useEffect(() => {
+    if (block.type !== "booking") return;
+    const nextDraft = normalizeMerchantBookingTimeRangeOptions(bookingAvailableTimeRangesValue).join("\n");
+    setBookingAvailableTimeRangesDraftByBlockId((current) => {
+      if (current[block.id] === nextDraft) return current;
+      return {
+        ...current,
+        [block.id]: nextDraft,
+      };
+    });
+  }, [block.id, bookingAvailableTimeRangesValue, block.type]);
 
   function normalizeGalleryImages(
     source: Array<
@@ -26132,7 +26146,9 @@ type GalleryEditorImage = {
   if (block.type === "booking") {
     const bookingStoreOptionsText = normalizeBookingOptionList(block.props.bookingStoreOptions).join("\n");
     const bookingItemOptionsText = normalizeBookingOptionList(block.props.bookingItemOptions).join("\n");
-    const bookingAvailableTimeRangesText = normalizeMerchantBookingTimeRangeOptions(block.props.bookingAvailableTimeRanges).join("\n");
+    const bookingAvailableTimeRangesText =
+      bookingAvailableTimeRangesDraftByBlockId[block.id] ??
+      normalizeMerchantBookingTimeRangeOptions(block.props.bookingAvailableTimeRanges).join("\n");
     const bookingTitleOptionsText = normalizeBookingOptionList(block.props.bookingTitleOptions).join("\n");
     const bookingPreview = (
       <BookingBlock
@@ -26252,8 +26268,20 @@ type GalleryEditorImage = {
                     value={bookingAvailableTimeRangesText}
                     placeholder={"每行一个时间点或时间段，例如：\n09:00-12:00\n14:00-18:00\n19:30"}
                     onChange={(event) =>
-                      onChange({ bookingAvailableTimeRanges: normalizeMerchantBookingTimeRangeOptions(event.target.value) })
+                      setBookingAvailableTimeRangesDraftByBlockId((current) => ({
+                        ...current,
+                        [block.id]: event.target.value,
+                      }))
                     }
+                    onBlur={(event) => {
+                      const normalizedRanges = normalizeMerchantBookingTimeRangeOptions(event.target.value);
+                      const normalizedText = normalizedRanges.join("\n");
+                      setBookingAvailableTimeRangesDraftByBlockId((current) => ({
+                        ...current,
+                        [block.id]: normalizedText,
+                      }));
+                      onChange({ bookingAvailableTimeRanges: normalizedRanges });
+                    }}
                   />
                 </label>
                 <div className="grid gap-3 md:grid-cols-2">

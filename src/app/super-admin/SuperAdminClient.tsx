@@ -1026,7 +1026,6 @@ const RELEASE_REGRESSION_CHECKLIST = [
   { id: "contact-font-sync", label: "联系方式区块字体样式前后台一致（含固定前缀）" },
   { id: "manual-rank-fallback", label: "排序数字生效；同排名时按默认排序规则决定先后" },
 ] as const;
-const MAX_MERCHANT_CONFIG_HISTORY = 30;
 const INLINE_IMAGE_HISTORY_PLACEHOLDER = "__inline_image_omitted__";
 const SORT_PREVIEW_FILTER_LABELS = {
   all: "全部",
@@ -1098,20 +1097,18 @@ function compactSnapshotForHistory(snapshot: MerchantConfigSnapshot): MerchantCo
 
 function compactMerchantConfigHistory(history: MerchantConfigHistoryEntry[] | undefined): MerchantConfigHistoryEntry[] {
   if (!Array.isArray(history) || history.length === 0) return [];
-  return history
-    .map((item) => ({
-      ...item,
-      before: compactSnapshotForHistory(item.before),
-      after: compactSnapshotForHistory(item.after),
-    }))
-    .slice(0, MAX_MERCHANT_CONFIG_HISTORY);
+  return history.map((item) => ({
+    ...item,
+    before: compactSnapshotForHistory(item.before),
+    after: compactSnapshotForHistory(item.after),
+  }));
 }
 
 function compactSitesForStorage(sites: Site[]): Site[] {
   return sites.map((site) => ({
     ...site,
     merchantCardImageUrl: compactMerchantCardImageForStorage(site.merchantCardImageUrl),
-    configHistory: compactMerchantConfigHistory(site.configHistory),
+    configHistory: [],
   }));
 }
 
@@ -1141,7 +1138,7 @@ function appendMerchantConfigHistory(
   history: MerchantConfigHistoryEntry[] | undefined,
   entry: MerchantConfigHistoryEntry,
 ) {
-  return [entry, ...compactMerchantConfigHistory(history)].slice(0, MAX_MERCHANT_CONFIG_HISTORY);
+  return [entry, ...compactMerchantConfigHistory(history)];
 }
 
 function resolveSortPreviewLevel(site: Site): SortPreviewLevel {
@@ -1315,6 +1312,7 @@ function buildMerchantConfigDiffLines(current: MerchantConfigSnapshot, target: M
 function buildMerchantConfigHistoryEntry(input: {
   operator: string;
   summary: string;
+  changes: string[];
   before: MerchantConfigSnapshot;
   after: MerchantConfigSnapshot;
 }): MerchantConfigHistoryEntry {
@@ -1323,9 +1321,16 @@ function buildMerchantConfigHistoryEntry(input: {
     at: nextIsoNow(),
     operator: input.operator,
     summary: input.summary.trim() || "配置更新",
+    changes: input.changes.map((item) => item.trim()).filter(Boolean),
     before: compactSnapshotForHistory(input.before),
     after: compactSnapshotForHistory(input.after),
   };
+}
+
+function resolveMerchantConfigHistoryChanges(history: MerchantConfigHistoryEntry) {
+  const explicitChanges = Array.isArray(history.changes) ? history.changes.map((item) => item.trim()).filter(Boolean) : [];
+  if (explicitChanges.length > 0) return explicitChanges;
+  return buildMerchantConfigDiffLines(history.before, history.after);
 }
 
 type PortalDraft = {
@@ -2540,25 +2545,41 @@ export default function SuperAdminClient() {
           <span className="font-medium">配置变更历史</span>
           <span className="text-[11px]">{selectedMerchantConfigHistory.length} 条</span>
         </div>
-        <div className="space-y-1">
+        <div className="max-h-[56vh] space-y-2 overflow-y-auto pr-1">
           {selectedMerchantConfigHistory.length > 0 ? (
-            selectedMerchantConfigHistory.slice(0, 12).map((history) => (
-              <div key={history.id} className="rounded border px-2 py-1.5">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="truncate text-slate-700">{history.summary || "配置更新"}</span>
-                  <button
-                    type="button"
-                    className="rounded border px-2 py-0.5 text-[11px] hover:bg-slate-50"
-                    onClick={() => rollbackMerchantConfigByHistoryAction(history.id)}
-                  >
-                    回滚到此版本
-                  </button>
+            selectedMerchantConfigHistory.map((history) => {
+              const changeLines = resolveMerchantConfigHistoryChanges(history);
+              return (
+                <div key={history.id} className="rounded border px-2 py-1.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="break-words text-slate-700">{history.summary || "配置更新"}</div>
+                      <div className="mt-1 text-[11px] text-slate-500">
+                        {fmt(history.at)} | {history.operator || "-"} | {changeLines.length} 项
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="shrink-0 rounded border px-2 py-0.5 text-[11px] hover:bg-slate-50"
+                      onClick={() => rollbackMerchantConfigByHistoryAction(history.id)}
+                    >
+                      回滚到此版本
+                    </button>
+                  </div>
+                  <div className="mt-2 space-y-1 rounded bg-slate-50 px-2 py-1.5 text-[12px] text-slate-700">
+                    {changeLines.length > 0 ? (
+                      changeLines.map((line, index) => (
+                        <div key={`${history.id}-change-${index}`} className="break-all whitespace-pre-wrap">
+                          {index + 1}. {line}
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-slate-400">未记录具体变更项</div>
+                    )}
+                  </div>
                 </div>
-                <div className="mt-1 text-[11px] text-slate-500">
-                  {fmt(history.at)} | {history.operator || "-"}
-                </div>
-              </div>
-            ))
+              );
+            })
           ) : (
             <div className="rounded border border-dashed px-2 py-2 text-[11px] text-slate-400">
               暂无配置变更历史
@@ -4539,13 +4560,11 @@ export default function SuperAdminClient() {
       merchantCardImageOpacity,
       sortConfig,
     };
-    const historySummary =
-      pendingChanges.length <= 3
-        ? pendingChanges.join("；")
-        : `${pendingChanges.slice(0, 3).join("；")}；共 ${pendingChanges.length} 项`;
+    const historySummary = pendingChanges.length === 1 ? pendingChanges[0] : `配置调整（共 ${pendingChanges.length} 项）`;
     const historyEntry = buildMerchantConfigHistoryEntry({
       operator: operatorName,
       summary: historySummary,
+      changes: pendingChanges,
       before: beforeSnapshot,
       after: afterSnapshot,
     });
@@ -4571,7 +4590,7 @@ export default function SuperAdminClient() {
     const nextStatePreview = compactPlatformStateForStorage(nextStatePreviewRaw);
     const nextStateBytes = estimateUtf8Size(JSON.stringify(nextStatePreview));
     if (nextStateBytes > MAX_PLATFORM_STATE_STORAGE_BYTES) {
-      setTip(`${SUPER_ADMIN_MESSAGES.configTooLargePrefix}（${formatBytes(nextStateBytes)}），请压缩图片或清理历史后重试`);
+      setTip(`${SUPER_ADMIN_MESSAGES.configTooLargePrefix}（${formatBytes(nextStateBytes)}），请压缩图片后重试`);
       return;
     }
 
@@ -4656,6 +4675,7 @@ export default function SuperAdminClient() {
     const rollbackHistoryEntry = buildMerchantConfigHistoryEntry({
       operator: operatorName,
       summary: `回滚到 ${fmt(targetHistory.at)} 配置`,
+      changes: rollbackDiffLines,
       before: rollbackBeforeSnapshot,
       after: rollbackAfterSnapshot,
     });
