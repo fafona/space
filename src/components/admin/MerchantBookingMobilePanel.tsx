@@ -320,12 +320,15 @@ export default function MerchantBookingMobilePanel({
       setBusyKey(`${busyLabel}:${bookingId}`);
       setError("");
       try {
+        const currentRecord = records.find((item) => item.id === bookingId) ?? null;
         const response = await fetch("/api/bookings", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             siteId,
             bookingId,
+            bookingBlockId: currentRecord?.bookingBlockId,
+            bookingViewport: currentRecord?.bookingViewport,
             ...payload,
           }),
         });
@@ -349,7 +352,7 @@ export default function MerchantBookingMobilePanel({
         setBusyKey("");
       }
     },
-    [siteId, updateFailedText],
+    [records, siteId, updateFailedText],
   );
 
   const handleDraftChange = useCallback(

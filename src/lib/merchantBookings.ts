@@ -1,4 +1,5 @@
 import { getUtf8ByteLength, truncateUtf8ByBytes } from "./merchantProfileBinding";
+import type { MerchantBookingRuleViewport } from "./merchantBookingRules";
 
 export const MERCHANT_BOOKING_STATUSES = ["active", "confirmed", "completed", "cancelled"] as const;
 export const MERCHANT_BOOKING_CUSTOMER_NAME_MAX_BYTES = 40;
@@ -17,12 +18,17 @@ export type MerchantBookingEditableInput = {
   note: string;
 };
 
-export type MerchantBookingCreateInput = MerchantBookingEditableInput & {
+export type MerchantBookingRuleBinding = {
+  bookingBlockId?: string;
+  bookingViewport?: MerchantBookingRuleViewport;
+};
+
+export type MerchantBookingCreateInput = MerchantBookingEditableInput & MerchantBookingRuleBinding & {
   siteId: string;
   siteName?: string;
 };
 
-export type MerchantBookingRecord = MerchantBookingEditableInput & {
+export type MerchantBookingRecord = MerchantBookingEditableInput & MerchantBookingRuleBinding & {
   id: string;
   siteId: string;
   siteName: string;
@@ -48,7 +54,7 @@ export type MerchantBookingValidationOptions = {
   availableTimeRanges?: unknown;
 };
 
-export type MerchantBookingActionInput = {
+export type MerchantBookingActionInput = MerchantBookingRuleBinding & {
   bookingId: string;
   editToken: string;
   action: MerchantBookingUpdateAction;

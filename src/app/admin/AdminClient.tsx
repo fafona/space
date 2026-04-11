@@ -538,6 +538,27 @@ function collectBookingOptionsFromPlanConfig(config: PagePlanConfig | null | und
   return collected;
 }
 
+function countBlocksByTypeInPlanConfig(config: PagePlanConfig | null | undefined, type: Block["type"]) {
+  if (!config) return 0;
+  let count = 0;
+  for (const plan of config.plans ?? []) {
+    const pages =
+      Array.isArray(plan.pages) && plan.pages.length > 0
+        ? plan.pages
+        : [{ id: plan.activePageId, name: "", blocks: getBlocksForPage(plan, plan.activePageId) }];
+    for (const page of pages) {
+      for (const block of page.blocks ?? []) {
+        if (block.type === type) count += 1;
+      }
+    }
+  }
+  return count;
+}
+
+function countBookingBlocksInPlanConfig(config: PagePlanConfig | null | undefined) {
+  return countBlocksByTypeInPlanConfig(config, "booking");
+}
+
 const MIN_BLOCK_WIDTH = 240;
 const MIN_BLOCK_HEIGHT = 120;
 const NUDGE_STEP = 4;
@@ -6236,6 +6257,15 @@ export default function AdminClient({
       showTip("该方案没有可应用的页面内容");
       return;
     }
+    const templateDesktopConfig = getPagePlanConfigFromBlocks(loadedBlocks);
+    const templateMobileConfig = getEmbeddedMobilePlanConfig(loadedBlocks);
+    if (
+      countBookingBlocksInPlanConfig(templateDesktopConfig) > 1 ||
+      countBookingBlocksInPlanConfig(templateMobileConfig) > 1
+    ) {
+      showTip("预约区块只能有一个");
+      return;
+    }
     const confirmed = await openConfirm(
       `应用方案「${template.name}」会覆盖当前编辑中的整套 PC 和手机方案，是否继续？`,
       "应用方案模板",
@@ -7918,6 +7948,20 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         return;
       }
     }
+    if (newBlockType === "booking") {
+      const mergedConfig = mergePlanConfigWithEditingBlocks(
+        planConfigRef.current,
+        editingPlanIdRef.current,
+        editingPageIdRef.current,
+        blocksRef.current,
+        { syncNavPages: false },
+      );
+      if (countBookingBlocksInPlanConfig(mergedConfig) > 0) {
+        setTip("预约区块只能有一个");
+        setTimeout(() => setTip(""), 1200);
+        return;
+      }
+    }
     const nextBlock = makeDefaultBlock(newBlockType);
     const next = [...blocks, nextBlock];
     applyBlocks(next, { selectedId: nextBlock.id });
@@ -8079,6 +8123,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       ...mergedConfig,
       plans: mergedConfig.plans.map((plan, index) => (index === safePlanIndex ? nextPlan : plan)),
     };
+    const previousBookingBlockCount = countBookingBlocksInPlanConfig(mergedConfig);
+    const nextBookingBlockCount = countBookingBlocksInPlanConfig(nextPlanConfig);
+    if (nextBookingBlockCount > previousBookingBlockCount && nextBookingBlockCount > 1) {
+      showTip("预约区块只能有一个");
+      return;
+    }
     const targetPageLabel = toPlainText(targetPage.name, targetPage.id);
     pushUndoSnapshot(createSnapshot());
     setPlanConfig(nextPlanConfig);
@@ -8552,6 +8602,13 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     );
     const desktopConfig = previewViewport === "desktop" ? mergedConfig : viewportStatesRef.current.desktop.planConfig;
     const mobileConfig = previewViewport === "mobile" ? mergedConfig : viewportStatesRef.current.mobile.planConfig;
+    if (countBookingBlocksInPlanConfig(desktopConfig) > 1 || countBookingBlocksInPlanConfig(mobileConfig) > 1) {
+      showTip("预约区块只能有一个，请先删除重复的预约区块后再发布", {
+        durationMs: 4200,
+        dismissOnPointer: true,
+      });
+      return;
+    }
     let combinedBlocks = injectPublishedMerchantSnapshot(buildCombinedPersistedBlocks(desktopConfig, mobileConfig));
     if (isPlatformEditor) {
       await syncPlatformMerchantSnapshotToServerRef.current();
@@ -11550,6 +11607,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   useEffect(() => {
     if (
       isPlatformEditor ||
+      isMobileSupportDialog ||
       !supportInterfaceOpen ||
       !selectedSupportConversationVisible ||
       selectedSupportLoading ||
@@ -11560,6 +11618,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     focusSupportInput();
   }, [
     focusSupportInput,
+    isMobileSupportDialog,
     isPlatformEditor,
     selectedSupportConversationVisible,
     selectedSupportLoading,
@@ -12614,12 +12673,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       buildDefaultBookingTitleOptions(),
     ),
   };
-  const merchantHasBookingBlockConfigured = planConfig.plans.some((plan) => {
-    const planBlocks = Array.isArray(plan.blocks) ? plan.blocks : [];
-    if (planBlocks.some((block) => block.type === "booking")) return true;
-    const pages = Array.isArray(plan.pages) ? plan.pages : [];
-    return pages.some((page) => Array.isArray(page.blocks) && page.blocks.some((block) => block.type === "booking"));
-  });
+  const merchantBookingBlockCount = countBookingBlocksInPlanConfig(planConfig);
+  const merchantHasBookingBlockConfigured = merchantBookingBlockCount > 0;
   const merchantPermissionConfig = !isPlatformEditor
     ? (effectiveEditingSite?.permissionConfig ?? editingSite?.permissionConfig ?? createDefaultMerchantPermissionConfig())
     : null;
@@ -12638,12 +12693,13 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   const canUseProductBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowProductBlock);
   const canUseBookingBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowBookingBlock) || merchantHasBookingBlockConfigured;
   const canUseButtonBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowButtonBlock);
+  const isBookingBlockAddLocked = merchantHasBookingBlockConfigured;
   const isCurrentBlockTypeLocked =
     (!canUseButtonBlock && newBlockType === "button") ||
     (!canUseGalleryBlock && newBlockType === "gallery") ||
     (!canUseMusicBlock && newBlockType === "music") ||
     (!canUseProductBlock && newBlockType === "product") ||
-    (!canUseBookingBlock && newBlockType === "booking");
+    ((!canUseBookingBlock || isBookingBlockAddLocked) && newBlockType === "booking");
   const showAddBlockGuide = !isPlatformEditor && !hasAddedExtraBlock && blocks.length === 1 && blocks[0]?.type === "nav";
   const merchantPublishSizeLimitBytes = !isPlatformEditor
     ? Math.max(1, Math.round(merchantPermissionConfig?.publishSizeLimitMb ?? 1)) * 1024 * 1024
@@ -15735,7 +15791,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         <option value="nav">{"导航"}</option>
                         <option value="music" disabled={!canUseMusicBlock}>{"音乐"}{!canUseMusicBlock ? "（未开通）" : ""}</option>
                         <option value="product" disabled={!canUseProductBlock}>{"产品"}{!canUseProductBlock ? "（未开通）" : ""}</option>
-                        <option value="booking" disabled={!canUseBookingBlock}>{"预约"}{!canUseBookingBlock ? "（未开通）" : ""}</option>
+                        <option value="booking" disabled={!canUseBookingBlock || isBookingBlockAddLocked}>
+                          {"预约"}
+                          {!canUseBookingBlock ? "（未开通）" : isBookingBlockAddLocked ? "（已存在）" : ""}
+                        </option>
                         <option value="contact">{"联系方式"}</option>
                         {isPlatformEditor ? <option value="search-bar">{"搜索"}</option> : null}
                         {isPlatformEditor ? <option value="merchant-list">{"商户列表"}</option> : null}

@@ -18,6 +18,7 @@ import BookingBlock from "./BookingBlock";
 import ButtonBlock from "./ButtonBlock";
 import { getBlockRenderStackOrder } from "@/lib/blockStacking";
 import { buildPublicBlockId } from "@/lib/blockPublicId";
+import type { MerchantBookingRuleViewport } from "@/lib/merchantBookingRules";
 
 class BlockRuntimeBoundary extends Component<{ blockId: string; children: ReactNode }, { hasError: boolean }> {
   constructor(props: { blockId: string; children: ReactNode }) {
@@ -48,6 +49,7 @@ export default function BlockRenderer({
   bookingSiteId,
   bookingSiteName,
   bookingInteractive = true,
+  bookingViewport,
 }: {
   blocks: Block[];
   currentPageId?: string;
@@ -57,6 +59,7 @@ export default function BlockRenderer({
   bookingSiteId?: string;
   bookingSiteName?: string;
   bookingInteractive?: boolean;
+  bookingViewport?: MerchantBookingRuleViewport;
 }) {
   if (!blocks || blocks.length === 0) return null;
 
@@ -112,6 +115,8 @@ export default function BlockRenderer({
                 runtimeSiteId={bookingSiteId}
                 runtimeSiteName={bookingSiteName}
                 interactive={bookingInteractive}
+                runtimeBlockId={b.id}
+                runtimeViewport={bookingViewport}
               />
             );
             break;

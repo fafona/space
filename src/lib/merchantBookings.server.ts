@@ -3,19 +3,21 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   buildMerchantBookingId,
-  normalizeMerchantBookingTimeRangeOptions,
   sanitizeMerchantBookingEditableInput,
   shouldSendMerchantBookingConfirmationEmail,
   type MerchantBookingActionInput,
   type MerchantBookingCreateInput,
+  type MerchantBookingEditableInput,
   type MerchantBookingRecord,
+  type MerchantBookingRuleBinding,
   type MerchantBookingStatus,
   type MerchantBookingStoredRecord,
   validateMerchantBookingInput,
   withoutMerchantBookingToken,
 } from "./merchantBookings";
 import { sendMerchantBookingConfirmationEmail } from "./merchantBookingEmails";
-import { fetchPublishedSitePayloadFromSupabase } from "./publishedSiteData";
+import { resolveMerchantBookingRuleEntry, type MerchantBookingRuleLocator } from "./merchantBookingRules";
+import { loadMerchantBookingRulesSnapshot } from "./merchantBookingRulesStore";
 
 type MerchantBookingStoreFile = {
   version: 1;
@@ -86,23 +88,36 @@ function sortNewestFirst<T extends { updatedAt?: string; createdAt?: string }>(r
   });
 }
 
-async function loadPublishedBookingAvailableTimeRanges(siteId: string) {
+function normalizeBookingRuleBinding(input?: MerchantBookingRuleLocator | null): MerchantBookingRuleBinding {
+  return {
+    bookingBlockId: String(input?.bookingBlockId ?? "").trim() || undefined,
+    bookingViewport: input?.bookingViewport === "mobile" || input?.bookingViewport === "desktop" ? input.bookingViewport : undefined,
+  };
+}
+
+async function resolveBookingRuleContext(
+  siteId: string,
+  locator?: MerchantBookingRuleLocator | null,
+): Promise<{ binding: MerchantBookingRuleBinding; availableTimeRanges: string[] }> {
   const normalizedSiteId = String(siteId ?? "").trim();
-  if (!normalizedSiteId) return [] as string[];
-  try {
-    const payload = await fetchPublishedSitePayloadFromSupabase(normalizedSiteId);
-    if (!payload) return [] as string[];
-    const next: string[] = [];
-    payload.blocks.forEach((block) => {
-      if (block.type !== "booking") return;
-      normalizeMerchantBookingTimeRangeOptions(block.props.bookingAvailableTimeRanges).forEach((item) => {
-        if (!next.includes(item)) next.push(item);
-      });
-    });
-    return next;
-  } catch {
-    return [] as string[];
+  if (!normalizedSiteId) {
+    throw new Error("站点信息缺失");
   }
+  const snapshot = await loadMerchantBookingRulesSnapshot(normalizedSiteId);
+  if (!snapshot) {
+    throw new Error("预约规则暂不可用，请稍后重试");
+  }
+  const rule = resolveMerchantBookingRuleEntry(snapshot, locator);
+  if (!rule) {
+    throw new Error("预约规则不可验证，请刷新页面后重试");
+  }
+  return {
+    binding: {
+      bookingBlockId: rule.blockId,
+      bookingViewport: rule.viewport,
+    },
+    availableTimeRanges: rule.availableTimeRanges,
+  };
 }
 
 export async function listMerchantBookings(siteId: string): Promise<MerchantBookingRecord[]> {
@@ -121,8 +136,8 @@ export async function createMerchantBooking(input: MerchantBookingCreateInput): 
   editToken: string;
 }> {
   const editable = sanitizeMerchantBookingEditableInput(input);
-  const availableTimeRanges = await loadPublishedBookingAvailableTimeRanges(input.siteId);
-  const issues = validateMerchantBookingInput(editable, { availableTimeRanges });
+  const ruleContext = await resolveBookingRuleContext(input.siteId, normalizeBookingRuleBinding(input));
+  const issues = validateMerchantBookingInput(editable, { availableTimeRanges: ruleContext.availableTimeRanges });
   if (!input.siteId.trim()) {
     issues.push("站点信息缺失");
   }
@@ -146,6 +161,7 @@ export async function createMerchantBooking(input: MerchantBookingCreateInput): 
       id: nextId,
       siteId: input.siteId.trim(),
       siteName: String(input.siteName ?? "").trim(),
+      ...ruleContext.binding,
       ...editable,
       status: "active",
       createdAt: now,
@@ -191,13 +207,18 @@ export async function updateMerchantBooking(input: MerchantBookingActionInput): 
     }
 
     const nextEditable = sanitizeMerchantBookingEditableInput(input.updates, current);
-    const availableTimeRanges = await loadPublishedBookingAvailableTimeRanges(current.siteId);
-    const issues = validateMerchantBookingInput(nextEditable, { availableTimeRanges });
+    const normalizedBinding = normalizeBookingRuleBinding(input);
+    const ruleContext = await resolveBookingRuleContext(current.siteId, {
+      bookingBlockId: normalizedBinding.bookingBlockId ?? current.bookingBlockId,
+      bookingViewport: normalizedBinding.bookingViewport ?? current.bookingViewport,
+    });
+    const issues = validateMerchantBookingInput(nextEditable, { availableTimeRanges: ruleContext.availableTimeRanges });
     if (issues.length > 0) {
       throw new Error(issues[0]);
     }
     const next: MerchantBookingStoredRecord = {
       ...current,
+      ...ruleContext.binding,
       ...nextEditable,
       status: current.status === "cancelled" ? "active" : current.status,
       updatedAt: new Date().toISOString(),
@@ -266,7 +287,9 @@ export async function updateMerchantBookingBySite(input: {
   siteId: string;
   bookingId: string;
   status?: MerchantBookingStatus;
-  updates?: Partial<MerchantBookingCreateInput>;
+  bookingBlockId?: string;
+  bookingViewport?: MerchantBookingRuleBinding["bookingViewport"];
+  updates?: Partial<MerchantBookingEditableInput>;
 }): Promise<MerchantBookingRecord> {
   const siteId = String(input.siteId ?? "").trim();
   const bookingId = String(input.bookingId ?? "").trim();
@@ -285,18 +308,31 @@ export async function updateMerchantBookingBySite(input: {
       throw new Error("未找到对应预约记录");
     }
 
-    const nextEditable = input.updates
+    const hasEditableUpdates = Boolean(input.updates);
+    const nextEditable = hasEditableUpdates
       ? sanitizeMerchantBookingEditableInput(input.updates, current)
       : sanitizeMerchantBookingEditableInput(current, current);
-    const availableTimeRanges = await loadPublishedBookingAvailableTimeRanges(siteId);
-    const issues = validateMerchantBookingInput(nextEditable, { availableTimeRanges });
-    if (issues.length > 0) {
-      throw new Error(issues[0]);
+    let nextBinding: MerchantBookingRuleBinding = {
+      bookingBlockId: current.bookingBlockId,
+      bookingViewport: current.bookingViewport,
+    };
+    if (hasEditableUpdates) {
+      const normalizedBinding = normalizeBookingRuleBinding(input);
+      const ruleContext = await resolveBookingRuleContext(siteId, {
+        bookingBlockId: normalizedBinding.bookingBlockId ?? current.bookingBlockId,
+        bookingViewport: normalizedBinding.bookingViewport ?? current.bookingViewport,
+      });
+      const issues = validateMerchantBookingInput(nextEditable, { availableTimeRanges: ruleContext.availableTimeRanges });
+      if (issues.length > 0) {
+        throw new Error(issues[0]);
+      }
+      nextBinding = ruleContext.binding;
     }
 
     const nextStatus = input.status ?? current.status;
     let next: MerchantBookingStoredRecord = {
       ...current,
+      ...nextBinding,
       ...nextEditable,
       status: nextStatus,
       updatedAt: new Date().toISOString(),

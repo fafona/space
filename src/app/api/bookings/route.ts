@@ -15,9 +15,14 @@ import type {
   MerchantBookingCreateInput,
   MerchantBookingStatus,
 } from "@/lib/merchantBookings";
+import type { MerchantBookingRuleViewport } from "@/lib/merchantBookingRules";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+
+function normalizeBookingViewport(value: unknown): MerchantBookingRuleViewport | undefined {
+  return value === "mobile" || value === "desktop" ? value : undefined;
+}
 
 export async function GET(request: Request) {
   try {
@@ -49,6 +54,8 @@ export async function POST(request: Request) {
     const created = await createMerchantBooking({
       siteId,
       siteName: String(body.siteName ?? "").trim(),
+      bookingBlockId: String(body.bookingBlockId ?? "").trim() || undefined,
+      bookingViewport: normalizeBookingViewport(body.bookingViewport),
       store: String(body.store ?? ""),
       item: String(body.item ?? ""),
       appointmentAt: String(body.appointmentAt ?? ""),
@@ -110,6 +117,8 @@ export async function PATCH(request: Request) {
         siteId: maybeSiteId,
         bookingId: String(body?.bookingId ?? "").trim(),
         status: maybeStatus ?? undefined,
+        bookingBlockId: String(body?.bookingBlockId ?? "").trim() || undefined,
+        bookingViewport: normalizeBookingViewport(body?.bookingViewport),
         updates: body?.updates
           ? {
               store: String(body.updates.store ?? ""),
@@ -130,6 +139,8 @@ export async function PATCH(request: Request) {
     const booking = await updateMerchantBooking({
       bookingId: String(body?.bookingId ?? "").trim(),
       editToken: String(body?.editToken ?? "").trim(),
+      bookingBlockId: String(body?.bookingBlockId ?? "").trim() || undefined,
+      bookingViewport: normalizeBookingViewport(body?.bookingViewport),
       action,
       updates:
         action === "update"

@@ -474,6 +474,7 @@ export function SitePageClient({
         bookingSiteId={site?.id ?? siteId}
         bookingSiteName={effectiveMerchantName}
         bookingInteractive
+        bookingViewport={isMobileViewport ? "mobile" : "desktop"}
         onNavigatePage={(pageId) => {
           if (activePlan?.pages?.some((page) => page.id === pageId)) setCurrentPageId(pageId);
         }}

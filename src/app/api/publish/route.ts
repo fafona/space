@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import type { Block } from "@/data/homeBlocks";
 import { readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
 import { sanitizeBlocksForRuntime } from "@/lib/blocksSanitizer";
+import { saveMerchantBookingRulesSnapshotForSites } from "@/lib/merchantBookingRulesStore";
 import { saveStoredMerchantDraft, type MerchantDraftStoreClient } from "@/lib/merchantDraftStore";
 import { normalizeDomainPrefix } from "@/lib/merchantIdentity";
 import { loadPublishedMerchantServiceStatesBySiteIds } from "@/lib/publishedMerchantService";
@@ -540,6 +541,7 @@ export async function POST(request: Request) {
       resultCache.set(requestId, { at: Date.now(), status, body: responseBody });
       return makeCachedResponse(status, responseBody);
     }
+    const sanitizedPublishedBlocks = sanitizeBlocksForRuntime(payloadBlocks).blocks;
     const normalizedUpdatedAt = Number.isFinite(new Date(updatedAtRaw).getTime())
       ? new Date(updatedAtRaw).toISOString()
       : new Date().toISOString();
@@ -619,7 +621,7 @@ export async function POST(request: Request) {
     const saveError = await saveWithRetry(
       supabase,
       {
-        blocks: payloadBlocks,
+        blocks: sanitizedPublishedBlocks,
         updated_at: normalizedUpdatedAt,
       },
       merchantIds,
@@ -639,11 +641,24 @@ export async function POST(request: Request) {
     }
 
     if (!isPlatformEditor && merchantIds.length > 0) {
+      try {
+        await saveMerchantBookingRulesSnapshotForSites(merchantIds, sanitizedPublishedBlocks, normalizedUpdatedAt);
+      } catch (error) {
+        const status = 409;
+        const responseBody = {
+          ok: false,
+          code: "booking_rules_snapshot_failed",
+          message: error instanceof Error ? error.message : "预约规则快照保存失败，请重新发布",
+          requestId,
+        };
+        resultCache.set(requestId, { at: Date.now(), status, body: responseBody });
+        return makeCachedResponse(status, responseBody);
+      }
       await Promise.allSettled(
         merchantIds.map((merchantId) =>
           saveStoredMerchantDraft(supabase as unknown as MerchantDraftStoreClient, {
             siteId: merchantId,
-            blocks: payloadBlocks,
+            blocks: sanitizedPublishedBlocks,
             updatedAt: normalizedUpdatedAt,
           }),
         ),

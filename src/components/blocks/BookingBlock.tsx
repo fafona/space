@@ -21,6 +21,7 @@ import {
   type MerchantBookingRecord,
 } from "@/lib/merchantBookings";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
+import type { MerchantBookingRuleViewport } from "@/lib/merchantBookingRules";
 import { useI18n } from "@/components/I18nProvider";
 import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
 import { getBackgroundStyle } from "./backgroundStyle";
@@ -31,6 +32,8 @@ type BookingBlockComponentProps = BookingProps & {
   runtimeSiteId?: string;
   runtimeSiteName?: string;
   interactive?: boolean;
+  runtimeBlockId?: string;
+  runtimeViewport?: MerchantBookingRuleViewport;
 };
 
 type SubmittedBookingState = {
@@ -96,6 +99,8 @@ export default function BookingBlock({
   runtimeSiteId = "",
   runtimeSiteName = "",
   interactive = true,
+  runtimeBlockId = "",
+  runtimeViewport = "desktop",
   ...props
 }: BookingBlockComponentProps) {
   const { locale } = useI18n();
@@ -203,11 +208,15 @@ export default function BookingBlock({
                 bookingId: submittedState.booking.id,
                 editToken: submittedState.editToken,
                 action: "update",
+                bookingBlockId: runtimeBlockId,
+                bookingViewport: runtimeViewport,
                 updates: payload,
               }
             : {
                 siteId: runtimeSiteId,
                 siteName: runtimeSiteName,
+                bookingBlockId: runtimeBlockId,
+                bookingViewport: runtimeViewport,
                 ...payload,
               },
         ),
@@ -247,6 +256,8 @@ export default function BookingBlock({
           bookingId: submittedState.booking.id,
           editToken: submittedState.editToken,
           action: "cancel",
+          bookingBlockId: runtimeBlockId,
+          bookingViewport: runtimeViewport,
         }),
       });
       const json = (await response.json().catch(() => null)) as
