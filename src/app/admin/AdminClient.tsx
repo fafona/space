@@ -4267,23 +4267,26 @@ function readMobileVisualViewportOrientation() {
   return window.innerWidth > window.innerHeight ? "landscape" : "portrait";
 }
 
-function readMobileVisualViewportInsets(layoutViewportHeight?: number) {
+function readMobileVisualViewportMetrics(layoutViewportHeight?: number) {
   if (typeof window === "undefined") {
-    return { top: 0, bottom: 0 };
+    return { top: 0, bottom: 0, height: 0 };
   }
   const visualViewport = window.visualViewport;
   if (!visualViewport) {
-    return { top: 0, bottom: 0 };
+    const fallbackHeight = readMobileVisualViewportLayoutHeightCandidate();
+    return { top: 0, bottom: 0, height: fallbackHeight };
   }
   const topRaw = Number.isFinite(visualViewport.offsetTop) ? visualViewport.offsetTop : 0;
   const top = Math.max(0, Math.round(topRaw));
+  const heightRaw = Number.isFinite(visualViewport.height) ? visualViewport.height : 0;
+  const height = Math.max(0, Math.round(heightRaw));
   const layoutHeight =
     typeof layoutViewportHeight === "number" && Number.isFinite(layoutViewportHeight) && layoutViewportHeight > 0
       ? layoutViewportHeight
       : readMobileVisualViewportLayoutHeightCandidate();
-  const bottomRaw = layoutHeight - (visualViewport.height + topRaw);
+  const bottomRaw = layoutHeight - (heightRaw + topRaw);
   const bottom = Number.isFinite(bottomRaw) ? Math.max(0, Math.round(bottomRaw)) : 0;
-  return { top, bottom };
+  return { top, bottom, height };
 }
 
 function normalizeSupportMessageTimestamp(value: string | null | undefined) {
@@ -4927,13 +4930,14 @@ export default function AdminClient({
   const [supportPeerProfilesByMerchantId, setSupportPeerProfilesByMerchantId] = useState<
     Record<string, MerchantListPublishedSite | null>
   >({});
-  const [mobileVisualViewportInsets, setMobileVisualViewportInsets] = useState(() => readMobileVisualViewportInsets());
+  const [mobileVisualViewportMetrics, setMobileVisualViewportMetrics] = useState(() => readMobileVisualViewportMetrics());
   const supportRequestIdRef = useRef(0);
   const supportPeerRequestIdRef = useRef(0);
   const supportSendingRef = useRef(false);
   const supportMessagesViewportRef = useRef<HTMLDivElement>(null);
   const supportMobileConversationsViewportRef = useRef<HTMLDivElement>(null);
   const supportInputRef = useRef<HTMLTextAreaElement>(null);
+  const supportComposerRef = useRef<HTMLDivElement>(null);
   const supportSelfAvatarInputRef = useRef<HTMLInputElement>(null);
   const supportPhotoInputRef = useRef<HTMLInputElement>(null);
   const supportCameraInputRef = useRef<HTMLInputElement>(null);
@@ -5006,15 +5010,19 @@ export default function AdminClient({
         mobileVisualViewportOrientationRef.current = nextOrientation;
         mobileVisualViewportLayoutHeightRef.current = nextLayoutHeightCandidate;
       } else {
-        const estimatedInsets = readMobileVisualViewportInsets(mobileVisualViewportLayoutHeightRef.current);
-        const keyboardLikelyVisible = estimatedInsets.bottom > 96;
+        const estimatedMetrics = readMobileVisualViewportMetrics(mobileVisualViewportLayoutHeightRef.current);
+        const keyboardLikelyVisible = estimatedMetrics.bottom > 96;
         if (!keyboardLikelyVisible || nextLayoutHeightCandidate > mobileVisualViewportLayoutHeightRef.current) {
           mobileVisualViewportLayoutHeightRef.current = nextLayoutHeightCandidate;
         }
       }
-      const nextInsets = readMobileVisualViewportInsets(mobileVisualViewportLayoutHeightRef.current);
-      setMobileVisualViewportInsets((current) =>
-        current.top === nextInsets.top && current.bottom === nextInsets.bottom ? current : nextInsets,
+      const nextMetrics = readMobileVisualViewportMetrics(mobileVisualViewportLayoutHeightRef.current);
+      setMobileVisualViewportMetrics((current) =>
+        current.top === nextMetrics.top &&
+        current.bottom === nextMetrics.bottom &&
+        current.height === nextMetrics.height
+          ? current
+          : nextMetrics,
       );
     };
     syncMobileVisualViewportInsets();
@@ -11664,7 +11672,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }, [isPlatformEditor, latestVisibleSupportMessageKey, selectedSupportConversationVisible, selectedSupportLoading, supportInterfaceOpen]);
 
   useEffect(() => {
-    if (!showMobileSupportThread || mobileVisualViewportInsets.bottom <= 0 || typeof window === "undefined") return;
+    if (!showMobileSupportThread || mobileVisualViewportMetrics.bottom <= 0 || typeof window === "undefined") return;
     const viewport = supportMessagesViewportRef.current;
     if (!viewport) return;
     const timer = window.setTimeout(() => {
@@ -11673,7 +11681,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     return () => {
       window.clearTimeout(timer);
     };
-  }, [mobileVisualViewportInsets.bottom, showMobileSupportThread]);
+  }, [mobileVisualViewportMetrics.bottom, showMobileSupportThread]);
 
   useEffect(() => {
     if (
@@ -13892,11 +13900,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         : supportMobileHomeTab === "faolla"
           ? supportMobileFaollaContent
           : supportMobileSelfContent;
-  const isSupportMobileKeyboardVisible = mobileVisualViewportInsets.bottom > 0;
+  const isSupportMobileKeyboardVisible = mobileVisualViewportMetrics.bottom > 0;
   const supportMobileViewportFrameStyle: CSSProperties | undefined = isMobileSupportDialog
     ? {
-        top: `${mobileVisualViewportInsets.top}px`,
-        bottom: `${mobileVisualViewportInsets.bottom}px`,
+        top: `${mobileVisualViewportMetrics.top}px`,
+        bottom: "auto",
+        height: `${Math.max(0, mobileVisualViewportMetrics.height)}px`,
       }
     : undefined;
 
@@ -14149,6 +14158,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         )}
       </div>
       <div
+        ref={supportComposerRef}
         className="absolute inset-x-0 bottom-0 z-10 overscroll-none border-t border-slate-200/80 bg-[#edf1f7]/98 px-3 pb-[env(safe-area-inset-bottom)] pt-1 shadow-[0_-8px_30px_rgba(15,23,42,0.06)] backdrop-blur"
         onTouchMove={(event) => {
           event.stopPropagation();
@@ -14300,6 +14310,13 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               onFocus={() => {
                 setSupportAttachmentMenuOpen(false);
                 setSupportSelfCardPickerOpen(false);
+                window.setTimeout(() => {
+                  supportComposerRef.current?.scrollIntoView({ block: "end", inline: "nearest" });
+                  supportMessagesViewportRef.current?.scrollTo({
+                    top: supportMessagesViewportRef.current.scrollHeight,
+                    behavior: "auto",
+                  });
+                }, 80);
               }}
               onKeyDown={(event) => {
                 if (event.key !== "Enter" || !event.ctrlKey || event.nativeEvent.isComposing) return;
