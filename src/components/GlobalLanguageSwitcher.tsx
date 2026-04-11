@@ -28,6 +28,12 @@ export default function GlobalLanguageSwitcher() {
   const inEditor = pathname.startsWith("/admin") || pathname.startsWith("/super-admin/editor");
   const isAdminPage = pathname.startsWith("/admin");
   const isMobileAdminPage = isMobileViewport && isAdminPage;
+  const mobileAdminTopClassName =
+    isMobileAdminPage && allowMobileAdminSwitcher
+      ? "top-[calc(env(safe-area-inset-top)+0.75rem)]"
+      : inEditor
+        ? "top-[4.25rem] md:top-[4.5rem]"
+        : "top-3 md:top-5";
   const resolvedLocale = useMemo(() => resolveSupportedLocale(locale), [locale]);
 
   const selected = useMemo(
@@ -215,9 +221,7 @@ export default function GlobalLanguageSwitcher() {
   return (
     <div
       data-no-translate="1"
-      className={`pointer-events-none fixed right-3 ${isMobileAdminPage ? "z-[2147483605]" : "z-[20010]"} md:right-5 ${
-        inEditor ? "top-[4.25rem] md:top-[4.5rem]" : "top-3 md:top-5"
-      }`}
+      className={`pointer-events-none fixed right-3 ${isMobileAdminPage ? "z-[2147483605]" : "z-[20010]"} ${mobileAdminTopClassName} md:right-5`}
     >
       <div ref={rootRef} className="pointer-events-auto relative">
         <button

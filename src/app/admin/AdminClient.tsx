@@ -4239,7 +4239,35 @@ function hasSupportMerchantAvatarCoverage(profile: MerchantListPublishedSite | n
 
 const SUPPORT_MERCHANT_PROFILE_REFRESH_TTL_MS = 1_000;
 
-function readMobileVisualViewportInsets() {
+function readMobileVisualViewportLayoutHeightCandidate() {
+  if (typeof window === "undefined") {
+    return 0;
+  }
+  const visualViewport = window.visualViewport;
+  const topRaw = visualViewport && Number.isFinite(visualViewport.offsetTop) ? visualViewport.offsetTop : 0;
+  const visualViewportExtent = visualViewport ? visualViewport.height + topRaw : 0;
+  const documentElementHeight =
+    typeof document !== "undefined" ? Number.parseInt(String(document.documentElement?.clientHeight ?? 0), 10) : 0;
+  return Math.max(
+    0,
+    Math.round(
+      Math.max(
+        Number.isFinite(window.innerHeight) ? window.innerHeight : 0,
+        Number.isFinite(documentElementHeight) ? documentElementHeight : 0,
+        Number.isFinite(visualViewportExtent) ? visualViewportExtent : 0,
+      ),
+    ),
+  );
+}
+
+function readMobileVisualViewportOrientation() {
+  if (typeof window === "undefined") {
+    return "portrait";
+  }
+  return window.innerWidth > window.innerHeight ? "landscape" : "portrait";
+}
+
+function readMobileVisualViewportInsets(layoutViewportHeight?: number) {
   if (typeof window === "undefined") {
     return { top: 0, bottom: 0 };
   }
@@ -4249,7 +4277,11 @@ function readMobileVisualViewportInsets() {
   }
   const topRaw = Number.isFinite(visualViewport.offsetTop) ? visualViewport.offsetTop : 0;
   const top = Math.max(0, Math.round(topRaw));
-  const bottomRaw = window.innerHeight - (visualViewport.height + topRaw);
+  const layoutHeight =
+    typeof layoutViewportHeight === "number" && Number.isFinite(layoutViewportHeight) && layoutViewportHeight > 0
+      ? layoutViewportHeight
+      : readMobileVisualViewportLayoutHeightCandidate();
+  const bottomRaw = layoutHeight - (visualViewport.height + topRaw);
   const bottom = Number.isFinite(bottomRaw) ? Math.max(0, Math.round(bottomRaw)) : 0;
   return { top, bottom };
 }
@@ -4865,6 +4897,10 @@ export default function AdminClient({
     official: false,
     peer: false,
   });
+  const [supportReadStateHydrated, setSupportReadStateHydrated] = useState({
+    official: false,
+    peer: false,
+  });
   const [supportPushStandalone, setSupportPushStandalone] = useState(() => isSupportStandaloneDisplayMode());
   const [prefersSystemDarkMode, setPrefersSystemDarkMode] = useState(() =>
     typeof window !== "undefined" && typeof window.matchMedia === "function"
@@ -4919,6 +4955,8 @@ export default function AdminClient({
   const supportPeerProfileLoadingIdsRef = useRef(new Set<string>());
   const supportPeerProfileFetchedAtRef = useRef<Record<string, number>>({});
   const supportNotificationPreferencesKeyRef = useRef("");
+  const mobileVisualViewportLayoutHeightRef = useRef(readMobileVisualViewportLayoutHeightCandidate());
+  const mobileVisualViewportOrientationRef = useRef(readMobileVisualViewportOrientation());
   const resizeSupportComposerInput = useCallback((target?: HTMLTextAreaElement | null) => {
     const input = target ?? supportInputRef.current;
     if (!input) return;
@@ -4962,7 +5000,19 @@ export default function AdminClient({
   useEffect(() => {
     if (typeof window === "undefined") return;
     const syncMobileVisualViewportInsets = () => {
-      const nextInsets = readMobileVisualViewportInsets();
+      const nextOrientation = readMobileVisualViewportOrientation();
+      const nextLayoutHeightCandidate = readMobileVisualViewportLayoutHeightCandidate();
+      if (mobileVisualViewportOrientationRef.current !== nextOrientation) {
+        mobileVisualViewportOrientationRef.current = nextOrientation;
+        mobileVisualViewportLayoutHeightRef.current = nextLayoutHeightCandidate;
+      } else {
+        const estimatedInsets = readMobileVisualViewportInsets(mobileVisualViewportLayoutHeightRef.current);
+        const keyboardLikelyVisible = estimatedInsets.bottom > 96;
+        if (!keyboardLikelyVisible || nextLayoutHeightCandidate > mobileVisualViewportLayoutHeightRef.current) {
+          mobileVisualViewportLayoutHeightRef.current = nextLayoutHeightCandidate;
+        }
+      }
+      const nextInsets = readMobileVisualViewportInsets(mobileVisualViewportLayoutHeightRef.current);
       setMobileVisualViewportInsets((current) =>
         current.top === nextInsets.top && current.bottom === nextInsets.bottom ? current : nextInsets,
       );
@@ -9549,7 +9599,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
   const supportPeerUnreadContactIds = useMemo(() => {
     const unreadContactIds = new Set<string>();
-    if (!currentSupportMerchantId) return unreadContactIds;
+    if (!currentSupportMerchantId || !supportReadStateHydrated.peer) return unreadContactIds;
     supportPeerContacts.forEach((contact) => {
       const latestIncomingMessage = findLatestIncomingPeerMessage(
         supportPeerThreadByContactMerchantId.get(contact.merchantId),
@@ -9563,22 +9613,23 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       }
     });
     return unreadContactIds;
-  }, [currentSupportMerchantId, supportPeerContacts, supportPeerLastReadMap, supportPeerThreadByContactMerchantId]);
+  }, [currentSupportMerchantId, supportPeerContacts, supportPeerLastReadMap, supportPeerThreadByContactMerchantId, supportReadStateHydrated.peer]);
   const supportHasUnreadOfficialMessages =
+    supportReadStateHydrated.official &&
     !!latestSupportAdminMessageAt &&
     !!supportReadMerchantId &&
     new Date(latestSupportAdminMessageAt).getTime() > new Date(supportLastReadAt || 0).getTime();
   const supportUnreadOfficialMessageCount = useMemo(() => {
-    if (!supportReadMerchantId) return 0;
+    if (!supportReadMerchantId || !supportReadStateHydrated.official) return 0;
     const lastReadTimestamp = new Date(supportLastReadAt || 0).getTime();
     return (supportThread?.messages ?? []).reduce((count, message) => {
       if (message.sender !== "super_admin") return count;
       const createdAt = new Date(normalizeSupportMessageTimestamp(message.createdAt) || 0).getTime();
       return createdAt > lastReadTimestamp ? count + 1 : count;
     }, 0);
-  }, [supportLastReadAt, supportReadMerchantId, supportThread?.messages]);
+  }, [supportLastReadAt, supportReadMerchantId, supportThread?.messages, supportReadStateHydrated.official]);
   const supportUnreadPeerMessageCount = useMemo(() => {
-    if (!currentSupportMerchantId) return 0;
+    if (!currentSupportMerchantId || !supportReadStateHydrated.peer) return 0;
     let unreadCount = 0;
     supportPeerContacts.forEach((contact) => {
       const thread = supportPeerThreadByContactMerchantId.get(contact.merchantId);
@@ -9595,9 +9646,13 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       });
     });
     return unreadCount;
-  }, [currentSupportMerchantId, supportPeerContacts, supportPeerLastReadMap, supportPeerThreadByContactMerchantId]);
+  }, [currentSupportMerchantId, supportPeerContacts, supportPeerLastReadMap, supportPeerThreadByContactMerchantId, supportReadStateHydrated.peer]);
   const supportUnreadBadgeCount = supportUnreadOfficialMessageCount + supportUnreadPeerMessageCount;
-  const supportUnreadStateHydrated = supportUnreadHydrationState.official && supportUnreadHydrationState.peer;
+  const supportUnreadStateHydrated =
+    supportUnreadHydrationState.official &&
+    supportUnreadHydrationState.peer &&
+    supportReadStateHydrated.official &&
+    supportReadStateHydrated.peer;
   const supportEffectiveBadgeCount =
     supportUnreadStateHydrated
       ? supportUnreadBadgeCount
@@ -9656,18 +9711,14 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     (supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY || !!selectedSupportPeerContact);
   useEffect(() => {
     if (typeof window === "undefined" || typeof document === "undefined") return;
-    const visible =
-      !isPlatformEditor &&
-      !isDesktopEditorSidebar &&
-      supportInterfaceOpen &&
-      supportMobileHomeTab === "self";
+    const visible = isMobileSupportDialog && supportMobileHomeTab === "self";
     document.documentElement.setAttribute("data-mobile-language-switcher", visible ? "show" : "hide");
     window.dispatchEvent(
       new CustomEvent("merchant-mobile-language-switcher-change", {
         detail: { visible },
       }),
     );
-  }, [isDesktopEditorSidebar, isPlatformEditor, supportInterfaceOpen, supportMobileHomeTab]);
+  }, [isMobileSupportDialog, supportMobileHomeTab]);
   useEffect(() => {
     return () => {
       if (typeof window === "undefined" || typeof document === "undefined") return;
@@ -9919,6 +9970,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   useEffect(() => {
     if (isPlatformEditor) return;
     setSupportUnreadHydrationState({
+      official: false,
+      peer: false,
+    });
+    setSupportReadStateHydrated({
       official: false,
       peer: false,
     });
@@ -11077,18 +11132,21 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     if (isPlatformEditor || typeof window === "undefined") return;
     if (!supportReadMerchantId) {
       setSupportLastReadAt("");
+      setSupportReadStateHydrated((current) => (current.official ? { ...current, official: false } : current));
       supportLastIncomingAdminMessageKeyRef.current = "";
       return;
     }
     setSupportLastReadAt(
       normalizeSupportMessageTimestamp(localStorage.getItem(buildSupportLastReadStorageKey(supportReadMerchantId))),
     );
+    setSupportReadStateHydrated((current) => (current.official ? current : { ...current, official: true }));
   }, [isPlatformEditor, supportReadMerchantId]);
 
   useEffect(() => {
     if (isPlatformEditor || typeof window === "undefined") return;
     if (!currentSupportMerchantId) {
       setSupportPeerLastReadMap({});
+      setSupportReadStateHydrated((current) => (current.peer ? { ...current, peer: false } : current));
       supportLastIncomingPeerMessageKeyRef.current = "";
       return;
     }
@@ -11114,6 +11172,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       }
       return nextLastReadMap;
     });
+    setSupportReadStateHydrated((current) => (current.peer ? current : { ...current, peer: true }));
   }, [currentSupportMerchantId, isPlatformEditor, supportPeerContacts]);
 
   useEffect(() => {
@@ -11603,6 +11662,18 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       window.clearTimeout(timer);
     };
   }, [isPlatformEditor, latestVisibleSupportMessageKey, selectedSupportConversationVisible, selectedSupportLoading, supportInterfaceOpen]);
+
+  useEffect(() => {
+    if (!showMobileSupportThread || mobileVisualViewportInsets.bottom <= 0 || typeof window === "undefined") return;
+    const viewport = supportMessagesViewportRef.current;
+    if (!viewport) return;
+    const timer = window.setTimeout(() => {
+      viewport.scrollTo({ top: viewport.scrollHeight, behavior: "auto" });
+    }, 48);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [mobileVisualViewportInsets.bottom, showMobileSupportThread]);
 
   useEffect(() => {
     if (
@@ -13822,6 +13893,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           ? supportMobileFaollaContent
           : supportMobileSelfContent;
   const isSupportMobileKeyboardVisible = mobileVisualViewportInsets.bottom > 0;
+  const supportMobileViewportFrameStyle: CSSProperties | undefined = isMobileSupportDialog
+    ? {
+        top: `${mobileVisualViewportInsets.top}px`,
+        bottom: `${mobileVisualViewportInsets.bottom}px`,
+      }
+    : undefined;
 
   const supportMobileBottomNav = (
     <div
@@ -13928,14 +14005,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     isMobileSupportDialog && !showMobileSupportThread && !isSupportMobileKeyboardVisible
       ? renderTopMostOverlay(supportMobileBottomNav)
       : null;
-
-  const mobileSupportComposerStyle: CSSProperties | undefined =
-    isSupportMobileKeyboardVisible
-      ? {
-          transform: `translateY(-${mobileVisualViewportInsets.bottom}px)`,
-          willChange: "transform",
-        }
-      : undefined;
 
   const supportMobileDialogContent = showMobileSupportThread ? (
     <div
@@ -14078,7 +14147,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       </div>
       <div
         className="shrink-0 overscroll-none border-t border-slate-200/80 bg-[#edf1f7]/98 px-3 pb-[env(safe-area-inset-bottom)] pt-1 shadow-[0_-8px_30px_rgba(15,23,42,0.06)] backdrop-blur"
-        style={mobileSupportComposerStyle}
         onTouchMove={(event) => {
           event.stopPropagation();
         }}
@@ -14477,6 +14545,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       <>
         <main
           className={`${supportMobileShellClassName} fixed inset-x-0 top-0 bottom-0 z-[120] overflow-hidden overscroll-none ${supportMobileBackgroundClassName} touch-manipulation [&_input]:!text-base [&_select]:!text-base [&_textarea]:!text-base`}
+          style={supportMobileViewportFrameStyle}
         >
           <div className="flex h-full min-h-0 flex-col overflow-hidden">
             {supportMobileDialogContent}
@@ -16264,6 +16333,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               />
               <div
                 className={`fixed inset-x-0 top-0 bottom-0 z-[2147483301] ${isMobileSupportDialog ? "" : "flex items-center justify-center p-4"}`}
+                style={isMobileSupportDialog ? supportMobileViewportFrameStyle : undefined}
               >
                 {isMobileSupportDialog ? (
                   <>

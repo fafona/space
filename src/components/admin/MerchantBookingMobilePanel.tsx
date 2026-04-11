@@ -669,7 +669,7 @@ export default function MerchantBookingMobilePanel({
     <>
       <div ref={rootRef} className="space-y-3" {...pullToRefreshBind}>
         <div
-          className={`sticky top-0 z-20 -mx-4 space-y-3 border-b border-slate-200/80 px-4 pb-3 pt-[calc(env(safe-area-inset-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur ${
+          className={`sticky top-0 z-20 -mx-4 space-y-2.5 border-b border-slate-200/80 px-4 pb-2.5 pt-[calc(env(safe-area-inset-top)+0.5rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur ${
             darkMode
               ? "bg-[rgba(15,23,42,0.96)] supports-[backdrop-filter]:bg-[rgba(15,23,42,0.9)]"
               : "bg-[rgba(248,250,252,0.96)] supports-[backdrop-filter]:bg-[rgba(248,250,252,0.9)]"

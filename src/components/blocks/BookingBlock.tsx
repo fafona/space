@@ -95,6 +95,16 @@ function getFormFieldClass(disabled: boolean) {
   }`;
 }
 
+function resolveBookingAvailableTimeRangeSelection(value: string) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return "";
+  const matchedRange = normalized.match(/^(\d{2}:\d{2})-(\d{2}:\d{2})$/);
+  if (matchedRange) {
+    return matchedRange[1] ?? "";
+  }
+  return /^\d{2}:\d{2}$/.test(normalized) ? normalized : "";
+}
+
 export default function BookingBlock({
   runtimeSiteId = "",
   runtimeSiteName = "",
@@ -184,6 +194,13 @@ export default function BookingBlock({
           ? normalizeMerchantBookingNoteInput(value)
           : value;
     setDraft((current) => ({ ...current, [key]: nextValue }));
+  };
+
+  const handleAvailableTimeRangeSelect = (value: string) => {
+    if (!isLiveBooking) return;
+    const nextTime = resolveBookingAvailableTimeRangeSelection(value);
+    if (!nextTime) return;
+    handleFieldChange("appointmentTimeInput", nextTime);
   };
 
   const submitBooking = async () => {
@@ -392,12 +409,20 @@ export default function BookingBlock({
               {availableTimeRanges.length > 0 ? (
                 <div className="flex flex-wrap gap-2 pt-1">
                   {availableTimeRanges.map((item) => (
-                    <span
+                    <button
                       key={item}
-                      className="rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-[11px] font-medium text-sky-700"
+                      type="button"
+                      className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition ${
+                        resolveBookingAvailableTimeRangeSelection(item) === draft.appointmentTimeInput
+                          ? "border-sky-300 bg-sky-100 text-sky-800"
+                          : "border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100"
+                      } ${!isLiveBooking ? "cursor-not-allowed opacity-60" : ""}`}
+                      onClick={() => handleAvailableTimeRangeSelect(item)}
+                      disabled={!isLiveBooking}
+                      aria-label={`选择时间 ${item}`}
                     >
                       {item}
-                    </span>
+                    </button>
                   ))}
                 </div>
               ) : null}
