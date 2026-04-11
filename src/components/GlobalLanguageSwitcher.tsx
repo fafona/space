@@ -68,8 +68,16 @@ export default function GlobalLanguageSwitcher() {
       readVisibility();
     };
     readVisibility();
+    const observer = new MutationObserver(() => {
+      readVisibility();
+    });
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-mobile-language-switcher"],
+    });
     window.addEventListener("merchant-mobile-language-switcher-change", handleVisibilityChange as EventListener);
     return () => {
+      observer.disconnect();
       window.removeEventListener("merchant-mobile-language-switcher-change", handleVisibilityChange as EventListener);
     };
   }, []);

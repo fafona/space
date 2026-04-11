@@ -9515,14 +9515,18 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     (supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY || !!selectedSupportPeerContact);
   useEffect(() => {
     if (typeof window === "undefined" || typeof document === "undefined") return;
-    const visible = !isPlatformEditor && !isDesktopEditorSidebar && supportMobileHomeTab === "self";
+    const visible =
+      !isPlatformEditor &&
+      !isDesktopEditorSidebar &&
+      supportInterfaceOpen &&
+      supportMobileHomeTab === "self";
     document.documentElement.setAttribute("data-mobile-language-switcher", visible ? "show" : "hide");
     window.dispatchEvent(
       new CustomEvent("merchant-mobile-language-switcher-change", {
         detail: { visible },
       }),
     );
-  }, [isDesktopEditorSidebar, isPlatformEditor, supportMobileHomeTab]);
+  }, [isDesktopEditorSidebar, isPlatformEditor, supportInterfaceOpen, supportMobileHomeTab]);
   useEffect(() => {
     return () => {
       if (typeof window === "undefined" || typeof document === "undefined") return;
