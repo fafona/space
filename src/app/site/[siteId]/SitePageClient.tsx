@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
+import ServiceMaintenancePage from "@/components/ServiceMaintenancePage";
 import BlockRenderer from "@/components/blocks/BlockRenderer";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
 import {
@@ -17,7 +18,7 @@ import { sanitizeBlocksForRuntime } from "@/lib/blocksSanitizer";
 import { MOBILE_BREAKPOINT } from "@/lib/deviceViewport";
 import { cloneBlocks, getPagePlanConfigFromBlocks } from "@/lib/pagePlans";
 import { PUBLISH_SYNC_STORAGE_KEY, subscribePublishSync } from "@/lib/publishSync";
-import { buildMerchantBackendHref, buildPlatformHomeHref, buildSiteStoreScope } from "@/lib/siteRouting";
+import { buildPlatformHomeHref, buildSiteStoreScope } from "@/lib/siteRouting";
 import {
   canReachSupabaseGateway,
   getResolvedSupabaseUrl,
@@ -432,20 +433,11 @@ export function SitePageClient({
 
   if (!hasRenderableBlocks) {
     return (
-      <main className="min-h-screen bg-slate-100 p-6">
-        <div className="mx-auto max-w-6xl rounded-lg border bg-white p-6">
-          <h1 className="text-xl font-bold text-slate-900">该站点暂无已发布内容</h1>
-          <p className="mt-2 text-sm text-slate-600">请先在后台发布该商户的专属页面。</p>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <Link href={buildMerchantBackendHref(site?.id ?? siteId)} className="rounded border px-3 py-2 text-sm hover:bg-slate-50">
-              去后台发布专属页面
-            </Link>
-            <Link href={buildPlatformHomeHref()} className="rounded border px-3 py-2 text-sm hover:bg-slate-50">
-              返回总站首页
-            </Link>
-          </div>
-        </div>
-      </main>
+      <ServiceMaintenancePage
+        title="站点准备中"
+        merchantName={effectiveMerchantName || siteId}
+        description="该商户站点暂未完成首次发布，当前入口暂不可用，请稍后再访问。"
+      />
     );
   }
 

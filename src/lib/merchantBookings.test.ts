@@ -4,6 +4,7 @@ import {
   buildDefaultBookingStoreOptions,
   buildMerchantBookingId,
   formatMerchantBookingIdDate,
+  getMerchantBookingTimeAvailabilityIssue,
   getMerchantBookingStatusLabel,
   joinMerchantBookingDateTime,
   MERCHANT_BOOKING_CUSTOMER_NAME_MAX_BYTES,
@@ -98,6 +99,14 @@ test("isMerchantBookingTimeAllowed respects configured booking time ranges", () 
   assert.equal(isMerchantBookingTimeAllowed("19:00", ranges), false);
 });
 
+test("getMerchantBookingTimeAvailabilityIssue only warns for complete disallowed times", () => {
+  const ranges = ["09:00-12:00", "14:00-18:00"];
+  assert.equal(getMerchantBookingTimeAvailabilityIssue("", ranges), "");
+  assert.equal(getMerchantBookingTimeAvailabilityIssue("09", ranges), "");
+  assert.equal(getMerchantBookingTimeAvailabilityIssue("09:30", ranges), "");
+  assert.equal(getMerchantBookingTimeAvailabilityIssue("12:30", ranges), "预约时间需在可预约时段内");
+});
+
 test("validateMerchantBookingInput returns friendly issues", () => {
   const issues = validateMerchantBookingInput({
     store: "",
@@ -149,6 +158,24 @@ test("validateMerchantBookingInput rejects impossible calendar dates", () => {
   });
 
   assert.deepEqual(issues, ["\u9884\u7ea6\u65e5\u671f\u65f6\u95f4\u683c\u5f0f\u65e0\u6548"]);
+});
+
+test("validateMerchantBookingInput rejects appointment times outside configured ranges", () => {
+  const issues = validateMerchantBookingInput(
+    {
+      store: "Main",
+      item: "Consultation",
+      appointmentAt: "2026-03-19T12:30",
+      title: "Mr",
+      customerName: "Felix",
+      email: "test@example.com",
+      phone: "123456",
+      note: "",
+    },
+    { availableTimeRanges: ["09:00-12:00", "14:00-18:00"] },
+  );
+
+  assert.deepEqual(issues, ["预约时间需在可预约时段内"]);
 });
 
 test("validateMerchantBookingInput rejects customer name and note beyond byte limits", () => {

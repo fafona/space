@@ -9,7 +9,7 @@ import {
   buildDefaultBookingTitleOptions,
   createEmptyMerchantBookingInput,
   formatMerchantBookingDateTime,
-  isMerchantBookingTimeAllowed,
+  getMerchantBookingTimeAvailabilityIssue,
   joinMerchantBookingDateTime,
   normalizeMerchantBookingCustomerNameInput,
   normalizeMerchantBookingNoteInput,
@@ -119,6 +119,10 @@ export default function BookingBlock({
     [props.bookingAvailableTimeRanges],
   );
   const [draft, setDraft] = useState(() => buildInitialDraft(storeOptions, itemOptions, titleOptions));
+  const appointmentTimeIssue = useMemo(
+    () => getMerchantBookingTimeAvailabilityIssue(draft.appointmentTimeInput, availableTimeRanges),
+    [availableTimeRanges, draft.appointmentTimeInput],
+  );
   const [submittedState, setSubmittedState] = useState<SubmittedBookingState | null>(null);
   const [mode, setMode] = useState<"form" | "success">("form");
   const [submitting, setSubmitting] = useState(false);
@@ -182,8 +186,9 @@ export default function BookingBlock({
     setSubmitting(true);
     setError("");
     try {
-      if (!isMerchantBookingTimeAllowed(draft.appointmentTimeInput, availableTimeRanges)) {
-        throw new Error("预约时间需在可预约时段内");
+      const currentAppointmentTimeIssue = getMerchantBookingTimeAvailabilityIssue(draft.appointmentTimeInput, availableTimeRanges);
+      if (currentAppointmentTimeIssue) {
+        throw new Error(currentAppointmentTimeIssue);
       }
       const payload = sanitizeMerchantBookingEditableInput({
         ...draft,
@@ -367,7 +372,9 @@ export default function BookingBlock({
                 timeValue={draft.appointmentTimeInput}
                 disabled={!isLiveBooking}
                 dateInputClassName={`${getFormFieldClass(!isLiveBooking)} min-w-[180px] flex-1`}
-                timeInputClassName={`${getFormFieldClass(!isLiveBooking)} w-[112px] shrink-0`}
+                timeInputClassName={`${getFormFieldClass(!isLiveBooking)} w-[112px] shrink-0 ${
+                  appointmentTimeIssue ? "border-rose-300 bg-rose-50 focus:border-rose-500 focus:ring-rose-500/20" : ""
+                }`}
                 onDateChange={(value) => handleFieldChange("appointmentDateInput", value)}
                 onTimeChange={(value) => handleFieldChange("appointmentTimeInput", value)}
               />
@@ -381,6 +388,11 @@ export default function BookingBlock({
                       {item}
                     </span>
                   ))}
+                </div>
+              ) : null}
+              {appointmentTimeIssue ? (
+                <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                  {appointmentTimeIssue}
                 </div>
               ) : null}
             </label>
@@ -448,7 +460,7 @@ export default function BookingBlock({
             <button
               type="submit"
               className="rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={!isLiveBooking || submitting}
+              disabled={!isLiveBooking || submitting || Boolean(appointmentTimeIssue)}
             >
               {submitting ? "提交中..." : submittedState ? updateLabel : submitLabel}
             </button>

@@ -697,15 +697,21 @@ export default function MerchantBookingMobilePanel({
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-emerald-500 text-[13px] font-semibold text-white shadow-sm">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-emerald-500 text-sm font-semibold text-white shadow-sm">
               预约
             </div>
-            <input
-              className="min-h-[41px] min-w-0 flex-1 rounded-[20px] border border-slate-200 bg-white px-3.5 py-2 text-[14px] leading-5 text-slate-900 outline-none transition focus:border-slate-900"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder={getMerchantBookingFieldText("searchMobile", locale)}
-            />
+            <div className="flex min-h-[41px] min-w-0 flex-1 items-center gap-2.5 rounded-[20px] border border-slate-200 bg-[#f3f4f6] px-3.5 py-2 shadow-sm">
+              <svg viewBox="0 0 24 24" className="h-[17px] w-[17px] shrink-0 text-slate-400" fill="none" aria-hidden="true">
+                <circle cx="11" cy="11" r="6.5" stroke="currentColor" strokeWidth="1.9" />
+                <path d="m16 16 4 4" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+              </svg>
+              <input
+                className="min-w-0 flex-1 bg-transparent text-[14px] leading-5 text-slate-900 outline-none placeholder:text-slate-400"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder={getMerchantBookingFieldText("searchMobile", locale)}
+              />
+            </div>
           </div>
           <div className="flex flex-wrap gap-2">
             {[

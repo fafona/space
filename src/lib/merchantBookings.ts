@@ -44,6 +44,10 @@ export type MerchantBookingStoredRecord = MerchantBookingRecord & {
 
 export type MerchantBookingUpdateAction = "update" | "cancel";
 
+export type MerchantBookingValidationOptions = {
+  availableTimeRanges?: unknown;
+};
+
 export type MerchantBookingActionInput = {
   bookingId: string;
   editToken: string;
@@ -142,6 +146,16 @@ export function isMerchantBookingTimeAllowed(timeValue: string, configuredRanges
       currentMinutes <= endMinutes
     );
   });
+}
+
+export function getMerchantBookingTimeAvailabilityIssue(timeValue: string | null | undefined, configuredRanges: unknown) {
+  const rawValue = normalizeSingleLineText(timeValue);
+  if (!rawValue) return "";
+  const normalizedTime = normalizeBookingTimeValue(rawValue);
+  const ranges = normalizeMerchantBookingTimeRangeOptions(configuredRanges);
+  if (ranges.length === 0 || !normalizedTime) return "";
+  if (isMerchantBookingTimeAllowed(normalizedTime, ranges)) return "";
+  return "预约时间需在可预约时段内";
 }
 
 export function buildDefaultBookingStoreOptions(siteName?: string) {
@@ -257,13 +271,18 @@ export function getMerchantBookingNoteError(value: string | null | undefined) {
   return "";
 }
 
-export function validateMerchantBookingInput(value: MerchantBookingEditableInput) {
+export function validateMerchantBookingInput(value: MerchantBookingEditableInput, options?: MerchantBookingValidationOptions) {
   const issues: string[] = [];
   if (!value.store) issues.push("\u8bf7\u9009\u62e9\u9884\u7ea6\u5e97\u94fa");
   if (!value.item) issues.push("\u8bf7\u9009\u62e9\u9884\u7ea6\u9879\u76ee");
   if (!value.appointmentAt) issues.push("\u8bf7\u9009\u62e9\u9884\u7ea6\u65e5\u671f\u65f6\u95f4");
   if (value.appointmentAt && !isValidDateTimeValue(value.appointmentAt)) {
     issues.push("\u9884\u7ea6\u65e5\u671f\u65f6\u95f4\u683c\u5f0f\u65e0\u6548");
+  }
+  if (value.appointmentAt && isValidDateTimeValue(value.appointmentAt)) {
+    const { time } = splitMerchantBookingDateTime(value.appointmentAt);
+    const timeAvailabilityIssue = getMerchantBookingTimeAvailabilityIssue(time, options?.availableTimeRanges);
+    if (timeAvailabilityIssue) issues.push(timeAvailabilityIssue);
   }
   if (!value.title) issues.push("\u8bf7\u9009\u62e9\u79f0\u8c13");
   if (!value.customerName) issues.push("\u8bf7\u586b\u5199\u79f0\u8c13\u6216\u59d3\u540d");

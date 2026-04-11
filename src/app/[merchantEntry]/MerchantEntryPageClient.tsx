@@ -1,14 +1,13 @@
 "use client";
 
-import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
+import ServiceMaintenancePage from "@/components/ServiceMaintenancePage";
 import SitePageClient from "@/app/site/[siteId]/SitePageClient";
 import { loadPlatformState, subscribePlatformState } from "@/data/platformControlStore";
 import { isMerchantNumericId, normalizeDomainPrefix } from "@/lib/merchantIdentity";
 import { resolvePublishedSiteByPrefix } from "@/lib/publishedSiteLookup";
-import { buildPlatformHomeHref } from "@/lib/siteRouting";
 import { useHydrated } from "@/lib/useHydrated";
 
 type MerchantEntryPageClientProps = {
@@ -102,17 +101,5 @@ export default function MerchantEntryPageClient({
     return <SitePageClient forcedSiteId={resolvedSiteId} initialIsMobileViewport={initialIsMobileViewport} />;
   }
 
-  return (
-    <main className="min-h-screen bg-slate-100 p-6">
-      <div className="mx-auto max-w-3xl rounded-lg border bg-white p-6 shadow-sm">
-        <h1 className="text-lg font-semibold text-slate-900">地址未匹配到站点</h1>
-        <p className="mt-2 text-sm text-slate-600">请检查商户后台地址、商户 ID 或商户前台前缀是否正确。</p>
-        <div className="mt-4 flex flex-wrap gap-2">
-          <Link href={buildPlatformHomeHref()} className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50">
-            去总站首页
-          </Link>
-        </div>
-      </div>
-    </main>
-  );
+  return <ServiceMaintenancePage title="站点准备中" description="该商户站点暂未完成首次发布，当前入口暂不可用，请稍后再访问。" />;
 }

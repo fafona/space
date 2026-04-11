@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   buildMerchantBookingId,
+  normalizeMerchantBookingTimeRangeOptions,
   sanitizeMerchantBookingEditableInput,
   shouldSendMerchantBookingConfirmationEmail,
   type MerchantBookingActionInput,
@@ -14,6 +15,7 @@ import {
   withoutMerchantBookingToken,
 } from "./merchantBookings";
 import { sendMerchantBookingConfirmationEmail } from "./merchantBookingEmails";
+import { fetchPublishedSitePayloadFromSupabase } from "./publishedSiteData";
 
 type MerchantBookingStoreFile = {
   version: 1;
@@ -84,6 +86,25 @@ function sortNewestFirst<T extends { updatedAt?: string; createdAt?: string }>(r
   });
 }
 
+async function loadPublishedBookingAvailableTimeRanges(siteId: string) {
+  const normalizedSiteId = String(siteId ?? "").trim();
+  if (!normalizedSiteId) return [] as string[];
+  try {
+    const payload = await fetchPublishedSitePayloadFromSupabase(normalizedSiteId);
+    if (!payload) return [] as string[];
+    const next: string[] = [];
+    payload.blocks.forEach((block) => {
+      if (block.type !== "booking") return;
+      normalizeMerchantBookingTimeRangeOptions(block.props.bookingAvailableTimeRanges).forEach((item) => {
+        if (!next.includes(item)) next.push(item);
+      });
+    });
+    return next;
+  } catch {
+    return [] as string[];
+  }
+}
+
 export async function listMerchantBookings(siteId: string): Promise<MerchantBookingRecord[]> {
   const normalizedSiteId = String(siteId ?? "").trim();
   if (!normalizedSiteId) return [];
@@ -100,7 +121,8 @@ export async function createMerchantBooking(input: MerchantBookingCreateInput): 
   editToken: string;
 }> {
   const editable = sanitizeMerchantBookingEditableInput(input);
-  const issues = validateMerchantBookingInput(editable);
+  const availableTimeRanges = await loadPublishedBookingAvailableTimeRanges(input.siteId);
+  const issues = validateMerchantBookingInput(editable, { availableTimeRanges });
   if (!input.siteId.trim()) {
     issues.push("站点信息缺失");
   }
@@ -169,7 +191,8 @@ export async function updateMerchantBooking(input: MerchantBookingActionInput): 
     }
 
     const nextEditable = sanitizeMerchantBookingEditableInput(input.updates, current);
-    const issues = validateMerchantBookingInput(nextEditable);
+    const availableTimeRanges = await loadPublishedBookingAvailableTimeRanges(current.siteId);
+    const issues = validateMerchantBookingInput(nextEditable, { availableTimeRanges });
     if (issues.length > 0) {
       throw new Error(issues[0]);
     }
@@ -265,7 +288,8 @@ export async function updateMerchantBookingBySite(input: {
     const nextEditable = input.updates
       ? sanitizeMerchantBookingEditableInput(input.updates, current)
       : sanitizeMerchantBookingEditableInput(current, current);
-    const issues = validateMerchantBookingInput(nextEditable);
+    const availableTimeRanges = await loadPublishedBookingAvailableTimeRanges(siteId);
+    const issues = validateMerchantBookingInput(nextEditable, { availableTimeRanges });
     if (issues.length > 0) {
       throw new Error(issues[0]);
     }

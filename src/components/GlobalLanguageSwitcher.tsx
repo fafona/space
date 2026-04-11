@@ -26,6 +26,8 @@ export default function GlobalLanguageSwitcher() {
   );
   const [allowMobileAdminSwitcher, setAllowMobileAdminSwitcher] = useState(false);
   const inEditor = pathname.startsWith("/admin") || pathname.startsWith("/super-admin/editor");
+  const isAdminPage = pathname.startsWith("/admin");
+  const isMobileAdminPage = isMobileViewport && isAdminPage;
   const resolvedLocale = useMemo(() => resolveSupportedLocale(locale), [locale]);
 
   const selected = useMemo(
@@ -99,7 +101,7 @@ export default function GlobalLanguageSwitcher() {
       document.removeEventListener("mousedown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [open]);
+  }, [isMobileAdminPage, open]);
 
   useEffect(() => {
     if (!open || !rootRef.current || typeof window === "undefined") return;
@@ -124,7 +126,7 @@ export default function GlobalLanguageSwitcher() {
         right: Math.max(horizontalGap, viewportWidth - triggerRect.right),
         width: `${desiredWidth}px`,
         maxHeight: `${Math.max(220, openUpward ? availableAbove : availableBelow)}px`,
-        zIndex: 2147483600,
+        zIndex: isMobileAdminPage ? 2147483606 : 2147483600,
       });
     };
 
@@ -135,12 +137,11 @@ export default function GlobalLanguageSwitcher() {
       window.removeEventListener("resize", updateMenuStyle);
       window.removeEventListener("scroll", updateMenuStyle, true);
     };
-  }, [open]);
+  }, [isMobileAdminPage, open]);
 
   if (!hydrated) return null;
 
   const isLoginPage = pathname === "/login";
-  const isAdminPage = pathname.startsWith("/admin");
   const showOnMobile = isLoginPage || (isAdminPage && allowMobileAdminSwitcher);
   if (isMobileViewport && !showOnMobile) return null;
 
@@ -214,7 +215,7 @@ export default function GlobalLanguageSwitcher() {
   return (
     <div
       data-no-translate="1"
-      className={`pointer-events-none fixed right-3 z-[20010] md:right-5 ${
+      className={`pointer-events-none fixed right-3 ${isMobileAdminPage ? "z-[2147483605]" : "z-[20010]"} md:right-5 ${
         inEditor ? "top-[4.25rem] md:top-[4.5rem]" : "top-3 md:top-5"
       }`}
     >
