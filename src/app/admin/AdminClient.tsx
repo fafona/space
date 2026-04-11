@@ -3356,6 +3356,7 @@ async function loadPlatformBlocksViaApiFallback() {
 }
 
 type PublishedSiteSnapshot = {
+  siteId: string;
   blocks: Block[];
   slug: string;
   merchantName: string;
@@ -3373,6 +3374,7 @@ type MerchantDraftSnapshot = {
 };
 
 const REMOTE_MERCHANT_DRAFT_SYNC_KEY = "merchant-space:merchant-draft-remote-sync:v1";
+const REMOTE_CONTENT_VERIFIED_KEY = "merchant-space:remote-content-verified:v1";
 
 function merchantDraftSyncScopeToken(scope?: string) {
   const normalized = String(scope ?? "").trim();
@@ -3383,6 +3385,11 @@ function merchantDraftSyncScopeToken(scope?: string) {
 function buildRemoteMerchantDraftSyncStorageKey(scope?: string) {
   const token = merchantDraftSyncScopeToken(scope);
   return token === "default" ? REMOTE_MERCHANT_DRAFT_SYNC_KEY : `${REMOTE_MERCHANT_DRAFT_SYNC_KEY}:${token}`;
+}
+
+function buildRemoteContentVerifiedStorageKey(scope?: string) {
+  const token = merchantDraftSyncScopeToken(scope);
+  return token === "default" ? REMOTE_CONTENT_VERIFIED_KEY : `${REMOTE_CONTENT_VERIFIED_KEY}:${token}`;
 }
 
 function readRemoteMerchantDraftSyncTimestamp(scope?: string) {
@@ -3448,6 +3455,7 @@ async function loadPublishedSiteSnapshotViaApi(siteId: string): Promise<Publishe
           )
         : null;
     return {
+      siteId: normalizedSiteId,
       blocks: sanitized,
       slug: typeof json?.slug === "string" ? json.slug.trim() : "",
       merchantName: typeof json?.merchantName === "string" ? json.merchantName.trim() : "",
@@ -3501,6 +3509,17 @@ async function syncScopedMerchantSiteFromPublishedSnapshot(siteId: string, userE
   const snapshot = await loadPublishedSiteSnapshotViaApi(normalizedSiteId);
   if (!snapshot) return null;
   return applyPublishedSiteSnapshotToScopedMerchantSite(normalizedSiteId, snapshot, userEmail);
+}
+
+async function loadPublishedSiteSnapshotForMerchantIds(merchantIds: string[]) {
+  const uniqueMerchantIds = [...new Set(merchantIds.map((item) => String(item ?? "").trim()).filter(isMerchantNumericId))].slice(0, 8);
+  for (const merchantId of uniqueMerchantIds) {
+    const snapshot = await loadPublishedSiteSnapshotViaApi(merchantId);
+    if (snapshot && snapshot.blocks.length > 0) {
+      return snapshot;
+    }
+  }
+  return null;
 }
 
 async function loadMerchantDraftSnapshotViaApi(merchantIds: string[]): Promise<MerchantDraftSnapshot | null> {
@@ -3988,6 +4007,31 @@ function normalizeSupportBusinessCardComparableUrl(value: string) {
     return url.toString();
   } catch {
     return normalized.replace(/\/+$/, "");
+  }
+}
+
+function readRemoteContentVerifiedTimestamp(scope?: string) {
+  if (typeof window === "undefined") return "";
+  try {
+    return String(localStorage.getItem(buildRemoteContentVerifiedStorageKey(scope)) ?? "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function hasRemoteContentVerifiedStamp(scopes: string[]) {
+  return scopes.some((scope) => Boolean(readRemoteContentVerifiedTimestamp(scope)));
+}
+
+function recordRemoteContentVerifiedTimestamp(scope?: string, recordedAt?: string | null | undefined) {
+  if (typeof window === "undefined") return;
+  const normalizedScope = String(scope ?? "").trim();
+  if (!normalizedScope) return;
+  const normalizedRecordedAt = String(recordedAt ?? "").trim() || new Date().toISOString();
+  try {
+    localStorage.setItem(buildRemoteContentVerifiedStorageKey(normalizedScope), normalizedRecordedAt);
+  } catch {
+    // ignore verification stamp write failures
   }
 }
 
@@ -4734,7 +4778,9 @@ export default function AdminClient({
   const [dialog, setDialog] = useState<CenterDialog | null>(null);
   const [checkingAuth, setCheckingAuth] = useState(startInLoadingState);
   const [hasEditorContent, setHasEditorContent] = useState(true);
-  const [remoteContentVerified, setRemoteContentVerified] = useState<boolean>(!isSupabaseEnabled || isSupabaseFallbackMode);
+  const [remoteContentVerified, setRemoteContentVerified] = useState<boolean>(
+    () => !isSupabaseEnabled || isSupabaseFallbackMode || hasRemoteContentVerifiedStamp([storeScope]),
+  );
   const [publishing, setPublishing] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [merchantDesktopSection, setMerchantDesktopSection] = useState<MerchantDesktopSection>("editor");
@@ -6280,7 +6326,7 @@ export default function AdminClient({
       if (!mounted || isPlatformEditor) return false;
       const hasCachedContent = initialCached.length > 0 || hasMeaningfulCachedDraft();
       if (!hasCachedContent) return false;
-      setRemoteContentVerified(false);
+      setRemoteContentVerified(resolveCachedRemoteVerification());
       setHasEditorContent(true);
       releaseCheckingScreen({ notice });
       return true;
@@ -6315,6 +6361,15 @@ export default function AdminClient({
     };
     const getRemoteDraftSyncScopes = (merchantIds: string[]) =>
       [...new Set([storeScope, ...merchantIds.map((siteId) => buildSiteStoreScope(siteId))].filter(Boolean))];
+    const getRemoteVerificationScopes = (merchantIds: string[]) => getRemoteDraftSyncScopes(merchantIds);
+    const resolveCachedRemoteVerification = (candidateScopes = getCandidateStoreScopes()) =>
+      hasRemoteContentVerifiedStamp(candidateScopes);
+    const markRemoteContentVerified = (candidateScopes: string[], recordedAt?: string | null | undefined) => {
+      candidateScopes.forEach((candidateScope) => {
+        recordRemoteContentVerifiedTimestamp(candidateScope, recordedAt);
+      });
+      setRemoteContentVerified(true);
+    };
     const hasAppliedRemoteDraftAtOrAfter = (updatedAt: string | null | undefined, candidateScopes: string[]) => {
       const remoteUpdatedAtMs = parseIsoTimestampMs(updatedAt);
       if (remoteUpdatedAtMs <= 0) return false;
@@ -6361,7 +6416,7 @@ export default function AdminClient({
       merchantIdsRef.current = [scopedSiteId];
       applyPublishedSiteSnapshotToScopedMerchantSite(scopedSiteId, publishedSnapshot, null);
       setHasEditorContent(true);
-      setRemoteContentVerified(true);
+      markRemoteContentVerified([storeScope, buildSiteStoreScope(scopedSiteId)]);
       applyPersistedBlocksToEditorRef.current(publishedSnapshot.blocks);
       const desktopLoaded = viewportStatesRef.current.desktop.planConfig;
       const mobileLoaded = viewportStatesRef.current.mobile.planConfig;
@@ -6388,7 +6443,7 @@ export default function AdminClient({
       };
     }
 
-    setRemoteContentVerified(false);
+    setRemoteContentVerified(resolveCachedRemoteVerification(getCandidateStoreScopes()));
     const initialCached = applyCachedEditorBlocks();
     if (initialCached.length > 0) {
       releaseCheckingScreen();
@@ -6458,7 +6513,7 @@ export default function AdminClient({
           const cookieBackedAccess = await recoverCookieBackedMerchantAccess(justSignedIn ? 6000 : 4500);
           if (!mounted) return;
           if (cookieBackedAccess?.session || cookieBackedAccess?.merchantId || cookieBackedAccess?.email) {
-            setRemoteContentVerified(false);
+            setRemoteContentVerified(resolveCachedRemoteVerification());
             setHasEditorContent(true);
             setBackendNotice(null);
             releaseCheckingScreen({ notice: null });
@@ -6600,7 +6655,7 @@ export default function AdminClient({
             }
             if (cookieBackedMerchantIdentity) {
               setBackendNotice(null);
-              setRemoteContentVerified(false);
+              setRemoteContentVerified(resolveCachedRemoteVerification());
               setHasEditorContent(true);
               releaseCheckingScreen({ notice: null });
             } else {
@@ -6705,8 +6760,10 @@ export default function AdminClient({
           const remoteDraft = await loadMerchantDraftSnapshotViaApi(resolvedMerchantIds);
           if (!mounted) return;
           const remoteDraftScopes = getRemoteDraftSyncScopes(resolvedMerchantIds);
+          if (remoteDraft) {
+            markRemoteContentVerified(remoteDraftScopes, remoteDraft.updatedAt);
+          }
           if (remoteDraft && shouldApplyRemoteDraft(remoteDraft, remoteDraftScopes)) {
-            setRemoteContentVerified(true);
             applyPersistedBlocksToEditorRef.current(remoteDraft.blocks);
             saveBlocksToStorage(remoteDraft.blocks, storeScope);
             resolvedMerchantIds.forEach((siteId) => {
@@ -6715,6 +6772,30 @@ export default function AdminClient({
               }
             });
             markRemoteDraftApplied(remoteDraft.updatedAt, remoteDraftScopes);
+            releaseCheckingScreen({ notice: null });
+            return;
+          }
+          const publishedSnapshot = await loadPublishedSiteSnapshotForMerchantIds(resolvedMerchantIds);
+          if (!mounted) return;
+          if (publishedSnapshot) {
+            const verificationScopes = getRemoteVerificationScopes([publishedSnapshot.siteId, ...resolvedMerchantIds]);
+            markRemoteContentVerified(verificationScopes);
+            applyPublishedSiteSnapshotToScopedMerchantSite(
+              publishedSnapshot.siteId,
+              publishedSnapshot,
+              session?.user?.email ??
+                (typeof cookieBackedMerchantIdentity?.email === "string" ? cookieBackedMerchantIdentity.email : null),
+            );
+            applyPersistedBlocksToEditorRef.current(publishedSnapshot.blocks);
+            const desktopLoaded = viewportStatesRef.current.desktop.planConfig;
+            const mobileLoaded = viewportStatesRef.current.mobile.planConfig;
+            const combinedLoaded = buildCombinedPersistedBlocks(desktopLoaded, mobileLoaded);
+            savePublishedBlocksToStorage(combinedLoaded, storeScope);
+            verificationScopes.forEach((scope) => {
+              if (scope !== storeScope) {
+                savePublishedBlocksToStorage(combinedLoaded, scope);
+              }
+            });
             releaseCheckingScreen({ notice: null });
             return;
           }
@@ -6734,7 +6815,7 @@ export default function AdminClient({
         if (!mounted) return;
         if (restLoaded && Array.isArray(restLoaded) && restLoaded.length > 0) {
           setHasEditorContent(true);
-          setRemoteContentVerified(true);
+          markRemoteContentVerified(getRemoteVerificationScopes(resolvedMerchantIds));
           applyPersistedBlocksToEditorRef.current(restLoaded);
           const desktopLoaded = viewportStatesRef.current.desktop.planConfig;
           const mobileLoaded = viewportStatesRef.current.mobile.planConfig;
@@ -6756,7 +6837,7 @@ export default function AdminClient({
         if (!mounted) return;
         if (loaded && Array.isArray(loaded) && loaded.length > 0) {
           setHasEditorContent(true);
-          setRemoteContentVerified(true);
+          markRemoteContentVerified(getRemoteVerificationScopes(resolvedMerchantIds));
           applyPersistedBlocksToEditorRef.current(loaded);
           const desktopLoaded = viewportStatesRef.current.desktop.planConfig;
           const mobileLoaded = viewportStatesRef.current.mobile.planConfig;
@@ -6771,7 +6852,7 @@ export default function AdminClient({
           return;
         }
         setHasEditorContent(true);
-        setRemoteContentVerified(gatewayReady);
+        setRemoteContentVerified(gatewayReady || resolveCachedRemoteVerification(getRemoteVerificationScopes(resolvedMerchantIds)));
         releaseCheckingScreen({
           notice: gatewayReady
             ? null
@@ -6786,7 +6867,7 @@ export default function AdminClient({
         if (message.includes("超时")) {
           applyCachedEditorBlocks();
           setHasEditorContent(true);
-          setRemoteContentVerified(false);
+          setRemoteContentVerified(resolveCachedRemoteVerification());
           releaseCheckingScreen({
             notice: isPlatformEditor
               ? "远端加载超时，当前仅展示本地缓存。超级后台发布将走服务端通道。"
@@ -6796,7 +6877,7 @@ export default function AdminClient({
         }
         applyCachedEditorBlocks();
         setHasEditorContent(true);
-        setRemoteContentVerified(false);
+        setRemoteContentVerified(resolveCachedRemoteVerification());
         releaseCheckingScreen({
           notice: isPlatformEditor ? BACKEND_UNAVAILABLE_NOTICE : "当前内容加载失败，请重新登录后重试。",
         });
@@ -8685,6 +8766,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       recordPublishedVersion(publishedBlocks, storeScope);
       recordPublishedVersion(combinedBlocks, storeScope);
       savePublishedBlocksToStorage(combinedBlocks, storeScope);
+      recordRemoteContentVerifiedTimestamp(storeScope);
       if (!isPlatformEditor) {
         const mirrorSiteIds = Array.from(
           new Set(
@@ -8695,9 +8777,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         );
         mirrorSiteIds.forEach((siteId) => {
           savePublishedBlocksToStorage(combinedBlocks, buildSiteStoreScope(siteId));
+          recordRemoteContentVerifiedTimestamp(buildSiteStoreScope(siteId));
         });
         broadcastPublishSync(mirrorSiteIds);
       }
+      setRemoteContentVerified(true);
       trackPublishEvent({
         success: true,
         bytes: payloadBytes,
