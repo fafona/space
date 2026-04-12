@@ -4,6 +4,9 @@ import {
   buildDefaultBookingStoreOptions,
   buildMerchantBookingId,
   formatMerchantBookingIdDate,
+  formatMerchantBookingSlotCapacityRulesText,
+  getMerchantBookingDateAvailabilityIssue,
+  getMerchantBookingSlotCapacityIssue,
   getMerchantBookingTimeAvailabilityIssue,
   getMerchantBookingStatusLabel,
   joinMerchantBookingDateTime,
@@ -11,7 +14,9 @@ import {
   MERCHANT_BOOKING_NOTE_MAX_BYTES,
   normalizeBookingOptionList,
   normalizeMerchantBookingCustomerNameInput,
+  normalizeMerchantBookingDateOptions,
   normalizeMerchantBookingNoteInput,
+  normalizeMerchantBookingSlotCapacityRules,
   normalizeMerchantBookingTimeRangeOptions,
   sanitizeMerchantBookingEditableInput,
   isMerchantBookingTimeAllowed,
@@ -276,6 +281,135 @@ test("withoutMerchantBookingToken removes internal email delivery metadata", () 
     createdAt: "2026-03-19T10:00:00.000Z",
     updatedAt: "2026-03-19T10:30:00.000Z",
   });
+});
+
+test("normalizeMerchantBookingDateOptions keeps valid unique dates only", () => {
+  assert.deepEqual(
+    normalizeMerchantBookingDateOptions("2026-12-25\n2026-02-30\n2026-12-25\n2026-01-01"),
+    ["2026-01-01", "2026-12-25"],
+  );
+});
+
+test("normalizeMerchantBookingSlotCapacityRules normalizes slot capacity lines", () => {
+  assert.deepEqual(
+    normalizeMerchantBookingSlotCapacityRules("09:00-12:00=3\n14:30:2\n14:30=5\nbad\n09:61=1"),
+    [
+      { slot: "09:00-12:00", maxBookings: 3 },
+      { slot: "14:30", maxBookings: 5 },
+    ],
+  );
+  assert.equal(
+    formatMerchantBookingSlotCapacityRulesText([
+      { slot: "09:00-12:00", maxBookings: 3 },
+      { slot: "14:30", maxBookings: 1 },
+    ]),
+    "09:00-12:00=3\n14:30=1",
+  );
+});
+
+test("getMerchantBookingDateAvailabilityIssue distinguishes blacklist and holidays", () => {
+  assert.equal(
+    getMerchantBookingDateAvailabilityIssue("2026-12-24", ["2026-12-24"], ["2026-12-25"]),
+    "该日期已列入黑名单，暂不可预约",
+  );
+  assert.equal(
+    getMerchantBookingDateAvailabilityIssue("2026-12-25", ["2026-12-24"], ["2026-12-25"]),
+    "节假日暂不可预约",
+  );
+  assert.equal(getMerchantBookingDateAvailabilityIssue("2026-12-26", ["2026-12-24"], ["2026-12-25"]), "");
+});
+
+test("getMerchantBookingSlotCapacityIssue blocks full exact or ranged slots", () => {
+  assert.equal(
+    getMerchantBookingSlotCapacityIssue({
+      appointmentAt: "2026-03-19T14:30",
+      configuredRules: [{ slot: "14:30", maxBookings: 1 }],
+      existingRecords: [
+        { id: "a", appointmentAt: "2026-03-19T14:30", status: "active" },
+        { id: "b", appointmentAt: "2026-03-19T14:30", status: "cancelled" },
+      ],
+    }),
+    "该时段预约人数已满",
+  );
+  assert.equal(
+    getMerchantBookingSlotCapacityIssue({
+      appointmentAt: "2026-03-19T10:30",
+      configuredRules: [{ slot: "09:00-12:00", maxBookings: 2 }],
+      existingRecords: [
+        { id: "a", appointmentAt: "2026-03-19T09:15", status: "active" },
+        { id: "b", appointmentAt: "2026-03-19T11:45", status: "confirmed" },
+      ],
+    }),
+    "该时段预约人数已满",
+  );
+  assert.equal(
+    getMerchantBookingSlotCapacityIssue({
+      appointmentAt: "2026-03-19T10:30",
+      configuredRules: [{ slot: "09:00-12:00", maxBookings: 2 }],
+      existingRecords: [
+        { id: "self", appointmentAt: "2026-03-19T10:30", status: "active" },
+        { id: "other", appointmentAt: "2026-03-19T09:45", status: "active" },
+      ],
+      excludeBookingId: "self",
+    }),
+    "",
+  );
+});
+
+test("validateMerchantBookingInput rejects blacklisted dates and holidays", () => {
+  assert.deepEqual(
+    validateMerchantBookingInput(
+      {
+        store: "Main",
+        item: "Consultation",
+        appointmentAt: "2026-12-24T10:30",
+        title: "Mr",
+        customerName: "Felix",
+        email: "test@example.com",
+        phone: "123456",
+        note: "",
+      },
+      { blockedDates: ["2026-12-24"] },
+    ),
+    ["该日期已列入黑名单，暂不可预约"],
+  );
+  assert.deepEqual(
+    validateMerchantBookingInput(
+      {
+        store: "Main",
+        item: "Consultation",
+        appointmentAt: "2026-12-25T10:30",
+        title: "Mr",
+        customerName: "Felix",
+        email: "test@example.com",
+        phone: "123456",
+        note: "",
+      },
+      { holidayDates: ["2026-12-25"] },
+    ),
+    ["节假日暂不可预约"],
+  );
+});
+
+test("validateMerchantBookingInput rejects full slots when capacity rules are configured", () => {
+  const issues = validateMerchantBookingInput(
+    {
+      store: "Main",
+      item: "Consultation",
+      appointmentAt: "2026-03-19T10:30",
+      title: "Mr",
+      customerName: "Felix",
+      email: "test@example.com",
+      phone: "123456",
+      note: "",
+    },
+    {
+      slotCapacityRules: [{ slot: "09:00-12:00", maxBookings: 1 }],
+      existingRecords: [{ id: "a", appointmentAt: "2026-03-19T09:30", status: "active" }],
+    },
+  );
+
+  assert.deepEqual(issues, ["该时段预约人数已满"]);
 });
 
 test("getMerchantBookingStatusLabel returns readable labels", () => {

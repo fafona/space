@@ -9,9 +9,11 @@ import {
   buildDefaultBookingTitleOptions,
   createEmptyMerchantBookingInput,
   formatMerchantBookingDateTime,
+  getMerchantBookingDateAvailabilityIssue,
   getMerchantBookingTimeAvailabilityIssue,
   joinMerchantBookingDateTime,
   normalizeMerchantBookingCustomerNameInput,
+  normalizeMerchantBookingDateOptions,
   normalizeMerchantBookingNoteInput,
   normalizeBookingOptionList,
   normalizeMerchantBookingTimeRangeOptions,
@@ -133,7 +135,19 @@ export default function BookingBlock({
     () => normalizeMerchantBookingTimeRangeOptions(props.bookingAvailableTimeRanges),
     [props.bookingAvailableTimeRanges],
   );
+  const blockedDates = useMemo(
+    () => normalizeMerchantBookingDateOptions(props.bookingBlockedDates),
+    [props.bookingBlockedDates],
+  );
+  const holidayDates = useMemo(
+    () => normalizeMerchantBookingDateOptions(props.bookingHolidayDates),
+    [props.bookingHolidayDates],
+  );
   const [draft, setDraft] = useState(() => buildInitialDraft(storeOptions, itemOptions, titleOptions));
+  const appointmentDateIssue = useMemo(
+    () => getMerchantBookingDateAvailabilityIssue(draft.appointmentDateInput, blockedDates, holidayDates),
+    [blockedDates, draft.appointmentDateInput, holidayDates],
+  );
   const appointmentTimeIssue = useMemo(
     () => getMerchantBookingTimeAvailabilityIssue(draft.appointmentTimeInput, availableTimeRanges),
     [availableTimeRanges, draft.appointmentTimeInput],
@@ -399,7 +413,9 @@ export default function BookingBlock({
                 dateValue={draft.appointmentDateInput}
                 timeValue={draft.appointmentTimeInput}
                 disabled={!isLiveBooking}
-                dateInputClassName={`${getFormFieldClass(!isLiveBooking)} min-w-[180px] flex-1`}
+                dateInputClassName={`${getFormFieldClass(!isLiveBooking)} min-w-[180px] flex-1 ${
+                  appointmentDateIssue ? "border-rose-300 bg-rose-50 focus:border-rose-500 focus:ring-rose-500/20" : ""
+                }`}
                 timeInputClassName={`${getFormFieldClass(!isLiveBooking)} w-[112px] shrink-0 ${
                   appointmentTimeIssue ? "border-rose-300 bg-rose-50 focus:border-rose-500 focus:ring-rose-500/20" : ""
                 }`}
@@ -429,6 +445,11 @@ export default function BookingBlock({
               {appointmentTimeIssue ? (
                 <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
                   {appointmentTimeIssue}
+                </div>
+              ) : null}
+              {appointmentDateIssue ? (
+                <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                  {appointmentDateIssue}
                 </div>
               ) : null}
             </label>
@@ -496,7 +517,7 @@ export default function BookingBlock({
             <button
               type="submit"
               className="rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={!isLiveBooking || submitting || Boolean(appointmentTimeIssue)}
+              disabled={!isLiveBooking || submitting || Boolean(appointmentDateIssue) || Boolean(appointmentTimeIssue)}
             >
               {submitting ? "提交中..." : submittedState ? updateLabel : submitLabel}
             </button>

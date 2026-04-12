@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+﻿import { randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -12,6 +12,7 @@ import {
   type MerchantBookingRuleBinding,
   type MerchantBookingStatus,
   type MerchantBookingStoredRecord,
+  type MerchantBookingValidationOptions,
   validateMerchantBookingInput,
   withoutMerchantBookingToken,
 } from "./merchantBookings";
@@ -98,7 +99,13 @@ function normalizeBookingRuleBinding(input?: MerchantBookingRuleLocator | null):
 async function resolveBookingRuleContext(
   siteId: string,
   locator?: MerchantBookingRuleLocator | null,
-): Promise<{ binding: MerchantBookingRuleBinding; availableTimeRanges: string[] }> {
+): Promise<{
+  binding: MerchantBookingRuleBinding;
+  validationOptions: Pick<
+    MerchantBookingValidationOptions,
+    "availableTimeRanges" | "blockedDates" | "holidayDates" | "slotCapacityRules"
+  >;
+}> {
   const normalizedSiteId = String(siteId ?? "").trim();
   if (!normalizedSiteId) {
     throw new Error("站点信息缺失");
@@ -116,7 +123,31 @@ async function resolveBookingRuleContext(
       bookingBlockId: rule.blockId,
       bookingViewport: rule.viewport,
     },
-    availableTimeRanges: rule.availableTimeRanges,
+    validationOptions: {
+      availableTimeRanges: rule.availableTimeRanges,
+      blockedDates: rule.blockedDates,
+      holidayDates: rule.holidayDates,
+      slotCapacityRules: rule.slotCapacityRules,
+    },
+  };
+}
+
+function buildSiteBookingValidationOptions(
+  ruleContext: Awaited<ReturnType<typeof resolveBookingRuleContext>>,
+  records: MerchantBookingStoredRecord[],
+  siteId: string,
+  excludeBookingId?: string,
+): MerchantBookingValidationOptions {
+  return {
+    ...ruleContext.validationOptions,
+    existingRecords: records
+      .filter((item) => item.siteId === siteId)
+      .map((item) => ({
+        id: item.id,
+        appointmentAt: item.appointmentAt,
+        status: item.status,
+      })),
+    excludeBookingId,
   };
 }
 
@@ -137,16 +168,19 @@ export async function createMerchantBooking(input: MerchantBookingCreateInput): 
 }> {
   const editable = sanitizeMerchantBookingEditableInput(input);
   const ruleContext = await resolveBookingRuleContext(input.siteId, normalizeBookingRuleBinding(input));
-  const issues = validateMerchantBookingInput(editable, { availableTimeRanges: ruleContext.availableTimeRanges });
   if (!input.siteId.trim()) {
-    issues.push("站点信息缺失");
-  }
-  if (issues.length > 0) {
-    throw new Error(issues[0]);
+    throw new Error("站点信息缺失");
   }
 
   return withBookingStoreLock(async () => {
     const store = await readMerchantBookingStore();
+    const issues = validateMerchantBookingInput(
+      editable,
+      buildSiteBookingValidationOptions(ruleContext, store.records, input.siteId.trim()),
+    );
+    if (issues.length > 0) {
+      throw new Error(issues[0]);
+    }
     const nowDate = new Date();
     const now = nowDate.toISOString();
     const nextId = buildMerchantBookingId(
@@ -212,7 +246,10 @@ export async function updateMerchantBooking(input: MerchantBookingActionInput): 
       bookingBlockId: normalizedBinding.bookingBlockId ?? current.bookingBlockId,
       bookingViewport: normalizedBinding.bookingViewport ?? current.bookingViewport,
     });
-    const issues = validateMerchantBookingInput(nextEditable, { availableTimeRanges: ruleContext.availableTimeRanges });
+    const issues = validateMerchantBookingInput(
+      nextEditable,
+      buildSiteBookingValidationOptions(ruleContext, store.records, current.siteId, current.id),
+    );
     if (issues.length > 0) {
       throw new Error(issues[0]);
     }
@@ -256,6 +293,19 @@ export async function updateMerchantBookingStatusBySite(input: {
       status: nextStatus,
       updatedAt: new Date().toISOString(),
     };
+    if (current.status === "cancelled" && nextStatus !== "cancelled") {
+      const ruleContext = await resolveBookingRuleContext(current.siteId, {
+        bookingBlockId: current.bookingBlockId,
+        bookingViewport: current.bookingViewport,
+      });
+      const issues = validateMerchantBookingInput(
+        sanitizeMerchantBookingEditableInput(current, current),
+        buildSiteBookingValidationOptions(ruleContext, store.records, current.siteId, current.id),
+      );
+      if (issues.length > 0) {
+        throw new Error(issues[0]);
+      }
+    }
     if (
       shouldSendMerchantBookingConfirmationEmail({
         currentStatus: current.status,
@@ -316,13 +366,17 @@ export async function updateMerchantBookingBySite(input: {
       bookingBlockId: current.bookingBlockId,
       bookingViewport: current.bookingViewport,
     };
-    if (hasEditableUpdates) {
+    const shouldValidateExistingSlot = !hasEditableUpdates && current.status === "cancelled" && (input.status ?? current.status) !== "cancelled";
+    if (hasEditableUpdates || shouldValidateExistingSlot) {
       const normalizedBinding = normalizeBookingRuleBinding(input);
       const ruleContext = await resolveBookingRuleContext(siteId, {
         bookingBlockId: normalizedBinding.bookingBlockId ?? current.bookingBlockId,
         bookingViewport: normalizedBinding.bookingViewport ?? current.bookingViewport,
       });
-      const issues = validateMerchantBookingInput(nextEditable, { availableTimeRanges: ruleContext.availableTimeRanges });
+      const issues = validateMerchantBookingInput(
+        nextEditable,
+        buildSiteBookingValidationOptions(ruleContext, store.records, current.siteId, current.id),
+      );
       if (issues.length > 0) {
         throw new Error(issues[0]);
       }
@@ -363,3 +417,4 @@ export async function updateMerchantBookingBySite(input: {
     return withoutMerchantBookingToken(next);
   });
 }
+

@@ -1,7 +1,12 @@
 import type { Block } from "@/data/homeBlocks";
 import { getBlocksForPage, getPagePlanConfigFromBlocks, type PagePlanConfig } from "./pagePlans";
 import { getEmbeddedMobilePlanConfig } from "./planTemplateRuntime";
-import { normalizeMerchantBookingTimeRangeOptions } from "./merchantBookings";
+import {
+  normalizeMerchantBookingDateOptions,
+  normalizeMerchantBookingSlotCapacityRules,
+  normalizeMerchantBookingTimeRangeOptions,
+  type MerchantBookingSlotCapacityRule,
+} from "./merchantBookings";
 
 export const MERCHANT_BOOKING_RULE_VIEWPORTS = ["desktop", "mobile"] as const;
 export type MerchantBookingRuleViewport = (typeof MERCHANT_BOOKING_RULE_VIEWPORTS)[number];
@@ -17,6 +22,7 @@ export type MerchantBookingRuleSnapshotEntry = {
   availableTimeRanges: string[];
   blockedDates: string[];
   holidayDates: string[];
+  slotCapacityRules: MerchantBookingSlotCapacityRule[];
   maxBookingsPerSlot: number | null;
 };
 
@@ -46,8 +52,9 @@ function normalizeEntry(entry: MerchantBookingRuleSnapshotEntry): MerchantBookin
     viewport: entry.viewport,
     blockId: normalizeBlockId(entry.blockId),
     availableTimeRanges: normalizeMerchantBookingTimeRangeOptions(entry.availableTimeRanges),
-    blockedDates: [],
-    holidayDates: [],
+    blockedDates: normalizeMerchantBookingDateOptions(entry.blockedDates),
+    holidayDates: normalizeMerchantBookingDateOptions(entry.holidayDates),
+    slotCapacityRules: normalizeMerchantBookingSlotCapacityRules(entry.slotCapacityRules),
     maxBookingsPerSlot:
       typeof entry.maxBookingsPerSlot === "number" && Number.isFinite(entry.maxBookingsPerSlot)
         ? Math.max(1, Math.trunc(entry.maxBookingsPerSlot))
@@ -71,6 +78,7 @@ function normalizeSnapshotEntries(value: unknown): MerchantBookingRuleSnapshotEn
         availableTimeRanges: Array.isArray(record.availableTimeRanges) ? record.availableTimeRanges : [],
         blockedDates: Array.isArray(record.blockedDates) ? record.blockedDates.filter((entry) => typeof entry === "string") : [],
         holidayDates: Array.isArray(record.holidayDates) ? record.holidayDates.filter((entry) => typeof entry === "string") : [],
+        slotCapacityRules: Array.isArray(record.slotCapacityRules) ? record.slotCapacityRules : [],
         maxBookingsPerSlot:
           typeof record.maxBookingsPerSlot === "number" && Number.isFinite(record.maxBookingsPerSlot)
             ? record.maxBookingsPerSlot
@@ -102,8 +110,9 @@ function collectBookingRuleEntriesFromPlanConfig(
             viewport,
             blockId,
             availableTimeRanges: block.props.bookingAvailableTimeRanges ?? [],
-            blockedDates: [],
-            holidayDates: [],
+            blockedDates: block.props.bookingBlockedDates ?? [],
+            holidayDates: block.props.bookingHolidayDates ?? [],
+            slotCapacityRules: normalizeMerchantBookingSlotCapacityRules(block.props.bookingSlotCapacityRules),
             maxBookingsPerSlot: null,
           }),
         );
@@ -118,6 +127,9 @@ function buildRuleEquivalenceKey(entry: MerchantBookingRuleSnapshotEntry) {
     availableTimeRanges: normalizeMerchantBookingTimeRangeOptions(entry.availableTimeRanges),
     blockedDates: [...entry.blockedDates].sort(),
     holidayDates: [...entry.holidayDates].sort(),
+    slotCapacityRules: [...normalizeMerchantBookingSlotCapacityRules(entry.slotCapacityRules)].sort((left, right) =>
+      left.slot.localeCompare(right.slot),
+    ),
     maxBookingsPerSlot: entry.maxBookingsPerSlot ?? null,
   });
 }
