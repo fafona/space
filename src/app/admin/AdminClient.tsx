@@ -4945,9 +4945,6 @@ export default function AdminClient({
   const supportSelfLanguageRootRef = useRef<HTMLDivElement>(null);
   const supportSelfLanguageMenuRef = useRef<HTMLDivElement>(null);
   const supportSelfAvatarInputRef = useRef<HTMLInputElement>(null);
-  const supportPhotoInputRef = useRef<HTMLInputElement>(null);
-  const supportCameraInputRef = useRef<HTMLInputElement>(null);
-  const supportFileInputRef = useRef<HTMLInputElement>(null);
   const [supportSelfResolvedCardHref, setSupportSelfResolvedCardHref] = useState("");
   const [supportSelfResolvedCardId, setSupportSelfResolvedCardId] = useState("");
   const supportSelfCardShareBundleRef = useRef<Record<string, { shareUrl: string; shareKey: string; imageUrl: string }>>(
@@ -12117,6 +12114,57 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     }
   }
 
+  async function pickSupportFileViaTemporaryInput(
+    options: {
+      accept: string;
+      capture?: "environment" | "user";
+      onFile: (file: File) => Promise<void>;
+    },
+  ) {
+    if (typeof document === "undefined") return;
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = options.accept;
+    input.tabIndex = -1;
+    input.setAttribute("aria-hidden", "true");
+    if (options.capture) {
+      input.setAttribute("capture", options.capture);
+    }
+    Object.assign(input.style, {
+      position: "fixed",
+      left: "-9999px",
+      width: "1px",
+      height: "1px",
+      opacity: "0",
+      pointerEvents: "none",
+    });
+    let settled = false;
+    const cleanup = () => {
+      if (settled) return;
+      settled = true;
+      window.removeEventListener("focus", handleWindowFocus);
+      input.removeEventListener("change", handleChange);
+      input.remove();
+    };
+    const handleWindowFocus = () => {
+      window.setTimeout(() => {
+        if (!input.files?.length) {
+          cleanup();
+        }
+      }, 0);
+    };
+    const handleChange = () => {
+      const file = input.files?.[0] ?? null;
+      cleanup();
+      if (!file) return;
+      void options.onFile(file);
+    };
+    window.addEventListener("focus", handleWindowFocus, { once: true });
+    input.addEventListener("change", handleChange, { once: true });
+    document.body.appendChild(input);
+    input.click();
+  }
+
   async function openSupportPhotoPicker() {
     if (supportComposerBusy) return;
     setSupportAttachmentMenuOpen(false);
@@ -12149,7 +12197,22 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         }
       }
     }
-    supportPhotoInputRef.current?.click();
+    await pickSupportFileViaTemporaryInput({
+      accept: SUPPORT_PHOTO_PICKER_ACCEPT,
+      onFile: async (file) => handleSupportImageAttachment(file, "照片"),
+    });
+  }
+
+  async function openSupportCameraPicker() {
+    if (supportComposerBusy) return;
+    setSupportAttachmentMenuOpen(false);
+    setSupportSelfCardPickerOpen(false);
+    supportInputRef.current?.blur();
+    await pickSupportFileViaTemporaryInput({
+      accept: SUPPORT_PHOTO_PICKER_ACCEPT,
+      capture: "environment",
+      onFile: async (file) => handleSupportImageAttachment(file, "拍照"),
+    });
   }
 
   async function openSupportFilePicker() {
@@ -12196,7 +12259,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         }
       }
     }
-    supportFileInputRef.current?.click();
+    await pickSupportFileViaTemporaryInput({
+      accept: SUPPORT_FILE_PICKER_ACCEPT,
+      onFile: async (file) => handleSupportFileAttachment(file),
+    });
   }
 
   async function handleSupportLocationAttachment() {
@@ -12343,27 +12409,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
 
     setSupportSelfCardPickerCards([]);
     showTip("当前还没有可发送的名片，请先在商户资料里生成名片");
-  }
-
-  async function handleSupportPhotoInputChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0] ?? null;
-    resetSupportPickerInputValue(event.target);
-    if (!file) return;
-    await handleSupportImageAttachment(file, "照片");
-  }
-
-  async function handleSupportCameraInputChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0] ?? null;
-    resetSupportPickerInputValue(event.target);
-    if (!file) return;
-    await handleSupportImageAttachment(file, "拍照");
-  }
-
-  async function handleSupportFileInputChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0] ?? null;
-    resetSupportPickerInputValue(event.target);
-    if (!file) return;
-    await handleSupportFileAttachment(file);
   }
 
   async function saveSupportSelfSitePatch(
@@ -14297,40 +14342,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           event.stopPropagation();
         }}
       >
-        <input
-          ref={supportPhotoInputRef}
-          className="hidden"
-          type="file"
-          accept={SUPPORT_PHOTO_PICKER_ACCEPT}
-          tabIndex={-1}
-          aria-hidden="true"
-          onChange={(event) => {
-            void handleSupportPhotoInputChange(event);
-          }}
-        />
-        <input
-          ref={supportCameraInputRef}
-          className="hidden"
-          type="file"
-          accept={SUPPORT_PHOTO_PICKER_ACCEPT}
-          capture="environment"
-          tabIndex={-1}
-          aria-hidden="true"
-          onChange={(event) => {
-            void handleSupportCameraInputChange(event);
-          }}
-        />
-        <input
-          ref={supportFileInputRef}
-          className="hidden"
-          type="file"
-          accept={SUPPORT_FILE_PICKER_ACCEPT}
-          tabIndex={-1}
-          aria-hidden="true"
-          onChange={(event) => {
-            void handleSupportFileInputChange(event);
-          }}
-        />
         {supportAttachmentMenuOpen ? (
           <div className="mb-2 rounded-[28px] bg-white px-3 py-3 shadow-[0_12px_28px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/80">
             <div className="grid grid-cols-5 gap-2">
@@ -14353,7 +14364,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               <button
                 type="button"
                 className="flex flex-col items-center gap-2 rounded-2xl px-1 py-2 text-[11px] font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
-                onClick={() => supportCameraInputRef.current?.click()}
+                onClick={() => {
+                  void openSupportCameraPicker();
+                }}
                 disabled={supportComposerBusy}
               >
                 <span className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-700">
