@@ -9581,6 +9581,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const supportCanSend = !!supportDraft.trim() && supportComposerAvailable;
   const supportInterfaceOpen = supportDialogOpen || isMobileMerchantSupportOnlyMode;
   const isMobileSupportDialog = supportInterfaceOpen && !isPlatformEditor && !isDesktopEditorSidebar;
+  const isIosSupportBrowser =
+    typeof navigator !== "undefined" && /iPhone|iPad|iPod/i.test(String(navigator.userAgent ?? ""));
   const selectedSupportConversationVisible = !isMobileSupportDialog || supportMobileView === "thread";
   const selectedSupportAvatarLabel = getSupportContactAvatarLabel(
     selectedSupportDisplayName,
@@ -14283,6 +14285,14 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       <div
         ref={supportComposerRef}
         className="shrink-0 overscroll-none border-t border-slate-200/80 bg-[#edf1f7]/98 px-3 pb-[env(safe-area-inset-bottom)] pt-1 shadow-[0_-8px_30px_rgba(15,23,42,0.06)] backdrop-blur"
+        style={
+          isIosSupportBrowser && isSupportMobileKeyboardVisible
+            ? {
+                paddingBottom: "0",
+                paddingTop: "0.15rem",
+              }
+            : undefined
+        }
         onTouchMove={(event) => {
           event.stopPropagation();
         }}
@@ -14418,7 +14428,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
             </svg>
           </button>
-          <div className="flex min-h-11 min-w-0 flex-1 items-end overflow-hidden rounded-[28px] bg-white px-3 py-2 shadow-[0_8px_18px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/80">
+          <div
+            className="flex min-h-11 min-w-0 flex-1 items-end overflow-hidden rounded-[28px] bg-white px-3 py-2 shadow-[0_8px_18px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/80"
+            style={isIosSupportBrowser && isSupportMobileKeyboardVisible ? { paddingTop: "0.3rem", paddingBottom: "0.3rem" } : undefined}
+          >
             <textarea
               ref={supportInputRef}
               rows={1}
