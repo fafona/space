@@ -9596,6 +9596,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     if (!isMobileSupportDialog || typeof document === "undefined") return () => {};
     const html = document.documentElement;
     const body = document.body;
+    const userAgent = typeof navigator !== "undefined" ? String(navigator.userAgent ?? "") : "";
+    const applyFixedBodyLock = /Android/i.test(userAgent);
     const scrollY = typeof window !== "undefined" ? window.scrollY : 0;
     const previousHtmlOverflow = html.style.overflow;
     const previousHtmlOverscrollBehavior = html.style.overscrollBehavior;
@@ -9610,11 +9612,13 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     html.style.overscrollBehavior = "none";
     body.style.overflow = "hidden";
     body.style.overscrollBehavior = "none";
-    body.style.position = "fixed";
-    body.style.top = `${-scrollY}px`;
-    body.style.left = "0";
-    body.style.right = "0";
-    body.style.width = "100%";
+    if (applyFixedBodyLock) {
+      body.style.position = "fixed";
+      body.style.top = `${-scrollY}px`;
+      body.style.left = "0";
+      body.style.right = "0";
+      body.style.width = "100%";
+    }
     return () => {
       html.style.overflow = previousHtmlOverflow;
       html.style.overscrollBehavior = previousHtmlOverscrollBehavior;
@@ -9625,7 +9629,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       body.style.left = previousBodyLeft;
       body.style.right = previousBodyRight;
       body.style.width = previousBodyWidth;
-      if (typeof window !== "undefined") {
+      if (applyFixedBodyLock && typeof window !== "undefined") {
         window.scrollTo({ top: scrollY, left: 0, behavior: "auto" });
       }
     };
