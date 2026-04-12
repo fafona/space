@@ -1,7 +1,12 @@
 import type { Block } from "@/data/homeBlocks";
 import { getBlocksForPage, getPagePlanConfigFromBlocks, type PagePlanConfig } from "./pagePlans";
 import { getEmbeddedMobilePlanConfig } from "./planTemplateRuntime";
-import { normalizeMerchantBookingTimeRangeOptions } from "./merchantBookings";
+import {
+  normalizeMerchantBookingDateList,
+  normalizeMerchantBookingTimeRangeOptions,
+  normalizeMerchantBookingTimeSlotRules,
+  type MerchantBookingTimeSlotRule,
+} from "./merchantBookings";
 
 export const MERCHANT_BOOKING_RULE_VIEWPORTS = ["desktop", "mobile"] as const;
 export type MerchantBookingRuleViewport = (typeof MERCHANT_BOOKING_RULE_VIEWPORTS)[number];
@@ -15,6 +20,7 @@ export type MerchantBookingRuleSnapshotEntry = {
   viewport: MerchantBookingRuleViewport;
   blockId: string;
   availableTimeRanges: string[];
+  timeSlotRules: MerchantBookingTimeSlotRule[];
   blockedDates: string[];
   holidayDates: string[];
   maxBookingsPerSlot: number | null;
@@ -42,12 +48,14 @@ function normalizeViewport(value: unknown): MerchantBookingRuleViewport | null {
 }
 
 function normalizeEntry(entry: MerchantBookingRuleSnapshotEntry): MerchantBookingRuleSnapshotEntry {
+  const timeSlotRules = normalizeMerchantBookingTimeSlotRules(entry.timeSlotRules, entry.availableTimeRanges);
   return {
     viewport: entry.viewport,
     blockId: normalizeBlockId(entry.blockId),
-    availableTimeRanges: normalizeMerchantBookingTimeRangeOptions(entry.availableTimeRanges),
-    blockedDates: [],
-    holidayDates: [],
+    availableTimeRanges: timeSlotRules.map((item) => item.timeRange),
+    timeSlotRules,
+    blockedDates: normalizeMerchantBookingDateList(entry.blockedDates),
+    holidayDates: normalizeMerchantBookingDateList(entry.holidayDates),
     maxBookingsPerSlot:
       typeof entry.maxBookingsPerSlot === "number" && Number.isFinite(entry.maxBookingsPerSlot)
         ? Math.max(1, Math.trunc(entry.maxBookingsPerSlot))
@@ -69,6 +77,7 @@ function normalizeSnapshotEntries(value: unknown): MerchantBookingRuleSnapshotEn
         viewport,
         blockId,
         availableTimeRanges: Array.isArray(record.availableTimeRanges) ? record.availableTimeRanges : [],
+        timeSlotRules: Array.isArray(record.timeSlotRules) ? record.timeSlotRules : [],
         blockedDates: Array.isArray(record.blockedDates) ? record.blockedDates.filter((entry) => typeof entry === "string") : [],
         holidayDates: Array.isArray(record.holidayDates) ? record.holidayDates.filter((entry) => typeof entry === "string") : [],
         maxBookingsPerSlot:
@@ -97,13 +106,18 @@ function collectBookingRuleEntriesFromPlanConfig(
         if (block.type !== "booking") continue;
         const blockId = normalizeBlockId(block.id);
         if (!blockId) continue;
+        const timeSlotRules = normalizeMerchantBookingTimeSlotRules(
+          block.props.bookingTimeSlotRules,
+          block.props.bookingAvailableTimeRanges ?? [],
+        );
         next.push(
           normalizeEntry({
             viewport,
             blockId,
-            availableTimeRanges: block.props.bookingAvailableTimeRanges ?? [],
-            blockedDates: [],
-            holidayDates: [],
+            availableTimeRanges: timeSlotRules.map((item) => item.timeRange),
+            timeSlotRules,
+            blockedDates: block.props.bookingBlockedDates ?? [],
+            holidayDates: block.props.bookingHolidayDates ?? [],
             maxBookingsPerSlot: null,
           }),
         );
@@ -116,6 +130,7 @@ function collectBookingRuleEntriesFromPlanConfig(
 function buildRuleEquivalenceKey(entry: MerchantBookingRuleSnapshotEntry) {
   return JSON.stringify({
     availableTimeRanges: normalizeMerchantBookingTimeRangeOptions(entry.availableTimeRanges),
+    timeSlotRules: normalizeMerchantBookingTimeSlotRules(entry.timeSlotRules, entry.availableTimeRanges),
     blockedDates: [...entry.blockedDates].sort(),
     holidayDates: [...entry.holidayDates].sort(),
     maxBookingsPerSlot: entry.maxBookingsPerSlot ?? null,

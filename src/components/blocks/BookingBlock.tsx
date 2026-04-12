@@ -9,12 +9,14 @@ import {
   buildDefaultBookingTitleOptions,
   createEmptyMerchantBookingInput,
   formatMerchantBookingDateTime,
+  getMerchantBookingDateAvailabilityIssue,
   getMerchantBookingTimeAvailabilityIssue,
   joinMerchantBookingDateTime,
   normalizeMerchantBookingCustomerNameInput,
+  normalizeMerchantBookingDateList,
   normalizeMerchantBookingNoteInput,
   normalizeBookingOptionList,
-  normalizeMerchantBookingTimeRangeOptions,
+  normalizeMerchantBookingTimeSlotRules,
   sanitizeMerchantBookingEditableInput,
   splitMerchantBookingDateTime,
   type MerchantBookingEditableInput,
@@ -129,11 +131,27 @@ export default function BookingBlock({
     () => normalizeBookingOptionList(props.bookingTitleOptions, buildDefaultBookingTitleOptions()).map((item) => localizeSystemDefaultText(item, locale)),
     [locale, props.bookingTitleOptions],
   );
+  const timeSlotRules = useMemo(
+    () => normalizeMerchantBookingTimeSlotRules(props.bookingTimeSlotRules, props.bookingAvailableTimeRanges),
+    [props.bookingAvailableTimeRanges, props.bookingTimeSlotRules],
+  );
   const availableTimeRanges = useMemo(
-    () => normalizeMerchantBookingTimeRangeOptions(props.bookingAvailableTimeRanges),
-    [props.bookingAvailableTimeRanges],
+    () => timeSlotRules.map((item) => item.timeRange),
+    [timeSlotRules],
+  );
+  const blockedDates = useMemo(
+    () => normalizeMerchantBookingDateList(props.bookingBlockedDates),
+    [props.bookingBlockedDates],
+  );
+  const holidayDates = useMemo(
+    () => normalizeMerchantBookingDateList(props.bookingHolidayDates),
+    [props.bookingHolidayDates],
   );
   const [draft, setDraft] = useState(() => buildInitialDraft(storeOptions, itemOptions, titleOptions));
+  const appointmentDateIssue = useMemo(
+    () => getMerchantBookingDateAvailabilityIssue(draft.appointmentDateInput, blockedDates, holidayDates),
+    [blockedDates, draft.appointmentDateInput, holidayDates],
+  );
   const appointmentTimeIssue = useMemo(
     () => getMerchantBookingTimeAvailabilityIssue(draft.appointmentTimeInput, availableTimeRanges),
     [availableTimeRanges, draft.appointmentTimeInput],
@@ -208,6 +226,9 @@ export default function BookingBlock({
     setSubmitting(true);
     setError("");
     try {
+      if (appointmentDateIssue) {
+        throw new Error(appointmentDateIssue);
+      }
       const currentAppointmentTimeIssue = getMerchantBookingTimeAvailabilityIssue(draft.appointmentTimeInput, availableTimeRanges);
       if (currentAppointmentTimeIssue) {
         throw new Error(currentAppointmentTimeIssue);
@@ -399,13 +420,18 @@ export default function BookingBlock({
                 dateValue={draft.appointmentDateInput}
                 timeValue={draft.appointmentTimeInput}
                 disabled={!isLiveBooking}
-                dateInputClassName={`${getFormFieldClass(!isLiveBooking)} min-w-[180px] flex-1`}
+                dateInputClassName={`${getFormFieldClass(!isLiveBooking)} min-w-[180px] flex-1 ${
+                  appointmentDateIssue ? "border-rose-300 bg-rose-50 focus:border-rose-500 focus:ring-rose-500/20" : ""
+                }`}
                 timeInputClassName={`${getFormFieldClass(!isLiveBooking)} w-[112px] shrink-0 ${
                   appointmentTimeIssue ? "border-rose-300 bg-rose-50 focus:border-rose-500 focus:ring-rose-500/20" : ""
                 }`}
                 onDateChange={(value) => handleFieldChange("appointmentDateInput", value)}
                 onTimeChange={(value) => handleFieldChange("appointmentTimeInput", value)}
               />
+              {appointmentDateIssue ? (
+                <div className="pt-1 text-sm text-rose-600">{appointmentDateIssue}</div>
+              ) : null}
               {availableTimeRanges.length > 0 ? (
                 <div className="flex flex-wrap gap-2 pt-1">
                   {availableTimeRanges.map((item) => (
@@ -496,7 +522,7 @@ export default function BookingBlock({
             <button
               type="submit"
               className="rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={!isLiveBooking || submitting || Boolean(appointmentTimeIssue)}
+              disabled={!isLiveBooking || submitting || Boolean(appointmentDateIssue) || Boolean(appointmentTimeIssue)}
             >
               {submitting ? "提交中..." : submittedState ? updateLabel : submitLabel}
             </button>

@@ -4,6 +4,9 @@ import {
   buildDefaultBookingStoreOptions,
   buildMerchantBookingId,
   formatMerchantBookingIdDate,
+  getMerchantBookingDateAvailabilityIssue,
+  getMerchantBookingMatchedTimeSlotRule,
+  getMerchantBookingSlotCapacityIssue,
   getMerchantBookingTimeAvailabilityIssue,
   getMerchantBookingStatusLabel,
   joinMerchantBookingDateTime,
@@ -11,8 +14,10 @@ import {
   MERCHANT_BOOKING_NOTE_MAX_BYTES,
   normalizeBookingOptionList,
   normalizeMerchantBookingCustomerNameInput,
+  normalizeMerchantBookingDateList,
   normalizeMerchantBookingNoteInput,
   normalizeMerchantBookingTimeRangeOptions,
+  normalizeMerchantBookingTimeSlotRules,
   sanitizeMerchantBookingEditableInput,
   isMerchantBookingTimeAllowed,
   shouldSendMerchantBookingConfirmationEmail,
@@ -90,6 +95,29 @@ test("normalizeMerchantBookingTimeRangeOptions normalizes exact times and ranges
   );
 });
 
+test("normalizeMerchantBookingTimeSlotRules keeps per-slot capacities", () => {
+  assert.deepEqual(
+    normalizeMerchantBookingTimeSlotRules([
+      { timeRange: "9:00-12:00", maxBookings: "3" },
+      { timeRange: "14:00-18:00", maxBookings: 8 },
+      { timeRange: "19:30", maxBookings: 0 },
+      { timeRange: "bad", maxBookings: 5 },
+    ]),
+    [
+      { timeRange: "09:00-12:00", maxBookings: 3 },
+      { timeRange: "14:00-18:00", maxBookings: 8 },
+      { timeRange: "19:30", maxBookings: null },
+    ],
+  );
+});
+
+test("normalizeMerchantBookingDateList removes invalid and duplicate dates", () => {
+  assert.deepEqual(
+    normalizeMerchantBookingDateList(["2026-02-31", "2026-02-28", " 2026-02-28 ", "2026-03-01"]),
+    ["2026-02-28", "2026-03-01"],
+  );
+});
+
 test("isMerchantBookingTimeAllowed respects configured booking time ranges", () => {
   const ranges = ["09:00-12:00", "14:00-18:00", "19:30"];
   assert.equal(isMerchantBookingTimeAllowed("09:00", ranges), true);
@@ -105,6 +133,48 @@ test("getMerchantBookingTimeAvailabilityIssue only warns for complete disallowed
   assert.equal(getMerchantBookingTimeAvailabilityIssue("09", ranges), "");
   assert.equal(getMerchantBookingTimeAvailabilityIssue("09:30", ranges), "");
   assert.equal(getMerchantBookingTimeAvailabilityIssue("12:30", ranges), "预约时间需在可预约时段内");
+});
+
+test("date availability helpers distinguish blacklist and holiday dates", () => {
+  assert.equal(
+    getMerchantBookingDateAvailabilityIssue("2026-05-01", ["2026-05-01"], ["2026-05-02"]),
+    "该日期已被加入黑名单，请选择其他日期",
+  );
+  assert.equal(
+    getMerchantBookingDateAvailabilityIssue("2026-05-02", ["2026-05-01"], ["2026-05-02"]),
+    "该日期为节假日，不可预约",
+  );
+  assert.equal(getMerchantBookingDateAvailabilityIssue("2026-05-03", ["2026-05-01"], ["2026-05-02"]), "");
+});
+
+test("slot helpers resolve matching rules and full-capacity issues", () => {
+  const rules = [
+    { timeRange: "09:00-12:00", maxBookings: 2 },
+    { timeRange: "19:30", maxBookings: 1 },
+  ];
+  assert.deepEqual(getMerchantBookingMatchedTimeSlotRule("10:15", rules), rules[0]);
+  assert.deepEqual(getMerchantBookingMatchedTimeSlotRule("19:30", rules), rules[1]);
+  assert.equal(getMerchantBookingMatchedTimeSlotRule("13:00", rules), null);
+  assert.equal(
+    getMerchantBookingSlotCapacityIssue(
+      "2026-03-19T10:30",
+      rules,
+      [
+        { id: "a", appointmentAt: "2026-03-19T09:30", status: "active" },
+        { id: "b", appointmentAt: "2026-03-19T11:00", status: "confirmed" },
+        { id: "c", appointmentAt: "2026-03-19T10:00", status: "cancelled" },
+      ],
+    ),
+    "该预约时段人数已满，请选择其他时间",
+  );
+  assert.equal(
+    getMerchantBookingSlotCapacityIssue(
+      "2026-03-19T19:30",
+      rules,
+      [{ id: "a", appointmentAt: "2026-03-19T19:30", status: "cancelled" }],
+    ),
+    "",
+  );
 });
 
 test("validateMerchantBookingInput returns friendly issues", () => {

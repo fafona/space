@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   buildMerchantBookingId,
+  getMerchantBookingSlotCapacityIssue,
   sanitizeMerchantBookingEditableInput,
   shouldSendMerchantBookingConfirmationEmail,
   type MerchantBookingActionInput,
@@ -98,7 +99,13 @@ function normalizeBookingRuleBinding(input?: MerchantBookingRuleLocator | null):
 async function resolveBookingRuleContext(
   siteId: string,
   locator?: MerchantBookingRuleLocator | null,
-): Promise<{ binding: MerchantBookingRuleBinding; availableTimeRanges: string[] }> {
+): Promise<{
+  binding: MerchantBookingRuleBinding;
+  availableTimeRanges: string[];
+  timeSlotRules: NonNullable<ReturnType<typeof resolveMerchantBookingRuleEntry>>["timeSlotRules"];
+  blockedDates: string[];
+  holidayDates: string[];
+}> {
   const normalizedSiteId = String(siteId ?? "").trim();
   if (!normalizedSiteId) {
     throw new Error("站点信息缺失");
@@ -117,7 +124,14 @@ async function resolveBookingRuleContext(
       bookingViewport: rule.viewport,
     },
     availableTimeRanges: rule.availableTimeRanges,
+    timeSlotRules: rule.timeSlotRules,
+    blockedDates: rule.blockedDates,
+    holidayDates: rule.holidayDates,
   };
+}
+
+function matchesRuleBinding(record: MerchantBookingStoredRecord, binding: MerchantBookingRuleBinding) {
+  return record.bookingBlockId === binding.bookingBlockId && record.bookingViewport === binding.bookingViewport;
 }
 
 export async function listMerchantBookings(siteId: string): Promise<MerchantBookingRecord[]> {
@@ -137,7 +151,11 @@ export async function createMerchantBooking(input: MerchantBookingCreateInput): 
 }> {
   const editable = sanitizeMerchantBookingEditableInput(input);
   const ruleContext = await resolveBookingRuleContext(input.siteId, normalizeBookingRuleBinding(input));
-  const issues = validateMerchantBookingInput(editable, { availableTimeRanges: ruleContext.availableTimeRanges });
+  const issues = validateMerchantBookingInput(editable, {
+    availableTimeRanges: ruleContext.availableTimeRanges,
+    blockedDates: ruleContext.blockedDates,
+    holidayDates: ruleContext.holidayDates,
+  });
   if (!input.siteId.trim()) {
     issues.push("站点信息缺失");
   }
@@ -147,6 +165,14 @@ export async function createMerchantBooking(input: MerchantBookingCreateInput): 
 
   return withBookingStoreLock(async () => {
     const store = await readMerchantBookingStore();
+    const slotCapacityIssue = getMerchantBookingSlotCapacityIssue(
+      editable.appointmentAt,
+      ruleContext.timeSlotRules,
+      store.records.filter((record) => record.siteId === input.siteId.trim() && matchesRuleBinding(record, ruleContext.binding)),
+    );
+    if (slotCapacityIssue) {
+      throw new Error(slotCapacityIssue);
+    }
     const nowDate = new Date();
     const now = nowDate.toISOString();
     const nextId = buildMerchantBookingId(
@@ -212,9 +238,22 @@ export async function updateMerchantBooking(input: MerchantBookingActionInput): 
       bookingBlockId: normalizedBinding.bookingBlockId ?? current.bookingBlockId,
       bookingViewport: normalizedBinding.bookingViewport ?? current.bookingViewport,
     });
-    const issues = validateMerchantBookingInput(nextEditable, { availableTimeRanges: ruleContext.availableTimeRanges });
+    const issues = validateMerchantBookingInput(nextEditable, {
+      availableTimeRanges: ruleContext.availableTimeRanges,
+      blockedDates: ruleContext.blockedDates,
+      holidayDates: ruleContext.holidayDates,
+    });
     if (issues.length > 0) {
       throw new Error(issues[0]);
+    }
+    const slotCapacityIssue = getMerchantBookingSlotCapacityIssue(
+      nextEditable.appointmentAt,
+      ruleContext.timeSlotRules,
+      store.records.filter((record) => record.siteId === current.siteId && matchesRuleBinding(record, ruleContext.binding)),
+      { excludeBookingId: current.id },
+    );
+    if (slotCapacityIssue) {
+      throw new Error(slotCapacityIssue);
     }
     const next: MerchantBookingStoredRecord = {
       ...current,
@@ -322,9 +361,22 @@ export async function updateMerchantBookingBySite(input: {
         bookingBlockId: normalizedBinding.bookingBlockId ?? current.bookingBlockId,
         bookingViewport: normalizedBinding.bookingViewport ?? current.bookingViewport,
       });
-      const issues = validateMerchantBookingInput(nextEditable, { availableTimeRanges: ruleContext.availableTimeRanges });
+      const issues = validateMerchantBookingInput(nextEditable, {
+        availableTimeRanges: ruleContext.availableTimeRanges,
+        blockedDates: ruleContext.blockedDates,
+        holidayDates: ruleContext.holidayDates,
+      });
       if (issues.length > 0) {
         throw new Error(issues[0]);
+      }
+      const slotCapacityIssue = getMerchantBookingSlotCapacityIssue(
+        nextEditable.appointmentAt,
+        ruleContext.timeSlotRules,
+        store.records.filter((record) => record.siteId === siteId && matchesRuleBinding(record, ruleContext.binding)),
+        { excludeBookingId: current.id },
+      );
+      if (slotCapacityIssue) {
+        throw new Error(slotCapacityIssue);
       }
       nextBinding = ruleContext.binding;
     }

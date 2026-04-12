@@ -2,9 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import BookingStatusFilterDropdown from "@/components/admin/BookingStatusFilterDropdown";
 import { useI18n } from "@/components/I18nProvider";
 import BookingDateTimeInput from "@/components/booking/BookingDateTimeInput";
-import type { MerchantBookingEditableInput, MerchantBookingRecord, MerchantBookingStatus } from "@/lib/merchantBookings";
+import {
+  MERCHANT_BOOKING_STATUSES,
+  type MerchantBookingEditableInput,
+  type MerchantBookingRecord,
+  type MerchantBookingStatus,
+} from "@/lib/merchantBookings";
 import {
   buildDefaultBookingItemOptions,
   buildDefaultBookingStoreOptions,
@@ -21,9 +27,7 @@ import {
   getMerchantBookingActionText,
   getMerchantBookingDayLabel,
   getMerchantBookingFieldText,
-  getMerchantBookingFilterText,
   getMerchantBookingStatusText,
-  type MerchantBookingFilter,
 } from "@/lib/merchantBookingLocale";
 import { buildMerchantBookingMailtoHref } from "@/lib/merchantBookingMailto";
 import usePullToRefresh from "@/lib/usePullToRefresh";
@@ -93,31 +97,6 @@ function getStatusBadgeClass(status: MerchantBookingStatus) {
   if (status === "completed") return "bg-emerald-100 text-emerald-700";
   if (status === "confirmed") return "bg-sky-100 text-sky-700";
   return "bg-amber-100 text-amber-700";
-}
-
-function getFilterChipClass(filter: MerchantBookingFilter, key: MerchantBookingFilter) {
-  const isActive = filter === key;
-  if (key === "active") {
-    return isActive
-      ? "border border-amber-300 bg-amber-100 text-amber-800"
-      : "border border-amber-200 bg-amber-50 text-amber-700";
-  }
-  if (key === "confirmed") {
-    return isActive
-      ? "border border-sky-300 bg-sky-100 text-sky-800"
-      : "border border-sky-200 bg-sky-50 text-sky-700";
-  }
-  if (key === "completed") {
-    return isActive
-      ? "border border-emerald-300 bg-emerald-100 text-emerald-800"
-      : "border border-emerald-200 bg-emerald-50 text-emerald-700";
-  }
-  if (key === "cancelled") {
-    return isActive
-      ? "border border-slate-300 bg-slate-200 text-slate-800"
-      : "border border-slate-200 bg-slate-100 text-slate-600";
-  }
-  return isActive ? "bg-slate-900 text-white" : "border border-slate-200 bg-white text-slate-600";
 }
 
 function MailIcon() {
@@ -216,7 +195,7 @@ export default function MerchantBookingMobilePanel({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<MerchantBookingFilter>("all");
+  const [selectedStatuses, setSelectedStatuses] = useState<MerchantBookingStatus[]>(() => [...MERCHANT_BOOKING_STATUSES]);
   const [busyKey, setBusyKey] = useState("");
   const [detailBookingId, setDetailBookingId] = useState<string | null>(null);
 
@@ -275,10 +254,10 @@ export default function MerchantBookingMobilePanel({
   const filteredRecords = useMemo(
     () =>
       records.filter((item) => {
-        if (filter !== "all" && item.status !== filter) return false;
+        if (!selectedStatuses.includes(item.status)) return false;
         return matchesSearch(item, query);
       }),
-    [filter, query, records],
+    [query, records, selectedStatuses],
   );
 
   const selectableStoreOptions = useMemo(
@@ -717,22 +696,13 @@ export default function MerchantBookingMobilePanel({
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            {[
-              { key: "all" as const, label: getMerchantBookingFilterText("all", counts.total, locale) },
-              { key: "active" as const, label: getMerchantBookingFilterText("active", counts.active, locale) },
-              { key: "confirmed" as const, label: getMerchantBookingFilterText("confirmed", counts.confirmed, locale) },
-              { key: "completed" as const, label: getMerchantBookingFilterText("completed", counts.completed, locale) },
-              { key: "cancelled" as const, label: getMerchantBookingFilterText("cancelled", counts.cancelled, locale) },
-            ].map((item) => (
-              <button
-                key={item.key}
-                type="button"
-                className={`rounded-full px-3 py-2 text-xs font-medium transition ${getFilterChipClass(filter, item.key)}`}
-                onClick={() => setFilter(item.key)}
-              >
-                {item.label}
-              </button>
-            ))}
+            <BookingStatusFilterDropdown
+              locale={locale}
+              counts={counts}
+              selectedStatuses={selectedStatuses}
+              onChange={setSelectedStatuses}
+              compact
+            />
           </div>
         </div>
 

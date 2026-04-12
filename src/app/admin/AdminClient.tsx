@@ -217,7 +217,6 @@ import {
   buildDefaultBookingStoreOptions,
   buildDefaultBookingTitleOptions,
   normalizeBookingOptionList,
-  normalizeMerchantBookingTimeRangeOptions,
 } from "@/lib/merchantBookings";
 import {
   mergeImportedProductImages,
@@ -242,8 +241,10 @@ import {
 import { buildMerchantSiteLinker } from "@/lib/merchantSiteLinking";
 import BlockRenderer from "@/components/blocks/BlockRenderer";
 import BookingBlock from "@/components/blocks/BookingBlock";
+import BookingDateCalendarEditor from "@/components/admin/BookingDateCalendarEditor";
 import MerchantBookingManagerDialog from "@/components/admin/MerchantBookingManagerDialog";
 import MerchantBookingMobilePanel from "@/components/admin/MerchantBookingMobilePanel";
+import BookingTimeSlotRulesEditor from "@/components/admin/BookingTimeSlotRulesEditor";
 import MerchantProfileDialog from "@/components/admin/MerchantProfileDialog";
 import { useI18n } from "@/components/I18nProvider";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
@@ -7947,6 +7948,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           ),
           bookingItemOptions: buildDefaultBookingItemOptions(),
           bookingAvailableTimeRanges: [],
+          bookingTimeSlotRules: [],
+          bookingBlockedDates: [],
+          bookingHolidayDates: [],
           bookingTitleOptions: buildDefaultBookingTitleOptions(),
           bookingSubmitLabel: "提交预约",
           bookingUpdateLabel: "修改预约",
@@ -17376,7 +17380,6 @@ type GalleryEditorImage = {
   const [productPreviewTagByBlockId, setProductPreviewTagByBlockId] = useState<Record<string, string | null>>({});
   const [productPreviewSearchByBlockId, setProductPreviewSearchByBlockId] = useState<Record<string, string>>({});
   const [productTagOptionsDraftByBlockId, setProductTagOptionsDraftByBlockId] = useState<Record<string, string>>({});
-  const [bookingAvailableTimeRangesDraftByBlockId, setBookingAvailableTimeRangesDraftByBlockId] = useState<Record<string, string>>({});
   const [productDetailPreview, setProductDetailPreview] = useState<{ blockId: string; itemId: string } | null>(null);
   const [productSettingsCollapsedByBlockId, setProductSettingsCollapsedByBlockId] = useState<
     Record<string, Partial<Record<ProductSettingsSectionKey, boolean>>>
@@ -17408,23 +17411,10 @@ type GalleryEditorImage = {
     startHeight: number;
   } | null>(null);
   const galleryLayoutDefs: Array<{ id: GalleryLayoutPreset }> = GALLERY_LAYOUT_PRESETS.map((id) => ({ id }));
-  const bookingAvailableTimeRangesValue = block.type === "booking" ? block.props.bookingAvailableTimeRanges : null;
 
   useEffect(() => {
     setPreviewNavPageId(currentPageId);
   }, [currentPageId, block.id]);
-
-  useEffect(() => {
-    if (block.type !== "booking") return;
-    const nextDraft = normalizeMerchantBookingTimeRangeOptions(bookingAvailableTimeRangesValue).join("\n");
-    setBookingAvailableTimeRangesDraftByBlockId((current) => {
-      if (current[block.id] === nextDraft) return current;
-      return {
-        ...current,
-        [block.id]: nextDraft,
-      };
-    });
-  }, [block.id, bookingAvailableTimeRangesValue, block.type]);
 
   function normalizeGalleryImages(
     source: Array<
@@ -26564,9 +26554,6 @@ type GalleryEditorImage = {
   if (block.type === "booking") {
     const bookingStoreOptionsText = normalizeBookingOptionList(block.props.bookingStoreOptions).join("\n");
     const bookingItemOptionsText = normalizeBookingOptionList(block.props.bookingItemOptions).join("\n");
-    const bookingAvailableTimeRangesText =
-      bookingAvailableTimeRangesDraftByBlockId[block.id] ??
-      normalizeMerchantBookingTimeRangeOptions(block.props.bookingAvailableTimeRanges).join("\n");
     const bookingTitleOptionsText = normalizeBookingOptionList(block.props.bookingTitleOptions).join("\n");
     const bookingPreview = (
       <BookingBlock
@@ -26679,29 +26666,35 @@ type GalleryEditorImage = {
                     onChange={(event) => onChange({ bookingTitleOptions: normalizeBookingOptionList(event.target.value) })}
                   />
                 </label>
-                <label className="space-y-1 text-sm text-gray-700">
-                  <span className="block text-gray-600">可预约时段</span>
-                  <textarea
-                    className="min-h-[96px] w-full rounded border px-3 py-2"
-                    value={bookingAvailableTimeRangesText}
-                    placeholder={"每行一个时间点或时间段，例如：\n09:00-12:00\n14:00-18:00\n19:30"}
-                    onChange={(event) =>
-                      setBookingAvailableTimeRangesDraftByBlockId((current) => ({
-                        ...current,
-                        [block.id]: event.target.value,
-                      }))
+                <div className="space-y-1 text-sm text-gray-700 lg:col-span-2">
+                  <BookingTimeSlotRulesEditor
+                    value={block.props.bookingTimeSlotRules}
+                    legacyRanges={block.props.bookingAvailableTimeRanges}
+                    onChange={(nextRules) =>
+                      onChange({
+                        bookingTimeSlotRules: nextRules,
+                        bookingAvailableTimeRanges: nextRules.map((item) => item.timeRange),
+                      })
                     }
-                    onBlur={(event) => {
-                      const normalizedRanges = normalizeMerchantBookingTimeRangeOptions(event.target.value);
-                      const normalizedText = normalizedRanges.join("\n");
-                      setBookingAvailableTimeRangesDraftByBlockId((current) => ({
-                        ...current,
-                        [block.id]: normalizedText,
-                      }));
-                      onChange({ bookingAvailableTimeRanges: normalizedRanges });
-                    }}
                   />
-                </label>
+                </div>
+                <div className="grid gap-4 lg:col-span-2 xl:grid-cols-2">
+                  <BookingDateCalendarEditor
+                    label="黑名单日期"
+                    helperText="点击日历日期即可加入或移出黑名单，这些日期前台将不可预约。"
+                    value={block.props.bookingBlockedDates}
+                    tone="blocked"
+                    onChange={(nextDates) => onChange({ bookingBlockedDates: nextDates })}
+                  />
+                  <BookingDateCalendarEditor
+                    label="节假日"
+                    helperText="节假日也会作为不可预约日期处理，并提供全年周六和周日的一键勾选。"
+                    value={block.props.bookingHolidayDates}
+                    tone="holiday"
+                    allowYearWeekendShortcut
+                    onChange={(nextDates) => onChange({ bookingHolidayDates: nextDates })}
+                  />
+                </div>
                 <div className="grid gap-3 md:grid-cols-2">
                   <label className="space-y-1 text-sm text-gray-700">
                     <span className="block text-gray-600">提交按钮文案</span>

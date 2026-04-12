@@ -50,8 +50,15 @@ export type MerchantBookingStoredRecord = MerchantBookingRecord & {
 
 export type MerchantBookingUpdateAction = "update" | "cancel";
 
+export type MerchantBookingTimeSlotRule = {
+  timeRange: string;
+  maxBookings: number | null;
+};
+
 export type MerchantBookingValidationOptions = {
   availableTimeRanges?: unknown;
+  blockedDates?: unknown;
+  holidayDates?: unknown;
 };
 
 export type MerchantBookingActionInput = MerchantBookingRuleBinding & {
@@ -67,6 +74,29 @@ function normalizeSingleLineText(value: unknown) {
 
 function normalizeMultiLineText(value: unknown) {
   return typeof value === "string" ? value.replace(/\r\n/g, "\n").trim() : "";
+}
+
+function normalizePositiveInteger(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const normalized = Math.trunc(value);
+    return normalized >= 1 ? normalized : null;
+  }
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  if (!/^\d+$/.test(normalized)) return null;
+  const parsed = Number.parseInt(normalized, 10);
+  return Number.isFinite(parsed) && parsed >= 1 ? parsed : null;
+}
+
+function isValidCalendarDate(value: string) {
+  const matched = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!matched) return false;
+  const year = Number.parseInt(matched[1] ?? "", 10);
+  const month = Number.parseInt(matched[2] ?? "", 10);
+  const day = Number.parseInt(matched[3] ?? "", 10);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return false;
+  const date = new Date(year, month - 1, day);
+  return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day;
 }
 
 export function normalizeBookingOptionList(value: unknown, fallback: string[] = []) {
@@ -134,6 +164,47 @@ export function normalizeMerchantBookingTimeRangeOptions(value: unknown, fallbac
   return next;
 }
 
+export function normalizeMerchantBookingTimeSlotRules(value: unknown, fallbackRanges: unknown = []): MerchantBookingTimeSlotRule[] {
+  const source = Array.isArray(value) ? value : [];
+  const next: MerchantBookingTimeSlotRule[] = [];
+  source.forEach((item) => {
+    if (typeof item === "string") {
+      const timeRange = normalizeMerchantBookingTimeRangeOptions([item])[0];
+      if (!timeRange || next.some((entry) => entry.timeRange === timeRange)) return;
+      next.push({ timeRange, maxBookings: null });
+      return;
+    }
+    if (!item || typeof item !== "object") return;
+    const record = item as Partial<MerchantBookingTimeSlotRule> & { range?: unknown };
+    const timeRange = normalizeMerchantBookingTimeRangeOptions([record.timeRange ?? record.range ?? ""])[0];
+    if (!timeRange || next.some((entry) => entry.timeRange === timeRange)) return;
+    next.push({
+      timeRange,
+      maxBookings: normalizePositiveInteger(record.maxBookings),
+    });
+  });
+  if (next.length > 0) return next;
+  return normalizeMerchantBookingTimeRangeOptions(fallbackRanges).map((timeRange) => ({
+    timeRange,
+    maxBookings: null,
+  }));
+}
+
+export function normalizeMerchantBookingDateList(value: unknown) {
+  const source = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(/\r?\n|,/)
+      : [];
+  const next: string[] = [];
+  source.forEach((item) => {
+    const normalized = normalizeSingleLineText(item);
+    if (!normalized || !isValidCalendarDate(normalized) || next.includes(normalized)) return;
+    next.push(normalized);
+  });
+  return next.sort();
+}
+
 export function isMerchantBookingTimeAllowed(timeValue: string, configuredRanges: unknown) {
   const normalizedTime = normalizeBookingTimeValue(timeValue);
   const ranges = normalizeMerchantBookingTimeRangeOptions(configuredRanges);
@@ -152,6 +223,54 @@ export function isMerchantBookingTimeAllowed(timeValue: string, configuredRanges
       currentMinutes <= endMinutes
     );
   });
+}
+
+export function getMerchantBookingMatchedTimeSlotRule(
+  timeValue: string | null | undefined,
+  slotRules: unknown,
+) {
+  const normalizedTime = normalizeBookingTimeValue(timeValue);
+  if (!normalizedTime) return null;
+  const normalizedRules = normalizeMerchantBookingTimeSlotRules(slotRules);
+  return normalizedRules.find((rule) => isMerchantBookingTimeAllowed(normalizedTime, [rule.timeRange])) ?? null;
+}
+
+export function getMerchantBookingDateAvailabilityIssue(
+  dateValue: string | null | undefined,
+  blockedDates: unknown,
+  holidayDates: unknown,
+) {
+  const normalizedDate = normalizeSingleLineText(dateValue);
+  if (!normalizedDate || !isValidCalendarDate(normalizedDate)) return "";
+  if (normalizeMerchantBookingDateList(blockedDates).includes(normalizedDate)) {
+    return "该日期已被加入黑名单，请选择其他日期";
+  }
+  if (normalizeMerchantBookingDateList(holidayDates).includes(normalizedDate)) {
+    return "该日期为节假日，不可预约";
+  }
+  return "";
+}
+
+export function getMerchantBookingSlotCapacityIssue(
+  appointmentAt: string,
+  slotRules: unknown,
+  records: Array<Pick<MerchantBookingRecord, "id" | "appointmentAt" | "status">>,
+  options?: { excludeBookingId?: string | null },
+) {
+  const { date, time } = splitMerchantBookingDateTime(appointmentAt);
+  if (!date || !time) return "";
+  const matchedRule = getMerchantBookingMatchedTimeSlotRule(time, slotRules);
+  if (!matchedRule?.maxBookings) return "";
+  const occupiedCount = records.filter((record) => {
+    if (options?.excludeBookingId && record.id === options.excludeBookingId) return false;
+    if (record.status !== "active" && record.status !== "confirmed") return false;
+    const target = splitMerchantBookingDateTime(record.appointmentAt);
+    return target.date === date && isMerchantBookingTimeAllowed(target.time, [matchedRule.timeRange]);
+  }).length;
+  if (occupiedCount >= matchedRule.maxBookings) {
+    return "该预约时段人数已满，请选择其他时间";
+  }
+  return "";
 }
 
 export function getMerchantBookingTimeAvailabilityIssue(timeValue: string | null | undefined, configuredRanges: unknown) {
@@ -286,7 +405,9 @@ export function validateMerchantBookingInput(value: MerchantBookingEditableInput
     issues.push("\u9884\u7ea6\u65e5\u671f\u65f6\u95f4\u683c\u5f0f\u65e0\u6548");
   }
   if (value.appointmentAt && isValidDateTimeValue(value.appointmentAt)) {
-    const { time } = splitMerchantBookingDateTime(value.appointmentAt);
+    const { date, time } = splitMerchantBookingDateTime(value.appointmentAt);
+    const dateAvailabilityIssue = getMerchantBookingDateAvailabilityIssue(date, options?.blockedDates, options?.holidayDates);
+    if (dateAvailabilityIssue) issues.push(dateAvailabilityIssue);
     const timeAvailabilityIssue = getMerchantBookingTimeAvailabilityIssue(time, options?.availableTimeRanges);
     if (timeAvailabilityIssue) issues.push(timeAvailabilityIssue);
   }
