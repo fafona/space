@@ -9623,19 +9623,38 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     if (!isMobileSupportDialog || typeof document === "undefined") return () => {};
     const html = document.documentElement;
     const body = document.body;
+    const scrollY = typeof window !== "undefined" ? window.scrollY : 0;
     const previousHtmlOverflow = html.style.overflow;
     const previousHtmlOverscrollBehavior = html.style.overscrollBehavior;
     const previousBodyOverflow = body.style.overflow;
     const previousBodyOverscrollBehavior = body.style.overscrollBehavior;
+    const previousBodyPosition = body.style.position;
+    const previousBodyTop = body.style.top;
+    const previousBodyLeft = body.style.left;
+    const previousBodyRight = body.style.right;
+    const previousBodyWidth = body.style.width;
     html.style.overflow = "hidden";
     html.style.overscrollBehavior = "none";
     body.style.overflow = "hidden";
     body.style.overscrollBehavior = "none";
+    body.style.position = "fixed";
+    body.style.top = `${-scrollY}px`;
+    body.style.left = "0";
+    body.style.right = "0";
+    body.style.width = "100%";
     return () => {
       html.style.overflow = previousHtmlOverflow;
       html.style.overscrollBehavior = previousHtmlOverscrollBehavior;
       body.style.overflow = previousBodyOverflow;
       body.style.overscrollBehavior = previousBodyOverscrollBehavior;
+      body.style.position = previousBodyPosition;
+      body.style.top = previousBodyTop;
+      body.style.left = previousBodyLeft;
+      body.style.right = previousBodyRight;
+      body.style.width = previousBodyWidth;
+      if (typeof window !== "undefined") {
+        window.scrollTo({ top: scrollY, left: 0, behavior: "auto" });
+      }
     };
   }, [isMobileSupportDialog]);
 
