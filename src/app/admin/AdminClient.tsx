@@ -247,7 +247,7 @@ import MerchantBookingMobilePanel from "@/components/admin/MerchantBookingMobile
 import MerchantProfileDialog from "@/components/admin/MerchantProfileDialog";
 import { useI18n } from "@/components/I18nProvider";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
-import { I18N_URL_PARAM } from "@/lib/i18n";
+import { I18N_URL_PARAM, LANGUAGE_OPTIONS, resolveSupportedLocale } from "@/lib/i18n";
 import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
 import { getMerchantServiceState } from "@/lib/merchantServiceStatus";
 
@@ -294,6 +294,10 @@ const FONT_FAMILY_OPTIONS = [
   "Copperplate, Papyrus, fantasy",
   "monospace",
 ];
+
+function languageFlagImageUrl(countryCode: string) {
+  return `https://flagcdn.com/24x18/${countryCode.toLowerCase()}.png`;
+}
 
 function normalizeFontFamilyOptionKey(value: string) {
   return value
@@ -4289,6 +4293,32 @@ function readMobileVisualViewportMetrics(layoutViewportHeight?: number) {
   return { top, bottom, height };
 }
 
+function readMobileVisibleViewportBottom() {
+  if (typeof window === "undefined") {
+    return 0;
+  }
+  const candidates: number[] = [];
+  const visualViewport = window.visualViewport;
+  if (visualViewport) {
+    const heightRaw = Number.isFinite(visualViewport.height) ? visualViewport.height : 0;
+    const topRaw = Number.isFinite(visualViewport.offsetTop) ? visualViewport.offsetTop : 0;
+    const extent = heightRaw + topRaw;
+    if (extent > 0) {
+      candidates.push(Math.round(extent));
+    }
+  }
+  const innerHeight = Number.isFinite(window.innerHeight) ? window.innerHeight : 0;
+  if (innerHeight > 0) {
+    candidates.push(Math.round(innerHeight));
+  }
+  const documentElementHeight =
+    typeof document !== "undefined" ? Number.parseInt(String(document.documentElement?.clientHeight ?? 0), 10) : 0;
+  if (documentElementHeight > 0) {
+    candidates.push(Math.round(documentElementHeight));
+  }
+  return candidates.length ? Math.max(0, Math.min(...candidates)) : 0;
+}
+
 function normalizeSupportMessageTimestamp(value: string | null | undefined) {
   const normalized = String(value ?? "").trim();
   if (!normalized) return "";
@@ -4776,7 +4806,7 @@ export default function AdminClient({
   startInLoadingState = false,
 }: AdminClientProps = {}) {
   const [storeScope] = useState<string>(() => readBlocksStoreScopeFromLocation(forcedScope));
-  const { locale } = useI18n();
+  const { locale, setLocale, t } = useI18n();
   const [justSignedIn] = useState<boolean>(() => {
     if (typeof window === "undefined") return initialJustSignedIn;
     try {
@@ -4938,6 +4968,8 @@ export default function AdminClient({
   const supportMobileConversationsViewportRef = useRef<HTMLDivElement>(null);
   const supportInputRef = useRef<HTMLTextAreaElement>(null);
   const supportComposerRef = useRef<HTMLDivElement>(null);
+  const supportSelfLanguageRootRef = useRef<HTMLDivElement>(null);
+  const supportSelfLanguageMenuRef = useRef<HTMLDivElement>(null);
   const supportSelfAvatarInputRef = useRef<HTMLInputElement>(null);
   const supportPhotoInputRef = useRef<HTMLInputElement>(null);
   const supportCameraInputRef = useRef<HTMLInputElement>(null);
@@ -4961,6 +4993,8 @@ export default function AdminClient({
   const supportNotificationPreferencesKeyRef = useRef("");
   const mobileVisualViewportLayoutHeightRef = useRef(readMobileVisualViewportLayoutHeightCandidate());
   const mobileVisualViewportOrientationRef = useRef(readMobileVisualViewportOrientation());
+  const [supportComposerViewportLift, setSupportComposerViewportLift] = useState(0);
+  const [supportSelfLanguageMenuOpen, setSupportSelfLanguageMenuOpen] = useState(false);
   const resizeSupportComposerInput = useCallback((target?: HTMLTextAreaElement | null) => {
     const input = target ?? supportInputRef.current;
     if (!input) return;
@@ -9717,6 +9751,53 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     isMobileSupportDialog &&
     supportMobileView === "thread" &&
     (supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY || !!selectedSupportPeerContact);
+  const resolvedAdminLocale = useMemo(() => resolveSupportedLocale(locale), [locale]);
+  const supportSelfSelectedLanguage = useMemo(
+    () => LANGUAGE_OPTIONS.find((item) => item.code === resolvedAdminLocale) ?? LANGUAGE_OPTIONS[0],
+    [resolvedAdminLocale],
+  );
+  const syncSupportComposerViewportLift = useCallback(() => {
+    if (typeof window === "undefined" || !showMobileSupportThread) {
+      setSupportComposerViewportLift(0);
+      return;
+    }
+    const composer = supportComposerRef.current;
+    if (!composer) {
+      setSupportComposerViewportLift(0);
+      return;
+    }
+    const visibleViewportBottom = readMobileVisibleViewportBottom();
+    if (visibleViewportBottom <= 0) {
+      setSupportComposerViewportLift(0);
+      return;
+    }
+    const composerRect = composer.getBoundingClientRect();
+    const overlap = Math.max(0, Math.ceil(composerRect.bottom - visibleViewportBottom + 12));
+    setSupportComposerViewportLift((current) => (current === overlap ? current : overlap));
+  }, [showMobileSupportThread]);
+  useEffect(() => {
+    if (!showMobileSupportThread || typeof window === "undefined") {
+      setSupportComposerViewportLift(0);
+      return;
+    }
+    syncSupportComposerViewportLift();
+    const rafId = window.requestAnimationFrame(() => {
+      syncSupportComposerViewportLift();
+    });
+    const timer = window.setTimeout(() => {
+      syncSupportComposerViewportLift();
+    }, 180);
+    return () => {
+      window.cancelAnimationFrame(rafId);
+      window.clearTimeout(timer);
+    };
+  }, [
+    mobileVisualViewportMetrics.bottom,
+    mobileVisualViewportMetrics.height,
+    showMobileSupportThread,
+    supportDraft,
+    syncSupportComposerViewportLift,
+  ]);
   useEffect(() => {
     if (typeof window === "undefined" || typeof document === "undefined") return;
     const visible = isMobileSupportDialog && supportMobileHomeTab === "self";
@@ -9738,6 +9819,37 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       );
     };
   }, []);
+  useEffect(() => {
+    if (!isMobileSupportDialog || supportMobileHomeTab !== "self") {
+      setSupportSelfLanguageMenuOpen(false);
+    }
+  }, [isMobileSupportDialog, supportMobileHomeTab]);
+  useEffect(() => {
+    if (!supportSelfLanguageMenuOpen) return;
+    const handlePointerDown = (event: globalThis.MouseEvent | globalThis.TouchEvent) => {
+      const target = event.target as Node | null;
+      if (
+        target &&
+        (supportSelfLanguageRootRef.current?.contains(target) || supportSelfLanguageMenuRef.current?.contains(target))
+      ) {
+        return;
+      }
+      setSupportSelfLanguageMenuOpen(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setSupportSelfLanguageMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("touchstart", handlePointerDown, { passive: true });
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("touchstart", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [supportSelfLanguageMenuOpen]);
   useEffect(() => {
     if (!showMobileSupportThread) return;
     const rafId = window.requestAnimationFrame(() => {
@@ -11682,6 +11794,17 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       window.clearTimeout(timer);
     };
   }, [mobileVisualViewportMetrics.bottom, showMobileSupportThread]);
+  useEffect(() => {
+    if (!showMobileSupportThread || supportComposerViewportLift <= 0 || typeof window === "undefined") return;
+    const viewport = supportMessagesViewportRef.current;
+    if (!viewport) return;
+    const timer = window.setTimeout(() => {
+      viewport.scrollTo({ top: viewport.scrollHeight, behavior: "auto" });
+    }, 32);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [showMobileSupportThread, supportComposerViewportLift]);
 
   useEffect(() => {
     if (
@@ -13437,9 +13560,74 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         supportSelfSwipeStartRef.current = null;
       }}
     >
-      <div className="shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
+      <div className="relative shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
+        <div className="absolute right-4 top-[calc(env(safe-area-inset-top)+0.7rem)] z-20">
+          <div ref={supportSelfLanguageRootRef} className="relative">
+            <button
+              type="button"
+              className="flex h-11 items-center gap-2 rounded-full border border-slate-200 bg-white/95 px-3 text-xs font-medium text-slate-800 shadow-[0_10px_24px_rgba(15,23,42,0.08)]"
+              onClick={() => setSupportSelfLanguageMenuOpen((current) => !current)}
+              aria-label={t("lang.placeholder")}
+              aria-expanded={supportSelfLanguageMenuOpen}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={languageFlagImageUrl(supportSelfSelectedLanguage.countryCode)}
+                alt={supportSelfSelectedLanguage.label}
+                width={16}
+                height={12}
+                className="rounded-[2px] border border-slate-200 object-cover"
+                loading="eager"
+              />
+              <svg viewBox="0 0 24 24" className="h-4 w-4 text-slate-500" fill="none" aria-hidden="true">
+                <path
+                  d="m7 10 5 5 5-5"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+            {supportSelfLanguageMenuOpen ? (
+              <div
+                ref={supportSelfLanguageMenuRef}
+                className="absolute right-0 top-[calc(100%+0.5rem)] max-h-[55vh] w-[220px] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-[0_22px_60px_rgba(15,23,42,0.22)]"
+              >
+                <div className="space-y-1">
+                  {LANGUAGE_OPTIONS.map((item) => (
+                    <button
+                      key={item.code}
+                      type="button"
+                      className={`flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left text-sm transition ${
+                        item.code === resolvedAdminLocale
+                          ? "bg-slate-900 text-white"
+                          : "text-slate-700 hover:bg-slate-100"
+                      }`}
+                      onClick={() => {
+                        setLocale(item.code);
+                        setSupportSelfLanguageMenuOpen(false);
+                      }}
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={languageFlagImageUrl(item.countryCode)}
+                        alt={item.label}
+                        width={16}
+                        height={12}
+                        className="rounded-[2px] border border-slate-200 object-cover"
+                        loading="lazy"
+                      />
+                      <span className="truncate">{item.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
         {supportSelfSectionView === "home" ? (
-          <div className="flex flex-col items-center text-center">
+          <div className="flex flex-col items-center pr-16 text-center">
             <button
               type="button"
               className="relative flex h-24 w-24 items-center justify-center overflow-hidden rounded-[30px] bg-slate-900 text-xl font-semibold text-white shadow-[0_18px_40px_rgba(15,23,42,0.16)]"
@@ -13485,7 +13673,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             </div>
           </div>
         ) : (
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 pr-16">
             <button
               type="button"
               className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-slate-900 hover:bg-slate-100"
@@ -14096,6 +14284,13 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       <div
         ref={supportMessagesViewportRef}
         className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-[calc(env(safe-area-inset-bottom)+5.9rem)] pt-4"
+        style={
+          supportComposerViewportLift > 0
+            ? {
+                paddingBottom: `calc(env(safe-area-inset-bottom) + 5.9rem + ${supportComposerViewportLift}px)`,
+              }
+            : undefined
+        }
       >
         {selectedSupportLoading ? (
           <div className="rounded-[28px] border border-dashed border-slate-300 bg-white/90 px-5 py-8 text-center text-sm text-slate-500 shadow-sm">
@@ -14160,6 +14355,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       <div
         ref={supportComposerRef}
         className="absolute inset-x-0 bottom-0 z-10 overscroll-none border-t border-slate-200/80 bg-[#edf1f7]/98 px-3 pb-[env(safe-area-inset-bottom)] pt-1 shadow-[0_-8px_30px_rgba(15,23,42,0.06)] backdrop-blur"
+        style={supportComposerViewportLift > 0 ? { bottom: `${supportComposerViewportLift}px` } : undefined}
         onTouchMove={(event) => {
           event.stopPropagation();
         }}
@@ -14311,12 +14507,16 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 setSupportAttachmentMenuOpen(false);
                 setSupportSelfCardPickerOpen(false);
                 window.setTimeout(() => {
+                  syncSupportComposerViewportLift();
                   supportComposerRef.current?.scrollIntoView({ block: "end", inline: "nearest" });
                   supportMessagesViewportRef.current?.scrollTo({
                     top: supportMessagesViewportRef.current.scrollHeight,
                     behavior: "auto",
                   });
                 }, 80);
+                window.setTimeout(() => {
+                  syncSupportComposerViewportLift();
+                }, 220);
               }}
               onKeyDown={(event) => {
                 if (event.key !== "Enter" || !event.ctrlKey || event.nativeEvent.isComposing) return;

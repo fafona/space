@@ -149,7 +149,7 @@ export default function GlobalLanguageSwitcher() {
   if (!hydrated) return null;
 
   const isLoginPage = pathname === "/login";
-  const showOnMobile = isLoginPage || allowMobileAdminSwitcher;
+  const showOnMobile = isLoginPage;
   if (isMobileViewport && !showOnMobile) return null;
 
   const menuContent =
