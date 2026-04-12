@@ -14283,14 +14283,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       ) : null}
       <div
         ref={supportMessagesViewportRef}
-        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-[calc(env(safe-area-inset-bottom)+5.9rem)] pt-4"
-        style={
-          supportComposerViewportLift > 0
-            ? {
-                paddingBottom: `calc(env(safe-area-inset-bottom) + 5.9rem + ${supportComposerViewportLift}px)`,
-              }
-            : undefined
-        }
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-4 pt-4"
       >
         {selectedSupportLoading ? (
           <div className="rounded-[28px] border border-dashed border-slate-300 bg-white/90 px-5 py-8 text-center text-sm text-slate-500 shadow-sm">
@@ -14354,8 +14347,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       </div>
       <div
         ref={supportComposerRef}
-        className="absolute inset-x-0 bottom-0 z-10 overscroll-none border-t border-slate-200/80 bg-[#edf1f7]/98 px-3 pb-[env(safe-area-inset-bottom)] pt-1 shadow-[0_-8px_30px_rgba(15,23,42,0.06)] backdrop-blur"
-        style={supportComposerViewportLift > 0 ? { bottom: `${supportComposerViewportLift}px` } : undefined}
+        className="shrink-0 overscroll-none border-t border-slate-200/80 bg-[#edf1f7]/98 px-3 pb-[env(safe-area-inset-bottom)] pt-1 shadow-[0_-8px_30px_rgba(15,23,42,0.06)] backdrop-blur"
+        style={supportComposerViewportLift > 0 ? { marginBottom: `${supportComposerViewportLift}px` } : undefined}
         onTouchMove={(event) => {
           event.stopPropagation();
         }}
@@ -14508,7 +14501,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 setSupportSelfCardPickerOpen(false);
                 window.setTimeout(() => {
                   syncSupportComposerViewportLift();
-                  supportComposerRef.current?.scrollIntoView({ block: "end", inline: "nearest" });
                   supportMessagesViewportRef.current?.scrollTo({
                     top: supportMessagesViewportRef.current.scrollHeight,
                     behavior: "auto",
