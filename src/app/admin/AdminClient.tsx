@@ -14093,6 +14093,14 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           ? supportMobileFaollaContent
           : supportMobileSelfContent;
   const isSupportMobileKeyboardVisible = mobileVisualViewportMetrics.bottom > 0;
+  const supportMobileViewportFrameStyle: CSSProperties | undefined =
+    isIosSupportBrowser && isMobileSupportDialog
+      ? {
+          top: `${mobileVisualViewportMetrics.top}px`,
+          bottom: `${Math.max(0, mobileVisualViewportMetrics.bottom)}px`,
+          height: "auto",
+        }
+      : undefined;
 
   const supportMobileBottomNav = (
     <div
@@ -14742,6 +14750,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       <>
         <main
           className={`${supportMobileShellClassName} fixed inset-x-0 top-0 bottom-0 z-[120] overflow-hidden overscroll-none ${supportMobileBackgroundClassName} touch-manipulation [&_input]:!text-base [&_select]:!text-base [&_textarea]:!text-base`}
+          style={supportMobileViewportFrameStyle}
         >
           <div className="flex h-full min-h-0 flex-col overflow-hidden">
             {supportMobileDialogContent}
@@ -16526,11 +16535,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                   setSupportDialogOpen(false);
                 }}
                 aria-label="关闭在线客服弹窗"
-              />
-              <div
-                className={`fixed inset-x-0 top-0 bottom-0 z-[2147483301] ${isMobileSupportDialog ? "" : "flex items-center justify-center p-4"}`}
-              >
-                {isMobileSupportDialog ? (
+                />
+                <div
+                  className={`fixed inset-x-0 top-0 bottom-0 z-[2147483301] ${isMobileSupportDialog ? "" : "flex items-center justify-center p-4"}`}
+                  style={isMobileSupportDialog ? supportMobileViewportFrameStyle : undefined}
+                >
+                  {isMobileSupportDialog ? (
                   <>
                     {supportMobileDialogContent}
                     {supportMobileBottomNavOverlay}
