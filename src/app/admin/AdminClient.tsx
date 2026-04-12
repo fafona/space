@@ -4293,32 +4293,6 @@ function readMobileVisualViewportMetrics(layoutViewportHeight?: number) {
   return { top, bottom, height };
 }
 
-function readMobileVisibleViewportBottom() {
-  if (typeof window === "undefined") {
-    return 0;
-  }
-  const candidates: number[] = [];
-  const visualViewport = window.visualViewport;
-  if (visualViewport) {
-    const heightRaw = Number.isFinite(visualViewport.height) ? visualViewport.height : 0;
-    const topRaw = Number.isFinite(visualViewport.offsetTop) ? visualViewport.offsetTop : 0;
-    const extent = heightRaw + topRaw;
-    if (extent > 0) {
-      candidates.push(Math.round(extent));
-    }
-  }
-  const innerHeight = Number.isFinite(window.innerHeight) ? window.innerHeight : 0;
-  if (innerHeight > 0) {
-    candidates.push(Math.round(innerHeight));
-  }
-  const documentElementHeight =
-    typeof document !== "undefined" ? Number.parseInt(String(document.documentElement?.clientHeight ?? 0), 10) : 0;
-  if (documentElementHeight > 0) {
-    candidates.push(Math.round(documentElementHeight));
-  }
-  return candidates.length ? Math.max(0, Math.min(...candidates)) : 0;
-}
-
 function normalizeSupportMessageTimestamp(value: string | null | undefined) {
   const normalized = String(value ?? "").trim();
   if (!normalized) return "";
@@ -4993,7 +4967,6 @@ export default function AdminClient({
   const supportNotificationPreferencesKeyRef = useRef("");
   const mobileVisualViewportLayoutHeightRef = useRef(readMobileVisualViewportLayoutHeightCandidate());
   const mobileVisualViewportOrientationRef = useRef(readMobileVisualViewportOrientation());
-  const [supportComposerViewportLift, setSupportComposerViewportLift] = useState(0);
   const [supportSelfLanguageMenuOpen, setSupportSelfLanguageMenuOpen] = useState(false);
   const resizeSupportComposerInput = useCallback((target?: HTMLTextAreaElement | null) => {
     const input = target ?? supportInputRef.current;
@@ -9775,48 +9748,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     () => LANGUAGE_OPTIONS.find((item) => item.code === resolvedAdminLocale) ?? LANGUAGE_OPTIONS[0],
     [resolvedAdminLocale],
   );
-  const syncSupportComposerViewportLift = useCallback(() => {
-    if (typeof window === "undefined" || !showMobileSupportThread) {
-      setSupportComposerViewportLift(0);
-      return;
-    }
-    const composer = supportComposerRef.current;
-    if (!composer) {
-      setSupportComposerViewportLift(0);
-      return;
-    }
-    const visibleViewportBottom = readMobileVisibleViewportBottom();
-    if (visibleViewportBottom <= 0) {
-      setSupportComposerViewportLift(0);
-      return;
-    }
-    const composerRect = composer.getBoundingClientRect();
-    const overlap = Math.max(0, Math.ceil(composerRect.bottom - visibleViewportBottom + 12));
-    setSupportComposerViewportLift((current) => (current === overlap ? current : overlap));
-  }, [showMobileSupportThread]);
-  useEffect(() => {
-    if (!showMobileSupportThread || typeof window === "undefined") {
-      setSupportComposerViewportLift(0);
-      return;
-    }
-    syncSupportComposerViewportLift();
-    const rafId = window.requestAnimationFrame(() => {
-      syncSupportComposerViewportLift();
-    });
-    const timer = window.setTimeout(() => {
-      syncSupportComposerViewportLift();
-    }, 180);
-    return () => {
-      window.cancelAnimationFrame(rafId);
-      window.clearTimeout(timer);
-    };
-  }, [
-    mobileVisualViewportMetrics.bottom,
-    mobileVisualViewportMetrics.height,
-    showMobileSupportThread,
-    supportDraft,
-    syncSupportComposerViewportLift,
-  ]);
   useEffect(() => {
     if (typeof window === "undefined" || typeof document === "undefined") return;
     const visible = isMobileSupportDialog && supportMobileHomeTab === "self";
@@ -11813,18 +11744,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       window.clearTimeout(timer);
     };
   }, [mobileVisualViewportMetrics.bottom, showMobileSupportThread]);
-  useEffect(() => {
-    if (!showMobileSupportThread || supportComposerViewportLift <= 0 || typeof window === "undefined") return;
-    const viewport = supportMessagesViewportRef.current;
-    if (!viewport) return;
-    const timer = window.setTimeout(() => {
-      viewport.scrollTo({ top: viewport.scrollHeight, behavior: "auto" });
-    }, 32);
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [showMobileSupportThread, supportComposerViewportLift]);
-
   useEffect(() => {
     if (
       isPlatformEditor ||
@@ -14367,7 +14286,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       <div
         ref={supportComposerRef}
         className="shrink-0 overscroll-none border-t border-slate-200/80 bg-[#edf1f7]/98 px-3 pb-[env(safe-area-inset-bottom)] pt-1 shadow-[0_-8px_30px_rgba(15,23,42,0.06)] backdrop-blur"
-        style={supportComposerViewportLift > 0 ? { marginBottom: `${supportComposerViewportLift}px` } : undefined}
         onTouchMove={(event) => {
           event.stopPropagation();
         }}
@@ -14519,15 +14437,11 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 setSupportAttachmentMenuOpen(false);
                 setSupportSelfCardPickerOpen(false);
                 window.setTimeout(() => {
-                  syncSupportComposerViewportLift();
                   supportMessagesViewportRef.current?.scrollTo({
                     top: supportMessagesViewportRef.current.scrollHeight,
                     behavior: "auto",
                   });
                 }, 80);
-                window.setTimeout(() => {
-                  syncSupportComposerViewportLift();
-                }, 220);
               }}
               onKeyDown={(event) => {
                 if (event.key !== "Enter" || !event.ctrlKey || event.nativeEvent.isComposing) return;
