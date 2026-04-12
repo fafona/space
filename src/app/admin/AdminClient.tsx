@@ -4992,6 +4992,21 @@ export default function AdminClient({
       }
     });
   }, [resizeSupportComposerInput]);
+  const focusSupportInputImmediately = useCallback(() => {
+    if (typeof document === "undefined") return;
+    setSupportAttachmentMenuOpen(false);
+    setSupportSelfCardPickerOpen(false);
+    const input = supportInputRef.current;
+    if (!input || input.disabled) return;
+    input.focus({ preventScroll: true });
+    resizeSupportComposerInput(input);
+    const caretPosition = input.value.length;
+    try {
+      input.setSelectionRange(caretPosition, caretPosition);
+    } catch {
+      // Ignore browsers that do not allow setting selection on this element state.
+    }
+  }, [resizeSupportComposerInput]);
   const closeMobileSupportThread = useCallback(() => {
     setSupportBusinessCardDialogOpen(false);
     setSupportMerchantInfoSheetOpen(false);
@@ -14456,6 +14471,18 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 setSupportDraft(event.target.value);
                 resizeSupportComposerInput(event.target);
               }}
+              onTouchStart={(event) => {
+                if (!isIosSupportBrowser) return;
+                if (typeof document !== "undefined" && document.activeElement === event.currentTarget) return;
+                event.preventDefault();
+                focusSupportInputImmediately();
+              }}
+              onMouseDown={(event) => {
+                if (!isIosSupportBrowser) return;
+                if (typeof document !== "undefined" && document.activeElement === event.currentTarget) return;
+                event.preventDefault();
+                focusSupportInputImmediately();
+              }}
               onFocus={() => {
                 setSupportAttachmentMenuOpen(false);
                 setSupportSelfCardPickerOpen(false);
@@ -14478,7 +14505,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               autoCorrect="off"
               spellCheck={false}
               enterKeyHint="enter"
-              style={{ touchAction: "manipulation" }}
+              style={{ touchAction: isIosSupportBrowser ? "none" : "manipulation" }}
             />
           </div>
           <button
