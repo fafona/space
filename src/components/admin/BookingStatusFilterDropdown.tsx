@@ -20,7 +20,7 @@ type BookingStatusFilterDropdownProps = {
 const STATUS_ORDER = [...MERCHANT_BOOKING_STATUSES];
 
 function normalizeSelectedStatuses(value: MerchantBookingStatus[]) {
-  return STATUS_ORDER.filter((status, index) => value.indexOf(status) >= 0 && value.indexOf(status) === index);
+  return STATUS_ORDER.filter((status) => value.includes(status));
 }
 
 function getMenuItemClass(status: MerchantBookingStatus, selected: boolean) {
