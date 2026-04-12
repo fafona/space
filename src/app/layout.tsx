@@ -19,7 +19,7 @@ export const viewport: Viewport = {
   userScalable: false,
   viewportFit: "cover",
   themeColor: "#081121",
-  interactiveWidget: "overlays-content",
+  interactiveWidget: "resizes-content",
 };
 
 const IGNORE_REJECTION_SCRIPT = `
