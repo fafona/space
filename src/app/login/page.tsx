@@ -955,14 +955,12 @@ function LoginPageInner() {
       : undefined;
 
   return (
-    <main className="relative h-[100dvh] min-h-screen overflow-hidden overscroll-none bg-[#081121] text-slate-900">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(56,189,248,0.22),_transparent_34%),radial-gradient(circle_at_85%_18%,_rgba(45,212,191,0.18),_transparent_26%),linear-gradient(180deg,_#081121_0%,_#101b33_56%,_#eaf1ff_100%)]" />
-      <div className="absolute -left-16 top-20 h-48 w-48 rounded-full bg-cyan-300/20 blur-3xl" />
-      <div className="absolute right-[-3rem] top-40 h-56 w-56 rounded-full bg-emerald-300/16 blur-3xl" />
-      <div className="absolute bottom-[-5rem] left-1/2 h-64 w-64 -translate-x-1/2 rounded-full bg-white/12 blur-3xl" />
+    <main className="relative h-[100dvh] min-h-screen overflow-hidden overscroll-none bg-[#0b1424] text-slate-900">
+      <div className="absolute inset-0 bg-[linear-gradient(180deg,_#0b1424_0%,_#13213a_52%,_#eef4ff_100%)]" />
+      <div className="absolute inset-x-0 top-0 h-[30rem] bg-[radial-gradient(circle_at_top,_rgba(125,211,252,0.16),_transparent_58%)]" />
 
       <div className="relative mx-auto flex h-full w-full max-w-6xl flex-col md:min-h-screen md:px-6 md:py-8">
-        <div className="flex h-full w-full flex-col overflow-hidden md:min-h-0 md:flex-1 md:flex-row md:rounded-[34px] md:border md:border-white/14 md:bg-white/8 md:shadow-[0_32px_120px_rgba(8,17,33,0.4)]">
+        <div className="flex h-full w-full flex-col overflow-hidden md:min-h-0 md:flex-1 md:flex-row md:rounded-[34px] md:border md:border-white/10 md:bg-[#0f1a2f]/72 md:shadow-[0_28px_84px_rgba(8,17,33,0.28)]">
           <section
             className={`relative shrink-0 px-5 pb-4 pt-[calc(env(safe-area-inset-top)+0.875rem)] text-white sm:px-6 md:flex md:w-[44%] md:flex-col md:px-10 md:py-12 ${
               androidKeyboardOpen ? "hidden md:flex" : ""
@@ -1175,7 +1173,7 @@ function LoginPageInner() {
 
 export default function LoginPage() {
   return (
-    <Suspense fallback={<main className="min-h-screen bg-[#081121]" />}>
+    <Suspense fallback={<main className="min-h-screen bg-[#0b1424]" />}>
       <LoginPageInner />
     </Suspense>
   );

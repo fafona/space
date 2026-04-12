@@ -215,6 +215,9 @@ export default function MerchantBookingMobilePanel({
 }: MerchantBookingMobilePanelProps) {
   const { locale } = useI18n();
   const rootRef = useRef<HTMLDivElement>(null);
+  const detailDialogScrollViewportRef = useRef<HTMLDivElement>(null);
+  const isIosBrowser =
+    typeof navigator !== "undefined" && /iPhone|iPad|iPod/i.test(String(navigator.userAgent ?? ""));
   const loadFailedText = locale.startsWith("es") ? "No se pudieron cargar las citas." : "预约记录读取失败";
   const updateFailedText = locale.startsWith("es") ? "No se pudo actualizar la cita." : "预约更新失败";
   const [records, setRecords] = useState<MerchantBookingRecord[]>([]);
@@ -410,6 +413,49 @@ export default function MerchantBookingMobilePanel({
   const detailRecord = detailBookingId ? records.find((item) => item.id === detailBookingId) ?? null : null;
   const detailDraft = detailRecord ? drafts[detailRecord.id] ?? createDraft(detailRecord) : null;
 
+  useEffect(() => {
+    if (!detailBookingId || !isIosBrowser || typeof document === "undefined" || typeof window === "undefined") return () => {};
+
+    let scrollTimer = 0;
+    const scrollFocusedFieldIntoView = (delay = 0) => {
+      window.clearTimeout(scrollTimer);
+      scrollTimer = window.setTimeout(() => {
+        const activeElement = document.activeElement;
+        const viewport = detailDialogScrollViewportRef.current;
+        if (!(activeElement instanceof HTMLElement) || !viewport || !viewport.contains(activeElement)) return;
+        activeElement.scrollIntoView({
+          behavior: delay === 0 ? "auto" : "smooth",
+          block: "center",
+          inline: "nearest",
+        });
+      }, delay);
+    };
+
+    const handleFocusIn = (event: FocusEvent) => {
+      const target = event.target;
+      const viewport = detailDialogScrollViewportRef.current;
+      if (!(target instanceof HTMLElement) || !viewport || !viewport.contains(target)) return;
+      scrollFocusedFieldIntoView(220);
+      scrollFocusedFieldIntoView(420);
+    };
+
+    const handleViewportResize = () => {
+      scrollFocusedFieldIntoView(160);
+    };
+
+    document.addEventListener("focusin", handleFocusIn);
+    window.addEventListener("resize", handleViewportResize);
+    window.visualViewport?.addEventListener("resize", handleViewportResize);
+    window.visualViewport?.addEventListener("scroll", handleViewportResize);
+    return () => {
+      window.clearTimeout(scrollTimer);
+      document.removeEventListener("focusin", handleFocusIn);
+      window.removeEventListener("resize", handleViewportResize);
+      window.visualViewport?.removeEventListener("resize", handleViewportResize);
+      window.visualViewport?.removeEventListener("scroll", handleViewportResize);
+    };
+  }, [detailBookingId, isIosBrowser]);
+
   const saveDetailDialog = useCallback(async () => {
     if (!detailRecord || !detailDraft) return;
     const nextBooking = await patchBooking(
@@ -515,15 +561,13 @@ export default function MerchantBookingMobilePanel({
     detailRecord && detailDraft
         ? overlay(
           <div
-            className="fixed inset-0 z-[2147482950] overflow-y-auto bg-black/45 px-4 pt-4"
-            style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 7rem)" }}
+            className="fixed inset-0 z-[2147482950] flex justify-center overflow-hidden bg-black/45 px-4 pb-[calc(env(safe-area-inset-bottom,0px)+1rem)] pt-[calc(env(safe-area-inset-top,0px)+0.75rem)]"
             onMouseDown={(event) => {
               if (event.target === event.currentTarget) closeDetailDialog();
             }}
           >
             <div
-              className="mx-auto my-2 flex w-full max-w-xl min-h-0 flex-col overflow-hidden rounded-[28px] border bg-white shadow-2xl"
-              style={{ maxHeight: "calc(100vh - env(safe-area-inset-bottom, 0px) - 8.5rem)" }}
+              className="mx-auto flex w-full max-w-xl max-h-full min-h-0 flex-col overflow-hidden rounded-[28px] border bg-white shadow-2xl"
               onMouseDown={(event) => event.stopPropagation()}
             >
               <div className="flex items-start justify-between gap-3 border-b px-4 py-4">
@@ -564,7 +608,11 @@ export default function MerchantBookingMobilePanel({
                 </div>
               </div>
 
-              <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+              <div
+                ref={detailDialogScrollViewportRef}
+                className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4"
+                style={{ WebkitOverflowScrolling: "touch" }}
+              >
                 <div className="grid gap-3">
                   <label className="space-y-1 text-sm text-slate-700">
                     <span className="text-xs text-slate-500">{getMerchantBookingFieldText("store", locale)}</span>

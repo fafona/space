@@ -18,12 +18,26 @@ type CalendarCell = {
   inCurrentMonth: boolean;
 };
 
+const YEAR_SELECTION_SPAN = 5;
+
 function normalizeMonthStart(value: Date) {
   return new Date(value.getFullYear(), value.getMonth(), 1);
 }
 
 function addMonths(value: Date, delta: number) {
   return new Date(value.getFullYear(), value.getMonth() + delta, 1);
+}
+
+function clampDisplayMonthToAllowedRange(value: Date) {
+  const currentYear = new Date().getFullYear();
+  const maxYear = currentYear + YEAR_SELECTION_SPAN;
+  if (value.getFullYear() < currentYear) {
+    return new Date(currentYear, 0, 1);
+  }
+  if (value.getFullYear() > maxYear) {
+    return new Date(maxYear, 11, 1);
+  }
+  return normalizeMonthStart(value);
 }
 
 function formatDate(value: Date) {
@@ -64,15 +78,9 @@ function collectWeekendDatesForYear(year: number) {
   return next;
 }
 
-function buildYearOptions(selectedDates: string[], displayMonth: Date) {
-  const displayYear = displayMonth.getFullYear();
+function buildYearOptions() {
   const currentYear = new Date().getFullYear();
-  const selectedYears = selectedDates
-    .map((item) => Number.parseInt(item.slice(0, 4), 10))
-    .filter((item) => Number.isFinite(item));
-  const minYear = Math.min(displayYear, currentYear, ...(selectedYears.length > 0 ? selectedYears : [currentYear])) - 2;
-  const maxYear = Math.max(displayYear, currentYear, ...(selectedYears.length > 0 ? selectedYears : [currentYear])) + 2;
-  return Array.from({ length: maxYear - minYear + 1 }, (_, index) => minYear + index);
+  return Array.from({ length: YEAR_SELECTION_SPAN + 1 }, (_, index) => currentYear + index);
 }
 
 function groupSelectedDatesByMonth(selectedDates: string[]) {
@@ -89,16 +97,19 @@ function groupSelectedDatesByMonth(selectedDates: string[]) {
 
 function ArrowButton({
   direction,
+  disabled = false,
   onClick,
 }: {
   direction: "left" | "right";
+  disabled?: boolean;
   onClick: () => void;
 }) {
   return (
     <button
       type="button"
-      className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-700 transition hover:bg-slate-100"
+      className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-white"
       onClick={onClick}
+      disabled={disabled}
       aria-label={direction === "left" ? "上个月" : "下个月"}
       title={direction === "left" ? "上个月" : "下个月"}
     >
@@ -134,18 +145,22 @@ export default function BookingDateCalendarEditor({
   const [displayMonth, setDisplayMonth] = useState(() => {
     if (normalizedValue.length > 0) {
       const [year, month] = normalizedValue[0].split("-").map((item) => Number.parseInt(item, 10));
-      return new Date(year, (month || 1) - 1, 1);
+      return clampDisplayMonthToAllowedRange(new Date(year, (month || 1) - 1, 1));
     }
-    return normalizeMonthStart(new Date());
+    return clampDisplayMonthToAllowedRange(new Date());
   });
 
   const selectedDateSet = useMemo(() => new Set(selectedDates), [selectedDates]);
   const cells = useMemo(() => buildCalendarCells(displayMonth), [displayMonth]);
   const visibleYear = displayMonth.getFullYear();
   const visibleMonth = displayMonth.getMonth() + 1;
-  const yearOptions = useMemo(() => buildYearOptions(selectedDates, displayMonth), [displayMonth, selectedDates]);
+  const yearOptions = useMemo(() => buildYearOptions(), []);
   const selectedDateGroups = useMemo(() => groupSelectedDatesByMonth(selectedDates), [selectedDates]);
   const visibleYearWeekendDates = useMemo(() => collectWeekendDatesForYear(visibleYear), [visibleYear]);
+  const minSelectableYear = yearOptions[0] ?? visibleYear;
+  const maxSelectableYear = yearOptions[yearOptions.length - 1] ?? visibleYear;
+  const canNavigatePrevMonth = visibleYear > minSelectableYear || visibleMonth > 1;
+  const canNavigateNextMonth = visibleYear < maxSelectableYear || visibleMonth < 12;
   const accentClassName =
     tone === "holiday"
       ? "border-emerald-300 bg-emerald-100 text-emerald-800"
@@ -173,13 +188,13 @@ export default function BookingDateCalendarEditor({
   const handleYearChange = (value: string) => {
     const nextYear = Number.parseInt(value, 10);
     if (!Number.isFinite(nextYear)) return;
-    setDisplayMonth(new Date(nextYear, displayMonth.getMonth(), 1));
+    setDisplayMonth(clampDisplayMonthToAllowedRange(new Date(nextYear, displayMonth.getMonth(), 1)));
   };
 
   const handleMonthChange = (value: string) => {
     const nextMonth = Number.parseInt(value, 10);
     if (!Number.isFinite(nextMonth) || nextMonth < 1 || nextMonth > 12) return;
-    setDisplayMonth(new Date(displayMonth.getFullYear(), nextMonth - 1, 1));
+    setDisplayMonth(clampDisplayMonthToAllowedRange(new Date(displayMonth.getFullYear(), nextMonth - 1, 1)));
   };
 
   return (
@@ -191,7 +206,11 @@ export default function BookingDateCalendarEditor({
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
-          <ArrowButton direction="left" onClick={() => setDisplayMonth((current) => addMonths(current, -1))} />
+          <ArrowButton
+            direction="left"
+            disabled={!canNavigatePrevMonth}
+            onClick={() => setDisplayMonth((current) => clampDisplayMonthToAllowedRange(addMonths(current, -1)))}
+          />
           <select className={monthSelectClassName} value={visibleYear} onChange={(event) => handleYearChange(event.target.value)}>
             {yearOptions.map((year) => (
               <option key={year} value={year}>
@@ -206,7 +225,11 @@ export default function BookingDateCalendarEditor({
               </option>
             ))}
           </select>
-          <ArrowButton direction="right" onClick={() => setDisplayMonth((current) => addMonths(current, 1))} />
+          <ArrowButton
+            direction="right"
+            disabled={!canNavigateNextMonth}
+            onClick={() => setDisplayMonth((current) => clampDisplayMonthToAllowedRange(addMonths(current, 1)))}
+          />
         </div>
         <div className="text-xs text-slate-500">{`已选 ${selectedDates.length} 天`}</div>
       </div>
