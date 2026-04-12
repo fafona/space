@@ -11737,7 +11737,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }, [isPlatformEditor, latestVisibleSupportMessageKey, selectedSupportConversationVisible, selectedSupportLoading, supportInterfaceOpen]);
 
   useEffect(() => {
-    if (!showMobileSupportThread || mobileVisualViewportMetrics.bottom <= 0 || typeof window === "undefined") return;
+    if (isIosSupportBrowser || !showMobileSupportThread || mobileVisualViewportMetrics.bottom <= 0 || typeof window === "undefined") return;
     const viewport = supportMessagesViewportRef.current;
     if (!viewport) return;
     const timer = window.setTimeout(() => {
@@ -11746,7 +11746,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     return () => {
       window.clearTimeout(timer);
     };
-  }, [mobileVisualViewportMetrics.bottom, showMobileSupportThread]);
+  }, [isIosSupportBrowser, mobileVisualViewportMetrics.bottom, showMobileSupportThread]);
   useEffect(() => {
     if (
       isPlatformEditor ||
@@ -14459,12 +14459,14 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               onFocus={() => {
                 setSupportAttachmentMenuOpen(false);
                 setSupportSelfCardPickerOpen(false);
-                window.setTimeout(() => {
-                  supportMessagesViewportRef.current?.scrollTo({
-                    top: supportMessagesViewportRef.current.scrollHeight,
-                    behavior: "auto",
-                  });
-                }, 80);
+                if (!isIosSupportBrowser) {
+                  window.setTimeout(() => {
+                    supportMessagesViewportRef.current?.scrollTo({
+                      top: supportMessagesViewportRef.current.scrollHeight,
+                      behavior: "auto",
+                    });
+                  }, 80);
+                }
               }}
               onKeyDown={(event) => {
                 if (event.key !== "Enter" || !event.ctrlKey || event.nativeEvent.isComposing) return;
