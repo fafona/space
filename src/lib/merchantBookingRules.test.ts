@@ -5,15 +5,7 @@ import type { PagePlanConfig } from "./pagePlans";
 import { buildCombinedPersistedBlocks } from "./planTemplateRuntime";
 import { buildMerchantBookingRulesSnapshot, resolveMerchantBookingRuleEntry } from "./merchantBookingRules";
 
-function createBookingBlock(
-  id: string,
-  ranges: string[],
-  options?: {
-    blockedDates?: string[];
-    holidayDates?: string[];
-    slotCapacityRules?: Array<{ slot: string; maxBookings: number }>;
-  },
-): Block {
+function createBookingBlock(id: string, ranges: string[]): Block {
   return {
     id,
     type: "booking",
@@ -23,9 +15,6 @@ function createBookingBlock(
       bookingStoreOptions: ["Faolla"],
       bookingItemOptions: ["咨询预约"],
       bookingAvailableTimeRanges: ranges,
-      bookingBlockedDates: options?.blockedDates ?? [],
-      bookingHolidayDates: options?.holidayDates ?? [],
-      bookingSlotCapacityRules: options?.slotCapacityRules ?? [],
       bookingTitleOptions: ["先生", "女士"],
       bookingSubmitLabel: "提交预约",
       bookingUpdateLabel: "修改预约",
@@ -54,14 +43,8 @@ function createPlanConfig(blocks: Block[]): PagePlanConfig {
 }
 
 test("buildMerchantBookingRulesSnapshot extracts booking rules for desktop and mobile independently", () => {
-  const desktopBlock = createBookingBlock("booking-desktop", ["09:00-12:00"], {
-    blockedDates: ["2026-12-24"],
-    holidayDates: ["2026-12-25"],
-    slotCapacityRules: [{ slot: "09:00-12:00", maxBookings: 3 }],
-  });
-  const mobileBlock = createBookingBlock("booking-mobile", ["14:00-18:00"], {
-    slotCapacityRules: [{ slot: "14:00-18:00", maxBookings: 2 }],
-  });
+  const desktopBlock = createBookingBlock("booking-desktop", ["09:00-12:00"]);
+  const mobileBlock = createBookingBlock("booking-mobile", ["14:00-18:00"]);
   const combinedBlocks = buildCombinedPersistedBlocks(
     createPlanConfig([desktopBlock]),
     createPlanConfig([mobileBlock]),
@@ -74,9 +57,8 @@ test("buildMerchantBookingRulesSnapshot extracts booking rules for desktop and m
       viewport: "desktop",
       blockId: "booking-desktop",
       availableTimeRanges: ["09:00-12:00"],
-      blockedDates: ["2026-12-24"],
-      holidayDates: ["2026-12-25"],
-      slotCapacityRules: [{ slot: "09:00-12:00", maxBookings: 3 }],
+      blockedDates: [],
+      holidayDates: [],
       maxBookingsPerSlot: null,
     },
     {
@@ -85,7 +67,6 @@ test("buildMerchantBookingRulesSnapshot extracts booking rules for desktop and m
       availableTimeRanges: ["14:00-18:00"],
       blockedDates: [],
       holidayDates: [],
-      slotCapacityRules: [{ slot: "14:00-18:00", maxBookings: 2 }],
       maxBookingsPerSlot: null,
     },
   ]);
@@ -103,7 +84,6 @@ test("resolveMerchantBookingRuleEntry returns the exact viewport + block rule", 
         availableTimeRanges: ["09:00-12:00"],
         blockedDates: [],
         holidayDates: [],
-        slotCapacityRules: [],
         maxBookingsPerSlot: null,
       },
       {
@@ -112,7 +92,6 @@ test("resolveMerchantBookingRuleEntry returns the exact viewport + block rule", 
         availableTimeRanges: ["14:00-18:00"],
         blockedDates: [],
         holidayDates: [],
-        slotCapacityRules: [],
         maxBookingsPerSlot: null,
       },
     ],
@@ -134,7 +113,6 @@ test("resolveMerchantBookingRuleEntry allows legacy records only when the rules 
         availableTimeRanges: ["09:00-12:00"],
         blockedDates: [],
         holidayDates: [],
-        slotCapacityRules: [],
         maxBookingsPerSlot: null,
       },
       {
@@ -143,7 +121,6 @@ test("resolveMerchantBookingRuleEntry allows legacy records only when the rules 
         availableTimeRanges: ["09:00-12:00"],
         blockedDates: [],
         holidayDates: [],
-        slotCapacityRules: [],
         maxBookingsPerSlot: null,
       },
     ],
@@ -164,7 +141,6 @@ test("resolveMerchantBookingRuleEntry rejects ambiguous legacy matches when rule
         availableTimeRanges: ["09:00-12:00"],
         blockedDates: [],
         holidayDates: [],
-        slotCapacityRules: [],
         maxBookingsPerSlot: null,
       },
       {
@@ -173,7 +149,6 @@ test("resolveMerchantBookingRuleEntry rejects ambiguous legacy matches when rule
         availableTimeRanges: ["14:00-18:00"],
         blockedDates: [],
         holidayDates: [],
-        slotCapacityRules: [],
         maxBookingsPerSlot: null,
       },
     ],

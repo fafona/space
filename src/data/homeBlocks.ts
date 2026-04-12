@@ -366,12 +366,6 @@ export type BookingProps = BackgroundEditableProps &
     bookingStoreOptions?: string[];
     bookingItemOptions?: string[];
     bookingAvailableTimeRanges?: string[];
-    bookingSlotCapacityRules?: Array<{
-      slot?: string;
-      maxBookings?: number;
-    }>;
-    bookingBlockedDates?: string[];
-    bookingHolidayDates?: string[];
     bookingTitleOptions?: string[];
     bookingSubmitLabel?: string;
     bookingUpdateLabel?: string;

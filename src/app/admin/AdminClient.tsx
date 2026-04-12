@@ -216,10 +216,7 @@ import {
   buildDefaultBookingItemOptions,
   buildDefaultBookingStoreOptions,
   buildDefaultBookingTitleOptions,
-  formatMerchantBookingSlotCapacityRulesText,
   normalizeBookingOptionList,
-  normalizeMerchantBookingDateOptions,
-  normalizeMerchantBookingSlotCapacityRules,
   normalizeMerchantBookingTimeRangeOptions,
 } from "@/lib/merchantBookings";
 import {
@@ -7950,9 +7947,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           ),
           bookingItemOptions: buildDefaultBookingItemOptions(),
           bookingAvailableTimeRanges: [],
-          bookingSlotCapacityRules: [],
-          bookingBlockedDates: [],
-          bookingHolidayDates: [],
           bookingTitleOptions: buildDefaultBookingTitleOptions(),
           bookingSubmitLabel: "提交预约",
           bookingUpdateLabel: "修改预约",
@@ -14100,10 +14094,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           : supportMobileSelfContent;
   const isSupportMobileKeyboardVisible = mobileVisualViewportMetrics.bottom > 0;
   const supportMobileViewportFrameStyle: CSSProperties | undefined =
-    isIosSupportBrowser &&
-    isMobileSupportDialog &&
-    !isSupportMobileKeyboardVisible &&
-    mobileVisualViewportMetrics.height > 0
+    isIosSupportBrowser && isMobileSupportDialog && mobileVisualViewportMetrics.height > 0
       ? {
           top: `${mobileVisualViewportMetrics.top}px`,
           height: `${mobileVisualViewportMetrics.height}px`,
@@ -17386,9 +17377,6 @@ type GalleryEditorImage = {
   const [productPreviewSearchByBlockId, setProductPreviewSearchByBlockId] = useState<Record<string, string>>({});
   const [productTagOptionsDraftByBlockId, setProductTagOptionsDraftByBlockId] = useState<Record<string, string>>({});
   const [bookingAvailableTimeRangesDraftByBlockId, setBookingAvailableTimeRangesDraftByBlockId] = useState<Record<string, string>>({});
-  const [bookingSlotCapacityRulesDraftByBlockId, setBookingSlotCapacityRulesDraftByBlockId] = useState<Record<string, string>>({});
-  const [bookingBlockedDatesDraftByBlockId, setBookingBlockedDatesDraftByBlockId] = useState<Record<string, string>>({});
-  const [bookingHolidayDatesDraftByBlockId, setBookingHolidayDatesDraftByBlockId] = useState<Record<string, string>>({});
   const [productDetailPreview, setProductDetailPreview] = useState<{ blockId: string; itemId: string } | null>(null);
   const [productSettingsCollapsedByBlockId, setProductSettingsCollapsedByBlockId] = useState<
     Record<string, Partial<Record<ProductSettingsSectionKey, boolean>>>
@@ -17421,9 +17409,6 @@ type GalleryEditorImage = {
   } | null>(null);
   const galleryLayoutDefs: Array<{ id: GalleryLayoutPreset }> = GALLERY_LAYOUT_PRESETS.map((id) => ({ id }));
   const bookingAvailableTimeRangesValue = block.type === "booking" ? block.props.bookingAvailableTimeRanges : null;
-  const bookingSlotCapacityRulesValue = block.type === "booking" ? block.props.bookingSlotCapacityRules : null;
-  const bookingBlockedDatesValue = block.type === "booking" ? block.props.bookingBlockedDates : null;
-  const bookingHolidayDatesValue = block.type === "booking" ? block.props.bookingHolidayDates : null;
 
   useEffect(() => {
     setPreviewNavPageId(currentPageId);
@@ -17440,42 +17425,6 @@ type GalleryEditorImage = {
       };
     });
   }, [block.id, bookingAvailableTimeRangesValue, block.type]);
-
-  useEffect(() => {
-    if (block.type !== "booking") return;
-    const nextDraft = formatMerchantBookingSlotCapacityRulesText(bookingSlotCapacityRulesValue);
-    setBookingSlotCapacityRulesDraftByBlockId((current) => {
-      if (current[block.id] === nextDraft) return current;
-      return {
-        ...current,
-        [block.id]: nextDraft,
-      };
-    });
-  }, [block.id, bookingSlotCapacityRulesValue, block.type]);
-
-  useEffect(() => {
-    if (block.type !== "booking") return;
-    const nextDraft = normalizeMerchantBookingDateOptions(bookingBlockedDatesValue).join("\n");
-    setBookingBlockedDatesDraftByBlockId((current) => {
-      if (current[block.id] === nextDraft) return current;
-      return {
-        ...current,
-        [block.id]: nextDraft,
-      };
-    });
-  }, [block.id, bookingBlockedDatesValue, block.type]);
-
-  useEffect(() => {
-    if (block.type !== "booking") return;
-    const nextDraft = normalizeMerchantBookingDateOptions(bookingHolidayDatesValue).join("\n");
-    setBookingHolidayDatesDraftByBlockId((current) => {
-      if (current[block.id] === nextDraft) return current;
-      return {
-        ...current,
-        [block.id]: nextDraft,
-      };
-    });
-  }, [block.id, bookingHolidayDatesValue, block.type]);
 
   function normalizeGalleryImages(
     source: Array<
@@ -26618,15 +26567,6 @@ type GalleryEditorImage = {
     const bookingAvailableTimeRangesText =
       bookingAvailableTimeRangesDraftByBlockId[block.id] ??
       normalizeMerchantBookingTimeRangeOptions(block.props.bookingAvailableTimeRanges).join("\n");
-    const bookingSlotCapacityRulesText =
-      bookingSlotCapacityRulesDraftByBlockId[block.id] ??
-      formatMerchantBookingSlotCapacityRulesText(block.props.bookingSlotCapacityRules);
-    const bookingBlockedDatesText =
-      bookingBlockedDatesDraftByBlockId[block.id] ??
-      normalizeMerchantBookingDateOptions(block.props.bookingBlockedDates).join("\n");
-    const bookingHolidayDatesText =
-      bookingHolidayDatesDraftByBlockId[block.id] ??
-      normalizeMerchantBookingDateOptions(block.props.bookingHolidayDates).join("\n");
     const bookingTitleOptionsText = normalizeBookingOptionList(block.props.bookingTitleOptions).join("\n");
     const bookingPreview = (
       <BookingBlock
@@ -26759,75 +26699,6 @@ type GalleryEditorImage = {
                         [block.id]: normalizedText,
                       }));
                       onChange({ bookingAvailableTimeRanges: normalizedRanges });
-                    }}
-                  />
-                </label>
-                <label className="space-y-1 text-sm text-gray-700">
-                  <span className="block text-gray-600">各时段/时间点人数上限</span>
-                  <textarea
-                    className="min-h-[96px] w-full rounded border px-3 py-2"
-                    value={bookingSlotCapacityRulesText}
-                    placeholder={"每行一个时段或时间点的人数上限，例如：\n09:00-12:00=3\n14:30=1"}
-                    onChange={(event) =>
-                      setBookingSlotCapacityRulesDraftByBlockId((current) => ({
-                        ...current,
-                        [block.id]: event.target.value,
-                      }))
-                    }
-                    onBlur={(event) => {
-                      const normalizedRules = normalizeMerchantBookingSlotCapacityRules(event.target.value);
-                      const normalizedText = formatMerchantBookingSlotCapacityRulesText(normalizedRules);
-                      setBookingSlotCapacityRulesDraftByBlockId((current) => ({
-                        ...current,
-                        [block.id]: normalizedText,
-                      }));
-                      onChange({ bookingSlotCapacityRules: normalizedRules });
-                    }}
-                  />
-                </label>
-                <label className="space-y-1 text-sm text-gray-700">
-                  <span className="block text-gray-600">黑名单日期</span>
-                  <textarea
-                    className="min-h-[96px] w-full rounded border px-3 py-2"
-                    value={bookingBlockedDatesText}
-                    placeholder={"每行一个日期，例如：\n2026-12-24\n2026-12-31"}
-                    onChange={(event) =>
-                      setBookingBlockedDatesDraftByBlockId((current) => ({
-                        ...current,
-                        [block.id]: event.target.value,
-                      }))
-                    }
-                    onBlur={(event) => {
-                      const normalizedDates = normalizeMerchantBookingDateOptions(event.target.value);
-                      const normalizedText = normalizedDates.join("\n");
-                      setBookingBlockedDatesDraftByBlockId((current) => ({
-                        ...current,
-                        [block.id]: normalizedText,
-                      }));
-                      onChange({ bookingBlockedDates: normalizedDates });
-                    }}
-                  />
-                </label>
-                <label className="space-y-1 text-sm text-gray-700">
-                  <span className="block text-gray-600">节假日</span>
-                  <textarea
-                    className="min-h-[96px] w-full rounded border px-3 py-2"
-                    value={bookingHolidayDatesText}
-                    placeholder={"每行一个日期，例如：\n2026-01-01\n2026-05-01"}
-                    onChange={(event) =>
-                      setBookingHolidayDatesDraftByBlockId((current) => ({
-                        ...current,
-                        [block.id]: event.target.value,
-                      }))
-                    }
-                    onBlur={(event) => {
-                      const normalizedDates = normalizeMerchantBookingDateOptions(event.target.value);
-                      const normalizedText = normalizedDates.join("\n");
-                      setBookingHolidayDatesDraftByBlockId((current) => ({
-                        ...current,
-                        [block.id]: normalizedText,
-                      }));
-                      onChange({ bookingHolidayDates: normalizedDates });
                     }}
                   />
                 </label>
