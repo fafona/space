@@ -14094,10 +14094,11 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           : supportMobileSelfContent;
   const isSupportMobileKeyboardVisible = mobileVisualViewportMetrics.bottom > 0;
   const supportMobileViewportFrameStyle: CSSProperties | undefined =
-    isIosSupportBrowser && isMobileSupportDialog && !isSupportMobileKeyboardVisible && mobileVisualViewportMetrics.top > 0
+    isIosSupportBrowser && isMobileSupportDialog && mobileVisualViewportMetrics.height > 0
       ? {
           top: `${mobileVisualViewportMetrics.top}px`,
-          height: "auto",
+          height: `${mobileVisualViewportMetrics.height}px`,
+          bottom: "auto",
         }
       : undefined;
 
