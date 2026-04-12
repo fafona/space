@@ -13,6 +13,7 @@ type BookingStatusFilterDropdownProps = {
   counts: BookingStatusFilterCounts;
   selectedStatuses: MerchantBookingStatus[];
   onChange: (statuses: MerchantBookingStatus[]) => void;
+  onPress?: () => void;
   compact?: boolean;
 };
 
@@ -78,6 +79,7 @@ export default function BookingStatusFilterDropdown({
   counts,
   selectedStatuses,
   onChange,
+  onPress,
   compact = false,
 }: BookingStatusFilterDropdownProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -131,7 +133,10 @@ export default function BookingStatusFilterDropdown({
         className={`inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white transition hover:bg-slate-50 ${
           compact ? "px-3 py-2 text-xs" : "px-3 py-2 text-sm"
         }`}
-        onClick={() => setOpen((current) => !current)}
+        onClick={() => {
+          onPress?.();
+          setOpen((current) => !current);
+        }}
         aria-expanded={open}
       >
         <span className="font-medium text-slate-800">{getMerchantBookingFilterText("all", counts.total, locale)}</span>
