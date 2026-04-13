@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import BookingWorkbenchDialog from "@/components/admin/BookingWorkbenchDialog";
 import BookingStatusFilterDropdown from "@/components/admin/BookingStatusFilterDropdown";
 import { useI18n } from "@/components/I18nProvider";
 import BookingDateTimeInput from "@/components/booking/BookingDateTimeInput";
@@ -97,8 +98,23 @@ function createDraft(record: MerchantBookingRecord): MerchantBookingAdminDraft {
   };
 }
 
+function createStatusCounts(records: MerchantBookingRecord[]) {
+  const counts = {
+    total: records.length,
+  } as Record<MerchantBookingStatus, number> & { total: number };
+
+  MERCHANT_BOOKING_STATUSES.forEach((status) => {
+    counts[status] = 0;
+  });
+  records.forEach((record) => {
+    counts[record.status] += 1;
+  });
+  return counts;
+}
+
 function getStatusBadgeClass(status: MerchantBookingStatus) {
   if (status === "cancelled") return "bg-slate-200 text-slate-700";
+  if (status === "no_show") return "bg-rose-100 text-rose-700";
   if (status === "completed") return "bg-emerald-100 text-emerald-700";
   if (status === "confirmed") return "bg-sky-100 text-sky-700";
   return "bg-amber-100 text-amber-700";
@@ -120,6 +136,11 @@ function getFilterChipClass(filter: MerchantBookingFilter, key: MerchantBookingF
     return isActive
       ? "border border-emerald-300 bg-emerald-100 text-emerald-800"
       : "border border-emerald-200 bg-emerald-50 text-emerald-700";
+  }
+  if (key === "no_show") {
+    return isActive
+      ? "border border-rose-300 bg-rose-100 text-rose-800"
+      : "border border-rose-200 bg-rose-50 text-rose-700";
   }
   if (key === "cancelled") {
     return isActive
@@ -233,6 +254,7 @@ export default function MerchantBookingMobilePanel({
   const [selectedStatuses, setSelectedStatuses] = useState<MerchantBookingStatus[]>(() => [...MERCHANT_BOOKING_STATUSES]);
   const [busyKey, setBusyKey] = useState("");
   const [detailBookingId, setDetailBookingId] = useState<string | null>(null);
+  const [workbenchOpen, setWorkbenchOpen] = useState(false);
 
   const loadBookings = useCallback(async () => {
     if (!siteId) return;
@@ -272,19 +294,7 @@ export default function MerchantBookingMobilePanel({
     onRefresh: loadBookings,
   });
 
-  const counts = useMemo(() => {
-    const active = records.filter((item) => item.status === "active").length;
-    const confirmed = records.filter((item) => item.status === "confirmed").length;
-    const completed = records.filter((item) => item.status === "completed").length;
-    const cancelled = records.filter((item) => item.status === "cancelled").length;
-    return {
-      total: records.length,
-      active,
-      confirmed,
-      completed,
-      cancelled,
-    };
-  }, [records]);
+  const counts = useMemo(() => createStatusCounts(records), [records]);
 
   const filteredRecords = useMemo(
     () =>
@@ -494,7 +504,7 @@ export default function MerchantBookingMobilePanel({
   }, [detailDraft, detailRecord, patchBooking]);
 
   const renderStatusActions = (record: MerchantBookingRecord) => {
-    if (record.status === "cancelled") {
+    if (record.status === "cancelled" || record.status === "no_show") {
       return (
         <button
           type="button"
@@ -545,6 +555,18 @@ export default function MerchantBookingMobilePanel({
               : getMerchantBookingActionText("confirm", locale)}
           </button>
         )}
+        {(record.status === "active" || record.status === "confirmed") ? (
+          <button
+            type="button"
+            className="rounded-full border border-rose-300 bg-rose-100 px-3 py-2 text-xs font-medium text-rose-800 transition hover:bg-rose-200 disabled:opacity-50"
+            onClick={() => void patchBooking(record.id, { status: "no_show" }, "noshow")}
+            disabled={busyKey === `noshow:${record.id}`}
+          >
+            {busyKey === `noshow:${record.id}`
+              ? getMerchantBookingActionText("processing", locale)
+              : getMerchantBookingActionText("noshow", locale)}
+          </button>
+        ) : null}
         {record.status !== "completed" ? (
           <button
             type="button"
@@ -794,6 +816,17 @@ export default function MerchantBookingMobilePanel({
                 placeholder={getMerchantBookingFieldText("searchMobile", locale)}
               />
             </div>
+            <button
+              type="button"
+              className={`shrink-0 rounded-[18px] border px-3 py-2 text-xs font-medium transition ${
+                darkMode
+                  ? "border-slate-700 bg-slate-900 text-slate-100"
+                  : "border-slate-200 bg-white text-slate-700"
+              }`}
+              onClick={() => setWorkbenchOpen(true)}
+            >
+              工作台
+            </button>
           </div>
           <div className="flex flex-wrap gap-2">
             <BookingStatusFilterDropdown
@@ -807,7 +840,7 @@ export default function MerchantBookingMobilePanel({
               }}
               compact
             />
-            {(["active", "confirmed", "completed", "cancelled"] as MerchantBookingStatus[]).map((status) => (
+            {MERCHANT_BOOKING_STATUSES.map((status) => (
               <button
                 key={status}
                 type="button"
@@ -920,6 +953,14 @@ export default function MerchantBookingMobilePanel({
         )}
       </div>
 
+      <BookingWorkbenchDialog
+        open={workbenchOpen}
+        siteId={siteId}
+        siteName={siteName}
+        records={records}
+        darkMode={darkMode}
+        onClose={() => setWorkbenchOpen(false)}
+      />
       {detailDialog}
     </>
   );

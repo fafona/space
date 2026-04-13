@@ -39,6 +39,11 @@ function getMenuItemClass(status: MerchantBookingStatus, selected: boolean) {
       ? "border-emerald-300 bg-emerald-100 text-emerald-800"
       : "border-slate-200 bg-white text-slate-700 hover:border-emerald-200 hover:bg-emerald-50";
   }
+  if (status === "no_show") {
+    return selected
+      ? "border-rose-300 bg-rose-100 text-rose-800"
+      : "border-slate-200 bg-white text-slate-700 hover:border-rose-200 hover:bg-rose-50";
+  }
   return selected
     ? "border-slate-300 bg-slate-200 text-slate-800"
     : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-100";

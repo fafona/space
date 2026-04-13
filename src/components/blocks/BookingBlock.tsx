@@ -23,6 +23,11 @@ import {
   type MerchantBookingEditableInput,
   type MerchantBookingRecord,
 } from "@/lib/merchantBookings";
+import {
+  getMerchantBookingAdvanceIssue,
+  getMerchantBookingRecurringIssue,
+  type MerchantBookingWorkbenchPublicSettings,
+} from "@/lib/merchantBookingWorkbench";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import type { MerchantBookingRuleViewport } from "@/lib/merchantBookingRules";
 import { useI18n } from "@/components/I18nProvider";
@@ -139,13 +144,29 @@ export default function BookingBlock({
     [props.bookingHolidayDates],
   );
   const [draft, setDraft] = useState(() => buildInitialDraft(storeOptions, itemOptions, titleOptions));
+  const [workbenchSettings, setWorkbenchSettings] = useState<MerchantBookingWorkbenchPublicSettings | null>(null);
+  const appointmentValue = useMemo(
+    () => joinMerchantBookingDateTime(draft.appointmentDateInput, draft.appointmentTimeInput),
+    [draft.appointmentDateInput, draft.appointmentTimeInput],
+  );
   const appointmentDateIssue = useMemo(
-    () => getMerchantBookingDateAvailabilityIssue(draft.appointmentDateInput, blockedDates, holidayDates),
-    [blockedDates, draft.appointmentDateInput, holidayDates],
+    () => {
+      const baseIssue = getMerchantBookingDateAvailabilityIssue(draft.appointmentDateInput, blockedDates, holidayDates);
+      if (baseIssue) return baseIssue;
+      return getMerchantBookingRecurringIssue(appointmentValue, workbenchSettings?.recurringRules);
+    },
+    [appointmentValue, blockedDates, draft.appointmentDateInput, holidayDates, workbenchSettings],
   );
   const appointmentTimeIssue = useMemo(
     () => getMerchantBookingTimeAvailabilityIssue(draft.appointmentTimeInput, availableTimeRanges),
     [availableTimeRanges, draft.appointmentTimeInput],
+  );
+  const appointmentWorkbenchIssue = useMemo(
+    () => {
+      if (appointmentDateIssue) return "";
+      return getMerchantBookingAdvanceIssue(appointmentValue, workbenchSettings);
+    },
+    [appointmentDateIssue, appointmentValue, workbenchSettings],
   );
   const [submittedState, setSubmittedState] = useState<SubmittedBookingState | null>(null);
   const [mode, setMode] = useState<"form" | "success">("form");
@@ -156,6 +177,41 @@ export default function BookingBlock({
   useEffect(() => {
     setDraft((current) => buildInitialDraft(storeOptions, itemOptions, titleOptions, current));
   }, [storeOptions, itemOptions, titleOptions]);
+
+  useEffect(() => {
+    if (!isLiveBooking) {
+      setWorkbenchSettings(null);
+      return;
+    }
+
+    let cancelled = false;
+    const loadWorkbenchSettings = async () => {
+      try {
+        const response = await fetch(
+          `/api/bookings/workbench/public?siteId=${encodeURIComponent(runtimeSiteId)}`,
+          { cache: "no-store" },
+        );
+        const json = (await response.json().catch(() => null)) as
+          | { ok?: boolean; settings?: MerchantBookingWorkbenchPublicSettings }
+          | null;
+        if (!response.ok || !json?.ok || !json.settings) {
+          throw new Error("workbench_settings_unavailable");
+        }
+        if (!cancelled) {
+          setWorkbenchSettings(json.settings);
+        }
+      } catch {
+        if (!cancelled) {
+          setWorkbenchSettings(null);
+        }
+      }
+    };
+
+    void loadWorkbenchSettings();
+    return () => {
+      cancelled = true;
+    };
+  }, [isLiveBooking, runtimeSiteId]);
 
   const headingHtml = toRichHtml(props.heading, resolveLocalizedSystemDefaultText(props.heading, "在线预约", locale));
   const textHtml = toRichHtml(
@@ -219,6 +275,9 @@ export default function BookingBlock({
     try {
       if (appointmentDateIssue) {
         throw new Error(appointmentDateIssue);
+      }
+      if (appointmentWorkbenchIssue) {
+        throw new Error(appointmentWorkbenchIssue);
       }
       const currentAppointmentTimeIssue = getMerchantBookingTimeAvailabilityIssue(draft.appointmentTimeInput, availableTimeRanges);
       if (currentAppointmentTimeIssue) {
@@ -448,6 +507,11 @@ export default function BookingBlock({
                   {appointmentTimeIssue}
                 </div>
               ) : null}
+              {appointmentWorkbenchIssue ? (
+                <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                  {appointmentWorkbenchIssue}
+                </div>
+              ) : null}
             </label>
             <label className="space-y-1 text-sm text-slate-700">
               <span>称谓</span>
@@ -513,7 +577,13 @@ export default function BookingBlock({
             <button
               type="submit"
               className="rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={!isLiveBooking || submitting || Boolean(appointmentDateIssue) || Boolean(appointmentTimeIssue)}
+              disabled={
+                !isLiveBooking ||
+                submitting ||
+                Boolean(appointmentDateIssue) ||
+                Boolean(appointmentTimeIssue) ||
+                Boolean(appointmentWorkbenchIssue)
+              }
             >
               {submitting ? "提交中..." : submittedState ? updateLabel : submitLabel}
             </button>

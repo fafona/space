@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import BookingWorkbenchDialog from "@/components/admin/BookingWorkbenchDialog";
 import BookingStatusFilterDropdown from "@/components/admin/BookingStatusFilterDropdown";
 import { useI18n } from "@/components/I18nProvider";
 import BookingDateTimeInput from "@/components/booking/BookingDateTimeInput";
@@ -101,8 +102,23 @@ function createDraft(record: MerchantBookingRecord): MerchantBookingAdminDraft {
   };
 }
 
+function createStatusCounts(records: MerchantBookingRecord[]) {
+  const counts = {
+    total: records.length,
+  } as Record<MerchantBookingStatus, number> & { total: number };
+
+  MERCHANT_BOOKING_STATUSES.forEach((status) => {
+    counts[status] = 0;
+  });
+  records.forEach((record) => {
+    counts[record.status] += 1;
+  });
+  return counts;
+}
+
 function getStatusBadgeClass(status: MerchantBookingStatus) {
   if (status === "cancelled") return "bg-slate-200 text-slate-700";
+  if (status === "no_show") return "bg-rose-100 text-rose-700";
   if (status === "completed") return "bg-emerald-100 text-emerald-700";
   if (status === "confirmed") return "bg-sky-100 text-sky-700";
   return "bg-amber-100 text-amber-700";
@@ -124,6 +140,11 @@ function getFilterChipClass(filter: MerchantBookingFilter, key: MerchantBookingF
     return isActive
       ? "border border-emerald-300 bg-emerald-100 text-emerald-800"
       : "border border-emerald-200 bg-emerald-50 text-emerald-700";
+  }
+  if (key === "no_show") {
+    return isActive
+      ? "border border-rose-300 bg-rose-100 text-rose-800"
+      : "border border-rose-200 bg-rose-50 text-rose-700";
   }
   if (key === "cancelled") {
     return isActive
@@ -247,6 +268,13 @@ export default function MerchantBookingManagerDialog({
   const [selectedStatuses, setSelectedStatuses] = useState<MerchantBookingStatus[]>(() => [...MERCHANT_BOOKING_STATUSES]);
   const [busyKey, setBusyKey] = useState("");
   const [detailBookingId, setDetailBookingId] = useState<string | null>(null);
+  const [workbenchOpen, setWorkbenchOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) {
+      setWorkbenchOpen(false);
+    }
+  }, [open]);
 
   useEffect(() => {
     if (!open || !siteId) return;
@@ -282,19 +310,7 @@ export default function MerchantBookingManagerDialog({
     };
   }, [loadFailedText, open, siteId]);
 
-  const counts = useMemo(() => {
-    const active = records.filter((item) => item.status === "active").length;
-    const confirmed = records.filter((item) => item.status === "confirmed").length;
-    const completed = records.filter((item) => item.status === "completed").length;
-    const cancelled = records.filter((item) => item.status === "cancelled").length;
-    return {
-      total: records.length,
-      active,
-      confirmed,
-      completed,
-      cancelled,
-    };
-  }, [records]);
+  const counts = useMemo(() => createStatusCounts(records), [records]);
 
   const filteredRecords = useMemo(
     () =>
@@ -459,7 +475,7 @@ export default function MerchantBookingManagerDialog({
   };
 
   const renderStatusActions = (record: MerchantBookingRecord) => {
-    if (record.status === "cancelled") {
+    if (record.status === "cancelled" || record.status === "no_show") {
       return (
         <button
           type="button"
@@ -510,6 +526,18 @@ export default function MerchantBookingManagerDialog({
               : getMerchantBookingActionText("confirm", locale)}
           </button>
         )}
+        {(record.status === "active" || record.status === "confirmed") ? (
+          <button
+            type="button"
+            className="rounded border border-rose-300 bg-rose-100 px-3 py-1.5 text-[13px] leading-5 text-rose-800 hover:bg-rose-200 disabled:opacity-50"
+            onClick={() => void patchBooking(record.id, { status: "no_show" }, "noshow")}
+            disabled={busyKey === `noshow:${record.id}`}
+          >
+            {busyKey === `noshow:${record.id}`
+              ? getMerchantBookingActionText("processing", locale)
+              : getMerchantBookingActionText("noshow", locale)}
+          </button>
+        ) : null}
         {record.status !== "completed" ? (
           <button
             type="button"
@@ -723,7 +751,16 @@ export default function MerchantBookingManagerDialog({
         >
         <div className="flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4">
           <div className="space-y-1">
-            <div className="text-lg font-semibold text-slate-900">{getMerchantBookingFieldText("managementTitle", locale)}</div>
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="text-lg font-semibold text-slate-900">{getMerchantBookingFieldText("managementTitle", locale)}</div>
+              <button
+                type="button"
+                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                onClick={() => setWorkbenchOpen(true)}
+              >
+                工作台
+              </button>
+            </div>
             <div className="text-sm text-slate-500">{getMerchantBookingManagementSubtitle(siteName || siteId, locale)}</div>
           </div>
           {resolvedShowCloseButton ? (
@@ -756,7 +793,7 @@ export default function MerchantBookingManagerDialog({
                   setFilter("all");
                 }}
               />
-              {(["active", "confirmed", "completed", "cancelled"] as MerchantBookingStatus[]).map((status) => (
+              {MERCHANT_BOOKING_STATUSES.map((status) => (
                 <button
                   key={status}
                   type="button"
@@ -875,6 +912,13 @@ export default function MerchantBookingManagerDialog({
           )}
         </div>
       </div>
+      <BookingWorkbenchDialog
+        open={workbenchOpen}
+        siteId={siteId}
+        siteName={siteName}
+        records={records}
+        onClose={() => setWorkbenchOpen(false)}
+      />
       {detailDialog}
     </div>
   );

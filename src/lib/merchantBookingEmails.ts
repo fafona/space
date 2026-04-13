@@ -193,3 +193,121 @@ export async function sendMerchantBookingConfirmationEmail(
     ...(messageId ? { messageId } : {}),
   };
 }
+
+function buildReminderOffsetLabel(minutesBefore: number) {
+  if (minutesBefore % (60 * 24) === 0) {
+    return `${minutesBefore / (60 * 24)} day(s)`;
+  }
+  if (minutesBefore % 60 === 0) {
+    return `${minutesBefore / 60} hour(s)`;
+  }
+  return `${minutesBefore} minute(s)`;
+}
+
+function buildReminderEmailSubject(booking: MerchantBookingRecord, minutesBefore: number) {
+  return `Booking reminder - ${buildMerchantDisplayName(booking)} - ${buildReminderOffsetLabel(minutesBefore)}`;
+}
+
+function buildReminderEmailText(booking: MerchantBookingRecord, minutesBefore: number) {
+  const lines = [
+    `Hello ${buildCustomerDisplayName(booking) || "Customer"},`,
+    "",
+    `This is a reminder for your booking in ${buildReminderOffsetLabel(minutesBefore)}.`,
+    "",
+    `Booking ID: ${booking.id}`,
+    `Store: ${booking.store}`,
+    `Item: ${booking.item}`,
+    `Appointment time: ${formatMerchantBookingDateTime(booking.appointmentAt)}`,
+  ];
+  if (booking.note.trim()) {
+    lines.push(`Note: ${booking.note.trim()}`);
+  }
+  lines.push("", "If you need to change the booking, please contact the merchant.");
+  return lines.join("\n");
+}
+
+function buildReminderEmailHtml(booking: MerchantBookingRecord, minutesBefore: number) {
+  const customerName = escapeHtml(buildCustomerDisplayName(booking) || "Customer");
+  const bookingId = escapeHtml(booking.id);
+  const store = escapeHtml(booking.store);
+  const item = escapeHtml(booking.item);
+  const appointmentAt = escapeHtml(formatMerchantBookingDateTime(booking.appointmentAt));
+  const note = booking.note.trim() ? `<p><strong>Note:</strong> ${escapeHtml(booking.note.trim())}</p>` : "";
+  return [
+    "<div style=\"font-family:Arial,sans-serif;line-height:1.6;color:#111827;\">",
+    `<p>Hello ${customerName},</p>`,
+    `<p>This is a reminder for your booking in ${escapeHtml(buildReminderOffsetLabel(minutesBefore))}.</p>`,
+    `<p><strong>Booking ID:</strong> ${bookingId}</p>`,
+    `<p><strong>Store:</strong> ${store}</p>`,
+    `<p><strong>Item:</strong> ${item}</p>`,
+    `<p><strong>Appointment time:</strong> ${appointmentAt}</p>`,
+    note,
+    "<p>If you need to change the booking, please contact the merchant.</p>",
+    "</div>",
+  ].join("");
+}
+
+export async function sendMerchantBookingReminderEmail(
+  booking: MerchantBookingRecord,
+  minutesBefore: number,
+): Promise<MerchantBookingConfirmationEmailSendResult> {
+  const recipient = normalizeDisplayValue(booking.email).toLowerCase();
+  if (!recipient) {
+    return {
+      attempted: false,
+      reason: "missing_email",
+    };
+  }
+
+  const config = getMerchantBookingConfirmationEmailConfig();
+  if (!config) {
+    return {
+      attempted: false,
+      reason: "disabled",
+    };
+  }
+
+  const attemptedAt = new Date().toISOString();
+  const response = await fetch(RESEND_EMAILS_API_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${config.apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from: config.from,
+      to: [recipient],
+      subject: buildReminderEmailSubject(booking, minutesBefore),
+      text: buildReminderEmailText(booking, minutesBefore),
+      html: buildReminderEmailHtml(booking, minutesBefore),
+      ...(config.replyTo ? { reply_to: config.replyTo } : {}),
+    }),
+  });
+
+  const responseText = await response.text();
+  if (!response.ok) {
+    return {
+      attempted: true,
+      attemptedAt,
+      status: "failed",
+      error: parseResendErrorMessage(response.status, responseText),
+    };
+  }
+
+  let messageId = "";
+  if (responseText.trim()) {
+    try {
+      const parsed = JSON.parse(responseText) as ResendSendEmailResponse;
+      messageId = normalizeDisplayValue(parsed.id ?? "");
+    } catch {
+      messageId = "";
+    }
+  }
+
+  return {
+    attempted: true,
+    attemptedAt,
+    status: "sent",
+    ...(messageId ? { messageId } : {}),
+  };
+}

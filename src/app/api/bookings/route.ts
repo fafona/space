@@ -111,6 +111,8 @@ export async function PATCH(request: Request) {
             ? "confirmed"
             : body?.status === "completed"
               ? "completed"
+              : body?.status === "no_show"
+                ? "no_show"
               : null;
     if (isMerchantNumericId(maybeSiteId)) {
       const booking = await updateMerchantBookingBySite({

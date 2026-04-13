@@ -1,7 +1,7 @@
 import { getUtf8ByteLength, truncateUtf8ByBytes } from "./merchantProfileBinding";
 import type { MerchantBookingRuleViewport } from "./merchantBookingRules";
 
-export const MERCHANT_BOOKING_STATUSES = ["active", "confirmed", "completed", "cancelled"] as const;
+export const MERCHANT_BOOKING_STATUSES = ["active", "confirmed", "completed", "no_show", "cancelled"] as const;
 export const MERCHANT_BOOKING_CUSTOMER_NAME_MAX_BYTES = 40;
 export const MERCHANT_BOOKING_NOTE_MAX_BYTES = 100;
 
@@ -46,6 +46,9 @@ export type MerchantBookingStoredRecord = MerchantBookingRecord & {
   confirmationEmailSentAt?: string;
   confirmationEmailMessageId?: string;
   confirmationEmailError?: string;
+  customerReminderProcessedMinutes?: number[];
+  merchantReminderProcessedMinutes?: number[];
+  noShowMarkedAt?: string;
 };
 
 export type MerchantBookingUpdateAction = "update" | "cancel";
@@ -482,6 +485,7 @@ export function shouldSendMerchantBookingConfirmationEmail(input: {
 export function getMerchantBookingStatusLabel(status: MerchantBookingStatus) {
   if (status === "confirmed") return "\u5df2\u786e\u8ba4";
   if (status === "completed") return "\u5df2\u5b8c\u6210";
+  if (status === "no_show") return "\u672a\u5230\u5e97";
   if (status === "cancelled") return "\u5df2\u53d6\u6d88";
   return "\u5f85\u786e\u8ba4";
 }
@@ -494,6 +498,9 @@ export function withoutMerchantBookingToken(record: MerchantBookingStoredRecord)
     confirmationEmailSentAt,
     confirmationEmailMessageId,
     confirmationEmailError,
+    customerReminderProcessedMinutes,
+    merchantReminderProcessedMinutes,
+    noShowMarkedAt,
     ...publicRecord
   } = record;
   void editToken;
@@ -502,5 +509,8 @@ export function withoutMerchantBookingToken(record: MerchantBookingStoredRecord)
   void confirmationEmailSentAt;
   void confirmationEmailMessageId;
   void confirmationEmailError;
+  void customerReminderProcessedMinutes;
+  void merchantReminderProcessedMinutes;
+  void noShowMarkedAt;
   return publicRecord;
 }

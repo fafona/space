@@ -335,6 +335,9 @@ test("withoutMerchantBookingToken removes internal email delivery metadata", () 
     confirmationEmailSentAt: "2026-03-19T10:31:00.000Z",
     confirmationEmailMessageId: "email-id-1",
     confirmationEmailError: "failed",
+    customerReminderProcessedMinutes: [120, 30],
+    merchantReminderProcessedMinutes: [60],
+    noShowMarkedAt: "2026-03-19T11:05:00.000Z",
   });
 
   assert.deepEqual(publicRecord, {
@@ -359,5 +362,6 @@ test("getMerchantBookingStatusLabel returns readable labels", () => {
   assert.equal(getMerchantBookingStatusLabel("active"), "\u5f85\u786e\u8ba4");
   assert.equal(getMerchantBookingStatusLabel("confirmed"), "\u5df2\u786e\u8ba4");
   assert.equal(getMerchantBookingStatusLabel("completed"), "\u5df2\u5b8c\u6210");
+  assert.equal(getMerchantBookingStatusLabel("no_show"), "\u672a\u5230\u5e97");
   assert.equal(getMerchantBookingStatusLabel("cancelled"), "\u5df2\u53d6\u6d88");
 });

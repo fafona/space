@@ -1,0 +1,99 @@
+import { randomBytes } from "node:crypto";
+import { NextResponse } from "next/server";
+import { isMerchantNumericId } from "@/lib/merchantIdentity";
+import {
+  normalizeMerchantBookingWorkbenchSettings,
+  type MerchantBookingWorkbenchSettings,
+} from "@/lib/merchantBookingWorkbench";
+import {
+  loadMerchantBookingWorkbenchSettings,
+  saveMerchantBookingWorkbenchSettings,
+} from "@/lib/merchantBookingWorkbenchStore";
+import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+type CalendarSyncAction = "keep" | "ensure" | "reset" | "disable";
+
+function trimText(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function noStoreJson(body: unknown, init?: ResponseInit) {
+  const response = NextResponse.json(body, init);
+  response.headers.set("cache-control", "no-store");
+  return response;
+}
+
+async function resolveWorkbenchSession(request: Request, hintedSiteId: string) {
+  const session = await resolveMerchantSessionFromRequest(request, {
+    hintedMerchantId: hintedSiteId,
+  });
+  if (!session || session.merchantId !== hintedSiteId) return null;
+  return session;
+}
+
+function applyCalendarSyncAction(
+  settings: MerchantBookingWorkbenchSettings,
+  action: CalendarSyncAction,
+): MerchantBookingWorkbenchSettings {
+  if (action === "disable") {
+    return {
+      ...settings,
+      calendarSyncToken: "",
+      calendarSyncTokenUpdatedAt: "",
+    };
+  }
+  if (action === "reset" || (action === "ensure" && !settings.calendarSyncToken)) {
+    return {
+      ...settings,
+      calendarSyncToken: randomBytes(18).toString("hex"),
+      calendarSyncTokenUpdatedAt: new Date().toISOString(),
+    };
+  }
+  return settings;
+}
+
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const siteId = trimText(searchParams.get("siteId"));
+  if (!isMerchantNumericId(siteId)) {
+    return noStoreJson({ error: "invalid_site_id" }, { status: 400 });
+  }
+  const session = await resolveWorkbenchSession(request, siteId);
+  if (!session) {
+    return noStoreJson({ error: "unauthorized" }, { status: 401 });
+  }
+  const settings = await loadMerchantBookingWorkbenchSettings(siteId);
+  return noStoreJson({ ok: true, settings });
+}
+
+export async function PATCH(request: Request) {
+  const body = (await request.json().catch(() => null)) as
+    | {
+        siteId?: unknown;
+        settings?: unknown;
+        calendarSyncAction?: unknown;
+      }
+    | null;
+  const siteId = trimText(body?.siteId);
+  if (!isMerchantNumericId(siteId)) {
+    return noStoreJson({ error: "invalid_site_id" }, { status: 400 });
+  }
+  const session = await resolveWorkbenchSession(request, siteId);
+  if (!session) {
+    return noStoreJson({ error: "unauthorized" }, { status: 401 });
+  }
+
+  const baseSettings = normalizeMerchantBookingWorkbenchSettings(body?.settings);
+  const calendarSyncAction =
+    body?.calendarSyncAction === "ensure" ||
+    body?.calendarSyncAction === "reset" ||
+    body?.calendarSyncAction === "disable"
+      ? body.calendarSyncAction
+      : "keep";
+  const nextSettings = applyCalendarSyncAction(baseSettings, calendarSyncAction);
+  const saved = await saveMerchantBookingWorkbenchSettings(siteId, nextSettings);
+  return noStoreJson({ ok: true, settings: saved });
+}

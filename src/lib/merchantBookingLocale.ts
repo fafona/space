@@ -10,6 +10,7 @@ type BookingActionKey =
   | "unconfirm"
   | "confirm"
   | "complete"
+  | "noshow"
   | "cancel"
   | "detail"
   | "close"
@@ -74,6 +75,7 @@ const ACTION_SOURCE: Record<BookingActionKey, string> = {
   unconfirm: "取消确认",
   confirm: "确认预约",
   complete: "完成预约",
+  noshow: "标记未到店",
   cancel: "取消预约",
   detail: "详情",
   close: "关闭",
@@ -87,6 +89,7 @@ const STATUS_SOURCE: Record<MerchantBookingStatus, string> = {
   active: "待确认",
   confirmed: "已确认",
   completed: "已完成",
+  no_show: "未到店",
   cancelled: "已取消",
 };
 
@@ -131,8 +134,8 @@ function resolveHonorificBucket(title: string) {
     "domnule",
     "herra",
     "sur",
-    "様",
-    "님",
+    "男士",
+    "남",
   ]);
   const femaleTokens = new Set([
     "女士",
@@ -167,8 +170,8 @@ function resolveHonorificBucket(title: string) {
     "rouva",
     "sinjura",
     "madamm",
-    "様",
-    "님",
+    "女",
+    "여",
   ]);
   if (maleTokens.has(normalized)) return "male";
   if (femaleTokens.has(normalized)) return "female";
@@ -240,10 +243,7 @@ export function getMerchantBookingDayLabel(dateValue: string, locale: string) {
   }
 
   const now = new Date();
-  const isToday =
-    now.getFullYear() === year &&
-    now.getMonth() === month - 1 &&
-    now.getDate() === day;
+  const isToday = now.getFullYear() === year && now.getMonth() === month - 1 && now.getDate() === day;
   if (isToday) {
     return getUiGlossaryText("今天", locale);
   }
