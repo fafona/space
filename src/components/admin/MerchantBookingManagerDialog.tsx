@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import BookingStatusFilterDropdown from "@/components/admin/BookingStatusFilterDropdown";
 import { useI18n } from "@/components/I18nProvider";
 import BookingDateTimeInput from "@/components/booking/BookingDateTimeInput";
+import BookingQuickTimeRangePicker from "@/components/booking/BookingQuickTimeRangePicker";
 import {
   MERCHANT_BOOKING_STATUSES,
   type MerchantBookingEditableInput,
@@ -33,6 +34,7 @@ import {
   type MerchantBookingFilter,
 } from "@/lib/merchantBookingLocale";
 import { buildMerchantBookingMailtoHref } from "@/lib/merchantBookingMailto";
+import { resolveMerchantBookingRuleEntry, type MerchantBookingRulesSnapshot } from "@/lib/merchantBookingRules";
 
 type MerchantBookingManagerDialogProps = {
   open: boolean;
@@ -44,6 +46,7 @@ type MerchantBookingManagerDialogProps = {
   storeOptions?: string[];
   itemOptions?: string[];
   titleOptions?: string[];
+  bookingRulesSnapshot?: MerchantBookingRulesSnapshot | null;
   allowBookingEmailPrefill?: boolean;
   onClose: () => void;
 };
@@ -226,6 +229,7 @@ export default function MerchantBookingManagerDialog({
   storeOptions = [],
   itemOptions = [],
   titleOptions = [],
+  bookingRulesSnapshot = null,
   allowBookingEmailPrefill = false,
   onClose,
 }: MerchantBookingManagerDialogProps) {
@@ -420,6 +424,16 @@ export default function MerchantBookingManagerDialog({
 
   const detailRecord = detailBookingId ? records.find((item) => item.id === detailBookingId) ?? null : null;
   const detailDraft = detailRecord ? drafts[detailRecord.id] ?? createDraft(detailRecord) : null;
+  const detailAvailableTimeRanges = useMemo(
+    () =>
+      detailRecord
+        ? resolveMerchantBookingRuleEntry(bookingRulesSnapshot, {
+            bookingBlockId: detailRecord.bookingBlockId,
+            bookingViewport: detailRecord.bookingViewport,
+          })?.availableTimeRanges ?? []
+        : [],
+    [bookingRulesSnapshot, detailRecord],
+  );
 
   const saveDetailDialog = async () => {
     if (!detailRecord || !detailDraft) return;
@@ -599,6 +613,12 @@ export default function MerchantBookingManagerDialog({
                       timeInputClassName="w-[116px] shrink-0 rounded-[18px] border border-slate-200 px-4 py-3 text-base text-slate-900"
                       onDateChange={(value) => handleDraftChange(detailRecord.id, "appointmentDateInput", value)}
                       onTimeChange={(value) => handleDraftChange(detailRecord.id, "appointmentTimeInput", value)}
+                    />
+                    <BookingQuickTimeRangePicker
+                      ranges={detailAvailableTimeRanges}
+                      selectedTime={detailDraft.appointmentTimeInput}
+                      className="pt-1"
+                      onSelect={(nextTime) => handleDraftChange(detailRecord.id, "appointmentTimeInput", nextTime)}
                     />
                   </label>
 

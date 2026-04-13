@@ -164,6 +164,16 @@ export function normalizeMerchantBookingTimeRangeOptions(value: unknown, fallbac
   return next;
 }
 
+export function resolveMerchantBookingTimeRangeSelection(value: string | null | undefined) {
+  const normalized = normalizeSingleLineText(value);
+  if (!normalized) return "";
+  const matchedRange = normalized.match(/^(\d{2}:\d{2})-(\d{2}:\d{2})$/);
+  if (matchedRange) {
+    return matchedRange[1] ?? "";
+  }
+  return /^\d{2}:\d{2}$/.test(normalized) ? normalized : "";
+}
+
 export function normalizeMerchantBookingTimeSlotRules(value: unknown, fallbackRanges: unknown = []): MerchantBookingTimeSlotRule[] {
   const source = Array.isArray(value) ? value : [];
   const next: MerchantBookingTimeSlotRule[] = [];

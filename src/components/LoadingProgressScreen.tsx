@@ -20,10 +20,6 @@ type ContactPreviewItem = {
   iconNode?: ReactNode;
 };
 
-function isChineseLocale(locale?: string | null) {
-  return (locale ?? "").trim().toLowerCase().startsWith("zh");
-}
-
 function resolveWelcomeHeadline(locale?: string | null, fallback?: string) {
   const normalized = (locale ?? "").trim().toLowerCase();
   const byLanguage: Record<string, string> = {
@@ -111,10 +107,6 @@ function MapGlyph() {
 
 export default function LoadingProgressScreen(props: LoadingProgressScreenProps) {
   const locale = (props.locale ?? "").trim().toLowerCase();
-  const isChinese = isChineseLocale(locale);
-  const desktopSrc = isChinese ? "/loading-progress-desktop-zh.webp" : "/loading-progress-desktop-en.webp";
-  const mobileSrc = isChinese ? "/loading-progress-mobile-zh.webp" : "/loading-progress-mobile-en.webp";
-  const alt = "FAOLLA merchant workspace welcome poster";
   const headline = resolveWelcomeHeadline(locale, props.statusTitle);
   const quickAccessTagline = resolveQuickAccessTagline(locale);
   const contactItems: ContactPreviewItem[] = [
@@ -127,18 +119,10 @@ export default function LoadingProgressScreen(props: LoadingProgressScreenProps)
 
   return (
     <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#081121]">
-      <div className="absolute inset-0 overflow-hidden">
-        <picture className="block h-screen w-screen opacity-28 blur-[2px] saturate-[0.92]">
-          <source media="(max-width: 768px)" srcSet={mobileSrc} />
-          <img
-            src={desktopSrc}
-            alt={alt}
-            draggable={false}
-            className="h-full w-full scale-[1.02] select-none object-cover"
-          />
-        </picture>
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(103,232,249,0.16),_transparent_26%),radial-gradient(circle_at_82%_18%,_rgba(45,212,191,0.12),_transparent_24%),linear-gradient(180deg,rgba(8,17,33,0.52)_0%,rgba(8,17,33,0.62)_42%,rgba(7,16,33,0.78)_100%)]" />
-      </div>
+      <div className="absolute inset-0 bg-[linear-gradient(180deg,#091221_0%,#10203a_50%,#0f1a30_100%)]" />
+      <div className="absolute inset-x-0 top-0 h-[24rem] bg-[radial-gradient(circle_at_top_left,_rgba(125,211,252,0.16),_transparent_48%)]" />
+      <div className="absolute inset-x-0 top-0 h-[20rem] bg-[radial-gradient(circle_at_top_right,_rgba(45,212,191,0.1),_transparent_42%)]" />
+      <div className="absolute inset-x-0 bottom-0 h-[12rem] bg-[linear-gradient(180deg,transparent_0%,rgba(6,12,24,0.34)_100%)]" />
 
       <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-4 sm:p-6">
         <div className="grid w-full max-w-[1620px] gap-4 lg:grid-cols-[minmax(0,1.08fr)_minmax(460px,0.92fr)] lg:gap-8">

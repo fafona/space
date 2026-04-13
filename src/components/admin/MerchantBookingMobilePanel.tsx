@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import BookingStatusFilterDropdown from "@/components/admin/BookingStatusFilterDropdown";
 import { useI18n } from "@/components/I18nProvider";
 import BookingDateTimeInput from "@/components/booking/BookingDateTimeInput";
+import BookingQuickTimeRangePicker from "@/components/booking/BookingQuickTimeRangePicker";
 import {
   MERCHANT_BOOKING_STATUSES,
   type MerchantBookingEditableInput,
@@ -32,6 +33,7 @@ import {
   type MerchantBookingFilter,
 } from "@/lib/merchantBookingLocale";
 import { buildMerchantBookingMailtoHref } from "@/lib/merchantBookingMailto";
+import { resolveMerchantBookingRuleEntry, type MerchantBookingRulesSnapshot } from "@/lib/merchantBookingRules";
 import usePullToRefresh from "@/lib/usePullToRefresh";
 
 type MerchantBookingMobilePanelProps = {
@@ -40,6 +42,7 @@ type MerchantBookingMobilePanelProps = {
   storeOptions?: string[];
   itemOptions?: string[];
   titleOptions?: string[];
+  bookingRulesSnapshot?: MerchantBookingRulesSnapshot | null;
   darkMode?: boolean;
   allowBookingEmailPrefill?: boolean;
 };
@@ -210,6 +213,7 @@ export default function MerchantBookingMobilePanel({
   storeOptions = [],
   itemOptions = [],
   titleOptions = [],
+  bookingRulesSnapshot = null,
   darkMode = false,
   allowBookingEmailPrefill = false,
 }: MerchantBookingMobilePanelProps) {
@@ -412,6 +416,16 @@ export default function MerchantBookingMobilePanel({
 
   const detailRecord = detailBookingId ? records.find((item) => item.id === detailBookingId) ?? null : null;
   const detailDraft = detailRecord ? drafts[detailRecord.id] ?? createDraft(detailRecord) : null;
+  const detailAvailableTimeRanges = useMemo(
+    () =>
+      detailRecord
+        ? resolveMerchantBookingRuleEntry(bookingRulesSnapshot, {
+            bookingBlockId: detailRecord.bookingBlockId,
+            bookingViewport: detailRecord.bookingViewport,
+          })?.availableTimeRanges ?? []
+        : [],
+    [bookingRulesSnapshot, detailRecord],
+  );
 
   useEffect(() => {
     if (!detailBookingId || !isIosBrowser || typeof document === "undefined" || typeof window === "undefined") return () => {};
@@ -653,6 +667,12 @@ export default function MerchantBookingMobilePanel({
                       timeInputClassName="w-[116px] shrink-0 rounded-[18px] border border-slate-200 px-4 py-3 text-base text-slate-900"
                       onDateChange={(value) => handleDraftChange(detailRecord.id, "appointmentDateInput", value)}
                       onTimeChange={(value) => handleDraftChange(detailRecord.id, "appointmentTimeInput", value)}
+                    />
+                    <BookingQuickTimeRangePicker
+                      ranges={detailAvailableTimeRanges}
+                      selectedTime={detailDraft.appointmentTimeInput}
+                      className="pt-1"
+                      onSelect={(nextTime) => handleDraftChange(detailRecord.id, "appointmentTimeInput", nextTime)}
                     />
                   </label>
 

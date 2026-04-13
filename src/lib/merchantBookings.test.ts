@@ -17,6 +17,7 @@ import {
   normalizeMerchantBookingDateList,
   normalizeMerchantBookingNoteInput,
   normalizeMerchantBookingTimeRangeOptions,
+  resolveMerchantBookingTimeRangeSelection,
   normalizeMerchantBookingTimeSlotRules,
   sanitizeMerchantBookingEditableInput,
   isMerchantBookingTimeAllowed,
@@ -93,6 +94,12 @@ test("normalizeMerchantBookingTimeRangeOptions normalizes exact times and ranges
     normalizeMerchantBookingTimeRangeOptions("9:00-12:00\n14:00 ～ 18:00\n09:30\n09:30\nbad"),
     ["09:00-12:00", "14:00-18:00", "09:30"],
   );
+});
+
+test("resolveMerchantBookingTimeRangeSelection picks the quick-select time value", () => {
+  assert.equal(resolveMerchantBookingTimeRangeSelection("09:00-12:00"), "09:00");
+  assert.equal(resolveMerchantBookingTimeRangeSelection("19:30"), "19:30");
+  assert.equal(resolveMerchantBookingTimeRangeSelection("bad"), "");
 });
 
 test("normalizeMerchantBookingTimeSlotRules keeps per-slot capacities", () => {

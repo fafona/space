@@ -15,6 +15,7 @@ import {
   normalizeMerchantBookingCustomerNameInput,
   normalizeMerchantBookingDateList,
   normalizeMerchantBookingNoteInput,
+  resolveMerchantBookingTimeRangeSelection,
   normalizeBookingOptionList,
   normalizeMerchantBookingTimeSlotRules,
   sanitizeMerchantBookingEditableInput,
@@ -95,16 +96,6 @@ function getFormFieldClass(disabled: boolean) {
   return `w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-base outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 ${
     disabled ? "cursor-not-allowed bg-slate-100 text-slate-400" : ""
   }`;
-}
-
-function resolveBookingAvailableTimeRangeSelection(value: string) {
-  const normalized = String(value ?? "").trim();
-  if (!normalized) return "";
-  const matchedRange = normalized.match(/^(\d{2}:\d{2})-(\d{2}:\d{2})$/);
-  if (matchedRange) {
-    return matchedRange[1] ?? "";
-  }
-  return /^\d{2}:\d{2}$/.test(normalized) ? normalized : "";
 }
 
 export default function BookingBlock({
@@ -216,7 +207,7 @@ export default function BookingBlock({
 
   const handleAvailableTimeRangeSelect = (value: string) => {
     if (!isLiveBooking) return;
-    const nextTime = resolveBookingAvailableTimeRangeSelection(value);
+    const nextTime = resolveMerchantBookingTimeRangeSelection(value);
     if (!nextTime) return;
     handleFieldChange("appointmentTimeInput", nextTime);
   };
@@ -439,7 +430,7 @@ export default function BookingBlock({
                       key={item}
                       type="button"
                       className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition ${
-                        resolveBookingAvailableTimeRangeSelection(item) === draft.appointmentTimeInput
+                        resolveMerchantBookingTimeRangeSelection(item) === draft.appointmentTimeInput
                           ? "border-sky-300 bg-sky-100 text-sky-800"
                           : "border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100"
                       } ${!isLiveBooking ? "cursor-not-allowed opacity-60" : ""}`}

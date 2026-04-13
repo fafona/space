@@ -119,6 +119,7 @@ import {
   type PagePlanConfig,
   type PlanId,
 } from "@/lib/pagePlans";
+import { buildMerchantBookingRulesSnapshot } from "@/lib/merchantBookingRules";
 import { buildPublicBlockId } from "@/lib/blockPublicId";
 import { countInlineAssets, hasInlineAssets } from "@/lib/inlineAssetStats";
 import { useNotificationSound } from "@/lib/useNotificationSound";
@@ -12867,8 +12868,17 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     pageCopyBlockOptions.filter((item) => pageCopySelections[item.id] === true).length;
   const imageCompressionOptions = getCurrentImageCompressionOptions();
   const otherBookingViewport = previewViewport === "desktop" ? "mobile" : "desktop";
+  const desktopBookingConfig = previewViewport === "desktop" ? planConfig : viewportStatesRef.current.desktop.planConfig;
+  const mobileBookingConfig = previewViewport === "mobile" ? planConfig : viewportStatesRef.current.mobile.planConfig;
   const activeBookingOptions = collectBookingOptionsFromPlanConfig(planConfig);
   const otherBookingOptions = collectBookingOptionsFromPlanConfig(viewportStatesRef.current[otherBookingViewport].planConfig);
+  const merchantBookingRulesSnapshot = editingSiteId
+    ? buildMerchantBookingRulesSnapshot(
+        editingSiteId,
+        buildCombinedPersistedBlocks(desktopBookingConfig, mobileBookingConfig),
+        new Date().toISOString(),
+      )
+    : null;
   const merchantBookingManagerOptions = {
     storeOptions: normalizeBookingOptionList(
       [...activeBookingOptions.storeOptions, ...otherBookingOptions.storeOptions],
@@ -13535,6 +13545,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             storeOptions={merchantBookingManagerOptions.storeOptions}
             itemOptions={merchantBookingManagerOptions.itemOptions}
             titleOptions={merchantBookingManagerOptions.titleOptions}
+            bookingRulesSnapshot={merchantBookingRulesSnapshot}
             darkMode={supportMobileDarkMode}
             allowBookingEmailPrefill={Boolean(merchantPermissionConfig?.allowBookingEmailPrefill)}
           />
@@ -14863,6 +14874,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           storeOptions: merchantBookingManagerOptions.storeOptions,
           itemOptions: merchantBookingManagerOptions.itemOptions,
           titleOptions: merchantBookingManagerOptions.titleOptions,
+          bookingRulesSnapshot: merchantBookingRulesSnapshot,
           allowBookingEmailPrefill: Boolean(merchantPermissionConfig?.allowBookingEmailPrefill),
           onClose: () => {
             setMerchantBookingManagerOpen(false);
