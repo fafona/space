@@ -970,12 +970,10 @@ export default function MerchantBookingManagerDialog({
                 return (
                   <article
                     key={record.id}
-                    className={`relative overflow-hidden rounded-2xl border bg-slate-50 p-3.5 shadow-sm ${
-                      isNewRecord ? "pt-6" : ""
-                    }`}
+                    className="relative overflow-visible rounded-2xl border bg-slate-50 p-3.5 shadow-sm"
                   >
                     {isNewRecord ? (
-                      <span className="absolute left-0 top-0 inline-flex items-center rounded-br-[16px] bg-emerald-500 px-3 py-1 text-[10px] font-semibold tracking-[0.18em] text-white shadow-sm">
+                      <span className="absolute left-3 top-0 z-10 inline-flex -translate-y-1/2 items-center rounded-[14px] border border-white/70 bg-emerald-500 px-2.5 py-1 text-[10px] font-semibold tracking-[0.18em] text-white shadow-[0_10px_24px_rgba(16,185,129,0.24)]">
                         NEW
                       </span>
                     ) : null}
