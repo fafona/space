@@ -231,6 +231,7 @@ export default function BookingWorkbenchDialog({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [copySuccessNotice, setCopySuccessNotice] = useState("");
   const [sectionView, setSectionView] = useState<WorkbenchSectionView>("home");
   const [swipeOffset, setSwipeOffset] = useState(0);
   const swipeStateRef = useRef({
@@ -239,6 +240,7 @@ export default function BookingWorkbenchDialog({
     startY: 0,
   });
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const copySuccessTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draftRef = useRef(draft);
   const hasLoadedRef = useRef(false);
   const lastFailedDraftRef = useRef("");
@@ -255,10 +257,16 @@ export default function BookingWorkbenchDialog({
         clearTimeout(autosaveTimerRef.current);
         autosaveTimerRef.current = null;
       }
+      if (copySuccessTimerRef.current) {
+        clearTimeout(copySuccessTimerRef.current);
+        copySuccessTimerRef.current = null;
+      }
+      setCopySuccessNotice("");
       return;
     }
     setSectionView("home");
     setSwipeOffset(0);
+    setCopySuccessNotice("");
   }, [open]);
 
   useEffect(() => {
@@ -308,6 +316,9 @@ export default function BookingWorkbenchDialog({
     return () => {
       if (autosaveTimerRef.current) {
         clearTimeout(autosaveTimerRef.current);
+      }
+      if (copySuccessTimerRef.current) {
+        clearTimeout(copySuccessTimerRef.current);
       }
     };
   }, []);
@@ -502,12 +513,24 @@ export default function BookingWorkbenchDialog({
     return buildCalendarSyncUrl(window.location.origin, siteId, saved.calendarSyncToken);
   }, [calendarSyncUrl, saveWorkbench, siteId]);
 
+  const showCopySuccessNotice = useCallback(() => {
+    setCopySuccessNotice("复制成功");
+    if (copySuccessTimerRef.current) {
+      clearTimeout(copySuccessTimerRef.current);
+    }
+    copySuccessTimerRef.current = setTimeout(() => {
+      copySuccessTimerRef.current = null;
+      setCopySuccessNotice("");
+    }, 1800);
+  }, []);
+
   const copyCalendarSyncUrl = async () => {
     if (typeof navigator === "undefined" || !navigator.clipboard) return;
     const syncUrl = await ensureCalendarSyncUrl();
     if (!syncUrl) return;
     try {
       await navigator.clipboard.writeText(syncUrl);
+      showCopySuccessNotice();
     } catch {
       setError("订阅链接复制失败");
     }
@@ -866,74 +889,6 @@ export default function BookingWorkbenchDialog({
             {!loading && sectionView === "reminders" ? (
               <div className="space-y-4">
                 <section className={`rounded-3xl border p-5 ${panelClassName}`}>
-                  <div className="text-base font-semibold">提醒通知</div>
-                  <div className={`mt-1 text-sm ${mutedTextClassName}`}>客户提醒走邮件，商家提醒走浏览器推送。预设可点，也可直接输入分钟。</div>
-                  <div className="mt-4 grid gap-4 lg:grid-cols-2">
-                    <div className={`rounded-2xl border p-4 ${softPanelClassName}`}>
-                      <div className="text-sm font-semibold">客户提醒</div>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {REMINDER_PRESETS.map((minutes) => {
-                          const selected = draft.customerReminderOffsetsMinutes.includes(minutes);
-                          return (
-                            <button
-                              key={`customer-${minutes}`}
-                              type="button"
-                              className={`rounded-full px-3 py-1.5 text-xs font-medium ${selected ? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900" : darkMode ? "border border-slate-700 bg-slate-900 text-slate-300" : "border border-slate-200 bg-white text-slate-600"}`}
-                              onClick={() => toggleReminderPreset("customerReminderOffsetsMinutes", minutes)}
-                            >
-                              {formatMerchantBookingReminderOffset(minutes)}
-                            </button>
-                          );
-                        })}
-                      </div>
-                      <input
-                        type="text"
-                        className={`${inputClassName} mt-3`}
-                        value={formatReminderInput(draft.customerReminderOffsetsMinutes)}
-                        onChange={(event) =>
-                          setDraft((current) => ({
-                            ...current,
-                            customerReminderOffsetsMinutes: parseReminderInput(event.target.value),
-                          }))
-                        }
-                        placeholder="例如 1440, 120, 30"
-                      />
-                    </div>
-
-                    <div className={`rounded-2xl border p-4 ${softPanelClassName}`}>
-                      <div className="text-sm font-semibold">商家提醒</div>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {REMINDER_PRESETS.map((minutes) => {
-                          const selected = draft.merchantReminderOffsetsMinutes.includes(minutes);
-                          return (
-                            <button
-                              key={`merchant-${minutes}`}
-                              type="button"
-                              className={`rounded-full px-3 py-1.5 text-xs font-medium ${selected ? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900" : darkMode ? "border border-slate-700 bg-slate-900 text-slate-300" : "border border-slate-200 bg-white text-slate-600"}`}
-                              onClick={() => toggleReminderPreset("merchantReminderOffsetsMinutes", minutes)}
-                            >
-                              {formatMerchantBookingReminderOffset(minutes)}
-                            </button>
-                          );
-                        })}
-                      </div>
-                      <input
-                        type="text"
-                        className={`${inputClassName} mt-3`}
-                        value={formatReminderInput(draft.merchantReminderOffsetsMinutes)}
-                        onChange={(event) =>
-                          setDraft((current) => ({
-                            ...current,
-                            merchantReminderOffsetsMinutes: parseReminderInput(event.target.value),
-                          }))
-                        }
-                        placeholder="例如 1440, 120, 30"
-                      />
-                    </div>
-                  </div>
-                </section>
-
-                <section className={`rounded-3xl border p-5 ${panelClassName}`}>
                   <div className="text-base font-semibold">日历同步</div>
                   <div className={`mt-1 text-sm ${mutedTextClassName}`}>可直接添加到 Apple Calendar、Google Calendar、Outlook，也保留 ICS 下载。</div>
                   <div className={`mt-4 rounded-2xl border p-4 ${softPanelClassName}`}>
@@ -1018,11 +973,89 @@ export default function BookingWorkbenchDialog({
                     ) : null}
                   </div>
                 </section>
+
+                <section className={`rounded-3xl border p-5 ${panelClassName}`}>
+                  <div className="text-base font-semibold">提醒设置</div>
+                  <div className={`mt-1 text-sm ${mutedTextClassName}`}>客户提醒走邮件，商家提醒走浏览器推送。预设可点，也可直接输入分钟。</div>
+                  <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                    <div className={`rounded-2xl border p-4 ${softPanelClassName}`}>
+                      <div className="text-sm font-semibold">客户提醒</div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {REMINDER_PRESETS.map((minutes) => {
+                          const selected = draft.customerReminderOffsetsMinutes.includes(minutes);
+                          return (
+                            <button
+                              key={`customer-${minutes}`}
+                              type="button"
+                              className={`rounded-full px-3 py-1.5 text-xs font-medium ${selected ? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900" : darkMode ? "border border-slate-700 bg-slate-900 text-slate-300" : "border border-slate-200 bg-white text-slate-600"}`}
+                              onClick={() => toggleReminderPreset("customerReminderOffsetsMinutes", minutes)}
+                            >
+                              {formatMerchantBookingReminderOffset(minutes)}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <input
+                        type="text"
+                        className={`${inputClassName} mt-3`}
+                        value={formatReminderInput(draft.customerReminderOffsetsMinutes)}
+                        onChange={(event) =>
+                          setDraft((current) => ({
+                            ...current,
+                            customerReminderOffsetsMinutes: parseReminderInput(event.target.value),
+                          }))
+                        }
+                        placeholder="例如 1440, 120, 30"
+                      />
+                    </div>
+
+                    <div className={`rounded-2xl border p-4 ${softPanelClassName}`}>
+                      <div className="text-sm font-semibold">商家提醒</div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {REMINDER_PRESETS.map((minutes) => {
+                          const selected = draft.merchantReminderOffsetsMinutes.includes(minutes);
+                          return (
+                            <button
+                              key={`merchant-${minutes}`}
+                              type="button"
+                              className={`rounded-full px-3 py-1.5 text-xs font-medium ${selected ? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900" : darkMode ? "border border-slate-700 bg-slate-900 text-slate-300" : "border border-slate-200 bg-white text-slate-600"}`}
+                              onClick={() => toggleReminderPreset("merchantReminderOffsetsMinutes", minutes)}
+                            >
+                              {formatMerchantBookingReminderOffset(minutes)}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <input
+                        type="text"
+                        className={`${inputClassName} mt-3`}
+                        value={formatReminderInput(draft.merchantReminderOffsetsMinutes)}
+                        onChange={(event) =>
+                          setDraft((current) => ({
+                            ...current,
+                            merchantReminderOffsetsMinutes: parseReminderInput(event.target.value),
+                          }))
+                        }
+                        placeholder="例如 1440, 120, 30"
+                      />
+                    </div>
+                  </div>
+                </section>
               </div>
             ) : null}
           </div>
         </div>
       </div>
+      {copySuccessNotice ? (
+        <div
+          className="pointer-events-none fixed inset-x-0 z-[2147483200] flex justify-center px-4"
+          style={{ top: "max(1.25rem, env(safe-area-inset-top))" }}
+        >
+          <div className={`rounded-full px-4 py-2 text-sm font-medium shadow-2xl ${darkMode ? "bg-slate-100 text-slate-900" : "bg-slate-900 text-white"}`}>
+            {copySuccessNotice}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 
