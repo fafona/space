@@ -1,5 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import type { MerchantListPublishedSite } from "@/data/homeBlocks";
+import { loadStoredPlatformMerchantSnapshot, type PlatformMerchantSnapshotStoreClient } from "@/lib/platformMerchantSnapshotStore";
+import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import { extractMerchantPrefixFromHost } from "@/lib/siteRouting";
 import {
   getMerchantServiceState,
@@ -128,6 +130,15 @@ async function loadSnapshotSites() {
   return [...mergedCurrent, ...appendedStored];
 }
 
+async function loadCurrentSnapshotSites() {
+  const supabase = createServerSupabaseServiceClient();
+  if (!supabase) return [] as MerchantListPublishedSite[];
+  const payload = await loadStoredPlatformMerchantSnapshot(
+    supabase as unknown as PlatformMerchantSnapshotStoreClient,
+  ).catch(() => null);
+  return payload?.snapshot ?? [];
+}
+
 function buildPublishedMerchantServiceState(site: MerchantListPublishedSite): PublishedMerchantServiceState {
   const state = getMerchantServiceState(site.status, site.serviceExpiresAt);
   return {
@@ -183,6 +194,15 @@ export async function loadPublishedMerchantSnapshotSiteBySiteId(siteId: string |
   if (!isMerchantNumericId(normalizedSiteId)) return null;
   const snapshot = await loadSnapshotSites();
   return snapshot.find((item) => item.id === normalizedSiteId) ?? null;
+}
+
+export async function loadCurrentMerchantSnapshotSiteBySiteId(siteId: string | null | undefined) {
+  const normalizedSiteId = normalizeText(siteId);
+  if (!isMerchantNumericId(normalizedSiteId)) return null;
+  const currentSnapshot = await loadCurrentSnapshotSites();
+  const currentSite = currentSnapshot.find((item) => item.id === normalizedSiteId) ?? null;
+  if (currentSite) return currentSite;
+  return loadPublishedMerchantSnapshotSiteBySiteId(normalizedSiteId);
 }
 
 export async function loadPublishedMerchantServiceStatesBySiteIds(siteIds: string[]) {

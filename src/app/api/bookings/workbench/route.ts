@@ -9,7 +9,7 @@ import {
   loadMerchantBookingWorkbenchSettings,
   saveMerchantBookingWorkbenchSettings,
 } from "@/lib/merchantBookingWorkbenchStore";
-import { loadPublishedMerchantSnapshotSiteBySiteId } from "@/lib/publishedMerchantService";
+import { loadCurrentMerchantSnapshotSiteBySiteId } from "@/lib/publishedMerchantService";
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
 
 export const dynamic = "force-dynamic";
@@ -110,7 +110,7 @@ export async function PATCH(request: Request) {
     body?.calendarSyncAction === "disable"
       ? body.calendarSyncAction
       : "keep";
-  const snapshotSite = await loadPublishedMerchantSnapshotSiteBySiteId(siteId).catch(() => null);
+  const snapshotSite = await loadCurrentMerchantSnapshotSiteBySiteId(siteId).catch(() => null);
   const allowAutoEmail = Boolean(
     snapshotSite?.permissionConfig?.allowBookingBlock && snapshotSite?.permissionConfig?.allowBookingAutoEmail,
   );

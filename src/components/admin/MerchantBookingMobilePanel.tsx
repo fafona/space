@@ -181,28 +181,6 @@ function PhoneIcon() {
   );
 }
 
-function WorkbenchIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-4 w-4">
-      <path
-        d="M5 6.5A1.5 1.5 0 0 1 6.5 5h4A1.5 1.5 0 0 1 12 6.5v4A1.5 1.5 0 0 1 10.5 12h-4A1.5 1.5 0 0 1 5 10.5v-4Z"
-        stroke="currentColor"
-        strokeWidth="1.7"
-      />
-      <path
-        d="M12 6.5A1.5 1.5 0 0 1 13.5 5h4A1.5 1.5 0 0 1 19 6.5v4A1.5 1.5 0 0 1 17.5 12h-4A1.5 1.5 0 0 1 12 10.5v-4Z"
-        stroke="currentColor"
-        strokeWidth="1.7"
-      />
-      <path
-        d="M5 13.5A1.5 1.5 0 0 1 6.5 12h11a1.5 1.5 0 0 1 1.5 1.5v4a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 17.5v-4Z"
-        stroke="currentColor"
-        strokeWidth="1.7"
-      />
-    </svg>
-  );
-}
-
 function NoteIcon() {
   return (
     <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
@@ -323,13 +301,47 @@ export default function MerchantBookingMobilePanel({
   const [detailBookingId, setDetailBookingId] = useState<string | null>(null);
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
   const [customerEmailLocale, setCustomerEmailLocale] = useState(defaultCustomerEmailLocale);
+  const [customerEmailLocaleLoaded, setCustomerEmailLocaleLoaded] = useState(false);
   const workbenchButtonClassName = workbenchOpen
-    ? "shrink-0 rounded-[18px] rounded-br-[10px] border border-sky-300 bg-[linear-gradient(135deg,#0f172a_0%,#1d4ed8_58%,#0f766e_100%)] px-3 py-2 text-white shadow-[0_16px_30px_rgba(15,23,42,0.24)] ring-2 ring-sky-100 transition"
-    : "shrink-0 rounded-[18px] rounded-br-[10px] border border-slate-900/10 bg-[linear-gradient(135deg,#0f172a_0%,#1d4ed8_58%,#0f766e_100%)] px-3 py-2 text-white shadow-[0_14px_28px_rgba(15,23,42,0.18)] transition active:scale-[0.98]";
+    ? "shrink-0 rounded-[18px] rounded-tl-[8px] rounded-br-[24px] border border-[#c7b48f] bg-[linear-gradient(135deg,#1f2b46_0%,#233657_100%)] px-3.5 py-2 text-[12px] font-semibold tracking-[0.02em] text-[#f7e8c2] shadow-[0_14px_26px_rgba(15,23,42,0.22)] ring-1 ring-[#efe2bf]/60 transition"
+    : "shrink-0 rounded-[18px] rounded-tl-[8px] rounded-br-[24px] border border-[#d8c7a5] bg-[linear-gradient(135deg,#fffdfa_0%,#f6efe1_62%,#ecdfc2_100%)] px-3.5 py-2 text-[12px] font-semibold tracking-[0.02em] text-slate-800 shadow-[0_12px_24px_rgba(148,119,66,0.14)] transition active:scale-[0.98]";
 
   useEffect(() => {
     setCustomerEmailLocale(defaultCustomerEmailLocale);
+    setCustomerEmailLocaleLoaded(false);
   }, [defaultCustomerEmailLocale]);
+
+  const loadWorkbenchCustomerEmailLocale = useCallback(async () => {
+    if (!siteId) return defaultCustomerEmailLocale;
+    if (customerEmailLocaleLoaded) return customerEmailLocale;
+    try {
+      const response = await fetch(`/api/bookings/workbench?siteId=${encodeURIComponent(siteId)}`, {
+        cache: "no-store",
+      });
+      const json = (await response.json().catch(() => null)) as
+        | { ok?: boolean; settings?: unknown }
+        | null;
+      if (!response.ok || !json?.ok) {
+        throw new Error("load_workbench_locale_failed");
+      }
+      const normalized = normalizeMerchantBookingWorkbenchSettings(json.settings);
+      const resolvedLocale = resolveMerchantBookingCustomerEmailLocale(
+        normalized.customerEmailLocale,
+        siteCountryCode,
+      );
+      setCustomerEmailLocale(resolvedLocale);
+      setCustomerEmailLocaleLoaded(true);
+      return resolvedLocale;
+    } catch {
+      return customerEmailLocale || defaultCustomerEmailLocale;
+    }
+  }, [
+    customerEmailLocale,
+    customerEmailLocaleLoaded,
+    defaultCustomerEmailLocale,
+    siteCountryCode,
+    siteId,
+  ]);
 
   const loadBookings = useCallback(async () => {
     if (!siteId) return;
@@ -367,19 +379,8 @@ export default function MerchantBookingMobilePanel({
     let cancelled = false;
     const loadWorkbenchLocale = async () => {
       try {
-        const response = await fetch(`/api/bookings/workbench?siteId=${encodeURIComponent(siteId)}`, {
-          cache: "no-store",
-        });
-        const json = (await response.json().catch(() => null)) as
-          | { ok?: boolean; settings?: unknown }
-          | null;
-        if (!response.ok || !json?.ok) return;
-        const normalized = normalizeMerchantBookingWorkbenchSettings(json.settings);
-        if (!cancelled) {
-          setCustomerEmailLocale(
-            resolveMerchantBookingCustomerEmailLocale(normalized.customerEmailLocale, siteCountryCode),
-          );
-        }
+        const resolvedLocale = await loadWorkbenchCustomerEmailLocale();
+        if (!cancelled) setCustomerEmailLocale(resolvedLocale);
       } catch {
         // Keep the merchant-country default when workbench settings are unavailable.
       }
@@ -388,7 +389,7 @@ export default function MerchantBookingMobilePanel({
     return () => {
       cancelled = true;
     };
-  }, [defaultCustomerEmailLocale, siteCountryCode, siteId]);
+  }, [loadWorkbenchCustomerEmailLocale, siteId]);
 
   const {
     pullDistance,
@@ -706,7 +707,7 @@ export default function MerchantBookingMobilePanel({
         {(record.status === "active" || record.status === "confirmed") ? (
           <button
             type="button"
-            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-rose-300 bg-rose-100 text-base font-semibold leading-none text-rose-800 transition hover:bg-rose-200 disabled:opacity-50"
+            className="inline-flex h-9 min-w-[3rem] items-center justify-center rounded-[14px] border border-rose-300 bg-[linear-gradient(135deg,#fff1f2_0%,#ffe4e6_100%)] px-3 text-[18px] font-semibold leading-none text-rose-700 shadow-[0_6px_16px_rgba(244,63,94,0.14)] transition hover:bg-rose-100 disabled:opacity-50"
             onClick={() => void patchBooking(record.id, { status: "no_show" }, "noshow")}
             disabled={busyKey === `noshow:${record.id}`}
             title={getMerchantBookingActionText("noshow", locale)}
@@ -720,7 +721,7 @@ export default function MerchantBookingMobilePanel({
         {record.status !== "completed" ? (
           <button
             type="button"
-            className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-emerald-600 text-base font-semibold leading-none text-white transition hover:bg-emerald-700 disabled:opacity-50"
+            className="inline-flex h-9 min-w-[3rem] items-center justify-center rounded-[14px] border border-emerald-300 bg-[linear-gradient(135deg,#ecfdf5_0%,#d1fae5_100%)] px-3 text-[18px] font-semibold leading-none text-emerald-700 shadow-[0_6px_16px_rgba(16,185,129,0.16)] transition hover:bg-emerald-50 disabled:opacity-50"
             onClick={() => void patchBooking(record.id, { status: "completed" }, "complete")}
             disabled={busyKey === `complete:${record.id}`}
             title={getMerchantBookingActionText("complete", locale)}
@@ -996,14 +997,7 @@ export default function MerchantBookingMobilePanel({
               className={workbenchButtonClassName}
               onClick={() => setWorkbenchOpen(true)}
             >
-              <span className="flex items-center gap-2">
-                <span className="inline-flex h-7 w-7 items-center justify-center rounded-[11px] rounded-br-[6px] bg-white/14 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.16)]">
-                  <WorkbenchIcon />
-                </span>
-                <span className="text-xs font-semibold tracking-[0.02em]">
-                  {getMerchantBookingFieldText("workbenchButton", locale)}
-                </span>
-              </span>
+              {getMerchantBookingFieldText("workbenchButton", locale)}
             </button>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -1055,16 +1049,18 @@ export default function MerchantBookingMobilePanel({
               return (
                 <article
                   key={record.id}
-                  className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-[0_14px_34px_rgba(15,23,42,0.08)]"
+                  className={`relative overflow-hidden rounded-[28px] border border-slate-200 bg-white p-4 shadow-[0_14px_34px_rgba(15,23,42,0.08)] ${
+                    isNewRecord ? "pt-6" : ""
+                  }`}
                 >
+                  {isNewRecord ? (
+                    <span className="absolute left-0 top-0 inline-flex items-center rounded-br-[18px] bg-emerald-500 px-3 py-1 text-[10px] font-semibold tracking-[0.18em] text-white shadow-sm">
+                      NEW
+                    </span>
+                  ) : null}
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        {isNewRecord ? (
-                          <span className="rounded-full bg-emerald-500 px-2 py-0.5 text-[11px] font-semibold tracking-[0.18em] text-white">
-                            NEW
-                          </span>
-                        ) : null}
                         <span className={`rounded-full px-2 py-0.5 text-[11px] ${getStatusBadgeClass(record.status)}`}>
                           {getMerchantBookingStatusText(record.status, locale)}
                         </span>
@@ -1079,8 +1075,19 @@ export default function MerchantBookingMobilePanel({
                           <a
                             className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
                             href={buildMerchantBookingMailtoHref(record, customerEmailLocale, allowBookingEmailPrefill)}
-                            onClick={() => {
+                            onClick={async (event) => {
                               void markBookingTouched(record.id);
+                              if (customerEmailLocaleLoaded) return;
+                              event.preventDefault();
+                              const resolvedLocale = await loadWorkbenchCustomerEmailLocale();
+                              const href = buildMerchantBookingMailtoHref(
+                                record,
+                                resolvedLocale,
+                                allowBookingEmailPrefill,
+                              );
+                              if (typeof window !== "undefined" && href) {
+                                window.location.href = href;
+                              }
                             }}
                             title={getMerchantBookingFieldText("replyEmail", locale)}
                             aria-label={getMerchantBookingFieldText("replyEmail", locale)}
@@ -1164,6 +1171,7 @@ export default function MerchantBookingMobilePanel({
           setCustomerEmailLocale(
             resolveMerchantBookingCustomerEmailLocale(settings.customerEmailLocale, siteCountryCode),
           );
+          setCustomerEmailLocaleLoaded(true);
         }}
         onClose={() => setWorkbenchOpen(false)}
       />

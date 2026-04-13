@@ -62,15 +62,6 @@ function trimText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function createDefaultStatusMessageMap(locale: string) {
-  return Object.fromEntries(
-    MERCHANT_BOOKING_STATUSES.map((status) => [
-      status,
-      getMerchantBookingCustomerEmailDefaultStatusMessage(status, locale),
-    ]),
-  ) as Partial<Record<MerchantBookingStatus, string>>;
-}
-
 function toNumberOrNull(value: string) {
   const numeric = Number.parseInt(value.trim(), 10);
   if (!Number.isFinite(numeric) || numeric < 1) return null;
@@ -315,19 +306,10 @@ export default function BookingWorkbenchDialog({
         }
         if (!cancelled) {
           const normalized = normalizeMerchantBookingWorkbenchSettings(json.settings);
-          const hydrated = {
-            ...normalized,
-            customerEmailLocale: normalized.customerEmailLocale || defaultCustomerEmailLocale,
-            customerEmailSenderName: normalized.customerEmailSenderName || trimText(siteName),
-            customerAutoEmailMessageByStatus: {
-              ...createDefaultStatusMessageMap(normalized.customerEmailLocale || defaultCustomerEmailLocale),
-              ...normalized.customerAutoEmailMessageByStatus,
-            },
-          } satisfies MerchantBookingWorkbenchSettings;
-          lastSavedDraftRef.current = JSON.stringify(hydrated);
-          draftRef.current = hydrated;
+          lastSavedDraftRef.current = JSON.stringify(normalized);
+          draftRef.current = normalized;
           hasLoadedRef.current = true;
-          setDraft(hydrated);
+          setDraft(normalized);
         }
       } catch (loadError) {
         if (!cancelled) {

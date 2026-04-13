@@ -380,32 +380,48 @@ function trimText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function hasExactEmailCopy(locale: string) {
+  return Object.prototype.hasOwnProperty.call(EMAIL_COPY, locale);
+}
+
+function hasLanguageEmailCopy(language: string) {
+  return Object.prototype.hasOwnProperty.call(EMAIL_COPY, language);
+}
+
+function resolveSupportedEmailLocaleCandidate(value: string | null | undefined) {
+  const normalized = trimText(value);
+  if (!normalized) return "";
+  const resolved = resolveSupportedLocale(normalized);
+  const normalizedResolved = resolved.toLowerCase();
+  if (hasExactEmailCopy(normalizedResolved)) return resolved;
+  const language = normalizedResolved.split("-")[0] ?? "";
+  if (!hasLanguageEmailCopy(language)) return "";
+  return LANGUAGE_OPTIONS.find((item) => item.code.split("-")[0]?.toLowerCase() === language)?.code ?? "";
+}
+
 function resolveCopy(locale: string | null | undefined) {
-  const normalized = resolveSupportedLocale(locale).toLowerCase();
+  const normalized = resolveMerchantBookingCustomerEmailLocale(locale).toLowerCase();
   if (EMAIL_COPY[normalized]) return EMAIL_COPY[normalized];
   const language = normalized.split("-")[0] ?? "";
   return EMAIL_COPY[language] ?? EMAIL_COPY.en;
 }
 
 export function getMerchantBookingCustomerEmailLanguageOptions() {
-  return LANGUAGE_OPTIONS;
+  return LANGUAGE_OPTIONS.filter((item) => Boolean(resolveSupportedEmailLocaleCandidate(item.code)));
 }
 
 export function resolveMerchantBookingCustomerEmailLocale(
   preferredLocale: string | null | undefined,
   countryCode?: string | null,
 ) {
-  const normalizedPreferred = trimText(preferredLocale);
-  if (normalizedPreferred) {
-    return resolveSupportedLocale(normalizedPreferred);
-  }
+  const preferred = resolveSupportedEmailLocaleCandidate(preferredLocale);
+  if (preferred) return preferred;
   const normalizedCountryCode = trimText(countryCode).toUpperCase();
   const override = COUNTRY_EMAIL_LOCALE_OVERRIDES[normalizedCountryCode];
-  if (override) {
-    return resolveSupportedLocale(override);
-  }
+  const overrideLocale = resolveSupportedEmailLocaleCandidate(override);
+  if (overrideLocale) return overrideLocale;
   const matched = LANGUAGE_OPTIONS.find((item) => item.countryCode.toUpperCase() === normalizedCountryCode);
-  return resolveSupportedLocale(matched?.code ?? "en-GB");
+  return resolveSupportedEmailLocaleCandidate(matched?.code) || "en-GB";
 }
 
 export function buildMerchantBookingReminderOffsetLabel(minutesBefore: number, locale: string | null | undefined) {

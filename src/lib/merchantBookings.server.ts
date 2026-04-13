@@ -32,7 +32,7 @@ import { resolveMerchantBookingCustomerEmailLocale } from "./merchantBookingCust
 import { buildMerchantBookingReminderPushNotification } from "./merchantPushEvents";
 import { resolveMerchantBookingRuleEntry, type MerchantBookingRuleLocator } from "./merchantBookingRules";
 import { loadMerchantBookingRulesSnapshot } from "./merchantBookingRulesStore";
-import { loadPublishedMerchantSnapshotSiteBySiteId } from "./publishedMerchantService";
+import { loadCurrentMerchantSnapshotSiteBySiteId } from "./publishedMerchantService";
 import type { MerchantPushSubscriptionStoreClient } from "./merchantPushSubscriptionStore";
 import { createServerSupabaseServiceClient } from "./superAdminServer";
 import { notifyMerchantPushSubscribers } from "./webPush";
@@ -222,7 +222,7 @@ async function loadSiteCustomerEmailRuntime(
   settings: Awaited<ReturnType<typeof loadMerchantBookingWorkbenchSettings>>,
   fallbackMerchantName?: string | null,
 ): Promise<SiteCustomerEmailRuntime> {
-  const snapshotSite = await loadPublishedMerchantSnapshotSiteBySiteId(siteId).catch(() => null);
+  const snapshotSite = await loadCurrentMerchantSnapshotSiteBySiteId(siteId).catch(() => null);
   const allowAutoEmail = Boolean(
     snapshotSite?.permissionConfig?.allowBookingBlock && snapshotSite?.permissionConfig?.allowBookingAutoEmail,
   );
