@@ -3,8 +3,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type TouchEventHandler } from "react";
 import { createPortal } from "react-dom";
 import { useI18n } from "@/components/I18nProvider";
-import { getMerchantBookingFieldText } from "@/lib/merchantBookingLocale";
-import type { MerchantBookingRecord } from "@/lib/merchantBookings";
+import { getMerchantBookingFieldText, getMerchantBookingStatusText } from "@/lib/merchantBookingLocale";
+import { MERCHANT_BOOKING_STATUSES, type MerchantBookingRecord, type MerchantBookingStatus } from "@/lib/merchantBookings";
+import {
+  getMerchantBookingCustomerEmailDefaultStatusMessage,
+  getMerchantBookingCustomerEmailLanguageOptions,
+  resolveMerchantBookingCustomerEmailLocale,
+} from "@/lib/merchantBookingCustomerEmail";
 import {
   buildMerchantBookingReminderSummary,
   createDefaultMerchantBookingWorkbenchSettings,
@@ -18,9 +23,12 @@ type BookingWorkbenchDialogProps = {
   open: boolean;
   siteId: string;
   siteName: string;
+  siteCountryCode?: string;
   records: MerchantBookingRecord[];
   darkMode?: boolean;
+  allowCustomerAutoEmail?: boolean;
   onClose: () => void;
+  onSettingsSaved?: (settings: MerchantBookingWorkbenchSettings) => void;
 };
 
 type WorkbenchMenuKey = "rules" | "reminders";
@@ -33,7 +41,6 @@ type SaveWorkbenchOptions = {
 };
 type MetricTone = "amber" | "sky" | "emerald" | "rose" | "cyan";
 
-const REMINDER_PRESETS = [1440, 720, 120, 60, 30];
 const MOBILE_BREAKPOINT = 768;
 
 function overlay(children: ReactNode) {
@@ -42,29 +49,36 @@ function overlay(children: ReactNode) {
 }
 
 function formatReminderInput(value: number[]) {
-  return value.join(", ");
+  return value[0] ? String(value[0]) : "";
 }
 
 function parseReminderInput(value: string) {
-  const next: number[] = [];
-  value
-    .split(/[,\s]+/)
-    .map((item) => Number.parseInt(item.trim(), 10))
-    .forEach((item) => {
-      if (!Number.isFinite(item) || item < 1 || next.includes(item)) return;
-      next.push(item);
-    });
-  return next.sort((left, right) => right - left);
+  const numeric = Number.parseInt(value.trim(), 10);
+  if (!Number.isFinite(numeric) || numeric < 1) return [];
+  return [numeric];
 }
 
 function trimText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function createDefaultStatusMessageMap(locale: string) {
+  return Object.fromEntries(
+    MERCHANT_BOOKING_STATUSES.map((status) => [
+      status,
+      getMerchantBookingCustomerEmailDefaultStatusMessage(status, locale),
+    ]),
+  ) as Partial<Record<MerchantBookingStatus, string>>;
+}
+
 function toNumberOrNull(value: string) {
   const numeric = Number.parseInt(value.trim(), 10);
   if (!Number.isFinite(numeric) || numeric < 1) return null;
   return numeric;
+}
+
+function getReminderSummaryLabel(value: number[]) {
+  return value[0] ? formatMerchantBookingReminderOffset(value[0]) : "未设置";
 }
 
 function buildCalendarSyncUrl(origin: string, siteId: string, token: string) {
@@ -222,11 +236,19 @@ export default function BookingWorkbenchDialog({
   open,
   siteId,
   siteName,
+  siteCountryCode = "",
   records,
   darkMode = false,
+  allowCustomerAutoEmail = false,
   onClose,
+  onSettingsSaved,
 }: BookingWorkbenchDialogProps) {
   const { locale } = useI18n();
+  const defaultCustomerEmailLocale = useMemo(
+    () => resolveMerchantBookingCustomerEmailLocale("", siteCountryCode),
+    [siteCountryCode],
+  );
+  const emailLanguageOptions = useMemo(() => getMerchantBookingCustomerEmailLanguageOptions(), []);
   const [draft, setDraft] = useState<MerchantBookingWorkbenchSettings>(() => createDefaultMerchantBookingWorkbenchSettings());
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -293,10 +315,19 @@ export default function BookingWorkbenchDialog({
         }
         if (!cancelled) {
           const normalized = normalizeMerchantBookingWorkbenchSettings(json.settings);
-          lastSavedDraftRef.current = JSON.stringify(normalized);
-          draftRef.current = normalized;
+          const hydrated = {
+            ...normalized,
+            customerEmailLocale: normalized.customerEmailLocale || defaultCustomerEmailLocale,
+            customerEmailSenderName: normalized.customerEmailSenderName || trimText(siteName),
+            customerAutoEmailMessageByStatus: {
+              ...createDefaultStatusMessageMap(normalized.customerEmailLocale || defaultCustomerEmailLocale),
+              ...normalized.customerAutoEmailMessageByStatus,
+            },
+          } satisfies MerchantBookingWorkbenchSettings;
+          lastSavedDraftRef.current = JSON.stringify(hydrated);
+          draftRef.current = hydrated;
           hasLoadedRef.current = true;
-          setDraft(normalized);
+          setDraft(hydrated);
         }
       } catch (loadError) {
         if (!cancelled) {
@@ -310,7 +341,7 @@ export default function BookingWorkbenchDialog({
     return () => {
       cancelled = true;
     };
-  }, [open, siteId]);
+  }, [defaultCustomerEmailLocale, open, siteId, siteName]);
 
   useEffect(() => {
     return () => {
@@ -324,7 +355,14 @@ export default function BookingWorkbenchDialog({
   }, []);
 
   const weekdayLabels = useMemo(() => buildWeekdayLabels(locale || "zh-CN"), [locale]);
-  const reminderSummary = useMemo(() => buildMerchantBookingReminderSummary(records, draft), [draft, records]);
+  const reminderSummary = useMemo(
+    () =>
+      buildMerchantBookingReminderSummary(records, {
+        ...draft,
+        customerAutoEmailEnabled: allowCustomerAutoEmail && draft.customerAutoEmailEnabled,
+      }),
+    [allowCustomerAutoEmail, draft, records],
+  );
   const openBookingCount = useMemo(() => countOpenBookings(records), [records]);
   const todayBookingCount = useMemo(() => countTodayBookings(records), [records]);
   const upcomingWeekCount = useMemo(() => countUpcomingBookings(records, 7), [records]);
@@ -356,15 +394,15 @@ export default function BookingWorkbenchDialog({
           key: "reminders",
           label: getMerchantBookingFieldText("workbenchReminders", locale),
           summary: draft.calendarSyncToken
-            ? `客户 ${draft.customerReminderOffsetsMinutes.length} 项、商家 ${draft.merchantReminderOffsetsMinutes.length} 项提醒，已开启日历同步`
-            : `客户 ${draft.customerReminderOffsetsMinutes.length} 项、商家 ${draft.merchantReminderOffsetsMinutes.length} 项提醒，可生成日历同步链接`,
+            ? `客户 ${getReminderSummaryLabel(draft.customerReminderOffsetsMinutes)}、商家 ${getReminderSummaryLabel(draft.merchantReminderOffsetsMinutes)}，已开启日历同步`
+            : `客户 ${getReminderSummaryLabel(draft.customerReminderOffsetsMinutes)}、商家 ${getReminderSummaryLabel(draft.merchantReminderOffsetsMinutes)}，可生成日历同步链接`,
         },
       ] satisfies Array<{ key: WorkbenchMenuKey; label: string; summary: string }>,
     [
       locale,
       draft.calendarSyncToken,
-      draft.customerReminderOffsetsMinutes.length,
-      draft.merchantReminderOffsetsMinutes.length,
+      draft.customerReminderOffsetsMinutes,
+      draft.merchantReminderOffsetsMinutes,
     ],
   );
   const currentSectionLabel = useMemo(() => {
@@ -418,17 +456,56 @@ export default function BookingWorkbenchDialog({
     });
   };
 
-  const toggleReminderPreset = (field: "customerReminderOffsetsMinutes" | "merchantReminderOffsetsMinutes", minutes: number) => {
+  const handleCustomerEmailLocaleChange = (nextLocale: string) => {
     setDraft((current) => {
-      const currentValues = current[field];
-      const nextValues = currentValues.includes(minutes)
-        ? currentValues.filter((item) => item !== minutes)
-        : [...currentValues, minutes];
+      const resolvedNextLocale = resolveMerchantBookingCustomerEmailLocale(nextLocale, siteCountryCode);
+      const previousLocale = current.customerEmailLocale || defaultCustomerEmailLocale;
+      const nextMessageByStatus: Partial<Record<MerchantBookingStatus, string>> = {
+        ...current.customerAutoEmailMessageByStatus,
+      };
+      MERCHANT_BOOKING_STATUSES.forEach((status) => {
+        const currentMessage = trimText(nextMessageByStatus[status]);
+        const previousDefault = getMerchantBookingCustomerEmailDefaultStatusMessage(status, previousLocale);
+        if (!currentMessage || currentMessage === previousDefault) {
+          nextMessageByStatus[status] = getMerchantBookingCustomerEmailDefaultStatusMessage(status, resolvedNextLocale);
+        }
+      });
       return {
         ...current,
-        [field]: nextValues.sort((left, right) => right - left),
+        customerEmailLocale: resolvedNextLocale,
+        customerAutoEmailMessageByStatus: nextMessageByStatus,
       };
     });
+  };
+
+  const toggleAutoEmailStatus = (status: MerchantBookingStatus) => {
+    setDraft((current) => {
+      const selected = current.customerAutoEmailStatuses.includes(status);
+      const nextStatuses = selected
+        ? current.customerAutoEmailStatuses.filter((item) => item !== status)
+        : [...current.customerAutoEmailStatuses, status];
+      const resolvedLocale = current.customerEmailLocale || defaultCustomerEmailLocale;
+      return {
+        ...current,
+        customerAutoEmailStatuses: nextStatuses,
+        customerAutoEmailMessageByStatus: {
+          ...current.customerAutoEmailMessageByStatus,
+          [status]:
+            trimText(current.customerAutoEmailMessageByStatus[status]) ||
+            getMerchantBookingCustomerEmailDefaultStatusMessage(status, resolvedLocale),
+        },
+      };
+    });
+  };
+
+  const updateAutoEmailStatusMessage = (status: MerchantBookingStatus, value: string) => {
+    setDraft((current) => ({
+      ...current,
+      customerAutoEmailMessageByStatus: {
+        ...current.customerAutoEmailMessageByStatus,
+        [status]: value,
+      },
+    }));
   };
 
   const saveWorkbench = useCallback(
@@ -467,6 +544,7 @@ export default function BookingWorkbenchDialog({
           draftRef.current = normalized;
           setDraft(normalized);
         }
+        onSettingsSaved?.(normalized);
         return normalized;
       } catch (saveError) {
         lastFailedDraftRef.current = sourceSerialized;
@@ -476,7 +554,7 @@ export default function BookingWorkbenchDialog({
         setSaving(false);
       }
     },
-    [siteId],
+    [onSettingsSaved, siteId],
   );
 
   useEffect(() => {
@@ -634,6 +712,8 @@ export default function BookingWorkbenchDialog({
   const menuDividerClassName = darkMode ? "divide-slate-800" : "divide-slate-100";
   const menuChevronClassName = darkMode ? "text-slate-500" : "text-slate-300";
   const pageContentBottomClassName = sectionView === "home" ? "pb-[calc(env(safe-area-inset-bottom)+7.5rem)]" : "pb-[calc(env(safe-area-inset-bottom)+6.25rem)]";
+  const effectiveCustomerEmailLocale = draft.customerEmailLocale || defaultCustomerEmailLocale;
+  const customerAutoEmailControlsDisabled = !allowCustomerAutoEmail || !draft.customerAutoEmailEnabled;
 
   const content = (
     <div className={`fixed inset-0 z-[2147483000] ${shellClassName}`}>
@@ -976,58 +1056,126 @@ export default function BookingWorkbenchDialog({
 
                 <section className={`rounded-3xl border p-5 ${panelClassName}`}>
                   <div className="text-base font-semibold">提醒设置</div>
-                  <div className={`mt-1 text-sm ${mutedTextClassName}`}>客户提醒走邮件，商家提醒走浏览器推送。预设可点，也可直接输入分钟。</div>
-                  <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                  <div className={`mt-1 text-sm ${mutedTextClassName}`}>客户邮件和商家浏览器提醒分开设置，客户邮件语言以这里选定的语言为准。</div>
+                  <div className="mt-4 space-y-4">
                     <div className={`rounded-2xl border p-4 ${softPanelClassName}`}>
-                      <div className="text-sm font-semibold">客户提醒</div>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {REMINDER_PRESETS.map((minutes) => {
-                          const selected = draft.customerReminderOffsetsMinutes.includes(minutes);
+                      <div className="text-sm font-semibold">客户邮件</div>
+                      <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                        <label className="space-y-1">
+                          <span className="text-sm">邮件语言</span>
+                          <select
+                            className={inputClassName}
+                            value={effectiveCustomerEmailLocale}
+                            onChange={(event) => handleCustomerEmailLocaleChange(event.target.value)}
+                          >
+                            {emailLanguageOptions.map((option) => (
+                              <option key={option.code} value={option.code}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="space-y-1">
+                          <span className="text-sm">发件人名称</span>
+                          <input
+                            type="text"
+                            className={inputClassName}
+                            value={draft.customerEmailSenderName}
+                            onChange={(event) =>
+                              setDraft((current) => ({
+                                ...current,
+                                customerEmailSenderName: event.target.value,
+                              }))
+                            }
+                            placeholder={trimText(siteName) || "商户名称"}
+                          />
+                        </label>
+                      </div>
+                      <div className={`mt-2 text-xs ${mutedTextClassName}`}>
+                        留空时默认使用商户名称；这里的语言也会用于预约管理里的邮件按钮预填内容。
+                      </div>
+
+                      {!allowCustomerAutoEmail ? (
+                        <div className={`mt-4 rounded-2xl border px-4 py-3 text-sm ${darkMode ? "border-amber-500/30 bg-amber-500/10 text-amber-100" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
+                          当前预约权限未开通自动发邮件，只保留邮件语言设置。
+                        </div>
+                      ) : null}
+
+                      <div className="mt-4 flex flex-wrap items-center gap-4">
+                        <label className="flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={draft.customerAutoEmailEnabled}
+                            onChange={(event) =>
+                              setDraft((current) => ({
+                                ...current,
+                                customerAutoEmailEnabled: event.target.checked,
+                              }))
+                            }
+                            disabled={!allowCustomerAutoEmail}
+                          />
+                          开启自动发邮件
+                        </label>
+                        <span className={`text-xs ${mutedTextClassName}`}>关闭后，客户状态邮件和自动邮件提醒都不会发送。</span>
+                      </div>
+
+                      <div className="mt-4 space-y-3">
+                        {MERCHANT_BOOKING_STATUSES.map((status) => {
+                          const selected = draft.customerAutoEmailStatuses.includes(status);
                           return (
-                            <button
-                              key={`customer-${minutes}`}
-                              type="button"
-                              className={`rounded-full px-3 py-1.5 text-xs font-medium ${selected ? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900" : darkMode ? "border border-slate-700 bg-slate-900 text-slate-300" : "border border-slate-200 bg-white text-slate-600"}`}
-                              onClick={() => toggleReminderPreset("customerReminderOffsetsMinutes", minutes)}
-                            >
-                              {formatMerchantBookingReminderOffset(minutes)}
-                            </button>
+                            <div key={status} className={`rounded-2xl border p-3 ${darkMode ? "border-slate-700 bg-slate-900/70" : "border-slate-200 bg-white"}`}>
+                              <div className="flex items-center gap-3">
+                                <label className="flex items-center gap-2 text-sm font-medium">
+                                  <input
+                                    type="checkbox"
+                                    checked={selected}
+                                    disabled={!allowCustomerAutoEmail}
+                                    onChange={() => toggleAutoEmailStatus(status)}
+                                  />
+                                  {getMerchantBookingStatusText(status, locale)}
+                                </label>
+                              </div>
+                              <textarea
+                                className={`${inputClassName} mt-3 min-h-[92px]`}
+                                value={
+                                  draft.customerAutoEmailMessageByStatus[status] ??
+                                  getMerchantBookingCustomerEmailDefaultStatusMessage(status, effectiveCustomerEmailLocale)
+                                }
+                                disabled={customerAutoEmailControlsDisabled || !selected}
+                                onChange={(event) => updateAutoEmailStatusMessage(status, event.target.value)}
+                              />
+                            </div>
                           );
                         })}
                       </div>
-                      <input
-                        type="text"
-                        className={`${inputClassName} mt-3`}
-                        value={formatReminderInput(draft.customerReminderOffsetsMinutes)}
-                        onChange={(event) =>
-                          setDraft((current) => ({
-                            ...current,
-                            customerReminderOffsetsMinutes: parseReminderInput(event.target.value),
-                          }))
-                        }
-                        placeholder="例如 1440, 120, 30"
-                      />
+
+                      <div className="mt-4">
+                        <div className="text-sm font-medium">客户自动提醒时间</div>
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          className={`${inputClassName} mt-3`}
+                          value={formatReminderInput(draft.customerReminderOffsetsMinutes)}
+                          disabled={customerAutoEmailControlsDisabled}
+                          onChange={(event) =>
+                            setDraft((current) => ({
+                              ...current,
+                              customerReminderOffsetsMinutes: parseReminderInput(event.target.value),
+                            }))
+                          }
+                          placeholder="例如 30"
+                        />
+                      </div>
                     </div>
 
                     <div className={`rounded-2xl border p-4 ${softPanelClassName}`}>
                       <div className="text-sm font-semibold">商家提醒</div>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {REMINDER_PRESETS.map((minutes) => {
-                          const selected = draft.merchantReminderOffsetsMinutes.includes(minutes);
-                          return (
-                            <button
-                              key={`merchant-${minutes}`}
-                              type="button"
-                              className={`rounded-full px-3 py-1.5 text-xs font-medium ${selected ? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900" : darkMode ? "border border-slate-700 bg-slate-900 text-slate-300" : "border border-slate-200 bg-white text-slate-600"}`}
-                              onClick={() => toggleReminderPreset("merchantReminderOffsetsMinutes", minutes)}
-                            >
-                              {formatMerchantBookingReminderOffset(minutes)}
-                            </button>
-                          );
-                        })}
-                      </div>
+                      <div className={`mt-1 text-xs ${mutedTextClassName}`}>走浏览器推送，推给当前已开启系统通知的设备。</div>
                       <input
-                        type="text"
+                        type="number"
+                        min="1"
+                        step="1"
                         className={`${inputClassName} mt-3`}
                         value={formatReminderInput(draft.merchantReminderOffsetsMinutes)}
                         onChange={(event) =>
@@ -1036,7 +1184,7 @@ export default function BookingWorkbenchDialog({
                             merchantReminderOffsetsMinutes: parseReminderInput(event.target.value),
                           }))
                         }
-                        placeholder="例如 1440, 120, 30"
+                        placeholder="例如 30"
                       />
                     </div>
                   </div>

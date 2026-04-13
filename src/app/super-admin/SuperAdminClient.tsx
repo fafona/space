@@ -1231,6 +1231,7 @@ function describePermissionValue(
   if (
     key === "allowBusinessCardLinkMode" ||
     key === "allowBookingEmailPrefill" ||
+    key === "allowBookingAutoEmail" ||
     key === "allowInsertBackground" ||
     key === "allowThemeEffects" ||
     key === "allowButtonBlock" ||
@@ -1272,6 +1273,7 @@ function buildMerchantConfigDiffLines(current: MerchantConfigSnapshot, target: M
     { key: "businessCardLimit", label: "名片夹上限" },
     { key: "allowBusinessCardLinkMode", label: "可链接模式名片" },
     { key: "allowBookingEmailPrefill", label: "邮件自动带入预约信息" },
+    { key: "allowBookingAutoEmail", label: "可自动发预约邮件" },
     { key: "businessCardBackgroundImageLimitKb", label: "名片背景图上限(KB)" },
     { key: "businessCardContactImageLimitKb", label: "联系卡展示图上限(KB)" },
     { key: "businessCardExportImageLimitKb", label: "导出名片图片上限(KB)" },
@@ -1492,6 +1494,7 @@ export default function SuperAdminClient() {
   const [configBusinessCardLimit, setConfigBusinessCardLimit] = useState("1");
   const [configAllowBusinessCardLinkMode, setConfigAllowBusinessCardLinkMode] = useState(false);
   const [configAllowBookingEmailPrefill, setConfigAllowBookingEmailPrefill] = useState(false);
+  const [configAllowBookingAutoEmail, setConfigAllowBookingAutoEmail] = useState(false);
   const [configBusinessCardBackgroundImageLimitKb, setConfigBusinessCardBackgroundImageLimitKb] = useState("200");
   const [configBusinessCardContactImageLimitKb, setConfigBusinessCardContactImageLimitKb] = useState("200");
   const [configBusinessCardExportImageLimitKb, setConfigBusinessCardExportImageLimitKb] = useState("400");
@@ -3005,6 +3008,7 @@ export default function SuperAdminClient() {
     setConfigBusinessCardLimit(`${permission.businessCardLimit}`);
     setConfigAllowBusinessCardLinkMode(permission.allowBusinessCardLinkMode);
     setConfigAllowBookingEmailPrefill(permission.allowBookingEmailPrefill);
+    setConfigAllowBookingAutoEmail(permission.allowBookingBlock && permission.allowBookingAutoEmail);
     setConfigBusinessCardBackgroundImageLimitKb(`${permission.businessCardBackgroundImageLimitKb}`);
     setConfigBusinessCardContactImageLimitKb(`${permission.businessCardContactImageLimitKb}`);
     setConfigBusinessCardExportImageLimitKb(`${permission.businessCardExportImageLimitKb}`);
@@ -4447,6 +4451,13 @@ export default function SuperAdminClient() {
         `邮件自动带入预约信息：${formatBool(prevPermission.allowBookingEmailPrefill)} -> ${formatBool(configAllowBookingEmailPrefill)}`,
       );
     }
+    if (prevPermission.allowBookingAutoEmail !== (configAllowBookingBlock && configAllowBookingAutoEmail)) {
+      pendingChanges.push(
+        `自动预约邮件：${formatBool(prevPermission.allowBookingAutoEmail)} -> ${formatBool(
+          configAllowBookingBlock && configAllowBookingAutoEmail,
+        )}`,
+      );
+    }
     if (prevPermission.businessCardBackgroundImageLimitKb !== businessCardBackgroundImageLimitKb) {
       pendingChanges.push(
         `名片背景图上限：${prevPermission.businessCardBackgroundImageLimitKb}KB -> ${businessCardBackgroundImageLimitKb}KB`,
@@ -4540,6 +4551,7 @@ export default function SuperAdminClient() {
         businessCardLimit,
         allowBusinessCardLinkMode: configAllowBusinessCardLinkMode,
         allowBookingEmailPrefill: configAllowBookingEmailPrefill,
+        allowBookingAutoEmail: configAllowBookingBlock && configAllowBookingAutoEmail,
         businessCardBackgroundImageLimitKb,
         businessCardContactImageLimitKb,
         businessCardExportImageLimitKb,
@@ -6563,6 +6575,15 @@ export default function SuperAdminClient() {
                                   />
                                   邮件自动带入预约信息
                                 </label>
+                                <label className={`flex items-center gap-2 rounded border bg-white px-3 py-2 ${configAllowBookingBlock ? "" : "opacity-50"}`}>
+                                  <input
+                                    type="checkbox"
+                                    checked={configAllowBookingBlock && configAllowBookingAutoEmail}
+                                    onChange={(e) => setConfigAllowBookingAutoEmail(e.target.checked)}
+                                    disabled={!configAllowBookingBlock}
+                                  />
+                                  自动预约邮件
+                                </label>
                                 <label className="space-y-1">
                                   <div className="text-slate-500">名片背景图上限(KB)</div>
                                   <input
@@ -6631,7 +6652,17 @@ export default function SuperAdminClient() {
                                 产品区块
                               </label>
                               <label className="flex items-center gap-2 rounded border px-2 py-1.5">
-                                <input type="checkbox" checked={configAllowBookingBlock} onChange={(e) => setConfigAllowBookingBlock(e.target.checked)} />
+                                <input
+                                  type="checkbox"
+                                  checked={configAllowBookingBlock}
+                                  onChange={(e) => {
+                                    const nextChecked = e.target.checked;
+                                    setConfigAllowBookingBlock(nextChecked);
+                                    if (!nextChecked) {
+                                      setConfigAllowBookingAutoEmail(false);
+                                    }
+                                  }}
+                                />
                                 预约区块
                               </label>
                             </div>

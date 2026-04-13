@@ -1,10 +1,12 @@
 import {
+  MERCHANT_BOOKING_STATUSES,
   isMerchantBookingTimeAllowed,
   normalizeMerchantBookingTimeRangeOptions,
   splitMerchantBookingDateTime,
   type MerchantBookingRecord,
   type MerchantBookingStatus,
 } from "./merchantBookings";
+import { resolveSupportedLocale } from "@/lib/i18n";
 
 export type MerchantBookingRecurringRule = {
   id: string;
@@ -21,6 +23,11 @@ export type MerchantBookingWorkbenchPublicSettings = {
 };
 
 export type MerchantBookingWorkbenchSettings = MerchantBookingWorkbenchPublicSettings & {
+  customerEmailLocale: string;
+  customerAutoEmailEnabled: boolean;
+  customerAutoEmailStatuses: MerchantBookingStatus[];
+  customerAutoEmailMessageByStatus: Partial<Record<MerchantBookingStatus, string>>;
+  customerEmailSenderName: string;
   customerReminderOffsetsMinutes: number[];
   merchantReminderOffsetsMinutes: number[];
   noShowEnabled: boolean;
@@ -34,6 +41,11 @@ const WORKBENCH_DEFAULTS: MerchantBookingWorkbenchSettings = {
   dailyCutoffTime: "",
   bufferMinutes: null,
   recurringRules: [],
+  customerEmailLocale: "",
+  customerAutoEmailEnabled: true,
+  customerAutoEmailStatuses: ["confirmed"],
+  customerAutoEmailMessageByStatus: {},
+  customerEmailSenderName: "",
   customerReminderOffsetsMinutes: [],
   merchantReminderOffsetsMinutes: [],
   noShowEnabled: false,
@@ -90,6 +102,43 @@ function normalizeReminderOffsets(value: unknown) {
     next.push(normalized);
   });
   return next.sort((left, right) => right - left);
+}
+
+function normalizeSingleReminderOffset(value: unknown) {
+  const normalized = normalizeReminderOffsets(value);
+  if (normalized.length === 0) return [];
+  return [normalized[normalized.length - 1] as number];
+}
+
+function normalizeEmailLocale(value: unknown) {
+  const normalized = trimText(value);
+  return normalized ? resolveSupportedLocale(normalized) : "";
+}
+
+function normalizeAutoEmailStatuses(value: unknown) {
+  if (!Array.isArray(value) && typeof value !== "string") {
+    return [...WORKBENCH_DEFAULTS.customerAutoEmailStatuses];
+  }
+  const source = Array.isArray(value) ? value : typeof value === "string" ? value.split(/[,\s]+/) : [];
+  const next: MerchantBookingStatus[] = [];
+  source.forEach((item) => {
+    const normalized = trimText(item) as MerchantBookingStatus;
+    if (!MERCHANT_BOOKING_STATUSES.includes(normalized) || next.includes(normalized)) return;
+    next.push(normalized);
+  });
+  return next;
+}
+
+function normalizeStatusMessageByStatus(value: unknown) {
+  const source = value && typeof value === "object" ? (value as Partial<Record<MerchantBookingStatus, unknown>>) : {};
+  const next: Partial<Record<MerchantBookingStatus, string>> = {};
+  MERCHANT_BOOKING_STATUSES.forEach((status) => {
+    const normalized = typeof source[status] === "string" ? source[status].replace(/\r\n/g, "\n").trim() : "";
+    if (normalized) {
+      next[status] = normalized;
+    }
+  });
+  return next;
 }
 
 function normalizeRecurringRules(value: unknown) {
@@ -150,6 +199,8 @@ export function createDefaultMerchantBookingWorkbenchSettings(): MerchantBooking
   return {
     ...WORKBENCH_DEFAULTS,
     recurringRules: [],
+    customerAutoEmailStatuses: [...WORKBENCH_DEFAULTS.customerAutoEmailStatuses],
+    customerAutoEmailMessageByStatus: {},
     customerReminderOffsetsMinutes: [],
     merchantReminderOffsetsMinutes: [],
   };
@@ -162,8 +213,16 @@ export function normalizeMerchantBookingWorkbenchSettings(value: unknown): Merch
     dailyCutoffTime: normalizeClockTime(source.dailyCutoffTime),
     bufferMinutes: normalizePositiveMinutes(source.bufferMinutes),
     recurringRules: normalizeRecurringRules(source.recurringRules),
-    customerReminderOffsetsMinutes: normalizeReminderOffsets(source.customerReminderOffsetsMinutes),
-    merchantReminderOffsetsMinutes: normalizeReminderOffsets(source.merchantReminderOffsetsMinutes),
+    customerEmailLocale: normalizeEmailLocale(source.customerEmailLocale),
+    customerAutoEmailEnabled:
+      typeof source.customerAutoEmailEnabled === "boolean"
+        ? source.customerAutoEmailEnabled
+        : WORKBENCH_DEFAULTS.customerAutoEmailEnabled,
+    customerAutoEmailStatuses: normalizeAutoEmailStatuses(source.customerAutoEmailStatuses),
+    customerAutoEmailMessageByStatus: normalizeStatusMessageByStatus(source.customerAutoEmailMessageByStatus),
+    customerEmailSenderName: trimText(source.customerEmailSenderName),
+    customerReminderOffsetsMinutes: normalizeSingleReminderOffset(source.customerReminderOffsetsMinutes),
+    merchantReminderOffsetsMinutes: normalizeSingleReminderOffset(source.merchantReminderOffsetsMinutes),
     noShowEnabled: source.noShowEnabled === true,
     noShowGraceMinutes: normalizePositiveMinutes(source.noShowGraceMinutes),
     calendarSyncToken: trimText(source.calendarSyncToken),
@@ -331,6 +390,7 @@ export function buildMerchantBookingReminderSummary(
 ) {
   const activeRecords = records.filter((record) => record.status === "active" || record.status === "confirmed");
   const dueCustomerReminderCount = activeRecords.filter((record) => {
+    if (settings.customerAutoEmailEnabled !== true) return false;
     const dueOffset = getMerchantBookingDueReminderOffset(record, settings.customerReminderOffsetsMinutes, now);
     return dueOffset !== null && !(record.customerReminderProcessedMinutes ?? []).includes(dueOffset);
   }).length;

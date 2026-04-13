@@ -29,6 +29,19 @@ export type MerchantBookingAutomationState = {
   noShowMarkedAt?: string;
 };
 
+export type MerchantBookingCustomerEmailLogKind = "status" | "reminder";
+
+export type MerchantBookingCustomerEmailLogEntry = {
+  id: string;
+  kind: MerchantBookingCustomerEmailLogKind;
+  sentAt: string;
+  locale: string;
+  subject: string;
+  senderName: string;
+  status?: MerchantBookingStatus;
+  minutesBefore?: number;
+};
+
 export type MerchantBookingCreateInput = MerchantBookingEditableInput & MerchantBookingRuleBinding & {
   siteId: string;
   siteName?: string;
@@ -43,6 +56,8 @@ export type MerchantBookingRecord = MerchantBookingEditableInput &
     status: MerchantBookingStatus;
     createdAt: string;
     updatedAt: string;
+    merchantTouchedAt?: string;
+    customerEmailLogs?: MerchantBookingCustomerEmailLogEntry[];
   };
 
 export type MerchantBookingConfirmationEmailStatus = "sent" | "failed";
@@ -57,6 +72,7 @@ export type MerchantBookingStoredRecord = MerchantBookingRecord & {
   customerReminderProcessedMinutes?: number[];
   merchantReminderProcessedMinutes?: number[];
   noShowMarkedAt?: string;
+  customerEmailLogs?: MerchantBookingCustomerEmailLogEntry[];
 };
 
 export type MerchantBookingUpdateAction = "update" | "cancel";
@@ -478,6 +494,16 @@ export function buildMerchantBookingId(siteId: string, createdAt: Date | string,
   return `${prefix}${padBookingSequence(maxSequence + 1)}`;
 }
 
+export function isMerchantBookingPendingMerchantTouch(
+  record: Pick<MerchantBookingRecord, "updatedAt" | "merchantTouchedAt">,
+) {
+  const updatedAt = normalizeSingleLineText(record.updatedAt);
+  const merchantTouchedAt = normalizeSingleLineText(record.merchantTouchedAt ?? "");
+  if (!updatedAt) return !merchantTouchedAt;
+  if (!merchantTouchedAt) return true;
+  return new Date(updatedAt).getTime() > new Date(merchantTouchedAt).getTime();
+}
+
 export function shouldSendMerchantBookingConfirmationEmail(input: {
   currentStatus: MerchantBookingStatus;
   nextStatus: MerchantBookingStatus;
@@ -500,7 +526,7 @@ export function getMerchantBookingStatusLabel(status: MerchantBookingStatus) {
 
 export function withoutMerchantBookingToken(
   record: MerchantBookingStoredRecord,
-  options?: { includeAutomationState?: boolean },
+  options?: { includeAutomationState?: boolean; includeCustomerEmailLogs?: boolean },
 ): MerchantBookingRecord {
   const {
     editToken,
@@ -512,6 +538,7 @@ export function withoutMerchantBookingToken(
     customerReminderProcessedMinutes,
     merchantReminderProcessedMinutes,
     noShowMarkedAt,
+    customerEmailLogs,
     ...publicRecord
   } = record;
   void editToken;
@@ -524,7 +551,14 @@ export function withoutMerchantBookingToken(
     void customerReminderProcessedMinutes;
     void merchantReminderProcessedMinutes;
     void noShowMarkedAt;
-    return publicRecord;
+    if (!options?.includeCustomerEmailLogs) {
+      void customerEmailLogs;
+      return publicRecord;
+    }
+    return {
+      ...publicRecord,
+      customerEmailLogs: Array.isArray(customerEmailLogs) ? customerEmailLogs.map((item) => ({ ...item })) : [],
+    };
   }
   return {
     ...publicRecord,
@@ -535,5 +569,10 @@ export function withoutMerchantBookingToken(
       ? [...merchantReminderProcessedMinutes]
       : [],
     noShowMarkedAt,
+    ...(options?.includeCustomerEmailLogs
+      ? {
+          customerEmailLogs: Array.isArray(customerEmailLogs) ? customerEmailLogs.map((item) => ({ ...item })) : [],
+        }
+      : {}),
   };
 }

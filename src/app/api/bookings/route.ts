@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { buildMerchantBookingPushNotification } from "@/lib/merchantPushEvents";
 import {
+  acknowledgeMerchantBookingBySite,
   createMerchantBooking,
   listMerchantBookings,
   updateMerchantBooking,
@@ -44,7 +45,10 @@ export async function GET(request: Request) {
     if (!session) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
-    const bookings = await listMerchantBookings(siteId, { includeAutomationState: true });
+    const bookings = await listMerchantBookings(siteId, {
+      includeAutomationState: true,
+      includeCustomerEmailLogs: true,
+    });
     return NextResponse.json({ ok: true, bookings });
   } catch (error) {
     return NextResponse.json(
@@ -108,9 +112,10 @@ export async function POST(request: Request) {
 export async function PATCH(request: Request) {
   try {
     const body = (await request.json()) as
-      | (Partial<MerchantBookingActionInput> & {
+        | (Partial<MerchantBookingActionInput> & {
           siteId?: string;
           status?: MerchantBookingStatus;
+          markTouched?: boolean;
         })
       | null;
 
@@ -131,6 +136,13 @@ export async function PATCH(request: Request) {
       const session = await resolveBookingAdminSession(request, maybeSiteId);
       if (!session) {
         return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+      }
+      if (body?.markTouched === true) {
+        const booking = await acknowledgeMerchantBookingBySite({
+          siteId: maybeSiteId,
+          bookingId: String(body?.bookingId ?? "").trim(),
+        });
+        return NextResponse.json({ ok: true, booking });
       }
       const booking = await updateMerchantBookingBySite({
         siteId: maybeSiteId,

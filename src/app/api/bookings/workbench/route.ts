@@ -9,6 +9,7 @@ import {
   loadMerchantBookingWorkbenchSettings,
   saveMerchantBookingWorkbenchSettings,
 } from "@/lib/merchantBookingWorkbenchStore";
+import { loadPublishedMerchantSnapshotSiteBySiteId } from "@/lib/publishedMerchantService";
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
 
 export const dynamic = "force-dynamic";
@@ -55,6 +56,21 @@ function applyCalendarSyncAction(
   return settings;
 }
 
+function applyAutoEmailPermissionGuard(
+  nextSettings: MerchantBookingWorkbenchSettings,
+  currentSettings: MerchantBookingWorkbenchSettings,
+  allowAutoEmail: boolean,
+) {
+  if (allowAutoEmail) return nextSettings;
+  return {
+    ...nextSettings,
+    customerAutoEmailEnabled: currentSettings.customerAutoEmailEnabled,
+    customerAutoEmailStatuses: [...currentSettings.customerAutoEmailStatuses],
+    customerAutoEmailMessageByStatus: { ...currentSettings.customerAutoEmailMessageByStatus },
+    customerReminderOffsetsMinutes: [...currentSettings.customerReminderOffsetsMinutes],
+  } satisfies MerchantBookingWorkbenchSettings;
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const siteId = trimText(searchParams.get("siteId"));
@@ -86,6 +102,7 @@ export async function PATCH(request: Request) {
     return noStoreJson({ error: "unauthorized" }, { status: 401 });
   }
 
+  const currentSettings = await loadMerchantBookingWorkbenchSettings(siteId);
   const baseSettings = normalizeMerchantBookingWorkbenchSettings(body?.settings);
   const calendarSyncAction =
     body?.calendarSyncAction === "ensure" ||
@@ -93,7 +110,14 @@ export async function PATCH(request: Request) {
     body?.calendarSyncAction === "disable"
       ? body.calendarSyncAction
       : "keep";
-  const nextSettings = applyCalendarSyncAction(baseSettings, calendarSyncAction);
+  const snapshotSite = await loadPublishedMerchantSnapshotSiteBySiteId(siteId).catch(() => null);
+  const allowAutoEmail = Boolean(
+    snapshotSite?.permissionConfig?.allowBookingBlock && snapshotSite?.permissionConfig?.allowBookingAutoEmail,
+  );
+  const nextSettings = applyCalendarSyncAction(
+    applyAutoEmailPermissionGuard(baseSettings, currentSettings, allowAutoEmail),
+    calendarSyncAction,
+  );
   const saved = await saveMerchantBookingWorkbenchSettings(siteId, nextSettings);
   return noStoreJson({ ok: true, settings: saved });
 }

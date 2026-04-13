@@ -178,6 +178,13 @@ export async function loadPublishedMerchantServiceStateBySiteId(siteId: string |
   return site ? buildPublishedMerchantServiceState(site) : null;
 }
 
+export async function loadPublishedMerchantSnapshotSiteBySiteId(siteId: string | null | undefined) {
+  const normalizedSiteId = normalizeText(siteId);
+  if (!isMerchantNumericId(normalizedSiteId)) return null;
+  const snapshot = await loadSnapshotSites();
+  return snapshot.find((item) => item.id === normalizedSiteId) ?? null;
+}
+
 export async function loadPublishedMerchantServiceStatesBySiteIds(siteIds: string[]) {
   const uniqueIds = [...new Set(siteIds.map((item) => normalizeText(item)).filter((item) => isMerchantNumericId(item)))];
   if (uniqueIds.length === 0) return new Map<string, PublishedMerchantServiceState>();

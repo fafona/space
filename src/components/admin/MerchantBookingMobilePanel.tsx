@@ -9,9 +9,11 @@ import BookingDateTimeInput from "@/components/booking/BookingDateTimeInput";
 import BookingQuickTimeRangePicker from "@/components/booking/BookingQuickTimeRangePicker";
 import {
   MERCHANT_BOOKING_STATUSES,
+  type MerchantBookingCustomerEmailLogEntry,
   type MerchantBookingEditableInput,
   type MerchantBookingRecord,
   type MerchantBookingStatus,
+  isMerchantBookingPendingMerchantTouch,
 } from "@/lib/merchantBookings";
 import {
   buildDefaultBookingItemOptions,
@@ -34,18 +36,26 @@ import {
   type MerchantBookingFilter,
 } from "@/lib/merchantBookingLocale";
 import { buildMerchantBookingMailtoHref } from "@/lib/merchantBookingMailto";
+import {
+  buildMerchantBookingReminderOffsetLabel,
+  resolveMerchantBookingCustomerEmailLocale,
+} from "@/lib/merchantBookingCustomerEmail";
 import { resolveMerchantBookingRuleEntry, type MerchantBookingRulesSnapshot } from "@/lib/merchantBookingRules";
+import { normalizeMerchantBookingWorkbenchSettings } from "@/lib/merchantBookingWorkbench";
 import usePullToRefresh from "@/lib/usePullToRefresh";
 
 type MerchantBookingMobilePanelProps = {
   siteId: string;
   siteName: string;
+  siteCountryCode?: string;
   storeOptions?: string[];
   itemOptions?: string[];
   titleOptions?: string[];
   bookingRulesSnapshot?: MerchantBookingRulesSnapshot | null;
   darkMode?: boolean;
   allowBookingEmailPrefill?: boolean;
+  allowCustomerAutoEmail?: boolean;
+  onRecordsChange?: (records: MerchantBookingRecord[]) => void;
 };
 
 type MerchantBookingAdminDraft = {
@@ -171,6 +181,28 @@ function PhoneIcon() {
   );
 }
 
+function WorkbenchIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-4 w-4">
+      <path
+        d="M5 6.5A1.5 1.5 0 0 1 6.5 5h4A1.5 1.5 0 0 1 12 6.5v4A1.5 1.5 0 0 1 10.5 12h-4A1.5 1.5 0 0 1 5 10.5v-4Z"
+        stroke="currentColor"
+        strokeWidth="1.7"
+      />
+      <path
+        d="M12 6.5A1.5 1.5 0 0 1 13.5 5h4A1.5 1.5 0 0 1 19 6.5v4A1.5 1.5 0 0 1 17.5 12h-4A1.5 1.5 0 0 1 12 10.5v-4Z"
+        stroke="currentColor"
+        strokeWidth="1.7"
+      />
+      <path
+        d="M5 13.5A1.5 1.5 0 0 1 6.5 12h11a1.5 1.5 0 0 1 1.5 1.5v4a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 17.5v-4Z"
+        stroke="currentColor"
+        strokeWidth="1.7"
+      />
+    </svg>
+  );
+}
+
 function NoteIcon() {
   return (
     <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
@@ -184,6 +216,34 @@ function NoteIcon() {
       <path d="M7.5 10h5M7.5 12.75h5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
     </svg>
   );
+}
+
+function getCustomerEmailBadgeText(count: number, locale: string) {
+  return locale.startsWith("es") ? `Correos ${count}` : `已发邮件 ${count}`;
+}
+
+function getCustomerEmailLogHeading(locale: string) {
+  return locale.startsWith("es") ? "Historial de correos" : "客户邮件记录";
+}
+
+function getCustomerEmailLogTypeText(entry: MerchantBookingCustomerEmailLogEntry, locale: string) {
+  if (entry.kind === "reminder") {
+    const offsetLabel = buildMerchantBookingReminderOffsetLabel(entry.minutesBefore ?? 0, locale);
+    return locale.startsWith("es") ? `Recordatorio · ${offsetLabel}` : `提醒邮件 · ${offsetLabel}`;
+  }
+  const statusLabel = entry.status ? getMerchantBookingStatusText(entry.status, locale) : locale.startsWith("es") ? "actualización" : "状态更新";
+  return locale.startsWith("es") ? `Estado · ${statusLabel}` : `状态邮件 · ${statusLabel}`;
+}
+
+function getCustomerEmailSenderMeta(entry: MerchantBookingCustomerEmailLogEntry, locale: string) {
+  const parts: string[] = [];
+  if (entry.senderName) {
+    parts.push(locale.startsWith("es") ? `Remitente: ${entry.senderName}` : `发件人：${entry.senderName}`);
+  }
+  if (entry.locale) {
+    parts.push(locale.startsWith("es") ? `Idioma: ${entry.locale}` : `语言：${entry.locale}`);
+  }
+  return parts.join(" · ");
 }
 
 function SummaryField({ value }: { value: string }) {
@@ -231,16 +291,23 @@ function SummaryAppointmentField({
 export default function MerchantBookingMobilePanel({
   siteId,
   siteName,
+  siteCountryCode = "",
   storeOptions = [],
   itemOptions = [],
   titleOptions = [],
   bookingRulesSnapshot = null,
   darkMode = false,
   allowBookingEmailPrefill = false,
+  allowCustomerAutoEmail = false,
+  onRecordsChange,
 }: MerchantBookingMobilePanelProps) {
   const { locale } = useI18n();
   const rootRef = useRef<HTMLDivElement>(null);
   const detailDialogScrollViewportRef = useRef<HTMLDivElement>(null);
+  const defaultCustomerEmailLocale = useMemo(
+    () => resolveMerchantBookingCustomerEmailLocale("", siteCountryCode),
+    [siteCountryCode],
+  );
   const isIosBrowser =
     typeof navigator !== "undefined" && /iPhone|iPad|iPod/i.test(String(navigator.userAgent ?? ""));
   const loadFailedText = locale.startsWith("es") ? "No se pudieron cargar las citas." : "预约记录读取失败";
@@ -255,6 +322,14 @@ export default function MerchantBookingMobilePanel({
   const [busyKey, setBusyKey] = useState("");
   const [detailBookingId, setDetailBookingId] = useState<string | null>(null);
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
+  const [customerEmailLocale, setCustomerEmailLocale] = useState(defaultCustomerEmailLocale);
+  const workbenchButtonClassName = workbenchOpen
+    ? "shrink-0 rounded-[18px] rounded-br-[10px] border border-sky-300 bg-[linear-gradient(135deg,#0f172a_0%,#1d4ed8_58%,#0f766e_100%)] px-3 py-2 text-white shadow-[0_16px_30px_rgba(15,23,42,0.24)] ring-2 ring-sky-100 transition"
+    : "shrink-0 rounded-[18px] rounded-br-[10px] border border-slate-900/10 bg-[linear-gradient(135deg,#0f172a_0%,#1d4ed8_58%,#0f766e_100%)] px-3 py-2 text-white shadow-[0_14px_28px_rgba(15,23,42,0.18)] transition active:scale-[0.98]";
+
+  useEffect(() => {
+    setCustomerEmailLocale(defaultCustomerEmailLocale);
+  }, [defaultCustomerEmailLocale]);
 
   const loadBookings = useCallback(async () => {
     if (!siteId) return;
@@ -282,6 +357,38 @@ export default function MerchantBookingMobilePanel({
   useEffect(() => {
     void loadBookings();
   }, [loadBookings]);
+
+  useEffect(() => {
+    onRecordsChange?.(records);
+  }, [onRecordsChange, records]);
+
+  useEffect(() => {
+    if (!siteId) return;
+    let cancelled = false;
+    const loadWorkbenchLocale = async () => {
+      try {
+        const response = await fetch(`/api/bookings/workbench?siteId=${encodeURIComponent(siteId)}`, {
+          cache: "no-store",
+        });
+        const json = (await response.json().catch(() => null)) as
+          | { ok?: boolean; settings?: unknown }
+          | null;
+        if (!response.ok || !json?.ok) return;
+        const normalized = normalizeMerchantBookingWorkbenchSettings(json.settings);
+        if (!cancelled) {
+          setCustomerEmailLocale(
+            resolveMerchantBookingCustomerEmailLocale(normalized.customerEmailLocale, siteCountryCode),
+          );
+        }
+      } catch {
+        // Keep the merchant-country default when workbench settings are unavailable.
+      }
+    };
+    void loadWorkbenchLocale();
+    return () => {
+      cancelled = true;
+    };
+  }, [defaultCustomerEmailLocale, siteCountryCode, siteId]);
 
   const {
     pullDistance,
@@ -383,6 +490,39 @@ export default function MerchantBookingMobilePanel({
     [records, siteId, updateFailedText],
   );
 
+  const markBookingTouched = useCallback(
+    async (bookingId: string) => {
+      const currentRecord = records.find((item) => item.id === bookingId);
+      if (!currentRecord || !isMerchantBookingPendingMerchantTouch(currentRecord)) return currentRecord ?? null;
+      const touchedAt = new Date().toISOString();
+      setRecords((current) =>
+        current.map((item) => (item.id === bookingId ? { ...item, merchantTouchedAt: touchedAt } : item)),
+      );
+      try {
+        const response = await fetch("/api/bookings", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            siteId,
+            bookingId,
+            markTouched: true,
+          }),
+        });
+        const json = (await response.json().catch(() => null)) as
+          | { ok?: boolean; booking?: MerchantBookingRecord }
+          | null;
+        if (!response.ok || !json?.ok || !json.booking) {
+          throw new Error("mark_touched_failed");
+        }
+        setRecords((current) => current.map((item) => (item.id === bookingId ? json.booking! : item)));
+        return json.booking;
+      } catch {
+        return null;
+      }
+    },
+    [records, siteId],
+  );
+
   const handleDraftChange = useCallback(
     (bookingId: string, key: keyof MerchantBookingAdminDraft, value: string) => {
       const nextValue =
@@ -413,12 +553,13 @@ export default function MerchantBookingMobilePanel({
   );
 
   const openDetailDialog = useCallback((record: MerchantBookingRecord) => {
+    void markBookingTouched(record.id);
     setDrafts((current) => ({
       ...current,
       [record.id]: createDraft(record),
     }));
     setDetailBookingId(record.id);
-  }, []);
+  }, [markBookingTouched]);
 
   const closeDetailDialog = useCallback(() => {
     setDetailBookingId(null);
@@ -426,6 +567,13 @@ export default function MerchantBookingMobilePanel({
 
   const detailRecord = detailBookingId ? records.find((item) => item.id === detailBookingId) ?? null : null;
   const detailDraft = detailRecord ? drafts[detailRecord.id] ?? createDraft(detailRecord) : null;
+  const detailCustomerEmailLogs = useMemo(
+    () =>
+      [...(detailRecord?.customerEmailLogs ?? [])].sort(
+        (left, right) => new Date(right.sentAt).getTime() - new Date(left.sentAt).getTime(),
+      ),
+    [detailRecord],
+  );
   const detailAvailableTimeRanges = useMemo(
     () =>
       detailRecord
@@ -558,25 +706,29 @@ export default function MerchantBookingMobilePanel({
         {(record.status === "active" || record.status === "confirmed") ? (
           <button
             type="button"
-            className="rounded-full border border-rose-300 bg-rose-100 px-3 py-2 text-xs font-medium text-rose-800 transition hover:bg-rose-200 disabled:opacity-50"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-rose-300 bg-rose-100 text-base font-semibold leading-none text-rose-800 transition hover:bg-rose-200 disabled:opacity-50"
             onClick={() => void patchBooking(record.id, { status: "no_show" }, "noshow")}
             disabled={busyKey === `noshow:${record.id}`}
+            title={getMerchantBookingActionText("noshow", locale)}
+            aria-label={getMerchantBookingActionText("noshow", locale)}
           >
             {busyKey === `noshow:${record.id}`
-              ? getMerchantBookingActionText("processing", locale)
-              : getMerchantBookingActionText("noshow", locale)}
+              ? "…"
+              : "×"}
           </button>
         ) : null}
         {record.status !== "completed" ? (
           <button
             type="button"
-            className="rounded-full bg-emerald-600 px-3 py-2 text-xs font-medium text-white transition hover:bg-emerald-700 disabled:opacity-50"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-emerald-600 text-base font-semibold leading-none text-white transition hover:bg-emerald-700 disabled:opacity-50"
             onClick={() => void patchBooking(record.id, { status: "completed" }, "complete")}
             disabled={busyKey === `complete:${record.id}`}
+            title={getMerchantBookingActionText("complete", locale)}
+            aria-label={getMerchantBookingActionText("complete", locale)}
           >
             {busyKey === `complete:${record.id}`
-              ? getMerchantBookingActionText("processing", locale)
-              : getMerchantBookingActionText("complete", locale)}
+              ? "…"
+              : "√"}
           </button>
         ) : null}
         <button
@@ -650,6 +802,29 @@ export default function MerchantBookingMobilePanel({
                 style={{ WebkitOverflowScrolling: "touch" }}
               >
                 <div className="grid gap-3">
+                  {detailCustomerEmailLogs.length > 0 ? (
+                    <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-4">
+                      <div className="text-sm font-semibold text-slate-900">{getCustomerEmailLogHeading(locale)}</div>
+                      <div className="mt-3 space-y-2">
+                        {detailCustomerEmailLogs.map((entry) => (
+                          <div key={entry.id} className="rounded-[18px] border border-slate-200 bg-white px-3 py-2.5">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="text-sm font-medium text-slate-900">
+                                {getCustomerEmailLogTypeText(entry, locale)}
+                              </div>
+                              <div className="text-xs text-slate-500">
+                                {formatMerchantBookingDateTime(entry.sentAt, locale)}
+                              </div>
+                            </div>
+                            {entry.subject ? <div className="mt-1 text-xs text-slate-600">{entry.subject}</div> : null}
+                            {getCustomerEmailSenderMeta(entry, locale) ? (
+                              <div className="mt-1 text-xs text-slate-500">{getCustomerEmailSenderMeta(entry, locale)}</div>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                   <label className="space-y-1 text-sm text-slate-700">
                     <span className="text-xs text-slate-500">{getMerchantBookingFieldText("store", locale)}</span>
                     <select
@@ -818,14 +993,17 @@ export default function MerchantBookingMobilePanel({
             </div>
             <button
               type="button"
-              className={`shrink-0 rounded-[18px] border px-3 py-2 text-xs font-medium transition ${
-                darkMode
-                  ? "border-slate-700 bg-slate-900 text-slate-100"
-                  : "border-slate-200 bg-white text-slate-700"
-              }`}
+              className={workbenchButtonClassName}
               onClick={() => setWorkbenchOpen(true)}
             >
-              {getMerchantBookingFieldText("workbenchButton", locale)}
+              <span className="flex items-center gap-2">
+                <span className="inline-flex h-7 w-7 items-center justify-center rounded-[11px] rounded-br-[6px] bg-white/14 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.16)]">
+                  <WorkbenchIcon />
+                </span>
+                <span className="text-xs font-semibold tracking-[0.02em]">
+                  {getMerchantBookingFieldText("workbenchButton", locale)}
+                </span>
+              </span>
             </button>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -873,6 +1051,7 @@ export default function MerchantBookingMobilePanel({
             {filteredRecords.map((record) => {
               const appointmentParts = splitMerchantBookingDateTime(record.appointmentAt);
               const displayName = formatMerchantBookingDisplayName(record.customerName, record.title, locale);
+              const isNewRecord = isMerchantBookingPendingMerchantTouch(record);
               return (
                 <article
                   key={record.id}
@@ -881,6 +1060,11 @@ export default function MerchantBookingMobilePanel({
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
+                        {isNewRecord ? (
+                          <span className="rounded-full bg-emerald-500 px-2 py-0.5 text-[11px] font-semibold tracking-[0.18em] text-white">
+                            NEW
+                          </span>
+                        ) : null}
                         <span className={`rounded-full px-2 py-0.5 text-[11px] ${getStatusBadgeClass(record.status)}`}>
                           {getMerchantBookingStatusText(record.status, locale)}
                         </span>
@@ -894,7 +1078,10 @@ export default function MerchantBookingMobilePanel({
                         {record.email ? (
                           <a
                             className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
-                            href={buildMerchantBookingMailtoHref(record, locale, allowBookingEmailPrefill)}
+                            href={buildMerchantBookingMailtoHref(record, customerEmailLocale, allowBookingEmailPrefill)}
+                            onClick={() => {
+                              void markBookingTouched(record.id);
+                            }}
                             title={getMerchantBookingFieldText("replyEmail", locale)}
                             aria-label={getMerchantBookingFieldText("replyEmail", locale)}
                           >
@@ -905,6 +1092,9 @@ export default function MerchantBookingMobilePanel({
                           <a
                             className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#007AFF] text-white shadow-sm transition hover:bg-[#0066D6]"
                             href={`tel:${record.phone}`}
+                            onClick={() => {
+                              void markBookingTouched(record.id);
+                            }}
                             title={getMerchantBookingFieldText("callPhone", locale)}
                             aria-label={getMerchantBookingFieldText("callPhone", locale)}
                           >
@@ -924,14 +1114,23 @@ export default function MerchantBookingMobilePanel({
                       <SummaryAppointmentField dateValue={appointmentParts.date} timeValue={appointmentParts.time} locale={locale} />
                     </div>
                     <div className="relative flex items-end self-end">
-                      {record.note ? (
-                        <span
-                          className="pointer-events-none absolute bottom-full right-0 mb-1 inline-flex h-8 w-8 items-center justify-center rounded-full bg-amber-50 text-amber-700"
-                          title={getMerchantBookingFieldText("hasNote", locale)}
-                          aria-label={getMerchantBookingFieldText("hasNote", locale)}
-                        >
-                          <NoteIcon />
-                        </span>
+                      {(record.customerEmailLogs?.length || record.note) ? (
+                        <div className="pointer-events-none absolute bottom-full right-0 mb-1 flex flex-col items-end gap-1">
+                          {record.customerEmailLogs?.length ? (
+                            <span className="inline-flex min-h-8 items-center rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-[11px] font-medium text-sky-700">
+                              {getCustomerEmailBadgeText(record.customerEmailLogs.length, locale)}
+                            </span>
+                          ) : null}
+                          {record.note ? (
+                            <span
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-amber-50 text-amber-700"
+                              title={getMerchantBookingFieldText("hasNote", locale)}
+                              aria-label={getMerchantBookingFieldText("hasNote", locale)}
+                            >
+                              <NoteIcon />
+                            </span>
+                          ) : null}
+                        </div>
                       ) : null}
                       <button
                         type="button"
@@ -957,8 +1156,15 @@ export default function MerchantBookingMobilePanel({
         open={workbenchOpen}
         siteId={siteId}
         siteName={siteName}
+        siteCountryCode={siteCountryCode}
         records={records}
         darkMode={darkMode}
+        allowCustomerAutoEmail={allowCustomerAutoEmail}
+        onSettingsSaved={(settings) => {
+          setCustomerEmailLocale(
+            resolveMerchantBookingCustomerEmailLocale(settings.customerEmailLocale, siteCountryCode),
+          );
+        }}
         onClose={() => setWorkbenchOpen(false)}
       />
       {detailDialog}

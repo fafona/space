@@ -7,6 +7,7 @@ import {
   getMerchantBookingDateAvailabilityIssue,
   getMerchantBookingMatchedTimeSlotRule,
   getMerchantBookingSlotCapacityIssue,
+  isMerchantBookingPendingMerchantTouch,
   getMerchantBookingTimeAvailabilityIssue,
   getMerchantBookingStatusLabel,
   joinMerchantBookingDateTime,
@@ -30,6 +31,7 @@ import {
   buildMerchantBookingReminderSummary,
   getMerchantBookingBufferIssue,
   getMerchantBookingDueReminderOffset,
+  normalizeMerchantBookingWorkbenchSettings,
 } from "./merchantBookingWorkbench";
 
 test("normalizeBookingOptionList trims blanks and removes duplicates", () => {
@@ -278,6 +280,11 @@ test("buildMerchantBookingReminderSummary ignores already-processed reminder buc
       minAdvanceMinutes: null,
       dailyCutoffTime: "",
       bufferMinutes: null,
+      customerEmailLocale: "",
+      customerAutoEmailEnabled: true,
+      customerAutoEmailStatuses: ["confirmed"],
+      customerAutoEmailMessageByStatus: {},
+      customerEmailSenderName: "",
       recurringRules: [],
       customerReminderOffsetsMinutes: [1440, 120, 30],
       merchantReminderOffsetsMinutes: [30],
@@ -398,6 +405,30 @@ test("buildMerchantBookingId uses R + merchant id + date + 4-digit sequence", ()
   );
 });
 
+test("isMerchantBookingPendingMerchantTouch only clears after a merchant action catches up", () => {
+  assert.equal(
+    isMerchantBookingPendingMerchantTouch({
+      updatedAt: "2026-03-19T10:00:00.000Z",
+      merchantTouchedAt: "",
+    }),
+    true,
+  );
+  assert.equal(
+    isMerchantBookingPendingMerchantTouch({
+      updatedAt: "2026-03-19T10:00:00.000Z",
+      merchantTouchedAt: "2026-03-19T10:00:00.000Z",
+    }),
+    false,
+  );
+  assert.equal(
+    isMerchantBookingPendingMerchantTouch({
+      updatedAt: "2026-03-19T10:15:00.000Z",
+      merchantTouchedAt: "2026-03-19T10:00:00.000Z",
+    }),
+    true,
+  );
+});
+
 test("shouldSendMerchantBookingConfirmationEmail only allows the first transition to confirmed", () => {
   assert.equal(
     shouldSendMerchantBookingConfirmationEmail({
@@ -498,6 +529,70 @@ test("withoutMerchantBookingToken can keep automation state for admin surfaces",
   assert.deepEqual(publicRecord.customerReminderProcessedMinutes, [120, 30]);
   assert.deepEqual(publicRecord.merchantReminderProcessedMinutes, [60]);
   assert.equal(publicRecord.noShowMarkedAt, "2026-03-19T11:05:00.000Z");
+});
+
+test("withoutMerchantBookingToken can keep customer email logs for admin surfaces", () => {
+  const publicRecord = withoutMerchantBookingToken(
+    {
+      id: "R10000000202603190001",
+      siteId: "10000000",
+      siteName: "Faolla",
+      store: "Main",
+      item: "Consultation",
+      appointmentAt: "2026-03-19T10:30",
+      title: "Mr",
+      customerName: "Felix",
+      email: "test@example.com",
+      phone: "123456",
+      note: "",
+      status: "confirmed",
+      createdAt: "2026-03-19T10:00:00.000Z",
+      updatedAt: "2026-03-19T10:30:00.000Z",
+      editToken: "secret",
+      customerEmailLogs: [
+        {
+          id: "mail-1",
+          kind: "status",
+          sentAt: "2026-03-19T10:31:00.000Z",
+          locale: "es-ES",
+          subject: "Reserva confirmada",
+          senderName: "Faolla",
+          status: "confirmed",
+        },
+      ],
+    },
+    { includeCustomerEmailLogs: true },
+  );
+
+  assert.deepEqual(publicRecord.customerEmailLogs, [
+    {
+      id: "mail-1",
+      kind: "status",
+      sentAt: "2026-03-19T10:31:00.000Z",
+      locale: "es-ES",
+      subject: "Reserva confirmada",
+      senderName: "Faolla",
+      status: "confirmed",
+    },
+  ]);
+});
+
+test("normalizeMerchantBookingWorkbenchSettings preserves an empty auto-email status selection", () => {
+  const settings = normalizeMerchantBookingWorkbenchSettings({
+    customerAutoEmailStatuses: [],
+  });
+
+  assert.deepEqual(settings.customerAutoEmailStatuses, []);
+});
+
+test("normalizeMerchantBookingWorkbenchSettings keeps only one reminder minute per channel", () => {
+  const settings = normalizeMerchantBookingWorkbenchSettings({
+    customerReminderOffsetsMinutes: [1440, 120, 30],
+    merchantReminderOffsetsMinutes: "720, 60, 15",
+  });
+
+  assert.deepEqual(settings.customerReminderOffsetsMinutes, [30]);
+  assert.deepEqual(settings.merchantReminderOffsetsMinutes, [15]);
 });
 
 test("getMerchantBookingStatusLabel returns readable labels", () => {

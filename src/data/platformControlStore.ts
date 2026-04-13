@@ -90,6 +90,7 @@ export type MerchantServicePermissionConfig = {
   businessCardLimit: number;
   allowBusinessCardLinkMode: boolean;
   allowBookingEmailPrefill: boolean;
+  allowBookingAutoEmail: boolean;
   businessCardBackgroundImageLimitKb: number;
   businessCardContactImageLimitKb: number;
   businessCardExportImageLimitKb: number;
@@ -409,6 +410,7 @@ export function createDefaultMerchantPermissionConfig(): MerchantServicePermissi
     businessCardLimit: 1,
     allowBusinessCardLinkMode: false,
     allowBookingEmailPrefill: false,
+    allowBookingAutoEmail: false,
     businessCardBackgroundImageLimitKb: 200,
     businessCardContactImageLimitKb: 200,
     businessCardExportImageLimitKb: 400,
@@ -450,6 +452,12 @@ export function normalizeMerchantPermissionConfig(value: unknown): MerchantServi
       typeof source.allowBookingEmailPrefill === "boolean"
         ? source.allowBookingEmailPrefill
         : fallback.allowBookingEmailPrefill,
+    allowBookingAutoEmail:
+      typeof source.allowBookingAutoEmail === "boolean"
+        ? source.allowBookingAutoEmail
+        : typeof source.allowBookingBlock === "boolean"
+          ? source.allowBookingBlock
+          : fallback.allowBookingAutoEmail,
     businessCardBackgroundImageLimitKb: normalizeInt(
       source.businessCardBackgroundImageLimitKb,
       fallback.businessCardBackgroundImageLimitKb,

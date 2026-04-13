@@ -217,7 +217,9 @@ import {
   buildDefaultBookingItemOptions,
   buildDefaultBookingStoreOptions,
   buildDefaultBookingTitleOptions,
+  isMerchantBookingPendingMerchantTouch,
   normalizeBookingOptionList,
+  type MerchantBookingRecord,
 } from "@/lib/merchantBookings";
 import {
   mergeImportedProductImages,
@@ -2754,12 +2756,12 @@ function formatSuccessRate(total: number, success: number) {
 function getMerchantDesktopMenuButtonClassName(active: boolean, tone: "default" | "alert" = "default") {
   if (active) {
     return tone === "alert"
-      ? "relative rounded-xl border border-rose-600 bg-rose-600 px-3 py-2.5 text-sm font-semibold text-white shadow-sm"
-      : "relative rounded-xl border border-slate-950 bg-slate-950 px-3 py-2.5 text-sm font-semibold text-white shadow-sm";
+      ? "relative flex items-center justify-between rounded-xl border border-rose-600 bg-rose-600 px-3 py-2.5 text-sm font-semibold text-white shadow-sm"
+      : "relative flex items-center justify-between rounded-xl border border-slate-950 bg-slate-950 px-3 py-2.5 text-sm font-semibold text-white shadow-sm";
   }
   return tone === "alert"
-    ? "relative rounded-xl border border-rose-200 bg-white px-3 py-2.5 text-sm font-semibold text-rose-700 transition hover:bg-rose-50"
-    : "relative rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50";
+    ? "relative flex items-center justify-between rounded-xl border border-rose-200 bg-white px-3 py-2.5 text-sm font-semibold text-rose-700 transition hover:bg-rose-50"
+    : "relative flex items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50";
 }
 
 type LargeStringField = {
@@ -4853,6 +4855,7 @@ export default function AdminClient({
   const [merchantProfileDialogShowBusinessCards, setMerchantProfileDialogShowBusinessCards] = useState(true);
   const [merchantSiteIdOverride, setMerchantSiteIdOverride] = useState("");
   const [merchantBookingManagerOpen, setMerchantBookingManagerOpen] = useState(false);
+  const [merchantBookingAttentionCount, setMerchantBookingAttentionCount] = useState(0);
   const [supportDialogOpen, setSupportDialogOpen] = useState(false);
   const [supportDataActivated, setSupportDataActivated] = useState(false);
   const [supportThread, setSupportThread] = useState<PlatformSupportThread | null>(null);
@@ -9035,11 +9038,51 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     editingSiteId && merchantPlatformState
       ? merchantPlatformState.sites.find((item) => item.id === editingSiteId) ?? null
       : null;
+  const countMerchantBookingAttention = (records: MerchantBookingRecord[]) =>
+    records.reduce((count, record) => (isMerchantBookingPendingMerchantTouch(record) ? count + 1 : count), 0);
+  const handleMerchantBookingRecordsChange = (records: MerchantBookingRecord[]) => {
+    setMerchantBookingAttentionCount(countMerchantBookingAttention(records));
+  };
 
   useEffect(() => {
     if (isPlatformEditor || typeof window === "undefined") return;
     if (!isMerchantNumericId(editingSiteId)) return;
     persistRecentMerchantLaunchState(editingSiteId);
+  }, [editingSiteId, isPlatformEditor]);
+
+  useEffect(() => {
+    if (isPlatformEditor || !isMerchantNumericId(editingSiteId)) {
+      setMerchantBookingAttentionCount(0);
+      return;
+    }
+    let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const loadMerchantBookingAttention = async () => {
+      try {
+        const response = await fetch(`/api/bookings?siteId=${encodeURIComponent(editingSiteId)}`, {
+          cache: "no-store",
+        });
+        const json = (await response.json().catch(() => null)) as
+          | { ok?: boolean; bookings?: MerchantBookingRecord[] }
+          | null;
+        if (!response.ok || !json?.ok || !Array.isArray(json.bookings)) {
+          throw new Error("booking_attention_failed");
+        }
+        if (!cancelled) {
+          setMerchantBookingAttentionCount(countMerchantBookingAttention(json.bookings));
+        }
+      } catch {
+        // Keep the last known badge count when the lightweight refresh fails.
+      }
+    };
+    void loadMerchantBookingAttention();
+    timer = setInterval(() => {
+      void loadMerchantBookingAttention();
+    }, 60000);
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+    };
   }, [editingSiteId, isPlatformEditor]);
 
   useEffect(() => {
@@ -12914,6 +12957,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   const canUseBookingBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowBookingBlock) || merchantHasBookingBlockConfigured;
   const canUseButtonBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowButtonBlock);
   const isBookingBlockAddLocked = merchantHasBookingBlockConfigured;
+  const merchantBookingBadgeLabel =
+    merchantBookingAttentionCount > 99 ? "99+" : String(merchantBookingAttentionCount);
+  const merchantHasBookingAttention = merchantBookingAttentionCount > 0;
   const isCurrentBlockTypeLocked =
     (!canUseButtonBlock && newBlockType === "button") ||
     (!canUseGalleryBlock && newBlockType === "gallery") ||
@@ -13542,12 +13588,15 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           <MerchantBookingMobilePanel
             siteId={supportMobileBookingSiteId}
             siteName={merchantDisplayName}
+            siteCountryCode={effectiveEditingSite?.location?.countryCode ?? editingSite?.location?.countryCode ?? ""}
             storeOptions={merchantBookingManagerOptions.storeOptions}
             itemOptions={merchantBookingManagerOptions.itemOptions}
             titleOptions={merchantBookingManagerOptions.titleOptions}
             bookingRulesSnapshot={merchantBookingRulesSnapshot}
             darkMode={supportMobileDarkMode}
             allowBookingEmailPrefill={Boolean(merchantPermissionConfig?.allowBookingEmailPrefill)}
+            allowCustomerAutoEmail={Boolean(merchantPermissionConfig?.allowBookingAutoEmail)}
+            onRecordsChange={handleMerchantBookingRecordsChange}
           />
         ) : (
           <>
@@ -14205,6 +14254,11 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 {item.key === "conversations" && supportUnreadBadgeCount > 0 ? (
                   <span className="absolute right-2 top-1 inline-flex min-w-[18px] items-center justify-center rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white shadow-[0_8px_18px_rgba(244,63,94,0.28)]">
                     {supportUnreadBadgeLabel}
+                  </span>
+                ) : null}
+                {item.key === "business" && merchantHasBookingAttention ? (
+                  <span className="absolute right-2 top-1 inline-flex min-w-[18px] items-center justify-center rounded-full bg-emerald-500 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white shadow-[0_8px_18px_rgba(16,185,129,0.28)]">
+                    {merchantBookingBadgeLabel}
                   </span>
                 ) : null}
                 <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
@@ -14875,7 +14929,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           itemOptions: merchantBookingManagerOptions.itemOptions,
           titleOptions: merchantBookingManagerOptions.titleOptions,
           bookingRulesSnapshot: merchantBookingRulesSnapshot,
+          siteCountryCode: effectiveEditingSite?.location?.countryCode ?? editingSite?.location?.countryCode ?? "",
           allowBookingEmailPrefill: Boolean(merchantPermissionConfig?.allowBookingEmailPrefill),
+          allowCustomerAutoEmail: Boolean(merchantPermissionConfig?.allowBookingAutoEmail),
+          onRecordsChange: handleMerchantBookingRecordsChange,
           onClose: () => {
             setMerchantBookingManagerOpen(false);
             if (isDesktopMerchantWorkspace) {
@@ -15602,7 +15659,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                           void openMerchantBookingPanel();
                         }}
                       >
-                        预约管理
+                        <span>预约管理</span>
+                        {merchantHasBookingAttention ? (
+                          <span className="ml-2 inline-flex min-w-[1.5rem] items-center justify-center rounded-full bg-emerald-500 px-2 py-0.5 text-xs font-semibold leading-none text-white">
+                            {merchantBookingBadgeLabel}
+                          </span>
+                        ) : null}
                       </button>
                     ) : null}
                     <button
