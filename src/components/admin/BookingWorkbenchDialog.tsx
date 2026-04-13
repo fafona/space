@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type TouchEventHandler } from "react";
 import { createPortal } from "react-dom";
 import { useI18n } from "@/components/I18nProvider";
 import type { MerchantBookingRecord } from "@/lib/merchantBookings";
@@ -22,7 +22,16 @@ type BookingWorkbenchDialogProps = {
   onClose: () => void;
 };
 
+type WorkbenchMenuKey = "rules" | "reminders" | "reports";
+type SaveWorkbenchOptions = {
+  applyServerDraft?: boolean;
+  calendarSyncAction?: "keep" | "ensure" | "reset" | "disable";
+  sourceDraft?: MerchantBookingWorkbenchSettings;
+  sourceSerialized?: string;
+};
+
 const REMINDER_PRESETS = [1440, 720, 120, 60, 30];
+const MOBILE_BREAKPOINT = 768;
 
 function overlay(children: ReactNode) {
   if (typeof document === "undefined") return null;
@@ -79,6 +88,25 @@ function countUpcomingBookings(records: MerchantBookingRecord[], days: number) {
   }).length;
 }
 
+function BackIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
+      <path d="m11.5 4.5-5 5 5 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function getMenuButtonClass(active: boolean, darkMode: boolean) {
+  if (active) {
+    return darkMode
+      ? "border-slate-100 bg-slate-100 text-slate-900"
+      : "border-slate-900 bg-slate-900 text-white";
+  }
+  return darkMode
+    ? "border-slate-700 bg-slate-900 text-slate-300 hover:border-slate-500"
+    : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50";
+}
+
 export default function BookingWorkbenchDialog({
   open,
   siteId,
@@ -92,10 +120,48 @@ export default function BookingWorkbenchDialog({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [activeMenu, setActiveMenu] = useState<WorkbenchMenuKey>("rules");
+  const [swipeOffset, setSwipeOffset] = useState(0);
+  const [autoSaveStatus, setAutoSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
+  const swipeStateRef = useRef({
+    tracking: false,
+    startX: 0,
+    startY: 0,
+  });
+  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const draftRef = useRef(draft);
+  const hasLoadedRef = useRef(false);
+  const lastFailedDraftRef = useRef("");
+  const lastSavedDraftRef = useRef("");
+
+  useEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
+
+  useEffect(() => {
+    if (!open) {
+      hasLoadedRef.current = false;
+      if (autosaveTimerRef.current) {
+        clearTimeout(autosaveTimerRef.current);
+        autosaveTimerRef.current = null;
+      }
+      setAutoSaveStatus("idle");
+      return;
+    }
+    setActiveMenu("rules");
+    setSwipeOffset(0);
+  }, [open]);
 
   useEffect(() => {
     if (!open || !siteId) return;
     let cancelled = false;
+    hasLoadedRef.current = false;
+    lastFailedDraftRef.current = "";
+    setAutoSaveStatus("idle");
+    if (autosaveTimerRef.current) {
+      clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    }
     const load = async () => {
       setLoading(true);
       setError("");
@@ -110,7 +176,12 @@ export default function BookingWorkbenchDialog({
           throw new Error("工作台设置读取失败");
         }
         if (!cancelled) {
-          setDraft(normalizeMerchantBookingWorkbenchSettings(json.settings));
+          const normalized = normalizeMerchantBookingWorkbenchSettings(json.settings);
+          lastSavedDraftRef.current = JSON.stringify(normalized);
+          draftRef.current = normalized;
+          hasLoadedRef.current = true;
+          setDraft(normalized);
+          setAutoSaveStatus("saved");
         }
       } catch (loadError) {
         if (!cancelled) {
@@ -126,6 +197,14 @@ export default function BookingWorkbenchDialog({
     };
   }, [open, siteId]);
 
+  useEffect(() => {
+    return () => {
+      if (autosaveTimerRef.current) {
+        clearTimeout(autosaveTimerRef.current);
+      }
+    };
+  }, []);
+
   const weekdayLabels = useMemo(() => buildWeekdayLabels(locale || "zh-CN"), [locale]);
   const reminderSummary = useMemo(() => buildMerchantBookingReminderSummary(records, draft), [draft, records]);
   const openBookingCount = useMemo(() => countOpenBookings(records), [records]);
@@ -140,14 +219,15 @@ export default function BookingWorkbenchDialog({
     setDraft((current) => {
       const currentRule = current.recurringRules.find((item) => item.weekday === weekday) ?? null;
       const nextAllDay = patch.allDay ?? currentRule?.allDay ?? false;
-      const nextTimeRanges = typeof patch.timeRangesText === "string"
-        ? normalizeMerchantBookingTimeRangeOptions(
-            patch.timeRangesText
-              .split(",")
-              .map((item) => item.trim())
-              .filter(Boolean),
-          )
-        : currentRule?.timeRanges ?? [];
+      const nextTimeRanges =
+        typeof patch.timeRangesText === "string"
+          ? normalizeMerchantBookingTimeRangeOptions(
+              patch.timeRangesText
+                .split(",")
+                .map((item) => item.trim())
+                .filter(Boolean),
+            )
+          : currentRule?.timeRanges ?? [];
       const nextRules = current.recurringRules.filter((item) => item.weekday !== weekday);
       if (nextAllDay || nextTimeRanges.length > 0) {
         nextRules.push({
@@ -177,32 +257,77 @@ export default function BookingWorkbenchDialog({
     });
   };
 
-  const saveWorkbench = async (calendarSyncAction: "keep" | "ensure" | "reset" | "disable" = "keep") => {
-    setSaving(true);
-    setError("");
-    try {
-      const response = await fetch("/api/bookings/workbench", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          siteId,
-          settings: draft,
-          calendarSyncAction,
-        }),
-      });
-      const json = (await response.json().catch(() => null)) as
-        | { ok?: boolean; settings?: MerchantBookingWorkbenchSettings }
-        | null;
-      if (!response.ok || !json?.ok || !json.settings) {
-        throw new Error("工作台设置保存失败");
+  const saveWorkbench = useCallback(
+    async ({
+      applyServerDraft = false,
+      calendarSyncAction = "keep",
+      sourceDraft = draftRef.current,
+      sourceSerialized = JSON.stringify(sourceDraft),
+    }: SaveWorkbenchOptions = {}) => {
+      if (autosaveTimerRef.current) {
+        clearTimeout(autosaveTimerRef.current);
+        autosaveTimerRef.current = null;
       }
-      setDraft(normalizeMerchantBookingWorkbenchSettings(json.settings));
-    } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "工作台设置保存失败");
-    } finally {
-      setSaving(false);
+      setSaving(true);
+      setAutoSaveStatus("saving");
+      setError("");
+      lastFailedDraftRef.current = "";
+      try {
+        const response = await fetch("/api/bookings/workbench", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            siteId,
+            settings: sourceDraft,
+            calendarSyncAction,
+          }),
+        });
+        const json = (await response.json().catch(() => null)) as
+          | { ok?: boolean; settings?: MerchantBookingWorkbenchSettings }
+          | null;
+        if (!response.ok || !json?.ok || !json.settings) {
+          throw new Error("工作台设置保存失败");
+        }
+        const normalized = normalizeMerchantBookingWorkbenchSettings(json.settings);
+        lastSavedDraftRef.current = JSON.stringify(normalized);
+        if (applyServerDraft) {
+          draftRef.current = normalized;
+          setDraft(normalized);
+        }
+        setAutoSaveStatus("saved");
+      } catch (saveError) {
+        lastFailedDraftRef.current = sourceSerialized;
+        setAutoSaveStatus("idle");
+        setError(saveError instanceof Error ? saveError.message : "工作台设置保存失败");
+      } finally {
+        setSaving(false);
+      }
+    },
+    [siteId],
+  );
+
+  useEffect(() => {
+    if (!open || !siteId || loading || saving || !hasLoadedRef.current) return;
+    const serialized = JSON.stringify(draft);
+    if (serialized === lastSavedDraftRef.current || serialized === lastFailedDraftRef.current) return;
+    if (autosaveTimerRef.current) {
+      clearTimeout(autosaveTimerRef.current);
     }
-  };
+    autosaveTimerRef.current = setTimeout(() => {
+      autosaveTimerRef.current = null;
+      void saveWorkbench({
+        applyServerDraft: false,
+        sourceDraft: draft,
+        sourceSerialized: serialized,
+      });
+    }, 700);
+    return () => {
+      if (autosaveTimerRef.current) {
+        clearTimeout(autosaveTimerRef.current);
+        autosaveTimerRef.current = null;
+      }
+    };
+  }, [draft, loading, open, saveWorkbench, saving, siteId]);
 
   const copyCalendarSyncUrl = async () => {
     if (!calendarSyncUrl || typeof navigator === "undefined" || !navigator.clipboard) return;
@@ -213,173 +338,269 @@ export default function BookingWorkbenchDialog({
     }
   };
 
+  const handleTouchStart = ((event) => {
+    if (typeof window === "undefined" || window.innerWidth >= MOBILE_BREAKPOINT) return;
+    const touch = event.touches[0];
+    if (!touch || touch.clientX > 42) {
+      swipeStateRef.current.tracking = false;
+      return;
+    }
+    swipeStateRef.current = {
+      tracking: true,
+      startX: touch.clientX,
+      startY: touch.clientY,
+    };
+    setSwipeOffset(0);
+  }) satisfies TouchEventHandler<HTMLDivElement>;
+
+  const handleTouchMove = ((event) => {
+    if (!swipeStateRef.current.tracking) return;
+    const touch = event.touches[0];
+    if (!touch) return;
+    const deltaX = touch.clientX - swipeStateRef.current.startX;
+    const deltaY = touch.clientY - swipeStateRef.current.startY;
+    if (deltaX <= 0 || Math.abs(deltaY) > 80) {
+      setSwipeOffset(0);
+      return;
+    }
+    setSwipeOffset(Math.min(120, deltaX));
+  }) satisfies TouchEventHandler<HTMLDivElement>;
+
+  const finishSwipe = () => {
+    if (swipeOffset >= 96) {
+      onClose();
+      return;
+    }
+    setSwipeOffset(0);
+    swipeStateRef.current.tracking = false;
+  };
+
+  const handleTouchEnd = (() => {
+    finishSwipe();
+  }) satisfies TouchEventHandler<HTMLDivElement>;
+
+  const handleTouchCancel = (() => {
+    setSwipeOffset(0);
+    swipeStateRef.current.tracking = false;
+  }) satisfies TouchEventHandler<HTMLDivElement>;
+
   if (!open) return null;
 
-  const containerClassName = darkMode
-    ? "border-slate-700 bg-slate-900 text-slate-100"
-    : "border-slate-200 bg-white text-slate-900";
+  const shellClassName = darkMode ? "bg-slate-950 text-slate-100" : "bg-slate-50 text-slate-900";
   const panelClassName = darkMode
+    ? "border-slate-700/80 bg-slate-900 text-slate-100"
+    : "border-slate-200 bg-white text-slate-900";
+  const softPanelClassName = darkMode
     ? "border-slate-700/80 bg-slate-950 text-slate-100"
     : "border-slate-200 bg-slate-50 text-slate-900";
   const inputClassName = darkMode
-    ? "w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm text-slate-100 outline-none"
-    : "w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none";
-  const cardClassName = darkMode
-    ? "rounded-2xl border border-slate-700/80 bg-slate-950/90 p-4"
-    : "rounded-2xl border border-slate-200 bg-white p-4";
+    ? "w-full rounded-2xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm text-slate-100 outline-none"
+    : "w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none";
+  const mutedTextClassName = darkMode ? "text-slate-400" : "text-slate-500";
 
-  const dialog = (
-    <div className="fixed inset-0 z-[2147483000] bg-black/50 p-3 sm:p-5" onMouseDown={(event) => {
-      if (event.target === event.currentTarget) onClose();
-    }}>
+  const content = (
+    <div className={`fixed inset-0 z-[2147483000] ${shellClassName}`}>
       <div
-        className={`mx-auto flex h-full max-w-5xl flex-col overflow-hidden rounded-[30px] border shadow-2xl ${containerClassName}`}
-        onMouseDown={(event) => event.stopPropagation()}
+        className="flex h-full flex-col"
+        style={{
+          transform: swipeOffset > 0 ? `translateX(${swipeOffset}px)` : undefined,
+          transition: swipeStateRef.current.tracking ? "none" : "transform 180ms ease-out",
+        }}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onTouchCancel={handleTouchCancel}
       >
-        <div className="flex items-center justify-between gap-3 border-b border-inherit px-5 py-4">
-          <div>
-            <div className="text-lg font-semibold">预约工作台</div>
-            <div className={`mt-1 text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{siteName || siteId}</div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              className={`rounded-xl px-4 py-2 text-sm font-medium ${darkMode ? "border border-slate-700 bg-slate-900 text-slate-200" : "border border-slate-200 bg-white text-slate-700"}`}
-              onClick={onClose}
-            >
-              关闭
-            </button>
-            <button
-              type="button"
-              className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900"
-              onClick={() => void saveWorkbench()}
-              disabled={saving}
-            >
-              {saving ? "保存中..." : "保存工作台"}
-            </button>
+        <div className={`border-b px-4 py-3 sm:px-6 ${darkMode ? "border-slate-800 bg-slate-950" : "border-slate-200 bg-white"}`}>
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <button
+                type="button"
+                className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm font-medium transition ${darkMode ? "border-slate-700 bg-slate-900 text-slate-100 hover:border-slate-500" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}
+                onClick={onClose}
+              >
+                <BackIcon />
+                <span>返回预约管理</span>
+              </button>
+              <div className="mt-3 text-xl font-semibold">预约工作台</div>
+              <div className={`mt-1 text-sm ${mutedTextClassName}`}>{siteName || siteId}</div>
+              <div className={`mt-2 text-xs ${mutedTextClassName}`}>
+                {saving ? "正在自动保存..." : autoSaveStatus === "saved" ? "已自动保存" : "修改后自动保存"}
+              </div>
+            </div>
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
-          {loading ? (
-            <div className={cardClassName}>正在加载工作台设置...</div>
-          ) : (
-            <div className="space-y-4">
-              <div className="grid gap-3 md:grid-cols-4">
-                <div className={cardClassName}>
-                  <div className={`text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>待处理预约</div>
-                  <div className="mt-2 text-2xl font-semibold">{openBookingCount}</div>
-                </div>
-                <div className={cardClassName}>
-                  <div className={`text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>今日预约</div>
-                  <div className="mt-2 text-2xl font-semibold">{todayBookingCount}</div>
-                </div>
-                <div className={cardClassName}>
-                  <div className={`text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>7日内预约</div>
-                  <div className="mt-2 text-2xl font-semibold">{upcomingWeekCount}</div>
-                </div>
-                <div className={cardClassName}>
-                  <div className={`text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>待自动处理</div>
-                  <div className="mt-2 space-y-1 text-sm">
-                    <div>{`客户提醒 ${reminderSummary.dueCustomerReminderCount}`}</div>
-                    <div>{`商家提醒 ${reminderSummary.dueMerchantReminderCount}`}</div>
-                    <div>{`爽约判定 ${reminderSummary.pendingNoShowCount}`}</div>
-                  </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5">
+          <div className="mx-auto flex w-full max-w-7xl flex-col gap-4">
+            <div className="grid gap-3 md:grid-cols-4">
+              <div className={`rounded-3xl border p-4 ${panelClassName}`}>
+                <div className={`text-xs ${mutedTextClassName}`}>待处理预约</div>
+                <div className="mt-2 text-2xl font-semibold">{openBookingCount}</div>
+              </div>
+              <div className={`rounded-3xl border p-4 ${panelClassName}`}>
+                <div className={`text-xs ${mutedTextClassName}`}>今日预约</div>
+                <div className="mt-2 text-2xl font-semibold">{todayBookingCount}</div>
+              </div>
+              <div className={`rounded-3xl border p-4 ${panelClassName}`}>
+                <div className={`text-xs ${mutedTextClassName}`}>7日内预约</div>
+                <div className="mt-2 text-2xl font-semibold">{upcomingWeekCount}</div>
+              </div>
+              <div className={`rounded-3xl border p-4 ${panelClassName}`}>
+                <div className={`text-xs ${mutedTextClassName}`}>待自动处理</div>
+                <div className="mt-2 space-y-1 text-sm">
+                  <div>{`客户提醒 ${reminderSummary.dueCustomerReminderCount}`}</div>
+                  <div>{`商家提醒 ${reminderSummary.dueMerchantReminderCount}`}</div>
+                  <div>{`爽约判定 ${reminderSummary.pendingNoShowCount}`}</div>
                 </div>
               </div>
+            </div>
 
-              {error ? (
-                <div className={`rounded-2xl border px-4 py-3 text-sm ${darkMode ? "border-rose-700 bg-rose-950/60 text-rose-200" : "border-rose-200 bg-rose-50 text-rose-700"}`}>
-                  {error}
-                </div>
-              ) : null}
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              {([
+                { key: "rules", label: "预约规则" },
+                { key: "reminders", label: "提醒通知" },
+                { key: "reports", label: "报表" },
+              ] as Array<{ key: WorkbenchMenuKey; label: string }>).map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  className={`shrink-0 rounded-full border px-4 py-2 text-sm font-medium transition ${getMenuButtonClass(activeMenu === item.key, darkMode)}`}
+                  onClick={() => setActiveMenu(item.key)}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
 
-              <section className={cardClassName}>
-                <div className="text-base font-semibold">1. 提前预约 / 截止规则</div>
-                <div className={`mt-1 text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>至少提前多久才能预约，以及过了当天截止时间后，需要再额外提前多久。</div>
-                <div className="mt-4 grid gap-3 md:grid-cols-3">
-                  <label className="space-y-1">
-                    <span className="text-sm">最少提前分钟</span>
-                    <input
-                      type="number"
-                      className={inputClassName}
-                      value={draft.minAdvanceMinutes ?? ""}
-                      onChange={(event) => setDraft((current) => ({ ...current, minAdvanceMinutes: toNumberOrNull(event.target.value) }))}
-                    />
-                  </label>
-                  <label className="space-y-1">
-                    <span className="text-sm">当天截止时间</span>
-                    <input
-                      type="time"
-                      className={inputClassName}
-                      value={draft.dailyCutoffTime}
-                      onChange={(event) => setDraft((current) => ({ ...current, dailyCutoffTime: event.target.value }))}
-                    />
-                  </label>
-                  <label className="space-y-1">
-                    <span className="text-sm">截止后额外提前分钟</span>
-                    <input
-                      type="number"
-                      className={inputClassName}
-                      value={draft.dailyCutoffLeadMinutes ?? ""}
-                      onChange={(event) => setDraft((current) => ({ ...current, dailyCutoffLeadMinutes: toNumberOrNull(event.target.value) }))}
-                    />
-                  </label>
-                </div>
-              </section>
+            {error ? (
+              <div className={`rounded-2xl border px-4 py-3 text-sm ${darkMode ? "border-rose-700 bg-rose-950/60 text-rose-200" : "border-rose-200 bg-rose-50 text-rose-700"}`}>
+                {error}
+              </div>
+            ) : null}
 
-              <section className={cardClassName}>
-                <div className="text-base font-semibold">2. 缓冲时间</div>
-                <div className={`mt-1 text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>同一预约区块内，前后订单需要至少间隔多少分钟。</div>
-                <div className="mt-4 max-w-sm">
-                  <label className="space-y-1">
-                    <span className="text-sm">缓冲分钟</span>
-                    <input
-                      type="number"
-                      className={inputClassName}
-                      value={draft.bufferMinutes ?? ""}
-                      onChange={(event) => setDraft((current) => ({ ...current, bufferMinutes: toNumberOrNull(event.target.value) }))}
-                    />
-                  </label>
-                </div>
-              </section>
+            {loading ? (
+              <div className={`rounded-3xl border p-6 ${panelClassName}`}>正在加载工作台设置...</div>
+            ) : null}
 
-              <section className={cardClassName}>
-                <div className="text-base font-semibold">3. 周期性不可预约</div>
-                <div className={`mt-1 text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>支持“每周一全天休息”或“每周三下午不接单”。时间段用英文逗号分隔。</div>
-                <div className="mt-4 space-y-3">
-                  {weekdayLabels.map((label, weekday) => {
-                    const currentRule = draft.recurringRules.find((item) => item.weekday === weekday) ?? null;
-                    return (
-                      <div key={weekday} className={`grid gap-3 rounded-2xl border p-3 md:grid-cols-[96px_auto_minmax(0,1fr)] ${panelClassName}`}>
-                        <div className="flex items-center text-sm font-medium">{label}</div>
-                        <label className="flex items-center gap-2 text-sm">
-                          <input
-                            type="checkbox"
-                            checked={currentRule?.allDay === true}
-                            onChange={(event) => updateRecurringRule(weekday, { allDay: event.target.checked })}
-                          />
-                          全天停约
-                        </label>
+            {!loading && activeMenu === "rules" ? (
+              <div className="grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
+                <div className="space-y-4">
+                  <section className={`rounded-3xl border p-5 ${panelClassName}`}>
+                    <div className="text-base font-semibold">提前预约 / 截止规则</div>
+                    <div className={`mt-1 text-sm ${mutedTextClassName}`}>至少提前多久才能预约，以及当天最晚接受预约到几点。</div>
+                    <div className="mt-4 grid gap-3 md:grid-cols-2">
+                      <label className="space-y-1">
+                        <span className="text-sm">最少提前分钟</span>
                         <input
-                          type="text"
+                          type="number"
                           className={inputClassName}
-                          placeholder="例如 13:00-18:00,19:30-21:00"
-                          value={currentRule?.allDay ? "" : (currentRule?.timeRanges ?? []).join(", ")}
-                          disabled={currentRule?.allDay === true}
-                          onChange={(event) => updateRecurringRule(weekday, { timeRangesText: event.target.value })}
+                          value={draft.minAdvanceMinutes ?? ""}
+                          onChange={(event) =>
+                            setDraft((current) => ({ ...current, minAdvanceMinutes: toNumberOrNull(event.target.value) }))
+                          }
+                        />
+                      </label>
+                      <label className="space-y-1">
+                        <span className="text-sm">当天截止时间</span>
+                        <input
+                          type="time"
+                          className={inputClassName}
+                          value={draft.dailyCutoffTime}
+                          onChange={(event) => setDraft((current) => ({ ...current, dailyCutoffTime: event.target.value }))}
+                        />
+                      </label>
+                    </div>
+                  </section>
+
+                  <section className={`rounded-3xl border p-5 ${panelClassName}`}>
+                    <div className="text-base font-semibold">周期性不可预约</div>
+                    <div className={`mt-1 text-sm ${mutedTextClassName}`}>支持“每周一全天休息”或“每周三下午不接单”。时间段用英文逗号分隔。</div>
+                    <div className="mt-4 space-y-3">
+                      {weekdayLabels.map((label, weekday) => {
+                        const currentRule = draft.recurringRules.find((item) => item.weekday === weekday) ?? null;
+                        return (
+                          <div
+                            key={weekday}
+                            className={`grid gap-3 rounded-2xl border p-3 md:grid-cols-[96px_auto_minmax(0,1fr)] ${softPanelClassName}`}
+                          >
+                            <div className="flex items-center text-sm font-medium">{label}</div>
+                            <label className="flex items-center gap-2 text-sm">
+                              <input
+                                type="checkbox"
+                                checked={currentRule?.allDay === true}
+                                onChange={(event) => updateRecurringRule(weekday, { allDay: event.target.checked })}
+                              />
+                              全天停约
+                            </label>
+                            <input
+                              type="text"
+                              className={inputClassName}
+                              placeholder="例如 13:00-18:00,19:30-21:00"
+                              value={currentRule?.allDay ? "" : (currentRule?.timeRanges ?? []).join(", ")}
+                              disabled={currentRule?.allDay === true}
+                              onChange={(event) => updateRecurringRule(weekday, { timeRangesText: event.target.value })}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </section>
+                </div>
+
+                <div className="space-y-4">
+                  <section className={`rounded-3xl border p-5 ${panelClassName}`}>
+                    <div className="text-base font-semibold">缓冲时间</div>
+                    <div className={`mt-1 text-sm ${mutedTextClassName}`}>只有店铺和项目这两项内容都相同的预约，前后才需要按这个间隔错开。</div>
+                    <div className="mt-4 max-w-sm">
+                      <label className="space-y-1">
+                        <span className="text-sm">缓冲分钟</span>
+                        <input
+                          type="number"
+                          className={inputClassName}
+                          value={draft.bufferMinutes ?? ""}
+                          onChange={(event) => setDraft((current) => ({ ...current, bufferMinutes: toNumberOrNull(event.target.value) }))}
+                        />
+                      </label>
+                    </div>
+                  </section>
+
+                  <section className={`rounded-3xl border p-5 ${panelClassName}`}>
+                    <div className="text-base font-semibold">爽约</div>
+                    <div className={`mt-1 text-sm ${mutedTextClassName}`}>到预约时间后超过宽限分钟仍未完成或确认，系统会自动标记为未到店。</div>
+                    <div className="mt-4 flex flex-wrap items-center gap-4">
+                      <label className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={draft.noShowEnabled}
+                          onChange={(event) => setDraft((current) => ({ ...current, noShowEnabled: event.target.checked }))}
+                        />
+                        启用自动爽约判定
+                      </label>
+                      <div className="w-full max-w-sm">
+                        <input
+                          type="number"
+                          className={inputClassName}
+                          value={draft.noShowGraceMinutes ?? ""}
+                          onChange={(event) =>
+                            setDraft((current) => ({ ...current, noShowGraceMinutes: toNumberOrNull(event.target.value) }))
+                          }
+                          placeholder="宽限分钟，例如 30"
+                          disabled={!draft.noShowEnabled}
                         />
                       </div>
-                    );
-                  })}
+                    </div>
+                  </section>
                 </div>
-              </section>
+              </div>
+            ) : null}
 
-              <section className={cardClassName}>
-                <div className="text-base font-semibold">4. 提醒通知</div>
-                <div className={`mt-1 text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>客户提醒走邮件，商家提醒走浏览器推送。预设可点，也可直接输入分钟。</div>
-                <div className="mt-4 grid gap-4 md:grid-cols-2">
-                  <div className={`rounded-2xl border p-4 ${panelClassName}`}>
+            {!loading && activeMenu === "reminders" ? (
+              <section className={`rounded-3xl border p-5 ${panelClassName}`}>
+                <div className="text-base font-semibold">提醒通知</div>
+                <div className={`mt-1 text-sm ${mutedTextClassName}`}>客户提醒走邮件，商家提醒走浏览器推送。预设可点，也可直接输入分钟。</div>
+                <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                  <div className={`rounded-2xl border p-4 ${softPanelClassName}`}>
                     <div className="text-sm font-semibold">客户提醒</div>
                     <div className="mt-3 flex flex-wrap gap-2">
                       {REMINDER_PRESETS.map((minutes) => {
@@ -388,7 +609,7 @@ export default function BookingWorkbenchDialog({
                           <button
                             key={`customer-${minutes}`}
                             type="button"
-                            className={`rounded-full px-3 py-1.5 text-xs font-medium ${selected ? "bg-slate-900 text-white" : darkMode ? "border border-slate-700 bg-slate-900 text-slate-300" : "border border-slate-200 bg-white text-slate-600"}`}
+                            className={`rounded-full px-3 py-1.5 text-xs font-medium ${selected ? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900" : darkMode ? "border border-slate-700 bg-slate-900 text-slate-300" : "border border-slate-200 bg-white text-slate-600"}`}
                             onClick={() => toggleReminderPreset("customerReminderOffsetsMinutes", minutes)}
                           >
                             {formatMerchantBookingReminderOffset(minutes)}
@@ -400,14 +621,17 @@ export default function BookingWorkbenchDialog({
                       type="text"
                       className={`${inputClassName} mt-3`}
                       value={formatReminderInput(draft.customerReminderOffsetsMinutes)}
-                      onChange={(event) => setDraft((current) => ({
-                        ...current,
-                        customerReminderOffsetsMinutes: parseReminderInput(event.target.value),
-                      }))}
+                      onChange={(event) =>
+                        setDraft((current) => ({
+                          ...current,
+                          customerReminderOffsetsMinutes: parseReminderInput(event.target.value),
+                        }))
+                      }
                       placeholder="例如 1440, 120, 30"
                     />
                   </div>
-                  <div className={`rounded-2xl border p-4 ${panelClassName}`}>
+
+                  <div className={`rounded-2xl border p-4 ${softPanelClassName}`}>
                     <div className="text-sm font-semibold">商家提醒</div>
                     <div className="mt-3 flex flex-wrap gap-2">
                       {REMINDER_PRESETS.map((minutes) => {
@@ -416,7 +640,7 @@ export default function BookingWorkbenchDialog({
                           <button
                             key={`merchant-${minutes}`}
                             type="button"
-                            className={`rounded-full px-3 py-1.5 text-xs font-medium ${selected ? "bg-slate-900 text-white" : darkMode ? "border border-slate-700 bg-slate-900 text-slate-300" : "border border-slate-200 bg-white text-slate-600"}`}
+                            className={`rounded-full px-3 py-1.5 text-xs font-medium ${selected ? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900" : darkMode ? "border border-slate-700 bg-slate-900 text-slate-300" : "border border-slate-200 bg-white text-slate-600"}`}
                             onClick={() => toggleReminderPreset("merchantReminderOffsetsMinutes", minutes)}
                           >
                             {formatMerchantBookingReminderOffset(minutes)}
@@ -428,45 +652,24 @@ export default function BookingWorkbenchDialog({
                       type="text"
                       className={`${inputClassName} mt-3`}
                       value={formatReminderInput(draft.merchantReminderOffsetsMinutes)}
-                      onChange={(event) => setDraft((current) => ({
-                        ...current,
-                        merchantReminderOffsetsMinutes: parseReminderInput(event.target.value),
-                      }))}
+                      onChange={(event) =>
+                        setDraft((current) => ({
+                          ...current,
+                          merchantReminderOffsetsMinutes: parseReminderInput(event.target.value),
+                        }))
+                      }
                       placeholder="例如 1440, 120, 30"
                     />
                   </div>
                 </div>
               </section>
+            ) : null}
 
-              <section className={cardClassName}>
-                <div className="text-base font-semibold">5. 未到店 / 爽约</div>
-                <div className={`mt-1 text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>到预约时间后超过宽限分钟仍未完成或确认，系统会自动标记为未到店。</div>
-                <div className="mt-4 flex flex-wrap items-center gap-4">
-                  <label className="flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={draft.noShowEnabled}
-                      onChange={(event) => setDraft((current) => ({ ...current, noShowEnabled: event.target.checked }))}
-                    />
-                    启用自动爽约判定
-                  </label>
-                  <div className="w-full max-w-sm">
-                    <input
-                      type="number"
-                      className={inputClassName}
-                      value={draft.noShowGraceMinutes ?? ""}
-                      onChange={(event) => setDraft((current) => ({ ...current, noShowGraceMinutes: toNumberOrNull(event.target.value) }))}
-                      placeholder="宽限分钟，例如 30"
-                      disabled={!draft.noShowEnabled}
-                    />
-                  </div>
-                </div>
-              </section>
-
-              <section className={cardClassName}>
-                <div className="text-base font-semibold">6. 导出 / 同步日历</div>
-                <div className={`mt-1 text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>支持直接下载 ICS，也可生成订阅链接给 Google Calendar / Apple Calendar 使用。</div>
-                <div className={`mt-4 rounded-2xl border p-4 ${panelClassName}`}>
+            {!loading && activeMenu === "reports" ? (
+              <section className={`rounded-3xl border p-5 ${panelClassName}`}>
+                <div className="text-base font-semibold">报表</div>
+                <div className={`mt-1 text-sm ${mutedTextClassName}`}>支持直接下载 ICS，也可生成订阅链接给 Google Calendar / Apple Calendar 使用。</div>
+                <div className={`mt-4 rounded-2xl border p-4 ${softPanelClassName}`}>
                   <div className="text-sm">
                     {draft.calendarSyncToken
                       ? `已生成同步令牌${draft.calendarSyncTokenUpdatedAt ? `，更新时间 ${draft.calendarSyncTokenUpdatedAt}` : ""}`
@@ -476,7 +679,12 @@ export default function BookingWorkbenchDialog({
                     <button
                       type="button"
                       className={`rounded-xl px-4 py-2 text-sm font-medium ${darkMode ? "border border-slate-700 bg-slate-900 text-slate-100" : "border border-slate-200 bg-white text-slate-700"}`}
-                      onClick={() => void saveWorkbench(draft.calendarSyncToken ? "reset" : "ensure")}
+                      onClick={() =>
+                        void saveWorkbench({
+                          applyServerDraft: true,
+                          calendarSyncAction: draft.calendarSyncToken ? "reset" : "ensure",
+                        })
+                      }
                       disabled={saving}
                     >
                       {draft.calendarSyncToken ? "重置订阅链接" : "生成订阅链接"}
@@ -484,7 +692,7 @@ export default function BookingWorkbenchDialog({
                     <button
                       type="button"
                       className={`rounded-xl px-4 py-2 text-sm font-medium ${darkMode ? "border border-slate-700 bg-slate-900 text-slate-100" : "border border-slate-200 bg-white text-slate-700"}`}
-                      onClick={() => void saveWorkbench("disable")}
+                      onClick={() => void saveWorkbench({ applyServerDraft: true, calendarSyncAction: "disable" })}
                       disabled={saving || !draft.calendarSyncToken}
                     >
                       停用订阅链接
@@ -515,12 +723,12 @@ export default function BookingWorkbenchDialog({
                   ) : null}
                 </div>
               </section>
-            </div>
-          )}
+            ) : null}
+          </div>
         </div>
       </div>
     </div>
   );
 
-  return overlay(dialog);
+  return overlay(content);
 }

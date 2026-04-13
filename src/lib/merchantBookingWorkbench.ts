@@ -16,7 +16,6 @@ export type MerchantBookingRecurringRule = {
 export type MerchantBookingWorkbenchPublicSettings = {
   minAdvanceMinutes: number | null;
   dailyCutoffTime: string;
-  dailyCutoffLeadMinutes: number | null;
   bufferMinutes: number | null;
   recurringRules: MerchantBookingRecurringRule[];
 };
@@ -33,7 +32,6 @@ export type MerchantBookingWorkbenchSettings = MerchantBookingWorkbenchPublicSet
 const WORKBENCH_DEFAULTS: MerchantBookingWorkbenchSettings = {
   minAdvanceMinutes: null,
   dailyCutoffTime: "",
-  dailyCutoffLeadMinutes: null,
   bufferMinutes: null,
   recurringRules: [],
   customerReminderOffsetsMinutes: [],
@@ -139,6 +137,14 @@ function toClockMinutes(value: string) {
   return Number.parseInt(hourText ?? "", 10) * 60 + Number.parseInt(minuteText ?? "", 10);
 }
 
+function isSameCalendarDay(left: Date, right: Date) {
+  return (
+    left.getFullYear() === right.getFullYear() &&
+    left.getMonth() === right.getMonth() &&
+    left.getDate() === right.getDate()
+  );
+}
+
 export function createDefaultMerchantBookingWorkbenchSettings(): MerchantBookingWorkbenchSettings {
   return {
     ...WORKBENCH_DEFAULTS,
@@ -153,7 +159,6 @@ export function normalizeMerchantBookingWorkbenchSettings(value: unknown): Merch
   return {
     minAdvanceMinutes: normalizePositiveMinutes(source.minAdvanceMinutes),
     dailyCutoffTime: normalizeClockTime(source.dailyCutoffTime),
-    dailyCutoffLeadMinutes: normalizePositiveMinutes(source.dailyCutoffLeadMinutes),
     bufferMinutes: normalizePositiveMinutes(source.bufferMinutes),
     recurringRules: normalizeRecurringRules(source.recurringRules),
     customerReminderOffsetsMinutes: normalizeReminderOffsets(source.customerReminderOffsetsMinutes),
@@ -172,7 +177,6 @@ export function getMerchantBookingWorkbenchPublicSettings(
   return {
     minAdvanceMinutes: normalized.minAdvanceMinutes,
     dailyCutoffTime: normalized.dailyCutoffTime,
-    dailyCutoffLeadMinutes: normalized.dailyCutoffLeadMinutes,
     bufferMinutes: normalized.bufferMinutes,
     recurringRules: normalized.recurringRules,
   };
@@ -197,22 +201,18 @@ export function getMerchantBookingAdvanceIssue(
 ) {
   const appointmentDate = parseLocalDateTime(appointmentAt);
   if (!appointmentDate) return "";
+
   const minAdvanceMinutes = settings?.minAdvanceMinutes ?? null;
   if (minAdvanceMinutes && appointmentDate.getTime() - now.getTime() < minAdvanceMinutes * 60 * 1000) {
     return `当前预约需至少提前 ${minAdvanceMinutes} 分钟提交`;
   }
 
   const cutoffTime = settings?.dailyCutoffTime ?? "";
-  const cutoffLeadMinutes = settings?.dailyCutoffLeadMinutes ?? null;
-  if (cutoffTime && cutoffLeadMinutes) {
-    const nowClockMinutes = now.getHours() * 60 + now.getMinutes();
+  if (cutoffTime && isSameCalendarDay(appointmentDate, now)) {
     const cutoffClockMinutes = toClockMinutes(cutoffTime);
-    if (
-      Number.isFinite(cutoffClockMinutes) &&
-      nowClockMinutes >= cutoffClockMinutes &&
-      appointmentDate.getTime() - now.getTime() < cutoffLeadMinutes * 60 * 1000
-    ) {
-      return `已过今日截止时间，请选择至少 ${cutoffLeadMinutes} 分钟之后的预约时间`;
+    const nowClockMinutes = now.getHours() * 60 + now.getMinutes();
+    if (Number.isFinite(cutoffClockMinutes) && nowClockMinutes >= cutoffClockMinutes) {
+      return "已过今日截止时间，请选择明天或之后的预约日期";
     }
   }
 
@@ -241,24 +241,27 @@ export function getMerchantBookingRecurringIssue(
 }
 
 export function getMerchantBookingBufferIssue(
-  appointmentAt: string,
+  targetBooking: Pick<MerchantBookingRecord, "appointmentAt" | "store" | "item">,
   bufferMinutes: number | null | undefined,
-  records: Array<Pick<MerchantBookingRecord, "id" | "appointmentAt" | "status">>,
+  records: Array<Pick<MerchantBookingRecord, "id" | "appointmentAt" | "status" | "store" | "item">>,
   options?: { excludeBookingId?: string | null },
 ) {
   const normalizedBufferMinutes = normalizePositiveMinutes(bufferMinutes);
   if (!normalizedBufferMinutes) return "";
-  const targetDate = parseLocalDateTime(appointmentAt);
+  const targetDate = parseLocalDateTime(targetBooking.appointmentAt);
   if (!targetDate) return "";
+  const targetStore = trimText(targetBooking.store);
+  const targetItem = trimText(targetBooking.item);
   const targetTimestamp = targetDate.getTime();
   const conflict = records.some((record) => {
     if (options?.excludeBookingId && record.id === options.excludeBookingId) return false;
     if (record.status !== "active" && record.status !== "confirmed") return false;
+    if (trimText(record.store) !== targetStore || trimText(record.item) !== targetItem) return false;
     const currentDate = parseLocalDateTime(record.appointmentAt);
     if (!currentDate) return false;
     return Math.abs(currentDate.getTime() - targetTimestamp) < normalizedBufferMinutes * 60 * 1000;
   });
-  return conflict ? `当前预约与前后订单至少需要间隔 ${normalizedBufferMinutes} 分钟` : "";
+  return conflict ? `当前同店铺同项目的预约至少需要间隔 ${normalizedBufferMinutes} 分钟` : "";
 }
 
 export function shouldMarkMerchantBookingNoShow(

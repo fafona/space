@@ -324,7 +324,11 @@ export async function createMerchantBooking(input: MerchantBookingCreateInput): 
       throw new Error(slotCapacityIssue);
     }
     const bufferIssue = getMerchantBookingBufferIssue(
-      editable.appointmentAt,
+      {
+        appointmentAt: editable.appointmentAt,
+        store: editable.store,
+        item: editable.item,
+      },
       workbenchSettings.bufferMinutes,
       boundRecords,
     );
@@ -421,7 +425,11 @@ export async function updateMerchantBooking(input: MerchantBookingActionInput): 
       throw new Error(slotCapacityIssue);
     }
     const bufferIssue = getMerchantBookingBufferIssue(
-      nextEditable.appointmentAt,
+      {
+        appointmentAt: nextEditable.appointmentAt,
+        store: nextEditable.store,
+        item: nextEditable.item,
+      },
       workbenchSettings.bufferMinutes,
       boundRecords,
       { excludeBookingId: current.id },
@@ -559,7 +567,11 @@ export async function updateMerchantBookingBySite(input: {
         throw new Error(slotCapacityIssue);
       }
       const bufferIssue = getMerchantBookingBufferIssue(
-        nextEditable.appointmentAt,
+        {
+          appointmentAt: nextEditable.appointmentAt,
+          store: nextEditable.store,
+          item: nextEditable.item,
+        },
         workbenchSettings.bufferMinutes,
         boundRecords,
         { excludeBookingId: current.id },

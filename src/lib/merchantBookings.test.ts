@@ -26,6 +26,7 @@ import {
   validateMerchantBookingInput,
   withoutMerchantBookingToken,
 } from "./merchantBookings";
+import { getMerchantBookingBufferIssue } from "./merchantBookingWorkbench";
 
 test("normalizeBookingOptionList trims blanks and removes duplicates", () => {
   assert.deepEqual(
@@ -179,6 +180,42 @@ test("slot helpers resolve matching rules and full-capacity issues", () => {
       "2026-03-19T19:30",
       rules,
       [{ id: "a", appointmentAt: "2026-03-19T19:30", status: "cancelled" }],
+    ),
+    "",
+  );
+});
+
+test("buffer issue only applies to bookings with the same store and item values", () => {
+  assert.equal(
+    getMerchantBookingBufferIssue(
+      {
+        appointmentAt: "2026-03-19T10:30",
+        store: "羽毛球",
+        item: "1小时",
+      },
+      30,
+      [
+        { id: "a", appointmentAt: "2026-03-19T10:10", store: "羽毛球", item: "1小时", status: "active" },
+        { id: "b", appointmentAt: "2026-03-19T10:20", store: "篮球", item: "1小时", status: "active" },
+        { id: "c", appointmentAt: "2026-03-19T10:25", store: "羽毛球", item: "30分", status: "confirmed" },
+      ],
+    ),
+    "当前同店铺同项目的预约至少需要间隔 30 分钟",
+  );
+
+  assert.equal(
+    getMerchantBookingBufferIssue(
+      {
+        appointmentAt: "2026-03-19T10:30",
+        store: "羽毛球",
+        item: "1小时",
+      },
+      30,
+      [
+        { id: "a", appointmentAt: "2026-03-19T10:10", store: "篮球", item: "1小时", status: "active" },
+        { id: "b", appointmentAt: "2026-03-19T10:20", store: "羽毛球", item: "30分", status: "confirmed" },
+        { id: "c", appointmentAt: "2026-03-19T10:25", store: "羽毛球", item: "1小时", status: "cancelled" },
+      ],
     ),
     "",
   );
