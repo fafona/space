@@ -19,8 +19,8 @@ import {
 import {
   getMerchantBookingAdvanceIssue,
   getMerchantBookingBufferIssue,
+  getMerchantBookingDueReminderOffset,
   getMerchantBookingRecurringIssue,
-  isMerchantBookingReminderDue,
   shouldMarkMerchantBookingNoShow,
 } from "./merchantBookingWorkbench";
 import { loadMerchantBookingWorkbenchSettings } from "./merchantBookingWorkbenchStore";
@@ -162,6 +162,30 @@ function applyStatusMetadata(
   } satisfies Pick<MerchantBookingStoredRecord, "status" | "updatedAt" | "noShowMarkedAt">;
 }
 
+function collectAutomationSiteIds(records: MerchantBookingStoredRecord[]) {
+  return [...new Set(records.map((record) => trimText(record.siteId)).filter(Boolean))];
+}
+
+function buildAutomationStateForEditableUpdate(
+  current: MerchantBookingStoredRecord,
+  nextEditable: MerchantBookingEditableInput,
+) {
+  if (current.appointmentAt === nextEditable.appointmentAt) {
+    return {
+      customerReminderProcessedMinutes: current.customerReminderProcessedMinutes,
+      merchantReminderProcessedMinutes: current.merchantReminderProcessedMinutes,
+    } satisfies Pick<
+      MerchantBookingStoredRecord,
+      "customerReminderProcessedMinutes" | "merchantReminderProcessedMinutes"
+    >;
+  }
+
+  return {
+    customerReminderProcessedMinutes: [],
+    merchantReminderProcessedMinutes: [],
+  } satisfies Pick<MerchantBookingStoredRecord, "customerReminderProcessedMinutes" | "merchantReminderProcessedMinutes">;
+}
+
 async function resolveBookingRuleContext(
   siteId: string,
   locator?: MerchantBookingRuleLocator | null,
@@ -224,13 +248,17 @@ async function runMerchantBookingAutomationForSite(siteId: string) {
 
       if (next.status === "active" || next.status === "confirmed") {
         const customerProcessed = normalizeProcessedMinutes(next.customerReminderProcessedMinutes);
-        for (const offset of settings.customerReminderOffsetsMinutes) {
-          if (customerProcessed.includes(offset) || !isMerchantBookingReminderDue(next, offset, now)) continue;
-          await sendMerchantBookingReminderEmail(next, offset).catch(() => ({
-            attempted: false as const,
-            reason: "disabled" as const,
+        const dueCustomerOffset = getMerchantBookingDueReminderOffset(next, settings.customerReminderOffsetsMinutes, now);
+        if (dueCustomerOffset && !customerProcessed.includes(dueCustomerOffset)) {
+          const emailResult = await sendMerchantBookingReminderEmail(next, dueCustomerOffset).catch(() => ({
+            attempted: true as const,
+            attemptedAt: nowIso,
+            status: "failed" as const,
+            error: "booking_reminder_send_failed",
           }));
-          customerProcessed.push(offset);
+          if (emailResult.attempted && emailResult.status === "sent") {
+            customerProcessed.push(dueCustomerOffset);
+          }
         }
         const normalizedCustomerProcessed = normalizeProcessedMinutes(customerProcessed);
         if (JSON.stringify(normalizedCustomerProcessed) !== JSON.stringify(normalizeProcessedMinutes(next.customerReminderProcessedMinutes))) {
@@ -242,20 +270,20 @@ async function runMerchantBookingAutomationForSite(siteId: string) {
         }
 
         const merchantProcessed = normalizeProcessedMinutes(next.merchantReminderProcessedMinutes);
-        for (const offset of settings.merchantReminderOffsetsMinutes) {
-          if (merchantProcessed.includes(offset) || !isMerchantBookingReminderDue(next, offset, now)) continue;
-          if (supabase) {
-            const notification = buildMerchantBookingReminderPushNotification({
-              siteId: normalizedSiteId,
-              booking: next,
-              minutesBefore: offset,
-            });
-            await notifyMerchantPushSubscribers(supabase as unknown as MerchantPushSubscriptionStoreClient, {
-              merchantId: normalizedSiteId,
-              ...notification,
-            }).catch(() => null);
+        const dueMerchantOffset = getMerchantBookingDueReminderOffset(next, settings.merchantReminderOffsetsMinutes, now);
+        if (dueMerchantOffset && !merchantProcessed.includes(dueMerchantOffset) && supabase) {
+          const notification = buildMerchantBookingReminderPushNotification({
+            siteId: normalizedSiteId,
+            booking: next,
+            minutesBefore: dueMerchantOffset,
+          });
+          const delivery = await notifyMerchantPushSubscribers(supabase as unknown as MerchantPushSubscriptionStoreClient, {
+            merchantId: normalizedSiteId,
+            ...notification,
+          }).catch(() => null);
+          if (delivery && delivery.delivered > 0) {
+            merchantProcessed.push(dueMerchantOffset);
           }
-          merchantProcessed.push(offset);
         }
         const normalizedMerchantProcessed = normalizeProcessedMinutes(merchantProcessed);
         if (JSON.stringify(normalizedMerchantProcessed) !== JSON.stringify(normalizeProcessedMinutes(next.merchantReminderProcessedMinutes))) {
@@ -280,14 +308,29 @@ async function runMerchantBookingAutomationForSite(siteId: string) {
   });
 }
 
-export async function listMerchantBookings(siteId: string): Promise<MerchantBookingRecord[]> {
+export async function runMerchantBookingAutomationForAllSites() {
+  const store = await readMerchantBookingStore();
+  const siteIds = collectAutomationSiteIds(store.records);
+  for (const siteId of siteIds) {
+    await runMerchantBookingAutomationForSite(siteId);
+  }
+  return {
+    processedSiteCount: siteIds.length,
+    siteIds,
+  };
+}
+
+export async function listMerchantBookings(
+  siteId: string,
+  options?: { includeAutomationState?: boolean },
+): Promise<MerchantBookingRecord[]> {
   const normalizedSiteId = trimText(siteId);
   if (!normalizedSiteId) return [];
   const store = await runMerchantBookingAutomationForSite(normalizedSiteId);
   return sortNewestFirst(
     store.records
       .filter((item) => item.siteId === normalizedSiteId)
-      .map((item) => withoutMerchantBookingToken(item)),
+      .map((item) => withoutMerchantBookingToken(item, options)),
   );
 }
 
@@ -442,9 +485,13 @@ export async function updateMerchantBooking(input: MerchantBookingActionInput): 
       ...current,
       ...ruleContext.binding,
       ...nextEditable,
+      ...buildAutomationStateForEditableUpdate(current, nextEditable),
       status: current.status === "cancelled" || current.status === "no_show" ? "active" : current.status,
       updatedAt: new Date().toISOString(),
-      noShowMarkedAt: current.status === "no_show" ? undefined : current.noShowMarkedAt,
+      noShowMarkedAt:
+        current.appointmentAt === nextEditable.appointmentAt && current.status !== "no_show"
+          ? current.noShowMarkedAt
+          : undefined,
     };
     store.records[targetIndex] = next;
     await writeMerchantBookingStore(store);
@@ -587,8 +634,15 @@ export async function updateMerchantBookingBySite(input: {
       ...current,
       ...nextBinding,
       ...nextEditable,
+      ...buildAutomationStateForEditableUpdate(current, nextEditable),
       ...applyStatusMetadata(current, nextStatus, new Date().toISOString()),
     };
+    if (current.appointmentAt !== nextEditable.appointmentAt && next.status !== "no_show") {
+      next = {
+        ...next,
+        noShowMarkedAt: undefined,
+      };
+    }
     if (
       shouldSendMerchantBookingConfirmationEmail({
         currentStatus: current.status,

@@ -23,19 +23,27 @@ export type MerchantBookingRuleBinding = {
   bookingViewport?: MerchantBookingRuleViewport;
 };
 
+export type MerchantBookingAutomationState = {
+  customerReminderProcessedMinutes?: number[];
+  merchantReminderProcessedMinutes?: number[];
+  noShowMarkedAt?: string;
+};
+
 export type MerchantBookingCreateInput = MerchantBookingEditableInput & MerchantBookingRuleBinding & {
   siteId: string;
   siteName?: string;
 };
 
-export type MerchantBookingRecord = MerchantBookingEditableInput & MerchantBookingRuleBinding & {
-  id: string;
-  siteId: string;
-  siteName: string;
-  status: MerchantBookingStatus;
-  createdAt: string;
-  updatedAt: string;
-};
+export type MerchantBookingRecord = MerchantBookingEditableInput &
+  MerchantBookingRuleBinding &
+  MerchantBookingAutomationState & {
+    id: string;
+    siteId: string;
+    siteName: string;
+    status: MerchantBookingStatus;
+    createdAt: string;
+    updatedAt: string;
+  };
 
 export type MerchantBookingConfirmationEmailStatus = "sent" | "failed";
 
@@ -490,7 +498,10 @@ export function getMerchantBookingStatusLabel(status: MerchantBookingStatus) {
   return "\u5f85\u786e\u8ba4";
 }
 
-export function withoutMerchantBookingToken(record: MerchantBookingStoredRecord): MerchantBookingRecord {
+export function withoutMerchantBookingToken(
+  record: MerchantBookingStoredRecord,
+  options?: { includeAutomationState?: boolean },
+): MerchantBookingRecord {
   const {
     editToken,
     confirmationEmailLastAttemptAt,
@@ -509,8 +520,20 @@ export function withoutMerchantBookingToken(record: MerchantBookingStoredRecord)
   void confirmationEmailSentAt;
   void confirmationEmailMessageId;
   void confirmationEmailError;
-  void customerReminderProcessedMinutes;
-  void merchantReminderProcessedMinutes;
-  void noShowMarkedAt;
-  return publicRecord;
+  if (!options?.includeAutomationState) {
+    void customerReminderProcessedMinutes;
+    void merchantReminderProcessedMinutes;
+    void noShowMarkedAt;
+    return publicRecord;
+  }
+  return {
+    ...publicRecord,
+    customerReminderProcessedMinutes: Array.isArray(customerReminderProcessedMinutes)
+      ? [...customerReminderProcessedMinutes]
+      : [],
+    merchantReminderProcessedMinutes: Array.isArray(merchantReminderProcessedMinutes)
+      ? [...merchantReminderProcessedMinutes]
+      : [],
+    noShowMarkedAt,
+  };
 }

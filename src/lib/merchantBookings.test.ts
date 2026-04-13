@@ -26,7 +26,11 @@ import {
   validateMerchantBookingInput,
   withoutMerchantBookingToken,
 } from "./merchantBookings";
-import { getMerchantBookingBufferIssue } from "./merchantBookingWorkbench";
+import {
+  buildMerchantBookingReminderSummary,
+  getMerchantBookingBufferIssue,
+  getMerchantBookingDueReminderOffset,
+} from "./merchantBookingWorkbench";
 
 test("normalizeBookingOptionList trims blanks and removes duplicates", () => {
   assert.deepEqual(
@@ -221,6 +225,77 @@ test("buffer issue only applies to bookings with the same store and item values"
   );
 });
 
+test("getMerchantBookingDueReminderOffset only returns the current reminder bucket", () => {
+  const booking = {
+    status: "confirmed" as const,
+    appointmentAt: "2026-03-19T10:00",
+  };
+
+  assert.equal(
+    getMerchantBookingDueReminderOffset(booking, [1440, 120, 30], new Date(2026, 2, 18, 10, 10, 0, 0)),
+    1440,
+  );
+  assert.equal(
+    getMerchantBookingDueReminderOffset(booking, [1440, 120, 30], new Date(2026, 2, 19, 8, 10, 0, 0)),
+    120,
+  );
+  assert.equal(
+    getMerchantBookingDueReminderOffset(booking, [1440, 120, 30], new Date(2026, 2, 19, 9, 40, 0, 0)),
+    30,
+  );
+  assert.equal(
+    getMerchantBookingDueReminderOffset(booking, [1440, 120, 30], new Date(2026, 2, 19, 9, 20, 0, 0)),
+    null,
+  );
+});
+
+test("buildMerchantBookingReminderSummary ignores already-processed reminder buckets", () => {
+  const summary = buildMerchantBookingReminderSummary(
+    [
+      {
+        status: "confirmed",
+        appointmentAt: "2026-03-19T10:00",
+        customerReminderProcessedMinutes: [30],
+        merchantReminderProcessedMinutes: [30],
+        noShowMarkedAt: "",
+      },
+      {
+        status: "active",
+        appointmentAt: "2026-03-19T10:00",
+        customerReminderProcessedMinutes: [],
+        merchantReminderProcessedMinutes: [],
+        noShowMarkedAt: "",
+      },
+      {
+        status: "confirmed",
+        appointmentAt: "2026-03-19T08:30",
+        customerReminderProcessedMinutes: [],
+        merchantReminderProcessedMinutes: [],
+        noShowMarkedAt: "",
+      },
+    ],
+    {
+      minAdvanceMinutes: null,
+      dailyCutoffTime: "",
+      bufferMinutes: null,
+      recurringRules: [],
+      customerReminderOffsetsMinutes: [1440, 120, 30],
+      merchantReminderOffsetsMinutes: [30],
+      noShowEnabled: true,
+      noShowGraceMinutes: 30,
+      calendarSyncToken: "",
+      calendarSyncTokenUpdatedAt: "",
+    },
+    new Date(2026, 2, 19, 9, 40, 0, 0),
+  );
+
+  assert.deepEqual(summary, {
+    dueCustomerReminderCount: 1,
+    dueMerchantReminderCount: 1,
+    pendingNoShowCount: 1,
+  });
+});
+
 test("validateMerchantBookingInput returns friendly issues", () => {
   const issues = validateMerchantBookingInput({
     store: "",
@@ -393,6 +468,36 @@ test("withoutMerchantBookingToken removes internal email delivery metadata", () 
     createdAt: "2026-03-19T10:00:00.000Z",
     updatedAt: "2026-03-19T10:30:00.000Z",
   });
+});
+
+test("withoutMerchantBookingToken can keep automation state for admin surfaces", () => {
+  const publicRecord = withoutMerchantBookingToken(
+    {
+      id: "R10000000202603190001",
+      siteId: "10000000",
+      siteName: "Faolla",
+      store: "Main",
+      item: "Consultation",
+      appointmentAt: "2026-03-19T10:30",
+      title: "Mr",
+      customerName: "Felix",
+      email: "test@example.com",
+      phone: "123456",
+      note: "",
+      status: "confirmed",
+      createdAt: "2026-03-19T10:00:00.000Z",
+      updatedAt: "2026-03-19T10:30:00.000Z",
+      editToken: "secret",
+      customerReminderProcessedMinutes: [120, 30],
+      merchantReminderProcessedMinutes: [60],
+      noShowMarkedAt: "2026-03-19T11:05:00.000Z",
+    },
+    { includeAutomationState: true },
+  );
+
+  assert.deepEqual(publicRecord.customerReminderProcessedMinutes, [120, 30]);
+  assert.deepEqual(publicRecord.merchantReminderProcessedMinutes, [60]);
+  assert.equal(publicRecord.noShowMarkedAt, "2026-03-19T11:05:00.000Z");
 });
 
 test("getMerchantBookingStatusLabel returns readable labels", () => {

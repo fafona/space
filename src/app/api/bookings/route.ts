@@ -10,6 +10,7 @@ import {
 import type { MerchantPushSubscriptionStoreClient } from "@/lib/merchantPushSubscriptionStore";
 import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import { notifyMerchantPushSubscribers } from "@/lib/webPush";
+import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
 import type {
   MerchantBookingActionInput,
   MerchantBookingCreateInput,
@@ -24,6 +25,14 @@ function normalizeBookingViewport(value: unknown): MerchantBookingRuleViewport |
   return value === "mobile" || value === "desktop" ? value : undefined;
 }
 
+async function resolveBookingAdminSession(request: Request, siteId: string) {
+  const session = await resolveMerchantSessionFromRequest(request, {
+    hintedMerchantId: siteId,
+  });
+  if (!session || session.merchantId !== siteId) return null;
+  return session;
+}
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -31,7 +40,11 @@ export async function GET(request: Request) {
     if (!isMerchantNumericId(siteId)) {
       return NextResponse.json({ error: "invalid_site_id" }, { status: 400 });
     }
-    const bookings = await listMerchantBookings(siteId);
+    const session = await resolveBookingAdminSession(request, siteId);
+    if (!session) {
+      return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    }
+    const bookings = await listMerchantBookings(siteId, { includeAutomationState: true });
     return NextResponse.json({ ok: true, bookings });
   } catch (error) {
     return NextResponse.json(
@@ -115,6 +128,10 @@ export async function PATCH(request: Request) {
                 ? "no_show"
               : null;
     if (isMerchantNumericId(maybeSiteId)) {
+      const session = await resolveBookingAdminSession(request, maybeSiteId);
+      if (!session) {
+        return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+      }
       const booking = await updateMerchantBookingBySite({
         siteId: maybeSiteId,
         bookingId: String(body?.bookingId ?? "").trim(),

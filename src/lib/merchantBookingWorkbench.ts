@@ -41,6 +41,7 @@ const WORKBENCH_DEFAULTS: MerchantBookingWorkbenchSettings = {
   calendarSyncToken: "",
   calendarSyncTokenUpdatedAt: "",
 };
+const REMINDER_TRIGGER_GRACE_MINUTES = 15;
 
 function trimText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
@@ -290,19 +291,56 @@ export function isMerchantBookingReminderDue(
   return remainingMinutes > 0 && remainingMinutes <= normalizedOffset;
 }
 
+export function getMerchantBookingDueReminderOffset(
+  booking: Pick<MerchantBookingRecord, "status" | "appointmentAt">,
+  reminderOffsets: unknown,
+  now = new Date(),
+) {
+  if (booking.status !== "active" && booking.status !== "confirmed") return null;
+  const appointmentDate = parseLocalDateTime(booking.appointmentAt);
+  if (!appointmentDate) return null;
+  const remainingMinutes = Math.floor((appointmentDate.getTime() - now.getTime()) / 60000);
+  if (remainingMinutes <= 0) return null;
+
+  const normalizedOffsets = [...normalizeReminderOffsets(reminderOffsets)].sort((left, right) => left - right);
+  for (let index = 0; index < normalizedOffsets.length; index += 1) {
+    const currentOffset = normalizedOffsets[index];
+    if (!currentOffset) continue;
+    const lowerBound = Math.max(0, currentOffset - REMINDER_TRIGGER_GRACE_MINUTES);
+    if (remainingMinutes <= currentOffset && remainingMinutes > lowerBound) {
+      return currentOffset;
+    }
+  }
+
+  return null;
+}
+
 export function buildMerchantBookingReminderSummary(
-  records: Array<Pick<MerchantBookingRecord, "status" | "appointmentAt">>,
+  records: Array<
+    Pick<
+      MerchantBookingRecord,
+      | "status"
+      | "appointmentAt"
+      | "customerReminderProcessedMinutes"
+      | "merchantReminderProcessedMinutes"
+      | "noShowMarkedAt"
+    >
+  >,
   settings: MerchantBookingWorkbenchSettings,
   now = new Date(),
 ) {
   const activeRecords = records.filter((record) => record.status === "active" || record.status === "confirmed");
-  const dueCustomerReminderCount = activeRecords.filter((record) =>
-    settings.customerReminderOffsetsMinutes.some((offset) => isMerchantBookingReminderDue(record, offset, now)),
+  const dueCustomerReminderCount = activeRecords.filter((record) => {
+    const dueOffset = getMerchantBookingDueReminderOffset(record, settings.customerReminderOffsetsMinutes, now);
+    return dueOffset !== null && !(record.customerReminderProcessedMinutes ?? []).includes(dueOffset);
+  }).length;
+  const dueMerchantReminderCount = activeRecords.filter((record) => {
+    const dueOffset = getMerchantBookingDueReminderOffset(record, settings.merchantReminderOffsetsMinutes, now);
+    return dueOffset !== null && !(record.merchantReminderProcessedMinutes ?? []).includes(dueOffset);
+  }).length;
+  const pendingNoShowCount = activeRecords.filter(
+    (record) => !trimText(record.noShowMarkedAt) && shouldMarkMerchantBookingNoShow(record, settings, now),
   ).length;
-  const dueMerchantReminderCount = activeRecords.filter((record) =>
-    settings.merchantReminderOffsetsMinutes.some((offset) => isMerchantBookingReminderDue(record, offset, now)),
-  ).length;
-  const pendingNoShowCount = activeRecords.filter((record) => shouldMarkMerchantBookingNoShow(record, settings, now)).length;
   return {
     dueCustomerReminderCount,
     dueMerchantReminderCount,
