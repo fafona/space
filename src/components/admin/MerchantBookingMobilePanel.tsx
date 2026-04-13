@@ -825,7 +825,7 @@ export default function MerchantBookingMobilePanel({
               }`}
               onClick={() => setWorkbenchOpen(true)}
             >
-              工作台
+              {getMerchantBookingFieldText("workbenchButton", locale)}
             </button>
           </div>
           <div className="flex flex-wrap gap-2">

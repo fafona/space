@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type TouchEventHandler } from "react";
 import { createPortal } from "react-dom";
 import { useI18n } from "@/components/I18nProvider";
+import { getMerchantBookingFieldText } from "@/lib/merchantBookingLocale";
 import type { MerchantBookingRecord } from "@/lib/merchantBookings";
 import {
   buildMerchantBookingReminderSummary,
@@ -22,7 +23,7 @@ type BookingWorkbenchDialogProps = {
   onClose: () => void;
 };
 
-type WorkbenchMenuKey = "rules" | "reminders" | "reports";
+type WorkbenchMenuKey = "rules" | "reminders";
 type WorkbenchSectionView = "home" | WorkbenchMenuKey;
 type SaveWorkbenchOptions = {
   applyServerDraft?: boolean;
@@ -56,10 +57,31 @@ function parseReminderInput(value: string) {
   return next.sort((left, right) => right - left);
 }
 
+function trimText(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
 function toNumberOrNull(value: string) {
   const numeric = Number.parseInt(value.trim(), 10);
   if (!Number.isFinite(numeric) || numeric < 1) return null;
   return numeric;
+}
+
+function buildCalendarSyncUrl(origin: string, siteId: string, token: string) {
+  return `${origin}/api/bookings/calendar?siteId=${encodeURIComponent(siteId)}&token=${encodeURIComponent(token)}`;
+}
+
+function toWebcalUrl(url: string) {
+  return trimText(url).replace(/^https?:\/\//i, "webcal://");
+}
+
+function buildGoogleCalendarSubscribeUrl(url: string) {
+  return `https://calendar.google.com/calendar/u/0/r?cid=${encodeURIComponent(toWebcalUrl(url) || url)}`;
+}
+
+function buildOutlookCalendarSubscribeUrl(url: string, title: string) {
+  const normalizedTitle = trimText(title) || "FAOLLA bookings";
+  return `https://outlook.live.com/calendar/0/addcalendar?url=${encodeURIComponent(url)}&name=${encodeURIComponent(normalizedTitle)}`;
 }
 
 function buildWeekdayLabels(locale: string) {
@@ -115,24 +137,15 @@ function WorkbenchSectionIcon({ section }: { section: WorkbenchMenuKey }) {
       </svg>
     );
   }
-  if (section === "reminders") {
-    return (
-      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
-        <path
-          d="M12 4.5a4.5 4.5 0 0 0-4.5 4.5v2.1c0 .6-.2 1.2-.6 1.7L5.8 14a1 1 0 0 0 .8 1.6h10.8a1 1 0 0 0 .8-1.6l-1.1-1.2c-.4-.5-.6-1.1-.6-1.7V9A4.5 4.5 0 0 0 12 4.5Z"
-          stroke="currentColor"
-          strokeWidth="1.8"
-          strokeLinejoin="round"
-        />
-        <path d="M10.3 18a1.9 1.9 0 0 0 3.4 0" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-      </svg>
-    );
-  }
   return (
     <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
-      <rect x="4.8" y="6.2" width="14.4" height="11.6" rx="2.4" stroke="currentColor" strokeWidth="1.8" />
-      <path d="M8 10.2h8M8 13.2h5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-      <path d="M8.5 18.2V20M15.5 18.2V20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <path
+        d="M12 4.5a4.5 4.5 0 0 0-4.5 4.5v2.1c0 .6-.2 1.2-.6 1.7L5.8 14a1 1 0 0 0 .8 1.6h10.8a1 1 0 0 0 .8-1.6l-1.1-1.2c-.4-.5-.6-1.1-.6-1.7V9A4.5 4.5 0 0 0 12 4.5Z"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+      <path d="M10.3 18a1.9 1.9 0 0 0 3.4 0" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
     </svg>
   );
 }
@@ -208,6 +221,7 @@ function getMetricValueClass(tone: MetricTone, darkMode: boolean) {
 export default function BookingWorkbenchDialog({
   open,
   siteId,
+  siteName,
   records,
   darkMode = false,
   onClose,
@@ -324,33 +338,36 @@ export default function BookingWorkbenchDialog({
       [
         {
           key: "rules",
-          label: "预约规则",
+          label: getMerchantBookingFieldText("workbenchRules", locale),
           summary: "提前预约、截止时间、缓冲时间、周期性不可预约、爽约",
         },
         {
           key: "reminders",
-          label: "提醒通知",
-          summary: `客户 ${draft.customerReminderOffsetsMinutes.length} 项，商家 ${draft.merchantReminderOffsetsMinutes.length} 项提醒设置`,
-        },
-        {
-          key: "reports",
-          label: "报表",
-          summary: draft.calendarSyncToken ? "已生成日历订阅链接，可下载 ICS 或复制订阅地址" : "下载 ICS，或生成日历订阅链接",
+          label: getMerchantBookingFieldText("workbenchReminders", locale),
+          summary: draft.calendarSyncToken
+            ? `客户 ${draft.customerReminderOffsetsMinutes.length} 项、商家 ${draft.merchantReminderOffsetsMinutes.length} 项提醒，已开启日历同步`
+            : `客户 ${draft.customerReminderOffsetsMinutes.length} 项、商家 ${draft.merchantReminderOffsetsMinutes.length} 项提醒，可生成日历同步链接`,
         },
       ] satisfies Array<{ key: WorkbenchMenuKey; label: string; summary: string }>,
     [
+      locale,
       draft.calendarSyncToken,
       draft.customerReminderOffsetsMinutes.length,
       draft.merchantReminderOffsetsMinutes.length,
     ],
   );
   const currentSectionLabel = useMemo(() => {
-    if (sectionView === "home") return "预约工作台";
-    return menuItems.find((item) => item.key === sectionView)?.label ?? "预约工作台";
-  }, [menuItems, sectionView]);
+    if (sectionView === "home") return getMerchantBookingFieldText("workbenchTitle", locale);
+    return menuItems.find((item) => item.key === sectionView)?.label ?? getMerchantBookingFieldText("workbenchTitle", locale);
+  }, [locale, menuItems, sectionView]);
+  const siteCalendarTitle = useMemo(() => {
+    const normalizedSiteName = trimText(siteName);
+    const normalizedSiteId = trimText(siteId);
+    return normalizedSiteName || normalizedSiteId || "FAOLLA bookings";
+  }, [siteId, siteName]);
   const calendarSyncUrl = useMemo(() => {
     if (!draft.calendarSyncToken || typeof window === "undefined") return "";
-    return `${window.location.origin}/api/bookings/calendar?siteId=${encodeURIComponent(siteId)}&token=${encodeURIComponent(draft.calendarSyncToken)}`;
+    return buildCalendarSyncUrl(window.location.origin, siteId, draft.calendarSyncToken);
   }, [draft.calendarSyncToken, siteId]);
 
   const handleBack = useCallback(() => {
@@ -409,7 +426,7 @@ export default function BookingWorkbenchDialog({
       calendarSyncAction = "keep",
       sourceDraft = draftRef.current,
       sourceSerialized = JSON.stringify(sourceDraft),
-    }: SaveWorkbenchOptions = {}) => {
+    }: SaveWorkbenchOptions = {}): Promise<MerchantBookingWorkbenchSettings | null> => {
       if (autosaveTimerRef.current) {
         clearTimeout(autosaveTimerRef.current);
         autosaveTimerRef.current = null;
@@ -439,9 +456,11 @@ export default function BookingWorkbenchDialog({
           draftRef.current = normalized;
           setDraft(normalized);
         }
+        return normalized;
       } catch (saveError) {
         lastFailedDraftRef.current = sourceSerialized;
         setError(saveError instanceof Error ? saveError.message : "工作台设置保存失败");
+        return null;
       } finally {
         setSaving(false);
       }
@@ -472,14 +491,49 @@ export default function BookingWorkbenchDialog({
     };
   }, [draft, loading, open, saveWorkbench, saving, siteId]);
 
+  const ensureCalendarSyncUrl = useCallback(async () => {
+    if (typeof window === "undefined") return "";
+    if (calendarSyncUrl) return calendarSyncUrl;
+    const saved = await saveWorkbench({
+      applyServerDraft: true,
+      calendarSyncAction: "ensure",
+    });
+    if (!saved?.calendarSyncToken) return "";
+    return buildCalendarSyncUrl(window.location.origin, siteId, saved.calendarSyncToken);
+  }, [calendarSyncUrl, saveWorkbench, siteId]);
+
   const copyCalendarSyncUrl = async () => {
-    if (!calendarSyncUrl || typeof navigator === "undefined" || !navigator.clipboard) return;
+    if (typeof navigator === "undefined" || !navigator.clipboard) return;
+    const syncUrl = await ensureCalendarSyncUrl();
+    if (!syncUrl) return;
     try {
-      await navigator.clipboard.writeText(calendarSyncUrl);
+      await navigator.clipboard.writeText(syncUrl);
     } catch {
       setError("订阅链接复制失败");
     }
   };
+
+  const openCalendarTarget = useCallback(
+    async (target: "apple" | "google" | "outlook" | "ics") => {
+      if (typeof window === "undefined") return;
+      if (target === "ics") {
+        window.open(`/api/bookings/calendar?siteId=${encodeURIComponent(siteId)}&download=1`, "_blank", "noopener,noreferrer");
+        return;
+      }
+      const syncUrl = await ensureCalendarSyncUrl();
+      if (!syncUrl) return;
+      if (target === "apple") {
+        window.location.href = toWebcalUrl(syncUrl) || syncUrl;
+        return;
+      }
+      const targetUrl =
+        target === "google"
+          ? buildGoogleCalendarSubscribeUrl(syncUrl)
+          : buildOutlookCalendarSubscribeUrl(syncUrl, siteCalendarTitle);
+      window.open(targetUrl, "_blank", "noopener,noreferrer");
+    },
+    [ensureCalendarSyncUrl, siteCalendarTitle, siteId],
+  );
 
   const handleTouchStart = ((event) => {
     if (typeof window === "undefined" || window.innerWidth >= MOBILE_BREAKPOINT) return;
@@ -577,10 +631,18 @@ export default function BookingWorkbenchDialog({
               type="button"
               className={backButtonClassName}
               onClick={handleBack}
-              aria-label={sectionView === "home" ? "返回预约管理" : "返回工作台"}
+              aria-label={
+                sectionView === "home"
+                  ? getMerchantBookingFieldText("backToManagement", locale)
+                  : getMerchantBookingFieldText("backToWorkbench", locale)
+              }
             >
               <BackIcon />
-              <span className="hidden sm:inline">{sectionView === "home" ? "返回预约管理" : "返回工作台"}</span>
+              <span className="hidden sm:inline">
+                {sectionView === "home"
+                  ? getMerchantBookingFieldText("backToManagement", locale)
+                  : getMerchantBookingFieldText("backToWorkbench", locale)}
+              </span>
             </button>
             <div className="min-w-0 text-lg font-semibold tracking-tight sm:text-xl">{currentSectionLabel}</div>
           </div>
@@ -723,27 +785,25 @@ export default function BookingWorkbenchDialog({
 
                   <section className={`rounded-3xl border p-5 ${panelClassName}`}>
                     <div className="text-base font-semibold">周期性不可预约</div>
-                    <div className={`mt-1 text-sm ${mutedTextClassName}`}>支持“每周一全天休息”或“每周三下午不接单”。时间段用英文逗号分隔。</div>
                     <div className="mt-4 space-y-3">
                       {weekdayLabels.map((label, weekday) => {
                         const currentRule = draft.recurringRules.find((item) => item.weekday === weekday) ?? null;
                         return (
-                          <div
-                            key={weekday}
-                            className={`grid gap-3 rounded-2xl border p-3 md:grid-cols-[96px_auto_minmax(0,1fr)] ${softPanelClassName}`}
-                          >
-                            <div className="flex items-center text-sm font-medium">{label}</div>
-                            <label className="flex items-center gap-2 text-sm">
-                              <input
-                                type="checkbox"
-                                checked={currentRule?.allDay === true}
-                                onChange={(event) => updateRecurringRule(weekday, { allDay: event.target.checked })}
-                              />
-                              全天停约
-                            </label>
+                          <div key={weekday} className={`rounded-2xl border p-3 ${softPanelClassName}`}>
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="text-sm font-medium">{label}</div>
+                              <label className="flex shrink-0 items-center gap-2 text-sm">
+                                <input
+                                  type="checkbox"
+                                  checked={currentRule?.allDay === true}
+                                  onChange={(event) => updateRecurringRule(weekday, { allDay: event.target.checked })}
+                                />
+                                全天停约
+                              </label>
+                            </div>
                             <input
                               type="text"
-                              className={inputClassName}
+                              className={`${inputClassName} mt-3`}
                               placeholder="例如 13:00-18:00,19:30-21:00"
                               value={currentRule?.allDay ? "" : (currentRule?.timeRanges ?? []).join(", ")}
                               disabled={currentRule?.allDay === true}
@@ -804,133 +864,161 @@ export default function BookingWorkbenchDialog({
             ) : null}
 
             {!loading && sectionView === "reminders" ? (
-              <section className={`rounded-3xl border p-5 ${panelClassName}`}>
-                <div className="text-base font-semibold">提醒通知</div>
-                <div className={`mt-1 text-sm ${mutedTextClassName}`}>客户提醒走邮件，商家提醒走浏览器推送。预设可点，也可直接输入分钟。</div>
-                <div className="mt-4 grid gap-4 lg:grid-cols-2">
-                  <div className={`rounded-2xl border p-4 ${softPanelClassName}`}>
-                    <div className="text-sm font-semibold">客户提醒</div>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {REMINDER_PRESETS.map((minutes) => {
-                        const selected = draft.customerReminderOffsetsMinutes.includes(minutes);
-                        return (
-                          <button
-                            key={`customer-${minutes}`}
-                            type="button"
-                            className={`rounded-full px-3 py-1.5 text-xs font-medium ${selected ? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900" : darkMode ? "border border-slate-700 bg-slate-900 text-slate-300" : "border border-slate-200 bg-white text-slate-600"}`}
-                            onClick={() => toggleReminderPreset("customerReminderOffsetsMinutes", minutes)}
-                          >
-                            {formatMerchantBookingReminderOffset(minutes)}
-                          </button>
-                        );
-                      })}
+              <div className="space-y-4">
+                <section className={`rounded-3xl border p-5 ${panelClassName}`}>
+                  <div className="text-base font-semibold">提醒通知</div>
+                  <div className={`mt-1 text-sm ${mutedTextClassName}`}>客户提醒走邮件，商家提醒走浏览器推送。预设可点，也可直接输入分钟。</div>
+                  <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                    <div className={`rounded-2xl border p-4 ${softPanelClassName}`}>
+                      <div className="text-sm font-semibold">客户提醒</div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {REMINDER_PRESETS.map((minutes) => {
+                          const selected = draft.customerReminderOffsetsMinutes.includes(minutes);
+                          return (
+                            <button
+                              key={`customer-${minutes}`}
+                              type="button"
+                              className={`rounded-full px-3 py-1.5 text-xs font-medium ${selected ? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900" : darkMode ? "border border-slate-700 bg-slate-900 text-slate-300" : "border border-slate-200 bg-white text-slate-600"}`}
+                              onClick={() => toggleReminderPreset("customerReminderOffsetsMinutes", minutes)}
+                            >
+                              {formatMerchantBookingReminderOffset(minutes)}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <input
+                        type="text"
+                        className={`${inputClassName} mt-3`}
+                        value={formatReminderInput(draft.customerReminderOffsetsMinutes)}
+                        onChange={(event) =>
+                          setDraft((current) => ({
+                            ...current,
+                            customerReminderOffsetsMinutes: parseReminderInput(event.target.value),
+                          }))
+                        }
+                        placeholder="例如 1440, 120, 30"
+                      />
                     </div>
-                    <input
-                      type="text"
-                      className={`${inputClassName} mt-3`}
-                      value={formatReminderInput(draft.customerReminderOffsetsMinutes)}
-                      onChange={(event) =>
-                        setDraft((current) => ({
-                          ...current,
-                          customerReminderOffsetsMinutes: parseReminderInput(event.target.value),
-                        }))
-                      }
-                      placeholder="例如 1440, 120, 30"
-                    />
-                  </div>
 
-                  <div className={`rounded-2xl border p-4 ${softPanelClassName}`}>
-                    <div className="text-sm font-semibold">商家提醒</div>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {REMINDER_PRESETS.map((minutes) => {
-                        const selected = draft.merchantReminderOffsetsMinutes.includes(minutes);
-                        return (
-                          <button
-                            key={`merchant-${minutes}`}
-                            type="button"
-                            className={`rounded-full px-3 py-1.5 text-xs font-medium ${selected ? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900" : darkMode ? "border border-slate-700 bg-slate-900 text-slate-300" : "border border-slate-200 bg-white text-slate-600"}`}
-                            onClick={() => toggleReminderPreset("merchantReminderOffsetsMinutes", minutes)}
-                          >
-                            {formatMerchantBookingReminderOffset(minutes)}
-                          </button>
-                        );
-                      })}
+                    <div className={`rounded-2xl border p-4 ${softPanelClassName}`}>
+                      <div className="text-sm font-semibold">商家提醒</div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {REMINDER_PRESETS.map((minutes) => {
+                          const selected = draft.merchantReminderOffsetsMinutes.includes(minutes);
+                          return (
+                            <button
+                              key={`merchant-${minutes}`}
+                              type="button"
+                              className={`rounded-full px-3 py-1.5 text-xs font-medium ${selected ? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900" : darkMode ? "border border-slate-700 bg-slate-900 text-slate-300" : "border border-slate-200 bg-white text-slate-600"}`}
+                              onClick={() => toggleReminderPreset("merchantReminderOffsetsMinutes", minutes)}
+                            >
+                              {formatMerchantBookingReminderOffset(minutes)}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <input
+                        type="text"
+                        className={`${inputClassName} mt-3`}
+                        value={formatReminderInput(draft.merchantReminderOffsetsMinutes)}
+                        onChange={(event) =>
+                          setDraft((current) => ({
+                            ...current,
+                            merchantReminderOffsetsMinutes: parseReminderInput(event.target.value),
+                          }))
+                        }
+                        placeholder="例如 1440, 120, 30"
+                      />
                     </div>
-                    <input
-                      type="text"
-                      className={`${inputClassName} mt-3`}
-                      value={formatReminderInput(draft.merchantReminderOffsetsMinutes)}
-                      onChange={(event) =>
-                        setDraft((current) => ({
-                          ...current,
-                          merchantReminderOffsetsMinutes: parseReminderInput(event.target.value),
-                        }))
-                      }
-                      placeholder="例如 1440, 120, 30"
-                    />
                   </div>
-                </div>
-              </section>
-            ) : null}
+                </section>
 
-            {!loading && sectionView === "reports" ? (
-              <section className={`rounded-3xl border p-5 ${panelClassName}`}>
-                <div className="text-base font-semibold">报表</div>
-                <div className={`mt-1 text-sm ${mutedTextClassName}`}>支持直接下载 ICS，也可生成订阅链接给 Google Calendar / Apple Calendar 使用。</div>
-                <div className={`mt-4 rounded-2xl border p-4 ${softPanelClassName}`}>
-                  <div className="text-sm">
-                    {draft.calendarSyncToken
-                      ? `已生成同步令牌${draft.calendarSyncTokenUpdatedAt ? `，更新时间 ${draft.calendarSyncTokenUpdatedAt}` : ""}`
-                      : "当前还没有同步令牌"}
-                  </div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      className={`rounded-xl px-4 py-2 text-sm font-medium ${darkMode ? "border border-slate-700 bg-slate-900 text-slate-100" : "border border-slate-200 bg-white text-slate-700"}`}
-                      onClick={() =>
-                        void saveWorkbench({
-                          applyServerDraft: true,
-                          calendarSyncAction: draft.calendarSyncToken ? "reset" : "ensure",
-                        })
-                      }
-                      disabled={saving}
-                    >
-                      {draft.calendarSyncToken ? "重置订阅链接" : "生成订阅链接"}
-                    </button>
-                    <button
-                      type="button"
-                      className={`rounded-xl px-4 py-2 text-sm font-medium ${darkMode ? "border border-slate-700 bg-slate-900 text-slate-100" : "border border-slate-200 bg-white text-slate-700"}`}
-                      onClick={() => void saveWorkbench({ applyServerDraft: true, calendarSyncAction: "disable" })}
-                      disabled={saving || !draft.calendarSyncToken}
-                    >
-                      停用订阅链接
-                    </button>
-                    <button
-                      type="button"
-                      className={`rounded-xl px-4 py-2 text-sm font-medium ${darkMode ? "border border-slate-700 bg-slate-900 text-slate-100" : "border border-slate-200 bg-white text-slate-700"}`}
-                      onClick={() => void copyCalendarSyncUrl()}
-                      disabled={!calendarSyncUrl}
-                    >
-                      复制订阅链接
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white"
-                      onClick={() => {
-                        if (typeof window === "undefined") return;
-                        window.open(`/api/bookings/calendar?siteId=${encodeURIComponent(siteId)}&download=1`, "_blank", "noopener,noreferrer");
-                      }}
-                    >
-                      下载 ICS
-                    </button>
-                  </div>
-                  {calendarSyncUrl ? (
-                    <div className={`mt-3 break-all rounded-xl px-3 py-2 text-xs ${darkMode ? "bg-slate-900 text-slate-300" : "bg-white text-slate-500"}`}>
-                      {calendarSyncUrl}
+                <section className={`rounded-3xl border p-5 ${panelClassName}`}>
+                  <div className="text-base font-semibold">日历同步</div>
+                  <div className={`mt-1 text-sm ${mutedTextClassName}`}>可直接添加到 Apple Calendar、Google Calendar、Outlook，也保留 ICS 下载。</div>
+                  <div className={`mt-4 rounded-2xl border p-4 ${softPanelClassName}`}>
+                    <div className="text-sm">
+                      {draft.calendarSyncToken
+                        ? `已生成同步令牌${draft.calendarSyncTokenUpdatedAt ? `，更新时间 ${draft.calendarSyncTokenUpdatedAt}` : ""}`
+                        : "当前还没有同步令牌"}
                     </div>
-                  ) : null}
-                </div>
-              </section>
+                    <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                      <button
+                        type="button"
+                        className="rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
+                        onClick={() => void openCalendarTarget("apple")}
+                        disabled={saving || loading}
+                      >
+                        Apple Calendar
+                      </button>
+                      <button
+                        type="button"
+                        className={`rounded-xl px-4 py-3 text-sm font-medium ${darkMode ? "border border-slate-700 bg-slate-900 text-slate-100" : "border border-slate-200 bg-white text-slate-700"}`}
+                        onClick={() => void openCalendarTarget("google")}
+                        disabled={saving || loading}
+                      >
+                        Google Calendar
+                      </button>
+                      <button
+                        type="button"
+                        className={`rounded-xl px-4 py-3 text-sm font-medium ${darkMode ? "border border-slate-700 bg-slate-900 text-slate-100" : "border border-slate-200 bg-white text-slate-700"}`}
+                        onClick={() => void openCalendarTarget("outlook")}
+                        disabled={saving || loading}
+                      >
+                        Outlook
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:opacity-50"
+                        onClick={() => void openCalendarTarget("ics")}
+                        disabled={saving || loading}
+                      >
+                        下载 ICS
+                      </button>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        className={`rounded-xl px-4 py-2 text-sm font-medium ${darkMode ? "border border-slate-700 bg-slate-900 text-slate-100" : "border border-slate-200 bg-white text-slate-700"}`}
+                        onClick={() => void copyCalendarSyncUrl()}
+                        disabled={saving || loading}
+                      >
+                        复制订阅链接
+                      </button>
+                      {draft.calendarSyncToken ? (
+                        <>
+                          <button
+                            type="button"
+                            className={`rounded-xl px-4 py-2 text-sm font-medium ${darkMode ? "border border-slate-700 bg-slate-900 text-slate-100" : "border border-slate-200 bg-white text-slate-700"}`}
+                            onClick={() =>
+                              void saveWorkbench({
+                                applyServerDraft: true,
+                                calendarSyncAction: "reset",
+                              })
+                            }
+                            disabled={saving}
+                          >
+                            重置订阅链接
+                          </button>
+                          <button
+                            type="button"
+                            className={`rounded-xl px-4 py-2 text-sm font-medium ${darkMode ? "border border-slate-700 bg-slate-900 text-slate-100" : "border border-slate-200 bg-white text-slate-700"}`}
+                            onClick={() => void saveWorkbench({ applyServerDraft: true, calendarSyncAction: "disable" })}
+                            disabled={saving}
+                          >
+                            停用订阅链接
+                          </button>
+                        </>
+                      ) : null}
+                    </div>
+                    {calendarSyncUrl ? (
+                      <div className={`mt-3 break-all rounded-xl px-3 py-2 text-xs ${darkMode ? "bg-slate-900 text-slate-300" : "bg-white text-slate-500"}`}>
+                        {calendarSyncUrl}
+                      </div>
+                    ) : null}
+                  </div>
+                </section>
+              </div>
             ) : null}
           </div>
         </div>

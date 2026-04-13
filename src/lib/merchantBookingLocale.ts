@@ -22,6 +22,12 @@ type BookingActionKey =
 type BookingFieldKey =
   | "managementTitle"
   | "detailTitle"
+  | "workbenchButton"
+  | "workbenchTitle"
+  | "backToManagement"
+  | "backToWorkbench"
+  | "workbenchRules"
+  | "workbenchReminders"
   | "managementEmpty"
   | "managementLoading"
   | "missingSite"
@@ -46,6 +52,12 @@ type BookingFieldKey =
 const FIELD_SOURCE: Record<BookingFieldKey, string> = {
   managementTitle: "预约管理",
   detailTitle: "预约详情",
+  workbenchButton: "工作台",
+  workbenchTitle: "预约工作台",
+  backToManagement: "返回预约管理",
+  backToWorkbench: "返回工作台",
+  workbenchRules: "预约规则",
+  workbenchReminders: "提醒通知",
   managementEmpty: "还没有匹配到预约记录。",
   managementLoading: "正在读取预约记录...",
   missingSite: "当前商户信息未准备好，暂时无法读取预约管理。",

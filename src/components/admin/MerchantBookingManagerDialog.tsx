@@ -758,7 +758,7 @@ export default function MerchantBookingManagerDialog({
                 className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
                 onClick={() => setWorkbenchOpen(true)}
               >
-                工作台
+                {getMerchantBookingFieldText("workbenchButton", locale)}
               </button>
             </div>
             <div className="text-sm text-slate-500">{getMerchantBookingManagementSubtitle(siteName || siteId, locale)}</div>

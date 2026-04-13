@@ -216,6 +216,30 @@ export const UI_GLOSSARY_TRANSLATIONS = {
     "ko": "이름",
     "zh-tw": "姓名"
   },
+  "工作台": {
+    "en": "Workbench",
+    "es": "Panel"
+  },
+  "预约工作台": {
+    "en": "Booking workbench",
+    "es": "Panel de reservas"
+  },
+  "返回预约管理": {
+    "en": "Back to bookings",
+    "es": "Volver a reservas"
+  },
+  "返回工作台": {
+    "en": "Back to workbench",
+    "es": "Volver al panel"
+  },
+  "预约规则": {
+    "en": "Booking rules",
+    "es": "Reglas"
+  },
+  "提醒通知": {
+    "en": "Reminders",
+    "es": "Avisos"
+  },
   "名称": {
     "en": "Name",
     "es": "Nombre",
