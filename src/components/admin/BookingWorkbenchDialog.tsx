@@ -23,6 +23,7 @@ type BookingWorkbenchDialogProps = {
 };
 
 type WorkbenchMenuKey = "rules" | "reminders" | "reports";
+type WorkbenchSectionView = "home" | WorkbenchMenuKey;
 type SaveWorkbenchOptions = {
   applyServerDraft?: boolean;
   calendarSyncAction?: "keep" | "ensure" | "reset" | "disable";
@@ -97,15 +98,43 @@ function BackIcon() {
   );
 }
 
-function getMenuButtonClass(active: boolean, darkMode: boolean) {
-  if (active) {
-    return darkMode
-      ? "border-slate-100 bg-slate-100 text-slate-900"
-      : "border-slate-900 bg-slate-900 text-white";
+function ChevronRightIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+      <path d="m9 6 6 6-6 6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function WorkbenchSectionIcon({ section }: { section: WorkbenchMenuKey }) {
+  if (section === "rules") {
+    return (
+      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+        <path d="M7 6.8h10M7 12h10M7 17.2h6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+        <path d="M4.8 6.8h.01M4.8 12h.01M4.8 17.2h.01" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" />
+      </svg>
+    );
   }
-  return darkMode
-    ? "border-slate-700 bg-slate-900 text-slate-300 hover:border-slate-500"
-    : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50";
+  if (section === "reminders") {
+    return (
+      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+        <path
+          d="M12 4.5a4.5 4.5 0 0 0-4.5 4.5v2.1c0 .6-.2 1.2-.6 1.7L5.8 14a1 1 0 0 0 .8 1.6h10.8a1 1 0 0 0 .8-1.6l-1.1-1.2c-.4-.5-.6-1.1-.6-1.7V9A4.5 4.5 0 0 0 12 4.5Z"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinejoin="round"
+        />
+        <path d="M10.3 18a1.9 1.9 0 0 0 3.4 0" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+      <rect x="4.8" y="6.2" width="14.4" height="11.6" rx="2.4" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M8 10.2h8M8 13.2h5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M8.5 18.2V20M15.5 18.2V20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
 }
 
 function getMetricRowClass(tone: MetricTone, darkMode: boolean) {
@@ -188,7 +217,7 @@ export default function BookingWorkbenchDialog({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [activeMenu, setActiveMenu] = useState<WorkbenchMenuKey>("rules");
+  const [sectionView, setSectionView] = useState<WorkbenchSectionView>("home");
   const [swipeOffset, setSwipeOffset] = useState(0);
   const swipeStateRef = useRef({
     tracking: false,
@@ -214,7 +243,7 @@ export default function BookingWorkbenchDialog({
       }
       return;
     }
-    setActiveMenu("rules");
+    setSectionView("home");
     setSwipeOffset(0);
   }, [open]);
 
@@ -290,10 +319,47 @@ export default function BookingWorkbenchDialog({
     ],
     [reminderSummary.dueCustomerReminderCount, reminderSummary.dueMerchantReminderCount, reminderSummary.pendingNoShowCount],
   );
+  const menuItems = useMemo(
+    () =>
+      [
+        {
+          key: "rules",
+          label: "预约规则",
+          summary: "提前预约、截止时间、缓冲时间、周期性不可预约、爽约",
+        },
+        {
+          key: "reminders",
+          label: "提醒通知",
+          summary: `客户 ${draft.customerReminderOffsetsMinutes.length} 项，商家 ${draft.merchantReminderOffsetsMinutes.length} 项提醒设置`,
+        },
+        {
+          key: "reports",
+          label: "报表",
+          summary: draft.calendarSyncToken ? "已生成日历订阅链接，可下载 ICS 或复制订阅地址" : "下载 ICS，或生成日历订阅链接",
+        },
+      ] satisfies Array<{ key: WorkbenchMenuKey; label: string; summary: string }>,
+    [
+      draft.calendarSyncToken,
+      draft.customerReminderOffsetsMinutes.length,
+      draft.merchantReminderOffsetsMinutes.length,
+    ],
+  );
+  const currentSectionLabel = useMemo(() => {
+    if (sectionView === "home") return "预约工作台";
+    return menuItems.find((item) => item.key === sectionView)?.label ?? "预约工作台";
+  }, [menuItems, sectionView]);
   const calendarSyncUrl = useMemo(() => {
     if (!draft.calendarSyncToken || typeof window === "undefined") return "";
     return `${window.location.origin}/api/bookings/calendar?siteId=${encodeURIComponent(siteId)}&token=${encodeURIComponent(draft.calendarSyncToken)}`;
   }, [draft.calendarSyncToken, siteId]);
+
+  const handleBack = useCallback(() => {
+    if (sectionView === "home") {
+      onClose();
+      return;
+    }
+    setSectionView("home");
+  }, [onClose, sectionView]);
 
   const updateRecurringRule = (weekday: number, patch: { allDay?: boolean; timeRangesText?: string }) => {
     setDraft((current) => {
@@ -445,7 +511,9 @@ export default function BookingWorkbenchDialog({
 
   const finishSwipe = () => {
     if (swipeOffset >= 96) {
-      onClose();
+      setSwipeOffset(0);
+      swipeStateRef.current.tracking = false;
+      handleBack();
       return;
     }
     setSwipeOffset(0);
@@ -477,6 +545,18 @@ export default function BookingWorkbenchDialog({
   const backButtonClassName = darkMode
     ? "flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-slate-100 transition hover:bg-slate-800/60 sm:h-auto sm:w-auto sm:gap-2 sm:border sm:border-slate-700 sm:bg-slate-900 sm:px-3 sm:py-2 sm:text-slate-100 sm:hover:border-slate-500 sm:hover:bg-slate-900"
     : "flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-slate-900 transition hover:bg-slate-100 sm:h-auto sm:w-auto sm:gap-2 sm:border sm:border-slate-200 sm:bg-white sm:px-3 sm:py-2 sm:text-slate-700 sm:hover:bg-slate-50";
+  const menuSectionClassName = darkMode
+    ? "overflow-hidden rounded-[28px] border border-slate-700/80 bg-slate-900 shadow-[0_18px_40px_rgba(2,6,23,0.36)]"
+    : "overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]";
+  const menuIconClassName = darkMode
+    ? "inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-800 text-slate-100"
+    : "inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-100 text-slate-700";
+  const menuItemClassName = darkMode
+    ? "flex w-full items-center gap-4 px-5 py-4 text-left transition hover:bg-slate-800/70"
+    : "flex w-full items-center gap-4 px-5 py-4 text-left transition hover:bg-slate-50";
+  const menuDividerClassName = darkMode ? "divide-slate-800" : "divide-slate-100";
+  const menuChevronClassName = darkMode ? "text-slate-500" : "text-slate-300";
+  const pageContentBottomClassName = sectionView === "home" ? "pb-[calc(env(safe-area-inset-bottom)+7.5rem)]" : "pb-[calc(env(safe-area-inset-bottom)+6.25rem)]";
 
   const content = (
     <div className={`fixed inset-0 z-[2147483000] ${shellClassName}`}>
@@ -493,30 +573,35 @@ export default function BookingWorkbenchDialog({
       >
         <div className={`border-b px-4 pb-3 pt-[calc(env(safe-area-inset-top)+0.55rem)] sm:px-6 sm:py-3 ${darkMode ? "border-slate-800 bg-slate-950" : "border-slate-200 bg-white"}`}>
           <div className="flex items-center gap-2.5 sm:gap-3">
-            <button type="button" className={backButtonClassName} onClick={onClose} aria-label="返回预约管理">
+            <button
+              type="button"
+              className={backButtonClassName}
+              onClick={handleBack}
+              aria-label={sectionView === "home" ? "返回预约管理" : "返回工作台"}
+            >
               <BackIcon />
-              <span className="hidden sm:inline">返回预约管理</span>
+              <span className="hidden sm:inline">{sectionView === "home" ? "返回预约管理" : "返回工作台"}</span>
             </button>
-            <div className="min-w-0 text-lg font-semibold tracking-tight sm:text-xl">预约工作台</div>
+            <div className="min-w-0 text-lg font-semibold tracking-tight sm:text-xl">{currentSectionLabel}</div>
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-[calc(env(safe-area-inset-bottom)+7.5rem)] pt-4 sm:px-6 sm:py-5">
+        <div className={`min-h-0 flex-1 overflow-y-auto px-4 pt-4 sm:px-6 sm:py-5 ${pageContentBottomClassName}`}>
           <div className="mx-auto flex w-full max-w-7xl flex-col gap-4">
-            <div className="space-y-2 md:hidden">
-              {primaryMetrics.map((item) => (
-                <div key={item.label} className={`flex items-center justify-between rounded-2xl border px-4 py-3 ${getMetricRowClass(item.tone, darkMode)}`}>
-                  <span className="text-sm font-medium">{item.shortLabel}</span>
-                  <span className={`inline-flex min-w-[2.5rem] items-center justify-center rounded-full px-2.5 py-1 text-sm font-semibold ${getMetricValueClass(item.tone, darkMode)}`}>
-                    {item.value}
-                  </span>
-                </div>
-              ))}
+            {sectionView === "home" ? (
+              <>
+                <div className="space-y-2 md:hidden">
+                  {primaryMetrics.map((item) => (
+                    <div key={item.label} className={`flex items-center justify-between rounded-2xl border px-4 py-3 ${getMetricRowClass(item.tone, darkMode)}`}>
+                      <span className="text-sm font-medium">{item.shortLabel}</span>
+                      <span className={`inline-flex min-w-[2.5rem] items-center justify-center rounded-full px-2.5 py-1 text-sm font-semibold ${getMetricValueClass(item.tone, darkMode)}`}>
+                        {item.value}
+                      </span>
+                    </div>
+                  ))}
 
-              <div className={`rounded-2xl border p-3 ${panelClassName}`}>
-                <div className="space-y-2">
                   {autoMetrics.map((item) => (
-                    <div key={item.label} className={`flex items-center justify-between rounded-2xl border px-3 py-2.5 ${getMetricRowClass(item.tone, darkMode)}`}>
+                    <div key={item.label} className={`flex items-center justify-between rounded-2xl border px-4 py-3 ${getMetricRowClass(item.tone, darkMode)}`}>
                       <span className="text-sm font-medium">{item.label}</span>
                       <span className={`inline-flex min-w-[2.5rem] items-center justify-center rounded-full px-2.5 py-1 text-sm font-semibold ${getMetricValueClass(item.tone, darkMode)}`}>
                         {item.value}
@@ -524,47 +609,30 @@ export default function BookingWorkbenchDialog({
                     </div>
                   ))}
                 </div>
-              </div>
-            </div>
 
-            <div className="hidden gap-3 md:grid md:grid-cols-4">
-              {primaryMetrics.map((item) => (
-                <div key={item.label} className={`rounded-3xl border p-4 ${panelClassName}`}>
-                  <div className={`text-xs ${mutedTextClassName}`}>{item.label}</div>
-                  <div className="mt-2 text-2xl font-semibold">{item.value}</div>
-                </div>
-              ))}
-
-              <div className={`rounded-3xl border p-4 ${panelClassName}`}>
-                <div className="space-y-2 pt-1">
-                  {autoMetrics.map((item) => (
-                    <div key={item.label} className="flex items-center justify-between gap-3 text-sm">
-                      <span className="truncate">{item.label}</span>
-                      <span className={`inline-flex min-w-[2.4rem] items-center justify-center rounded-full px-2.5 py-1 text-sm font-semibold ${getMetricValueClass(item.tone, darkMode)}`}>
-                        {item.value}
-                      </span>
+                <div className="hidden gap-3 md:grid md:grid-cols-4">
+                  {primaryMetrics.map((item) => (
+                    <div key={item.label} className={`rounded-3xl border p-4 ${panelClassName}`}>
+                      <div className={`text-xs ${mutedTextClassName}`}>{item.label}</div>
+                      <div className="mt-2 text-2xl font-semibold">{item.value}</div>
                     </div>
                   ))}
-                </div>
-              </div>
-            </div>
 
-            <div className="flex gap-2 overflow-x-auto pb-1">
-              {([
-                { key: "rules", label: "预约规则" },
-                { key: "reminders", label: "提醒通知" },
-                { key: "reports", label: "报表" },
-              ] as Array<{ key: WorkbenchMenuKey; label: string }>).map((item) => (
-                <button
-                  key={item.key}
-                  type="button"
-                  className={`shrink-0 rounded-full border px-4 py-2 text-sm font-medium transition ${getMenuButtonClass(activeMenu === item.key, darkMode)}`}
-                  onClick={() => setActiveMenu(item.key)}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
+                  <div className={`rounded-3xl border p-4 ${panelClassName}`}>
+                    <div className="space-y-2 pt-1">
+                      {autoMetrics.map((item) => (
+                        <div key={item.label} className="flex items-center justify-between gap-3 text-sm">
+                          <span className="truncate">{item.label}</span>
+                          <span className={`inline-flex min-w-[2.4rem] items-center justify-center rounded-full px-2.5 py-1 text-sm font-semibold ${getMetricValueClass(item.tone, darkMode)}`}>
+                            {item.value}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </>
+            ) : null}
 
             {error ? (
               <div className={`rounded-2xl border px-4 py-3 text-sm ${darkMode ? "border-rose-700 bg-rose-950/60 text-rose-200" : "border-rose-200 bg-rose-50 text-rose-700"}`}>
@@ -576,7 +644,35 @@ export default function BookingWorkbenchDialog({
               <div className={`rounded-3xl border p-6 ${panelClassName}`}>正在加载工作台设置...</div>
             ) : null}
 
-            {!loading && activeMenu === "rules" ? (
+            {!loading && sectionView === "home" ? (
+              <section className={menuSectionClassName}>
+                <div className={`divide-y ${menuDividerClassName}`}>
+                  {menuItems.map((item) => (
+                    <button
+                      key={item.key}
+                      type="button"
+                      className={menuItemClassName}
+                      onClick={() => setSectionView(item.key)}
+                    >
+                      <span className={menuIconClassName}>
+                        <WorkbenchSectionIcon section={item.key} />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className={darkMode ? "block text-sm font-semibold text-slate-100" : "block text-sm font-semibold text-slate-900"}>
+                          {item.label}
+                        </span>
+                        <span className={`mt-1 block truncate text-xs leading-5 ${mutedTextClassName}`}>{item.summary}</span>
+                      </span>
+                      <span className={menuChevronClassName}>
+                        <ChevronRightIcon />
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+
+            {!loading && sectionView === "rules" ? (
               <div className="grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
                 <div className="space-y-4">
                   <section className={`rounded-3xl border p-5 ${panelClassName}`}>
@@ -596,13 +692,31 @@ export default function BookingWorkbenchDialog({
                       </label>
                       <label className="min-w-0 space-y-1 overflow-hidden">
                         <span className="text-sm">当天截止时间</span>
-                        <input
-                          type="time"
-                          className={`${inputClassName} max-w-full`}
-                          value={draft.dailyCutoffTime}
-                          onChange={(event) => setDraft((current) => ({ ...current, dailyCutoffTime: event.target.value }))}
-                          style={{ minWidth: 0, maxWidth: "100%", colorScheme: darkMode ? "dark" : "light" }}
-                        />
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="time"
+                            className={`${inputClassName} max-w-full flex-1`}
+                            value={draft.dailyCutoffTime}
+                            onChange={(event) => setDraft((current) => ({ ...current, dailyCutoffTime: event.target.value }))}
+                            style={{ minWidth: 0, maxWidth: "100%", colorScheme: darkMode ? "dark" : "light" }}
+                          />
+                          <button
+                            type="button"
+                            className={`shrink-0 rounded-full px-3 py-2 text-xs font-medium transition ${
+                              draft.dailyCutoffTime
+                                ? darkMode
+                                  ? "border border-slate-600 bg-slate-900 text-slate-200 hover:border-slate-500"
+                                  : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                                : darkMode
+                                  ? "border border-slate-800 bg-slate-950 text-slate-600"
+                                  : "border border-slate-200 bg-slate-50 text-slate-300"
+                            }`}
+                            onClick={() => setDraft((current) => ({ ...current, dailyCutoffTime: "" }))}
+                            disabled={!draft.dailyCutoffTime}
+                          >
+                            清除
+                          </button>
+                        </div>
                       </label>
                     </div>
                   </section>
@@ -689,7 +803,7 @@ export default function BookingWorkbenchDialog({
               </div>
             ) : null}
 
-            {!loading && activeMenu === "reminders" ? (
+            {!loading && sectionView === "reminders" ? (
               <section className={`rounded-3xl border p-5 ${panelClassName}`}>
                 <div className="text-base font-semibold">提醒通知</div>
                 <div className={`mt-1 text-sm ${mutedTextClassName}`}>客户提醒走邮件，商家提醒走浏览器推送。预设可点，也可直接输入分钟。</div>
@@ -759,7 +873,7 @@ export default function BookingWorkbenchDialog({
               </section>
             ) : null}
 
-            {!loading && activeMenu === "reports" ? (
+            {!loading && sectionView === "reports" ? (
               <section className={`rounded-3xl border p-5 ${panelClassName}`}>
                 <div className="text-base font-semibold">报表</div>
                 <div className={`mt-1 text-sm ${mutedTextClassName}`}>支持直接下载 ICS，也可生成订阅链接给 Google Calendar / Apple Calendar 使用。</div>
