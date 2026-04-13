@@ -29,6 +29,7 @@ type SaveWorkbenchOptions = {
   sourceDraft?: MerchantBookingWorkbenchSettings;
   sourceSerialized?: string;
 };
+type MetricTone = "amber" | "sky" | "emerald" | "rose" | "cyan";
 
 const REMINDER_PRESETS = [1440, 720, 120, 60, 30];
 const MOBILE_BREAKPOINT = 768;
@@ -90,8 +91,8 @@ function countUpcomingBookings(records: MerchantBookingRecord[], days: number) {
 
 function BackIcon() {
   return (
-    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
-      <path d="m11.5 4.5-5 5 5 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-6 w-6">
+      <path d="M19 12H7M12 7l-5 5 5 5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="square" strokeLinejoin="miter" />
     </svg>
   );
 }
@@ -107,10 +108,77 @@ function getMenuButtonClass(active: boolean, darkMode: boolean) {
     : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50";
 }
 
+function getMetricRowClass(tone: MetricTone, darkMode: boolean) {
+  if (darkMode) {
+    switch (tone) {
+      case "amber":
+        return "border-amber-400/20 bg-amber-400/10";
+      case "sky":
+        return "border-sky-400/20 bg-sky-400/10";
+      case "emerald":
+        return "border-emerald-400/20 bg-emerald-400/10";
+      case "rose":
+        return "border-rose-400/20 bg-rose-400/10";
+      case "cyan":
+        return "border-cyan-400/20 bg-cyan-400/10";
+      default:
+        return "border-slate-700/80 bg-slate-900";
+    }
+  }
+
+  switch (tone) {
+    case "amber":
+      return "border-amber-200 bg-amber-50/80";
+    case "sky":
+      return "border-sky-200 bg-sky-50/85";
+    case "emerald":
+      return "border-emerald-200 bg-emerald-50/85";
+    case "rose":
+      return "border-rose-200 bg-rose-50/85";
+    case "cyan":
+      return "border-cyan-200 bg-cyan-50/85";
+    default:
+      return "border-slate-200 bg-white";
+  }
+}
+
+function getMetricValueClass(tone: MetricTone, darkMode: boolean) {
+  if (darkMode) {
+    switch (tone) {
+      case "amber":
+        return "bg-amber-300/16 text-amber-100 ring-1 ring-amber-300/18";
+      case "sky":
+        return "bg-sky-300/16 text-sky-100 ring-1 ring-sky-300/18";
+      case "emerald":
+        return "bg-emerald-300/16 text-emerald-100 ring-1 ring-emerald-300/18";
+      case "rose":
+        return "bg-rose-300/16 text-rose-100 ring-1 ring-rose-300/18";
+      case "cyan":
+        return "bg-cyan-300/16 text-cyan-100 ring-1 ring-cyan-300/18";
+      default:
+        return "bg-slate-800 text-slate-100 ring-1 ring-slate-700";
+    }
+  }
+
+  switch (tone) {
+    case "amber":
+      return "bg-amber-100 text-amber-700 ring-1 ring-amber-200";
+    case "sky":
+      return "bg-sky-100 text-sky-700 ring-1 ring-sky-200";
+    case "emerald":
+      return "bg-emerald-100 text-emerald-700 ring-1 ring-emerald-200";
+    case "rose":
+      return "bg-rose-100 text-rose-700 ring-1 ring-rose-200";
+    case "cyan":
+      return "bg-cyan-100 text-cyan-700 ring-1 ring-cyan-200";
+    default:
+      return "bg-slate-100 text-slate-700 ring-1 ring-slate-200";
+  }
+}
+
 export default function BookingWorkbenchDialog({
   open,
   siteId,
-  siteName,
   records,
   darkMode = false,
   onClose,
@@ -122,7 +190,6 @@ export default function BookingWorkbenchDialog({
   const [error, setError] = useState("");
   const [activeMenu, setActiveMenu] = useState<WorkbenchMenuKey>("rules");
   const [swipeOffset, setSwipeOffset] = useState(0);
-  const [autoSaveStatus, setAutoSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
   const swipeStateRef = useRef({
     tracking: false,
     startX: 0,
@@ -145,7 +212,6 @@ export default function BookingWorkbenchDialog({
         clearTimeout(autosaveTimerRef.current);
         autosaveTimerRef.current = null;
       }
-      setAutoSaveStatus("idle");
       return;
     }
     setActiveMenu("rules");
@@ -157,7 +223,6 @@ export default function BookingWorkbenchDialog({
     let cancelled = false;
     hasLoadedRef.current = false;
     lastFailedDraftRef.current = "";
-    setAutoSaveStatus("idle");
     if (autosaveTimerRef.current) {
       clearTimeout(autosaveTimerRef.current);
       autosaveTimerRef.current = null;
@@ -181,7 +246,6 @@ export default function BookingWorkbenchDialog({
           draftRef.current = normalized;
           hasLoadedRef.current = true;
           setDraft(normalized);
-          setAutoSaveStatus("saved");
         }
       } catch (loadError) {
         if (!cancelled) {
@@ -210,6 +274,22 @@ export default function BookingWorkbenchDialog({
   const openBookingCount = useMemo(() => countOpenBookings(records), [records]);
   const todayBookingCount = useMemo(() => countTodayBookings(records), [records]);
   const upcomingWeekCount = useMemo(() => countUpcomingBookings(records, 7), [records]);
+  const primaryMetrics = useMemo(
+    () => [
+      { label: "待处理预约", shortLabel: "待处理", value: openBookingCount, tone: "amber" as const },
+      { label: "今日预约", shortLabel: "今日预约", value: todayBookingCount, tone: "sky" as const },
+      { label: "7日内预约", shortLabel: "7日内预约", value: upcomingWeekCount, tone: "emerald" as const },
+    ],
+    [openBookingCount, todayBookingCount, upcomingWeekCount],
+  );
+  const autoMetrics = useMemo(
+    () => [
+      { label: "客户提醒", value: reminderSummary.dueCustomerReminderCount, tone: "sky" as const },
+      { label: "商家提醒", value: reminderSummary.dueMerchantReminderCount, tone: "cyan" as const },
+      { label: "爽约判定", value: reminderSummary.pendingNoShowCount, tone: "rose" as const },
+    ],
+    [reminderSummary.dueCustomerReminderCount, reminderSummary.dueMerchantReminderCount, reminderSummary.pendingNoShowCount],
+  );
   const calendarSyncUrl = useMemo(() => {
     if (!draft.calendarSyncToken || typeof window === "undefined") return "";
     return `${window.location.origin}/api/bookings/calendar?siteId=${encodeURIComponent(siteId)}&token=${encodeURIComponent(draft.calendarSyncToken)}`;
@@ -269,7 +349,6 @@ export default function BookingWorkbenchDialog({
         autosaveTimerRef.current = null;
       }
       setSaving(true);
-      setAutoSaveStatus("saving");
       setError("");
       lastFailedDraftRef.current = "";
       try {
@@ -294,10 +373,8 @@ export default function BookingWorkbenchDialog({
           draftRef.current = normalized;
           setDraft(normalized);
         }
-        setAutoSaveStatus("saved");
       } catch (saveError) {
         lastFailedDraftRef.current = sourceSerialized;
-        setAutoSaveStatus("idle");
         setError(saveError instanceof Error ? saveError.message : "工作台设置保存失败");
       } finally {
         setSaving(false);
@@ -394,9 +471,12 @@ export default function BookingWorkbenchDialog({
     ? "border-slate-700/80 bg-slate-950 text-slate-100"
     : "border-slate-200 bg-slate-50 text-slate-900";
   const inputClassName = darkMode
-    ? "w-full rounded-2xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm text-slate-100 outline-none"
-    : "w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none";
+    ? "block w-full min-w-0 rounded-2xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm text-slate-100 outline-none"
+    : "block w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none";
   const mutedTextClassName = darkMode ? "text-slate-400" : "text-slate-500";
+  const backButtonClassName = darkMode
+    ? "flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-slate-100 transition hover:bg-slate-800/60 sm:h-auto sm:w-auto sm:gap-2 sm:border sm:border-slate-700 sm:bg-slate-900 sm:px-3 sm:py-2 sm:text-slate-100 sm:hover:border-slate-500 sm:hover:bg-slate-900"
+    : "flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-slate-900 transition hover:bg-slate-100 sm:h-auto sm:w-auto sm:gap-2 sm:border sm:border-slate-200 sm:bg-white sm:px-3 sm:py-2 sm:text-slate-700 sm:hover:bg-slate-50";
 
   const content = (
     <div className={`fixed inset-0 z-[2147483000] ${shellClassName}`}>
@@ -411,47 +491,60 @@ export default function BookingWorkbenchDialog({
         onTouchEnd={handleTouchEnd}
         onTouchCancel={handleTouchCancel}
       >
-        <div className={`border-b px-4 py-3 sm:px-6 ${darkMode ? "border-slate-800 bg-slate-950" : "border-slate-200 bg-white"}`}>
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <button
-                type="button"
-                className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm font-medium transition ${darkMode ? "border-slate-700 bg-slate-900 text-slate-100 hover:border-slate-500" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}
-                onClick={onClose}
-              >
-                <BackIcon />
-                <span>返回预约管理</span>
-              </button>
-              <div className="mt-3 text-xl font-semibold">预约工作台</div>
-              <div className={`mt-1 text-sm ${mutedTextClassName}`}>{siteName || siteId}</div>
-              <div className={`mt-2 text-xs ${mutedTextClassName}`}>
-                {saving ? "正在自动保存..." : autoSaveStatus === "saved" ? "已自动保存" : "修改后自动保存"}
-              </div>
-            </div>
+        <div className={`border-b px-4 pb-3 pt-[calc(env(safe-area-inset-top)+0.55rem)] sm:px-6 sm:py-3 ${darkMode ? "border-slate-800 bg-slate-950" : "border-slate-200 bg-white"}`}>
+          <div className="flex items-center gap-2.5 sm:gap-3">
+            <button type="button" className={backButtonClassName} onClick={onClose} aria-label="返回预约管理">
+              <BackIcon />
+              <span className="hidden sm:inline">返回预约管理</span>
+            </button>
+            <div className="min-w-0 text-lg font-semibold tracking-tight sm:text-xl">预约工作台</div>
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5">
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-[calc(env(safe-area-inset-bottom)+7.5rem)] pt-4 sm:px-6 sm:py-5">
           <div className="mx-auto flex w-full max-w-7xl flex-col gap-4">
-            <div className="grid gap-3 md:grid-cols-4">
-              <div className={`rounded-3xl border p-4 ${panelClassName}`}>
-                <div className={`text-xs ${mutedTextClassName}`}>待处理预约</div>
-                <div className="mt-2 text-2xl font-semibold">{openBookingCount}</div>
+            <div className="space-y-2 md:hidden">
+              {primaryMetrics.map((item) => (
+                <div key={item.label} className={`flex items-center justify-between rounded-2xl border px-4 py-3 ${getMetricRowClass(item.tone, darkMode)}`}>
+                  <span className="text-sm font-medium">{item.shortLabel}</span>
+                  <span className={`inline-flex min-w-[2.5rem] items-center justify-center rounded-full px-2.5 py-1 text-sm font-semibold ${getMetricValueClass(item.tone, darkMode)}`}>
+                    {item.value}
+                  </span>
+                </div>
+              ))}
+
+              <div className={`rounded-2xl border p-3 ${panelClassName}`}>
+                <div className="space-y-2">
+                  {autoMetrics.map((item) => (
+                    <div key={item.label} className={`flex items-center justify-between rounded-2xl border px-3 py-2.5 ${getMetricRowClass(item.tone, darkMode)}`}>
+                      <span className="text-sm font-medium">{item.label}</span>
+                      <span className={`inline-flex min-w-[2.5rem] items-center justify-center rounded-full px-2.5 py-1 text-sm font-semibold ${getMetricValueClass(item.tone, darkMode)}`}>
+                        {item.value}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               </div>
+            </div>
+
+            <div className="hidden gap-3 md:grid md:grid-cols-4">
+              {primaryMetrics.map((item) => (
+                <div key={item.label} className={`rounded-3xl border p-4 ${panelClassName}`}>
+                  <div className={`text-xs ${mutedTextClassName}`}>{item.label}</div>
+                  <div className="mt-2 text-2xl font-semibold">{item.value}</div>
+                </div>
+              ))}
+
               <div className={`rounded-3xl border p-4 ${panelClassName}`}>
-                <div className={`text-xs ${mutedTextClassName}`}>今日预约</div>
-                <div className="mt-2 text-2xl font-semibold">{todayBookingCount}</div>
-              </div>
-              <div className={`rounded-3xl border p-4 ${panelClassName}`}>
-                <div className={`text-xs ${mutedTextClassName}`}>7日内预约</div>
-                <div className="mt-2 text-2xl font-semibold">{upcomingWeekCount}</div>
-              </div>
-              <div className={`rounded-3xl border p-4 ${panelClassName}`}>
-                <div className={`text-xs ${mutedTextClassName}`}>待自动处理</div>
-                <div className="mt-2 space-y-1 text-sm">
-                  <div>{`客户提醒 ${reminderSummary.dueCustomerReminderCount}`}</div>
-                  <div>{`商家提醒 ${reminderSummary.dueMerchantReminderCount}`}</div>
-                  <div>{`爽约判定 ${reminderSummary.pendingNoShowCount}`}</div>
+                <div className="space-y-2 pt-1">
+                  {autoMetrics.map((item) => (
+                    <div key={item.label} className="flex items-center justify-between gap-3 text-sm">
+                      <span className="truncate">{item.label}</span>
+                      <span className={`inline-flex min-w-[2.4rem] items-center justify-center rounded-full px-2.5 py-1 text-sm font-semibold ${getMetricValueClass(item.tone, darkMode)}`}>
+                        {item.value}
+                      </span>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
@@ -490,7 +583,7 @@ export default function BookingWorkbenchDialog({
                     <div className="text-base font-semibold">提前预约 / 截止规则</div>
                     <div className={`mt-1 text-sm ${mutedTextClassName}`}>至少提前多久才能预约，以及当天最晚接受预约到几点。</div>
                     <div className="mt-4 grid gap-3 md:grid-cols-2">
-                      <label className="space-y-1">
+                      <label className="min-w-0 space-y-1">
                         <span className="text-sm">最少提前分钟</span>
                         <input
                           type="number"
@@ -501,13 +594,14 @@ export default function BookingWorkbenchDialog({
                           }
                         />
                       </label>
-                      <label className="space-y-1">
+                      <label className="min-w-0 space-y-1 overflow-hidden">
                         <span className="text-sm">当天截止时间</span>
                         <input
                           type="time"
-                          className={inputClassName}
+                          className={`${inputClassName} max-w-full`}
                           value={draft.dailyCutoffTime}
                           onChange={(event) => setDraft((current) => ({ ...current, dailyCutoffTime: event.target.value }))}
+                          style={{ minWidth: 0, maxWidth: "100%", colorScheme: darkMode ? "dark" : "light" }}
                         />
                       </label>
                     </div>
