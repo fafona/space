@@ -5,6 +5,7 @@ import {
   acknowledgeMerchantBookingBySite,
   createMerchantBooking,
   listMerchantBookings,
+  sendMerchantBookingManualEmailBySite,
   updateMerchantBooking,
   updateMerchantBookingBySite,
 } from "@/lib/merchantBookings.server";
@@ -116,6 +117,7 @@ export async function PATCH(request: Request) {
           siteId?: string;
           status?: MerchantBookingStatus;
           markTouched?: boolean;
+          sendCustomerEmail?: boolean;
         })
       | null;
 
@@ -136,6 +138,13 @@ export async function PATCH(request: Request) {
       const session = await resolveBookingAdminSession(request, maybeSiteId);
       if (!session) {
         return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+      }
+      if (body?.sendCustomerEmail === true) {
+        const booking = await sendMerchantBookingManualEmailBySite({
+          siteId: maybeSiteId,
+          bookingId: String(body?.bookingId ?? "").trim(),
+        });
+        return NextResponse.json({ ok: true, booking });
       }
       if (body?.markTouched === true) {
         const booking = await acknowledgeMerchantBookingBySite({

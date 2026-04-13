@@ -29,7 +29,7 @@ export type MerchantBookingAutomationState = {
   noShowMarkedAt?: string;
 };
 
-export type MerchantBookingCustomerEmailLogKind = "status" | "reminder";
+export type MerchantBookingCustomerEmailLogKind = "status" | "reminder" | "manual";
 
 export type MerchantBookingCustomerEmailLogEntry = {
   id: string;

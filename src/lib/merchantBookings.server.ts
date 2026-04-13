@@ -217,6 +217,18 @@ type SiteCustomerEmailRuntime = {
   locale: string;
 };
 
+function resolveCustomerEmailSendFailureMessage(
+  result: Awaited<ReturnType<typeof sendMerchantBookingStatusEmail>>,
+) {
+  if (!result.attempted) {
+    return result.reason === "missing_email" ? "该预约未填写客户邮箱" : "客户邮件发送功能未配置";
+  }
+  if (result.status === "sent") {
+    return "客户邮件发送失败";
+  }
+  return trimText(result.error) || "客户邮件发送失败";
+}
+
 async function loadSiteCustomerEmailRuntime(
   siteId: string,
   settings: Awaited<ReturnType<typeof loadMerchantBookingWorkbenchSettings>>,
@@ -823,6 +835,66 @@ export async function updateMerchantBookingBySite(input: {
       settings: workbenchSettings,
       runtime: emailRuntime,
     });
+    store.records[targetIndex] = next;
+    await writeMerchantBookingStore(store);
+    return withoutMerchantBookingToken(next, { includeCustomerEmailLogs: true });
+  });
+}
+
+export async function sendMerchantBookingManualEmailBySite(input: {
+  siteId: string;
+  bookingId: string;
+}): Promise<MerchantBookingRecord> {
+  const siteId = trimText(input.siteId);
+  const bookingId = trimText(input.bookingId);
+  if (!siteId || !bookingId) {
+    throw new Error("预约记录参数缺失");
+  }
+
+  return withBookingStoreLock(async () => {
+    const store = await readMerchantBookingStore();
+    const targetIndex = store.records.findIndex((item) => item.id === bookingId && item.siteId === siteId);
+    if (targetIndex < 0) {
+      throw new Error("未找到对应预约记录");
+    }
+    const current = store.records[targetIndex];
+    if (!current) {
+      throw new Error("未找到对应预约记录");
+    }
+    const workbenchSettings = await loadMerchantBookingWorkbenchSettings(siteId);
+    const emailRuntime = await loadSiteCustomerEmailRuntime(siteId, workbenchSettings, current.siteName);
+    const touchedAt = new Date().toISOString();
+    let next: MerchantBookingStoredRecord = stampMerchantBookingTouch(current, touchedAt);
+    const emailResult = await sendMerchantBookingStatusEmail(next, next.status, {
+      locale: emailRuntime.locale,
+      senderName: emailRuntime.senderName,
+      merchantDisplayName: emailRuntime.merchantDisplayName,
+      extraMessage: workbenchSettings.customerAutoEmailMessageByStatus[next.status],
+    }).catch(() => ({
+      attempted: true as const,
+      attemptedAt: touchedAt,
+      status: "failed" as const,
+      error: "booking_manual_email_send_failed",
+      subject: "",
+      locale: emailRuntime.locale,
+      senderName: emailRuntime.senderName,
+    }));
+    if (!(emailResult.attempted && emailResult.status === "sent")) {
+      store.records[targetIndex] = next;
+      await writeMerchantBookingStore(store);
+      throw new Error(resolveCustomerEmailSendFailureMessage(emailResult));
+    }
+    next = appendCustomerEmailLog(
+      next,
+      createCustomerEmailLogEntry({
+        kind: "manual",
+        sentAt: emailResult.attemptedAt,
+        locale: emailResult.locale,
+        subject: emailResult.subject,
+        senderName: emailResult.senderName,
+        status: next.status,
+      }),
+    );
     store.records[targetIndex] = next;
     await writeMerchantBookingStore(store);
     return withoutMerchantBookingToken(next, { includeCustomerEmailLogs: true });

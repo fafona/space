@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import BookingWorkbenchDialog from "@/components/admin/BookingWorkbenchDialog";
 import BookingStatusFilterDropdown from "@/components/admin/BookingStatusFilterDropdown";
@@ -36,13 +36,8 @@ import {
   getMerchantBookingStatusText,
   type MerchantBookingFilter,
 } from "@/lib/merchantBookingLocale";
-import { buildMerchantBookingMailtoHref } from "@/lib/merchantBookingMailto";
 import { resolveMerchantBookingRuleEntry, type MerchantBookingRulesSnapshot } from "@/lib/merchantBookingRules";
-import { normalizeMerchantBookingWorkbenchSettings } from "@/lib/merchantBookingWorkbench";
-import {
-  buildMerchantBookingReminderOffsetLabel,
-  resolveMerchantBookingCustomerEmailLocale,
-} from "@/lib/merchantBookingCustomerEmail";
+import { buildMerchantBookingReminderOffsetLabel } from "@/lib/merchantBookingCustomerEmail";
 
 type MerchantBookingManagerDialogProps = {
   open: boolean;
@@ -298,12 +293,9 @@ export default function MerchantBookingManagerDialog({
   const { locale } = useI18n();
   const isInline = mode === "inline";
   const resolvedShowCloseButton = showCloseButton ?? !isInline;
-  const defaultCustomerEmailLocale = useMemo(
-    () => resolveMerchantBookingCustomerEmailLocale("", siteCountryCode),
-    [siteCountryCode],
-  );
   const loadFailedText = locale.startsWith("es") ? "No se pudieron cargar las citas." : "预约记录读取失败";
   const updateFailedText = locale.startsWith("es") ? "No se pudo actualizar la cita." : "预约更新失败";
+  const sendEmailFailedText = locale.startsWith("es") ? "No se pudo enviar el correo al cliente." : "客户邮件发送失败";
   const [records, setRecords] = useState<MerchantBookingRecord[]>([]);
   const [drafts, setDrafts] = useState<Record<string, MerchantBookingAdminDraft>>({});
   const [loading, setLoading] = useState(false);
@@ -314,8 +306,6 @@ export default function MerchantBookingManagerDialog({
   const [busyKey, setBusyKey] = useState("");
   const [detailBookingId, setDetailBookingId] = useState<string | null>(null);
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
-  const [customerEmailLocale, setCustomerEmailLocale] = useState(defaultCustomerEmailLocale);
-  const [customerEmailLocaleLoaded, setCustomerEmailLocaleLoaded] = useState(false);
   const workbenchButtonClassName = workbenchOpen
     ? "inline-flex items-center justify-center rounded-[18px] rounded-tl-[8px] rounded-br-[24px] border border-[#c7b48f] bg-[linear-gradient(135deg,#1f2b46_0%,#233657_100%)] px-4 py-2 text-sm font-semibold tracking-[0.02em] text-[#f7e8c2] shadow-[0_16px_30px_rgba(15,23,42,0.22)] ring-1 ring-[#efe2bf]/70 transition"
     : "inline-flex items-center justify-center rounded-[18px] rounded-tl-[8px] rounded-br-[24px] border border-[#d8c7a5] bg-[linear-gradient(135deg,#fffdfa_0%,#f6efe1_62%,#ecdfc2_100%)] px-4 py-2 text-sm font-semibold tracking-[0.02em] text-slate-800 shadow-[0_12px_24px_rgba(148,119,66,0.14)] transition hover:-translate-y-[1px] hover:shadow-[0_16px_28px_rgba(148,119,66,0.18)]";
@@ -325,43 +315,6 @@ export default function MerchantBookingManagerDialog({
       setWorkbenchOpen(false);
     }
   }, [open]);
-
-  useEffect(() => {
-    setCustomerEmailLocale(defaultCustomerEmailLocale);
-    setCustomerEmailLocaleLoaded(false);
-  }, [defaultCustomerEmailLocale]);
-
-  const loadWorkbenchCustomerEmailLocale = useCallback(async () => {
-    if (!siteId) return defaultCustomerEmailLocale;
-    if (customerEmailLocaleLoaded) return customerEmailLocale;
-    try {
-      const response = await fetch(`/api/bookings/workbench?siteId=${encodeURIComponent(siteId)}`, {
-        cache: "no-store",
-      });
-      const json = (await response.json().catch(() => null)) as
-        | { ok?: boolean; settings?: unknown }
-        | null;
-      if (!response.ok || !json?.ok) {
-        throw new Error("load_workbench_locale_failed");
-      }
-      const normalized = normalizeMerchantBookingWorkbenchSettings(json.settings);
-      const resolvedLocale = resolveMerchantBookingCustomerEmailLocale(
-        normalized.customerEmailLocale,
-        siteCountryCode,
-      );
-      setCustomerEmailLocale(resolvedLocale);
-      setCustomerEmailLocaleLoaded(true);
-      return resolvedLocale;
-    } catch {
-      return customerEmailLocale || defaultCustomerEmailLocale;
-    }
-  }, [
-    customerEmailLocale,
-    customerEmailLocaleLoaded,
-    defaultCustomerEmailLocale,
-    siteCountryCode,
-    siteId,
-  ]);
 
   useEffect(() => {
     if (!open || !siteId) return;
@@ -396,23 +349,6 @@ export default function MerchantBookingManagerDialog({
       cancelled = true;
     };
   }, [loadFailedText, open, siteId]);
-
-  useEffect(() => {
-    if (!open || !siteId) return;
-    let cancelled = false;
-    const loadWorkbenchLocale = async () => {
-      try {
-        const resolvedLocale = await loadWorkbenchCustomerEmailLocale();
-        if (!cancelled) setCustomerEmailLocale(resolvedLocale);
-      } catch {
-        // Keep the locale resolved from the merchant country when workbench settings fail to load.
-      }
-    };
-    void loadWorkbenchLocale();
-    return () => {
-      cancelled = true;
-    };
-  }, [loadWorkbenchCustomerEmailLocale, open, siteId]);
 
   useEffect(() => {
     onRecordsChange?.(records);
@@ -498,6 +434,41 @@ export default function MerchantBookingManagerDialog({
       return nextBooking;
     } catch (updateError) {
       setError(updateError instanceof Error ? updateError.message : updateFailedText);
+      return null;
+    } finally {
+      setBusyKey("");
+    }
+  };
+
+  const sendCustomerEmail = async (bookingId: string) => {
+    setBusyKey(`email:${bookingId}`);
+    setError("");
+    try {
+      const response = await fetch("/api/bookings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          siteId,
+          bookingId,
+          sendCustomerEmail: true,
+          allowBookingEmailPrefill,
+        }),
+      });
+      const json = (await response.json().catch(() => null)) as
+        | { ok?: boolean; booking?: MerchantBookingRecord; message?: string }
+        | null;
+      if (!response.ok || !json?.ok || !json.booking) {
+        throw new Error(json?.message || sendEmailFailedText);
+      }
+      const nextBooking = json.booking;
+      setRecords((current) => current.map((item) => (item.id === nextBooking.id ? nextBooking : item)));
+      setDrafts((current) => ({
+        ...current,
+        [nextBooking.id]: createDraft(nextBooking),
+      }));
+      return nextBooking;
+    } catch (sendError) {
+      setError(sendError instanceof Error ? sendError.message : sendEmailFailedText);
       return null;
     } finally {
       setBusyKey("");
@@ -1028,28 +999,19 @@ export default function MerchantBookingManagerDialog({
                         <div className="flex min-w-[280px] items-center gap-2 text-[13px] leading-5 text-slate-700">
                           <span className="min-w-0 flex-1 truncate">{`${getMerchantBookingFieldText("email", locale)}: ${record.email || "-"}`}</span>
                           {record.email ? (
-                            <a
-                              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
-                              href={buildMerchantBookingMailtoHref(record, customerEmailLocale, allowBookingEmailPrefill)}
-                              onClick={async (event) => {
+                            <button
+                              type="button"
+                              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                              onClick={() => {
                                 void markBookingTouched(record.id);
-                                if (customerEmailLocaleLoaded) return;
-                                event.preventDefault();
-                                const resolvedLocale = await loadWorkbenchCustomerEmailLocale();
-                                const href = buildMerchantBookingMailtoHref(
-                                  record,
-                                  resolvedLocale,
-                                  allowBookingEmailPrefill,
-                                );
-                                if (typeof window !== "undefined" && href) {
-                                  window.location.href = href;
-                                }
+                                void sendCustomerEmail(record.id);
                               }}
+                              disabled={busyKey === `email:${record.id}`}
                               title={getMerchantBookingFieldText("replyEmail", locale)}
                               aria-label={getMerchantBookingFieldText("replyEmail", locale)}
                             >
-                              <MailIcon />
-                            </a>
+                              {busyKey === `email:${record.id}` ? "..." : <MailIcon />}
+                            </button>
                           ) : null}
                         </div>
 
@@ -1085,8 +1047,13 @@ export default function MerchantBookingManagerDialog({
                       <ReadOnlyBookingField fieldKey="title" value={record.title || "-"} locale={locale} />
                       <div className="flex items-end justify-end gap-2">
                         {record.customerEmailLogs?.length ? (
-                          <span className="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-[11px] font-medium text-sky-700">
-                            {getCustomerEmailBadgeText(record.customerEmailLogs.length, locale)}
+                          <span
+                            className="inline-flex items-center gap-1.5 rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-[11px] font-medium text-sky-700"
+                            title={getCustomerEmailBadgeText(record.customerEmailLogs.length, locale)}
+                            aria-label={getCustomerEmailBadgeText(record.customerEmailLogs.length, locale)}
+                          >
+                            <MailIcon />
+                            <span>{record.customerEmailLogs.length}</span>
                           </span>
                         ) : null}
                         <button
@@ -1121,12 +1088,6 @@ export default function MerchantBookingManagerDialog({
         siteCountryCode={siteCountryCode}
         records={records}
         allowCustomerAutoEmail={allowCustomerAutoEmail}
-        onSettingsSaved={(settings) => {
-          setCustomerEmailLocale(
-            resolveMerchantBookingCustomerEmailLocale(settings.customerEmailLocale, siteCountryCode),
-          );
-          setCustomerEmailLocaleLoaded(true);
-        }}
         onClose={() => setWorkbenchOpen(false)}
       />
       {detailDialog}
