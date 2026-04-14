@@ -193,6 +193,34 @@ function NoteIcon() {
   );
 }
 
+function ActionCloseIcon() {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" className="h-4 w-4">
+      <path
+        d="M5 5l6 6M11 5l-6 6"
+        stroke="currentColor"
+        strokeWidth="1.9"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function ActionCheckIcon() {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" className="h-4 w-4">
+      <path
+        d="M3.5 8.25 6.5 11l6-6.5"
+        stroke="currentColor"
+        strokeWidth="1.9"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 function getCustomerEmailBadgeText(count: number, locale: string) {
   return locale.startsWith("es") ? `Correos ${count}` : `已发邮件 ${count}`;
 }
@@ -683,7 +711,7 @@ export default function MerchantBookingMobilePanel({
         {(record.status === "active" || record.status === "confirmed") ? (
           <button
             type="button"
-            className="inline-flex h-10 min-w-[4.25rem] items-center justify-center rounded-[15px] border border-rose-200 bg-[linear-gradient(180deg,#ffffff_0%,#fff1f2_100%)] px-3.5 text-[22px] font-semibold leading-none text-rose-700 shadow-[0_10px_24px_rgba(244,63,94,0.12)] transition hover:-translate-y-[1px] hover:border-rose-300 hover:shadow-[0_12px_28px_rgba(244,63,94,0.16)] disabled:opacity-50"
+            className="inline-flex h-11 min-w-[4.5rem] items-center justify-center rounded-[16px] border border-rose-200 bg-[linear-gradient(180deg,#ffffff_0%,#fff1f2_100%)] px-4 text-rose-700 shadow-[0_10px_24px_rgba(244,63,94,0.12)] transition hover:-translate-y-[1px] hover:border-rose-300 hover:shadow-[0_12px_28px_rgba(244,63,94,0.16)] disabled:opacity-50"
             onClick={() => void patchBooking(record.id, { status: "no_show" }, "noshow")}
             disabled={busyKey === `noshow:${record.id}`}
             title={getMerchantBookingActionText("noshow", locale)}
@@ -692,14 +720,19 @@ export default function MerchantBookingMobilePanel({
             {busyKey === `noshow:${record.id}` ? (
               <span className="text-xs font-semibold tracking-[0.18em]">...</span>
             ) : (
-              <span className="-translate-y-[0.5px]">×</span>
+              <span className="inline-flex items-center gap-2.5">
+                <span className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-rose-100 bg-white text-rose-600 shadow-[0_4px_10px_rgba(244,63,94,0.14)]">
+                  <ActionCloseIcon />
+                </span>
+                <span className="h-1.5 w-5 rounded-full bg-rose-200" />
+              </span>
             )}
           </button>
         ) : null}
         {record.status !== "completed" ? (
           <button
             type="button"
-            className="inline-flex h-10 min-w-[4.25rem] items-center justify-center rounded-[15px] border border-emerald-200 bg-[linear-gradient(180deg,#ffffff_0%,#ecfdf5_100%)] px-3.5 text-[24px] font-semibold leading-none text-emerald-700 shadow-[0_10px_24px_rgba(16,185,129,0.13)] transition hover:-translate-y-[1px] hover:border-emerald-300 hover:shadow-[0_12px_28px_rgba(16,185,129,0.17)] disabled:opacity-50"
+            className="inline-flex h-11 min-w-[4.5rem] items-center justify-center rounded-[16px] border border-emerald-200 bg-[linear-gradient(180deg,#ffffff_0%,#ecfdf5_100%)] px-4 text-emerald-700 shadow-[0_10px_24px_rgba(16,185,129,0.13)] transition hover:-translate-y-[1px] hover:border-emerald-300 hover:shadow-[0_12px_28px_rgba(16,185,129,0.17)] disabled:opacity-50"
             onClick={() => void patchBooking(record.id, { status: "completed" }, "complete")}
             disabled={busyKey === `complete:${record.id}`}
             title={getMerchantBookingActionText("complete", locale)}
@@ -708,7 +741,12 @@ export default function MerchantBookingMobilePanel({
             {busyKey === `complete:${record.id}` ? (
               <span className="text-xs font-semibold tracking-[0.18em]">...</span>
             ) : (
-              <span className="-translate-y-[1px]">√</span>
+              <span className="inline-flex items-center gap-2.5">
+                <span className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-emerald-100 bg-white text-emerald-600 shadow-[0_4px_10px_rgba(16,185,129,0.14)]">
+                  <ActionCheckIcon />
+                </span>
+                <span className="h-1.5 w-5 rounded-full bg-emerald-200" />
+              </span>
             )}
           </button>
         ) : null}
