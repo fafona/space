@@ -9,8 +9,17 @@ import {
   loadMerchantBookingWorkbenchSettings,
   saveMerchantBookingWorkbenchSettings,
 } from "@/lib/merchantBookingWorkbenchStore";
+import { getMerchantBookingAutomationRuntimeSnapshot } from "@/lib/merchantBookingAutomationRuntime";
+import {
+  listMerchantPushSubscriptionsForMerchant,
+} from "@/lib/merchantPushSubscriptions";
+import {
+  loadStoredMerchantPushSubscriptions,
+  type MerchantPushSubscriptionStoreClient,
+} from "@/lib/merchantPushSubscriptionStore";
 import { loadCurrentMerchantSnapshotSiteBySiteId } from "@/lib/publishedMerchantService";
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
+import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -71,6 +80,25 @@ function applyAutoEmailPermissionGuard(
   } satisfies MerchantBookingWorkbenchSettings;
 }
 
+async function buildWorkbenchDashboard(siteId: string) {
+  let pushDeviceCount = 0;
+  const supabase = createServerSupabaseServiceClient();
+  if (supabase) {
+    const payload = await loadStoredMerchantPushSubscriptions(
+      supabase as unknown as MerchantPushSubscriptionStoreClient,
+    ).catch(() => null);
+    if (payload) {
+      pushDeviceCount = listMerchantPushSubscriptionsForMerchant(payload, siteId).filter(
+        (item) => item.permission === "granted",
+      ).length;
+    }
+  }
+  return {
+    pushDeviceCount,
+    automation: getMerchantBookingAutomationRuntimeSnapshot(),
+  };
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const siteId = trimText(searchParams.get("siteId"));
@@ -82,7 +110,8 @@ export async function GET(request: Request) {
     return noStoreJson({ error: "unauthorized" }, { status: 401 });
   }
   const settings = await loadMerchantBookingWorkbenchSettings(siteId);
-  return noStoreJson({ ok: true, settings });
+  const dashboard = await buildWorkbenchDashboard(siteId);
+  return noStoreJson({ ok: true, settings, dashboard });
 }
 
 export async function PATCH(request: Request) {

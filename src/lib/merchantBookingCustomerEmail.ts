@@ -498,3 +498,46 @@ export function getMerchantBookingCustomerEmailStatusLabel(locale: string | null
 export function getMerchantBookingCustomerEmailReminderLabel(locale: string | null | undefined) {
   return resolveCopy(locale).reminderLabel;
 }
+
+function resolveEmailLanguageKey(locale: string | null | undefined) {
+  return resolveMerchantBookingCustomerEmailLocale(locale).toLowerCase().split("-")[0] ?? "en";
+}
+
+export function getMerchantBookingCustomerEmailActionLead(locale: string | null | undefined) {
+  const key = resolveEmailLanguageKey(locale);
+  if (key === "zh") return "如需改期、取消或保存到日历，可使用以下链接：";
+  if (key === "es") return "Si necesita reprogramar, cancelar o guardarla en su calendario, use los siguientes enlaces:";
+  if (key === "fr") return "Si vous devez modifier, annuler ou ajouter la réservation à votre calendrier, utilisez les liens ci-dessous :";
+  if (key === "de") return "Wenn Sie die Buchung verschieben, stornieren oder in Ihren Kalender übernehmen möchten, nutzen Sie bitte die folgenden Links:";
+  if (key === "it") return "Se deve riprogrammare, annullare o aggiungere la prenotazione al calendario, usi i link qui sotto:";
+  if (key === "pt") return "Se precisar remarcar, cancelar ou guardar a reserva no calendário, use os links abaixo:";
+  if (key === "ja") return "予約の変更・キャンセルやカレンダー追加が必要な場合は、以下のリンクをご利用ください。";
+  if (key === "ko") return "예약 변경, 취소 또는 캘린더 추가가 필요하면 아래 링크를 이용해 주세요.";
+  return "Use the links below if you need to reschedule, cancel, or save this booking to your calendar:";
+}
+
+export function getMerchantBookingCustomerEmailManageActionLabel(locale: string | null | undefined) {
+  const key = resolveEmailLanguageKey(locale);
+  if (key === "zh") return "管理预约";
+  if (key === "es") return "Gestionar reserva";
+  if (key === "fr") return "Gérer la réservation";
+  if (key === "de") return "Buchung verwalten";
+  if (key === "it") return "Gestire prenotazione";
+  if (key === "pt") return "Gerir reserva";
+  if (key === "ja") return "予約を管理";
+  if (key === "ko") return "예약 관리";
+  return "Manage booking";
+}
+
+export function getMerchantBookingCustomerEmailCalendarActionLabel(locale: string | null | undefined) {
+  const key = resolveEmailLanguageKey(locale);
+  if (key === "zh") return "加入日历";
+  if (key === "es") return "Añadir al calendario";
+  if (key === "fr") return "Ajouter au calendrier";
+  if (key === "de") return "Zum Kalender hinzufügen";
+  if (key === "it") return "Aggiungere al calendario";
+  if (key === "pt") return "Adicionar ao calendário";
+  if (key === "ja") return "カレンダーに追加";
+  if (key === "ko") return "캘린더에 추가";
+  return "Add to calendar";
+}

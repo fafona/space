@@ -1,9 +1,12 @@
 import {
   buildMerchantBookingReminderOffsetLabel,
   getMerchantBookingCustomerEmailAdditionalMessageLabel,
+  getMerchantBookingCustomerEmailActionLead,
+  getMerchantBookingCustomerEmailCalendarActionLabel,
   getMerchantBookingCustomerEmailContactMerchantLine,
   getMerchantBookingCustomerEmailCustomerFallback,
   getMerchantBookingCustomerEmailGreeting,
+  getMerchantBookingCustomerEmailManageActionLabel,
   getMerchantBookingCustomerEmailReminderLabel,
   getMerchantBookingCustomerEmailDefaultStatusMessage,
   getMerchantBookingCustomerReminderLead,
@@ -64,6 +67,10 @@ type MerchantBookingCustomerEmailOptions = {
   senderName?: string | null;
   merchantDisplayName?: string | null;
   extraMessage?: string | null;
+  actionLinks?: {
+    manageUrl?: string | null;
+    calendarUrl?: string | null;
+  } | null;
 };
 
 function normalizeEnvValue(value: string | undefined) {
@@ -237,6 +244,47 @@ function buildReminderDetailsHtml(booking: MerchantBookingRecord, minutesBefore:
     .join("");
 }
 
+function buildActionLinkLines(
+  locale: string,
+  actionLinks?: MerchantBookingCustomerEmailOptions["actionLinks"],
+) {
+  const manageUrl = trimText(actionLinks?.manageUrl);
+  const calendarUrl = trimText(actionLinks?.calendarUrl);
+  if (!manageUrl && !calendarUrl) return [];
+  const lines = [getMerchantBookingCustomerEmailActionLead(locale), ""];
+  if (manageUrl) {
+    lines.push(`${getMerchantBookingCustomerEmailManageActionLabel(locale)}: ${manageUrl}`);
+  }
+  if (calendarUrl) {
+    lines.push(`${getMerchantBookingCustomerEmailCalendarActionLabel(locale)}: ${calendarUrl}`);
+  }
+  return lines;
+}
+
+function buildActionLinkHtml(
+  locale: string,
+  actionLinks?: MerchantBookingCustomerEmailOptions["actionLinks"],
+) {
+  const manageUrl = trimText(actionLinks?.manageUrl);
+  const calendarUrl = trimText(actionLinks?.calendarUrl);
+  if (!manageUrl && !calendarUrl) return "";
+  const links: string[] = [];
+  if (manageUrl) {
+    links.push(
+      `<a href="${escapeHtml(manageUrl)}" style="display:inline-block;margin:0 10px 10px 0;padding:10px 16px;border-radius:999px;background:#0f172a;color:#ffffff;text-decoration:none;font-weight:600;">${escapeHtml(getMerchantBookingCustomerEmailManageActionLabel(locale))}</a>`,
+    );
+  }
+  if (calendarUrl) {
+    links.push(
+      `<a href="${escapeHtml(calendarUrl)}" style="display:inline-block;margin:0 10px 10px 0;padding:10px 16px;border-radius:999px;background:#e2e8f0;color:#0f172a;text-decoration:none;font-weight:600;">${escapeHtml(getMerchantBookingCustomerEmailCalendarActionLabel(locale))}</a>`,
+    );
+  }
+  return [
+    `<p>${escapeHtml(getMerchantBookingCustomerEmailActionLead(locale))}</p>`,
+    `<div>${links.join("")}</div>`,
+  ].join("");
+}
+
 async function sendPreparedMerchantBookingEmail(input: {
   booking: MerchantBookingRecord;
   locale?: string | null;
@@ -332,6 +380,8 @@ export async function sendMerchantBookingStatusEmail(
     "",
     ...buildStatusDetailsLines(booking, status, locale, extraMessage),
     "",
+    ...buildActionLinkLines(locale, options.actionLinks),
+    "",
     getMerchantBookingCustomerEmailContactMerchantLine(locale),
   ].join("\n");
   const html = [
@@ -339,6 +389,7 @@ export async function sendMerchantBookingStatusEmail(
     `<p>${escapeHtml(getMerchantBookingCustomerEmailGreeting(locale))} ${escapeHtml(customerDisplayName)},</p>`,
     `<p>${escapeHtml(getMerchantBookingCustomerEmailStatusLead(status, locale))}</p>`,
     buildStatusDetailsHtml(booking, status, locale, extraMessage),
+    buildActionLinkHtml(locale, options.actionLinks),
     `<p>${escapeHtml(getMerchantBookingCustomerEmailContactMerchantLine(locale))}</p>`,
     "</div>",
   ].join("");
@@ -375,6 +426,8 @@ export async function sendMerchantBookingReminderEmail(
     "",
     ...buildReminderDetailsLines(booking, minutesBefore, locale),
     "",
+    ...buildActionLinkLines(locale, options.actionLinks),
+    "",
     getMerchantBookingCustomerEmailContactMerchantLine(locale),
   ].join("\n");
   const html = [
@@ -382,6 +435,7 @@ export async function sendMerchantBookingReminderEmail(
     `<p>${escapeHtml(getMerchantBookingCustomerEmailGreeting(locale))} ${escapeHtml(customerDisplayName)},</p>`,
     `<p>${escapeHtml(getMerchantBookingCustomerReminderLead(minutesBefore, locale))}</p>`,
     buildReminderDetailsHtml(booking, minutesBefore, locale),
+    buildActionLinkHtml(locale, options.actionLinks),
     `<p>${escapeHtml(getMerchantBookingCustomerEmailContactMerchantLine(locale))}</p>`,
     "</div>",
   ].join("");

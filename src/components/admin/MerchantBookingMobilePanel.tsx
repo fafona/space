@@ -13,6 +13,7 @@ import {
   type MerchantBookingEditableInput,
   type MerchantBookingRecord,
   type MerchantBookingStatus,
+  type MerchantBookingTimelineEntry,
   isMerchantBookingPendingMerchantTouch,
 } from "@/lib/merchantBookings";
 import {
@@ -36,6 +37,7 @@ import {
   type MerchantBookingFilter,
 } from "@/lib/merchantBookingLocale";
 import { buildMerchantBookingMailtoHref } from "@/lib/merchantBookingMailto";
+import { buildMerchantBookingsCsv } from "@/lib/merchantBookingCsv";
 import {
   buildMerchantBookingReminderOffsetLabel,
   resolveMerchantBookingCustomerEmailLocale,
@@ -252,6 +254,112 @@ function getCustomerEmailSenderMeta(entry: MerchantBookingCustomerEmailLogEntry,
   return parts.join(" · ");
 }
 
+function getTimelineFieldLabel(field: string, locale: string) {
+  if (
+    field === "store" ||
+    field === "item" ||
+    field === "appointmentAt" ||
+    field === "title" ||
+    field === "customerName" ||
+    field === "email" ||
+    field === "phone" ||
+    field === "note"
+  ) {
+    return getMerchantBookingFieldText(field, locale);
+  }
+  return field;
+}
+
+function getTimelineEntryTitle(entry: MerchantBookingTimelineEntry, locale: string) {
+  const actorLabel =
+    entry.actor === "merchant"
+      ? locale.startsWith("es")
+        ? "El comercio"
+        : "商家"
+      : entry.actor === "system"
+        ? locale.startsWith("es")
+          ? "El sistema"
+          : "系统"
+        : locale.startsWith("es")
+          ? "El cliente"
+          : "客户";
+
+  if (entry.kind === "created") {
+    return locale.startsWith("es") ? "El cliente creó la reserva" : "客户创建了预约";
+  }
+  if (entry.kind === "acknowledged") {
+    return locale.startsWith("es") ? "El comercio revisó la reserva" : "商家已查看预约";
+  }
+  if (entry.kind === "updated") {
+    return locale.startsWith("es") ? `${actorLabel} actualizó la reserva` : `${actorLabel}修改了预约`;
+  }
+  if (entry.kind === "status_changed") {
+    const nextLabel = entry.toStatus ? getMerchantBookingStatusText(entry.toStatus, locale) : "-";
+    return locale.startsWith("es") ? `Estado → ${nextLabel}` : `状态改为 ${nextLabel}`;
+  }
+  if (entry.kind === "customer_email") {
+    const deliveryLabel =
+      entry.delivery === "failed"
+        ? locale.startsWith("es")
+          ? "falló"
+          : "失败"
+        : locale.startsWith("es")
+          ? "enviado"
+          : "已发送";
+    if (entry.emailKind === "reminder") {
+      return locale.startsWith("es") ? `Recordatorio por correo ${deliveryLabel}` : `客户提醒邮件${deliveryLabel}`;
+    }
+    if (entry.emailKind === "manual") {
+      return locale.startsWith("es") ? `Correo manual ${deliveryLabel}` : `手动客户邮件${deliveryLabel}`;
+    }
+    return locale.startsWith("es") ? `Correo de estado ${deliveryLabel}` : `状态邮件${deliveryLabel}`;
+  }
+  if (entry.kind === "merchant_reminder") {
+    return entry.delivery === "failed"
+      ? locale.startsWith("es")
+        ? "Push al comercio falló"
+        : "商家提醒推送失败"
+      : locale.startsWith("es")
+        ? "Push al comercio enviado"
+        : "商家提醒已推送";
+  }
+  return locale.startsWith("es") ? "Actividad de reserva" : "预约动态";
+}
+
+function getTimelineEntryMeta(entry: MerchantBookingTimelineEntry, locale: string) {
+  const parts: string[] = [];
+  if (entry.fields?.length) {
+    parts.push(entry.fields.map((field) => getTimelineFieldLabel(field, locale)).join(" · "));
+  }
+  if (entry.fromStatus && entry.toStatus) {
+    parts.push(`${getMerchantBookingStatusText(entry.fromStatus, locale)} → ${getMerchantBookingStatusText(entry.toStatus, locale)}`);
+  }
+  if (typeof entry.minutesBefore === "number") {
+    parts.push(buildMerchantBookingReminderOffsetLabel(entry.minutesBefore, locale));
+  }
+  if (typeof entry.deliveredCount === "number" && entry.deliveredCount > 0) {
+    parts.push(locale.startsWith("es") ? `${entry.deliveredCount} dispositivos` : `${entry.deliveredCount} 台设备`);
+  }
+  if (entry.subject) parts.push(entry.subject);
+  if (entry.senderName) parts.push(locale.startsWith("es") ? `Remitente ${entry.senderName}` : `发件人 ${entry.senderName}`);
+  if (entry.locale) parts.push(entry.locale);
+  if (entry.note) parts.push(entry.note);
+  return parts.join(" · ");
+}
+
+function downloadBookingsCsv(records: MerchantBookingRecord[], locale: string, siteId: string) {
+  if (typeof document === "undefined" || records.length === 0) return;
+  const blob = new Blob([buildMerchantBookingsCsv(records, locale)], {
+    type: "text/csv;charset=utf-8",
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `bookings-${siteId || "export"}.csv`;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
 function SummaryField({ value }: { value: string }) {
   return <div className="text-sm text-slate-900">{value || "-"}</div>;
 }
@@ -325,6 +433,8 @@ export default function MerchantBookingMobilePanel({
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<MerchantBookingFilter>("all");
   const [selectedStatuses, setSelectedStatuses] = useState<MerchantBookingStatus[]>(() => [...MERCHANT_BOOKING_STATUSES]);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedBookingIds, setSelectedBookingIds] = useState<string[]>([]);
   const [busyKey, setBusyKey] = useState("");
   const [detailBookingId, setDetailBookingId] = useState<string | null>(null);
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
@@ -419,6 +529,12 @@ export default function MerchantBookingMobilePanel({
     onRecordsChange?.(records);
   }, [onRecordsChange, records]);
 
+  useEffect(() => {
+    if (!selectionMode && selectedBookingIds.length > 0) {
+      setSelectedBookingIds([]);
+    }
+  }, [selectedBookingIds.length, selectionMode]);
+
   const {
     pullDistance,
     readyToRefresh,
@@ -443,6 +559,11 @@ export default function MerchantBookingMobilePanel({
         return matchesSearch(item, query);
       }),
     [filter, query, records, selectedStatuses],
+  );
+  const selectedRecordSet = useMemo(() => new Set(selectedBookingIds), [selectedBookingIds]);
+  const selectedRecords = useMemo(
+    () => records.filter((record) => selectedRecordSet.has(record.id)),
+    [records, selectedRecordSet],
   );
 
   const selectableStoreOptions = useMemo(
@@ -517,6 +638,47 @@ export default function MerchantBookingMobilePanel({
       }
     },
     [records, siteId, updateFailedText],
+  );
+
+  const runBatchStatusUpdate = useCallback(
+    async (status: MerchantBookingStatus, busyLabel: string) => {
+      if (selectedBookingIds.length === 0) return;
+      setBusyKey(`batch:${busyLabel}`);
+      setError("");
+      try {
+        const response = await fetch("/api/bookings", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            siteId,
+            bookingIds: selectedBookingIds,
+            status,
+          }),
+        });
+        const json = (await response.json().catch(() => null)) as
+          | { ok?: boolean; bookings?: MerchantBookingRecord[]; message?: string }
+          | null;
+        if (!response.ok || !json?.ok || !Array.isArray(json.bookings)) {
+          throw new Error(json?.message || updateFailedText);
+        }
+        const updatedById = new Map(json.bookings.map((item) => [item.id, item]));
+        setRecords((current) => current.map((item) => updatedById.get(item.id) ?? item));
+        setDrafts((current) => {
+          const next = { ...current };
+          json.bookings?.forEach((item) => {
+            next[item.id] = createDraft(item);
+          });
+          return next;
+        });
+        setSelectedBookingIds([]);
+        setSelectionMode(false);
+      } catch (batchError) {
+        setError(batchError instanceof Error ? batchError.message : updateFailedText);
+      } finally {
+        setBusyKey("");
+      }
+    },
+    [selectedBookingIds, siteId, updateFailedText],
   );
 
   const markBookingTouched = useCallback(
@@ -603,6 +765,13 @@ export default function MerchantBookingMobilePanel({
       ),
     [detailRecord],
   );
+  const detailTimeline = useMemo(
+    () =>
+      [...(detailRecord?.timeline ?? [])].sort(
+        (left, right) => new Date(right.at).getTime() - new Date(left.at).getTime(),
+      ),
+    [detailRecord],
+  );
   const detailAvailableTimeRanges = useMemo(
     () =>
       detailRecord
@@ -679,6 +848,21 @@ export default function MerchantBookingMobilePanel({
       setDetailBookingId(null);
     }
   }, [detailDraft, detailRecord, patchBooking]);
+
+  const toggleSelectedBooking = useCallback((bookingId: string) => {
+    setSelectedBookingIds((current) =>
+      current.includes(bookingId) ? current.filter((item) => item !== bookingId) : [...current, bookingId],
+    );
+  }, []);
+
+  const toggleSelectAllFiltered = useCallback(() => {
+    const visibleIds = filteredRecords.map((item) => item.id);
+    setSelectedBookingIds((current) =>
+      visibleIds.every((id) => current.includes(id))
+        ? current.filter((id) => !visibleIds.includes(id))
+        : [...new Set([...current, ...visibleIds])],
+    );
+  }, [filteredRecords]);
 
   const renderStatusActions = (record: MerchantBookingRecord) => {
     if (record.status === "cancelled" || record.status === "no_show") {
@@ -856,6 +1040,26 @@ export default function MerchantBookingMobilePanel({
                             {entry.subject ? <div className="mt-1 text-xs text-slate-600">{entry.subject}</div> : null}
                             {getCustomerEmailSenderMeta(entry, locale) ? (
                               <div className="mt-1 text-xs text-slate-500">{getCustomerEmailSenderMeta(entry, locale)}</div>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  {detailTimeline.length > 0 ? (
+                    <div className="rounded-[22px] border border-slate-200 bg-white p-4">
+                      <div className="text-sm font-semibold text-slate-900">
+                        {locale.startsWith("es") ? "Línea de tiempo" : "预约时间线"}
+                      </div>
+                      <div className="mt-3 space-y-2">
+                        {detailTimeline.map((entry) => (
+                          <div key={entry.id} className="rounded-[18px] border border-slate-200 bg-slate-50 px-3 py-2.5">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="text-sm font-medium text-slate-900">{getTimelineEntryTitle(entry, locale)}</div>
+                              <div className="text-xs text-slate-500">{formatMerchantBookingDateTime(entry.at, locale)}</div>
+                            </div>
+                            {getTimelineEntryMeta(entry, locale) ? (
+                              <div className="mt-1 text-xs leading-5 text-slate-600">{getTimelineEntryMeta(entry, locale)}</div>
                             ) : null}
                           </div>
                         ))}
@@ -1062,7 +1266,81 @@ export default function MerchantBookingMobilePanel({
               >
                 {getMerchantBookingFilterText(status, counts[status], locale)}
               </button>
-            ))}
+              ))}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              className={`rounded-full px-3 py-2 text-xs font-medium transition ${
+                selectionMode ? "bg-slate-900 text-white" : "border border-slate-200 bg-white text-slate-700"
+              }`}
+              onClick={() => setSelectionMode((current) => !current)}
+            >
+              {locale.startsWith("es") ? "Lote" : "批量"}
+            </button>
+            {selectionMode ? (
+              <>
+                <button
+                  type="button"
+                  className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700"
+                  onClick={toggleSelectAllFiltered}
+                >
+                  {selectedRecordSet.size > 0 && filteredRecords.every((item) => selectedRecordSet.has(item.id))
+                    ? locale.startsWith("es")
+                      ? "Quitar visibles"
+                      : "取消当前页"
+                    : locale.startsWith("es")
+                      ? "Seleccionar visibles"
+                      : "全选当前页"}
+                </button>
+                <span className="rounded-full bg-slate-100 px-3 py-1.5 text-[11px] font-semibold text-slate-700">
+                  {locale.startsWith("es") ? `${selectedBookingIds.length} seleccionadas` : `已选 ${selectedBookingIds.length} 条`}
+                </span>
+                {selectedBookingIds.length > 0 ? (
+                  <>
+                    <button
+                      type="button"
+                      className="rounded-full border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-medium text-sky-700"
+                      onClick={() => void runBatchStatusUpdate("confirmed", "batch-confirm")}
+                      disabled={busyKey === "batch:batch-confirm"}
+                    >
+                      {locale.startsWith("es") ? "Confirmar" : "批量确认"}
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700"
+                      onClick={() => void runBatchStatusUpdate("completed", "batch-complete")}
+                      disabled={busyKey === "batch:batch-complete"}
+                    >
+                      {locale.startsWith("es") ? "Completar" : "批量完成"}
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-full border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700"
+                      onClick={() => void runBatchStatusUpdate("no_show", "batch-noshow")}
+                      disabled={busyKey === "batch:batch-noshow"}
+                    >
+                      {locale.startsWith("es") ? "No show" : "批量未到店"}
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700"
+                      onClick={() => void runBatchStatusUpdate("cancelled", "batch-cancel")}
+                      disabled={busyKey === "batch:batch-cancel"}
+                    >
+                      {locale.startsWith("es") ? "Cancelar" : "批量取消"}
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-full border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700"
+                      onClick={() => downloadBookingsCsv(selectedRecords, locale, siteId)}
+                    >
+                      CSV
+                    </button>
+                  </>
+                ) : null}
+              </>
+            ) : null}
           </div>
         </div>
 
@@ -1091,6 +1369,16 @@ export default function MerchantBookingMobilePanel({
                     <span className="absolute left-3 top-0 z-10 inline-flex -translate-y-1/2 items-center rounded-[14px] border border-white/70 bg-emerald-500 px-2.5 py-1 text-[10px] font-semibold tracking-[0.18em] text-white shadow-[0_10px_24px_rgba(16,185,129,0.28)]">
                       NEW
                     </span>
+                  ) : null}
+                  {selectionMode ? (
+                    <label className="absolute right-3 top-3 inline-flex items-center gap-2 rounded-full bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700 shadow-sm">
+                      <input
+                        type="checkbox"
+                        checked={selectedRecordSet.has(record.id)}
+                        onChange={() => toggleSelectedBooking(record.id)}
+                      />
+                      {locale.startsWith("es") ? "Seleccionar" : "选中"}
+                    </label>
                   ) : null}
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
@@ -1204,6 +1492,7 @@ export default function MerchantBookingMobilePanel({
         siteName={siteName}
         siteCountryCode={siteCountryCode}
         records={records}
+        bookingRulesSnapshot={bookingRulesSnapshot}
         darkMode={darkMode}
         allowCustomerAutoEmail={allowCustomerAutoEmail}
         onSettingsSaved={(settings) => {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import type { BookingProps } from "@/data/homeBlocks";
 import BookingDateTimeInput from "@/components/booking/BookingDateTimeInput";
 import {
@@ -103,6 +104,16 @@ function getFormFieldClass(disabled: boolean) {
   }`;
 }
 
+function buildCustomerCalendarHref(bookingId: string, editToken: string) {
+  if (!bookingId || !editToken) return "";
+  const params = new URLSearchParams({
+    bookingId,
+    editToken,
+    download: "1",
+  });
+  return `/api/bookings/customer-calendar?${params.toString()}`;
+}
+
 export default function BookingBlock({
   runtimeSiteId = "",
   runtimeSiteName = "",
@@ -112,6 +123,7 @@ export default function BookingBlock({
   ...props
 }: BookingBlockComponentProps) {
   const { locale } = useI18n();
+  const searchParams = useSearchParams();
   const storeOptions = useMemo(
     () =>
       normalizeBookingOptionList(props.bookingStoreOptions, buildDefaultBookingStoreOptions(runtimeSiteName)).map((item) =>
@@ -173,6 +185,10 @@ export default function BookingBlock({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const isLiveBooking = interactive && isMerchantNumericId(runtimeSiteId);
+  const restoredBookingId = searchParams?.get("bookingId")?.trim() ?? "";
+  const restoredEditToken = searchParams?.get("editToken")?.trim() ?? "";
+  const restoredBlockId = searchParams?.get("bookingBlockId")?.trim() ?? "";
+  const restoredViewport = searchParams?.get("bookingViewport")?.trim() ?? "";
 
   useEffect(() => {
     setDraft((current) => buildInitialDraft(storeOptions, itemOptions, titleOptions, current));
@@ -212,6 +228,64 @@ export default function BookingBlock({
       cancelled = true;
     };
   }, [isLiveBooking, runtimeSiteId]);
+
+  useEffect(() => {
+    if (!isLiveBooking || !restoredBookingId || !restoredEditToken) return;
+    if (restoredBlockId && runtimeBlockId && restoredBlockId !== runtimeBlockId) return;
+    if (restoredViewport && runtimeViewport && restoredViewport !== runtimeViewport) return;
+    if (submittedState?.booking.id === restoredBookingId && submittedState.editToken === restoredEditToken) return;
+
+    let cancelled = false;
+    const restoreBooking = async () => {
+      try {
+        const response = await fetch(
+          `/api/bookings/self-service?bookingId=${encodeURIComponent(restoredBookingId)}&editToken=${encodeURIComponent(restoredEditToken)}`,
+          { cache: "no-store" },
+        );
+        const json = (await response.json().catch(() => null)) as
+          | { ok?: boolean; booking?: MerchantBookingRecord; message?: string }
+          | null;
+        if (!response.ok || !json?.ok || !json.booking) {
+          throw new Error(json?.message || "预约链接已失效，请重新获取");
+        }
+        const nextBooking = json.booking;
+        if (
+          (runtimeBlockId && nextBooking.bookingBlockId && nextBooking.bookingBlockId !== runtimeBlockId) ||
+          (runtimeViewport && nextBooking.bookingViewport && nextBooking.bookingViewport !== runtimeViewport)
+        ) {
+          return;
+        }
+        if (cancelled) return;
+        persistEditToken(nextBooking.id, restoredEditToken);
+        setSubmittedState({
+          booking: nextBooking,
+          editToken: restoredEditToken,
+        });
+        setDraft(buildInitialDraft(storeOptions, itemOptions, titleOptions, nextBooking));
+        setMode("success");
+      } catch (restoreError) {
+        if (!cancelled) {
+          setError(restoreError instanceof Error ? restoreError.message : "预约链接已失效，请重新获取");
+        }
+      }
+    };
+    void restoreBooking();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    isLiveBooking,
+    itemOptions,
+    restoredBlockId,
+    restoredBookingId,
+    restoredEditToken,
+    restoredViewport,
+    runtimeBlockId,
+    runtimeViewport,
+    storeOptions,
+    submittedState,
+    titleOptions,
+  ]);
 
   const headingHtml = toRichHtml(props.heading, resolveLocalizedSystemDefaultText(props.heading, "在线预约", locale));
   const textHtml = toRichHtml(
@@ -421,6 +495,12 @@ export default function BookingBlock({
             >
               {submitting ? "处理中..." : cancelLabel}
             </button>
+            <a
+              className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-100"
+              href={buildCustomerCalendarHref(submittedState.booking.id, submittedState.editToken)}
+            >
+              加入日历
+            </a>
           </div>
         </div>
       ) : null}

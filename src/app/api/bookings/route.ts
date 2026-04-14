@@ -8,6 +8,7 @@ import {
   sendMerchantBookingManualEmailBySite,
   updateMerchantBooking,
   updateMerchantBookingBySite,
+  updateMerchantBookingsBatchBySite,
 } from "@/lib/merchantBookings.server";
 import type { MerchantPushSubscriptionStoreClient } from "@/lib/merchantPushSubscriptionStore";
 import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
@@ -49,6 +50,7 @@ export async function GET(request: Request) {
     const bookings = await listMerchantBookings(siteId, {
       includeAutomationState: true,
       includeCustomerEmailLogs: true,
+      includeTimeline: true,
     });
     return NextResponse.json({ ok: true, bookings });
   } catch (error) {
@@ -118,6 +120,7 @@ export async function PATCH(request: Request) {
           status?: MerchantBookingStatus;
           markTouched?: boolean;
           sendCustomerEmail?: boolean;
+          bookingIds?: string[];
         })
       | null;
 
@@ -152,6 +155,14 @@ export async function PATCH(request: Request) {
           bookingId: String(body?.bookingId ?? "").trim(),
         });
         return NextResponse.json({ ok: true, booking });
+      }
+      if (Array.isArray(body?.bookingIds) && maybeStatus) {
+        const bookings = await updateMerchantBookingsBatchBySite({
+          siteId: maybeSiteId,
+          bookingIds: body.bookingIds.map((item) => String(item ?? "").trim()),
+          status: maybeStatus,
+        });
+        return NextResponse.json({ ok: true, bookings });
       }
       const booking = await updateMerchantBookingBySite({
         siteId: maybeSiteId,

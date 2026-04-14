@@ -18,6 +18,7 @@ import {
   type MerchantBookingWorkbenchSettings,
 } from "@/lib/merchantBookingWorkbench";
 import { normalizeMerchantBookingTimeRangeOptions } from "@/lib/merchantBookings";
+import type { MerchantBookingRulesSnapshot } from "@/lib/merchantBookingRules";
 
 type BookingWorkbenchDialogProps = {
   open: boolean;
@@ -25,13 +26,14 @@ type BookingWorkbenchDialogProps = {
   siteName: string;
   siteCountryCode?: string;
   records: MerchantBookingRecord[];
+  bookingRulesSnapshot?: MerchantBookingRulesSnapshot | null;
   darkMode?: boolean;
   allowCustomerAutoEmail?: boolean;
   onClose: () => void;
   onSettingsSaved?: (settings: MerchantBookingWorkbenchSettings) => void;
 };
 
-type WorkbenchMenuKey = "rules" | "reminders";
+type WorkbenchMenuKey = "rules" | "reminders" | "analysis";
 type WorkbenchSectionView = "home" | WorkbenchMenuKey;
 type SaveWorkbenchOptions = {
   applyServerDraft?: boolean;
@@ -40,6 +42,22 @@ type SaveWorkbenchOptions = {
   sourceSerialized?: string;
 };
 type MetricTone = "amber" | "sky" | "emerald" | "rose" | "cyan";
+type WorkbenchDashboard = {
+  pushDeviceCount: number;
+  automation: {
+    started: boolean;
+    running: boolean;
+    lastStartedAt: string;
+    lastCompletedAt: string;
+    lastSuccessAt: string;
+    lastErrorAt: string;
+    lastErrorMessage: string;
+    lastResult: {
+      processedSiteCount?: number;
+      siteIds?: string[];
+    } | null;
+  };
+};
 
 const MOBILE_BREAKPOINT = 768;
 
@@ -117,6 +135,183 @@ function countUpcomingBookings(records: MerchantBookingRecord[], days: number) {
   }).length;
 }
 
+function parseBookingDate(value: string) {
+  const normalized = trimText(value).replace(" ", "T");
+  const parsed = new Date(normalized);
+  return Number.isFinite(parsed.getTime()) ? parsed : null;
+}
+
+function formatAutomationTimestamp(value: string, locale: string) {
+  const normalized = trimText(value);
+  if (!normalized) return locale.startsWith("es") ? "Sin ejecutar" : "尚未执行";
+  const parsed = new Date(normalized);
+  if (!Number.isFinite(parsed.getTime())) return normalized;
+  return new Intl.DateTimeFormat(locale || "zh-CN", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(parsed);
+}
+
+function buildEmailDeliveryStats(records: MerchantBookingRecord[]) {
+  const since = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  return records.reduce(
+    (summary, record) => {
+      (record.timeline ?? []).forEach((entry) => {
+        const timestamp = new Date(entry.at).getTime();
+        if (!Number.isFinite(timestamp) || timestamp < since) return;
+        if (entry.kind === "customer_email") {
+          if (entry.delivery === "sent") summary.customerEmailsSent += 1;
+          if (entry.delivery === "failed") summary.customerEmailsFailed += 1;
+        }
+        if (entry.kind === "merchant_reminder") {
+          if (entry.delivery === "sent") summary.merchantPushSent += 1;
+          if (entry.delivery === "failed") summary.merchantPushFailed += 1;
+        }
+      });
+      return summary;
+    },
+    {
+      customerEmailsSent: 0,
+      customerEmailsFailed: 0,
+      merchantPushSent: 0,
+      merchantPushFailed: 0,
+    },
+  );
+}
+
+function buildBookingAnalysis(records: MerchantBookingRecord[], locale: string) {
+  const statusTotals = MERCHANT_BOOKING_STATUSES.map((status) => ({
+    status,
+    label: getMerchantBookingStatusText(status, locale),
+    count: records.filter((record) => record.status === status).length,
+  }));
+  const topCombos = [...records.reduce((map, record) => {
+    const key = `${trimText(record.store) || "-"}__${trimText(record.item) || "-"}`;
+    const current = map.get(key) ?? {
+      key,
+      store: trimText(record.store) || "-",
+      item: trimText(record.item) || "-",
+      count: 0,
+    };
+    current.count += 1;
+    map.set(key, current);
+    return map;
+  }, new Map<string, { key: string; store: string; item: string; count: number }>()).values()]
+    .sort((left, right) => right.count - left.count)
+    .slice(0, 6);
+
+  const weekdayTotals = records.reduce((map, record) => {
+    const parsed = parseBookingDate(record.appointmentAt);
+    if (!parsed) return map;
+    const weekday = parsed.getDay();
+    map.set(weekday, (map.get(weekday) ?? 0) + 1);
+    return map;
+  }, new Map<number, number>());
+
+  const hourTotals = records.reduce((map, record) => {
+    const parsed = parseBookingDate(record.appointmentAt);
+    if (!parsed) return map;
+    const hour = parsed.getHours();
+    map.set(hour, (map.get(hour) ?? 0) + 1);
+    return map;
+  }, new Map<number, number>());
+
+  const weekdaySeries = Array.from({ length: 7 }, (_, weekday) => ({
+    label: new Intl.DateTimeFormat(locale || "zh-CN", { weekday: "short" }).format(new Date(2026, 0, 4 + weekday)),
+    count: weekdayTotals.get(weekday) ?? 0,
+  }));
+  const hourSeries = [...hourTotals.entries()]
+    .sort((left, right) => left[0] - right[0])
+    .map(([hour, count]) => ({
+      label: `${String(hour).padStart(2, "0")}:00`,
+      count,
+    }));
+
+  const completedOrNoShowCount = records.filter(
+    (record) => record.status === "completed" || record.status === "no_show",
+  ).length;
+  const noShowRate = completedOrNoShowCount > 0
+    ? Math.round((records.filter((record) => record.status === "no_show").length / completedOrNoShowCount) * 100)
+    : 0;
+
+  return {
+    statusTotals,
+    topCombos,
+    weekdaySeries,
+    hourSeries,
+    noShowRate,
+  };
+}
+
+function buildRulePreview(
+  snapshot: MerchantBookingRulesSnapshot | null | undefined,
+  records: MerchantBookingRecord[],
+  recurringRules: MerchantBookingWorkbenchSettings["recurringRules"],
+  locale: string,
+) {
+  const entries = snapshot?.entries ?? [];
+  const blockedDates = [...new Set(entries.flatMap((entry) => entry.blockedDates))].sort();
+  const holidayDates = [...new Set(entries.flatMap((entry) => entry.holidayDates))].sort();
+  const cappedSlots = entries.flatMap((entry) =>
+    entry.timeSlotRules
+      .filter((rule) => typeof rule.maxBookings === "number" && rule.maxBookings > 0)
+      .map((rule) => ({
+        viewport: entry.viewport,
+        range: rule.timeRange,
+        maxBookings: rule.maxBookings as number,
+      })),
+  );
+
+  const today = new Date();
+  const impactedDays: Array<{ date: string; reasons: string[] }> = [];
+  for (let offset = 0; offset < 14; offset += 1) {
+    const date = new Date(today.getFullYear(), today.getMonth(), today.getDate() + offset);
+    const yyyy = date.getFullYear();
+    const mm = String(date.getMonth() + 1).padStart(2, "0");
+    const dd = String(date.getDate()).padStart(2, "0");
+    const dateText = `${yyyy}-${mm}-${dd}`;
+    const reasons: string[] = [];
+    if (blockedDates.includes(dateText)) reasons.push(locale.startsWith("es") ? "bloqueado" : "黑名单");
+    if (holidayDates.includes(dateText)) reasons.push(locale.startsWith("es") ? "festivo" : "节假日");
+    recurringRules
+      .filter((rule) => rule.weekday === date.getDay())
+      .forEach((rule) => {
+        reasons.push(
+          rule.allDay
+            ? (locale.startsWith("es") ? "cierre fijo" : "固定停约")
+            : `${locale.startsWith("es") ? "parada fija" : "固定停约"} ${rule.timeRanges.join(", ")}`,
+        );
+      });
+    if (reasons.length > 0) {
+      impactedDays.push({ date: dateText, reasons });
+    }
+  }
+
+  const busiestUpcoming = records
+    .filter((record) => record.status === "active" || record.status === "confirmed")
+    .map((record) => ({
+      date: trimText(record.appointmentAt).slice(0, 10),
+      value: record,
+    }))
+    .filter((item) => item.date)
+    .reduce((map, item) => {
+      map.set(item.date, (map.get(item.date) ?? 0) + 1);
+      return map;
+    }, new Map<string, number>());
+
+  return {
+    blockedDates,
+    holidayDates,
+    cappedSlots,
+    impactedDays,
+    busiestUpcoming: [...busiestUpcoming.entries()]
+      .sort((left, right) => right[1] - left[1])
+      .slice(0, 5),
+  };
+}
+
 function BackIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-6 w-6">
@@ -139,6 +334,14 @@ function WorkbenchSectionIcon({ section }: { section: WorkbenchMenuKey }) {
       <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
         <path d="M7 6.8h10M7 12h10M7 17.2h6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
         <path d="M4.8 6.8h.01M4.8 12h.01M4.8 17.2h.01" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" />
+      </svg>
+    );
+  }
+  if (section === "analysis") {
+    return (
+      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+        <path d="M5 18.2V10m7 8.2V6m7 12.2v-4.7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+        <path d="M4 18.5h16" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
       </svg>
     );
   }
@@ -229,6 +432,7 @@ export default function BookingWorkbenchDialog({
   siteName,
   siteCountryCode = "",
   records,
+  bookingRulesSnapshot = null,
   darkMode = false,
   allowCustomerAutoEmail = false,
   onClose,
@@ -241,6 +445,7 @@ export default function BookingWorkbenchDialog({
   );
   const emailLanguageOptions = useMemo(() => getMerchantBookingCustomerEmailLanguageOptions(), []);
   const [draft, setDraft] = useState<MerchantBookingWorkbenchSettings>(() => createDefaultMerchantBookingWorkbenchSettings());
+  const [dashboard, setDashboard] = useState<WorkbenchDashboard | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -299,7 +504,7 @@ export default function BookingWorkbenchDialog({
           cache: "no-store",
         });
         const json = (await response.json().catch(() => null)) as
-          | { ok?: boolean; settings?: MerchantBookingWorkbenchSettings; error?: string }
+          | { ok?: boolean; settings?: MerchantBookingWorkbenchSettings; dashboard?: WorkbenchDashboard; error?: string }
           | null;
         if (!response.ok || !json?.ok) {
           throw new Error("工作台设置读取失败");
@@ -310,6 +515,7 @@ export default function BookingWorkbenchDialog({
           draftRef.current = normalized;
           hasLoadedRef.current = true;
           setDraft(normalized);
+          setDashboard(json.dashboard ?? null);
         }
       } catch (loadError) {
         if (!cancelled) {
@@ -356,6 +562,33 @@ export default function BookingWorkbenchDialog({
     ],
     [openBookingCount, todayBookingCount, upcomingWeekCount],
   );
+  const deliveryStats = useMemo(() => buildEmailDeliveryStats(records), [records]);
+  const analysisData = useMemo(() => buildBookingAnalysis(records, locale), [locale, records]);
+  const rulePreview = useMemo(
+    () => buildRulePreview(bookingRulesSnapshot, records, draft.recurringRules, locale),
+    [bookingRulesSnapshot, draft.recurringRules, locale, records],
+  );
+  const automationSummaryRows = useMemo(
+    () => [
+      {
+        label: locale.startsWith("es") ? "Dispositivos push" : "推送设备",
+        value: String(dashboard?.pushDeviceCount ?? 0),
+      },
+      {
+        label: locale.startsWith("es") ? "Última ejecución" : "最近执行",
+        value: formatAutomationTimestamp(dashboard?.automation.lastCompletedAt ?? "", locale),
+      },
+      {
+        label: locale.startsWith("es") ? "Correos 30d" : "30天邮件",
+        value: `${deliveryStats.customerEmailsSent}/${deliveryStats.customerEmailsFailed}`,
+      },
+      {
+        label: locale.startsWith("es") ? "Push 30d" : "30天推送",
+        value: `${deliveryStats.merchantPushSent}/${deliveryStats.merchantPushFailed}`,
+      },
+    ],
+    [dashboard, deliveryStats.customerEmailsFailed, deliveryStats.customerEmailsSent, deliveryStats.merchantPushFailed, deliveryStats.merchantPushSent, locale],
+  );
   const autoMetrics = useMemo(
     () => [
       { label: "客户提醒", value: reminderSummary.dueCustomerReminderCount, tone: "sky" as const },
@@ -378,6 +611,13 @@ export default function BookingWorkbenchDialog({
           summary: draft.calendarSyncToken
             ? `客户 ${getReminderSummaryLabel(draft.customerReminderOffsetsMinutes)}、商家 ${getReminderSummaryLabel(draft.merchantReminderOffsetsMinutes)}，已开启日历同步`
             : `客户 ${getReminderSummaryLabel(draft.customerReminderOffsetsMinutes)}、商家 ${getReminderSummaryLabel(draft.merchantReminderOffsetsMinutes)}，可生成日历同步链接`,
+        },
+        {
+          key: "analysis",
+          label: locale.startsWith("es") ? "Análisis" : "经营分析",
+          summary: locale.startsWith("es")
+            ? "Estado, proyectos populares, días y horas con más reservas."
+            : "查看状态占比、热门项目组合、星期与时段分布。",
         },
       ] satisfies Array<{ key: WorkbenchMenuKey; label: string; summary: string }>,
     [
@@ -778,6 +1018,42 @@ export default function BookingWorkbenchDialog({
                     </div>
                   </div>
                 </div>
+
+                <section className={`rounded-3xl border p-5 ${panelClassName}`}>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <div className="text-base font-semibold">{locale.startsWith("es") ? "Estado automático" : "自动化状态"}</div>
+                      <div className={`mt-1 text-sm ${mutedTextClassName}`}>
+                        {dashboard?.automation.running
+                          ? locale.startsWith("es")
+                            ? "La automatización está ejecutándose ahora."
+                            : "自动任务正在执行。"
+                          : dashboard?.automation.lastErrorMessage
+                            ? locale.startsWith("es")
+                              ? `Último error: ${dashboard.automation.lastErrorMessage}`
+                              : `最近错误：${dashboard.automation.lastErrorMessage}`
+                            : locale.startsWith("es")
+                              ? "Revise la última ejecución, el envío de correos y la disponibilidad push."
+                              : "查看最近执行、邮件发送和推送设备情况。"}
+                      </div>
+                    </div>
+                    {dashboard?.automation.lastResult?.processedSiteCount ? (
+                      <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getMetricValueClass("cyan", darkMode)}`}>
+                        {locale.startsWith("es")
+                          ? `${dashboard.automation.lastResult.processedSiteCount} sitios`
+                          : `${dashboard.automation.lastResult.processedSiteCount} 个站点`}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                    {automationSummaryRows.map((item) => (
+                      <div key={item.label} className={`rounded-2xl border px-4 py-3 ${softPanelClassName}`}>
+                        <div className={`text-xs ${mutedTextClassName}`}>{item.label}</div>
+                        <div className="mt-2 text-sm font-semibold leading-6">{item.value}</div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
               </>
             ) : null}
 
@@ -944,6 +1220,153 @@ export default function BookingWorkbenchDialog({
                       </div>
                     </div>
                   </section>
+
+                  <section className={`rounded-3xl border p-5 ${panelClassName}`}>
+                    <div className="text-base font-semibold">{locale.startsWith("es") ? "Vista previa de reglas" : "规则预览"}</div>
+                    <div className={`mt-1 text-sm ${mutedTextClassName}`}>
+                      {locale.startsWith("es")
+                        ? "Resumen de fechas bloqueadas, festivos, cupos por franja e impacto de los próximos 14 días."
+                        : "汇总黑名单、节假日、时段限额，以及未来 14 天会被规则影响的日期。"}
+                    </div>
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      <div className={`rounded-2xl border px-4 py-3 ${softPanelClassName}`}>
+                        <div className={`text-xs ${mutedTextClassName}`}>{locale.startsWith("es") ? "Fechas bloqueadas" : "黑名单日期"}</div>
+                        <div className="mt-2 text-lg font-semibold">{rulePreview.blockedDates.length}</div>
+                        {rulePreview.blockedDates.slice(0, 4).length > 0 ? (
+                          <div className={`mt-2 text-xs leading-5 ${mutedTextClassName}`}>{rulePreview.blockedDates.slice(0, 4).join(" · ")}</div>
+                        ) : null}
+                      </div>
+                      <div className={`rounded-2xl border px-4 py-3 ${softPanelClassName}`}>
+                        <div className={`text-xs ${mutedTextClassName}`}>{locale.startsWith("es") ? "Festivos" : "节假日"}</div>
+                        <div className="mt-2 text-lg font-semibold">{rulePreview.holidayDates.length}</div>
+                        {rulePreview.holidayDates.slice(0, 4).length > 0 ? (
+                          <div className={`mt-2 text-xs leading-5 ${mutedTextClassName}`}>{rulePreview.holidayDates.slice(0, 4).join(" · ")}</div>
+                        ) : null}
+                      </div>
+                      <div className={`rounded-2xl border px-4 py-3 ${softPanelClassName}`}>
+                        <div className={`text-xs ${mutedTextClassName}`}>{locale.startsWith("es") ? "Franjas con cupo" : "限额时段"}</div>
+                        <div className="mt-2 text-lg font-semibold">{rulePreview.cappedSlots.length}</div>
+                        {rulePreview.cappedSlots.slice(0, 3).map((slot) => (
+                          <div key={`${slot.viewport}-${slot.range}`} className={`mt-2 text-xs leading-5 ${mutedTextClassName}`}>
+                            {slot.range} · {slot.maxBookings}
+                          </div>
+                        ))}
+                      </div>
+                      <div className={`rounded-2xl border px-4 py-3 ${softPanelClassName}`}>
+                        <div className={`text-xs ${mutedTextClassName}`}>{locale.startsWith("es") ? "Días con más citas" : "近期高峰日"}</div>
+                        <div className="mt-2 space-y-1">
+                          {rulePreview.busiestUpcoming.slice(0, 3).map(([date, count]) => (
+                            <div key={date} className="flex items-center justify-between gap-3 text-sm">
+                              <span>{date}</span>
+                              <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getMetricValueClass("amber", darkMode)}`}>{count}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                    {rulePreview.impactedDays.length > 0 ? (
+                      <div className="mt-4 space-y-2">
+                        <div className="text-sm font-medium">{locale.startsWith("es") ? "Próximos 14 días afectados" : "未来 14 天受影响日期"}</div>
+                        <div className="space-y-2">
+                          {rulePreview.impactedDays.slice(0, 8).map((item) => (
+                            <div key={item.date} className={`flex flex-wrap items-center gap-2 rounded-2xl border px-3 py-2 ${softPanelClassName}`}>
+                              <span className="text-sm font-medium">{item.date}</span>
+                              {item.reasons.map((reason) => (
+                                <span key={`${item.date}-${reason}`} className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${getMetricValueClass("rose", darkMode)}`}>
+                                  {reason}
+                                </span>
+                              ))}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                  </section>
+                </div>
+              </div>
+            ) : null}
+
+            {!loading && sectionView === "analysis" ? (
+              <div className="space-y-4">
+                <section className={`rounded-3xl border p-5 ${panelClassName}`}>
+                  <div className="text-base font-semibold">{locale.startsWith("es") ? "Estado y rendimiento" : "状态与表现"}</div>
+                  <div className={`mt-1 text-sm ${mutedTextClassName}`}>
+                    {locale.startsWith("es")
+                      ? "Revise el reparto por estado y la tasa de no-show sobre citas ya cerradas."
+                      : "查看当前各状态占比，以及已结束预约里的未到店比例。"}
+                  </div>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                    {analysisData.statusTotals.map((item) => (
+                      <div key={item.status} className={`rounded-2xl border px-4 py-3 ${softPanelClassName}`}>
+                        <div className={`text-xs ${mutedTextClassName}`}>{item.label}</div>
+                        <div className="mt-2 text-2xl font-semibold">{item.count}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-4 inline-flex rounded-full px-3 py-1.5 text-sm font-semibold bg-rose-50 text-rose-700 ring-1 ring-rose-200">
+                    {locale.startsWith("es") ? `No-show ${analysisData.noShowRate}%` : `未到店率 ${analysisData.noShowRate}%`}
+                  </div>
+                </section>
+
+                <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]">
+                  <section className={`rounded-3xl border p-5 ${panelClassName}`}>
+                    <div className="text-base font-semibold">{locale.startsWith("es") ? "Proyectos más reservados" : "热门项目组合"}</div>
+                    <div className="mt-4 space-y-3">
+                      {analysisData.topCombos.length > 0 ? (
+                        analysisData.topCombos.map((item) => (
+                          <div key={item.key} className={`rounded-2xl border px-4 py-3 ${softPanelClassName}`}>
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="truncate text-sm font-semibold">{item.store}</div>
+                                <div className={`mt-1 truncate text-xs ${mutedTextClassName}`}>{item.item}</div>
+                              </div>
+                              <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getMetricValueClass("sky", darkMode)}`}>{item.count}</span>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className={`rounded-2xl border px-4 py-3 text-sm ${softPanelClassName}`}>{locale.startsWith("es") ? "Aún no hay reservas." : "暂无预约数据。"}</div>
+                      )}
+                    </div>
+                  </section>
+
+                  <div className="space-y-4">
+                    <section className={`rounded-3xl border p-5 ${panelClassName}`}>
+                      <div className="text-base font-semibold">{locale.startsWith("es") ? "Días con más reservas" : "星期分布"}</div>
+                      <div className="mt-4 space-y-2">
+                        {analysisData.weekdaySeries.map((item) => (
+                          <div key={item.label} className="flex items-center gap-3">
+                            <div className="w-14 text-sm">{item.label}</div>
+                            <div className={`h-2 flex-1 rounded-full ${darkMode ? "bg-slate-800" : "bg-slate-100"}`}>
+                              <div
+                                className="h-2 rounded-full bg-sky-500"
+                                style={{
+                                  width: `${Math.max(8, (item.count / Math.max(1, ...analysisData.weekdaySeries.map((entry) => entry.count))) * 100)}%`,
+                                }}
+                              />
+                            </div>
+                            <div className="w-8 text-right text-sm font-medium">{item.count}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+
+                    <section className={`rounded-3xl border p-5 ${panelClassName}`}>
+                      <div className="text-base font-semibold">{locale.startsWith("es") ? "Horas con más reservas" : "时段分布"}</div>
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        {analysisData.hourSeries.length > 0 ? (
+                          analysisData.hourSeries.map((item) => (
+                            <span key={item.label} className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium ${softPanelClassName}`}>
+                              <span>{item.label}</span>
+                              <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${getMetricValueClass("emerald", darkMode)}`}>{item.count}</span>
+                            </span>
+                          ))
+                        ) : (
+                          <span className={`inline-flex rounded-full px-3 py-1.5 text-sm ${softPanelClassName}`}>{locale.startsWith("es") ? "Sin datos horarios" : "暂无时段数据"}</span>
+                        )}
+                      </div>
+                    </section>
+                  </div>
                 </div>
               </div>
             ) : null}
