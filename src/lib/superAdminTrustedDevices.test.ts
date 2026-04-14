@@ -4,6 +4,7 @@ import {
   canRegisterAnotherSuperAdminDevice,
   normalizeSuperAdminMaxDevices,
   normalizeSuperAdminTrustedDevices,
+  pickLeastRecentlyVerifiedSuperAdminTrustedDevice,
   removeSuperAdminTrustedDevice,
   upsertSuperAdminTrustedDevice,
 } from "@/lib/superAdminTrustedDevices";
@@ -135,4 +136,38 @@ test("normalizeSuperAdminMaxDevices clamps values to a safe range", () => {
   assert.equal(normalizeSuperAdminMaxDevices(0), 1);
   assert.equal(normalizeSuperAdminMaxDevices(99), 20);
   assert.equal(normalizeSuperAdminMaxDevices("4"), 4);
+});
+
+test("pickLeastRecentlyVerifiedSuperAdminTrustedDevice returns the stalest verified device", () => {
+  const device = pickLeastRecentlyVerifiedSuperAdminTrustedDevice([
+    {
+      deviceId: "device-1",
+      deviceLabel: "Windows / Chrome",
+      addedAt: "2026-04-01T10:00:00.000Z",
+      lastVerifiedAt: "2026-04-10T10:00:00.000Z",
+      firstLoginIp: "1.1.1.1",
+      lastLoginIp: "1.1.1.1",
+      lastLoginStatus: "success",
+    },
+    {
+      deviceId: "device-2",
+      deviceLabel: "iPhone / Safari",
+      addedAt: "2026-04-02T10:00:00.000Z",
+      lastVerifiedAt: "2026-04-05T10:00:00.000Z",
+      firstLoginIp: "2.2.2.2",
+      lastLoginIp: "2.2.2.2",
+      lastLoginStatus: "success",
+    },
+    {
+      deviceId: "device-3",
+      deviceLabel: "Windows / Edge",
+      addedAt: "2026-04-03T10:00:00.000Z",
+      lastVerifiedAt: "2026-04-12T10:00:00.000Z",
+      firstLoginIp: "3.3.3.3",
+      lastLoginIp: "3.3.3.3",
+      lastLoginStatus: "success",
+    },
+  ]);
+
+  assert.equal(device?.deviceId, "device-2");
 });

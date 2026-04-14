@@ -184,6 +184,11 @@ export function removeSuperAdminTrustedDevice(
   return sortTrustedDevices(devices.filter((item) => item.deviceId !== normalizedDeviceId));
 }
 
+export function pickLeastRecentlyVerifiedSuperAdminTrustedDevice(devices: SuperAdminTrustedDeviceRecord[]) {
+  const sortedDevices = sortTrustedDevices(devices);
+  return sortedDevices.at(-1) ?? null;
+}
+
 function readDevicesFromBlocks(blocks: unknown) {
   if (Array.isArray(blocks)) {
     return {

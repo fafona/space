@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
-import { readSuperAdminTrustedDeviceToken, createSuperAdminChallengeToken, normalizeSuperAdminNextPath } from "@/lib/superAdminVerification";
+import {
+  createSuperAdminChallengeToken,
+  normalizeSuperAdminNextPath,
+  readSuperAdminTrustedDeviceToken,
+} from "@/lib/superAdminVerification";
 import {
   createServerSupabaseAuthClient,
   createServerSupabaseServiceClient,
@@ -14,7 +18,11 @@ import {
 } from "@/lib/superAdminServer";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { SUPER_ADMIN_TRUSTED_DEVICE_COOKIE } from "@/lib/superAdminSession";
-import { canRegisterAnotherSuperAdminDevice, loadSuperAdminTrustedDevicesFromStore } from "@/lib/superAdminTrustedDevices";
+import {
+  canRegisterAnotherSuperAdminDevice,
+  loadSuperAdminTrustedDevicesFromStore,
+  pickLeastRecentlyVerifiedSuperAdminTrustedDevice,
+} from "@/lib/superAdminTrustedDevices";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -96,6 +104,8 @@ export async function POST(request: Request) {
     let currentDeviceTrusted = trustedDevice?.deviceId === deviceId;
     let maxDevices: number | null = null;
     let currentCount = 0;
+    let replacedDeviceLabel = "";
+
     const serviceSupabase = createServerSupabaseServiceClient();
     if (serviceSupabase) {
       try {
@@ -104,17 +114,7 @@ export async function POST(request: Request) {
         maxDevices = storedMaxDevices;
         currentCount = devices.length;
         if (!canRegisterAnotherSuperAdminDevice(devices, storedMaxDevices, deviceId)) {
-          return NextResponse.json(
-            {
-              error: "device_limit_reached",
-              message: `白名单设备已达到上限（${storedMaxDevices} 台），请先移除旧设备后再登录。`,
-              maxDevices: storedMaxDevices,
-              currentCount: devices.length,
-              trustedDevice: currentDeviceTrusted,
-              requestIp: readRequestClientIp(request),
-            },
-            { status: 403 },
-          );
+          replacedDeviceLabel = pickLeastRecentlyVerifiedSuperAdminTrustedDevice(devices)?.deviceLabel ?? "";
         }
       } catch {
         // Keep the cookie-based fallback if the device whitelist store is temporarily unavailable.
@@ -147,6 +147,7 @@ export async function POST(request: Request) {
       challenge: challengeToken,
       maxDevices,
       currentCount,
+      replacedDeviceLabel: replacedDeviceLabel || undefined,
       requestIp: readRequestClientIp(request),
     });
   } catch {
