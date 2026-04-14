@@ -5,6 +5,7 @@ import {
   SUPER_ADMIN_DEVICE_ID_COOKIE,
   SUPER_ADMIN_DEVICE_ID_KEY,
   SUPER_ADMIN_LOGIN_PATH,
+  SUPER_ADMIN_SESSION_COOKIE_MAX_AGE_SECONDS,
   SUPER_ADMIN_SESSION_KEY,
   SUPER_ADMIN_SESSION_VALUE,
   resolveSuperAdminCookieDomainFromHostname,
@@ -25,6 +26,36 @@ function readCookieValue(key: string) {
     .map((part) => part.trim())
     .find((part) => part.startsWith(`${key}=`))
     ?.slice(key.length + 1) ?? "";
+}
+
+const SUPER_ADMIN_SESSION_RECENT_KEY = "merchant-space:super-admin-session-recent:v1";
+const SUPER_ADMIN_SESSION_CONFIRMATION_GRACE_MS = Math.min(15_000, SUPER_ADMIN_SESSION_COOKIE_MAX_AGE_SECONDS * 1000);
+const SUPER_ADMIN_SESSION_CONFIRMATION_RETRY_DELAYS_MS = [0, 250, 900, 1800] as const;
+
+function readRecentSuperAdminAuthTimestamp() {
+  if (typeof window === "undefined") return 0;
+  const raw = localStorage.getItem(SUPER_ADMIN_SESSION_RECENT_KEY) ?? "";
+  const timestamp = Number.parseInt(raw, 10);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function markRecentSuperAdminAuthentication() {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(SUPER_ADMIN_SESSION_RECENT_KEY, `${Date.now()}`);
+}
+
+function clearRecentSuperAdminAuthentication() {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem(SUPER_ADMIN_SESSION_RECENT_KEY);
+}
+
+function hasPendingRecentSuperAdminAuthentication() {
+  const timestamp = readRecentSuperAdminAuthTimestamp();
+  return timestamp > 0 && Date.now() - timestamp <= SUPER_ADMIN_SESSION_CONFIRMATION_GRACE_MS;
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function buildCookieDomainPart() {
@@ -65,36 +96,49 @@ export function syncSuperAdminAuthenticatedCookie() {
 
 export async function refreshSuperAdminAuthenticatedState() {
   if (typeof window === "undefined") return false;
-  try {
-    const response = await fetch("/api/super-admin/auth/session", {
-      method: "GET",
-      cache: "no-store",
-      credentials: "same-origin",
-      headers: {
-        accept: "application/json",
-      },
-    });
-    const payload = (await response.json().catch(() => null)) as { authenticated?: unknown } | null;
-    const authenticated = response.ok && payload?.authenticated === true;
-    if (authenticated) {
-      localStorage.setItem(SUPER_ADMIN_SESSION_KEY, SUPER_ADMIN_SESSION_VALUE);
-      return true;
+  const shouldRetry = hasPendingRecentSuperAdminAuthentication();
+  const delays = shouldRetry ? SUPER_ADMIN_SESSION_CONFIRMATION_RETRY_DELAYS_MS : [0];
+  for (const waitMs of delays) {
+    if (waitMs > 0) {
+      await delay(waitMs);
     }
-    localStorage.removeItem(SUPER_ADMIN_SESSION_KEY);
-    return false;
-  } catch {
-    return localStorage.getItem(SUPER_ADMIN_SESSION_KEY) === SUPER_ADMIN_SESSION_VALUE;
+    try {
+      const response = await fetch("/api/super-admin/auth/session", {
+        method: "GET",
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: {
+          accept: "application/json",
+        },
+      });
+      const payload = (await response.json().catch(() => null)) as { authenticated?: unknown } | null;
+      const authenticated = response.ok && payload?.authenticated === true;
+      if (authenticated) {
+        localStorage.setItem(SUPER_ADMIN_SESSION_KEY, SUPER_ADMIN_SESSION_VALUE);
+        markRecentSuperAdminAuthentication();
+        return true;
+      }
+    } catch {
+      if (!shouldRetry) {
+        return localStorage.getItem(SUPER_ADMIN_SESSION_KEY) === SUPER_ADMIN_SESSION_VALUE;
+      }
+    }
   }
+  localStorage.removeItem(SUPER_ADMIN_SESSION_KEY);
+  clearRecentSuperAdminAuthentication();
+  return false;
 }
 
 export function setSuperAdminAuthenticated() {
   if (typeof window === "undefined") return;
   localStorage.setItem(SUPER_ADMIN_SESSION_KEY, SUPER_ADMIN_SESSION_VALUE);
+  markRecentSuperAdminAuthentication();
 }
 
 export function clearSuperAdminAuthenticated() {
   if (typeof window === "undefined") return;
   localStorage.removeItem(SUPER_ADMIN_SESSION_KEY);
+  clearRecentSuperAdminAuthentication();
 }
 
 export function buildSuperAdminLoginHref(nextPath = "/super-admin") {
