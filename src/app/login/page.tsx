@@ -19,8 +19,7 @@ import {
   persistResetPasswordEmailRequest,
 } from "@/lib/resetPasswordEmailRequest";
 import {
-  buildResetPasswordRecoveryUrl,
-  persistResetPasswordRecoveryPayload,
+  clearStoredResetPasswordRecoveryPayload,
 } from "@/lib/resetPasswordRecoveryPayload";
 import {
   clearRecentMerchantLaunchState,
@@ -911,30 +910,18 @@ function LoginPageInner() {
         | {
             ok?: unknown;
             error?: unknown;
-            accessToken?: unknown;
-            refreshToken?: unknown;
+            ready?: unknown;
           }
         | null;
       if (!response.ok || payload?.ok !== true) {
         const errorMessage = typeof payload?.error === "string" ? payload.error : t("login.requestFailed");
         throw new Error(errorMessage);
       }
-      const accessToken = typeof payload?.accessToken === "string" ? payload.accessToken.trim() : "";
-      const refreshToken = typeof payload?.refreshToken === "string" ? payload.refreshToken.trim() : "";
-      if (!accessToken) {
+      if (payload?.ready !== true) {
         throw new Error(t("reset.sessionExpired"));
       }
-      const recoveryPayload = {
-        accessToken,
-        refreshToken,
-        tokenHash: "",
-        code: "",
-        type: "recovery",
-        capturedAt: Date.now(),
-      } as const;
-      persistResetPasswordRecoveryPayload(recoveryPayload);
-      const targetUrl = buildResetPasswordRecoveryUrl(new URL("/reset-password", window.location.origin), recoveryPayload);
-      window.location.href = `${targetUrl.pathname}${targetUrl.search}${targetUrl.hash}`;
+      clearStoredResetPasswordRecoveryPayload();
+      window.location.href = "/reset-password";
     } catch (error) {
       setMsg(error instanceof Error ? normalizeResetCodeError(error.message) : t("reset.invalidCode"));
     } finally {

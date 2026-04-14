@@ -4,9 +4,8 @@ import { createClient } from "@supabase/supabase-js";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useI18n } from "@/components/I18nProvider";
 import {
-  buildResetPasswordRecoveryUrl,
+  clearStoredResetPasswordRecoveryPayload,
   type ResetPasswordRecoveryPayload,
-  persistResetPasswordRecoveryPayload,
   readResetPasswordRecoveryPayloadFromUrl,
 } from "@/lib/resetPasswordRecoveryPayload";
 import { getResolvedSupabaseUrl, resolvedSupabaseAnonKey } from "@/lib/supabase";
@@ -62,9 +61,9 @@ export default function ResetPasswordBridgePage() {
   }, []);
 
   const redirectToResetPage = useCallback(
-    (payload?: Partial<ResetPasswordRecoveryPayload> | null) => {
-      const targetUrl = buildResetPasswordRecoveryUrl(new URL(nextUrl, window.location.origin), payload);
-      window.location.replace(`${targetUrl.pathname}${targetUrl.search}${targetUrl.hash}`);
+    () => {
+      clearStoredResetPasswordRecoveryPayload();
+      window.location.replace(nextUrl);
     },
     [nextUrl],
   );
@@ -76,23 +75,11 @@ export default function ResetPasswordBridgePage() {
       if (!accessToken || !refreshToken) {
         throw new Error(t("reset.sessionExpired"));
       }
-      persistResetPasswordRecoveryPayload({
-        ...payload,
-        accessToken,
-        refreshToken,
-        type: "recovery",
-        capturedAt: Date.now(),
-      });
       await syncRecoverySessionToServer({
         accessToken,
         refreshToken,
       });
-      redirectToResetPage({
-        ...payload,
-        accessToken,
-        refreshToken,
-        type: "recovery",
-      });
+      redirectToResetPage();
     },
     [redirectToResetPage, t],
   );
@@ -186,7 +173,6 @@ export default function ResetPasswordBridgePage() {
       }
 
       setPendingPayload(payload);
-      persistResetPasswordRecoveryPayload(payload);
 
       if (!hasDirectSessionPayload(payload)) {
         return;

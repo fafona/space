@@ -6,9 +6,12 @@ import {
   readResetRecoveryRefreshCookie,
   setResetRecoveryCookies,
 } from "@/lib/resetPasswordRecoverySession";
+import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+
+type RecoveryOtpType = "email" | "magiclink" | "recovery";
 
 type AuthUserSummary = {
   id?: string | null;
@@ -77,6 +80,14 @@ function noStoreJson(body: unknown, init?: ResponseInit) {
   return response;
 }
 
+function normalizeRecoveryType(value: unknown): RecoveryOtpType {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  if (normalized === "email" || normalized === "magiclink" || normalized === "recovery") {
+    return normalized;
+  }
+  return "recovery";
+}
+
 export async function GET(request: Request) {
   try {
     const supabase = createServerSupabaseClient();
@@ -137,6 +148,10 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  if (!isTrustedSameOriginMutationRequest(request)) {
+    return getTrustedMutationRequestErrorResponse();
+  }
+
   try {
     const supabase = createServerSupabaseClient();
     if (!supabase) {
@@ -148,13 +163,50 @@ export async function POST(request: Request) {
           accessToken?: unknown;
           refreshToken?: unknown;
           expiresIn?: unknown;
+          tokenHash?: unknown;
+          code?: unknown;
+          type?: unknown;
         }
       | null;
 
-    const accessToken = typeof payload?.accessToken === "string" ? payload.accessToken.trim() : "";
-    const refreshToken = typeof payload?.refreshToken === "string" ? payload.refreshToken.trim() : "";
-    const expiresIn =
+    let accessToken = typeof payload?.accessToken === "string" ? payload.accessToken.trim() : "";
+    let refreshToken = typeof payload?.refreshToken === "string" ? payload.refreshToken.trim() : "";
+    let expiresIn =
       typeof payload?.expiresIn === "number" && Number.isFinite(payload.expiresIn) ? payload.expiresIn : undefined;
+    const tokenHash = typeof payload?.tokenHash === "string" ? payload.tokenHash.trim() : "";
+    const code = typeof payload?.code === "string" ? payload.code.trim() : "";
+    const recoveryType = normalizeRecoveryType(payload?.type);
+
+    if (!accessToken && code) {
+      const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+      accessToken = String(data.session?.access_token ?? "").trim();
+      refreshToken = String(data.session?.refresh_token ?? "").trim();
+      if (typeof data.session?.expires_in === "number" && Number.isFinite(data.session.expires_in)) {
+        expiresIn = data.session.expires_in;
+      }
+      if (error || !accessToken) {
+        const response = noStoreJson({ ok: false, error: "reset_password_invalid_code" }, { status: 401 });
+        clearResetRecoveryCookies(response, request);
+        return response;
+      }
+    }
+
+    if (!accessToken && tokenHash) {
+      const { data, error } = await supabase.auth.verifyOtp({
+        type: recoveryType,
+        token_hash: tokenHash,
+      });
+      accessToken = String(data.session?.access_token ?? "").trim();
+      refreshToken = String(data.session?.refresh_token ?? "").trim();
+      if (typeof data.session?.expires_in === "number" && Number.isFinite(data.session.expires_in)) {
+        expiresIn = data.session.expires_in;
+      }
+      if (error || !accessToken) {
+        const response = noStoreJson({ ok: false, error: "reset_password_invalid_access_token" }, { status: 401 });
+        clearResetRecoveryCookies(response, request);
+        return response;
+      }
+    }
 
     if (!accessToken) {
       const response = noStoreJson({ ok: false, error: "reset_password_missing_access_token" }, { status: 400 });

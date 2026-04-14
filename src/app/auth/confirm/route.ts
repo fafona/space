@@ -60,7 +60,7 @@ function appendSuperAdminProofParams(url: URL, confirmed: boolean) {
 }
 
 function appendRecoveryRedirectParams(url: URL, input: { tokenHash?: string; code?: string }) {
-  const nextUrl = new URL(url.toString());
+  const nextUrl = isResetPasswordRedirectTarget(url) ? new URL("/reset-password", url.origin) : new URL(url.toString());
   const tokenHash = String(input.tokenHash ?? "").trim();
   const code = String(input.code ?? "").trim();
   nextUrl.searchParams.set("type", "recovery");

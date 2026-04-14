@@ -4,6 +4,7 @@ import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { loadMerchantIdRulesFromStore } from "@/lib/merchantIdRuleStore";
 import { findNextAllowedMerchantIdNumber, MERCHANT_ID_MAX, MERCHANT_ID_MIN, type MerchantIdRule } from "@/lib/merchantIdRules";
 import { setMerchantAuthCookies } from "@/lib/merchantAuthSession";
+import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -350,6 +351,10 @@ async function tryAllocateSequentialMerchantId(
 }
 
 export async function POST(request: Request) {
+  if (!isTrustedSameOriginMutationRequest(request)) {
+    return getTrustedMutationRequestErrorResponse();
+  }
+
   try {
     const payload = (await request.json().catch(() => null)) as { account?: unknown; password?: unknown } | null;
     const account = typeof payload?.account === "string" ? payload.account.trim() : "";

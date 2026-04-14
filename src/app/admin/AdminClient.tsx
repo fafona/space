@@ -2230,16 +2230,6 @@ function parseDataUrlMeta(dataUrl: string) {
   return { mime, extension };
 }
 
-function dataUrlToBlob(dataUrl: string, mime: string) {
-  const base64 = dataUrl.split(",")[1] ?? "";
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return new Blob([bytes], { type: mime });
-}
-
 async function getAssetUploadAccessToken(timeoutMs = 900) {
   try {
     const sessionTask = supabase.auth.getSession();

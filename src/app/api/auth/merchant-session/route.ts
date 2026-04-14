@@ -8,6 +8,7 @@ import {
   readMerchantAuthRefreshCookie,
   setMerchantAuthCookies,
 } from "@/lib/merchantAuthSession";
+import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -446,6 +447,10 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  if (!isTrustedSameOriginMutationRequest(request)) {
+    return getTrustedMutationRequestErrorResponse();
+  }
+
   try {
     const supabase = createServerSupabaseClient();
     const adminSupabase = createServiceRoleSupabaseClient();

@@ -9,15 +9,15 @@ export function appendResetPasswordBridgeRedirectParams(
   redirectTo: URL,
   input: { type: EmailOtpType; tokenHash?: string; code?: string },
 ) {
-  const bridgeUrl = new URL("/reset-password/bridge", redirectTo.origin);
-  bridgeUrl.searchParams.set("type", input.type);
+  const targetUrl = new URL("/reset-password", redirectTo.origin);
+  targetUrl.searchParams.set("type", input.type);
   const tokenHash = String(input.tokenHash ?? "").trim();
   const code = String(input.code ?? "").trim();
   if (tokenHash) {
-    bridgeUrl.searchParams.set("token_hash", tokenHash);
+    targetUrl.searchParams.set("token_hash", tokenHash);
   }
   if (code) {
-    bridgeUrl.searchParams.set("code", code);
+    targetUrl.searchParams.set("code", code);
   }
-  return bridgeUrl;
+  return targetUrl;
 }

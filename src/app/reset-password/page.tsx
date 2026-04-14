@@ -173,6 +173,34 @@ export default function ResetPasswordPage() {
     [withTimeout],
   );
 
+  const syncRecoveryPayloadToServer = useCallback(
+    async (payload: ResetPasswordRecoveryPayload, timeoutMs = 9000) => {
+      const response = await withTimeout(
+        fetch("/api/auth/reset-password/session", {
+          method: "POST",
+          cache: "no-store",
+          headers: {
+            "Content-Type": "application/json",
+            accept: "application/json",
+          },
+          body: JSON.stringify({
+            accessToken: payload.accessToken ?? "",
+            refreshToken: payload.refreshToken ?? "",
+            tokenHash: payload.tokenHash ?? "",
+            code: payload.code ?? "",
+            type: payload.type ?? "",
+          }),
+        }),
+        timeoutMs,
+      ).catch(() => null);
+
+      if (!response || !response.ok) return false;
+      const result = (await response.json().catch(() => null)) as { ok?: unknown; ready?: unknown } | null;
+      return result?.ok === true || result?.ready === true;
+    },
+    [withTimeout],
+  );
+
   const recoverResetSession = useCallback(
     async (timeoutMs = 5000) => {
       const storedPayload = recoveryPayloadRef.current ?? readStoredResetPasswordRecoveryPayload();
@@ -254,6 +282,17 @@ export default function ResetPasswordPage() {
       const storedPayload = urlPayload ?? (preferFreshRecoveryAttempt ? null : readStoredResetPasswordRecoveryPayload());
       if (storedPayload) {
         recoveryPayloadRef.current = storedPayload;
+        const serverSynced = await syncRecoveryPayloadToServer(storedPayload, 9000).catch(() => false);
+        if (cancelled || recoveryResolvedRef.current) return;
+        if (serverSynced) {
+          clearStoredResetPasswordRecoveryPayload();
+          recoveryPayloadRef.current = null;
+          clearRecoveryUrlArtifacts();
+          recoveryResolvedRef.current = true;
+          setRecoveryState("ready");
+          setMsg("");
+          return;
+        }
         persistResetPasswordRecoveryPayload(storedPayload);
         clearRecoveryUrlArtifacts();
         if (hasDirectResetPasswordRecoveryPayload(storedPayload)) {
@@ -296,7 +335,7 @@ export default function ResetPasswordPage() {
     return () => {
       cancelled = true;
     };
-  }, [hasServerRecoverySession, recoverResetSession]);
+  }, [hasServerRecoverySession, recoverResetSession, syncRecoveryPayloadToServer]);
 
   const submitPasswordResetViaServer = useCallback(async () => {
     const payload = recoveryPayloadRef.current ?? readStoredResetPasswordRecoveryPayload();
