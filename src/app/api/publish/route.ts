@@ -1,13 +1,19 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import type { Block } from "@/data/homeBlocks";
+import { createDefaultMerchantPermissionConfig } from "@/data/platformControlStore";
 import { readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
 import { sanitizeBlocksForRuntime } from "@/lib/blocksSanitizer";
 import { saveMerchantBookingRulesSnapshotForSites } from "@/lib/merchantBookingRulesStore";
 import { saveStoredMerchantDraft, type MerchantDraftStoreClient } from "@/lib/merchantDraftStore";
 import { normalizeDomainPrefix } from "@/lib/merchantIdentity";
+import { getMerchantPublishPermissionViolation } from "@/lib/merchantPermissionGuards";
 import { loadPublishedMerchantServiceStatesBySiteIds } from "@/lib/publishedMerchantService";
 import { getInlinePublishPayloadViolation } from "@/lib/publishPayloadValidation";
+import {
+  loadStoredPlatformMerchantSnapshot,
+  type PlatformMerchantSnapshotStoreClient,
+} from "@/lib/platformMerchantSnapshotStore";
 import { isSuperAdminRequestAuthorized } from "@/lib/superAdminRequestAuth";
 
 type SaveErrorLike = { message: string } | null;
@@ -611,6 +617,33 @@ export async function POST(request: Request) {
           ok: false,
           code: "merchant_service_paused",
           message: "服务到期，详询官方客服",
+          requestId,
+        };
+        resultCache.set(requestId, { at: Date.now(), status, body: responseBody });
+        return makeCachedResponse(status, responseBody);
+      }
+
+      const snapshotPayload = await loadStoredPlatformMerchantSnapshot(
+        supabase as unknown as PlatformMerchantSnapshotStoreClient,
+      ).catch(() => null);
+      const snapshotByMerchantId = new Map(
+        (snapshotPayload?.snapshot ?? []).map((site) => [site.id, site] as const),
+      );
+      const violation = merchantIds
+        .map((merchantId) => {
+          const snapshotSite = snapshotByMerchantId.get(merchantId) ?? null;
+          return getMerchantPublishPermissionViolation(
+            snapshotSite?.permissionConfig ?? createDefaultMerchantPermissionConfig(),
+            sanitizedPublishedBlocks,
+          );
+        })
+        .find((item) => !!item);
+      if (violation) {
+        const status = 403;
+        const responseBody = {
+          ok: false,
+          code: violation.code,
+          message: violation.message,
           requestId,
         };
         resultCache.set(requestId, { at: Date.now(), status, body: responseBody });

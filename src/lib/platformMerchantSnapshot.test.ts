@@ -290,6 +290,7 @@ test("buildPlatformMerchantSnapshotPayloadFromState keeps merchant info and card
     },
   });
 
+  assert.equal(payload.revision, "");
   assert.equal(payload.defaultSortRule, "name_desc");
   assert.equal(payload.snapshot.length, 1);
   assert.equal(payload.snapshot[0]?.industry, "娱乐");
@@ -308,6 +309,7 @@ test("buildPlatformMerchantSnapshotPayloadFromState keeps merchant info and card
 
 test("platform merchant snapshot blocks round-trip through storage payload", () => {
   const stored = buildPlatformMerchantSnapshotBlocks({
+    revision: "snapshot-test-revision",
     snapshot: [
       {
         id: "10000000",
@@ -436,6 +438,7 @@ test("platform merchant snapshot blocks round-trip through storage payload", () 
 
   const payload = readPlatformMerchantSnapshotFromBlocks(stored);
   assert.ok(payload);
+  assert.equal(payload?.revision, "snapshot-test-revision");
   assert.equal(payload?.defaultSortRule, "monthly_views_desc");
   assert.equal(payload?.snapshot[0]?.location.city, "Sevilla");
   assert.equal(payload?.snapshot[0]?.merchantCardImageUrl, "https://example.com/card.webp");

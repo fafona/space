@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import type { MerchantListPublishedSite } from "@/data/homeBlocks";
 import { readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
+import { getMerchantBusinessCardPermissionViolation } from "@/lib/merchantPermissionGuards";
 import { normalizeMerchantBusinessCards, resolveMerchantBusinessCardForChatDisplay } from "@/lib/merchantBusinessCards";
 import { listMerchantPeerContactsForMerchant } from "@/lib/merchantPeerInbox";
 import {
@@ -362,6 +363,7 @@ export async function POST(request: Request) {
     if (!authorized) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
+    const isSuperAdminActor = isSuperAdminRequestAuthorized(request);
 
     const snapshotStore = supabase as unknown as PlatformMerchantSnapshotStoreClient;
     const existingPayload = await loadStoredPlatformMerchantSnapshot(snapshotStore);
@@ -370,6 +372,18 @@ export async function POST(request: Request) {
     const normalizedBusinessCards = Object.prototype.hasOwnProperty.call(body ?? {}, "businessCards")
       ? normalizeMerchantBusinessCards(body?.businessCards)
       : normalizeMerchantBusinessCards(existingSite?.businessCards);
+    if (!isSuperAdminActor) {
+      const permissionViolation = getMerchantBusinessCardPermissionViolation(
+        existingSite?.permissionConfig,
+        normalizedBusinessCards,
+      );
+      if (permissionViolation) {
+        return NextResponse.json(
+          { error: permissionViolation.code, message: permissionViolation.message },
+          { status: 403 },
+        );
+      }
+    }
     const snapshotSite = buildPlatformMerchantSnapshotSite({
       id: merchantId,
       merchantName,
@@ -406,10 +420,19 @@ export async function POST(request: Request) {
     }
 
     const saveResult = await savePlatformMerchantSnapshot(snapshotStore, {
+      revision: existingPayload?.revision ?? "",
       snapshot: upsertPlatformMerchantSnapshotSite(existingPayload?.snapshot ?? [], snapshotSite),
       defaultSortRule: existingPayload?.defaultSortRule ?? "created_desc",
       merchantConfigHistoryBySiteId: existingPayload?.merchantConfigHistoryBySiteId ?? {},
+    }, {
+      expectedRevision: existingPayload?.revision ?? "",
     });
+    if (saveResult.code === "conflict") {
+      return NextResponse.json(
+        { error: "merchant_chat_business_card_conflict", message: "merchant_chat_business_card_conflict" },
+        { status: 409 },
+      );
+    }
     if (saveResult.error) {
       return NextResponse.json(
         { error: "merchant_chat_business_card_save_failed", message: saveResult.error },

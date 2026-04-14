@@ -59,6 +59,7 @@ function mergePlatformMerchantSnapshotPayloads(
   const mergedIds = new Set(mergedCurrent.map((site) => site.id));
   const appendedExisting = existing.snapshot.filter((site) => !mergedIds.has(site.id));
   return normalizePlatformMerchantSnapshotPayload({
+    revision: incoming.revision || existing.revision,
     snapshot: [...mergedCurrent, ...appendedExisting],
     defaultSortRule: incoming.defaultSortRule || existing.defaultSortRule,
     merchantConfigHistoryBySiteId: mergePlatformMerchantConfigHistoryBySiteId(
@@ -108,6 +109,15 @@ export async function POST(request: Request) {
   }
 
   const existingPayload = await loadStoredPlatformMerchantSnapshot(supabase as unknown as PlatformMerchantSnapshotStoreClient);
+  if (existingPayload && payload.revision !== existingPayload.revision) {
+    return NextResponse.json(
+      {
+        error: "platform_merchant_snapshot_conflict",
+        payload: existingPayload,
+      },
+      { status: 409 },
+    );
+  }
   const nextPayload = existingPayload
     ? mergePlatformMerchantSnapshotPayloads(payload, existingPayload)
     : payload;
@@ -115,7 +125,20 @@ export async function POST(request: Request) {
   const saveResult = await savePlatformMerchantSnapshot(
     supabase as unknown as PlatformMerchantSnapshotStoreClient,
     nextPayload,
+    {
+      expectedRevision: existingPayload?.revision ?? "",
+    },
   );
+
+  if (saveResult.code === "conflict") {
+    return NextResponse.json(
+      {
+        error: "platform_merchant_snapshot_conflict",
+        payload: saveResult.payload ?? existingPayload ?? normalizePlatformMerchantSnapshotPayload({}),
+      },
+      { status: 409 },
+    );
+  }
 
   if (saveResult.error) {
     return NextResponse.json(
@@ -129,7 +152,8 @@ export async function POST(request: Request) {
 
   return NextResponse.json({
     ok: true,
-    count: nextPayload.snapshot.length,
-    defaultSortRule: nextPayload.defaultSortRule,
+    count: saveResult.payload?.snapshot.length ?? nextPayload.snapshot.length,
+    defaultSortRule: saveResult.payload?.defaultSortRule ?? nextPayload.defaultSortRule,
+    payload: saveResult.payload ?? nextPayload,
   });
 }

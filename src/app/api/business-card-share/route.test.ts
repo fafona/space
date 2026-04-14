@@ -21,6 +21,7 @@ test("share owner lookup resolves merchant ids from snapshot business cards by s
   assert.equal(
     findShareOwnerMerchantIdInSnapshotPayload(
       {
+        revision: "snapshot-test-revision",
         defaultSortRule: "created_desc",
         merchantConfigHistoryBySiteId: {},
         snapshot: [
@@ -222,6 +223,7 @@ test("share owner lookup resolves legacy fingerprints from snapshot business car
   assert.equal(
     findShareOwnerMerchantIdInSnapshotPayload(
       {
+        revision: "snapshot-test-revision",
         defaultSortRule: "created_desc",
         merchantConfigHistoryBySiteId: {},
         snapshot: [

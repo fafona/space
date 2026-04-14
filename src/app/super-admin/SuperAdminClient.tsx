@@ -1740,6 +1740,7 @@ export default function SuperAdminClient() {
   const [trustedDeviceLimitSaving, setTrustedDeviceLimitSaving] = useState(false);
   const [currentSuperAdminDeviceId, setCurrentSuperAdminDeviceId] = useState("");
   const checklistStorageKeyRef = useRef(releaseChecklistStorageKeyForToday());
+  const platformSnapshotRevisionRef = useRef("");
   const [releaseChecklistState, setReleaseChecklistState] = useState<Record<string, boolean>>(() =>
     loadReleaseChecklistStateFromStorage(),
   );
@@ -1760,9 +1761,16 @@ export default function SuperAdminClient() {
     () => buildPlatformMerchantSnapshotPayloadFromSites(state.sites, state.homeLayout.merchantDefaultSortRule),
     [state.sites, state.homeLayout.merchantDefaultSortRule],
   );
-  const platformMerchantSnapshotPayloadKey = useMemo(
-    () => JSON.stringify(platformMerchantSnapshotPayload),
-    [platformMerchantSnapshotPayload],
+  const buildPlatformMerchantSnapshotSyncPayload = useCallback(
+    (nextState: PlatformState) =>
+      normalizePlatformMerchantSnapshotPayload({
+        ...buildPlatformMerchantSnapshotPayloadFromSites(
+          nextState.sites,
+          nextState.homeLayout.merchantDefaultSortRule,
+        ),
+        revision: platformSnapshotRevisionRef.current,
+      }),
+    [],
   );
 
   useEffect(() => {
@@ -1802,34 +1810,68 @@ export default function SuperAdminClient() {
     stateRef.current = state;
   }, [state]);
 
+  const hydratePlatformMerchantSnapshotFromServerPayload = useCallback(
+    (
+      payload: PlatformMerchantSnapshotPayload,
+      options: {
+        conflictTip?: string;
+      } = {},
+    ) => {
+      platformSnapshotRevisionRef.current = payload.revision ?? "";
+      const next = applyServerMerchantSnapshotPayloadToState(stateRef.current, payload);
+      const persisted = applyLocalPlatformState(next, { allowVolatile: true });
+      if (!persisted) {
+        setTip("服务端配置已加载，本地缓存写入失败，请稍后检查浏览器存储空间");
+      } else if (options.conflictTip) {
+        setTip(options.conflictTip);
+      }
+      setPlatformSnapshotServerReady(true);
+      return next;
+    },
+    [applyLocalPlatformState],
+  );
+
+  const loadPlatformMerchantSnapshotFromServer = useCallback(
+    async (
+      options: {
+        signal?: AbortSignal;
+        failureTip?: string;
+        conflictTip?: string;
+      } = {},
+    ) => {
+      const response = await fetch("/api/super-admin/platform-merchant-snapshot", {
+        method: "GET",
+        cache: "no-store",
+        signal: options.signal,
+      });
+      const raw = (await response.json().catch(() => null)) as
+        | {
+            payload?: unknown;
+            error?: string;
+            message?: string;
+          }
+        | null;
+      if (!response.ok) {
+        throw new Error(raw?.message || raw?.error || "platform_merchant_snapshot_load_failed");
+      }
+      const payload = normalizePlatformMerchantSnapshotPayload(raw?.payload ?? {});
+      hydratePlatformMerchantSnapshotFromServerPayload(payload, {
+        conflictTip: options.conflictTip,
+      });
+      return payload;
+    },
+    [hydratePlatformMerchantSnapshotFromServerPayload],
+  );
+
   useEffect(() => {
     if (!hydrated || !authed) return;
     if (isMobileSupportOnlyMode) return;
     const controller = new AbortController();
     const run = async () => {
       try {
-        const response = await fetch("/api/super-admin/platform-merchant-snapshot", {
-          method: "GET",
-          cache: "no-store",
+        await loadPlatformMerchantSnapshotFromServer({
           signal: controller.signal,
         });
-        const raw = (await response.json().catch(() => null)) as
-          | {
-              payload?: unknown;
-              error?: string;
-              message?: string;
-            }
-          | null;
-        if (!response.ok) {
-          throw new Error(raw?.message || raw?.error || "platform_merchant_snapshot_load_failed");
-        }
-        const payload = normalizePlatformMerchantSnapshotPayload(raw?.payload ?? {});
-        const next = applyServerMerchantSnapshotPayloadToState(stateRef.current, payload);
-        const persisted = applyLocalPlatformState(next, { allowVolatile: true });
-        if (!persisted) {
-          setTip("服务端配置已加载，本地缓存写入失败，请稍后检查浏览器存储空间");
-        }
-        setPlatformSnapshotServerReady(true);
       } catch {
         if (controller.signal.aborted) return;
         setPlatformSnapshotServerReady(false);
@@ -1838,37 +1880,62 @@ export default function SuperAdminClient() {
     };
     void run();
     return () => controller.abort();
-  }, [applyLocalPlatformState, authed, hydrated, isMobileSupportOnlyMode]);
+  }, [authed, hydrated, isMobileSupportOnlyMode, loadPlatformMerchantSnapshotFromServer]);
 
   useEffect(() => {
     if (!hydrated || !authed) return;
     if (isMobileSupportOnlyMode) return;
     if (!platformSnapshotServerReady) return;
     if (platformMerchantSnapshotPayload.snapshot.length === 0) return;
-    const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      fetch("/api/super-admin/platform-merchant-snapshot", {
+      const payload = buildPlatformMerchantSnapshotSyncPayload(stateRef.current);
+      void fetch("/api/super-admin/platform-merchant-snapshot", {
         method: "POST",
         headers: {
           "content-type": "application/json",
         },
         cache: "no-store",
-        signal: controller.signal,
-        body: platformMerchantSnapshotPayloadKey,
-      }).catch(() => {
-        // Keep the super-admin screen responsive even if background sync fails.
-      });
+        body: JSON.stringify(payload),
+      })
+        .then(async (response) => {
+          const result = (await response.json().catch(() => null)) as
+            | { ok?: boolean; error?: string; message?: string; payload?: unknown }
+            | null;
+          if (response.status === 409) {
+            const latestPayload = normalizePlatformMerchantSnapshotPayload(result?.payload ?? {});
+            if (latestPayload.snapshot.length > 0 || latestPayload.revision) {
+              hydratePlatformMerchantSnapshotFromServerPayload(latestPayload, {
+                conflictTip: "检测到其他超级后台已更新配置，当前页面已自动同步到最新版本",
+              });
+            } else {
+              await loadPlatformMerchantSnapshotFromServer({
+                conflictTip: "检测到其他超级后台已更新配置，当前页面已自动同步到最新版本",
+              });
+            }
+            return;
+          }
+          if (!response.ok) return;
+          const savedPayload = normalizePlatformMerchantSnapshotPayload(result?.payload ?? {});
+          if (savedPayload.revision) {
+            platformSnapshotRevisionRef.current = savedPayload.revision;
+          }
+          setPlatformSnapshotServerReady(true);
+        })
+        .catch(() => {
+          // Keep the super-admin screen responsive even if background sync fails.
+        });
     }, 250);
     return () => {
-      controller.abort();
       window.clearTimeout(timer);
     };
   }, [
     authed,
+    buildPlatformMerchantSnapshotSyncPayload,
+    hydratePlatformMerchantSnapshotFromServerPayload,
     hydrated,
     isMobileSupportOnlyMode,
+    loadPlatformMerchantSnapshotFromServer,
     platformMerchantSnapshotPayload.snapshot.length,
-    platformMerchantSnapshotPayloadKey,
     platformSnapshotServerReady,
   ]);
 
@@ -3153,11 +3220,13 @@ export default function SuperAdminClient() {
   };
 
   const syncPlatformMerchantSnapshotToServer = useCallback(
-    async (nextState: PlatformState) => {
-      const payload = buildPlatformMerchantSnapshotPayloadFromSites(
-        nextState.sites,
-        nextState.homeLayout.merchantDefaultSortRule,
-      );
+    async (
+      nextState: PlatformState,
+      options: {
+        conflictTip?: string;
+      } = {},
+    ) => {
+      const payload = buildPlatformMerchantSnapshotSyncPayload(nextState);
       if (payload.snapshot.length === 0) {
         throw new Error("empty_snapshot");
       }
@@ -3170,14 +3239,35 @@ export default function SuperAdminClient() {
         body: JSON.stringify(payload),
       });
       const result = (await response.json().catch(() => null)) as
-        | { ok?: boolean; error?: string; message?: string }
+        | { ok?: boolean; error?: string; message?: string; payload?: unknown }
         | null;
+      if (response.status === 409) {
+        const latestPayload = normalizePlatformMerchantSnapshotPayload(result?.payload ?? {});
+        if (latestPayload.snapshot.length > 0 || latestPayload.revision) {
+          hydratePlatformMerchantSnapshotFromServerPayload(latestPayload, {
+            conflictTip: options.conflictTip || "检测到其他超级后台已更新配置，当前页面已同步到最新版本",
+          });
+        } else {
+          await loadPlatformMerchantSnapshotFromServer({
+            conflictTip: options.conflictTip || "检测到其他超级后台已更新配置，当前页面已同步到最新版本",
+          });
+        }
+        throw new Error("platform_merchant_snapshot_conflict");
+      }
       if (!response.ok) {
         throw new Error(result?.message || result?.error || "platform_merchant_snapshot_save_failed");
       }
+      const savedPayload = normalizePlatformMerchantSnapshotPayload(result?.payload ?? {});
+      if (savedPayload.revision) {
+        platformSnapshotRevisionRef.current = savedPayload.revision;
+      }
       setPlatformSnapshotServerReady(true);
     },
-    [],
+    [
+      buildPlatformMerchantSnapshotSyncPayload,
+      hydratePlatformMerchantSnapshotFromServerPayload,
+      loadPlatformMerchantSnapshotFromServer,
+    ],
   );
 
   const withAudit = (
@@ -4825,7 +4915,12 @@ export default function SuperAdminClient() {
     try {
       await syncPlatformMerchantSnapshotToServer(auditedNextState);
     } catch (error) {
-      setTip(`服务端配置保存失败：${error instanceof Error ? error.message : "unknown_error"}`);
+      const message = error instanceof Error ? error.message : "unknown_error";
+      setTip(
+        message === "platform_merchant_snapshot_conflict"
+          ? "检测到其他超级后台已更新配置，当前页面已同步到最新版本"
+          : `服务端配置保存失败：${message}`,
+      );
       return;
     }
     const persisted = applyLocalPlatformState(auditedNextState, { allowVolatile: true });
@@ -4940,7 +5035,12 @@ export default function SuperAdminClient() {
     try {
       await syncPlatformMerchantSnapshotToServer(auditedNextState);
     } catch (error) {
-      setTip(`服务端配置回滚失败：${error instanceof Error ? error.message : "unknown_error"}`);
+      const message = error instanceof Error ? error.message : "unknown_error";
+      setTip(
+        message === "platform_merchant_snapshot_conflict"
+          ? "检测到其他超级后台已更新配置，当前页面已同步到最新版本"
+          : `服务端配置回滚失败：${message}`,
+      );
       return;
     }
     const persisted = applyLocalPlatformState(auditedNextState, { allowVolatile: true });

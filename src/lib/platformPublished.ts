@@ -7,6 +7,7 @@ import {
 } from "@/data/platformControlStore";
 import { sanitizeBlocksForRuntime } from "@/lib/blocksSanitizer";
 import {
+  PLATFORM_MERCHANT_SNAPSHOT_BACKUP_SLUG,
   PLATFORM_MERCHANT_SNAPSHOT_SLUG,
   readPlatformMerchantSnapshotFromBlocks,
 } from "@/lib/platformMerchantSnapshot";
@@ -476,37 +477,44 @@ export function injectPublishedMerchantSnapshotIntoBlocks(
 async function loadStoredPlatformMerchantSnapshot(
   supabase: LooseSupabaseClient,
 ): Promise<PublishedMerchantSnapshotLoadResult | null> {
-  const initialQuery = await supabase
-    .from("pages")
-    .select("blocks")
-    .is("merchant_id", null)
-    .eq("slug", PLATFORM_MERCHANT_SNAPSHOT_SLUG)
-    .limit(1)
-    .maybeSingle();
+  const readBlocksBySlug = async (slug: string) => {
+    const initialQuery = await supabase
+      .from("pages")
+      .select("blocks")
+      .is("merchant_id", null)
+      .eq("slug", slug)
+      .limit(1)
+      .maybeSingle();
 
-  let data = initialQuery.data as { blocks?: unknown } | null;
-  let error = initialQuery.error;
+    let data = initialQuery.data as { blocks?: unknown } | null;
+    let error = initialQuery.error;
 
-  if (error) {
-    const message = toErrorMessage(error);
-    if (isMissingPlatformMerchantIdColumn(message)) {
-      const bySlug = await supabase
-        .from("pages")
-        .select("blocks")
-        .eq("slug", PLATFORM_MERCHANT_SNAPSHOT_SLUG)
-        .limit(1)
-        .maybeSingle();
-      data = bySlug.data as { blocks?: unknown } | null;
-      error = bySlug.error;
-    } else if (isMissingPlatformSlugColumn(message)) {
-      return null;
-    } else {
-      return null;
+    if (error) {
+      const message = toErrorMessage(error);
+      if (isMissingPlatformMerchantIdColumn(message)) {
+        const bySlug = await supabase
+          .from("pages")
+          .select("blocks")
+          .eq("slug", slug)
+          .limit(1)
+          .maybeSingle();
+        data = bySlug.data as { blocks?: unknown } | null;
+        error = bySlug.error;
+      } else if (isMissingPlatformSlugColumn(message)) {
+        return null;
+      } else {
+        return null;
+      }
     }
-  }
 
-  if (error) return null;
-  const payload = readPlatformMerchantSnapshotFromBlocks(data?.blocks);
+    if (error) return null;
+    return data?.blocks;
+  };
+
+  const blocks =
+    (await readBlocksBySlug(PLATFORM_MERCHANT_SNAPSHOT_SLUG)) ??
+    (await readBlocksBySlug(PLATFORM_MERCHANT_SNAPSHOT_BACKUP_SLUG));
+  const payload = readPlatformMerchantSnapshotFromBlocks(blocks);
   if (!payload || payload.snapshot.length === 0) return null;
   return {
     snapshot: payload.snapshot,

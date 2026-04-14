@@ -18,10 +18,12 @@ import {
 } from "@/data/platformControlStore";
 
 export const PLATFORM_MERCHANT_SNAPSHOT_SLUG = "__platform_merchant_snapshot__";
+export const PLATFORM_MERCHANT_SNAPSHOT_BACKUP_SLUG = "__platform_merchant_snapshot_backup__";
 const PLATFORM_MERCHANT_SNAPSHOT_BLOCK_ID = "__platform_merchant_snapshot__";
 const PLATFORM_MERCHANT_SNAPSHOT_VERSION = 1;
 
 export type PlatformMerchantSnapshotPayload = {
+  revision: string;
   snapshot: MerchantListPublishedSite[];
   defaultSortRule: MerchantSortRule;
   merchantConfigHistoryBySiteId: Record<string, MerchantConfigHistoryEntry[]>;
@@ -34,6 +36,15 @@ function normalizeText(value: unknown) {
 function normalizeMerchantId(value: unknown) {
   const normalized = normalizeText(value);
   return /^\d{8}$/.test(normalized) ? normalized : "";
+}
+
+function normalizePlatformMerchantSnapshotRevision(value: unknown) {
+  return normalizeText(value);
+}
+
+export function createPlatformMerchantSnapshotRevision() {
+  const randomPart = Math.random().toString(36).slice(2, 10);
+  return `snapshot-${Date.now()}-${randomPart}`;
 }
 
 function normalizeMerchantIndustry(value: unknown): MerchantIndustry {
@@ -298,6 +309,9 @@ export function normalizePlatformMerchantSnapshotPayload(input: unknown): Platfo
       : [];
   const snapshot = sortSnapshotSites(rawSnapshot.map((item) => normalizeSnapshotSite(item)).filter((item): item is MerchantListPublishedSite => !!item));
   return {
+    revision: normalizePlatformMerchantSnapshotRevision(
+      value.revision ?? value.platformMerchantSnapshotRevision,
+    ),
     snapshot,
     defaultSortRule: normalizeMerchantSortRule(
       value.defaultSortRule ?? value.publishedMerchantDefaultSortRule,
@@ -311,6 +325,7 @@ export function normalizePlatformMerchantSnapshotPayload(input: unknown): Platfo
 export function buildPlatformMerchantSnapshotPayloadFromSites(
   sites: Site[],
   defaultSortRule: MerchantSortRule = "created_desc",
+  revision = "",
 ): PlatformMerchantSnapshotPayload {
   const snapshotItems: MerchantListPublishedSite[] = [];
   const merchantConfigHistoryBySiteId: Record<string, MerchantConfigHistoryEntry[]> = {};
@@ -355,6 +370,7 @@ export function buildPlatformMerchantSnapshotPayloadFromSites(
   const snapshot = sortSnapshotSites(snapshotItems);
 
   return {
+    revision: normalizePlatformMerchantSnapshotRevision(revision),
     snapshot,
     defaultSortRule: normalizeMerchantSortRule(defaultSortRule),
     merchantConfigHistoryBySiteId,
@@ -363,10 +379,12 @@ export function buildPlatformMerchantSnapshotPayloadFromSites(
 
 export function buildPlatformMerchantSnapshotPayloadFromState(
   state: Pick<PlatformState, "sites" | "homeLayout">,
+  revision = "",
 ): PlatformMerchantSnapshotPayload {
   return buildPlatformMerchantSnapshotPayloadFromSites(
     state.sites,
     state.homeLayout?.merchantDefaultSortRule ?? "created_desc",
+    revision,
   );
 }
 
@@ -379,6 +397,7 @@ export function buildPlatformMerchantSnapshotBlocks(
       type: "common",
       props: {
         platformMerchantSnapshotVersion: PLATFORM_MERCHANT_SNAPSHOT_VERSION,
+        platformMerchantSnapshotRevision: payload.revision,
         publishedMerchantSnapshot: payload.snapshot,
         publishedMerchantDefaultSortRule: payload.defaultSortRule,
         publishedMerchantConfigHistoryBySiteId: payload.merchantConfigHistoryBySiteId,

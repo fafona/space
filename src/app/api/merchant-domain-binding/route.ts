@@ -338,7 +338,10 @@ async function syncMerchantProfileSnapshot(
     chatAvatarImageUrl?: string;
     contactVisibility?: MerchantContactVisibility;
   },
-) {
+): Promise<
+  | { ok: true }
+  | { ok: false; message: string; conflict?: boolean }
+> {
   const existingPayload = await loadStoredPlatformMerchantSnapshot(supabase);
   const existingSite = existingPayload?.snapshot.find((site) => site.id === input.merchantId) ?? null;
   const snapshotSite = buildPlatformMerchantSnapshotSite({
@@ -373,13 +376,19 @@ async function syncMerchantProfileSnapshot(
   }
 
   const nextPayload = {
+    revision: existingPayload?.revision ?? "",
     snapshot: upsertPlatformMerchantSnapshotSite(existingPayload?.snapshot ?? [], snapshotSite),
     defaultSortRule: existingPayload?.defaultSortRule ?? "created_desc",
     merchantConfigHistoryBySiteId: existingPayload?.merchantConfigHistoryBySiteId ?? {},
   };
-  const saveResult = await savePlatformMerchantSnapshot(supabase, nextPayload);
+  const saveResult = await savePlatformMerchantSnapshot(supabase, nextPayload, {
+    expectedRevision: existingPayload?.revision ?? "",
+  });
+  if (saveResult.code === "conflict") {
+    return { ok: false as const, message: "merchant_profile_snapshot_conflict", conflict: true as const };
+  }
   if (saveResult.error) {
-    return { ok: false as const, message: saveResult.error };
+    return { ok: false as const, message: saveResult.error, conflict: false as const };
   }
   return { ok: true as const };
 }
@@ -487,7 +496,7 @@ export async function POST(request: Request) {
           error: "merchant_domain_binding_failed",
           message: snapshotResult.message,
         },
-        { status: 500 },
+        { status: snapshotResult.conflict ? 409 : 500 },
       );
     }
 

@@ -10,6 +10,7 @@ import {
   type MerchantServiceRestrictionReason,
 } from "@/lib/merchantServiceStatus";
 import {
+  PLATFORM_MERCHANT_SNAPSHOT_BACKUP_SLUG,
   PLATFORM_MERCHANT_SNAPSHOT_SLUG,
   readPlatformMerchantSnapshotFromBlocks,
 } from "@/lib/platformMerchantSnapshot";
@@ -90,27 +91,34 @@ async function loadSnapshotBlocks() {
   const supabase = createServerSupabaseClient();
   if (!supabase) return null;
 
-  const scoped = await supabase
-    .from<SnapshotRow>("pages")
-    .select("blocks")
-    .is("merchant_id", null)
-    .eq("slug", PLATFORM_MERCHANT_SNAPSHOT_SLUG)
-    .limit(1)
-    .maybeSingle();
-  if (!scoped.error) return scoped.data?.blocks ?? null;
-
-  const scopedMessage = normalizeText(scoped.error?.message);
-  if (isMissingMerchantIdColumn(scopedMessage)) {
-    const fallback = await supabase
+  const readBlocksBySlug = async (slug: string) => {
+    const scoped = await supabase
       .from<SnapshotRow>("pages")
       .select("blocks")
-      .eq("slug", PLATFORM_MERCHANT_SNAPSHOT_SLUG)
+      .is("merchant_id", null)
+      .eq("slug", slug)
       .limit(1)
       .maybeSingle();
-    if (!fallback.error) return fallback.data?.blocks ?? null;
-    if (!isMissingSlugColumn(normalizeText(fallback.error?.message))) return null;
-  }
-  return null;
+    if (!scoped.error) return scoped.data?.blocks ?? null;
+
+    const scopedMessage = normalizeText(scoped.error?.message);
+    if (isMissingMerchantIdColumn(scopedMessage)) {
+      const fallback = await supabase
+        .from<SnapshotRow>("pages")
+        .select("blocks")
+        .eq("slug", slug)
+        .limit(1)
+        .maybeSingle();
+      if (!fallback.error) return fallback.data?.blocks ?? null;
+      if (!isMissingSlugColumn(normalizeText(fallback.error?.message))) return null;
+    }
+    return null;
+  };
+
+  return (
+    (await readBlocksBySlug(PLATFORM_MERCHANT_SNAPSHOT_SLUG)) ??
+    (await readBlocksBySlug(PLATFORM_MERCHANT_SNAPSHOT_BACKUP_SLUG))
+  );
 }
 
 async function loadSnapshotSites() {
