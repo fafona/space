@@ -195,11 +195,11 @@ function NoteIcon() {
 
 function ActionCloseIcon() {
   return (
-    <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" className="h-[18px] w-[18px]">
+    <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" className="h-[22px] w-[22px]">
       <path
         d="M5 5l6 6M11 5l-6 6"
         stroke="currentColor"
-        strokeWidth="2"
+        strokeWidth="2.2"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
@@ -209,11 +209,11 @@ function ActionCloseIcon() {
 
 function ActionCheckIcon() {
   return (
-    <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" className="h-[18px] w-[18px]">
+    <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" className="h-[22px] w-[22px]">
       <path
         d="M3.5 8.25 6.5 11l6-6.5"
         stroke="currentColor"
-        strokeWidth="2"
+        strokeWidth="2.2"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
@@ -720,7 +720,7 @@ export default function MerchantBookingMobilePanel({
             {busyKey === `noshow:${record.id}` ? (
               <span className="text-xs font-semibold tracking-[0.18em]">...</span>
             ) : (
-              <span className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-rose-100 bg-white text-rose-600 shadow-[0_4px_10px_rgba(244,63,94,0.14)]">
+              <span className="inline-flex items-center justify-center text-rose-600">
                 <ActionCloseIcon />
               </span>
             )}
@@ -738,7 +738,7 @@ export default function MerchantBookingMobilePanel({
             {busyKey === `complete:${record.id}` ? (
               <span className="text-xs font-semibold tracking-[0.18em]">...</span>
             ) : (
-              <span className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-emerald-100 bg-white text-emerald-600 shadow-[0_4px_10px_rgba(16,185,129,0.14)]">
+              <span className="inline-flex items-center justify-center text-emerald-600">
                 <ActionCheckIcon />
               </span>
             )}
