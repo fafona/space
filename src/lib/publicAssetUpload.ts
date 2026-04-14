@@ -1,6 +1,3 @@
-import { recoverBrowserSupabaseSession } from "@/lib/authSessionRecovery";
-import { supabase } from "@/lib/supabase";
-
 const FOLDER_CANDIDATES = new Set(["merchant-assets", "merchant-audio"]);
 
 export type PublicAssetUploadUsage =
@@ -46,19 +43,6 @@ async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, tim
   }
 }
 
-async function getAssetUploadAccessToken() {
-  try {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    const directToken = String(session?.access_token ?? "").trim();
-    if (directToken) return directToken;
-  } catch {
-    // Fall through to cookie-backed server auth.
-  }
-  return "";
-}
-
 async function uploadDataUrlViaServerApi(
   dataUrl: string,
   merchantHint: string,
@@ -67,18 +51,13 @@ async function uploadDataUrlViaServerApi(
 ): Promise<string | null> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      const accessToken = await getAssetUploadAccessToken();
-      const headers: Record<string, string> = {
-        "content-type": "application/json",
-      };
-      if (accessToken) {
-        headers.Authorization = `Bearer ${accessToken}`;
-      }
       const response = await fetchWithTimeout(
         "/api/assets/upload",
         {
           method: "POST",
-          headers,
+          headers: {
+            "content-type": "application/json",
+          },
           credentials: "same-origin",
           body: JSON.stringify({
             dataUrl,
@@ -93,14 +72,12 @@ async function uploadDataUrlViaServerApi(
         const payload = (await response.json().catch(() => null)) as { url?: unknown } | null;
         return typeof payload?.url === "string" && payload.url.trim() ? payload.url.trim() : null;
       }
-      if (attempt === 0 && response.status === 401) {
-        await recoverBrowserSupabaseSession(9000).catch(() => null);
+      if (attempt === 0 && (response.status === 401 || response.status === 503)) {
         await delay(500);
         continue;
       }
     } catch {
       if (attempt === 0) {
-        await recoverBrowserSupabaseSession(9000).catch(() => null);
         await delay(500);
         continue;
       }

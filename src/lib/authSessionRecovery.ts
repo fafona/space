@@ -13,17 +13,37 @@ type BrowserSessionSnapshot = {
   session: unknown;
 };
 
-type MerchantCookieSessionPayload = {
+export type MerchantCookieSessionPayload = {
   authenticated?: unknown;
   accessToken?: unknown;
   refreshToken?: unknown;
   expiresIn?: unknown;
   tokenType?: unknown;
   merchantId?: unknown;
+  merchantIds?: unknown;
   user?: Session["user"] | null;
 };
 
 let merchantSessionPayloadInFlight: Promise<MerchantCookieSessionPayload | null> | null = null;
+
+export function readMerchantSessionMerchantIds(
+  payload: { merchantId?: unknown; merchantIds?: unknown } | null | undefined,
+) {
+  const merchantIds: string[] = [];
+  const pushId = (value: unknown) => {
+    if (typeof value !== "string") return;
+    const trimmed = value.trim();
+    if (!trimmed || merchantIds.includes(trimmed)) return;
+    merchantIds.push(trimmed);
+  };
+
+  pushId(payload?.merchantId);
+  if (Array.isArray(payload?.merchantIds)) {
+    payload.merchantIds.forEach(pushId);
+  }
+
+  return merchantIds;
+}
 
 function collectUsableBrowserStorages(candidates: Array<Storage | null | undefined>) {
   if (typeof window === "undefined") return [];
@@ -374,13 +394,13 @@ export async function recoverBrowserSupabaseSessionWithRefresh(timeoutMs = 4500)
 export async function syncMerchantSessionCookies(
   session: Pick<Session, "access_token" | "refresh_token" | "expires_in"> | null | undefined,
   timeoutMs = 3200,
-): Promise<boolean> {
-  if (typeof window === "undefined") return false;
+): Promise<MerchantCookieSessionPayload | null> {
+  if (typeof window === "undefined") return null;
   const accessToken = String(session?.access_token ?? "").trim();
   const refreshToken = String(session?.refresh_token ?? "").trim();
   const expiresIn =
     typeof session?.expires_in === "number" && Number.isFinite(session.expires_in) ? session.expires_in : undefined;
-  if (!accessToken) return false;
+  if (!accessToken) return null;
 
   try {
     const response = await withTimeout(
@@ -400,9 +420,10 @@ export async function syncMerchantSessionCookies(
       }),
       Math.max(1200, timeoutMs),
     );
-    return response.ok;
+    if (!response.ok) return null;
+    return (await response.json().catch(() => null)) as MerchantCookieSessionPayload | null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -416,47 +437,16 @@ export function startMerchantSessionKeepAlive(options?: MerchantSessionKeepAlive
   if (typeof window === "undefined") return () => {};
 
   const intervalMs = Math.max(60_000, Math.min(15 * 60_000, options?.intervalMs ?? 8 * 60_000));
-  const refreshWindowMs = Math.max(30_000, Math.min(intervalMs, options?.refreshWindowMs ?? 12 * 60_000));
   const timeoutMs = Math.max(1800, Math.min(9000, options?.timeoutMs ?? 4200));
   let disposed = false;
-  let inFlight: Promise<Session | null> | null = null;
+  let inFlight: Promise<MerchantCookieSessionPayload | null> | null = null;
 
-  const tick = async (forceRefresh: boolean) => {
+  const tick = async () => {
     if (disposed) return null;
     if (inFlight) return inFlight;
     const task = (async () => {
       try {
-        let currentSession: Session | null = null;
-        try {
-          const {
-            data: { session },
-          } = await withTimeout(supabase.auth.getSession(), timeoutMs);
-          currentSession = session ?? null;
-        } catch {
-          currentSession = null;
-        }
-
-        const expiresAtMs =
-          typeof currentSession?.expires_at === "number" && Number.isFinite(currentSession.expires_at)
-            ? currentSession.expires_at * 1000
-            : 0;
-        const shouldRefresh =
-          forceRefresh ||
-          !currentSession ||
-          !currentSession.refresh_token ||
-          !expiresAtMs ||
-          expiresAtMs - Date.now() <= refreshWindowMs;
-
-        const activeSession = shouldRefresh
-          ? await recoverBrowserSupabaseSessionWithRefresh(timeoutMs)
-          : currentSession;
-        if (!activeSession) return null;
-        persistBrowserSupabaseSessionSnapshot({
-          currentSession: activeSession,
-          session: activeSession,
-        });
-        await syncMerchantSessionCookies(activeSession, timeoutMs);
-        return activeSession;
+        return await readMerchantSessionPayload(timeoutMs);
       } catch {
         return null;
       }
@@ -474,20 +464,20 @@ export function startMerchantSessionKeepAlive(options?: MerchantSessionKeepAlive
 
   const onVisibilityChange = () => {
     if (document.visibilityState !== "visible") return;
-    void tick(true);
+    void tick();
   };
   const onFocus = () => {
-    void tick(true);
+    void tick();
   };
 
   const intervalId = window.setInterval(() => {
     if (document.visibilityState === "hidden") return;
-    void tick(false);
+    void tick();
   }, intervalMs);
 
   document.addEventListener("visibilitychange", onVisibilityChange);
   window.addEventListener("focus", onFocus);
-  void tick(false);
+  void tick();
 
   return () => {
     disposed = true;

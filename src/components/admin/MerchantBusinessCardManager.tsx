@@ -41,10 +41,8 @@ import {
   resolveMerchantBusinessCardShareOrigin,
   type MerchantBusinessCardShareContact,
 } from "@/lib/merchantBusinessCardShare";
-import { recoverBrowserSupabaseSession } from "@/lib/authSessionRecovery";
 import { uploadImageDataUrlToPublicStorage } from "@/lib/publicAssetUpload";
 import { buildMerchantDomain } from "@/lib/siteRouting";
-import { supabase } from "@/lib/supabase";
 
 type MerchantBusinessCardManagerProps = {
   merchantId?: string | null;
@@ -1411,20 +1409,15 @@ export default function MerchantBusinessCardManager({
       throw new Error("share_delete_failed");
     }
 
-    const initialAccessToken = await getShareAccessToken();
     let lastErrorCode = "";
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
-        const accessToken = attempt === 0 ? initialAccessToken : await getShareAccessToken();
         const headers: Record<string, string> = {
           "content-type": "application/json",
         };
         if (normalizedMerchantId) {
           headers["x-merchant-site-id"] = normalizedMerchantId;
-        }
-        if (accessToken) {
-          headers.Authorization = `Bearer ${accessToken}`;
         }
 
         const response = await fetchWithTimeout(
@@ -1449,8 +1442,7 @@ export default function MerchantBusinessCardManager({
         if (response.ok) {
           return;
         }
-        if (attempt === 0 && (response.status === 401 || lastErrorCode === "unauthorized")) {
-          await recoverBrowserSupabaseSession(9000).catch(() => null);
+        if (attempt === 0 && (response.status === 401 || response.status === 503 || lastErrorCode === "unauthorized")) {
           await delay(500);
           continue;
         }
@@ -2793,19 +2785,6 @@ export default function MerchantBusinessCardManager({
     }
   }
 
-  async function getShareAccessToken() {
-    try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      const directToken = String(session?.access_token ?? "").trim();
-      if (directToken) return directToken;
-    } catch {
-      // Fall through to cookie-backed server auth.
-    }
-    return "";
-  }
-
   function updateCardShareMeta(
     cardId: string,
     patch: Partial<Pick<MerchantBusinessCardAsset, "shareImageUrl" | "shareKey" | "contactPagePublicImageUrl">>,
@@ -2948,21 +2927,16 @@ export default function MerchantBusinessCardManager({
       }
       throw new Error("share_image_unavailable");
     }
-    const initialAccessToken = await getShareAccessToken();
     let shareUrl = "";
     let shareKey = "";
     let lastErrorCode = "";
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
-        const accessToken = attempt === 0 ? initialAccessToken : await getShareAccessToken();
         const headers: Record<string, string> = {
           "content-type": "application/json",
         };
         if (normalizedMerchantId) {
           headers["x-merchant-site-id"] = normalizedMerchantId;
-        }
-        if (accessToken) {
-          headers.Authorization = `Bearer ${accessToken}`;
         }
         const response = await fetchWithTimeout("/api/business-card-share", {
           method: "POST",
@@ -2996,8 +2970,7 @@ export default function MerchantBusinessCardManager({
         if (response.ok && shareUrl && shareKey) {
           break;
         }
-        if (attempt === 0 && (response.status === 401 || lastErrorCode === "unauthorized")) {
-          await recoverBrowserSupabaseSession(9000).catch(() => null);
+        if (attempt === 0 && (response.status === 401 || response.status === 503 || lastErrorCode === "unauthorized")) {
           await delay(500);
           continue;
         }

@@ -4,6 +4,7 @@ import {
   clearStoredBrowserSupabaseSessionTokens,
   hasStoredBrowserSupabaseSessionTokens,
   persistBrowserSupabaseSessionSnapshot,
+  readMerchantSessionMerchantIds,
 } from "@/lib/authSessionRecovery";
 import { legacySupabaseAuthStorageKey, resolvedSupabaseAuthStorageKey } from "@/lib/supabase";
 
@@ -106,4 +107,14 @@ test("stored browser auth snapshot still counts when only durable localStorage r
   } finally {
     harness.restore();
   }
+});
+
+test("merchant session payload ids keep server primary id first and dedupe extras", () => {
+  assert.deepEqual(
+    readMerchantSessionMerchantIds({
+      merchantId: "10000002",
+      merchantIds: ["10000003", "10000002", "10000004", "", null],
+    }),
+    ["10000002", "10000003", "10000004"],
+  );
 });

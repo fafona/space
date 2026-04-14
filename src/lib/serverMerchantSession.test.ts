@@ -72,7 +72,7 @@ test("resolveMerchantSessionFromRequest accepts an authorized hinted merchant id
     const session = await resolveMerchantSessionFromRequest(
       new Request("https://faolla.com/api/support-messages?siteId=87654321", {
         headers: {
-          authorization: "Bearer access-token-query",
+          cookie: "merchant-space-merchant-auth=access-token-query",
         },
       }),
     );
@@ -146,7 +146,7 @@ test("resolveMerchantSessionFromRequest rejects unauthorized hinted merchant ids
     const session = await resolveMerchantSessionFromRequest(
       new Request("https://faolla.com/api/support-messages?siteId=99999999", {
         headers: {
-          authorization: "Bearer access-token-fallback",
+          cookie: "merchant-space-merchant-auth=access-token-fallback",
         },
       }),
     );

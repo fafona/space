@@ -94,19 +94,9 @@ export function readMerchantAuthMerchantIdCookie(request: Request) {
   return normalizeMerchantId(parseCookieValue(request.headers.get("cookie") ?? "", MERCHANT_AUTH_MERCHANT_ID_COOKIE));
 }
 
-export function readBearerAccessToken(request: Request) {
-  const authHeader = request.headers.get("authorization") ?? "";
-  const tokenMatch = authHeader.match(/^Bearer\s+(.+)$/i);
-  return tokenMatch?.[1]?.trim() ?? "";
-}
-
-export function readMerchantAccessTokenHeader(request: Request) {
-  return (request.headers.get("x-merchant-access-token") ?? "").trim();
-}
-
 export function readMerchantRequestAccessTokens(request: Request) {
   const tokens: string[] = [];
-  [readBearerAccessToken(request), readMerchantAccessTokenHeader(request), readMerchantAuthCookie(request)].forEach((token) => {
+  [readMerchantAuthCookie(request)].forEach((token) => {
     if (!token || tokens.includes(token)) return;
     tokens.push(token);
   });

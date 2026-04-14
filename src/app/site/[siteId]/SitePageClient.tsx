@@ -126,21 +126,7 @@ function isMissingSlugColumn(message: string) {
   );
 }
 
-async function getAccessTokenQuickly(timeoutMs = 1200) {
-  try {
-    const sessionTask = supabase.auth.getSession();
-    const timeoutTask = new Promise<null>((resolve) => {
-      setTimeout(() => resolve(null), Math.max(200, timeoutMs));
-    });
-    const result = (await Promise.race([sessionTask, timeoutTask])) as Awaited<typeof sessionTask> | null;
-    const token = result?.data?.session?.access_token ?? "";
-    return token.trim() || "";
-  } catch {
-    return "";
-  }
-}
-
-async function fetchPublishedSiteBlocksViaRest(siteId: string, bearerToken?: string) {
+async function fetchPublishedSiteBlocksViaRest(siteId: string) {
   const base = getResolvedSupabaseUrl().trim().replace(/\/+$/, "");
   if (!base || !siteId) return null;
   const queryOne = async (slug?: string) => {
@@ -157,9 +143,6 @@ async function fetchPublishedSiteBlocksViaRest(siteId: string, bearerToken?: str
       const headers: Record<string, string> = {
         apikey: resolvedSupabaseAnonKey,
       };
-      if ((bearerToken ?? "").trim()) {
-        headers.Authorization = `Bearer ${bearerToken}`;
-      }
       const response = await fetch(`${base}/rest/v1/pages?${query.toString()}`, {
         method: "GET",
         headers,
@@ -360,7 +343,6 @@ export function SitePageClient({
           const gatewayReady = await canReachSupabaseGateway(3000);
           if (!mounted) return;
           if (gatewayReady) {
-            const accessTokenTask = getAccessTokenQuickly(900);
             const anonRestTask = withTimeout(fetchPublishedSiteBlocksViaRest(siteId), SITE_REMOTE_FETCH_TIMEOUT_MS);
             const sdkTask = withTimeout(
               (async () => {
@@ -382,12 +364,6 @@ export function SitePageClient({
             nextBlocks = await anonRestTask;
             if (!nextBlocks) {
               nextBlocks = await sdkTask;
-            }
-            if (!nextBlocks) {
-              const accessToken = await accessTokenTask;
-              if (accessToken) {
-                nextBlocks = await withTimeout(fetchPublishedSiteBlocksViaRest(siteId, accessToken), SITE_REMOTE_FETCH_TIMEOUT_MS);
-              }
             }
           }
         }

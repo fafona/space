@@ -69,6 +69,7 @@ import {
 import {
   clearStoredBrowserSupabaseSessionTokens,
   isTransientAuthValidationError,
+  readMerchantSessionMerchantIds,
   readMerchantSessionPayload,
   recoverBrowserSupabaseSessionViaMerchantCookies,
   recoverBrowserSupabaseSessionWithRefresh,
@@ -234,7 +235,7 @@ import {
   resolveButtonContentPadding,
   resolveButtonLabel,
 } from "@/lib/buttonBlock";
-import { ensureMerchantIdentityForUser, isMerchantNumericId } from "@/lib/merchantIdentity";
+import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import {
   buildMerchantDomain,
   buildMerchantFrontendHref,
@@ -2230,20 +2231,6 @@ function parseDataUrlMeta(dataUrl: string) {
   return { mime, extension };
 }
 
-async function getAssetUploadAccessToken(timeoutMs = 900) {
-  try {
-    const sessionTask = supabase.auth.getSession();
-    const timeoutTask = new Promise<null>((resolve) => {
-      setTimeout(() => resolve(null), Math.max(200, timeoutMs));
-    });
-    const result = (await Promise.race([sessionTask, timeoutTask])) as Awaited<typeof sessionTask> | null;
-    const token = result?.data?.session?.access_token ?? "";
-    return token.trim() || "";
-  } catch {
-    return "";
-  }
-}
-
 async function uploadDataUrlViaServerApi(
   dataUrl: string,
   merchantHint = "public",
@@ -2251,16 +2238,11 @@ async function uploadDataUrlViaServerApi(
   usage = folder === "merchant-audio" ? "audio" : folder === "merchant-files" ? "support-file" : "generic-image",
 ): Promise<string | null> {
   try {
-    const accessToken = await getAssetUploadAccessToken();
-    const headers: Record<string, string> = {
-      "content-type": "application/json",
-    };
-    if (accessToken) {
-      headers.Authorization = `Bearer ${accessToken}`;
-    }
     const response = await fetch("/api/assets/upload", {
       method: "POST",
-      headers,
+      headers: {
+      "content-type": "application/json",
+      },
       credentials: "same-origin",
       body: JSON.stringify({
         dataUrl,
@@ -3225,23 +3207,25 @@ async function resolveMerchantIds(sessionUserId?: string, email?: string, metada
   readMerchantIdsFromMetadata(metadataRecord).forEach(pushId);
   cachedIds.forEach(pushId);
 
-  if (!sessionUserId) {
-    return ids;
-  }
-
   try {
-    const ensured = await ensureMerchantIdentityForUser({
-      id: sessionUserId,
-      email: email ?? null,
-      user_metadata: metadataRecord,
-      app_metadata: metadataRecord,
-    });
-    ensured.merchantIds.forEach(pushId);
-    if (ensured.merchantId) {
-      pushId(ensured.merchantId);
+    const payload = await readMerchantSessionPayload(2600).catch(() => null);
+    const expectedUserId = String(sessionUserId ?? "").trim();
+    const expectedEmail = String(email ?? "").trim().toLowerCase();
+    const payloadUserId = typeof payload?.user?.id === "string" ? payload.user.id.trim() : "";
+    const payloadEmail = typeof payload?.user?.email === "string" ? payload.user.email.trim().toLowerCase() : "";
+    const payloadMatchesCurrentUser =
+      payload?.authenticated === true &&
+      (!expectedUserId || !payloadUserId || payloadUserId === expectedUserId) &&
+      (!expectedEmail || !payloadEmail || payloadEmail === expectedEmail);
+    if (payloadMatchesCurrentUser) {
+      readMerchantSessionMerchantIds(payload).forEach(pushId);
     }
   } catch {
-    // Keep cached + metadata ids when ensure step fails.
+    // Keep cached + metadata ids when server-backed identity read fails.
+  }
+
+  if (!sessionUserId) {
+    return ids;
   }
 
   const numericIds = ids.filter((item) => isMerchantNumericId(item)).sort((a, b) => Number(a) - Number(b));
@@ -5221,15 +5205,25 @@ export default function AdminClient({
         try {
           const payload = await withTimeout(readMerchantSessionPayload(timeoutMs), timeoutMs, "商户身份识别超时，请稍后重试");
           if (!payload || payload.authenticated !== true) return null;
-          const merchantId = typeof payload?.merchantId === "string" ? payload.merchantId.trim() : "";
+          const merchantIds = readMerchantSessionMerchantIds(payload);
+          const merchantId =
+            (typeof payload?.merchantId === "string" ? payload.merchantId.trim() : "") ||
+            merchantIds.find((item) => isMerchantNumericId(item)) ||
+            merchantIds[0] ||
+            "";
           const email = typeof payload?.user?.email === "string" ? payload.user.email.trim() : "";
           if (!merchantId && !email) return null;
           merchantSessionIdentityRef.current = {
             merchantId,
             email: email || null,
           };
+          if (merchantIds.length > 0 || merchantId) {
+            merchantIdsRef.current = mergePreferredMerchantIds(
+              merchantIds.length > 0 ? merchantIds : [merchantId],
+              merchantIdsRef.current,
+            );
+          }
           if (merchantId) {
-            merchantIdsRef.current = mergePreferredMerchantIds([merchantId], merchantIdsRef.current);
             setMerchantSiteIdOverride((current) => current || merchantId);
           }
           return merchantSessionIdentityRef.current;
@@ -5257,15 +5251,25 @@ export default function AdminClient({
         if (!payload || payload.authenticated !== true) {
           return null;
         }
-        const merchantId = typeof payload?.merchantId === "string" ? payload.merchantId.trim() : "";
+        const merchantIds = readMerchantSessionMerchantIds(payload);
+        const merchantId =
+          (typeof payload?.merchantId === "string" ? payload.merchantId.trim() : "") ||
+          merchantIds.find((item) => isMerchantNumericId(item)) ||
+          merchantIds[0] ||
+          "";
         const email = typeof payload?.user?.email === "string" ? payload.user.email.trim() : "";
         if (!merchantId && !email) return null;
         merchantSessionIdentityRef.current = {
           merchantId,
           email: email || null,
         };
+        if (merchantIds.length > 0 || merchantId) {
+          merchantIdsRef.current = mergePreferredMerchantIds(
+            merchantIds.length > 0 ? merchantIds : [merchantId],
+            merchantIdsRef.current,
+          );
+        }
         if (merchantId) {
-          merchantIdsRef.current = mergePreferredMerchantIds([merchantId], merchantIdsRef.current);
           setMerchantSiteIdOverride((current) => current || merchantId);
         }
         return merchantSessionIdentityRef.current;
@@ -5302,8 +5306,8 @@ export default function AdminClient({
 
     if (!targetSiteId) {
       try {
-        const session = await recoverBrowserSupabaseSessionWithRefresh(Math.max(2600, AUTH_CHECK_TIMEOUT_MS));
-        const recoveredSessionEmail = typeof session?.user?.email === "string" ? session.user.email.trim() : "";
+        const freshIdentity = await readFreshMerchantSessionIdentity(Math.max(2600, AUTH_CHECK_TIMEOUT_MS));
+        const recoveredSessionEmail = typeof freshIdentity?.email === "string" ? freshIdentity.email.trim() : "";
         if (recoveredSessionEmail) {
           sessionUserEmail = recoveredSessionEmail;
           merchantSessionIdentityRef.current = {
@@ -5312,10 +5316,7 @@ export default function AdminClient({
           };
         }
         if (!targetSiteId) {
-          const resolvedMerchantIds = await resolveMerchantIds(session?.user?.id, session?.user?.email, {
-            ...(session?.user?.user_metadata ?? {}),
-            ...(session?.user?.app_metadata ?? {}),
-          });
+          const resolvedMerchantIds = mergePreferredMerchantIds(merchantIdsRef.current);
           if (resolvedMerchantIds.length > 0) {
             merchantIdsRef.current = mergePreferredMerchantIds(resolvedMerchantIds, merchantIdsRef.current);
             targetSiteId = resolvedMerchantIds.find((item) => isMerchantNumericId(item)) ?? resolvedMerchantIds[0] ?? "";
@@ -5355,7 +5356,7 @@ export default function AdminClient({
     };
     setMerchantSiteIdOverride(ensuredSiteId);
     return ensuredSiteId;
-  }, [isPlatformEditor, merchantSiteIdOverride, prefetchMerchantSessionIdentity, storeScope]);
+  }, [isPlatformEditor, merchantSiteIdOverride, prefetchMerchantSessionIdentity, readFreshMerchantSessionIdentity, storeScope]);
 
   useEffect(() => {
     if (isPlatformEditor || typeof window === "undefined") return;
@@ -5714,17 +5715,8 @@ export default function AdminClient({
       try {
         const gatewayReady = await canReachSupabaseGateway(Math.min(2500, AUTH_CHECK_TIMEOUT_MS));
         if (!gatewayReady) return merchantIds[0] ?? "public";
-        const {
-          data: { session },
-        } = await withTimeout(
-          supabase.auth.getSession(),
-          AUTH_CHECK_TIMEOUT_MS,
-          "登录检查超时，已回退到默认商户标识",
-        );
-        merchantIds = await resolveMerchantIds(session?.user?.id, session?.user?.email, {
-          ...(session?.user?.user_metadata ?? {}),
-          ...(session?.user?.app_metadata ?? {}),
-        });
+        await readFreshMerchantSessionIdentity(Math.min(3200, AUTH_CHECK_TIMEOUT_MS)).catch(() => null);
+        merchantIds = mergePreferredMerchantIds(merchantIdsRef.current);
         merchantIdsRef.current = merchantIds;
       } catch {
         merchantIds = merchantIdsRef.current;
@@ -6208,17 +6200,8 @@ export default function AdminClient({
     try {
       const gatewayReady = await canReachSupabaseGateway(Math.min(2500, AUTH_CHECK_TIMEOUT_MS));
       if (!gatewayReady) return withTimeout(saveBlocksToSupabaseFallback(payload, merchantIds, merchantSlug), timeoutMs);
-      const {
-        data: { session },
-      } = await withTimeout(
-        supabase.auth.getSession(),
-        AUTH_CHECK_TIMEOUT_MS,
-        "商户鉴权超时，请稍后重试保存",
-      );
-      const resolvedMerchantIds = await resolveMerchantIds(session?.user?.id, session?.user?.email, {
-        ...(session?.user?.user_metadata ?? {}),
-        ...(session?.user?.app_metadata ?? {}),
-      });
+      await readFreshMerchantSessionIdentity(Math.min(3600, AUTH_CHECK_TIMEOUT_MS)).catch(() => null);
+      const resolvedMerchantIds = mergePreferredMerchantIds(merchantIdsRef.current);
       // Always prefer freshly resolved ids to avoid stale in-memory/session cache blocking publish.
       if (resolvedMerchantIds.length > 0) {
         merchantIds = mergePreferredMerchantIds(preferredMerchantIds, resolvedMerchantIds);
@@ -6269,13 +6252,17 @@ export default function AdminClient({
         const code = typeof data?.code === "string" ? data.code : "";
         const message = typeof data?.message === "string" ? data.message : `发布接口错误（HTTP ${response.status}）`;
         if (code === "publish_service_unavailable") {
-          return { handled: false, error: null };
+          return isPlatformEditor
+            ? { handled: false, error: null }
+            : { handled: true, error: { message: "发布服务暂不可用，请稍后重试" } };
         }
         return { handled: true, error: { message } };
       }
       return { handled: true, error: null };
     } catch {
-      return { handled: false, error: null };
+      return isPlatformEditor
+        ? { handled: false, error: null }
+        : { handled: true, error: { message: "发布服务暂不可用，请稍后重试" } };
     } finally {
       clearTimeout(timer);
     }
@@ -6669,6 +6656,148 @@ export default function AdminClient({
         if (!mounted) return;
         if (!gatewayReady) {
           setBackendNotice(isPlatformEditor ? "后端连接不稳定，正在尝试直接获取远端内容..." : null);
+        }
+
+        if (!isPlatformEditor) {
+          clearStoredBrowserSupabaseSessionTokens();
+          void supabase.auth.signOut({ scope: "local" }).catch(() => {
+            // Ignore local browser-session cleanup failures.
+          });
+          const merchantPayload = await withTimeout(
+            readMerchantSessionPayload(Math.max(2200, Math.min(7000, AUTH_CHECK_TIMEOUT_MS))),
+            AUTH_CHECK_TIMEOUT_MS,
+            "登录检查超时，已使用本地缓存继续编辑",
+          ).catch(() => null);
+          const merchantIds = merchantPayload?.authenticated === true ? readMerchantSessionMerchantIds(merchantPayload) : [];
+          const merchantId = merchantIds.find((item) => isMerchantNumericId(item)) ?? merchantIds[0] ?? "";
+          const merchantEmail =
+            typeof merchantPayload?.user?.email === "string" ? merchantPayload.user.email.trim() : "";
+
+          if (!mounted) return;
+          clearTimeout(safetyTimeoutId);
+
+          if (merchantIds.length > 0) {
+            merchantIdsRef.current = mergePreferredMerchantIds(merchantIds, merchantIdsRef.current);
+          }
+          if (merchantId || merchantEmail) {
+            merchantSessionIdentityRef.current = {
+              merchantId,
+              email: merchantEmail || null,
+            };
+            if (merchantId) {
+              setMerchantSiteIdOverride((current) => current || merchantId);
+            }
+            if (!detachKeepAlive) {
+              detachKeepAlive = startMerchantSessionKeepAlive({
+                timeoutMs: Math.max(2200, Math.min(6000, AUTH_CHECK_TIMEOUT_MS)),
+              });
+            }
+          }
+
+          if (!merchantId && !merchantEmail) {
+            if (!gatewayReady) {
+              releaseCheckingScreen({ notice: BACKEND_UNAVAILABLE_NOTICE });
+              return;
+            }
+            if (justSignedIn) {
+              const restored = await tryLoadJustSignedInPublishedContent();
+              if (!mounted) return;
+              if (restored) return;
+              if (preserveCachedMerchantEditorState("登录未完成，请重新登录后继续。")) {
+                return;
+              }
+              releaseMerchantUnauthenticatedState("登录未完成，请重新登录后继续。");
+              return;
+            }
+            if (preserveCachedMerchantEditorState("当前未登录，请重新登录后继续。")) {
+              return;
+            }
+            releaseMerchantUnauthenticatedState("当前未登录，请重新登录后继续。");
+            return;
+          }
+
+          if (justSignedIn && typeof window !== "undefined") {
+            const scopedMerchantId = getSiteIdFromStoreScope(storeScope).trim();
+            if (scopedMerchantId) {
+              clearMerchantSignInBridge(scopedMerchantId);
+            }
+            clearJustSignedInFlagFromUrl();
+          }
+          setBackendNotice(null);
+          if (initialCached.length > 0) {
+            releaseCheckingScreen();
+          }
+
+          const preferredByScope = getSiteIdFromStoreScope(storeScope);
+          const resolvedMerchantIds = preferredByScope ? [preferredByScope] : mergePreferredMerchantIds(merchantIdsRef.current);
+          merchantIdsRef.current = resolvedMerchantIds;
+          const scopedSiteId = getSiteIdFromStoreScope(storeScope).trim();
+          const preferredNumericId = resolvedMerchantIds.find((item) => isMerchantNumericId(item)) ?? "";
+          const currentMerchantSiteId = scopedSiteId || preferredNumericId || resolvedMerchantIds[0] || "";
+          if (!scopedSiteId && preferredNumericId) {
+            window.location.replace(`/${encodeURIComponent(preferredNumericId)}`);
+            return;
+          }
+          if (currentMerchantSiteId) {
+            ensureScopedMerchantSite(currentMerchantSiteId, merchantEmail || null);
+            void syncScopedMerchantSiteFromPublishedSnapshot(currentMerchantSiteId, merchantEmail || null);
+          }
+          const identityNotice = getMerchantIdentityNotice(resolvedMerchantIds);
+          if (identityNotice) {
+            setHasEditorContent(true);
+            releaseCheckingScreen({ notice: identityNotice });
+            return;
+          }
+
+          const remoteDraft = await loadMerchantDraftSnapshotViaApi(resolvedMerchantIds);
+          if (!mounted) return;
+          if (remoteDraft) {
+            const remoteDraftScopes = getRemoteDraftSyncScopes([remoteDraft.siteId, ...resolvedMerchantIds]);
+            applyPersistedBlocksToEditorRef.current(remoteDraft.blocks);
+            const desktopLoaded = viewportStatesRef.current.desktop.planConfig;
+            const mobileLoaded = viewportStatesRef.current.mobile.planConfig;
+            const combinedLoaded = buildCombinedPersistedBlocks(desktopLoaded, mobileLoaded);
+            saveLatestDraftSnapshot(combinedLoaded, storeScope);
+            remoteDraftScopes.forEach((scope) => {
+              if (scope !== storeScope) {
+                saveLatestDraftSnapshot(combinedLoaded, scope);
+              }
+            });
+            markRemoteDraftApplied(remoteDraft.updatedAt, remoteDraftScopes);
+            releaseCheckingScreen({ notice: null });
+            return;
+          }
+
+          const publishedSnapshot = await loadPublishedSiteSnapshotForMerchantIds(resolvedMerchantIds);
+          if (!mounted) return;
+          if (publishedSnapshot) {
+            const verificationScopes = getRemoteVerificationScopes([publishedSnapshot.siteId, ...resolvedMerchantIds]);
+            markRemoteContentVerified(verificationScopes);
+            applyPublishedSiteSnapshotToScopedMerchantSite(
+              publishedSnapshot.siteId,
+              publishedSnapshot,
+              merchantEmail || null,
+            );
+            applyPersistedBlocksToEditorRef.current(publishedSnapshot.blocks);
+            const desktopLoaded = viewportStatesRef.current.desktop.planConfig;
+            const mobileLoaded = viewportStatesRef.current.mobile.planConfig;
+            const combinedLoaded = buildCombinedPersistedBlocks(desktopLoaded, mobileLoaded);
+            savePublishedBlocksToStorage(combinedLoaded, storeScope);
+            verificationScopes.forEach((scope) => {
+              if (scope !== storeScope) {
+                savePublishedBlocksToStorage(combinedLoaded, scope);
+              }
+            });
+            releaseCheckingScreen({ notice: null });
+            return;
+          }
+
+          setHasEditorContent(true);
+          setRemoteContentVerified(resolveCachedRemoteVerification(getRemoteVerificationScopes(resolvedMerchantIds)));
+          releaseCheckingScreen({
+            notice: gatewayReady ? null : "当前内容加载不完整，请刷新页面或重新登录后重试。",
+          });
+          return;
         }
 
         const {
@@ -8415,24 +8544,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       return { ok: false as const, updated: false };
     }
 
-    let accessToken = "";
-    try {
-      const sessionResult = await withTimeout(
-        supabase.auth.getSession(),
-        Math.min(2500, AUTH_CHECK_TIMEOUT_MS),
-        "同步商户域名前缀超时",
-      );
-      accessToken = String(sessionResult.data.session?.access_token ?? "").trim();
-    } catch {
-      accessToken = "";
-    }
-
     const headers: Record<string, string> = {
       "content-type": "application/json",
     };
-    if (accessToken) {
-      headers.Authorization = `Bearer ${accessToken}`;
-    }
 
     const response = await fetch("/api/merchant-domain-binding", {
       method: "POST",
@@ -10014,24 +10128,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         headers.set("x-merchant-name", merchantDisplayName);
       }
 
-      if (isSupabaseEnabled && !isSupabaseFallbackMode) {
-        let activeSession = (
-          await supabase.auth.getSession().catch(() => null)
-        )?.data.session ?? null;
-        if (!activeSession && allowRecovery) {
-          activeSession = await recoverBrowserSupabaseSessionWithRefresh(
-            Math.max(2600, Math.min(7000, AUTH_CHECK_TIMEOUT_MS)),
-          );
-        }
-        if (activeSession?.access_token) {
-          headers.set("x-merchant-access-token", activeSession.access_token);
-          if (activeSession.refresh_token) {
-            headers.set("x-merchant-refresh-token", activeSession.refresh_token);
-          }
-          if (typeof activeSession.expires_in === "number" && Number.isFinite(activeSession.expires_in)) {
-            headers.set("x-merchant-expires-in", String(activeSession.expires_in));
-          }
-        }
+      if (allowRecovery) {
+        await readMerchantSessionPayload(Math.max(1600, Math.min(4200, AUTH_CHECK_TIMEOUT_MS))).catch(() => null);
       }
 
       return {
@@ -10049,23 +10147,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     if (response.status !== 401 && response.status !== 403) {
       return response;
     }
-    if (!isSupabaseEnabled || isSupabaseFallbackMode) {
-      return response;
-    }
-
-    let recoveredSession: Awaited<ReturnType<typeof recoverBrowserSupabaseSessionWithRefresh>> | null = null;
-    try {
-      recoveredSession = await recoverBrowserSupabaseSessionWithRefresh(
-        Math.max(2600, Math.min(7000, AUTH_CHECK_TIMEOUT_MS)),
-      );
-    } catch {
-      return response;
-    }
-    if (!recoveredSession) {
-      return response;
-    }
-
-    await syncMerchantSessionCookies(recoveredSession, Math.max(2200, Math.min(6000, AUTH_CHECK_TIMEOUT_MS)));
+    await readMerchantSessionPayload(Math.max(1800, Math.min(5000, AUTH_CHECK_TIMEOUT_MS))).catch(() => null);
     try {
       response = await sendRequest(true);
     } catch {

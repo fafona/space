@@ -7,14 +7,12 @@ import LoadingProgressScreen from "@/components/LoadingProgressScreen";
 import { loadPlatformState, subscribePlatformState } from "@/data/platformControlStore";
 import { readRecentMerchantLaunchMerchantId } from "@/lib/merchantLaunchState";
 import {
-  hasStoredBrowserSupabaseSessionTokens,
-  isTransientAuthValidationError,
+  readMerchantSessionMerchantIds,
   readMerchantSessionPayload,
-  recoverBrowserSupabaseSession,
 } from "@/lib/authSessionRecovery";
 import { buildMerchantSiteLinker } from "@/lib/merchantSiteLinking";
 import { clearMerchantSignInBridge, hasMerchantSignInBridge } from "@/lib/merchantSignInBridge";
-import { canReachSupabaseGateway, isSupabaseEnabled, supabase } from "@/lib/supabase";
+import { canReachSupabaseGateway, isSupabaseEnabled } from "@/lib/supabase";
 import { useHydrated } from "@/lib/useHydrated";
 
 export default function MerchantNumericEntryPageClient() {
@@ -23,18 +21,11 @@ export default function MerchantNumericEntryPageClient() {
   const merchantEntry = String(params?.merchantEntry ?? "").trim();
   const hydrated = useHydrated();
   const [justSignedIn] = useState(() => (searchParams.get("justSignedIn") ?? "").trim() === "1");
-  const [hasStoredSessionTokens] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return hasStoredBrowserSupabaseSessionTokens();
-  });
   const hasRecentLaunchEntry = useMemo(() => {
     if (!hydrated || typeof window === "undefined") return false;
     return readRecentMerchantLaunchMerchantId() === merchantEntry;
   }, [hydrated, merchantEntry]);
-  const skipEntrySessionCheck = useMemo(
-    () => hydrated && (justSignedIn || hasStoredSessionTokens),
-    [hasStoredSessionTokens, hydrated, justSignedIn],
-  );
+  const skipEntrySessionCheck = useMemo(() => hydrated && justSignedIn, [hydrated, justSignedIn]);
   const recentSignInBridgeActive = useMemo(
     () => hydrated && justSignedIn && hasMerchantSignInBridge(merchantEntry),
     [hydrated, justSignedIn, merchantEntry],
@@ -60,8 +51,12 @@ export default function MerchantNumericEntryPageClient() {
   const readCookieBackedMerchantIdentity = useCallback(async (timeoutMs = 4500) => {
     const payload = await readMerchantSessionPayload(timeoutMs).catch(() => null);
     if (!payload || payload.authenticated !== true) return null;
+    const merchantIds = readMerchantSessionMerchantIds(payload);
     return {
-      merchantId: typeof payload.merchantId === "string" ? payload.merchantId.trim() : "",
+      merchantId:
+        (typeof payload.merchantId === "string" ? payload.merchantId.trim() : "") ||
+        merchantIds.find(Boolean) ||
+        "",
       email: typeof payload.user?.email === "string" ? payload.user.email.trim().toLowerCase() : "",
     };
   }, []);
@@ -118,74 +113,18 @@ export default function MerchantNumericEntryPageClient() {
     };
 
     void (async () => {
-      let session = await recoverBrowserSupabaseSession(4500);
+      const cookieBackedIdentity = await readCookieBackedMerchantIdentity(4500);
       if (!mounted) return;
-      if (!session?.user) {
-        const cookieBackedIdentity = await readCookieBackedMerchantIdentity(4500);
-        if (!mounted) return;
-        if (cookieBackedIdentity) {
-          setNumericSessionEmail(cookieBackedIdentity.email);
-          setNumericAdminAuthenticated(true);
-          setNumericAdminAuthReady(true);
-          return;
-        }
-        if (hasStoredBrowserSupabaseSessionTokens()) {
-          setNumericAdminAuthenticated(true);
-          setNumericAdminAuthReady(true);
-          return;
-        }
-        if (await allowTransientResumeRecovery()) {
-          return;
-        }
-        redirectToLogin();
-        return;
-      }
-
-      try {
-        const { data, error } = await supabase.auth.getUser();
-        if (!mounted) return;
-        if (error || !data.user) {
-          if (error && isTransientAuthValidationError(error)) {
-            setNumericAdminAuthenticated(true);
-            setNumericAdminAuthReady(true);
-            return;
-          }
-          session = await recoverBrowserSupabaseSession(2200);
-          if (!mounted) return;
-          if (!session?.user) {
-            const cookieBackedIdentity = await readCookieBackedMerchantIdentity(3200);
-            if (!mounted) return;
-            if (cookieBackedIdentity) {
-              setNumericSessionEmail(cookieBackedIdentity.email);
-              setNumericAdminAuthenticated(true);
-              setNumericAdminAuthReady(true);
-              return;
-            }
-            if (hasStoredBrowserSupabaseSessionTokens()) {
-              setNumericAdminAuthenticated(true);
-              setNumericAdminAuthReady(true);
-              return;
-            }
-            if (await allowTransientResumeRecovery()) {
-              return;
-            }
-            await supabase.auth.signOut({ scope: "local" }).catch(() => {
-              // Ignore local cleanup failure.
-            });
-            redirectToLogin();
-            return;
-          }
-        }
-      } catch {
-        if (!mounted) return;
+      if (cookieBackedIdentity) {
+        setNumericSessionEmail(cookieBackedIdentity.email);
         setNumericAdminAuthenticated(true);
         setNumericAdminAuthReady(true);
         return;
       }
-
-      setNumericSessionEmail(String(session.user.email ?? "").trim().toLowerCase());
-      setNumericAdminAuthenticated(true);
-      setNumericAdminAuthReady(true);
+      if (await allowTransientResumeRecovery()) {
+        return;
+      }
+      redirectToLogin();
     })().catch(() => {
       void readCookieBackedMerchantIdentity(3200)
         .then(async (cookieBackedIdentity) => {
@@ -234,18 +173,16 @@ export default function MerchantNumericEntryPageClient() {
       .then(() => {
         if (!mounted) return null;
         setNumericSessionLookupDone(false);
-        return recoverBrowserSupabaseSession(2200);
+        return readCookieBackedMerchantIdentity(2200);
       })
-      .then(async (session) => {
+      .then(async (cookieBackedIdentity) => {
         if (!mounted) return;
-        const sessionEmail = String(session?.user?.email ?? "").trim().toLowerCase();
+        const sessionEmail = String(cookieBackedIdentity?.email ?? "").trim().toLowerCase();
         if (sessionEmail) {
           setNumericSessionEmail(sessionEmail);
           return;
         }
-        const cookieBackedIdentity = await readCookieBackedMerchantIdentity(2200);
-        if (!mounted) return;
-        setNumericSessionEmail(cookieBackedIdentity?.email ?? "");
+        setNumericSessionEmail("");
       })
       .catch(() => {
         if (!mounted) return;
@@ -265,9 +202,9 @@ export default function MerchantNumericEntryPageClient() {
     if (!recentSignInBridgeActive) return;
 
     let mounted = true;
-    void recoverBrowserSupabaseSession(3200)
-      .then((session) => {
-        if (!mounted || !session?.user) return;
+    void readCookieBackedMerchantIdentity(3200)
+      .then((cookieBackedIdentity) => {
+        if (!mounted || !cookieBackedIdentity) return;
         clearMerchantSignInBridge(merchantEntry);
       })
       .catch(() => {
@@ -277,7 +214,7 @@ export default function MerchantNumericEntryPageClient() {
     return () => {
       mounted = false;
     };
-  }, [merchantEntry, recentSignInBridgeActive]);
+  }, [merchantEntry, readCookieBackedMerchantIdentity, recentSignInBridgeActive]);
 
   if (!hydrated) {
     return <LoadingProgressScreen message="正在加载站点..." />;

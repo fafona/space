@@ -19,7 +19,7 @@ test("parseCookieValue reads the merchant auth cookie from a header", () => {
   );
 });
 
-test("readMerchantRequestAccessTokens prefers bearer token and keeps cookie fallback", () => {
+test("readMerchantRequestAccessTokens only reads the httpOnly merchant auth cookie", () => {
   const request = new Request("http://localhost/api/business-card-share", {
     headers: {
       authorization: "Bearer bearer-token",
@@ -27,10 +27,10 @@ test("readMerchantRequestAccessTokens prefers bearer token and keeps cookie fall
     },
   });
 
-  assert.deepEqual(readMerchantRequestAccessTokens(request), ["bearer-token", "cookie-token"]);
+  assert.deepEqual(readMerchantRequestAccessTokens(request), ["cookie-token"]);
 });
 
-test("readMerchantRequestAccessTokens removes duplicate request tokens", () => {
+test("readMerchantRequestAccessTokens ignores duplicate cookie tokens", () => {
   const request = new Request("http://localhost/api/business-card-share", {
     headers: {
       authorization: "Bearer same-token",

@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
-import { loadMerchantIdRulesFromStore } from "@/lib/merchantIdRuleStore";
-import { findNextAllowedMerchantIdNumber, MERCHANT_ID_MAX, MERCHANT_ID_MIN, type MerchantIdRule } from "@/lib/merchantIdRules";
+import {
+  type MerchantAuthUserSummary,
+  normalizeMerchantEmail,
+  resolveMerchantIdentityForUser,
+} from "@/lib/merchantAuthIdentity";
 import { setMerchantAuthCookies } from "@/lib/merchantAuthSession";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 
@@ -10,13 +13,6 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 type AuthMetadata = Record<string, unknown> | null | undefined;
-
-type AuthUserSummary = {
-  id?: string | null;
-  email?: string | null;
-  user_metadata?: AuthMetadata;
-  app_metadata?: AuthMetadata;
-};
 
 type ResolvedAccountIdentity = {
   email: string;
@@ -27,7 +23,7 @@ type AdminListUsersClient = {
   auth: {
     admin: {
       listUsers: (params: { page: number; perPage: number }) => Promise<{
-        data: { users: AuthUserSummary[] } | null;
+        data: { users: MerchantAuthUserSummary[] } | null;
         error: Error | null;
       }>;
     };
@@ -35,7 +31,10 @@ type AdminListUsersClient = {
   from: (table: string) => {
     select: (columns: string) => {
       eq: (column: string, value: string) => {
-        limit: (count: number) => {
+        limit: (count: number) => PromiseLike<{
+          data: Record<string, string | null | undefined>[] | null;
+          error: Error | null;
+        }> & {
           maybeSingle: () => Promise<{
             data: Record<string, string | null | undefined> | null;
             error: Error | null;
@@ -43,6 +42,7 @@ type AdminListUsersClient = {
         };
       };
     };
+    insert: (values: Record<string, unknown>) => Promise<{ error: Error | null }>;
   };
 };
 
@@ -51,7 +51,7 @@ const ACCOUNT_IDENTITY_CACHE_TTL_MS = 60_000;
 let authUsersCache:
   | {
       expiresAt: number;
-      users: AuthUserSummary[];
+      users: MerchantAuthUserSummary[];
     }
   | null = null;
 const accountIdentityCache = new Map<string, { expiresAt: number; identity: ResolvedAccountIdentity }>();
@@ -60,24 +60,8 @@ function readEnv(name: string) {
   return (process.env[name] ?? "").trim();
 }
 
-function normalizeEmail(...values: Array<string | null | undefined>) {
-  for (const value of values) {
-    const normalized = String(value ?? "").trim().toLowerCase();
-    if (normalized) return normalized;
-  }
-  return "";
-}
-
 function normalizeAccountValue(value: string | null | undefined) {
   return String(value ?? "").trim().toLowerCase();
-}
-
-function isDuplicateKeyError(error: unknown) {
-  if (!error || typeof error !== "object") return false;
-  const record = error as { code?: unknown; message?: unknown };
-  if (typeof record.code === "string" && record.code === "23505") return true;
-  const message = typeof record.message === "string" ? record.message : "";
-  return /duplicate key|already exists|unique constraint/i.test(message);
 }
 
 function readMetadataString(metadata: AuthMetadata, ...keys: string[]) {
@@ -91,7 +75,7 @@ function readMetadataString(metadata: AuthMetadata, ...keys: string[]) {
   return "";
 }
 
-function readAccountKeys(user: AuthUserSummary) {
+function readAccountKeys(user: MerchantAuthUserSummary) {
   const username =
     readMetadataString(user.user_metadata, "username", "display_name", "name") ||
     readMetadataString(user.app_metadata, "username", "display_name", "name");
@@ -126,7 +110,7 @@ async function listAuthUsers(supabase: AdminListUsersClient) {
   if (authUsersCache && authUsersCache.expiresAt > Date.now()) {
     return authUsersCache.users;
   }
-  const users: AuthUserSummary[] = [];
+  const users: MerchantAuthUserSummary[] = [];
   let page = 1;
   while (true) {
     const { data, error } = await supabase.auth.admin.listUsers({ page, perPage: 200 });
@@ -189,7 +173,7 @@ async function resolveAccountIdentity(supabase: AdminListUsersClient, account: s
       .limit(1)
       .maybeSingle();
     if (error) throw error;
-    const email = normalizeEmail(
+    const email = normalizeMerchantEmail(
       merchant?.user_email,
       merchant?.email,
       merchant?.owner_email,
@@ -211,7 +195,7 @@ async function resolveAccountIdentity(supabase: AdminListUsersClient, account: s
       .limit(1)
       .maybeSingle();
     if (error) throw error;
-    const email = normalizeEmail(
+    const email = normalizeMerchantEmail(
       merchantByName?.user_email,
       merchantByName?.email,
       merchantByName?.owner_email,
@@ -230,124 +214,11 @@ async function resolveAccountIdentity(supabase: AdminListUsersClient, account: s
   const authUsers = await listAuthUsers(supabase);
   const matchedUser = authUsers.find((user) => readAccountKeys(user).includes(normalizedAccount));
   const identity = {
-    email: normalizeEmail(matchedUser?.email),
+    email: normalizeMerchantEmail(matchedUser?.email),
     merchantId: "",
   };
   writeCachedAccountIdentity(account, identity);
   return identity;
-}
-
-function readMerchantIdFromMetadata(...metadatas: AuthMetadata[]) {
-  for (const metadata of metadatas) {
-    const candidate = readMetadataString(metadata, "merchant_id", "merchantId", "merchantID", "login_id", "loginId");
-    if (isMerchantNumericId(candidate)) return candidate;
-  }
-  return "";
-}
-
-async function resolveMerchantId(
-  supabase: AdminListUsersClient,
-  account: string,
-  email: string,
-  user?: AuthUserSummary | null,
-) {
-  const candidates: string[] = [];
-  const push = (value: string | null | undefined) => {
-    const normalized = String(value ?? "").trim();
-    if (!normalized || !isMerchantNumericId(normalized) || candidates.includes(normalized)) return;
-    candidates.push(normalized);
-  };
-
-  push(isMerchantNumericId(account) ? account : "");
-  push(readMerchantIdFromMetadata(user?.user_metadata, user?.app_metadata));
-  if (candidates[0]) {
-    return candidates[0];
-  }
-
-  const userId = String(user?.id ?? "").trim();
-  const lookupTasks: Array<Promise<{
-    data: Record<string, string | null | undefined> | null;
-    error: Error | null;
-  }>> = [];
-
-  if (userId) {
-    [
-      "user_id",
-      "auth_user_id",
-      "owner_user_id",
-      "owner_id",
-      "auth_id",
-      "created_by",
-      "created_by_user_id",
-    ].forEach((column) => {
-      lookupTasks.push(supabase.from("merchants").select("id").eq(column, userId).limit(1).maybeSingle());
-    });
-  }
-
-  if (email) {
-    ["email", "owner_email", "contact_email", "user_email"].forEach((column) => {
-      lookupTasks.push(supabase.from("merchants").select("id").eq(column, email).limit(1).maybeSingle());
-    });
-  }
-
-  const settled = await Promise.allSettled(lookupTasks);
-  settled.forEach((result) => {
-    if (result.status !== "fulfilled" || result.value.error) return;
-    push(result.value.data?.id);
-  });
-
-  return candidates[0] ?? "";
-}
-
-async function readBlockedMerchantIdRules(supabase: AdminListUsersClient): Promise<MerchantIdRule[]> {
-  try {
-    const { rules } = await loadMerchantIdRulesFromStore(supabase);
-    return rules;
-  } catch {
-    return [];
-  }
-}
-
-async function tryAllocateSequentialMerchantId(
-  supabase: AdminListUsersClient,
-  user: AuthUserSummary | null,
-  email: string,
-): Promise<string> {
-  const userId = String(user?.id ?? "").trim();
-  if (!userId) return "";
-  const blockedRules = await readBlockedMerchantIdRules(supabase);
-  let candidate = MERCHANT_ID_MIN;
-  while (candidate <= MERCHANT_ID_MAX) {
-    const nextAllowed = findNextAllowedMerchantIdNumber(candidate, blockedRules);
-    if (!nextAllowed) return "";
-    candidate = nextAllowed;
-    const candidateId = String(candidate);
-    const { error } = await (supabase as unknown as {
-      from: (table: string) => {
-        insert: (values: Record<string, unknown>) => Promise<{ error: Error | null }>;
-      };
-    })
-      .from("merchants")
-      .insert({
-        id: candidateId,
-        name: "",
-        email: email || null,
-        owner_email: email || null,
-        contact_email: email || null,
-        user_email: email || null,
-        user_id: userId,
-        auth_user_id: userId,
-        owner_user_id: userId,
-        owner_id: userId,
-        auth_id: userId,
-        created_by: userId,
-        created_by_user_id: userId,
-      });
-    if (!error) return candidateId;
-    if (!isDuplicateKeyError(error)) return "";
-    candidate += 1;
-  }
-  return "";
 }
 
 export async function POST(request: Request) {
@@ -434,17 +305,18 @@ export async function POST(request: Request) {
 
     const authUser =
       upstreamPayload?.user && typeof upstreamPayload.user === "object"
-        ? (upstreamPayload.user as AuthUserSummary)
+        ? (upstreamPayload.user as MerchantAuthUserSummary)
         : null;
-    let merchantId = resolvedAccount.merchantId || (await resolveMerchantId(supabase, account, email, authUser));
-    if (!merchantId) {
-      merchantId = await tryAllocateSequentialMerchantId(supabase, authUser, email);
-    }
+    const merchantIdentity = await resolveMerchantIdentityForUser(supabase, authUser, {
+      preferredMerchantId: resolvedAccount.merchantId,
+      preferredEmail: email,
+    });
+    const merchantId = merchantIdentity.merchantId ?? "";
 
     const response = NextResponse.json({
       email,
       merchantId: merchantId || null,
-      session: upstreamPayload,
+      merchantIds: merchantIdentity.merchantIds,
       user: authUser,
     });
     setMerchantAuthCookies(response, {

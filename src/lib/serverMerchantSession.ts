@@ -1,6 +1,5 @@
 import { createServerSupabaseAuthClient, createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import {
-  readBearerAccessToken,
   readMerchantAuthCookie,
   readMerchantAuthRefreshCookie,
 } from "@/lib/merchantAuthSession";
@@ -265,11 +264,8 @@ export async function resolveMerchantSessionFromRequest(
   hintInput?: MerchantSessionHintInput,
 ): Promise<ResolvedMerchantSession | null> {
   const { hintedMerchantId, hintedEmail, hintedName } = readMerchantSessionHints(request, hintInput);
-  const accessToken =
-    trimText(request.headers.get("x-merchant-access-token")) ||
-    readBearerAccessToken(request) ||
-    readMerchantAuthCookie(request);
-  const refreshToken = trimText(request.headers.get("x-merchant-refresh-token")) || readMerchantAuthRefreshCookie(request);
+  const accessToken = readMerchantAuthCookie(request);
+  const refreshToken = readMerchantAuthRefreshCookie(request);
 
   const cached = readCachedSession(accessToken, refreshToken, hintedMerchantId);
   if (cached) {

@@ -6,14 +6,11 @@ import { useI18n } from "@/components/I18nProvider";
 import PasswordField, { getPasswordToggleLabels } from "@/components/PasswordField";
 import {
   clearStoredBrowserSupabaseSessionTokens,
-  establishBrowserSupabaseSession,
   hasStoredBrowserSupabaseSessionTokens,
-  isTransientAuthValidationError,
-  persistBrowserSupabaseSessionSnapshot,
+  readMerchantSessionMerchantIds,
   readMerchantSessionPayload,
-  recoverBrowserSupabaseSession,
 } from "@/lib/authSessionRecovery";
-import { ensureMerchantIdentityForUser, isMerchantNumericId } from "@/lib/merchantIdentity";
+import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import {
   clearStoredResetPasswordEmailRequest,
   persistResetPasswordEmailRequest,
@@ -42,18 +39,10 @@ type LoginAuthUser = {
   app_metadata?: Record<string, unknown> | null;
 };
 
-type LoginAuthSession = {
-  access_token?: string;
-  refresh_token?: string;
-  expires_at?: number | null;
-  expires_in?: number;
-  token_type?: string;
-  user?: LoginAuthUser | null;
-};
-
 type ServerSignInResult = {
   user: LoginAuthUser | null;
   merchantId: string;
+  merchantIds: string[];
   needsJustSignedInBridge: boolean;
 };
 
@@ -114,6 +103,12 @@ function isStandaloneDisplayMode() {
   if (typeof window === "undefined" || typeof navigator === "undefined") return false;
   const navigatorWithStandalone = navigator as Navigator & { standalone?: boolean };
   return window.matchMedia?.("(display-mode: standalone)").matches || navigatorWithStandalone.standalone === true;
+}
+
+function pickPrimaryMerchantId(preferredMerchantId: string | null | undefined, merchantIds: string[]) {
+  const directMerchantId = String(preferredMerchantId ?? "").trim();
+  if (directMerchantId) return directMerchantId;
+  return merchantIds.find((value) => isMerchantNumericId(value)) ?? merchantIds[0] ?? "";
 }
 
 function readAndroidKeyboardInset() {
@@ -338,14 +333,14 @@ function LoginPageInner() {
 
   const redirectToMerchantBackend = useCallback(
     async (
-      user?: {
+      _user?: {
         id?: string;
         email?: string | null;
         user_metadata?: Record<string, unknown> | null;
         app_metadata?: Record<string, unknown> | null;
       } | null,
       preferredMerchantId?: string | null,
-      options?: { withSignInBridge?: boolean },
+      options?: { withSignInBridge?: boolean; merchantIds?: string[] },
     ) => {
       const decorateMerchantHref = (href: string) => {
         const url = new URL(href, window.location.origin);
@@ -377,15 +372,10 @@ function LoginPageInner() {
         window.location.href = decorateMerchantHref(buildMerchantBackendHref(directMerchantId));
         return;
       }
-
-      try {
-        const resolved = await ensureMerchantIdentityForUser(user ?? undefined);
-        if (resolved.merchantId) {
-          window.location.href = decorateMerchantHref(buildMerchantBackendHref(resolved.merchantId));
-          return;
-        }
-      } catch {
-        // fallback to legacy route
+      const resolvedMerchantId = pickPrimaryMerchantId(null, options?.merchantIds ?? []);
+      if (resolvedMerchantId) {
+        window.location.href = decorateMerchantHref(buildMerchantBackendHref(resolvedMerchantId));
+        return;
       }
       window.location.href = decorateMerchantHref("/admin");
     },
@@ -406,64 +396,17 @@ function LoginPageInner() {
     }
   }
 
-  function signUpNeedsEmailConfirmation(data: {
-    session?: { user?: { email_confirmed_at?: string | null; user_metadata?: Record<string, unknown> | null } | null } | null;
-    user?: { email_confirmed_at?: string | null; user_metadata?: Record<string, unknown> | null } | null;
-  }) {
-    const user = data.session?.user ?? data.user ?? null;
-    const metadata = user?.user_metadata;
-    const emailVerified =
-      metadata && typeof metadata === "object" ? (metadata.email_verified as boolean | undefined) === true : false;
-    return !(data.session || user?.email_confirmed_at || emailVerified);
-  }
-
-  function pickAuthUser(data: {
-    session?: { user?: { id?: string; email?: string | null; user_metadata?: Record<string, unknown> | null } | null } | null;
-    user?: { id?: string; email?: string | null; user_metadata?: Record<string, unknown> | null } | null;
-  }) {
-    return data.session?.user ?? data.user ?? null;
-  }
-
-  async function readValidatedSessionUser() {
-    const session = await recoverBrowserSupabaseSession(1800);
-    if (!session?.user) return null;
-
-    try {
-      const { data, error } = await supabase.auth.getUser();
-      if (error || !data.user) {
-        if (error && isTransientAuthValidationError(error)) {
-          return session.user;
-        }
-        const recovered = await recoverBrowserSupabaseSession(1200);
-        if (recovered?.user) return recovered.user;
-        await supabase.auth.signOut({ scope: "local" }).catch(() => {
-          // ignore local cleanup failure
-        });
-        return null;
-      }
-      return data.user;
-    } catch {
-      return session.user;
-    }
-  }
-
   async function readValidatedCookieBackedSession() {
     const payload = await readMerchantSessionPayload(2600).catch(() => null);
     if (!payload || payload.authenticated !== true || !payload.user) return null;
-    const accessToken = typeof payload.accessToken === "string" ? payload.accessToken.trim() : "";
-    const refreshToken = typeof payload.refreshToken === "string" ? payload.refreshToken.trim() : "";
-    if (accessToken && refreshToken) {
-      void establishBrowserSupabaseSession(
-        {
-          access_token: accessToken,
-          refresh_token: refreshToken,
-        },
-        2200,
-      ).catch(() => null);
-    }
+    const merchantIds = readMerchantSessionMerchantIds(payload);
     return {
       user: payload.user as LoginAuthUser,
-      merchantId: typeof payload.merchantId === "string" ? payload.merchantId.trim() : "",
+      merchantId: pickPrimaryMerchantId(
+        typeof payload.merchantId === "string" ? payload.merchantId.trim() : "",
+        merchantIds,
+      ),
+      merchantIds,
     };
   }
 
@@ -492,20 +435,13 @@ function LoginPageInner() {
 
     void (async () => {
       try {
-        if (hasStoredBrowserSupabaseSessionTokens()) {
-          const user = await readValidatedSessionUser();
-          if (!mounted) return;
-          if (user) {
-            await redirectToMerchantBackend(user);
-            return;
-          }
-        }
-
         const cookieBackedSession = await readValidatedCookieBackedSession();
         if (!mounted) return;
         if (cookieBackedSession?.user) {
+          clearStoredBrowserSupabaseSessionTokens();
           await redirectToMerchantBackend(cookieBackedSession.user, cookieBackedSession.merchantId, {
             withSignInBridge: false,
+            merchantIds: cookieBackedSession.merchantIds,
           });
         }
       } catch {
@@ -626,44 +562,6 @@ function LoginPageInner() {
     }
   }
 
-  function persistSessionSnapshot(session: LoginAuthSession) {
-    return persistBrowserSupabaseSessionSnapshot({
-      currentSession: session,
-      session,
-    });
-  }
-
-  async function stabilizeBrowserSession(session: LoginAuthSession) {
-    const accessToken = String(session.access_token ?? "").trim();
-    const refreshToken = String(session.refresh_token ?? "").trim();
-    if (!accessToken || !refreshToken) {
-      return {
-        browserSessionReady: false,
-        snapshotStored: false,
-      };
-    }
-
-    const snapshotStored = persistSessionSnapshot(session) || hasStoredBrowserSupabaseSessionTokens();
-    void establishBrowserSupabaseSession(
-      {
-        access_token: accessToken,
-        refresh_token: refreshToken,
-      },
-      2600,
-    ).catch(() => null);
-
-    const recoveredSession = await Promise.race([
-      supabase.auth.getSession().then(({ data }) => data.session ?? null).catch(() => null),
-      new Promise<null>((resolve) => {
-        setTimeout(() => resolve(null), 180);
-      }),
-    ]);
-    return {
-      browserSessionReady: Boolean(recoveredSession?.user),
-      snapshotStored,
-    };
-  }
-
   async function signInViaServer(accountValue: string, passwordValue: string): Promise<ServerSignInResult> {
     const response = await withTimeout(
       fetch("/api/auth/merchant-login", {
@@ -685,8 +583,8 @@ function LoginPageInner() {
           error?: unknown;
           message?: unknown;
           user?: LoginAuthUser | null;
-          session?: LoginAuthSession | null;
           merchantId?: unknown;
+          merchantIds?: unknown;
         }
       | null;
 
@@ -700,22 +598,15 @@ function LoginPageInner() {
       throw new Error(message);
     }
 
-    const session = (payload?.session ?? null) as LoginAuthSession | null;
-    const accessToken = String(session?.access_token ?? "").trim();
-    const refreshToken = String(session?.refresh_token ?? "").trim();
-    if (!session || !accessToken || !refreshToken) {
-      throw new Error(t("login.requestFailed"));
-    }
-
-    const stabilization = await stabilizeBrowserSession(session).catch(() => ({
-      browserSessionReady: false,
-      snapshotStored: false,
-    }));
-
+    const merchantIds = readMerchantSessionMerchantIds(payload);
     return {
-      user: (payload?.user ?? session?.user ?? null) as LoginAuthUser | null,
-      merchantId: typeof payload?.merchantId === "string" ? payload.merchantId.trim() : "",
-      needsJustSignedInBridge: !stabilization.browserSessionReady,
+      user: (payload?.user ?? null) as LoginAuthUser | null,
+      merchantId: pickPrimaryMerchantId(
+        typeof payload?.merchantId === "string" ? payload.merchantId.trim() : "",
+        merchantIds,
+      ),
+      merchantIds,
+      needsJustSignedInBridge: false,
     };
   }
 
@@ -731,26 +622,52 @@ function LoginPageInner() {
 
     setPendingAction("signup");
     try {
-      const { data, error } = await withTimeout(
-        supabase.auth.signUp({
-          email: account.trim(),
-          password,
-          options: {
-            emailRedirectTo: `${authEmailRedirectOrigin || window.location.origin}/login`,
+      const response = await withTimeout(
+        fetch("/api/auth/merchant-signup", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
           },
+          cache: "no-store",
+          body: JSON.stringify({
+            email: account.trim(),
+            password,
+            emailRedirectTo: `${authEmailRedirectOrigin || window.location.origin}/login`,
+          }),
         }),
       );
-      if (error) {
-        if (isUserAlreadyRegistered(error.message, (error as { code?: string }).code)) {
+      const payload = (await response.json().catch(() => null)) as
+        | {
+            ok?: unknown;
+            error?: unknown;
+            message?: unknown;
+            needsConfirmation?: unknown;
+            merchantId?: unknown;
+            merchantIds?: unknown;
+            user?: LoginAuthUser | null;
+          }
+        | null;
+      if (!response.ok) {
+        const message = typeof payload?.message === "string" ? payload.message : typeof payload?.error === "string" ? payload.error : t("login.requestFailed");
+        const errorCode = typeof payload?.error === "string" ? payload.error : "";
+        if (isUserAlreadyRegistered(message, errorCode)) {
           setNeedConfirmEmail(true);
           return setMsg(getRegisteredAccountMessage());
         }
-        return setMsg(normalizeError(error.message));
+        return setMsg(normalizeError(message));
       }
-      const needsConfirmation = signUpNeedsEmailConfirmation(data);
+      const needsConfirmation = payload?.needsConfirmation === true;
       setEmailConfirmationRequired(needsConfirmation);
       if (!needsConfirmation) {
-        await redirectToMerchantBackend(pickAuthUser(data), undefined, { withSignInBridge: false });
+        clearStoredBrowserSupabaseSessionTokens();
+        await redirectToMerchantBackend(
+          (payload?.user ?? null) as LoginAuthUser | null,
+          typeof payload?.merchantId === "string" ? payload.merchantId.trim() : "",
+          {
+            withSignInBridge: false,
+            merchantIds: readMerchantSessionMerchantIds(payload),
+          },
+        );
         return;
       }
       setMsg(t("login.signupSuccess"));
@@ -781,8 +698,10 @@ function LoginPageInner() {
       const preferredMerchantId = isMerchantNumericId(account.trim()) ? account.trim() : "";
       const result = await signInViaServer(account, password);
       const resolvedMerchantId = preferredMerchantId || result.merchantId;
+      clearStoredBrowserSupabaseSessionTokens();
       await redirectToMerchantBackend(result.user, resolvedMerchantId, {
         withSignInBridge: result.needsJustSignedInBridge,
+        merchantIds: result.merchantIds,
       });
     } catch (error) {
       const normalizedMessage = error instanceof Error ? normalizeError(error.message) : t("login.requestFailed");

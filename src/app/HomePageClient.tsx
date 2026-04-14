@@ -10,9 +10,9 @@ import LoadingProgressScreen from "@/components/LoadingProgressScreen";
 import { homeBlocks, type Block } from "@/data/homeBlocks";
 import { loadPlatformState, subscribePlatformState } from "@/data/platformControlStore";
 import { trackPageView } from "@/lib/analytics";
-import { readMerchantSessionPayload } from "@/lib/authSessionRecovery";
+import { readMerchantSessionMerchantIds, readMerchantSessionPayload } from "@/lib/authSessionRecovery";
 import { MOBILE_BREAKPOINT } from "@/lib/deviceViewport";
-import { ensureMerchantIdentityForUser, isMerchantNumericId, normalizeDomainPrefix } from "@/lib/merchantIdentity";
+import { isMerchantNumericId, normalizeDomainPrefix } from "@/lib/merchantIdentity";
 import { readRecentMerchantLaunchMerchantId } from "@/lib/merchantLaunchState";
 import { cloneBlocks, getPagePlanConfigFromBlocks } from "@/lib/pagePlans";
 import { resolvePublishedSiteByPrefix } from "@/lib/publishedSiteLookup";
@@ -206,12 +206,11 @@ export default function HomePageClient({
         const payload = await readMerchantSessionPayload(2600).catch(() => null);
         if (!mounted) return;
         if (payload?.authenticated === true) {
-          let merchantId = typeof payload.merchantId === "string" ? payload.merchantId.trim() : "";
-          if (!isMerchantNumericId(merchantId) && payload.user) {
-            const resolvedIdentity = await ensureMerchantIdentityForUser(payload.user).catch(() => null);
-            if (!mounted) return;
-            merchantId = String(resolvedIdentity?.merchantId ?? "").trim();
-          }
+          const merchantIds = readMerchantSessionMerchantIds(payload);
+          const merchantId =
+            merchantIds.find((value) => isMerchantNumericId(value)) ??
+            merchantIds[0] ??
+            (typeof payload.merchantId === "string" ? payload.merchantId.trim() : "");
           if (isMerchantNumericId(merchantId)) {
             window.location.replace(buildMerchantBackendHref(merchantId));
             return;
