@@ -8,6 +8,7 @@ import {
   buildCurrentSuperAdminDeviceLabel,
   buildSuperAdminLoginHref,
   getOrCreateSuperAdminDeviceId,
+  refreshSuperAdminAuthenticatedState,
   setSuperAdminAuthenticated,
 } from "@/lib/superAdminAuth";
 import { useI18n } from "@/components/I18nProvider";
@@ -112,6 +113,10 @@ function SuperAdminLoginForm() {
           throw new Error(payload?.message || describeSuperAdminLoginError(payload?.error ?? "super_admin_verification_failed"));
         }
         setSuperAdminAuthenticated();
+        const confirmed = await refreshSuperAdminAuthenticatedState();
+        if (!confirmed) {
+          throw new Error("超级后台会话建立失败，请稍后重试。");
+        }
         window.location.href = typeof payload?.nextPath === "string" && payload.nextPath.startsWith("/")
           ? payload.nextPath
           : nextHref;
@@ -224,6 +229,10 @@ function SuperAdminLoginForm() {
         throw new Error(payload?.message || describeSuperAdminLoginError(payload?.error ?? "super_admin_verification_failed"));
       }
       setSuperAdminAuthenticated();
+      const confirmed = await refreshSuperAdminAuthenticatedState();
+      if (!confirmed) {
+        throw new Error("超级后台会话建立失败，请稍后重试。");
+      }
       window.location.href = typeof payload?.nextPath === "string" && payload.nextPath.startsWith("/")
         ? payload.nextPath
         : nextHref;
