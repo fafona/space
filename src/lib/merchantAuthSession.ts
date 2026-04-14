@@ -74,12 +74,17 @@ function resolveMerchantCookieSecureFlag(request?: Request) {
   return !isLocalLikeHostname(requestHost);
 }
 
-export function parseCookieValue(cookieHeader: string, key: string) {
+export function parseCookieValues(cookieHeader: string, key: string) {
   return cookieHeader
     .split(";")
     .map((part) => part.trim())
-    .find((part) => part.startsWith(`${key}=`))
-    ?.slice(key.length + 1) ?? "";
+    .filter((part) => part.startsWith(`${key}=`))
+    .map((part) => part.slice(key.length + 1));
+}
+
+export function parseCookieValue(cookieHeader: string, key: string) {
+  const values = parseCookieValues(cookieHeader, key).map((value) => value.trim()).filter(Boolean);
+  return values.at(-1) ?? "";
 }
 
 export function readMerchantAuthCookie(request: Request) {
@@ -96,6 +101,11 @@ export function readMerchantAuthMerchantIdCookie(request: Request) {
 
 export function readMerchantRequestAccessTokens(request: Request) {
   const tokens: string[] = [];
+  parseCookieValues(request.headers.get("cookie") ?? "", MERCHANT_AUTH_COOKIE).forEach((token) => {
+    const normalized = String(token ?? "").trim();
+    if (!normalized || tokens.includes(normalized)) return;
+    tokens.push(normalized);
+  });
   [readMerchantAuthCookie(request)].forEach((token) => {
     if (!token || tokens.includes(token)) return;
     tokens.push(token);

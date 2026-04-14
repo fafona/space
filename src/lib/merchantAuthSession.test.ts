@@ -6,6 +6,7 @@ import {
   MERCHANT_AUTH_MERCHANT_ID_COOKIE,
   MERCHANT_AUTH_REFRESH_COOKIE,
   parseCookieValue,
+  parseCookieValues,
   readMerchantAuthMerchantIdCookie,
   readMerchantAuthRefreshCookie,
   readMerchantRequestAccessTokens,
@@ -16,6 +17,23 @@ test("parseCookieValue reads the merchant auth cookie from a header", () => {
   assert.equal(
     parseCookieValue(`foo=bar; ${MERCHANT_AUTH_COOKIE}=token-123; hello=world`, MERCHANT_AUTH_COOKIE),
     "token-123",
+  );
+});
+
+test("parseCookieValue prefers the latest non-empty duplicate cookie value", () => {
+  assert.equal(
+    parseCookieValue(
+      `${MERCHANT_AUTH_COOKIE}=; ${MERCHANT_AUTH_COOKIE}=stale-token; ${MERCHANT_AUTH_COOKIE}=fresh-token`,
+      MERCHANT_AUTH_COOKIE,
+    ),
+    "fresh-token",
+  );
+  assert.deepEqual(
+    parseCookieValues(
+      `${MERCHANT_AUTH_COOKIE}=; ${MERCHANT_AUTH_COOKIE}=stale-token; ${MERCHANT_AUTH_COOKIE}=fresh-token`,
+      MERCHANT_AUTH_COOKIE,
+    ),
+    ["", "stale-token", "fresh-token"],
   );
 });
 
