@@ -12,11 +12,11 @@ import {
 } from "@/lib/resetPasswordEmailRequest";
 import {
   clearStoredResetPasswordRecoveryPayload,
-  hasDirectResetPasswordRecoveryPayload,
   persistResetPasswordRecoveryPayload,
   readResetPasswordRecoveryHashParams,
   readResetPasswordRecoveryPayloadFromUrl,
   readStoredResetPasswordRecoveryPayload,
+  stripDirectResetPasswordRecoveryPayloadTokens,
   type ResetPasswordRecoveryPayload,
 } from "@/lib/resetPasswordRecoveryPayload";
 import { getResolvedSupabaseUrl, resolvedSupabaseAnonKey } from "@/lib/supabase";
@@ -293,14 +293,10 @@ export default function ResetPasswordPage() {
           setMsg("");
           return;
         }
-        persistResetPasswordRecoveryPayload(storedPayload);
+        const sanitizedStoredPayload = stripDirectResetPasswordRecoveryPayloadTokens(storedPayload);
+        persistResetPasswordRecoveryPayload(sanitizedStoredPayload);
+        recoveryPayloadRef.current = sanitizedStoredPayload;
         clearRecoveryUrlArtifacts();
-        if (hasDirectResetPasswordRecoveryPayload(storedPayload)) {
-          recoveryResolvedRef.current = true;
-          setRecoveryState("ready");
-          setMsg("");
-          return;
-        }
       }
 
       const hasIndicators = hasRecoveryIndicators();
@@ -395,11 +391,7 @@ export default function ResetPasswordPage() {
     if (recoveryState !== "ready") {
       const recoveredSession = await recoverResetSession(5500).catch(() => null);
       const serverReady = recoveredSession ? true : await hasServerRecoverySession(5500).catch(() => false);
-      if (
-        !recoveredSession &&
-        !serverReady &&
-        !hasDirectResetPasswordRecoveryPayload(recoveryPayloadRef.current ?? readStoredResetPasswordRecoveryPayload())
-      ) {
+      if (!recoveredSession && !serverReady) {
         clearStoredResetPasswordRecoveryPayload();
         recoveryPayloadRef.current = null;
         setRecoveryState("expired");

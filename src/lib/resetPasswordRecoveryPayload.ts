@@ -36,6 +36,18 @@ export function normalizeResetPasswordRecoveryPayload(
   };
 }
 
+export function stripDirectResetPasswordRecoveryPayloadTokens(
+  payload: ResetPasswordRecoveryPayload | null | undefined,
+): ResetPasswordRecoveryPayload | null {
+  const normalized = normalizeResetPasswordRecoveryPayload(payload);
+  if (!normalized) return null;
+  return {
+    ...normalized,
+    accessToken: "",
+    refreshToken: "",
+  };
+}
+
 export function readResetPasswordRecoveryHashParams(url: URL) {
   return new URLSearchParams(url.hash.replace(/^#/, ""));
 }
@@ -55,11 +67,16 @@ export function readResetPasswordRecoveryPayloadFromUrl(url: URL) {
 export function persistResetPasswordRecoveryPayload(payload: ResetPasswordRecoveryPayload | null) {
   if (typeof window === "undefined") return;
   try {
+    const sanitized = stripDirectResetPasswordRecoveryPayloadTokens(payload);
     if (!payload) {
       window.sessionStorage.removeItem(RESET_RECOVERY_STORAGE_KEY);
       return;
     }
-    window.sessionStorage.setItem(RESET_RECOVERY_STORAGE_KEY, JSON.stringify(payload));
+    if (!sanitized) {
+      window.sessionStorage.removeItem(RESET_RECOVERY_STORAGE_KEY);
+      return;
+    }
+    window.sessionStorage.setItem(RESET_RECOVERY_STORAGE_KEY, JSON.stringify(sanitized));
   } catch {
     // Ignore browser storage failures.
   }
@@ -103,12 +120,12 @@ export function buildResetPasswordRecoveryUrl(
   payload: Partial<ResetPasswordRecoveryPayload> | null | undefined,
 ) {
   const url = typeof target === "string" ? new URL(target, "http://localhost") : new URL(target.toString());
-  const normalized = normalizeResetPasswordRecoveryPayload(payload);
+  const normalized = stripDirectResetPasswordRecoveryPayloadTokens(
+    normalizeResetPasswordRecoveryPayload(payload),
+  );
   if (!normalized) return url;
 
   const hashParams = new URLSearchParams();
-  if (normalized.accessToken) hashParams.set("access_token", normalized.accessToken);
-  if (normalized.refreshToken) hashParams.set("refresh_token", normalized.refreshToken);
   if (normalized.type) hashParams.set("type", normalized.type);
   if (normalized.tokenHash) hashParams.set("token_hash", normalized.tokenHash);
   if (normalized.code) hashParams.set("code", normalized.code);
