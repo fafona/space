@@ -1,8 +1,21 @@
 import { createClient } from "@supabase/supabase-js";
 import { resolveTrustedPublicOrigin } from "@/lib/requestOrigin";
 
+const SUPER_ADMIN_AUTH_ENV_KEYS = [
+  "SUPER_ADMIN_ACCOUNT",
+  "SUPER_ADMIN_PASSWORD",
+  "SUPER_ADMIN_VERIFICATION_EMAIL",
+  "SUPER_ADMIN_VERIFICATION_SECRET",
+] as const;
+
+const SUPER_ADMIN_SUPABASE_AUTH_ENV_KEYS = ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY"] as const;
+
 function readEnv(name: string) {
   return (process.env[name] ?? "").trim();
+}
+
+function listMissingEnv(names: readonly string[]) {
+  return names.filter((name) => !readEnv(name));
 }
 
 export function readSuperAdminAccount() {
@@ -21,13 +34,16 @@ export function readSuperAdminVerificationSecret() {
   return readEnv("SUPER_ADMIN_VERIFICATION_SECRET");
 }
 
+export function listMissingSuperAdminAuthEnv() {
+  return listMissingEnv(SUPER_ADMIN_AUTH_ENV_KEYS);
+}
+
+export function listMissingSuperAdminSupabaseAuthEnv() {
+  return listMissingEnv(SUPER_ADMIN_SUPABASE_AUTH_ENV_KEYS);
+}
+
 export function isSuperAdminAuthConfigured() {
-  return Boolean(
-    readSuperAdminAccount() &&
-      readSuperAdminPassword() &&
-      readSuperAdminVerificationEmail() &&
-      readSuperAdminVerificationSecret(),
-  );
+  return listMissingSuperAdminAuthEnv().length === 0;
 }
 
 export function validateSuperAdminCredentials(account: string, password: string) {

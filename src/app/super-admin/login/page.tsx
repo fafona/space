@@ -168,7 +168,7 @@ function SuperAdminLoginForm() {
         throw new Error(payload?.message || describeSuperAdminLoginError(payload?.error ?? "verification_send_failed"));
       }
 
-      const maskedEmail = String(payload?.maskedEmail ?? "caimin6669@qq.com").trim();
+      const maskedEmail = String(payload?.maskedEmail ?? "").trim() || "已配置的验证邮箱";
       const trustedDeviceTip = payload?.trustedDevice
         ? "当前浏览器已在白名单内。"
         : "当前浏览器会在验证成功后加入白名单。";
@@ -240,7 +240,7 @@ function SuperAdminLoginForm() {
       <div className="w-full max-w-md space-y-4 rounded-xl border bg-white p-6">
         <h1 className="text-xl font-bold">{t("superLogin.title")}</h1>
         <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
-          超级后台启用白名单设备。每次登录都需要发送邮件到 `caimin6669@qq.com` 完成验证，收到验证码后也可以直接在这里输入。
+          超级后台启用白名单设备。每次登录都需要向已配置的验证邮箱发送验证邮件，收到验证码后也可以直接在这里输入。
         </div>
         <div className="space-y-2">
           <div className="hidden" aria-hidden="true">

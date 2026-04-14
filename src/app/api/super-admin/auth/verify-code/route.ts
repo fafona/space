@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
-import { createServerSupabaseAuthClient, readRequestClientIp, readSuperAdminVerificationEmail } from "@/lib/superAdminServer";
+import {
+  createServerSupabaseAuthClient,
+  listMissingSuperAdminAuthEnv,
+  listMissingSuperAdminSupabaseAuthEnv,
+  readRequestClientIp,
+  readSuperAdminVerificationEmail,
+} from "@/lib/superAdminServer";
 import { finalizeSuperAdminLogin } from "@/lib/superAdminLoginCompletion";
 import { readSuperAdminChallengeToken } from "@/lib/superAdminVerification";
 
@@ -27,6 +33,7 @@ export async function POST(request: Request) {
     const challenge = typeof body?.challenge === "string" ? body.challenge.trim() : "";
     const deviceId = typeof body?.deviceId === "string" ? body.deviceId.trim() : "";
     const code = normalizeCode(body?.code);
+    const requestHost = new URL(request.url).host;
 
     const challengePayload = readSuperAdminChallengeToken(challenge);
     if (!challengePayload) {
@@ -41,6 +48,17 @@ export async function POST(request: Request) {
 
     const supabase = createServerSupabaseAuthClient();
     if (!supabase) {
+      console.error("[super-admin-auth] verification_env_missing", {
+        host: requestHost,
+        missingEnv: listMissingSuperAdminSupabaseAuthEnv(),
+      });
+      return NextResponse.json({ error: "verification_env_missing" }, { status: 503 });
+    }
+    if (!readSuperAdminVerificationEmail()) {
+      console.error("[super-admin-auth] verification_env_missing", {
+        host: requestHost,
+        missingEnv: listMissingSuperAdminAuthEnv(),
+      });
       return NextResponse.json({ error: "verification_env_missing" }, { status: 503 });
     }
 

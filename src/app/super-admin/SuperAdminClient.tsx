@@ -8056,7 +8056,7 @@ export default function SuperAdminClient() {
                       {trustedDeviceLimitSaving ? "保存中..." : "保存上限"}
                     </button>
                     <div className="rounded border bg-slate-50 px-3 py-3 text-xs text-slate-600">
-                      新设备在完成 `caimin6669@qq.com` 邮箱验证后会自动加入白名单；当设备数达到上限后，新设备即使拿到验证码也不允许登录，必须先移除旧设备。
+                      新设备在完成验证邮箱校验后会自动加入白名单；当设备数达到上限后，新设备即使拿到验证码也不允许登录，必须先移除旧设备。
                     </div>
                   </div>
 
