@@ -41,7 +41,12 @@ export function resolveSuperAdminCookieDomainFromHostname(hostname: string | nul
   }
   const configuredBaseDomain = normalizeCookieBaseDomain(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN);
   const fallbackBaseDomain = requestHost.split(".").length >= 2 ? requestHost.split(".").slice(-2).join(".") : "";
-  const baseDomain = configuredBaseDomain || fallbackBaseDomain;
+  const matchedConfiguredBaseDomain =
+    configuredBaseDomain &&
+    (requestHost === configuredBaseDomain || requestHost.endsWith(`.${configuredBaseDomain}`))
+      ? configuredBaseDomain
+      : "";
+  const baseDomain = matchedConfiguredBaseDomain || fallbackBaseDomain;
   if (!baseDomain) return undefined;
   if (requestHost !== baseDomain && !requestHost.endsWith(`.${baseDomain}`)) {
     return undefined;

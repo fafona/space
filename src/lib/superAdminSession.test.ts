@@ -31,3 +31,14 @@ test("resolveSuperAdminCookieDomain uses host header when present", () => {
     process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN = previousBaseDomain;
   }
 });
+
+test("resolveSuperAdminCookieDomainFromHostname falls back to the live request domain when portal config is stale", () => {
+  const previousBaseDomain = process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN;
+  process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN = "https://www.fafona.com";
+  try {
+    assert.equal(resolveSuperAdminCookieDomainFromHostname("www.faolla.com"), "faolla.com");
+    assert.equal(resolveSuperAdminCookieDomainFromHostname("faolla.com"), "faolla.com");
+  } finally {
+    process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN = previousBaseDomain;
+  }
+});

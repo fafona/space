@@ -105,6 +105,31 @@ test("setMerchantAuthCookies shares cookies across faolla subdomains", () => {
   assert.equal(response.cookies.get(MERCHANT_AUTH_MERCHANT_ID_COOKIE)?.secure, true);
 });
 
+test("setMerchantAuthCookies falls back to the live request domain when portal config is stale", () => {
+  const previousBaseDomain = process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN;
+  process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN = "https://www.fafona.com";
+  try {
+    const response = NextResponse.json({ ok: true });
+    const request = new Request("https://www.faolla.com/api/auth/merchant-login");
+    setMerchantAuthCookies(
+      response,
+      {
+        accessToken: "access-token",
+        refreshToken: "refresh-token",
+        maxAgeSeconds: 3600,
+        merchantId: "12345678",
+      },
+      request,
+    );
+
+    assert.equal(response.cookies.get(MERCHANT_AUTH_COOKIE)?.domain, "faolla.com");
+    assert.equal(response.cookies.get(MERCHANT_AUTH_REFRESH_COOKIE)?.domain, "faolla.com");
+    assert.equal(response.cookies.get(MERCHANT_AUTH_MERCHANT_ID_COOKIE)?.domain, "faolla.com");
+  } finally {
+    process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN = previousBaseDomain;
+  }
+});
+
 test("setMerchantAuthCookies keeps localhost cookies non-secure for local development", () => {
   const response = NextResponse.json({ ok: true });
   const request = new Request("http://localhost:3000/api/auth/merchant-login");
