@@ -3,12 +3,14 @@ import { readSuperAdminTrustedDeviceToken, createSuperAdminChallengeToken, norma
 import {
   createServerSupabaseAuthClient,
   createServerSupabaseServiceClient,
+  isSuperAdminAuthConfigured,
   maskEmailAddress,
   readRequestClientIp,
   readSuperAdminVerificationEmail,
   resolvePublicOrigin,
   validateSuperAdminCredentials,
 } from "@/lib/superAdminServer";
+import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { SUPER_ADMIN_TRUSTED_DEVICE_COOKIE } from "@/lib/superAdminSession";
 import { canRegisterAnotherSuperAdminDevice, loadSuperAdminTrustedDevicesFromStore } from "@/lib/superAdminTrustedDevices";
 
@@ -32,6 +34,10 @@ function parseCookieValue(cookieHeader: string, key: string) {
 }
 
 export async function POST(request: Request) {
+  if (!isTrustedSameOriginMutationRequest(request)) {
+    return getTrustedMutationRequestErrorResponse();
+  }
+
   try {
     const body = (await request.json().catch(() => null)) as RequestBody | null;
     const account = typeof body?.account === "string" ? body.account.trim() : "";
@@ -40,6 +46,9 @@ export async function POST(request: Request) {
     const deviceLabel = typeof body?.deviceLabel === "string" ? body.deviceLabel.trim() : "";
     const nextPath = normalizeSuperAdminNextPath(typeof body?.next === "string" ? body.next : "");
 
+    if (!isSuperAdminAuthConfigured()) {
+      return NextResponse.json({ error: "verification_env_missing" }, { status: 503 });
+    }
     if (!account || !password) {
       return NextResponse.json({ error: "invalid_credentials" }, { status: 400 });
     }

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import {
   readSuperAdminChallengeToken,
   verifySuperAdminEmailProofToken,
@@ -16,6 +17,10 @@ type CompleteBody = {
 };
 
 export async function POST(request: Request) {
+  if (!isTrustedSameOriginMutationRequest(request)) {
+    return getTrustedMutationRequestErrorResponse();
+  }
+
   try {
     const body = (await request.json().catch(() => null)) as CompleteBody | null;
     const challenge = typeof body?.challenge === "string" ? body.challenge.trim() : "";

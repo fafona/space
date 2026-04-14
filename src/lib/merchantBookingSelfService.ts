@@ -16,6 +16,24 @@ function normalizePublicUrl(value: string) {
   return "";
 }
 
+function buildBookingTokenHash(input: {
+  bookingId: string;
+  editToken: string;
+  bookingBlockId?: string | null | undefined;
+  bookingViewport?: string | null | undefined;
+  download?: boolean;
+}) {
+  const params = new URLSearchParams();
+  params.set("bookingId", trimText(input.bookingId));
+  params.set("editToken", trimText(input.editToken));
+  const bookingBlockId = trimText(input.bookingBlockId);
+  const bookingViewport = trimText(input.bookingViewport);
+  if (bookingBlockId) params.set("bookingBlockId", bookingBlockId);
+  if (bookingViewport) params.set("bookingViewport", bookingViewport);
+  if (input.download) params.set("download", "1");
+  return params.toString();
+}
+
 export function buildMerchantBookingPublicSiteUrl(
   site: Partial<MerchantListPublishedSite> | null | undefined,
   siteId: string,
@@ -42,14 +60,12 @@ export function buildMerchantBookingSelfServiceUrl(
   const normalizedEditToken = trimText(editToken);
   if (!normalizedSiteUrl || !booking.id || !normalizedEditToken) return "";
   const url = new URL(normalizedSiteUrl);
-  url.searchParams.set("bookingId", booking.id);
-  url.searchParams.set("editToken", normalizedEditToken);
-  if (booking.bookingBlockId) {
-    url.searchParams.set("bookingBlockId", booking.bookingBlockId);
-  }
-  if (booking.bookingViewport) {
-    url.searchParams.set("bookingViewport", booking.bookingViewport);
-  }
+  url.hash = buildBookingTokenHash({
+    bookingId: booking.id,
+    editToken: normalizedEditToken,
+    bookingBlockId: booking.bookingBlockId,
+    bookingViewport: booking.bookingViewport,
+  });
   return url.toString();
 }
 
@@ -63,9 +79,11 @@ export function buildMerchantBookingCustomerCalendarUrl(
   const normalizedEditToken = trimText(editToken);
   if (!normalizedSiteUrl || !normalizedBookingId || !normalizedEditToken) return "";
   const site = new URL(normalizedSiteUrl);
-  const url = new URL("/api/bookings/customer-calendar", site.origin);
-  url.searchParams.set("bookingId", normalizedBookingId);
-  url.searchParams.set("editToken", normalizedEditToken);
-  url.searchParams.set("download", "1");
+  const url = new URL("/booking-calendar", site.origin);
+  url.hash = buildBookingTokenHash({
+    bookingId: normalizedBookingId,
+    editToken: normalizedEditToken,
+    download: true,
+  });
   return url.toString();
 }

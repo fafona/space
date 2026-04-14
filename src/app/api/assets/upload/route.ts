@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
+import { createDefaultMerchantPermissionConfig } from "@/data/platformControlStore";
+import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
+import {
+  loadStoredPlatformMerchantSnapshot,
+  type PlatformMerchantSnapshotStoreClient,
+} from "@/lib/platformMerchantSnapshotStore";
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
 import { isSuperAdminRequestAuthorized } from "@/lib/superAdminRequestAuth";
 
@@ -11,7 +16,27 @@ type AssetUploadRequestBody = {
   dataUrl?: string;
   merchantHint?: string;
   folder?: string;
+  usage?: unknown;
 };
+
+type AssetUsage =
+  | "common-block-image"
+  | "gallery-block-image"
+  | "business-card-background"
+  | "business-card-contact"
+  | "business-card-export"
+  | "support-image"
+  | "support-file"
+  | "audio"
+  | "generic-image";
+
+type ActorContext =
+  | {
+      ok: true;
+      effectiveMerchantHint: string;
+      permissionConfig: ReturnType<typeof createDefaultMerchantPermissionConfig>;
+    }
+  | { ok: false };
 
 function parseDataUrlMeta(dataUrl: string) {
   const matched = dataUrl.match(/^data:([a-z0-9.+-]+\/[a-z0-9.+-]+);base64,/i);
@@ -24,10 +49,8 @@ function parseDataUrlMeta(dataUrl: string) {
     if (mime === "image/gif") return "gif";
     if (mime === "image/bmp") return "bmp";
     if (mime === "image/svg+xml") return "svg";
-    if (mime === "audio/mpeg") return "mp3";
-    if (mime === "audio/mp3") return "mp3";
-    if (mime === "audio/wav") return "wav";
-    if (mime === "audio/x-wav") return "wav";
+    if (mime === "audio/mpeg" || mime === "audio/mp3") return "mp3";
+    if (mime === "audio/wav" || mime === "audio/x-wav") return "wav";
     if (mime === "audio/ogg") return "ogg";
     if (mime === "audio/aac") return "aac";
     if (mime === "audio/webm") return "webm";
@@ -36,8 +59,7 @@ function parseDataUrlMeta(dataUrl: string) {
     if (mime === "text/plain") return "txt";
     if (mime === "text/csv") return "csv";
     if (mime === "application/json") return "json";
-    if (mime === "application/zip") return "zip";
-    if (mime === "application/x-zip-compressed") return "zip";
+    if (mime === "application/zip" || mime === "application/x-zip-compressed") return "zip";
     if (mime === "application/x-rar-compressed") return "rar";
     if (mime === "application/x-7z-compressed") return "7z";
     if (mime === "application/msword") return "doc";
@@ -60,40 +82,90 @@ function dataUrlToBlob(dataUrl: string, mime: string) {
 }
 
 function sanitizeMerchantHint(input: string) {
-  const normalized = (input ?? "").trim().replace(/[^a-zA-Z0-9_-]+/g, "-");
+  const normalized = String(input ?? "")
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]+/g, "-");
   return normalized || "public";
 }
 
-async function isAuthorized(request: Request, supabaseUrl: string, serviceRoleKey: string) {
+function normalizeAssetUsage(value: unknown, folder: string, mime: string): AssetUsage {
+  const normalized = String(value ?? "").trim();
+  if (
+    normalized === "common-block-image" ||
+    normalized === "gallery-block-image" ||
+    normalized === "business-card-background" ||
+    normalized === "business-card-contact" ||
+    normalized === "business-card-export" ||
+    normalized === "support-image" ||
+    normalized === "support-file" ||
+    normalized === "audio"
+  ) {
+    return normalized;
+  }
+  if (folder === "merchant-audio" || mime.startsWith("audio/")) return "audio";
+  if (folder === "merchant-files") return "support-file";
+  return "generic-image";
+}
+
+function getAssetUploadLimitBytes(input: {
+  usage: AssetUsage;
+  permissionConfig: ReturnType<typeof createDefaultMerchantPermissionConfig>;
+}) {
+  const permissionConfig = input.permissionConfig;
+  switch (input.usage) {
+    case "gallery-block-image":
+      return Math.max(50, Math.round(permissionConfig.galleryBlockImageLimitKb)) * 1024;
+    case "business-card-background":
+      return Math.max(50, Math.round(permissionConfig.businessCardBackgroundImageLimitKb)) * 1024;
+    case "business-card-contact":
+      return Math.max(50, Math.round(permissionConfig.businessCardContactImageLimitKb)) * 1024;
+    case "business-card-export":
+      return Math.max(50, Math.round(permissionConfig.businessCardExportImageLimitKb)) * 1024;
+    case "support-image":
+      return 512 * 1024;
+    case "support-file":
+      return 8 * 1024 * 1024;
+    case "audio":
+      return 10 * 1024 * 1024;
+    case "common-block-image":
+    case "generic-image":
+    default:
+      return Math.max(50, Math.round(permissionConfig.commonBlockImageLimitKb)) * 1024;
+  }
+}
+
+async function resolveActorContext(
+  request: Request,
+  supabase: PlatformMerchantSnapshotStoreClient,
+  merchantHint: string,
+): Promise<ActorContext> {
   if (isSuperAdminRequestAuthorized(request)) {
-    return true;
+    return {
+      ok: true,
+      effectiveMerchantHint: merchantHint || "platform",
+      permissionConfig: createDefaultMerchantPermissionConfig(),
+    };
   }
 
   const resolvedSession = await resolveMerchantSessionFromRequest(request);
-  if (resolvedSession?.merchantId) {
-    return true;
+  if (!resolvedSession?.merchantId) {
+    return { ok: false };
   }
 
-  const accessTokens = readMerchantRequestAccessTokens(request);
-  if (accessTokens.length === 0) return false;
-
-  const authClient = createClient(supabaseUrl, serviceRoleKey, {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-      detectSessionInUrl: false,
-    },
-  });
-  for (const accessToken of accessTokens) {
-    const { data, error } = await authClient.auth.getUser(accessToken);
-    if (!error && data.user) {
-      return true;
-    }
-  }
-  return false;
+  const snapshotPayload = await loadStoredPlatformMerchantSnapshot(supabase).catch(() => null);
+  const snapshotSite = snapshotPayload?.snapshot.find((site) => site.id === resolvedSession.merchantId) ?? null;
+  return {
+    ok: true,
+    effectiveMerchantHint: sanitizeMerchantHint(resolvedSession.merchantId),
+    permissionConfig: snapshotSite?.permissionConfig ?? createDefaultMerchantPermissionConfig(),
+  };
 }
 
 export async function POST(request: Request) {
+  if (!isTrustedSameOriginMutationRequest(request)) {
+    return getTrustedMutationRequestErrorResponse();
+  }
+
   const supabaseUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").trim();
   const serviceRoleKey =
     (process.env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim() ||
@@ -104,20 +176,9 @@ export async function POST(request: Request) {
       {
         ok: false,
         code: "asset_upload_service_unavailable",
-        message: "资源上传服务未配置。",
+        message: "Asset upload service is not configured.",
       },
       { status: 503 },
-    );
-  }
-
-  if (!(await isAuthorized(request, supabaseUrl, serviceRoleKey))) {
-    return NextResponse.json(
-      {
-        ok: false,
-        code: "unauthorized",
-        message: "当前会话无权上传资源。",
-      },
-      { status: 401 },
     );
   }
 
@@ -129,7 +190,7 @@ export async function POST(request: Request) {
       {
         ok: false,
         code: "invalid_json",
-        message: "请求体不是有效 JSON。",
+        message: "Request body must be valid JSON.",
       },
       { status: 400 },
     );
@@ -142,7 +203,7 @@ export async function POST(request: Request) {
       {
         ok: false,
         code: "invalid_payload",
-        message: "缺少有效的资源内容。",
+        message: "A supported upload payload is required.",
       },
       { status: 400 },
     );
@@ -154,7 +215,7 @@ export async function POST(request: Request) {
       {
         ok: false,
         code: "unsupported_asset",
-        message: "仅支持图片、音频或常见文件 data URL。",
+        message: "Only supported image, audio, and common document data URLs can be uploaded.",
       },
       { status: 400 },
     );
@@ -162,9 +223,6 @@ export async function POST(request: Request) {
 
   const blob = dataUrlToBlob(dataUrl, meta.mime);
   const merchantHint = sanitizeMerchantHint(String(body.merchantHint ?? "public"));
-  const now = new Date();
-  const yyyy = `${now.getFullYear()}`;
-  const mm = `${now.getMonth() + 1}`.padStart(2, "0");
   const supabase = createClient(supabaseUrl, serviceRoleKey, {
     auth: {
       persistSession: false,
@@ -172,10 +230,42 @@ export async function POST(request: Request) {
       detectSessionInUrl: false,
     },
   });
+
+  const actor = await resolveActorContext(request, supabase as unknown as PlatformMerchantSnapshotStoreClient, merchantHint);
+  if (!actor.ok) {
+    return NextResponse.json(
+      {
+        ok: false,
+        code: "unauthorized",
+        message: "Unauthorized asset upload request.",
+      },
+      { status: 401 },
+    );
+  }
+
+  const usage = normalizeAssetUsage(body.usage, folder, meta.mime);
+  const limitBytes = getAssetUploadLimitBytes({
+    usage,
+    permissionConfig: actor.permissionConfig,
+  });
+  if (blob.size > limitBytes) {
+    return NextResponse.json(
+      {
+        ok: false,
+        code: "asset_size_limit_exceeded",
+        message: `Asset exceeds the allowed size limit (${Math.round(limitBytes / 1024)}KB).`,
+      },
+      { status: 413 },
+    );
+  }
+
+  const now = new Date();
+  const yyyy = `${now.getFullYear()}`;
+  const mm = `${now.getMonth() + 1}`.padStart(2, "0");
   const uploadErrors: string[] = [];
 
   for (const bucket of BUCKET_CANDIDATES) {
-    const objectPath = `${folder}/${merchantHint}/${yyyy}/${mm}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${meta.extension}`;
+    const objectPath = `${folder}/${actor.effectiveMerchantHint}/${yyyy}/${mm}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${meta.extension}`;
     const uploaded = await supabase.storage.from(bucket).upload(objectPath, blob, {
       contentType: meta.mime,
       upsert: false,
@@ -200,7 +290,7 @@ export async function POST(request: Request) {
     {
       ok: false,
       code: "asset_upload_failed",
-      message: uploadErrors.join(" | ") || "资源上传失败",
+      message: uploadErrors.join(" | ") || "Asset upload failed.",
     },
     { status: 409 },
   );

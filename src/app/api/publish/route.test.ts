@@ -62,6 +62,7 @@ test("publish rejects merchant requests without an authorized session", async ()
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          Origin: "http://localhost",
         },
         body: JSON.stringify({
           requestId: "merchant-unauthorized",
@@ -123,6 +124,7 @@ test("publish rejects platform requests without a verified super-admin session",
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          Origin: "http://localhost",
         },
         body: JSON.stringify({
           requestId: "platform-unauthorized",

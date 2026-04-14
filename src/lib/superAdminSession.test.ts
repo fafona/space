@@ -17,14 +17,13 @@ test("resolveSuperAdminCookieDomainFromHostname folds www portal config back to 
   }
 });
 
-test("resolveSuperAdminCookieDomain prefers forwarded host over internal request url", () => {
+test("resolveSuperAdminCookieDomain uses host header when present", () => {
   const previousBaseDomain = process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN;
   process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN = "https://www.faolla.com";
   try {
     const request = new Request("https://www.faolla.com/api/super-admin/auth/complete", {
       headers: {
         host: "faolla.com",
-        "x-forwarded-host": "faolla.com",
       },
     });
     assert.equal(resolveSuperAdminCookieDomain(request), "faolla.com");
@@ -32,4 +31,3 @@ test("resolveSuperAdminCookieDomain prefers forwarded host over internal request
     process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN = previousBaseDomain;
   }
 });
-

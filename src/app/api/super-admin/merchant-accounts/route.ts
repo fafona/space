@@ -6,6 +6,7 @@ import { loadMerchantIdRulesFromStore } from "@/lib/merchantIdRuleStore";
 import { findBlockingMerchantIdRule } from "@/lib/merchantIdRules";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { loadStoredPlatformMerchantSnapshot, type PlatformMerchantSnapshotStoreClient } from "@/lib/platformMerchantSnapshotStore";
+import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { isSuperAdminRequestAuthorized } from "@/lib/superAdminRequestAuth";
 
 export const dynamic = "force-dynamic";
@@ -635,6 +636,10 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  if (!isTrustedSameOriginMutationRequest(request)) {
+    return getTrustedMutationRequestErrorResponse();
+  }
+
   if (!ensureAuthorized(request)) {
     return unauthorizedJson();
   }

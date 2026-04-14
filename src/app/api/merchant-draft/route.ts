@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import type { Block } from "@/data/homeBlocks";
 import { readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
 import { loadStoredMerchantDraft, saveStoredMerchantDraft, type MerchantDraftStoreClient } from "@/lib/merchantDraftStore";
+import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { isSuperAdminRequestAuthorized } from "@/lib/superAdminRequestAuth";
 
 export const dynamic = "force-dynamic";
@@ -205,6 +206,10 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  if (!isTrustedSameOriginMutationRequest(request)) {
+    return getTrustedMutationRequestErrorResponse();
+  }
+
   const supabase = createServerSupabaseClient();
   if (!supabase) {
     return NextResponse.json({ ok: false, error: "merchant_draft_env_missing" }, { status: 503 });

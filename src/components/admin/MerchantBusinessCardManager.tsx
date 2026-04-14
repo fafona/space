@@ -2856,6 +2856,7 @@ export default function MerchantBusinessCardManager({
           normalizeText(input.card?.name) ||
           normalizeText(profile.merchantName),
       ),
+      "business-card-export",
     );
     const publicUrl = normalizeMerchantBusinessCardShareImageUrl(uploadedUrl, shareOrigin);
     if (publicUrl && input.card) {
@@ -2890,6 +2891,7 @@ export default function MerchantBusinessCardManager({
       sanitizeShareAssetHint(
         `${normalizeText(profile.domainPrefix) || normalizeText(input.cardName) || normalizeText(input.card?.name) || normalizeText(profile.merchantName)}-contact`,
       ),
+      "business-card-contact",
     );
     const publicUrl = normalizeMerchantBusinessCardShareImageUrl(uploadedUrl, shareOrigin);
     if (publicUrl && input.card) {

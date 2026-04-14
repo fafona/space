@@ -16,6 +16,7 @@ import {
   readMerchantWebPushPublicKey,
   syncMerchantPushBadgeCountForSubscription,
 } from "@/lib/webPush";
+import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
 
 export const dynamic = "force-dynamic";
@@ -117,6 +118,10 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  if (!isTrustedSameOriginMutationRequest(request)) {
+    return getTrustedMutationRequestErrorResponse();
+  }
+
   const body = (await request.json().catch(() => null)) as
     | {
         action?: unknown;

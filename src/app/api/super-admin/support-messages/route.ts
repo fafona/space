@@ -9,6 +9,7 @@ import {
   type PlatformSupportInboxStoreClient,
 } from "@/lib/platformSupportInboxStore";
 import { buildSuperAdminReplyPushNotification } from "@/lib/merchantPushEvents";
+import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import { isSuperAdminRequestAuthorized } from "@/lib/superAdminRequestAuth";
 import { notifyMerchantPushSubscribers } from "@/lib/webPush";
@@ -52,6 +53,10 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  if (!isTrustedSameOriginMutationRequest(request)) {
+    return getTrustedMutationRequestErrorResponse();
+  }
+
   if (!isAuthorized(request)) {
     return noStoreJson({ error: "unauthorized" }, { status: 401 });
   }

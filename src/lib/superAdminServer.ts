@@ -1,30 +1,42 @@
 import { createClient } from "@supabase/supabase-js";
+import { resolveTrustedPublicOrigin } from "@/lib/requestOrigin";
 
 function readEnv(name: string) {
   return (process.env[name] ?? "").trim();
 }
 
 export function readSuperAdminAccount() {
-  return readEnv("SUPER_ADMIN_ACCOUNT") || "felix";
+  return readEnv("SUPER_ADMIN_ACCOUNT");
 }
 
 export function readSuperAdminPassword() {
-  return readEnv("SUPER_ADMIN_PASSWORD") || "987987";
+  return readEnv("SUPER_ADMIN_PASSWORD");
 }
 
 export function readSuperAdminVerificationEmail() {
-  return readEnv("SUPER_ADMIN_VERIFICATION_EMAIL") || "caimin6669@qq.com";
+  return readEnv("SUPER_ADMIN_VERIFICATION_EMAIL");
 }
 
 export function readSuperAdminVerificationSecret() {
-  return (
-    readEnv("SUPER_ADMIN_VERIFICATION_SECRET") ||
-    `${readSuperAdminAccount()}::${readSuperAdminPassword()}::${readSuperAdminVerificationEmail()}::merchant-space`
+  return readEnv("SUPER_ADMIN_VERIFICATION_SECRET");
+}
+
+export function isSuperAdminAuthConfigured() {
+  return Boolean(
+    readSuperAdminAccount() &&
+      readSuperAdminPassword() &&
+      readSuperAdminVerificationEmail() &&
+      readSuperAdminVerificationSecret(),
   );
 }
 
 export function validateSuperAdminCredentials(account: string, password: string) {
-  return account.trim() === readSuperAdminAccount() && password === readSuperAdminPassword();
+  const configuredAccount = readSuperAdminAccount();
+  const configuredPassword = readSuperAdminPassword();
+  if (!configuredAccount || !configuredPassword || !readSuperAdminVerificationSecret()) {
+    return false;
+  }
+  return account.trim() === configuredAccount && password === configuredPassword;
 }
 
 export function createServerSupabaseAuthClient() {
@@ -56,13 +68,8 @@ export function createServerSupabaseServiceClient() {
 }
 
 export function resolvePublicOrigin(request: Request, requestUrl: URL) {
-  const forwardedProto = (request.headers.get("x-forwarded-proto") ?? "").split(",")[0]?.trim();
-  const forwardedHost = (request.headers.get("x-forwarded-host") ?? "").split(",")[0]?.trim();
-  const host = (request.headers.get("host") ?? "").trim();
-  const publicHost = forwardedHost || host;
-  const protocol = forwardedProto || requestUrl.protocol.replace(/:$/, "") || "http";
-  if (publicHost) return `${protocol}://${publicHost}`;
-  return requestUrl.origin;
+  void request;
+  return resolveTrustedPublicOrigin(requestUrl);
 }
 
 export function readRequestClientIp(request: Request) {

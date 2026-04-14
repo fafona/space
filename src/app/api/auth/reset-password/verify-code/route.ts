@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { createServerSupabaseAuthClient } from "@/lib/superAdminServer";
 import { setResetRecoveryCookies } from "@/lib/resetPasswordRecoverySession";
 
@@ -25,6 +26,10 @@ function noStoreJson(body: unknown, init?: ResponseInit) {
 }
 
 export async function POST(request: Request) {
+  if (!isTrustedSameOriginMutationRequest(request)) {
+    return getTrustedMutationRequestErrorResponse();
+  }
+
   try {
     const body = (await request.json().catch(() => null)) as RequestBody | null;
     const email = normalizeEmail(body?.email);
@@ -62,15 +67,12 @@ export async function POST(request: Request) {
     const response = noStoreJson({
       ok: true,
       ready: true,
-      accessToken,
-      refreshToken,
-      expiresIn: data.session?.expires_in ?? null,
     });
     setResetRecoveryCookies(response, {
       accessToken,
       refreshToken,
       maxAgeSeconds: data.session?.expires_in,
-    });
+    }, request);
     return response;
   } catch {
     return noStoreJson({ ok: false, error: "reset_password_verify_unavailable" }, { status: 503 });

@@ -5,7 +5,6 @@ import {
   SUPER_ADMIN_DEVICE_ID_COOKIE,
   SUPER_ADMIN_DEVICE_ID_KEY,
   SUPER_ADMIN_LOGIN_PATH,
-  SUPER_ADMIN_SESSION_COOKIE,
   SUPER_ADMIN_SESSION_KEY,
   SUPER_ADMIN_SESSION_VALUE,
   resolveSuperAdminCookieDomainFromHostname,
@@ -15,7 +14,6 @@ export {
   SUPER_ADMIN_DEVICE_ID_COOKIE,
   SUPER_ADMIN_DEVICE_ID_KEY,
   SUPER_ADMIN_LOGIN_PATH,
-  SUPER_ADMIN_SESSION_COOKIE,
   SUPER_ADMIN_SESSION_KEY,
   SUPER_ADMIN_SESSION_VALUE,
 };
@@ -40,11 +38,6 @@ function clearHostOnlyCookie(key: string) {
   document.cookie = `${key}=; Path=/; Max-Age=0; SameSite=Lax`;
 }
 
-function readSuperAdminCookie() {
-  const value = readCookieValue(SUPER_ADMIN_SESSION_COOKIE).trim();
-  return Boolean(value && value !== SUPER_ADMIN_SESSION_VALUE);
-}
-
 function readSuperAdminDeviceIdCookie() {
   return readCookieValue(SUPER_ADMIN_DEVICE_ID_COOKIE).trim();
 }
@@ -63,20 +56,35 @@ function writeSuperAdminDeviceIdCookie(deviceId: string) {
 
 export function isSuperAdminAuthenticated() {
   if (typeof window === "undefined") return false;
-  return readSuperAdminCookie() || localStorage.getItem(SUPER_ADMIN_SESSION_KEY) === SUPER_ADMIN_SESSION_VALUE;
+  return localStorage.getItem(SUPER_ADMIN_SESSION_KEY) === SUPER_ADMIN_SESSION_VALUE;
 }
 
 export function syncSuperAdminAuthenticatedCookie() {
+  return isSuperAdminAuthenticated();
+}
+
+export async function refreshSuperAdminAuthenticatedState() {
   if (typeof window === "undefined") return false;
-  const hasSignedCookie = readSuperAdminCookie();
-  if (hasSignedCookie) {
-    if (localStorage.getItem(SUPER_ADMIN_SESSION_KEY) !== SUPER_ADMIN_SESSION_VALUE) {
+  try {
+    const response = await fetch("/api/super-admin/auth/session", {
+      method: "GET",
+      cache: "no-store",
+      credentials: "same-origin",
+      headers: {
+        accept: "application/json",
+      },
+    });
+    const payload = (await response.json().catch(() => null)) as { authenticated?: unknown } | null;
+    const authenticated = response.ok && payload?.authenticated === true;
+    if (authenticated) {
       localStorage.setItem(SUPER_ADMIN_SESSION_KEY, SUPER_ADMIN_SESSION_VALUE);
+      return true;
     }
-    return true;
+    localStorage.removeItem(SUPER_ADMIN_SESSION_KEY);
+    return false;
+  } catch {
+    return localStorage.getItem(SUPER_ADMIN_SESSION_KEY) === SUPER_ADMIN_SESSION_VALUE;
   }
-  localStorage.removeItem(SUPER_ADMIN_SESSION_KEY);
-  return false;
 }
 
 export function setSuperAdminAuthenticated() {
@@ -87,11 +95,6 @@ export function setSuperAdminAuthenticated() {
 export function clearSuperAdminAuthenticated() {
   if (typeof window === "undefined") return;
   localStorage.removeItem(SUPER_ADMIN_SESSION_KEY);
-  const cookieDomainPart = buildCookieDomainPart();
-  if (cookieDomainPart) {
-    clearHostOnlyCookie(SUPER_ADMIN_SESSION_COOKIE);
-  }
-  document.cookie = `${SUPER_ADMIN_SESSION_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax${cookieDomainPart}`;
 }
 
 export function buildSuperAdminLoginHref(nextPath = "/super-admin") {

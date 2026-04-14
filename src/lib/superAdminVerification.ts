@@ -48,18 +48,22 @@ function base64UrlDecode(input: string) {
 }
 
 function signTokenPayload(payload: SignedSuperAdminTokenPayload) {
+  const secret = readSuperAdminVerificationSecret();
+  if (!secret) return "";
   const serialized = JSON.stringify(payload);
   const encodedPayload = base64UrlEncode(serialized);
-  const signature = createHmac("sha256", readSuperAdminVerificationSecret()).update(encodedPayload).digest("base64url");
+  const signature = createHmac("sha256", secret).update(encodedPayload).digest("base64url");
   return `${encodedPayload}.${signature}`;
 }
 
 function readSignedTokenPayload<T extends SignedSuperAdminTokenPayload>(token: string, expectedKind: T["kind"]) {
   const normalized = String(token ?? "").trim();
   if (!normalized) return null;
+  const secret = readSuperAdminVerificationSecret();
+  if (!secret) return null;
   const [encodedPayload, signature] = normalized.split(".");
   if (!encodedPayload || !signature) return null;
-  const expectedSignature = createHmac("sha256", readSuperAdminVerificationSecret()).update(encodedPayload).digest("base64url");
+  const expectedSignature = createHmac("sha256", secret).update(encodedPayload).digest("base64url");
   if (signature !== expectedSignature) return null;
 
   try {

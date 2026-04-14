@@ -50,12 +50,19 @@ type SubmittedBookingState = {
   editToken: string;
 };
 
-const EDIT_TOKEN_STORAGE_KEY = "merchant-space:merchant-booking-tokens:v1";
+type BookingSelfServiceParams = {
+  bookingId: string;
+  editToken: string;
+  bookingBlockId: string;
+  bookingViewport: string;
+};
+
+const EDIT_TOKEN_STORAGE_KEY = "merchant-space:merchant-booking-tokens:v2";
 
 function readEditTokenMap() {
   if (typeof window === "undefined") return {} as Record<string, string>;
   try {
-    const raw = window.localStorage.getItem(EDIT_TOKEN_STORAGE_KEY);
+    const raw = window.sessionStorage.getItem(EDIT_TOKEN_STORAGE_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as Record<string, string>;
     return parsed && typeof parsed === "object" ? parsed : {};
@@ -67,7 +74,7 @@ function readEditTokenMap() {
 function writeEditTokenMap(next: Record<string, string>) {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(EDIT_TOKEN_STORAGE_KEY, JSON.stringify(next));
+    window.sessionStorage.setItem(EDIT_TOKEN_STORAGE_KEY, JSON.stringify(next));
   } catch {
     // Ignore quota failures for best-effort persistence.
   }
@@ -78,6 +85,36 @@ function persistEditToken(bookingId: string, editToken: string) {
   const next = readEditTokenMap();
   next[bookingId] = editToken;
   writeEditTokenMap(next);
+}
+
+function readBookingSelfServiceParams(searchParams: ReturnType<typeof useSearchParams>): BookingSelfServiceParams {
+  if (typeof window !== "undefined") {
+    const url = new URL(window.location.href);
+    const hashParams = new URLSearchParams(url.hash.replace(/^#/, ""));
+    const source = hashParams.get("bookingId") || hashParams.get("editToken") ? hashParams : url.searchParams;
+    return {
+      bookingId: source.get("bookingId")?.trim() ?? "",
+      editToken: source.get("editToken")?.trim() ?? "",
+      bookingBlockId: source.get("bookingBlockId")?.trim() ?? "",
+      bookingViewport: source.get("bookingViewport")?.trim() ?? "",
+    };
+  }
+  return {
+    bookingId: searchParams?.get("bookingId")?.trim() ?? "",
+    editToken: searchParams?.get("editToken")?.trim() ?? "",
+    bookingBlockId: searchParams?.get("bookingBlockId")?.trim() ?? "",
+    bookingViewport: searchParams?.get("bookingViewport")?.trim() ?? "",
+  };
+}
+
+function clearBookingSelfServiceUrlParams() {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  ["bookingId", "editToken", "bookingBlockId", "bookingViewport", "download"].forEach((key) => {
+    url.searchParams.delete(key);
+  });
+  url.hash = "";
+  window.history.replaceState({}, document.title, `${url.pathname}${url.search}`);
 }
 
 function buildInitialDraft(
@@ -102,16 +139,6 @@ function getFormFieldClass(disabled: boolean) {
   return `w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-base outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 ${
     disabled ? "cursor-not-allowed bg-slate-100 text-slate-400" : ""
   }`;
-}
-
-function buildCustomerCalendarHref(bookingId: string, editToken: string) {
-  if (!bookingId || !editToken) return "";
-  const params = new URLSearchParams({
-    bookingId,
-    editToken,
-    download: "1",
-  });
-  return `/api/bookings/customer-calendar?${params.toString()}`;
 }
 
 export default function BookingBlock({
@@ -185,14 +212,23 @@ export default function BookingBlock({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const isLiveBooking = interactive && isMerchantNumericId(runtimeSiteId);
-  const restoredBookingId = searchParams?.get("bookingId")?.trim() ?? "";
-  const restoredEditToken = searchParams?.get("editToken")?.trim() ?? "";
-  const restoredBlockId = searchParams?.get("bookingBlockId")?.trim() ?? "";
-  const restoredViewport = searchParams?.get("bookingViewport")?.trim() ?? "";
+  const [restoredParams, setRestoredParams] = useState<BookingSelfServiceParams>(() => readBookingSelfServiceParams(searchParams));
+  const restoredBookingId = restoredParams.bookingId;
+  const restoredEditToken = restoredParams.editToken;
+  const restoredBlockId = restoredParams.bookingBlockId;
+  const restoredViewport = restoredParams.bookingViewport;
 
   useEffect(() => {
     setDraft((current) => buildInitialDraft(storeOptions, itemOptions, titleOptions, current));
   }, [storeOptions, itemOptions, titleOptions]);
+
+  useEffect(() => {
+    const next = readBookingSelfServiceParams(searchParams);
+    setRestoredParams(next);
+    if (next.bookingId || next.editToken) {
+      clearBookingSelfServiceUrlParams();
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     if (!isLiveBooking) {
@@ -238,10 +274,18 @@ export default function BookingBlock({
     let cancelled = false;
     const restoreBooking = async () => {
       try {
-        const response = await fetch(
-          `/api/bookings/self-service?bookingId=${encodeURIComponent(restoredBookingId)}&editToken=${encodeURIComponent(restoredEditToken)}`,
-          { cache: "no-store" },
-        );
+        const response = await fetch("/api/bookings/self-service", {
+          method: "POST",
+          cache: "no-store",
+          headers: {
+            "Content-Type": "application/json",
+            accept: "application/json",
+          },
+          body: JSON.stringify({
+            bookingId: restoredBookingId,
+            editToken: restoredEditToken,
+          }),
+        });
         const json = (await response.json().catch(() => null)) as
           | { ok?: boolean; booking?: MerchantBookingRecord; message?: string }
           | null;
@@ -436,6 +480,48 @@ export default function BookingBlock({
     }
   };
 
+  const downloadCustomerCalendar = async () => {
+    if (!submittedState) return;
+    setSubmitting(true);
+    setError("");
+    try {
+      const response = await fetch("/api/bookings/customer-calendar", {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          accept: "text/calendar,application/json",
+        },
+        body: JSON.stringify({
+          bookingId: submittedState.booking.id,
+          editToken: submittedState.editToken,
+          download: true,
+        }),
+      });
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { message?: unknown; error?: unknown } | null;
+        throw new Error(
+          (typeof payload?.message === "string" && payload.message.trim()) ||
+            (typeof payload?.error === "string" && payload.error.trim()) ||
+            "日历文件生成失败，请稍后重试",
+        );
+      }
+      const blob = await response.blob();
+      const objectUrl = window.URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = `booking-${submittedState.booking.id}.ics`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(objectUrl);
+    } catch (calendarError) {
+      setError(calendarError instanceof Error ? calendarError.message : "日历文件生成失败，请稍后重试");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <section
       className={`mx-auto max-w-6xl rounded-2xl p-6 shadow-sm ${borderClass}`}
@@ -495,12 +581,14 @@ export default function BookingBlock({
             >
               {submitting ? "处理中..." : cancelLabel}
             </button>
-            <a
-              className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-100"
-              href={buildCustomerCalendarHref(submittedState.booking.id, submittedState.editToken)}
+            <button
+              type="button"
+              className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+              onClick={() => void downloadCustomerCalendar()}
+              disabled={submitting}
             >
               加入日历
-            </a>
+            </button>
           </div>
         </div>
       ) : null}

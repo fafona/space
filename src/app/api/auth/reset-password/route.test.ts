@@ -8,6 +8,7 @@ test("reset-password rejects short passwords before touching backend", async () 
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        Origin: "http://localhost",
       },
       body: JSON.stringify({
         password: "12345",
@@ -29,6 +30,7 @@ test("reset-password rejects missing recovery payload before touching backend", 
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        Origin: "http://localhost",
       },
       body: JSON.stringify({
         password: "secret123",
@@ -60,6 +62,7 @@ test("reset-password returns env-missing when Supabase config is absent", async 
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          Origin: "http://localhost",
         },
         body: JSON.stringify({
           password: "secret123",

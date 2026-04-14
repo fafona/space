@@ -18,6 +18,7 @@ import {
   savePlatformMerchantSnapshot,
   type PlatformMerchantSnapshotStoreClient,
 } from "@/lib/platformMerchantSnapshotStore";
+import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
 import { buildMerchantFrontendHref } from "@/lib/siteRouting";
 import { isSuperAdminRequestAuthorized } from "@/lib/superAdminRequestAuth";
@@ -332,6 +333,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  if (!isTrustedSameOriginMutationRequest(request)) {
+    return getTrustedMutationRequestErrorResponse();
+  }
   const supabaseUrl = readEnv("NEXT_PUBLIC_SUPABASE_URL");
   const serviceRoleKey = readEnv("SUPABASE_SERVICE_ROLE_KEY") || readEnv("NEXT_SUPABASE_SERVICE_ROLE_KEY");
   if (!supabaseUrl || !serviceRoleKey) {

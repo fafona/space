@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { createServerSupabaseAuthClient, readRequestClientIp, readSuperAdminVerificationEmail } from "@/lib/superAdminServer";
 import { finalizeSuperAdminLogin } from "@/lib/superAdminLoginCompletion";
 import { readSuperAdminChallengeToken } from "@/lib/superAdminVerification";
@@ -17,6 +18,10 @@ function normalizeCode(value: unknown) {
 }
 
 export async function POST(request: Request) {
+  if (!isTrustedSameOriginMutationRequest(request)) {
+    return getTrustedMutationRequestErrorResponse();
+  }
+
   try {
     const body = (await request.json().catch(() => null)) as VerifyCodeBody | null;
     const challenge = typeof body?.challenge === "string" ? body.challenge.trim() : "";

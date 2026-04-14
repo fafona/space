@@ -1,4 +1,5 @@
 import type { NextResponse } from "next/server";
+import { resolveSecureCookieFlag } from "@/lib/requestOrigin";
 
 export const RESET_PASSWORD_RECOVERY_COOKIE = "merchant-space-reset-recovery";
 export const RESET_PASSWORD_RECOVERY_REFRESH_COOKIE = "merchant-space-reset-recovery-refresh";
@@ -30,20 +31,22 @@ export function readResetRecoveryRefreshCookie(request: Request) {
 export function setResetRecoveryCookies(
   response: NextResponse,
   input: { accessToken: string; refreshToken?: string | null; maxAgeSeconds?: unknown },
+  request?: Request,
 ) {
   const accessToken = String(input.accessToken ?? "").trim();
   const refreshToken = String(input.refreshToken ?? "").trim();
   const maxAge = normalizeMaxAge(input.maxAgeSeconds);
+  const secure = resolveSecureCookieFlag(request);
 
   if (!accessToken) {
-    clearResetRecoveryCookies(response);
+    clearResetRecoveryCookies(response, request);
     return;
   }
 
   response.cookies.set(RESET_PASSWORD_RECOVERY_COOKIE, accessToken, {
     httpOnly: true,
     sameSite: "lax",
-    secure: false,
+    secure,
     path: "/",
     maxAge,
   });
@@ -52,7 +55,7 @@ export function setResetRecoveryCookies(
     response.cookies.set(RESET_PASSWORD_RECOVERY_REFRESH_COOKIE, refreshToken, {
       httpOnly: true,
       sameSite: "lax",
-      secure: false,
+      secure,
       path: "/",
       maxAge,
     });
@@ -60,25 +63,26 @@ export function setResetRecoveryCookies(
     response.cookies.set(RESET_PASSWORD_RECOVERY_REFRESH_COOKIE, "", {
       httpOnly: true,
       sameSite: "lax",
-      secure: false,
+      secure,
       path: "/",
       maxAge: 0,
     });
   }
 }
 
-export function clearResetRecoveryCookies(response: NextResponse) {
+export function clearResetRecoveryCookies(response: NextResponse, request?: Request) {
+  const secure = resolveSecureCookieFlag(request);
   response.cookies.set(RESET_PASSWORD_RECOVERY_COOKIE, "", {
     httpOnly: true,
     sameSite: "lax",
-    secure: false,
+    secure,
     path: "/",
     maxAge: 0,
   });
   response.cookies.set(RESET_PASSWORD_RECOVERY_REFRESH_COOKIE, "", {
     httpOnly: true,
     sameSite: "lax",
-    secure: false,
+    secure,
     path: "/",
     maxAge: 0,
   });

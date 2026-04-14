@@ -18,6 +18,7 @@ import {
   type MerchantPushSubscriptionStoreClient,
 } from "@/lib/merchantPushSubscriptionStore";
 import { loadCurrentMerchantSnapshotSiteBySiteId } from "@/lib/publishedMerchantService";
+import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
 import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 
@@ -115,6 +116,10 @@ export async function GET(request: Request) {
 }
 
 export async function PATCH(request: Request) {
+  if (!isTrustedSameOriginMutationRequest(request)) {
+    return getTrustedMutationRequestErrorResponse();
+  }
+
   const body = (await request.json().catch(() => null)) as
     | {
         siteId?: unknown;

@@ -116,7 +116,7 @@ export async function GET(request: Request) {
 
     if (!accessToken || !user) {
       const response = noStoreJson({ ready: false }, { status: 401 });
-      clearResetRecoveryCookies(response);
+      clearResetRecoveryCookies(response, request);
       return response;
     }
 
@@ -126,12 +126,12 @@ export async function GET(request: Request) {
         accessToken,
         refreshToken,
         maxAgeSeconds: expiresIn ?? undefined,
-      });
+      }, request);
     }
     return response;
   } catch {
     const response = noStoreJson({ ready: false, error: "reset_password_session_unavailable" }, { status: 503 });
-    clearResetRecoveryCookies(response);
+    clearResetRecoveryCookies(response, request);
     return response;
   }
 }
@@ -158,14 +158,14 @@ export async function POST(request: Request) {
 
     if (!accessToken) {
       const response = noStoreJson({ ok: false, error: "reset_password_missing_access_token" }, { status: 400 });
-      clearResetRecoveryCookies(response);
+      clearResetRecoveryCookies(response, request);
       return response;
     }
 
     const { data, error } = await supabase.auth.getUser(accessToken);
     if (error || !data.user) {
       const response = noStoreJson({ ok: false, error: "reset_password_invalid_access_token" }, { status: 401 });
-      clearResetRecoveryCookies(response);
+      clearResetRecoveryCookies(response, request);
       return response;
     }
 
@@ -177,11 +177,11 @@ export async function POST(request: Request) {
       accessToken,
       refreshToken,
       maxAgeSeconds: expiresIn,
-    });
+    }, request);
     return response;
   } catch {
     const response = noStoreJson({ ok: false, error: "reset_password_session_unavailable" }, { status: 503 });
-    clearResetRecoveryCookies(response);
+    clearResetRecoveryCookies(response, request);
     return response;
   }
 }

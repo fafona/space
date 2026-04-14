@@ -1,3 +1,6 @@
+import type { NextResponse } from "next/server";
+import { resolveSecureCookieFlag } from "@/lib/requestOrigin";
+
 export const SUPER_ADMIN_LOGIN_PATH = "/super-admin/login";
 export const SUPER_ADMIN_SESSION_KEY = "merchant-space:super-admin-session:v1";
 export const SUPER_ADMIN_SESSION_COOKIE = "merchant-space-super-admin";
@@ -48,18 +51,30 @@ export function resolveSuperAdminCookieDomainFromHostname(hostname: string | nul
 
 export function resolveSuperAdminCookieDomain(request?: Request) {
   if (!request) return undefined;
-  const forwardedHost = (request.headers.get("x-forwarded-host") ?? "")
-    .split(",")[0]
-    ?.trim()
-    .toLowerCase();
   const hostHeader = (request.headers.get("host") ?? "").trim().toLowerCase();
-  const publicHost = forwardedHost || hostHeader;
-  if (publicHost) {
-    return resolveSuperAdminCookieDomainFromHostname(publicHost);
+  if (hostHeader) {
+    return resolveSuperAdminCookieDomainFromHostname(hostHeader);
   }
   try {
     return resolveSuperAdminCookieDomainFromHostname(new URL(request.url).hostname);
   } catch {
     return undefined;
   }
+}
+
+export function resolveSuperAdminCookieSecureFlag(request?: Request) {
+  return resolveSecureCookieFlag(request);
+}
+
+export function clearSuperAdminSessionCookies(response: NextResponse, request?: Request) {
+  const cookieDomain = resolveSuperAdminCookieDomain(request);
+  const secure = resolveSuperAdminCookieSecureFlag(request);
+  response.cookies.set(SUPER_ADMIN_SESSION_COOKIE, "", {
+    path: "/",
+    maxAge: 0,
+    sameSite: "lax",
+    secure,
+    httpOnly: true,
+    ...(cookieDomain ? { domain: cookieDomain } : {}),
+  });
 }

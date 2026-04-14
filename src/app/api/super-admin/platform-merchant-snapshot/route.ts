@@ -12,6 +12,7 @@ import {
   type PlatformMerchantSnapshotStoreClient,
 } from "@/lib/platformMerchantSnapshotStore";
 import { isSuperAdminRequestAuthorized } from "@/lib/superAdminRequestAuth";
+import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -87,6 +88,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  if (!isTrustedSameOriginMutationRequest(request)) {
+    return getTrustedMutationRequestErrorResponse();
+  }
   if (!isSuperAdminRequestAuthorized(request)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }

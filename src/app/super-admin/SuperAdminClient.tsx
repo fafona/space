@@ -108,8 +108,7 @@ import {
   buildSuperAdminLoginHref,
   clearSuperAdminAuthenticated,
   getOrCreateSuperAdminDeviceId,
-  isSuperAdminAuthenticated,
-  syncSuperAdminAuthenticatedCookie,
+  refreshSuperAdminAuthenticatedState,
 } from "@/lib/superAdminAuth";
 import { type SuperAdminTrustedDeviceRecord } from "@/lib/superAdminTrustedDevices";
 import { useHydrated } from "@/lib/useHydrated";
@@ -922,7 +921,7 @@ async function optimizeMerchantCardImage(file: File) {
 }
 
 async function uploadMerchantCardImageDataUrlToSupabase(dataUrl: string, siteHint = "merchant-card") {
-  return uploadImageDataUrlToPublicStorage(dataUrl, siteHint);
+  return uploadImageDataUrlToPublicStorage(dataUrl, siteHint, "business-card-background");
 }
 
 function parseDateInputToIso(value: string) {
@@ -1542,11 +1541,26 @@ function buildPortalDraft(state: PlatformState): PortalDraft {
 
 export default function SuperAdminClient() {
   const hydrated = useHydrated();
+  const [authed, setAuthed] = useState(false);
+  const [authChecked, setAuthChecked] = useState(false);
   useEffect(() => {
     if (!hydrated) return;
-    syncSuperAdminAuthenticatedCookie();
+    let cancelled = false;
+    void (async () => {
+      const authenticated = await refreshSuperAdminAuthenticatedState();
+      if (cancelled) return;
+      setAuthed(authenticated);
+      setAuthChecked(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [hydrated]);
-  const authed = hydrated && isSuperAdminAuthenticated();
+  useEffect(() => {
+    if (!hydrated || !authChecked || authed) return;
+    const next = `${window.location.pathname}${window.location.search}`;
+    window.location.href = buildSuperAdminLoginHref(next);
+  }, [authChecked, authed, hydrated]);
   const [activeMenu, setActiveMenu] = useState<"site_editor" | "user_manage" | "support_messages" | "merchant_id_rules" | "trusted_devices" | "stats" | "logs">("site_editor");
   const [isMobileSupportOnlyMode, setIsMobileSupportOnlyMode] = useState(false);
   const [supportMobileView, setSupportMobileView] = useState<"list" | "thread">("list");
@@ -2002,7 +2016,7 @@ export default function SuperAdminClient() {
             signal: controller.signal,
           });
         let response = await requestAccounts();
-        if ((response.status === 401 || response.status === 403) && syncSuperAdminAuthenticatedCookie()) {
+        if ((response.status === 401 || response.status === 403) && (await refreshSuperAdminAuthenticatedState())) {
           response = await requestAccounts();
         }
         if (!response.ok) {
@@ -3353,16 +3367,17 @@ export default function SuperAdminClient() {
         ...init,
       });
 
-    syncSuperAdminAuthenticatedCookie();
     let response = await sendRequest();
     if (response.status !== 401 && response.status !== 403) {
       return response;
     }
 
-    const recovered = syncSuperAdminAuthenticatedCookie();
+    const recovered = await refreshSuperAdminAuthenticatedState();
     if (!recovered) {
+      setAuthed(false);
       return response;
     }
+    setAuthed(true);
     response = await sendRequest();
     return response;
   }, []);
@@ -5222,10 +5237,18 @@ export default function SuperAdminClient() {
   const showMobileSupportThread = isMobileSupportOnlyMode && supportMobileView === "thread" && !!selectedSupportThread;
   function logoutSuperAdmin() {
     clearSuperAdminAuthenticated();
-    window.location.href = `${buildSuperAdminLoginHref("/super-admin")}&loggedOut=1`;
+    void fetch("/api/super-admin/auth/logout", {
+      method: "POST",
+      credentials: "same-origin",
+      cache: "no-store",
+    }).finally(() => {
+      setAuthed(false);
+      setAuthChecked(true);
+      window.location.href = `${buildSuperAdminLoginHref("/super-admin")}&loggedOut=1`;
+    });
   }
 
-  if (!hydrated || !authed) {
+  if (!hydrated || !authChecked || !authed) {
     return (
       <main className="min-h-screen bg-slate-100 p-6">
         <div className="mx-auto max-w-6xl rounded-lg border bg-white p-4 text-sm text-slate-600">

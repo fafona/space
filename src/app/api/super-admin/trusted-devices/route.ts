@@ -9,7 +9,9 @@ import {
 import {
   SUPER_ADMIN_TRUSTED_DEVICE_COOKIE,
   resolveSuperAdminCookieDomain,
+  resolveSuperAdminCookieSecureFlag,
 } from "@/lib/superAdminSession";
+import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { isSuperAdminRequestAuthorized } from "@/lib/superAdminRequestAuth";
 import { readSuperAdminTrustedDeviceToken } from "@/lib/superAdminVerification";
 
@@ -57,6 +59,10 @@ export async function GET(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+  if (!isTrustedSameOriginMutationRequest(request)) {
+    return getTrustedMutationRequestErrorResponse();
+  }
+
   if (!ensureAuthorized(request)) {
     return unauthorizedJson();
   }
@@ -90,7 +96,7 @@ export async function DELETE(request: Request) {
         path: "/",
         maxAge: 0,
         sameSite: "lax",
-        secure: process.env.NODE_ENV === "production",
+        secure: resolveSuperAdminCookieSecureFlag(request),
         httpOnly: true,
         ...(cookieDomain ? { domain: cookieDomain } : {}),
       });
@@ -108,6 +114,10 @@ export async function DELETE(request: Request) {
 }
 
 export async function PATCH(request: Request) {
+  if (!isTrustedSameOriginMutationRequest(request)) {
+    return getTrustedMutationRequestErrorResponse();
+  }
+
   if (!ensureAuthorized(request)) {
     return unauthorizedJson();
   }

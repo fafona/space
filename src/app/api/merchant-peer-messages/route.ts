@@ -14,6 +14,7 @@ import {
 } from "@/lib/merchantPeerInboxStore";
 import { buildMerchantPeerPushNotification } from "@/lib/merchantPushEvents";
 import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
+import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
 import { notifyMerchantPushSubscribers } from "@/lib/webPush";
 
@@ -196,6 +197,10 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  if (!isTrustedSameOriginMutationRequest(request)) {
+    return getTrustedMutationRequestErrorResponse();
+  }
+
   const body = (await request.json().catch(() => null)) as
     | {
         action?: unknown;

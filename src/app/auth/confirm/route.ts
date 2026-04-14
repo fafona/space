@@ -4,6 +4,7 @@ import {
   appendResetPasswordBridgeRedirectParams,
   isResetPasswordRedirectTarget,
 } from "@/lib/authConfirmRedirect";
+import { resolveTrustedPublicOrigin } from "@/lib/requestOrigin";
 import { createSuperAdminEmailProofToken } from "@/lib/superAdminVerification";
 
 export const dynamic = "force-dynamic";
@@ -20,16 +21,6 @@ const SUPPORTED_TYPES = new Set<EmailOtpType>([
 
 function readEnv(name: string) {
   return (process.env[name] ?? "").trim();
-}
-
-function resolvePublicOrigin(request: Request, requestUrl: URL) {
-  const forwardedProto = (request.headers.get("x-forwarded-proto") ?? "").split(",")[0]?.trim();
-  const forwardedHost = (request.headers.get("x-forwarded-host") ?? "").split(",")[0]?.trim();
-  const host = (request.headers.get("host") ?? "").trim();
-  const publicHost = forwardedHost || host;
-  const protocol = forwardedProto || requestUrl.protocol.replace(/:$/, "") || "http";
-  if (publicHost) return `${protocol}://${publicHost}`;
-  return requestUrl.origin;
 }
 
 function resolveSafeRedirect(publicOrigin: string, rawRedirectTo: string | null, type: EmailOtpType) {
@@ -93,7 +84,7 @@ export async function GET(request: Request) {
   const tokenHash = (requestUrl.searchParams.get("token_hash") ?? requestUrl.searchParams.get("token") ?? "").trim();
   const code = (requestUrl.searchParams.get("code") ?? "").trim();
   const rawType = (requestUrl.searchParams.get("type") ?? "").trim() as EmailOtpType;
-  const publicOrigin = resolvePublicOrigin(request, requestUrl);
+  const publicOrigin = resolveTrustedPublicOrigin(requestUrl);
   const redirectTo = resolveSafeRedirect(publicOrigin, requestUrl.searchParams.get("redirect_to"), rawType || "signup");
 
   if (rawType === "recovery") {

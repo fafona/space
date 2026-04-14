@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { createServerSupabaseAuthClient, maskEmailAddress, resolvePublicOrigin } from "@/lib/superAdminServer";
 
 export const dynamic = "force-dynamic";
@@ -19,6 +20,10 @@ function noStoreJson(body: unknown, init?: ResponseInit) {
 }
 
 export async function POST(request: Request) {
+  if (!isTrustedSameOriginMutationRequest(request)) {
+    return getTrustedMutationRequestErrorResponse();
+  }
+
   try {
     const body = (await request.json().catch(() => null)) as RequestBody | null;
     const email = normalizeEmail(body?.email);

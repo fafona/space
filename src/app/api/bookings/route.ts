@@ -12,6 +12,7 @@ import {
 } from "@/lib/merchantBookings.server";
 import type { MerchantPushSubscriptionStoreClient } from "@/lib/merchantPushSubscriptionStore";
 import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
+import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { notifyMerchantPushSubscribers } from "@/lib/webPush";
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
 import type {
@@ -113,6 +114,9 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
+  if (!isTrustedSameOriginMutationRequest(request)) {
+    return getTrustedMutationRequestErrorResponse();
+  }
   try {
     const body = (await request.json()) as
         | (Partial<MerchantBookingActionInput> & {

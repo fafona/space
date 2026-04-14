@@ -19,6 +19,7 @@ import {
   SUPER_ADMIN_TRUSTED_DEVICE_COOKIE_MAX_AGE_SECONDS,
   SUPER_ADMIN_TRUSTED_DEVICE_COOKIE,
   resolveSuperAdminCookieDomain,
+  resolveSuperAdminCookieSecureFlag,
 } from "@/lib/superAdminSession";
 
 export async function finalizeSuperAdminLogin(
@@ -70,25 +71,27 @@ export async function finalizeSuperAdminLogin(
     deviceLabel: challengePayload.deviceLabel,
   });
   const cookieDomain = resolveSuperAdminCookieDomain(options?.request);
+  const secure = resolveSuperAdminCookieSecureFlag(options?.request);
   response.cookies.set(SUPER_ADMIN_SESSION_COOKIE, sessionToken, {
     path: "/",
     maxAge: SUPER_ADMIN_SESSION_COOKIE_MAX_AGE_SECONDS,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure,
+    httpOnly: true,
     ...(cookieDomain ? { domain: cookieDomain } : {}),
   });
   response.cookies.set(SUPER_ADMIN_DEVICE_ID_COOKIE, challengePayload.deviceId, {
     path: "/",
     maxAge: SUPER_ADMIN_DEVICE_COOKIE_MAX_AGE_SECONDS,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure,
     ...(cookieDomain ? { domain: cookieDomain } : {}),
   });
   response.cookies.set(SUPER_ADMIN_TRUSTED_DEVICE_COOKIE, trustedDeviceToken, {
     path: "/",
     maxAge: SUPER_ADMIN_TRUSTED_DEVICE_COOKIE_MAX_AGE_SECONDS,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure,
     httpOnly: true,
     ...(cookieDomain ? { domain: cookieDomain } : {}),
   });

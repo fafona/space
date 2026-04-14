@@ -1,39 +1,21 @@
 import { recoverBrowserSupabaseSession } from "@/lib/authSessionRecovery";
 import { supabase } from "@/lib/supabase";
 
-const BUCKET_CANDIDATES = ["page-assets", "assets", "uploads", "public"] as const;
 const FOLDER_CANDIDATES = new Set(["merchant-assets", "merchant-audio"]);
+
+export type PublicAssetUploadUsage =
+  | "common-block-image"
+  | "gallery-block-image"
+  | "business-card-background"
+  | "business-card-contact"
+  | "business-card-export"
+  | "audio"
+  | "generic-image";
 
 function parseDataUrlMeta(dataUrl: string) {
   const matched = dataUrl.match(/^data:((?:image|audio)\/[a-zA-Z0-9.+-]+);base64,/i);
   if (!matched) return null;
-  const mime = matched[1].toLowerCase();
-  const extension = (() => {
-    if (mime === "image/jpeg") return "jpg";
-    if (mime === "image/png") return "png";
-    if (mime === "image/webp") return "webp";
-    if (mime === "image/gif") return "gif";
-    if (mime === "image/bmp") return "bmp";
-    if (mime === "image/svg+xml") return "svg";
-    if (mime === "audio/mpeg" || mime === "audio/mp3") return "mp3";
-    if (mime === "audio/wav" || mime === "audio/x-wav") return "wav";
-    if (mime === "audio/ogg") return "ogg";
-    if (mime === "audio/aac") return "aac";
-    if (mime === "audio/webm") return "webm";
-    if (mime === "audio/mp4") return "m4a";
-    return "bin";
-  })();
-  return { mime, extension };
-}
-
-function dataUrlToBlob(dataUrl: string, mime: string) {
-  const base64 = dataUrl.split(",")[1] ?? "";
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  return new Blob([bytes], { type: mime });
+  return { mime: matched[1].toLowerCase() };
 }
 
 function sanitizeMerchantHint(input: string) {
@@ -77,7 +59,12 @@ async function getAssetUploadAccessToken() {
   return "";
 }
 
-async function uploadDataUrlViaServerApi(dataUrl: string, merchantHint: string, folder: string): Promise<string | null> {
+async function uploadDataUrlViaServerApi(
+  dataUrl: string,
+  merchantHint: string,
+  folder: string,
+  usage: PublicAssetUploadUsage,
+): Promise<string | null> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       const accessToken = await getAssetUploadAccessToken();
@@ -87,16 +74,21 @@ async function uploadDataUrlViaServerApi(dataUrl: string, merchantHint: string, 
       if (accessToken) {
         headers.Authorization = `Bearer ${accessToken}`;
       }
-      const response = await fetchWithTimeout("/api/assets/upload", {
-        method: "POST",
-        headers,
-        credentials: "same-origin",
-        body: JSON.stringify({
-          dataUrl,
-          merchantHint,
-          folder,
-        }),
-      }, attempt === 0 ? 15_000 : 20_000);
+      const response = await fetchWithTimeout(
+        "/api/assets/upload",
+        {
+          method: "POST",
+          headers,
+          credentials: "same-origin",
+          body: JSON.stringify({
+            dataUrl,
+            merchantHint,
+            folder,
+            usage,
+          }),
+        },
+        attempt === 0 ? 15_000 : 20_000,
+      );
       if (response.ok) {
         const payload = (await response.json().catch(() => null)) as { url?: unknown } | null;
         return typeof payload?.url === "string" && payload.url.trim() ? payload.url.trim() : null;
@@ -123,6 +115,7 @@ export async function uploadDataUrlToPublicStorage(
   options?: {
     merchantHint?: string;
     folder?: "merchant-assets" | "merchant-audio";
+    usage?: PublicAssetUploadUsage;
   },
 ): Promise<string | null> {
   const meta = parseDataUrlMeta(dataUrl);
@@ -130,31 +123,20 @@ export async function uploadDataUrlToPublicStorage(
   if (!meta || !FOLDER_CANDIDATES.has(folder)) return null;
 
   const merchantHint = sanitizeMerchantHint(options?.merchantHint ?? "public");
-  const uploadedViaServer = await uploadDataUrlViaServerApi(dataUrl, merchantHint, folder);
-  if (uploadedViaServer) return uploadedViaServer;
-
-  const blob = dataUrlToBlob(dataUrl, meta.mime);
-  const now = new Date();
-  const yyyy = `${now.getFullYear()}`;
-  const mm = `${now.getMonth() + 1}`.padStart(2, "0");
-
-  for (const bucket of BUCKET_CANDIDATES) {
-    const objectPath = `${folder}/${merchantHint}/${yyyy}/${mm}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${meta.extension}`;
-    const uploaded = await supabase.storage.from(bucket).upload(objectPath, blob, {
-      contentType: meta.mime,
-      upsert: false,
-    });
-    if (uploaded.error) continue;
-    const { data } = supabase.storage.from(bucket).getPublicUrl(objectPath);
-    if (data?.publicUrl) return data.publicUrl;
-  }
-
-  return null;
+  const usage =
+    options?.usage ??
+    (folder === "merchant-audio" || meta.mime.startsWith("audio/") ? "audio" : "generic-image");
+  return uploadDataUrlViaServerApi(dataUrl, merchantHint, folder, usage);
 }
 
-export async function uploadImageDataUrlToPublicStorage(dataUrl: string, merchantHint = "public") {
+export async function uploadImageDataUrlToPublicStorage(
+  dataUrl: string,
+  merchantHint = "public",
+  usage: PublicAssetUploadUsage = "generic-image",
+) {
   return uploadDataUrlToPublicStorage(dataUrl, {
     merchantHint,
     folder: "merchant-assets",
+    usage,
   });
 }

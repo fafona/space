@@ -3,12 +3,26 @@ import assert from "node:assert/strict";
 import { POST } from "@/app/api/super-admin/auth/verify-code/route";
 import { createSuperAdminChallengeToken } from "@/lib/superAdminVerification";
 
+function withSuperAdminVerificationSecret(run: () => Promise<void>) {
+  const previousSecret = process.env.SUPER_ADMIN_VERIFICATION_SECRET;
+  process.env.SUPER_ADMIN_VERIFICATION_SECRET = "test-super-admin-secret";
+  return Promise.resolve(run()).finally(() => {
+    if (previousSecret === undefined) {
+      delete process.env.SUPER_ADMIN_VERIFICATION_SECRET;
+    } else {
+      process.env.SUPER_ADMIN_VERIFICATION_SECRET = previousSecret;
+    }
+  });
+}
+
 test("super-admin auth verify-code rejects expired or malformed challenges", async () => {
+  await withSuperAdminVerificationSecret(async () => {
   const response = await POST(
     new Request("http://localhost/api/super-admin/auth/verify-code", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        Origin: "http://localhost",
       },
       body: JSON.stringify({
         challenge: "bad-token",
@@ -20,9 +34,11 @@ test("super-admin auth verify-code rejects expired or malformed challenges", asy
 
   assert.equal(response.status, 400);
   assert.deepEqual(await response.json(), { error: "invalid_or_expired_challenge" });
+  });
 });
 
 test("super-admin auth verify-code rejects device mismatch before touching backend", async () => {
+  await withSuperAdminVerificationSecret(async () => {
   const challenge = createSuperAdminChallengeToken({
     deviceId: "device-12345678",
     deviceLabel: "Windows / Chrome",
@@ -34,6 +50,7 @@ test("super-admin auth verify-code rejects device mismatch before touching backe
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        Origin: "http://localhost",
       },
       body: JSON.stringify({
         challenge,
@@ -45,9 +62,11 @@ test("super-admin auth verify-code rejects device mismatch before touching backe
 
   assert.equal(response.status, 401);
   assert.deepEqual(await response.json(), { error: "device_mismatch" });
+  });
 });
 
 test("super-admin auth verify-code rejects empty code before touching backend", async () => {
+  await withSuperAdminVerificationSecret(async () => {
   const challenge = createSuperAdminChallengeToken({
     deviceId: "device-12345678",
     deviceLabel: "Windows / Chrome",
@@ -59,6 +78,7 @@ test("super-admin auth verify-code rejects empty code before touching backend", 
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        Origin: "http://localhost",
       },
       body: JSON.stringify({
         challenge,
@@ -70,4 +90,5 @@ test("super-admin auth verify-code rejects empty code before touching backend", 
 
   assert.equal(response.status, 400);
   assert.deepEqual(await response.json(), { error: "invalid_email_code" });
+  });
 });

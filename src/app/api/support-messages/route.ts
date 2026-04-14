@@ -10,6 +10,7 @@ import {
   savePlatformSupportInbox,
   type PlatformSupportInboxStoreClient,
 } from "@/lib/platformSupportInboxStore";
+import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
 
@@ -87,6 +88,10 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  if (!isTrustedSameOriginMutationRequest(request)) {
+    return getTrustedMutationRequestErrorResponse();
+  }
+
   const body = (await request.json().catch(() => null)) as
     | {
         text?: unknown;

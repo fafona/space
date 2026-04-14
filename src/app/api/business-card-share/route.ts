@@ -25,6 +25,7 @@ import {
 } from "@/lib/merchantBusinessCards";
 import { type PlatformMerchantSnapshotPayload } from "@/lib/platformMerchantSnapshot";
 import { loadStoredPlatformMerchantSnapshot, type PlatformMerchantSnapshotStoreClient } from "@/lib/platformMerchantSnapshotStore";
+import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
 import { isSuperAdminRequestAuthorized } from "@/lib/superAdminRequestAuth";
 
@@ -453,6 +454,10 @@ function jsonError(status: number, error: string, extra?: Record<string, unknown
 }
 
 export async function POST(request: Request) {
+  if (!isTrustedSameOriginMutationRequest(request)) {
+    return getTrustedMutationRequestErrorResponse();
+  }
+
   const supabaseUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").trim();
   const serviceRoleKey =
     (process.env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim() ||
@@ -586,6 +591,10 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+  if (!isTrustedSameOriginMutationRequest(request)) {
+    return getTrustedMutationRequestErrorResponse();
+  }
+
   const supabaseUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").trim();
   const serviceRoleKey =
     (process.env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim() ||

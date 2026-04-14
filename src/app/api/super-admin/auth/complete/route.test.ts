@@ -13,7 +13,20 @@ import {
   readSuperAdminTrustedDeviceToken,
 } from "@/lib/superAdminVerification";
 
+function withSuperAdminVerificationSecret(run: () => Promise<void>) {
+  const previousSecret = process.env.SUPER_ADMIN_VERIFICATION_SECRET;
+  process.env.SUPER_ADMIN_VERIFICATION_SECRET = "test-super-admin-secret";
+  return Promise.resolve(run()).finally(() => {
+    if (previousSecret === undefined) {
+      delete process.env.SUPER_ADMIN_VERIFICATION_SECRET;
+    } else {
+      process.env.SUPER_ADMIN_VERIFICATION_SECRET = previousSecret;
+    }
+  });
+}
+
 test("super-admin auth complete rejects device mismatch", async () => {
+  await withSuperAdminVerificationSecret(async () => {
   const challenge = createSuperAdminChallengeToken({
     deviceId: "device-12345678",
     deviceLabel: "Windows / Chrome",
@@ -26,6 +39,7 @@ test("super-admin auth complete rejects device mismatch", async () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        Origin: "http://localhost",
       },
       body: JSON.stringify({
         challenge,
@@ -37,9 +51,11 @@ test("super-admin auth complete rejects device mismatch", async () => {
 
   assert.equal(response.status, 401);
   assert.deepEqual(await response.json(), { error: "device_mismatch" });
+  });
 });
 
 test("super-admin auth complete accepts matching verified device", async () => {
+  await withSuperAdminVerificationSecret(async () => {
   const challenge = createSuperAdminChallengeToken({
     deviceId: "device-12345678",
     deviceLabel: "Windows / Chrome",
@@ -52,6 +68,7 @@ test("super-admin auth complete accepts matching verified device", async () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        Origin: "http://localhost",
       },
       body: JSON.stringify({
         challenge,
@@ -75,9 +92,12 @@ test("super-admin auth complete accepts matching verified device", async () => {
     readSuperAdminTrustedDeviceToken(response.cookies.get(SUPER_ADMIN_TRUSTED_DEVICE_COOKIE)?.value ?? "")?.deviceId,
     "device-12345678",
   );
+  assert.equal(response.cookies.get(SUPER_ADMIN_SESSION_COOKIE)?.httpOnly, true);
+  });
 });
 
 test("super-admin auth complete shares session and trusted-device cookies across faolla subdomains", async () => {
+  await withSuperAdminVerificationSecret(async () => {
   const challenge = createSuperAdminChallengeToken({
     deviceId: "device-12345678",
     deviceLabel: "Windows / Chrome",
@@ -90,6 +110,7 @@ test("super-admin auth complete shares session and trusted-device cookies across
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        Origin: "https://www.faolla.com",
       },
       body: JSON.stringify({
         challenge,
@@ -103,4 +124,5 @@ test("super-admin auth complete shares session and trusted-device cookies across
   assert.equal(response.cookies.get(SUPER_ADMIN_SESSION_COOKIE)?.domain, "faolla.com");
   assert.equal(response.cookies.get(SUPER_ADMIN_DEVICE_ID_COOKIE)?.domain, "faolla.com");
   assert.equal(response.cookies.get(SUPER_ADMIN_TRUSTED_DEVICE_COOKIE)?.domain, "faolla.com");
+  });
 });

@@ -301,9 +301,6 @@ export default function ResetPasswordPage() {
   const submitPasswordResetViaServer = useCallback(async () => {
     const payload = recoveryPayloadRef.current ?? readStoredResetPasswordRecoveryPayload();
     recoveryPayloadRef.current = payload;
-    if (!payload || !hasDirectResetPasswordRecoveryPayload(payload)) {
-      return false;
-    }
 
     const response = await withTimeout(
       fetch("/api/auth/reset-password", {
@@ -315,9 +312,9 @@ export default function ResetPasswordPage() {
         },
         body: JSON.stringify({
           password,
-          accessToken: payload.accessToken,
-          refreshToken: payload.refreshToken,
-          tokenHash: payload.tokenHash,
+          accessToken: payload?.accessToken ?? "",
+          refreshToken: payload?.refreshToken ?? "",
+          tokenHash: payload?.tokenHash ?? "",
         }),
       }),
       20000,
@@ -376,30 +373,7 @@ export default function ResetPasswordPage() {
 
     setSaving(true);
     try {
-      const handledByServer = await submitPasswordResetViaServer();
-      if (handledByServer) return;
-
-      const { error } = await withTimeout(resetSupabase.auth.updateUser({ password }));
-
-      if (error) {
-        if (/session/i.test(error.message)) {
-          clearStoredResetPasswordRecoveryPayload();
-          recoveryPayloadRef.current = null;
-          setRecoveryState("expired");
-          setMsg(sessionExpiredMessageRef.current);
-          return;
-        }
-        setMsg(error.message);
-        return;
-      }
-
-      clearStoredResetPasswordRecoveryPayload();
-      recoveryPayloadRef.current = null;
-      clearStoredResetPasswordEmailRequest();
-      setMsg(t("reset.successRedirect"));
-      setTimeout(() => {
-        window.location.href = "/login";
-      }, 900);
+      await submitPasswordResetViaServer();
     } catch (error) {
       setMsg(error instanceof Error ? error.message : t("login.requestFailed"));
     } finally {
@@ -476,29 +450,14 @@ export default function ResetPasswordPage() {
         | {
             ok?: unknown;
             error?: unknown;
-            accessToken?: unknown;
-            refreshToken?: unknown;
           }
         | null;
       if (!response.ok || payload?.ok !== true) {
         throw new Error(typeof payload?.error === "string" ? payload.error : t("reset.invalidCode"));
       }
-      const accessToken = typeof payload?.accessToken === "string" ? payload.accessToken.trim() : "";
-      const refreshToken = typeof payload?.refreshToken === "string" ? payload.refreshToken.trim() : "";
-      if (!accessToken) {
-        throw new Error(t("reset.sessionExpired"));
-      }
       persistResetPasswordEmailRequest(email);
-      const recoveryPayload = {
-        accessToken,
-        refreshToken,
-        tokenHash: "",
-        code: "",
-        type: "recovery",
-        capturedAt: Date.now(),
-      } as const;
-      recoveryPayloadRef.current = recoveryPayload;
-      persistResetPasswordRecoveryPayload(recoveryPayload);
+      clearStoredResetPasswordRecoveryPayload();
+      recoveryPayloadRef.current = null;
       recoveryResolvedRef.current = true;
       setRecoveryState("ready");
       setResetCode("");

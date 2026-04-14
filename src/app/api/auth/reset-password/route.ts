@@ -5,6 +5,7 @@ import {
   readResetRecoveryCookie,
   readResetRecoveryRefreshCookie,
 } from "@/lib/resetPasswordRecoverySession";
+import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -113,6 +114,10 @@ async function resolveRecoveryUserId(payload: {
 }
 
 export async function POST(request: Request) {
+  if (!isTrustedSameOriginMutationRequest(request)) {
+    return getTrustedMutationRequestErrorResponse();
+  }
+
   try {
     const payload = (await request.json().catch(() => null)) as ResetPasswordPayload | null;
     const password = typeof payload?.password === "string" ? payload.password : "";
@@ -141,7 +146,7 @@ export async function POST(request: Request) {
         { ok: false, error: errorCode },
         { status: /env_missing|unavailable/i.test(errorCode) ? 503 : 401 },
       );
-      clearResetRecoveryCookies(response);
+      clearResetRecoveryCookies(response, request);
       return response;
     }
 
@@ -164,17 +169,17 @@ export async function POST(request: Request) {
         { status: 400 },
       );
       if (/session|expired|invalid/i.test(String(error.message ?? ""))) {
-        clearResetRecoveryCookies(response);
+        clearResetRecoveryCookies(response, request);
       }
       return response;
     }
 
     const response = noStoreJson({ ok: true });
-    clearResetRecoveryCookies(response);
+    clearResetRecoveryCookies(response, request);
     return response;
   } catch {
     const response = noStoreJson({ ok: false, error: "reset_password_unavailable" }, { status: 503 });
-    clearResetRecoveryCookies(response);
+    clearResetRecoveryCookies(response, request);
     return response;
   }
 }

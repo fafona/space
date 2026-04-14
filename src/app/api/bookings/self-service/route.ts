@@ -14,19 +14,63 @@ function noStoreJson(body: unknown, init?: ResponseInit) {
   return response;
 }
 
+type SelfServiceTokenPayload = {
+  bookingId?: unknown;
+  editToken?: unknown;
+};
+
+function readSelfServiceTokenInput(request: Request, body?: SelfServiceTokenPayload | null) {
+  const url = new URL(request.url);
+  return {
+    bookingId: trimText(body?.bookingId ?? url.searchParams.get("bookingId")),
+    editToken: trimText(body?.editToken ?? url.searchParams.get("editToken")),
+  };
+}
+
+async function resolveSelfServiceBooking(request: Request, body?: SelfServiceTokenPayload | null) {
+  const { bookingId, editToken } = readSelfServiceTokenInput(request, body);
+  if (!bookingId || !editToken) {
+    return {
+      ok: false as const,
+      response: noStoreJson({ error: "invalid_booking_token" }, { status: 400 }),
+    };
+  }
+  const booking = await getMerchantBookingByEditToken({
+    bookingId,
+    editToken,
+  });
+  return {
+    ok: true as const,
+    booking,
+  };
+}
+
 export async function GET(request: Request) {
   try {
-    const { searchParams } = new URL(request.url);
-    const bookingId = trimText(searchParams.get("bookingId"));
-    const editToken = trimText(searchParams.get("editToken"));
-    if (!bookingId || !editToken) {
-      return noStoreJson({ error: "invalid_booking_token" }, { status: 400 });
+    const resolved = await resolveSelfServiceBooking(request);
+    if (!resolved.ok) {
+      return resolved.response;
     }
-    const booking = await getMerchantBookingByEditToken({
-      bookingId,
-      editToken,
-    });
-    return noStoreJson({ ok: true, booking });
+    return noStoreJson({ ok: true, booking: resolved.booking });
+  } catch (error) {
+    return noStoreJson(
+      {
+        error: "booking_self_service_failed",
+        message: error instanceof Error ? error.message : "unknown_error",
+      },
+      { status: 400 },
+    );
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    const body = (await request.json().catch(() => null)) as SelfServiceTokenPayload | null;
+    const resolved = await resolveSelfServiceBooking(request, body);
+    if (!resolved.ok) {
+      return resolved.response;
+    }
+    return noStoreJson({ ok: true, booking: resolved.booking });
   } catch (error) {
     return noStoreJson(
       {
