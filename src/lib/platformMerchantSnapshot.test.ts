@@ -56,6 +56,95 @@ test("buildPlatformMerchantSnapshotPayloadFromState keeps merchant info and card
           industryProvinceRank: null,
           industryCityRank: null,
         },
+        configHistory: [
+          {
+            id: "cfg-1",
+            at: "2026-04-10T10:00:00.000Z",
+            operator: "super-admin",
+            summary: "配置更新",
+            changes: ["到期时间：未设置 -> 2026-04-30"],
+            before: {
+              serviceExpiresAt: null,
+              permissionConfig: {
+                planLimit: 1,
+                pageLimit: 10,
+                businessCardLimit: 1,
+                allowBusinessCardLinkMode: false,
+                allowBookingEmailPrefill: false,
+                allowBookingAutoEmail: false,
+                businessCardBackgroundImageLimitKb: 200,
+                businessCardContactImageLimitKb: 200,
+                businessCardExportImageLimitKb: 400,
+                commonBlockImageLimitKb: 300,
+                galleryBlockImageLimitKb: 300,
+                allowInsertBackground: false,
+                allowThemeEffects: false,
+                allowButtonBlock: false,
+                allowGalleryBlock: false,
+                allowMusicBlock: false,
+                allowProductBlock: false,
+                allowBookingBlock: false,
+                publishSizeLimitMb: 1,
+              },
+              merchantCardImageUrl: "",
+              merchantCardImageOpacity: 1,
+              chatAvatarImageUrl: "",
+              contactVisibility: {
+                phoneHidden: false,
+                emailHidden: false,
+                businessCardHidden: false,
+              },
+              sortConfig: {
+                recommendedCountryRank: null,
+                recommendedProvinceRank: null,
+                recommendedCityRank: null,
+                industryCountryRank: null,
+                industryProvinceRank: null,
+                industryCityRank: null,
+              },
+            },
+            after: {
+              serviceExpiresAt: "2026-04-30T00:00:00.000Z",
+              permissionConfig: {
+                planLimit: 1,
+                pageLimit: 10,
+                businessCardLimit: 1,
+                allowBusinessCardLinkMode: false,
+                allowBookingEmailPrefill: false,
+                allowBookingAutoEmail: false,
+                businessCardBackgroundImageLimitKb: 200,
+                businessCardContactImageLimitKb: 200,
+                businessCardExportImageLimitKb: 400,
+                commonBlockImageLimitKb: 300,
+                galleryBlockImageLimitKb: 300,
+                allowInsertBackground: false,
+                allowThemeEffects: false,
+                allowButtonBlock: false,
+                allowGalleryBlock: false,
+                allowMusicBlock: false,
+                allowProductBlock: false,
+                allowBookingBlock: false,
+                publishSizeLimitMb: 1,
+              },
+              merchantCardImageUrl: "",
+              merchantCardImageOpacity: 1,
+              chatAvatarImageUrl: "",
+              contactVisibility: {
+                phoneHidden: false,
+                emailHidden: false,
+                businessCardHidden: false,
+              },
+              sortConfig: {
+                recommendedCountryRank: 2,
+                recommendedProvinceRank: null,
+                recommendedCityRank: null,
+                industryCountryRank: 1,
+                industryProvinceRank: null,
+                industryCityRank: null,
+              },
+            },
+          },
+        ],
         businessCards: [
           {
             id: "card-1",
@@ -213,6 +302,8 @@ test("buildPlatformMerchantSnapshotPayloadFromState keeps merchant info and card
   assert.equal(payload.snapshot[0]?.chatBusinessCard?.backgroundImageUrl, "");
   assert.equal(payload.snapshot[0]?.chatBusinessCard?.contactPageImageUrl, "");
   assert.equal(payload.snapshot[0]?.chatBusinessCard?.contactPagePublicImageUrl, "https://example.com/contact-card.webp");
+  assert.equal(payload.merchantConfigHistoryBySiteId["10000000"]?.length, 1);
+  assert.equal(payload.merchantConfigHistoryBySiteId["10000000"]?.[0]?.operator, "super-admin");
 });
 
 test("platform merchant snapshot blocks round-trip through storage payload", () => {
@@ -250,6 +341,97 @@ test("platform merchant snapshot blocks round-trip through storage payload", () 
       },
     ],
     defaultSortRule: "monthly_views_desc",
+    merchantConfigHistoryBySiteId: {
+      "10000000": [
+        {
+          id: "cfg-1",
+          at: "2026-04-10T10:00:00.000Z",
+          operator: "super-admin",
+          summary: "配置更新",
+          changes: ["到期时间：未设置 -> 2026-04-30"],
+          before: {
+            serviceExpiresAt: null,
+            permissionConfig: {
+              planLimit: 1,
+              pageLimit: 10,
+              businessCardLimit: 1,
+              allowBusinessCardLinkMode: false,
+              allowBookingEmailPrefill: false,
+              allowBookingAutoEmail: false,
+              businessCardBackgroundImageLimitKb: 200,
+              businessCardContactImageLimitKb: 200,
+              businessCardExportImageLimitKb: 400,
+              commonBlockImageLimitKb: 300,
+              galleryBlockImageLimitKb: 300,
+              allowInsertBackground: false,
+              allowThemeEffects: false,
+              allowButtonBlock: false,
+              allowGalleryBlock: false,
+              allowMusicBlock: false,
+              allowProductBlock: false,
+              allowBookingBlock: false,
+              publishSizeLimitMb: 1,
+            },
+            merchantCardImageUrl: "",
+            merchantCardImageOpacity: 1,
+            chatAvatarImageUrl: "",
+            contactVisibility: {
+              phoneHidden: false,
+              emailHidden: false,
+              businessCardHidden: false,
+            },
+            sortConfig: {
+              recommendedCountryRank: null,
+              recommendedProvinceRank: null,
+              recommendedCityRank: null,
+              industryCountryRank: null,
+              industryProvinceRank: null,
+              industryCityRank: null,
+            },
+          },
+          after: {
+            serviceExpiresAt: "2026-04-30T00:00:00.000Z",
+            permissionConfig: {
+              planLimit: 1,
+              pageLimit: 10,
+              businessCardLimit: 1,
+              allowBusinessCardLinkMode: false,
+              allowBookingEmailPrefill: false,
+              allowBookingAutoEmail: false,
+              businessCardBackgroundImageLimitKb: 200,
+              businessCardContactImageLimitKb: 200,
+              businessCardExportImageLimitKb: 400,
+              commonBlockImageLimitKb: 300,
+              galleryBlockImageLimitKb: 300,
+              allowInsertBackground: false,
+              allowThemeEffects: false,
+              allowButtonBlock: false,
+              allowGalleryBlock: false,
+              allowMusicBlock: false,
+              allowProductBlock: false,
+              allowBookingBlock: false,
+              publishSizeLimitMb: 1,
+            },
+            merchantCardImageUrl: "",
+            merchantCardImageOpacity: 1,
+            chatAvatarImageUrl: "",
+            contactVisibility: {
+              phoneHidden: false,
+              emailHidden: false,
+              businessCardHidden: false,
+            },
+            sortConfig: {
+              recommendedCountryRank: 2,
+              recommendedProvinceRank: null,
+              recommendedCityRank: null,
+              industryCountryRank: 1,
+              industryProvinceRank: null,
+              industryCityRank: null,
+            },
+          },
+        },
+      ],
+    },
   });
 
   const payload = readPlatformMerchantSnapshotFromBlocks(stored);
@@ -260,4 +442,6 @@ test("platform merchant snapshot blocks round-trip through storage payload", () 
   assert.equal(payload?.snapshot[0]?.merchantCardImageOpacity, 0.45);
   assert.equal(payload?.snapshot[0]?.status, "maintenance");
   assert.equal(payload?.snapshot[0]?.serviceExpiresAt, "2026-04-30T00:00:00.000Z");
+  assert.equal(payload?.merchantConfigHistoryBySiteId["10000000"]?.length, 1);
+  assert.equal(payload?.merchantConfigHistoryBySiteId["10000000"]?.[0]?.summary, "配置更新");
 });

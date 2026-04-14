@@ -573,7 +573,7 @@ function merchantConfigHistoryTimestamp(value: string) {
   return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
-function mergeMerchantConfigHistoryEntries(
+export function mergeMerchantConfigHistoryEntries(
   ...groups: Array<MerchantConfigHistoryEntry[] | undefined>
 ): MerchantConfigHistoryEntry[] {
   const rows = new Map<string, MerchantConfigHistoryEntry>();

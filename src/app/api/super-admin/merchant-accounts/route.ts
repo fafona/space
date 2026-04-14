@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import type { MerchantListPublishedSite } from "@/data/homeBlocks";
+import type { MerchantConfigHistoryEntry } from "@/data/platformControlStore";
 import { loadMerchantIdRulesFromStore } from "@/lib/merchantIdRuleStore";
 import { findBlockingMerchantIdRule } from "@/lib/merchantIdRules";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
@@ -70,6 +71,7 @@ type MerchantAccountItem = {
   visits: MerchantVisitSummary;
   visitsKnown: boolean;
   profileSnapshot: MerchantListPublishedSite | null;
+  profileConfigHistory: MerchantConfigHistoryEntry[];
 };
 
 type MerchantAccountsScope = "full" | "support";
@@ -197,7 +199,10 @@ async function loadPlatformMerchantSnapshotByMerchantId(
   supabase: PlatformMerchantSnapshotStoreClient,
 ) {
   const payload = await loadStoredPlatformMerchantSnapshot(supabase);
-  return new Map((payload?.snapshot ?? []).map((site) => [site.id, site] as const));
+  return {
+    snapshotByMerchantId: new Map((payload?.snapshot ?? []).map((site) => [site.id, site] as const)),
+    configHistoryByMerchantId: payload?.merchantConfigHistoryBySiteId ?? {},
+  };
 }
 
 function normalizeSlug(value: string | null | undefined) {
@@ -406,6 +411,7 @@ function buildSupportScopeItems(merchants: MerchantRow[]) {
         visits: { today: 0, day7: 0, day30: 0, total: 0 },
         visitsKnown: false,
         profileSnapshot: null,
+        profileConfigHistory: [],
       } satisfies MerchantAccountItem;
     }),
   );
@@ -462,7 +468,7 @@ export async function GET(request: Request) {
         .filter(([email]) => Boolean(email)),
     );
 
-    const snapshotByMerchantId = await loadPlatformMerchantSnapshotByMerchantId(
+    const { snapshotByMerchantId, configHistoryByMerchantId } = await loadPlatformMerchantSnapshotByMerchantId(
       supabase as unknown as PlatformMerchantSnapshotStoreClient,
     );
 
@@ -504,6 +510,7 @@ export async function GET(request: Request) {
         visits: { today: 0, day7: 0, day30: 0, total: 0 },
         visitsKnown: false,
         profileSnapshot: snapshotSite,
+        profileConfigHistory: configHistoryByMerchantId[merchantId] ?? [],
       };
     });
 
@@ -543,6 +550,7 @@ export async function GET(request: Request) {
           visits: { today: 0, day7: 0, day30: 0, total: 0 },
           visitsKnown: false,
           profileSnapshot: snapshotByMerchantId.get(metadata.merchantId) ?? null,
+          profileConfigHistory: configHistoryByMerchantId[metadata.merchantId] ?? [],
         };
       });
 
@@ -557,6 +565,10 @@ export async function GET(request: Request) {
       merchantId: isNumericMerchantId(item.merchantId) ? item.merchantId : "",
       profileSnapshot:
         isNumericMerchantId(item.merchantId) ? snapshotByMerchantId.get(item.merchantId) ?? item.profileSnapshot ?? null : null,
+      profileConfigHistory:
+        isNumericMerchantId(item.merchantId)
+          ? configHistoryByMerchantId[item.merchantId] ?? item.profileConfigHistory ?? []
+          : [],
     }));
     const merchantIds = [...new Set(normalizedItems.map((item) => item.merchantId).filter((item) => isNumericMerchantId(item)))];
     let publishedSiteInfoByMerchantId = new Map<
@@ -765,6 +777,7 @@ export async function POST(request: Request) {
       visits: { today: 0, day7: 0, day30: 0, total: 0 },
       visitsKnown: false,
       profileSnapshot: null,
+      profileConfigHistory: [],
     };
 
     merchantAccountsCache.clear();

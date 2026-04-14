@@ -6,6 +6,8 @@ import {
   createDefaultMerchantContactVisibility,
   createDefaultMerchantSortConfig,
   normalizeMerchantPermissionConfig,
+  type MerchantConfigHistoryEntry,
+  type MerchantConfigSnapshot,
   type MerchantIndustry,
   type MerchantSortConfig,
   type MerchantSortRule,
@@ -22,6 +24,7 @@ const PLATFORM_MERCHANT_SNAPSHOT_VERSION = 1;
 export type PlatformMerchantSnapshotPayload = {
   snapshot: MerchantListPublishedSite[];
   defaultSortRule: MerchantSortRule;
+  merchantConfigHistoryBySiteId: Record<string, MerchantConfigHistoryEntry[]>;
 };
 
 function normalizeText(value: unknown) {
@@ -116,6 +119,103 @@ function normalizeServiceExpiresAt(value: unknown) {
   return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
 }
 
+function normalizeMerchantConfigSnapshot(value: unknown): MerchantConfigSnapshot {
+  const input = value && typeof value === "object" ? (value as Partial<MerchantConfigSnapshot>) : {};
+  return {
+    serviceExpiresAt: normalizeServiceExpiresAt(input.serviceExpiresAt),
+    permissionConfig: normalizeMerchantPermissionConfig(input.permissionConfig),
+    merchantCardImageUrl: normalizeText(input.merchantCardImageUrl),
+    merchantCardImageOpacity: normalizeUnitInterval(input.merchantCardImageOpacity, 1),
+    chatAvatarImageUrl: normalizeText((input as { chatAvatarImageUrl?: unknown }).chatAvatarImageUrl),
+    contactVisibility: normalizeMerchantContactVisibility((input as { contactVisibility?: unknown }).contactVisibility),
+    sortConfig: normalizeMerchantSortConfig(input.sortConfig),
+  };
+}
+
+function normalizeMerchantConfigHistoryChanges(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => normalizeText(item)).filter(Boolean);
+}
+
+function merchantConfigHistoryTimestamp(value: string) {
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function mergeMerchantConfigHistoryEntries(
+  ...groups: Array<MerchantConfigHistoryEntry[] | undefined>
+): MerchantConfigHistoryEntry[] {
+  const rows = new Map<string, MerchantConfigHistoryEntry>();
+  groups.forEach((group) => {
+    if (!Array.isArray(group)) return;
+    group.forEach((entry) => {
+      if (!entry?.id) return;
+      const existing = rows.get(entry.id);
+      if (!existing || merchantConfigHistoryTimestamp(entry.at) >= merchantConfigHistoryTimestamp(existing.at)) {
+        rows.set(entry.id, entry);
+      }
+    });
+  });
+  return [...rows.values()].sort((left, right) => merchantConfigHistoryTimestamp(right.at) - merchantConfigHistoryTimestamp(left.at));
+}
+
+function normalizeMerchantConfigHistory(value: unknown): MerchantConfigHistoryEntry[] {
+  if (!Array.isArray(value)) return [];
+  const rows: MerchantConfigHistoryEntry[] = [];
+  value.forEach((item) => {
+    if (!item || typeof item !== "object") return;
+    const input = item as Partial<MerchantConfigHistoryEntry>;
+    const id = normalizeText(input.id);
+    const at = normalizeText(input.at);
+    if (!id || !at) return;
+    rows.push({
+      id,
+      at,
+      operator: normalizeText(input.operator) || "未知操作人",
+      summary: normalizeText(input.summary) || "配置更新",
+      changes: normalizeMerchantConfigHistoryChanges((input as { changes?: unknown }).changes),
+      before: normalizeMerchantConfigSnapshot(input.before),
+      after: normalizeMerchantConfigSnapshot(input.after),
+    });
+  });
+  return mergeMerchantConfigHistoryEntries(rows);
+}
+
+export function normalizePlatformMerchantConfigHistoryBySiteId(
+  value: unknown,
+): Record<string, MerchantConfigHistoryEntry[]> {
+  if (!value || typeof value !== "object") return {};
+  const source = value as Record<string, unknown>;
+  const rows: Record<string, MerchantConfigHistoryEntry[]> = {};
+  Object.entries(source).forEach(([siteId, history]) => {
+    const normalizedSiteId = normalizeMerchantId(siteId);
+    if (!normalizedSiteId) return;
+    const normalizedHistory = normalizeMerchantConfigHistory(history);
+    if (normalizedHistory.length > 0) {
+      rows[normalizedSiteId] = normalizedHistory;
+    }
+  });
+  return rows;
+}
+
+export function mergePlatformMerchantConfigHistoryBySiteId(
+  preferred: Record<string, MerchantConfigHistoryEntry[]> | null | undefined,
+  fallback: Record<string, MerchantConfigHistoryEntry[]> | null | undefined,
+): Record<string, MerchantConfigHistoryEntry[]> {
+  const next: Record<string, MerchantConfigHistoryEntry[]> = {};
+  const keys = new Set([
+    ...Object.keys(fallback ?? {}),
+    ...Object.keys(preferred ?? {}),
+  ]);
+  keys.forEach((siteId) => {
+    const merged = mergeMerchantConfigHistoryEntries(preferred?.[siteId], fallback?.[siteId]);
+    if (merged.length > 0) {
+      next[siteId] = merged;
+    }
+  });
+  return next;
+}
+
 function compactSnapshotChatBusinessCard(
   card: MerchantBusinessCardAsset | null | undefined,
 ): MerchantBusinessCardAsset | null {
@@ -202,6 +302,9 @@ export function normalizePlatformMerchantSnapshotPayload(input: unknown): Platfo
     defaultSortRule: normalizeMerchantSortRule(
       value.defaultSortRule ?? value.publishedMerchantDefaultSortRule,
     ),
+    merchantConfigHistoryBySiteId: normalizePlatformMerchantConfigHistoryBySiteId(
+      value.merchantConfigHistoryBySiteId ?? value.publishedMerchantConfigHistoryBySiteId,
+    ),
   };
 }
 
@@ -210,6 +313,7 @@ export function buildPlatformMerchantSnapshotPayloadFromSites(
   defaultSortRule: MerchantSortRule = "created_desc",
 ): PlatformMerchantSnapshotPayload {
   const snapshotItems: MerchantListPublishedSite[] = [];
+  const merchantConfigHistoryBySiteId: Record<string, MerchantConfigHistoryEntry[]> = {};
   sites.forEach((site) => {
     const id = normalizeMerchantId(site.id);
     if (!id) return;
@@ -243,12 +347,17 @@ export function buildPlatformMerchantSnapshotPayloadFromSites(
       sortConfig: normalizeMerchantSortConfig(site.sortConfig),
       createdAt: normalizeText(site.createdAt),
     } satisfies MerchantListPublishedSite);
+    const normalizedHistory = normalizeMerchantConfigHistory(site.configHistory);
+    if (normalizedHistory.length > 0) {
+      merchantConfigHistoryBySiteId[id] = normalizedHistory;
+    }
   });
   const snapshot = sortSnapshotSites(snapshotItems);
 
   return {
     snapshot,
     defaultSortRule: normalizeMerchantSortRule(defaultSortRule),
+    merchantConfigHistoryBySiteId,
   };
 }
 
@@ -272,6 +381,7 @@ export function buildPlatformMerchantSnapshotBlocks(
         platformMerchantSnapshotVersion: PLATFORM_MERCHANT_SNAPSHOT_VERSION,
         publishedMerchantSnapshot: payload.snapshot,
         publishedMerchantDefaultSortRule: payload.defaultSortRule,
+        publishedMerchantConfigHistoryBySiteId: payload.merchantConfigHistoryBySiteId,
       } as never,
     },
   ];

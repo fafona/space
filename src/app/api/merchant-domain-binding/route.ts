@@ -375,6 +375,7 @@ async function syncMerchantProfileSnapshot(
   const nextPayload = {
     snapshot: upsertPlatformMerchantSnapshotSite(existingPayload?.snapshot ?? [], snapshotSite),
     defaultSortRule: existingPayload?.defaultSortRule ?? "created_desc",
+    merchantConfigHistoryBySiteId: existingPayload?.merchantConfigHistoryBySiteId ?? {},
   };
   const saveResult = await savePlatformMerchantSnapshot(supabase, nextPayload);
   if (saveResult.error) {

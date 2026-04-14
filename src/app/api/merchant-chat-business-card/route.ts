@@ -408,6 +408,7 @@ export async function POST(request: Request) {
     const saveResult = await savePlatformMerchantSnapshot(snapshotStore, {
       snapshot: upsertPlatformMerchantSnapshotSite(existingPayload?.snapshot ?? [], snapshotSite),
       defaultSortRule: existingPayload?.defaultSortRule ?? "created_desc",
+      merchantConfigHistoryBySiteId: existingPayload?.merchantConfigHistoryBySiteId ?? {},
     });
     if (saveResult.error) {
       return NextResponse.json(

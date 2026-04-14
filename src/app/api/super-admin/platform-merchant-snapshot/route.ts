@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import {
+  mergePlatformMerchantConfigHistoryBySiteId,
   normalizePlatformMerchantSnapshotPayload,
   type PlatformMerchantSnapshotPayload,
 } from "@/lib/platformMerchantSnapshot";
@@ -60,6 +61,27 @@ function mergePlatformMerchantSnapshotPayloads(
   return normalizePlatformMerchantSnapshotPayload({
     snapshot: [...mergedCurrent, ...appendedExisting],
     defaultSortRule: incoming.defaultSortRule || existing.defaultSortRule,
+    merchantConfigHistoryBySiteId: mergePlatformMerchantConfigHistoryBySiteId(
+      incoming.merchantConfigHistoryBySiteId,
+      existing.merchantConfigHistoryBySiteId,
+    ),
+  });
+}
+
+export async function GET(request: Request) {
+  if (!isSuperAdminRequestAuthorized(request)) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+
+  const supabase = createServerSupabaseClient();
+  if (!supabase) {
+    return NextResponse.json({ error: "platform_merchant_snapshot_env_missing" }, { status: 503 });
+  }
+
+  const payload = await loadStoredPlatformMerchantSnapshot(supabase as unknown as PlatformMerchantSnapshotStoreClient);
+  return NextResponse.json({
+    ok: true,
+    payload: payload ?? normalizePlatformMerchantSnapshotPayload({}),
   });
 }
 
@@ -85,11 +107,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "empty_snapshot" }, { status: 400 });
   }
 
-  let nextPayload = payload;
   const existingPayload = await loadStoredPlatformMerchantSnapshot(supabase as unknown as PlatformMerchantSnapshotStoreClient);
-  if (existingPayload && payload.snapshot.length < existingPayload.snapshot.length) {
-    nextPayload = mergePlatformMerchantSnapshotPayloads(payload, existingPayload);
-  }
+  const nextPayload = existingPayload
+    ? mergePlatformMerchantSnapshotPayloads(payload, existingPayload)
+    : payload;
 
   const saveResult = await savePlatformMerchantSnapshot(
     supabase as unknown as PlatformMerchantSnapshotStoreClient,

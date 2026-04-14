@@ -37,6 +37,7 @@ import {
   createFeaturePackage,
   createHomeLayoutSection,
   createIndustryCategory,
+  mergeMerchantConfigHistoryEntries,
   createPlanTemplate,
   createSite,
   loadPlatformState,
@@ -85,7 +86,11 @@ import {
   capturePlanTemplatePreviewAssets,
   PLAN_TEMPLATE_PREVIEW_VARIANT,
 } from "@/lib/planTemplatePreviewCapture";
-import { buildPlatformMerchantSnapshotPayloadFromSites } from "@/lib/platformMerchantSnapshot";
+import {
+  buildPlatformMerchantSnapshotPayloadFromSites,
+  normalizePlatformMerchantSnapshotPayload,
+  type PlatformMerchantSnapshotPayload,
+} from "@/lib/platformMerchantSnapshot";
 import ChatBusinessCardDialog from "@/components/admin/ChatBusinessCardDialog";
 import SupportMessageContent, { type SupportMessageImageActivatePayload } from "@/components/support/SupportMessageContent";
 import SupportMessageImagePreviewOverlay from "@/components/support/SupportMessageImagePreviewOverlay";
@@ -458,6 +463,10 @@ function applyBackendProfileSnapshot(
     contactEmail: pickPreferredText(snapshot.contactEmail, site.contactEmail, fallbackEmail),
     merchantCardImageUrl: pickPreferredText(snapshot.merchantCardImageUrl, site.merchantCardImageUrl),
     merchantCardImageOpacity: normalizeUnitInterval(snapshot.merchantCardImageOpacity, site.merchantCardImageOpacity ?? 1),
+    permissionConfig: snapshot.permissionConfig ?? site.permissionConfig ?? createDefaultMerchantPermissionConfig(),
+    serviceExpiresAt: snapshot.serviceExpiresAt ?? site.serviceExpiresAt ?? null,
+    sortConfig: snapshot.sortConfig ?? site.sortConfig ?? createDefaultMerchantSortConfig(),
+    status: snapshot.status ?? site.status,
     name: pickPreferredText(snapshot.name, site.name, snapshot.merchantName, site.merchantName),
   };
 }
@@ -536,7 +545,7 @@ function buildBackendOnlySite(account: BackendMerchantAccount): Site {
     merchantCardImageUrl: "",
     merchantCardImageOpacity: 1,
     sortConfig: createDefaultMerchantSortConfig(),
-    configHistory: [],
+    configHistory: account.profileConfigHistory ?? [],
     createdAt: timestamp,
     updatedAt: timestamp,
   };
@@ -1086,6 +1095,99 @@ function createMerchantConfigSnapshot(site: Site): MerchantConfigSnapshot {
   };
 }
 
+function buildSnapshotBackedSite(
+  snapshot: MerchantListPublishedSite,
+  templateSite: Site | null,
+  configHistory: MerchantConfigHistoryEntry[],
+): Site {
+  const timestamp = snapshot.createdAt || nextIsoNow();
+  const prefix = normalizePublishedSitePrefix(snapshot.domainPrefix || snapshot.domainSuffix);
+  const merchantName = (snapshot.merchantName ?? "").trim() || snapshot.name || snapshot.id;
+  return {
+    id: snapshot.id,
+    tenantId: templateSite?.tenantId ?? "backend-only",
+    merchantName,
+    signature: (snapshot.signature ?? "").trim(),
+    domainPrefix: prefix,
+    domainSuffix: prefix,
+    contactAddress: (snapshot.contactAddress ?? "").trim(),
+    contactName: (snapshot.contactName ?? "").trim(),
+    contactPhone: (snapshot.contactPhone ?? "").trim(),
+    contactEmail: (snapshot.contactEmail ?? "").trim(),
+    name: (snapshot.name ?? "").trim() || merchantName || snapshot.id,
+    domain: (snapshot.domain ?? "").trim() || buildMerchantFrontendHref(snapshot.id, prefix),
+    categoryId: templateSite?.categoryId ?? "snapshot",
+    category: (snapshot.category ?? "").trim() || (templateSite?.category ?? "商户"),
+    industry: normalizeMerchantIndustryValue(snapshot.industry),
+    status: snapshot.status ?? "online",
+    publishedVersion: 0,
+    lastPublishedAt: null,
+    features: templateSite?.features ?? createFeaturePackage("basic"),
+    location: mergeSnapshotLocation(templateSite?.location, snapshot.location),
+    serviceExpiresAt: snapshot.serviceExpiresAt ?? null,
+    permissionConfig: snapshot.permissionConfig ?? createDefaultMerchantPermissionConfig(),
+    merchantCardImageUrl: (snapshot.merchantCardImageUrl ?? "").trim(),
+    merchantCardImageOpacity: normalizeUnitInterval(snapshot.merchantCardImageOpacity, 1),
+    chatAvatarImageUrl: (snapshot.chatAvatarImageUrl ?? "").trim(),
+    contactVisibility: snapshot.contactVisibility ?? createDefaultMerchantContactVisibility(),
+    businessCards: snapshot.businessCards ?? [],
+    sortConfig: snapshot.sortConfig ?? createDefaultMerchantSortConfig(),
+    configHistory,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+}
+
+function applyServerMerchantSnapshotPayloadToState(
+  state: PlatformState,
+  payload: PlatformMerchantSnapshotPayload,
+): PlatformState {
+  if (
+    payload.snapshot.length === 0 &&
+    Object.keys(payload.merchantConfigHistoryBySiteId ?? {}).length === 0
+  ) {
+    return state;
+  }
+  const snapshotById = new Map(payload.snapshot.map((site) => [site.id, site] as const));
+  const serverHistoryBySiteId = payload.merchantConfigHistoryBySiteId ?? {};
+  const templateSite = state.sites.find((site) => site.id === "site-main") ?? state.sites[0] ?? null;
+  const nextSites = state.sites.map((site) => {
+    const snapshot = snapshotById.get(site.id);
+    if (!snapshot) return site;
+    snapshotById.delete(site.id);
+    const serverHistory = serverHistoryBySiteId[site.id];
+    return {
+      ...applyBackendProfileSnapshot(site, snapshot, site.contactEmail),
+      configHistory:
+        Array.isArray(serverHistory) && serverHistory.length > 0
+          ? mergeMerchantConfigHistoryEntries(serverHistory)
+          : site.configHistory ?? [],
+    };
+  });
+
+  snapshotById.forEach((snapshot, siteId) => {
+    nextSites.push(
+      buildSnapshotBackedSite(
+        snapshot,
+        templateSite,
+        mergeMerchantConfigHistoryEntries(serverHistoryBySiteId[siteId]),
+      ),
+    );
+  });
+
+  return {
+    ...state,
+    sites: nextSites,
+    homeLayout: {
+      ...state.homeLayout,
+      merchantDefaultSortRule:
+        payload.snapshot.length > 0
+          ? payload.defaultSortRule || state.homeLayout.merchantDefaultSortRule
+          : state.homeLayout.merchantDefaultSortRule,
+    },
+  };
+}
+
 function compactSnapshotForHistory(snapshot: MerchantConfigSnapshot): MerchantConfigSnapshot {
   const image = (snapshot.merchantCardImageUrl ?? "").trim();
   const compactImage = /^data:image\//i.test(image) ? INLINE_IMAGE_HISTORY_PLACEHOLDER : image;
@@ -1405,6 +1507,7 @@ type BackendMerchantAccount = {
   visits: MerchantVisits;
   visitsKnown: boolean;
   profileSnapshot: MerchantListPublishedSite | null;
+  profileConfigHistory: MerchantConfigHistoryEntry[];
 };
 
 type MerchantTableSortField =
@@ -1640,7 +1743,19 @@ export default function SuperAdminClient() {
   const [releaseChecklistState, setReleaseChecklistState] = useState<Record<string, boolean>>(() =>
     loadReleaseChecklistStateFromStorage(),
   );
+  const [platformSnapshotServerReady, setPlatformSnapshotServerReady] = useState(false);
   const playNotificationSound = useNotificationSound();
+  const applyLocalPlatformState = useCallback(
+    (next: PlatformState, options: { allowVolatile?: boolean } = {}) => {
+      const persisted = savePlatformState(next);
+      if (!persisted && !options.allowVolatile) return false;
+      stateRef.current = next;
+      setState(next);
+      setNowMs(Date.now());
+      return persisted;
+    },
+    [],
+  );
   const platformMerchantSnapshotPayload = useMemo(
     () => buildPlatformMerchantSnapshotPayloadFromSites(state.sites, state.homeLayout.merchantDefaultSortRule),
     [state.sites, state.homeLayout.merchantDefaultSortRule],
@@ -1690,6 +1805,45 @@ export default function SuperAdminClient() {
   useEffect(() => {
     if (!hydrated || !authed) return;
     if (isMobileSupportOnlyMode) return;
+    const controller = new AbortController();
+    const run = async () => {
+      try {
+        const response = await fetch("/api/super-admin/platform-merchant-snapshot", {
+          method: "GET",
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        const raw = (await response.json().catch(() => null)) as
+          | {
+              payload?: unknown;
+              error?: string;
+              message?: string;
+            }
+          | null;
+        if (!response.ok) {
+          throw new Error(raw?.message || raw?.error || "platform_merchant_snapshot_load_failed");
+        }
+        const payload = normalizePlatformMerchantSnapshotPayload(raw?.payload ?? {});
+        const next = applyServerMerchantSnapshotPayloadToState(stateRef.current, payload);
+        const persisted = applyLocalPlatformState(next, { allowVolatile: true });
+        if (!persisted) {
+          setTip("服务端配置已加载，本地缓存写入失败，请稍后检查浏览器存储空间");
+        }
+        setPlatformSnapshotServerReady(true);
+      } catch {
+        if (controller.signal.aborted) return;
+        setPlatformSnapshotServerReady(false);
+        setTip("服务端商户配置加载失败，已暂停后台配置同步");
+      }
+    };
+    void run();
+    return () => controller.abort();
+  }, [applyLocalPlatformState, authed, hydrated, isMobileSupportOnlyMode]);
+
+  useEffect(() => {
+    if (!hydrated || !authed) return;
+    if (isMobileSupportOnlyMode) return;
+    if (!platformSnapshotServerReady) return;
     if (platformMerchantSnapshotPayload.snapshot.length === 0) return;
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
@@ -1709,7 +1863,14 @@ export default function SuperAdminClient() {
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [authed, hydrated, isMobileSupportOnlyMode, platformMerchantSnapshotPayload.snapshot.length, platformMerchantSnapshotPayloadKey]);
+  }, [
+    authed,
+    hydrated,
+    isMobileSupportOnlyMode,
+    platformMerchantSnapshotPayload.snapshot.length,
+    platformMerchantSnapshotPayloadKey,
+    platformSnapshotServerReady,
+  ]);
 
   useEffect(() => {
     if (!hydrated || !authed || typeof window === "undefined") return;
@@ -1989,7 +2150,28 @@ export default function SuperAdminClient() {
         }) ?? null;
       const legacySiteContext = legacySiteContextByEmail.get(normalizeEmailValue(account.email)) ?? null;
       const localSite = matchedSite ?? legacySiteContext?.site ?? null;
-      const mergedSite = localSite ? applyBackendProfileSnapshot(localSite, account.profileSnapshot, account.email) : null;
+      const mergedSite = localSite
+        ? {
+            ...applyBackendProfileSnapshot(localSite, account.profileSnapshot, account.email),
+            permissionConfig:
+              localSite.permissionConfig ??
+              account.profileSnapshot?.permissionConfig ??
+              createDefaultMerchantPermissionConfig(),
+            serviceExpiresAt:
+              localSite.serviceExpiresAt ??
+              account.profileSnapshot?.serviceExpiresAt ??
+              null,
+            sortConfig:
+              localSite.sortConfig ??
+              account.profileSnapshot?.sortConfig ??
+              createDefaultMerchantSortConfig(),
+            status: localSite.status ?? account.profileSnapshot?.status ?? "online",
+            configHistory:
+              account.profileConfigHistory?.length > 0
+                ? mergeMerchantConfigHistoryEntries(account.profileConfigHistory)
+                : localSite.configHistory ?? [],
+          }
+        : null;
       const localSiteContext = mergedSite
         ? buildMerchantSiteContext(mergedSite, merchantOwnerBySiteId.get(mergedSite.id) ?? null, nowMs)
         : legacySiteContext;
@@ -2564,7 +2746,9 @@ export default function SuperAdminClient() {
                     <button
                       type="button"
                       className="shrink-0 rounded border px-2 py-0.5 text-[11px] hover:bg-slate-50"
-                      onClick={() => rollbackMerchantConfigByHistoryAction(history.id)}
+                      onClick={() => {
+                        void rollbackMerchantConfigByHistoryAction(history.id);
+                      }}
                     >
                       回滚到此版本
                     </button>
@@ -2965,13 +3149,36 @@ export default function SuperAdminClient() {
   const commit = (updater: (prev: PlatformState) => PlatformState) => {
     const prev = stateRef.current;
     const next = updater(prev);
-    const persisted = savePlatformState(next);
-    if (!persisted) return false;
-    stateRef.current = next;
-    setState(next);
-    setNowMs(Date.now());
-    return persisted;
+    return applyLocalPlatformState(next);
   };
+
+  const syncPlatformMerchantSnapshotToServer = useCallback(
+    async (nextState: PlatformState) => {
+      const payload = buildPlatformMerchantSnapshotPayloadFromSites(
+        nextState.sites,
+        nextState.homeLayout.merchantDefaultSortRule,
+      );
+      if (payload.snapshot.length === 0) {
+        throw new Error("empty_snapshot");
+      }
+      const response = await fetch("/api/super-admin/platform-merchant-snapshot", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        cache: "no-store",
+        body: JSON.stringify(payload),
+      });
+      const result = (await response.json().catch(() => null)) as
+        | { ok?: boolean; error?: string; message?: string }
+        | null;
+      if (!response.ok) {
+        throw new Error(result?.message || result?.error || "platform_merchant_snapshot_save_failed");
+      }
+      setPlatformSnapshotServerReady(true);
+    },
+    [],
+  );
 
   const withAudit = (
     base: PlatformState,
@@ -4606,25 +4813,30 @@ export default function SuperAdminClient() {
       return;
     }
 
-    const persisted = commit(() =>
-      withAudit(
-        {
-          ...nextStatePreview,
-        },
-        "merchant_config_update",
-        "site",
-        selectedMerchantSite.id,
-        "配置已更新",
-      ),
+    const auditedNextState = withAudit(
+      {
+        ...nextStatePreview,
+      },
+      "merchant_config_update",
+      "site",
+      selectedMerchantSite.id,
+      "配置已更新",
     );
+    try {
+      await syncPlatformMerchantSnapshotToServer(auditedNextState);
+    } catch (error) {
+      setTip(`服务端配置保存失败：${error instanceof Error ? error.message : "unknown_error"}`);
+      return;
+    }
+    const persisted = applyLocalPlatformState(auditedNextState, { allowVolatile: true });
     if (!persisted) {
-      setTip(SUPER_ADMIN_MESSAGES.configSaveFailedStorage);
+      setTip("配置已保存到服务端，但本地缓存写入失败，请稍后刷新确认");
       return;
     }
     setTip(SUPER_ADMIN_MESSAGES.configSaved);
   }
 
-  function rollbackMerchantConfigByHistoryAction(historyId: string) {
+  async function rollbackMerchantConfigByHistoryAction(historyId: string) {
     if (!guard("user.manage", SUPER_ADMIN_MESSAGES.noUserPermission)) return;
     if (!selectedMerchantSite) {
       setTip(SUPER_ADMIN_MESSAGES.selectMerchantFirst);
@@ -4716,22 +4928,27 @@ export default function SuperAdminClient() {
       setTip(`${SUPER_ADMIN_MESSAGES.configRollbackFailedStorage}（${formatBytes(nextStateBytes)}）`);
       return;
     }
-    const persisted = commit(() =>
-      withAudit(
-        {
-          ...nextStatePreview,
-        },
-        "merchant_config_rollback",
-        "site",
-        selectedMerchantSite.id,
-        `rollback:${targetHistory.id}`,
-      ),
+    const auditedNextState = withAudit(
+      {
+        ...nextStatePreview,
+      },
+      "merchant_config_rollback",
+      "site",
+      selectedMerchantSite.id,
+      `rollback:${targetHistory.id}`,
     );
-    if (!persisted) {
-      setTip(SUPER_ADMIN_MESSAGES.configRollbackFailedStorage);
+    try {
+      await syncPlatformMerchantSnapshotToServer(auditedNextState);
+    } catch (error) {
+      setTip(`服务端配置回滚失败：${error instanceof Error ? error.message : "unknown_error"}`);
       return;
     }
-    const latestSite = nextStatePreview.sites.find((site) => site.id === selectedMerchantSite.id);
+    const persisted = applyLocalPlatformState(auditedNextState, { allowVolatile: true });
+    if (!persisted) {
+      setTip("配置已回滚到服务端，但本地缓存写入失败，请稍后刷新确认");
+      return;
+    }
+    const latestSite = auditedNextState.sites.find((site) => site.id === selectedMerchantSite.id);
     if (latestSite) hydrateMerchantConfigDraft(latestSite);
     setTip(
       rollbackImageUnavailableInHistory

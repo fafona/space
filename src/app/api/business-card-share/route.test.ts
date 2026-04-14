@@ -22,6 +22,7 @@ test("share owner lookup resolves merchant ids from snapshot business cards by s
     findShareOwnerMerchantIdInSnapshotPayload(
       {
         defaultSortRule: "created_desc",
+        merchantConfigHistoryBySiteId: {},
         snapshot: [
           {
             id: "12345678",
@@ -222,6 +223,7 @@ test("share owner lookup resolves legacy fingerprints from snapshot business car
     findShareOwnerMerchantIdInSnapshotPayload(
       {
         defaultSortRule: "created_desc",
+        merchantConfigHistoryBySiteId: {},
         snapshot: [
           {
             id: "12345678",
