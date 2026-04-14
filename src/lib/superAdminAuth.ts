@@ -29,8 +29,8 @@ function readCookieValue(key: string) {
 }
 
 const SUPER_ADMIN_SESSION_RECENT_KEY = "merchant-space:super-admin-session-recent:v1";
-const SUPER_ADMIN_SESSION_CONFIRMATION_GRACE_MS = Math.min(15_000, SUPER_ADMIN_SESSION_COOKIE_MAX_AGE_SECONDS * 1000);
-const SUPER_ADMIN_SESSION_CONFIRMATION_RETRY_DELAYS_MS = [0, 250, 900, 1800] as const;
+const SUPER_ADMIN_SESSION_CONFIRMATION_GRACE_MS = Math.min(30_000, SUPER_ADMIN_SESSION_COOKIE_MAX_AGE_SECONDS * 1000);
+const SUPER_ADMIN_SESSION_CONFIRMATION_RETRY_DELAYS_MS = [0, 350, 1_000, 2_500, 5_000, 8_000] as const;
 
 function readRecentSuperAdminAuthTimestamp() {
   if (typeof window === "undefined") return 0;
@@ -112,7 +112,7 @@ export async function refreshSuperAdminAuthenticatedState() {
         },
       });
       const payload = (await response.json().catch(() => null)) as { authenticated?: unknown } | null;
-      const authenticated = response.ok && payload?.authenticated === true;
+      const authenticated = response.ok && payload?.authenticated !== false;
       if (authenticated) {
         localStorage.setItem(SUPER_ADMIN_SESSION_KEY, SUPER_ADMIN_SESSION_VALUE);
         markRecentSuperAdminAuthentication();

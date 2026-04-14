@@ -1985,14 +1985,6 @@ export default function SuperAdminClient() {
   }, [activeMenu, authed, hydrated]);
 
   useEffect(() => {
-    if (!hydrated) return;
-    if (!authed) {
-      const next = `${window.location.pathname}${window.location.search}`;
-      window.location.href = buildSuperAdminLoginHref(next);
-    }
-  }, [authed, hydrated]);
-
-  useEffect(() => {
     if (!hydrated || !authed) return;
     setCurrentSuperAdminDeviceId(getOrCreateSuperAdminDeviceId());
   }, [authed, hydrated]);
