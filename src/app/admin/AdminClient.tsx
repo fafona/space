@@ -4772,6 +4772,25 @@ function compareSupportMessages(left: Pick<PlatformSupportMessage, "createdAt" |
   return left.id.localeCompare(right.id, "en");
 }
 
+function buildVisibleSupportMessageKey(message: {
+  id: string;
+  createdAt: string;
+  localStatus?: LocalSupportMessageStatus | null;
+}) {
+  return `${message.id}:${normalizeSupportMessageTimestamp(message.createdAt) || message.createdAt}:${message.localStatus ?? "server"}`;
+}
+
+function scrollSupportMessageToViewportTop(
+  viewport: HTMLDivElement,
+  target: HTMLElement,
+  behavior: ScrollBehavior,
+) {
+  const viewportRect = viewport.getBoundingClientRect();
+  const targetRect = target.getBoundingClientRect();
+  const nextTop = viewport.scrollTop + (targetRect.top - viewportRect.top);
+  viewport.scrollTo({ top: Math.max(0, nextTop), behavior });
+}
+
 export default function AdminClient({
   forcedScope,
   editorTitle = "页面编辑",
@@ -4944,6 +4963,7 @@ export default function AdminClient({
   const supportPeerRequestIdRef = useRef(0);
   const supportSendingRef = useRef(false);
   const supportMessagesViewportRef = useRef<HTMLDivElement>(null);
+  const supportMessageElementByKeyRef = useRef<Record<string, HTMLDivElement | null>>({});
   const supportMobileConversationsViewportRef = useRef<HTMLDivElement>(null);
   const supportInputRef = useRef<HTMLTextAreaElement>(null);
   const supportComposerRef = useRef<HTMLDivElement>(null);
@@ -9144,22 +9164,26 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const latestSupportAdminMessageAt = normalizeSupportMessageTimestamp(
     latestSupportAdminMessage?.createdAt,
   );
-  const officialVisibleSupportMessages = [
-    ...(supportThread?.messages ?? []).map((message) => ({
-      ...message,
-      localStatus: null as LocalSupportMessageStatus | null,
-      isSelf: message.sender === "merchant",
-      senderLabel: message.sender === "merchant" ? "我" : "Faolla",
-    })),
-    ...supportLocalMessages
-      .filter((message) => message.merchantId === supportReadMerchantId)
-      .map((message) => ({
-        ...message,
-        localStatus: message.status,
-        isSelf: true,
-        senderLabel: "我",
-      })),
-  ].sort(compareSupportMessages);
+  const officialVisibleSupportMessages = useMemo(
+    () =>
+      [
+        ...(supportThread?.messages ?? []).map((message) => ({
+          ...message,
+          localStatus: null as LocalSupportMessageStatus | null,
+          isSelf: message.sender === "merchant",
+          senderLabel: message.sender === "merchant" ? "我" : "Faolla",
+        })),
+        ...supportLocalMessages
+          .filter((message) => message.merchantId === supportReadMerchantId)
+          .map((message) => ({
+            ...message,
+            localStatus: message.status,
+            isSelf: true,
+            senderLabel: "我",
+          })),
+      ].sort(compareSupportMessages),
+    [supportLocalMessages, supportReadMerchantId, supportThread?.messages],
+  );
   const supportOfficialName = "Faolla";
   const supportOfficialSiteLabel = "www.faolla.com";
   const supportOfficialBadgeLabel = "官方";
@@ -9229,35 +9253,78 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     () => findLatestIncomingPeerMessage(selectedSupportPeerThread, currentSupportMerchantId),
     [currentSupportMerchantId, selectedSupportPeerThread],
   );
-  const peerVisibleSupportMessages = selectedSupportPeerMerchantId
-    ? [
-        ...(selectedSupportPeerThread?.messages ?? []).map((message) => ({
-          ...message,
-          localStatus: null as LocalSupportMessageStatus | null,
-          isSelf: message.senderMerchantId === currentSupportMerchantId,
-          senderLabel:
-            message.senderMerchantId === currentSupportMerchantId
-              ? "我"
-              : selectedSupportPeerContact?.merchantName || selectedSupportPeerMerchantId,
-        })),
-        ...supportPeerLocalMessages
-          .filter((message) => message.contactMerchantId === selectedSupportPeerMerchantId)
-          .map((message) => ({
-            ...message,
-            localStatus: message.status,
-            isSelf: true,
-            senderLabel: "我",
-          })),
-      ].sort(compareSupportMessages)
-    : [];
+  const peerVisibleSupportMessages = useMemo(
+    () =>
+      selectedSupportPeerMerchantId
+        ? [
+            ...(selectedSupportPeerThread?.messages ?? []).map((message) => ({
+              ...message,
+              localStatus: null as LocalSupportMessageStatus | null,
+              isSelf: message.senderMerchantId === currentSupportMerchantId,
+              senderLabel:
+                message.senderMerchantId === currentSupportMerchantId
+                  ? "我"
+                  : selectedSupportPeerContact?.merchantName || selectedSupportPeerMerchantId,
+            })),
+            ...supportPeerLocalMessages
+              .filter((message) => message.contactMerchantId === selectedSupportPeerMerchantId)
+              .map((message) => ({
+                ...message,
+                localStatus: message.status,
+                isSelf: true,
+                senderLabel: "我",
+              })),
+          ].sort(compareSupportMessages)
+        : [],
+    [
+      currentSupportMerchantId,
+      selectedSupportPeerContact?.merchantName,
+      selectedSupportPeerMerchantId,
+      selectedSupportPeerThread?.messages,
+      supportPeerLocalMessages,
+    ],
+  );
   const visibleSupportMessages =
     supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY ? officialVisibleSupportMessages : peerVisibleSupportMessages;
   const latestOfficialVisibleSupportMessage =
     officialVisibleSupportMessages[officialVisibleSupportMessages.length - 1] ?? null;
   const latestVisibleSupportMessage = visibleSupportMessages[visibleSupportMessages.length - 1] ?? null;
   const latestVisibleSupportMessageKey = latestVisibleSupportMessage
-    ? `${latestVisibleSupportMessage.id}:${latestVisibleSupportMessage.localStatus ?? "server"}`
+    ? buildVisibleSupportMessageKey(latestVisibleSupportMessage)
     : "";
+  const selectedSupportFirstUnreadMessageKey = useMemo(() => {
+    if (supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY) {
+      if (!supportReadMerchantId || !supportReadStateHydrated.official) return "";
+      const lastReadTimestamp = new Date(supportLastReadAt || 0).getTime();
+      const firstUnreadMessage = officialVisibleSupportMessages.find((message) => {
+        if (message.sender !== "super_admin") return false;
+        const createdAt = new Date(normalizeSupportMessageTimestamp(message.createdAt) || 0).getTime();
+        return createdAt > lastReadTimestamp;
+      });
+      return firstUnreadMessage ? buildVisibleSupportMessageKey(firstUnreadMessage) : "";
+    }
+    if (!currentSupportMerchantId || !selectedSupportPeerMerchantId || !supportReadStateHydrated.peer) return "";
+    const lastReadTimestamp = new Date(
+      normalizeSupportMessageTimestamp(supportPeerLastReadMap[selectedSupportPeerMerchantId]) || 0,
+    ).getTime();
+    const firstUnreadMessage = peerVisibleSupportMessages.find((message) => {
+      if (message.senderMerchantId === currentSupportMerchantId) return false;
+      const createdAt = new Date(normalizeSupportMessageTimestamp(message.createdAt) || 0).getTime();
+      return createdAt > lastReadTimestamp;
+    });
+    return firstUnreadMessage ? buildVisibleSupportMessageKey(firstUnreadMessage) : "";
+  }, [
+    currentSupportMerchantId,
+    officialVisibleSupportMessages,
+    peerVisibleSupportMessages,
+    selectedSupportPeerMerchantId,
+    supportLastReadAt,
+    supportPeerLastReadMap,
+    supportReadMerchantId,
+    supportReadStateHydrated.official,
+    supportReadStateHydrated.peer,
+    supportSelectedContactKey,
+  ]);
   const selectedSupportDisplayName =
     supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY
       ? supportOfficialName
@@ -9809,6 +9876,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     isMobileSupportDialog &&
     supportMobileView === "thread" &&
     (supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY || !!selectedSupportPeerContact);
+  useEffect(() => {
+    supportMessageElementByKeyRef.current = {};
+  }, [supportSelectedContactKey]);
   const resolvedAdminLocale = useMemo(() => resolveSupportedLocale(locale), [locale]);
   const supportSelfSelectedLanguage = useMemo(
     () => LANGUAGE_OPTIONS.find((item) => item.code === resolvedAdminLocale) ?? LANGUAGE_OPTIONS[0],
@@ -11784,20 +11854,42 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     if (selectedSupportLoading) return;
     const viewport = supportMessagesViewportRef.current;
     if (!viewport) return;
-    const shouldScrollToLatest = supportScrollToLatestPendingRef.current;
+    const shouldScrollToInitialTarget = supportScrollToLatestPendingRef.current;
     const shouldScrollForNewMessage =
       !!latestVisibleSupportMessageKey && supportLastVisibleMessageKeyRef.current !== latestVisibleSupportMessageKey;
-    if (!shouldScrollToLatest && !shouldScrollForNewMessage) return;
-    const behavior: ScrollBehavior = shouldScrollToLatest || !supportLastVisibleMessageKeyRef.current ? "auto" : "smooth";
+    if (!shouldScrollToInitialTarget && !shouldScrollForNewMessage) return;
+    const targetMessageKey = shouldScrollToInitialTarget ? selectedSupportFirstUnreadMessageKey : "";
+    const behavior: ScrollBehavior = shouldScrollToInitialTarget || !supportLastVisibleMessageKeyRef.current ? "auto" : "smooth";
     supportScrollToLatestPendingRef.current = false;
     supportLastVisibleMessageKeyRef.current = latestVisibleSupportMessageKey;
-    const timer = window.setTimeout(() => {
-      viewport.scrollTo({ top: viewport.scrollHeight, behavior });
-    }, 0);
+    const rafIds = new Set<number>();
+    const timers = [0, 120].map((delay) =>
+      window.setTimeout(() => {
+        const rafId = window.requestAnimationFrame(() => {
+          if (targetMessageKey) {
+            const target = supportMessageElementByKeyRef.current[targetMessageKey];
+            if (target) {
+              scrollSupportMessageToViewportTop(viewport, target, behavior);
+              return;
+            }
+          }
+          viewport.scrollTo({ top: viewport.scrollHeight, behavior });
+        });
+        rafIds.add(rafId);
+      }, delay),
+    );
     return () => {
-      window.clearTimeout(timer);
+      timers.forEach((timer) => window.clearTimeout(timer));
+      rafIds.forEach((rafId) => window.cancelAnimationFrame(rafId));
     };
-  }, [isPlatformEditor, latestVisibleSupportMessageKey, selectedSupportConversationVisible, selectedSupportLoading, supportInterfaceOpen]);
+  }, [
+    isPlatformEditor,
+    latestVisibleSupportMessageKey,
+    selectedSupportConversationVisible,
+    selectedSupportFirstUnreadMessageKey,
+    selectedSupportLoading,
+    supportInterfaceOpen,
+  ]);
 
   useEffect(() => {
     if (isIosSupportBrowser || !showMobileSupportThread || mobileVisualViewportMetrics.bottom <= 0 || typeof window === "undefined") return;
@@ -11810,6 +11902,48 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       window.clearTimeout(timer);
     };
   }, [isIosSupportBrowser, mobileVisualViewportMetrics.bottom, showMobileSupportThread]);
+  useEffect(() => {
+    if (!isIosSupportBrowser || !showMobileSupportThread || typeof document === "undefined" || typeof window === "undefined") return;
+
+    const timers = new Set<number>();
+    const syncFocusedComposerIntoStableViewport = (delay = 0) => {
+      const timer = window.setTimeout(() => {
+        timers.delete(timer);
+        const activeElement = document.activeElement;
+        const composer = supportComposerRef.current;
+        const viewport = supportMessagesViewportRef.current;
+        if (!(activeElement instanceof HTMLElement) || !composer || !composer.contains(activeElement) || !viewport) return;
+        window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+        viewport.scrollTo({ top: viewport.scrollHeight, behavior: "auto" });
+      }, delay);
+      timers.add(timer);
+    };
+
+    const handleFocusIn = (event: FocusEvent) => {
+      const target = event.target;
+      const composer = supportComposerRef.current;
+      if (!(target instanceof HTMLElement) || !composer || !composer.contains(target)) return;
+      syncFocusedComposerIntoStableViewport(140);
+      syncFocusedComposerIntoStableViewport(320);
+      syncFocusedComposerIntoStableViewport(520);
+    };
+
+    const handleViewportResize = () => {
+      syncFocusedComposerIntoStableViewport(160);
+    };
+
+    document.addEventListener("focusin", handleFocusIn);
+    window.addEventListener("resize", handleViewportResize);
+    window.visualViewport?.addEventListener("resize", handleViewportResize);
+    window.visualViewport?.addEventListener("scroll", handleViewportResize);
+    return () => {
+      timers.forEach((timer) => window.clearTimeout(timer));
+      document.removeEventListener("focusin", handleFocusIn);
+      window.removeEventListener("resize", handleViewportResize);
+      window.visualViewport?.removeEventListener("resize", handleViewportResize);
+      window.visualViewport?.removeEventListener("scroll", handleViewportResize);
+    };
+  }, [isIosSupportBrowser, showMobileSupportThread]);
   useEffect(() => {
     if (
       isPlatformEditor ||
@@ -14369,6 +14503,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               const previousMessage = index > 0 ? visibleSupportMessages[index - 1] : null;
               const showDateDivider =
                 !previousMessage || !isSameSupportCalendarDay(previousMessage.createdAt, message.createdAt);
+              const messageKey = buildVisibleSupportMessageKey(message);
               const messageMeta =
                 message.localStatus === "pending"
                   ? "发送中"
@@ -14376,7 +14511,13 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     ? "发送失败"
                     : formatSupportClockTime(message.createdAt);
               return (
-                <div key={message.id} className="space-y-3">
+                <div
+                  key={messageKey}
+                  ref={(node) => {
+                    supportMessageElementByKeyRef.current[messageKey] = node;
+                  }}
+                  className="space-y-3"
+                >
                   {showDateDivider ? (
                     <div className="flex justify-center">
                       <span className="rounded-full bg-white/90 px-3 py-1 text-[11px] text-slate-500 shadow-sm">
@@ -15352,6 +15493,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 const previousMessage = index > 0 ? visibleSupportMessages[index - 1] : null;
                 const showDateDivider =
                   !previousMessage || !isSameSupportCalendarDay(previousMessage.createdAt, message.createdAt);
+                const messageKey = buildVisibleSupportMessageKey(message);
                 const messageMeta =
                   message.localStatus === "pending"
                     ? "发送中"
@@ -15359,7 +15501,13 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       ? "发送失败"
                       : formatSupportClockTime(message.createdAt);
                 return (
-                  <div key={message.id} className="space-y-3">
+                  <div
+                    key={messageKey}
+                    ref={(node) => {
+                      supportMessageElementByKeyRef.current[messageKey] = node;
+                    }}
+                    className="space-y-3"
+                  >
                     {showDateDivider ? (
                       <div className="flex justify-center">
                         <span className="rounded-full bg-white/90 px-3 py-1 text-[11px] text-slate-500 shadow-sm">
