@@ -1449,45 +1449,44 @@ function createBuiltinRestaurantStoryboardBlock(variant: BuiltinRestaurantVarian
 
   if (variant.key === "tracker-blue") {
     const trackerBlackCardHtml = `
-      <div style="width:100%;height:100%;padding:26px;border-radius:28px;border:1px solid #262626;background:linear-gradient(180deg, #121212 0%, #040404 100%);box-shadow:0 24px 48px rgba(15,23,42,0.18);display:flex;flex-direction:column;justify-content:space-between;">
+      <div style="width:100%;height:100%;padding:24px;border-radius:24px;border:1px solid #262626;background:linear-gradient(180deg, #111111 0%, #050505 100%);box-shadow:0 22px 44px rgba(15,23,42,0.16);display:flex;flex-direction:column;justify-content:space-between;">
         <div style="display:flex;flex-direction:column;gap:18px;">
-          <div style="display:inline-flex;width:max-content;padding:6px 12px;border-radius:999px;border:1px solid rgba(255,255,255,0.18);font-size:11px;font-weight:800;letter-spacing:0.18em;color:rgba(255,255,255,0.78);">QUALITY CHECK</div>
-          <div style="font-size:31px;line-height:1.02;font-weight:900;letter-spacing:-0.04em;color:#ffffff;text-transform:uppercase;">红色步骤正在推进，\n蓝色步骤已经完成</div>
-          <div style="font-size:14px;line-height:1.72;color:rgba(255,255,255,0.72);">左边这张就是提醒卡：先告诉客户当前流程和下一步动作，语气更直接，不做品牌铺垫。</div>
+          <div style="display:inline-flex;width:max-content;padding:5px 11px;border-radius:999px;border:1px solid rgba(255,255,255,0.16);font-size:10px;font-weight:800;letter-spacing:0.18em;color:rgba(255,255,255,0.78);">QUALITY CHECK</div>
+          <div style="font-size:29px;line-height:1.04;font-weight:900;letter-spacing:-0.03em;color:#ffffff;text-transform:uppercase;">Red steps are in progress.\nBlue steps are complete.</div>
+          <div style="font-size:13px;line-height:1.68;color:rgba(255,255,255,0.7);">先把当前流程和下一步动作说清楚，黑卡就是提醒入口，不承载多余信息。</div>
         </div>
         <div style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;">
-          <div style="display:inline-flex;align-items:center;justify-content:center;padding:11px 18px;border-radius:10px;background:#ef233c;color:#ffffff;font-size:13px;font-weight:900;letter-spacing:0.05em;text-transform:uppercase;">立即开始</div>
-          <div style="font-size:12px;color:rgba(255,255,255,0.62);text-transform:uppercase;">外送 / 自提 / 堂食</div>
+          <div style="display:inline-flex;align-items:center;justify-content:center;padding:10px 18px;border-radius:8px;background:#ef233c;color:#ffffff;font-size:12px;font-weight:900;letter-spacing:0.06em;text-transform:uppercase;">Skip Intro</div>
+          <div style="font-size:11px;color:rgba(255,255,255,0.6);text-transform:uppercase;">外送 / 自提 / 堂食</div>
         </div>
       </div>
     `;
     const trackerBlueCardHtml = `
-      <div style="width:100%;height:100%;padding:24px;border-radius:28px;border:1px solid #0b5b98;background:linear-gradient(180deg, #0d78bd 0%, #0a63a7 100%);box-shadow:0 24px 48px rgba(15,23,42,0.12);display:flex;flex-direction:column;justify-content:space-between;position:relative;overflow:hidden;">
-        <div style="position:absolute;inset:20px auto auto 22px;display:flex;gap:16px;flex-wrap:wrap;opacity:0.16;font-size:14px;font-weight:800;color:#ffffff;text-transform:uppercase;">
-          <span>pizza</span><span>slice</span><span>deal</span><span>pick-up</span><span>hot</span><span>cheese</span><span>box</span><span>order</span>
+      <div style="width:100%;height:100%;padding:24px;border-radius:24px;border:1px solid #0b5b98;background:linear-gradient(180deg, #0d78bd 0%, #0a63a7 100%);box-shadow:0 22px 44px rgba(15,23,42,0.12);display:flex;flex-direction:column;justify-content:space-between;position:relative;overflow:hidden;">
+        <div style="position:absolute;inset:16px auto auto 18px;display:flex;gap:14px;flex-wrap:wrap;opacity:0.12;font-size:13px;font-weight:800;color:#ffffff;text-transform:uppercase;">
+          <span>pizza</span><span>slice</span><span>deal</span><span>hot</span><span>cheese</span><span>order</span><span>box</span>
         </div>
-        <div style="position:absolute;inset:auto -36px -44px auto;width:160px;height:160px;border-radius:999px;background:rgba(255,255,255,0.08);"></div>
-        <div style="display:flex;flex-direction:column;gap:16px;padding-top:46px;position:relative;z-index:1;">
-          <div style="font-size:42px;line-height:1.02;font-weight:900;letter-spacing:-0.05em;color:#ffffff;">Blue Flow<br/>Redesign</div>
-          <div style="font-size:15px;line-height:1.68;color:rgba(255,255,255,0.8);">中间蓝卡直接负责解释点单入口、套餐结构和步骤反馈，它要像一个“正在工作的下单系统”，不是普通宣传卡。</div>
-          <div style="display:flex;gap:10px;flex-wrap:wrap;">
-            <span style="display:inline-flex;padding:8px 12px;border-radius:999px;background:#ffffff;color:#0a63a7;font-size:12px;font-weight:800;">选门店</span>
-            <span style="display:inline-flex;padding:8px 12px;border-radius:999px;background:#ffffff;color:#0a63a7;font-size:12px;font-weight:800;">看套餐</span>
-            <span style="display:inline-flex;padding:8px 12px;border-radius:999px;background:#ffffff;color:#0a63a7;font-size:12px;font-weight:800;">追踪订单</span>
+        <div style="position:absolute;inset:auto -30px -36px auto;width:146px;height:146px;border-radius:999px;background:rgba(255,255,255,0.08);"></div>
+        <div style="display:flex;flex-direction:column;gap:14px;padding-top:44px;position:relative;z-index:1;">
+          <div style="font-size:40px;line-height:1.02;font-weight:900;letter-spacing:-0.04em;color:#ffffff;">Domino's<br/>Redesign</div>
+          <div style="font-size:13px;line-height:1.66;color:rgba(255,255,255,0.8);">中间蓝卡像总控面板，解释套餐入口、流程步骤和当前推荐动作。</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <span style="display:inline-flex;padding:8px 12px;border-radius:999px;background:#ffffff;color:#0a63a7;font-size:11px;font-weight:800;">Start order</span>
+            <span style="display:inline-flex;padding:8px 12px;border-radius:999px;background:#ffffff;color:#0a63a7;font-size:11px;font-weight:800;">View deals</span>
+            <span style="display:inline-flex;padding:8px 12px;border-radius:999px;background:#ffffff;color:#0a63a7;font-size:11px;font-weight:800;">Pizza Tracker</span>
           </div>
         </div>
-        <div style="display:flex;gap:10px;flex-wrap:wrap;position:relative;z-index:1;">
-          <span style="display:inline-flex;padding:9px 14px;border-radius:999px;background:#ffffff;color:#0a63a7;font-size:12px;font-weight:800;">点单入口</span>
-          <span style="display:inline-flex;padding:9px 14px;border-radius:999px;background:#ffffff;color:#0a63a7;font-size:12px;font-weight:800;">套餐推荐</span>
-          <span style="display:inline-flex;padding:9px 14px;border-radius:999px;background:#ffffff;color:#0a63a7;font-size:12px;font-weight:800;">Pizza Tracker</span>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;position:relative;z-index:1;">
+          <span style="display:inline-flex;padding:8px 12px;border-radius:999px;border:1px solid rgba(255,255,255,0.26);color:#ffffff;font-size:11px;font-weight:700;">Order ahead</span>
+          <span style="display:inline-flex;padding:8px 12px;border-radius:999px;border:1px solid rgba(255,255,255,0.26);color:#ffffff;font-size:11px;font-weight:700;">Pick up</span>
         </div>
       </div>
     `;
     const trackerPhoneCardHtml = `
-      <div style="width:100%;height:100%;padding:22px;border-radius:28px;border:1px solid #0d5da7;background:linear-gradient(180deg, #3db0ff 0%, #1d82dc 100%);box-shadow:0 24px 48px rgba(15,23,42,0.14);display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden;">
-        <div style="position:absolute;inset:auto auto 18px 20px;width:88px;height:88px;border-radius:999px;background:rgba(255,255,255,0.12);"></div>
-        <div style="position:absolute;inset:18px 20px auto auto;display:inline-flex;padding:6px 10px;border-radius:999px;background:rgba(255,255,255,0.22);font-size:11px;font-weight:800;color:#ffffff;">MOBILE ORDER</div>
-        <div style="width:212px;height:100%;max-height:360px;border-radius:34px;border:6px solid #121826;background:#ffffff;padding:16px 14px;display:flex;flex-direction:column;gap:12px;position:relative;z-index:1;transform:rotate(-8deg);box-shadow:0 18px 36px rgba(15,23,42,0.22);">
+      <div style="width:100%;height:100%;padding:22px;border-radius:24px;border:1px solid #0d5da7;background:linear-gradient(180deg, #3db0ff 0%, #1d82dc 100%);box-shadow:0 22px 44px rgba(15,23,42,0.14);display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden;">
+        <div style="position:absolute;inset:18px 18px auto auto;display:inline-flex;padding:6px 10px;border-radius:999px;background:rgba(255,255,255,0.22);font-size:11px;font-weight:800;color:#ffffff;">MOBILE ORDER</div>
+        <div style="position:absolute;inset:54px 36px auto auto;width:148px;height:250px;border-radius:28px;background:rgba(255,255,255,0.18);transform:rotate(6deg);"></div>
+        <div style="width:198px;height:100%;max-height:332px;border-radius:32px;border:6px solid #121826;background:#ffffff;padding:15px 13px;display:flex;flex-direction:column;gap:11px;position:relative;z-index:1;transform:rotate(-10deg);box-shadow:0 18px 36px rgba(15,23,42,0.22);">
           <div style="font-size:14px;font-weight:800;color:#0f3d73;letter-spacing:0.01em;">Pepperoni Combo</div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
             <span style="display:inline-flex;padding:6px 10px;border-radius:999px;background:#eef5ff;font-size:12px;color:#285a8b;">追踪中</span>
@@ -1502,9 +1501,9 @@ function createBuiltinRestaurantStoryboardBlock(variant: BuiltinRestaurantVarian
               <span style="width:10px;height:10px;border-radius:999px;background:#0e5ca8;display:inline-flex;opacity:0.25;"></span>
             </div>
           </div>
-          <div style="height:26px;border-radius:13px;background:rgba(239,244,255,0.96);padding:0 12px;display:flex;align-items:center;font-size:13px;color:#1f2937;">门店已确认订单</div>
-          <div style="height:26px;border-radius:13px;background:rgba(239,244,255,0.96);padding:0 12px;display:flex;align-items:center;font-size:13px;color:#1f2937;">披萨与配菜制作中</div>
-          <div style="height:26px;border-radius:13px;background:rgba(239,244,255,0.96);padding:0 12px;display:flex;align-items:center;font-size:13px;color:#1f2937;">预计 14 分钟后完成</div>
+          <div style="height:24px;border-radius:12px;background:rgba(239,244,255,0.96);padding:0 11px;display:flex;align-items:center;font-size:12px;color:#1f2937;">门店已确认订单</div>
+          <div style="height:24px;border-radius:12px;background:rgba(239,244,255,0.96);padding:0 11px;display:flex;align-items:center;font-size:12px;color:#1f2937;">披萨与配菜制作中</div>
+          <div style="height:24px;border-radius:12px;background:rgba(239,244,255,0.96);padding:0 11px;display:flex;align-items:center;font-size:12px;color:#1f2937;">预计 14 分钟后完成</div>
           <div style="display:flex;gap:8px;">
             <div style="flex:1;display:inline-flex;align-items:center;justify-content:center;padding:8px 0;border-radius:12px;background:#d9252a;color:#ffffff;font-size:12px;font-weight:800;">重复下单</div>
             <div style="flex:1;display:inline-flex;align-items:center;justify-content:center;padding:8px 0;border-radius:12px;background:#0e5ca8;color:#ffffff;font-size:12px;font-weight:700;">查看订单</div>
@@ -1520,31 +1519,31 @@ function createBuiltinRestaurantStoryboardBlock(variant: BuiltinRestaurantVarian
         bgColorOpacity: 0,
         blockBorderStyle: "none",
         blockWidth: 1080,
-        blockHeight: 430,
+        blockHeight: 388,
         commonTextBoxes: [
           makeBox(
             `tracker-left-${variant.key}`,
             trackerBlackCardHtml,
-            0,
-            10,
-            330,
-            300,
+            18,
+            28,
+            316,
+            284,
           ),
           makeBox(
             `tracker-middle-${variant.key}`,
             trackerBlueCardHtml,
-            370,
-            10,
-            330,
-            300,
+            382,
+            28,
+            316,
+            284,
           ),
           makeBox(
             `tracker-right-${variant.key}`,
             trackerPhoneCardHtml,
-            740,
-            10,
-            340,
-            300,
+            746,
+            28,
+            316,
+            284,
           ),
         ],
       },
