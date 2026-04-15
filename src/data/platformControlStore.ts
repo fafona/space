@@ -2969,11 +2969,19 @@ function normalizePlanTemplates(value: unknown): PlanTemplate[] {
     }
     unique.set(row.id, row);
   }
-  return [...unique.values()].sort((left, right) => {
-    const leftTime = new Date(left.updatedAt).getTime();
-    const rightTime = new Date(right.updatedAt).getTime();
-    return (Number.isFinite(rightTime) ? rightTime : 0) - (Number.isFinite(leftTime) ? leftTime : 0);
-  });
+  return [...unique.values()]
+    .map((item, index) => ({ item, index }))
+    .sort((left, right) => {
+      const leftTime = new Date(left.item.createdAt).getTime();
+      const rightTime = new Date(right.item.createdAt).getTime();
+      const normalizedLeft = Number.isFinite(leftTime) ? leftTime : 0;
+      const normalizedRight = Number.isFinite(rightTime) ? rightTime : 0;
+      if (normalizedRight !== normalizedLeft) {
+        return normalizedRight - normalizedLeft;
+      }
+      return left.index - right.index;
+    })
+    .map(({ item }) => item);
 }
 
 function normalizeHomeLayout(input: unknown, categories: IndustryCategory[]): HomeLayoutConfig {

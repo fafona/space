@@ -206,3 +206,88 @@ test("platform state seeds built-in starter templates within new-merchant permis
     }
   }
 });
+
+test("plan templates are ordered by createdAt descending instead of updatedAt", () => {
+  const globalTarget = globalThis as typeof globalThis & {
+    localStorage?: Storage;
+    window?: Window & typeof globalThis;
+  };
+  const previousWindow = globalTarget.window;
+  const previousLocalStorage = globalTarget.localStorage;
+  const localStorage = createMemoryStorage();
+  const mockWindow = {
+    ...globalThis,
+    dispatchEvent() {
+      return true;
+    },
+  } as unknown as Window & typeof globalThis;
+
+  globalTarget.localStorage = localStorage;
+  globalTarget.window = mockWindow;
+
+  try {
+    const state = loadPlatformState();
+    const current = new Date("2026-04-15T06:00:00.000Z").toISOString();
+    const olderCreatedAt = new Date("2026-04-10T06:00:00.000Z").toISOString();
+    const newerCreatedAt = new Date("2026-04-14T06:00:00.000Z").toISOString();
+
+    const customTemplates = [
+      {
+        id: "template-older",
+        name: "Older template",
+        category: "服务",
+        sourceSiteId: "site:older",
+        sourceSiteName: "Older source",
+        sourceSiteDomain: "older.example",
+        sourceIndustry: "服务",
+        coverImageUrl: "",
+        previewImageUrl: "",
+        planPreviewImageUrls: {},
+        previewVariant: "",
+        blocks: [],
+        createdAt: olderCreatedAt,
+        updatedAt: current,
+      },
+      {
+        id: "template-newer",
+        name: "Newer template",
+        category: "服务",
+        sourceSiteId: "site:newer",
+        sourceSiteName: "Newer source",
+        sourceSiteDomain: "newer.example",
+        sourceIndustry: "服务",
+        coverImageUrl: "",
+        previewImageUrl: "",
+        planPreviewImageUrls: {},
+        previewVariant: "",
+        blocks: [],
+        createdAt: newerCreatedAt,
+        updatedAt: olderCreatedAt,
+      },
+    ];
+
+    savePlatformState({
+      ...state,
+      planTemplates: [...state.planTemplates, ...customTemplates],
+    });
+
+    const reloaded = loadPlatformState();
+    const olderIndex = reloaded.planTemplates.findIndex((item) => item.id === "template-older");
+    const newerIndex = reloaded.planTemplates.findIndex((item) => item.id === "template-newer");
+
+    assert.notEqual(olderIndex, -1);
+    assert.notEqual(newerIndex, -1);
+    assert.ok(newerIndex < olderIndex);
+  } finally {
+    if (typeof previousWindow === "undefined") {
+      delete globalTarget.window;
+    } else {
+      globalTarget.window = previousWindow;
+    }
+    if (typeof previousLocalStorage === "undefined") {
+      delete globalTarget.localStorage;
+    } else {
+      globalTarget.localStorage = previousLocalStorage;
+    }
+  }
+});

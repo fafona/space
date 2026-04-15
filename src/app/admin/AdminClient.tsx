@@ -13367,21 +13367,34 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           blockCount: blocks.length,
         };
   const planTemplateKeyword = planTemplateSearch.trim().toLowerCase();
-  const filteredPlanTemplates = planTemplates.filter((template) => {
-    if (!matchPlanTemplateCategory(template, planTemplateFilter)) return false;
-    if (!planTemplateKeyword) return true;
-    const haystack = [
-      template.name,
-      template.sourceSiteName,
-      template.sourceSiteDomain,
-      template.sourceSiteId,
-      template.category,
-      template.sourceIndustry,
-    ]
-      .join("\n")
-      .toLowerCase();
-    return haystack.includes(planTemplateKeyword);
-  });
+  const filteredPlanTemplates = planTemplates
+    .filter((template) => {
+      if (!matchPlanTemplateCategory(template, planTemplateFilter)) return false;
+      if (!planTemplateKeyword) return true;
+      const haystack = [
+        template.name,
+        template.sourceSiteName,
+        template.sourceSiteDomain,
+        template.sourceSiteId,
+        template.category,
+        template.sourceIndustry,
+      ]
+        .join("\n")
+        .toLowerCase();
+      return haystack.includes(planTemplateKeyword);
+    })
+    .map((template, index) => ({ template, index }))
+    .sort((left, right) => {
+      const leftTime = new Date(left.template.createdAt).getTime();
+      const rightTime = new Date(right.template.createdAt).getTime();
+      const normalizedLeft = Number.isFinite(leftTime) ? leftTime : 0;
+      const normalizedRight = Number.isFinite(rightTime) ? rightTime : 0;
+      if (normalizedRight !== normalizedLeft) {
+        return normalizedRight - normalizedLeft;
+      }
+      return left.index - right.index;
+    })
+    .map(({ template }) => template);
   const planTemplateCards = filteredPlanTemplates.map((template) => ({
     template,
     summary: summarizePlanTemplateBlocks(template.blocks),
