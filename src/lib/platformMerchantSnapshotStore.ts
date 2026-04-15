@@ -1,8 +1,11 @@
 import {
   PLATFORM_MERCHANT_SNAPSHOT_BACKUP_SLUG,
+  PLATFORM_MERCHANT_SNAPSHOT_HISTORY_BACKUP_SLUG,
+  PLATFORM_MERCHANT_SNAPSHOT_HISTORY_SLUG,
   PLATFORM_MERCHANT_SNAPSHOT_SLUG,
   buildPlatformMerchantSnapshotBlocks,
   createPlatformMerchantSnapshotRevision,
+  mergePlatformMerchantConfigHistoryBySiteId,
   normalizePlatformMerchantSnapshotPayload,
   readPlatformMerchantSnapshotFromBlocks,
   type PlatformMerchantSnapshotPayload,
@@ -144,6 +147,26 @@ async function loadStoredPlatformMerchantSnapshotBySlug(
   return payload && payload.snapshot.length > 0 ? payload : null;
 }
 
+function mergeSnapshotPayloadHistory(
+  primary: PlatformMerchantSnapshotPayload | null,
+  ...fallbacks: Array<PlatformMerchantSnapshotPayload | null>
+): PlatformMerchantSnapshotPayload | null {
+  const base = primary ?? fallbacks.find((item) => !!item) ?? null;
+  if (!base) return null;
+  let mergedHistoryBySiteId = base.merchantConfigHistoryBySiteId ?? {};
+  fallbacks.forEach((payload) => {
+    if (!payload) return;
+    mergedHistoryBySiteId = mergePlatformMerchantConfigHistoryBySiteId(
+      mergedHistoryBySiteId,
+      payload.merchantConfigHistoryBySiteId,
+    );
+  });
+  return normalizePlatformMerchantSnapshotPayload({
+    ...base,
+    merchantConfigHistoryBySiteId: mergedHistoryBySiteId,
+  });
+}
+
 export async function loadStoredPlatformMerchantSnapshot(
   supabase: PlatformMerchantSnapshotStoreClient,
 ): Promise<PlatformMerchantSnapshotPayload | null> {
@@ -152,9 +175,18 @@ export async function loadStoredPlatformMerchantSnapshot(
   }
 
   const primaryPayload = await loadStoredPlatformMerchantSnapshotBySlug(supabase, PLATFORM_MERCHANT_SNAPSHOT_SLUG);
-  const normalizedPayload =
-    primaryPayload ??
-    (await loadStoredPlatformMerchantSnapshotBySlug(supabase, PLATFORM_MERCHANT_SNAPSHOT_BACKUP_SLUG));
+  const backupPayload = await loadStoredPlatformMerchantSnapshotBySlug(supabase, PLATFORM_MERCHANT_SNAPSHOT_BACKUP_SLUG);
+  const historyPayload = await loadStoredPlatformMerchantSnapshotBySlug(supabase, PLATFORM_MERCHANT_SNAPSHOT_HISTORY_SLUG);
+  const historyBackupPayload = await loadStoredPlatformMerchantSnapshotBySlug(
+    supabase,
+    PLATFORM_MERCHANT_SNAPSHOT_HISTORY_BACKUP_SLUG,
+  );
+  const normalizedPayload = mergeSnapshotPayloadHistory(
+    primaryPayload,
+    backupPayload,
+    historyPayload,
+    historyBackupPayload,
+  );
   platformMerchantSnapshotCache = {
     expiresAt: Date.now() + PLATFORM_MERCHANT_SNAPSHOT_CACHE_TTL_MS,
     value: normalizedPayload,
@@ -170,10 +202,18 @@ export async function savePlatformMerchantSnapshot(
   } = {},
 ): Promise<PlatformMerchantSnapshotSaveResult> {
   const primaryPayload = await loadStoredPlatformMerchantSnapshotBySlug(supabase, PLATFORM_MERCHANT_SNAPSHOT_SLUG);
-  const backupPayload = primaryPayload
-    ? null
-    : await loadStoredPlatformMerchantSnapshotBySlug(supabase, PLATFORM_MERCHANT_SNAPSHOT_BACKUP_SLUG);
-  const existingPayload = primaryPayload ?? backupPayload;
+  const backupPayload = await loadStoredPlatformMerchantSnapshotBySlug(supabase, PLATFORM_MERCHANT_SNAPSHOT_BACKUP_SLUG);
+  const historyPayload = await loadStoredPlatformMerchantSnapshotBySlug(supabase, PLATFORM_MERCHANT_SNAPSHOT_HISTORY_SLUG);
+  const historyBackupPayload = await loadStoredPlatformMerchantSnapshotBySlug(
+    supabase,
+    PLATFORM_MERCHANT_SNAPSHOT_HISTORY_BACKUP_SLUG,
+  );
+  const existingPayload = mergeSnapshotPayloadHistory(
+    primaryPayload,
+    backupPayload,
+    historyPayload,
+    historyBackupPayload,
+  );
   const expectedRevision = String(options.expectedRevision ?? "").trim();
   const currentRevision = String(existingPayload?.revision ?? "").trim();
   if (options.expectedRevision !== undefined && expectedRevision !== currentRevision) {
@@ -187,6 +227,10 @@ export async function savePlatformMerchantSnapshot(
   const payloadToPersist = normalizePlatformMerchantSnapshotPayload({
     ...payload,
     revision: createPlatformMerchantSnapshotRevision(),
+    merchantConfigHistoryBySiteId: mergePlatformMerchantConfigHistoryBySiteId(
+      payload.merchantConfigHistoryBySiteId,
+      existingPayload?.merchantConfigHistoryBySiteId,
+    ),
   });
   const blocks = buildPlatformMerchantSnapshotBlocks(payloadToPersist);
   const basePayload = {
@@ -234,6 +278,16 @@ export async function savePlatformMerchantSnapshot(
   const backupSave = await persistBySlug(PLATFORM_MERCHANT_SNAPSHOT_BACKUP_SLUG);
   if (backupSave.error && typeof console !== "undefined") {
     console.error("[platform-merchant-snapshot] backup save failed", backupSave.error);
+  }
+
+  const historySave = await persistBySlug(PLATFORM_MERCHANT_SNAPSHOT_HISTORY_SLUG);
+  if (historySave.error && typeof console !== "undefined") {
+    console.error("[platform-merchant-snapshot] history save failed", historySave.error);
+  }
+
+  const historyBackupSave = await persistBySlug(PLATFORM_MERCHANT_SNAPSHOT_HISTORY_BACKUP_SLUG);
+  if (historyBackupSave.error && typeof console !== "undefined") {
+    console.error("[platform-merchant-snapshot] history backup save failed", historyBackupSave.error);
   }
 
   platformMerchantSnapshotCache = {

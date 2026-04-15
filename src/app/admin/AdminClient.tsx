@@ -15995,21 +15995,23 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     {"预约管理"}
                   </button>
                 ) : null}
-                <button
-                  className={supportButtonClassName}
-                  onClick={openSupportDialog}
-                  aria-label={supportHasUnreadMessages ? "会话，有新消息" : "会话"}
-                >
-                  <span className="relative inline-flex items-center">
-                    {"会话"}
-                    {supportHasUnreadMessages ? (
-                      <span
-                        aria-hidden="true"
-                        className="absolute -right-3 -top-1 h-2.5 w-2.5 rounded-full bg-rose-500 ring-2 ring-white"
-                      />
-                    ) : null}
-                  </span>
-                </button>
+                {!isPlatformEditor ? (
+                  <button
+                    className={supportButtonClassName}
+                    onClick={openSupportDialog}
+                    aria-label={supportHasUnreadMessages ? "会话，有新消息" : "会话"}
+                  >
+                    <span className="relative inline-flex items-center">
+                      {"会话"}
+                      {supportHasUnreadMessages ? (
+                        <span
+                          aria-hidden="true"
+                          className="absolute -right-3 -top-1 h-2.5 w-2.5 rounded-full bg-rose-500 ring-2 ring-white"
+                        />
+                      ) : null}
+                    </span>
+                  </button>
+                ) : null}
               </div>
             )}
           </div>

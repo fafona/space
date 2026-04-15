@@ -4956,7 +4956,7 @@ export default function SuperAdminClient() {
 
     const auditedNextState = withAudit(
       {
-        ...nextStatePreview,
+        ...nextStatePreviewRaw,
       },
       "merchant_config_update",
       "site",
@@ -5076,7 +5076,7 @@ export default function SuperAdminClient() {
     }
     const auditedNextState = withAudit(
       {
-        ...nextStatePreview,
+        ...nextStatePreviewRaw,
       },
       "merchant_config_rollback",
       "site",

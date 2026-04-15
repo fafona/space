@@ -19,6 +19,8 @@ import {
 
 export const PLATFORM_MERCHANT_SNAPSHOT_SLUG = "__platform_merchant_snapshot__";
 export const PLATFORM_MERCHANT_SNAPSHOT_BACKUP_SLUG = "__platform_merchant_snapshot_backup__";
+export const PLATFORM_MERCHANT_SNAPSHOT_HISTORY_SLUG = "__platform_merchant_snapshot_history__";
+export const PLATFORM_MERCHANT_SNAPSHOT_HISTORY_BACKUP_SLUG = "__platform_merchant_snapshot_history_backup__";
 const PLATFORM_MERCHANT_SNAPSHOT_BLOCK_ID = "__platform_merchant_snapshot__";
 const PLATFORM_MERCHANT_SNAPSHOT_VERSION = 1;
 
