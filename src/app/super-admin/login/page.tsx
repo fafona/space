@@ -53,6 +53,7 @@ function SuperAdminLoginForm() {
   const [pendingAction, setPendingAction] = useState<"request" | "complete" | "verify_code" | null>(null);
   const [emailPending, setEmailPending] = useState(false);
   const [pendingChallenge, setPendingChallenge] = useState("");
+  const [emailLinkRetryTick, setEmailLinkRetryTick] = useState(0);
   const completedChallengeRef = useRef("");
   const activeChallenge = challengeFromUrl || pendingChallenge;
   const passwordToggleLabels = useMemo(() => getPasswordToggleLabels(locale), [locale]);
@@ -123,13 +124,14 @@ function SuperAdminLoginForm() {
           : nextHref;
       })
       .catch((error) => {
+        completedChallengeRef.current = "";
         setMessage(error instanceof Error ? error.message : "超级后台登录失败，请重新验证。");
         setEmailPending(false);
       })
       .finally(() => {
         setPendingAction(null);
       });
-  }, [challengeFromUrl, nextHref, proofFromUrl, verifiedFromEmail]);
+  }, [challengeFromUrl, emailLinkRetryTick, nextHref, proofFromUrl, verifiedFromEmail]);
 
   async function signIn() {
     if (pendingAction) return;
@@ -326,6 +328,15 @@ function SuperAdminLoginForm() {
         </div>
         {message ? (
           <div className={`text-sm ${emailPending ? "text-amber-700" : "text-rose-600"}`}>{message}</div>
+        ) : null}
+        {verifiedFromEmail && challengeFromUrl && proofFromUrl && pendingAction === null ? (
+          <button
+            type="button"
+            className="w-full rounded border border-slate-200 px-3 py-2 text-sm text-slate-700 hover:bg-gray-50"
+            onClick={() => setEmailLinkRetryTick((current) => current + 1)}
+          >
+            {locale.startsWith("es") ? "Reintentar verificación" : "重试完成验证"}
+          </button>
         ) : null}
         <button
           type="button"

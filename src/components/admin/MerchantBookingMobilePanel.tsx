@@ -610,10 +610,11 @@ export default function MerchantBookingMobilePanel({
       ),
     [filter, historyFilteredRecords, query, selectedStatuses, sortMode],
   );
+  const visibleRecordIdSet = useMemo(() => new Set(filteredRecords.map((record) => record.id)), [filteredRecords]);
   const selectedRecordSet = useMemo(() => new Set(selectedBookingIds), [selectedBookingIds]);
   const selectedRecords = useMemo(
-    () => records.filter((record) => selectedRecordSet.has(record.id)),
-    [records, selectedRecordSet],
+    () => filteredRecords.filter((record) => selectedRecordSet.has(record.id)),
+    [filteredRecords, selectedRecordSet],
   );
 
   const selectableStoreOptions = useMemo(
@@ -913,6 +914,14 @@ export default function MerchantBookingMobilePanel({
         : [...new Set([...current, ...visibleIds])],
     );
   }, [filteredRecords]);
+
+  useEffect(() => {
+    if (!selectionMode) return;
+    setSelectedBookingIds((current) => {
+      const next = current.filter((id) => visibleRecordIdSet.has(id));
+      return next.length === current.length ? current : next;
+    });
+  }, [selectionMode, visibleRecordIdSet]);
 
   const renderStatusActions = (record: MerchantBookingRecord) => {
     if (record.status === "cancelled" || record.status === "no_show") {

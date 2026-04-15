@@ -593,10 +593,11 @@ export default function MerchantBookingManagerDialog({
       ),
     [filter, historyFilteredRecords, query, selectedStatuses, sortMode],
   );
+  const visibleRecordIdSet = useMemo(() => new Set(filteredRecords.map((record) => record.id)), [filteredRecords]);
   const selectedRecordSet = useMemo(() => new Set(selectedBookingIds), [selectedBookingIds]);
   const selectedRecords = useMemo(
-    () => records.filter((record) => selectedRecordSet.has(record.id)),
-    [records, selectedRecordSet],
+    () => filteredRecords.filter((record) => selectedRecordSet.has(record.id)),
+    [filteredRecords, selectedRecordSet],
   );
 
   const selectableStoreOptions = useMemo(
@@ -780,6 +781,14 @@ export default function MerchantBookingManagerDialog({
       visibleIds.every((id) => current.includes(id)) ? current.filter((id) => !visibleIds.includes(id)) : [...new Set([...current, ...visibleIds])],
     );
   };
+
+  useEffect(() => {
+    if (!selectionMode) return;
+    setSelectedBookingIds((current) => {
+      const next = current.filter((id) => visibleRecordIdSet.has(id));
+      return next.length === current.length ? current : next;
+    });
+  }, [selectionMode, visibleRecordIdSet]);
 
   const openDetailDialog = (record: MerchantBookingRecord) => {
     void markBookingTouched(record.id);
