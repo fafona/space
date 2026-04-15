@@ -9,6 +9,7 @@ import {
 } from "@/lib/buttonBlock";
 import { getBackgroundStyle } from "./backgroundStyle";
 import { getBlockBorderClass, getBlockBorderInlineStyle } from "./borderStyle";
+import { resolveMobileFitCardClass, resolveMobileFitSectionClass } from "./mobileFrame";
 import { toRichHtml } from "./richText";
 import { getTypographyStyle } from "./typographyStyle";
 
@@ -50,6 +51,7 @@ function performJump(
 }
 
 export default function ButtonBlock(props: ButtonBlockRuntimeProps) {
+  const mobileFitScreenWidth = props.mobileFitScreenWidth === true;
   const cardStyle = getBackgroundStyle({
     imageUrl: props.bgImageUrl,
     fillMode: props.bgFillMode,
@@ -97,9 +99,9 @@ export default function ButtonBlock(props: ButtonBlockRuntimeProps) {
   const labelHtml = toRichHtml(resolveButtonLabel(props), "按钮");
 
   return (
-    <section className="max-w-6xl mx-auto px-6 py-6" style={offsetStyle}>
+    <section className={resolveMobileFitSectionClass("max-w-6xl mx-auto px-6 py-6", mobileFitScreenWidth)} style={offsetStyle}>
       <div
-        className={`relative overflow-hidden rounded-xl shadow-sm ${borderClass}`}
+        className={resolveMobileFitCardClass(`relative overflow-hidden rounded-xl shadow-sm ${borderClass}`, mobileFitScreenWidth)}
         style={{ ...cardStyle, ...sizeStyle, ...borderInlineStyle }}
       >
         {isClickable ? (

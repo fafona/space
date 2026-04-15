@@ -1,6 +1,7 @@
 import type { BackgroundEditableProps } from "@/data/homeBlocks";
 import { getBackgroundStyle } from "./backgroundStyle";
 import { getBlockBorderClass, getBlockBorderInlineStyle } from "./borderStyle";
+import { resolveMobileFitCardClass, resolveMobileFitSectionClass } from "./mobileFrame";
 import { toRichHtml } from "./richText";
 
 type MusicBlockProps = BackgroundEditableProps & {
@@ -16,6 +17,7 @@ function getPlayerWrapClass(style: MusicBlockProps["musicPlayerStyle"]) {
 }
 
 export default function MusicBlock(props: MusicBlockProps) {
+  const mobileFitScreenWidth = props.mobileFitScreenWidth === true;
   const cardStyle = getBackgroundStyle({
     imageUrl: props.bgImageUrl,
     fillMode: props.bgFillMode,
@@ -61,9 +63,9 @@ export default function MusicBlock(props: MusicBlockProps) {
   const audioUrl = props.audioUrl?.trim() ?? "";
 
   return (
-    <section className="max-w-6xl mx-auto px-6 py-6" style={offsetStyle}>
+    <section className={resolveMobileFitSectionClass("max-w-6xl mx-auto px-6 py-6", mobileFitScreenWidth)} style={offsetStyle}>
       <div
-        className={`bg-white rounded-xl shadow-sm p-6 overflow-hidden ${borderClass}`}
+        className={resolveMobileFitCardClass(`bg-white rounded-xl shadow-sm p-6 overflow-hidden ${borderClass}`, mobileFitScreenWidth)}
         style={{ ...cardStyle, ...sizeStyle, ...borderInlineStyle }}
       >
         <h2

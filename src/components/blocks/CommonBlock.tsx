@@ -2,6 +2,7 @@ import type { BackgroundEditableProps } from "@/data/homeBlocks";
 import { resolveCommonCanvasLayout } from "@/lib/commonCanvasLayout";
 import { getBackgroundStyle } from "./backgroundStyle";
 import { getBlockBorderClass, getBlockBorderInlineStyle } from "./borderStyle";
+import { resolveMobileFitCardClass, resolveMobileFitSectionClass } from "./mobileFrame";
 import { toRichHtml } from "./richText";
 
 type CommonTextBox = {
@@ -50,6 +51,7 @@ function normalizeCommonTextBoxes(props: CommonBlockProps): CommonTextBox[] {
 }
 
 export default function CommonBlock(props: CommonBlockProps) {
+  const mobileFitScreenWidth = props.mobileFitScreenWidth === true;
   const cardStyle = getBackgroundStyle({
     imageUrl: props.bgImageUrl,
     fillMode: props.bgFillMode,
@@ -99,9 +101,9 @@ export default function CommonBlock(props: CommonBlockProps) {
   });
 
   return (
-    <section className="max-w-6xl mx-auto px-6 py-6" style={offsetStyle}>
+    <section className={resolveMobileFitSectionClass("max-w-6xl mx-auto px-6 py-6", mobileFitScreenWidth)} style={offsetStyle}>
       <div
-        className={`bg-white rounded-xl shadow-sm p-6 overflow-hidden ${borderClass}`}
+        className={resolveMobileFitCardClass(`bg-white rounded-xl shadow-sm p-6 overflow-hidden ${borderClass}`, mobileFitScreenWidth)}
         style={{ ...cardStyle, ...sizeStyle, ...borderInlineStyle }}
       >
         <div

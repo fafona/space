@@ -33,6 +33,7 @@ import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/
 import { getMerchantServiceState } from "@/lib/merchantServiceStatus";
 import { getBackgroundStyle } from "./backgroundStyle";
 import { getBlockBorderClass, getBlockBorderInlineStyle } from "./borderStyle";
+import { resolveMobileFitCardClass, resolveMobileFitSectionClass } from "./mobileFrame";
 import { toRichHtml } from "./richText";
 
 type MerchantListBlockProps = BackgroundEditableProps &
@@ -405,6 +406,7 @@ function compareByDefaultRule(
 }
 
 export default function MerchantListBlock(props: MerchantListBlockProps) {
+  const mobileFitScreenWidth = props.mobileFitScreenWidth === true;
   const { locale } = useI18n();
   const [platformState, setPlatformState] = useState<PlatformState>(() => loadPlatformState());
   const [searchFilter, setSearchFilter] = useState<SearchFilter>(EMPTY_SEARCH_FILTER);
@@ -677,9 +679,9 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
     : "inline-flex w-fit max-w-full";
 
   return (
-    <section className="max-w-6xl mx-auto px-6 py-6" style={offsetStyle}>
+    <section className={resolveMobileFitSectionClass("max-w-6xl mx-auto px-6 py-6", mobileFitScreenWidth)} style={offsetStyle}>
       <div
-        className={`rounded-xl bg-white p-6 shadow-sm overflow-hidden ${borderClass}`}
+        className={resolveMobileFitCardClass(`rounded-xl bg-white p-6 shadow-sm overflow-hidden ${borderClass}`, mobileFitScreenWidth)}
         style={{ ...cardStyle, ...sizeStyle, ...borderInlineStyle }}
       >
         <h2

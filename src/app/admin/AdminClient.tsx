@@ -17767,11 +17767,15 @@ type GalleryEditorImage = {
   const [buttonJumpTargetInput, setButtonJumpTargetInput] = useState("");
   const [galleryEditorOpen, setGalleryEditorOpen] = useState(false);
   const [previewNavPageId, setPreviewNavPageId] = useState(currentPageId);
+  const [previewNavMobileMenuOpen, setPreviewNavMobileMenuOpen] = useState(false);
   const [layoutPanelOpen, setLayoutPanelOpen] = useState(false);
   const [customLayoutDialogOpen, setCustomLayoutDialogOpen] = useState(false);
   const [customLayoutDraft, setCustomLayoutDraft] = useState<CustomGalleryLayout>(createDefaultCustomGalleryLayout());
   const [selectedCustomRowIndex, setSelectedCustomRowIndex] = useState(0);
   const [activeGalleryImageId, setActiveGalleryImageId] = useState<string | null>(null);
+  useEffect(() => {
+    setPreviewNavMobileMenuOpen(false);
+  }, [block.id, currentPageId, previewViewport]);
   const [activeContactEntryKeys, setActiveContactEntryKeys] = useState<
     Array<
       | "phone"
@@ -19881,14 +19885,29 @@ type GalleryEditorImage = {
     window.addEventListener("mouseup", onUp);
   }
 
+  const isMobileInlineEditorViewport = previewViewport === "mobile";
+  const mobileFitScreenWidth = isMobileInlineEditorViewport && block.props.mobileFitScreenWidth === true;
   const shellClass =
-    block.type === "hero" ? "bg-white mx-auto" : "max-w-6xl mx-auto px-6 py-6";
+    block.type === "hero"
+      ? `${mobileFitScreenWidth ? "mobile-editor-fit-screen-section " : ""}bg-white mx-auto`
+      : `${mobileFitScreenWidth ? "mobile-editor-fit-screen-section " : ""}max-w-6xl mx-auto px-6 py-6`;
   const borderClass = getBlockBorderClass(block.props.blockBorderStyle);
   const borderInlineStyle = getBlockBorderInlineStyle(block.props.blockBorderStyle, block.props.blockBorderColor);
+  const previewBorderInlineStyle: CSSProperties = mobileFitScreenWidth
+    ? {
+        ...borderInlineStyle,
+        borderLeftWidth: 0,
+        borderRightWidth: 0,
+        borderTopLeftRadius: 0,
+        borderTopRightRadius: 0,
+        borderBottomLeftRadius: 0,
+        borderBottomRightRadius: 0,
+      }
+    : borderInlineStyle;
   const cardClass =
     block.type === "hero"
-      ? "max-w-6xl mx-auto px-6 py-10 pointer-events-auto"
-      : `bg-white rounded-xl shadow-sm p-6 pointer-events-auto ${isSelected ? "overflow-visible" : "overflow-hidden"} ${borderClass}`;
+      ? `${mobileFitScreenWidth ? "mobile-editor-fit-screen-card " : ""}max-w-6xl mx-auto px-6 py-10 pointer-events-auto`
+      : `${mobileFitScreenWidth ? "mobile-editor-fit-screen-card " : ""}bg-white rounded-xl shadow-sm p-6 pointer-events-auto ${isSelected ? "overflow-visible" : "overflow-hidden"} ${borderClass}`;
   const blockBackgroundStyle = getBackgroundStyle({
     imageUrl: block.props.bgImageUrl,
     fillMode: block.props.bgFillMode,
@@ -19898,7 +19917,6 @@ type GalleryEditorImage = {
     imageOpacity: block.props.bgImageOpacity,
     colorOpacity: block.props.bgColorOpacity,
   });
-  const isMobileInlineEditorViewport = previewViewport === "mobile";
   const selectedEditorMinWidth =
     isMobileInlineEditorViewport
       ? "min(400px, calc(100vw - 2rem))"
@@ -19937,7 +19955,7 @@ type GalleryEditorImage = {
     zIndex: isDraggingSource ? 10000 : isEditingBlock ? 9999 : undefined,
   };
   const blockSizeStyle = {
-    width: blockWidth ? `${blockWidth}px` : undefined,
+    width: mobileFitScreenWidth ? "100%" : blockWidth ? `${blockWidth}px` : undefined,
     height: blockHeight ? `${blockHeight}px` : undefined,
   };
   const blockPreviewOverflowStyle: CSSProperties = isEditingBlock
@@ -19951,7 +19969,14 @@ type GalleryEditorImage = {
     ...blockBackgroundStyle,
     ...blockSizeStyle,
     ...blockPreviewOverflowStyle,
-    ...borderInlineStyle,
+    ...previewBorderInlineStyle,
+  };
+  const handleToggleMobileFitScreenWidth = () => {
+    const nextValue = block.props.mobileFitScreenWidth !== true;
+    onChange({
+      mobileFitScreenWidth: nextValue,
+      ...(nextValue ? { blockOffsetX: 0 } : {}),
+    });
   };
   function renderSelectedEditor(content: ReactNode) {
     return (
@@ -19972,16 +19997,20 @@ type GalleryEditorImage = {
   }
   const resizeHandles = isBlockLocked ? null : (
     <>
-      <div
-        className="absolute top-0 left-0 h-full w-2 cursor-ew-resize z-10"
-        title={"拖拽调整宽度"}
-        onMouseDown={(event) => beginResize("left", event)}
-      />
-      <div
-        className="absolute top-0 right-0 h-full w-2 cursor-ew-resize z-10"
-        title={"拖拽调整宽度"}
-        onMouseDown={(event) => beginResize("right", event)}
-      />
+      {!mobileFitScreenWidth ? (
+        <>
+          <div
+            className="absolute top-0 left-0 h-full w-2 cursor-ew-resize z-10"
+            title={"拖拽调整宽度"}
+            onMouseDown={(event) => beginResize("left", event)}
+          />
+          <div
+            className="absolute top-0 right-0 h-full w-2 cursor-ew-resize z-10"
+            title={"拖拽调整宽度"}
+            onMouseDown={(event) => beginResize("right", event)}
+          />
+        </>
+      ) : null}
       <div
         className="absolute top-0 left-0 w-full h-2 cursor-ns-resize z-10"
         title={"拖拽调整高度"}
@@ -21171,6 +21200,9 @@ type GalleryEditorImage = {
           onConfigureJump={openButtonJumpDialog}
           onEditImageSettings={editImageSettings}
           onEditBorderStyle={editBorderSettings}
+          isMobileViewport={previewViewport === "mobile"}
+          mobileFitScreenWidth={block.props.mobileFitScreenWidth === true}
+          onToggleMobileFitScreenWidth={handleToggleMobileFitScreenWidth}
           onDelete={onDelete}
         />
         <div
@@ -21241,6 +21273,9 @@ type GalleryEditorImage = {
           onInsertImage={insertImage}
           onEditImageSettings={editImageSettings}
           onEditBorderStyle={editBorderSettings}
+          isMobileViewport={previewViewport === "mobile"}
+          mobileFitScreenWidth={block.props.mobileFitScreenWidth === true}
+          onToggleMobileFitScreenWidth={handleToggleMobileFitScreenWidth}
           onDelete={onDelete}
         />
         <div
@@ -21674,6 +21709,9 @@ type GalleryEditorImage = {
           onInsertImage={insertImage}
           onEditImageSettings={editImageSettings}
           onEditBorderStyle={editBorderSettings}
+          isMobileViewport={previewViewport === "mobile"}
+          mobileFitScreenWidth={block.props.mobileFitScreenWidth === true}
+          onToggleMobileFitScreenWidth={handleToggleMobileFitScreenWidth}
           onDelete={onDelete}
         />
         <div
@@ -21681,7 +21719,7 @@ type GalleryEditorImage = {
           data-block-visual-boundary
           className={`${cardClass} relative`}
           onClick={onSelect}
-          style={{ ...blockBackgroundStyle, ...blockSizeStyle, ...borderInlineStyle }}
+          style={{ ...blockBackgroundStyle, ...blockSizeStyle, ...previewBorderInlineStyle }}
         >
           {imageDialog}
           {imageSettingsDialog}
@@ -22219,6 +22257,7 @@ type GalleryEditorImage = {
     const navItemActiveLabelStyle = buildTypographyInlineStyle({
       fontColor: navItemActiveTextColor,
     });
+    const mobileHiddenNavMode = previewViewport === "mobile" && block.props.mobileNavDisplayMode === "hidden";
     const navCardClass = `${cardClass.replace("bg-white", "").trim()} relative`;
     const navBlockSizeStyle =
       orientation === "vertical"
@@ -22226,6 +22265,62 @@ type GalleryEditorImage = {
           ? blockSizeStyle
           : { ...blockSizeStyle, width: "max-content", maxWidth: "100%" }
         : blockSizeStyle;
+    const renderNavPreviewButtons = (options?: { closeMenuOnClick?: boolean }) =>
+      localizedNavItems.map((item) => {
+        const isActive = item.pageId === selectedNavPageId;
+        const labelHtml = toRichHtml(item.label, "");
+        const renderedLabelHtml = isActive ? stripInlineTextColorStylesFromHtml(labelHtml) : labelHtml;
+        return (
+          <button
+            key={`${options?.closeMenuOnClick ? "mobile" : "preview"}-${item.id}`}
+            type="button"
+            className={`${navItemButtonClass} ${options?.closeMenuOnClick ? "w-full" : ""} ${getBlockBorderClass(isActive ? navItemActiveBorderStyle : navItemBorderStyle)} ${
+              isActive ? "" : "hover:brightness-[0.98]"
+            }`}
+            style={isActive ? navItemActiveButtonStyle : navItemButtonStyle}
+            onClick={() => {
+              onSelect();
+              setPreviewNavPageId(item.pageId);
+              if (options?.closeMenuOnClick) setPreviewNavMobileMenuOpen(false);
+            }}
+          >
+            <span
+              className="block w-full break-words whitespace-normal"
+              style={isActive ? navItemActiveLabelStyle : undefined}
+              dangerouslySetInnerHTML={{ __html: renderedLabelHtml }}
+            />
+          </button>
+        );
+      });
+    const renderHiddenMobileNavPreview = () => (
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <button
+            type="button"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white/85 text-slate-700 transition hover:bg-slate-50"
+            aria-label={previewNavMobileMenuOpen ? "收起导航" : "展开导航"}
+            onClick={() => {
+              onSelect();
+              setPreviewNavMobileMenuOpen((current) => !current);
+            }}
+          >
+            <span className="inline-flex flex-col items-center justify-center gap-1.5">
+              <span className="block h-0.5 w-4 rounded-full bg-current" />
+              <span className="block h-0.5 w-4 rounded-full bg-current" />
+              <span className="block h-0.5 w-4 rounded-full bg-current" />
+            </span>
+          </button>
+          <div className="min-w-0 flex-1 text-sm font-semibold text-slate-700">
+            <div className="truncate">
+              {block.props.heading
+                ? localizeSystemDefaultText(block.props.heading, locale)
+                : localizedNavItems.find((item) => item.pageId === selectedNavPageId)?.label ?? localizedNavHeading}
+            </div>
+          </div>
+        </div>
+        {previewNavMobileMenuOpen ? <div className="flex flex-col items-stretch gap-2">{renderNavPreviewButtons({ closeMenuOnClick: true })}</div> : null}
+      </div>
+    );
     return (
       <section
         data-block-id={block.id}
@@ -22246,6 +22341,9 @@ type GalleryEditorImage = {
           onInsertImage={insertImage}
           onEditImageSettings={editImageSettings}
           onEditBorderStyle={editBorderSettings}
+          isMobileViewport={previewViewport === "mobile"}
+          mobileFitScreenWidth={block.props.mobileFitScreenWidth === true}
+          onToggleMobileFitScreenWidth={handleToggleMobileFitScreenWidth}
           onDelete={onDelete}
         />
         <div
@@ -22253,7 +22351,7 @@ type GalleryEditorImage = {
           data-block-visual-boundary
           className={`${navCardClass} ${isSelected ? "!overflow-visible" : ""}`}
           onClick={onSelect}
-          style={{ ...blockBackgroundStyle, ...navBlockSizeStyle, ...borderInlineStyle }}
+          style={{ ...blockBackgroundStyle, ...navBlockSizeStyle, ...previewBorderInlineStyle }}
         >
           {imageDialog}
           {imageSettingsDialog}
@@ -22328,6 +22426,32 @@ type GalleryEditorImage = {
                   导航栏对齐
                 </button>
               </div>
+              {previewViewport === "mobile" ? (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm text-gray-600 whitespace-nowrap shrink-0">{"手机导航"}</span>
+                  <button
+                    type="button"
+                    className={`px-3 py-1 rounded border text-sm whitespace-nowrap shrink-0 ${
+                      block.props.mobileNavDisplayMode === "hidden" ? "bg-white hover:bg-gray-50" : "bg-black text-white border-black"
+                    }`}
+                    onClick={() => {
+                      setPreviewNavMobileMenuOpen(false);
+                      onChange({ mobileNavDisplayMode: "inline" });
+                    }}
+                  >
+                    {"常规"}
+                  </button>
+                  <button
+                    type="button"
+                    className={`px-3 py-1 rounded border text-sm whitespace-nowrap shrink-0 ${
+                      block.props.mobileNavDisplayMode === "hidden" ? "bg-black text-white border-black" : "bg-white hover:bg-gray-50"
+                    }`}
+                    onClick={() => onChange({ mobileNavDisplayMode: "hidden" })}
+                  >
+                    {"隐藏式"}
+                  </button>
+                </div>
+              ) : null}
               <div className="space-y-2">
                 {navItems.map((item, idx) => (
                   <div key={item.id} className="grid grid-cols-[56px_1fr] gap-2 items-center">
@@ -22345,67 +22469,19 @@ type GalleryEditorImage = {
                 ))}
               </div>
               <div className={orientation === "vertical" ? "flex flex-col items-start gap-2 pt-1" : "flex flex-wrap gap-2 pt-1"}>
-                {localizedNavItems.map((item) => {
-                  const isActive = item.pageId === selectedNavPageId;
-                  const labelHtml = toRichHtml(item.label, "");
-                  const renderedLabelHtml = isActive ? stripInlineTextColorStylesFromHtml(labelHtml) : labelHtml;
-                  return (
-                    <button
-                      key={`preview-${item.id}`}
-                      type="button"
-                      className={`${navItemButtonClass} ${getBlockBorderClass(isActive ? navItemActiveBorderStyle : navItemBorderStyle)} ${
-                        isActive ? "" : "hover:brightness-[0.98]"
-                      }`}
-                      style={isActive ? navItemActiveButtonStyle : navItemButtonStyle}
-                      onClick={() => {
-                        onSelect();
-                        setPreviewNavPageId(item.pageId);
-                      }}
-                    >
-                      <span
-                        className="block w-full break-words whitespace-normal"
-                        style={isActive ? navItemActiveLabelStyle : undefined}
-                        dangerouslySetInnerHTML={{ __html: renderedLabelHtml }}
-                      />
-                    </button>
-                  );
-                })}
+                {mobileHiddenNavMode ? renderHiddenMobileNavPreview() : renderNavPreviewButtons()}
               </div>
             </div>
           ) : (
             <div className="space-y-2">
-              {block.props.heading ? (
+              {!mobileHiddenNavMode && block.props.heading ? (
                 <div
                   className="text-sm font-semibold whitespace-pre-wrap break-words"
                   dangerouslySetInnerHTML={{ __html: toRichHtml(block.props.heading, localizedNavHeading) }}
                 />
               ) : null}
               <div className={orientation === "vertical" ? "flex flex-col items-start gap-2" : "flex flex-wrap gap-2"}>
-                {localizedNavItems.map((item) => {
-                  const isActive = item.pageId === selectedNavPageId;
-                  const labelHtml = toRichHtml(item.label, "");
-                  const renderedLabelHtml = isActive ? stripInlineTextColorStylesFromHtml(labelHtml) : labelHtml;
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      className={`${navItemButtonClass} ${getBlockBorderClass(isActive ? navItemActiveBorderStyle : navItemBorderStyle)} ${
-                        isActive ? "" : "hover:brightness-[0.98]"
-                      }`}
-                      style={isActive ? navItemActiveButtonStyle : navItemButtonStyle}
-                      onClick={() => {
-                        onSelect();
-                        setPreviewNavPageId(item.pageId);
-                      }}
-                    >
-                      <span
-                        className="block w-full break-words whitespace-normal"
-                        style={isActive ? navItemActiveLabelStyle : undefined}
-                        dangerouslySetInnerHTML={{ __html: renderedLabelHtml }}
-                      />
-                    </button>
-                  );
-                })}
+                {mobileHiddenNavMode ? renderHiddenMobileNavPreview() : renderNavPreviewButtons()}
               </div>
             </div>
           )}
@@ -22447,6 +22523,9 @@ type GalleryEditorImage = {
           onInsertImage={insertImage}
           onEditImageSettings={editImageSettings}
           onEditBorderStyle={editBorderSettings}
+          isMobileViewport={previewViewport === "mobile"}
+          mobileFitScreenWidth={block.props.mobileFitScreenWidth === true}
+          onToggleMobileFitScreenWidth={handleToggleMobileFitScreenWidth}
           onDelete={onDelete}
         />
         <div
@@ -22454,7 +22533,7 @@ type GalleryEditorImage = {
           data-block-visual-boundary
           className={`${cardClass} relative`}
           onClick={onSelect}
-          style={{ ...blockBackgroundStyle, ...blockSizeStyle, ...borderInlineStyle }}
+          style={{ ...blockBackgroundStyle, ...blockSizeStyle, ...previewBorderInlineStyle }}
         >
           {imageDialog}
           {imageSettingsDialog}
@@ -22614,6 +22693,9 @@ type GalleryEditorImage = {
           onInsertImage={insertImage}
           onEditImageSettings={editImageSettings}
           onEditBorderStyle={editBorderSettings}
+          isMobileViewport={previewViewport === "mobile"}
+          mobileFitScreenWidth={block.props.mobileFitScreenWidth === true}
+          onToggleMobileFitScreenWidth={handleToggleMobileFitScreenWidth}
           onDelete={onDelete}
         />
         <div
@@ -22621,7 +22703,7 @@ type GalleryEditorImage = {
           data-block-visual-boundary
           className={`${cardClass} relative`}
           onClick={onSelect}
-          style={{ ...blockBackgroundStyle, ...blockSizeStyle, ...borderInlineStyle }}
+          style={{ ...blockBackgroundStyle, ...blockSizeStyle, ...previewBorderInlineStyle }}
         >
           {imageDialog}
           {imageSettingsDialog}
@@ -22724,7 +22806,7 @@ type GalleryEditorImage = {
         data-jump-target={publicBlockId}
         data-block-public-id={publicBlockId}
         className={`${shellClass} pointer-events-none relative rounded-xl overflow-visible ${borderClass}`}
-        style={{ ...blockBackgroundStyle, ...blockSizeStyle, ...offsetStyle, ...borderInlineStyle }}
+        style={{ ...blockBackgroundStyle, ...blockSizeStyle, ...offsetStyle, ...previewBorderInlineStyle }}
       >
         <EditorBlockHeader
           blockId={publicBlockId}
@@ -22738,6 +22820,9 @@ type GalleryEditorImage = {
           onInsertImage={insertImage}
           onEditImageSettings={editImageSettings}
           onEditBorderStyle={editBorderSettings}
+          isMobileViewport={previewViewport === "mobile"}
+          mobileFitScreenWidth={block.props.mobileFitScreenWidth === true}
+          onToggleMobileFitScreenWidth={handleToggleMobileFitScreenWidth}
           onDelete={onDelete}
         />
         <div className={cardClass} onClick={onSelect}>
@@ -22805,6 +22890,9 @@ type GalleryEditorImage = {
           onInsertImage={insertImage}
           onEditImageSettings={editImageSettings}
           onEditBorderStyle={editBorderSettings}
+          isMobileViewport={previewViewport === "mobile"}
+          mobileFitScreenWidth={block.props.mobileFitScreenWidth === true}
+          onToggleMobileFitScreenWidth={handleToggleMobileFitScreenWidth}
           onDelete={onDelete}
         />
         <div
@@ -22812,7 +22900,7 @@ type GalleryEditorImage = {
           data-block-visual-boundary
           className={`${cardClass} relative`}
           onClick={onSelect}
-          style={{ ...blockBackgroundStyle, ...blockSizeStyle, ...borderInlineStyle }}
+          style={{ ...blockBackgroundStyle, ...blockSizeStyle, ...previewBorderInlineStyle }}
         >
           {imageDialog}
           {imageSettingsDialog}
@@ -22882,6 +22970,9 @@ type GalleryEditorImage = {
           onInsertImage={insertImage}
           onEditImageSettings={editImageSettings}
           onEditBorderStyle={editBorderSettings}
+          isMobileViewport={previewViewport === "mobile"}
+          mobileFitScreenWidth={block.props.mobileFitScreenWidth === true}
+          onToggleMobileFitScreenWidth={handleToggleMobileFitScreenWidth}
           onDelete={onDelete}
         />
         <div
@@ -22889,7 +22980,7 @@ type GalleryEditorImage = {
           data-block-visual-boundary
           className={`${cardClass} relative`}
           onClick={onSelect}
-          style={{ ...blockBackgroundStyle, ...blockSizeStyle, ...borderInlineStyle }}
+          style={{ ...blockBackgroundStyle, ...blockSizeStyle, ...previewBorderInlineStyle }}
         >
           {imageDialog}
           {imageSettingsDialog}
@@ -23939,6 +24030,9 @@ type GalleryEditorImage = {
           onInsertImage={insertImage}
           onEditImageSettings={editImageSettings}
           onEditBorderStyle={editBorderSettings}
+          isMobileViewport={previewViewport === "mobile"}
+          mobileFitScreenWidth={block.props.mobileFitScreenWidth === true}
+          onToggleMobileFitScreenWidth={handleToggleMobileFitScreenWidth}
           onDelete={onDelete}
         />
         <div
@@ -25609,6 +25703,9 @@ type GalleryEditorImage = {
           onInsertImage={insertImage}
           onEditImageSettings={editImageSettings}
           onEditBorderStyle={editBorderSettings}
+          isMobileViewport={previewViewport === "mobile"}
+          mobileFitScreenWidth={block.props.mobileFitScreenWidth === true}
+          onToggleMobileFitScreenWidth={handleToggleMobileFitScreenWidth}
           onDelete={onDelete}
         />
         <div
@@ -26558,6 +26655,9 @@ type GalleryEditorImage = {
           onInsertImage={insertImage}
           onEditImageSettings={editImageSettings}
           onEditBorderStyle={editBorderSettings}
+          isMobileViewport={previewViewport === "mobile"}
+          mobileFitScreenWidth={block.props.mobileFitScreenWidth === true}
+          onToggleMobileFitScreenWidth={handleToggleMobileFitScreenWidth}
           onDelete={onDelete}
         />
         <div
@@ -27007,6 +27107,9 @@ type GalleryEditorImage = {
           onInsertImage={insertImage}
           onEditImageSettings={editImageSettings}
           onEditBorderStyle={editBorderSettings}
+          isMobileViewport={previewViewport === "mobile"}
+          mobileFitScreenWidth={block.props.mobileFitScreenWidth === true}
+          onToggleMobileFitScreenWidth={handleToggleMobileFitScreenWidth}
           onDelete={onDelete}
         />
         <div
@@ -27676,6 +27779,9 @@ type GalleryEditorImage = {
           onInsertImage={insertImage}
           onEditImageSettings={editImageSettings}
           onEditBorderStyle={editBorderSettings}
+          isMobileViewport={previewViewport === "mobile"}
+          mobileFitScreenWidth={block.props.mobileFitScreenWidth === true}
+          onToggleMobileFitScreenWidth={handleToggleMobileFitScreenWidth}
           onDelete={onDelete}
         />
         <div
@@ -27683,7 +27789,7 @@ type GalleryEditorImage = {
           data-block-visual-boundary
           className={`${cardClass} relative`}
           onClick={onSelect}
-          style={{ ...blockBackgroundStyle, ...blockSizeStyle, ...borderInlineStyle }}
+          style={{ ...blockBackgroundStyle, ...blockSizeStyle, ...previewBorderInlineStyle }}
         >
           {imageDialog}
           {imageSettingsDialog}
@@ -28535,6 +28641,9 @@ function EditorBlockHeader({
   onConfigureJump,
   onEditImageSettings,
   onEditBorderStyle,
+  isMobileViewport,
+  mobileFitScreenWidth,
+  onToggleMobileFitScreenWidth,
   onDelete,
   toolbarAnchorClassName,
   toolbarAnchorStyle,
@@ -28551,6 +28660,9 @@ function EditorBlockHeader({
   onConfigureJump?: (() => void) | undefined;
   onEditImageSettings: () => void;
   onEditBorderStyle: () => void;
+  isMobileViewport?: boolean;
+  mobileFitScreenWidth?: boolean;
+  onToggleMobileFitScreenWidth?: (() => void) | undefined;
   onDelete: () => void;
   toolbarAnchorClassName?: string;
   toolbarAnchorStyle?: React.CSSProperties;
@@ -28702,6 +28814,19 @@ function EditorBlockHeader({
             >
               {"边框样式"}
             </button>
+            {isMobileViewport && onToggleMobileFitScreenWidth ? (
+              <button
+                className={`px-2 py-1 text-xs rounded border shrink-0 whitespace-nowrap ${
+                  mobileFitScreenWidth ? "border-black bg-black text-white" : "bg-white hover:bg-gray-50"
+                }`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleMobileFitScreenWidth();
+                }}
+              >
+                {mobileFitScreenWidth ? "取消适应屏宽" : "适应屏宽"}
+              </button>
+            ) : null}
             <button
               className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50 shrink-0 whitespace-nowrap"
               onClick={(e) => {

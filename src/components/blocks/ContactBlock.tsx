@@ -9,6 +9,7 @@ import { useI18n } from "@/components/I18nProvider";
 import { resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
 import { getBackgroundStyle } from "./backgroundStyle";
 import { getBlockBorderClass, getBlockBorderInlineStyle } from "./borderStyle";
+import { resolveMobileFitCardClass, resolveMobileFitSectionClass } from "./mobileFrame";
 import { toRichHtml } from "./richText";
 
 type ContactLayoutKey =
@@ -243,6 +244,7 @@ function buildContactTypographyStyle(props: TypographyEditableProps): CSSPropert
 }
 
 export default function ContactBlock(props: ContactBlockProps) {
+  const mobileFitScreenWidth = props.mobileFitScreenWidth === true;
   const { locale } = useI18n();
   const [showMap, setShowMap] = useState(false);
   const [activeAddressIndex, setActiveAddressIndex] = useState(0);
@@ -555,9 +557,9 @@ export default function ContactBlock(props: ContactBlockProps) {
   };
 
   return (
-    <section className="max-w-6xl mx-auto px-6 py-6" style={offsetStyle}>
+    <section className={resolveMobileFitSectionClass("max-w-6xl mx-auto px-6 py-6", mobileFitScreenWidth)} style={offsetStyle}>
       <div
-        className={`bg-white rounded-xl shadow-sm p-6 overflow-hidden ${borderClass}`}
+        className={resolveMobileFitCardClass(`bg-white rounded-xl shadow-sm p-6 overflow-hidden ${borderClass}`, mobileFitScreenWidth)}
         style={{ ...cardStyle, ...sizeStyle, ...borderInlineStyle }}
       >
         <h2

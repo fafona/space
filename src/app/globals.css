@@ -80,6 +80,46 @@ html[data-i18n-pending="1"] body {
   .mobile-safe-input-text {
     font-size: max(16px, var(--mobile-safe-font-size, 16px)) !important;
   }
+
+  .mobile-fit-screen-section {
+    width: 100vw !important;
+    max-width: 100vw !important;
+    margin-left: calc(50% - 50vw) !important;
+    margin-right: calc(50% - 50vw) !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+  }
+
+  .mobile-fit-screen-card {
+    width: 100% !important;
+    max-width: 100% !important;
+    border-top-left-radius: 0 !important;
+    border-top-right-radius: 0 !important;
+    border-bottom-left-radius: 0 !important;
+    border-bottom-right-radius: 0 !important;
+    border-left-width: 0 !important;
+    border-right-width: 0 !important;
+  }
+}
+
+.mobile-editor-fit-screen-section {
+  width: calc(100% + 3rem);
+  max-width: calc(100% + 3rem);
+  margin-left: -1.5rem;
+  margin-right: -1.5rem;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+}
+
+.mobile-editor-fit-screen-card {
+  width: 100% !important;
+  max-width: 100% !important;
+  border-top-left-radius: 0 !important;
+  border-top-right-radius: 0 !important;
+  border-bottom-left-radius: 0 !important;
+  border-bottom-right-radius: 0 !important;
+  border-left-width: 0 !important;
+  border-right-width: 0 !important;
 }
 
 .support-mobile-shell.support-mobile-dark,

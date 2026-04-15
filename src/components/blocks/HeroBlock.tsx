@@ -1,6 +1,7 @@
 import type { BackgroundEditableProps } from "@/data/homeBlocks";
 import { getBackgroundStyle } from "./backgroundStyle";
 import { getBlockBorderClass, getBlockBorderInlineStyle } from "./borderStyle";
+import { resolveMobileFitCardClass, resolveMobileFitSectionClass } from "./mobileFrame";
 import { toRichHtml } from "./richText";
 
 type HeroBlockProps = BackgroundEditableProps & {
@@ -9,6 +10,7 @@ type HeroBlockProps = BackgroundEditableProps & {
 };
 
 export default function HeroBlock(props: HeroBlockProps) {
+  const mobileFitScreenWidth = props.mobileFitScreenWidth === true;
   const sectionStyle = getBackgroundStyle({
     imageUrl: props.bgImageUrl,
     fillMode: props.bgFillMode,
@@ -53,10 +55,13 @@ export default function HeroBlock(props: HeroBlockProps) {
 
   return (
     <section
-      className={`bg-white mx-auto rounded-xl overflow-hidden ${borderClass}`}
+      className={resolveMobileFitCardClass(
+        resolveMobileFitSectionClass(`bg-white mx-auto rounded-xl overflow-hidden ${borderClass}`, mobileFitScreenWidth),
+        mobileFitScreenWidth,
+      )}
       style={{ ...sectionStyle, ...sizeStyle, ...offsetStyle, ...borderInlineStyle }}
     >
-      <div className="max-w-6xl mx-auto px-6 py-10">
+      <div className={`max-w-6xl mx-auto py-10 ${mobileFitScreenWidth ? "px-4 md:px-6" : "px-6"}`}>
         <div className="p-6">
           <h1 className="text-3xl font-bold whitespace-pre-wrap break-words" dangerouslySetInnerHTML={{ __html: toRichHtml(props.title, "我的商家主页") }} />
           <div

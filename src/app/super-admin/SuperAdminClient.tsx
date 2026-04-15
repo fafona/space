@@ -97,6 +97,12 @@ import {
   type PlatformMerchantConfigBackupEntry,
   type PlatformMerchantConfigArchiveSource,
 } from "@/lib/platformMerchantConfigArchive";
+import {
+  getDaysBetweenDateKeys,
+  getMadridDateKey,
+  type PlatformAdminDataBackupListItem,
+  type PlatformAdminDataBackupRestoreScope,
+} from "@/lib/platformAdminDataBackup";
 import ChatBusinessCardDialog from "@/components/admin/ChatBusinessCardDialog";
 import SupportMessageContent, { type SupportMessageImageActivatePayload } from "@/components/support/SupportMessageContent";
 import SupportMessageImagePreviewOverlay from "@/components/support/SupportMessageImagePreviewOverlay";
@@ -250,6 +256,42 @@ function formatSupportThreadDateLabel(value: string | null | undefined) {
     month: "long",
     day: "numeric",
   });
+}
+
+function normalizeSuperAdminLogKeyword(value: string) {
+  return value.trim().toLocaleLowerCase();
+}
+
+function buildSuperAdminAuditSearchText(item: {
+  id: string;
+  at: string;
+  operator: string;
+  action: string;
+  targetType: string;
+  targetId: string;
+  detail: string;
+}) {
+  return [item.id, item.at, item.operator, item.action, item.targetType, item.targetId, item.detail]
+    .join(" ")
+    .toLocaleLowerCase();
+}
+
+function buildSuperAdminAlertSearchText(item: {
+  id: string;
+  level: string;
+  title: string;
+  message: string;
+  createdAt: string;
+  resolvedAt: string | null;
+  resolvedBy: string | null;
+}) {
+  return [item.id, item.level, item.title, item.message, item.createdAt, item.resolvedAt ?? "", item.resolvedBy ?? ""]
+    .join(" ")
+    .toLocaleLowerCase();
+}
+
+function formatPlatformAdminBackupSourceLabel(source: "manual" | "auto") {
+  return source === "auto" ? "自动备份" : "手动备份";
 }
 
 function isSameSupportCalendarDay(left: string | null | undefined, right: string | null | undefined) {
@@ -1699,6 +1741,12 @@ export default function SuperAdminClient() {
   const [merchantConfigAuditEntries, setMerchantConfigAuditEntries] = useState<PlatformMerchantConfigAuditEntry[]>([]);
   const [merchantConfigBackupEntries, setMerchantConfigBackupEntries] = useState<PlatformMerchantConfigBackupEntry[]>([]);
   const [merchantConfigRestoreSubmittingId, setMerchantConfigRestoreSubmittingId] = useState("");
+  const [dataBackups, setDataBackups] = useState<PlatformAdminDataBackupListItem[]>([]);
+  const [dataBackupsLoading, setDataBackupsLoading] = useState(false);
+  const [dataBackupsError, setDataBackupsError] = useState("");
+  const [dataBackupCreating, setDataBackupCreating] = useState(false);
+  const [dataBackupRestoringKey, setDataBackupRestoringKey] = useState("");
+  const [dataBackupAutoChecked, setDataBackupAutoChecked] = useState(false);
   const [backendMerchantAccounts, setBackendMerchantAccounts] = useState<BackendMerchantAccount[]>([]);
   const [backendMerchantAccountsLoading, setBackendMerchantAccountsLoading] = useState(false);
   const [backendMerchantAccountsError, setBackendMerchantAccountsError] = useState("");
@@ -1813,6 +1861,7 @@ export default function SuperAdminClient() {
   const [trustedDeviceLimitSaving, setTrustedDeviceLimitSaving] = useState(false);
   const [currentSuperAdminDeviceId, setCurrentSuperAdminDeviceId] = useState("");
   const [currentSuperAdminDeviceLabel, setCurrentSuperAdminDeviceLabel] = useState("");
+  const [logKeyword, setLogKeyword] = useState("");
   const checklistStorageKeyRef = useRef(releaseChecklistStorageKeyForToday());
   const platformSnapshotRevisionRef = useRef("");
   const [releaseChecklistState, setReleaseChecklistState] = useState<Record<string, boolean>>(() =>
@@ -2579,6 +2628,31 @@ export default function SuperAdminClient() {
     const start = (clampedMerchantTablePage - 1) * MERCHANT_USER_PAGE_SIZE_DEFAULT;
     return displayMerchantRows.slice(start, start + MERCHANT_USER_PAGE_SIZE_DEFAULT);
   }, [clampedMerchantTablePage, displayMerchantRows]);
+  const normalizedLogKeyword = useMemo(() => normalizeSuperAdminLogKeyword(logKeyword), [logKeyword]);
+  const filteredAuditRows = useMemo(() => {
+    if (!normalizedLogKeyword) return state.audits.slice(0, 20);
+    return state.audits.filter((item) => buildSuperAdminAuditSearchText(item).includes(normalizedLogKeyword));
+  }, [normalizedLogKeyword, state.audits]);
+  const filteredAlertRows = useMemo(() => {
+    if (!normalizedLogKeyword) return state.alerts.slice(0, 12);
+    return state.alerts.filter((item) => buildSuperAdminAlertSearchText(item).includes(normalizedLogKeyword));
+  }, [normalizedLogKeyword, state.alerts]);
+  const currentMadridDateKey = useMemo(() => getMadridDateKey(new Date(nowMs)), [nowMs]);
+  const latestAutoDataBackup = useMemo(
+    () => dataBackups.find((item) => item.source === "auto") ?? null,
+    [dataBackups],
+  );
+  const nextAutoBackupHint = useMemo(() => {
+    if (!latestAutoDataBackup) {
+      return "尚未生成自动备份，下一次进入后台时会补当前周期。";
+    }
+    const latestDateKey = latestAutoDataBackup.scheduleDateKey ?? getMadridDateKey(new Date(latestAutoDataBackup.at));
+    const passedDays = getDaysBetweenDateKeys(latestDateKey, currentMadridDateKey);
+    if (!Number.isFinite(passedDays) || passedDays >= 3) {
+      return "当前已到自动备份周期，系统会在本次后台会话中自动补备份。";
+    }
+    return `距离下一次自动备份还差 ${Math.max(0, 3 - passedDays)} 天（西班牙时间 0 点执行）。`;
+  }, [currentMadridDateKey, latestAutoDataBackup]);
   const selectedMerchantRow =
     merchantRows.find((item) => item.site.id === merchantDetailSiteId) ?? filteredMerchantRows[0] ?? merchantRows[0] ?? null;
   useEffect(() => {
@@ -3663,6 +3737,10 @@ export default function SuperAdminClient() {
     (init: RequestInit) => requestSuperAdminWithSessionRecovery("/api/super-admin/support-messages", init),
     [requestSuperAdminWithSessionRecovery],
   );
+  const requestDataBackupsWithSessionRecovery = useCallback(
+    (init: RequestInit) => requestSuperAdminWithSessionRecovery("/api/super-admin/data-backups", init),
+    [requestSuperAdminWithSessionRecovery],
+  );
   useEffect(() => {
     if (!authed || !hydrated || activeMenu !== "support_messages") return;
     const merchantId = selectedSupportMerchantId.trim();
@@ -3774,6 +3852,163 @@ export default function SuperAdminClient() {
     }
   }
   loadSupportThreadsActionRef.current = loadSupportThreadsAction;
+
+  const loadDataBackupsAction = useCallback(async (options?: { silent?: boolean }) => {
+    const silent = options?.silent === true;
+    if (!silent) {
+      setDataBackupsLoading(true);
+    }
+    setDataBackupsError("");
+    try {
+      const response = await requestDataBackupsWithSessionRecovery({
+        method: "GET",
+        cache: "no-store",
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | {
+            backups?: PlatformAdminDataBackupListItem[];
+            error?: string;
+          }
+        | null;
+      if (!response.ok) {
+        setDataBackupsError(payload?.error === "unauthorized" ? "超级后台登录已失效，请重新登录" : "备份记录加载失败，请稍后重试");
+        return;
+      }
+      setDataBackups(Array.isArray(payload?.backups) ? payload.backups : []);
+      setDataBackupsError("");
+    } catch {
+      setDataBackupsError("备份记录加载失败，请稍后重试");
+    } finally {
+      if (!silent) {
+        setDataBackupsLoading(false);
+      }
+    }
+  }, [requestDataBackupsWithSessionRecovery]);
+
+  const createDataBackupAction = useCallback(async (source: "manual" | "auto") => {
+    if (!authed || !hydrated) return false;
+    if (source === "manual") {
+      setDataBackupCreating(true);
+    }
+    setDataBackupsError("");
+    try {
+      const response = await requestDataBackupsWithSessionRecovery({
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          source,
+          operator: operatorName,
+          summary: source === "auto" ? "超级后台自动备份" : "超级后台手动备份",
+          platformState: state,
+          merchantAccounts: backendMerchantAccounts,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | {
+            backups?: PlatformAdminDataBackupListItem[];
+            created?: boolean;
+            error?: string;
+            message?: string;
+          }
+        | null;
+      if (!response.ok) {
+        setDataBackupsError(payload?.message || payload?.error || "备份创建失败，请稍后重试");
+        return false;
+      }
+      setDataBackups(Array.isArray(payload?.backups) ? payload.backups : []);
+      setDataBackupsError("");
+      if (source === "manual") {
+        setTip(payload?.created === false ? "当前还没到自动备份周期，无需重复创建自动备份" : "超级后台备份已创建");
+      }
+      return payload?.created !== false;
+    } catch {
+      setDataBackupsError("备份创建失败，请稍后重试");
+      return false;
+    } finally {
+      if (source === "manual") {
+        setDataBackupCreating(false);
+      }
+    }
+  }, [authed, backendMerchantAccounts, hydrated, operatorName, requestDataBackupsWithSessionRecovery, state]);
+
+  async function restoreDataBackupAction(backupId: string, scope: PlatformAdminDataBackupRestoreScope) {
+    if (!authed || !hydrated) return;
+    const target = dataBackups.find((item) => item.id === backupId);
+    if (!target) {
+      setDataBackupsError("备份记录不存在，恢复失败");
+      return;
+    }
+    const scopeLabel = scope === "user_manage" ? "用户管理" : "信息处理";
+    const confirmed = window.confirm(`确认恢复“${target.summary || "备份"}”中的${scopeLabel}数据吗？当前对应菜单的数据会被覆盖。`);
+    if (!confirmed) return;
+
+    setDataBackupRestoringKey(`${backupId}:${scope}`);
+    setDataBackupsError("");
+    try {
+      const response = await requestDataBackupsWithSessionRecovery({
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          backupId,
+          scope,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | {
+            ok?: boolean;
+            error?: string;
+            message?: string;
+            platformState?: PlatformState;
+            merchantAccounts?: BackendMerchantAccount[];
+            threads?: PlatformSupportThread[];
+          }
+        | null;
+      if (!response.ok) {
+        setDataBackupsError(payload?.message || payload?.error || "备份恢复失败，请稍后重试");
+        return;
+      }
+
+      if (scope === "user_manage" && payload?.platformState) {
+        const restoredState = payload.platformState;
+        savePlatformState(restoredState);
+        setState(restoredState);
+        setPortalDraft(buildPortalDraft(restoredState));
+        if (Array.isArray(payload?.merchantAccounts)) {
+          setBackendMerchantAccounts(payload.merchantAccounts);
+        }
+        if (merchantPanelOpen && userPanelMode === "backup" && selectedMerchantRow?.hasSite) {
+          void loadMerchantConfigArchiveAction(String(selectedMerchantRow.site.id ?? ""), { silent: true }).catch(() => {});
+        }
+      }
+
+      if (scope === "support_messages" && Array.isArray(payload?.threads)) {
+        applySupportThreadsState(payload.threads);
+      }
+
+      setTip(`${scopeLabel}数据已恢复`);
+    } catch {
+      setDataBackupsError("备份恢复失败，请稍后重试");
+    } finally {
+      setDataBackupRestoringKey("");
+    }
+  }
+
+  useEffect(() => {
+    if (!hydrated || !authed) return;
+    void loadDataBackupsAction({ silent: true });
+  }, [authed, hydrated, loadDataBackupsAction]);
+
+  useEffect(() => {
+    if (!hydrated || !authed) return;
+    if (backendMerchantAccountsLoading) return;
+    if (dataBackupAutoChecked) return;
+    setDataBackupAutoChecked(true);
+    void createDataBackupAction("auto");
+  }, [authed, backendMerchantAccountsLoading, createDataBackupAction, dataBackupAutoChecked, hydrated]);
 
   async function sendSupportReplyAction() {
     if (!selectedSupportThread || supportSending) return;
@@ -8687,6 +8922,96 @@ export default function SuperAdminClient() {
                   <div className="rounded-lg border bg-white p-4 text-sm">30天发布成功率：{publishSuccessRate}</div>
                 </div>
                 <div className="rounded-lg border bg-white p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h2 className="font-semibold">数据备份</h2>
+                      <div className="mt-1 text-xs text-slate-500">
+                        备份范围：用户管理菜单 + 信息处理菜单。自动备份按西班牙时间每隔 3 天的 0 点补一档，最多保留最近 8 次。
+                      </div>
+                      <div className="mt-2 text-xs text-slate-600">
+                        {latestAutoDataBackup
+                          ? `最近自动备份：${fmt(latestAutoDataBackup.at)}（${latestAutoDataBackup.scheduleDateKey || "-" }）`
+                          : "最近自动备份：暂无"}
+                      </div>
+                      <div className="mt-1 text-xs text-slate-600">{nextAutoBackupHint}</div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        className="rounded border px-3 py-2 text-sm hover:bg-slate-50"
+                        onClick={() => void loadDataBackupsAction()}
+                        disabled={dataBackupsLoading}
+                      >
+                        {dataBackupsLoading ? "刷新中..." : "刷新列表"}
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded bg-black px-3 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50"
+                        onClick={() => void createDataBackupAction("manual")}
+                        disabled={dataBackupCreating}
+                      >
+                        {dataBackupCreating ? "备份中..." : "立即备份"}
+                      </button>
+                    </div>
+                  </div>
+                  {dataBackupsError ? <div className="mt-3 text-sm text-rose-600">{dataBackupsError}</div> : null}
+                  {dataBackupsLoading && dataBackups.length === 0 ? (
+                    <div className="mt-3 text-xs text-slate-500">正在加载备份记录…</div>
+                  ) : dataBackups.length === 0 ? (
+                    <div className="mt-4 rounded border border-dashed px-3 py-6 text-center text-xs text-slate-500">
+                      暂无备份记录。
+                    </div>
+                  ) : (
+                    <div className="mt-4 grid gap-3">
+                      {dataBackups.map((backup) => {
+                        const restoringUserManage = dataBackupRestoringKey === `${backup.id}:user_manage`;
+                        const restoringSupport = dataBackupRestoringKey === `${backup.id}:support_messages`;
+                        return (
+                          <div key={backup.id} className="rounded border px-3 py-3 text-xs">
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div className="space-y-1">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="font-medium text-slate-900">{backup.summary || "超级后台备份"}</span>
+                                  <span className={`rounded-full px-2 py-0.5 ${backup.source === "auto" ? "bg-sky-100 text-sky-700" : "bg-slate-200 text-slate-700"}`}>
+                                    {formatPlatformAdminBackupSourceLabel(backup.source)}
+                                  </span>
+                                </div>
+                                <div className="text-slate-500">
+                                  {fmt(backup.at)} | {backup.operator} | 周期 {backup.scheduleDateKey || "-"}
+                                </div>
+                                <div className="text-slate-600">
+                                  用户管理：站点 {backup.userManageCounts.siteCount} / 用户 {backup.userManageCounts.userCount} / 角色 {backup.userManageCounts.roleCount} / 商户账号 {backup.userManageCounts.merchantAccountCount}
+                                </div>
+                                <div className="text-slate-600">
+                                  信息处理：会话 {backup.supportCounts.threadCount} / 消息 {backup.supportCounts.messageCount}
+                                </div>
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  className="rounded border px-3 py-2 text-xs hover:bg-slate-50 disabled:opacity-50"
+                                  onClick={() => void restoreDataBackupAction(backup.id, "user_manage")}
+                                  disabled={!!dataBackupRestoringKey}
+                                >
+                                  {restoringUserManage ? "恢复中..." : "恢复用户管理"}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="rounded border px-3 py-2 text-xs hover:bg-slate-50 disabled:opacity-50"
+                                  onClick={() => void restoreDataBackupAction(backup.id, "support_messages")}
+                                  disabled={!!dataBackupRestoringKey}
+                                >
+                                  {restoringSupport ? "恢复中..." : "恢复信息处理"}
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+                <div className="rounded-lg border bg-white p-4">
                   <h2 className="mb-2 font-semibold">最近发布记录</h2>
                   <div className="space-y-1">
                     {state.publishRecords.slice(0, 12).map((record) => (
@@ -8704,30 +9029,68 @@ export default function SuperAdminClient() {
             {activeMenu === "logs" ? (
               <section className="space-y-4">
                 <div className="rounded-lg border bg-white p-4">
-                  <h2 className="mb-2 font-semibold">审计日志</h2>
-                  <div className="space-y-1">
-                    {state.audits.slice(0, 20).map((item) => (
-                      <div key={item.id} className="rounded border px-3 py-2 text-xs">
-                        <div className="font-medium">{item.action}</div>
-                        <div className="text-slate-500">{fmt(item.at)} | {item.operator} | {item.targetType}:{item.targetId}</div>
-                        <div className="text-slate-500">{item.detail}</div>
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h2 className="font-semibold">审计日志</h2>
+                      <div className="text-xs text-slate-500">
+                        {normalizedLogKeyword
+                          ? `当前关键词：${logKeyword}，审计命中 ${filteredAuditRows.length} 条，告警命中 ${filteredAlertRows.length} 条`
+                          : "支持对动作、操作人、目标、详情、告警标题和消息做模糊搜索。"}
                       </div>
-                    ))}
+                    </div>
+                    <div className="flex min-w-[280px] flex-1 items-center gap-2 md:max-w-md">
+                      <input
+                        className="w-full rounded border px-3 py-2 text-sm"
+                        value={logKeyword}
+                        onChange={(event) => setLogKeyword(event.target.value)}
+                        placeholder="搜索动作 / 操作人 / 站点ID / 详情 / 告警内容"
+                      />
+                      {logKeyword.trim() ? (
+                        <button
+                          type="button"
+                          className="shrink-0 rounded border px-3 py-2 text-sm hover:bg-slate-50"
+                          onClick={() => setLogKeyword("")}
+                        >
+                          清空
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    {filteredAuditRows.length === 0 ? (
+                      <div className="rounded border border-dashed px-3 py-6 text-center text-xs text-slate-500">
+                        没有匹配到审计日志。
+                      </div>
+                    ) : (
+                      filteredAuditRows.map((item) => (
+                        <div key={item.id} className="rounded border px-3 py-2 text-xs">
+                          <div className="font-medium">{item.action}</div>
+                          <div className="text-slate-500">{fmt(item.at)} | {item.operator} | {item.targetType}:{item.targetId}</div>
+                          <div className="text-slate-500">{item.detail}</div>
+                        </div>
+                      ))
+                    )}
                   </div>
                 </div>
 
                 <div className="rounded-lg border bg-white p-4">
                   <h2 className="mb-2 font-semibold">系统告警</h2>
                   <div className="space-y-1">
-                    {state.alerts.slice(0, 12).map((alert) => (
-                      <div key={alert.id} className="rounded border px-3 py-2 text-xs">
-                        <div className="flex items-center justify-between">
-                          <span>{alert.title}</span>
-                          <span className={`rounded border px-2 py-0.5 ${badgeClass(alert.level)}`}>{alert.level}</span>
-                        </div>
-                        <div className="text-slate-500">{alert.message}</div>
+                    {filteredAlertRows.length === 0 ? (
+                      <div className="rounded border border-dashed px-3 py-6 text-center text-xs text-slate-500">
+                        没有匹配到系统告警。
                       </div>
-                    ))}
+                    ) : (
+                      filteredAlertRows.map((alert) => (
+                        <div key={alert.id} className="rounded border px-3 py-2 text-xs">
+                          <div className="flex items-center justify-between">
+                            <span>{alert.title}</span>
+                            <span className={`rounded border px-2 py-0.5 ${badgeClass(alert.level)}`}>{alert.level}</span>
+                          </div>
+                          <div className="text-slate-500">{alert.message}</div>
+                        </div>
+                      ))
+                    )}
                   </div>
                 </div>
               </section>

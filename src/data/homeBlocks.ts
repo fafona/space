@@ -39,6 +39,7 @@ export type BackgroundEditableProps = {
   blockLocked?: boolean;
   blockBorderStyle?: BlockBorderStyle;
   blockBorderColor?: string;
+  mobileFitScreenWidth?: boolean;
   pageBgImageUrl?: string;
   pageBgFillMode?: ImageFillMode;
   pageBgPosition?: string;
@@ -385,6 +386,7 @@ type NavProps = BackgroundEditableProps &
   TypographyEditableProps & {
     heading?: string;
     navOrientation?: "horizontal" | "vertical";
+    mobileNavDisplayMode?: "inline" | "hidden";
     navItemBgColor?: string;
     navItemBgOpacity?: number;
     navItemBorderStyle?: BlockBorderStyle;

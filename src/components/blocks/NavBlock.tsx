@@ -1,10 +1,12 @@
 ﻿"use client";
 
+import { useEffect, useMemo, useState } from "react";
 import type { BackgroundEditableProps, BlockBorderStyle } from "@/data/homeBlocks";
 import { useI18n } from "@/components/I18nProvider";
 import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
 import { getBackgroundStyle } from "./backgroundStyle";
 import { getBlockBorderClass, getBlockBorderInlineStyle } from "./borderStyle";
+import { resolveMobileFitCardClass, resolveMobileFitSectionClass } from "./mobileFrame";
 import { stripInlineTextColorStylesFromHtml, toRichHtml } from "./richText";
 
 type NavItem = {
@@ -16,6 +18,7 @@ type NavItem = {
 type NavBlockProps = BackgroundEditableProps & {
   heading?: string;
   navOrientation?: "horizontal" | "vertical";
+  mobileNavDisplayMode?: "inline" | "hidden";
   navItemBgColor?: string;
   navItemBgOpacity?: number;
   navItemBorderStyle?: BlockBorderStyle;
@@ -96,6 +99,9 @@ function buildLabelColorStyle(color: string) {
 
 export default function NavBlock(props: NavBlockProps) {
   const { locale } = useI18n();
+  const mobileFitScreenWidth = props.mobileFitScreenWidth === true;
+  const [mobileMenuOpenPageId, setMobileMenuOpenPageId] = useState<string | null>(null);
+  const [isMobileViewport, setIsMobileViewport] = useState(false);
   const orientation = props.navOrientation === "vertical" ? "vertical" : "horizontal";
   const navItems =
     Array.isArray(props.navItems) && props.navItems.length > 0
@@ -116,6 +122,25 @@ export default function NavBlock(props: NavBlockProps) {
     ...item,
     label: localizeSystemDefaultText(item.label ?? "", locale),
   }));
+  const currentPageKey = props.currentPageId ?? localizedNavItems[0]?.pageId ?? "__default__";
+  const mobileMenuOpen = mobileMenuOpenPageId === currentPageKey;
+  const activeNavLabel = useMemo(
+    () => localizedNavItems.find((item) => item.pageId === props.currentPageId)?.label ?? localizedNavItems[0]?.label ?? localizedHeading,
+    [localizedHeading, localizedNavItems, props.currentPageId],
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mediaQuery = window.matchMedia("(max-width: 767px)");
+    const syncViewport = () => setIsMobileViewport(mediaQuery.matches);
+    syncViewport();
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", syncViewport);
+      return () => mediaQuery.removeEventListener("change", syncViewport);
+    }
+    mediaQuery.addListener(syncViewport);
+    return () => mediaQuery.removeListener(syncViewport);
+  }, []);
 
   const cardStyle = getBackgroundStyle({
     imageUrl: props.bgImageUrl,
@@ -173,10 +198,11 @@ export default function NavBlock(props: NavBlockProps) {
   };
   const navItemActiveTextColor = (props.navItemActiveTextColor ?? "").trim();
   const navItemActiveLabelStyle = buildLabelColorStyle(navItemActiveTextColor);
+  const hiddenMobileMode = props.mobileNavDisplayMode === "hidden" && isMobileViewport;
 
   return (
     <section
-      className="max-w-6xl mx-auto px-6 py-4"
+      className={resolveMobileFitSectionClass("max-w-6xl mx-auto px-6 py-4", mobileFitScreenWidth)}
       style={{
         position: "relative",
         transform: offsetX || offsetY ? `translate(${offsetX}px, ${offsetY}px)` : undefined,
@@ -184,7 +210,7 @@ export default function NavBlock(props: NavBlockProps) {
       }}
     >
       <div
-        className={`rounded-xl shadow-sm p-4 ${borderClass}`}
+        className={resolveMobileFitCardClass(`rounded-xl shadow-sm p-4 ${borderClass}`, mobileFitScreenWidth)}
         style={{
           ...cardStyle,
           ...borderInlineStyle,
@@ -201,34 +227,85 @@ export default function NavBlock(props: NavBlockProps) {
           overflow: blockHeight ? "auto" : undefined,
         }}
       >
-        {props.heading ? (
-          <div
-            className="text-sm font-semibold text-gray-700 mb-2 whitespace-pre-wrap break-words"
-            dangerouslySetInnerHTML={{ __html: toRichHtml(props.heading, localizedHeading) }}
-          />
-        ) : null}
-        <nav className={orientation === "vertical" ? "flex flex-col items-start gap-2" : "flex flex-wrap items-center gap-2"}>
-          {localizedNavItems.map((item) => {
-            const isActive = props.currentPageId === item.pageId;
-            const labelHtml = toRichHtml(item.label, "");
-            const renderedLabelHtml = isActive ? stripInlineTextColorStylesFromHtml(labelHtml) : labelHtml;
-            return (
+        {hiddenMobileMode ? (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-3">
               <button
-                key={item.id}
                 type="button"
-                className={`${navItemClass} ${getBlockBorderClass(isActive ? navItemActiveBorderStyle : navItemBorderStyle)} ${isActive ? "" : "hover:brightness-[0.98]"}`}
-                style={isActive ? navItemActiveStyle : navItemStyle}
-                onClick={() => props.onNavigatePage?.(item.pageId)}
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white/80 text-slate-700 transition hover:bg-slate-50"
+                aria-label={mobileMenuOpen ? "收起导航" : "展开导航"}
+                onClick={() => setMobileMenuOpenPageId((current) => (current === currentPageKey ? null : currentPageKey))}
               >
-                <span
-                  className="block w-full break-words whitespace-normal"
-                  style={isActive ? navItemActiveLabelStyle : undefined}
-                  dangerouslySetInnerHTML={{ __html: renderedLabelHtml }}
-                />
+                <span className="inline-flex flex-col items-center justify-center gap-1.5">
+                  <span className="block h-0.5 w-4 rounded-full bg-current" />
+                  <span className="block h-0.5 w-4 rounded-full bg-current" />
+                  <span className="block h-0.5 w-4 rounded-full bg-current" />
+                </span>
               </button>
-            );
-          })}
-        </nav>
+              <div className="min-w-0 flex-1 text-sm font-semibold text-slate-700">
+                <div className="truncate">{props.heading ? localizeSystemDefaultText(props.heading, locale) : activeNavLabel}</div>
+              </div>
+            </div>
+            {mobileMenuOpen ? (
+              <nav className="flex flex-col items-stretch gap-2">
+                {localizedNavItems.map((item) => {
+                  const isActive = props.currentPageId === item.pageId;
+                  const labelHtml = toRichHtml(item.label, "");
+                  const renderedLabelHtml = isActive ? stripInlineTextColorStylesFromHtml(labelHtml) : labelHtml;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={`${navItemClass} w-full ${getBlockBorderClass(isActive ? navItemActiveBorderStyle : navItemBorderStyle)} ${isActive ? "" : "hover:brightness-[0.98]"}`}
+                      style={isActive ? navItemActiveStyle : navItemStyle}
+                      onClick={() => {
+                        setMobileMenuOpenPageId(null);
+                        props.onNavigatePage?.(item.pageId);
+                      }}
+                    >
+                      <span
+                        className="block w-full break-words whitespace-normal"
+                        style={isActive ? navItemActiveLabelStyle : undefined}
+                        dangerouslySetInnerHTML={{ __html: renderedLabelHtml }}
+                      />
+                    </button>
+                  );
+                })}
+              </nav>
+            ) : null}
+          </div>
+        ) : (
+          <>
+            {props.heading ? (
+              <div
+                className="text-sm font-semibold text-gray-700 mb-2 whitespace-pre-wrap break-words"
+                dangerouslySetInnerHTML={{ __html: toRichHtml(props.heading, localizedHeading) }}
+              />
+            ) : null}
+            <nav className={orientation === "vertical" ? "flex flex-col items-start gap-2" : "flex flex-wrap items-center gap-2"}>
+              {localizedNavItems.map((item) => {
+                const isActive = props.currentPageId === item.pageId;
+                const labelHtml = toRichHtml(item.label, "");
+                const renderedLabelHtml = isActive ? stripInlineTextColorStylesFromHtml(labelHtml) : labelHtml;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={`${navItemClass} ${getBlockBorderClass(isActive ? navItemActiveBorderStyle : navItemBorderStyle)} ${isActive ? "" : "hover:brightness-[0.98]"}`}
+                    style={isActive ? navItemActiveStyle : navItemStyle}
+                    onClick={() => props.onNavigatePage?.(item.pageId)}
+                  >
+                    <span
+                      className="block w-full break-words whitespace-normal"
+                      style={isActive ? navItemActiveLabelStyle : undefined}
+                      dangerouslySetInnerHTML={{ __html: renderedLabelHtml }}
+                    />
+                  </button>
+                );
+              })}
+            </nav>
+          </>
+        )}
       </div>
     </section>
   );

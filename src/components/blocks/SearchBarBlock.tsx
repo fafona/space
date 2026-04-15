@@ -15,6 +15,7 @@ import { useI18n } from "@/components/I18nProvider";
 import { resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
 import { getBackgroundStyle } from "./backgroundStyle";
 import { getBlockBorderClass, getBlockBorderInlineStyle } from "./borderStyle";
+import { resolveMobileFitCardClass, resolveMobileFitSectionClass } from "./mobileFrame";
 import { toRichHtml } from "./richText";
 
 type SearchBarBlockProps = BackgroundEditableProps &
@@ -180,6 +181,7 @@ function logLocateDebug(label: string, detail: Record<string, unknown>) {
 }
 
 export default function SearchBarBlock(props: SearchBarBlockProps) {
+  const mobileFitScreenWidth = props.mobileFitScreenWidth === true;
   const { locale } = useI18n();
   const countryOptions = useMemo(() => getEuropeCountryOptions(), []);
   const normalizedText = useMemo(() => {
@@ -914,9 +916,9 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
   };
 
   return (
-    <section className="max-w-6xl mx-auto px-6 py-6" style={offsetStyle}>
+    <section className={resolveMobileFitSectionClass("max-w-6xl mx-auto px-6 py-6", mobileFitScreenWidth)} style={offsetStyle}>
       <div
-        className={`rounded-xl bg-white p-6 shadow-sm overflow-visible ${borderClass}`}
+        className={resolveMobileFitCardClass(`rounded-xl bg-white p-6 shadow-sm overflow-visible ${borderClass}`, mobileFitScreenWidth)}
         style={{ ...cardStyle, ...sizeStyle, ...borderInlineStyle }}
       >
         {hasHeading ? (

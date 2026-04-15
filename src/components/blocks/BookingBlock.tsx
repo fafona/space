@@ -35,6 +35,7 @@ import { useI18n } from "@/components/I18nProvider";
 import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
 import { getBackgroundStyle } from "./backgroundStyle";
 import { getBlockBorderClass, getBlockBorderInlineStyle } from "./borderStyle";
+import { resolveMobileFitCardClass, resolveMobileFitSectionClass } from "./mobileFrame";
 import { toRichHtml } from "./richText";
 
 type BookingBlockComponentProps = BookingProps & {
@@ -149,6 +150,7 @@ export default function BookingBlock({
   runtimeViewport = "desktop",
   ...props
 }: BookingBlockComponentProps) {
+  const mobileFitScreenWidth = props.mobileFitScreenWidth === true;
   const { locale } = useI18n();
   const searchParams = useSearchParams();
   const storeOptions = useMemo(
@@ -524,7 +526,10 @@ export default function BookingBlock({
 
   return (
     <section
-      className={`mx-auto max-w-6xl rounded-2xl p-6 shadow-sm ${borderClass}`}
+      className={resolveMobileFitCardClass(
+        resolveMobileFitSectionClass(`mx-auto max-w-6xl rounded-2xl p-6 shadow-sm ${borderClass}`, mobileFitScreenWidth),
+        mobileFitScreenWidth,
+      )}
       style={{
         ...cardStyle,
         ...borderInlineStyle,

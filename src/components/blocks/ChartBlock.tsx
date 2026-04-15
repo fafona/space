@@ -1,6 +1,7 @@
 import type { BackgroundEditableProps } from "@/data/homeBlocks";
 import { getBackgroundStyle } from "./backgroundStyle";
 import { getBlockBorderClass, getBlockBorderInlineStyle } from "./borderStyle";
+import { resolveMobileFitCardClass, resolveMobileFitSectionClass } from "./mobileFrame";
 import { toRichHtml } from "./richText";
 
 type ChartBlockProps = BackgroundEditableProps & {
@@ -41,6 +42,7 @@ function renderPieSegments(values: number[]) {
 }
 
 export default function ChartBlock(props: ChartBlockProps) {
+  const mobileFitScreenWidth = props.mobileFitScreenWidth === true;
   const { labels, values } = normalizeData(props.labels, props.values);
   const maxValue = values.length > 0 ? Math.max(...values, 1) : 1;
 
@@ -88,9 +90,9 @@ export default function ChartBlock(props: ChartBlockProps) {
   const chartType = props.chartType ?? "bar";
 
   return (
-    <section className="max-w-6xl mx-auto px-6 py-6" style={offsetStyle}>
+    <section className={resolveMobileFitSectionClass("max-w-6xl mx-auto px-6 py-6", mobileFitScreenWidth)} style={offsetStyle}>
       <div
-        className={`bg-white rounded-xl shadow-sm p-6 overflow-hidden ${borderClass}`}
+        className={resolveMobileFitCardClass(`bg-white rounded-xl shadow-sm p-6 overflow-hidden ${borderClass}`, mobileFitScreenWidth)}
         style={{ ...cardStyle, ...sizeStyle, ...borderInlineStyle }}
       >
         <h2

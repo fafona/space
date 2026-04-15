@@ -3409,6 +3409,10 @@ export function loadPlatformState(): PlatformState {
   }
 }
 
+export function normalizePlatformState(state: unknown): PlatformState {
+  return normalizeState((state ?? {}) as PlatformState);
+}
+
 export function savePlatformState(state: PlatformState) {
   if (typeof window === "undefined") return false;
   const normalized = normalizeState(state);

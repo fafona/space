@@ -30,6 +30,7 @@ import {
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import { getBackgroundStyle } from "./backgroundStyle";
 import { getBlockBorderClass, getBlockBorderInlineStyle } from "./borderStyle";
+import { resolveMobileFitCardClass, resolveMobileFitSectionClass } from "./mobileFrame";
 import { toRichHtml } from "./richText";
 import { useI18n } from "@/components/I18nProvider";
 import { resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
@@ -295,6 +296,7 @@ function renderProductCard(
 }
 
 export default function ProductBlock(props: ProductBlockProps) {
+  const mobileFitScreenWidth = props.mobileFitScreenWidth === true;
   const { locale } = useI18n();
   const products = normalizeProductItems(props.products)
     .map((item) => ({
@@ -810,9 +812,9 @@ export default function ProductBlock(props: ProductBlockProps) {
     ) : null;
 
   return (
-    <section ref={rootRef} className="mx-auto max-w-6xl px-6 py-6" style={offsetStyle}>
+    <section ref={rootRef} className={resolveMobileFitSectionClass("mx-auto max-w-6xl px-6 py-6", mobileFitScreenWidth)} style={offsetStyle}>
       <div
-        className={`overflow-hidden rounded-2xl bg-white p-6 shadow-sm ${borderClass}`}
+        className={resolveMobileFitCardClass(`overflow-hidden rounded-2xl bg-white p-6 shadow-sm ${borderClass}`, mobileFitScreenWidth)}
         style={{ ...cardStyle, ...sizeStyle, ...borderInlineStyle }}
       >
         {hasHeading ? (

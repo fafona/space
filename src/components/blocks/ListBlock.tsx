@@ -1,6 +1,7 @@
 import type { BackgroundEditableProps } from "@/data/homeBlocks";
 import { getBackgroundStyle } from "./backgroundStyle";
 import { getBlockBorderClass, getBlockBorderInlineStyle } from "./borderStyle";
+import { resolveMobileFitCardClass, resolveMobileFitSectionClass } from "./mobileFrame";
 import { toRichHtml } from "./richText";
 
 type ListBlockProps = BackgroundEditableProps & {
@@ -9,6 +10,7 @@ type ListBlockProps = BackgroundEditableProps & {
 };
 
 export default function ListBlock(props: ListBlockProps) {
+  const mobileFitScreenWidth = props.mobileFitScreenWidth === true;
   const items = Array.isArray(props.items) ? props.items.map((item) => item.trim()).filter(Boolean) : [];
 
   const cardStyle = getBackgroundStyle({
@@ -54,9 +56,9 @@ export default function ListBlock(props: ListBlockProps) {
   const borderInlineStyle = getBlockBorderInlineStyle(props.blockBorderStyle, props.blockBorderColor);
 
   return (
-    <section className="max-w-6xl mx-auto px-6 py-6" style={offsetStyle}>
+    <section className={resolveMobileFitSectionClass("max-w-6xl mx-auto px-6 py-6", mobileFitScreenWidth)} style={offsetStyle}>
       <div
-        className={`bg-white rounded-xl shadow-sm p-6 overflow-hidden ${borderClass}`}
+        className={resolveMobileFitCardClass(`bg-white rounded-xl shadow-sm p-6 overflow-hidden ${borderClass}`, mobileFitScreenWidth)}
         style={{ ...cardStyle, ...sizeStyle, ...borderInlineStyle }}
       >
         <h2 className="text-xl font-bold whitespace-pre-wrap break-words" dangerouslySetInnerHTML={{ __html: toRichHtml(props.heading, "") }} />

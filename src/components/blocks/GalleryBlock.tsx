@@ -13,6 +13,7 @@ import {
 } from "@/lib/galleryLayout";
 import { getBackgroundStyle } from "./backgroundStyle";
 import { getBlockBorderClass, getBlockBorderInlineStyle } from "./borderStyle";
+import { resolveMobileFitCardClass, resolveMobileFitSectionClass } from "./mobileFrame";
 import { toRichHtml } from "./richText";
 
 type GalleryImageItem = {
@@ -86,6 +87,7 @@ function normalizeGalleryItems(source: GalleryBlockProps["images"]): GalleryImag
 }
 
 export default function GalleryBlock(props: GalleryBlockProps) {
+  const mobileFitScreenWidth = props.mobileFitScreenWidth === true;
   const imageItems = useMemo(() => normalizeGalleryItems(props.images), [props.images]);
   const featured = imageItems.filter((item) => item.featured);
   const homeItems = featured.length > 0 ? featured : imageItems;
@@ -179,9 +181,9 @@ export default function GalleryBlock(props: GalleryBlockProps) {
   const customRows = buildCustomGalleryRows(customLayout, imageItems.length);
 
   return (
-    <section className="max-w-6xl mx-auto px-6 py-6" style={offsetStyle}>
+    <section className={resolveMobileFitSectionClass("max-w-6xl mx-auto px-6 py-6", mobileFitScreenWidth)} style={offsetStyle}>
       <div
-        className={`bg-white rounded-xl shadow-sm p-6 overflow-hidden ${borderClass}`}
+        className={resolveMobileFitCardClass(`bg-white rounded-xl shadow-sm p-6 overflow-hidden ${borderClass}`, mobileFitScreenWidth)}
         style={{ ...cardStyle, ...sizeStyle, ...borderInlineStyle }}
       >
         <h2
