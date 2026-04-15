@@ -793,38 +793,159 @@ function createDefaultHomeLayoutConfig(): HomeLayoutConfig {
 
 const BUILTIN_NEW_MERCHANT_TEMPLATE_ID = "builtin-template-new-merchant-service-starter";
 const BUILTIN_NEW_MERCHANT_TEMPLATE_TIMESTAMP = "2026-04-15T03:40:00.000Z";
-const BUILTIN_NEW_MERCHANT_TEMPLATE_PAGE_IDS = {
-  home: "page-service-home",
-  services: "page-service-offerings",
-  contact: "page-service-contact",
-} as const;
+type BuiltinServiceStarterVariant = {
+  key: string;
+  planId: "plan-1" | "plan-2" | "plan-3";
+  name: string;
+  heroTitle: string;
+  heroSubtitle: string;
+  pageBgColor: string;
+  navItemBorderColor: string;
+  navActiveBgColor: string;
+  navActiveBorderColor: string;
+  heroBorderColor: string;
+  listHeading: string;
+  listItems: string[];
+  servicesIntro: string;
+  serviceListHeading: string;
+  serviceListItems: string[];
+  chartHeading: string;
+  chartText: string;
+  chartValues: number[];
+  contactIntro: string;
+};
 
-function createBuiltinServiceStarterNavItems() {
+const BUILTIN_NEW_MERCHANT_TEMPLATE_VARIANTS: BuiltinServiceStarterVariant[] = [
+  {
+    key: "fresh",
+    planId: "plan-1",
+    name: "清爽服务版",
+    heroTitle: "把你的服务介绍清楚，让客户更快找到你",
+    heroSubtitle: "适合咨询、工作室、门店与个人服务的新用户入门版，先把业务说明、优势和联系方式搭起来。",
+    pageBgColor: "#f8fafc",
+    navItemBorderColor: "#d7e1ee",
+    navActiveBgColor: "#0f172a",
+    navActiveBorderColor: "#0f172a",
+    heroBorderColor: "#cfe0f7",
+    listHeading: "首页建议展示的重点",
+    listItems: [
+      "一句话介绍你的核心服务",
+      "3 到 5 个最常见的服务项目",
+      "服务流程或合作方式",
+      "联系方式、营业时间或服务区域",
+    ],
+    servicesIntro: "这一页适合详细写清楚你能做什么。可以按服务类型、套餐、适用对象或交付方式来分组说明，先写核心项目，再补充细节。",
+    serviceListHeading: "可直接替换的服务清单",
+    serviceListItems: [
+      "基础咨询 / 到店沟通",
+      "标准服务 / 常规方案",
+      "进阶服务 / 定制方案",
+      "售后支持 / 二次跟进",
+    ],
+    chartHeading: "合作流程示意",
+    chartText: "把服务流程写清楚，可以降低客户的理解成本。这里可替换成你的阶段流程、响应时效或常见项目占比。",
+    chartValues: [1, 2, 3, 4],
+    contactIntro: "最后一页建议只放最关键的信息：电话、邮箱、地址、地图和服务时间。这样客户看完介绍后，能直接找到你。",
+  },
+  {
+    key: "flow",
+    planId: "plan-2",
+    name: "流程说明版",
+    heroTitle: "先讲清服务流程，让客户更安心地下单",
+    heroSubtitle: "适合顾问、工作室、咨询与项目制服务，把步骤、时间和交付方式先讲明白。",
+    pageBgColor: "#f6f5ff",
+    navItemBorderColor: "#ddd6fe",
+    navActiveBgColor: "#4338ca",
+    navActiveBorderColor: "#4338ca",
+    heroBorderColor: "#c7d2fe",
+    listHeading: "首页建议强调的内容",
+    listItems: [
+      "你的服务适合什么客户",
+      "首次咨询如何开始",
+      "标准流程分几步完成",
+      "每一步大概需要多久",
+    ],
+    servicesIntro: "把服务拆成几个阶段，会更适合流程型业务。客户知道从咨询到交付会经历什么，决策会更快。",
+    serviceListHeading: "推荐展示的流程节点",
+    serviceListItems: [
+      "需求沟通 / 信息收集",
+      "方案确认 / 时间安排",
+      "执行服务 / 中途反馈",
+      "结果交付 / 后续跟进",
+    ],
+    chartHeading: "服务阶段占比",
+    chartText: "你可以把每个阶段的工作量、耗时比例或重点项目展示出来，让客户更直观理解服务结构。",
+    chartValues: [2, 3, 4, 2],
+    contactIntro: "联系页建议继续强调响应时间、接单时间段和主要沟通方式，让客户知道什么时候联系最有效。",
+  },
+  {
+    key: "contact",
+    planId: "plan-3",
+    name: "快速联系版",
+    heroTitle: "把核心服务和联系方式直接摆在前面",
+    heroSubtitle: "适合到店、预约、上门与本地服务，客户看完一眼就知道你做什么、怎么联系你。",
+    pageBgColor: "#fff7ed",
+    navItemBorderColor: "#fed7aa",
+    navActiveBgColor: "#c2410c",
+    navActiveBorderColor: "#c2410c",
+    heroBorderColor: "#fdba74",
+    listHeading: "首页建议优先放什么",
+    listItems: [
+      "你最主要的 3 项服务",
+      "服务区域 / 到店方式",
+      "营业时间 / 接单时间",
+      "电话、地址、即时联系入口",
+    ],
+    servicesIntro: "如果你的业务以快速沟通、到店或预约为主，这一页建议突出项目简述、适合场景和价格说明。",
+    serviceListHeading: "可直接替换的服务项目",
+    serviceListItems: [
+      "到店咨询 / 快速接待",
+      "热门服务 / 高频项目",
+      "预约项目 / 时段服务",
+      "补充服务 / 上门支持",
+    ],
+    chartHeading: "热门服务分布",
+    chartText: "这里可以换成你的热门项目、成交占比、到店高峰时段或客户最常咨询的服务类型。",
+    chartValues: [4, 3, 2, 1],
+    contactIntro: "联系页建议把电话、邮箱、地址、地图和主要社交账号都放齐，方便客户立刻联系或导航到店。",
+  },
+];
+
+function createBuiltinServiceStarterPageIds(variantKey: string) {
+  return {
+    home: `page-service-home-${variantKey}`,
+    services: `page-service-offerings-${variantKey}`,
+    contact: `page-service-contact-${variantKey}`,
+  } as const;
+}
+
+function createBuiltinServiceStarterNavItems(variant: BuiltinServiceStarterVariant) {
+  const pageIds = createBuiltinServiceStarterPageIds(variant.key);
   return [
-    { id: "builtin-nav-home", label: "首页", pageId: BUILTIN_NEW_MERCHANT_TEMPLATE_PAGE_IDS.home },
-    { id: "builtin-nav-services", label: "服务内容", pageId: BUILTIN_NEW_MERCHANT_TEMPLATE_PAGE_IDS.services },
-    { id: "builtin-nav-contact", label: "联系", pageId: BUILTIN_NEW_MERCHANT_TEMPLATE_PAGE_IDS.contact },
+    { id: `builtin-nav-home-${variant.key}`, label: "首页", pageId: pageIds.home },
+    { id: `builtin-nav-services-${variant.key}`, label: "服务内容", pageId: pageIds.services },
+    { id: `builtin-nav-contact-${variant.key}`, label: "联系", pageId: pageIds.contact },
   ];
 }
 
-function createBuiltinServiceStarterNavBlock(idSuffix: string): Block {
+function createBuiltinServiceStarterNavBlock(idSuffix: string, variant: BuiltinServiceStarterVariant): Block {
   return {
-    id: `builtin-service-nav-${idSuffix}`,
+    id: `builtin-service-nav-${variant.key}-${idSuffix}`,
     type: "nav",
     props: {
       heading: "",
       navOrientation: "horizontal",
-      navItems: createBuiltinServiceStarterNavItems(),
-      pageBgColor: "#f8fafc",
+      navItems: createBuiltinServiceStarterNavItems(variant),
+      pageBgColor: variant.pageBgColor,
       pageBgColorOpacity: 1,
       navItemBgColor: "#ffffff",
       navItemBgOpacity: 1,
       navItemBorderStyle: "solid",
-      navItemBorderColor: "#d7e1ee",
-      navItemActiveBgColor: "#0f172a",
+      navItemBorderColor: variant.navItemBorderColor,
+      navItemActiveBgColor: variant.navActiveBgColor,
       navItemActiveBgOpacity: 1,
       navItemActiveBorderStyle: "solid",
-      navItemActiveBorderColor: "#0f172a",
+      navItemActiveBorderColor: variant.navActiveBorderColor,
       navItemActiveTextColor: "#ffffff",
       fontColor: "#0f172a",
       fontWeight: "bold",
@@ -832,28 +953,29 @@ function createBuiltinServiceStarterNavBlock(idSuffix: string): Block {
   };
 }
 
-function createBuiltinServiceStarterPages(): PlanPage[] {
+function createBuiltinServiceStarterPages(variant: BuiltinServiceStarterVariant): PlanPage[] {
+  const pageIds = createBuiltinServiceStarterPageIds(variant.key);
   return [
     {
-      id: BUILTIN_NEW_MERCHANT_TEMPLATE_PAGE_IDS.home,
+      id: pageIds.home,
       name: "首页",
       blocks: [
-        createBuiltinServiceStarterNavBlock("home"),
+        createBuiltinServiceStarterNavBlock("home", variant),
         {
-          id: "builtin-service-hero-home",
+          id: `builtin-service-hero-home-${variant.key}`,
           type: "hero",
           props: {
-            title: "把你的服务介绍清楚，让客户更快找到你",
-            subtitle: "适合咨询、工作室、门店与个人服务的新用户入门版，先把业务说明、优势和联系方式搭起来。",
-            bgColor: "#eef6ff",
+            title: variant.heroTitle,
+            subtitle: variant.heroSubtitle,
+            bgColor: variant.pageBgColor,
             bgColorOpacity: 1,
             blockBorderStyle: "solid",
-            blockBorderColor: "#cfe0f7",
+            blockBorderColor: variant.heroBorderColor,
             fontColor: "#0f172a",
           },
         },
         {
-          id: "builtin-service-text-home",
+          id: `builtin-service-text-home-${variant.key}`,
           type: "text",
           props: {
             heading: "你可以先写什么",
@@ -865,16 +987,11 @@ function createBuiltinServiceStarterPages(): PlanPage[] {
           },
         },
         {
-          id: "builtin-service-list-home",
+          id: `builtin-service-list-home-${variant.key}`,
           type: "list",
           props: {
-            heading: "首页建议展示的重点",
-            items: [
-              "一句话介绍你的核心服务",
-              "3 到 5 个最常见的服务项目",
-              "服务流程或合作方式",
-              "联系方式、营业时间或服务区域",
-            ],
+            heading: variant.listHeading,
+            items: variant.listItems,
             bgColor: "#ffffff",
             bgColorOpacity: 1,
             blockBorderStyle: "solid",
@@ -884,16 +1001,16 @@ function createBuiltinServiceStarterPages(): PlanPage[] {
       ],
     },
     {
-      id: BUILTIN_NEW_MERCHANT_TEMPLATE_PAGE_IDS.services,
+      id: pageIds.services,
       name: "服务内容",
       blocks: [
-        createBuiltinServiceStarterNavBlock("services"),
+        createBuiltinServiceStarterNavBlock("services", variant),
         {
-          id: "builtin-service-text-offerings",
+          id: `builtin-service-text-offerings-${variant.key}`,
           type: "text",
           props: {
             heading: "服务内容",
-            text: "这一页适合详细写清楚你能做什么。可以按服务类型、套餐、适用对象或交付方式来分组说明，先写核心项目，再补充细节。",
+            text: variant.servicesIntro,
             bgColor: "#ffffff",
             bgColorOpacity: 1,
             blockBorderStyle: "solid",
@@ -901,16 +1018,11 @@ function createBuiltinServiceStarterPages(): PlanPage[] {
           },
         },
         {
-          id: "builtin-service-list-offerings",
+          id: `builtin-service-list-offerings-${variant.key}`,
           type: "list",
           props: {
-            heading: "可直接替换的服务清单",
-            items: [
-              "基础咨询 / 到店沟通",
-              "标准服务 / 常规方案",
-              "进阶服务 / 定制方案",
-              "售后支持 / 二次跟进",
-            ],
+            heading: variant.serviceListHeading,
+            items: variant.serviceListItems,
             bgColor: "#ffffff",
             bgColorOpacity: 1,
             blockBorderStyle: "solid",
@@ -918,14 +1030,14 @@ function createBuiltinServiceStarterPages(): PlanPage[] {
           },
         },
         {
-          id: "builtin-service-chart-process",
+          id: `builtin-service-chart-process-${variant.key}`,
           type: "chart",
           props: {
-            heading: "合作流程示意",
-            text: "把服务流程写清楚，可以降低客户的理解成本。这里可替换成你的阶段流程、响应时效或常见项目占比。",
+            heading: variant.chartHeading,
+            text: variant.chartText,
             chartType: "bar",
             labels: ["咨询", "确认", "执行", "交付"],
-            values: [1, 2, 3, 4],
+            values: variant.chartValues,
             bgColor: "#ffffff",
             bgColorOpacity: 1,
             blockBorderStyle: "solid",
@@ -935,16 +1047,16 @@ function createBuiltinServiceStarterPages(): PlanPage[] {
       ],
     },
     {
-      id: BUILTIN_NEW_MERCHANT_TEMPLATE_PAGE_IDS.contact,
+      id: pageIds.contact,
       name: "联系",
       blocks: [
-        createBuiltinServiceStarterNavBlock("contact"),
+        createBuiltinServiceStarterNavBlock("contact", variant),
         {
-          id: "builtin-service-text-contact",
+          id: `builtin-service-text-contact-${variant.key}`,
           type: "text",
           props: {
             heading: "联系与到店信息",
-            text: "最后一页建议只放最关键的信息：电话、邮箱、地址、地图和服务时间。这样客户看完介绍后，能直接找到你。",
+            text: variant.contactIntro,
             bgColor: "#ffffff",
             bgColorOpacity: 1,
             blockBorderStyle: "solid",
@@ -952,7 +1064,7 @@ function createBuiltinServiceStarterPages(): PlanPage[] {
           },
         },
         {
-          id: "builtin-service-contact",
+          id: `builtin-service-contact-${variant.key}`,
           type: "contact",
           props: {
             heading: "联系方式",
@@ -987,32 +1099,18 @@ function createBuiltinServiceStarterPages(): PlanPage[] {
 }
 
 function createBuiltinServiceStarterPlanConfig(): PagePlanConfig {
-  const pages = createBuiltinServiceStarterPages();
   return {
     activePlanId: "plan-1",
-    plans: [
-      {
-        id: "plan-1",
-        name: "方案一",
+    plans: BUILTIN_NEW_MERCHANT_TEMPLATE_VARIANTS.map((variant) => {
+      const pages = createBuiltinServiceStarterPages(variant);
+      return {
+        id: variant.planId,
+        name: variant.name,
         blocks: pages[0]?.blocks ?? [],
         pages,
-        activePageId: BUILTIN_NEW_MERCHANT_TEMPLATE_PAGE_IDS.home,
-      },
-      {
-        id: "plan-2",
-        name: "方案二",
-        blocks: pages[0]?.blocks ?? [],
-        pages,
-        activePageId: BUILTIN_NEW_MERCHANT_TEMPLATE_PAGE_IDS.home,
-      },
-      {
-        id: "plan-3",
-        name: "方案三",
-        blocks: pages[0]?.blocks ?? [],
-        pages,
-        activePageId: BUILTIN_NEW_MERCHANT_TEMPLATE_PAGE_IDS.home,
-      },
-    ],
+        activePageId: createBuiltinServiceStarterPageIds(variant.key).home,
+      };
+    }),
   };
 }
 
@@ -1137,10 +1235,22 @@ function normalizePlanTemplates(value: unknown): PlanTemplate[] {
     : [];
   const unique = new Map<string, PlanTemplate>();
   const builtinTemplates = createBuiltinPlanTemplates();
+  const builtinById = new Map(builtinTemplates.map((item) => [item.id, item] as const));
   for (const row of builtinTemplates) {
     unique.set(row.id, row);
   }
   for (const row of rows) {
+    const builtin = builtinById.get(row.id);
+    if (builtin) {
+      unique.set(row.id, {
+        ...builtin,
+        name: row.name.trim() || builtin.name,
+        category: row.category,
+        createdAt: row.createdAt || builtin.createdAt,
+        updatedAt: row.updatedAt || builtin.updatedAt,
+      });
+      continue;
+    }
     unique.set(row.id, row);
   }
   return [...unique.values()].sort((left, right) => {

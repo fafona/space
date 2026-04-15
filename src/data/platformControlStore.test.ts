@@ -170,6 +170,7 @@ test("platform state seeds a built-in starter template within new-merchant permi
     assert.ok(builtin);
     assert.equal(builtin?.category, "服务");
     const config = getPagePlanConfigFromBlocks((builtin?.blocks ?? []) as never);
+    assert.deepEqual(config.plans.map((plan) => plan.name), ["清爽服务版", "流程说明版", "快速联系版"]);
     const blockTypes = new Set(
       config.plans.flatMap((plan) =>
         plan.pages.flatMap((page) =>

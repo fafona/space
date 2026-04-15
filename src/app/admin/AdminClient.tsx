@@ -134,6 +134,7 @@ import {
   summarizePlanTemplateBlocks,
 } from "@/lib/planTemplates";
 import { extractPlanTemplateCoverBackground } from "@/lib/planTemplateRuntime";
+import { capturePlanTemplatePreviewAssets, PLAN_TEMPLATE_PREVIEW_VARIANT } from "@/lib/planTemplatePreviewCapture";
 import {
   CUSTOM_GALLERY_FRAME_WIDTHS,
   GALLERY_LAYOUT_PRESETS,
@@ -6359,6 +6360,45 @@ export default function AdminClient({
     }
     setPlanTemplates(nextTemplates);
     return true;
+  }
+
+  function needsPlanTemplatePreviewRefresh(template: PlanTemplate) {
+    if ((template.previewVariant ?? "").trim() !== PLAN_TEMPLATE_PREVIEW_VARIANT) return true;
+    const planPreviewKeys = Object.keys(template.planPreviewImageUrls ?? {}).filter((key) => key.trim());
+    return planPreviewKeys.length === 0;
+  }
+
+  async function ensurePlanTemplatePreviewAssets(template: PlanTemplate) {
+    if (!needsPlanTemplatePreviewRefresh(template)) return template;
+    const blocks = Array.isArray(template.blocks) ? (template.blocks as Block[]) : [];
+    if (blocks.length === 0) return template;
+    const previewAssets = await capturePlanTemplatePreviewAssets(blocks).catch(() => null);
+    if (!previewAssets) return template;
+    const nextTemplate: PlanTemplate = {
+      ...template,
+      previewImageUrl: previewAssets.previewImageUrl,
+      planPreviewImageUrls: previewAssets.planPreviewImageUrls,
+      previewVariant: previewAssets.previewVariant,
+      updatedAt: new Date().toISOString(),
+    };
+    const nextTemplates = planTemplates.map((item) => (item.id === template.id ? nextTemplate : item));
+    if (!persistPlanTemplates(nextTemplates)) return template;
+    return nextTemplate;
+  }
+
+  async function openPlanTemplatePreview(template: PlanTemplate, planId?: string, planName?: string) {
+    const refreshedTemplate = await ensurePlanTemplatePreviewAssets(template);
+    const previewUrl = planId
+      ? String((refreshedTemplate.planPreviewImageUrls ?? {})[planId] ?? "").trim()
+      : (refreshedTemplate.previewImageUrl ?? "").trim();
+    if (!previewUrl) {
+      showTip("该方案预览生成失败，请稍后重试");
+      return;
+    }
+    setPlanTemplateCoverPreview({
+      url: previewUrl,
+      name: planId ? `${refreshedTemplate.name} · ${planName || "方案"} 整套页面预览` : `${refreshedTemplate.name} · 方案预览`,
+    });
   }
 
   function updatePlanTemplateDraft(
@@ -17224,17 +17264,15 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                           !coverImageUrl && coverBackground ? getBackgroundStyle(coverBackground) : null;
                         const hasCustomCoverBackground = !!coverBackgroundStyle;
                         const previewImageUrl = (template.previewImageUrl ?? "").trim();
+                        const canPreviewTemplate = !!previewImageUrl || needsPlanTemplatePreviewRefresh(template);
                         return (
                           <article key={template.id} className="overflow-hidden rounded-2xl border bg-slate-50 shadow-sm">
                             <div className="space-y-4 p-4">
                               <button
                                 type="button"
                                 className="group relative block aspect-[16/10] w-full overflow-hidden rounded-2xl border bg-gradient-to-br from-slate-950 via-slate-800 to-slate-600 text-left text-white"
-                                onClick={() =>
-                                  previewImageUrl &&
-                                  setPlanTemplateCoverPreview({ url: previewImageUrl, name: `${template.name} · 方案预览` })
-                                }
-                                disabled={!previewImageUrl}
+                                onClick={() => void openPlanTemplatePreview(template)}
+                                disabled={!canPreviewTemplate}
                                 style={coverBackgroundStyle ?? undefined}
                               >
                                 {coverImageUrl ? (
@@ -17266,7 +17304,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                                       <span className="rounded-full border border-white/20 bg-white/10 px-2 py-1 text-xs">
                                         {summary.hasMobile ? "PC + 手机" : "仅 PC"}
                                       </span>
-                                      {previewImageUrl ? (
+                                      {canPreviewTemplate ? (
                                         <span className="rounded-full border border-white/20 bg-white/10 px-2 py-1 text-xs">点击预览方案</span>
                                       ) : coverImageUrl ? (
                                         <span className="rounded-full border border-white/20 bg-white/10 px-2 py-1 text-xs">仅封面</span>
@@ -17374,14 +17412,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                                             key={`${template.id}-${plan.planId}`}
                                             type="button"
                                             className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                                            onClick={() =>
-                                              previewUrl &&
-                                              setPlanTemplateCoverPreview({
-                                                url: previewUrl,
-                                                name: `${template.name} · ${plan.planName} 整套页面预览`,
-                                              })
-                                            }
-                                            disabled={!previewUrl}
+                                            onClick={() => void openPlanTemplatePreview(template, plan.planId, plan.planName)}
+                                            disabled={!previewUrl && !needsPlanTemplatePreviewRefresh(template)}
                                           >
                                             {plan.planName}
                                           </button>
@@ -17391,18 +17423,16 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                                   </div>
                                 ) : null}
 
-                                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-white px-3 py-3">
-                                  <div className="text-xs text-slate-500">
-                                    创建于 {new Date(template.createdAt).toLocaleString("zh-CN", { hour12: false })}
-                                  </div>
-                                  <div className="flex flex-wrap gap-2">
-                                    {previewImageUrl ? (
+                                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-white px-3 py-3">
+                                    <div className="text-xs text-slate-500">
+                                      创建于 {new Date(template.createdAt).toLocaleString("zh-CN", { hour12: false })}
+                                    </div>
+                                    <div className="flex flex-wrap gap-2">
+                                    {canPreviewTemplate ? (
                                       <button
                                         type="button"
                                         className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50"
-                                        onClick={() =>
-                                          setPlanTemplateCoverPreview({ url: previewImageUrl, name: `${template.name} · 方案预览` })
-                                        }
+                                        onClick={() => void openPlanTemplatePreview(template)}
                                       >
                                         预览方案
                                       </button>
