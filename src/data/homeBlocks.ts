@@ -387,6 +387,9 @@ type NavProps = BackgroundEditableProps &
     heading?: string;
     navOrientation?: "horizontal" | "vertical";
     mobileNavDisplayMode?: "inline" | "hidden";
+    mobileNavButtonBgColor?: string;
+    mobileNavButtonBgOpacity?: number;
+    mobileNavButtonLineColor?: string;
     navItemBgColor?: string;
     navItemBgOpacity?: number;
     navItemBorderStyle?: BlockBorderStyle;

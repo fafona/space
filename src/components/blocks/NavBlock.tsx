@@ -20,6 +20,9 @@ type NavBlockProps = BackgroundEditableProps & {
   navOrientation?: "horizontal" | "vertical";
   mobileNavDisplayMode?: "inline" | "hidden";
   forceMobileViewport?: boolean;
+  mobileNavButtonBgColor?: string;
+  mobileNavButtonBgOpacity?: number;
+  mobileNavButtonLineColor?: string;
   navItemBgColor?: string;
   navItemBgOpacity?: number;
   navItemBorderStyle?: BlockBorderStyle;
@@ -201,6 +204,15 @@ export default function NavBlock(props: NavBlockProps) {
   };
   const navItemActiveTextColor = (props.navItemActiveTextColor ?? "").trim();
   const navItemActiveLabelStyle = buildLabelColorStyle(navItemActiveTextColor);
+  const mobileNavButtonBgColor = (props.mobileNavButtonBgColor ?? "#ffffff").trim() || "#ffffff";
+  const mobileNavButtonBgOpacity =
+    typeof props.mobileNavButtonBgOpacity === "number" && Number.isFinite(props.mobileNavButtonBgOpacity)
+      ? Math.max(0, Math.min(1, props.mobileNavButtonBgOpacity))
+      : 0.8;
+  const mobileNavButtonLineColor = (props.mobileNavButtonLineColor ?? "#334155").trim() || "#334155";
+  const mobileNavButtonStyle = {
+    ...getColorLayerStyle(mobileNavButtonBgColor, mobileNavButtonBgOpacity),
+  };
   const hiddenMobileMode = props.mobileNavDisplayMode === "hidden" && effectiveMobileViewport;
 
   return (
@@ -235,14 +247,15 @@ export default function NavBlock(props: NavBlockProps) {
             <div className="flex items-center justify-between gap-3">
               <button
                 type="button"
-                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white/80 text-slate-700 transition hover:bg-slate-50"
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 transition hover:brightness-[0.98]"
                 aria-label={mobileMenuOpen ? "收起导航" : "展开导航"}
+                style={mobileNavButtonStyle}
                 onClick={() => setMobileMenuOpenPageId((current) => (current === currentPageKey ? null : currentPageKey))}
               >
                 <span className="inline-flex flex-col items-center justify-center gap-1.5">
-                  <span className="block h-0.5 w-4 rounded-full bg-current" />
-                  <span className="block h-0.5 w-4 rounded-full bg-current" />
-                  <span className="block h-0.5 w-4 rounded-full bg-current" />
+                  <span className="block h-0.5 w-4 rounded-full" style={{ backgroundColor: mobileNavButtonLineColor }} />
+                  <span className="block h-0.5 w-4 rounded-full" style={{ backgroundColor: mobileNavButtonLineColor }} />
+                  <span className="block h-0.5 w-4 rounded-full" style={{ backgroundColor: mobileNavButtonLineColor }} />
                 </span>
               </button>
               <div className="min-w-0 flex-1 text-sm font-semibold text-slate-700">

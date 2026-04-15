@@ -17711,6 +17711,9 @@ type GalleryEditorImage = {
   const [navItemBgOpacityInput, setNavItemBgOpacityInput] = useState(1);
   const [navItemBorderStyleInput, setNavItemBorderStyleInput] = useState<BlockBorderStyle>("solid");
   const [navItemBorderColorInput, setNavItemBorderColorInput] = useState("#6b7280");
+  const [mobileNavButtonBgColorInput, setMobileNavButtonBgColorInput] = useState("#ffffff");
+  const [mobileNavButtonBgOpacityInput, setMobileNavButtonBgOpacityInput] = useState(0.8);
+  const [mobileNavButtonLineColorInput, setMobileNavButtonLineColorInput] = useState("#334155");
   const [navItemActiveBgColorInput, setNavItemActiveBgColorInput] = useState("#e5e7eb");
   const [navItemActiveBgOpacityInput, setNavItemActiveBgOpacityInput] = useState(1);
   const [navItemActiveBorderStyleInput, setNavItemActiveBorderStyleInput] = useState<BlockBorderStyle>("solid");
@@ -19529,6 +19532,8 @@ type GalleryEditorImage = {
     const currentActiveBgColor = (block.props.navItemActiveBgColor ?? "").trim();
     const currentActiveBorderColor = (block.props.navItemActiveBorderColor ?? "").trim();
     const currentActiveTextColor = (block.props.navItemActiveTextColor ?? "").trim();
+    const currentMobileButtonBgColor = (block.props.mobileNavButtonBgColor ?? "").trim();
+    const currentMobileButtonLineColor = (block.props.mobileNavButtonLineColor ?? "").trim();
     setNavItemBgColorInput(currentBgColor || "#ffffff");
     setNavItemBgOpacityInput(
       typeof block.props.navItemBgOpacity === "number" && Number.isFinite(block.props.navItemBgOpacity)
@@ -19537,6 +19542,13 @@ type GalleryEditorImage = {
     );
     setNavItemBorderStyleInput((block.props.navItemBorderStyle ?? "solid") as BlockBorderStyle);
     setNavItemBorderColorInput(currentBorderColor || "#6b7280");
+    setMobileNavButtonBgColorInput(currentMobileButtonBgColor || "#ffffff");
+    setMobileNavButtonBgOpacityInput(
+      typeof block.props.mobileNavButtonBgOpacity === "number" && Number.isFinite(block.props.mobileNavButtonBgOpacity)
+        ? Math.max(0, Math.min(1, block.props.mobileNavButtonBgOpacity))
+        : 0.8,
+    );
+    setMobileNavButtonLineColorInput(currentMobileButtonLineColor || "#334155");
     setNavItemActiveBgColorInput(currentActiveBgColor || "#e5e7eb");
     setNavItemActiveBgOpacityInput(
       typeof block.props.navItemActiveBgOpacity === "number" && Number.isFinite(block.props.navItemActiveBgOpacity)
@@ -19703,6 +19715,9 @@ type GalleryEditorImage = {
       navItemBgOpacity: Math.max(0, Math.min(1, navItemBgOpacityInput)),
       navItemBorderStyle: navItemBorderStyleInput,
       navItemBorderColor: navItemBorderColorInput.trim() || undefined,
+      mobileNavButtonBgColor: mobileNavButtonBgColorInput.trim() || undefined,
+      mobileNavButtonBgOpacity: Math.max(0, Math.min(1, mobileNavButtonBgOpacityInput)),
+      mobileNavButtonLineColor: mobileNavButtonLineColorInput.trim() || undefined,
       navItemActiveBgColor: navItemActiveBgColorInput.trim() || undefined,
       navItemActiveBgOpacity: Math.max(0, Math.min(1, navItemActiveBgOpacityInput)),
       navItemActiveBorderStyle: navItemActiveBorderStyleInput,
@@ -19711,6 +19726,8 @@ type GalleryEditorImage = {
     });
     onRecordColor(navItemBgColorInput);
     onRecordColor(navItemBorderColorInput);
+    onRecordColor(mobileNavButtonBgColorInput);
+    onRecordColor(mobileNavButtonLineColorInput);
     onRecordColor(navItemActiveBgColorInput);
     onRecordColor(navItemActiveBorderColorInput);
     onRecordColor(navItemActiveTextColorInput);
@@ -20265,6 +20282,56 @@ type GalleryEditorImage = {
                     onClear={onClearRecentColors}
                     onPick={(color) => setNavItemBorderColorInput(color)}
               />
+            </div>
+            <div className="space-y-2 rounded-lg border border-dashed p-3">
+              <div className="text-xs font-semibold text-gray-700">手机隐藏按钮</div>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200"
+                  style={getColorLayerStyle(mobileNavButtonBgColorInput, mobileNavButtonBgOpacityInput)}
+                  aria-label="手机隐藏按钮预览"
+                >
+                  <span className="inline-flex flex-col items-center justify-center gap-1.5">
+                    <span className="block h-0.5 w-4 rounded-full" style={{ backgroundColor: mobileNavButtonLineColorInput }} />
+                    <span className="block h-0.5 w-4 rounded-full" style={{ backgroundColor: mobileNavButtonLineColorInput }} />
+                    <span className="block h-0.5 w-4 rounded-full" style={{ backgroundColor: mobileNavButtonLineColorInput }} />
+                  </span>
+                </button>
+                <div className="text-xs text-gray-500">隐藏式导航左侧按钮预览</div>
+              </div>
+              <div className="space-y-1">
+                <div className="text-xs text-gray-600">按钮底色</div>
+                <ColorOrGradientPicker value={mobileNavButtonBgColorInput} onChange={setMobileNavButtonBgColorInput} allowGradient={false} />
+                <RecentColorBar
+                  colors={recentColors}
+                  onClear={onClearRecentColors}
+                  onPick={(color) => setMobileNavButtonBgColorInput(color)}
+                  allowGradients={false}
+                />
+              </div>
+              <div className="space-y-1">
+                <div className="text-xs text-gray-600">按钮底色透明度：{mobileNavButtonBgOpacityInput.toFixed(2)}</div>
+                <input
+                  className="w-full"
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={mobileNavButtonBgOpacityInput}
+                  onChange={(e) => setMobileNavButtonBgOpacityInput(Number(e.target.value))}
+                />
+              </div>
+              <div className="space-y-1">
+                <div className="text-xs text-gray-600">横杠颜色</div>
+                <ColorOrGradientPicker value={mobileNavButtonLineColorInput} onChange={setMobileNavButtonLineColorInput} allowGradient={false} />
+                <RecentColorBar
+                  colors={recentColors}
+                  onClear={onClearRecentColors}
+                  onPick={(color) => setMobileNavButtonLineColorInput(color)}
+                  allowGradients={false}
+                />
+              </div>
             </div>
           </div>
           <div className="space-y-3 rounded-lg border p-3">
@@ -22271,6 +22338,15 @@ type GalleryEditorImage = {
     const navItemActiveLabelStyle = buildTypographyInlineStyle({
       fontColor: navItemActiveTextColor,
     });
+    const mobileNavButtonBgColor = (block.props.mobileNavButtonBgColor ?? "#ffffff").trim() || "#ffffff";
+    const mobileNavButtonBgOpacity =
+      typeof block.props.mobileNavButtonBgOpacity === "number" && Number.isFinite(block.props.mobileNavButtonBgOpacity)
+        ? Math.max(0, Math.min(1, block.props.mobileNavButtonBgOpacity))
+        : 0.8;
+    const mobileNavButtonLineColor = (block.props.mobileNavButtonLineColor ?? "#334155").trim() || "#334155";
+    const mobileNavButtonStyle = {
+      ...getColorLayerStyle(mobileNavButtonBgColor, mobileNavButtonBgOpacity),
+    };
     const mobileHiddenNavMode = previewViewport === "mobile" && block.props.mobileNavDisplayMode === "hidden";
     const navCardClass = `${cardClass.replace("bg-white", "").trim()} relative`;
     const navBlockSizeStyle =
@@ -22311,17 +22387,18 @@ type GalleryEditorImage = {
         <div className="flex items-center justify-between gap-3">
           <button
             type="button"
-            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white/85 text-slate-700 transition hover:bg-slate-50"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 transition hover:brightness-[0.98]"
             aria-label={previewNavMobileMenuOpen ? "收起导航" : "展开导航"}
+            style={mobileNavButtonStyle}
             onClick={() => {
               onSelect();
               setPreviewNavMobileMenuOpen((current) => !current);
             }}
           >
             <span className="inline-flex flex-col items-center justify-center gap-1.5">
-              <span className="block h-0.5 w-4 rounded-full bg-current" />
-              <span className="block h-0.5 w-4 rounded-full bg-current" />
-              <span className="block h-0.5 w-4 rounded-full bg-current" />
+              <span className="block h-0.5 w-4 rounded-full" style={{ backgroundColor: mobileNavButtonLineColor }} />
+              <span className="block h-0.5 w-4 rounded-full" style={{ backgroundColor: mobileNavButtonLineColor }} />
+              <span className="block h-0.5 w-4 rounded-full" style={{ backgroundColor: mobileNavButtonLineColor }} />
             </span>
           </button>
           <div className="min-w-0 flex-1 text-sm font-semibold text-slate-700">
