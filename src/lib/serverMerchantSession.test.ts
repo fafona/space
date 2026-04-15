@@ -163,3 +163,79 @@ test("resolveMerchantSessionFromRequest rejects unauthorized hinted merchant ids
     process.env.SUPABASE_SERVICE_ROLE_KEY = previousServiceRoleKey;
   }
 });
+
+test("resolveMerchantSessionFromRequest falls back to older duplicate cookies when the newest one is stale", async () => {
+  const originalFetch = globalThis.fetch;
+  const previousUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const previousAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const previousServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  process.env.NEXT_PUBLIC_SUPABASE_URL = "https://unit-test.supabase.co";
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon-key";
+  process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-key";
+
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const requestUrl = new URL(url);
+
+    if (requestUrl.pathname === "/auth/v1/user") {
+      const authorizationHeader =
+        init?.headers instanceof Headers
+          ? init.headers.get("authorization")
+          : Array.isArray(init?.headers)
+            ? new Headers(init?.headers).get("authorization")
+            : new Headers(init?.headers ?? {}).get("authorization");
+      if (authorizationHeader === "Bearer access-token-valid") {
+        return new Response(
+          JSON.stringify({
+            id: "user-3",
+            email: "owner@example.com",
+            user_metadata: {},
+            app_metadata: {},
+          }),
+          {
+            status: 200,
+            headers: {
+              "content-type": "application/json",
+            },
+          },
+        );
+      }
+      return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
+    }
+
+    if (requestUrl.pathname === "/rest/v1/merchants") {
+      return new Response(JSON.stringify([{ id: "12345678" }]), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    }
+
+    return new Response("not found", { status: 404 });
+  }) as typeof fetch;
+
+  try {
+    const session = await resolveMerchantSessionFromRequest(
+      new Request("https://faolla.com/api/bookings?siteId=12345678", {
+        headers: {
+          cookie:
+            "merchant-space-merchant-auth=access-token-valid; merchant-space-merchant-auth=access-token-stale",
+        },
+      }),
+      { hintedMerchantId: "12345678" },
+    );
+
+    assert.deepEqual(session, {
+      merchantId: "12345678",
+      merchantEmail: "owner@example.com",
+      merchantName: "",
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env.NEXT_PUBLIC_SUPABASE_URL = previousUrl;
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = previousAnonKey;
+    process.env.SUPABASE_SERVICE_ROLE_KEY = previousServiceRoleKey;
+  }
+});

@@ -2,6 +2,8 @@ import { createServerSupabaseAuthClient, createServerSupabaseServiceClient } fro
 import {
   readMerchantAuthCookie,
   readMerchantAuthRefreshCookie,
+  readMerchantRequestAccessTokens,
+  readMerchantRequestRefreshTokens,
 } from "@/lib/merchantAuthSession";
 
 type AuthUserSummary = {
@@ -264,8 +266,10 @@ export async function resolveMerchantSessionFromRequest(
   hintInput?: MerchantSessionHintInput,
 ): Promise<ResolvedMerchantSession | null> {
   const { hintedMerchantId, hintedEmail, hintedName } = readMerchantSessionHints(request, hintInput);
-  const accessToken = readMerchantAuthCookie(request);
-  const refreshToken = readMerchantAuthRefreshCookie(request);
+  const accessTokens = readMerchantRequestAccessTokens(request);
+  const refreshTokens = readMerchantRequestRefreshTokens(request);
+  const accessToken = accessTokens[0] ?? readMerchantAuthCookie(request);
+  const refreshToken = refreshTokens[0] ?? readMerchantAuthRefreshCookie(request);
 
   const cached = readCachedSession(accessToken, refreshToken, hintedMerchantId);
   if (cached) {
@@ -281,25 +285,35 @@ export async function resolveMerchantSessionFromRequest(
   let validatedAccessToken = accessToken;
   let validatedRefreshToken = refreshToken;
 
-  if (authSupabase && validatedAccessToken) {
-    const { data, error } = await authSupabase.auth.getUser(validatedAccessToken).catch(() => ({ data: null, error: true }));
-    if (!error && data?.user) {
-      user = data.user as AuthUserSummary;
+  if (authSupabase) {
+    for (const candidateAccessToken of accessTokens) {
+      const { data, error } = await authSupabase.auth
+        .getUser(candidateAccessToken)
+        .catch(() => ({ data: null, error: true }));
+      if (!error && data?.user) {
+        validatedAccessToken = candidateAccessToken;
+        user = data.user as AuthUserSummary;
+        break;
+      }
     }
   }
 
-  if (!user && authSupabase && validatedRefreshToken) {
-    const refreshed = await refreshMerchantSession(validatedRefreshToken);
-    if (refreshed) {
+  if (!user && authSupabase) {
+    for (const candidateRefreshToken of refreshTokens) {
+      const refreshed = await refreshMerchantSession(candidateRefreshToken);
+      if (!refreshed) continue;
       validatedAccessToken = refreshed.accessToken;
       validatedRefreshToken = refreshed.refreshToken;
       user = refreshed.user;
       if (!user) {
-        const { data, error } = await authSupabase.auth.getUser(validatedAccessToken).catch(() => ({ data: null, error: true }));
+        const { data, error } = await authSupabase.auth
+          .getUser(validatedAccessToken)
+          .catch(() => ({ data: null, error: true }));
         if (!error && data?.user) {
           user = data.user as AuthUserSummary;
         }
       }
+      if (user) break;
     }
   }
 

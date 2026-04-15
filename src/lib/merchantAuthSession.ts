@@ -92,12 +92,26 @@ export function parseCookieValue(cookieHeader: string, key: string) {
   return values.at(-1) ?? "";
 }
 
+function uniqueCookieCandidates(values: string[]) {
+  const candidates: string[] = [];
+  for (let index = values.length - 1; index >= 0; index -= 1) {
+    const normalized = String(values[index] ?? "").trim();
+    if (!normalized || candidates.includes(normalized)) continue;
+    candidates.push(normalized);
+  }
+  return candidates;
+}
+
+function readMerchantCookieCandidates(request: Request, key: string) {
+  return uniqueCookieCandidates(parseCookieValues(request.headers.get("cookie") ?? "", key));
+}
+
 export function readMerchantAuthCookie(request: Request) {
-  return parseCookieValue(request.headers.get("cookie") ?? "", MERCHANT_AUTH_COOKIE).trim();
+  return readMerchantCookieCandidates(request, MERCHANT_AUTH_COOKIE)[0] ?? "";
 }
 
 export function readMerchantAuthRefreshCookie(request: Request) {
-  return parseCookieValue(request.headers.get("cookie") ?? "", MERCHANT_AUTH_REFRESH_COOKIE).trim();
+  return readMerchantCookieCandidates(request, MERCHANT_AUTH_REFRESH_COOKIE)[0] ?? "";
 }
 
 export function readMerchantAuthMerchantIdCookie(request: Request) {
@@ -105,17 +119,11 @@ export function readMerchantAuthMerchantIdCookie(request: Request) {
 }
 
 export function readMerchantRequestAccessTokens(request: Request) {
-  const tokens: string[] = [];
-  parseCookieValues(request.headers.get("cookie") ?? "", MERCHANT_AUTH_COOKIE).forEach((token) => {
-    const normalized = String(token ?? "").trim();
-    if (!normalized || tokens.includes(normalized)) return;
-    tokens.push(normalized);
-  });
-  [readMerchantAuthCookie(request)].forEach((token) => {
-    if (!token || tokens.includes(token)) return;
-    tokens.push(token);
-  });
-  return tokens;
+  return readMerchantCookieCandidates(request, MERCHANT_AUTH_COOKIE);
+}
+
+export function readMerchantRequestRefreshTokens(request: Request) {
+  return readMerchantCookieCandidates(request, MERCHANT_AUTH_REFRESH_COOKIE);
 }
 
 export function setMerchantAuthCookie(response: NextResponse, accessToken: string, maxAgeSeconds?: unknown, request?: Request) {

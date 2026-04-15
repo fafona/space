@@ -9,6 +9,8 @@ import {
   clearMerchantAuthCookies,
   readMerchantAuthCookie,
   readMerchantAuthRefreshCookie,
+  readMerchantRequestAccessTokens,
+  readMerchantRequestRefreshTokens,
   setMerchantAuthCookies,
 } from "@/lib/merchantAuthSession";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
@@ -174,6 +176,18 @@ function readMerchantSessionCache(accessToken: string, refreshToken: string) {
   return null;
 }
 
+function readMerchantSessionCacheFromCandidates(accessTokens: string[], refreshTokens: string[]) {
+  for (const refreshToken of refreshTokens) {
+    const cached = readMerchantSessionCache("", refreshToken);
+    if (cached) return cached;
+  }
+  for (const accessToken of accessTokens) {
+    const cached = readMerchantSessionCache(accessToken, "");
+    if (cached) return cached;
+  }
+  return null;
+}
+
 function writeMerchantSessionCache(payload: AuthenticatedMerchantSessionPayload) {
   const keys = [payload.refreshToken, payload.accessToken].map((value) => String(value ?? "").trim()).filter(Boolean);
   if (keys.length === 0) return;
@@ -194,6 +208,16 @@ function clearMerchantSessionCache(accessToken: string, refreshToken: string) {
       merchantSessionCache.delete(key);
       merchantSessionInflight.delete(key);
     });
+}
+
+function clearMerchantSessionCacheFromCandidates(accessTokens: string[], refreshTokens: string[]) {
+  const attempted = new Set<string>();
+  [...refreshTokens, ...accessTokens].forEach((token) => {
+    const normalized = String(token ?? "").trim();
+    if (!normalized || attempted.has(normalized)) return;
+    attempted.add(normalized);
+    clearMerchantSessionCache(normalized, "");
+  });
 }
 
 function toPublicMerchantSessionPayload(payload: AuthenticatedMerchantSessionPayload): PublicMerchantSessionPayload {
@@ -218,9 +242,11 @@ function respondWithMerchantSession(request: Request, payload: AuthenticatedMerc
 
 export async function GET(request: Request) {
   try {
-    const cookieAccessToken = readMerchantAuthCookie(request);
-    const cookieRefreshToken = readMerchantAuthRefreshCookie(request);
-    const cached = readMerchantSessionCache(cookieAccessToken, cookieRefreshToken);
+    const cookieAccessTokens = readMerchantRequestAccessTokens(request);
+    const cookieRefreshTokens = readMerchantRequestRefreshTokens(request);
+    const cookieAccessToken = cookieAccessTokens[0] ?? readMerchantAuthCookie(request);
+    const cookieRefreshToken = cookieRefreshTokens[0] ?? readMerchantAuthRefreshCookie(request);
+    const cached = readMerchantSessionCacheFromCandidates(cookieAccessTokens, cookieRefreshTokens);
     if (cached) {
       return respondWithMerchantSession(request, cached);
     }
@@ -248,33 +274,39 @@ export async function GET(request: Request) {
       let tokenType = "bearer";
       let authUnavailable = false;
 
-      if (accessToken) {
-        const { data, error } = await supabase.auth.getUser(accessToken);
+      for (const candidateAccessToken of cookieAccessTokens) {
+        const { data, error } = await supabase.auth.getUser(candidateAccessToken);
         if (!error && data.user) {
+          accessToken = candidateAccessToken;
           user = data.user as MerchantAuthUserSummary;
-        } else if (error && isTransientMerchantSessionError(error)) {
+          break;
+        }
+        if (error && isTransientMerchantSessionError(error)) {
           authUnavailable = true;
         }
       }
 
-      if (!user && refreshToken) {
-        const refreshed = await refreshMerchantSession(refreshToken);
-        if (refreshed.status === "ok") {
-          accessToken = refreshed.accessToken;
-          refreshToken = refreshed.refreshToken;
-          expiresIn = refreshed.expiresIn;
-          tokenType = refreshed.tokenType;
-          user = refreshed.user;
-          if (!user && accessToken) {
-            const { data, error } = await supabase.auth.getUser(accessToken);
-            if (!error && data.user) {
-              user = data.user as MerchantAuthUserSummary;
-            } else if (error && isTransientMerchantSessionError(error)) {
-              authUnavailable = true;
+      if (!user) {
+        for (const candidateRefreshToken of cookieRefreshTokens) {
+          const refreshed = await refreshMerchantSession(candidateRefreshToken);
+          if (refreshed.status === "ok") {
+            accessToken = refreshed.accessToken;
+            refreshToken = refreshed.refreshToken;
+            expiresIn = refreshed.expiresIn;
+            tokenType = refreshed.tokenType;
+            user = refreshed.user;
+            if (!user && accessToken) {
+              const { data, error } = await supabase.auth.getUser(accessToken);
+              if (!error && data.user) {
+                user = data.user as MerchantAuthUserSummary;
+              } else if (error && isTransientMerchantSessionError(error)) {
+                authUnavailable = true;
+              }
             }
+            if (user) break;
+          } else if (refreshed.status === "unavailable") {
+            authUnavailable = true;
           }
-        } else if (refreshed.status === "unavailable") {
-          authUnavailable = true;
         }
       }
 
@@ -282,7 +314,7 @@ export async function GET(request: Request) {
         if (authUnavailable) {
           throw new Error("merchant_session_transient_unavailable");
         }
-        clearMerchantSessionCache(cookieAccessToken, cookieRefreshToken);
+        clearMerchantSessionCacheFromCandidates(cookieAccessTokens, cookieRefreshTokens);
         return null;
       }
 
