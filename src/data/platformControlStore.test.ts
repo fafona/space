@@ -177,7 +177,7 @@ test("platform state seeds built-in starter templates within new-merchant permis
     assert.ok(restaurantBuiltin);
     assert.equal(restaurantBuiltin?.category, "餐饮");
     const restaurantConfig = getPagePlanConfigFromBlocks((restaurantBuiltin?.blocks ?? []) as never);
-    assert.deepEqual(restaurantConfig.plans.map((plan) => plan.name), ["暖金餐厅版", "橄榄招牌版", "陶土轻奢版"]);
+    assert.deepEqual(restaurantConfig.plans.map((plan) => plan.name), ["轻食点单版", "蓝标流程版", "品牌转化版"]);
 
     const blockTypes = new Set(
       [...serviceConfig.plans, ...restaurantConfig.plans].flatMap((plan) =>
