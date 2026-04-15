@@ -1485,6 +1485,10 @@ function hasNavBlock(blocks: Block[]) {
   return blocks.some((item) => item.type === "nav");
 }
 
+function getDefaultSelectedBlockIdForPage(blocks: Block[]) {
+  return blocks.find((item) => item.type !== "nav")?.id ?? "";
+}
+
 function getNavSyncKey(blocks: Block[]) {
   const nav = getFirstNavBlock(blocks);
   if (!nav || nav.type !== "nav") return "";
@@ -8362,7 +8366,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     setPlanConfig(nextConfig);
     setEditingPageId(pageId);
     setBlocks(targetBlocks);
-    setSelectedId(targetBlocks[0]?.id ?? "");
+    setSelectedId(getDefaultSelectedBlockIdForPage(targetBlocks));
     persistDraftForConfigs(nextConfig);
   }
 
