@@ -794,6 +794,7 @@ function createDefaultHomeLayoutConfig(): HomeLayoutConfig {
 const BUILTIN_NEW_MERCHANT_TEMPLATE_ID = "builtin-template-new-merchant-service-starter";
 const BUILTIN_NEW_MERCHANT_TEMPLATE_TIMESTAMP = "2026-04-15T03:40:00.000Z";
 const BUILTIN_RESTAURANT_TEMPLATE_ID = "builtin-template-restaurant-signature-starter";
+const BUILTIN_ORGANIZATION_TEMPLATE_ID = "builtin-template-organization-network-starter";
 type BuiltinServiceStarterVariant = {
   key: string;
   planId: "plan-1" | "plan-2" | "plan-3";
@@ -854,6 +855,39 @@ type BuiltinRestaurantVariant = {
   menuChartType: "bar" | "line" | "pie";
   menuChartLabels: string[];
   menuChartValues: number[];
+  contactHeading: string;
+  contactIntro: string;
+  contactItems: string[];
+};
+
+type BuiltinOrganizationVariant = {
+  key: string;
+  planId: "plan-1" | "plan-2" | "plan-3";
+  name: string;
+  pageBgColor: string;
+  navItemBgColor: string;
+  navItemBorderColor: string;
+  navItemTextColor: string;
+  navActiveBgColor: string;
+  navActiveBorderColor: string;
+  heroBorderColor: string;
+  accentColor: string;
+  surfaceColor: string;
+  surfaceAltColor: string;
+  textColor: string;
+  introHeading: string;
+  introText: string;
+  featureHeading: string;
+  featureItems: string[];
+  programHeading: string;
+  programIntro: string;
+  programFeatureHeading: string;
+  programFeatureItems: string[];
+  chartHeading: string;
+  chartText: string;
+  chartType: "bar" | "line" | "pie";
+  chartLabels: string[];
+  chartValues: number[];
   contactHeading: string;
   contactIntro: string;
   contactItems: string[];
@@ -1126,6 +1160,135 @@ const BUILTIN_RESTAURANT_TEMPLATE_VARIANTS: BuiltinRestaurantVariant[] = [
   },
 ];
 
+const BUILTIN_ORGANIZATION_TEMPLATE_VARIANTS: BuiltinOrganizationVariant[] = [
+  {
+    key: "membership-standard",
+    planId: "plan-1",
+    name: "会员活动版",
+    pageBgColor: "linear-gradient(180deg, #f7f8fc 0%, #eef2f7 42%, #fbfcff 100%)",
+    navItemBgColor: "#ffffff",
+    navItemBorderColor: "#cfd8e6",
+    navItemTextColor: "#16314f",
+    navActiveBgColor: "#16314f",
+    navActiveBorderColor: "#16314f",
+    heroBorderColor: "#c9d3e2",
+    accentColor: "#16314f",
+    surfaceColor: "#ffffff",
+    surfaceAltColor: "#eef4fb",
+    textColor: "#18324d",
+    introHeading: "标准组织站的第一屏要先给结构感",
+    introText: "这版参考 British Chambers of Commerce 这种组织站：首页先给会员、活动和入口结构，不靠花哨视觉，而是靠信息密度和秩序感建立信任。",
+    featureHeading: "首页建议先露出的内容",
+    featureItems: [
+      "会员权益或会员层级的最短说明",
+      "近期活动、报名入口和日程提醒",
+      "组织最新倡议、新闻或项目重点",
+      "加入组织和联系秘书处的入口",
+    ],
+    programHeading: "会员与活动页更像一张组织运营面板",
+    programIntro: "这一页适合把会员等级、活动安排、项目支持和资源下载拆开。结构越清晰，越像成熟商会、协会或行业组织官网。",
+    programFeatureHeading: "适合直接做成卡片的模块",
+    programFeatureItems: [
+      "会员等级对比 / 会费 / 对应权益",
+      "月度活动安排 / 报名入口",
+      "行业专题 / 调研 / 白皮书下载",
+      "秘书处服务 / 对接 / 咨询支持",
+    ],
+    chartHeading: "会员服务重点",
+    chartText: "这里可以替换成会员服务投入重点，比如活动、政策对接、培训、资源下载或对外合作占比。",
+    chartType: "bar",
+    chartLabels: ["活动", "培训", "政策", "资源"],
+    chartValues: [5, 4, 3, 2],
+    contactHeading: "加入组织与秘书处联系",
+    contactIntro: "联系页建议明确秘书处电话、邮箱、办公地址、活动承办咨询和会员申请流程，让组织站看起来更完整、更可执行。",
+    contactItems: ["加入流程、会费和联系人建议同屏展示", "活动报名、赞助合作和媒体联系分开写", "如果组织有分会或区域办事点，按地区分组展示"],
+  },
+  {
+    key: "federation-future",
+    planId: "plan-2",
+    name: "国际商会版",
+    pageBgColor: "linear-gradient(180deg, #eef8ff 0%, #dff3ff 40%, #f8fcff 100%)",
+    navItemBgColor: "#f8fdff",
+    navItemBorderColor: "#b8d7ea",
+    navItemTextColor: "#123b59",
+    navActiveBgColor: "#0f6ea3",
+    navActiveBorderColor: "#0f6ea3",
+    heroBorderColor: "#8bc7de",
+    accentColor: "#0f6ea3",
+    surfaceColor: "#ffffff",
+    surfaceAltColor: "#eaf7fb",
+    textColor: "#143a57",
+    introHeading: "现代组织官网要更像平台，不像公告栏",
+    introText: "这版参考 Singapore Business Federation 这种更现代的政企组织站：强调国际连接、政策服务、项目平台和商业机会，而不是传统栏目堆叠。",
+    featureHeading: "第一屏更适合突出什么",
+    featureItems: [
+      "面向企业的核心项目或服务入口",
+      "国际合作、贸易与投资机会",
+      "行业倡议、政策回应或新闻焦点",
+      "会员网络、资源平台和报名入口",
+    ],
+    programHeading: "活动与项目页要有平台感",
+    programIntro: "这一页建议像一个组织服务面板，把项目、行业计划、资源中心和会员服务做成可浏览的模块，比传统长列表更像现代组织网站。",
+    programFeatureHeading: "更适合在这一版强调的模块",
+    programFeatureItems: [
+      "国际贸易与投资促进项目",
+      "行业计划 / 培训 / 转型支持",
+      "会员网络 / TAC / 委员会资源",
+      "新闻、评论和政策解读入口",
+    ],
+    chartHeading: "组织服务分布",
+    chartText: "这块可以表达贸易、会员、活动、政策和国际合作等服务重点，让页面更像一套有方向感的组织平台。",
+    chartType: "line",
+    chartLabels: ["贸易", "项目", "会员", "活动", "政策"],
+    chartValues: [2, 4, 4, 5, 3],
+    contactHeading: "秘书处、活动与合作联系",
+    contactIntro: "联系页建议同时给出秘书处、活动合作、国际对接和媒体问询，让组织网站的运营和对外接口一眼完整。",
+    contactItems: ["秘书处、活动与媒体联系人建议拆开", "可以放办公时间、会议场地或租用信息", "如果有 newsletter 或订阅入口，建议放在联系页底部继续承接"],
+  },
+  {
+    key: "bridge-bilingual",
+    planId: "plan-3",
+    name: "双语桥接版",
+    pageBgColor: "linear-gradient(180deg, #fffaf1 0%, #f7efe0 40%, #fffcf7 100%)",
+    navItemBgColor: "#fffdf9",
+    navItemBorderColor: "#e0ccb0",
+    navItemTextColor: "#3f2f22",
+    navActiveBgColor: "#9b1c1f",
+    navActiveBorderColor: "#9b1c1f",
+    heroBorderColor: "#d8b78f",
+    accentColor: "#7c1118",
+    surfaceColor: "#fffdf9",
+    surfaceAltColor: "#f7ecdc",
+    textColor: "#3f2f22",
+    introHeading: "双语商会站更重要的是桥接感",
+    introText: "这版参考华人商会和跨国商会官网：既要有正式组织感，也要让人一眼知道你在连接哪两边、提供什么桥接服务、适合谁加入。",
+    featureHeading: "首页建议优先说明的事项",
+    featureItems: [
+      "组织身份与面向群体",
+      "服务哪两个市场或哪两类会员",
+      "近期活动、商贸对接与访问安排",
+      "入会、合作和联络窗口",
+    ],
+    programHeading: "会员与桥接服务页",
+    programIntro: "这一页适合集中展示经贸对接、代表团访问、会员服务、双语活动和秘书处支持，让双语商会的用途一眼就能看懂。",
+    programFeatureHeading: "适合做成重点板块的内容",
+    programFeatureItems: [
+      "会员服务 / 企业对接 / 经贸咨询",
+      "双语活动 / 访问团 / 商务晚宴",
+      "合作机构、分会和海外联系点",
+      "入会方式、会费和秘书处支持",
+    ],
+    chartHeading: "组织工作重点",
+    chartText: "这里可以换成经贸对接、会员服务、活动、媒体传播和政府沟通等重点方向，增强组织站的完整感。",
+    chartType: "pie",
+    chartLabels: ["对接", "会员", "活动", "传播"],
+    chartValues: [4, 3, 2, 1],
+    contactHeading: "秘书处与双语联络",
+    contactIntro: "联系页建议同时给出双语联系人、办公地点、合作邮箱和活动咨询，让跨境型组织站更有可执行性。",
+    contactItems: ["双语联系人和服务语言建议直接写出来", "如果有海外联络点，建议单独列出国家和城市", "活动报名、入会申请和合作咨询建议保留不同入口"],
+  },
+];
+
 function createBuiltinServiceStarterPageIds(variantKey: string) {
   return {
     home: `page-service-home-${variantKey}`,
@@ -1139,6 +1302,14 @@ function createBuiltinRestaurantPageIds(variantKey: string) {
     home: `page-restaurant-home-${variantKey}`,
     menu: `page-restaurant-menu-${variantKey}`,
     contact: `page-restaurant-contact-${variantKey}`,
+  } as const;
+}
+
+function createBuiltinOrganizationPageIds(variantKey: string) {
+  return {
+    home: `page-organization-home-${variantKey}`,
+    programs: `page-organization-programs-${variantKey}`,
+    contact: `page-organization-contact-${variantKey}`,
   } as const;
 }
 
@@ -1157,6 +1328,15 @@ function createBuiltinRestaurantNavItems(variant: BuiltinRestaurantVariant) {
     { id: `builtin-restaurant-nav-home-${variant.key}`, label: "点单入口", pageId: pageIds.home },
     { id: `builtin-restaurant-nav-menu-${variant.key}`, label: "热卖菜单", pageId: pageIds.menu },
     { id: `builtin-restaurant-nav-contact-${variant.key}`, label: "到店联系", pageId: pageIds.contact },
+  ];
+}
+
+function createBuiltinOrganizationNavItems(variant: BuiltinOrganizationVariant) {
+  const pageIds = createBuiltinOrganizationPageIds(variant.key);
+  return [
+    { id: `builtin-organization-nav-home-${variant.key}`, label: "关于组织", pageId: pageIds.home },
+    { id: `builtin-organization-nav-programs-${variant.key}`, label: "会员活动", pageId: pageIds.programs },
+    { id: `builtin-organization-nav-contact-${variant.key}`, label: "联系加入", pageId: pageIds.contact },
   ];
 }
 
@@ -1193,6 +1373,31 @@ function createBuiltinRestaurantNavBlock(idSuffix: string, variant: BuiltinResta
       heading: "",
       navOrientation: "horizontal",
       navItems: createBuiltinRestaurantNavItems(variant),
+      pageBgColor: variant.pageBgColor,
+      pageBgColorOpacity: 1,
+      navItemBgColor: variant.navItemBgColor,
+      navItemBgOpacity: 1,
+      navItemBorderStyle: "solid",
+      navItemBorderColor: variant.navItemBorderColor,
+      navItemActiveBgColor: variant.navActiveBgColor,
+      navItemActiveBgOpacity: 1,
+      navItemActiveBorderStyle: "solid",
+      navItemActiveBorderColor: variant.navActiveBorderColor,
+      navItemActiveTextColor: "#ffffff",
+      fontColor: variant.navItemTextColor,
+      fontWeight: "bold",
+    },
+  };
+}
+
+function createBuiltinOrganizationNavBlock(idSuffix: string, variant: BuiltinOrganizationVariant): Block {
+  return {
+    id: `builtin-organization-nav-${variant.key}-${idSuffix}`,
+    type: "nav",
+    props: {
+      heading: "",
+      navOrientation: "horizontal",
+      navItems: createBuiltinOrganizationNavItems(variant),
       pageBgColor: variant.pageBgColor,
       pageBgColorOpacity: 1,
       navItemBgColor: variant.navItemBgColor,
@@ -1265,6 +1470,81 @@ function createBuiltinRestaurantChartBlock(
   variant: BuiltinRestaurantVariant,
   layout: Partial<BackgroundEditableProps> = {},
   chartType: BuiltinRestaurantVariant["menuChartType"] = variant.menuChartType,
+): Block {
+  return {
+    id,
+    type: "chart",
+    props: {
+      heading,
+      text,
+      chartType,
+      labels,
+      values,
+      bgColor: variant.surfaceColor,
+      bgColorOpacity: 1,
+      blockBorderStyle: "solid",
+      blockBorderColor: variant.heroBorderColor,
+      fontColor: variant.accentColor,
+      ...layout,
+    },
+  };
+}
+
+function createBuiltinOrganizationTextBlock(
+  id: string,
+  heading: string,
+  text: string,
+  variant: BuiltinOrganizationVariant,
+  layout: Partial<BackgroundEditableProps> = {},
+): Block {
+  return {
+    id,
+    type: "text",
+    props: {
+      heading,
+      text,
+      bgColor: variant.surfaceColor,
+      bgColorOpacity: 1,
+      blockBorderStyle: "accent",
+      blockBorderColor: variant.navItemBorderColor,
+      fontColor: variant.textColor,
+      ...layout,
+    },
+  };
+}
+
+function createBuiltinOrganizationListBlock(
+  id: string,
+  heading: string,
+  items: string[],
+  variant: BuiltinOrganizationVariant,
+  layout: Partial<BackgroundEditableProps> = {},
+): Block {
+  return {
+    id,
+    type: "list",
+    props: {
+      heading,
+      items,
+      bgColor: variant.surfaceAltColor,
+      bgColorOpacity: 1,
+      blockBorderStyle: "soft",
+      blockBorderColor: variant.navItemBorderColor,
+      fontColor: variant.textColor,
+      ...layout,
+    },
+  };
+}
+
+function createBuiltinOrganizationChartBlock(
+  id: string,
+  heading: string,
+  text: string,
+  labels: string[],
+  values: number[],
+  variant: BuiltinOrganizationVariant,
+  layout: Partial<BackgroundEditableProps> = {},
+  chartType: BuiltinOrganizationVariant["chartType"] = variant.chartType,
 ): Block {
   return {
     id,
@@ -2040,6 +2320,438 @@ function createBuiltinRestaurantPages(variant: BuiltinRestaurantVariant): PlanPa
   ];
 }
 
+function createBuiltinOrganizationStoryboardBlock(variant: BuiltinOrganizationVariant): Block {
+  const makeBox = (id: string, html: string, x: number, y: number, width: number, height: number) => ({
+    id,
+    html,
+    x,
+    y,
+    width,
+    height,
+  });
+
+  if (variant.key === "membership-standard") {
+    const membershipGridHtml = `
+      <div style="width:100%;height:100%;padding:18px;border-radius:26px;border:1px solid #d7deea;background:linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);box-shadow:0 20px 42px rgba(15,23,42,0.08);display:flex;flex-direction:column;gap:12px;">
+        <div style="display:grid;grid-template-columns:2fr repeat(4,1fr);gap:8px;font-size:11px;font-weight:800;color:#16314f;text-transform:uppercase;">
+          <div style="padding:8px 10px;border-radius:10px;background:#eff4fa;">Member Benefits</div>
+          <div style="padding:8px 0;border-radius:10px;background:#ff4f87;color:#fff;text-align:center;">A</div>
+          <div style="padding:8px 0;border-radius:10px;background:#2da3ff;color:#fff;text-align:center;">B</div>
+          <div style="padding:8px 0;border-radius:10px;background:#41bf74;color:#fff;text-align:center;">C</div>
+          <div style="padding:8px 0;border-radius:10px;background:#8f59ff;color:#fff;text-align:center;">D</div>
+        </div>
+        ${["Events access", "Policy updates", "Member directory", "Partner referrals", "Media exposure", "Market briefings"].map((item, index) => `
+          <div style="display:grid;grid-template-columns:2fr repeat(4,1fr);gap:8px;align-items:center;font-size:12px;">
+            <div style="padding:8px 10px;border-radius:10px;background:${index % 2 === 0 ? "#f7f9fc" : "#ffffff"};color:#25405d;">${item}</div>
+            <div style="padding:8px 0;border-radius:10px;background:#fff5f8;color:#ff4f87;text-align:center;">✓</div>
+            <div style="padding:8px 0;border-radius:10px;background:#f2f9ff;color:#2da3ff;text-align:center;">✓</div>
+            <div style="padding:8px 0;border-radius:10px;background:#f3fff7;color:#41bf74;text-align:center;">✓</div>
+            <div style="padding:8px 0;border-radius:10px;background:#f7f4ff;color:#8f59ff;text-align:center;">✓</div>
+          </div>
+        `).join("")}
+      </div>
+    `;
+    const eventStageHtml = `
+      <div style="width:100%;height:100%;padding:24px;border-radius:26px;border:1px solid #d7deea;background:linear-gradient(180deg, rgba(16,53,92,0.20) 0%, rgba(16,53,92,0.10) 100%), linear-gradient(135deg, #d9e3f0 0%, #f5f8fb 100%);box-shadow:0 20px 42px rgba(15,23,42,0.08);display:flex;flex-direction:column;justify-content:flex-end;">
+        <div style="display:flex;flex-direction:column;gap:10px;padding:18px;border-radius:18px;background:rgba(255,255,255,0.82);backdrop-filter:blur(6px);">
+          <div style="font-size:11px;font-weight:800;letter-spacing:0.18em;text-transform:uppercase;color:#6b7c90;">Annual Forum</div>
+          <div style="font-size:30px;line-height:1.08;font-weight:900;color:#16314f;">Future Economy<br/>Member Summit</div>
+          <div style="font-size:13px;line-height:1.65;color:#35506d;">中间这张像活动主视觉，用来承接年会、论坛、代表团访问或重点活动。</div>
+        </div>
+      </div>
+    `;
+    const eventMobileHtml = `
+      <div style="width:100%;height:100%;padding:22px;border-radius:26px;border:1px solid #221b48;background:linear-gradient(180deg, #251957 0%, #17113f 100%);box-shadow:0 20px 42px rgba(15,23,42,0.14);display:flex;align-items:center;justify-content:center;">
+        <div style="width:208px;height:100%;max-height:330px;border-radius:32px;border:5px solid #0c0c1a;background:#0f1535;padding:16px 14px;display:flex;flex-direction:column;gap:10px;">
+          <div style="font-size:13px;font-weight:800;color:#ffffff;">Upcoming events</div>
+          ${["Breakfast Briefing", "Policy Roundtable", "Women in Trade", "Networking Night"].map((item, index) => `
+            <div style="padding:10px 12px;border-radius:14px;background:${index === 0 ? "linear-gradient(135deg,#ff4fa0 0%,#8f59ff 100%)" : "rgba(255,255,255,0.08)"};font-size:12px;color:#ffffff;">${item}</div>
+          `).join("")}
+        </div>
+      </div>
+    `;
+    return {
+      id: `builtin-organization-storyboard-home-${variant.key}`,
+      type: "common",
+      props: {
+        bgColor: "transparent",
+        bgColorOpacity: 0,
+        blockBorderStyle: "none",
+        blockWidth: 1080,
+        blockHeight: 410,
+        commonTextBoxes: [
+          makeBox(`org-story-left-${variant.key}`, membershipGridHtml, 0, 16, 360, 300),
+          makeBox(`org-story-middle-${variant.key}`, eventStageHtml, 390, 16, 360, 300),
+          makeBox(`org-story-right-${variant.key}`, eventMobileHtml, 780, 16, 300, 300),
+        ],
+      },
+    };
+  }
+
+  if (variant.key === "federation-future") {
+    const overviewHtml = `
+      <div style="width:100%;height:100%;padding:18px;border-radius:26px;border:1px solid #bde1eb;background:linear-gradient(180deg, #ffffff 0%, #f3fbff 100%);box-shadow:0 20px 42px rgba(15,23,42,0.08);display:flex;flex-direction:column;gap:12px;">
+        <div style="height:96px;border-radius:16px;background:linear-gradient(135deg, #ffb36c 0%, #ff7d7d 35%, #5fa7ff 100%);"></div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">
+          ${["Trade", "Events", "News", "Policy", "Members", "Insights"].map((item) => `
+            <div style="padding:12px 8px;border-radius:14px;background:#ffffff;border:1px solid #d4e7ee;text-align:center;font-size:12px;color:#17445f;font-weight:700;">${item}</div>
+          `).join("")}
+        </div>
+      </div>
+    `;
+    const futureHeroHtml = `
+      <div style="width:100%;height:100%;padding:28px;border-radius:26px;border:1px solid #7cc9da;background:radial-gradient(circle at 28% 22%, rgba(255,255,255,0.22) 0, rgba(255,255,255,0.08) 28%, transparent 46%), linear-gradient(135deg, #67d6dd 0%, #2fa7c7 42%, #2375d3 100%);box-shadow:0 22px 44px rgba(15,23,42,0.10);display:flex;flex-direction:column;justify-content:space-between;">
+        <div style="font-size:44px;line-height:1.06;font-weight:900;color:#ffffff;letter-spacing:-0.04em;">Mobilising Business,<br/>Magnifying Opportunities</div>
+        <div style="display:flex;flex-direction:column;gap:12px;">
+          <div style="font-size:14px;line-height:1.7;color:rgba(255,255,255,0.86);">中间主卡更像现代商会首页的大标语屏，强调国际合作、转型支持和组织使命。</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;">
+            <span style="display:inline-flex;padding:9px 14px;border-radius:999px;background:#ffffff;color:#1670a5;font-size:12px;font-weight:800;">加入会员</span>
+            <span style="display:inline-flex;padding:9px 14px;border-radius:999px;border:1px solid rgba(255,255,255,0.35);color:#ffffff;font-size:12px;font-weight:700;">查看项目</span>
+          </div>
+        </div>
+      </div>
+    `;
+    const dashboardHtml = `
+      <div style="width:100%;height:100%;padding:18px;border-radius:26px;border:1px solid #a9cbf1;background:linear-gradient(180deg, #4f8dff 0%, #3779e6 100%);box-shadow:0 22px 44px rgba(15,23,42,0.12);display:flex;align-items:center;justify-content:center;">
+        <div style="width:100%;height:100%;border-radius:20px;background:#ffffff;padding:16px;display:flex;flex-direction:column;gap:12px;">
+          <div style="display:flex;gap:8px;">
+            ${["Policy", "Trade", "Members"].map((item, index) => `<div style="flex:1;padding:10px;border-radius:12px;background:${["#dff2ff", "#eaf7e3", "#fff1da"][index]};font-size:11px;font-weight:800;color:#16314f;text-align:center;">${item}</div>`).join("")}
+          </div>
+          <div style="height:86px;border-radius:16px;background:linear-gradient(180deg,#f5f9ff 0%,#edf4fb 100%);padding:12px;display:flex;align-items:flex-end;gap:8px;">
+            <div style="flex:1;height:34%;border-radius:999px 999px 0 0;background:#58bde6;"></div>
+            <div style="flex:1;height:52%;border-radius:999px 999px 0 0;background:#7f9cff;"></div>
+            <div style="flex:1;height:70%;border-radius:999px 999px 0 0;background:#ffb36c;"></div>
+            <div style="flex:1;height:44%;border-radius:999px 999px 0 0;background:#88d39d;"></div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            <div style="height:24px;border-radius:12px;background:#f5f8fc;"></div>
+            <div style="height:24px;border-radius:12px;background:#f5f8fc;"></div>
+            <div style="height:24px;border-radius:12px;background:#f5f8fc;"></div>
+          </div>
+        </div>
+      </div>
+    `;
+    return {
+      id: `builtin-organization-storyboard-home-${variant.key}`,
+      type: "common",
+      props: {
+        bgColor: "transparent",
+        bgColorOpacity: 0,
+        blockBorderStyle: "none",
+        blockWidth: 1080,
+        blockHeight: 410,
+        commonTextBoxes: [
+          makeBox(`org-story-left-${variant.key}`, overviewHtml, 0, 18, 280, 300),
+          makeBox(`org-story-middle-${variant.key}`, futureHeroHtml, 310, 18, 400, 300),
+          makeBox(`org-story-right-${variant.key}`, dashboardHtml, 740, 18, 340, 300),
+        ],
+      },
+    };
+  }
+
+  const bilingualIntroHtml = `
+    <div style="width:100%;height:100%;padding:24px;border-radius:26px;border:1px solid #dcc3a0;background:linear-gradient(180deg, #fffdf8 0%, #f7efe0 100%);box-shadow:0 20px 42px rgba(15,23,42,0.08);display:flex;flex-direction:column;justify-content:space-between;">
+      <div style="display:flex;flex-direction:column;gap:12px;">
+        <div style="font-size:12px;font-weight:800;letter-spacing:0.18em;text-transform:uppercase;color:#9b1c1f;">Spain · China Chamber</div>
+        <div style="font-size:34px;line-height:1.06;font-weight:900;color:#3f2f22;">双语商会 /<br/>Bilingual Chamber</div>
+        <div style="font-size:14px;line-height:1.7;color:#5f4b3b;">左侧先把组织身份、双语属性和服务对象讲明白，让桥接感一眼成立。</div>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <span style="display:inline-flex;padding:8px 12px;border-radius:999px;background:#9b1c1f;color:#fff;font-size:12px;font-weight:800;">加入会员</span>
+        <span style="display:inline-flex;padding:8px 12px;border-radius:999px;border:1px solid #d9b78f;color:#7c1118;font-size:12px;font-weight:700;">查看活动</span>
+      </div>
+    </div>
+  `;
+  const bridgeMapHtml = `
+    <div style="width:100%;height:100%;padding:24px;border-radius:26px;border:1px solid #cfb08a;background:linear-gradient(135deg, #9b1c1f 0%, #7c1118 58%, #2d2238 100%);box-shadow:0 22px 44px rgba(15,23,42,0.12);position:relative;overflow:hidden;display:flex;flex-direction:column;justify-content:space-between;">
+      <div style="position:absolute;inset:24px 22px auto auto;width:118px;height:118px;border-radius:999px;background:rgba(255,255,255,0.08);"></div>
+      <div style="display:flex;flex-direction:column;gap:14px;position:relative;z-index:1;">
+        <div style="font-size:40px;line-height:1.02;font-weight:900;color:#ffffff;letter-spacing:-0.04em;">Business Bridge<br/>Spain ↔ China</div>
+        <div style="font-size:14px;line-height:1.72;color:rgba(255,255,255,0.82);">中间主卡用来承接经贸对接、访问团、活动合作和商会服务，让“桥接”成为页面主叙事。</div>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;position:relative;z-index:1;">
+        <span style="display:inline-flex;padding:8px 12px;border-radius:999px;background:#ffffff;color:#9b1c1f;font-size:12px;font-weight:800;">Delegation</span>
+        <span style="display:inline-flex;padding:8px 12px;border-radius:999px;background:#ffffff;color:#9b1c1f;font-size:12px;font-weight:800;">Matchmaking</span>
+        <span style="display:inline-flex;padding:8px 12px;border-radius:999px;background:#ffffff;color:#9b1c1f;font-size:12px;font-weight:800;">Bilingual Events</span>
+      </div>
+    </div>
+  `;
+  const bilingualPanelHtml = `
+    <div style="width:100%;height:100%;padding:18px;border-radius:26px;border:1px solid #cfb08a;background:linear-gradient(180deg, #fff9f1 0%, #f7ecdd 100%);box-shadow:0 20px 42px rgba(15,23,42,0.08);display:flex;flex-direction:column;gap:12px;">
+      ${["Membership service", "商务活动 / Business events", "秘书处联络 / Secretariat"].map((item, index) => `
+        <div style="padding:14px 14px;border-radius:16px;background:${index === 0 ? "#fff2f2" : "#ffffff"};border:1px solid ${index === 0 ? "#f0c2c4" : "#ead7c1"};font-size:13px;font-weight:700;color:#523629;">${item}</div>
+      `).join("")}
+      <div style="margin-top:auto;padding:12px 14px;border-radius:16px;background:#2d2238;color:#ffffff;font-size:12px;line-height:1.65;">适合做双语服务、会务联络、访问团与企业对接的快捷入口。</div>
+    </div>
+  `;
+  return {
+    id: `builtin-organization-storyboard-home-${variant.key}`,
+    type: "common",
+    props: {
+      bgColor: "transparent",
+      bgColorOpacity: 0,
+      blockBorderStyle: "none",
+      blockWidth: 1080,
+      blockHeight: 410,
+      commonTextBoxes: [
+        makeBox(`org-story-left-${variant.key}`, bilingualIntroHtml, 0, 18, 310, 300),
+        makeBox(`org-story-middle-${variant.key}`, bridgeMapHtml, 340, 18, 380, 300),
+        makeBox(`org-story-right-${variant.key}`, bilingualPanelHtml, 750, 18, 330, 300),
+      ],
+    },
+  };
+}
+
+function createBuiltinOrganizationShowcaseBlock(variant: BuiltinOrganizationVariant): Block {
+  const makeBox = (id: string, html: string, x: number, y: number, width: number, height: number) => ({
+    id,
+    html,
+    x,
+    y,
+    width,
+    height,
+  });
+  const card = (title: string, subtitle: string, badge: string, bg: string, border: string) => `
+    <div style="width:100%;height:100%;padding:22px;border-radius:24px;border:1px solid ${border};background:${bg};display:flex;flex-direction:column;justify-content:space-between;box-shadow:0 18px 38px rgba(15,23,42,0.08);">
+      <div style="display:flex;flex-direction:column;gap:12px;">
+        <div style="display:inline-flex;width:max-content;padding:7px 12px;border-radius:999px;background:rgba(255,255,255,0.82);font-size:12px;font-weight:700;color:#1f2937;">${badge}</div>
+        <div style="font-size:28px;line-height:1.08;font-weight:800;color:${variant.textColor};">${title}</div>
+        <div style="font-size:14px;line-height:1.6;color:rgba(15,23,42,0.72);">${subtitle}</div>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <span style="display:inline-flex;padding:6px 10px;border-radius:999px;background:rgba(255,255,255,0.85);font-size:12px;">成员</span>
+        <span style="display:inline-flex;padding:6px 10px;border-radius:999px;background:rgba(255,255,255,0.85);font-size:12px;">活动</span>
+      </div>
+    </div>
+  `;
+
+  if (variant.key === "membership-standard") {
+    return {
+      id: `builtin-organization-showcase-${variant.key}`,
+      type: "common",
+      props: {
+        bgColor: "transparent",
+        bgColorOpacity: 0,
+        blockBorderStyle: "none",
+        blockWidth: 1080,
+        blockHeight: 430,
+        commonTextBoxes: [
+          makeBox("org-card-1", card("会员等级", "把会员层级、会费和权益做成结构化卡片，最像成熟商协会模板。", "MEMBERSHIP", "#f6fbff", "#d5e3ef"), 0, 0, 340, 320),
+          makeBox("org-card-2", card("重点活动", "第二张卡承接论坛、早餐会、路演和闭门圆桌。", "EVENTS", "#fff6ef", "#eccfb1"), 370, 0, 340, 320),
+          makeBox("org-card-3", card("资源下载", "第三张卡更适合放政策简报、白皮书和会员资源。", "RESOURCES", "#f4f3ff", "#d7d0f7"), 740, 0, 340, 320),
+        ],
+      },
+    };
+  }
+
+  if (variant.key === "federation-future") {
+    return {
+      id: `builtin-organization-showcase-${variant.key}`,
+      type: "common",
+      props: {
+        bgColor: "transparent",
+        bgColorOpacity: 0,
+        blockBorderStyle: "none",
+        blockWidth: 1080,
+        blockHeight: 430,
+        commonTextBoxes: [
+          makeBox("org-card-1", card("贸易促进", "把国际贸易、投资项目和市场进入支持集中放第一张卡。", "TRADE", "#eefbff", "#c6e8ef"), 0, 0, 340, 320),
+          makeBox("org-card-2", card("行业计划", "用第二张卡承接培训、转型和重点项目，让组织更像平台。", "PROGRAMMES", "#ffffff", "#d8e6ef"), 370, 0, 340, 320),
+          makeBox("org-card-3", card("政策与新闻", "第三张卡更适合接评论、政策回应和会员通讯。", "NEWSROOM", "#edf4ff", "#c8d7ee"), 740, 0, 340, 320),
+        ],
+      },
+    };
+  }
+
+  return {
+    id: `builtin-organization-showcase-${variant.key}`,
+    type: "common",
+    props: {
+      bgColor: "transparent",
+      bgColorOpacity: 0,
+      blockBorderStyle: "none",
+      blockWidth: 1080,
+      blockHeight: 430,
+      commonTextBoxes: [
+        makeBox("org-card-1", card("商会服务", "第一张卡负责会员服务、秘书处支持和企业咨询。", "SERVICE", "#fff8f3", "#ead7c1"), 0, 0, 340, 320),
+        makeBox("org-card-2", card("双语活动", "活动、团组和商务交流建议用中间主卡承接。", "EVENTS", "#fff1f1", "#f0c2c4"), 370, 0, 340, 320),
+        makeBox("org-card-3", card("联络网络", "第三张卡更适合放海外节点、分会和合作机构。", "NETWORK", "#f8f4ff", "#ddcff5"), 740, 0, 340, 320),
+      ],
+    },
+  };
+}
+
+function createBuiltinOrganizationPages(variant: BuiltinOrganizationVariant): PlanPage[] {
+  const pageIds = createBuiltinOrganizationPageIds(variant.key);
+  const homeNoteText =
+    variant.key === "membership-standard"
+      ? "这一屏参考标准商会站：首页先把会员结构、重点活动和移动活动入口摆出来，信息多但不乱。"
+      : variant.key === "federation-future"
+        ? "这一屏参考更现代的国际商会站，用大主卡表达组织愿景，再配平台概览和管理面板卡。"
+        : "这一屏强调双语桥接：左边讲身份，中间讲桥接服务，右边给联络和双语活动入口。";
+
+  return [
+    {
+      id: pageIds.home,
+      name: "首页",
+      blocks: [
+        createBuiltinOrganizationNavBlock("home", variant),
+        createBuiltinOrganizationStoryboardBlock(variant),
+        createBuiltinOrganizationTextBlock(
+          `builtin-organization-text-home-${variant.key}`,
+          variant.introHeading,
+          variant.introText,
+          variant,
+          {
+            blockWidth: 520,
+            blockOffsetX: -120,
+            blockOffsetY: -10,
+            blockLayer: 2,
+          },
+        ),
+        createBuiltinOrganizationListBlock(
+          `builtin-organization-list-home-${variant.key}`,
+          variant.featureHeading,
+          variant.featureItems,
+          variant,
+          {
+            blockWidth: 430,
+            blockOffsetX: 200,
+            blockOffsetY: -210,
+            blockLayer: 3,
+          },
+        ),
+        createBuiltinOrganizationTextBlock(
+          `builtin-organization-note-home-${variant.key}`,
+          "为什么这样排",
+          homeNoteText,
+          variant,
+          {
+            blockWidth: 940,
+            blockOffsetY: -90,
+            blockLayer: 1,
+          },
+        ),
+      ],
+    },
+    {
+      id: pageIds.programs,
+      name: "会员活动",
+      blocks: [
+        createBuiltinOrganizationNavBlock("programs", variant),
+        createBuiltinOrganizationTextBlock(
+          `builtin-organization-text-program-${variant.key}`,
+          variant.programHeading,
+          variant.programIntro,
+          variant,
+          {
+            blockWidth: 1040,
+          },
+        ),
+        createBuiltinOrganizationShowcaseBlock(variant),
+        createBuiltinOrganizationListBlock(
+          `builtin-organization-list-program-${variant.key}`,
+          variant.programFeatureHeading,
+          variant.programFeatureItems,
+          variant,
+          {
+            blockWidth: 500,
+            blockOffsetX: -150,
+            blockOffsetY: -34,
+          },
+        ),
+        createBuiltinOrganizationTextBlock(
+          `builtin-organization-note-program-${variant.key}`,
+          "页面排版建议",
+          "组织类模板最关键的是层级：会员、活动、资源、联系入口要分开，不要把新闻、活动和会籍写成一个长列表。",
+          variant,
+          {
+            blockWidth: 520,
+            blockOffsetX: 210,
+            blockOffsetY: -280,
+            blockLayer: 3,
+          },
+        ),
+        createBuiltinOrganizationChartBlock(
+          `builtin-organization-chart-${variant.key}`,
+          variant.chartHeading,
+          variant.chartText,
+          variant.chartLabels,
+          variant.chartValues,
+          variant,
+          {
+            blockWidth: 960,
+            blockOffsetY: -100,
+          },
+          variant.chartType,
+        ),
+      ],
+    },
+    {
+      id: pageIds.contact,
+      name: "联系加入",
+      blocks: [
+        createBuiltinOrganizationNavBlock("contact", variant),
+        createBuiltinOrganizationTextBlock(
+          `builtin-organization-text-contact-${variant.key}`,
+          variant.contactHeading,
+          variant.contactIntro,
+          variant,
+          {
+            blockWidth: 700,
+            blockOffsetX: -70,
+          },
+        ),
+        createBuiltinOrganizationListBlock(
+          `builtin-organization-list-contact-${variant.key}`,
+          "加入与联络提示",
+          variant.contactItems,
+          variant,
+          {
+            blockWidth: 410,
+            blockOffsetX: 260,
+            blockOffsetY: -170,
+            blockLayer: 3,
+          },
+        ),
+        {
+          id: `builtin-organization-contact-${variant.key}`,
+          type: "contact",
+          props: {
+            heading: "秘书处信息",
+            phone: "",
+            phones: [],
+            address: "",
+            addresses: [],
+            email: "",
+            whatsapp: "",
+            wechat: "",
+            twitter: "",
+            weibo: "",
+            telegram: "",
+            linkedin: "",
+            discord: "",
+            tiktok: "",
+            xiaohongshu: "",
+            facebook: "",
+            instagram: "",
+            mapZoom: 14,
+            mapType: "roadmap",
+            mapShowMarker: true,
+            bgColor: variant.surfaceColor,
+            bgColorOpacity: 1,
+            blockBorderStyle: "accent",
+            blockBorderColor: variant.heroBorderColor,
+            blockWidth: 980,
+            blockOffsetY: -70,
+            fontColor: variant.textColor,
+          },
+        },
+      ],
+    },
+  ];
+}
+
 function createBuiltinServiceStarterPlanConfig(): PagePlanConfig {
   return {
     activePlanId: "plan-1",
@@ -2051,6 +2763,22 @@ function createBuiltinServiceStarterPlanConfig(): PagePlanConfig {
         blocks: pages[0]?.blocks ?? [],
         pages,
         activePageId: createBuiltinServiceStarterPageIds(variant.key).home,
+      };
+    }),
+  };
+}
+
+function createBuiltinOrganizationPlanConfig(): PagePlanConfig {
+  return {
+    activePlanId: "plan-1",
+    plans: BUILTIN_ORGANIZATION_TEMPLATE_VARIANTS.map((variant) => {
+      const pages = createBuiltinOrganizationPages(variant);
+      return {
+        id: variant.planId,
+        name: variant.name,
+        blocks: pages[0]?.blocks ?? [],
+        pages,
+        activePageId: createBuiltinOrganizationPageIds(variant.key).home,
       };
     }),
   };
@@ -2071,6 +2799,7 @@ function createBuiltinPlanTemplates(): PlanTemplate[] {
       };
     }),
   };
+  const organizationConfig = createBuiltinOrganizationPlanConfig();
   return [
     {
       id: BUILTIN_NEW_MERCHANT_TEMPLATE_ID,
@@ -2101,6 +2830,22 @@ function createBuiltinPlanTemplates(): PlanTemplate[] {
       planPreviewImageUrls: {},
       previewVariant: "",
       blocks: buildCombinedPersistedBlocks(restaurantConfig, restaurantConfig),
+      createdAt: BUILTIN_NEW_MERCHANT_TEMPLATE_TIMESTAMP,
+      updatedAt: BUILTIN_NEW_MERCHANT_TEMPLATE_TIMESTAMP,
+    },
+    {
+      id: BUILTIN_ORGANIZATION_TEMPLATE_ID,
+      name: "组织官网版",
+      category: "组织",
+      sourceSiteId: "builtin:organization-network",
+      sourceSiteName: "FAOLLA 内置模板",
+      sourceSiteDomain: "faolla.com",
+      sourceIndustry: "组织",
+      coverImageUrl: "",
+      previewImageUrl: "",
+      planPreviewImageUrls: {},
+      previewVariant: "",
+      blocks: buildCombinedPersistedBlocks(organizationConfig, organizationConfig),
       createdAt: BUILTIN_NEW_MERCHANT_TEMPLATE_TIMESTAMP,
       updatedAt: BUILTIN_NEW_MERCHANT_TEMPLATE_TIMESTAMP,
     },

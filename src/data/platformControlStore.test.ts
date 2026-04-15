@@ -59,9 +59,9 @@ test("merchant config history keeps full entries and persists details outside ma
     const nextHistory = Array.from({ length: 35 }, (_, index) => ({
       id: `history-${index + 1}`,
       at: new Date(Date.UTC(2026, 3, 1, 0, 0, 35 - index)).toISOString(),
-      operator: "平台管理员",
-      summary: `配置更新 ${index + 1}`,
-      changes: [`字段 ${index + 1}: 旧值 -> 新值`],
+      operator: "platform-admin",
+      summary: `config update ${index + 1}`,
+      changes: [`field ${index + 1}: before -> after`],
       before: {
         serviceExpiresAt: null,
         permissionConfig: createDefaultMerchantPermissionConfig(),
@@ -122,7 +122,7 @@ test("merchant config history keeps full entries and persists details outside ma
 
     const reloaded = loadPlatformState();
     assert.equal(reloaded.sites[0]?.configHistory?.length, 35);
-    assert.deepEqual(reloaded.sites[0]?.configHistory?.[0]?.changes, ["字段 1: 旧值 -> 新值"]);
+    assert.deepEqual(reloaded.sites[0]?.configHistory?.[0]?.changes, ["field 1: before -> after"]);
 
     const primaryStateRaw = localStorage.getItem("merchant-space:platform-control-center:v1");
     assert.ok(primaryStateRaw);
@@ -171,16 +171,22 @@ test("platform state seeds built-in starter templates within new-merchant permis
     assert.ok(serviceBuiltin);
     assert.equal(serviceBuiltin?.category, "服务");
     const serviceConfig = getPagePlanConfigFromBlocks((serviceBuiltin?.blocks ?? []) as never);
-    assert.deepEqual(serviceConfig.plans.map((plan) => plan.name), ["清爽服务版", "流程说明版", "快速联系版"]);
+    assert.deepEqual(serviceConfig.plans.map((plan) => plan.id), ["plan-1", "plan-2", "plan-3"]);
 
     const restaurantBuiltin = state.planTemplates.find((item) => item.id === "builtin-template-restaurant-signature-starter");
     assert.ok(restaurantBuiltin);
     assert.equal(restaurantBuiltin?.category, "餐饮");
     const restaurantConfig = getPagePlanConfigFromBlocks((restaurantBuiltin?.blocks ?? []) as never);
-    assert.deepEqual(restaurantConfig.plans.map((plan) => plan.name), ["轻食点单版", "蓝标流程版", "品牌转化版"]);
+    assert.deepEqual(restaurantConfig.plans.map((plan) => plan.id), ["plan-1", "plan-2", "plan-3"]);
+
+    const organizationBuiltin = state.planTemplates.find((item) => item.id === "builtin-template-organization-network-starter");
+    assert.ok(organizationBuiltin);
+    assert.equal(organizationBuiltin?.category, "组织");
+    const organizationConfig = getPagePlanConfigFromBlocks((organizationBuiltin?.blocks ?? []) as never);
+    assert.deepEqual(organizationConfig.plans.map((plan) => plan.id), ["plan-1", "plan-2", "plan-3"]);
 
     const blockTypes = new Set(
-      [...serviceConfig.plans, ...restaurantConfig.plans].flatMap((plan) =>
+      [...serviceConfig.plans, ...restaurantConfig.plans, ...organizationConfig.plans].flatMap((plan) =>
         plan.pages.flatMap((page) =>
           page.blocks.map((block) => block?.type).filter((type): type is string => Boolean(type)),
         ),
