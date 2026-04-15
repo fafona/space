@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createDefaultMerchantPermissionConfig, loadPlatformState, savePlatformState } from "./platformControlStore";
+import { getPagePlanConfigFromBlocks } from "@/lib/pagePlans";
 
 function createMemoryStorage(): Storage {
   const store = new Map<string, string>();
@@ -141,6 +142,55 @@ test("merchant config history keeps full entries and persists details outside ma
       delete globalTarget.window;
     } else {
       globalTarget.window = previousWindow;
+    }
+  }
+});
+
+test("platform state seeds a built-in starter template within new-merchant permissions", () => {
+  const globalTarget = globalThis as typeof globalThis & {
+    localStorage?: Storage;
+    window?: Window & typeof globalThis;
+  };
+  const previousWindow = globalTarget.window;
+  const previousLocalStorage = globalTarget.localStorage;
+  const localStorage = createMemoryStorage();
+  const mockWindow = {
+    ...globalThis,
+    dispatchEvent() {
+      return true;
+    },
+  } as unknown as Window & typeof globalThis;
+
+  globalTarget.localStorage = localStorage;
+  globalTarget.window = mockWindow;
+
+  try {
+    const state = loadPlatformState();
+    const builtin = state.planTemplates.find((item) => item.id === "builtin-template-new-merchant-service-starter");
+    assert.ok(builtin);
+    assert.equal(builtin?.category, "服务");
+    const config = getPagePlanConfigFromBlocks((builtin?.blocks ?? []) as never);
+    const blockTypes = new Set(
+      config.plans.flatMap((plan) =>
+        plan.pages.flatMap((page) =>
+          page.blocks.map((block) => block?.type).filter((type): type is string => Boolean(type)),
+        ),
+      ),
+    );
+    assert.deepEqual(
+      [...blockTypes].sort(),
+      ["chart", "contact", "hero", "list", "nav", "text"].sort(),
+    );
+  } finally {
+    if (typeof previousWindow === "undefined") {
+      delete globalTarget.window;
+    } else {
+      globalTarget.window = previousWindow;
+    }
+    if (typeof previousLocalStorage === "undefined") {
+      delete globalTarget.localStorage;
+    } else {
+      globalTarget.localStorage = previousLocalStorage;
     }
   }
 });

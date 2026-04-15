@@ -1,5 +1,7 @@
 ﻿import { normalizeMerchantBusinessCards, type MerchantBusinessCardAsset } from "@/lib/merchantBusinessCards";
-import { extractPlanTemplateCoverImage } from "@/lib/planTemplateRuntime";
+import { buildCombinedPersistedBlocks, extractPlanTemplateCoverImage } from "@/lib/planTemplateRuntime";
+import type { PagePlanConfig, PlanPage } from "@/lib/pagePlans";
+import type { Block } from "./homeBlocks";
 
 export type PermissionKey =
   | "dashboard.view"
@@ -789,6 +791,253 @@ function createDefaultHomeLayoutConfig(): HomeLayoutConfig {
   };
 }
 
+const BUILTIN_NEW_MERCHANT_TEMPLATE_ID = "builtin-template-new-merchant-service-starter";
+const BUILTIN_NEW_MERCHANT_TEMPLATE_TIMESTAMP = "2026-04-15T03:40:00.000Z";
+const BUILTIN_NEW_MERCHANT_TEMPLATE_PAGE_IDS = {
+  home: "page-service-home",
+  services: "page-service-offerings",
+  contact: "page-service-contact",
+} as const;
+
+function createBuiltinServiceStarterNavItems() {
+  return [
+    { id: "builtin-nav-home", label: "首页", pageId: BUILTIN_NEW_MERCHANT_TEMPLATE_PAGE_IDS.home },
+    { id: "builtin-nav-services", label: "服务内容", pageId: BUILTIN_NEW_MERCHANT_TEMPLATE_PAGE_IDS.services },
+    { id: "builtin-nav-contact", label: "联系", pageId: BUILTIN_NEW_MERCHANT_TEMPLATE_PAGE_IDS.contact },
+  ];
+}
+
+function createBuiltinServiceStarterNavBlock(idSuffix: string): Block {
+  return {
+    id: `builtin-service-nav-${idSuffix}`,
+    type: "nav",
+    props: {
+      heading: "",
+      navOrientation: "horizontal",
+      navItems: createBuiltinServiceStarterNavItems(),
+      pageBgColor: "#f8fafc",
+      pageBgColorOpacity: 1,
+      navItemBgColor: "#ffffff",
+      navItemBgOpacity: 1,
+      navItemBorderStyle: "solid",
+      navItemBorderColor: "#d7e1ee",
+      navItemActiveBgColor: "#0f172a",
+      navItemActiveBgOpacity: 1,
+      navItemActiveBorderStyle: "solid",
+      navItemActiveBorderColor: "#0f172a",
+      navItemActiveTextColor: "#ffffff",
+      fontColor: "#0f172a",
+      fontWeight: "bold",
+    },
+  };
+}
+
+function createBuiltinServiceStarterPages(): PlanPage[] {
+  return [
+    {
+      id: BUILTIN_NEW_MERCHANT_TEMPLATE_PAGE_IDS.home,
+      name: "首页",
+      blocks: [
+        createBuiltinServiceStarterNavBlock("home"),
+        {
+          id: "builtin-service-hero-home",
+          type: "hero",
+          props: {
+            title: "把你的服务介绍清楚，让客户更快找到你",
+            subtitle: "适合咨询、工作室、门店与个人服务的新用户入门版，先把业务说明、优势和联系方式搭起来。",
+            bgColor: "#eef6ff",
+            bgColorOpacity: 1,
+            blockBorderStyle: "solid",
+            blockBorderColor: "#cfe0f7",
+            fontColor: "#0f172a",
+          },
+        },
+        {
+          id: "builtin-service-text-home",
+          type: "text",
+          props: {
+            heading: "你可以先写什么",
+            text: "用一小段文字说明主营服务、适合的人群、服务区域或到店方式。先把最常被问到的问题写清楚，客户会更容易理解你提供什么。",
+            bgColor: "#ffffff",
+            bgColorOpacity: 1,
+            blockBorderStyle: "solid",
+            blockBorderColor: "#e2e8f0",
+          },
+        },
+        {
+          id: "builtin-service-list-home",
+          type: "list",
+          props: {
+            heading: "首页建议展示的重点",
+            items: [
+              "一句话介绍你的核心服务",
+              "3 到 5 个最常见的服务项目",
+              "服务流程或合作方式",
+              "联系方式、营业时间或服务区域",
+            ],
+            bgColor: "#ffffff",
+            bgColorOpacity: 1,
+            blockBorderStyle: "solid",
+            blockBorderColor: "#e2e8f0",
+          },
+        },
+      ],
+    },
+    {
+      id: BUILTIN_NEW_MERCHANT_TEMPLATE_PAGE_IDS.services,
+      name: "服务内容",
+      blocks: [
+        createBuiltinServiceStarterNavBlock("services"),
+        {
+          id: "builtin-service-text-offerings",
+          type: "text",
+          props: {
+            heading: "服务内容",
+            text: "这一页适合详细写清楚你能做什么。可以按服务类型、套餐、适用对象或交付方式来分组说明，先写核心项目，再补充细节。",
+            bgColor: "#ffffff",
+            bgColorOpacity: 1,
+            blockBorderStyle: "solid",
+            blockBorderColor: "#e2e8f0",
+          },
+        },
+        {
+          id: "builtin-service-list-offerings",
+          type: "list",
+          props: {
+            heading: "可直接替换的服务清单",
+            items: [
+              "基础咨询 / 到店沟通",
+              "标准服务 / 常规方案",
+              "进阶服务 / 定制方案",
+              "售后支持 / 二次跟进",
+            ],
+            bgColor: "#ffffff",
+            bgColorOpacity: 1,
+            blockBorderStyle: "solid",
+            blockBorderColor: "#e2e8f0",
+          },
+        },
+        {
+          id: "builtin-service-chart-process",
+          type: "chart",
+          props: {
+            heading: "合作流程示意",
+            text: "把服务流程写清楚，可以降低客户的理解成本。这里可替换成你的阶段流程、响应时效或常见项目占比。",
+            chartType: "bar",
+            labels: ["咨询", "确认", "执行", "交付"],
+            values: [1, 2, 3, 4],
+            bgColor: "#ffffff",
+            bgColorOpacity: 1,
+            blockBorderStyle: "solid",
+            blockBorderColor: "#e2e8f0",
+          },
+        },
+      ],
+    },
+    {
+      id: BUILTIN_NEW_MERCHANT_TEMPLATE_PAGE_IDS.contact,
+      name: "联系",
+      blocks: [
+        createBuiltinServiceStarterNavBlock("contact"),
+        {
+          id: "builtin-service-text-contact",
+          type: "text",
+          props: {
+            heading: "联系与到店信息",
+            text: "最后一页建议只放最关键的信息：电话、邮箱、地址、地图和服务时间。这样客户看完介绍后，能直接找到你。",
+            bgColor: "#ffffff",
+            bgColorOpacity: 1,
+            blockBorderStyle: "solid",
+            blockBorderColor: "#e2e8f0",
+          },
+        },
+        {
+          id: "builtin-service-contact",
+          type: "contact",
+          props: {
+            heading: "联系方式",
+            phone: "",
+            phones: [],
+            address: "",
+            addresses: [],
+            email: "",
+            whatsapp: "",
+            wechat: "",
+            twitter: "",
+            weibo: "",
+            telegram: "",
+            linkedin: "",
+            discord: "",
+            tiktok: "",
+            xiaohongshu: "",
+            facebook: "",
+            instagram: "",
+            mapZoom: 13,
+            mapType: "roadmap",
+            mapShowMarker: true,
+            bgColor: "#ffffff",
+            bgColorOpacity: 1,
+            blockBorderStyle: "solid",
+            blockBorderColor: "#e2e8f0",
+          },
+        },
+      ],
+    },
+  ];
+}
+
+function createBuiltinServiceStarterPlanConfig(): PagePlanConfig {
+  const pages = createBuiltinServiceStarterPages();
+  return {
+    activePlanId: "plan-1",
+    plans: [
+      {
+        id: "plan-1",
+        name: "方案一",
+        blocks: pages[0]?.blocks ?? [],
+        pages,
+        activePageId: BUILTIN_NEW_MERCHANT_TEMPLATE_PAGE_IDS.home,
+      },
+      {
+        id: "plan-2",
+        name: "方案二",
+        blocks: pages[0]?.blocks ?? [],
+        pages,
+        activePageId: BUILTIN_NEW_MERCHANT_TEMPLATE_PAGE_IDS.home,
+      },
+      {
+        id: "plan-3",
+        name: "方案三",
+        blocks: pages[0]?.blocks ?? [],
+        pages,
+        activePageId: BUILTIN_NEW_MERCHANT_TEMPLATE_PAGE_IDS.home,
+      },
+    ],
+  };
+}
+
+function createBuiltinPlanTemplates(): PlanTemplate[] {
+  const config = createBuiltinServiceStarterPlanConfig();
+  return [
+    {
+      id: BUILTIN_NEW_MERCHANT_TEMPLATE_ID,
+      name: "新用户服务入门版",
+      category: "服务",
+      sourceSiteId: "builtin:new-merchant-service",
+      sourceSiteName: "FAOLLA 内置模板",
+      sourceSiteDomain: "faolla.com",
+      sourceIndustry: "服务",
+      coverImageUrl: "",
+      previewImageUrl: "",
+      planPreviewImageUrls: {},
+      previewVariant: "",
+      blocks: buildCombinedPersistedBlocks(config, config),
+      createdAt: BUILTIN_NEW_MERCHANT_TEMPLATE_TIMESTAMP,
+      updatedAt: BUILTIN_NEW_MERCHANT_TEMPLATE_TIMESTAMP,
+    },
+  ];
+}
+
 function normalizeIndustryCategories(input: unknown): IndustryCategory[] {
   if (!Array.isArray(input)) return [];
   const fallbackById: Record<string, { name: string; description: string; slug: string }> = {
@@ -881,11 +1130,16 @@ function normalizePlanTemplate(value: unknown): PlanTemplate | null {
 }
 
 function normalizePlanTemplates(value: unknown): PlanTemplate[] {
-  if (!Array.isArray(value)) return [];
-  const rows = value
-    .map((item) => normalizePlanTemplate(item))
-    .filter((item): item is PlanTemplate => !!item);
+  const rows = Array.isArray(value)
+    ? value
+        .map((item) => normalizePlanTemplate(item))
+        .filter((item): item is PlanTemplate => !!item)
+    : [];
   const unique = new Map<string, PlanTemplate>();
+  const builtinTemplates = createBuiltinPlanTemplates();
+  for (const row of builtinTemplates) {
+    unique.set(row.id, row);
+  }
   for (const row of rows) {
     unique.set(row.id, row);
   }
@@ -1056,7 +1310,7 @@ function createDefaultState(): PlatformState {
         updatedAt: current,
       },
     ],
-    planTemplates: [],
+    planTemplates: createBuiltinPlanTemplates(),
     industryCategories,
     homeLayout,
     roles: [
