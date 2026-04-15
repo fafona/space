@@ -2603,6 +2603,31 @@ export default function SuperAdminClient() {
     });
     return map;
   }, [supportThreads]);
+  const localSupportSnapshotByMerchantId = useMemo(
+    () => new Map(platformMerchantSnapshotPayload.snapshot.map((site) => [site.id, site] as const)),
+    [platformMerchantSnapshotPayload],
+  );
+  const resolveSupportRowAvatarImageUrl = useCallback(
+    (row: MerchantUserRow) => {
+      const merchantId = normalizeSupportDisplayValue(row.merchantId);
+      const fetchedProfile =
+        merchantId && Object.prototype.hasOwnProperty.call(supportMerchantProfilesByMerchantId, merchantId)
+          ? supportMerchantProfilesByMerchantId[merchantId] ?? null
+          : null;
+      const localProfile = merchantId ? localSupportSnapshotByMerchantId.get(merchantId) ?? null : null;
+      return resolveSupportAvatarImageUrl(
+        fetchedProfile?.chatAvatarImageUrl,
+        fetchedProfile?.merchantCardImageUrl,
+        localProfile?.chatAvatarImageUrl,
+        localProfile?.merchantCardImageUrl,
+        row.backendAccount?.profileSnapshot?.chatAvatarImageUrl,
+        row.backendAccount?.profileSnapshot?.merchantCardImageUrl,
+        row.site.chatAvatarImageUrl,
+        row.site.merchantCardImageUrl,
+      );
+    },
+    [localSupportSnapshotByMerchantId, supportMerchantProfilesByMerchantId],
+  );
   const supportBaseRows = useMemo(() => {
     const merged = new Map<
       string,
@@ -2698,10 +2723,6 @@ export default function SuperAdminClient() {
     normalizeSupportDisplayValue(selectedSupportMerchantRow?.merchantId) ||
     normalizeSupportDisplayValue(selectedSupportThread?.merchantId) ||
     "-";
-  const localSupportSnapshotByMerchantId = useMemo(
-    () => new Map(platformMerchantSnapshotPayload.snapshot.map((site) => [site.id, site] as const)),
-    [platformMerchantSnapshotPayload],
-  );
   const selectedSupportFetchedProfile = useMemo(() => {
     if (!/^\d{8}$/.test(selectedSupportMerchantId)) return undefined;
     return Object.prototype.hasOwnProperty.call(supportMerchantProfilesByMerchantId, selectedSupportMerchantId)
@@ -7895,12 +7916,7 @@ export default function SuperAdminClient() {
                           <div className="space-y-2.5">
                             {supportListRows.map(({ row, selectionKey, thread, lastMessage }) => {
                               const displayLabel = row.merchantName || thread?.merchantName || row.merchantId || thread?.merchantId || selectionKey;
-                              const avatarImageUrl = resolveSupportAvatarImageUrl(
-                                row.backendAccount?.profileSnapshot?.chatAvatarImageUrl,
-                                row.backendAccount?.profileSnapshot?.merchantCardImageUrl,
-                                row.site.chatAvatarImageUrl,
-                                row.site.merchantCardImageUrl,
-                              );
+                              const avatarImageUrl = resolveSupportRowAvatarImageUrl(row);
                               const subtitle = [
                                 row.backendAccount?.loginId || row.backendAccount?.username || "",
                                 row.userEmail || row.loginAccount || thread?.merchantEmail || "",
@@ -8028,12 +8044,7 @@ export default function SuperAdminClient() {
                         <div className="space-y-2">
                           {supportListRows.map(({ row, selectionKey, thread, lastMessage }) => {
                             const displayLabel = row.merchantName || thread?.merchantName || row.merchantId || thread?.merchantId || selectionKey;
-                            const avatarImageUrl = resolveSupportAvatarImageUrl(
-                              row.backendAccount?.profileSnapshot?.chatAvatarImageUrl,
-                              row.backendAccount?.profileSnapshot?.merchantCardImageUrl,
-                              row.site.chatAvatarImageUrl,
-                              row.site.merchantCardImageUrl,
-                            );
+                            const avatarImageUrl = resolveSupportRowAvatarImageUrl(row);
                             const subtitle = [
                               row.backendAccount?.loginId || row.backendAccount?.username || "",
                               row.userEmail || row.loginAccount || thread?.merchantEmail || "",

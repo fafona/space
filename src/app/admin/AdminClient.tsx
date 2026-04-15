@@ -50,6 +50,8 @@ import {
   rollbackToPreviousPublishedVersion,
   recordPublishedVersion,
   readLatestDraftSnapshot,
+  flushScheduledBlocksToStorage,
+  scheduleBlocksToStorage,
   saveLatestDraftSnapshot,
   saveBlocksToStorage,
   savePublishedBlocksToStorage,
@@ -2787,6 +2789,43 @@ type PublishDiffSummary = {
   addedCount: number;
   removedCount: number;
   changedPaths: string[];
+};
+
+type MerchantAnalyticsSnapshot = {
+  blockCount: number;
+  payloadBytes: number;
+  diffSummary: PublishDiffSummary;
+  byType: Array<[string, number]>;
+  visit1d: number;
+  visit7d: number;
+  visit30d: number;
+  clickPairs: Array<[string, number]>;
+  topClick7d: Array<{ channel: string; count: number }>;
+  publish7d: ReturnType<typeof readPublishEvents>;
+  publish30d: ReturnType<typeof readPublishEvents>;
+  failureSnapshots: ReturnType<typeof readPublishFailureSnapshots>;
+};
+
+const EMPTY_PUBLISH_DIFF_SUMMARY: PublishDiffSummary = {
+  changedCount: 0,
+  addedCount: 0,
+  removedCount: 0,
+  changedPaths: [],
+};
+
+const EMPTY_MERCHANT_ANALYTICS_SNAPSHOT: MerchantAnalyticsSnapshot = {
+  blockCount: 0,
+  payloadBytes: 0,
+  diffSummary: EMPTY_PUBLISH_DIFF_SUMMARY,
+  byType: [],
+  visit1d: 0,
+  visit7d: 0,
+  visit30d: 0,
+  clickPairs: [],
+  topClick7d: [],
+  publish7d: [],
+  publish30d: [],
+  failureSnapshots: [],
 };
 
 function computePublishDiffSummary(nextBlocks: Block[], previousBlocks: Block[]): PublishDiffSummary {
@@ -5912,11 +5951,39 @@ export default function AdminClient({
     showSavePublishTip(`已应用：${preset.label}`);
   }
 
-  function persistDraftForConfigs(activeConfig: PagePlanConfig) {
+  function persistDraftForConfigs(activeConfig: PagePlanConfig, options?: { immediate?: boolean }) {
     const desktopConfig = previewViewport === "desktop" ? activeConfig : viewportStatesRef.current.desktop.planConfig;
     const mobileConfig = previewViewport === "mobile" ? activeConfig : viewportStatesRef.current.mobile.planConfig;
-    saveBlocksToStorage(buildCombinedPersistedBlocks(desktopConfig, mobileConfig), storeScope);
+    const combinedBlocks = buildCombinedPersistedBlocks(desktopConfig, mobileConfig);
+    if (options?.immediate) {
+      saveBlocksToStorage(combinedBlocks, storeScope);
+      return;
+    }
+    scheduleBlocksToStorage(combinedBlocks, storeScope);
   }
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const flushScheduledDraftSave = () => {
+      flushScheduledBlocksToStorage(storeScope);
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        flushScheduledDraftSave();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("pagehide", flushScheduledDraftSave);
+    window.addEventListener("beforeunload", flushScheduledDraftSave);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("pagehide", flushScheduledDraftSave);
+      window.removeEventListener("beforeunload", flushScheduledDraftSave);
+      flushScheduledDraftSave();
+    };
+  }, [storeScope]);
 
   function switchPreviewViewport(nextViewport: ViewportKey) {
     if (nextViewport === previewViewport) return;
@@ -13202,7 +13269,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   const shouldShowPublishActions = showPublishActions ?? !isPlatformEditor;
   const isDesktopMerchantWorkspace = desktopMerchantWorkspaceActive;
   const showDesktopMerchantSupportPanel = isDesktopMerchantWorkspace && merchantDesktopSection === "support";
-  const merchantAnalyticsSnapshot = (() => {
+  const merchantAnalyticsSnapshot: MerchantAnalyticsSnapshot =
+    isDesktopMerchantWorkspace && merchantDesktopSection === "analytics"
+      ? (() => {
     const desktopConfig = previewViewport === "desktop" ? planConfig : viewportStatesRef.current.desktop.planConfig;
     const mobileConfig = previewViewport === "mobile" ? planConfig : viewportStatesRef.current.mobile.planConfig;
     const combinedBlocks = buildCombinedPersistedBlocks(desktopConfig, mobileConfig);
@@ -13252,7 +13321,11 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       publish30d,
       failureSnapshots: readPublishFailureSnapshots(storeScope),
     };
-  })();
+        })()
+      : {
+          ...EMPTY_MERCHANT_ANALYTICS_SNAPSHOT,
+          blockCount: blocks.length,
+        };
   const planTemplateKeyword = planTemplateSearch.trim().toLowerCase();
   const filteredPlanTemplates = planTemplates.filter((template) => {
     if (!matchPlanTemplateCategory(template, planTemplateFilter)) return false;

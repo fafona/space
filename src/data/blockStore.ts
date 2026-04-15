@@ -17,6 +17,15 @@ export type BlocksStoreScope = string | undefined;
 const DEFAULT_SCOPE = "default";
 const draftCacheByKey = new Map<string, { raw: string | null | undefined; parsed: Block[] | undefined }>();
 const publishedCacheByKey = new Map<string, { raw: string | null | undefined; parsed: Block[] | undefined }>();
+const scheduledDraftSaveByKey = new Map<
+  string,
+  {
+    raw: string;
+    parsed: Block[];
+    timer: ReturnType<typeof globalThis.setTimeout> | number;
+    eventName: string;
+  }
+>();
 
 type PublishFailureSnapshot = {
   id: string;
@@ -84,14 +93,60 @@ function loadBlocksByKey(key: string, fallback: Block[]): Block[] {
   }
 }
 
-function saveBlocksByKey(key: string, eventName: string, blocks: Block[]) {
+function normalizeBlocksForStorage(blocks: Block[]) {
+  const sanitized = sanitizeBlocksForRuntime(blocks);
+  const canonicalized = canonicalizeEditorBlocksSystemDefaults(sanitized.blocks);
+  return {
+    raw: JSON.stringify(canonicalized),
+    parsed: canonicalized,
+  };
+}
+
+function readCachedBlocksRaw(
+  key: string,
+  cache: Map<string, { raw: string | null | undefined; parsed: Block[] | undefined }>,
+) {
+  const cached = cache.get(key);
+  if (typeof cached?.raw === "string") return cached.raw;
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem(key);
+}
+
+function clearScheduledDraftSave(key: string) {
+  const pending = scheduledDraftSaveByKey.get(key);
+  if (!pending) return;
+  clearTimeout(pending.timer);
+  scheduledDraftSaveByKey.delete(key);
+}
+
+function commitDraftSaveByKey(key: string, eventName: string, payload: { raw: string; parsed: Block[] }) {
   if (typeof window === "undefined") return;
   try {
-    const sanitized = sanitizeBlocksForRuntime(blocks);
-    const canonicalized = canonicalizeEditorBlocksSystemDefaults(sanitized.blocks);
-    const raw = JSON.stringify(canonicalized);
-    localStorage.setItem(key, raw);
+    localStorage.setItem(key, payload.raw);
     window.dispatchEvent(new Event(eventName));
+    draftCacheByKey.set(key, payload);
+  } catch {
+    // Ignore local cache write failures (e.g. quota exceeded).
+  }
+}
+
+function saveBlocksByKey(
+  key: string,
+  eventName: string,
+  blocks: Block[],
+  cache: Map<string, { raw: string | null | undefined; parsed: Block[] | undefined }>,
+) {
+  if (typeof window === "undefined") return;
+  try {
+    const payload = normalizeBlocksForStorage(blocks);
+    const previousRaw = readCachedBlocksRaw(key, cache);
+    if (previousRaw === payload.raw) {
+      cache.set(key, payload);
+      return;
+    }
+    localStorage.setItem(key, payload.raw);
+    window.dispatchEvent(new Event(eventName));
+    cache.set(key, payload);
   } catch {
     // Ignore local cache write failures (e.g. quota exceeded).
   }
@@ -119,11 +174,46 @@ export function loadBlocksFromStorage(fallback: Block[], scope?: BlocksStoreScop
 
 export function saveBlocksToStorage(blocks: Block[], scope?: BlocksStoreScope) {
   const key = scopedKey(DRAFT_KEY, scope);
-  saveBlocksByKey(key, scopedEvent(DRAFT_STORE_EVENT, scope), blocks);
-  draftCacheByKey.set(key, {
-    raw: typeof window === "undefined" ? null : localStorage.getItem(key),
-    parsed: canonicalizeEditorBlocksSystemDefaults(sanitizeBlocksForRuntime(blocks).blocks),
+  clearScheduledDraftSave(key);
+  saveBlocksByKey(key, scopedEvent(DRAFT_STORE_EVENT, scope), blocks, draftCacheByKey);
+}
+
+export function scheduleBlocksToStorage(blocks: Block[], scope?: BlocksStoreScope, delayMs = 180) {
+  if (typeof window === "undefined") return;
+  const key = scopedKey(DRAFT_KEY, scope);
+  const eventName = scopedEvent(DRAFT_STORE_EVENT, scope);
+  const payload = normalizeBlocksForStorage(blocks);
+  const scheduled = scheduledDraftSaveByKey.get(key);
+  if (scheduled?.raw === payload.raw) {
+    draftCacheByKey.set(key, payload);
+    return;
+  }
+  const storedRaw = readCachedBlocksRaw(key, draftCacheByKey);
+  if (storedRaw === payload.raw) {
+    clearScheduledDraftSave(key);
+    draftCacheByKey.set(key, payload);
+    return;
+  }
+  clearScheduledDraftSave(key);
+  const timer = window.setTimeout(() => {
+    scheduledDraftSaveByKey.delete(key);
+    commitDraftSaveByKey(key, eventName, payload);
+  }, Math.max(0, Math.round(delayMs)));
+  scheduledDraftSaveByKey.set(key, {
+    ...payload,
+    timer,
+    eventName,
   });
+}
+
+export function flushScheduledBlocksToStorage(scope?: BlocksStoreScope) {
+  if (typeof window === "undefined") return;
+  const key = scopedKey(DRAFT_KEY, scope);
+  const pending = scheduledDraftSaveByKey.get(key);
+  if (!pending) return;
+  clearTimeout(pending.timer);
+  scheduledDraftSaveByKey.delete(key);
+  commitDraftSaveByKey(key, pending.eventName, pending);
 }
 
 export function loadPublishedBlocksFromStorage(fallback: Block[], scope?: BlocksStoreScope): Block[] {
@@ -132,11 +222,7 @@ export function loadPublishedBlocksFromStorage(fallback: Block[], scope?: Blocks
 
 export function savePublishedBlocksToStorage(blocks: Block[], scope?: BlocksStoreScope) {
   const key = scopedKey(PUBLISHED_KEY, scope);
-  saveBlocksByKey(key, scopedEvent(PUBLISHED_STORE_EVENT, scope), blocks);
-  publishedCacheByKey.set(key, {
-    raw: typeof window === "undefined" ? null : localStorage.getItem(key),
-    parsed: canonicalizeEditorBlocksSystemDefaults(sanitizeBlocksForRuntime(blocks).blocks),
-  });
+  saveBlocksByKey(key, scopedEvent(PUBLISHED_STORE_EVENT, scope), blocks, publishedCacheByKey);
 }
 
 function estimateUtf8Size(text: string) {
