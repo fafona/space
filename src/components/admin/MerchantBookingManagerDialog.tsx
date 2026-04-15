@@ -39,6 +39,20 @@ import {
 } from "@/lib/merchantBookingLocale";
 import { buildMerchantBookingMailtoHref } from "@/lib/merchantBookingMailto";
 import { buildMerchantBookingsCsv } from "@/lib/merchantBookingCsv";
+import {
+  filterMerchantBookingRecordsByHistory,
+  getMerchantBookingHistoryVisibilityLabel,
+  getMerchantBookingHistoryVisibilityText,
+  getMerchantBookingSortLabel,
+  getMerchantBookingSortOptionText,
+  loadMerchantBookingManagerPreferences,
+  MERCHANT_BOOKING_HISTORY_VISIBILITY_OPTIONS,
+  MERCHANT_BOOKING_SORT_MODES,
+  saveMerchantBookingManagerPreferences,
+  sortMerchantBookingRecords,
+  type MerchantBookingHistoryVisibility,
+  type MerchantBookingSortMode,
+} from "@/lib/merchantBookingManagerPreferences";
 import { resolveMerchantBookingRuleEntry, type MerchantBookingRulesSnapshot } from "@/lib/merchantBookingRules";
 import { normalizeMerchantBookingWorkbenchSettings } from "@/lib/merchantBookingWorkbench";
 import {
@@ -418,7 +432,15 @@ export default function MerchantBookingManagerDialog({
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<MerchantBookingFilter>("all");
-  const [selectedStatuses, setSelectedStatuses] = useState<MerchantBookingStatus[]>(() => [...MERCHANT_BOOKING_STATUSES]);
+  const [selectedStatuses, setSelectedStatuses] = useState<MerchantBookingStatus[]>(
+    () => loadMerchantBookingManagerPreferences(siteId).selectedStatuses,
+  );
+  const [sortMode, setSortMode] = useState<MerchantBookingSortMode>(
+    () => loadMerchantBookingManagerPreferences(siteId).sortMode,
+  );
+  const [historyVisibility, setHistoryVisibility] = useState<MerchantBookingHistoryVisibility>(
+    () => loadMerchantBookingManagerPreferences(siteId).historyVisibility,
+  );
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedBookingIds, setSelectedBookingIds] = useState<string[]>([]);
   const [busyKey, setBusyKey] = useState("");
@@ -534,19 +556,42 @@ export default function MerchantBookingManagerDialog({
     }
   }, [selectedBookingIds.length, selectionMode]);
 
-  const counts = useMemo(() => createStatusCounts(records), [records]);
+  useEffect(() => {
+    const preferences = loadMerchantBookingManagerPreferences(siteId);
+    setSelectedStatuses(preferences.selectedStatuses);
+    setSortMode(preferences.sortMode);
+    setHistoryVisibility(preferences.historyVisibility);
+  }, [siteId]);
+
+  useEffect(() => {
+    saveMerchantBookingManagerPreferences(siteId, {
+      selectedStatuses,
+      sortMode,
+      historyVisibility,
+    });
+  }, [historyVisibility, selectedStatuses, siteId, sortMode]);
+
+  const historyFilteredRecords = useMemo(
+    () => filterMerchantBookingRecordsByHistory(records, historyVisibility),
+    [historyVisibility, records],
+  );
+
+  const counts = useMemo(() => createStatusCounts(historyFilteredRecords), [historyFilteredRecords]);
 
   const filteredRecords = useMemo(
     () =>
-      records.filter((item) => {
+      sortMerchantBookingRecords(
+        historyFilteredRecords.filter((item) => {
         if (filter === "all") {
           if (!selectedStatuses.includes(item.status)) return false;
         } else if (item.status !== filter) {
           return false;
         }
         return matchesSearch(item, query);
-      }),
-    [filter, records, query, selectedStatuses],
+        }),
+        sortMode,
+      ),
+    [filter, historyFilteredRecords, query, selectedStatuses, sortMode],
   );
   const selectedRecordSet = useMemo(() => new Set(selectedBookingIds), [selectedBookingIds]);
   const selectedRecords = useMemo(
@@ -1175,6 +1220,58 @@ export default function MerchantBookingManagerDialog({
                 </button>
               ))}
             </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+              <span className="text-xs font-medium text-slate-500">{getMerchantBookingSortLabel(locale)}</span>
+              <div className="relative">
+                <select
+                  className="appearance-none bg-transparent pr-5 text-sm font-medium text-slate-900 outline-none"
+                  value={sortMode}
+                  onChange={(event) => setSortMode(event.target.value as MerchantBookingSortMode)}
+                >
+                  {MERCHANT_BOOKING_SORT_MODES.map((mode) => (
+                    <option key={mode} value={mode}>
+                      {getMerchantBookingSortOptionText(mode, locale)}
+                    </option>
+                  ))}
+                </select>
+                <svg
+                  viewBox="0 0 20 20"
+                  fill="none"
+                  aria-hidden="true"
+                  className="pointer-events-none absolute right-0 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+                >
+                  <path d="m5 7.5 5 5 5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </div>
+            </label>
+            <label className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+              <span className="text-xs font-medium text-slate-500">{getMerchantBookingHistoryVisibilityLabel(locale)}</span>
+              <div className="relative">
+                <select
+                  className="appearance-none bg-transparent pr-5 text-sm font-medium text-slate-900 outline-none"
+                  value={historyVisibility}
+                  onChange={(event) =>
+                    setHistoryVisibility(event.target.value as MerchantBookingHistoryVisibility)
+                  }
+                >
+                  {MERCHANT_BOOKING_HISTORY_VISIBILITY_OPTIONS.map((value) => (
+                    <option key={value} value={value}>
+                      {getMerchantBookingHistoryVisibilityText(value, locale)}
+                    </option>
+                  ))}
+                </select>
+                <svg
+                  viewBox="0 0 20 20"
+                  fill="none"
+                  aria-hidden="true"
+                  className="pointer-events-none absolute right-0 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+                >
+                  <path d="m5 7.5 5 5 5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </div>
+            </label>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button

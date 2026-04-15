@@ -133,28 +133,45 @@ export default function BookingStatusFilterDropdown({
 
   return (
     <div ref={containerRef} className="relative">
-      <button
-        type="button"
-        className={`inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white transition hover:bg-slate-50 ${
-          compact ? "px-3 py-2 text-xs" : "px-3 py-2 text-sm"
+      <div
+        className={`inline-flex items-stretch overflow-hidden rounded-full border border-slate-200 bg-white shadow-sm transition ${
+          open ? "border-slate-300" : "hover:bg-slate-50"
         }`}
-        onClick={() => {
-          onPress?.();
-          setOpen((current) => !current);
-        }}
-        aria-expanded={open}
       >
-        <span className="font-medium text-slate-900">{getMerchantBookingFilterText("all", counts.total, locale)}</span>
-        <span className="text-[11px] font-medium text-slate-500">{`${normalizedSelectedStatuses.length}/${STATUS_ORDER.length}`}</span>
-        <svg
-          viewBox="0 0 20 20"
-          fill="none"
-          aria-hidden="true"
-          className={`h-4 w-4 text-slate-500 transition-transform ${open ? "rotate-180" : ""}`}
+        <button
+          type="button"
+          className={`inline-flex items-center gap-2 transition hover:bg-slate-50 ${
+            compact ? "px-3 py-2 text-xs" : "px-3 py-2 text-sm"
+          }`}
+          onClick={() => {
+            onPress?.();
+            setOpen(false);
+          }}
         >
-          <path d="m5 7.5 5 5 5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </button>
+          <span className="font-medium text-slate-900">{getMerchantBookingFilterText("all", counts.total, locale)}</span>
+          <span className="text-[11px] font-medium text-slate-500">{`${normalizedSelectedStatuses.length}/${STATUS_ORDER.length}`}</span>
+        </button>
+        <button
+          type="button"
+          className={`inline-flex items-center justify-center border-l border-slate-200 text-slate-500 transition hover:bg-slate-50 ${
+            compact ? "w-9" : "w-10"
+          }`}
+          onClick={() => {
+            setOpen((current) => !current);
+          }}
+          aria-expanded={open}
+          aria-label={getMerchantBookingFilterText("all", counts.total, locale)}
+        >
+          <svg
+            viewBox="0 0 20 20"
+            fill="none"
+            aria-hidden="true"
+            className={`h-4 w-4 transition-transform ${open ? "rotate-180" : ""}`}
+          >
+            <path d="m5 7.5 5 5 5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+      </div>
 
       {open ? (
         <div className="absolute left-0 top-full z-30 mt-2 w-[240px] max-w-[calc(100vw-2rem)] rounded-2xl border border-slate-200 bg-white p-2 shadow-[0_16px_38px_rgba(15,23,42,0.14)]">

@@ -39,6 +39,20 @@ import {
 import { buildMerchantBookingMailtoHref } from "@/lib/merchantBookingMailto";
 import { buildMerchantBookingsCsv } from "@/lib/merchantBookingCsv";
 import {
+  filterMerchantBookingRecordsByHistory,
+  getMerchantBookingHistoryVisibilityLabel,
+  getMerchantBookingHistoryVisibilityText,
+  getMerchantBookingSortLabel,
+  getMerchantBookingSortOptionText,
+  loadMerchantBookingManagerPreferences,
+  MERCHANT_BOOKING_HISTORY_VISIBILITY_OPTIONS,
+  MERCHANT_BOOKING_SORT_MODES,
+  saveMerchantBookingManagerPreferences,
+  sortMerchantBookingRecords,
+  type MerchantBookingHistoryVisibility,
+  type MerchantBookingSortMode,
+} from "@/lib/merchantBookingManagerPreferences";
+import {
   buildMerchantBookingReminderOffsetLabel,
   resolveMerchantBookingCustomerEmailLocale,
 } from "@/lib/merchantBookingCustomerEmail";
@@ -432,7 +446,15 @@ export default function MerchantBookingMobilePanel({
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<MerchantBookingFilter>("all");
-  const [selectedStatuses, setSelectedStatuses] = useState<MerchantBookingStatus[]>(() => [...MERCHANT_BOOKING_STATUSES]);
+  const [selectedStatuses, setSelectedStatuses] = useState<MerchantBookingStatus[]>(
+    () => loadMerchantBookingManagerPreferences(siteId).selectedStatuses,
+  );
+  const [sortMode, setSortMode] = useState<MerchantBookingSortMode>(
+    () => loadMerchantBookingManagerPreferences(siteId).sortMode,
+  );
+  const [historyVisibility, setHistoryVisibility] = useState<MerchantBookingHistoryVisibility>(
+    () => loadMerchantBookingManagerPreferences(siteId).historyVisibility,
+  );
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedBookingIds, setSelectedBookingIds] = useState<string[]>([]);
   const [busyKey, setBusyKey] = useState("");
@@ -443,6 +465,11 @@ export default function MerchantBookingMobilePanel({
   const workbenchButtonClassName = workbenchOpen
     ? "shrink-0 rounded-[18px] rounded-tl-[8px] rounded-br-[24px] border border-[#c7b48f] bg-[linear-gradient(135deg,#1f2b46_0%,#233657_100%)] px-3.5 py-2 text-[12px] font-semibold tracking-[0.02em] text-[#f7e8c2] shadow-[0_14px_26px_rgba(15,23,42,0.22)] ring-1 ring-[#efe2bf]/60 transition"
     : "shrink-0 rounded-[18px] rounded-tl-[8px] rounded-br-[24px] border border-[#d8c7a5] bg-[linear-gradient(135deg,#fffdfa_0%,#f6efe1_62%,#ecdfc2_100%)] px-3.5 py-2 text-[12px] font-semibold tracking-[0.02em] text-slate-800 shadow-[0_12px_24px_rgba(148,119,66,0.14)] transition active:scale-[0.98]";
+  const filterSelectShellClassName = darkMode
+    ? "rounded-[18px] border border-slate-700 bg-slate-900/75 px-3 py-2.5 text-slate-100 shadow-sm"
+    : "rounded-[18px] border border-slate-200 bg-white px-3 py-2.5 text-slate-900 shadow-sm";
+  const filterSelectLabelClassName = darkMode ? "text-slate-400" : "text-slate-500";
+  const filterSelectIconClassName = darkMode ? "text-slate-500" : "text-slate-400";
 
   useEffect(() => {
     setCustomerEmailLocale(defaultCustomerEmailLocale);
@@ -535,6 +562,21 @@ export default function MerchantBookingMobilePanel({
     }
   }, [selectedBookingIds.length, selectionMode]);
 
+  useEffect(() => {
+    const preferences = loadMerchantBookingManagerPreferences(siteId);
+    setSelectedStatuses(preferences.selectedStatuses);
+    setSortMode(preferences.sortMode);
+    setHistoryVisibility(preferences.historyVisibility);
+  }, [siteId]);
+
+  useEffect(() => {
+    saveMerchantBookingManagerPreferences(siteId, {
+      selectedStatuses,
+      sortMode,
+      historyVisibility,
+    });
+  }, [historyVisibility, selectedStatuses, siteId, sortMode]);
+
   const {
     pullDistance,
     readyToRefresh,
@@ -546,19 +588,27 @@ export default function MerchantBookingMobilePanel({
     onRefresh: loadBookings,
   });
 
-  const counts = useMemo(() => createStatusCounts(records), [records]);
+  const historyFilteredRecords = useMemo(
+    () => filterMerchantBookingRecordsByHistory(records, historyVisibility),
+    [historyVisibility, records],
+  );
+
+  const counts = useMemo(() => createStatusCounts(historyFilteredRecords), [historyFilteredRecords]);
 
   const filteredRecords = useMemo(
     () =>
-      records.filter((item) => {
+      sortMerchantBookingRecords(
+        historyFilteredRecords.filter((item) => {
         if (filter === "all") {
           if (!selectedStatuses.includes(item.status)) return false;
         } else if (item.status !== filter) {
           return false;
         }
         return matchesSearch(item, query);
-      }),
-    [filter, query, records, selectedStatuses],
+        }),
+        sortMode,
+      ),
+    [filter, historyFilteredRecords, query, selectedStatuses, sortMode],
   );
   const selectedRecordSet = useMemo(() => new Set(selectedBookingIds), [selectedBookingIds]);
   const selectedRecords = useMemo(
@@ -1265,8 +1315,64 @@ export default function MerchantBookingMobilePanel({
                 }}
               >
                 {getMerchantBookingFilterText(status, counts[status], locale)}
-              </button>
+                </button>
               ))}
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <label className={`flex min-w-0 items-center gap-2 ${filterSelectShellClassName}`}>
+              <span className={`shrink-0 text-[11px] font-medium ${filterSelectLabelClassName}`}>
+                {getMerchantBookingSortLabel(locale)}
+              </span>
+              <div className="relative min-w-0 flex-1">
+                <select
+                  className="w-full min-w-0 appearance-none bg-transparent pr-5 text-[13px] font-medium outline-none"
+                  value={sortMode}
+                  onChange={(event) => setSortMode(event.target.value as MerchantBookingSortMode)}
+                >
+                  {MERCHANT_BOOKING_SORT_MODES.map((mode) => (
+                    <option key={mode} value={mode}>
+                      {getMerchantBookingSortOptionText(mode, locale)}
+                    </option>
+                  ))}
+                </select>
+                <svg
+                  viewBox="0 0 20 20"
+                  fill="none"
+                  aria-hidden="true"
+                  className={`pointer-events-none absolute right-0 top-1/2 h-4 w-4 -translate-y-1/2 ${filterSelectIconClassName}`}
+                >
+                  <path d="m5 7.5 5 5 5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </div>
+            </label>
+            <label className={`flex min-w-0 items-center gap-2 ${filterSelectShellClassName}`}>
+              <span className={`shrink-0 text-[11px] font-medium ${filterSelectLabelClassName}`}>
+                {getMerchantBookingHistoryVisibilityLabel(locale)}
+              </span>
+              <div className="relative min-w-0 flex-1">
+                <select
+                  className="w-full min-w-0 appearance-none bg-transparent pr-5 text-[13px] font-medium outline-none"
+                  value={historyVisibility}
+                  onChange={(event) =>
+                    setHistoryVisibility(event.target.value as MerchantBookingHistoryVisibility)
+                  }
+                >
+                  {MERCHANT_BOOKING_HISTORY_VISIBILITY_OPTIONS.map((value) => (
+                    <option key={value} value={value}>
+                      {getMerchantBookingHistoryVisibilityText(value, locale)}
+                    </option>
+                  ))}
+                </select>
+                <svg
+                  viewBox="0 0 20 20"
+                  fill="none"
+                  aria-hidden="true"
+                  className={`pointer-events-none absolute right-0 top-1/2 h-4 w-4 -translate-y-1/2 ${filterSelectIconClassName}`}
+                >
+                  <path d="m5 7.5 5 5 5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </div>
+            </label>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button
