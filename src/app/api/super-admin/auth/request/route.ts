@@ -21,6 +21,7 @@ import { SUPER_ADMIN_TRUSTED_DEVICE_COOKIE } from "@/lib/superAdminSession";
 import {
   canRegisterAnotherSuperAdminDevice,
   loadSuperAdminTrustedDevicesFromStore,
+  normalizeSuperAdminTrustedDeviceDetails,
   pickLeastRecentlyVerifiedSuperAdminTrustedDevice,
 } from "@/lib/superAdminTrustedDevices";
 import { finalizeSuperAdminLogin } from "@/lib/superAdminLoginCompletion";
@@ -34,6 +35,7 @@ type RequestBody = {
   next?: unknown;
   deviceId?: unknown;
   deviceLabel?: unknown;
+  deviceDetails?: unknown;
 };
 
 function parseCookieValue(cookieHeader: string, key: string) {
@@ -42,6 +44,23 @@ function parseCookieValue(cookieHeader: string, key: string) {
     .map((part) => part.trim())
     .find((part) => part.startsWith(`${key}=`))
     ?.slice(key.length + 1) ?? "";
+}
+
+function readRequestDeviceDetails(request: Request, rawDetails: unknown) {
+  const normalized = normalizeSuperAdminTrustedDeviceDetails(rawDetails);
+  const userAgent = request.headers.get("user-agent") ?? "";
+  const acceptLanguage = request.headers.get("accept-language") ?? "";
+  const requestLanguages = acceptLanguage
+    .split(",")
+    .map((item) => item.split(";")[0]?.trim() ?? "")
+    .filter(Boolean)
+    .slice(0, 8);
+  return normalizeSuperAdminTrustedDeviceDetails({
+    ...normalized,
+    userAgent: normalized?.userAgent || userAgent,
+    language: normalized?.language || requestLanguages[0] || "",
+    languages: normalized?.languages?.length ? normalized.languages : requestLanguages,
+  });
 }
 
 export async function POST(request: Request) {
@@ -55,6 +74,7 @@ export async function POST(request: Request) {
     const password = typeof body?.password === "string" ? body.password : "";
     const deviceId = typeof body?.deviceId === "string" ? body.deviceId.trim() : "";
     const deviceLabel = typeof body?.deviceLabel === "string" ? body.deviceLabel.trim() : "";
+    const deviceDetails = readRequestDeviceDetails(request, body?.deviceDetails);
     const nextPath = normalizeSuperAdminNextPath(typeof body?.next === "string" ? body.next : "");
     const requestHost = new URL(request.url).host;
 
@@ -79,6 +99,7 @@ export async function POST(request: Request) {
       deviceId,
       deviceLabel,
       nextPath,
+      deviceDetails,
     });
     if (!challengeToken) {
       return NextResponse.json({ error: "invalid_device" }, { status: 400 });
@@ -123,6 +144,7 @@ export async function POST(request: Request) {
           deviceId,
           deviceLabel: deviceLabel || challengePayload?.deviceLabel || "Windows / Chrome",
           nextPath,
+          deviceDetails,
         },
         {
           loginIp: readRequestClientIp(request),

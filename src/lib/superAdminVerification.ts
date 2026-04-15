@@ -1,6 +1,7 @@
 import { createHash, createHmac } from "node:crypto";
 import { readSuperAdminVerificationSecret } from "@/lib/superAdminServer";
 import { SUPER_ADMIN_SESSION_COOKIE_MAX_AGE_SECONDS } from "@/lib/superAdminSession";
+import type { SuperAdminTrustedDeviceDetails } from "@/lib/superAdminTrustedDevices";
 
 const SUPER_ADMIN_CHALLENGE_TTL_MS = 10 * 60 * 1000;
 const SUPER_ADMIN_EMAIL_PROOF_TTL_MS = 15 * 60 * 1000;
@@ -20,6 +21,7 @@ export type SuperAdminChallengePayload = SignedSuperAdminTokenPayload & {
   deviceId: string;
   deviceLabel: string;
   nextPath: string;
+  deviceDetails?: SuperAdminTrustedDeviceDetails | null;
 };
 
 type SuperAdminEmailProofPayload = SignedSuperAdminTokenPayload & {
@@ -91,6 +93,7 @@ export function createSuperAdminChallengeToken(input: {
   deviceId: string;
   deviceLabel: string;
   nextPath?: string | null;
+  deviceDetails?: SuperAdminTrustedDeviceDetails | null;
 }) {
   const issuedAt = Date.now();
   const payload: SuperAdminChallengePayload = {
@@ -100,6 +103,7 @@ export function createSuperAdminChallengeToken(input: {
     deviceId: String(input.deviceId ?? "").trim(),
     deviceLabel: String(input.deviceLabel ?? "").trim() || "当前设备",
     nextPath: normalizeSuperAdminNextPath(input.nextPath),
+    deviceDetails: input.deviceDetails ?? null,
   };
   if (!payload.deviceId) return "";
   return signTokenPayload(payload);
@@ -135,7 +139,7 @@ export function createSuperAdminSessionToken(input: { deviceId: string; deviceLa
     issuedAt,
     expiresAt: issuedAt + SUPER_ADMIN_SESSION_TTL_MS,
     deviceId: String(input.deviceId ?? "").trim(),
-    deviceLabel: String(input.deviceLabel ?? "").trim() || "????",
+    deviceLabel: String(input.deviceLabel ?? "").trim() || "当前设备",
   };
   if (!payload.deviceId) return "";
   return signTokenPayload(payload);

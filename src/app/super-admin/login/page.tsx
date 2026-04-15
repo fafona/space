@@ -7,6 +7,7 @@ import PasswordField, { getPasswordToggleLabels } from "@/components/PasswordFie
 import {
   buildCurrentSuperAdminDeviceLabel,
   buildSuperAdminLoginHref,
+  collectCurrentSuperAdminDeviceDetails,
   getOrCreateSuperAdminDeviceId,
   refreshSuperAdminAuthenticatedState,
   setSuperAdminAuthenticated,
@@ -144,6 +145,7 @@ function SuperAdminLoginForm() {
 
     setPendingAction("request");
     try {
+      const deviceDetails = await collectCurrentSuperAdminDeviceDetails();
       const response = await fetch("/api/super-admin/auth/request", {
         method: "POST",
         headers: {
@@ -155,6 +157,7 @@ function SuperAdminLoginForm() {
           next: nextHref,
           deviceId,
           deviceLabel: buildCurrentSuperAdminDeviceLabel(),
+          deviceDetails,
         }),
       });
       const payload = (await response.json().catch(() => null)) as
@@ -262,7 +265,7 @@ function SuperAdminLoginForm() {
       <div className="w-full max-w-md space-y-4 rounded-xl border bg-white p-6">
         <h1 className="text-xl font-bold">{t("superLogin.title")}</h1>
         <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
-          超级后台启用白名单设备。每次登录都需要向已配置的验证邮箱发送验证邮件，收到验证码后也可以直接在这里输入。
+          超级后台启用白名单设备。已受信设备可直接登录；陌生设备、换浏览器或清空站点数据后，会向已配置的验证邮箱发送验证码，你也可以直接在这里输入。
         </div>
         <div className="space-y-2">
           <div className="hidden" aria-hidden="true">

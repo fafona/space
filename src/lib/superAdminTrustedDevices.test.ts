@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   canRegisterAnotherSuperAdminDevice,
   normalizeSuperAdminMaxDevices,
+  normalizeSuperAdminTrustedDeviceDetails,
   normalizeSuperAdminTrustedDevices,
   pickLeastRecentlyVerifiedSuperAdminTrustedDevice,
   removeSuperAdminTrustedDevice,
@@ -73,6 +74,59 @@ test("upsertSuperAdminTrustedDevice preserves original addedAt and first login i
   assert.equal(devices[0]?.addedAt, "2026-03-20T10:00:00.000Z");
   assert.equal(devices[0]?.firstLoginIp, "1.1.1.1");
   assert.equal(devices[0]?.lastLoginIp, "9.9.9.9");
+});
+
+test("normalizeSuperAdminTrustedDeviceDetails keeps useful browser information only", () => {
+  const details = normalizeSuperAdminTrustedDeviceDetails({
+    platform: "iPhone",
+    os: "iOS 18.1",
+    browser: "Safari",
+    browserVersion: "18.1",
+    model: "iPhone",
+    deviceType: "mobile",
+    language: "es-ES",
+    languages: ["es-ES", "en-US"],
+    timezone: "Europe/Madrid",
+    screen: "1179×2556 @3x",
+    viewport: "393×852",
+    userAgent: "Mozilla/5.0",
+    brands: ["Safari 18.1"],
+    deviceMemory: "8 GB",
+    hardwareConcurrency: "6",
+  });
+
+  assert.equal(details?.platform, "iPhone");
+  assert.equal(details?.deviceType, "mobile");
+  assert.deepEqual(details?.languages, ["es-ES", "en-US"]);
+});
+
+test("upsertSuperAdminTrustedDevice stores device details", () => {
+  const devices = upsertSuperAdminTrustedDevice([], {
+    deviceId: "device-1",
+    deviceLabel: "iPhone / Safari",
+    verifiedAt: "2026-04-15T10:00:00.000Z",
+    loginIp: "4.4.4.4",
+    details: {
+      platform: "iPhone",
+      os: "iOS 18.1",
+      browser: "Safari",
+      browserVersion: "18.1",
+      model: "iPhone",
+      deviceType: "mobile",
+      language: "es-ES",
+      languages: ["es-ES"],
+      timezone: "Europe/Madrid",
+      screen: "1179×2556 @3x",
+      viewport: "393×852",
+      userAgent: "Mozilla/5.0",
+      brands: ["Safari 18.1"],
+      deviceMemory: "",
+      hardwareConcurrency: "6",
+    },
+  });
+
+  assert.equal(devices[0]?.details?.browser, "Safari");
+  assert.equal(devices[0]?.details?.timezone, "Europe/Madrid");
 });
 
 test("removeSuperAdminTrustedDevice removes the requested device only", () => {

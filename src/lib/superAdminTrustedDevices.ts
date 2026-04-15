@@ -1,7 +1,26 @@
 export const SUPER_ADMIN_TRUSTED_DEVICES_PAGE_SLUG = "super-admin-trusted-devices";
 export const DEFAULT_SUPER_ADMIN_MAX_DEVICES = 3;
+const SUPER_ADMIN_TRUSTED_DEVICES_VERSION = 3;
 
 export type SuperAdminTrustedDeviceLoginStatus = "success";
+
+export type SuperAdminTrustedDeviceDetails = {
+  platform: string;
+  os: string;
+  browser: string;
+  browserVersion: string;
+  model: string;
+  deviceType: "desktop" | "mobile" | "tablet" | "unknown";
+  language: string;
+  languages: string[];
+  timezone: string;
+  screen: string;
+  viewport: string;
+  userAgent: string;
+  brands: string[];
+  deviceMemory: string;
+  hardwareConcurrency: string;
+};
 
 export type SuperAdminTrustedDeviceRecord = {
   deviceId: string;
@@ -11,6 +30,7 @@ export type SuperAdminTrustedDeviceRecord = {
   firstLoginIp: string;
   lastLoginIp: string;
   lastLoginStatus: SuperAdminTrustedDeviceLoginStatus;
+  details: SuperAdminTrustedDeviceDetails | null;
 };
 
 type QueryErrorLike = { message?: string } | null;
@@ -47,7 +67,7 @@ type TrustedDevicesStoreClient = {
 };
 
 type TrustedDevicesPagePayload = {
-  version: 2;
+  version: number;
   maxDevices: number;
   devices: SuperAdminTrustedDeviceRecord[];
 };
@@ -67,8 +87,52 @@ function normalizeLoginStatus(value: unknown): SuperAdminTrustedDeviceLoginStatu
   return normalizeText(value) === "success" ? "success" : "success";
 }
 
+function normalizeTextArray(value: unknown) {
+  if (!Array.isArray(value)) return [] as string[];
+  return value
+    .map((item) => normalizeText(item))
+    .filter(Boolean)
+    .slice(0, 12);
+}
+
+function normalizeDeviceType(value: unknown): SuperAdminTrustedDeviceDetails["deviceType"] {
+  const normalized = normalizeText(value).toLowerCase();
+  if (normalized === "desktop" || normalized === "mobile" || normalized === "tablet") return normalized;
+  return "unknown";
+}
+
+export function normalizeSuperAdminTrustedDeviceDetails(value: unknown): SuperAdminTrustedDeviceDetails | null {
+  if (!value || typeof value !== "object") return null;
+  const source = value as Partial<SuperAdminTrustedDeviceDetails>;
+  const details: SuperAdminTrustedDeviceDetails = {
+    platform: normalizeText(source.platform),
+    os: normalizeText(source.os),
+    browser: normalizeText(source.browser),
+    browserVersion: normalizeText(source.browserVersion),
+    model: normalizeText(source.model),
+    deviceType: normalizeDeviceType(source.deviceType),
+    language: normalizeText(source.language),
+    languages: normalizeTextArray(source.languages),
+    timezone: normalizeText(source.timezone),
+    screen: normalizeText(source.screen),
+    viewport: normalizeText(source.viewport),
+    userAgent: normalizeText(source.userAgent),
+    brands: normalizeTextArray(source.brands),
+    deviceMemory: normalizeText(source.deviceMemory),
+    hardwareConcurrency: normalizeText(source.hardwareConcurrency),
+  };
+
+  const hasMeaningfulValue = Object.entries(details).some(([key, current]) => {
+    if (key === "deviceType") return current !== "unknown";
+    if (Array.isArray(current)) return current.length > 0;
+    return Boolean(current);
+  });
+  return hasMeaningfulValue ? details : null;
+}
+
 export function normalizeSuperAdminMaxDevices(value: unknown) {
-  const numeric = typeof value === "number" && Number.isFinite(value) ? Math.round(value) : Number.parseInt(String(value ?? ""), 10);
+  const numeric =
+    typeof value === "number" && Number.isFinite(value) ? Math.round(value) : Number.parseInt(String(value ?? ""), 10);
   if (!Number.isFinite(numeric)) return DEFAULT_SUPER_ADMIN_MAX_DEVICES;
   return Math.max(1, Math.min(20, numeric));
 }
@@ -85,7 +149,7 @@ function sortTrustedDevices(devices: SuperAdminTrustedDeviceRecord[]) {
 
 function normalizeTrustedDeviceRecord(value: unknown) {
   if (!value || typeof value !== "object") return null;
-  const source = value as Partial<SuperAdminTrustedDeviceRecord>;
+  const source = value as Partial<SuperAdminTrustedDeviceRecord> & { details?: unknown };
   const deviceId = normalizeText(source.deviceId);
   if (!deviceId) return null;
   const nowIso = new Date().toISOString();
@@ -101,6 +165,7 @@ function normalizeTrustedDeviceRecord(value: unknown) {
     firstLoginIp,
     lastLoginIp,
     lastLoginStatus: normalizeLoginStatus(source.lastLoginStatus),
+    details: normalizeSuperAdminTrustedDeviceDetails(source.details),
   } satisfies SuperAdminTrustedDeviceRecord;
 }
 
@@ -129,7 +194,7 @@ export function normalizeSuperAdminTrustedDevices(value: unknown) {
 
 function buildPayload(maxDevices: number, devices: SuperAdminTrustedDeviceRecord[]): TrustedDevicesPagePayload {
   return {
-    version: 2,
+    version: SUPER_ADMIN_TRUSTED_DEVICES_VERSION,
     maxDevices: normalizeSuperAdminMaxDevices(maxDevices),
     devices: sortTrustedDevices(devices),
   };
@@ -154,6 +219,7 @@ export function upsertSuperAdminTrustedDevice(
     verifiedAt?: string | null;
     loginIp?: string | null;
     loginStatus?: SuperAdminTrustedDeviceLoginStatus | null;
+    details?: SuperAdminTrustedDeviceDetails | null;
   },
 ) {
   const deviceId = normalizeText(input.deviceId);
@@ -169,17 +235,12 @@ export function upsertSuperAdminTrustedDevice(
     firstLoginIp: existing?.firstLoginIp || loginIp,
     lastLoginIp: loginIp || existing?.lastLoginIp || "",
     lastLoginStatus: input.loginStatus ?? existing?.lastLoginStatus ?? "success",
+    details: normalizeSuperAdminTrustedDeviceDetails(input.details) ?? existing?.details ?? null,
   };
-  return sortTrustedDevices([
-    nextRecord,
-    ...devices.filter((item) => item.deviceId !== deviceId),
-  ]);
+  return sortTrustedDevices([nextRecord, ...devices.filter((item) => item.deviceId !== deviceId)]);
 }
 
-export function removeSuperAdminTrustedDevice(
-  devices: SuperAdminTrustedDeviceRecord[],
-  deviceId: string,
-) {
+export function removeSuperAdminTrustedDevice(devices: SuperAdminTrustedDeviceRecord[], deviceId: string) {
   const normalizedDeviceId = normalizeText(deviceId);
   return sortTrustedDevices(devices.filter((item) => item.deviceId !== normalizedDeviceId));
 }

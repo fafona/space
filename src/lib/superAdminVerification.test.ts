@@ -36,11 +36,29 @@ test("super admin challenge/proof tokens stay bound together", async () => {
     deviceId: "device-12345678",
     deviceLabel: "Windows / Chrome",
     nextPath: "/super-admin/editor",
+    deviceDetails: {
+      platform: "Windows",
+      os: "Windows 10.0",
+      browser: "Chrome",
+      browserVersion: "135.0.0.0",
+      model: "PC",
+      deviceType: "desktop",
+      language: "zh-CN",
+      languages: ["zh-CN"],
+      timezone: "Asia/Shanghai",
+      screen: "1920×1080 @1x",
+      viewport: "1440×900",
+      userAgent: "Mozilla/5.0",
+      brands: ["Google Chrome 135.0.0.0"],
+      deviceMemory: "8 GB",
+      hardwareConcurrency: "8",
+    },
   });
   assert.ok(challenge);
   const payload = readSuperAdminChallengeToken(challenge);
   assert.equal(payload?.deviceId, "device-12345678");
   assert.equal(payload?.nextPath, "/super-admin/editor");
+  assert.equal(payload?.deviceDetails?.browser, "Chrome");
 
   const proof = createSuperAdminEmailProofToken(challenge);
   assert.equal(verifySuperAdminEmailProofToken(proof, challenge), true);

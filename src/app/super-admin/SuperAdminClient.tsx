@@ -105,6 +105,7 @@ import {
   parseSupportMessageAttachmentPreview,
 } from "@/lib/supportMessageAttachments";
 import {
+  buildCurrentSuperAdminDeviceLabel,
   buildSuperAdminLoginHref,
   clearSuperAdminAuthenticated,
   getOrCreateSuperAdminDeviceId,
@@ -124,6 +125,43 @@ function fmt(iso: string | null) {
   if (!iso) return "-";
   const date = new Date(iso);
   return Number.isFinite(date.getTime()) ? date.toLocaleString("zh-CN", { hour12: false }) : iso;
+}
+
+function formatTrustedDeviceTypeLabel(type: "desktop" | "mobile" | "tablet" | "unknown") {
+  if (type === "mobile") return "手机";
+  if (type === "tablet") return "平板";
+  if (type === "desktop") return "桌面";
+  return "未知";
+}
+
+function formatTrustedDeviceBrowserSummary(device: SuperAdminTrustedDeviceRecord) {
+  const browser = (device.details?.browser ?? "").trim();
+  const browserVersion = (device.details?.browserVersion ?? "").trim();
+  if (!browser) return "-";
+  return browserVersion ? `${browser} ${browserVersion}` : browser;
+}
+
+function formatTrustedDevicePlatformSummary(device: SuperAdminTrustedDeviceRecord) {
+  const model = (device.details?.model ?? "").trim();
+  const platform = (device.details?.platform ?? "").trim();
+  const os = (device.details?.os ?? "").trim();
+  const typeLabel = formatTrustedDeviceTypeLabel(device.details?.deviceType ?? "unknown");
+  const primary = model || platform || "-";
+  return [primary, os, typeLabel !== "未知" ? typeLabel : ""].filter(Boolean).join(" / ");
+}
+
+function formatTrustedDeviceLocaleSummary(device: SuperAdminTrustedDeviceRecord) {
+  const language = (device.details?.language ?? "").trim();
+  const timezone = (device.details?.timezone ?? "").trim();
+  if (!language && !timezone) return "-";
+  return [language || "-", timezone || "-"].join(" / ");
+}
+
+function formatTrustedDeviceDisplaySummary(device: SuperAdminTrustedDeviceRecord) {
+  const screen = (device.details?.screen ?? "").trim();
+  const viewport = (device.details?.viewport ?? "").trim();
+  if (!screen && !viewport) return "-";
+  return [screen || "-", viewport ? `视口 ${viewport}` : ""].filter(Boolean).join(" / ");
 }
 
 function formatSupportMessageTime(value: string | null | undefined) {
@@ -1753,6 +1791,7 @@ export default function SuperAdminClient() {
   const [trustedDeviceLimitInput, setTrustedDeviceLimitInput] = useState("3");
   const [trustedDeviceLimitSaving, setTrustedDeviceLimitSaving] = useState(false);
   const [currentSuperAdminDeviceId, setCurrentSuperAdminDeviceId] = useState("");
+  const [currentSuperAdminDeviceLabel, setCurrentSuperAdminDeviceLabel] = useState("");
   const checklistStorageKeyRef = useRef(releaseChecklistStorageKeyForToday());
   const platformSnapshotRevisionRef = useRef("");
   const [releaseChecklistState, setReleaseChecklistState] = useState<Record<string, boolean>>(() =>
@@ -1987,6 +2026,7 @@ export default function SuperAdminClient() {
   useEffect(() => {
     if (!hydrated || !authed) return;
     setCurrentSuperAdminDeviceId(getOrCreateSuperAdminDeviceId());
+    setCurrentSuperAdminDeviceLabel(buildCurrentSuperAdminDeviceLabel());
   }, [authed, hydrated]);
 
   useEffect(() => {
@@ -2157,6 +2197,10 @@ export default function SuperAdminClient() {
   const permissions = useMemo(
     () => new Set(resolvePermissionsForUser(state, activeOperatorId)),
     [activeOperatorId, state],
+  );
+  const currentTrustedDevice = useMemo(
+    () => trustedDevices.find((item) => item.deviceId === currentSuperAdminDeviceId) ?? null,
+    [currentSuperAdminDeviceId, trustedDevices],
   );
   const hasPermission = (permission: PermissionKey) => permissions.has(permission);
 
@@ -8021,7 +8065,7 @@ export default function SuperAdminClient() {
                     <div>
                       <div className="text-sm font-semibold text-slate-900">白名单设备管理</div>
                       <div className="text-xs text-slate-500">
-                        超级后台每次登录都需要邮箱验证。这里会记录设备名称、设备编号、登录 IP 和最近登录状态，并可限制白名单设备总数。
+                        已受信设备可直接登录；陌生设备、换浏览器或清空站点数据后，才需要邮箱验证。这里会记录设备名称、设备编号、登录 IP 和最近登录状态，并可限制白名单设备总数。
                       </div>
                     </div>
                     <div className="rounded border bg-slate-50 px-3 py-2 text-sm">{`当前设备数：${trustedDevices.length} / ${trustedDeviceLimit}`}</div>
@@ -8029,6 +8073,43 @@ export default function SuperAdminClient() {
                 </div>
 
                 <div className="rounded-lg border bg-white p-4">
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <div className={`rounded-xl border px-4 py-4 ${currentTrustedDevice ? "border-emerald-200 bg-emerald-50/70" : "border-amber-200 bg-amber-50/70"}`}>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="text-sm font-semibold text-slate-900">当前设备状态</div>
+                        <span
+                          className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${currentTrustedDevice ? "bg-emerald-600 text-white" : "bg-amber-600 text-white"}`}
+                        >
+                          {currentTrustedDevice ? "已受信" : "需验证码"}
+                        </span>
+                      </div>
+                      <div className="mt-3 space-y-2 text-xs text-slate-700">
+                        <div>{`设备名称：${currentSuperAdminDeviceLabel || "当前浏览器"}`}</div>
+                        <div>{`设备编号：${currentSuperAdminDeviceId || "-"}`}</div>
+                        <div>
+                          {currentTrustedDevice
+                            ? `最近验证：${fmt(currentTrustedDevice.lastVerifiedAt)}`
+                            : "当前浏览器暂未在受信设备名单内，下次登录仍需要邮箱验证码。"}
+                        </div>
+                        {currentTrustedDevice ? (
+                          <>
+                            <div>{`系统/机型：${formatTrustedDevicePlatformSummary(currentTrustedDevice)}`}</div>
+                            <div>{`浏览器：${formatTrustedDeviceBrowserSummary(currentTrustedDevice)}`}</div>
+                            <div>{`语言/时区：${formatTrustedDeviceLocaleSummary(currentTrustedDevice)}`}</div>
+                          </>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border bg-slate-50 px-4 py-4">
+                      <div className="text-sm font-semibold text-slate-900">设备使用说明</div>
+                      <div className="mt-3 space-y-2 text-xs text-slate-600">
+                        <div>1. 同一台已受信设备再次登录时，可直接进入超级后台。</div>
+                        <div>2. 新电脑、新手机、换浏览器或清空站点数据后，会被视为陌生设备。</div>
+                        <div>3. 移出某台设备后，该设备下次登录将重新要求邮箱验证码。</div>
+                      </div>
+                    </div>
+                  </div>
+
                   <div className="grid gap-3 md:grid-cols-[minmax(0,220px)_auto_1fr] md:items-end">
                     <label className="block text-xs text-slate-600">
                       白名单设备上限
@@ -8048,12 +8129,12 @@ export default function SuperAdminClient() {
                       {trustedDeviceLimitSaving ? "保存中..." : "保存上限"}
                     </button>
                     <div className="rounded border bg-slate-50 px-3 py-3 text-xs text-slate-600">
-                      新设备在完成验证邮箱校验后会自动加入白名单；当设备数达到上限后，新设备即使拿到验证码也不允许登录，必须先移除旧设备。
+                      新设备在完成邮箱验证后会自动加入白名单；当设备数达到上限后，系统会优先替换最久未验证的旧设备，你也可以在下方手动移除。
                     </div>
                   </div>
 
                   <div className="mt-3 rounded border bg-slate-50 px-3 py-3 text-xs text-slate-600">
-                    当前设备会标记为“当前设备”；其他已登记设备会显示最近登录 IP 和最近状态，方便你排查异常登录来源。
+                    当前设备会标记为“当前设备”；其他已登记设备会显示最近登录 IP、首次记录 IP 和最近验证时间，方便你排查异常登录来源。
                   </div>
 
                   {trustedDevicesError ? (
@@ -8096,6 +8177,14 @@ export default function SuperAdminClient() {
                                   <div>{`最近验证：${fmt(device.lastVerifiedAt)}`}</div>
                                   <div>{`首次登记：${fmt(device.addedAt)}`}</div>
                                   <div>{`登录状态：${isCurrent ? "当前设备" : "允许登录"}`}</div>
+                                  <div>{`系统/机型：${formatTrustedDevicePlatformSummary(device)}`}</div>
+                                  <div>{`浏览器：${formatTrustedDeviceBrowserSummary(device)}`}</div>
+                                  <div>{`语言/时区：${formatTrustedDeviceLocaleSummary(device)}`}</div>
+                                  <div>{`屏幕/视口：${formatTrustedDeviceDisplaySummary(device)}`}</div>
+                                  <div className="md:col-span-2">{`浏览器标识：${(device.details?.brands ?? []).join(" / ") || "-"}`}</div>
+                                  <div className="md:col-span-2 break-all text-[11px] text-slate-500">
+                                    {`User-Agent：${(device.details?.userAgent ?? "").trim() || "-"}`}
+                                  </div>
                                 </div>
                               </div>
                               <button

@@ -70,6 +70,7 @@ export async function finalizeSuperAdminLogin(
           deviceLabel: challengePayload.deviceLabel,
           loginIp: options?.loginIp,
           loginStatus: "success",
+          details: challengePayload.deviceDetails ?? null,
         }),
       );
     } catch {
