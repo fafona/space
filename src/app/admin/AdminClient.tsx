@@ -7705,7 +7705,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         item && typeof item.props.blockOffsetY === "number" && Number.isFinite(item.props.blockOffsetY)
           ? Math.round(item.props.blockOffsetY)
           : 0;
-      startOffsets[id] = { x: startOffsetX, y: startOffsetY };
+      startOffsets[id] = {
+        x: item?.props.mobileFitScreenWidth === true ? 0 : startOffsetX,
+        y: startOffsetY,
+      };
     });
 
     setSelectedId(blockId);
@@ -7759,6 +7762,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     if (!deltaX && !deltaY) return;
     const targetBlock = blocks.find((item) => item.id === blockId);
     if (!targetBlock || isBlockLocked(targetBlock)) return;
+    const horizontalDelta = targetBlock.props.mobileFitScreenWidth === true ? 0 : deltaX;
+    if (!horizontalDelta && !deltaY) return;
     const movableIds = [blockId];
     if (movableIds.length === 0) return;
     const next = [...blocks];
@@ -7775,13 +7780,20 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         typeof current.props.blockOffsetY === "number" && Number.isFinite(current.props.blockOffsetY)
           ? Math.round(current.props.blockOffsetY)
           : 0;
-      const clampedOffset = clampBlockOffsetToViewport(id, currentX, currentY, currentX + deltaX, currentY + deltaY);
+      const currentBaseX = current.props.mobileFitScreenWidth === true ? 0 : currentX;
+      const clampedOffset = clampBlockOffsetToViewport(
+        id,
+        currentBaseX,
+        currentY,
+        currentBaseX + horizontalDelta,
+        currentY + deltaY,
+      );
       if (clampedOffset.x === currentX && clampedOffset.y === currentY) return;
       next[index] = {
         ...current,
         props: {
           ...current.props,
-          blockOffsetX: clampedOffset.x,
+          blockOffsetX: current.props.mobileFitScreenWidth === true ? 0 : clampedOffset.x,
           blockOffsetY: clampedOffset.y,
         } as never,
       } as Block;
@@ -7908,11 +7920,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             typeof current.props.blockOffsetY === "number" && Number.isFinite(current.props.blockOffsetY)
               ? Math.round(current.props.blockOffsetY)
               : 0;
+          const currentBaseX = current.props.mobileFitScreenWidth === true ? 0 : currentOffsetX;
           const clampedOffset = clampBlockOffsetToViewport(
             id,
-            currentOffsetX,
+            currentBaseX,
             currentOffsetY,
-            Math.round(origin.x + deltaX),
+            current.props.mobileFitScreenWidth === true ? currentBaseX : Math.round(origin.x + deltaX),
             Math.round(origin.y + deltaY),
             { allowDragDownOverflow: true },
           );
@@ -7920,7 +7933,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             ...current,
             props: {
               ...current.props,
-              blockOffsetX: clampedOffset.x,
+              blockOffsetX: current.props.mobileFitScreenWidth === true ? 0 : clampedOffset.x,
               blockOffsetY: clampedOffset.y,
             } as never,
           } as Block;
@@ -16676,7 +16689,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     className="relative rounded-[28px] overflow-hidden min-h-[780px]"
                     style={{ ...pageBackgroundStyle, paddingBottom: `${mobileFrontendPreviewPadding}px` }}
                   >
-                    <div className="relative z-10 w-full py-4">
+                    <div className="editor-mobile-preview relative z-10 w-full py-4">
                       <BlockRenderer
                         blocks={blocks}
                         currentPageId={editingPageId}
@@ -19946,7 +19959,7 @@ type GalleryEditorImage = {
     typeof block.props.blockOffsetY === "number" && Number.isFinite(block.props.blockOffsetY)
       ? Math.round(block.props.blockOffsetY)
       : 0;
-  const effectiveOffsetX = draftResize?.offsetX ?? offsetX;
+  const effectiveOffsetX = mobileFitScreenWidth ? 0 : draftResize?.offsetX ?? offsetX;
   const effectiveOffsetY = (draftResize?.offsetY ?? offsetY) + previewOffsetY;
   const isEditingBlock = isSelected || hasOverlayOpen;
   const offsetStyle = {
@@ -28691,19 +28704,21 @@ function EditorBlockHeader({
               >
                 <span className="block w-0 h-0 border-l-[7px] border-r-[7px] border-b-[11px] border-l-transparent border-r-transparent border-b-black" />
               </button>
+              {!mobileFitScreenWidth ? (
+                <button
+                  className="absolute left-1 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onNudge(-NUDGE_STEP, 0);
+                  }}
+                  title="左移微调"
+                  aria-label="左移微调"
+                >
+                  <span className="block w-0 h-0 border-t-[7px] border-b-[7px] border-r-[11px] border-t-transparent border-b-transparent border-r-black" />
+                </button>
+              ) : null}
               <button
-                className="absolute left-1 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onNudge(-NUDGE_STEP, 0);
-                }}
-                title="左移微调"
-                aria-label="左移微调"
-              >
-                <span className="block w-0 h-0 border-t-[7px] border-b-[7px] border-r-[11px] border-t-transparent border-b-transparent border-r-black" />
-              </button>
-              <button
-                title="按住并拖动此按钮可自由拖动区块"
+                title={mobileFitScreenWidth ? "按住并拖动此按钮可上下拖动区块" : "按住并拖动此按钮可自由拖动区块"}
                 className={`absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 px-2 py-1 text-xs rounded border select-none ${
                   draggingBlockId ? "bg-gray-100" : "bg-white hover:bg-gray-50"
                 } cursor-grab active:cursor-grabbing`}
@@ -28715,17 +28730,19 @@ function EditorBlockHeader({
               >
                 {"拖动"}
               </button>
-              <button
-                className="absolute right-1 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onNudge(NUDGE_STEP, 0);
-                }}
-                title="右移微调"
-                aria-label="右移微调"
-              >
-                <span className="block w-0 h-0 border-t-[7px] border-b-[7px] border-l-[11px] border-t-transparent border-b-transparent border-l-black" />
-              </button>
+              {!mobileFitScreenWidth ? (
+                <button
+                  className="absolute right-1 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onNudge(NUDGE_STEP, 0);
+                  }}
+                  title="右移微调"
+                  aria-label="右移微调"
+                >
+                  <span className="block w-0 h-0 border-t-[7px] border-b-[7px] border-l-[11px] border-t-transparent border-b-transparent border-l-black" />
+                </button>
+              ) : null}
               <button
                 className="absolute left-1/2 bottom-[6px] -translate-x-1/2 w-8 h-8 flex items-center justify-center"
                 onClick={(e) => {

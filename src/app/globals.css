@@ -102,6 +102,26 @@ html[data-i18n-pending="1"] body {
   }
 }
 
+.editor-mobile-preview .mobile-fit-screen-section {
+  width: 100% !important;
+  max-width: 100% !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+}
+
+.editor-mobile-preview .mobile-fit-screen-card {
+  width: 100% !important;
+  max-width: 100% !important;
+  border-top-left-radius: 0 !important;
+  border-top-right-radius: 0 !important;
+  border-bottom-left-radius: 0 !important;
+  border-bottom-right-radius: 0 !important;
+  border-left-width: 0 !important;
+  border-right-width: 0 !important;
+}
+
 .mobile-editor-fit-screen-section {
   width: calc(100% + 3rem);
   max-width: calc(100% + 3rem);
