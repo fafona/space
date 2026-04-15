@@ -174,11 +174,13 @@ test("applyPlanTemplateToBlocks preserves opted-out style and data fields", () =
     desktop: {
       enabled: true,
       applyBackground: false,
+      selectedPlanId: "plan-1",
       selectedPageKeys: ["plan-1::0"],
     },
     mobile: {
       enabled: false,
       applyBackground: false,
+      selectedPlanId: "",
       selectedPageKeys: [],
     },
   };
@@ -206,4 +208,95 @@ test("applyPlanTemplateToBlocks preserves opted-out style and data fields", () =
   assert.deepEqual(productProps.products, [{ id: "k-1", name: "Keep product", imageUrl: "https://example.com/keep-product.jpg" }]);
   assert.deepEqual(productProps.productNameTypography, { fontFamily: "Keep Product Font" });
   assert.equal(contactProps.phone, "123456");
+});
+
+test("applyPlanTemplateToBlocks only updates the selected plan", () => {
+  const templateConfig: PagePlanConfig = {
+    activePlanId: "plan-1",
+    plans: [
+      {
+        id: "plan-1",
+        name: "方案1",
+        blocks: [{ id: "text-a", type: "text", props: { heading: "A", text: "template-a", pageBgColor: "#111111" } }],
+        pages: [{ id: "page-1", name: "页面1", blocks: [{ id: "text-a", type: "text", props: { heading: "A", text: "template-a", pageBgColor: "#111111" } }] }],
+        activePageId: "page-1",
+      },
+      {
+        id: "plan-2",
+        name: "方案2",
+        blocks: [{ id: "text-b", type: "text", props: { heading: "B", text: "template-b", pageBgColor: "#222222" } }],
+        pages: [{ id: "page-1", name: "页面1", blocks: [{ id: "text-b", type: "text", props: { heading: "B", text: "template-b", pageBgColor: "#222222" } }] }],
+        activePageId: "page-1",
+      },
+      {
+        id: "plan-3",
+        name: "方案3",
+        blocks: [{ id: "text-c", type: "text", props: { heading: "C", text: "template-c", pageBgColor: "#333333" } }],
+        pages: [{ id: "page-1", name: "页面1", blocks: [{ id: "text-c", type: "text", props: { heading: "C", text: "template-c", pageBgColor: "#333333" } }] }],
+        activePageId: "page-1",
+      },
+    ],
+  };
+
+  const targetConfig: PagePlanConfig = {
+    activePlanId: "plan-1",
+    plans: [
+      {
+        id: "plan-1",
+        name: "方案1",
+        blocks: [{ id: "text-a", type: "text", props: { heading: "A", text: "keep-a", pageBgColor: "#aaaaaa" } }],
+        pages: [{ id: "page-1", name: "页面1", blocks: [{ id: "text-a", type: "text", props: { heading: "A", text: "keep-a", pageBgColor: "#aaaaaa" } }] }],
+        activePageId: "page-1",
+      },
+      {
+        id: "plan-2",
+        name: "方案2",
+        blocks: [{ id: "text-b", type: "text", props: { heading: "B", text: "keep-b", pageBgColor: "#bbbbbb" } }],
+        pages: [{ id: "page-1", name: "页面1", blocks: [{ id: "text-b", type: "text", props: { heading: "B", text: "keep-b", pageBgColor: "#bbbbbb" } }] }],
+        activePageId: "page-1",
+      },
+      {
+        id: "plan-3",
+        name: "方案3",
+        blocks: [{ id: "text-c", type: "text", props: { heading: "C", text: "keep-c", pageBgColor: "#cccccc" } }],
+        pages: [{ id: "page-1", name: "页面1", blocks: [{ id: "text-c", type: "text", props: { heading: "C", text: "keep-c", pageBgColor: "#cccccc" } }] }],
+        activePageId: "page-1",
+      },
+    ],
+  };
+
+  const merged = applyPlanTemplateToBlocks(
+    buildPersistedBlocksFromPlanConfig(templateConfig),
+    buildPersistedBlocksFromPlanConfig(targetConfig),
+    {
+      desktop: {
+        enabled: true,
+        applyBackground: true,
+        selectedPlanId: "plan-2",
+        selectedPageKeys: ["plan-2::0"],
+      },
+      mobile: {
+        enabled: false,
+        applyBackground: false,
+        selectedPlanId: "",
+        selectedPageKeys: [],
+      },
+    },
+    {
+      typography: true,
+      buttonStyles: true,
+      galleryImages: true,
+      productData: true,
+      contactInfo: true,
+    },
+  );
+
+  const mergedConfig = (merged[0]?.props as { pagePlanConfig?: PagePlanConfig } | undefined)?.pagePlanConfig;
+  const plan1Text = ((mergedConfig?.plans[0]?.pages[0]?.blocks[0]?.props ?? {}) as Record<string, unknown>).text;
+  const plan2Text = ((mergedConfig?.plans[1]?.pages[0]?.blocks[0]?.props ?? {}) as Record<string, unknown>).text;
+  const plan3Text = ((mergedConfig?.plans[2]?.pages[0]?.blocks[0]?.props ?? {}) as Record<string, unknown>).text;
+
+  assert.equal(plan1Text, "keep-a");
+  assert.equal(plan2Text, "template-b");
+  assert.equal(plan3Text, "keep-c");
 });

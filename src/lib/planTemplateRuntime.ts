@@ -34,6 +34,7 @@ export type PlanTemplateViewportOption = {
 export type PlanTemplateViewportScope = {
   enabled: boolean;
   applyBackground: boolean;
+  selectedPlanId?: string;
   selectedPageKeys: string[];
 };
 
@@ -375,8 +376,10 @@ function applyViewportTemplate(
 ) {
   const nextConfig = clonePlanConfig(targetConfig);
   nextConfig.plans = nextConfig.plans.map((plan) => syncPlan(plan));
+  const selectedPlanId = typeof scope.selectedPlanId === "string" ? scope.selectedPlanId.trim() : "";
 
   templateConfig.plans.forEach((templatePlan) => {
+    if (selectedPlanId && templatePlan.id !== selectedPlanId) return;
     const planIndex = nextConfig.plans.findIndex((item) => item.id === templatePlan.id);
     if (planIndex < 0) return;
     const targetPlan = syncPlan(nextConfig.plans[planIndex]);
@@ -514,10 +517,12 @@ export function createDefaultPlanTemplateApplyScope(rawBlocks: unknown): PlanTem
   const byViewport = new Map(options.map((option) => [option.viewport, option]));
   const defaultScope = (viewport: PlanTemplateViewport): PlanTemplateViewportScope => {
     const option = byViewport.get(viewport);
-    const selectedPageKeys = option ? option.plans.flatMap((plan) => plan.pages.map((page) => page.key)) : [];
+    const selectedPlan = option?.plans[0];
+    const selectedPageKeys = selectedPlan ? selectedPlan.pages.map((page) => page.key) : [];
     return {
       enabled: !!option,
       applyBackground: !!option,
+      selectedPlanId: selectedPlan?.planId ?? "",
       selectedPageKeys,
     };
   };
