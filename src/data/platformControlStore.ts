@@ -1016,8 +1016,8 @@ const BUILTIN_RESTAURANT_TEMPLATE_VARIANTS: BuiltinRestaurantVariant[] = [
     key: "tracker-blue",
     planId: "plan-2",
     name: "蓝标流程版",
-    heroTitle: "把下单、备餐和取餐流程做成页面里的主体验",
-    heroSubtitle: "参考 Domino's 这类流程反馈很强的网站：首页不是单纯讲品牌，而是先让客户理解现在怎么点、点完会发生什么。",
+    heroTitle: "先让客户知道怎么点、点完会发生什么，再去看菜单",
+    heroSubtitle: "这一版直接照着 Domino's 这类强流程餐饮站去做：第一屏先给点单入口、步骤反馈和手机订单卡，而不是把品牌介绍堆在最前面。",
     pageBgColor: "linear-gradient(180deg, #edf5ff 0%, #d7ebff 38%, #f5f9ff 100%)",
     heroBgColor: "linear-gradient(135deg, #1474b9 0%, #0e5ca8 58%, #1e86cb 100%)",
     navItemBgColor: "#f8fbff",
@@ -1030,43 +1030,43 @@ const BUILTIN_RESTAURANT_TEMPLATE_VARIANTS: BuiltinRestaurantVariant[] = [
     surfaceColor: "#ffffff",
     surfaceAltColor: "#e4f0fb",
     textColor: "#143151",
-    entryHeading: "马上开始",
+    entryHeading: "先走通第一步",
     entryItems: [
-      "先选门店，再选堂食 / 自提 / 外送",
-      "热门套餐和单点入口分开，决策更快",
-      "订单状态反馈做成固定模块，减少等待焦虑",
+      "先输地址或选门店，再决定外送 / 自提",
+      "首页直接给套餐入口，不让客户先翻长菜单",
+      "把已下单、制作中、可取餐做成页面固定反馈",
     ],
-    introHeading: "体验重点",
-    introText: "这一版更像“下单系统首页”，而不是静态品牌介绍。它适合披萨、汉堡、快餐和所有强调速度、流程和状态反馈的餐饮类型。",
-    featureHeading: "首页需要给客户的确定感",
+    introHeading: "像点单系统，不像普通官网",
+    introText: "这个版本不是让客户先读品牌故事，而是像 Domino's 那样一上来就知道：从哪里开始点、当前流程怎么走、取餐或配送接下来会发生什么。",
+    featureHeading: "首页先给客户的 4 个确定感",
     featureItems: [
-      "点单前先知道最快方式",
-      "当前热卖组合和促销入口",
-      "订单处理步骤清晰可见",
-      "配送、自提和门店支持说明",
+      "最快的点单入口在哪里",
+      "今天最值得点的组合是什么",
+      "下单后当前会走到哪一步",
+      "自提、外送和门店支持怎么分",
     ],
-    menuHeading: "套餐与单点结构",
-    menuIntro: "菜单页要像成熟连锁品牌那样，把套餐、加购、尺寸和口味结构拆清楚。客户不需要看太多字，也能明白怎么选。",
-    menuFeatureHeading: "适合直接做卡片的模块",
+    menuHeading: "套餐、单点和加购要一眼分层",
+    menuIntro: "菜单页继续按 Domino's 这类品牌的逻辑走：先给最稳的套餐，再给单点和加购，不让客户自己在一长串分类里摸索。",
+    menuFeatureHeading: "这版更适合直接做成的卡片",
     menuFeatureItems: [
-      "单人套餐 / 双人分享 / 家庭组合",
-      "可加购配菜、饮品和甜品",
-      "尺寸、口味和边料差异写清楚",
-      "优惠活动只留最核心的一种",
+      "单人、双人、家庭这 3 种主套餐",
+      "尺寸、边料和口味差异直接前置",
+      "加购配菜、饮品、甜品单独收一层",
+      "活动入口只保留一个最重要的",
     ],
-    processHeading: "订单反馈流程",
-    processText: "把“已下单 / 已接单 / 备餐中 / 可取餐”做成可视化步骤，会让网站的专业度直接上来，也更符合快餐连锁的使用心智。",
+    processHeading: "状态条要像真的在推进",
+    processText: "把下单、门店接单、制作、出餐、配送做成连续状态，比单纯写一句“已下单成功”更有体感，也更像成熟连锁品牌的网站。",
     processChartType: "bar",
-    processLabels: ["下单", "接单", "制作", "取餐"],
-    processValues: [5, 4, 3, 5],
-    menuChartHeading: "热卖结构",
-    menuChartText: "可以用这块表达披萨、配菜、甜品和饮品的热卖比例，帮助客户一眼知道最受欢迎的组合。",
+    processLabels: ["选门店", "选套餐", "门店接单", "制作中", "准备完成"],
+    processValues: [5, 5, 4, 3, 5],
+    menuChartHeading: "热卖组合分布",
+    menuChartText: "这里更适合表达“主披萨 / 配菜 / 甜品 / 饮品”在一个订单里的组合权重，而不是只做静态介绍。",
     menuChartType: "pie",
     menuChartLabels: ["主品", "配菜", "甜品", "饮品"],
     menuChartValues: [5, 3, 2, 2],
-    contactHeading: "门店与配送支持",
-    contactIntro: "联系页建议让客户一眼知道配送范围、下单时段和门店信息，尤其适合强外卖、自提和高频复购型餐饮。",
-    contactItems: ["配送时段、高峰延迟与自提说明分开写", "门店电话用于异常订单与改址沟通", "活动券和会员权益建议放首页，不要塞满联系页"],
+    contactHeading: "门店、配送与异常订单支持",
+    contactIntro: "联系页不要只放电话地址，而是要让客户一眼知道配送范围、门店营业时段、改址或异常订单该怎么处理。",
+    contactItems: ["配送范围、自提柜台和营业时间要分开写", "订单异常、改址和补差价要有独立联系方式", "活动券和会员入口继续留在首页，不塞进联系页"],
   },
   {
     key: "brand-convert",
@@ -1448,6 +1448,70 @@ function createBuiltinRestaurantStoryboardBlock(variant: BuiltinRestaurantVarian
   }
 
   if (variant.key === "tracker-blue") {
+    const trackerBlackCardHtml = `
+      <div style="width:100%;height:100%;padding:26px;border-radius:28px;border:1px solid #262626;background:linear-gradient(180deg, #121212 0%, #040404 100%);box-shadow:0 24px 48px rgba(15,23,42,0.18);display:flex;flex-direction:column;justify-content:space-between;">
+        <div style="display:flex;flex-direction:column;gap:18px;">
+          <div style="display:inline-flex;width:max-content;padding:6px 12px;border-radius:999px;border:1px solid rgba(255,255,255,0.18);font-size:11px;font-weight:800;letter-spacing:0.18em;color:rgba(255,255,255,0.78);">STEP STATUS</div>
+          <div style="font-size:34px;line-height:1.02;font-weight:800;letter-spacing:-0.05em;color:#ffffff;text-transform:uppercase;">先选门店，\n再把步骤直接讲清楚</div>
+          <div style="font-size:15px;line-height:1.7;color:rgba(255,255,255,0.72);">黑卡不讲品牌故事，先告诉客户现在该干什么。它更像 Domino's 首页里那种“先理解当前进度和入口”的提醒卡。</div>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;">
+          <div style="display:inline-flex;align-items:center;justify-content:center;padding:10px 18px;border-radius:14px;background:#ef233c;color:#ffffff;font-size:13px;font-weight:800;letter-spacing:0.04em;">开始点单</div>
+          <div style="font-size:12px;color:rgba(255,255,255,0.62);">外送 / 自提 / 堂食</div>
+        </div>
+      </div>
+    `;
+    const trackerBlueCardHtml = `
+      <div style="width:100%;height:100%;padding:24px;border-radius:28px;border:1px solid #0b5b98;background:linear-gradient(180deg, #0d78bd 0%, #0a63a7 100%);box-shadow:0 24px 48px rgba(15,23,42,0.12);display:flex;flex-direction:column;justify-content:space-between;position:relative;overflow:hidden;">
+        <div style="position:absolute;inset:auto -36px -44px auto;width:160px;height:160px;border-radius:999px;background:rgba(255,255,255,0.08);"></div>
+        <div style="position:absolute;inset:20px auto auto 22px;display:flex;gap:8px;flex-wrap:wrap;">
+          <span style="display:inline-flex;padding:6px 10px;border-radius:999px;border:1px solid rgba(255,255,255,0.18);font-size:11px;font-weight:700;color:rgba(255,255,255,0.82);">流程更清楚</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:16px;padding-top:38px;position:relative;z-index:1;">
+          <div style="font-size:38px;line-height:1.02;font-weight:800;letter-spacing:-0.05em;color:#ffffff;">Blue Flow<br/>Order Board</div>
+          <div style="font-size:15px;line-height:1.68;color:rgba(255,255,255,0.78);">中间蓝卡直接把点单流程、套餐入口和门店确认做成主视觉，比普通说明块更像真正的点单网站。</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;">
+            <span style="display:inline-flex;padding:8px 12px;border-radius:999px;background:#ffffff;color:#0a63a7;font-size:12px;font-weight:700;">先选地址</span>
+            <span style="display:inline-flex;padding:8px 12px;border-radius:999px;background:#ffffff;color:#0a63a7;font-size:12px;font-weight:700;">再选套餐</span>
+            <span style="display:inline-flex;padding:8px 12px;border-radius:999px;background:#ffffff;color:#0a63a7;font-size:12px;font-weight:700;">确认取餐</span>
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;position:relative;z-index:1;">
+          <span style="display:inline-flex;padding:9px 14px;border-radius:12px;background:#ffffff;color:#0a63a7;font-size:12px;font-weight:800;">查看热卖</span>
+          <span style="display:inline-flex;padding:9px 14px;border-radius:12px;border:1px solid rgba(255,255,255,0.32);color:#ffffff;font-size:12px;font-weight:700;">浏览套餐</span>
+          <span style="display:inline-flex;padding:9px 14px;border-radius:12px;border:1px solid rgba(255,255,255,0.32);color:#ffffff;font-size:12px;font-weight:700;">门店自提</span>
+        </div>
+      </div>
+    `;
+    const trackerPhoneCardHtml = `
+      <div style="width:100%;height:100%;padding:22px;border-radius:28px;border:1px solid #0d5da7;background:linear-gradient(180deg, #3db0ff 0%, #1d82dc 100%);box-shadow:0 24px 48px rgba(15,23,42,0.14);display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden;">
+        <div style="position:absolute;inset:auto auto 18px 20px;width:88px;height:88px;border-radius:999px;background:rgba(255,255,255,0.12);"></div>
+        <div style="position:absolute;inset:18px 20px auto auto;display:inline-flex;padding:6px 10px;border-radius:999px;background:rgba(255,255,255,0.22);font-size:11px;font-weight:800;color:#ffffff;">LIVE ORDER</div>
+        <div style="width:204px;height:100%;max-height:360px;border-radius:34px;border:6px solid #121826;background:#ffffff;padding:16px 14px;display:flex;flex-direction:column;gap:12px;position:relative;z-index:1;">
+          <div style="font-size:14px;font-weight:800;color:#0f3d73;letter-spacing:0.01em;">Pepperoni Combo</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <span style="display:inline-flex;padding:6px 10px;border-radius:999px;background:#eef5ff;font-size:12px;color:#285a8b;">追踪中</span>
+            <span style="display:inline-flex;padding:6px 10px;border-radius:999px;background:#fff3f3;font-size:12px;color:#d9252a;">热卖</span>
+          </div>
+          <div style="height:78px;border-radius:18px;background:linear-gradient(180deg, #e9f4ff 0%, #d5ebff 100%);padding:12px;display:flex;flex-direction:column;justify-content:space-between;">
+            <div style="font-size:13px;font-weight:700;color:#143151;">订单流程</div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="width:10px;height:10px;border-radius:999px;background:#d9252a;display:inline-flex;"></span>
+              <span style="width:10px;height:10px;border-radius:999px;background:#0e5ca8;display:inline-flex;"></span>
+              <span style="width:10px;height:10px;border-radius:999px;background:#0e5ca8;display:inline-flex;opacity:0.45;"></span>
+              <span style="width:10px;height:10px;border-radius:999px;background:#0e5ca8;display:inline-flex;opacity:0.25;"></span>
+            </div>
+          </div>
+          <div style="height:26px;border-radius:13px;background:rgba(239,244,255,0.96);padding:0 12px;display:flex;align-items:center;font-size:13px;color:#1f2937;">门店已接单</div>
+          <div style="height:26px;border-radius:13px;background:rgba(239,244,255,0.96);padding:0 12px;display:flex;align-items:center;font-size:13px;color:#1f2937;">正在准备披萨与配菜</div>
+          <div style="height:26px;border-radius:13px;background:rgba(239,244,255,0.96);padding:0 12px;display:flex;align-items:center;font-size:13px;color:#1f2937;">预计 14 分钟可取</div>
+          <div style="display:flex;gap:8px;">
+            <div style="flex:1;display:inline-flex;align-items:center;justify-content:center;padding:8px 0;border-radius:12px;background:#d9252a;color:#ffffff;font-size:12px;font-weight:800;">继续加购</div>
+            <div style="flex:1;display:inline-flex;align-items:center;justify-content:center;padding:8px 0;border-radius:12px;background:#0e5ca8;color:#ffffff;font-size:12px;font-weight:700;">查看订单</div>
+          </div>
+        </div>
+      </div>
+    `;
     return {
       id: `builtin-restaurant-storyboard-home-${variant.key}`,
       type: "common",
@@ -1460,17 +1524,7 @@ function createBuiltinRestaurantStoryboardBlock(variant: BuiltinRestaurantVarian
         commonTextBoxes: [
           makeBox(
             `tracker-left-${variant.key}`,
-            createBuiltinRestaurantCommonCardHtml(
-              "Track every step\nbefore pickup",
-              "左边直接做成提醒型黑卡：告诉客户门店正在处理什么、现在最适合做什么，这会很像 Domino's 的流程反馈逻辑。",
-              {
-                background: "linear-gradient(180deg, #111111 0%, #050505 100%)",
-                borderColor: "#242424",
-                accent: "#ffffff",
-                subtle: "rgba(255,255,255,0.72)",
-                pill: "继续下单",
-              },
-            ),
+            trackerBlackCardHtml,
             0,
             10,
             330,
@@ -1478,17 +1532,7 @@ function createBuiltinRestaurantStoryboardBlock(variant: BuiltinRestaurantVarian
           ),
           makeBox(
             `tracker-middle-${variant.key}`,
-            createBuiltinRestaurantCommonCardHtml(
-              "Order flow\nredesigned",
-              "中间蓝卡用来解释下单、加购、制作与取餐步骤。让客户理解流程，会直接提升这种快餐官网的专业感。",
-              {
-                background: "linear-gradient(180deg, #0872b5 0%, #0d62a6 100%)",
-                borderColor: "#0a5a93",
-                accent: "#ffffff",
-                subtle: "rgba(255,255,255,0.78)",
-                pill: "view combo",
-              },
-            ),
+            trackerBlueCardHtml,
             370,
             10,
             330,
@@ -1496,12 +1540,7 @@ function createBuiltinRestaurantStoryboardBlock(variant: BuiltinRestaurantVarian
           ),
           makeBox(
             `tracker-right-${variant.key}`,
-            createBuiltinRestaurantMiniPhoneHtml("Large pepperoni", ["已下单", "门店接单", "制作中", "准备取餐"], {
-              background: "linear-gradient(180deg, #36a4ff 0%, #1778cf 100%)",
-              borderColor: "#0d5da7",
-              accent: "#0f3d73",
-              badge: "tracker",
-            }),
+            trackerPhoneCardHtml,
             740,
             10,
             340,
@@ -1610,6 +1649,63 @@ function createBuiltinRestaurantMenuShowcaseBlock(variant: BuiltinRestaurantVari
         </div>
       </div>
     `;
+  if (variant.key === "tracker-blue") {
+    return {
+      id: `builtin-restaurant-menu-showcase-${variant.key}`,
+      type: "common",
+      props: {
+        bgColor: "transparent",
+        bgColorOpacity: 0,
+        blockBorderStyle: "none",
+        blockWidth: 1080,
+        blockHeight: 430,
+        commonTextBoxes: [
+          makeBox(
+            "card-1",
+            card(
+              "先推最稳的家庭套餐",
+              "像 Domino's 那样先给最容易下单的套餐入口，让客户不用先理解全部菜单结构。",
+              "BEST VALUE",
+              "linear-gradient(180deg, #f5fbff 0%, #dceeff 100%)",
+              "#b7d2ef",
+            ),
+            0,
+            0,
+            340,
+            320,
+          ),
+          makeBox(
+            "card-2",
+            card(
+              "尺寸、边料、口味写清楚",
+              "第二张卡直接承接最常见的决策项：尺寸、边料、口味和适合几个人。",
+              "STEP 02",
+              "linear-gradient(180deg, #ffffff 0%, #f7f9fc 100%)",
+              "#ced9e7",
+            ),
+            370,
+            0,
+            340,
+            320,
+          ),
+          makeBox(
+            "card-3",
+            card(
+              "加购和流程提示单独收口",
+              "右侧卡片继续负责配菜、甜品和订单进度，让菜单页延续首页的流程心智。",
+              "TRACKER",
+              "linear-gradient(180deg, #e7f2ff 0%, #cfe5ff 100%)",
+              "#a8c7eb",
+            ),
+            740,
+            0,
+            340,
+            320,
+          ),
+        ],
+      },
+    };
+  }
   return {
     id: `builtin-restaurant-menu-showcase-${variant.key}`,
     type: "common",
@@ -1775,6 +1871,14 @@ function createBuiltinServiceStarterPages(variant: BuiltinServiceStarterVariant)
 
 function createBuiltinRestaurantPages(variant: BuiltinRestaurantVariant): PlanPage[] {
   const pageIds = createBuiltinRestaurantPageIds(variant.key);
+  const homeNoteText =
+    variant.key === "tracker-blue"
+      ? "这一屏直接照着强流程餐饮站来排：左边先给状态提醒，中间放蓝色流程卡，右边再用手机订单卡承接点单和追踪。"
+      : "这一屏不是普通官网介绍，而是参考主流餐饮官网的转化首页：先把行动入口、热卖内容和流程提示摆出来，再补品牌说明。";
+  const menuNoteText =
+    variant.key === "tracker-blue"
+      ? "这版菜单页继续照着 Domino's 的方式走：先给最稳的套餐入口，再把尺寸、边料和加购拆清楚，让客户按步骤选而不是自己猜。"
+      : "参考主流餐饮官网时，最重要的不是照搬版式，而是先把“最值得点什么、怎么点、点完会怎样”这三件事讲清楚。这样页面才会既好看又有转化力。";
   return [
     {
       id: pageIds.home,
@@ -1809,7 +1913,7 @@ function createBuiltinRestaurantPages(variant: BuiltinRestaurantVariant): PlanPa
         createBuiltinRestaurantTextBlock(
           `builtin-restaurant-home-note-${variant.key}`,
           "为什么这样排",
-          "这一屏不是普通官网介绍，而是参考主流餐饮官网的转化首页：先把行动入口、热卖内容和流程提示摆出来，再补品牌说明。",
+          homeNoteText,
           variant,
           {
             blockWidth: 940,
@@ -1848,7 +1952,7 @@ function createBuiltinRestaurantPages(variant: BuiltinRestaurantVariant): PlanPa
         createBuiltinRestaurantTextBlock(
           `builtin-restaurant-text-menu-note-${variant.key}`,
           "页面排版建议",
-          "参考主流餐饮官网时，最重要的不是照搬版式，而是先把“最值得点什么、怎么点、点完会怎样”这三件事讲清楚。这样页面才会既好看又有转化力。",
+          menuNoteText,
           variant,
           {
             blockWidth: 520,
