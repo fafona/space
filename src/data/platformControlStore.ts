@@ -1,7 +1,7 @@
 ﻿import { normalizeMerchantBusinessCards, type MerchantBusinessCardAsset } from "@/lib/merchantBusinessCards";
 import { buildCombinedPersistedBlocks, extractPlanTemplateCoverImage } from "@/lib/planTemplateRuntime";
 import type { PagePlanConfig, PlanPage } from "@/lib/pagePlans";
-import type { Block } from "./homeBlocks";
+import type { BackgroundEditableProps, Block } from "./homeBlocks";
 
 export type PermissionKey =
   | "dashboard.view"
@@ -823,6 +823,7 @@ type BuiltinRestaurantVariant = {
   heroTitle: string;
   heroSubtitle: string;
   pageBgColor: string;
+  heroBgColor: string;
   navItemBgColor: string;
   navItemBorderColor: string;
   navItemTextColor: string;
@@ -830,6 +831,9 @@ type BuiltinRestaurantVariant = {
   navActiveBorderColor: string;
   heroBorderColor: string;
   accentColor: string;
+  surfaceColor: string;
+  surfaceAltColor: string;
+  textColor: string;
   introHeading: string;
   introText: string;
   featureHeading: string;
@@ -839,9 +843,11 @@ type BuiltinRestaurantVariant = {
   menuItems: string[];
   chartHeading: string;
   chartText: string;
+  chartType: "bar" | "line" | "pie";
   chartValues: number[];
   contactHeading: string;
   contactIntro: string;
+  contactItems: string[];
 };
 
 const BUILTIN_NEW_MERCHANT_TEMPLATE_VARIANTS: BuiltinServiceStarterVariant[] = [
@@ -947,7 +953,8 @@ const BUILTIN_RESTAURANT_TEMPLATE_VARIANTS: BuiltinRestaurantVariant[] = [
     name: "暖金餐厅版",
     heroTitle: "让第一眼就像走进餐厅本身",
     heroSubtitle: "用更柔和的奶油底色、克制的暖金点缀和清爽按钮层级，适合餐厅官网、主厨餐桌与品牌门店首页。",
-    pageBgColor: "#fffaf2",
+    pageBgColor: "linear-gradient(180deg, #fffaf2 0%, #fff4e4 54%, #fffdf8 100%)",
+    heroBgColor: "linear-gradient(135deg, #fff8ee 0%, #f7e2bf 100%)",
     navItemBgColor: "#fffdf8",
     navItemBorderColor: "#ead8bd",
     navItemTextColor: "#3c2f24",
@@ -955,6 +962,9 @@ const BUILTIN_RESTAURANT_TEMPLATE_VARIANTS: BuiltinRestaurantVariant[] = [
     navActiveBorderColor: "#8d5d2e",
     heroBorderColor: "#e8c999",
     accentColor: "#8d5d2e",
+    surfaceColor: "#fffdf8",
+    surfaceAltColor: "#f8ead5",
+    textColor: "#3c2f24",
     introHeading: "品牌气质",
     introText: "这一版适合强调环境、摆盘和整体氛围。首页先讲品牌故事，再把招牌菜、晚餐体验和订位方式交代清楚，会很像主流餐饮品牌官网的打开方式。",
     featureHeading: "首页建议放的重点",
@@ -974,9 +984,11 @@ const BUILTIN_RESTAURANT_TEMPLATE_VARIANTS: BuiltinRestaurantVariant[] = [
     ],
     chartHeading: "用餐时段推荐",
     chartText: "这里可以替换成午餐、下午时段、晚餐和周末高峰的推荐程度，也可以改成热门菜品占比。",
+    chartType: "pie",
     chartValues: [2, 1, 4, 3],
     contactHeading: "预订与到店",
     contactIntro: "联系页建议保留电话、地址、地图和营业时间，也可以加一句“建议提前预订”或“支持包场与多人聚会”。",
+    contactItems: ["建议提前预约热门晚餐时段", "支持生日、纪念日晚餐与小型聚会", "门店地址、电话与地图请保持最新"],
   },
   {
     key: "olive",
@@ -984,7 +996,8 @@ const BUILTIN_RESTAURANT_TEMPLATE_VARIANTS: BuiltinRestaurantVariant[] = [
     name: "橄榄招牌版",
     heroTitle: "把招牌菜、主厨理念和空间气质一起讲清楚",
     heroSubtitle: "主色偏橄榄绿与奶白，按钮层次更轻，适合地中海、融合菜、轻西餐和重视品牌感的餐饮官网。",
-    pageBgColor: "#f6f8f1",
+    pageBgColor: "linear-gradient(180deg, #f6f8f1 0%, #eef3e4 56%, #fbfdf7 100%)",
+    heroBgColor: "linear-gradient(135deg, #f7fbf2 0%, #dfe7ca 100%)",
     navItemBgColor: "#fcfdf8",
     navItemBorderColor: "#d3dcc5",
     navItemTextColor: "#233126",
@@ -992,6 +1005,9 @@ const BUILTIN_RESTAURANT_TEMPLATE_VARIANTS: BuiltinRestaurantVariant[] = [
     navActiveBorderColor: "#40553c",
     heroBorderColor: "#becfaf",
     accentColor: "#40553c",
+    surfaceColor: "#fcfdf8",
+    surfaceAltColor: "#e8efda",
+    textColor: "#233126",
     introHeading: "餐厅介绍",
     introText: "这一版更适合讲究食材来源、厨房理念和空间细节。首页先让客户知道你是什么类型的餐厅，再延伸到菜单和主厨推荐。",
     featureHeading: "首页适合突出什么",
@@ -1011,9 +1027,11 @@ const BUILTIN_RESTAURANT_TEMPLATE_VARIANTS: BuiltinRestaurantVariant[] = [
     ],
     chartHeading: "招牌内容占比",
     chartText: "你可以用这块表达冷前菜、热主菜、甜点和酒饮在整套体验里的比重，也可以换成午晚餐热门程度。",
+    chartType: "bar",
     chartValues: [2, 4, 1, 2],
     contactHeading: "联系门店",
     contactIntro: "这一页适合把门店地址、地图、电话、营业时间和预约说明放在一起，客户看完菜单后能直接行动。",
+    contactItems: ["午餐与晚餐时间可分开说明", "包场、团体用餐和预约政策建议单独写明", "地图、停车和交通方式建议直接写在页内"],
   },
   {
     key: "terracotta",
@@ -1021,7 +1039,8 @@ const BUILTIN_RESTAURANT_TEMPLATE_VARIANTS: BuiltinRestaurantVariant[] = [
     name: "陶土轻奢版",
     heroTitle: "让页面像菜单本身一样有温度",
     heroSubtitle: "奶油白底配陶土橘按钮和深咖文字，视觉更柔和，适合甜品店、咖啡餐食、街角小馆和精品餐饮品牌。",
-    pageBgColor: "#fff8f3",
+    pageBgColor: "linear-gradient(180deg, #fff8f3 0%, #fff0e4 52%, #fffdf9 100%)",
+    heroBgColor: "linear-gradient(135deg, #fff7f1 0%, #f3cfba 100%)",
     navItemBgColor: "#fffdf9",
     navItemBorderColor: "#f0c7b0",
     navItemTextColor: "#3b2c26",
@@ -1029,6 +1048,9 @@ const BUILTIN_RESTAURANT_TEMPLATE_VARIANTS: BuiltinRestaurantVariant[] = [
     navActiveBorderColor: "#bb6a3d",
     heroBorderColor: "#efb79a",
     accentColor: "#bb6a3d",
+    surfaceColor: "#fffdf9",
+    surfaceAltColor: "#fde8dd",
+    textColor: "#3b2c26",
     introHeading: "品牌氛围",
     introText: "如果你的餐饮空间更强调温度、拍照感和轻松体验，这一版会更舒服。按钮和标签层级更轻，看起来更像现代餐饮品牌首页。",
     featureHeading: "首页重点模块",
@@ -1048,9 +1070,11 @@ const BUILTIN_RESTAURANT_TEMPLATE_VARIANTS: BuiltinRestaurantVariant[] = [
     ],
     chartHeading: "热门选择分布",
     chartText: "这里可以换成正餐、轻食、甜品和饮品的人气占比，也可以改成全天时段的客流建议。",
+    chartType: "bar",
     chartValues: [3, 2, 4, 2],
     contactHeading: "到店信息",
     contactIntro: "联系页建议把营业时间、地址、电话、地图和社交账号留完整，尤其适合需要客户到店拍照、聚会或顺路外带的门店。",
+    contactItems: ["适合写清外带、自提或限时供应", "门店社交账号可用来放环境和每日新品", "节假日营业调整建议放在联系页醒目位置"],
   },
 ];
 
@@ -1134,6 +1158,78 @@ function createBuiltinRestaurantNavBlock(idSuffix: string, variant: BuiltinResta
       navItemActiveTextColor: "#ffffff",
       fontColor: variant.navItemTextColor,
       fontWeight: "bold",
+    },
+  };
+}
+
+function createBuiltinRestaurantTextBlock(
+  id: string,
+  heading: string,
+  text: string,
+  variant: BuiltinRestaurantVariant,
+  layout: Partial<BackgroundEditableProps> = {},
+): Block {
+  return {
+    id,
+    type: "text",
+    props: {
+      heading,
+      text,
+      bgColor: variant.surfaceColor,
+      bgColorOpacity: 1,
+      blockBorderStyle: "accent",
+      blockBorderColor: variant.navItemBorderColor,
+      fontColor: variant.textColor,
+      ...layout,
+    },
+  };
+}
+
+function createBuiltinRestaurantListBlock(
+  id: string,
+  heading: string,
+  items: string[],
+  variant: BuiltinRestaurantVariant,
+  layout: Partial<BackgroundEditableProps> = {},
+): Block {
+  return {
+    id,
+    type: "list",
+    props: {
+      heading,
+      items,
+      bgColor: variant.surfaceAltColor,
+      bgColorOpacity: 1,
+      blockBorderStyle: "soft",
+      blockBorderColor: variant.navItemBorderColor,
+      fontColor: variant.textColor,
+      ...layout,
+    },
+  };
+}
+
+function createBuiltinRestaurantChartBlock(
+  id: string,
+  heading: string,
+  text: string,
+  variant: BuiltinRestaurantVariant,
+  layout: Partial<BackgroundEditableProps> = {},
+): Block {
+  return {
+    id,
+    type: "chart",
+    props: {
+      heading,
+      text,
+      chartType: variant.chartType,
+      labels: ["前菜", "主菜", "甜品", "饮品"],
+      values: variant.chartValues,
+      bgColor: variant.surfaceColor,
+      bgColorOpacity: 1,
+      blockBorderStyle: "solid",
+      blockBorderColor: variant.heroBorderColor,
+      fontColor: variant.accentColor,
+      ...layout,
     },
   };
 }
@@ -1297,39 +1393,50 @@ function createBuiltinRestaurantPages(variant: BuiltinRestaurantVariant): PlanPa
           props: {
             title: variant.heroTitle,
             subtitle: variant.heroSubtitle,
-            bgColor: variant.pageBgColor,
+            bgColor: variant.heroBgColor,
             bgColorOpacity: 1,
-            blockBorderStyle: "solid",
+            blockBorderStyle: "accent",
             blockBorderColor: variant.heroBorderColor,
+            blockWidth: 1080,
+            blockOffsetY: 6,
             fontColor: "#1f2937",
           },
         },
-        {
-          id: `builtin-restaurant-text-home-${variant.key}`,
-          type: "text",
-          props: {
-            heading: variant.introHeading,
-            text: variant.introText,
-            bgColor: "#fffdf9",
-            bgColorOpacity: 1,
-            blockBorderStyle: "solid",
-            blockBorderColor: variant.navItemBorderColor,
-            fontColor: "#3b2c26",
+        createBuiltinRestaurantTextBlock(
+          `builtin-restaurant-text-home-${variant.key}`,
+          variant.introHeading,
+          variant.introText,
+          variant,
+          {
+            blockWidth: 680,
+            blockOffsetX: -70,
+            blockOffsetY: -18,
+            blockLayer: 2,
           },
-        },
-        {
-          id: `builtin-restaurant-list-home-${variant.key}`,
-          type: "list",
-          props: {
-            heading: variant.featureHeading,
-            items: variant.featureItems,
-            bgColor: "#fffdf9",
-            bgColorOpacity: 1,
-            blockBorderStyle: "solid",
-            blockBorderColor: variant.navItemBorderColor,
-            fontColor: "#3b2c26",
+        ),
+        createBuiltinRestaurantListBlock(
+          `builtin-restaurant-list-home-${variant.key}`,
+          variant.featureHeading,
+          variant.featureItems,
+          variant,
+          {
+            blockWidth: 430,
+            blockOffsetX: 255,
+            blockOffsetY: -210,
+            blockLayer: 3,
           },
-        },
+        ),
+        createBuiltinRestaurantChartBlock(
+          `builtin-restaurant-chart-home-${variant.key}`,
+          "首页氛围节奏",
+          "用一块图表去概括你最希望客户感知到的重点，会比直接堆菜单更像品牌官网。可以替换成用餐时段、主推菜品或空间体验分布。",
+          variant,
+          {
+            blockWidth: 980,
+            blockOffsetY: -86,
+            blockLayer: 1,
+          },
+        ),
       ],
     },
     {
@@ -1337,48 +1444,47 @@ function createBuiltinRestaurantPages(variant: BuiltinRestaurantVariant): PlanPa
       name: "菜单精选",
       blocks: [
         createBuiltinRestaurantNavBlock("menu", variant),
-        {
-          id: `builtin-restaurant-text-menu-${variant.key}`,
-          type: "text",
-          props: {
-            heading: variant.menuHeading,
-            text: variant.menuIntro,
-            bgColor: "#fffdf9",
-            bgColorOpacity: 1,
-            blockBorderStyle: "solid",
-            blockBorderColor: variant.navItemBorderColor,
-            fontColor: "#3b2c26",
+        createBuiltinRestaurantTextBlock(
+          `builtin-restaurant-text-menu-${variant.key}`,
+          variant.menuHeading,
+          variant.menuIntro,
+          variant,
+          {
+            blockWidth: 1040,
           },
-        },
-        {
-          id: `builtin-restaurant-list-menu-${variant.key}`,
-          type: "list",
-          props: {
-            heading: "推荐展示模块",
-            items: variant.menuItems,
-            bgColor: "#fffdf9",
-            bgColorOpacity: 1,
-            blockBorderStyle: "solid",
-            blockBorderColor: variant.navItemBorderColor,
-            fontColor: "#3b2c26",
+        ),
+        createBuiltinRestaurantListBlock(
+          `builtin-restaurant-list-menu-${variant.key}`,
+          "推荐展示模块",
+          variant.menuItems,
+          variant,
+          {
+            blockWidth: 480,
+            blockOffsetX: -120,
           },
-        },
-        {
-          id: `builtin-restaurant-chart-menu-${variant.key}`,
-          type: "chart",
-          props: {
-            heading: variant.chartHeading,
-            text: variant.chartText,
-            chartType: "bar",
-            labels: ["前菜", "主菜", "甜品", "饮品"],
-            values: variant.chartValues,
-            bgColor: "#fffdf9",
-            bgColorOpacity: 1,
-            blockBorderStyle: "solid",
-            blockBorderColor: variant.navItemBorderColor,
-            fontColor: variant.accentColor,
+        ),
+        createBuiltinRestaurantChartBlock(
+          `builtin-restaurant-chart-menu-${variant.key}`,
+          variant.chartHeading,
+          variant.chartText,
+          variant,
+          {
+            blockWidth: 540,
+            blockOffsetX: 220,
+            blockOffsetY: -250,
+            blockLayer: 3,
           },
-        },
+        ),
+        createBuiltinRestaurantTextBlock(
+          `builtin-restaurant-text-menu-note-${variant.key}`,
+          "主流餐饮官网常见写法",
+          "与其把完整菜单一次铺满，不如先把代表性的招牌菜、套餐逻辑和用餐体验写出来。客户先被品牌吸引，再去看更完整的细节，会更像成熟餐饮官网。",
+          variant,
+          {
+            blockWidth: 920,
+            blockOffsetY: -120,
+          },
+        ),
       ],
     },
     {
@@ -1386,19 +1492,28 @@ function createBuiltinRestaurantPages(variant: BuiltinRestaurantVariant): PlanPa
       name: "到店联系",
       blocks: [
         createBuiltinRestaurantNavBlock("contact", variant),
-        {
-          id: `builtin-restaurant-text-contact-${variant.key}`,
-          type: "text",
-          props: {
-            heading: variant.contactHeading,
-            text: variant.contactIntro,
-            bgColor: "#fffdf9",
-            bgColorOpacity: 1,
-            blockBorderStyle: "solid",
-            blockBorderColor: variant.navItemBorderColor,
-            fontColor: "#3b2c26",
+        createBuiltinRestaurantTextBlock(
+          `builtin-restaurant-text-contact-${variant.key}`,
+          variant.contactHeading,
+          variant.contactIntro,
+          variant,
+          {
+            blockWidth: 700,
+            blockOffsetX: -70,
           },
-        },
+        ),
+        createBuiltinRestaurantListBlock(
+          `builtin-restaurant-list-contact-${variant.key}`,
+          "到店提示",
+          variant.contactItems,
+          variant,
+          {
+            blockWidth: 410,
+            blockOffsetX: 260,
+            blockOffsetY: -170,
+            blockLayer: 3,
+          },
+        ),
         {
           id: `builtin-restaurant-contact-${variant.key}`,
           type: "contact",
@@ -1423,11 +1538,13 @@ function createBuiltinRestaurantPages(variant: BuiltinRestaurantVariant): PlanPa
             mapZoom: 14,
             mapType: "roadmap",
             mapShowMarker: true,
-            bgColor: "#fffdf9",
+            bgColor: variant.surfaceColor,
             bgColorOpacity: 1,
-            blockBorderStyle: "solid",
-            blockBorderColor: variant.navItemBorderColor,
-            fontColor: "#3b2c26",
+            blockBorderStyle: "accent",
+            blockBorderColor: variant.heroBorderColor,
+            blockWidth: 980,
+            blockOffsetY: -70,
+            fontColor: variant.textColor,
           },
         },
       ],
