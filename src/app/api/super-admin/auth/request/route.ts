@@ -23,6 +23,7 @@ import {
   loadSuperAdminTrustedDevicesFromStore,
   pickLeastRecentlyVerifiedSuperAdminTrustedDevice,
 } from "@/lib/superAdminTrustedDevices";
+import { finalizeSuperAdminLogin } from "@/lib/superAdminLoginCompletion";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -74,15 +75,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "invalid_credentials" }, { status: 401 });
     }
 
-    const supabase = createServerSupabaseAuthClient();
-    if (!supabase) {
-      console.error("[super-admin-auth] verification_env_missing", {
-        host: requestHost,
-        missingEnv: listMissingSuperAdminSupabaseAuthEnv(),
-      });
-      return NextResponse.json({ error: "verification_env_missing" }, { status: 503 });
-    }
-
     const challengeToken = createSuperAdminChallengeToken({
       deviceId,
       deviceLabel,
@@ -110,7 +102,7 @@ export async function POST(request: Request) {
     if (serviceSupabase) {
       try {
         const { devices, maxDevices: storedMaxDevices } = await loadSuperAdminTrustedDevicesFromStore(serviceSupabase);
-        currentDeviceTrusted = devices.some((item) => item.deviceId === deviceId);
+        currentDeviceTrusted = currentDeviceTrusted || devices.some((item) => item.deviceId === deviceId);
         maxDevices = storedMaxDevices;
         currentCount = devices.length;
         if (!canRegisterAnotherSuperAdminDevice(devices, storedMaxDevices, deviceId)) {
@@ -119,6 +111,33 @@ export async function POST(request: Request) {
       } catch {
         // Keep the cookie-based fallback if the device whitelist store is temporarily unavailable.
       }
+    }
+
+    if (currentDeviceTrusted) {
+      const challengePayload = readSuperAdminTrustedDeviceToken(trustedDeviceToken);
+      return finalizeSuperAdminLogin(
+        {
+          kind: "challenge",
+          issuedAt: Date.now(),
+          expiresAt: Date.now() + 10 * 60 * 1000,
+          deviceId,
+          deviceLabel: deviceLabel || challengePayload?.deviceLabel || "Windows / Chrome",
+          nextPath,
+        },
+        {
+          loginIp: readRequestClientIp(request),
+          request,
+        },
+      );
+    }
+
+    const supabase = createServerSupabaseAuthClient();
+    if (!supabase) {
+      console.error("[super-admin-auth] verification_env_missing", {
+        host: requestHost,
+        missingEnv: listMissingSuperAdminSupabaseAuthEnv(),
+      });
+      return NextResponse.json({ error: "verification_env_missing" }, { status: 503 });
     }
 
     const { error } = await supabase.auth.signInWithOtp({

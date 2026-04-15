@@ -159,6 +159,8 @@ function SuperAdminLoginForm() {
       });
       const payload = (await response.json().catch(() => null)) as
         | {
+            ok?: boolean;
+            nextPath?: string;
             error?: string;
             maskedEmail?: string;
             trustedDevice?: boolean;
@@ -171,6 +173,17 @@ function SuperAdminLoginForm() {
         | null;
       if (!response.ok) {
         throw new Error(payload?.message || describeSuperAdminLoginError(payload?.error ?? "verification_send_failed"));
+      }
+
+      if (payload?.ok === true && !String(payload?.challenge ?? "").trim()) {
+        setSuperAdminAuthenticated();
+        const confirmed = await refreshSuperAdminAuthenticatedState();
+        if (!confirmed) {
+          throw new Error("超级后台会话建立失败，请稍后重试。");
+        }
+        window.location.href =
+          typeof payload?.nextPath === "string" && payload.nextPath.startsWith("/") ? payload.nextPath : nextHref;
+        return;
       }
 
       const maskedEmail = String(payload?.maskedEmail ?? "").trim() || "已配置的验证邮箱";
