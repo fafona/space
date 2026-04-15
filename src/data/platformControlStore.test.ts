@@ -61,7 +61,7 @@ test("merchant config history keeps full entries and persists details outside ma
       at: new Date(Date.UTC(2026, 3, 1, 0, 0, 35 - index)).toISOString(),
       operator: "平台管理员",
       summary: `配置更新 ${index + 1}`,
-      changes: [`字段 ${index + 1}：旧值 -> 新值`],
+      changes: [`字段 ${index + 1}: 旧值 -> 新值`],
       before: {
         serviceExpiresAt: null,
         permissionConfig: createDefaultMerchantPermissionConfig(),
@@ -122,7 +122,7 @@ test("merchant config history keeps full entries and persists details outside ma
 
     const reloaded = loadPlatformState();
     assert.equal(reloaded.sites[0]?.configHistory?.length, 35);
-    assert.deepEqual(reloaded.sites[0]?.configHistory?.[0]?.changes, ["字段 1：旧值 -> 新值"]);
+    assert.deepEqual(reloaded.sites[0]?.configHistory?.[0]?.changes, ["字段 1: 旧值 -> 新值"]);
 
     const primaryStateRaw = localStorage.getItem("merchant-space:platform-control-center:v1");
     assert.ok(primaryStateRaw);
@@ -146,7 +146,7 @@ test("merchant config history keeps full entries and persists details outside ma
   }
 });
 
-test("platform state seeds a built-in starter template within new-merchant permissions", () => {
+test("platform state seeds built-in starter templates within new-merchant permissions", () => {
   const globalTarget = globalThis as typeof globalThis & {
     localStorage?: Storage;
     window?: Window & typeof globalThis;
@@ -166,22 +166,27 @@ test("platform state seeds a built-in starter template within new-merchant permi
 
   try {
     const state = loadPlatformState();
-    const builtin = state.planTemplates.find((item) => item.id === "builtin-template-new-merchant-service-starter");
-    assert.ok(builtin);
-    assert.equal(builtin?.category, "服务");
-    const config = getPagePlanConfigFromBlocks((builtin?.blocks ?? []) as never);
-    assert.deepEqual(config.plans.map((plan) => plan.name), ["清爽服务版", "流程说明版", "快速联系版"]);
+
+    const serviceBuiltin = state.planTemplates.find((item) => item.id === "builtin-template-new-merchant-service-starter");
+    assert.ok(serviceBuiltin);
+    assert.equal(serviceBuiltin?.category, "服务");
+    const serviceConfig = getPagePlanConfigFromBlocks((serviceBuiltin?.blocks ?? []) as never);
+    assert.deepEqual(serviceConfig.plans.map((plan) => plan.name), ["清爽服务版", "流程说明版", "快速联系版"]);
+
+    const restaurantBuiltin = state.planTemplates.find((item) => item.id === "builtin-template-restaurant-signature-starter");
+    assert.ok(restaurantBuiltin);
+    assert.equal(restaurantBuiltin?.category, "餐饮");
+    const restaurantConfig = getPagePlanConfigFromBlocks((restaurantBuiltin?.blocks ?? []) as never);
+    assert.deepEqual(restaurantConfig.plans.map((plan) => plan.name), ["暖金餐厅版", "橄榄招牌版", "陶土轻奢版"]);
+
     const blockTypes = new Set(
-      config.plans.flatMap((plan) =>
+      [...serviceConfig.plans, ...restaurantConfig.plans].flatMap((plan) =>
         plan.pages.flatMap((page) =>
           page.blocks.map((block) => block?.type).filter((type): type is string => Boolean(type)),
         ),
       ),
     );
-    assert.deepEqual(
-      [...blockTypes].sort(),
-      ["chart", "contact", "hero", "list", "nav", "text"].sort(),
-    );
+    assert.deepEqual([...blockTypes].sort(), ["chart", "contact", "hero", "list", "nav", "text"].sort());
   } finally {
     if (typeof previousWindow === "undefined") {
       delete globalTarget.window;

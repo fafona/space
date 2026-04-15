@@ -793,6 +793,7 @@ function createDefaultHomeLayoutConfig(): HomeLayoutConfig {
 
 const BUILTIN_NEW_MERCHANT_TEMPLATE_ID = "builtin-template-new-merchant-service-starter";
 const BUILTIN_NEW_MERCHANT_TEMPLATE_TIMESTAMP = "2026-04-15T03:40:00.000Z";
+const BUILTIN_RESTAURANT_TEMPLATE_ID = "builtin-template-restaurant-signature-starter";
 type BuiltinServiceStarterVariant = {
   key: string;
   planId: "plan-1" | "plan-2" | "plan-3";
@@ -812,6 +813,34 @@ type BuiltinServiceStarterVariant = {
   chartHeading: string;
   chartText: string;
   chartValues: number[];
+  contactIntro: string;
+};
+
+type BuiltinRestaurantVariant = {
+  key: string;
+  planId: "plan-1" | "plan-2" | "plan-3";
+  name: string;
+  heroTitle: string;
+  heroSubtitle: string;
+  pageBgColor: string;
+  navItemBgColor: string;
+  navItemBorderColor: string;
+  navItemTextColor: string;
+  navActiveBgColor: string;
+  navActiveBorderColor: string;
+  heroBorderColor: string;
+  accentColor: string;
+  introHeading: string;
+  introText: string;
+  featureHeading: string;
+  featureItems: string[];
+  menuHeading: string;
+  menuIntro: string;
+  menuItems: string[];
+  chartHeading: string;
+  chartText: string;
+  chartValues: number[];
+  contactHeading: string;
   contactIntro: string;
 };
 
@@ -911,11 +940,133 @@ const BUILTIN_NEW_MERCHANT_TEMPLATE_VARIANTS: BuiltinServiceStarterVariant[] = [
   },
 ];
 
+const BUILTIN_RESTAURANT_TEMPLATE_VARIANTS: BuiltinRestaurantVariant[] = [
+  {
+    key: "amber",
+    planId: "plan-1",
+    name: "暖金餐厅版",
+    heroTitle: "让第一眼就像走进餐厅本身",
+    heroSubtitle: "用更柔和的奶油底色、克制的暖金点缀和清爽按钮层级，适合餐厅官网、主厨餐桌与品牌门店首页。",
+    pageBgColor: "#fffaf2",
+    navItemBgColor: "#fffdf8",
+    navItemBorderColor: "#ead8bd",
+    navItemTextColor: "#3c2f24",
+    navActiveBgColor: "#8d5d2e",
+    navActiveBorderColor: "#8d5d2e",
+    heroBorderColor: "#e8c999",
+    accentColor: "#8d5d2e",
+    introHeading: "品牌气质",
+    introText: "这一版适合强调环境、摆盘和整体氛围。首页先讲品牌故事，再把招牌菜、晚餐体验和订位方式交代清楚，会很像主流餐饮品牌官网的打开方式。",
+    featureHeading: "首页建议放的重点",
+    featureItems: [
+      "一句话介绍菜系与用餐氛围",
+      "主厨推荐或季节限定菜单",
+      "营业时间、位置与订位方式",
+      "用餐场景：午餐、晚餐、聚会或约会",
+    ],
+    menuHeading: "菜单精选",
+    menuIntro: "餐饮官网更适合把菜单写成“精选内容”，而不是铺满细碎信息。你可以挑 4 到 6 个招牌菜，写原料、口味和推荐搭配。",
+    menuItems: [
+      "招牌前菜 / 开胃小点",
+      "主厨主菜 / 当季主推",
+      "人气甜品 / 手作收尾",
+      "葡萄酒 / 无酒精特调",
+    ],
+    chartHeading: "用餐时段推荐",
+    chartText: "这里可以替换成午餐、下午时段、晚餐和周末高峰的推荐程度，也可以改成热门菜品占比。",
+    chartValues: [2, 1, 4, 3],
+    contactHeading: "预订与到店",
+    contactIntro: "联系页建议保留电话、地址、地图和营业时间，也可以加一句“建议提前预订”或“支持包场与多人聚会”。",
+  },
+  {
+    key: "olive",
+    planId: "plan-2",
+    name: "橄榄招牌版",
+    heroTitle: "把招牌菜、主厨理念和空间气质一起讲清楚",
+    heroSubtitle: "主色偏橄榄绿与奶白，按钮层次更轻，适合地中海、融合菜、轻西餐和重视品牌感的餐饮官网。",
+    pageBgColor: "#f6f8f1",
+    navItemBgColor: "#fcfdf8",
+    navItemBorderColor: "#d3dcc5",
+    navItemTextColor: "#233126",
+    navActiveBgColor: "#40553c",
+    navActiveBorderColor: "#40553c",
+    heroBorderColor: "#becfaf",
+    accentColor: "#40553c",
+    introHeading: "餐厅介绍",
+    introText: "这一版更适合讲究食材来源、厨房理念和空间细节。首页先让客户知道你是什么类型的餐厅，再延伸到菜单和主厨推荐。",
+    featureHeading: "首页适合突出什么",
+    featureItems: [
+      "餐厅定位与菜系风格",
+      "当季菜单与招牌组合",
+      "空间环境与适合场景",
+      "预约方式与交通信息",
+    ],
+    menuHeading: "当季菜单",
+    menuIntro: "主流餐饮官网通常不会一上来放完整菜单，而是先用一页讲当季推荐、套餐逻辑和核心食材，让菜单看起来更有品牌感。",
+    menuItems: [
+      "季节前菜 / 时令冷盘",
+      "招牌主菜 / 经典保留",
+      "双人分享 / 套餐组合",
+      "甜品酒饮 / 餐后推荐",
+    ],
+    chartHeading: "招牌内容占比",
+    chartText: "你可以用这块表达冷前菜、热主菜、甜点和酒饮在整套体验里的比重，也可以换成午晚餐热门程度。",
+    chartValues: [2, 4, 1, 2],
+    contactHeading: "联系门店",
+    contactIntro: "这一页适合把门店地址、地图、电话、营业时间和预约说明放在一起，客户看完菜单后能直接行动。",
+  },
+  {
+    key: "terracotta",
+    planId: "plan-3",
+    name: "陶土轻奢版",
+    heroTitle: "让页面像菜单本身一样有温度",
+    heroSubtitle: "奶油白底配陶土橘按钮和深咖文字，视觉更柔和，适合甜品店、咖啡餐食、街角小馆和精品餐饮品牌。",
+    pageBgColor: "#fff8f3",
+    navItemBgColor: "#fffdf9",
+    navItemBorderColor: "#f0c7b0",
+    navItemTextColor: "#3b2c26",
+    navActiveBgColor: "#bb6a3d",
+    navActiveBorderColor: "#bb6a3d",
+    heroBorderColor: "#efb79a",
+    accentColor: "#bb6a3d",
+    introHeading: "品牌氛围",
+    introText: "如果你的餐饮空间更强调温度、拍照感和轻松体验，这一版会更舒服。按钮和标签层级更轻，看起来更像现代餐饮品牌首页。",
+    featureHeading: "首页重点模块",
+    featureItems: [
+      "店铺一句话风格介绍",
+      "招牌餐食 / 热门甜品",
+      "营业时间 / 限定时段",
+      "到店、外带或预约提示",
+    ],
+    menuHeading: "招牌推荐",
+    menuIntro: "这页适合用更精致的排版介绍招牌款。你可以写每道菜的关键词、适合人群、推荐时段和饮品搭配。",
+    menuItems: [
+      "热卖餐食 / 日常主打",
+      "下午茶 / 甜品组合",
+      "节日限定 / 周末特供",
+      "饮品搭配 / 店员推荐",
+    ],
+    chartHeading: "热门选择分布",
+    chartText: "这里可以换成正餐、轻食、甜品和饮品的人气占比，也可以改成全天时段的客流建议。",
+    chartValues: [3, 2, 4, 2],
+    contactHeading: "到店信息",
+    contactIntro: "联系页建议把营业时间、地址、电话、地图和社交账号留完整，尤其适合需要客户到店拍照、聚会或顺路外带的门店。",
+  },
+];
+
 function createBuiltinServiceStarterPageIds(variantKey: string) {
   return {
     home: `page-service-home-${variantKey}`,
     services: `page-service-offerings-${variantKey}`,
     contact: `page-service-contact-${variantKey}`,
+  } as const;
+}
+
+function createBuiltinRestaurantPageIds(variantKey: string) {
+  return {
+    home: `page-restaurant-home-${variantKey}`,
+    menu: `page-restaurant-menu-${variantKey}`,
+    contact: `page-restaurant-contact-${variantKey}`,
   } as const;
 }
 
@@ -925,6 +1076,15 @@ function createBuiltinServiceStarterNavItems(variant: BuiltinServiceStarterVaria
     { id: `builtin-nav-home-${variant.key}`, label: "首页", pageId: pageIds.home },
     { id: `builtin-nav-services-${variant.key}`, label: "服务内容", pageId: pageIds.services },
     { id: `builtin-nav-contact-${variant.key}`, label: "联系", pageId: pageIds.contact },
+  ];
+}
+
+function createBuiltinRestaurantNavItems(variant: BuiltinRestaurantVariant) {
+  const pageIds = createBuiltinRestaurantPageIds(variant.key);
+  return [
+    { id: `builtin-restaurant-nav-home-${variant.key}`, label: "首页", pageId: pageIds.home },
+    { id: `builtin-restaurant-nav-menu-${variant.key}`, label: "菜单精选", pageId: pageIds.menu },
+    { id: `builtin-restaurant-nav-contact-${variant.key}`, label: "到店联系", pageId: pageIds.contact },
   ];
 }
 
@@ -948,6 +1108,31 @@ function createBuiltinServiceStarterNavBlock(idSuffix: string, variant: BuiltinS
       navItemActiveBorderColor: variant.navActiveBorderColor,
       navItemActiveTextColor: "#ffffff",
       fontColor: "#0f172a",
+      fontWeight: "bold",
+    },
+  };
+}
+
+function createBuiltinRestaurantNavBlock(idSuffix: string, variant: BuiltinRestaurantVariant): Block {
+  return {
+    id: `builtin-restaurant-nav-${variant.key}-${idSuffix}`,
+    type: "nav",
+    props: {
+      heading: "",
+      navOrientation: "horizontal",
+      navItems: createBuiltinRestaurantNavItems(variant),
+      pageBgColor: variant.pageBgColor,
+      pageBgColorOpacity: 1,
+      navItemBgColor: variant.navItemBgColor,
+      navItemBgOpacity: 1,
+      navItemBorderStyle: "solid",
+      navItemBorderColor: variant.navItemBorderColor,
+      navItemActiveBgColor: variant.navActiveBgColor,
+      navItemActiveBgOpacity: 1,
+      navItemActiveBorderStyle: "solid",
+      navItemActiveBorderColor: variant.navActiveBorderColor,
+      navItemActiveTextColor: "#ffffff",
+      fontColor: variant.navItemTextColor,
       fontWeight: "bold",
     },
   };
@@ -1098,6 +1283,158 @@ function createBuiltinServiceStarterPages(variant: BuiltinServiceStarterVariant)
   ];
 }
 
+function createBuiltinRestaurantPages(variant: BuiltinRestaurantVariant): PlanPage[] {
+  const pageIds = createBuiltinRestaurantPageIds(variant.key);
+  return [
+    {
+      id: pageIds.home,
+      name: "首页",
+      blocks: [
+        createBuiltinRestaurantNavBlock("home", variant),
+        {
+          id: `builtin-restaurant-hero-home-${variant.key}`,
+          type: "hero",
+          props: {
+            title: variant.heroTitle,
+            subtitle: variant.heroSubtitle,
+            bgColor: variant.pageBgColor,
+            bgColorOpacity: 1,
+            blockBorderStyle: "solid",
+            blockBorderColor: variant.heroBorderColor,
+            fontColor: "#1f2937",
+          },
+        },
+        {
+          id: `builtin-restaurant-text-home-${variant.key}`,
+          type: "text",
+          props: {
+            heading: variant.introHeading,
+            text: variant.introText,
+            bgColor: "#fffdf9",
+            bgColorOpacity: 1,
+            blockBorderStyle: "solid",
+            blockBorderColor: variant.navItemBorderColor,
+            fontColor: "#3b2c26",
+          },
+        },
+        {
+          id: `builtin-restaurant-list-home-${variant.key}`,
+          type: "list",
+          props: {
+            heading: variant.featureHeading,
+            items: variant.featureItems,
+            bgColor: "#fffdf9",
+            bgColorOpacity: 1,
+            blockBorderStyle: "solid",
+            blockBorderColor: variant.navItemBorderColor,
+            fontColor: "#3b2c26",
+          },
+        },
+      ],
+    },
+    {
+      id: pageIds.menu,
+      name: "菜单精选",
+      blocks: [
+        createBuiltinRestaurantNavBlock("menu", variant),
+        {
+          id: `builtin-restaurant-text-menu-${variant.key}`,
+          type: "text",
+          props: {
+            heading: variant.menuHeading,
+            text: variant.menuIntro,
+            bgColor: "#fffdf9",
+            bgColorOpacity: 1,
+            blockBorderStyle: "solid",
+            blockBorderColor: variant.navItemBorderColor,
+            fontColor: "#3b2c26",
+          },
+        },
+        {
+          id: `builtin-restaurant-list-menu-${variant.key}`,
+          type: "list",
+          props: {
+            heading: "推荐展示模块",
+            items: variant.menuItems,
+            bgColor: "#fffdf9",
+            bgColorOpacity: 1,
+            blockBorderStyle: "solid",
+            blockBorderColor: variant.navItemBorderColor,
+            fontColor: "#3b2c26",
+          },
+        },
+        {
+          id: `builtin-restaurant-chart-menu-${variant.key}`,
+          type: "chart",
+          props: {
+            heading: variant.chartHeading,
+            text: variant.chartText,
+            chartType: "bar",
+            labels: ["前菜", "主菜", "甜品", "饮品"],
+            values: variant.chartValues,
+            bgColor: "#fffdf9",
+            bgColorOpacity: 1,
+            blockBorderStyle: "solid",
+            blockBorderColor: variant.navItemBorderColor,
+            fontColor: variant.accentColor,
+          },
+        },
+      ],
+    },
+    {
+      id: pageIds.contact,
+      name: "到店联系",
+      blocks: [
+        createBuiltinRestaurantNavBlock("contact", variant),
+        {
+          id: `builtin-restaurant-text-contact-${variant.key}`,
+          type: "text",
+          props: {
+            heading: variant.contactHeading,
+            text: variant.contactIntro,
+            bgColor: "#fffdf9",
+            bgColorOpacity: 1,
+            blockBorderStyle: "solid",
+            blockBorderColor: variant.navItemBorderColor,
+            fontColor: "#3b2c26",
+          },
+        },
+        {
+          id: `builtin-restaurant-contact-${variant.key}`,
+          type: "contact",
+          props: {
+            heading: "门店信息",
+            phone: "",
+            phones: [],
+            address: "",
+            addresses: [],
+            email: "",
+            whatsapp: "",
+            wechat: "",
+            twitter: "",
+            weibo: "",
+            telegram: "",
+            linkedin: "",
+            discord: "",
+            tiktok: "",
+            xiaohongshu: "",
+            facebook: "",
+            instagram: "",
+            mapZoom: 14,
+            mapType: "roadmap",
+            mapShowMarker: true,
+            bgColor: "#fffdf9",
+            bgColorOpacity: 1,
+            blockBorderStyle: "solid",
+            blockBorderColor: variant.navItemBorderColor,
+            fontColor: "#3b2c26",
+          },
+        },
+      ],
+    },
+  ];
+}
+
 function createBuiltinServiceStarterPlanConfig(): PagePlanConfig {
   return {
     activePlanId: "plan-1",
@@ -1115,7 +1452,20 @@ function createBuiltinServiceStarterPlanConfig(): PagePlanConfig {
 }
 
 function createBuiltinPlanTemplates(): PlanTemplate[] {
-  const config = createBuiltinServiceStarterPlanConfig();
+  const serviceConfig = createBuiltinServiceStarterPlanConfig();
+  const restaurantConfig: PagePlanConfig = {
+    activePlanId: "plan-1",
+    plans: BUILTIN_RESTAURANT_TEMPLATE_VARIANTS.map((variant) => {
+      const pages = createBuiltinRestaurantPages(variant);
+      return {
+        id: variant.planId,
+        name: variant.name,
+        blocks: pages[0]?.blocks ?? [],
+        pages,
+        activePageId: createBuiltinRestaurantPageIds(variant.key).home,
+      };
+    }),
+  };
   return [
     {
       id: BUILTIN_NEW_MERCHANT_TEMPLATE_ID,
@@ -1129,7 +1479,23 @@ function createBuiltinPlanTemplates(): PlanTemplate[] {
       previewImageUrl: "",
       planPreviewImageUrls: {},
       previewVariant: "",
-      blocks: buildCombinedPersistedBlocks(config, config),
+      blocks: buildCombinedPersistedBlocks(serviceConfig, serviceConfig),
+      createdAt: BUILTIN_NEW_MERCHANT_TEMPLATE_TIMESTAMP,
+      updatedAt: BUILTIN_NEW_MERCHANT_TEMPLATE_TIMESTAMP,
+    },
+    {
+      id: BUILTIN_RESTAURANT_TEMPLATE_ID,
+      name: "餐饮品牌官网版",
+      category: "餐饮",
+      sourceSiteId: "builtin:restaurant-signature",
+      sourceSiteName: "FAOLLA 内置模板",
+      sourceSiteDomain: "faolla.com",
+      sourceIndustry: "餐饮",
+      coverImageUrl: "",
+      previewImageUrl: "",
+      planPreviewImageUrls: {},
+      previewVariant: "",
+      blocks: buildCombinedPersistedBlocks(restaurantConfig, restaurantConfig),
       createdAt: BUILTIN_NEW_MERCHANT_TEMPLATE_TIMESTAMP,
       updatedAt: BUILTIN_NEW_MERCHANT_TEMPLATE_TIMESTAMP,
     },
