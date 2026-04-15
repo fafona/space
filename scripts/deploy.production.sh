@@ -47,13 +47,21 @@ write_env_value() {
   mv "$temp_file" "$file"
 }
 
+decode_base64_value() {
+  local value="$1"
+  if [ -z "$value" ]; then
+    return 0
+  fi
+  printf '%s' "$value" | base64 -d
+}
+
 write_env_value "WEB_PUSH_PUBLIC_KEY" "${WEB_PUSH_PUBLIC_KEY:-}"
 write_env_value "NEXT_PUBLIC_WEB_PUSH_PUBLIC_KEY" "${WEB_PUSH_PUBLIC_KEY:-}"
 write_env_value "WEB_PUSH_PRIVATE_KEY" "${WEB_PUSH_PRIVATE_KEY:-}"
 write_env_value "WEB_PUSH_SUBJECT" "${WEB_PUSH_SUBJECT:-}"
-write_env_value "NEXT_PUBLIC_SUPABASE_URL" "${NEXT_PUBLIC_SUPABASE_URL:-}"
-write_env_value "NEXT_PUBLIC_SUPABASE_ANON_KEY" "${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}"
-write_env_value "SUPABASE_SERVICE_ROLE_KEY" "${SUPABASE_SERVICE_ROLE_KEY:-}"
+write_env_value "NEXT_PUBLIC_SUPABASE_URL" "$(decode_base64_value "${NEXT_PUBLIC_SUPABASE_URL_B64:-}")"
+write_env_value "NEXT_PUBLIC_SUPABASE_ANON_KEY" "$(decode_base64_value "${NEXT_PUBLIC_SUPABASE_ANON_KEY_B64:-}")"
+write_env_value "SUPABASE_SERVICE_ROLE_KEY" "$(decode_base64_value "${SUPABASE_SERVICE_ROLE_KEY_B64:-}")"
 write_env_value "SUPER_ADMIN_ACCOUNT" "${SUPER_ADMIN_ACCOUNT:-}"
 write_env_value "SUPER_ADMIN_PASSWORD" "${SUPER_ADMIN_PASSWORD:-}"
 write_env_value "SUPER_ADMIN_VERIFICATION_EMAIL" "${SUPER_ADMIN_VERIFICATION_EMAIL:-}"
