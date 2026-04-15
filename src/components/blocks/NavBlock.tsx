@@ -19,6 +19,7 @@ type NavBlockProps = BackgroundEditableProps & {
   heading?: string;
   navOrientation?: "horizontal" | "vertical";
   mobileNavDisplayMode?: "inline" | "hidden";
+  forceMobileViewport?: boolean;
   navItemBgColor?: string;
   navItemBgOpacity?: number;
   navItemBorderStyle?: BlockBorderStyle;
@@ -102,6 +103,7 @@ export default function NavBlock(props: NavBlockProps) {
   const mobileFitScreenWidth = props.mobileFitScreenWidth === true;
   const [mobileMenuOpenPageId, setMobileMenuOpenPageId] = useState<string | null>(null);
   const [isMobileViewport, setIsMobileViewport] = useState(false);
+  const effectiveMobileViewport = props.forceMobileViewport || isMobileViewport;
   const orientation = props.navOrientation === "vertical" ? "vertical" : "horizontal";
   const navItems =
     Array.isArray(props.navItems) && props.navItems.length > 0
@@ -130,6 +132,7 @@ export default function NavBlock(props: NavBlockProps) {
   );
 
   useEffect(() => {
+    if (props.forceMobileViewport) return;
     if (typeof window === "undefined") return;
     const mediaQuery = window.matchMedia("(max-width: 767px)");
     const syncViewport = () => setIsMobileViewport(mediaQuery.matches);
@@ -140,7 +143,7 @@ export default function NavBlock(props: NavBlockProps) {
     }
     mediaQuery.addListener(syncViewport);
     return () => mediaQuery.removeListener(syncViewport);
-  }, []);
+  }, [props.forceMobileViewport]);
 
   const cardStyle = getBackgroundStyle({
     imageUrl: props.bgImageUrl,
@@ -198,7 +201,7 @@ export default function NavBlock(props: NavBlockProps) {
   };
   const navItemActiveTextColor = (props.navItemActiveTextColor ?? "").trim();
   const navItemActiveLabelStyle = buildLabelColorStyle(navItemActiveTextColor);
-  const hiddenMobileMode = props.mobileNavDisplayMode === "hidden" && isMobileViewport;
+  const hiddenMobileMode = props.mobileNavDisplayMode === "hidden" && effectiveMobileViewport;
 
   return (
     <section

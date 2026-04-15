@@ -16682,6 +16682,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         currentPageId={editingPageId}
                         currentPageIndex={editingPageIndex}
                         availablePages={editingPages.map((page) => ({ id: page.id, name: toPlainText(page.name, page.id) }))}
+                        forceMobileViewport
                         bookingSiteId={editingSiteId || ""}
                         bookingSiteName={merchantDisplayName}
                         bookingInteractive={false}

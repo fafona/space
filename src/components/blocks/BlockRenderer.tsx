@@ -46,6 +46,7 @@ export default function BlockRenderer({
   currentPageIndex = 0,
   availablePages,
   onNavigatePage,
+  forceMobileViewport = false,
   bookingSiteId,
   bookingSiteName,
   bookingInteractive = true,
@@ -56,6 +57,7 @@ export default function BlockRenderer({
   currentPageIndex?: number;
   availablePages?: Array<{ id: string; name?: string }>;
   onNavigatePage?: (pageId: string) => void;
+  forceMobileViewport?: boolean;
   bookingSiteId?: string;
   bookingSiteName?: string;
   bookingInteractive?: boolean;
@@ -82,7 +84,14 @@ export default function BlockRenderer({
             content = <ChartBlock {...b.props} />;
             break;
           case "nav":
-            content = <NavBlock {...b.props} currentPageId={currentPageId} onNavigatePage={onNavigatePage} />;
+            content = (
+              <NavBlock
+                {...b.props}
+                currentPageId={currentPageId}
+                onNavigatePage={onNavigatePage}
+                forceMobileViewport={forceMobileViewport}
+              />
+            );
             break;
           case "hero":
             content = <HeroBlock {...b.props} />;
