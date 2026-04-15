@@ -91,6 +91,12 @@ import {
   normalizePlatformMerchantSnapshotPayload,
   type PlatformMerchantSnapshotPayload,
 } from "@/lib/platformMerchantSnapshot";
+import {
+  normalizePlatformMerchantConfigArchivePayload,
+  type PlatformMerchantConfigAuditEntry,
+  type PlatformMerchantConfigBackupEntry,
+  type PlatformMerchantConfigArchiveSource,
+} from "@/lib/platformMerchantConfigArchive";
 import ChatBusinessCardDialog from "@/components/admin/ChatBusinessCardDialog";
 import SupportMessageContent, { type SupportMessageImageActivatePayload } from "@/components/support/SupportMessageContent";
 import SupportMessageImagePreviewOverlay from "@/components/support/SupportMessageImagePreviewOverlay";
@@ -125,6 +131,12 @@ function fmt(iso: string | null) {
   if (!iso) return "-";
   const date = new Date(iso);
   return Number.isFinite(date.getTime()) ? date.toLocaleString("zh-CN", { hour12: false }) : iso;
+}
+
+function formatMerchantConfigArchiveSourceLabel(source: PlatformMerchantConfigArchiveSource) {
+  if (source === "restore") return "恢复";
+  if (source === "rollback") return "回滚";
+  return "更新";
 }
 
 function formatTrustedDeviceTypeLabel(type: "desktop" | "mobile" | "tablet" | "unknown") {
@@ -1642,7 +1654,7 @@ export default function SuperAdminClient() {
   const [publishNote, setPublishNote] = useState("");
   const [userKeyword, setUserKeyword] = useState("");
   const [merchantDetailSiteId, setMerchantDetailSiteId] = useState("");
-  const [userPanelMode, setUserPanelMode] = useState<"detail" | "config" | "history">("detail");
+  const [userPanelMode, setUserPanelMode] = useState<"detail" | "config" | "history" | "backup">("detail");
   const [configExpireDate, setConfigExpireDate] = useState("");
   const [configPlanLimit, setConfigPlanLimit] = useState("1");
   const [configPageLimit, setConfigPageLimit] = useState("3");
@@ -1678,6 +1690,12 @@ export default function SuperAdminClient() {
   const [merchantTableSortOrder, setMerchantTableSortOrder] = useState<"asc" | "desc">("asc");
   const [merchantTablePage, setMerchantTablePage] = useState(1);
   const [merchantPanelOpen, setMerchantPanelOpen] = useState(false);
+  const [merchantConfigArchiveLoading, setMerchantConfigArchiveLoading] = useState(false);
+  const [merchantConfigArchiveError, setMerchantConfigArchiveError] = useState("");
+  const [merchantConfigArchiveSiteId, setMerchantConfigArchiveSiteId] = useState("");
+  const [merchantConfigAuditEntries, setMerchantConfigAuditEntries] = useState<PlatformMerchantConfigAuditEntry[]>([]);
+  const [merchantConfigBackupEntries, setMerchantConfigBackupEntries] = useState<PlatformMerchantConfigBackupEntry[]>([]);
+  const [merchantConfigRestoreSubmittingId, setMerchantConfigRestoreSubmittingId] = useState("");
   const [backendMerchantAccounts, setBackendMerchantAccounts] = useState<BackendMerchantAccount[]>([]);
   const [backendMerchantAccountsLoading, setBackendMerchantAccountsLoading] = useState(false);
   const [backendMerchantAccountsError, setBackendMerchantAccountsError] = useState("");
@@ -1914,6 +1932,71 @@ export default function SuperAdminClient() {
       return payload;
     },
     [hydratePlatformMerchantSnapshotFromServerPayload],
+  );
+
+  const loadMerchantConfigArchiveAction = useCallback(
+    async (
+      siteId: string,
+      options: {
+        signal?: AbortSignal;
+        silent?: boolean;
+      } = {},
+    ) => {
+      const normalizedSiteId = String(siteId ?? "").trim();
+      if (!normalizedSiteId) {
+        setMerchantConfigArchiveSiteId("");
+        setMerchantConfigArchiveError("");
+        setMerchantConfigAuditEntries([]);
+        setMerchantConfigBackupEntries([]);
+        return normalizePlatformMerchantConfigArchivePayload({});
+      }
+
+      setMerchantConfigArchiveLoading(true);
+      setMerchantConfigArchiveError("");
+      try {
+        const response = await fetch(
+          `/api/super-admin/platform-merchant-config-archive?siteId=${encodeURIComponent(normalizedSiteId)}&limit=80`,
+          {
+            method: "GET",
+            cache: "no-store",
+            signal: options.signal,
+          },
+        );
+        const raw = (await response.json().catch(() => null)) as
+          | {
+              payload?: unknown;
+              error?: string;
+              message?: string;
+            }
+          | null;
+        if (!response.ok) {
+          throw new Error(raw?.message || raw?.error || "platform_merchant_config_archive_load_failed");
+        }
+        const payload = normalizePlatformMerchantConfigArchivePayload(raw?.payload ?? {});
+        setMerchantConfigArchiveSiteId(normalizedSiteId);
+        setMerchantConfigAuditEntries(payload.audits);
+        setMerchantConfigBackupEntries(payload.backups);
+        setMerchantConfigArchiveError("");
+        return payload;
+      } catch (error) {
+        if (options.signal?.aborted) {
+          throw error;
+        }
+        const message = error instanceof Error ? error.message : "platform_merchant_config_archive_load_failed";
+        setMerchantConfigArchiveError(message);
+        setMerchantConfigAuditEntries([]);
+        setMerchantConfigBackupEntries([]);
+        if (!options.silent) {
+          setTip(`配置归档读取失败：${message}`);
+        }
+        throw error;
+      } finally {
+        if (!options.signal?.aborted) {
+          setMerchantConfigArchiveLoading(false);
+        }
+      }
+    },
+    [],
   );
 
   useEffect(() => {
@@ -2491,6 +2574,25 @@ export default function SuperAdminClient() {
   }, [clampedMerchantTablePage, displayMerchantRows]);
   const selectedMerchantRow =
     merchantRows.find((item) => item.site.id === merchantDetailSiteId) ?? filteredMerchantRows[0] ?? merchantRows[0] ?? null;
+  useEffect(() => {
+    if (!merchantPanelOpen) return;
+    if (userPanelMode !== "backup") return;
+    if (!selectedMerchantRow?.hasSite) return;
+    const siteId = String(selectedMerchantRow.site.id ?? "").trim();
+    if (!siteId) return;
+    const controller = new AbortController();
+    void loadMerchantConfigArchiveAction(siteId, {
+      signal: controller.signal,
+      silent: true,
+    }).catch(() => {});
+    return () => controller.abort();
+  }, [
+    loadMerchantConfigArchiveAction,
+    merchantPanelOpen,
+    selectedMerchantRow?.hasSite,
+    selectedMerchantRow?.site.id,
+    userPanelMode,
+  ]);
   const supportThreadBySelectionKey = useMemo(() => {
     const map = new Map<string, PlatformSupportThread>();
     supportThreads.forEach((thread) => {
@@ -2837,6 +2939,11 @@ export default function SuperAdminClient() {
     return ensureLocalMerchantSiteFromRow(selectedMerchantRow);
   };
   const selectedMerchantConfigHistory = selectedMerchantSite?.configHistory ?? [];
+  const selectedMerchantArchiveSiteId = String(selectedMerchantRow?.site.id ?? "").trim();
+  const selectedMerchantAuditEntries =
+    merchantConfigArchiveSiteId === selectedMerchantArchiveSiteId ? merchantConfigAuditEntries : [];
+  const selectedMerchantBackupEntries =
+    merchantConfigArchiveSiteId === selectedMerchantArchiveSiteId ? merchantConfigBackupEntries : [];
   const merchantConfigHistoryContent = (
     <div className="space-y-3 text-xs">
       <div className="rounded border bg-slate-50 px-3 py-2 text-slate-600">
@@ -2887,6 +2994,112 @@ export default function SuperAdminClient() {
           ) : (
             <div className="rounded border border-dashed px-2 py-2 text-[11px] text-slate-400">
               暂无配置变更历史
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+  const merchantConfigBackupContent = (
+    <div className="space-y-3 text-xs">
+      <div className="rounded border bg-slate-50 px-3 py-2 text-slate-600">
+        配置对象：{selectedMerchantRow?.loginAccount || "-"}
+      </div>
+      <div className="grid gap-3 md:grid-cols-2">
+        <div className="rounded border bg-slate-50 px-3 py-2">
+          <div className="text-slate-500">独立审计记录</div>
+          <div className="mt-1 text-lg font-semibold text-slate-900">{selectedMerchantAuditEntries.length}</div>
+        </div>
+        <div className="rounded border bg-slate-50 px-3 py-2">
+          <div className="text-slate-500">可恢复备份</div>
+          <div className="mt-1 text-lg font-semibold text-slate-900">{selectedMerchantBackupEntries.length}</div>
+        </div>
+      </div>
+      {merchantConfigArchiveError ? (
+        <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-amber-800">
+          配置归档读取失败：{merchantConfigArchiveError}
+        </div>
+      ) : null}
+      <div className="rounded border p-2">
+        <div className="mb-2 flex items-center justify-between text-slate-600">
+          <span className="font-medium">备份恢复</span>
+          <span className="text-[11px]">
+            {merchantConfigArchiveLoading ? "读取中..." : `${selectedMerchantBackupEntries.length} 条`}
+          </span>
+        </div>
+        <div className="max-h-[34vh] space-y-2 overflow-y-auto pr-1">
+          {selectedMerchantBackupEntries.length > 0 ? (
+            selectedMerchantBackupEntries.map((backup) => (
+              <div key={backup.id} className="rounded border px-2 py-1.5">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="break-words text-slate-700">{backup.summary || "配置备份"}</div>
+                    <div className="mt-1 text-[11px] text-slate-500">
+                      {fmt(backup.at)} | {backup.operator || "-"} | {formatMerchantConfigArchiveSourceLabel(backup.source)} |{" "}
+                      {backup.changes.length} 项
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="shrink-0 rounded border px-2 py-0.5 text-[11px] hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={merchantConfigRestoreSubmittingId === backup.id}
+                    onClick={() => {
+                      void restoreMerchantConfigByBackupAction(backup.id);
+                    }}
+                  >
+                    {merchantConfigRestoreSubmittingId === backup.id ? "恢复中..." : "恢复到此备份"}
+                  </button>
+                </div>
+                <div className="mt-2 space-y-1 rounded bg-slate-50 px-2 py-1.5 text-[12px] text-slate-700">
+                  {backup.changes.length > 0 ? (
+                    backup.changes.map((line, index) => (
+                      <div key={`${backup.id}-change-${index}`} className="break-all whitespace-pre-wrap">
+                        {index + 1}. {line}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-slate-400">该备份未记录具体变更项</div>
+                  )}
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="rounded border border-dashed px-2 py-2 text-[11px] text-slate-400">
+              {merchantConfigArchiveLoading ? "正在读取服务端备份..." : "暂无可恢复的配置备份"}
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="rounded border p-2">
+        <div className="mb-2 flex items-center justify-between text-slate-600">
+          <span className="font-medium">追加式审计记录</span>
+          <span className="text-[11px]">{selectedMerchantAuditEntries.length} 条</span>
+        </div>
+        <div className="max-h-[28vh] space-y-2 overflow-y-auto pr-1">
+          {selectedMerchantAuditEntries.length > 0 ? (
+            selectedMerchantAuditEntries.map((audit) => (
+              <div key={audit.id} className="rounded border px-2 py-1.5">
+                <div className="break-words text-slate-700">{audit.summary || "配置更新"}</div>
+                <div className="mt-1 text-[11px] text-slate-500">
+                  {fmt(audit.at)} | {audit.operator || "-"} | {formatMerchantConfigArchiveSourceLabel(audit.source)} |{" "}
+                  {audit.changes.length} 项
+                </div>
+                <div className="mt-2 space-y-1 rounded bg-slate-50 px-2 py-1.5 text-[12px] text-slate-700">
+                  {audit.changes.length > 0 ? (
+                    audit.changes.map((line, index) => (
+                      <div key={`${audit.id}-change-${index}`} className="break-all whitespace-pre-wrap">
+                        {index + 1}. {line}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-slate-400">该审计记录未附带具体变更项</div>
+                  )}
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="rounded border border-dashed px-2 py-2 text-[11px] text-slate-400">
+              暂无追加式审计记录
             </div>
           )}
         </div>
@@ -5108,6 +5321,142 @@ export default function SuperAdminClient() {
     );
   }
 
+  async function restoreMerchantConfigByBackupAction(backupId: string) {
+    if (!guard("user.manage", SUPER_ADMIN_MESSAGES.noUserPermission)) return;
+    const selectedSite = ensureSelectedMerchantConfigSite();
+    if (!selectedSite) {
+      setTip(SUPER_ADMIN_MESSAGES.selectMerchantFirst);
+      return;
+    }
+    const targetBackup = selectedMerchantBackupEntries.find((item) => item.id === backupId);
+    if (!targetBackup) {
+      setTip("未找到可恢复的配置备份，请刷新后重试");
+      return;
+    }
+
+    const restoreImageUnavailableInBackup = isInlineImageHistoryPlaceholder(targetBackup.snapshot.merchantCardImageUrl);
+    const fallbackMerchantCardImage = (selectedSite.merchantCardImageUrl ?? "").trim();
+    const restoreMerchantCardImage = restoreImageUnavailableInBackup
+      ? fallbackMerchantCardImage
+      : (targetBackup.snapshot.merchantCardImageUrl ?? "").trim();
+    const restoreBeforeSnapshot = createMerchantConfigSnapshot(selectedSite);
+    const restoreAfterSnapshot: MerchantConfigSnapshot = {
+      serviceExpiresAt: targetBackup.snapshot.serviceExpiresAt ?? null,
+      permissionConfig: targetBackup.snapshot.permissionConfig ?? createDefaultMerchantPermissionConfig(),
+      merchantCardImageUrl: restoreMerchantCardImage,
+      chatAvatarImageUrl: (selectedSite.chatAvatarImageUrl ?? "").trim(),
+      contactVisibility: selectedSite.contactVisibility ?? createDefaultMerchantContactVisibility(),
+      merchantCardImageOpacity: normalizeUnitInterval(targetBackup.snapshot.merchantCardImageOpacity, 1),
+      sortConfig: targetBackup.snapshot.sortConfig ?? createDefaultMerchantSortConfig(),
+    };
+    const restoreDiffLines = buildMerchantConfigDiffLines(restoreBeforeSnapshot, restoreAfterSnapshot);
+    if (restoreDiffLines.length === 0) {
+      setTip(SUPER_ADMIN_MESSAGES.configNoChanges);
+      return;
+    }
+    if (typeof window !== "undefined") {
+      const previewLines = restoreDiffLines.slice(0, 12);
+      const ok = window.confirm(
+        [
+          `将恢复到 ${fmt(targetBackup.at)} 的备份版本：`,
+          targetBackup.summary || "-",
+          "",
+          "以下内容将会变更：",
+          ...previewLines.map((line, index) => `${index + 1}. ${line}`),
+          restoreDiffLines.length > previewLines.length
+            ? `... 其余 ${restoreDiffLines.length - previewLines.length} 项变更请在恢复后查看历史`
+            : "",
+          "",
+          "确认继续吗？",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      );
+      if (!ok) {
+        setTip("已取消配置备份恢复");
+        return;
+      }
+    }
+
+    const restoreExpired = getMerchantServiceState(
+      selectedSite.status,
+      restoreAfterSnapshot.serviceExpiresAt,
+      nowMs,
+    ).expired;
+    const restoreHistoryEntry = buildMerchantConfigHistoryEntry({
+      operator: operatorName,
+      summary: `从备份恢复 ${fmt(targetBackup.at)} 配置`,
+      changes: restoreDiffLines,
+      before: restoreBeforeSnapshot,
+      after: restoreAfterSnapshot,
+    });
+    const nextSites = stateRef.current.sites.map((site) =>
+      site.id === selectedSite.id
+        ? {
+            ...site,
+            status: restoreExpired ? "maintenance" : site.status,
+            serviceExpiresAt: restoreAfterSnapshot.serviceExpiresAt,
+            permissionConfig: restoreAfterSnapshot.permissionConfig,
+            merchantCardImageUrl: restoreAfterSnapshot.merchantCardImageUrl,
+            merchantCardImageOpacity: restoreAfterSnapshot.merchantCardImageOpacity,
+            sortConfig: restoreAfterSnapshot.sortConfig,
+            configHistory: appendMerchantConfigHistory(site.configHistory, restoreHistoryEntry),
+            updatedAt: nextIsoNow(),
+          }
+        : site,
+    );
+    const nextStatePreviewRaw: PlatformState = {
+      ...stateRef.current,
+      sites: nextSites,
+    };
+    const nextStatePreview = compactPlatformStateForStorage(nextStatePreviewRaw);
+    const nextStateBytes = estimateUtf8Size(JSON.stringify(nextStatePreview));
+    if (nextStateBytes > MAX_PLATFORM_STATE_STORAGE_BYTES) {
+      setTip(`配置备份恢复后的数据过大（${formatBytes(nextStateBytes)}）`);
+      return;
+    }
+
+    setMerchantConfigRestoreSubmittingId(backupId);
+    const auditedNextState = withAudit(
+      {
+        ...nextStatePreviewRaw,
+      },
+      "merchant_config_restore",
+      "site",
+      selectedSite.id,
+      `restore:${targetBackup.sourceHistoryEntryId || targetBackup.id}`,
+    );
+    try {
+      await syncPlatformMerchantSnapshotToServer(auditedNextState);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "unknown_error";
+      setTip(
+        message === "platform_merchant_snapshot_conflict"
+          ? "检测到其他超级后台已更新配置，当前页面已同步到最新版本"
+          : `服务端配置恢复失败：${message}`,
+      );
+      return;
+    } finally {
+      setMerchantConfigRestoreSubmittingId("");
+    }
+
+    const persisted = applyLocalPlatformState(auditedNextState, { allowVolatile: true });
+    if (!persisted) {
+      setTip("配置已恢复到服务端，但本地缓存写入失败，请稍后刷新确认");
+      return;
+    }
+    const latestSite = auditedNextState.sites.find((site) => site.id === selectedSite.id);
+    if (latestSite) {
+      hydrateMerchantConfigDraft(latestSite);
+    }
+    void loadMerchantConfigArchiveAction(selectedSite.id, { silent: true }).catch(() => {});
+    setTip(
+      restoreImageUnavailableInBackup
+        ? "配置已从备份恢复（备份图片已精简，本次保留当前商户图）"
+        : "配置已从备份恢复",
+    );
+  }
+
   function toggleFeatureAction(siteId: string, key: FeatureKey) {
     if (!guard("feature.manage", "无功能开通权限")) return;
     commit((prev) =>
@@ -6800,6 +7149,16 @@ export default function SuperAdminClient() {
                           配置历史
                         </button>
                         <button
+                          className={`rounded border px-2 py-1 ${userPanelMode === "backup" ? "bg-black text-white" : "bg-white"} ${selectedMerchantRow?.hasSite ? "" : "opacity-40"}`}
+                          onClick={() => {
+                            if (!selectedMerchantRow?.hasSite) return;
+                            setUserPanelMode("backup");
+                          }}
+                          disabled={!selectedMerchantRow?.hasSite}
+                        >
+                          备份恢复
+                        </button>
+                        <button
                           className="rounded border px-2 py-1"
                           onClick={() => setMerchantPanelOpen(false)}
                         >
@@ -6897,6 +7256,8 @@ export default function SuperAdminClient() {
                           </div>
                         ) : userPanelMode === "history" ? (
                           merchantConfigHistoryContent
+                        ) : userPanelMode === "backup" ? (
+                          merchantConfigBackupContent
                         ) : (
                           <div className="space-y-3 text-xs">
                               <div className="rounded border bg-slate-50 px-3 py-2 text-slate-600">

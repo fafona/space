@@ -1,4 +1,13 @@
 import {
+  derivePlatformMerchantConfigArchiveEntries,
+  mergePlatformMerchantConfigArchivePayloads,
+} from "@/lib/platformMerchantConfigArchive";
+import {
+  loadStoredPlatformMerchantConfigArchive,
+  savePlatformMerchantConfigArchive,
+  type PlatformMerchantConfigArchiveStoreClient,
+} from "@/lib/platformMerchantConfigArchiveStore";
+import {
   PLATFORM_MERCHANT_SNAPSHOT_BACKUP_SLUG,
   PLATFORM_MERCHANT_SNAPSHOT_HISTORY_BACKUP_SLUG,
   PLATFORM_MERCHANT_SNAPSHOT_HISTORY_SLUG,
@@ -288,6 +297,24 @@ export async function savePlatformMerchantSnapshot(
   const historyBackupSave = await persistBySlug(PLATFORM_MERCHANT_SNAPSHOT_HISTORY_BACKUP_SLUG);
   if (historyBackupSave.error && typeof console !== "undefined") {
     console.error("[platform-merchant-snapshot] history backup save failed", historyBackupSave.error);
+  }
+
+  const archiveDelta = derivePlatformMerchantConfigArchiveEntries({
+    previousHistoryBySiteId: existingPayload?.merchantConfigHistoryBySiteId,
+    nextHistoryBySiteId: payloadToPersist.merchantConfigHistoryBySiteId,
+    nextSnapshot: payloadToPersist.snapshot,
+  });
+  if (archiveDelta.audits.length > 0 || archiveDelta.backups.length > 0) {
+    const existingArchive = await loadStoredPlatformMerchantConfigArchive(
+      supabase as unknown as PlatformMerchantConfigArchiveStoreClient,
+    );
+    const archiveSave = await savePlatformMerchantConfigArchive(
+      supabase as unknown as PlatformMerchantConfigArchiveStoreClient,
+      mergePlatformMerchantConfigArchivePayloads(existingArchive, archiveDelta),
+    );
+    if (archiveSave.error && typeof console !== "undefined") {
+      console.error("[platform-merchant-snapshot] config archive save failed", archiveSave.error);
+    }
   }
 
   platformMerchantSnapshotCache = {

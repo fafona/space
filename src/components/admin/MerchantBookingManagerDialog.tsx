@@ -1062,12 +1062,18 @@ export default function MerchantBookingManagerDialog({
                       onDateChange={(value) => handleDraftChange(detailRecord.id, "appointmentDateInput", value)}
                       onTimeChange={(value) => handleDraftChange(detailRecord.id, "appointmentTimeInput", value)}
                     />
-                    <BookingQuickTimeRangePicker
-                      ranges={detailAvailableTimeRanges}
-                      selectedTime={detailDraft.appointmentTimeInput}
-                      className="pt-1"
-                      onSelect={(nextTime) => handleDraftChange(detailRecord.id, "appointmentTimeInput", nextTime)}
-                    />
+                    {detailAvailableTimeRanges.length > 0 ? (
+                      <div className="space-y-1 pt-1">
+                        <div className="text-[11px] font-medium text-slate-500">
+                          {locale.startsWith("es") ? "Horarios disponibles" : "可预约时间"}
+                        </div>
+                        <BookingQuickTimeRangePicker
+                          ranges={detailAvailableTimeRanges}
+                          selectedTime={detailDraft.appointmentTimeInput}
+                          onSelect={(nextTime) => handleDraftChange(detailRecord.id, "appointmentTimeInput", nextTime)}
+                        />
+                      </div>
+                    ) : null}
                   </label>
 
                   <label className="space-y-1 text-sm text-slate-700">
