@@ -1285,6 +1285,349 @@ function createBuiltinRestaurantChartBlock(
   };
 }
 
+function createBuiltinRestaurantCommonCardHtml(
+  title: string,
+  text: string,
+  options: {
+    background: string;
+    borderColor: string;
+    accent?: string;
+    subtle?: string;
+    pill?: string;
+    align?: "start" | "center";
+  },
+) {
+  const justify = options.align === "center" ? "center" : "space-between";
+  const alignItems = options.align === "center" ? "center" : "flex-start";
+  const textAlign = options.align === "center" ? "center" : "left";
+  const accent = options.accent ?? "#1f2937";
+  const subtle = options.subtle ?? "rgba(15,23,42,0.74)";
+  const pillHtml = options.pill
+    ? `<div style="display:inline-flex;align-items:center;gap:8px;padding:8px 14px;border-radius:999px;background:#f7ff61;color:#142013;font-size:14px;font-weight:700;">${options.pill}</div>`
+    : "";
+  return `
+    <div style="width:100%;height:100%;padding:24px;border-radius:28px;border:1px solid ${options.borderColor};background:${options.background};box-shadow:0 24px 48px rgba(15,23,42,0.08);display:flex;flex-direction:column;justify-content:${justify};align-items:${alignItems};text-align:${textAlign};">
+      <div style="display:flex;flex-direction:column;gap:14px;">
+        <div style="font-size:34px;line-height:1.05;font-weight:800;letter-spacing:-0.04em;color:${accent};">${title}</div>
+        <div style="font-size:15px;line-height:1.65;color:${subtle};">${text}</div>
+      </div>
+      ${pillHtml}
+    </div>
+  `;
+}
+
+function createBuiltinRestaurantMiniPhoneHtml(
+  heading: string,
+  lines: string[],
+  options: {
+    background: string;
+    borderColor: string;
+    accent: string;
+    badge: string;
+  },
+) {
+  const lineHtml = lines
+    .map(
+      (line) =>
+        `<div style="height:26px;border-radius:13px;background:rgba(255,255,255,0.82);padding:0 12px;display:flex;align-items:center;font-size:13px;color:#1f2937;">${line}</div>`,
+    )
+    .join("");
+  return `
+    <div style="width:100%;height:100%;padding:22px;border-radius:28px;border:1px solid ${options.borderColor};background:${options.background};box-shadow:0 24px 48px rgba(15,23,42,0.08);display:flex;align-items:center;justify-content:center;">
+      <div style="width:210px;height:100%;max-height:360px;border-radius:34px;border:6px solid #121826;background:#ffffff;padding:16px 14px;display:flex;flex-direction:column;gap:12px;">
+        <div style="font-size:14px;font-weight:800;color:${options.accent};letter-spacing:0.01em;">${heading}</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <span style="display:inline-flex;padding:6px 10px;border-radius:999px;background:#eef5ff;font-size:12px;color:#285a8b;">${options.badge}</span>
+        </div>
+        ${lineHtml}
+      </div>
+    </div>
+  `;
+}
+
+function createBuiltinRestaurantStoryboardBlock(variant: BuiltinRestaurantVariant): Block {
+  const makeBox = (id: string, html: string, x: number, y: number, width: number, height: number) => ({
+    id,
+    html,
+    x,
+    y,
+    width,
+    height,
+  });
+
+  if (variant.key === "fresh-order") {
+    return {
+      id: `builtin-restaurant-storyboard-home-${variant.key}`,
+      type: "common",
+      props: {
+        bgColor: "transparent",
+        bgColorOpacity: 0,
+        blockBorderStyle: "none",
+        blockWidth: 1080,
+        blockHeight: 520,
+        commonTextBoxes: [
+          makeBox(
+            `story-left-${variant.key}`,
+            createBuiltinRestaurantCommonCardHtml(
+              "Explore our\nnew signature bowl",
+              "把首页主区域直接做成首单推荐和核心卖点入口。先告诉客户为什么点、适合谁、能怎么换配料，再给一个很亮的主按钮。",
+              {
+                background: "linear-gradient(180deg, #c9dcb9 0%, #bdd3ae 100%)",
+                borderColor: "#9db38d",
+                accent: "#102114",
+                subtle: "rgba(16,33,20,0.76)",
+                pill: "马上点这一碗",
+              },
+            ),
+            0,
+            0,
+            390,
+            400,
+          ),
+          makeBox(
+            `story-mini-1-${variant.key}`,
+            createBuiltinRestaurantCommonCardHtml("Feel-good food", "用窄卡片去承接品牌口号、当季食材或一条很短的价值主张。", {
+              background: "linear-gradient(180deg, #d7f2ef 0%, #c4ebe7 100%)",
+              borderColor: "#a3d7d0",
+              accent: "#16414b",
+              subtle: "rgba(22,65,75,0.76)",
+              pill: "fresh",
+              align: "center",
+            }),
+            422,
+            0,
+            146,
+            400,
+          ),
+          makeBox(
+            `story-mini-2-${variant.key}`,
+            createBuiltinRestaurantCommonCardHtml("Order ahead", "做成外送、自提、堂食这类路径卡，客户会更快知道下一步。", {
+              background: "linear-gradient(180deg, #f1f6ff 0%, #d9e7ff 100%)",
+              borderColor: "#b8caef",
+              accent: "#1a3765",
+              subtle: "rgba(26,55,101,0.74)",
+              pill: "pickup",
+              align: "center",
+            }),
+            586,
+            0,
+            146,
+            400,
+          ),
+          makeBox(
+            `story-mini-3-${variant.key}`,
+            createBuiltinRestaurantCommonCardHtml("Access menu", "第三张窄卡更适合放菜单结构或新品入口，像样板图那样形成节奏。", {
+              background: "linear-gradient(180deg, #fff8d8 0%, #faefba 100%)",
+              borderColor: "#e7d79d",
+              accent: "#4f3f0a",
+              subtle: "rgba(79,63,10,0.74)",
+              pill: "menu",
+              align: "center",
+            }),
+            750,
+            0,
+            146,
+            400,
+          ),
+          makeBox(
+            `story-phone-${variant.key}`,
+            createBuiltinRestaurantMiniPhoneHtml("Signature bowl", ["牛油果 + 烤鸡", "糙米 / 青菜 / 玉米", "加酱汁 / 加配料", "确认自提或外送"], {
+              background: "linear-gradient(180deg, #dce8ff 0%, #c9d9f8 100%)",
+              borderColor: "#b3c5e6",
+              accent: "#244b85",
+              badge: "热卖 No.1",
+            }),
+            914,
+            0,
+            166,
+            400,
+          ),
+        ],
+      },
+    };
+  }
+
+  if (variant.key === "tracker-blue") {
+    return {
+      id: `builtin-restaurant-storyboard-home-${variant.key}`,
+      type: "common",
+      props: {
+        bgColor: "transparent",
+        bgColorOpacity: 0,
+        blockBorderStyle: "none",
+        blockWidth: 1080,
+        blockHeight: 430,
+        commonTextBoxes: [
+          makeBox(
+            `tracker-left-${variant.key}`,
+            createBuiltinRestaurantCommonCardHtml(
+              "Track every step\nbefore pickup",
+              "左边直接做成提醒型黑卡：告诉客户门店正在处理什么、现在最适合做什么，这会很像 Domino's 的流程反馈逻辑。",
+              {
+                background: "linear-gradient(180deg, #111111 0%, #050505 100%)",
+                borderColor: "#242424",
+                accent: "#ffffff",
+                subtle: "rgba(255,255,255,0.72)",
+                pill: "继续下单",
+              },
+            ),
+            0,
+            10,
+            330,
+            300,
+          ),
+          makeBox(
+            `tracker-middle-${variant.key}`,
+            createBuiltinRestaurantCommonCardHtml(
+              "Order flow\nredesigned",
+              "中间蓝卡用来解释下单、加购、制作与取餐步骤。让客户理解流程，会直接提升这种快餐官网的专业感。",
+              {
+                background: "linear-gradient(180deg, #0872b5 0%, #0d62a6 100%)",
+                borderColor: "#0a5a93",
+                accent: "#ffffff",
+                subtle: "rgba(255,255,255,0.78)",
+                pill: "view combo",
+              },
+            ),
+            370,
+            10,
+            330,
+            300,
+          ),
+          makeBox(
+            `tracker-right-${variant.key}`,
+            createBuiltinRestaurantMiniPhoneHtml("Large pepperoni", ["已下单", "门店接单", "制作中", "准备取餐"], {
+              background: "linear-gradient(180deg, #36a4ff 0%, #1778cf 100%)",
+              borderColor: "#0d5da7",
+              accent: "#0f3d73",
+              badge: "tracker",
+            }),
+            740,
+            10,
+            340,
+            300,
+          ),
+        ],
+      },
+    };
+  }
+
+  return {
+    id: `builtin-restaurant-storyboard-home-${variant.key}`,
+    type: "common",
+    props: {
+      bgColor: "transparent",
+      bgColorOpacity: 0,
+      blockBorderStyle: "none",
+      blockWidth: 1080,
+      blockHeight: 470,
+      commonTextBoxes: [
+        makeBox(
+          `brand-main-${variant.key}`,
+          createBuiltinRestaurantCommonCardHtml(
+            "Brand first,\norder fast",
+            "这一版把品牌感和行动入口放在一块：大卡负责情绪和主叙事，右侧与下方小卡负责首次推荐、活动和门店入口。",
+            {
+              background: "linear-gradient(180deg, #fff1da 0%, #f7dfbd 100%)",
+              borderColor: "#e1bf92",
+              accent: "#1d3d33",
+              subtle: "rgba(39,32,24,0.74)",
+              pill: "先看招牌",
+            },
+          ),
+          0,
+          0,
+          500,
+          360,
+        ),
+        makeBox(
+          `brand-right-top-${variant.key}`,
+          createBuiltinRestaurantCommonCardHtml("Best sellers", "用一张更窄的推荐卡承接“首次必点”或“门店热卖”。", {
+            background: "linear-gradient(180deg, #f4f7ee 0%, #dfe9d3 100%)",
+            borderColor: "#cad9ba",
+            accent: "#203c2f",
+            subtle: "rgba(32,60,47,0.72)",
+            pill: "top picks",
+            align: "center",
+          }),
+          540,
+          0,
+          240,
+          170,
+        ),
+        makeBox(
+          `brand-right-phone-${variant.key}`,
+          createBuiltinRestaurantMiniPhoneHtml("Dinner set", ["双人套餐", "加购饮品", "选择门店", "预约到店"], {
+            background: "linear-gradient(180deg, #f3efe9 0%, #efe2cf 100%)",
+            borderColor: "#d4bda0",
+            accent: "#8f5e31",
+            badge: "今晚推荐",
+          }),
+          810,
+          0,
+          270,
+          360,
+        ),
+        makeBox(
+          `brand-bottom-1-${variant.key}`,
+          createBuiltinRestaurantCommonCardHtml("会员权益", "把复购理由放在首页，不要等客户滚到最底。", {
+            background: "#ffffff",
+            borderColor: "#e8d2b2",
+            accent: "#1d3d33",
+            subtle: "rgba(29,61,51,0.72)",
+            align: "center",
+          }),
+          540,
+          200,
+          240,
+          160,
+        ),
+      ],
+    },
+  };
+}
+
+function createBuiltinRestaurantMenuShowcaseBlock(variant: BuiltinRestaurantVariant): Block {
+  const makeBox = (id: string, html: string, x: number, y: number, width: number, height: number) => ({
+    id,
+    html,
+    x,
+    y,
+    width,
+    height,
+  });
+  const card = (title: string, subtitle: string, badge: string, bg: string, border: string) =>
+    `
+      <div style="width:100%;height:100%;padding:22px;border-radius:24px;border:1px solid ${border};background:${bg};display:flex;flex-direction:column;justify-content:space-between;box-shadow:0 18px 38px rgba(15,23,42,0.08);">
+        <div style="display:flex;flex-direction:column;gap:12px;">
+          <div style="display:inline-flex;width:max-content;padding:7px 12px;border-radius:999px;background:rgba(255,255,255,0.78);font-size:12px;font-weight:700;color:#1f2937;">${badge}</div>
+          <div style="font-size:28px;line-height:1.08;font-weight:800;color:${variant.textColor};">${title}</div>
+          <div style="font-size:14px;line-height:1.6;color:rgba(15,23,42,0.72);">${subtitle}</div>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <span style="display:inline-flex;padding:6px 10px;border-radius:999px;background:rgba(255,255,255,0.85);font-size:12px;">招牌</span>
+          <span style="display:inline-flex;padding:6px 10px;border-radius:999px;background:rgba(255,255,255,0.85);font-size:12px;">可加购</span>
+        </div>
+      </div>
+    `;
+  return {
+    id: `builtin-restaurant-menu-showcase-${variant.key}`,
+    type: "common",
+    props: {
+      bgColor: "transparent",
+      bgColorOpacity: 0,
+      blockBorderStyle: "none",
+      blockWidth: 1080,
+      blockHeight: 430,
+      commonTextBoxes: [
+        makeBox("card-1", card("招牌组合", "第一张卡就应该是新客最容易点的默认组合。", "NEW", "#f3f8ec", "#cadeb2"), 0, 0, 340, 320),
+        makeBox("card-2", card("高峰套餐", "用第二张卡解释双人或多人分享的点法。", "POPULAR", "#fff0df", "#ebc493"), 370, 0, 340, 320),
+        makeBox("card-3", card("加购甜品", "第三张卡专门承接饮品、甜品和附加项。", "ADD-ON", "#e7f1ff", "#b8ceef"), 740, 0, 340, 320),
+      ],
+    },
+  };
+}
+
 function createBuiltinServiceStarterPages(variant: BuiltinServiceStarterVariant): PlanPage[] {
   const pageIds = createBuiltinServiceStarterPageIds(variant.key);
   return [
@@ -1438,43 +1781,16 @@ function createBuiltinRestaurantPages(variant: BuiltinRestaurantVariant): PlanPa
       name: "首页",
       blocks: [
         createBuiltinRestaurantNavBlock("home", variant),
-        {
-          id: `builtin-restaurant-hero-home-${variant.key}`,
-          type: "hero",
-          props: {
-            title: variant.heroTitle,
-            subtitle: variant.heroSubtitle,
-            bgColor: variant.heroBgColor,
-            bgColorOpacity: 1,
-            blockBorderStyle: "accent",
-            blockBorderColor: variant.heroBorderColor,
-            blockWidth: 760,
-            blockOffsetX: -150,
-            blockOffsetY: 12,
-            fontColor: variant.textColor,
-          },
-        },
-        createBuiltinRestaurantListBlock(
-          `builtin-restaurant-entry-home-${variant.key}`,
-          variant.entryHeading,
-          variant.entryItems,
-          variant,
-          {
-            blockWidth: 320,
-            blockOffsetX: 230,
-            blockOffsetY: -250,
-            blockLayer: 3,
-          },
-        ),
+        createBuiltinRestaurantStoryboardBlock(variant),
         createBuiltinRestaurantTextBlock(
           `builtin-restaurant-text-home-${variant.key}`,
           variant.introHeading,
           variant.introText,
           variant,
           {
-            blockWidth: 480,
-            blockOffsetX: -250,
-            blockOffsetY: -36,
+            blockWidth: 520,
+            blockOffsetX: -120,
+            blockOffsetY: -14,
             blockLayer: 2,
           },
         ),
@@ -1485,24 +1801,21 @@ function createBuiltinRestaurantPages(variant: BuiltinRestaurantVariant): PlanPa
           variant,
           {
             blockWidth: 430,
-            blockOffsetX: 210,
-            blockOffsetY: -230,
+            blockOffsetX: 200,
+            blockOffsetY: -220,
             blockLayer: 3,
           },
         ),
-        createBuiltinRestaurantChartBlock(
-          `builtin-restaurant-chart-home-${variant.key}`,
-          variant.processHeading,
-          variant.processText,
-          variant.processLabels,
-          variant.processValues,
+        createBuiltinRestaurantTextBlock(
+          `builtin-restaurant-home-note-${variant.key}`,
+          "为什么这样排",
+          "这一屏不是普通官网介绍，而是参考主流餐饮官网的转化首页：先把行动入口、热卖内容和流程提示摆出来，再补品牌说明。",
           variant,
           {
-            blockWidth: 910,
-            blockOffsetY: -92,
-            blockLayer: 2,
+            blockWidth: 940,
+            blockOffsetY: -90,
+            blockLayer: 1,
           },
-          variant.processChartType,
         ),
       ],
     },
@@ -1520,6 +1833,7 @@ function createBuiltinRestaurantPages(variant: BuiltinRestaurantVariant): PlanPa
             blockWidth: 1040,
           },
         ),
+        createBuiltinRestaurantMenuShowcaseBlock(variant),
         createBuiltinRestaurantListBlock(
           `builtin-restaurant-list-menu-${variant.key}`,
           variant.menuFeatureHeading,
@@ -1528,6 +1842,19 @@ function createBuiltinRestaurantPages(variant: BuiltinRestaurantVariant): PlanPa
           {
             blockWidth: 500,
             blockOffsetX: -150,
+            blockOffsetY: -34,
+          },
+        ),
+        createBuiltinRestaurantTextBlock(
+          `builtin-restaurant-text-menu-note-${variant.key}`,
+          "页面排版建议",
+          "参考主流餐饮官网时，最重要的不是照搬版式，而是先把“最值得点什么、怎么点、点完会怎样”这三件事讲清楚。这样页面才会既好看又有转化力。",
+          variant,
+          {
+            blockWidth: 520,
+            blockOffsetX: 210,
+            blockOffsetY: -280,
+            blockLayer: 3,
           },
         ),
         createBuiltinRestaurantChartBlock(
@@ -1538,22 +1865,10 @@ function createBuiltinRestaurantPages(variant: BuiltinRestaurantVariant): PlanPa
           variant.menuChartValues,
           variant,
           {
-            blockWidth: 540,
-            blockOffsetX: 210,
-            blockOffsetY: -250,
-            blockLayer: 3,
+            blockWidth: 960,
+            blockOffsetY: -100,
           },
           variant.menuChartType,
-        ),
-        createBuiltinRestaurantTextBlock(
-          `builtin-restaurant-text-menu-note-${variant.key}`,
-          "页面排版建议",
-          "参考主流餐饮官网时，最重要的不是照搬版式，而是先把“最值得点什么、怎么点、点完会怎样”这三件事讲清楚。这样页面才会既好看又有转化力。",
-          variant,
-          {
-            blockWidth: 920,
-            blockOffsetY: -120,
-          },
         ),
       ],
     },

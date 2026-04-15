@@ -186,7 +186,7 @@ test("platform state seeds built-in starter templates within new-merchant permis
         ),
       ),
     );
-    assert.deepEqual([...blockTypes].sort(), ["chart", "contact", "hero", "list", "nav", "text"].sort());
+    assert.deepEqual([...blockTypes].sort(), ["chart", "common", "contact", "hero", "list", "nav", "text"].sort());
   } finally {
     if (typeof previousWindow === "undefined") {
       delete globalTarget.window;
