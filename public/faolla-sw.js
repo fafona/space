@@ -1,10 +1,13 @@
-const FAOLLA_SW_VERSION = "faolla-pwa-v20260416-5";
+const FAOLLA_SW_VERSION = "faolla-pwa-v20260416-6";
 const FAOLLA_BADGE_CACHE = "faolla-badge-state-v1";
 const FAOLLA_BADGE_STATE_URL = "/__faolla_badge_state__";
 const FAOLLA_VISIBILITY_STATE_URL = "/__faolla_visibility_state__";
 const FAOLLA_LAUNCH_TARGET_URL = "/__faolla_launch_target__";
+const FAOLLA_NOTIFICATION_SETTINGS_URL = "/__faolla_notification_settings__";
+const FAOLLA_NOTIFICATION_HISTORY_URL = "/__faolla_notification_history__";
 const FAOLLA_DEFAULT_ICON = "/faolla-app-icon-192.png";
 const FAOLLA_VISIBLE_STATE_TTL_MS = 20_000;
+const FAOLLA_NOTIFICATION_HISTORY_LIMIT = 40;
 const FAOLLA_SHELL_CACHE = `faolla-shell-${FAOLLA_SW_VERSION}`;
 const FAOLLA_PUBLIC_PAGE_CACHE = `faolla-public-pages-${FAOLLA_SW_VERSION}`;
 const FAOLLA_APP_PAGE_CACHE = `faolla-app-pages-${FAOLLA_SW_VERSION}`;
@@ -274,6 +277,56 @@ function normalizeWarmRoutePath(input) {
   return raw;
 }
 
+function normalizeNotificationCategory(input) {
+  const normalized = String(input || "").trim();
+  if (normalized === "booking" || normalized === "message" || normalized === "system") {
+    return normalized;
+  }
+  return "system";
+}
+
+function normalizeNotificationRoutingMode(input) {
+  return String(input || "").trim() === "recent-workspace" ? "recent-workspace" : "target-url";
+}
+
+function createDefaultNotificationSettings() {
+  return {
+    version: 1,
+    categories: {
+      booking: true,
+      message: true,
+      system: true,
+    },
+    routingMode: "target-url",
+  };
+}
+
+function normalizeNotificationSettings(input) {
+  const defaults = createDefaultNotificationSettings();
+  if (!input || typeof input !== "object") return defaults;
+  const categories = input.categories && typeof input.categories === "object" ? input.categories : {};
+  return {
+    version: 1,
+    categories: {
+      booking: typeof categories.booking === "boolean" ? categories.booking : defaults.categories.booking,
+      message: typeof categories.message === "boolean" ? categories.message : defaults.categories.message,
+      system: typeof categories.system === "boolean" ? categories.system : defaults.categories.system,
+    },
+    routingMode: normalizeNotificationRoutingMode(input.routingMode),
+  };
+}
+
+function inferNotificationCategory(payload) {
+  const explicit = normalizeNotificationCategory(payload.category);
+  if (explicit !== "system" || String(payload.category || "").trim() === "system") {
+    return explicit;
+  }
+  const tag = String(payload.tag || "").trim();
+  if (tag.startsWith("booking")) return "booking";
+  if (tag.startsWith("peer:") || tag.startsWith("support:")) return "message";
+  return "system";
+}
+
 async function warmRecentRoutes(paths) {
   if (!Array.isArray(paths) || !paths.length) return;
   const uniquePaths = [...new Set(paths.map(normalizeWarmRoutePath).filter(Boolean))].slice(0, FAOLLA_RECENT_ROUTE_WARM_LIMIT);
@@ -503,6 +556,83 @@ async function writeLaunchTarget(path) {
   }
 }
 
+async function readNotificationSettings() {
+  try {
+    const cache = await caches.open(FAOLLA_BADGE_CACHE);
+    const response = await cache.match(FAOLLA_NOTIFICATION_SETTINGS_URL);
+    if (!response) return createDefaultNotificationSettings();
+    const payload = await response.json().catch(() => null);
+    return normalizeNotificationSettings(payload);
+  } catch {
+    return createDefaultNotificationSettings();
+  }
+}
+
+async function writeNotificationSettings(settings) {
+  try {
+    const cache = await caches.open(FAOLLA_BADGE_CACHE);
+    const payload = JSON.stringify(normalizeNotificationSettings(settings));
+    await cache.put(
+      FAOLLA_NOTIFICATION_SETTINGS_URL,
+      new Response(payload, {
+        headers: {
+          "content-type": "application/json",
+          "cache-control": "no-store",
+        },
+      }),
+    );
+  } catch {
+    // Ignore notification settings persistence failures.
+  }
+}
+
+async function readNotificationHistory() {
+  try {
+    const cache = await caches.open(FAOLLA_BADGE_CACHE);
+    const response = await cache.match(FAOLLA_NOTIFICATION_HISTORY_URL);
+    if (!response) return [];
+    const payload = await response.json().catch(() => []);
+    return Array.isArray(payload) ? payload : [];
+  } catch {
+    return [];
+  }
+}
+
+async function writeNotificationHistory(entries) {
+  try {
+    const cache = await caches.open(FAOLLA_BADGE_CACHE);
+    await cache.put(
+      FAOLLA_NOTIFICATION_HISTORY_URL,
+      new Response(JSON.stringify(entries), {
+        headers: {
+          "content-type": "application/json",
+          "cache-control": "no-store",
+        },
+      }),
+    );
+  } catch {
+    // Ignore notification history persistence failures.
+  }
+}
+
+async function appendNotificationHistory(entry) {
+  const existing = await readNotificationHistory();
+  const nextEntries = [entry]
+    .concat(existing)
+    .filter((item, index, array) => array.findIndex((candidate) => candidate.id === item.id) === index)
+    .slice(0, FAOLLA_NOTIFICATION_HISTORY_LIMIT);
+  await writeNotificationHistory(nextEntries);
+}
+
+async function clearNotificationHistory() {
+  try {
+    const cache = await caches.open(FAOLLA_BADGE_CACHE);
+    await cache.delete(FAOLLA_NOTIFICATION_HISTORY_URL);
+  } catch {
+    // Ignore notification history clearing failures.
+  }
+}
+
 async function writeVisibilityState(visible) {
   try {
     const cache = await caches.open(FAOLLA_BADGE_CACHE);
@@ -550,6 +680,17 @@ async function syncBadgeCount(count) {
   await applyBadgeCount(nextCount);
 }
 
+async function resolveNotificationClickUrl(targetUrl, routingMode) {
+  const normalizedTarget = normalizeWarmRoutePath(targetUrl);
+  if (normalizeNotificationRoutingMode(routingMode) === "recent-workspace") {
+    const launchTarget = await readLaunchTarget();
+    if (launchTarget) return launchTarget;
+  }
+  if (normalizedTarget) return normalizedTarget;
+  const launchTarget = await readLaunchTarget();
+  return launchTarget || "/";
+}
+
 self.addEventListener("message", (event) => {
   const data = event.data;
   if (!data || typeof data !== "object") return;
@@ -571,6 +712,29 @@ self.addEventListener("message", (event) => {
   }
   if (data.type === "SYNC_LAUNCH_TARGET") {
     event.waitUntil(writeLaunchTarget(data.path));
+    return;
+  }
+  if (data.type === "SYNC_NOTIFICATION_SETTINGS") {
+    event.waitUntil(writeNotificationSettings(data.settings));
+    return;
+  }
+  if (data.type === "CLEAR_NOTIFICATION_HISTORY") {
+    event.waitUntil(clearNotificationHistory());
+    return;
+  }
+  if (data.type === "SHOW_TEST_NOTIFICATION") {
+    event.waitUntil(
+      handlePush({
+        title: data.title || "Faolla test notification",
+        body: data.body || "This is a local notification test from PWA settings.",
+        url: data.url || "/",
+        tag: data.tag || `pwa-test:${Date.now()}`,
+        category: data.category || "system",
+        forceShow: true,
+        isTest: true,
+        incrementBadgeBy: 0,
+      }),
+    );
     return;
   }
   if (data.type === "WARM_RECENT_ROUTES") {
@@ -595,20 +759,42 @@ async function shouldShowNotification() {
 }
 
 async function handlePush(payload) {
+  const settings = await readNotificationSettings();
+  const category = inferNotificationCategory(payload);
+  const clickUrl = await resolveNotificationClickUrl(payload.url, settings.routingMode);
+  const shouldDisplayCategory = settings.categories[category] !== false;
+  const shouldDisplayVisibility =
+    payload.forceShow === true ? true : await shouldShowNotification();
+  const shown = shouldDisplayCategory && shouldDisplayVisibility;
+  const title = typeof payload.title === "string" && payload.title.trim() ? payload.title.trim() : "Faolla";
+  const body = typeof payload.body === "string" ? payload.body.trim() : "";
+  const tag = typeof payload.tag === "string" && payload.tag.trim() ? payload.tag.trim() : undefined;
+  const icon = typeof payload.icon === "string" && payload.icon.trim() ? payload.icon.trim() : FAOLLA_DEFAULT_ICON;
+  const source = payload.isTest === true ? "test" : "push";
+  await appendNotificationHistory({
+    id: `${Date.now()}:${tag || title}:${source}`,
+    title,
+    body,
+    url: typeof payload.url === "string" ? payload.url.trim() : "",
+    clickUrl,
+    tag: tag || "",
+    category,
+    createdAt: new Date().toISOString(),
+    shown,
+    source,
+  });
+
   const currentCount = await readBadgeCount();
+  const incrementByRaw = Number(payload.incrementBadgeBy);
+  const incrementBy = Number.isFinite(incrementByRaw) ? Math.max(0, Math.round(incrementByRaw)) : 1;
   const nextCount =
     typeof payload.badgeCount === "number"
       ? payload.badgeCount
-      : currentCount + Math.max(1, Math.round(Number(payload.incrementBadgeBy) || 1));
+      : currentCount + incrementBy;
   await syncBadgeCount(nextCount);
 
-  if (!(await shouldShowNotification())) return;
+  if (!shown) return;
 
-  const title = typeof payload.title === "string" && payload.title.trim() ? payload.title.trim() : "Faolla";
-  const body = typeof payload.body === "string" ? payload.body.trim() : "";
-  const url = typeof payload.url === "string" && payload.url.trim() ? payload.url.trim() : "/";
-  const icon = typeof payload.icon === "string" && payload.icon.trim() ? payload.icon.trim() : FAOLLA_DEFAULT_ICON;
-  const tag = typeof payload.tag === "string" && payload.tag.trim() ? payload.tag.trim() : undefined;
   await self.registration.showNotification(title, {
     body,
     tag,
@@ -616,7 +802,9 @@ async function handlePush(payload) {
     icon,
     badge: icon,
     data: {
-      url,
+      url: clickUrl,
+      category,
+      source,
     },
   });
 }

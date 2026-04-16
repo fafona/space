@@ -5,6 +5,16 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "@/components/I18nProvider";
 import { readRecentMerchantLaunchMerchantId } from "@/lib/merchantLaunchState";
 import {
+  clearPwaNotificationHistory,
+  type PwaNotificationCategory,
+  type PwaNotificationHistoryEntry,
+  type PwaNotificationRoutingMode,
+  type PwaNotificationSettings,
+  readPwaNotificationHistory,
+  readPwaNotificationSettings,
+  writePwaNotificationSettings,
+} from "@/lib/pwaNotificationCenter";
+import {
   clearRecentPwaRoutes,
   collectPwaWarmRoutes,
   readRecentPwaRoutes,
@@ -281,13 +291,152 @@ async function clearFaollaPageCaches() {
 }
 
 type WorkerState = "active" | "waiting" | "missing";
+type NotificationPermissionState = NotificationPermission | "unsupported";
+
+type NotificationPanelCopy = {
+  title: string;
+  body: string;
+  permissionLabel: string;
+  permissionGranted: string;
+  permissionDefault: string;
+  permissionDenied: string;
+  permissionUnsupported: string;
+  requestPermissionAction: string;
+  testAction: string;
+  clearHistoryAction: string;
+  historyEmpty: string;
+  historyShown: string;
+  historyMuted: string;
+  sourcePush: string;
+  sourceTest: string;
+  targetLabel: string;
+  categoryLabel: string;
+  routeModeLabel: string;
+  routeModeTarget: string;
+  routeModeWorkspace: string;
+  saveDone: string;
+  permissionReady: string;
+  permissionFailed: string;
+  testSent: string;
+  testFailed: string;
+  historyCleared: string;
+  categoryBooking: string;
+  categoryMessage: string;
+  categorySystem: string;
+};
+
+function resolveNotificationPanelCopy(locale: string): NotificationPanelCopy {
+  const normalized = (locale || "").trim().toLowerCase();
+  const language = normalized.split("-")[0] || "en";
+  if (language === "zh") {
+    return {
+      title: "通知中心",
+      body: "这里可以管理通知分类、点击后的打开策略，并查看最近收到的通知记录。",
+      permissionLabel: "通知权限",
+      permissionGranted: "已允许",
+      permissionDefault: "未决定",
+      permissionDenied: "已拒绝",
+      permissionUnsupported: "当前环境不支持",
+      requestPermissionAction: "开启通知",
+      testAction: "发送测试通知",
+      clearHistoryAction: "清空通知历史",
+      historyEmpty: "当前还没有通知记录。",
+      historyShown: "已展示",
+      historyMuted: "已静默",
+      sourcePush: "推送",
+      sourceTest: "测试",
+      targetLabel: "目标",
+      categoryLabel: "通知分类",
+      routeModeLabel: "点击通知后",
+      routeModeTarget: "优先打开通知目标",
+      routeModeWorkspace: "优先回到最近工作区",
+      saveDone: "通知设置已保存。",
+      permissionReady: "通知权限已开启。",
+      permissionFailed: "通知权限请求失败，请稍后重试。",
+      testSent: "测试通知已发送。",
+      testFailed: "测试通知发送失败，请确认当前已允许通知。",
+      historyCleared: "通知历史已清空。",
+      categoryBooking: "预约",
+      categoryMessage: "消息",
+      categorySystem: "系统",
+    };
+  }
+  if (language === "es") {
+    return {
+      title: "Centro de notificaciones",
+      body: "Aqui puedes gestionar categorias, el destino al tocar una notificacion y revisar el historial reciente.",
+      permissionLabel: "Permiso de notificaciones",
+      permissionGranted: "Permitido",
+      permissionDefault: "Sin decidir",
+      permissionDenied: "Bloqueado",
+      permissionUnsupported: "No disponible aqui",
+      requestPermissionAction: "Activar notificaciones",
+      testAction: "Enviar prueba",
+      clearHistoryAction: "Borrar historial",
+      historyEmpty: "Todavia no hay notificaciones registradas.",
+      historyShown: "Mostrada",
+      historyMuted: "Silenciada",
+      sourcePush: "Push",
+      sourceTest: "Prueba",
+      targetLabel: "Destino",
+      categoryLabel: "Categorias",
+      routeModeLabel: "Al tocar la notificacion",
+      routeModeTarget: "Abrir el destino de la notificacion",
+      routeModeWorkspace: "Volver antes al panel reciente",
+      saveDone: "La configuracion de notificaciones se ha guardado.",
+      permissionReady: "El permiso de notificaciones esta activo.",
+      permissionFailed: "No se pudo solicitar el permiso. Intentalo otra vez.",
+      testSent: "La notificacion de prueba se ha enviado.",
+      testFailed: "No se pudo enviar la prueba. Comprueba el permiso de notificaciones.",
+      historyCleared: "El historial de notificaciones se ha borrado.",
+      categoryBooking: "Reservas",
+      categoryMessage: "Mensajes",
+      categorySystem: "Sistema",
+    };
+  }
+  return {
+    title: "Notification center",
+    body: "Manage notification categories, click routing, and inspect recent notification history here.",
+    permissionLabel: "Notification permission",
+    permissionGranted: "Allowed",
+    permissionDefault: "Not decided",
+    permissionDenied: "Blocked",
+    permissionUnsupported: "Not supported here",
+    requestPermissionAction: "Enable notifications",
+    testAction: "Send test notification",
+    clearHistoryAction: "Clear notification history",
+    historyEmpty: "No notifications have been recorded yet.",
+    historyShown: "Shown",
+    historyMuted: "Muted",
+    sourcePush: "Push",
+    sourceTest: "Test",
+    targetLabel: "Target",
+    categoryLabel: "Categories",
+    routeModeLabel: "When a notification is opened",
+    routeModeTarget: "Open the notification target first",
+    routeModeWorkspace: "Prefer the recent workspace first",
+    saveDone: "Notification settings were saved.",
+    permissionReady: "Notification permission is enabled.",
+    permissionFailed: "Permission request failed. Please try again later.",
+    testSent: "A test notification was sent.",
+    testFailed: "Test notification failed. Please confirm notifications are allowed.",
+    historyCleared: "Notification history was cleared.",
+    categoryBooking: "Bookings",
+    categoryMessage: "Messages",
+    categorySystem: "System",
+  };
+}
 
 export default function PwaSettingsPage() {
   const { locale } = useI18n();
   const copy = useMemo(() => resolvePwaSettingsCopy(locale), [locale]);
+  const notificationCopy = useMemo(() => resolveNotificationPanelCopy(locale), [locale]);
   const [installed, setInstalled] = useState(false);
   const [iosInstallReady, setIosInstallReady] = useState(false);
   const [workerState, setWorkerState] = useState<WorkerState>("missing");
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermissionState>("unsupported");
+  const [notificationSettings, setNotificationSettings] = useState<PwaNotificationSettings | null>(null);
+  const [notificationHistory, setNotificationHistory] = useState<PwaNotificationHistoryEntry[]>([]);
   const [cacheSummary, setCacheSummary] = useState<PwaCacheSummary[]>([]);
   const [launchTarget, setLaunchTarget] = useState("");
   const [recentWorkspaceHref, setRecentWorkspaceHref] = useState("");
@@ -298,15 +447,23 @@ export default function PwaSettingsPage() {
   const [isClearingCache, setIsClearingCache] = useState(false);
   const [isRefreshingDiagnostics, setIsRefreshingDiagnostics] = useState(false);
   const [isWarmingRecentRoutes, setIsWarmingRecentRoutes] = useState(false);
+  const [isSendingTestNotification, setIsSendingTestNotification] = useState(false);
   const registrationRef = useRef<ServiceWorkerRegistration | null>(null);
 
   const syncDiagnostics = async () => {
-    const [nextCacheSummary, nextLaunchTarget] = await Promise.all([
+    const [nextCacheSummary, nextLaunchTarget, nextNotificationSettings, nextNotificationHistory] = await Promise.all([
       readFaollaCacheSummary(),
       readLaunchTargetFromCache(),
+      readPwaNotificationSettings(),
+      readPwaNotificationHistory(),
     ]);
+    setNotificationPermission(
+      typeof Notification === "undefined" ? "unsupported" : Notification.permission,
+    );
     setCacheSummary(nextCacheSummary);
     setLaunchTarget(nextLaunchTarget);
+    setNotificationSettings(nextNotificationSettings);
+    setNotificationHistory(nextNotificationHistory);
     const recentMerchantId = readRecentMerchantLaunchMerchantId();
     setRecentWorkspaceHref(recentMerchantId ? buildMerchantBackendHref(recentMerchantId) : "");
     setRecentRoutes(readRecentPwaRoutes());
@@ -320,6 +477,9 @@ export default function PwaSettingsPage() {
 
       setInstalled(isStandaloneDisplayMode());
       setIosInstallReady(!isStandaloneDisplayMode() && isMobileSafariBrowser());
+      setNotificationPermission(
+        typeof Notification === "undefined" ? "unsupported" : Notification.permission,
+      );
 
       if ("serviceWorker" in navigator) {
         const registration = (await navigator.serviceWorker.getRegistration("/").catch(() => null)) ?? null;
@@ -486,6 +646,101 @@ export default function PwaSettingsPage() {
     setRecentRoutes([]);
   };
 
+  const pushNotificationSettings = async (nextSettings: PwaNotificationSettings) => {
+    await writePwaNotificationSettings(nextSettings);
+    setNotificationSettings(nextSettings);
+    const targetWorker =
+      registrationRef.current?.active ??
+      navigator.serviceWorker.controller ??
+      registrationRef.current?.waiting ??
+      registrationRef.current?.installing ??
+      null;
+    targetWorker?.postMessage({
+      type: "SYNC_NOTIFICATION_SETTINGS",
+      settings: nextSettings,
+    });
+    setStatusMessage(notificationCopy.saveDone);
+  };
+
+  const updateNotificationCategory = async (category: PwaNotificationCategory, enabled: boolean) => {
+    if (!notificationSettings) return;
+    await pushNotificationSettings({
+      ...notificationSettings,
+      categories: {
+        ...notificationSettings.categories,
+        [category]: enabled,
+      },
+    });
+  };
+
+  const updateNotificationRoutingMode = async (routingMode: PwaNotificationRoutingMode) => {
+    if (!notificationSettings) return;
+    await pushNotificationSettings({
+      ...notificationSettings,
+      routingMode,
+    });
+  };
+
+  const requestNotificationPermission = async () => {
+    if (typeof Notification === "undefined") {
+      setNotificationPermission("unsupported");
+      setStatusMessage(notificationCopy.permissionFailed);
+      return;
+    }
+    try {
+      const permission = await Notification.requestPermission();
+      setNotificationPermission(permission);
+      setStatusMessage(
+        permission === "granted" ? notificationCopy.permissionReady : notificationCopy.permissionFailed,
+      );
+    } catch {
+      setStatusMessage(notificationCopy.permissionFailed);
+    }
+  };
+
+  const sendTestNotification = async (category: PwaNotificationCategory) => {
+    const targetWorker =
+      registrationRef.current?.active ??
+      navigator.serviceWorker.controller ??
+      registrationRef.current?.waiting ??
+      registrationRef.current?.installing ??
+      null;
+    if (!targetWorker || typeof Notification === "undefined" || Notification.permission !== "granted") {
+      setStatusMessage(notificationCopy.testFailed);
+      return;
+    }
+    setIsSendingTestNotification(true);
+    try {
+      targetWorker.postMessage({
+        type: "SHOW_TEST_NOTIFICATION",
+        category,
+        title: `Faolla ${notificationCopy.sourceTest}`,
+        body:
+          category === "booking"
+            ? "Booking workflow reminder preview."
+            : category === "message"
+              ? "Message alert preview from PWA settings."
+              : "System notice preview from PWA settings.",
+        url: recentWorkspaceHref || launchTarget || "/",
+        tag: `pwa-test:${category}:${Date.now()}`,
+      });
+      await new Promise((resolve) => window.setTimeout(resolve, 180));
+      await syncDiagnostics();
+      setStatusMessage(notificationCopy.testSent);
+    } catch {
+      setStatusMessage(notificationCopy.testFailed);
+    } finally {
+      setIsSendingTestNotification(false);
+    }
+  };
+
+  const clearNotificationHistoryRecords = async () => {
+    await clearPwaNotificationHistory();
+    registrationRef.current?.active?.postMessage({ type: "CLEAR_NOTIFICATION_HISTORY" });
+    setNotificationHistory([]);
+    setStatusMessage(notificationCopy.historyCleared);
+  };
+
   const installStatusText = installed
     ? copy.installInstalled
     : iosInstallReady
@@ -499,6 +754,14 @@ export default function PwaSettingsPage() {
         : copy.workerMissing;
   const cacheCountLabel = cacheSummary.length ? `${cacheSummary.length} ${copy.cacheCountSuffix}` : copy.cacheEmpty;
   const totalCacheEntries = cacheSummary.reduce((sum, entry) => sum + entry.count, 0);
+  const notificationPermissionText =
+    notificationPermission === "granted"
+      ? notificationCopy.permissionGranted
+      : notificationPermission === "denied"
+        ? notificationCopy.permissionDenied
+        : notificationPermission === "default"
+          ? notificationCopy.permissionDefault
+          : notificationCopy.permissionUnsupported;
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top,#0f172a_0%,#081121_38%,#030712_100%)] px-4 py-8 text-white sm:px-6">
@@ -612,6 +875,171 @@ export default function PwaSettingsPage() {
               {recentWorkspaceHref || copy.recentWorkspaceEmpty}
             </div>
           </article>
+        </section>
+
+        <section className="rounded-[1.8rem] border border-white/12 bg-slate-950/54 px-5 py-5 shadow-[0_16px_40px_rgba(2,6,23,0.22)]">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="text-sm font-semibold text-white">{notificationCopy.title}</div>
+              <div className="mt-2 max-w-2xl text-sm leading-7 text-slate-300">{notificationCopy.body}</div>
+            </div>
+            <span className="rounded-full border border-white/10 bg-white/6 px-3 py-1 text-[11px] font-semibold text-slate-200">
+              {notificationCopy.permissionLabel}: {notificationPermissionText}
+            </span>
+          </div>
+
+          <div className="mt-5 flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                void requestNotificationPermission();
+              }}
+              disabled={notificationPermission === "granted" || notificationPermission === "unsupported"}
+              className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {notificationCopy.requestPermissionAction}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void clearNotificationHistoryRecords();
+              }}
+              className="rounded-full border border-white/14 bg-white/8 px-4 py-2 text-sm font-semibold text-white transition hover:border-white/24 hover:bg-white/12"
+            >
+              {notificationCopy.clearHistoryAction}
+            </button>
+          </div>
+
+          <div className="mt-5 grid gap-4 sm:grid-cols-2">
+            <article className="rounded-2xl border border-white/10 bg-white/6 px-4 py-4">
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                {notificationCopy.categoryLabel}
+              </div>
+              <div className="mt-3 space-y-3">
+                {([
+                  ["booking", notificationCopy.categoryBooking],
+                  ["message", notificationCopy.categoryMessage],
+                  ["system", notificationCopy.categorySystem],
+                ] as const).map(([category, label]) => {
+                  const enabled = notificationSettings?.categories[category] !== false;
+                  return (
+                    <div
+                      key={category}
+                      className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-slate-950/45 px-3 py-3"
+                    >
+                      <div className="text-sm font-medium text-white">{label}</div>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void updateNotificationCategory(category, !enabled);
+                          }}
+                          className={`rounded-full px-3 py-2 text-xs font-semibold transition ${
+                            enabled
+                              ? "bg-emerald-300/16 text-emerald-100 hover:bg-emerald-300/22"
+                              : "border border-white/14 bg-white/8 text-slate-200 hover:border-white/24 hover:bg-white/12"
+                          }`}
+                        >
+                          {enabled ? notificationCopy.historyShown : notificationCopy.historyMuted}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void sendTestNotification(category);
+                          }}
+                          disabled={isSendingTestNotification || notificationPermission !== "granted"}
+                          className="rounded-full border border-white/14 bg-white/8 px-3 py-2 text-xs font-semibold text-white transition hover:border-white/24 hover:bg-white/12 disabled:opacity-40"
+                        >
+                          {notificationCopy.testAction}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </article>
+
+            <article className="rounded-2xl border border-white/10 bg-white/6 px-4 py-4">
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                {notificationCopy.routeModeLabel}
+              </div>
+              <div className="mt-3 grid gap-3">
+                {([
+                  ["target-url", notificationCopy.routeModeTarget],
+                  ["recent-workspace", notificationCopy.routeModeWorkspace],
+                ] as const).map(([mode, label]) => {
+                  const active = (notificationSettings?.routingMode ?? "target-url") === mode;
+                  return (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => {
+                        void updateNotificationRoutingMode(mode);
+                      }}
+                      className={`rounded-2xl border px-4 py-3 text-left text-sm font-medium transition ${
+                        active
+                          ? "border-sky-300/28 bg-sky-300/14 text-sky-50"
+                          : "border-white/10 bg-slate-950/45 text-slate-200 hover:border-white/18 hover:bg-white/10"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </article>
+          </div>
+
+          <div className="mt-5 rounded-2xl border border-white/10 bg-white/6 px-4 py-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="text-sm font-semibold text-white">{notificationCopy.title}</div>
+              <span className="text-xs text-slate-400">
+                {notificationHistory.length ? `${notificationHistory.length} ${copy.cacheEntrySuffix}` : notificationCopy.historyEmpty}
+              </span>
+            </div>
+            {notificationHistory.length ? (
+              <div className="mt-4 space-y-3">
+                {notificationHistory.map((entry) => (
+                  <div
+                    key={entry.id}
+                    className="rounded-2xl border border-white/10 bg-slate-950/45 px-4 py-4"
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="text-sm font-semibold text-white">{entry.title || "Faolla"}</div>
+                      <span className="rounded-full border border-white/10 bg-white/8 px-2 py-1 text-[11px] font-medium text-slate-200">
+                        {entry.category === "booking"
+                          ? notificationCopy.categoryBooking
+                          : entry.category === "message"
+                            ? notificationCopy.categoryMessage
+                            : notificationCopy.categorySystem}
+                      </span>
+                      <span className="rounded-full border border-white/10 bg-white/8 px-2 py-1 text-[11px] font-medium text-slate-300">
+                        {entry.source === "test" ? notificationCopy.sourceTest : notificationCopy.sourcePush}
+                      </span>
+                      <span className={`rounded-full px-2 py-1 text-[11px] font-medium ${
+                        entry.shown
+                          ? "border border-emerald-300/16 bg-emerald-300/12 text-emerald-100"
+                          : "border border-amber-300/16 bg-amber-300/12 text-amber-100"
+                      }`}>
+                        {entry.shown ? notificationCopy.historyShown : notificationCopy.historyMuted}
+                      </span>
+                    </div>
+                    {entry.body ? <div className="mt-2 text-sm leading-6 text-slate-300">{entry.body}</div> : null}
+                    <div className="mt-3 text-[11px] leading-5 text-slate-400">
+                      {new Date(entry.createdAt).toLocaleString(locale || undefined)}
+                    </div>
+                    {entry.clickUrl ? (
+                      <div className="mt-2 break-all text-[11px] leading-5 text-slate-400">
+                        {notificationCopy.targetLabel}: {entry.clickUrl}
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="mt-4 text-sm leading-7 text-slate-300">{notificationCopy.historyEmpty}</div>
+            )}
+          </div>
         </section>
 
         <section className="rounded-[1.8rem] border border-white/12 bg-slate-950/54 px-5 py-5 shadow-[0_16px_40px_rgba(2,6,23,0.22)]">

@@ -22420,11 +22420,17 @@ type GalleryEditorImage = {
             </span>
           </button>
           <div className="min-w-0 flex-1 text-sm font-semibold text-slate-700">
-            <div className="truncate">
-              {block.props.heading
-                ? localizeSystemDefaultText(block.props.heading, locale)
-                : localizedNavItems.find((item) => item.pageId === selectedNavPageId)?.label ?? localizedNavHeading}
-            </div>
+            <div
+              className="truncate"
+              dangerouslySetInnerHTML={{
+                __html: toRichHtml(
+                  block.props.heading
+                    ? localizeSystemDefaultText(block.props.heading, locale)
+                    : localizedNavItems.find((item) => item.pageId === selectedNavPageId)?.label ?? localizedNavHeading,
+                  localizedNavHeading,
+                ),
+              }}
+            />
           </div>
         </div>
         {previewNavMobileMenuOpen ? <div className="flex flex-col items-stretch gap-2">{renderNavPreviewButtons({ closeMenuOnClick: true })}</div> : null}

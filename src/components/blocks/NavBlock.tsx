@@ -133,6 +133,14 @@ export default function NavBlock(props: NavBlockProps) {
     () => localizedNavItems.find((item) => item.pageId === props.currentPageId)?.label ?? localizedNavItems[0]?.label ?? localizedHeading,
     [localizedHeading, localizedNavItems, props.currentPageId],
   );
+  const hiddenMobileHeadingHtml = useMemo(
+    () =>
+      toRichHtml(
+        props.heading ? localizeSystemDefaultText(props.heading, locale) : activeNavLabel,
+        localizedHeading,
+      ),
+    [activeNavLabel, localizedHeading, locale, props.heading],
+  );
 
   useEffect(() => {
     if (props.forceMobileViewport) return;
@@ -259,7 +267,10 @@ export default function NavBlock(props: NavBlockProps) {
                 </span>
               </button>
               <div className="min-w-0 flex-1 text-sm font-semibold text-slate-700">
-                <div className="truncate">{props.heading ? localizeSystemDefaultText(props.heading, locale) : activeNavLabel}</div>
+                <div
+                  className="truncate"
+                  dangerouslySetInnerHTML={{ __html: hiddenMobileHeadingHtml }}
+                />
               </div>
             </div>
             {mobileMenuOpen ? (
