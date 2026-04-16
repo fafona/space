@@ -6,12 +6,15 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "Faolla.com",
     short_name: "Faolla",
     description: "Faolla.com mobile workspace",
+    lang: "en",
+    dir: "ltr",
     start_url: "/launch",
     scope: "/",
     display: "standalone",
     orientation: "portrait",
     background_color: "#081121",
     theme_color: "#081121",
+    categories: ["business", "productivity", "utilities"],
     icons: [
       {
         src: "/faolla-app-icon-192.png",
@@ -24,6 +27,47 @@ export default function manifest(): MetadataRoute.Manifest {
         sizes: "512x512",
         type: "image/png",
         purpose: "maskable",
+      },
+    ],
+    shortcuts: [
+      {
+        name: "Merchant Login",
+        short_name: "Login",
+        description: "Open merchant backend sign in",
+        url: "/login",
+        icons: [
+          {
+            src: "/faolla-app-icon-192.png",
+            sizes: "192x192",
+            type: "image/png",
+          },
+        ],
+      },
+      {
+        name: "Platform Home",
+        short_name: "Home",
+        description: "Open the Faolla platform home page",
+        url: "/",
+        icons: [
+          {
+            src: "/faolla-app-icon-192.png",
+            sizes: "192x192",
+            type: "image/png",
+          },
+        ],
+      },
+      {
+        name: "Super Admin",
+        short_name: "Admin",
+        description: "Open super admin sign in",
+        url: "/super-admin/login",
+        icons: [
+          {
+            src: "/faolla-app-icon-192.png",
+            sizes: "192x192",
+            type: "image/png",
+          },
+        ],
       },
     ],
   };
