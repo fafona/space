@@ -1,16 +1,20 @@
-const FAOLLA_SW_VERSION = "faolla-pwa-v20260416-2";
+const FAOLLA_SW_VERSION = "faolla-pwa-v20260416-3";
 const FAOLLA_BADGE_CACHE = "faolla-badge-state-v1";
 const FAOLLA_BADGE_STATE_URL = "/__faolla_badge_state__";
 const FAOLLA_VISIBILITY_STATE_URL = "/__faolla_visibility_state__";
 const FAOLLA_DEFAULT_ICON = "/faolla-app-icon-192.png";
 const FAOLLA_VISIBLE_STATE_TTL_MS = 20_000;
 const FAOLLA_SHELL_CACHE = `faolla-shell-${FAOLLA_SW_VERSION}`;
-const FAOLLA_NAVIGATION_CACHE = `faolla-navigation-${FAOLLA_SW_VERSION}`;
+const FAOLLA_PUBLIC_PAGE_CACHE = `faolla-public-pages-${FAOLLA_SW_VERSION}`;
+const FAOLLA_APP_PAGE_CACHE = `faolla-app-pages-${FAOLLA_SW_VERSION}`;
 const FAOLLA_STATIC_CACHE = `faolla-static-${FAOLLA_SW_VERSION}`;
+const FAOLLA_PUBLIC_PAGE_LIMIT = 18;
+const FAOLLA_APP_PAGE_LIMIT = 6;
 const FAOLLA_PRESERVED_CACHES = new Set([
   FAOLLA_BADGE_CACHE,
   FAOLLA_SHELL_CACHE,
-  FAOLLA_NAVIGATION_CACHE,
+  FAOLLA_PUBLIC_PAGE_CACHE,
+  FAOLLA_APP_PAGE_CACHE,
   FAOLLA_STATIC_CACHE,
 ]);
 const FAOLLA_SHELL_URLS = [
@@ -220,6 +224,50 @@ function normalizeNavigationCacheKey(url) {
   return `${url.origin}${url.pathname}`;
 }
 
+function isMerchantBackendPath(pathname) {
+  return /^\/\d{8}(?:\/|$)/.test(pathname);
+}
+
+function isAuthNavigationPath(pathname) {
+  return (
+    pathname === "/login" ||
+    pathname === "/launch" ||
+    pathname === "/super-admin/login" ||
+    pathname.startsWith("/reset-password") ||
+    pathname.startsWith("/auth/confirm")
+  );
+}
+
+function isAppNavigationPath(pathname) {
+  return pathname === "/admin" || isMerchantBackendPath(pathname) || pathname.startsWith("/super-admin");
+}
+
+function shouldPersistNavigationResponse(response) {
+  if (!response || !response.ok) return false;
+  const contentType = String(response.headers.get("content-type") || "").toLowerCase();
+  if (!contentType.includes("text/html")) return false;
+  const cacheControl = String(response.headers.get("cache-control") || "").toLowerCase();
+  if (cacheControl.includes("no-store") || cacheControl.includes("private")) return false;
+  if (response.headers.has("set-cookie")) return false;
+  return true;
+}
+
+async function trimCacheEntries(cacheName, maxEntries) {
+  if (!Number.isFinite(maxEntries) || maxEntries <= 0) return;
+  const cache = await caches.open(cacheName);
+  const keys = await cache.keys();
+  const overflow = keys.length - maxEntries;
+  if (overflow <= 0) return;
+  await Promise.all(keys.slice(0, overflow).map((key) => cache.delete(key)));
+}
+
+async function persistNavigationResponse(cacheName, cacheKey, response, maxEntries) {
+  if (!shouldPersistNavigationResponse(response)) return;
+  const cache = await caches.open(cacheName);
+  await cache.put(cacheKey, response.clone());
+  await trimCacheEntries(cacheName, maxEntries);
+}
+
 async function cacheStaticAsset(request) {
   const cache = await caches.open(FAOLLA_STATIC_CACHE);
   const cached = await cache.match(request);
@@ -245,21 +293,49 @@ async function cacheStaticAsset(request) {
   }
 }
 
-async function handleNavigationRequest(request, url) {
-  const navigationCache = await caches.open(FAOLLA_NAVIGATION_CACHE);
+async function handleAuthNavigationRequest(request, url) {
+  const shellCache = await caches.open(FAOLLA_SHELL_CACHE);
+  try {
+    return await fetch(request);
+  } catch {
+    const cachedResponse =
+      (await shellCache.match(url.pathname)) ||
+      (url.pathname !== "/login" ? await shellCache.match("/login") : null) ||
+      (await shellCache.match("/"));
+    if (cachedResponse) return cachedResponse;
+    return buildOfflineFallbackResponse(request);
+  }
+}
+
+async function handlePublicNavigationRequest(request, url) {
   const shellCache = await caches.open(FAOLLA_SHELL_CACHE);
   const cacheKey = normalizeNavigationCacheKey(url);
   try {
     const response = await fetch(request);
-    if (response && response.ok) {
-      await navigationCache.put(cacheKey, response.clone());
-    }
+    await persistNavigationResponse(FAOLLA_PUBLIC_PAGE_CACHE, cacheKey, response, FAOLLA_PUBLIC_PAGE_LIMIT);
     return response;
   } catch {
     const cachedResponse =
-      (await navigationCache.match(cacheKey)) ||
+      (await caches.match(cacheKey, { cacheName: FAOLLA_PUBLIC_PAGE_CACHE })) ||
       (await shellCache.match(url.pathname)) ||
       (url.pathname !== "/" ? await shellCache.match("/") : null);
+    if (cachedResponse) return cachedResponse;
+    return buildOfflineFallbackResponse(request);
+  }
+}
+
+async function handleAppNavigationRequest(request, url) {
+  const shellCache = await caches.open(FAOLLA_SHELL_CACHE);
+  const cacheKey = normalizeNavigationCacheKey(url);
+  try {
+    const response = await fetch(request);
+    await persistNavigationResponse(FAOLLA_APP_PAGE_CACHE, cacheKey, response, FAOLLA_APP_PAGE_LIMIT);
+    return response;
+  } catch {
+    const cachedResponse =
+      (await caches.match(cacheKey, { cacheName: FAOLLA_APP_PAGE_CACHE })) ||
+      (await shellCache.match(url.pathname)) ||
+      (await shellCache.match("/login"));
     if (cachedResponse) return cachedResponse;
     return buildOfflineFallbackResponse(request);
   }
@@ -457,7 +533,15 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
 
   if (isNavigationRequest(request, url)) {
-    event.respondWith(handleNavigationRequest(request, url));
+    if (isAuthNavigationPath(url.pathname)) {
+      event.respondWith(handleAuthNavigationRequest(request, url));
+      return;
+    }
+    if (isAppNavigationPath(url.pathname)) {
+      event.respondWith(handleAppNavigationRequest(request, url));
+      return;
+    }
+    event.respondWith(handlePublicNavigationRequest(request, url));
     return;
   }
 
