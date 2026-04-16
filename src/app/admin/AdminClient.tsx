@@ -5002,6 +5002,7 @@ export default function AdminClient({
   const merchantChatBusinessCardSyncPayloadRef = useRef("");
   const supportPeerProfileLoadingIdsRef = useRef(new Set<string>());
   const supportPeerProfileFetchedAtRef = useRef<Record<string, number>>({});
+  const supportPeerProfileLocalMutationAtRef = useRef<Record<string, number>>({});
   const supportNotificationPreferencesKeyRef = useRef("");
   const mobileVisualViewportLayoutHeightRef = useRef(readMobileVisualViewportLayoutHeightCandidate());
   const mobileVisualViewportOrientationRef = useRef(readMobileVisualViewportOrientation());
@@ -10965,6 +10966,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     if (Date.now() - lastFetchedAt < SUPPORT_MERCHANT_PROFILE_REFRESH_TTL_MS) return;
     if (supportPeerProfileLoadingIdsRef.current.has(merchantId)) return;
     let cancelled = false;
+    const requestStartedAt = Date.now();
     supportPeerProfileLoadingIdsRef.current.add(merchantId);
     void (async () => {
       try {
@@ -10978,6 +10980,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             }
           | null;
         if (cancelled || !response.ok) return;
+        if ((supportPeerProfileLocalMutationAtRef.current[merchantId] ?? 0) > requestStartedAt) return;
         supportPeerProfileFetchedAtRef.current[merchantId] = Date.now();
         setSupportPeerProfilesByMerchantId((current) => ({
           ...current,
@@ -11378,6 +11381,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     setMerchantSiteIdOverride(resolvedSiteId);
     if (/^\d{8}$/.test(resolvedSiteId)) {
       try {
+        const requestStartedAt = Date.now();
         const response = await requestMerchantChatBusinessCardById(resolvedSiteId, {
           cache: "no-store",
         });
@@ -11388,6 +11392,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             }
           | null;
         if (response.ok) {
+          if ((supportPeerProfileLocalMutationAtRef.current[resolvedSiteId] ?? 0) > requestStartedAt) {
+            return;
+          }
           supportPeerProfileFetchedAtRef.current[resolvedSiteId] = Date.now();
           setSupportPeerProfilesByMerchantId((current) => ({
             ...current,
@@ -11685,6 +11692,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
     let cancelled = false;
     merchantIdsToWarm.forEach((merchantId) => {
+      const requestStartedAt = Date.now();
       supportPeerProfileLoadingIdsRef.current.add(merchantId);
       void (async () => {
         try {
@@ -11698,6 +11706,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               }
             | null;
           if (cancelled || !response.ok) return;
+          if ((supportPeerProfileLocalMutationAtRef.current[merchantId] ?? 0) > requestStartedAt) return;
           supportPeerProfileFetchedAtRef.current[merchantId] = Date.now();
           setSupportPeerProfilesByMerchantId((current) => ({
             ...current,
@@ -11735,6 +11744,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     if (Date.now() - lastFetchedAt < SUPPORT_MERCHANT_PROFILE_REFRESH_TTL_MS) return;
     if (supportPeerProfileLoadingIdsRef.current.has(merchantId)) return;
     let cancelled = false;
+    const requestStartedAt = Date.now();
     supportPeerProfileLoadingIdsRef.current.add(merchantId);
     void (async () => {
       try {
@@ -11748,6 +11758,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             }
           | null;
         if (cancelled || !response.ok) return;
+        if ((supportPeerProfileLocalMutationAtRef.current[merchantId] ?? 0) > requestStartedAt) return;
         supportPeerProfileFetchedAtRef.current[merchantId] = Date.now();
         setSupportPeerProfilesByMerchantId((current) => ({
           ...current,
@@ -11795,6 +11806,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
     if (supportPeerProfileLoadingIdsRef.current.has(merchantId)) return;
     let cancelled = false;
+    const requestStartedAt = Date.now();
     supportPeerProfileLoadingIdsRef.current.add(merchantId);
     void (async () => {
       try {
@@ -11808,6 +11820,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             }
           | null;
         if (cancelled || !response.ok) return;
+        if ((supportPeerProfileLocalMutationAtRef.current[merchantId] ?? 0) > requestStartedAt) return;
         supportPeerProfileFetchedAtRef.current[merchantId] = Date.now();
         setSupportPeerProfilesByMerchantId((current) => ({
           ...current,
@@ -12765,6 +12778,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     const merchantId = editingSiteId.trim();
     if (/^\d{8}$/.test(merchantId)) {
       try {
+        const requestStartedAt = Date.now();
         const response = await requestMerchantChatBusinessCardById(merchantId, {
           cache: "no-store",
         });
@@ -12775,6 +12789,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             }
           | null;
         if (response.ok) {
+          if ((supportPeerProfileLocalMutationAtRef.current[merchantId] ?? 0) > requestStartedAt) {
+            return;
+          }
           supportPeerProfileFetchedAtRef.current[merchantId] = Date.now();
           setSupportPeerProfilesByMerchantId((current) => ({
             ...current,
@@ -12862,6 +12879,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       updatedAt: new Date().toISOString(),
     };
     const nextProfile = buildSupportPublishedProfileFromSite(nextSite);
+    supportPeerProfileLocalMutationAtRef.current[targetSiteId] = Date.now();
 
     savePlatformState({
       ...platformState,
