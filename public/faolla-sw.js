@@ -1,4 +1,4 @@
-const FAOLLA_SW_VERSION = "faolla-pwa-v20260416-3";
+const FAOLLA_SW_VERSION = "faolla-pwa-v20260416-4";
 const FAOLLA_BADGE_CACHE = "faolla-badge-state-v1";
 const FAOLLA_BADGE_STATE_URL = "/__faolla_badge_state__";
 const FAOLLA_VISIBILITY_STATE_URL = "/__faolla_visibility_state__";
@@ -10,6 +10,7 @@ const FAOLLA_APP_PAGE_CACHE = `faolla-app-pages-${FAOLLA_SW_VERSION}`;
 const FAOLLA_STATIC_CACHE = `faolla-static-${FAOLLA_SW_VERSION}`;
 const FAOLLA_PUBLIC_PAGE_LIMIT = 18;
 const FAOLLA_APP_PAGE_LIMIT = 6;
+const FAOLLA_RECENT_ROUTE_WARM_LIMIT = 6;
 const FAOLLA_PRESERVED_CACHES = new Set([
   FAOLLA_BADGE_CACHE,
   FAOLLA_SHELL_CACHE,
@@ -20,6 +21,7 @@ const FAOLLA_PRESERVED_CACHES = new Set([
 const FAOLLA_SHELL_URLS = [
   "/",
   "/login",
+  "/pwa",
   "/super-admin/login",
   "/offline",
   "/manifest.webmanifest",
@@ -252,6 +254,48 @@ function shouldPersistNavigationResponse(response) {
   return true;
 }
 
+function normalizeWarmRoutePath(input) {
+  const raw = String(input || "").trim();
+  if (!raw.startsWith("/")) return "";
+  if (raw.startsWith("/api/")) return "";
+  if (raw.startsWith("/_next/")) return "";
+  if (raw === "/launch" || raw === "/offline" || raw === "/pwa") return "";
+  if (raw === "/login" || raw === "/super-admin/login") return "";
+  if (raw.startsWith("/reset-password")) return "";
+  if (raw.startsWith("/auth/confirm")) return "";
+  return raw;
+}
+
+async function warmRecentRoutes(paths) {
+  if (!Array.isArray(paths) || !paths.length) return;
+  const uniquePaths = [...new Set(paths.map(normalizeWarmRoutePath).filter(Boolean))].slice(0, FAOLLA_RECENT_ROUTE_WARM_LIMIT);
+  await Promise.all(
+    uniquePaths.map(async (path) => {
+      try {
+        const url = new URL(path, self.location.origin);
+        const response = await fetch(
+          new Request(url.toString(), {
+            method: "GET",
+            headers: {
+              accept: "text/html",
+            },
+            credentials: "same-origin",
+          }),
+        );
+        if (!shouldPersistNavigationResponse(response)) return;
+        const cacheKey = normalizeNavigationCacheKey(url);
+        if (isAppNavigationPath(url.pathname)) {
+          await persistNavigationResponse(FAOLLA_APP_PAGE_CACHE, cacheKey, response, FAOLLA_APP_PAGE_LIMIT);
+          return;
+        }
+        await persistNavigationResponse(FAOLLA_PUBLIC_PAGE_CACHE, cacheKey, response, FAOLLA_PUBLIC_PAGE_LIMIT);
+      } catch {
+        // Ignore individual route warm failures.
+      }
+    }),
+  );
+}
+
 async function trimCacheEntries(cacheName, maxEntries) {
   if (!Number.isFinite(maxEntries) || maxEntries <= 0) return;
   const cache = await caches.open(cacheName);
@@ -454,6 +498,10 @@ self.addEventListener("message", (event) => {
   }
   if (data.type === "SYNC_VISIBILITY") {
     event.waitUntil(writeVisibilityState(data.visible));
+    return;
+  }
+  if (data.type === "WARM_RECENT_ROUTES") {
+    event.waitUntil(warmRecentRoutes(data.routes));
   }
 });
 

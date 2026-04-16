@@ -4,12 +4,14 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "@/components/I18nProvider";
+import { persistRecentPwaRoute, readRecentPwaRoutes } from "@/lib/pwaRecentRoutes";
 
 const FAOLLA_SERVICE_WORKER_PATH = "/faolla-sw.js";
 const PWA_UPDATE_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 const PWA_INSTALL_DISMISS_STORAGE_KEY = "merchant-space:pwa-install-dismissed:v1";
 const PWA_INSTALL_COMPLETED_STORAGE_KEY = "merchant-space:pwa-install-completed:v1";
 const PWA_INSTALL_DISMISS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const PWA_RECENT_ROUTE_WARM_SESSION_KEY = "merchant-space:pwa-recent-routes-warmed:v1";
 
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
@@ -173,6 +175,11 @@ export default function PwaBootstrap() {
   const waitingWorkerRef = useRef<ServiceWorker | null>(null);
   const deferredInstallPromptRef = useRef<BeforeInstallPromptEvent | null>(null);
   const reloadTriggeredRef = useRef(false);
+  const registrationRef = useRef<ServiceWorkerRegistration | null>(null);
+
+  useEffect(() => {
+    persistRecentPwaRoute(pathname);
+  }, [pathname]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -253,6 +260,32 @@ export default function PwaBootstrap() {
     let cancelled = false;
     let updateTimer: number | null = null;
 
+    const warmRecentRoutes = (registration: ServiceWorkerRegistration) => {
+      if (typeof window === "undefined" || navigator.onLine === false) return;
+      try {
+        if (window.sessionStorage.getItem(PWA_RECENT_ROUTE_WARM_SESSION_KEY) === "1") return;
+      } catch {
+        // Ignore sessionStorage failures.
+      }
+      const routes = readRecentPwaRoutes()
+        .map((entry) => entry.path)
+        .filter(Boolean);
+      if (!routes.length) return;
+      const targetWorker =
+        registration.active ??
+        navigator.serviceWorker.controller ??
+        registration.waiting ??
+        registration.installing ??
+        null;
+      if (!targetWorker) return;
+      targetWorker.postMessage({ type: "WARM_RECENT_ROUTES", routes });
+      try {
+        window.sessionStorage.setItem(PWA_RECENT_ROUTE_WARM_SESSION_KEY, "1");
+      } catch {
+        // Ignore sessionStorage failures.
+      }
+    };
+
     const markWaitingWorker = (worker: ServiceWorker | null) => {
       waitingWorkerRef.current = worker;
       setUpdateReady(Boolean(worker));
@@ -297,12 +330,15 @@ export default function PwaBootstrap() {
       })
       .then((registration) => {
         if (cancelled) return;
+        registrationRef.current = registration;
         bindRegistration(registration);
+        warmRecentRoutes(registration);
       })
       .catch(() => undefined);
 
     return () => {
       cancelled = true;
+      registrationRef.current = null;
       navigator.serviceWorker.removeEventListener("controllerchange", handleControllerChange);
       if (updateTimer) {
         window.clearInterval(updateTimer);

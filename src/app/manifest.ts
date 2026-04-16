@@ -57,6 +57,19 @@ export default function manifest(): MetadataRoute.Manifest {
         ],
       },
       {
+        name: "PWA Settings",
+        short_name: "PWA",
+        description: "Open the Faolla PWA settings page",
+        url: "/pwa",
+        icons: [
+          {
+            src: "/faolla-app-icon-192.png",
+            sizes: "192x192",
+            type: "image/png",
+          },
+        ],
+      },
+      {
         name: "Super Admin",
         short_name: "Admin",
         description: "Open super admin sign in",
