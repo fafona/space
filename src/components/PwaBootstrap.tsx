@@ -7,6 +7,14 @@ import { useI18n } from "@/components/I18nProvider";
 
 const FAOLLA_SERVICE_WORKER_PATH = "/faolla-sw.js";
 const PWA_UPDATE_CHECK_INTERVAL_MS = 30 * 60 * 1000;
+const PWA_INSTALL_DISMISS_STORAGE_KEY = "merchant-space:pwa-install-dismissed:v1";
+const PWA_INSTALL_COMPLETED_STORAGE_KEY = "merchant-space:pwa-install-completed:v1";
+const PWA_INSTALL_DISMISS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+type BeforeInstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
+};
 
 type PwaCopy = {
   offlineTitle: string;
@@ -16,6 +24,11 @@ type PwaCopy = {
   updateBody: string;
   updateAction: string;
   dismissAction: string;
+  installTitle: string;
+  installBody: string;
+  installAction: string;
+  iosInstallBody: string;
+  iosInstallAction: string;
 };
 
 function resolvePwaCopy(locale: string): PwaCopy {
@@ -30,6 +43,11 @@ function resolvePwaCopy(locale: string): PwaCopy {
       updateBody: "立即更新后会刷新页面，并切换到最新版本。",
       updateAction: "立即更新",
       dismissAction: "稍后",
+      installTitle: "添加到主屏幕",
+      installBody: "安装后可像 App 一样从桌面打开，并保留更新与离线能力。",
+      installAction: "立即安装",
+      iosInstallBody: "在 Safari 点分享，再选“添加到主屏幕”，就能像 App 一样打开。",
+      iosInstallAction: "知道了",
     };
   }
   if (language === "es") {
@@ -41,6 +59,11 @@ function resolvePwaCopy(locale: string): PwaCopy {
       updateBody: "Actualiza ahora para recargar la página con la versión más reciente.",
       updateAction: "Actualizar",
       dismissAction: "Luego",
+      installTitle: "Instalar como app",
+      installBody: "Instala esta web para abrirla desde el inicio con una experiencia más parecida a una app.",
+      installAction: "Instalar",
+      iosInstallBody: "En Safari, toca Compartir y luego \"Añadir a pantalla de inicio\" para usarla como app.",
+      iosInstallAction: "Entendido",
     };
   }
   return {
@@ -51,6 +74,11 @@ function resolvePwaCopy(locale: string): PwaCopy {
     updateBody: "Update now to reload the page with the latest version.",
     updateAction: "Update now",
     dismissAction: "Later",
+    installTitle: "Install as app",
+    installBody: "Install this site to open it from your home screen with a more app-like experience.",
+    installAction: "Install",
+    iosInstallBody: "In Safari, tap Share and choose Add to Home Screen to use it like an app.",
+    iosInstallAction: "Got it",
   };
 }
 
@@ -58,6 +86,53 @@ function isStandaloneDisplayMode() {
   if (typeof window === "undefined" || typeof navigator === "undefined") return false;
   const navigatorWithStandalone = navigator as Navigator & { standalone?: boolean };
   return window.matchMedia?.("(display-mode: standalone)").matches || navigatorWithStandalone.standalone === true;
+}
+
+function isMobileSafariBrowser() {
+  if (typeof navigator === "undefined") return false;
+  const userAgent = navigator.userAgent || "";
+  const isAppleMobile = /iPhone|iPad|iPod/i.test(userAgent);
+  if (!isAppleMobile) return false;
+  return /Safari/i.test(userAgent) && !/CriOS|FxiOS|EdgiOS|OPiOS|DuckDuckGo/i.test(userAgent);
+}
+
+function hasRecentInstallDismissal() {
+  if (typeof window === "undefined") return false;
+  try {
+    const raw = window.localStorage.getItem(PWA_INSTALL_DISMISS_STORAGE_KEY) || "";
+    const dismissedAt = Number(raw || 0);
+    return Number.isFinite(dismissedAt) && dismissedAt > 0 && Date.now() - dismissedAt < PWA_INSTALL_DISMISS_TTL_MS;
+  } catch {
+    return false;
+  }
+}
+
+function writeInstallDismissal() {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(PWA_INSTALL_DISMISS_STORAGE_KEY, String(Date.now()));
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+function markInstallCompleted() {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(PWA_INSTALL_COMPLETED_STORAGE_KEY, "1");
+    window.localStorage.removeItem(PWA_INSTALL_DISMISS_STORAGE_KEY);
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+function hasCompletedInstall() {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(PWA_INSTALL_COMPLETED_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
 }
 
 export default function PwaBootstrap() {
@@ -74,7 +149,10 @@ export default function PwaBootstrap() {
       ? window.matchMedia("(max-width: 767px)").matches
       : false,
   );
+  const [installPromptReady, setInstallPromptReady] = useState(false);
+  const [showIosInstallGuide, setShowIosInstallGuide] = useState(false);
   const waitingWorkerRef = useRef<ServiceWorker | null>(null);
+  const deferredInstallPromptRef = useRef<BeforeInstallPromptEvent | null>(null);
   const reloadTriggeredRef = useRef(false);
 
   useEffect(() => {
@@ -99,6 +177,56 @@ export default function PwaBootstrap() {
       mediaQuery.removeEventListener("change", handleChange);
     };
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const syncInstallVisibility = () => {
+      if (isStandaloneDisplayMode()) {
+        markInstallCompleted();
+        setInstallPromptReady(false);
+        setShowIosInstallGuide(false);
+        return;
+      }
+
+      const dismissedRecently = hasRecentInstallDismissal();
+      const alreadyInstalled = hasCompletedInstall();
+      if (dismissedRecently || alreadyInstalled) {
+        setInstallPromptReady(false);
+        setShowIosInstallGuide(false);
+        return;
+      }
+
+      setShowIosInstallGuide(isMobileSafariBrowser());
+    };
+
+    const visibilityFrame = window.requestAnimationFrame(syncInstallVisibility);
+
+    const handleBeforeInstallPrompt = (event: Event) => {
+      const promptEvent = event as BeforeInstallPromptEvent;
+      promptEvent.preventDefault();
+      deferredInstallPromptRef.current = promptEvent;
+      if (!hasRecentInstallDismissal() && !hasCompletedInstall()) {
+        setInstallPromptReady(true);
+      }
+    };
+
+    const handleAppInstalled = () => {
+      deferredInstallPromptRef.current = null;
+      setInstallPromptReady(false);
+      setShowIosInstallGuide(false);
+      markInstallCompleted();
+    };
+
+    window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt as EventListener);
+    window.addEventListener("appinstalled", handleAppInstalled);
+
+    return () => {
+      window.cancelAnimationFrame(visibilityFrame);
+      window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt as EventListener);
+      window.removeEventListener("appinstalled", handleAppInstalled);
+    };
+  }, [pathname]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
@@ -175,6 +303,28 @@ export default function PwaBootstrap() {
     setUpdateReady(false);
   };
 
+  const dismissInstallPrompt = () => {
+    writeInstallDismissal();
+    deferredInstallPromptRef.current = null;
+    setInstallPromptReady(false);
+    setShowIosInstallGuide(false);
+  };
+
+  const applyInstallPrompt = async () => {
+    const target = deferredInstallPromptRef.current;
+    if (!target) return;
+    await target.prompt();
+    const choice = await target.userChoice.catch(() => null);
+    if (choice?.outcome === "accepted") {
+      markInstallCompleted();
+      setInstallPromptReady(false);
+      setShowIosInstallGuide(false);
+      return;
+    }
+    writeInstallDismissal();
+    setInstallPromptReady(false);
+  };
+
   const showOfflineBanner = isOffline && typeof window !== "undefined" && window.location.pathname !== "/offline";
   const showUpdatePrompt = updateReady;
   const inStandalone = typeof window !== "undefined" ? isStandaloneDisplayMode() : false;
@@ -184,11 +334,14 @@ export default function PwaBootstrap() {
     : inStandalone
       ? "bottom-[calc(env(safe-area-inset-bottom)+1rem)]"
       : "bottom-4";
+  const showInstallPrompt = !inStandalone && !showUpdatePrompt && (installPromptReady || showIosInstallGuide);
 
-  if (!showOfflineBanner && !showUpdatePrompt) return null;
+  if (!showOfflineBanner && !showUpdatePrompt && !showInstallPrompt) return null;
 
   return (
-    <div className={`pointer-events-none fixed inset-x-0 z-[2147482500] mx-auto flex max-w-xl flex-col gap-3 px-3 ${promptBottomClassName}`}>
+    <div
+      className={`pointer-events-none fixed inset-x-0 z-[2147482500] mx-auto flex max-w-xl flex-col gap-3 px-3 ${promptBottomClassName}`}
+    >
       {showOfflineBanner ? (
         <div className="pointer-events-auto rounded-2xl border border-amber-300 bg-amber-50/95 px-4 py-3 text-slate-900 shadow-[0_16px_40px_rgba(15,23,42,0.18)] backdrop-blur">
           <div className="text-sm font-semibold">{copy.offlineTitle}</div>
@@ -240,6 +393,46 @@ export default function PwaBootstrap() {
               className="rounded-full border border-white/14 bg-white/6 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-white/24 hover:bg-white/10 disabled:opacity-60"
             >
               {copy.dismissAction}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {showInstallPrompt ? (
+        <div
+          className={`pointer-events-auto rounded-[1.4rem] border border-slate-200 bg-white/95 px-4 py-3 text-slate-900 shadow-[0_18px_42px_rgba(15,23,42,0.18)] backdrop-blur ${
+            isMobileViewport ? "mx-auto w-full max-w-sm" : "ml-auto w-full max-w-md"
+          }`}
+        >
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-950 text-sm text-white">
+              +
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold leading-5">{copy.installTitle}</div>
+              <div className="mt-1 text-[11px] leading-5 text-slate-600">
+                {showIosInstallGuide ? copy.iosInstallBody : copy.installBody}
+              </div>
+            </div>
+          </div>
+          <div className="mt-3 flex items-center gap-2">
+            {!showIosInstallGuide ? (
+              <button
+                type="button"
+                onClick={() => {
+                  void applyInstallPrompt();
+                }}
+                className="rounded-full bg-slate-950 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-800"
+              >
+                {copy.installAction}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={dismissInstallPrompt}
+              className="rounded-full border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-400 hover:text-slate-900"
+            >
+              {showIosInstallGuide ? copy.iosInstallAction : copy.dismissAction}
             </button>
           </div>
         </div>
