@@ -4,10 +4,16 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "@/components/I18nProvider";
-import { persistRecentPwaRoute, readRecentPwaRoutes } from "@/lib/pwaRecentRoutes";
+import {
+  collectPwaWarmRoutes,
+  persistRecentPwaRoute,
+  resolvePreferredPwaLaunchPath,
+  shouldAutoWarmPwaRoutes,
+} from "@/lib/pwaRecentRoutes";
 
 const FAOLLA_SERVICE_WORKER_PATH = "/faolla-sw.js";
 const PWA_UPDATE_CHECK_INTERVAL_MS = 30 * 60 * 1000;
+const PWA_UPDATE_RESUME_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const PWA_INSTALL_DISMISS_STORAGE_KEY = "merchant-space:pwa-install-dismissed:v1";
 const PWA_INSTALL_COMPLETED_STORAGE_KEY = "merchant-space:pwa-install-completed:v1";
 const PWA_INSTALL_DISMISS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -176,9 +182,33 @@ export default function PwaBootstrap() {
   const deferredInstallPromptRef = useRef<BeforeInstallPromptEvent | null>(null);
   const reloadTriggeredRef = useRef(false);
   const registrationRef = useRef<ServiceWorkerRegistration | null>(null);
+  const lastUpdateCheckAtRef = useRef(0);
+  const latestPathnameRef = useRef(pathname);
+
+  const postLaunchTargetToWorker = (registration: ServiceWorkerRegistration | null, path: string) => {
+    if (typeof window === "undefined" || typeof navigator === "undefined") return;
+    if (!registration || !path) return;
+    const targetWorker =
+      registration.active ??
+      navigator.serviceWorker.controller ??
+      registration.waiting ??
+      registration.installing ??
+      null;
+    if (!targetWorker) return;
+    targetWorker.postMessage({ type: "SYNC_LAUNCH_TARGET", path });
+  };
 
   useEffect(() => {
     persistRecentPwaRoute(pathname);
+  }, [pathname]);
+
+  useEffect(() => {
+    latestPathnameRef.current = pathname;
+  }, [pathname]);
+
+  useEffect(() => {
+    const launchTarget = resolvePreferredPwaLaunchPath(pathname);
+    postLaunchTargetToWorker(registrationRef.current, launchTarget);
   }, [pathname]);
 
   useEffect(() => {
@@ -261,15 +291,13 @@ export default function PwaBootstrap() {
     let updateTimer: number | null = null;
 
     const warmRecentRoutes = (registration: ServiceWorkerRegistration) => {
-      if (typeof window === "undefined" || navigator.onLine === false) return;
+      if (typeof window === "undefined" || navigator.onLine === false || !shouldAutoWarmPwaRoutes()) return;
       try {
         if (window.sessionStorage.getItem(PWA_RECENT_ROUTE_WARM_SESSION_KEY) === "1") return;
       } catch {
         // Ignore sessionStorage failures.
       }
-      const routes = readRecentPwaRoutes()
-        .map((entry) => entry.path)
-        .filter(Boolean);
+      const routes = collectPwaWarmRoutes(latestPathnameRef.current);
       if (!routes.length) return;
       const targetWorker =
         registration.active ??
@@ -284,6 +312,16 @@ export default function PwaBootstrap() {
       } catch {
         // Ignore sessionStorage failures.
       }
+    };
+
+    const silentlyCheckForUpdates = (registration: ServiceWorkerRegistration, force = false) => {
+      if (navigator.onLine === false) return;
+      const now = Date.now();
+      if (!force && now - lastUpdateCheckAtRef.current < PWA_UPDATE_RESUME_CHECK_INTERVAL_MS) {
+        return;
+      }
+      lastUpdateCheckAtRef.current = now;
+      void registration.update().catch(() => undefined);
     };
 
     const markWaitingWorker = (worker: ServiceWorker | null) => {
@@ -310,8 +348,9 @@ export default function PwaBootstrap() {
         trackInstallingWorker(registration.installing);
       });
 
+      silentlyCheckForUpdates(registration, true);
       updateTimer = window.setInterval(() => {
-        void registration.update().catch(() => undefined);
+        silentlyCheckForUpdates(registration, true);
       }, PWA_UPDATE_CHECK_INTERVAL_MS);
     };
 
@@ -321,7 +360,18 @@ export default function PwaBootstrap() {
       window.location.reload();
     };
 
+    const handleResume = () => {
+      if (document.visibilityState === "hidden") return;
+      const registration = registrationRef.current;
+      if (!registration) return;
+      silentlyCheckForUpdates(registration);
+      warmRecentRoutes(registration);
+    };
+
     navigator.serviceWorker.addEventListener("controllerchange", handleControllerChange);
+    window.addEventListener("focus", handleResume);
+    window.addEventListener("online", handleResume);
+    document.addEventListener("visibilitychange", handleResume);
 
     void navigator.serviceWorker
       .register(FAOLLA_SERVICE_WORKER_PATH, {
@@ -332,6 +382,7 @@ export default function PwaBootstrap() {
         if (cancelled) return;
         registrationRef.current = registration;
         bindRegistration(registration);
+        postLaunchTargetToWorker(registration, resolvePreferredPwaLaunchPath(latestPathnameRef.current));
         warmRecentRoutes(registration);
       })
       .catch(() => undefined);
@@ -340,6 +391,9 @@ export default function PwaBootstrap() {
       cancelled = true;
       registrationRef.current = null;
       navigator.serviceWorker.removeEventListener("controllerchange", handleControllerChange);
+      window.removeEventListener("focus", handleResume);
+      window.removeEventListener("online", handleResume);
+      document.removeEventListener("visibilitychange", handleResume);
       if (updateTimer) {
         window.clearInterval(updateTimer);
       }

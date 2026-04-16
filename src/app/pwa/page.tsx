@@ -3,10 +3,23 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "@/components/I18nProvider";
-import { clearRecentPwaRoutes, readRecentPwaRoutes, type PwaRecentRouteRecord } from "@/lib/pwaRecentRoutes";
+import { readRecentMerchantLaunchMerchantId } from "@/lib/merchantLaunchState";
+import {
+  clearRecentPwaRoutes,
+  collectPwaWarmRoutes,
+  readRecentPwaRoutes,
+  type PwaRecentRouteRecord,
+} from "@/lib/pwaRecentRoutes";
+import { buildMerchantBackendHref } from "@/lib/siteRouting";
 
 const PWA_INSTALL_DISMISS_STORAGE_KEY = "merchant-space:pwa-install-dismissed:v1";
 const PWA_INSTALL_COMPLETED_STORAGE_KEY = "merchant-space:pwa-install-completed:v1";
+const PWA_LAUNCH_TARGET_URL = "/__faolla_launch_target__";
+
+type PwaCacheSummary = {
+  name: string;
+  count: number;
+};
 
 type PwaSettingsCopy = {
   title: string;
@@ -22,6 +35,15 @@ type PwaSettingsCopy = {
   cacheLabel: string;
   cacheEmpty: string;
   cacheCountSuffix: string;
+  cacheEntrySuffix: string;
+  cacheRefreshAction: string;
+  cacheClearPagesAction: string;
+  cachePagesCleared: string;
+  cachePagesClearFailed: string;
+  launchTargetLabel: string;
+  launchTargetEmpty: string;
+  recentWorkspaceLabel: string;
+  recentWorkspaceEmpty: string;
   recentLabel: string;
   recentEmpty: string;
   recentWarmAction: string;
@@ -55,10 +77,10 @@ function resolvePwaSettingsCopy(locale: string): PwaSettingsCopy {
   if (language === "zh") {
     return {
       title: "PWA 设置",
-      body: "这里可以查看当前安装状态、缓存情况，并手动检查更新或清理缓存。",
+      body: "这里可以查看安装状态、缓存概况、启动目标，并手动管理更新和缓存。",
       installLabel: "安装状态",
-      installInstalled: "已作为应用安装",
-      installBrowser: "当前仍以浏览器网页方式打开",
+      installInstalled: "已安装为 App",
+      installBrowser: "当前仍以浏览器方式打开",
       installIosReady: "可在 Safari 中手动添加到主屏幕",
       workerLabel: "Service Worker",
       workerActive: "已接管当前页面",
@@ -67,6 +89,15 @@ function resolvePwaSettingsCopy(locale: string): PwaSettingsCopy {
       cacheLabel: "缓存",
       cacheEmpty: "当前没有 Faolla 缓存",
       cacheCountSuffix: "个缓存",
+      cacheEntrySuffix: "条记录",
+      cacheRefreshAction: "刷新诊断",
+      cacheClearPagesAction: "清理页面缓存",
+      cachePagesCleared: "页面缓存已清理。",
+      cachePagesClearFailed: "页面缓存清理失败，请稍后重试。",
+      launchTargetLabel: "启动目标",
+      launchTargetEmpty: "当前还没有记录离线启动目标",
+      recentWorkspaceLabel: "最近工作区",
+      recentWorkspaceEmpty: "当前还没有最近工作区记录",
       recentLabel: "最近访问页",
       recentEmpty: "当前还没有最近访问记录",
       recentWarmAction: "预热最近页面",
@@ -80,12 +111,12 @@ function resolvePwaSettingsCopy(locale: string): PwaSettingsCopy {
       updateAction: "检查更新",
       applyUpdateAction: "应用更新",
       refreshAction: "刷新页面",
-      clearCacheAction: "清理缓存",
+      clearCacheAction: "清理全部缓存",
       resetInstallAction: "重新显示安装引导",
       offlineAction: "打开离线页",
       backAction: "返回首页",
       updateChecking: "正在检查新版本…",
-      updateReady: "已检测到新版本，可立即应用。",
+      updateReady: "检测到新版本，可以立即应用。",
       updateLatest: "当前已经是最新版本。",
       updateFailed: "检查更新失败，请稍后重试。",
       cacheCleared: "Faolla 缓存已清理。",
@@ -97,48 +128,57 @@ function resolvePwaSettingsCopy(locale: string): PwaSettingsCopy {
   if (language === "es") {
     return {
       title: "Ajustes PWA",
-      body: "Aquí puedes revisar la instalación, la caché y gestionar actualizaciones manualmente.",
-      installLabel: "Instalación",
-      installInstalled: "La app ya está instalada",
-      installBrowser: "Ahora mismo se está usando en modo navegador",
-      installIosReady: "Puedes añadirla manualmente a la pantalla de inicio en Safari",
+      body: "Aqui puedes revisar la instalacion, el estado de cache, el destino de arranque y gestionar actualizaciones manualmente.",
+      installLabel: "Instalacion",
+      installInstalled: "La app ya esta instalada",
+      installBrowser: "Ahora mismo se esta usando en modo navegador",
+      installIosReady: "Puedes anadirla manualmente a la pantalla de inicio en Safari",
       workerLabel: "Service Worker",
-      workerActive: "La página ya está controlada",
-      workerWaiting: "Hay una versión nueva esperando aplicarse",
-      workerMissing: "No está registrado ahora mismo",
-      cacheLabel: "Caché",
-      cacheEmpty: "No hay caché de Faolla disponible",
-      cacheCountSuffix: "cachés",
-      recentLabel: "Páginas recientes",
-      recentEmpty: "Todavía no hay páginas recientes registradas",
+      workerActive: "La pagina ya esta controlada",
+      workerWaiting: "Hay una version nueva esperando aplicarse",
+      workerMissing: "No esta registrado ahora mismo",
+      cacheLabel: "Cache",
+      cacheEmpty: "No hay cache de Faolla disponible",
+      cacheCountSuffix: "caches",
+      cacheEntrySuffix: "entradas",
+      cacheRefreshAction: "Actualizar diagnostico",
+      cacheClearPagesAction: "Limpiar cache de paginas",
+      cachePagesCleared: "La cache de paginas se ha limpiado.",
+      cachePagesClearFailed: "No se pudo limpiar la cache de paginas. Intentalo de nuevo.",
+      launchTargetLabel: "Destino de arranque",
+      launchTargetEmpty: "Todavia no hay un destino de arranque guardado",
+      recentWorkspaceLabel: "Ultimo panel",
+      recentWorkspaceEmpty: "Todavia no hay un panel reciente guardado",
+      recentLabel: "Paginas recientes",
+      recentEmpty: "Todavia no hay paginas recientes registradas",
       recentWarmAction: "Precargar recientes",
       recentClearAction: "Borrar recientes",
-      recentWarmReady: "Las páginas recientes se han enviado al Service Worker para precarga.",
-      recentWarmFailed: "No se pudieron precargar las páginas recientes. Inténtalo de nuevo.",
+      recentWarmReady: "Las paginas recientes se han enviado al Service Worker para precarga.",
+      recentWarmFailed: "No se pudieron precargar las paginas recientes. Intentalo de nuevo.",
       recentAppBadge: "Panel",
-      recentPublicBadge: "Pública",
+      recentPublicBadge: "Publica",
       hintTitle: "Consejo",
-      hintBody: "Si limpias la caché, las páginas guardadas para uso offline se volverán a descargar al abrirlas con conexión.",
+      hintBody: "Si limpias la cache, las paginas guardadas para uso offline se descargaran otra vez cuando las abras con conexion.",
       updateAction: "Buscar actualizaciones",
-      applyUpdateAction: "Aplicar actualización",
+      applyUpdateAction: "Aplicar actualizacion",
       refreshAction: "Recargar",
-      clearCacheAction: "Limpiar caché",
-      resetInstallAction: "Mostrar instalación otra vez",
+      clearCacheAction: "Limpiar toda la cache",
+      resetInstallAction: "Mostrar instalacion otra vez",
       offlineAction: "Abrir modo offline",
       backAction: "Volver al inicio",
-      updateChecking: "Buscando una versión nueva…",
-      updateReady: "Se ha encontrado una versión nueva y ya se puede aplicar.",
-      updateLatest: "Ya estás en la versión más reciente.",
-      updateFailed: "No se pudo comprobar la actualización. Inténtalo de nuevo.",
-      cacheCleared: "La caché de Faolla se ha limpiado.",
-      cacheClearFailed: "No se pudo limpiar la caché. Inténtalo de nuevo.",
-      installReset: "La guía de instalación se ha reactivado para la próxima visita.",
+      updateChecking: "Buscando una version nueva…",
+      updateReady: "Se ha encontrado una version nueva y ya se puede aplicar.",
+      updateLatest: "Ya estas en la version mas reciente.",
+      updateFailed: "No se pudo comprobar la actualizacion. Intentalo de nuevo.",
+      cacheCleared: "La cache de Faolla se ha limpiado.",
+      cacheClearFailed: "No se pudo limpiar la cache. Intentalo de nuevo.",
+      installReset: "La guia de instalacion se ha reactivado para la proxima visita.",
     };
   }
 
   return {
     title: "PWA Settings",
-    body: "Review installation state, cached resources, and manually manage updates from here.",
+    body: "Review installation state, cache diagnostics, launch target, and manually manage updates from here.",
     installLabel: "Install status",
     installInstalled: "Installed as an app",
     installBrowser: "Currently running in the browser",
@@ -150,6 +190,15 @@ function resolvePwaSettingsCopy(locale: string): PwaSettingsCopy {
     cacheLabel: "Cache",
     cacheEmpty: "No Faolla caches are available right now",
     cacheCountSuffix: "caches",
+    cacheEntrySuffix: "entries",
+    cacheRefreshAction: "Refresh diagnostics",
+    cacheClearPagesAction: "Clear page caches",
+    cachePagesCleared: "Page caches were cleared.",
+    cachePagesClearFailed: "Page cache clearing failed. Please try again later.",
+    launchTargetLabel: "Launch target",
+    launchTargetEmpty: "No offline launch target has been recorded yet.",
+    recentWorkspaceLabel: "Recent workspace",
+    recentWorkspaceEmpty: "No recent workspace has been recorded yet.",
     recentLabel: "Recent pages",
     recentEmpty: "No recent pages have been recorded yet",
     recentWarmAction: "Warm recent pages",
@@ -163,7 +212,7 @@ function resolvePwaSettingsCopy(locale: string): PwaSettingsCopy {
     updateAction: "Check for updates",
     applyUpdateAction: "Apply update",
     refreshAction: "Refresh page",
-    clearCacheAction: "Clear cache",
+    clearCacheAction: "Clear all caches",
     resetInstallAction: "Show install guide again",
     offlineAction: "Open offline page",
     backAction: "Back to home",
@@ -191,6 +240,46 @@ function isMobileSafariBrowser() {
   return /Safari/i.test(userAgent) && !/CriOS|FxiOS|EdgiOS|OPiOS|DuckDuckGo/i.test(userAgent);
 }
 
+async function readFaollaCacheSummary() {
+  if (typeof window === "undefined" || !("caches" in window)) return [] as PwaCacheSummary[];
+  const keys = (await caches.keys().catch(() => []))
+    .filter((key) => key.startsWith("faolla-"))
+    .sort();
+  const summaries = await Promise.all(
+    keys.map(async (name) => {
+      const cache = await caches.open(name);
+      const entries = await cache.keys();
+      return { name, count: entries.length };
+    }),
+  );
+  return summaries;
+}
+
+async function readLaunchTargetFromCache() {
+  if (typeof window === "undefined" || !("caches" in window)) return "";
+  const cacheKeys = await caches.keys().catch(() => []);
+  for (const cacheName of cacheKeys) {
+    if (!cacheName.startsWith("faolla-")) continue;
+    const cache = await caches.open(cacheName);
+    const response = await cache.match(PWA_LAUNCH_TARGET_URL);
+    if (!response) continue;
+    const payload = await response.json().catch(() => null);
+    const path = String(payload?.path ?? "").trim();
+    if (path.startsWith("/")) return path;
+  }
+  return "";
+}
+
+async function clearFaollaPageCaches() {
+  if (typeof window === "undefined" || !("caches" in window)) return;
+  const keys = await caches.keys();
+  await Promise.all(
+    keys
+      .filter((key) => key.startsWith("faolla-public-pages-") || key.startsWith("faolla-app-pages-"))
+      .map((key) => caches.delete(key)),
+  );
+}
+
 type WorkerState = "active" | "waiting" | "missing";
 
 export default function PwaSettingsPage() {
@@ -199,14 +288,29 @@ export default function PwaSettingsPage() {
   const [installed, setInstalled] = useState(false);
   const [iosInstallReady, setIosInstallReady] = useState(false);
   const [workerState, setWorkerState] = useState<WorkerState>("missing");
-  const [cacheNames, setCacheNames] = useState<string[]>([]);
+  const [cacheSummary, setCacheSummary] = useState<PwaCacheSummary[]>([]);
+  const [launchTarget, setLaunchTarget] = useState("");
+  const [recentWorkspaceHref, setRecentWorkspaceHref] = useState("");
   const [recentRoutes, setRecentRoutes] = useState<PwaRecentRouteRecord[]>([]);
   const [statusMessage, setStatusMessage] = useState("");
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const [isApplyingUpdate, setIsApplyingUpdate] = useState(false);
   const [isClearingCache, setIsClearingCache] = useState(false);
+  const [isRefreshingDiagnostics, setIsRefreshingDiagnostics] = useState(false);
   const [isWarmingRecentRoutes, setIsWarmingRecentRoutes] = useState(false);
   const registrationRef = useRef<ServiceWorkerRegistration | null>(null);
+
+  const syncDiagnostics = async () => {
+    const [nextCacheSummary, nextLaunchTarget] = await Promise.all([
+      readFaollaCacheSummary(),
+      readLaunchTargetFromCache(),
+    ]);
+    setCacheSummary(nextCacheSummary);
+    setLaunchTarget(nextLaunchTarget);
+    const recentMerchantId = readRecentMerchantLaunchMerchantId();
+    setRecentWorkspaceHref(recentMerchantId ? buildMerchantBackendHref(recentMerchantId) : "");
+    setRecentRoutes(readRecentPwaRoutes());
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -232,13 +336,8 @@ export default function PwaSettingsPage() {
         setWorkerState("missing");
       }
 
-      if ("caches" in window) {
-        const keys = await caches.keys().catch(() => []);
-        if (cancelled) return;
-        setCacheNames(keys.filter((key) => key.startsWith("faolla-")).sort());
-      }
-
-      setRecentRoutes(readRecentPwaRoutes());
+      if (cancelled) return;
+      await syncDiagnostics();
     };
 
     void syncPwaState();
@@ -256,10 +355,14 @@ export default function PwaSettingsPage() {
     };
   }, []);
 
-  const refreshCacheNames = async () => {
-    if (typeof window === "undefined" || !("caches" in window)) return;
-    const keys = await caches.keys().catch(() => []);
-    setCacheNames(keys.filter((key) => key.startsWith("faolla-")).sort());
+  const refreshDiagnostics = async () => {
+    setIsRefreshingDiagnostics(true);
+    try {
+      await syncDiagnostics();
+      setStatusMessage("");
+    } finally {
+      setIsRefreshingDiagnostics(false);
+    }
   };
 
   const checkForUpdates = async () => {
@@ -308,10 +411,23 @@ export default function PwaSettingsPage() {
     try {
       const keys = await caches.keys();
       await Promise.all(keys.filter((key) => key.startsWith("faolla-")).map((key) => caches.delete(key)));
-      await refreshCacheNames();
+      await syncDiagnostics();
       setStatusMessage(copy.cacheCleared);
     } catch {
       setStatusMessage(copy.cacheClearFailed);
+    } finally {
+      setIsClearingCache(false);
+    }
+  };
+
+  const clearPageCaches = async () => {
+    setIsClearingCache(true);
+    try {
+      await clearFaollaPageCaches();
+      await syncDiagnostics();
+      setStatusMessage(copy.cachePagesCleared);
+    } catch {
+      setStatusMessage(copy.cachePagesClearFailed);
     } finally {
       setIsClearingCache(false);
     }
@@ -338,7 +454,7 @@ export default function PwaSettingsPage() {
     }
     const nextRecentRoutes = readRecentPwaRoutes();
     setRecentRoutes(nextRecentRoutes);
-    const routes = nextRecentRoutes.map((entry) => entry.path).filter(Boolean);
+    const routes = collectPwaWarmRoutes();
     if (!routes.length) {
       setStatusMessage(copy.recentEmpty);
       return;
@@ -381,6 +497,8 @@ export default function PwaSettingsPage() {
       : workerState === "active"
         ? copy.workerActive
         : copy.workerMissing;
+  const cacheCountLabel = cacheSummary.length ? `${cacheSummary.length} ${copy.cacheCountSuffix}` : copy.cacheEmpty;
+  const totalCacheEntries = cacheSummary.reduce((sum, entry) => sum + entry.count, 0);
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top,#0f172a_0%,#081121_38%,#030712_100%)] px-4 py-8 text-white sm:px-6">
@@ -404,9 +522,12 @@ export default function PwaSettingsPage() {
           </article>
           <article className="rounded-[1.6rem] border border-white/12 bg-slate-950/54 px-4 py-4 shadow-[0_16px_40px_rgba(2,6,23,0.22)]">
             <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{copy.cacheLabel}</div>
-            <div className="mt-3 text-base font-semibold text-white">
-              {cacheNames.length ? `${cacheNames.length} ${copy.cacheCountSuffix}` : copy.cacheEmpty}
-            </div>
+            <div className="mt-3 text-base font-semibold text-white">{cacheCountLabel}</div>
+            {cacheSummary.length ? (
+              <div className="mt-1 text-xs leading-5 text-slate-400">
+                {totalCacheEntries} {copy.cacheEntrySuffix}
+              </div>
+            ) : null}
           </article>
         </section>
 
@@ -440,6 +561,26 @@ export default function PwaSettingsPage() {
             <button
               type="button"
               onClick={() => {
+                void refreshDiagnostics();
+              }}
+              disabled={isRefreshingDiagnostics}
+              className="rounded-full border border-white/14 bg-white/8 px-4 py-2 text-sm font-semibold text-white transition hover:border-white/24 hover:bg-white/12 disabled:opacity-40"
+            >
+              {copy.cacheRefreshAction}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void clearPageCaches();
+              }}
+              disabled={isClearingCache}
+              className="rounded-full border border-sky-300/24 bg-sky-300/10 px-4 py-2 text-sm font-semibold text-sky-100 transition hover:border-sky-300/40 hover:bg-sky-300/14 disabled:opacity-40"
+            >
+              {copy.cacheClearPagesAction}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
                 void clearPwaCache();
               }}
               disabled={isClearingCache}
@@ -456,6 +597,42 @@ export default function PwaSettingsPage() {
             </button>
           </div>
           {statusMessage ? <div className="mt-4 text-sm leading-6 text-slate-300">{statusMessage}</div> : null}
+        </section>
+
+        <section className="grid gap-4 sm:grid-cols-2">
+          <article className="rounded-[1.8rem] border border-white/12 bg-slate-950/54 px-5 py-5 shadow-[0_16px_40px_rgba(2,6,23,0.22)]">
+            <div className="text-sm font-semibold text-white">{copy.launchTargetLabel}</div>
+            <div className="mt-3 break-all text-sm leading-7 text-slate-200">
+              {launchTarget || copy.launchTargetEmpty}
+            </div>
+          </article>
+          <article className="rounded-[1.8rem] border border-white/12 bg-slate-950/54 px-5 py-5 shadow-[0_16px_40px_rgba(2,6,23,0.22)]">
+            <div className="text-sm font-semibold text-white">{copy.recentWorkspaceLabel}</div>
+            <div className="mt-3 break-all text-sm leading-7 text-slate-200">
+              {recentWorkspaceHref || copy.recentWorkspaceEmpty}
+            </div>
+          </article>
+        </section>
+
+        <section className="rounded-[1.8rem] border border-white/12 bg-slate-950/54 px-5 py-5 shadow-[0_16px_40px_rgba(2,6,23,0.22)]">
+          <div className="text-sm font-semibold text-white">{copy.cacheLabel}</div>
+          {cacheSummary.length ? (
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              {cacheSummary.map((entry) => (
+                <div
+                  key={entry.name}
+                  className="rounded-2xl border border-white/10 bg-white/6 px-4 py-3"
+                >
+                  <div className="truncate text-sm font-medium text-white">{entry.name}</div>
+                  <div className="mt-1 text-xs leading-5 text-slate-400">
+                    {entry.count} {copy.cacheEntrySuffix}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="mt-4 text-sm leading-7 text-slate-300">{copy.cacheEmpty}</div>
+          )}
         </section>
 
         <section className="rounded-[1.8rem] border border-white/12 bg-slate-950/54 px-5 py-5 shadow-[0_16px_40px_rgba(2,6,23,0.22)]">
@@ -511,14 +688,14 @@ export default function PwaSettingsPage() {
         <section className="rounded-[1.8rem] border border-white/12 bg-slate-950/54 px-5 py-5 shadow-[0_16px_40px_rgba(2,6,23,0.22)]">
           <div className="text-sm font-semibold text-white">{copy.hintTitle}</div>
           <div className="mt-2 text-sm leading-7 text-slate-300">{copy.hintBody}</div>
-          {cacheNames.length ? (
+          {cacheSummary.length ? (
             <div className="mt-4 flex flex-wrap gap-2">
-              {cacheNames.map((cacheName) => (
+              {cacheSummary.map((entry) => (
                 <span
-                  key={cacheName}
+                  key={entry.name}
                   className="rounded-full border border-white/10 bg-white/6 px-3 py-1 text-[11px] font-medium text-slate-200"
                 >
-                  {cacheName}
+                  {entry.name}
                 </span>
               ))}
             </div>

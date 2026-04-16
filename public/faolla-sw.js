@@ -1,7 +1,8 @@
-const FAOLLA_SW_VERSION = "faolla-pwa-v20260416-4";
+const FAOLLA_SW_VERSION = "faolla-pwa-v20260416-5";
 const FAOLLA_BADGE_CACHE = "faolla-badge-state-v1";
 const FAOLLA_BADGE_STATE_URL = "/__faolla_badge_state__";
 const FAOLLA_VISIBILITY_STATE_URL = "/__faolla_visibility_state__";
+const FAOLLA_LAUNCH_TARGET_URL = "/__faolla_launch_target__";
 const FAOLLA_DEFAULT_ICON = "/faolla-app-icon-192.png";
 const FAOLLA_VISIBLE_STATE_TTL_MS = 20_000;
 const FAOLLA_SHELL_CACHE = `faolla-shell-${FAOLLA_SW_VERSION}`;
@@ -63,6 +64,13 @@ self.addEventListener("activate", (event) => {
           return Promise.resolve(false);
         }),
       );
+      if ("navigationPreload" in self.registration) {
+        try {
+          await self.registration.navigationPreload.enable();
+        } catch {
+          // Ignore navigation preload failures.
+        }
+      }
       await self.clients.claim();
     })(),
   );
@@ -337,11 +345,23 @@ async function cacheStaticAsset(request) {
   }
 }
 
-async function handleAuthNavigationRequest(request, url) {
+async function handleAuthNavigationRequest(event, request, url) {
   const shellCache = await caches.open(FAOLLA_SHELL_CACHE);
   try {
-    return await fetch(request);
+    return await resolveNavigationResponse(event, request);
   } catch {
+    if (url.pathname === "/launch") {
+      const launchTarget = await readLaunchTarget();
+      if (launchTarget) {
+        const cachedLaunchTarget = await caches.match(
+          normalizeNavigationCacheKey(new URL(launchTarget, self.location.origin)),
+          {
+            cacheName: FAOLLA_APP_PAGE_CACHE,
+          },
+        );
+        if (cachedLaunchTarget) return cachedLaunchTarget;
+      }
+    }
     const cachedResponse =
       (await shellCache.match(url.pathname)) ||
       (url.pathname !== "/login" ? await shellCache.match("/login") : null) ||
@@ -351,11 +371,21 @@ async function handleAuthNavigationRequest(request, url) {
   }
 }
 
-async function handlePublicNavigationRequest(request, url) {
+async function resolveNavigationResponse(event, request) {
+  try {
+    const preloadResponse = await event.preloadResponse;
+    if (preloadResponse) return preloadResponse;
+  } catch {
+    // Ignore preload lookup failures and fall back to a normal fetch.
+  }
+  return fetch(request);
+}
+
+async function handlePublicNavigationRequest(event, request, url) {
   const shellCache = await caches.open(FAOLLA_SHELL_CACHE);
   const cacheKey = normalizeNavigationCacheKey(url);
   try {
-    const response = await fetch(request);
+    const response = await resolveNavigationResponse(event, request);
     await persistNavigationResponse(FAOLLA_PUBLIC_PAGE_CACHE, cacheKey, response, FAOLLA_PUBLIC_PAGE_LIMIT);
     return response;
   } catch {
@@ -368,11 +398,11 @@ async function handlePublicNavigationRequest(request, url) {
   }
 }
 
-async function handleAppNavigationRequest(request, url) {
+async function handleAppNavigationRequest(event, request, url) {
   const shellCache = await caches.open(FAOLLA_SHELL_CACHE);
   const cacheKey = normalizeNavigationCacheKey(url);
   try {
-    const response = await fetch(request);
+    const response = await resolveNavigationResponse(event, request);
     await persistNavigationResponse(FAOLLA_APP_PAGE_CACHE, cacheKey, response, FAOLLA_APP_PAGE_LIMIT);
     return response;
   } catch {
@@ -431,6 +461,45 @@ async function readVisibilityState() {
     return { visible, updatedAt };
   } catch {
     return null;
+  }
+}
+
+async function readLaunchTarget() {
+  try {
+    const cache = await caches.open(FAOLLA_BADGE_CACHE);
+    const response = await cache.match(FAOLLA_LAUNCH_TARGET_URL);
+    if (!response) return "";
+    const payload = await response.json().catch(() => null);
+    const path = normalizeWarmRoutePath(String(payload?.path ?? ""));
+    return isAppNavigationPath(path) ? path : "";
+  } catch {
+    return "";
+  }
+}
+
+async function writeLaunchTarget(path) {
+  try {
+    const normalizedPath = normalizeWarmRoutePath(path);
+    const cache = await caches.open(FAOLLA_BADGE_CACHE);
+    if (!normalizedPath || !isAppNavigationPath(normalizedPath)) {
+      await cache.delete(FAOLLA_LAUNCH_TARGET_URL);
+      return;
+    }
+    const payload = JSON.stringify({
+      path: normalizedPath,
+      updatedAt: Date.now(),
+    });
+    await cache.put(
+      FAOLLA_LAUNCH_TARGET_URL,
+      new Response(payload, {
+        headers: {
+          "content-type": "application/json",
+          "cache-control": "no-store",
+        },
+      }),
+    );
+  } catch {
+    // Ignore launch target persistence failures.
   }
 }
 
@@ -498,6 +567,10 @@ self.addEventListener("message", (event) => {
   }
   if (data.type === "SYNC_VISIBILITY") {
     event.waitUntil(writeVisibilityState(data.visible));
+    return;
+  }
+  if (data.type === "SYNC_LAUNCH_TARGET") {
+    event.waitUntil(writeLaunchTarget(data.path));
     return;
   }
   if (data.type === "WARM_RECENT_ROUTES") {
@@ -582,14 +655,14 @@ self.addEventListener("fetch", (event) => {
 
   if (isNavigationRequest(request, url)) {
     if (isAuthNavigationPath(url.pathname)) {
-      event.respondWith(handleAuthNavigationRequest(request, url));
+      event.respondWith(handleAuthNavigationRequest(event, request, url));
       return;
     }
     if (isAppNavigationPath(url.pathname)) {
-      event.respondWith(handleAppNavigationRequest(request, url));
+      event.respondWith(handleAppNavigationRequest(event, request, url));
       return;
     }
-    event.respondWith(handlePublicNavigationRequest(request, url));
+    event.respondWith(handlePublicNavigationRequest(event, request, url));
     return;
   }
 

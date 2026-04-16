@@ -1,3 +1,6 @@
+import { readRecentMerchantLaunchMerchantId } from "@/lib/merchantLaunchState";
+import { buildMerchantBackendHref } from "@/lib/siteRouting";
+
 export const PWA_RECENT_ROUTES_STORAGE_KEY = "merchant-space:pwa-recent-routes:v1";
 export const PWA_RECENT_ROUTES_MAX_ENTRIES = 8;
 export const PWA_RECENT_ROUTES_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
@@ -39,6 +42,17 @@ function resolveRouteKind(pathname: string): PwaRecentRouteKind {
     return "app";
   }
   return "public";
+}
+
+type BrowserConnection = {
+  saveData?: boolean;
+  effectiveType?: string;
+};
+
+function readBrowserConnection(): BrowserConnection | null {
+  if (typeof navigator === "undefined") return null;
+  const connection = (navigator as Navigator & { connection?: BrowserConnection }).connection;
+  return connection && typeof connection === "object" ? connection : null;
 }
 
 function normalizeRecord(input: unknown, maxAgeMs: number): PwaRecentRouteRecord | null {
@@ -105,4 +119,46 @@ export function clearRecentPwaRoutes() {
   } catch {
     // Ignore cleanup failures.
   }
+}
+
+export function shouldAutoWarmPwaRoutes() {
+  const connection = readBrowserConnection();
+  if (!connection) return true;
+  if (connection.saveData === true) return false;
+  const effectiveType = String(connection.effectiveType ?? "").trim().toLowerCase();
+  return effectiveType !== "slow-2g" && effectiveType !== "2g";
+}
+
+export function resolvePreferredPwaLaunchPath(pathname?: string | null) {
+  const normalizedPath = normalizePathname(pathname);
+  if (normalizedPath && /^\/\d{8}(?:\/|$)/.test(normalizedPath)) {
+    return normalizedPath;
+  }
+
+  const recentMerchantId = readRecentMerchantLaunchMerchantId();
+  if (recentMerchantId) {
+    return buildMerchantBackendHref(recentMerchantId);
+  }
+
+  return "";
+}
+
+export function collectPwaWarmRoutes(pathname?: string | null) {
+  const nextRoutes = new Set<string>();
+  const pushRoute = (value: string | null | undefined) => {
+    const normalized = normalizePathname(value);
+    if (!normalized) return;
+    nextRoutes.add(normalized);
+  };
+
+  pushRoute(pathname);
+
+  pushRoute(resolvePreferredPwaLaunchPath(pathname));
+
+  readRecentPwaRoutes().forEach((entry) => {
+    pushRoute(entry.path);
+  });
+
+  pushRoute("/");
+  return Array.from(nextRoutes);
 }
