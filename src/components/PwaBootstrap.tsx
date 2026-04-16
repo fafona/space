@@ -28,12 +28,17 @@ type PwaCopy = {
   installBody: string;
   installAction: string;
   iosInstallBody: string;
+  iosInstallHint: string;
+  iosInstallStepShare: string;
+  iosInstallStepAddToHome: string;
+  iosInstallStepConfirm: string;
   iosInstallAction: string;
 };
 
 function resolvePwaCopy(locale: string): PwaCopy {
   const normalized = (locale || "").trim().toLowerCase();
   const language = normalized.split("-")[0] || "en";
+
   if (language === "zh") {
     return {
       offlineTitle: "当前离线",
@@ -46,14 +51,19 @@ function resolvePwaCopy(locale: string): PwaCopy {
       installTitle: "添加到主屏幕",
       installBody: "安装后可像 App 一样从桌面打开，并保留更新与离线能力。",
       installAction: "立即安装",
-      iosInstallBody: "在 Safari 点分享，再选“添加到主屏幕”，就能像 App 一样打开。",
+      iosInstallBody: "在 Safari 里按下面 3 步操作，就能把 Faolla 添加到主屏幕。",
+      iosInstallHint: "如果 Safari 工具栏在顶部，分享按钮也会出现在顶部右侧。",
+      iosInstallStepShare: "点击 Safari 的“分享”按钮",
+      iosInstallStepAddToHome: "在菜单里选择“添加到主屏幕”",
+      iosInstallStepConfirm: "最后点击“添加”完成安装",
       iosInstallAction: "知道了",
     };
   }
+
   if (language === "es") {
     return {
       offlineTitle: "Sin conexión",
-      offlineBody: "Puedes seguir usando las páginas ya guardadas y sincronizar después cuando vuelva la red.",
+      offlineBody: "Puedes seguir usando las páginas guardadas y sincronizar después cuando vuelva la red.",
       offlineAction: "Reintentar",
       updateTitle: "Nueva versión disponible",
       updateBody: "Actualiza ahora para recargar la página con la versión más reciente.",
@@ -62,10 +72,15 @@ function resolvePwaCopy(locale: string): PwaCopy {
       installTitle: "Instalar como app",
       installBody: "Instala esta web para abrirla desde el inicio con una experiencia más parecida a una app.",
       installAction: "Instalar",
-      iosInstallBody: "En Safari, toca Compartir y luego \"Añadir a pantalla de inicio\" para usarla como app.",
+      iosInstallBody: "En Safari, sigue estos 3 pasos para añadir Faolla a la pantalla de inicio.",
+      iosInstallHint: "Si la barra de Safari está arriba, el botón Compartir también aparecerá arriba a la derecha.",
+      iosInstallStepShare: "Toca el botón Compartir de Safari",
+      iosInstallStepAddToHome: 'Elige "Añadir a pantalla de inicio"',
+      iosInstallStepConfirm: 'Confirma con "Añadir" para terminar',
       iosInstallAction: "Entendido",
     };
   }
+
   return {
     offlineTitle: "Offline",
     offlineBody: "You can keep using cached pages now and sync the latest content once the connection returns.",
@@ -77,7 +92,11 @@ function resolvePwaCopy(locale: string): PwaCopy {
     installTitle: "Install as app",
     installBody: "Install this site to open it from your home screen with a more app-like experience.",
     installAction: "Install",
-    iosInstallBody: "In Safari, tap Share and choose Add to Home Screen to use it like an app.",
+    iosInstallBody: "In Safari, follow these 3 steps to add Faolla to your home screen.",
+    iosInstallHint: "If Safari shows the toolbar at the top, the Share button will also appear in the top-right corner.",
+    iosInstallStepShare: "Tap Safari's Share button",
+    iosInstallStepAddToHome: "Choose Add to Home Screen",
+    iosInstallStepConfirm: "Finish by tapping Add",
     iosInstallAction: "Got it",
   };
 }
@@ -335,108 +354,168 @@ export default function PwaBootstrap() {
       ? "bottom-[calc(env(safe-area-inset-bottom)+1rem)]"
       : "bottom-4";
   const showInstallPrompt = !inStandalone && !showUpdatePrompt && (installPromptReady || showIosInstallGuide);
+  const showInstallCard = showInstallPrompt && !showIosInstallGuide;
+  const showBottomPromptStack = showOfflineBanner || showUpdatePrompt || showInstallCard;
 
-  if (!showOfflineBanner && !showUpdatePrompt && !showInstallPrompt) return null;
+  if (!showBottomPromptStack && !showIosInstallGuide) return null;
 
   return (
-    <div
-      className={`pointer-events-none fixed inset-x-0 z-[2147482500] mx-auto flex max-w-xl flex-col gap-3 px-3 ${promptBottomClassName}`}
-    >
-      {showOfflineBanner ? (
-        <div className="pointer-events-auto rounded-2xl border border-amber-300 bg-amber-50/95 px-4 py-3 text-slate-900 shadow-[0_16px_40px_rgba(15,23,42,0.18)] backdrop-blur">
-          <div className="text-sm font-semibold">{copy.offlineTitle}</div>
-          <div className="mt-1 text-xs leading-5 text-slate-600">{copy.offlineBody}</div>
-          <div className="mt-3 flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => window.location.reload()}
-              className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700"
+    <>
+      {showBottomPromptStack ? (
+        <div
+          className={`pointer-events-none fixed inset-x-0 z-[2147482500] mx-auto flex max-w-xl flex-col gap-3 px-3 ${promptBottomClassName}`}
+        >
+          {showOfflineBanner ? (
+            <div className="pointer-events-auto rounded-2xl border border-amber-300 bg-amber-50/95 px-4 py-3 text-slate-900 shadow-[0_16px_40px_rgba(15,23,42,0.18)] backdrop-blur">
+              <div className="text-sm font-semibold">{copy.offlineTitle}</div>
+              <div className="mt-1 text-xs leading-5 text-slate-600">{copy.offlineBody}</div>
+              <div className="mt-3 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => window.location.reload()}
+                  className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700"
+                >
+                  {copy.offlineAction}
+                </button>
+                <Link
+                  href="/offline"
+                  className="rounded-full border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-400 hover:text-slate-900"
+                >
+                  /offline
+                </Link>
+              </div>
+            </div>
+          ) : null}
+
+          {showUpdatePrompt ? (
+            <div
+              className={`pointer-events-auto rounded-[1.4rem] border border-white/12 bg-slate-950/92 px-4 py-3 text-white shadow-[0_18px_46px_rgba(2,6,23,0.34)] backdrop-blur-xl ${
+                isMobileViewport ? "mx-auto w-full max-w-sm" : "ml-auto w-full max-w-md"
+              }`}
             >
-              {copy.offlineAction}
-            </button>
-            <Link
-              href="/offline"
-              className="rounded-full border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-400 hover:text-slate-900"
+              <div className="flex items-start gap-3">
+                <div className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-400 shadow-[0_0_0_6px_rgba(52,211,153,0.14)]" />
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold leading-5">{copy.updateTitle}</div>
+                  <div className="mt-1 text-[11px] leading-5 text-slate-300">{copy.updateBody}</div>
+                </div>
+              </div>
+              <div className="mt-3 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={applyUpdate}
+                  disabled={isApplyingUpdate}
+                  className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-slate-200 disabled:cursor-wait disabled:opacity-60"
+                >
+                  {copy.updateAction}
+                </button>
+                <button
+                  type="button"
+                  onClick={hideUpdatePrompt}
+                  disabled={isApplyingUpdate}
+                  className="rounded-full border border-white/14 bg-white/6 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-white/24 hover:bg-white/10 disabled:opacity-60"
+                >
+                  {copy.dismissAction}
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {showInstallCard ? (
+            <div
+              className={`pointer-events-auto rounded-[1.4rem] border border-slate-200 bg-white/95 px-4 py-3 text-slate-900 shadow-[0_18px_42px_rgba(15,23,42,0.18)] backdrop-blur ${
+                isMobileViewport ? "mx-auto w-full max-w-sm" : "ml-auto w-full max-w-md"
+              }`}
             >
-              /offline
-            </Link>
-          </div>
+              <div className="flex items-start gap-3">
+                <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-950 text-sm text-white">
+                  +
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold leading-5">{copy.installTitle}</div>
+                  <div className="mt-1 text-[11px] leading-5 text-slate-600">{copy.installBody}</div>
+                </div>
+              </div>
+              <div className="mt-3 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    void applyInstallPrompt();
+                  }}
+                  className="rounded-full bg-slate-950 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-800"
+                >
+                  {copy.installAction}
+                </button>
+                <button
+                  type="button"
+                  onClick={dismissInstallPrompt}
+                  className="rounded-full border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-400 hover:text-slate-900"
+                >
+                  {copy.dismissAction}
+                </button>
+              </div>
+            </div>
+          ) : null}
         </div>
       ) : null}
 
-      {showUpdatePrompt ? (
-        <div
-          className={`pointer-events-auto rounded-[1.4rem] border border-white/12 bg-slate-950/92 px-4 py-3 text-white shadow-[0_18px_46px_rgba(2,6,23,0.34)] backdrop-blur-xl ${
-            isMobileViewport ? "mx-auto w-full max-w-sm" : "ml-auto w-full max-w-md"
-          }`}
-        >
-          <div className="flex items-start gap-3">
-            <div className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-400 shadow-[0_0_0_6px_rgba(52,211,153,0.14)]" />
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-semibold leading-5">{copy.updateTitle}</div>
-              <div className="mt-1 text-[11px] leading-5 text-slate-300">{copy.updateBody}</div>
+      {showIosInstallGuide ? (
+        <div className="pointer-events-auto fixed inset-0 z-[2147482501] bg-slate-950/62 backdrop-blur-[2px]">
+          <div className="absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+1rem)] mx-auto w-full max-w-sm px-4">
+            <div className="mb-3 flex justify-center">
+              <div className="flex h-14 w-14 items-center justify-center rounded-full border border-white/15 bg-white/10 text-3xl text-white shadow-[0_12px_32px_rgba(15,23,42,0.35)] animate-bounce">
+                ↑
+              </div>
             </div>
-          </div>
-          <div className="mt-3 flex items-center gap-2">
-            <button
-              type="button"
-              onClick={applyUpdate}
-              disabled={isApplyingUpdate}
-              className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-slate-200 disabled:cursor-wait disabled:opacity-60"
-            >
-              {copy.updateAction}
-            </button>
-            <button
-              type="button"
-              onClick={hideUpdatePrompt}
-              disabled={isApplyingUpdate}
-              className="rounded-full border border-white/14 bg-white/6 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-white/24 hover:bg-white/10 disabled:opacity-60"
-            >
-              {copy.dismissAction}
-            </button>
-          </div>
-        </div>
-      ) : null}
+            <div className="rounded-[1.6rem] border border-white/12 bg-slate-950/92 px-4 py-4 text-white shadow-[0_20px_48px_rgba(15,23,42,0.42)] backdrop-blur-xl">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold leading-5">{copy.installTitle}</div>
+                  <div className="mt-1 text-[11px] leading-5 text-slate-300">{copy.iosInstallBody}</div>
+                </div>
+                <div className="rounded-full border border-white/14 bg-white/10 px-2 py-1 text-[10px] font-semibold text-slate-200">
+                  Safari
+                </div>
+              </div>
 
-      {showInstallPrompt ? (
-        <div
-          className={`pointer-events-auto rounded-[1.4rem] border border-slate-200 bg-white/95 px-4 py-3 text-slate-900 shadow-[0_18px_42px_rgba(15,23,42,0.18)] backdrop-blur ${
-            isMobileViewport ? "mx-auto w-full max-w-sm" : "ml-auto w-full max-w-md"
-          }`}
-        >
-          <div className="flex items-start gap-3">
-            <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-950 text-sm text-white">
-              +
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-semibold leading-5">{copy.installTitle}</div>
-              <div className="mt-1 text-[11px] leading-5 text-slate-600">
-                {showIosInstallGuide ? copy.iosInstallBody : copy.installBody}
+              <div className="mt-4 space-y-2.5">
+                {[
+                  copy.iosInstallStepShare,
+                  copy.iosInstallStepAddToHome,
+                  copy.iosInstallStepConfirm,
+                ].map((step, index) => (
+                  <div
+                    key={step}
+                    className="flex items-start gap-3 rounded-2xl border border-white/10 bg-white/6 px-3 py-3"
+                  >
+                    <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white text-[11px] font-bold text-slate-950">
+                      {index + 1}
+                    </div>
+                    <div className="text-xs leading-5 text-slate-100">{step}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-3 rounded-2xl border border-sky-400/18 bg-sky-400/10 px-3 py-2 text-[11px] leading-5 text-sky-100">
+                {copy.iosInstallHint}
+              </div>
+
+              <div className="mt-4 flex items-center justify-between gap-2">
+                <div className="rounded-full border border-white/12 bg-white/6 px-3 py-1.5 text-[11px] font-semibold text-slate-200">
+                  ↑ 分享
+                </div>
+                <button
+                  type="button"
+                  onClick={dismissInstallPrompt}
+                  className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-slate-200"
+                >
+                  {copy.iosInstallAction}
+                </button>
               </div>
             </div>
           </div>
-          <div className="mt-3 flex items-center gap-2">
-            {!showIosInstallGuide ? (
-              <button
-                type="button"
-                onClick={() => {
-                  void applyInstallPrompt();
-                }}
-                className="rounded-full bg-slate-950 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-800"
-              >
-                {copy.installAction}
-              </button>
-            ) : null}
-            <button
-              type="button"
-              onClick={dismissInstallPrompt}
-              className="rounded-full border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-400 hover:text-slate-900"
-            >
-              {showIosInstallGuide ? copy.iosInstallAction : copy.dismissAction}
-            </button>
-          </div>
         </div>
       ) : null}
-    </div>
+    </>
   );
 }
