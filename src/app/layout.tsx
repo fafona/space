@@ -8,10 +8,6 @@ import PwaBootstrap from "@/components/PwaBootstrap";
 import UnhandledRejectionGuard from "@/components/UnhandledRejectionGuard";
 import "./globals.css";
 import { DEFAULT_LOCALE, I18N_COOKIE_KEY, readPreferredLocaleFromAcceptLanguage, resolveSupportedLocale } from "@/lib/i18n";
-import {
-  RECENT_MERCHANT_LAUNCH_MAX_AGE_MS,
-  RECENT_MERCHANT_LAUNCH_STORAGE_KEY,
-} from "@/lib/merchantLaunchState";
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -107,21 +103,7 @@ const STANDALONE_LAUNCH_SCRIPT = `
     // Ignore search param parsing failures and continue normal launch bootstrap.
   }
   if ((window.location.pathname || "/") !== "/") return;
-  try {
-    const raw =
-      window.sessionStorage.getItem(${JSON.stringify(RECENT_MERCHANT_LAUNCH_STORAGE_KEY)}) ||
-      window.localStorage.getItem(${JSON.stringify(RECENT_MERCHANT_LAUNCH_STORAGE_KEY)}) ||
-      "";
-    if (!raw) return;
-    const parsed = JSON.parse(raw);
-    const merchantId = typeof parsed?.merchantId === "string" ? parsed.merchantId.trim() : "";
-    const updatedAt = Number(parsed?.updatedAt ?? 0);
-    if (!/^\\d{8}$/.test(merchantId) || !Number.isFinite(updatedAt)) return;
-    if (Date.now() - updatedAt > ${RECENT_MERCHANT_LAUNCH_MAX_AGE_MS}) return;
-    window.location.replace("/launch");
-  } catch {
-    // Ignore launch bootstrap storage failures.
-  }
+  window.location.replace("/launch");
 })();
 `;
 

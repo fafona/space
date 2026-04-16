@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import LaunchBootstrap from "@/app/launch/LaunchBootstrap";
 import {
   MERCHANT_AUTH_COOKIE,
   MERCHANT_AUTH_MERCHANT_ID_COOKIE,
@@ -25,5 +26,5 @@ export default async function LaunchPage() {
     redirect(buildMerchantBackendHref(merchantId));
   }
 
-  redirect("/login?launchRetry=1");
+  return <LaunchBootstrap />;
 }

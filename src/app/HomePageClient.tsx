@@ -10,13 +10,11 @@ import LoadingProgressScreen from "@/components/LoadingProgressScreen";
 import { homeBlocks, type Block } from "@/data/homeBlocks";
 import { loadPlatformState, subscribePlatformState } from "@/data/platformControlStore";
 import { trackPageView } from "@/lib/analytics";
-import { readMerchantSessionMerchantIds, readMerchantSessionPayload } from "@/lib/authSessionRecovery";
 import { MOBILE_BREAKPOINT } from "@/lib/deviceViewport";
-import { isMerchantNumericId, normalizeDomainPrefix } from "@/lib/merchantIdentity";
-import { readRecentMerchantLaunchMerchantId } from "@/lib/merchantLaunchState";
+import { normalizeDomainPrefix } from "@/lib/merchantIdentity";
 import { cloneBlocks, getPagePlanConfigFromBlocks } from "@/lib/pagePlans";
 import { resolvePublishedSiteByPrefix } from "@/lib/publishedSiteLookup";
-import { buildMerchantBackendHref, extractMerchantPrefixFromHost, resolveRuntimePortalBaseDomain } from "@/lib/siteRouting";
+import { extractMerchantPrefixFromHost, resolveRuntimePortalBaseDomain } from "@/lib/siteRouting";
 import { useMobileHorizontalScrollLock } from "@/lib/useMobileHorizontalScrollLock";
 
 function readViewportWidth() {
@@ -194,38 +192,7 @@ export default function HomePageClient({
     if (typeof window === "undefined") return;
     if (suppressStandaloneLaunchRedirect) return;
     if (!isStandaloneDisplayMode()) return;
-
-    let mounted = true;
-    void (async () => {
-      try {
-        const recentMerchantId = readRecentMerchantLaunchMerchantId();
-        if (isMerchantNumericId(recentMerchantId)) {
-          window.location.replace("/launch");
-          return;
-        }
-        const payload = await readMerchantSessionPayload(2600).catch(() => null);
-        if (!mounted) return;
-        if (payload?.authenticated === true) {
-          const merchantIds = readMerchantSessionMerchantIds(payload);
-          const merchantId =
-            merchantIds.find((value) => isMerchantNumericId(value)) ??
-            merchantIds[0] ??
-            (typeof payload.merchantId === "string" ? payload.merchantId.trim() : "");
-          if (isMerchantNumericId(merchantId)) {
-            window.location.replace(buildMerchantBackendHref(merchantId));
-            return;
-          }
-        }
-        window.location.replace("/login");
-      } catch {
-        if (!mounted) return;
-        window.location.replace("/login");
-      }
-    })();
-
-    return () => {
-      mounted = false;
-    };
+    window.location.replace("/launch");
   }, [suppressStandaloneLaunchRedirect]);
 
   if (hostMatchedSite) {
