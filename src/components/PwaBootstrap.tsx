@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "@/components/I18nProvider";
 
@@ -60,6 +61,7 @@ function isStandaloneDisplayMode() {
 }
 
 export default function PwaBootstrap() {
+  const pathname = usePathname();
   const { locale } = useI18n();
   const copy = useMemo(() => resolvePwaCopy(locale), [locale]);
   const [isOffline, setIsOffline] = useState(() =>
@@ -67,6 +69,11 @@ export default function PwaBootstrap() {
   );
   const [updateReady, setUpdateReady] = useState(false);
   const [isApplyingUpdate, setIsApplyingUpdate] = useState(false);
+  const [isMobileViewport, setIsMobileViewport] = useState(() =>
+    typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia("(max-width: 767px)").matches
+      : false,
+  );
   const waitingWorkerRef = useRef<ServiceWorker | null>(null);
   const reloadTriggeredRef = useRef(false);
 
@@ -79,6 +86,17 @@ export default function PwaBootstrap() {
     return () => {
       window.removeEventListener("online", syncOnlineState);
       window.removeEventListener("offline", syncOnlineState);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const mediaQuery = window.matchMedia("(max-width: 767px)");
+    const handleChange = () => setIsMobileViewport(mediaQuery.matches);
+    handleChange();
+    mediaQuery.addEventListener("change", handleChange);
+    return () => {
+      mediaQuery.removeEventListener("change", handleChange);
     };
   }, []);
 
@@ -160,7 +178,12 @@ export default function PwaBootstrap() {
   const showOfflineBanner = isOffline && typeof window !== "undefined" && window.location.pathname !== "/offline";
   const showUpdatePrompt = updateReady;
   const inStandalone = typeof window !== "undefined" ? isStandaloneDisplayMode() : false;
-  const promptBottomClassName = inStandalone ? "bottom-[calc(env(safe-area-inset-bottom)+1rem)]" : "bottom-4";
+  const isMobileAdminShell = isMobileViewport && pathname.startsWith("/admin");
+  const promptBottomClassName = isMobileAdminShell
+    ? "bottom-[calc(env(safe-area-inset-bottom)+6.4rem)]"
+    : inStandalone
+      ? "bottom-[calc(env(safe-area-inset-bottom)+1rem)]"
+      : "bottom-4";
 
   if (!showOfflineBanner && !showUpdatePrompt) return null;
 
