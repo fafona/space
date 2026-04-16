@@ -114,12 +114,12 @@ export default function ChatBusinessCardDialog({
               </div>
             ) : card ? (
               <div className="space-y-4">
-                <div className="overflow-hidden rounded-2xl border bg-slate-50 p-4">
+                <div className="support-preserve-light-surface support-preserve-light-border overflow-hidden rounded-2xl border bg-slate-50 p-4">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={card.imageUrl}
                     alt={card.name}
-                    className="mx-auto block h-auto max-h-[60vh] w-auto max-w-full bg-transparent object-contain"
+                    className="support-preserve-light-surface mx-auto block h-auto max-h-[60vh] w-auto max-w-full bg-transparent object-contain"
                   />
                 </div>
                 <div className="rounded-2xl border bg-slate-50 px-4 py-3">

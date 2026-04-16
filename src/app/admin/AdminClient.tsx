@@ -14359,10 +14359,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     return (
                       <article key={card.id} className="overflow-hidden rounded-[24px] border border-slate-200 bg-slate-50/80">
                         <div className="flex gap-3 px-3 py-3">
-                          <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-white p-1 text-xs font-semibold text-slate-700 shadow-sm">
+                          <div className="support-preserve-light-surface support-preserve-light-border flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-white p-1 text-xs font-semibold text-slate-700 shadow-sm">
                             {cardPreviewUrl ? (
                               /* eslint-disable-next-line @next/next/no-img-element */
-                              <img src={cardPreviewUrl} alt={card.name} className="h-full w-full rounded-[14px] bg-white object-contain" />
+                              <img src={cardPreviewUrl} alt={card.name} className="support-preserve-light-surface h-full w-full rounded-[14px] bg-white object-contain" />
                             ) : (
                               getSupportContactAvatarLabel(card.name || supportSelfDisplayName, "名")
                             )}
@@ -15024,10 +15024,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                           }}
                           disabled={supportComposerBusy}
                         >
-                          <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-white p-1 text-xs font-semibold text-slate-700 shadow-sm">
+                          <div className="support-preserve-light-surface support-preserve-light-border flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-white p-1 text-xs font-semibold text-slate-700 shadow-sm">
                             {cardPreviewUrl ? (
                               /* eslint-disable-next-line @next/next/no-img-element */
-                              <img src={cardPreviewUrl} alt={card.name} className="h-full w-full rounded-[12px] bg-white object-contain" />
+                              <img src={cardPreviewUrl} alt={card.name} className="support-preserve-light-surface h-full w-full rounded-[12px] bg-white object-contain" />
                             ) : (
                               getSupportContactAvatarLabel(card.name || merchantDisplayName, "名")
                             )}

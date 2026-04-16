@@ -245,3 +245,15 @@ html[data-i18n-pending="1"] body {
     0 2px 8px rgba(15, 23, 42, 0.35),
     inset 0 1px 0 rgba(255, 255, 255, 0.9) !important;
 }
+
+.support-mobile-shell.support-mobile-dark .support-preserve-light-surface,
+.support-mobile-sheet.support-mobile-dark .support-preserve-light-surface,
+.support-mobile-nav-shell.support-mobile-dark .support-preserve-light-surface {
+  background-color: #ffffff !important;
+}
+
+.support-mobile-shell.support-mobile-dark .support-preserve-light-border,
+.support-mobile-sheet.support-mobile-dark .support-preserve-light-border,
+.support-mobile-nav-shell.support-mobile-dark .support-preserve-light-border {
+  border-color: rgba(226, 232, 240, 0.92) !important;
+}

@@ -104,7 +104,7 @@ export default function SupportMessageContent({
     <div className="space-y-2">
       <button
         type="button"
-        className="block w-full overflow-hidden rounded-[20px] bg-white p-1 shadow-[0_10px_24px_rgba(15,23,42,0.08)]"
+        className="support-preserve-light-surface block w-full overflow-hidden rounded-[20px] bg-white p-1 shadow-[0_10px_24px_rgba(15,23,42,0.08)]"
         onClick={openImagePreview}
         aria-label="查看图片大图"
       >
@@ -112,7 +112,7 @@ export default function SupportMessageContent({
         <img
           src={normalizedImageUrl}
           alt={linkUrl ? "名片图片" : "聊天图片"}
-          className="block h-auto max-h-[18rem] w-full rounded-[16px] bg-white object-contain"
+          className="support-preserve-light-surface block h-auto max-h-[18rem] w-full rounded-[16px] bg-white object-contain"
         />
       </button>
       {linkUrl ? (
