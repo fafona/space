@@ -212,15 +212,24 @@ export default function PwaBootstrap() {
       ) : null}
 
       {showUpdatePrompt ? (
-        <div className="pointer-events-auto rounded-2xl border border-sky-200 bg-white/96 px-4 py-3 text-slate-900 shadow-[0_20px_48px_rgba(15,23,42,0.2)] backdrop-blur">
-          <div className="text-sm font-semibold">{copy.updateTitle}</div>
-          <div className="mt-1 text-xs leading-5 text-slate-600">{copy.updateBody}</div>
+        <div
+          className={`pointer-events-auto rounded-[1.4rem] border border-white/12 bg-slate-950/92 px-4 py-3 text-white shadow-[0_18px_46px_rgba(2,6,23,0.34)] backdrop-blur-xl ${
+            isMobileViewport ? "mx-auto w-full max-w-sm" : "ml-auto w-full max-w-md"
+          }`}
+        >
+          <div className="flex items-start gap-3">
+            <div className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-400 shadow-[0_0_0_6px_rgba(52,211,153,0.14)]" />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold leading-5">{copy.updateTitle}</div>
+              <div className="mt-1 text-[11px] leading-5 text-slate-300">{copy.updateBody}</div>
+            </div>
+          </div>
           <div className="mt-3 flex items-center gap-2">
             <button
               type="button"
               onClick={applyUpdate}
               disabled={isApplyingUpdate}
-              className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700 disabled:cursor-wait disabled:opacity-60"
+              className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-slate-200 disabled:cursor-wait disabled:opacity-60"
             >
               {copy.updateAction}
             </button>
@@ -228,7 +237,7 @@ export default function PwaBootstrap() {
               type="button"
               onClick={hideUpdatePrompt}
               disabled={isApplyingUpdate}
-              className="rounded-full border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-400 hover:text-slate-900 disabled:opacity-60"
+              className="rounded-full border border-white/14 bg-white/6 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-white/24 hover:bg-white/10 disabled:opacity-60"
             >
               {copy.dismissAction}
             </button>
