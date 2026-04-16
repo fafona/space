@@ -22,6 +22,7 @@ type NavBlockProps = BackgroundEditableProps & {
   forceMobileViewport?: boolean;
   mobileNavButtonBgColor?: string;
   mobileNavButtonBgOpacity?: number;
+  mobileNavButtonBorderStyle?: BlockBorderStyle;
   mobileNavButtonLineColor?: string;
   navItemBgColor?: string;
   navItemBgOpacity?: number;
@@ -217,8 +218,11 @@ export default function NavBlock(props: NavBlockProps) {
     typeof props.mobileNavButtonBgOpacity === "number" && Number.isFinite(props.mobileNavButtonBgOpacity)
       ? Math.max(0, Math.min(1, props.mobileNavButtonBgOpacity))
       : 0.8;
+  const mobileNavButtonBorderStyle = (props.mobileNavButtonBorderStyle ?? "solid") as BlockBorderStyle;
+  const mobileNavButtonBorderColor = "#cbd5e1";
   const mobileNavButtonLineColor = (props.mobileNavButtonLineColor ?? "#334155").trim() || "#334155";
   const mobileNavButtonStyle = {
+    ...getBlockBorderInlineStyle(mobileNavButtonBorderStyle, mobileNavButtonBorderColor),
     ...getColorLayerStyle(mobileNavButtonBgColor, mobileNavButtonBgOpacity),
   };
   const hiddenMobileMode = props.mobileNavDisplayMode === "hidden" && effectiveMobileViewport;
@@ -255,7 +259,9 @@ export default function NavBlock(props: NavBlockProps) {
             <div className="flex items-center justify-between gap-3">
               <button
                 type="button"
-                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 transition hover:brightness-[0.98]"
+                className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition hover:brightness-[0.98] ${getBlockBorderClass(
+                  mobileNavButtonBorderStyle,
+                )}`}
                 aria-label={mobileMenuOpen ? "收起导航" : "展开导航"}
                 style={mobileNavButtonStyle}
                 onClick={() => setMobileMenuOpenPageId((current) => (current === currentPageKey ? null : currentPageKey))}

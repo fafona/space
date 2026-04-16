@@ -115,6 +115,16 @@ const EMPTY_SEARCH_FILTER: SearchFilter = {
 const INITIAL_SORT_NOW_MS = Date.now();
 const REAL_MERCHANT_SITE_ID_REGEX = /^\d{8}$/;
 
+function hasVisibleRichText(value?: string) {
+  const raw = String(value ?? "");
+  if (!raw.trim()) return false;
+  const stripped = raw
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .trim();
+  return stripped.length > 0;
+}
+
 function normalizeLocationValue(value: string) {
   return String(value ?? "")
     .normalize("NFD")
@@ -677,6 +687,8 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
   const merchantCardTextBoxClass = merchantCardTextBoxVisible
     ? "inline-flex w-fit max-w-full rounded border border-slate-300 bg-white/90 px-1.5 py-0.5"
     : "inline-flex w-fit max-w-full";
+  const hasHeading = hasVisibleRichText(props.heading);
+  const hasText = hasVisibleRichText(props.text);
 
   return (
     <section className={resolveMobileFitSectionClass("max-w-6xl mx-auto px-6 py-6", mobileFitScreenWidth)} style={offsetStyle}>
@@ -684,13 +696,15 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
         className={resolveMobileFitCardClass(`rounded-xl bg-white p-6 shadow-sm overflow-hidden ${borderClass}`, mobileFitScreenWidth)}
         style={{ ...cardStyle, ...sizeStyle, ...borderInlineStyle }}
       >
-        <h2
-          className="text-xl font-bold whitespace-pre-wrap break-words"
-          dangerouslySetInnerHTML={{
-            __html: toRichHtml(props.heading, resolveLocalizedSystemDefaultText(props.heading, "商户列表", locale)),
-          }}
-        />
-        {props.text ? (
+        {hasHeading ? (
+          <h2
+            className="text-xl font-bold whitespace-pre-wrap break-words"
+            dangerouslySetInnerHTML={{
+              __html: toRichHtml(props.heading, resolveLocalizedSystemDefaultText(props.heading, "商户列表", locale)),
+            }}
+          />
+        ) : null}
+        {hasText ? (
           <div
             className="mt-2 text-sm text-gray-600 whitespace-pre-wrap break-words"
             dangerouslySetInnerHTML={{
@@ -702,7 +716,7 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
           />
         ) : null}
 
-        <div className="mt-4 max-w-full overflow-x-auto pb-1">
+        <div className={`${hasHeading || hasText ? "mt-4 " : ""}max-w-full overflow-x-auto pb-1`}>
           <div
             className="relative"
             style={{

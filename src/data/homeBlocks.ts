@@ -389,6 +389,7 @@ type NavProps = BackgroundEditableProps &
     mobileNavDisplayMode?: "inline" | "hidden";
     mobileNavButtonBgColor?: string;
     mobileNavButtonBgOpacity?: number;
+    mobileNavButtonBorderStyle?: BlockBorderStyle;
     mobileNavButtonLineColor?: string;
     navItemBgColor?: string;
     navItemBgOpacity?: number;

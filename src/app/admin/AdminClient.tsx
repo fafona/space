@@ -1691,6 +1691,24 @@ function normalizeNavBorderColor(value: string, fallback: string) {
   return fallback;
 }
 
+function isEditorTypingTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  if (target.closest('[contenteditable="true"]')) return true;
+  return (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement
+  );
+}
+
+function isEditorToolbarInteractionTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.closest("[data-editor-toolbar]")) return true;
+  if (target.closest("[data-editor-overlay]")) return true;
+  return target instanceof HTMLButtonElement;
+}
+
 function gradientWithOpacity(value: string, opacity: number) {
   const alpha = Math.max(0, Math.min(1, opacity));
   let next = value.replace(/#([0-9a-fA-F]{6})/g, (match, hex: string) => {
@@ -5206,6 +5224,7 @@ export default function AdminClient({
   const applyPersistedBlocksToEditorRef = useRef<(loaded: Block[], options?: { resetHistory?: boolean }) => void>(() => {});
   const recordDragHistoryRef = useRef<() => void>(() => {});
   const persistDraggingDraftRef = useRef<() => void>(() => {});
+  const nudgeBlockRef = useRef<(blockId: string, deltaX: number, deltaY: number) => void>(() => {});
   const viewportStatesRef = useRef<Record<ViewportKey, ViewportEditorState>>({
     desktop: {
       planConfig: JSON.parse(JSON.stringify(initialPlanConfig)) as PagePlanConfig,
@@ -7419,6 +7438,25 @@ export default function AdminClient({
   }, [selectedId]);
 
   useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      if (!selectedIdRef.current) return;
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) return;
+      if (isEditorTypingTarget(event.target)) return;
+      if (isEditorToolbarInteractionTarget(event.target)) return;
+      event.preventDefault();
+      const deltaX = event.key === "ArrowLeft" ? -NUDGE_STEP : event.key === "ArrowRight" ? NUDGE_STEP : 0;
+      const deltaY = event.key === "ArrowUp" ? -NUDGE_STEP : event.key === "ArrowDown" ? NUDGE_STEP : 0;
+      nudgeBlockRef.current(selectedIdRef.current, deltaX, deltaY);
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+    };
+  }, []);
+
+  useEffect(() => {
     setRecentColors(loadRecentColors());
   }, []);
 
@@ -7802,6 +7840,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     });
     if (changed) applyBlocks(next);
   }
+  nudgeBlockRef.current = nudgeBlock;
 
   function handleEditorMouseDownCapture(event: ReactMouseEvent<HTMLElement>) {
     const target = event.target as HTMLElement | null;
@@ -17731,6 +17770,7 @@ type GalleryEditorImage = {
   const [navItemBorderColorInput, setNavItemBorderColorInput] = useState("#6b7280");
   const [mobileNavButtonBgColorInput, setMobileNavButtonBgColorInput] = useState("#ffffff");
   const [mobileNavButtonBgOpacityInput, setMobileNavButtonBgOpacityInput] = useState(0.8);
+  const [mobileNavButtonBorderStyleInput, setMobileNavButtonBorderStyleInput] = useState<BlockBorderStyle>("solid");
   const [mobileNavButtonLineColorInput, setMobileNavButtonLineColorInput] = useState("#334155");
   const [navItemActiveBgColorInput, setNavItemActiveBgColorInput] = useState("#e5e7eb");
   const [navItemActiveBgOpacityInput, setNavItemActiveBgOpacityInput] = useState(1);
@@ -19566,6 +19606,7 @@ type GalleryEditorImage = {
         ? Math.max(0, Math.min(1, block.props.mobileNavButtonBgOpacity))
         : 0.8,
     );
+    setMobileNavButtonBorderStyleInput((block.props.mobileNavButtonBorderStyle ?? "solid") as BlockBorderStyle);
     setMobileNavButtonLineColorInput(currentMobileButtonLineColor || "#334155");
     setNavItemActiveBgColorInput(currentActiveBgColor || "#e5e7eb");
     setNavItemActiveBgOpacityInput(
@@ -19726,6 +19767,28 @@ type GalleryEditorImage = {
     setBorderSettingsOpen(false);
   }
 
+  const renderCompactBorderStyleOptions = (
+    selectedStyle: BlockBorderStyle,
+    borderColor: string,
+    onSelectStyle: (style: BlockBorderStyle) => void,
+  ) => (
+    <div className="grid grid-cols-6 gap-1.5">
+      {BLOCK_BORDER_STYLE_OPTIONS.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          className={`min-w-0 rounded px-1.5 py-1.5 text-[11px] leading-tight whitespace-nowrap ${getBlockBorderClass(option.value)} ${
+            selectedStyle === option.value ? "ring-2 ring-black" : "bg-white"
+          }`}
+          style={getBlockBorderInlineStyle(option.value, borderColor)}
+          onClick={() => onSelectStyle(option.value)}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+
   function applyNavItemStyle() {
     if (block.type !== "nav") return;
     onChange({
@@ -19735,6 +19798,7 @@ type GalleryEditorImage = {
       navItemBorderColor: navItemBorderColorInput.trim() || undefined,
       mobileNavButtonBgColor: mobileNavButtonBgColorInput.trim() || undefined,
       mobileNavButtonBgOpacity: Math.max(0, Math.min(1, mobileNavButtonBgOpacityInput)),
+      mobileNavButtonBorderStyle: mobileNavButtonBorderStyleInput,
       mobileNavButtonLineColor: mobileNavButtonLineColorInput.trim() || undefined,
       navItemActiveBgColor: navItemActiveBgColorInput.trim() || undefined,
       navItemActiveBgOpacity: Math.max(0, Math.min(1, navItemActiveBgOpacityInput)),
@@ -19938,8 +20002,8 @@ type GalleryEditorImage = {
   const mobileFitScreenWidth = isMobileInlineEditorViewport && block.props.mobileFitScreenWidth === true;
   const shellClass =
     block.type === "hero"
-      ? `${mobileFitScreenWidth ? "mobile-editor-fit-screen-section " : ""}bg-white mx-auto`
-      : `${mobileFitScreenWidth ? "mobile-editor-fit-screen-section " : ""}max-w-6xl mx-auto px-6 py-6`;
+      ? `${mobileFitScreenWidth ? "mobile-editor-fit-screen-section " : ""}relative bg-white mx-auto`
+      : `${mobileFitScreenWidth ? "mobile-editor-fit-screen-section " : ""}relative max-w-6xl mx-auto px-6 py-6`;
   const borderClass = getBlockBorderClass(block.props.blockBorderStyle);
   const borderInlineStyle = getBlockBorderInlineStyle(block.props.blockBorderStyle, block.props.blockBorderColor);
   const previewBorderInlineStyle: CSSProperties = mobileFitScreenWidth
@@ -20218,23 +20282,11 @@ type GalleryEditorImage = {
                 onPick={(color) => setBorderColorInput(color)}
           />
         </div>
-        <div className="grid grid-cols-2 gap-2">
-          {BLOCK_BORDER_STYLE_OPTIONS.map((option) => (
-            <button
-              key={option.value}
-              className={`px-3 py-2 rounded text-sm border ${getBlockBorderClass(option.value)} ${
-                ((block.props.blockBorderStyle ?? "glass") === "soft" ? "glass" : (block.props.blockBorderStyle ?? "glass")) ===
-                option.value
-                  ? "ring-2 ring-black"
-                  : "bg-white"
-              }`}
-              style={getBlockBorderInlineStyle(option.value, borderColorInput)}
-              onClick={() => applyBorderStyle(option.value)}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
+        {renderCompactBorderStyleOptions(
+          ((block.props.blockBorderStyle ?? "glass") === "soft" ? "glass" : (block.props.blockBorderStyle ?? "glass")) as BlockBorderStyle,
+          borderColorInput,
+          applyBorderStyle,
+        )}
         <div className="flex justify-end">
           <button
             className="px-3 py-2 rounded border bg-white hover:bg-gray-50 text-sm"
@@ -20276,21 +20328,7 @@ type GalleryEditorImage = {
             </div>
             <div className="space-y-1">
               <div className="text-xs text-gray-600">栏目框样式</div>
-              <div className="grid grid-cols-3 gap-2">
-                {BLOCK_BORDER_STYLE_OPTIONS.map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    className={`px-3 py-2 rounded text-sm border ${getBlockBorderClass(option.value)} ${
-                      navItemBorderStyleInput === option.value ? "ring-2 ring-black" : "bg-white"
-                    }`}
-                    style={getBlockBorderInlineStyle(option.value, navItemBorderColorInput)}
-                    onClick={() => setNavItemBorderStyleInput(option.value)}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
+              {renderCompactBorderStyleOptions(navItemBorderStyleInput, navItemBorderColorInput, setNavItemBorderStyleInput)}
             </div>
             <div className="space-y-1">
               <div className="text-xs text-gray-600">栏目框颜色</div>
@@ -20306,8 +20344,13 @@ type GalleryEditorImage = {
               <div className="flex items-center gap-3">
                 <button
                   type="button"
-                  className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200"
-                  style={getColorLayerStyle(mobileNavButtonBgColorInput, mobileNavButtonBgOpacityInput)}
+                  className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${getBlockBorderClass(
+                    mobileNavButtonBorderStyleInput,
+                  )}`}
+                  style={{
+                    ...getBlockBorderInlineStyle(mobileNavButtonBorderStyleInput, "#cbd5e1"),
+                    ...getColorLayerStyle(mobileNavButtonBgColorInput, mobileNavButtonBgOpacityInput),
+                  }}
                   aria-label="手机隐藏按钮预览"
                 >
                   <span className="inline-flex flex-col items-center justify-center gap-1.5">
@@ -20339,6 +20382,10 @@ type GalleryEditorImage = {
                   value={mobileNavButtonBgOpacityInput}
                   onChange={(e) => setMobileNavButtonBgOpacityInput(Number(e.target.value))}
                 />
+              </div>
+              <div className="space-y-1">
+                <div className="text-xs text-gray-600">按钮边框样式</div>
+                {renderCompactBorderStyleOptions(mobileNavButtonBorderStyleInput, "#cbd5e1", setMobileNavButtonBorderStyleInput)}
               </div>
               <div className="space-y-1">
                 <div className="text-xs text-gray-600">横杠颜色</div>
@@ -20377,21 +20424,11 @@ type GalleryEditorImage = {
             </div>
             <div className="space-y-1">
               <div className="text-xs text-gray-600">选中栏目框样式</div>
-              <div className="grid grid-cols-3 gap-2">
-                {BLOCK_BORDER_STYLE_OPTIONS.map((option) => (
-                  <button
-                    key={`active-${option.value}`}
-                    type="button"
-                    className={`px-3 py-2 rounded text-sm border ${getBlockBorderClass(option.value)} ${
-                      navItemActiveBorderStyleInput === option.value ? "ring-2 ring-black" : "bg-white"
-                    }`}
-                    style={getBlockBorderInlineStyle(option.value, navItemActiveBorderColorInput)}
-                    onClick={() => setNavItemActiveBorderStyleInput(option.value)}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
+              {renderCompactBorderStyleOptions(
+                navItemActiveBorderStyleInput,
+                navItemActiveBorderColorInput,
+                setNavItemActiveBorderStyleInput,
+              )}
             </div>
             <div className="space-y-1">
               <div className="text-xs text-gray-600">选中栏目框颜色</div>
@@ -20458,21 +20495,11 @@ type GalleryEditorImage = {
             </div>
             <div className="space-y-1">
               <div className="text-xs text-gray-600">按钮框样式</div>
-              <div className="grid grid-cols-3 gap-2">
-                {BLOCK_BORDER_STYLE_OPTIONS.map((option) => (
-                  <button
-                    key={`search-locate-${option.value}`}
-                    type="button"
-                    className={`px-3 py-2 rounded text-sm border ${getBlockBorderClass(option.value)} ${
-                      searchButtonBorderStyleInput === option.value ? "ring-2 ring-black" : "bg-white"
-                    }`}
-                    style={getBlockBorderInlineStyle(option.value, searchButtonBorderColorInput)}
-                    onClick={() => setSearchButtonBorderStyleInput(option.value)}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
+              {renderCompactBorderStyleOptions(
+                searchButtonBorderStyleInput,
+                searchButtonBorderColorInput,
+                setSearchButtonBorderStyleInput,
+              )}
             </div>
             <div className="space-y-1">
               <div className="text-xs text-gray-600">按钮框颜色</div>
@@ -20509,21 +20536,11 @@ type GalleryEditorImage = {
             </div>
             <div className="space-y-1">
               <div className="text-xs text-gray-600">按钮边框样式</div>
-              <div className="grid grid-cols-3 gap-2">
-                {BLOCK_BORDER_STYLE_OPTIONS.map((option) => (
-                  <button
-                    key={`search-action-${option.value}`}
-                    type="button"
-                    className={`px-3 py-2 rounded text-sm border ${getBlockBorderClass(option.value)} ${
-                      searchButtonActiveBorderStyleInput === option.value ? "ring-2 ring-black" : "bg-white"
-                    }`}
-                    style={getBlockBorderInlineStyle(option.value, searchButtonActiveBorderColorInput)}
-                    onClick={() => setSearchButtonActiveBorderStyleInput(option.value)}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
+              {renderCompactBorderStyleOptions(
+                searchButtonActiveBorderStyleInput,
+                searchButtonActiveBorderColorInput,
+                setSearchButtonActiveBorderStyleInput,
+              )}
             </div>
             <div className="space-y-1">
               <div className="text-xs text-gray-600">按钮边框颜色</div>
@@ -20581,21 +20598,11 @@ type GalleryEditorImage = {
             </div>
             <div className="space-y-1">
               <div className="text-xs text-gray-600">按钮边框样式</div>
-              <div className="grid grid-cols-3 gap-2">
-                {BLOCK_BORDER_STYLE_OPTIONS.map((option) => (
-                  <button
-                    key={`merchant-tab-${option.value}`}
-                    type="button"
-                    className={`px-3 py-2 rounded text-sm border ${getBlockBorderClass(option.value)} ${
-                      merchantTabButtonBorderStyleInput === option.value ? "ring-2 ring-black" : "bg-white"
-                    }`}
-                    style={getBlockBorderInlineStyle(option.value, merchantTabButtonBorderColorInput)}
-                    onClick={() => setMerchantTabButtonBorderStyleInput(option.value)}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
+              {renderCompactBorderStyleOptions(
+                merchantTabButtonBorderStyleInput,
+                merchantTabButtonBorderColorInput,
+                setMerchantTabButtonBorderStyleInput,
+              )}
             </div>
             <div className="space-y-1">
               <div className="text-xs text-gray-600">按钮边框颜色</div>
@@ -20632,21 +20639,11 @@ type GalleryEditorImage = {
             </div>
             <div className="space-y-1">
               <div className="text-xs text-gray-600">按钮边框样式</div>
-              <div className="grid grid-cols-3 gap-2">
-                {BLOCK_BORDER_STYLE_OPTIONS.map((option) => (
-                  <button
-                    key={`merchant-tab-active-${option.value}`}
-                    type="button"
-                    className={`px-3 py-2 rounded text-sm border ${getBlockBorderClass(option.value)} ${
-                      merchantTabButtonActiveBorderStyleInput === option.value ? "ring-2 ring-black" : "bg-white"
-                    }`}
-                    style={getBlockBorderInlineStyle(option.value, merchantTabButtonActiveBorderColorInput)}
-                    onClick={() => setMerchantTabButtonActiveBorderStyleInput(option.value)}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
+              {renderCompactBorderStyleOptions(
+                merchantTabButtonActiveBorderStyleInput,
+                merchantTabButtonActiveBorderColorInput,
+                setMerchantTabButtonActiveBorderStyleInput,
+              )}
             </div>
             <div className="space-y-1">
               <div className="text-xs text-gray-600">按钮边框颜色</div>
@@ -20683,21 +20680,11 @@ type GalleryEditorImage = {
             </div>
             <div className="space-y-1">
               <div className="text-xs text-gray-600">按钮边框样式</div>
-              <div className="grid grid-cols-3 gap-2">
-                {BLOCK_BORDER_STYLE_OPTIONS.map((option) => (
-                  <button
-                    key={`merchant-pager-${option.value}`}
-                    type="button"
-                    className={`px-3 py-2 rounded text-sm border ${getBlockBorderClass(option.value)} ${
-                      merchantPagerButtonBorderStyleInput === option.value ? "ring-2 ring-black" : "bg-white"
-                    }`}
-                    style={getBlockBorderInlineStyle(option.value, merchantPagerButtonBorderColorInput)}
-                    onClick={() => setMerchantPagerButtonBorderStyleInput(option.value)}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
+              {renderCompactBorderStyleOptions(
+                merchantPagerButtonBorderStyleInput,
+                merchantPagerButtonBorderColorInput,
+                setMerchantPagerButtonBorderStyleInput,
+              )}
             </div>
             <div className="space-y-1">
               <div className="text-xs text-gray-600">按钮边框颜色</div>
@@ -20734,21 +20721,11 @@ type GalleryEditorImage = {
             </div>
             <div className="space-y-1">
               <div className="text-xs text-gray-600">按钮边框样式</div>
-              <div className="grid grid-cols-3 gap-2">
-                {BLOCK_BORDER_STYLE_OPTIONS.map((option) => (
-                  <button
-                    key={`merchant-pager-disabled-${option.value}`}
-                    type="button"
-                    className={`px-3 py-2 rounded text-sm border ${getBlockBorderClass(option.value)} ${
-                      merchantPagerButtonDisabledBorderStyleInput === option.value ? "ring-2 ring-black" : "bg-white"
-                    }`}
-                    style={getBlockBorderInlineStyle(option.value, merchantPagerButtonDisabledBorderColorInput)}
-                    onClick={() => setMerchantPagerButtonDisabledBorderStyleInput(option.value)}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
+              {renderCompactBorderStyleOptions(
+                merchantPagerButtonDisabledBorderStyleInput,
+                merchantPagerButtonDisabledBorderColorInput,
+                setMerchantPagerButtonDisabledBorderStyleInput,
+              )}
             </div>
             <div className="space-y-1">
               <div className="text-xs text-gray-600">按钮边框颜色</div>
@@ -20825,21 +20802,11 @@ type GalleryEditorImage = {
           <div className="space-y-3 rounded-lg border p-3">
             <div className="space-y-1">
               <div className="text-xs text-gray-600">商户卡片样式</div>
-              <div className="grid grid-cols-3 gap-2">
-                {BLOCK_BORDER_STYLE_OPTIONS.map((option) => (
-                  <button
-                    key={`merchant-card-${option.value}`}
-                    type="button"
-                    className={`px-3 py-2 rounded text-sm border ${getBlockBorderClass(option.value)} ${
-                      merchantCardBorderStyleInput === option.value ? "ring-2 ring-black" : "bg-white"
-                    }`}
-                    style={getBlockBorderInlineStyle(option.value, merchantCardBorderColorInput)}
-                    onClick={() => setMerchantCardBorderStyleInput(option.value)}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
+              {renderCompactBorderStyleOptions(
+                merchantCardBorderStyleInput,
+                merchantCardBorderColorInput,
+                setMerchantCardBorderStyleInput,
+              )}
             </div>
             <div className="space-y-1">
               <div className="text-xs text-gray-600">商户卡片颜色</div>
@@ -22361,8 +22328,10 @@ type GalleryEditorImage = {
       typeof block.props.mobileNavButtonBgOpacity === "number" && Number.isFinite(block.props.mobileNavButtonBgOpacity)
         ? Math.max(0, Math.min(1, block.props.mobileNavButtonBgOpacity))
         : 0.8;
+    const mobileNavButtonBorderStyle = (block.props.mobileNavButtonBorderStyle ?? "solid") as BlockBorderStyle;
     const mobileNavButtonLineColor = (block.props.mobileNavButtonLineColor ?? "#334155").trim() || "#334155";
     const mobileNavButtonStyle = {
+      ...getBlockBorderInlineStyle(mobileNavButtonBorderStyle, "#cbd5e1"),
       ...getColorLayerStyle(mobileNavButtonBgColor, mobileNavButtonBgOpacity),
     };
     const mobileHiddenNavMode = previewViewport === "mobile" && block.props.mobileNavDisplayMode === "hidden";
@@ -22405,7 +22374,9 @@ type GalleryEditorImage = {
         <div className="flex items-center justify-between gap-3">
           <button
             type="button"
-            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 transition hover:brightness-[0.98]"
+            className={`inline-flex h-9 w-9 items-center justify-center rounded-full transition hover:brightness-[0.98] ${getBlockBorderClass(
+              mobileNavButtonBorderStyle,
+            )}`}
             aria-label={previewNavMobileMenuOpen ? "收起导航" : "展开导航"}
             style={mobileNavButtonStyle}
             onClick={() => {
@@ -24451,21 +24422,9 @@ type GalleryEditorImage = {
                     </label>
                     <div className="space-y-1">
                       <div className="text-xs text-gray-600">边框样式</div>
-                      <div className="grid grid-cols-3 gap-2">
-                        {BLOCK_BORDER_STYLE_OPTIONS.map((option) => (
-                          <button
-                            key={option.value}
-                            type="button"
-                            className={`rounded px-2 py-2 text-xs ${getBlockBorderClass(option.value)} ${
-                              productCardBorderStyle === option.value ? "ring-2 ring-black" : "bg-white"
-                            }`}
-                            style={getBlockBorderInlineStyle(option.value, productCardBorderColor)}
-                            onClick={() => onChange({ productCardBorderStyle: option.value })}
-                          >
-                            {option.label}
-                          </button>
-                        ))}
-                      </div>
+                      {renderCompactBorderStyleOptions(productCardBorderStyle, productCardBorderColor, (style) =>
+                        onChange({ productCardBorderStyle: style }),
+                      )}
                     </div>
                     <div className="space-y-1">
                       <div className="text-xs text-gray-600">边框颜色</div>
@@ -25061,21 +25020,9 @@ type GalleryEditorImage = {
                     </div>
                     <div className="space-y-2 rounded-lg border border-slate-200 bg-white p-3">
                       <div className="text-sm font-medium text-slate-700">产品框边框</div>
-                      <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
-                        {BLOCK_BORDER_STYLE_OPTIONS.map((option) => (
-                          <button
-                            key={option.value}
-                            type="button"
-                            className={`rounded px-3 py-2 text-sm ${getBlockBorderClass(option.value)} ${
-                              productCardBorderStyle === option.value ? "ring-2 ring-black" : "bg-white"
-                            }`}
-                            style={getBlockBorderInlineStyle(option.value, productCardBorderColor)}
-                            onClick={() => onChange({ productCardBorderStyle: option.value })}
-                          >
-                            {option.label}
-                          </button>
-                        ))}
-                      </div>
+                      {renderCompactBorderStyleOptions(productCardBorderStyle, productCardBorderColor, (style) =>
+                        onChange({ productCardBorderStyle: style }),
+                      )}
                     </div>
                     </div>,
                   )}
@@ -26128,7 +26075,7 @@ type GalleryEditorImage = {
                   dangerouslySetInnerHTML={{ __html: toRichHtml(block.props.text, localizedMerchantText) }}
                 />
               ) : null}
-              <div className="mt-4 max-w-full overflow-x-auto pb-1">
+              <div className={`${hasMerchantHeading || hasMerchantText ? "mt-4 " : ""}max-w-full overflow-x-auto pb-1`}>
                 <div className="relative" style={{ width: `${merchantCardCanvasWidth}px`, minHeight: `${merchantCardsContainerHeight}px` }}>
                   {merchantTabs.map((tab, index) => {
                     const layout = adaptiveMerchantLayoutEntries.find(
@@ -28784,85 +28731,42 @@ function EditorBlockHeader({
 }) {
   const anchorClassName =
     toolbarAnchorClassName ?? "absolute left-0 bottom-full mb-[2px] z-[80] flex items-end gap-3 w-max max-w-none";
+  void onNudge;
   function preserveEditorSelection(event: ReactMouseEvent<HTMLButtonElement>) {
     event.preventDefault();
     event.stopPropagation();
   }
   return (
-    <div data-editor-toolbar className="relative h-0 overflow-visible pointer-events-auto">
+    <div data-editor-toolbar className="absolute inset-0 h-full w-full overflow-visible pointer-events-none">
       {isSelected ? (
-        <div className={anchorClassName} style={toolbarAnchorStyle}>
-          <div className="z-30 translate-y-3">
-            <div className="relative w-[96px] h-[90px] shrink-0">
-              <button
-                className="absolute left-1/2 top-[6px] -translate-x-1/2 w-8 h-8 flex items-center justify-center"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onNudge(0, -NUDGE_STEP);
-                }}
-                title="上移微调"
-                aria-label="上移微调"
-              >
-                <span className="block w-0 h-0 border-l-[7px] border-r-[7px] border-b-[11px] border-l-transparent border-r-transparent border-b-black" />
-              </button>
-              {!mobileFitScreenWidth ? (
-                <button
-                  className="absolute left-1 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onNudge(-NUDGE_STEP, 0);
-                  }}
-                  title="左移微调"
-                  aria-label="左移微调"
-                >
-                  <span className="block w-0 h-0 border-t-[7px] border-b-[7px] border-r-[11px] border-t-transparent border-b-transparent border-r-black" />
-                </button>
-              ) : null}
-              <button
-                title={mobileFitScreenWidth ? "按住并拖动此按钮可上下拖动区块" : "按住并拖动此按钮可自由拖动区块"}
-                className={`absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 px-2 py-1 text-xs rounded border select-none ${
-                  draggingBlockId ? "bg-gray-100" : "bg-white hover:bg-gray-50"
-                } cursor-grab active:cursor-grabbing`}
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  onDragHandleMouseDown({ x: e.clientX, y: e.clientY });
-                }}
-              >
-                {"拖动"}
-              </button>
-              {!mobileFitScreenWidth ? (
-                <button
-                  className="absolute right-1 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onNudge(NUDGE_STEP, 0);
-                  }}
-                  title="右移微调"
-                  aria-label="右移微调"
-                >
-                  <span className="block w-0 h-0 border-t-[7px] border-b-[7px] border-l-[11px] border-t-transparent border-b-transparent border-l-black" />
-                </button>
-              ) : null}
-              <button
-                className="absolute left-1/2 bottom-[6px] -translate-x-1/2 w-8 h-8 flex items-center justify-center"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onNudge(0, NUDGE_STEP);
-                }}
-                title="下移微调"
-                aria-label="下移微调"
-              >
-                <span className="block w-0 h-0 border-l-[7px] border-r-[7px] border-t-[11px] border-l-transparent border-r-transparent border-t-black" />
-              </button>
-            </div>
-          </div>
-          {blockId ? (
-            <div className="z-30 mb-1 rounded border bg-white px-2 py-1 text-[11px] font-mono text-gray-700 whitespace-nowrap">
-              {`ID: ${blockId}`}
-            </div>
-          ) : null}
-          <div className="z-30 flex items-center gap-2 flex-nowrap overflow-visible pr-1 pb-1">
+        <>
+          <button
+            type="button"
+            title={mobileFitScreenWidth ? "按住并拖动此按钮可上下拖动区块" : "按住并拖动此按钮可自由拖动区块"}
+            aria-label={mobileFitScreenWidth ? "拖动区块（仅上下）" : "拖动区块"}
+            className={`pointer-events-auto absolute -top-2 -left-2 z-[90] flex h-6 w-6 select-none items-center justify-center rounded-full border border-black bg-white text-black shadow-sm ${
+              draggingBlockId ? "cursor-grabbing bg-gray-100" : "cursor-grab hover:bg-gray-50"
+            }`}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onDragHandleMouseDown({ x: e.clientX, y: e.clientY });
+            }}
+          >
+            <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
+              <path d="M8 2 L6.5 3.5 M8 2 L9.5 3.5 M8 2 V14" />
+              <path d="M14 8 L12.5 6.5 M14 8 L12.5 9.5 M14 8 H2" />
+              <path d="M8 14 L6.5 12.5 M8 14 L9.5 12.5" />
+              <path d="M2 8 L3.5 6.5 M2 8 L3.5 9.5" />
+            </svg>
+          </button>
+          <div className={`${anchorClassName} pointer-events-auto`} style={toolbarAnchorStyle}>
+            {blockId ? (
+              <div className="z-30 mb-1 rounded border bg-white px-2 py-1 text-[11px] font-mono text-gray-700 whitespace-nowrap">
+                {`ID: ${blockId}`}
+              </div>
+            ) : null}
+            <div className="z-30 flex items-center gap-2 flex-nowrap overflow-visible pr-1 pb-1">
             <button
               className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-50 shrink-0 whitespace-nowrap"
               onMouseDown={preserveEditorSelection}
@@ -28955,8 +28859,9 @@ function EditorBlockHeader({
             >
               {"删除"}
             </button>
+            </div>
           </div>
-        </div>
+        </>
       ) : null}
     </div>
   );
