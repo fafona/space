@@ -1,16 +1,268 @@
+const FAOLLA_SW_VERSION = "faolla-pwa-v20260416-1";
 const FAOLLA_BADGE_CACHE = "faolla-badge-state-v1";
 const FAOLLA_BADGE_STATE_URL = "/__faolla_badge_state__";
 const FAOLLA_VISIBILITY_STATE_URL = "/__faolla_visibility_state__";
 const FAOLLA_DEFAULT_ICON = "/faolla-app-icon-192.png";
 const FAOLLA_VISIBLE_STATE_TTL_MS = 20_000;
+const FAOLLA_SHELL_CACHE = `faolla-shell-${FAOLLA_SW_VERSION}`;
+const FAOLLA_NAVIGATION_CACHE = `faolla-navigation-${FAOLLA_SW_VERSION}`;
+const FAOLLA_STATIC_CACHE = `faolla-static-${FAOLLA_SW_VERSION}`;
+const FAOLLA_PRESERVED_CACHES = new Set([
+  FAOLLA_BADGE_CACHE,
+  FAOLLA_SHELL_CACHE,
+  FAOLLA_NAVIGATION_CACHE,
+  FAOLLA_STATIC_CACHE,
+]);
+const FAOLLA_SHELL_URLS = [
+  "/",
+  "/login",
+  "/offline",
+  "/manifest.webmanifest",
+  "/favicon.ico",
+  "/apple-touch-icon.png",
+  "/faolla-app-icon-192.png",
+  "/faolla-app-icon-512.png",
+];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(self.skipWaiting());
+  event.waitUntil(
+    (async () => {
+      const cache = await caches.open(FAOLLA_SHELL_CACHE);
+      await Promise.all(
+        FAOLLA_SHELL_URLS.map(async (path) => {
+          try {
+            const response = await fetch(new Request(path, { cache: "reload" }));
+            if (response.ok) {
+              await cache.put(path, response.clone());
+            }
+          } catch {
+            // Ignore individual precache failures so the worker can still install.
+          }
+        }),
+      );
+    })(),
+  );
 });
 
 self.addEventListener("activate", (event) => {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil(
+    (async () => {
+      const cacheKeys = await caches.keys();
+      await Promise.all(
+        cacheKeys.map((key) => {
+          if (!FAOLLA_PRESERVED_CACHES.has(key)) {
+            return caches.delete(key);
+          }
+          return Promise.resolve(false);
+        }),
+      );
+      await self.clients.claim();
+    })(),
+  );
 });
+
+function resolveOfflineCopy(acceptLanguageHeader) {
+  const normalized = String(acceptLanguageHeader || "").trim().toLowerCase();
+  if (normalized.startsWith("zh")) {
+    return {
+      title: "当前处于离线状态",
+      body: "网络暂时不可用。你可以继续查看已缓存页面，恢复连接后再刷新同步最新内容。",
+      retry: "刷新重试",
+      home: "返回首页",
+    };
+  }
+  if (normalized.startsWith("es")) {
+    return {
+      title: "Ahora estás sin conexión",
+      body: "La red no está disponible. Puedes seguir usando páginas en caché y actualizar cuando vuelva la conexión.",
+      retry: "Reintentar",
+      home: "Volver al inicio",
+    };
+  }
+  return {
+    title: "You are offline",
+    body: "The network is unavailable right now. You can keep using cached pages and refresh again once the connection returns.",
+    retry: "Retry",
+    home: "Back to home",
+  };
+}
+
+function buildOfflineFallbackResponse(request) {
+  const copy = resolveOfflineCopy(request.headers.get("accept-language"));
+  const html = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <title>Faolla Offline</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background: radial-gradient(circle at top, #1e3a8a 0%, #0f172a 42%, #020617 100%);
+        color: #ffffff;
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      .card {
+        width: min(100%, 560px);
+        border-radius: 32px;
+        border: 1px solid rgba(255,255,255,0.14);
+        background: rgba(255,255,255,0.1);
+        box-shadow: 0 30px 90px rgba(2,6,23,0.42);
+        backdrop-filter: blur(24px);
+        padding: 32px;
+      }
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        border: 1px solid rgba(255,255,255,0.18);
+        background: rgba(255,255,255,0.1);
+        padding: 6px 12px;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.28em;
+        text-transform: uppercase;
+        color: #dbeafe;
+      }
+      h1 {
+        margin: 18px 0 0;
+        font-size: 32px;
+        line-height: 1.15;
+      }
+      p {
+        margin: 14px 0 0;
+        color: #dbe4f0;
+        font-size: 14px;
+        line-height: 1.9;
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 28px;
+      }
+      button, a {
+        appearance: none;
+        border: 0;
+        text-decoration: none;
+        cursor: pointer;
+        border-radius: 999px;
+        padding: 12px 18px;
+        font-weight: 700;
+        font-size: 14px;
+      }
+      button {
+        background: #ffffff;
+        color: #020617;
+      }
+      a {
+        border: 1px solid rgba(255,255,255,0.24);
+        color: #ffffff;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <div class="eyebrow">Faolla offline</div>
+      <h1>${copy.title}</h1>
+      <p>${copy.body}</p>
+      <div class="actions">
+        <button onclick="window.location.reload()">${copy.retry}</button>
+        <a href="/">${copy.home}</a>
+      </div>
+    </main>
+  </body>
+</html>`;
+  return new Response(html, {
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+    },
+    status: 200,
+  });
+}
+
+function isNavigationRequest(request, url) {
+  if (request.method !== "GET") return false;
+  if (request.mode !== "navigate") return false;
+  if (url.origin !== self.location.origin) return false;
+  if (url.pathname.startsWith("/api/")) return false;
+  if (url.pathname.startsWith("/_next/")) return false;
+  if (url.pathname.startsWith("/auth/confirm")) return false;
+  if (url.pathname.startsWith("/reset-password")) return false;
+  if (url.searchParams.has("token_hash")) return false;
+  if (url.searchParams.has("code")) return false;
+  if (url.searchParams.has("superAdminProof")) return false;
+  if (url.searchParams.has("superAdminChallenge")) return false;
+  return true;
+}
+
+function isStaticAssetRequest(request, url) {
+  if (request.method !== "GET") return false;
+  if (url.origin !== self.location.origin) return false;
+  if (url.pathname.startsWith("/api/")) return false;
+  if (url.pathname.startsWith("/_next/image")) return false;
+  if (url.pathname.startsWith("/_next/static/")) return true;
+  return ["style", "script", "image", "font", "audio"].includes(request.destination);
+}
+
+function normalizeNavigationCacheKey(url) {
+  return `${url.origin}${url.pathname}`;
+}
+
+async function cacheStaticAsset(request) {
+  const cache = await caches.open(FAOLLA_STATIC_CACHE);
+  const cached = await cache.match(request);
+  if (cached) {
+    fetch(request)
+      .then((response) => {
+        if (response && response.ok) {
+          return cache.put(request, response.clone());
+        }
+        return null;
+      })
+      .catch(() => null);
+    return cached;
+  }
+  try {
+    const response = await fetch(request);
+    if (response && response.ok) {
+      await cache.put(request, response.clone());
+    }
+    return response;
+  } catch {
+    return cached || Response.error();
+  }
+}
+
+async function handleNavigationRequest(request, url) {
+  const navigationCache = await caches.open(FAOLLA_NAVIGATION_CACHE);
+  const shellCache = await caches.open(FAOLLA_SHELL_CACHE);
+  const cacheKey = normalizeNavigationCacheKey(url);
+  try {
+    const response = await fetch(request);
+    if (response && response.ok) {
+      await navigationCache.put(cacheKey, response.clone());
+    }
+    return response;
+  } catch {
+    const cachedResponse =
+      (await navigationCache.match(cacheKey)) ||
+      (await shellCache.match(url.pathname)) ||
+      (url.pathname !== "/" ? await shellCache.match("/") : null);
+    if (cachedResponse) return cachedResponse;
+    return buildOfflineFallbackResponse(request);
+  }
+}
 
 async function readBadgeCount() {
   try {
@@ -111,6 +363,10 @@ async function syncBadgeCount(count) {
 self.addEventListener("message", (event) => {
   const data = event.data;
   if (!data || typeof data !== "object") return;
+  if (data.type === "SKIP_WAITING") {
+    event.waitUntil(self.skipWaiting());
+    return;
+  }
   if (data.type === "SYNC_BADGE") {
     event.waitUntil(syncBadgeCount(data.unreadCount));
     return;
@@ -193,4 +449,18 @@ self.addEventListener("notificationclick", (event) => {
       }
     })(),
   );
+});
+
+self.addEventListener("fetch", (event) => {
+  const request = event.request;
+  const url = new URL(request.url);
+
+  if (isNavigationRequest(request, url)) {
+    event.respondWith(handleNavigationRequest(request, url));
+    return;
+  }
+
+  if (isStaticAssetRequest(request, url)) {
+    event.respondWith(cacheStaticAsset(request));
+  }
 });
