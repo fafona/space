@@ -1704,9 +1704,8 @@ function isEditorTypingTarget(target: EventTarget | null) {
 
 function isEditorToolbarInteractionTarget(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) return false;
-  if (target.closest("[data-editor-toolbar]")) return true;
   if (target.closest("[data-editor-overlay]")) return true;
-  return target instanceof HTMLButtonElement;
+  return false;
 }
 
 function gradientWithOpacity(value: string, opacity: number) {
