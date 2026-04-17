@@ -142,6 +142,31 @@ export default function NavBlock(props: NavBlockProps) {
       ),
     [activeNavLabel, localizedHeading, locale, props.heading],
   );
+  const hiddenMobileMenuItems = localizedNavItems.map((item) => {
+    const isActive = props.currentPageId === item.pageId;
+    const labelHtml = toRichHtml(item.label, "");
+    const renderedLabelHtml = isActive ? stripInlineTextColorStylesFromHtml(labelHtml) : labelHtml;
+    return (
+      <button
+        key={item.id}
+        type="button"
+        className={`${navItemClass} w-full ${getBlockBorderClass(isActive ? navItemActiveBorderStyle : navItemBorderStyle)} ${
+          isActive ? "" : "hover:brightness-[0.98]"
+        }`}
+        style={isActive ? navItemActiveStyle : navItemStyle}
+        onClick={() => {
+          setMobileMenuOpenPageId(null);
+          props.onNavigatePage?.(item.pageId);
+        }}
+      >
+        <span
+          className="block w-full break-words whitespace-normal"
+          style={isActive ? navItemActiveLabelStyle : undefined}
+          dangerouslySetInnerHTML={{ __html: renderedLabelHtml }}
+        />
+      </button>
+    );
+  });
 
   useEffect(() => {
     if (props.forceMobileViewport) return;
@@ -255,14 +280,14 @@ export default function NavBlock(props: NavBlockProps) {
         }}
       >
         {hiddenMobileMode ? (
-          <div className="space-y-3">
+          <div className="relative">
             <div className="flex items-center justify-between gap-3">
               <button
                 type="button"
                 className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition hover:brightness-[0.98] ${getBlockBorderClass(
                   mobileNavButtonBorderStyle,
                 )}`}
-                aria-label={mobileMenuOpen ? "收起导航" : "展开导航"}
+                  aria-label={mobileMenuOpen ? "收起导航" : "展开导航"}
                 style={mobileNavButtonStyle}
                 onClick={() => setMobileMenuOpenPageId((current) => (current === currentPageKey ? null : currentPageKey))}
               >
@@ -280,31 +305,12 @@ export default function NavBlock(props: NavBlockProps) {
               </div>
             </div>
             {mobileMenuOpen ? (
-              <nav className="flex flex-col items-stretch gap-2">
-                {localizedNavItems.map((item) => {
-                  const isActive = props.currentPageId === item.pageId;
-                  const labelHtml = toRichHtml(item.label, "");
-                  const renderedLabelHtml = isActive ? stripInlineTextColorStylesFromHtml(labelHtml) : labelHtml;
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      className={`${navItemClass} w-full ${getBlockBorderClass(isActive ? navItemActiveBorderStyle : navItemBorderStyle)} ${isActive ? "" : "hover:brightness-[0.98]"}`}
-                      style={isActive ? navItemActiveStyle : navItemStyle}
-                      onClick={() => {
-                        setMobileMenuOpenPageId(null);
-                        props.onNavigatePage?.(item.pageId);
-                      }}
-                    >
-                      <span
-                        className="block w-full break-words whitespace-normal"
-                        style={isActive ? navItemActiveLabelStyle : undefined}
-                        dangerouslySetInnerHTML={{ __html: renderedLabelHtml }}
-                      />
-                    </button>
-                  );
-                })}
-              </nav>
+              <div className="absolute left-0 top-full z-20 mt-3 w-[min(16rem,calc(100vw-4rem))] max-w-full rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-2xl backdrop-blur">
+                <div className="mb-2 text-xs font-medium tracking-[0.12em] text-slate-400 uppercase">选择页面</div>
+                <nav className="flex flex-col items-stretch gap-2">
+                  {hiddenMobileMenuItems}
+                </nav>
+              </div>
             ) : null}
           </div>
         ) : (
