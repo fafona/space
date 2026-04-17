@@ -119,6 +119,20 @@ function getEmbeddedMobilePlanConfig(sourceBlocks: Block[]) {
   return getPagePlanConfigFromBlocks(cloned);
 }
 
+function getInitialVisiblePageId(
+  plan:
+    | {
+        activePageId?: string;
+        pages?: Array<{ id: string }>;
+      }
+    | null
+    | undefined,
+) {
+  const pages = Array.isArray(plan?.pages) ? plan.pages : [];
+  const firstPage = pages.find((page) => page.id === "page-1") ?? pages[0];
+  return firstPage?.id ?? "page-1";
+}
+
 function isMissingSlugColumn(message: string) {
   return (
     /column\s+pages\.slug\s+does\s+not\s+exist/i.test(message) ||
@@ -228,9 +242,9 @@ export function SitePageClient({
   const mobilePlanConfig = getEmbeddedMobilePlanConfig(sourceBlocks);
   const planConfig = isMobileViewport && mobilePlanConfig ? mobilePlanConfig : desktopPlanConfig;
   const activePlan = planConfig.plans.find((plan) => plan.id === planConfig.activePlanId) ?? planConfig.plans[0];
-  const [currentPageId, setCurrentPageId] = useState<string>(activePlan?.activePageId ?? "page-1");
+  const [currentPageId, setCurrentPageId] = useState<string>(getInitialVisiblePageId(activePlan));
   const resolvedPageId =
-    activePlan?.pages?.some((page) => page.id === currentPageId) ? currentPageId : activePlan?.activePageId ?? "page-1";
+    activePlan?.pages?.some((page) => page.id === currentPageId) ? currentPageId : getInitialVisiblePageId(activePlan);
   const activePage =
     activePlan?.pages?.find((page) => page.id === resolvedPageId) ??
     activePlan?.pages?.find((page) => page.id === activePlan.activePageId) ??
