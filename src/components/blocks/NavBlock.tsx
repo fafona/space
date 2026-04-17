@@ -153,31 +153,6 @@ export default function NavBlock(props: NavBlockProps) {
     const localizedSource = props.heading ? localizeSystemDefaultText(props.heading, locale) : "";
     return toPlainNavText(localizedSource, activeNavLabel || localizedHeading);
   }, [activeNavLabel, localizedHeading, locale, props.heading]);
-  const hiddenMobileMenuItems = localizedNavItems.map((item) => {
-    const isActive = props.currentPageId === item.pageId;
-    const labelHtml = toRichHtml(item.label, "");
-    const renderedLabelHtml = isActive ? stripInlineTextColorStylesFromHtml(labelHtml) : labelHtml;
-    return (
-      <button
-        key={item.id}
-        type="button"
-        className={`${navItemClass} w-full ${getBlockBorderClass(isActive ? navItemActiveBorderStyle : navItemBorderStyle)} ${
-          isActive ? "" : "hover:brightness-[0.98]"
-        }`}
-        style={isActive ? navItemActiveStyle : navItemStyle}
-        onClick={() => {
-          setMobileMenuOpenPageId(null);
-          props.onNavigatePage?.(item.pageId);
-        }}
-      >
-        <span
-          className="block w-full break-words whitespace-normal"
-          style={isActive ? navItemActiveLabelStyle : undefined}
-          dangerouslySetInnerHTML={{ __html: renderedLabelHtml }}
-        />
-      </button>
-    );
-  });
 
   useEffect(() => {
     if (props.forceMobileViewport) return;
@@ -262,6 +237,31 @@ export default function NavBlock(props: NavBlockProps) {
     ...getColorLayerStyle(mobileNavButtonBgColor, mobileNavButtonBgOpacity),
   };
   const hiddenMobileMode = props.mobileNavDisplayMode === "hidden" && effectiveMobileViewport;
+  const hiddenMobileMenuItems = localizedNavItems.map((item) => {
+    const isActive = props.currentPageId === item.pageId;
+    const labelHtml = toRichHtml(item.label, "");
+    const renderedLabelHtml = isActive ? stripInlineTextColorStylesFromHtml(labelHtml) : labelHtml;
+    return (
+      <button
+        key={item.id}
+        type="button"
+        className={`${navItemClass} w-full ${getBlockBorderClass(isActive ? navItemActiveBorderStyle : navItemBorderStyle)} ${
+          isActive ? "" : "hover:brightness-[0.98]"
+        }`}
+        style={isActive ? navItemActiveStyle : navItemStyle}
+        onClick={() => {
+          setMobileMenuOpenPageId(null);
+          props.onNavigatePage?.(item.pageId);
+        }}
+      >
+        <span
+          className="block w-full break-words whitespace-normal"
+          style={isActive ? navItemActiveLabelStyle : undefined}
+          dangerouslySetInnerHTML={{ __html: renderedLabelHtml }}
+        />
+      </button>
+    );
+  });
 
   return (
     <section
