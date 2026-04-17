@@ -18186,6 +18186,7 @@ type GalleryEditorImage = {
   const [productPreviewSearchByBlockId, setProductPreviewSearchByBlockId] = useState<Record<string, string>>({});
   const [productTagOptionsDraftByBlockId, setProductTagOptionsDraftByBlockId] = useState<Record<string, string>>({});
   const [productDetailPreview, setProductDetailPreview] = useState<{ blockId: string; itemId: string } | null>(null);
+  const [productEditorDialogState, setProductEditorDialogState] = useState<{ blockId: string; itemId: string } | null>(null);
   const [productSettingsCollapsedByBlockId, setProductSettingsCollapsedByBlockId] = useState<
     Record<string, Partial<Record<ProductSettingsSectionKey, boolean>>>
   >({});
@@ -18306,18 +18307,20 @@ type GalleryEditorImage = {
 
   function addProductItem() {
     if (block.type !== "product") return;
+    const nextItem = {
+      id: createProductItemId(),
+      code: "",
+      name: "",
+      description: "",
+      price: "",
+      imageUrl: "",
+      tag: "",
+    };
     commitProductItems([
       ...getProductItems(),
-      {
-        id: createProductItemId(),
-        code: "",
-        name: "",
-        description: "",
-        price: "",
-        imageUrl: "",
-        tag: "",
-      },
+      nextItem,
     ]);
+    setProductEditorDialogState({ blockId: block.id, itemId: nextItem.id });
   }
 
   function removeProductItem(id: string) {
@@ -23578,6 +23581,8 @@ type GalleryEditorImage = {
     const productTags = productTagOptions;
     const arrangedProductItems = arrangeProductItemsByTag(productItems, productTags, productGroupByTag);
     const productSectionCollapsed = productSettingsCollapsedByBlockId[block.id] ?? {};
+    const isProductSectionCollapsed = (section: ProductSettingsSectionKey) =>
+      productSectionCollapsed[section] ?? (section !== "basic");
     const rawActiveProductTag = productPreviewTagByBlockId[block.id] ?? null;
     const activeProductTag = rawActiveProductTag && productTags.includes(rawActiveProductTag) ? rawActiveProductTag : null;
     const searchMatchedProductItems = productSearchEnabled
@@ -23603,6 +23608,10 @@ type GalleryEditorImage = {
     const detailPreviewProduct =
       productDetailPreview?.blockId === block.id
         ? arrangedProductItems.find((item) => item.id === productDetailPreview.itemId) ?? arrangedProductItems[0] ?? null
+        : null;
+    const editingProductItem =
+      productEditorDialogState?.blockId === block.id
+        ? getProductItems().find((item) => item.id === productEditorDialogState.itemId) ?? null
         : null;
     const productPlaceholderCount =
       productContainerMode === "paged" && productLayoutPreset !== "spotlight"
@@ -23652,6 +23661,17 @@ type GalleryEditorImage = {
         ...current,
         [block.id]: current[block.id] && allowed.has(current[block.id] as string) ? current[block.id] : null,
       }));
+    };
+    const openProductItemEditor = (itemId: string) => {
+      setProductEditorDialogState({ blockId: block.id, itemId });
+    };
+    const closeProductItemEditor = () => {
+      setProductEditorDialogState((current) => (current?.blockId === block.id ? null : current));
+    };
+    const deleteEditingProductItem = () => {
+      if (!editingProductItem) return;
+      removeProductItem(editingProductItem.id);
+      closeProductItemEditor();
     };
     const handleProductTagOptionsDraftChange = (rawValue: string) => {
       setProductTagOptionsDraftByBlockId((current) => ({
@@ -23806,7 +23826,7 @@ type GalleryEditorImage = {
 
     const renderProductCard = (
       item: ProductEditorItem,
-      options: { list?: boolean; featured?: boolean } = {},
+      options: { list?: boolean; featured?: boolean; editable?: boolean } = {},
     ) => {
       const priceText = productPriceText(item.price, productPricePrefix);
       const textWrapStyle = { overflowWrap: "anywhere" as const, wordBreak: "break-word" as const };
@@ -23825,8 +23845,9 @@ type GalleryEditorImage = {
             options.list
               ? "flex flex-col gap-4 p-4 sm:h-[var(--product-list-card-height)] sm:max-h-[var(--product-list-card-height)] sm:flex-row"
               : "flex h-full flex-col"
-          } ${options.featured ? "lg:min-h-[360px]" : ""}`}
+          } ${options.featured ? "lg:min-h-[360px]" : ""} ${options.editable ? "cursor-pointer transition hover:-translate-y-0.5 hover:shadow-md" : ""}`}
           style={{ ...productCardBackgroundStyle, ...productCardBorderInlineStyle, ...productListCardStyle }}
+          onClick={options.editable ? () => openProductItemEditor(item.id) : undefined}
         >
           <div
             className={`relative overflow-hidden bg-slate-100 ${options.list ? "shrink-0 self-start rounded-lg" : ""}`}
@@ -23918,9 +23939,9 @@ type GalleryEditorImage = {
         const secondary = items.slice(1);
         return (
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
-            {renderProductCard(featured, { featured: true })}
+            {renderProductCard(featured, { featured: true, editable: true })}
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
-              {secondary.map((item) => renderProductCard(item))}
+              {secondary.map((item) => renderProductCard(item, { editable: true }))}
             </div>
           </div>
         );
@@ -23928,7 +23949,7 @@ type GalleryEditorImage = {
       if (productLayoutPreset === "list") {
         return (
           <div className="space-y-4">
-            {items.map((item) => renderProductCard(item, { list: true }))}
+            {items.map((item) => renderProductCard(item, { list: true, editable: true }))}
             {options.includePlaceholders
               ? Array.from({ length: productPlaceholderCount }, (_, index) =>
                   renderProductPlaceholder(`${options.placeholderPrefix}-list-${index}`, { list: true }),
@@ -23939,7 +23960,7 @@ type GalleryEditorImage = {
       }
       return (
         <div className={productGridClass(productLayoutPreset)}>
-          {items.map((item) => renderProductCard(item))}
+          {items.map((item) => renderProductCard(item, { editable: true }))}
           {options.includePlaceholders
             ? Array.from({ length: productPlaceholderCount }, (_, index) =>
                 renderProductPlaceholder(`${options.placeholderPrefix}-grid-${index}`),
@@ -24103,7 +24124,7 @@ type GalleryEditorImage = {
       content: ReactNode,
       options: { wrapperClassName?: string; bodyClassName?: string } = {},
     ) => {
-      const collapsed = productSectionCollapsed[section] === true;
+      const collapsed = isProductSectionCollapsed(section);
       return (
         <div className={options.wrapperClassName ?? "rounded-lg border border-slate-200 bg-slate-50 p-4"}>
           <button
@@ -24417,6 +24438,125 @@ type GalleryEditorImage = {
                       </div>
                     </div>
                   )}
+                </div>
+              </div>
+            </div>
+          )
+        : null;
+    const productItemEditorDialog =
+      editingProductItem !== null
+        ? renderOverlay(
+            <div data-editor-overlay className="fixed inset-0 z-[2147483600] bg-black/50 p-4">
+              <div className="mx-auto flex h-full max-w-4xl items-center justify-center">
+                <div className="relative max-h-[90vh] w-full overflow-auto rounded-3xl bg-white p-5 shadow-2xl sm:p-6">
+                  <button
+                    type="button"
+                    className="absolute right-4 top-4 z-10 flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-2xl leading-none text-slate-600 hover:bg-slate-50"
+                    onClick={closeProductItemEditor}
+                    aria-label="关闭"
+                  >
+                    ×
+                  </button>
+                  <div className="flex flex-wrap items-start justify-between gap-3 pr-12">
+                    <div>
+                      <div className="text-xs font-medium uppercase tracking-[0.2em] text-slate-400">产品编辑</div>
+                      <div className="mt-1 text-lg font-semibold text-slate-900">
+                        {editingProductItem.name || editingProductItem.code || "未命名产品"}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-600 hover:bg-rose-100"
+                      onClick={deleteEditingProductItem}
+                    >
+                      删除产品
+                    </button>
+                  </div>
+                  <div className="mt-5 grid gap-5 lg:grid-cols-[200px_minmax(0,1fr)]">
+                    <div>
+                      <div
+                        className={`relative overflow-hidden rounded-lg border bg-slate-100 ${productLayoutPreset === "list" ? "shrink-0 self-start" : ""}`}
+                        style={getProductImageFrameStyle({ list: productLayoutPreset === "list", editor: true })}
+                      >
+                        {editingProductItem.imageUrl ? (
+                          <NextImage
+                            src={normalizePublicAssetUrl(editingProductItem.imageUrl)}
+                            alt={editingProductItem.name || editingProductItem.code || "产品图片"}
+                            fill
+                            unoptimized
+                            sizes="240px"
+                            className="object-cover"
+                          />
+                        ) : (
+                          <div className="flex h-full items-center justify-center text-sm text-slate-400">暂无图片</div>
+                        )}
+                      </div>
+                      <label className="mt-3 inline-flex cursor-pointer items-center rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50">
+                        上传图片
+                        <input
+                          className="hidden"
+                          type="file"
+                          accept="image/*"
+                          onChange={(event) => {
+                            void onReplaceProductImage(editingProductItem.id, event);
+                          }}
+                        />
+                      </label>
+                    </div>
+                    <div className={`grid gap-3 ${compactProductEditor ? "grid-cols-1" : "md:grid-cols-2"}`}>
+                      <label className="text-sm text-gray-600">
+                        <div className="mb-1">编号</div>
+                        <input
+                          className="w-full rounded border px-3 py-2"
+                          value={editingProductItem.code}
+                          onChange={(event) => updateProductItem(editingProductItem.id, { code: event.target.value })}
+                          placeholder="SKU-001"
+                        />
+                      </label>
+                      <label className="text-sm text-gray-600">
+                        <div className="mb-1">价格</div>
+                        <input
+                          className="w-full rounded border px-3 py-2"
+                          value={editingProductItem.price}
+                          onChange={(event) => updateProductItem(editingProductItem.id, { price: event.target.value })}
+                          placeholder="39.90"
+                        />
+                      </label>
+                      <label className={`text-sm text-gray-600 ${compactProductEditor ? "" : "md:col-span-2"}`}>
+                        <div className="mb-1">选择分类</div>
+                        <select
+                          className="w-full rounded border px-3 py-2 bg-white"
+                          value={editingProductItem.tag}
+                          onChange={(event) => updateProductItem(editingProductItem.id, { tag: event.target.value })}
+                        >
+                          <option value="">未分类</option>
+                          {productTagOptions.map((tag) => (
+                            <option key={`${editingProductItem.id}-${tag}`} value={tag}>
+                              {tag}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className={`text-sm text-gray-600 ${compactProductEditor ? "" : "md:col-span-2"}`}>
+                        <div className="mb-1">名称</div>
+                        <input
+                          className="w-full rounded border px-3 py-2"
+                          value={editingProductItem.name}
+                          onChange={(event) => updateProductItem(editingProductItem.id, { name: event.target.value })}
+                          placeholder="输入产品名称"
+                        />
+                      </label>
+                      <label className={`text-sm text-gray-600 ${compactProductEditor ? "" : "md:col-span-2"}`}>
+                        <div className="mb-1">介绍</div>
+                        <textarea
+                          className="min-h-[150px] w-full rounded border px-3 py-2"
+                          value={editingProductItem.description}
+                          onChange={(event) => updateProductItem(editingProductItem.id, { description: event.target.value })}
+                          placeholder="输入产品介绍、规格或卖点"
+                        />
+                      </label>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -25471,105 +25611,11 @@ type GalleryEditorImage = {
               {renderProductPreviewWithFilters()}
               {renderProductPager()}
               {productDetailPreviewDialog}
-              <div className="mt-5 space-y-4">
-                {productItems.length === 0 ? (
-                  <div className="rounded border border-dashed border-gray-300 bg-gray-50 p-4 text-sm text-gray-500">
-                    {"暂无产品，点击“新增产品”或导入 Excel。"}
-                  </div>
-                ) : (
-                  productItems.map((item, index) => (
-                    <div key={item.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div className="text-sm font-semibold text-slate-800">{`产品 ${index + 1}`}</div>
-                        <button
-                          type="button"
-                          className="rounded border bg-white px-2 py-1 text-xs hover:bg-gray-50"
-                          onClick={() => removeProductItem(item.id)}
-                        >
-                          删除
-                        </button>
-                      </div>
-                      <div className={`mt-3 grid gap-4 ${compactProductEditor ? "grid-cols-1" : "lg:grid-cols-[180px_minmax(0,1fr)]"}`}>
-                        <div>
-                          <div
-                            className={`relative overflow-hidden rounded-lg border bg-slate-100 ${productLayoutPreset === "list" ? "shrink-0 self-start" : ""}`}
-                            style={getProductImageFrameStyle({ list: productLayoutPreset === "list", editor: true })}
-                          >
-                            {item.imageUrl ? (
-                              <NextImage src={normalizePublicAssetUrl(item.imageUrl)} alt={item.name || item.code || "产品图片"} fill unoptimized sizes="240px" className="object-cover" />
-                            ) : (
-                              <div className="flex h-full items-center justify-center text-sm text-slate-400">{"暂无图片"}</div>
-                            )}
-                          </div>
-                          <label className="mt-3 inline-flex cursor-pointer items-center rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50">
-                            {"上传图片"}
-                            <input
-                              className="hidden"
-                              type="file"
-                              accept="image/*"
-                              onChange={(event) => {
-                                void onReplaceProductImage(item.id, event);
-                              }}
-                            />
-                          </label>
-                        </div>
-                        <div className={`grid gap-3 ${compactProductEditor ? "grid-cols-1" : "md:grid-cols-2"}`}>
-                          <label className="text-sm text-gray-600">
-                            <div className="mb-1">编号</div>
-                            <input
-                              className="w-full rounded border px-3 py-2"
-                              value={item.code}
-                              onChange={(event) => updateProductItem(item.id, { code: event.target.value })}
-                              placeholder="SKU-001"
-                            />
-                          </label>
-                          <label className="text-sm text-gray-600">
-                            <div className="mb-1">价格</div>
-                            <input
-                              className="w-full rounded border px-3 py-2"
-                              value={item.price}
-                              onChange={(event) => updateProductItem(item.id, { price: event.target.value })}
-                              placeholder="39.90"
-                            />
-                          </label>
-                          <label className={`text-sm text-gray-600 ${compactProductEditor ? "" : "md:col-span-2"}`}>
-                            <div className="mb-1">选择分类</div>
-                            <select
-                              className="w-full rounded border px-3 py-2 bg-white"
-                              value={item.tag}
-                              onChange={(event) => updateProductItem(item.id, { tag: event.target.value })}
-                            >
-                              <option value="">未分类</option>
-                              {productTagOptions.map((tag) => (
-                                <option key={`${item.id}-${tag}`} value={tag}>
-                                  {tag}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <label className={`text-sm text-gray-600 ${compactProductEditor ? "" : "md:col-span-2"}`}>
-                            <div className="mb-1">名称</div>
-                            <input
-                              className="w-full rounded border px-3 py-2"
-                              value={item.name}
-                              onChange={(event) => updateProductItem(item.id, { name: event.target.value })}
-                              placeholder="输入产品名称"
-                            />
-                          </label>
-                          <label className={`text-sm text-gray-600 ${compactProductEditor ? "" : "md:col-span-2"}`}>
-                            <div className="mb-1">介绍</div>
-                            <textarea
-                              className="min-h-[110px] w-full rounded border px-3 py-2"
-                              value={item.description}
-                              onChange={(event) => updateProductItem(item.id, { description: event.target.value })}
-                              placeholder="输入产品介绍、规格或卖点"
-                            />
-                          </label>
-                        </div>
-                      </div>
-                    </div>
-                  ))
-                )}
+              {productItemEditorDialog}
+              <div className="mt-5 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-500">
+                {productItems.length === 0
+                  ? "暂无产品，点击“新增产品”后会直接打开编辑弹窗。"
+                  : "点击上方产品预览中的任意产品，可直接弹窗编辑该产品；新增产品也会直接打开编辑弹窗。"}
               </div>
             </div>
           ) : (
