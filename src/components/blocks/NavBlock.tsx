@@ -291,35 +291,25 @@ export default function NavBlock(props: NavBlockProps) {
         }}
       >
         {hiddenMobileMode ? (
-          <div className="relative">
-            <div className="flex items-center justify-between gap-3">
-              <button
-                type="button"
-                className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition hover:brightness-[0.98] ${getBlockBorderClass(
-                  mobileNavButtonBorderStyle,
-                )}`}
-                  aria-label={mobileMenuOpen ? "收起导航" : "展开导航"}
-                style={mobileNavButtonStyle}
-                onClick={() => setMobileMenuOpenPageId((current) => (current === currentPageKey ? null : currentPageKey))}
-              >
-                <span className="inline-flex flex-col items-center justify-center gap-1.5">
-                  <span className="block h-0.5 w-4 rounded-full" style={{ backgroundColor: mobileNavButtonLineColor }} />
-                  <span className="block h-0.5 w-4 rounded-full" style={{ backgroundColor: mobileNavButtonLineColor }} />
-                  <span className="block h-0.5 w-4 rounded-full" style={{ backgroundColor: mobileNavButtonLineColor }} />
-                </span>
-              </button>
-              <div className="min-w-0 flex-1 text-sm font-semibold text-slate-700">
-                <div className="truncate">{hiddenMobileHeadingText}</div>
-              </div>
+          <div className="flex items-center justify-between gap-3">
+            <button
+              type="button"
+              className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition hover:brightness-[0.98] ${getBlockBorderClass(
+                mobileNavButtonBorderStyle,
+              )}`}
+              aria-label={mobileMenuOpen ? "收起导航" : "展开导航"}
+              style={mobileNavButtonStyle}
+              onClick={() => setMobileMenuOpenPageId((current) => (current === currentPageKey ? null : currentPageKey))}
+            >
+              <span className="inline-flex flex-col items-center justify-center gap-1.5">
+                <span className="block h-0.5 w-4 rounded-full" style={{ backgroundColor: mobileNavButtonLineColor }} />
+                <span className="block h-0.5 w-4 rounded-full" style={{ backgroundColor: mobileNavButtonLineColor }} />
+                <span className="block h-0.5 w-4 rounded-full" style={{ backgroundColor: mobileNavButtonLineColor }} />
+              </span>
+            </button>
+            <div className="min-w-0 flex-1 text-sm font-semibold text-slate-700">
+              <div className="truncate">{hiddenMobileHeadingText}</div>
             </div>
-            {mobileMenuOpen ? (
-              <div className="absolute left-0 top-full z-20 mt-3 w-[min(16rem,calc(100vw-4rem))] max-w-full rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-2xl backdrop-blur">
-                <div className="mb-2 text-xs font-medium tracking-[0.12em] text-slate-400 uppercase">选择页面</div>
-                <nav className="flex flex-col items-stretch gap-2">
-                  {hiddenMobileMenuItems}
-                </nav>
-              </div>
-            ) : null}
           </div>
         ) : (
           <>
@@ -354,6 +344,16 @@ export default function NavBlock(props: NavBlockProps) {
           </>
         )}
       </div>
+      {hiddenMobileMode && mobileMenuOpen ? (
+        <div className="pointer-events-none absolute left-6 top-[calc(100%-0.25rem)] z-30 flex w-[calc(100%-3rem)] max-w-full justify-start">
+          <div className="pointer-events-auto w-[min(16rem,calc(100vw-4rem))] max-w-full rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-2xl backdrop-blur">
+            <div className="mb-2 text-xs font-medium tracking-[0.12em] text-slate-400 uppercase">选择页面</div>
+            <nav className="flex flex-col items-stretch gap-2">
+              {hiddenMobileMenuItems}
+            </nav>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

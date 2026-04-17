@@ -22370,7 +22370,7 @@ type GalleryEditorImage = {
         );
       });
     const renderHiddenMobileNavPreview = () => (
-      <div className="relative">
+      <div>
         <div className="flex items-center justify-between gap-3">
           <button
             type="button"
@@ -22401,14 +22401,17 @@ type GalleryEditorImage = {
             </div>
           </div>
         </div>
-        {previewNavMobileMenuOpen ? (
-          <div className="absolute left-0 top-full z-20 mt-3 w-[min(16rem,calc(100%-0rem))] max-w-full rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-2xl backdrop-blur">
+      </div>
+    );
+    const hiddenMobileNavPreviewPopup =
+      mobileHiddenNavMode && previewNavMobileMenuOpen ? (
+        <div className="pointer-events-none absolute left-6 top-[calc(100%-0.25rem)] z-30 flex w-[calc(100%-3rem)] max-w-full justify-start">
+          <div className="pointer-events-auto w-[min(16rem,calc(100%-0rem))] max-w-full rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-2xl backdrop-blur">
             <div className="mb-2 text-xs font-medium tracking-[0.12em] text-slate-400 uppercase">选择页面</div>
             <div className="flex flex-col items-stretch gap-2">{renderNavPreviewButtons({ closeMenuOnClick: true })}</div>
           </div>
-        ) : null}
-      </div>
-    );
+        </div>
+      ) : null;
     return (
       <section
         data-block-id={block.id}
@@ -22575,6 +22578,7 @@ type GalleryEditorImage = {
           )}
           {resizeHandles}
         </div>
+        {hiddenMobileNavPreviewPopup}
       </section>
     );
   }
