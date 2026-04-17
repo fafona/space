@@ -253,6 +253,8 @@ import BookingBlock from "@/components/blocks/BookingBlock";
 import BookingDateCalendarEditor from "@/components/admin/BookingDateCalendarEditor";
 import MerchantBookingManagerDialog from "@/components/admin/MerchantBookingManagerDialog";
 import MerchantBookingMobilePanel from "@/components/admin/MerchantBookingMobilePanel";
+import MerchantOrderManagerDialog from "@/components/admin/MerchantOrderManagerDialog";
+import MerchantOrderMobilePanel from "@/components/admin/MerchantOrderMobilePanel";
 import BookingTimeSlotRulesEditor from "@/components/admin/BookingTimeSlotRulesEditor";
 import MerchantProfileDialog from "@/components/admin/MerchantProfileDialog";
 import { useI18n } from "@/components/I18nProvider";
@@ -1205,7 +1207,7 @@ const GALLERY_FRAME_WIDTH_LABELS: Record<CustomGalleryFrameWidth, string> = {
   "2/3": "2/3",
 };
 type ViewportKey = "desktop" | "mobile";
-type MerchantDesktopSection = "editor" | "profile" | "cards" | "booking" | "analytics" | "support";
+type MerchantDesktopSection = "editor" | "profile" | "cards" | "booking" | "orders" | "analytics" | "support";
 type ProductSettingsSectionKey = "basic" | "typography" | "tags" | "card" | "detail";
 type ProductTypographyRole = "code" | "name" | "description" | "price";
 const MOBILE_SIZE_SCALE = 0.82;
@@ -4924,6 +4926,7 @@ export default function AdminClient({
   const [merchantProfileDialogShowBusinessCards, setMerchantProfileDialogShowBusinessCards] = useState(true);
   const [merchantSiteIdOverride, setMerchantSiteIdOverride] = useState("");
   const [merchantBookingManagerOpen, setMerchantBookingManagerOpen] = useState(false);
+  const [merchantOrderManagerOpen, setMerchantOrderManagerOpen] = useState(false);
   const [merchantBookingAttentionCount, setMerchantBookingAttentionCount] = useState(0);
   const [supportDialogOpen, setSupportDialogOpen] = useState(false);
   const [supportDataActivated, setSupportDataActivated] = useState(false);
@@ -4949,6 +4952,7 @@ export default function AdminClient({
   const [supportSelectedContactKey, setSupportSelectedContactKey] = useState(SUPPORT_OFFICIAL_CONTACT_KEY);
   const [supportMobileView, setSupportMobileView] = useState<"list" | "thread">("list");
   const [supportMobileHomeTab, setSupportMobileHomeTab] = useState<SupportMobileHomeTab>("conversations");
+  const [supportMobileBusinessSection, setSupportMobileBusinessSection] = useState<"booking" | "orders">("booking");
   const [supportSelfSectionView, setSupportSelfSectionView] = useState<SupportSelfSectionView>("home");
   const [supportPeerLocalMessages, setSupportPeerLocalMessages] = useState<LocalPeerSupportMessage[]>([]);
   const [supportBusinessCardDialogOpen, setSupportBusinessCardDialogOpen] = useState(false);
@@ -11712,6 +11716,16 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     setMerchantDesktopSection("booking");
   }
 
+  async function openMerchantOrderPanel() {
+    const resolvedSiteId = editingSiteId || (await ensureEditableMerchantSiteId());
+    if (!resolvedSiteId) {
+      showTip("当前商户还没准备好订单资料，请稍后重试");
+      return;
+    }
+    setMerchantSiteIdOverride(resolvedSiteId);
+    setMerchantDesktopSection("orders");
+  }
+
   function openMerchantAnalyticsPanel() {
     setMerchantDesktopSection("analytics");
   }
@@ -13615,6 +13629,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   const canUseProductBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowProductBlock);
   const canUseBookingBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowBookingBlock) || merchantHasBookingBlockConfigured;
   const canUseButtonBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowButtonBlock);
+  const resolvedSupportMobileBusinessSection =
+    canUseProductBlock || supportMobileBusinessSection === "booking" ? supportMobileBusinessSection : "booking";
   const isBookingBlockAddLocked = merchantHasBookingBlockConfigured;
   const merchantBookingBadgeLabel =
     merchantBookingAttentionCount > 99 ? "99+" : String(merchantBookingAttentionCount);
@@ -14263,24 +14279,69 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     <>
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(env(safe-area-inset-bottom)+5.85rem)] pt-0">
         {supportMobileBookingSiteId ? (
-          <MerchantBookingMobilePanel
-            siteId={supportMobileBookingSiteId}
-            siteName={merchantDisplayName}
-            siteCountryCode={effectiveEditingSite?.location?.countryCode ?? editingSite?.location?.countryCode ?? ""}
-            storeOptions={merchantBookingManagerOptions.storeOptions}
-            itemOptions={merchantBookingManagerOptions.itemOptions}
-            titleOptions={merchantBookingManagerOptions.titleOptions}
-            bookingRulesSnapshot={merchantBookingRulesSnapshot}
-            darkMode={supportMobileDarkMode}
-            allowBookingEmailPrefill={Boolean(merchantPermissionConfig?.allowBookingEmailPrefill)}
-            allowCustomerAutoEmail={Boolean(merchantPermissionConfig?.allowBookingAutoEmail)}
-            onRecordsChange={handleMerchantBookingRecordsChange}
-          />
+          <div className="space-y-4 pt-4">
+            <div className="sticky top-0 z-20">
+              <div className="inline-flex rounded-[24px] border border-slate-200/70 bg-white/90 p-1 shadow-[0_14px_30px_rgba(15,23,42,0.08)] backdrop-blur">
+                <button
+                  type="button"
+                  className={`min-w-[88px] rounded-[18px] px-4 py-2.5 text-sm font-semibold transition ${
+                    resolvedSupportMobileBusinessSection === "booking"
+                      ? "bg-emerald-500 text-white shadow-sm"
+                      : "text-slate-600"
+                  }`}
+                  onClick={() => setSupportMobileBusinessSection("booking")}
+                >
+                  预约
+                </button>
+                {canUseProductBlock ? (
+                  <button
+                    type="button"
+                    className={`min-w-[88px] rounded-[18px] px-4 py-2.5 text-sm font-semibold transition ${
+                      resolvedSupportMobileBusinessSection === "orders"
+                        ? "bg-slate-900 text-white shadow-sm"
+                        : "text-slate-600"
+                    }`}
+                    onClick={() => setSupportMobileBusinessSection("orders")}
+                  >
+                    订单
+                  </button>
+                ) : null}
+              </div>
+            </div>
+            {resolvedSupportMobileBusinessSection === "orders" && canUseProductBlock ? (
+              <MerchantOrderMobilePanel
+                siteId={supportMobileBookingSiteId}
+                siteName={merchantDisplayName}
+                darkMode={supportMobileDarkMode}
+              />
+            ) : (
+              <MerchantBookingMobilePanel
+                siteId={supportMobileBookingSiteId}
+                siteName={merchantDisplayName}
+                siteCountryCode={effectiveEditingSite?.location?.countryCode ?? editingSite?.location?.countryCode ?? ""}
+                storeOptions={merchantBookingManagerOptions.storeOptions}
+                itemOptions={merchantBookingManagerOptions.itemOptions}
+                titleOptions={merchantBookingManagerOptions.titleOptions}
+                bookingRulesSnapshot={merchantBookingRulesSnapshot}
+                darkMode={supportMobileDarkMode}
+                allowBookingEmailPrefill={Boolean(merchantPermissionConfig?.allowBookingEmailPrefill)}
+                allowCustomerAutoEmail={Boolean(merchantPermissionConfig?.allowBookingAutoEmail)}
+                onRecordsChange={handleMerchantBookingRecordsChange}
+              />
+            )}
+          </div>
         ) : (
           <>
             <div className="sticky top-0 z-20 -mx-4 border-b border-slate-200/80 bg-[rgba(248,250,252,0.96)] px-4 pb-3 pt-[calc(env(safe-area-inset-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur supports-[backdrop-filter]:bg-[rgba(248,250,252,0.9)]">
-              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-500 text-[13px] font-semibold text-white shadow-sm">
-                预约
+              <div className="inline-flex rounded-[24px] border border-slate-200/70 bg-white/90 p-1 shadow-[0_14px_30px_rgba(15,23,42,0.08)] backdrop-blur">
+                <div className="min-w-[88px] rounded-[18px] bg-emerald-500 px-4 py-2.5 text-center text-sm font-semibold text-white shadow-sm">
+                  预约
+                </div>
+                {canUseProductBlock ? (
+                  <div className="min-w-[88px] rounded-[18px] px-4 py-2.5 text-center text-sm font-semibold text-slate-500">
+                    订单
+                  </div>
+                ) : null}
               </div>
             </div>
             <div className="pt-4">
@@ -15626,6 +15687,19 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           },
         }
       : null;
+  const merchantOrderManagerDialogCommonProps =
+    !isPlatformEditor && canUseProductBlock
+      ? {
+          siteId: editingSiteId || "",
+          siteName: effectiveMerchantDisplayName || merchantDisplayName,
+          onClose: () => {
+            setMerchantOrderManagerOpen(false);
+            if (isDesktopMerchantWorkspace) {
+              setMerchantDesktopSection("editor");
+            }
+          },
+        }
+      : null;
   const merchantAnalyticsSuccessRate7d = formatSuccessRate(
     merchantAnalyticsSnapshot.publish7d.length,
     merchantAnalyticsSnapshot.publish7d.filter((item) => item.success).length,
@@ -16164,6 +16238,14 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               showCloseButton={false}
               className="min-h-[calc(100vh-14rem)]"
             />
+          ) : merchantDesktopSection === "orders" && merchantOrderManagerDialogCommonProps ? (
+            <MerchantOrderManagerDialog
+              {...merchantOrderManagerDialogCommonProps}
+              open
+              mode="inline"
+              showCloseButton={false}
+              className="min-h-[calc(100vh-14rem)]"
+            />
           ) : merchantDesktopSection === "analytics" ? (
             merchantAnalyticsPanelContent
           ) : merchantDesktopSection === "support" ? (
@@ -16359,6 +16441,17 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         ) : null}
                       </button>
                     ) : null}
+                    {canUseProductBlock ? (
+                      <button
+                        type="button"
+                        className={getMerchantDesktopMenuButtonClassName(merchantDesktopSection === "orders")}
+                        onClick={() => {
+                          void openMerchantOrderPanel();
+                        }}
+                      >
+                        <span>订单管理</span>
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       className={getMerchantDesktopMenuButtonClassName(merchantDesktopSection === "analytics")}
@@ -16460,6 +16553,19 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     {"预约管理"}
                   </button>
                 ) : null}
+                {!isPlatformEditor && canUseProductBlock ? (
+                  <button
+                    className={
+                      isMobileMerchantEditorShell
+                        ? merchantMobileToolbarButtonClassName
+                        : "px-3 py-2 rounded border bg-white hover:bg-gray-50 disabled:opacity-50"
+                    }
+                    onClick={() => setMerchantOrderManagerOpen(true)}
+                    disabled={!editingSiteId}
+                  >
+                    {"订单管理"}
+                  </button>
+                ) : null}
                 {!isPlatformEditor ? (
                   <button
                     className={supportButtonClassName}
@@ -16492,6 +16598,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         ? "名片夹"
                       : merchantDesktopSection === "booking"
                         ? "预约管理"
+                      : merchantDesktopSection === "orders"
+                        ? "订单管理"
                       : merchantDesktopSection === "analytics"
                           ? "数据统计"
                           : "会话"}
@@ -16503,6 +16611,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         ? "这里集中管理聊天展示名片与联系卡复制内容。"
                       : merchantDesktopSection === "booking"
                         ? "这里集中查看和处理当前商户收到的预约记录。"
+                      : merchantDesktopSection === "orders"
+                        ? "这里集中查看和处理前台提交的产品订单。"
                       : merchantDesktopSection === "analytics"
                           ? "这里集中查看访问、发布和联系方式点击等统计。"
                           : "这里集中处理官方客服和商户聊天消息。"}
@@ -17388,6 +17498,13 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         />
       ) : null}
 
+      {merchantOrderManagerOpen && merchantOrderManagerDialogCommonProps ? (
+        <MerchantOrderManagerDialog
+          {...merchantOrderManagerDialogCommonProps}
+          open={merchantOrderManagerOpen}
+        />
+      ) : null}
+
       {pageCopyDialogOpen
         ? renderTopMostOverlay(
             <div
@@ -18186,7 +18303,11 @@ type GalleryEditorImage = {
   const [productPreviewSearchByBlockId, setProductPreviewSearchByBlockId] = useState<Record<string, string>>({});
   const [productTagOptionsDraftByBlockId, setProductTagOptionsDraftByBlockId] = useState<Record<string, string>>({});
   const [productDetailPreview, setProductDetailPreview] = useState<{ blockId: string; itemId: string } | null>(null);
-  const [productEditorDialogState, setProductEditorDialogState] = useState<{ blockId: string; itemId: string } | null>(null);
+  const [productEditorDialogState, setProductEditorDialogState] = useState<
+    | { blockId: string; itemId: string; mode: "create" | "edit" }
+    | null
+  >(null);
+  const [productEditorDraft, setProductEditorDraft] = useState<ProductEditorItem | null>(null);
   const [productSettingsCollapsedByBlockId, setProductSettingsCollapsedByBlockId] = useState<
     Record<string, Partial<Record<ProductSettingsSectionKey, boolean>>>
   >({});
@@ -18298,16 +18419,9 @@ type GalleryEditorImage = {
     });
   }
 
-  function updateProductItem(id: string, patch: Partial<ProductEditorItem>) {
-    if (block.type !== "product") return;
-    commitProductItems(
-      getProductItems().map((item) => (item.id === id ? { ...item, ...patch } : item)),
-    );
-  }
-
   function addProductItem() {
     if (block.type !== "product") return;
-    const nextItem = {
+    const nextItem: ProductEditorItem = {
       id: createProductItemId(),
       code: "",
       name: "",
@@ -18316,11 +18430,8 @@ type GalleryEditorImage = {
       imageUrl: "",
       tag: "",
     };
-    commitProductItems([
-      ...getProductItems(),
-      nextItem,
-    ]);
-    setProductEditorDialogState({ blockId: block.id, itemId: nextItem.id });
+    setProductEditorDraft(nextItem);
+    setProductEditorDialogState({ blockId: block.id, itemId: nextItem.id, mode: "create" });
   }
 
   function removeProductItem(id: string) {
@@ -19593,19 +19704,19 @@ type GalleryEditorImage = {
     }
   }
 
-  async function onReplaceProductImage(id: string, event: ChangeEvent<HTMLInputElement>) {
-    if (block.type !== "product") return;
+  async function persistProductImageUpload(event: ChangeEvent<HTMLInputElement>) {
     const inputEl = event.currentTarget;
     const file = event.target.files?.[0];
-    if (!file) return;
+    if (!file) return null;
     try {
       const result = await onPersistProductImageFile(file);
-      updateProductItem(id, { imageUrl: result.value });
       if (!result.externalized) {
         onAlert("产品图片已写入草稿，但未上传到存储；发布前会再次尝试外链化。");
       }
+      return result.value;
     } catch (error) {
       onAlert(error instanceof Error ? error.message : "上传失败，请重试");
+      return null;
     } finally {
       inputEl.value = "";
     }
@@ -23610,9 +23721,11 @@ type GalleryEditorImage = {
         ? arrangedProductItems.find((item) => item.id === productDetailPreview.itemId) ?? arrangedProductItems[0] ?? null
         : null;
     const editingProductItem =
-      productEditorDialogState?.blockId === block.id
+      productEditorDialogState?.blockId === block.id && productEditorDialogState.mode === "edit"
         ? getProductItems().find((item) => item.id === productEditorDialogState.itemId) ?? null
         : null;
+    const activeProductEditorDraft =
+      productEditorDialogState?.blockId === block.id ? productEditorDraft : null;
     const productPlaceholderCount =
       productContainerMode === "paged" && productLayoutPreset !== "spotlight"
         ? Math.max(0, productItemsPerPage - previewItems.length)
@@ -23663,14 +23776,32 @@ type GalleryEditorImage = {
       }));
     };
     const openProductItemEditor = (itemId: string) => {
-      setProductEditorDialogState({ blockId: block.id, itemId });
+      const targetItem = getProductItems().find((item) => item.id === itemId);
+      if (!targetItem) return;
+      setProductEditorDraft({ ...targetItem });
+      setProductEditorDialogState({ blockId: block.id, itemId, mode: "edit" });
     };
     const closeProductItemEditor = () => {
       setProductEditorDialogState((current) => (current?.blockId === block.id ? null : current));
+      setProductEditorDraft(null);
     };
     const deleteEditingProductItem = () => {
       if (!editingProductItem) return;
       removeProductItem(editingProductItem.id);
+      closeProductItemEditor();
+    };
+    const updateProductEditorDraft = (patch: Partial<ProductEditorItem>) => {
+      setProductEditorDraft((current) => (current ? { ...current, ...patch } : current));
+    };
+    const saveProductEditorDraft = () => {
+      if (block.type !== "product" || productEditorDialogState?.blockId !== block.id || !activeProductEditorDraft) return;
+      const normalizedDraft = normalizeProductItems([activeProductEditorDraft])[0];
+      if (!normalizedDraft) return;
+      const nextItems =
+        productEditorDialogState.mode === "create"
+          ? [...getProductItems(), normalizedDraft]
+          : getProductItems().map((item) => (item.id === normalizedDraft.id ? normalizedDraft : item));
+      commitProductItems(nextItems);
       closeProductItemEditor();
     };
     const handleProductTagOptionsDraftChange = (rawValue: string) => {
@@ -24444,7 +24575,7 @@ type GalleryEditorImage = {
           )
         : null;
     const productItemEditorDialog =
-      editingProductItem !== null
+      activeProductEditorDraft !== null
         ? renderOverlay(
             <div data-editor-overlay className="fixed inset-0 z-[2147483600] bg-black/50 p-4">
               <div className="mx-auto flex h-full max-w-4xl items-center justify-center">
@@ -24459,18 +24590,22 @@ type GalleryEditorImage = {
                   </button>
                   <div className="flex flex-wrap items-start justify-between gap-3 pr-12">
                     <div>
-                      <div className="text-xs font-medium uppercase tracking-[0.2em] text-slate-400">产品编辑</div>
+                      <div className="text-xs font-medium uppercase tracking-[0.2em] text-slate-400">
+                        {productEditorDialogState?.mode === "create" ? "新增产品" : "产品编辑"}
+                      </div>
                       <div className="mt-1 text-lg font-semibold text-slate-900">
-                        {editingProductItem.name || editingProductItem.code || "未命名产品"}
+                        {activeProductEditorDraft.name || activeProductEditorDraft.code || "未命名产品"}
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      className="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-600 hover:bg-rose-100"
-                      onClick={deleteEditingProductItem}
-                    >
-                      删除产品
-                    </button>
+                    {productEditorDialogState?.mode === "edit" ? (
+                      <button
+                        type="button"
+                        className="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-600 hover:bg-rose-100"
+                        onClick={deleteEditingProductItem}
+                      >
+                        删除产品
+                      </button>
+                    ) : null}
                   </div>
                   <div className="mt-5 grid gap-5 lg:grid-cols-[200px_minmax(0,1fr)]">
                     <div>
@@ -24478,10 +24613,10 @@ type GalleryEditorImage = {
                         className={`relative overflow-hidden rounded-lg border bg-slate-100 ${productLayoutPreset === "list" ? "shrink-0 self-start" : ""}`}
                         style={getProductImageFrameStyle({ list: productLayoutPreset === "list", editor: true })}
                       >
-                        {editingProductItem.imageUrl ? (
+                        {activeProductEditorDraft.imageUrl ? (
                           <NextImage
-                            src={normalizePublicAssetUrl(editingProductItem.imageUrl)}
-                            alt={editingProductItem.name || editingProductItem.code || "产品图片"}
+                            src={normalizePublicAssetUrl(activeProductEditorDraft.imageUrl)}
+                            alt={activeProductEditorDraft.name || activeProductEditorDraft.code || "产品图片"}
                             fill
                             unoptimized
                             sizes="240px"
@@ -24497,8 +24632,10 @@ type GalleryEditorImage = {
                           className="hidden"
                           type="file"
                           accept="image/*"
-                          onChange={(event) => {
-                            void onReplaceProductImage(editingProductItem.id, event);
+                          onChange={async (event) => {
+                            const nextImageUrl = await persistProductImageUpload(event);
+                            if (!nextImageUrl) return;
+                            updateProductEditorDraft({ imageUrl: nextImageUrl });
                           }}
                         />
                       </label>
@@ -24508,8 +24645,8 @@ type GalleryEditorImage = {
                         <div className="mb-1">编号</div>
                         <input
                           className="w-full rounded border px-3 py-2"
-                          value={editingProductItem.code}
-                          onChange={(event) => updateProductItem(editingProductItem.id, { code: event.target.value })}
+                          value={activeProductEditorDraft.code}
+                          onChange={(event) => updateProductEditorDraft({ code: event.target.value })}
                           placeholder="SKU-001"
                         />
                       </label>
@@ -24517,8 +24654,8 @@ type GalleryEditorImage = {
                         <div className="mb-1">价格</div>
                         <input
                           className="w-full rounded border px-3 py-2"
-                          value={editingProductItem.price}
-                          onChange={(event) => updateProductItem(editingProductItem.id, { price: event.target.value })}
+                          value={activeProductEditorDraft.price}
+                          onChange={(event) => updateProductEditorDraft({ price: event.target.value })}
                           placeholder="39.90"
                         />
                       </label>
@@ -24526,12 +24663,12 @@ type GalleryEditorImage = {
                         <div className="mb-1">选择分类</div>
                         <select
                           className="w-full rounded border px-3 py-2 bg-white"
-                          value={editingProductItem.tag}
-                          onChange={(event) => updateProductItem(editingProductItem.id, { tag: event.target.value })}
+                          value={activeProductEditorDraft.tag}
+                          onChange={(event) => updateProductEditorDraft({ tag: event.target.value })}
                         >
                           <option value="">未分类</option>
                           {productTagOptions.map((tag) => (
-                            <option key={`${editingProductItem.id}-${tag}`} value={tag}>
+                            <option key={`${activeProductEditorDraft.id}-${tag}`} value={tag}>
                               {tag}
                             </option>
                           ))}
@@ -24541,8 +24678,8 @@ type GalleryEditorImage = {
                         <div className="mb-1">名称</div>
                         <input
                           className="w-full rounded border px-3 py-2"
-                          value={editingProductItem.name}
-                          onChange={(event) => updateProductItem(editingProductItem.id, { name: event.target.value })}
+                          value={activeProductEditorDraft.name}
+                          onChange={(event) => updateProductEditorDraft({ name: event.target.value })}
                           placeholder="输入产品名称"
                         />
                       </label>
@@ -24550,12 +24687,28 @@ type GalleryEditorImage = {
                         <div className="mb-1">介绍</div>
                         <textarea
                           className="min-h-[150px] w-full rounded border px-3 py-2"
-                          value={editingProductItem.description}
-                          onChange={(event) => updateProductItem(editingProductItem.id, { description: event.target.value })}
+                          value={activeProductEditorDraft.description}
+                          onChange={(event) => updateProductEditorDraft({ description: event.target.value })}
                           placeholder="输入产品介绍、规格或卖点"
                         />
                       </label>
                     </div>
+                  </div>
+                  <div className="mt-6 flex justify-end gap-3">
+                    <button
+                      type="button"
+                      className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                      onClick={closeProductItemEditor}
+                    >
+                      取消
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-xl bg-slate-900 px-4 py-2 text-sm text-white hover:bg-slate-800"
+                      onClick={saveProductEditorDraft}
+                    >
+                      保存产品
+                    </button>
                   </div>
                 </div>
               </div>

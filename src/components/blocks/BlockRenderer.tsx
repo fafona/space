@@ -115,7 +115,14 @@ export default function BlockRenderer({
             content = <MusicBlock {...b.props} />;
             break;
           case "product":
-            content = <ProductBlock {...b.props} />;
+            content = (
+              <ProductBlock
+                {...b.props}
+                runtimeSiteId={bookingSiteId}
+                runtimeSiteName={bookingSiteName}
+                runtimeBlockId={b.id}
+              />
+            );
             break;
           case "booking":
             content = (

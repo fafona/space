@@ -22,6 +22,7 @@ import {
   productPriceText,
   type ProductContainerMode,
   type ProductImageAspectRatio,
+  type ProductItem,
   type ProductItemInput,
   type ProductLayoutPreset,
   type ProductPriceAlign,
@@ -34,6 +35,11 @@ import { resolveMobileFitCardClass, resolveMobileFitSectionClass } from "./mobil
 import { toRichHtml } from "./richText";
 import { useI18n } from "@/components/I18nProvider";
 import { resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
+import {
+  formatMerchantOrderAmount,
+  parseMerchantOrderPriceValue,
+  type MerchantOrderCustomerInput,
+} from "@/lib/merchantOrders";
 
 type ProductBlockProps = BackgroundEditableProps &
   TypographyEditableProps & {
@@ -75,7 +81,26 @@ type ProductBlockProps = BackgroundEditableProps &
     productNameTypography?: TypographyEditableProps;
     productDescriptionTypography?: TypographyEditableProps;
     productPriceTypography?: TypographyEditableProps;
+    runtimeSiteId?: string;
+    runtimeSiteName?: string;
+    runtimeBlockId?: string;
   };
+
+type ProductCartItemState = {
+  productId: string;
+  quantity: number;
+  checked: boolean;
+  product: ProductItem;
+  unitPrice: number;
+  unitPriceText: string;
+};
+
+type ProductCartStorageState = {
+  customer?: MerchantOrderCustomerInput;
+  items?: ProductCartItemState[];
+};
+
+const PRODUCT_CART_STORAGE_PREFIX = "merchant-space:product-cart:v1:";
 
 function getProductAspectRatioPair(value: ProductImageAspectRatio) {
   if (value === "landscape") return { width: 4, height: 3 };
@@ -186,6 +211,72 @@ function getProductGroupTagKey(tag: string) {
   return encodeURIComponent((tag || "untagged").trim() || "untagged");
 }
 
+function getProductCartStorageKey(siteId: string, blockId: string) {
+  return `${PRODUCT_CART_STORAGE_PREFIX}${siteId}:${blockId}`;
+}
+
+function normalizeCartItems(items: ProductCartItemState[] | undefined, pricePrefix: string) {
+  if (!Array.isArray(items)) return [];
+  return items
+    .map((item) => {
+      const quantity = Math.max(0, Math.round(Number(item?.quantity ?? 0) || 0));
+      const unitPrice =
+        typeof item?.unitPrice === "number" && Number.isFinite(item.unitPrice)
+          ? Math.max(0, Number(item.unitPrice.toFixed(2)))
+          : parseMerchantOrderPriceValue(String(item?.unitPriceText ?? ""));
+      return {
+        productId: String(item?.productId ?? "").trim(),
+        quantity,
+        checked: item?.checked !== false,
+        product: {
+          id: String(item?.product?.id ?? item?.productId ?? "").trim(),
+          code: String(item?.product?.code ?? "").trim(),
+          name: String(item?.product?.name ?? "").trim(),
+          description: String(item?.product?.description ?? "").trim(),
+          imageUrl: normalizePublicAssetUrl(String(item?.product?.imageUrl ?? "").trim()),
+          tag: String(item?.product?.tag ?? "").trim(),
+          price: String(item?.product?.price ?? "").trim(),
+        },
+        unitPrice,
+        unitPriceText: String(item?.unitPriceText ?? "").trim() || formatMerchantOrderAmount(unitPrice, pricePrefix),
+      } satisfies ProductCartItemState;
+    })
+    .filter((item) => item.quantity > 0 && item.productId);
+}
+
+function normalizeCartCustomer(input: MerchantOrderCustomerInput | undefined): MerchantOrderCustomerInput {
+  return {
+    name: String(input?.name ?? "").trim(),
+    phone: String(input?.phone ?? "").trim(),
+    email: String(input?.email ?? "").trim(),
+    note: String(input?.note ?? "").trim(),
+  };
+}
+
+function loadProductCartStorageState(storageKey: string, pricePrefix: string): ProductCartStorageState {
+  if (typeof window === "undefined" || !storageKey) return {};
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as ProductCartStorageState;
+    return {
+      customer: normalizeCartCustomer(parsed.customer),
+      items: normalizeCartItems(parsed.items, pricePrefix),
+    };
+  } catch {
+    return {};
+  }
+}
+
+function saveProductCartStorageState(storageKey: string, next: ProductCartStorageState) {
+  if (typeof window === "undefined" || !storageKey) return;
+  try {
+    window.localStorage.setItem(storageKey, JSON.stringify(next));
+  } catch {
+    // Ignore storage write failures.
+  }
+}
+
 function renderProductCard(
   item: ReturnType<typeof normalizeProductItems>[number],
   options: {
@@ -204,6 +295,10 @@ function renderProductCard(
     descriptionTextStyle: CSSProperties;
     priceTextStyle: CSSProperties;
     onOpen: (id: string) => void;
+    cartEnabled?: boolean;
+    quantity?: number;
+    onIncreaseQuantity?: (item: ReturnType<typeof normalizeProductItems>[number]) => void;
+    onDecreaseQuantity?: (item: ReturnType<typeof normalizeProductItems>[number]) => void;
     list?: boolean;
     spotlight?: boolean;
   },
@@ -256,6 +351,36 @@ function renderProductCard(
       } ${options.spotlight ? "lg:min-h-[420px]" : ""}`}
       style={{ ...cardBackgroundStyle, ...cardBorderInlineStyle, ...listCardStyle }}
     >
+      {options.cartEnabled ? (
+        <div className="absolute right-3 top-3 z-[2] flex items-center gap-1 rounded-full border border-slate-200 bg-white/95 px-1.5 py-1 shadow-sm backdrop-blur">
+          <button
+            type="button"
+            className="flex h-7 w-7 items-center justify-center rounded-full text-base font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-35"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              options.onDecreaseQuantity?.(item);
+            }}
+            disabled={!options.quantity}
+            aria-label="减少购买数量"
+          >
+            -
+          </button>
+          <div className="min-w-[1.5rem] text-center text-xs font-semibold text-slate-700">{options.quantity ?? 0}</div>
+          <button
+            type="button"
+            className="flex h-7 w-7 items-center justify-center rounded-full text-base font-semibold text-slate-700 transition hover:bg-slate-100"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              options.onIncreaseQuantity?.(item);
+            }}
+            aria-label="增加购买数量"
+          >
+            +
+          </button>
+        </div>
+      ) : null}
       <div
         className={`relative overflow-hidden bg-slate-100 ${options.list ? "shrink-0 self-start rounded-xl" : ""}`}
         style={frameStyle}
@@ -413,8 +538,17 @@ export default function ProductBlock(props: ProductBlockProps) {
   const [activeProductId, setActiveProductId] = useState<string | null>(null);
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [searchKeyword, setSearchKeyword] = useState("");
+  const [cartOpen, setCartOpen] = useState(false);
+  const [cartItems, setCartItems] = useState<ProductCartItemState[]>([]);
+  const [cartCustomer, setCartCustomer] = useState<MerchantOrderCustomerInput>({});
+  const [cartSubmitting, setCartSubmitting] = useState(false);
+  const [cartError, setCartError] = useState("");
+  const [cartNotice, setCartNotice] = useState("");
   const rootRef = useRef<HTMLElement | null>(null);
   const scrollViewportRef = useRef<HTMLDivElement | null>(null);
+  const cartStorageKey =
+    props.runtimeSiteId && props.runtimeBlockId ? getProductCartStorageKey(props.runtimeSiteId, props.runtimeBlockId) : "";
+  const cartEnabled = Boolean(props.runtimeSiteId && props.runtimeBlockId);
   const selectedTag = activeTag && productTags.includes(activeTag) ? activeTag : null;
   const searchMatchedProducts = productSearchEnabled ? filterProductItemsByKeyword(arrangedProducts, searchKeyword) : arrangedProducts;
   const filteredProducts =
@@ -428,6 +562,32 @@ export default function ProductBlock(props: ProductBlockProps) {
   const activeProduct = arrangedProducts.find((item) => item.id === activeProductId) ?? products.find((item) => item.id === activeProductId) ?? null;
   const placeholderCount =
     containerMode === "paged" && layoutPreset !== "spotlight" ? Math.max(0, itemsPerPage - pagedProducts.length) : 0;
+  const cartQuantities = cartItems.reduce<Record<string, number>>((map, item) => {
+    map[item.productId] = item.quantity;
+    return map;
+  }, {});
+  const checkedCartItems = cartItems.filter((item) => item.checked);
+  const checkedCartTotalQuantity = checkedCartItems.reduce((sum, item) => sum + item.quantity, 0);
+  const checkedCartTotalAmount = checkedCartItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
+
+  useEffect(() => {
+    if (!cartEnabled || !cartStorageKey) {
+      setCartItems([]);
+      setCartCustomer({});
+      return;
+    }
+    const stored = loadProductCartStorageState(cartStorageKey, pricePrefix);
+    setCartItems(stored.items ?? []);
+    setCartCustomer(stored.customer ?? {});
+  }, [cartEnabled, cartStorageKey, pricePrefix]);
+
+  useEffect(() => {
+    if (!cartEnabled || !cartStorageKey) return;
+    saveProductCartStorageState(cartStorageKey, {
+      customer: normalizeCartCustomer(cartCustomer),
+      items: normalizeCartItems(cartItems, pricePrefix),
+    });
+  }, [cartEnabled, cartCustomer, cartItems, cartStorageKey, pricePrefix]);
 
   useEffect(() => {
     if (!activeProductId) return;
@@ -517,6 +677,156 @@ export default function ProductBlock(props: ProductBlockProps) {
     }
   };
 
+  const updateCartItems = (updater: (items: ProductCartItemState[]) => ProductCartItemState[]) => {
+    setCartItems((current) => normalizeCartItems(updater(current), pricePrefix));
+  };
+
+  const handleIncreaseQuantity = (item: ReturnType<typeof normalizeProductItems>[number]) => {
+    if (!cartEnabled) return;
+    setCartError("");
+    setCartNotice("");
+    updateCartItems((current) => {
+      const nextIndex = current.findIndex((entry) => entry.productId === item.id);
+      if (nextIndex < 0) {
+        const unitPrice = parseMerchantOrderPriceValue(item.price);
+        return [
+          ...current,
+          {
+            productId: item.id,
+            quantity: 1,
+            checked: true,
+            product: item,
+            unitPrice,
+            unitPriceText: formatMerchantOrderAmount(unitPrice, pricePrefix),
+          },
+        ];
+      }
+      const next = [...current];
+      next[nextIndex] = {
+        ...next[nextIndex],
+        quantity: next[nextIndex].quantity + 1,
+        checked: true,
+        product: item,
+      };
+      return next;
+    });
+  };
+
+  const handleDecreaseQuantity = (item: ReturnType<typeof normalizeProductItems>[number]) => {
+    if (!cartEnabled) return;
+    setCartError("");
+    setCartNotice("");
+    updateCartItems((current) =>
+      current.flatMap((entry) => {
+        if (entry.productId !== item.id) return [entry];
+        const nextQuantity = entry.quantity - 1;
+        if (nextQuantity <= 0) return [];
+        return [{ ...entry, quantity: nextQuantity, product: item }];
+      }),
+    );
+  };
+
+  const handleToggleCartItemChecked = (productId: string, checked: boolean) => {
+    updateCartItems((current) =>
+      current.map((entry) => (entry.productId === productId ? { ...entry, checked } : entry)),
+    );
+  };
+
+  const handleSetCartItemQuantity = (productId: string, quantityInput: string) => {
+    const nextQuantity = Math.max(0, Number.parseInt(quantityInput.replace(/[^\d]/g, ""), 10) || 0);
+    updateCartItems((current) =>
+      current.flatMap((entry) => {
+        if (entry.productId !== productId) return [entry];
+        if (nextQuantity <= 0) return [];
+        return [{ ...entry, quantity: nextQuantity }];
+      }),
+    );
+  };
+
+  const handleRemoveCartItem = (productId: string) => {
+    updateCartItems((current) => current.filter((entry) => entry.productId !== productId));
+  };
+
+  const handleCartCustomerChange = (field: keyof MerchantOrderCustomerInput, value: string) => {
+    setCartCustomer((current) => ({
+      ...current,
+      [field]: value,
+    }));
+  };
+
+  const handleSubmitOrder = async () => {
+    if (!cartEnabled || !props.runtimeSiteId || !props.runtimeBlockId) return;
+    if (checkedCartItems.length === 0) {
+      setCartError("请先勾选要提交的产品。");
+      return;
+    }
+    if (!String(cartCustomer.name ?? "").trim() && !String(cartCustomer.phone ?? "").trim() && !String(cartCustomer.email ?? "").trim()) {
+      setCartError("请至少填写姓名、电话或邮箱中的一项。");
+      return;
+    }
+    setCartSubmitting(true);
+    setCartError("");
+    setCartNotice("");
+    try {
+      const response = await fetch("/api/orders", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          siteId: props.runtimeSiteId,
+          siteName: props.runtimeSiteName,
+          blockId: props.runtimeBlockId,
+          pricePrefix,
+          customer: cartCustomer,
+          items: checkedCartItems.map((item) => ({
+            productId: item.productId,
+            code: item.product.code,
+            name: item.product.name,
+            description: item.product.description,
+            imageUrl: item.product.imageUrl,
+            tag: item.product.tag,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            unitPriceText: item.unitPriceText,
+          })),
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as { order?: { id?: string }; message?: string; error?: string } | null;
+      if (!response.ok) {
+        throw new Error(payload?.message || payload?.error || "order_create_failed");
+      }
+      const nextOrderId = String(payload?.order?.id ?? "").trim();
+      setCartItems((current) => current.filter((item) => !item.checked));
+      setCartCustomer({});
+      setCartOpen(false);
+      setCartNotice(nextOrderId ? `订单 ${nextOrderId} 已提交。` : "订单已提交。");
+    } catch (error) {
+      setCartError(error instanceof Error && error.message ? error.message : "提交订单失败，请稍后重试。");
+    } finally {
+      setCartSubmitting(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!cartEnabled) return;
+    setCartItems((current) => {
+      const productMap = new Map(products.map((item) => [item.id, item] as const));
+      const next = current.map((entry) => {
+        const product = productMap.get(entry.productId);
+        if (!product) return entry;
+        const unitPrice = parseMerchantOrderPriceValue(product.price);
+        return {
+          ...entry,
+          product,
+          unitPrice,
+          unitPriceText: formatMerchantOrderAmount(unitPrice, pricePrefix),
+        };
+      });
+      return normalizeCartItems(next, pricePrefix);
+    });
+  }, [cartEnabled, pricePrefix, products]);
+
   const renderCard = (
     item: ReturnType<typeof normalizeProductItems>[number],
     extra: { list?: boolean; spotlight?: boolean; imageAspectRatio?: ProductImageAspectRatio } = {},
@@ -537,6 +847,10 @@ export default function ProductBlock(props: ProductBlockProps) {
       descriptionTextStyle: productDescriptionTextStyle,
       priceTextStyle: productPriceTextStyle,
       onOpen: setActiveProductId,
+      cartEnabled,
+      quantity: cartQuantities[item.id] ?? 0,
+      onIncreaseQuantity: handleIncreaseQuantity,
+      onDecreaseQuantity: handleDecreaseQuantity,
       ...extra,
     });
 
@@ -814,7 +1128,7 @@ export default function ProductBlock(props: ProductBlockProps) {
   return (
     <section ref={rootRef} className={resolveMobileFitSectionClass("mx-auto max-w-6xl px-6 py-6", mobileFitScreenWidth)} style={offsetStyle}>
       <div
-        className={resolveMobileFitCardClass(`overflow-hidden rounded-2xl bg-white p-6 shadow-sm ${borderClass}`, mobileFitScreenWidth)}
+        className={resolveMobileFitCardClass(`relative overflow-hidden rounded-2xl bg-white p-6 shadow-sm ${borderClass} ${cartEnabled ? "pb-24" : ""}`, mobileFitScreenWidth)}
         style={{ ...cardStyle, ...sizeStyle, ...borderInlineStyle }}
       >
         {hasHeading ? (
@@ -827,7 +1141,210 @@ export default function ProductBlock(props: ProductBlockProps) {
           <div className="mt-2 break-words whitespace-pre-wrap text-sm leading-6 text-slate-600" dangerouslySetInnerHTML={{ __html: toRichHtml(props.text, "") }} />
         ) : null}
         {renderProductsWithFilters()}
+        {cartEnabled ? (
+          <button
+            type="button"
+            className="absolute bottom-5 left-5 inline-flex items-center gap-3 rounded-full bg-slate-950 px-4 py-3 text-sm font-semibold text-white shadow-[0_18px_40px_rgba(15,23,42,0.18)] transition hover:bg-slate-800"
+            onClick={() => {
+              setCartError("");
+              setCartNotice("");
+              setCartOpen(true);
+            }}
+          >
+            <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-lg">🛒</span>
+            <span>购物车</span>
+            <span className="inline-flex min-w-[1.6rem] items-center justify-center rounded-full bg-emerald-400 px-2 py-0.5 text-xs font-bold text-slate-950">
+              {checkedCartTotalQuantity}
+            </span>
+          </button>
+        ) : null}
       </div>
+      {cartOpen ? (
+        <div className="fixed inset-0 z-[1100] flex items-center justify-center bg-black/55 p-4" onClick={() => setCartOpen(false)}>
+          <div
+            className="relative flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-[28px] bg-white shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
+              <div>
+                <div className="text-2xl font-semibold text-slate-900">购物车</div>
+                <div className="mt-1 text-sm text-slate-500">
+                  已选 {checkedCartTotalQuantity} 件，合计 {formatMerchantOrderAmount(checkedCartTotalAmount, pricePrefix)}
+                </div>
+                {cartNotice ? <div className="mt-2 text-sm text-emerald-600">{cartNotice}</div> : null}
+                {cartError ? <div className="mt-2 text-sm text-rose-600">{cartError}</div> : null}
+              </div>
+              <button
+                type="button"
+                className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 text-xl text-slate-500 transition hover:bg-slate-50"
+                onClick={() => setCartOpen(false)}
+                aria-label="关闭购物车"
+              >
+                ×
+              </button>
+            </div>
+            <div className="grid min-h-0 flex-1 gap-0 overflow-hidden lg:grid-cols-[minmax(0,1.15fr)_minmax(300px,0.85fr)]">
+              <div className="min-h-0 overflow-y-auto px-6 py-5">
+                {cartItems.length > 0 ? (
+                  <div className="space-y-4">
+                    {cartItems.map((item) => {
+                      const subtotal = item.unitPrice * item.quantity;
+                      return (
+                        <div key={item.productId} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+                          <div className="flex items-start gap-4">
+                            <input
+                              type="checkbox"
+                              checked={item.checked}
+                              onChange={(event) => handleToggleCartItemChecked(item.productId, event.target.checked)}
+                              className="mt-1 h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400"
+                            />
+                            <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-2xl bg-slate-100">
+                              {item.product.imageUrl ? (
+                                <Image
+                                  src={item.product.imageUrl}
+                                  alt={item.product.name || item.product.code || "产品图片"}
+                                  fill
+                                  unoptimized
+                                  sizes="96px"
+                                  className="object-cover"
+                                />
+                              ) : (
+                                <div className="flex h-full items-center justify-center text-xs text-slate-400">暂无图片</div>
+                              )}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <div className="truncate text-base font-semibold text-slate-900">{item.product.name || "未命名产品"}</div>
+                                  {item.product.code ? <div className="mt-1 text-xs uppercase tracking-[0.18em] text-slate-400">{item.product.code}</div> : null}
+                                </div>
+                                <button
+                                  type="button"
+                                  className="rounded-full border border-slate-200 px-3 py-1 text-xs font-medium text-slate-500 transition hover:bg-white"
+                                  onClick={() => handleRemoveCartItem(item.productId)}
+                                >
+                                  删除
+                                </button>
+                              </div>
+                              {item.product.description ? (
+                                <div className="mt-2 line-clamp-2 text-sm leading-6 text-slate-500">{item.product.description}</div>
+                              ) : null}
+                              <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                                <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-2 py-1">
+                                  <button
+                                    type="button"
+                                    className="flex h-8 w-8 items-center justify-center rounded-full text-lg font-semibold text-slate-700 transition hover:bg-slate-100"
+                                    onClick={() => handleDecreaseQuantity(item.product)}
+                                  >
+                                    -
+                                  </button>
+                                  <input
+                                    type="text"
+                                    value={String(item.quantity)}
+                                    onChange={(event) => handleSetCartItemQuantity(item.productId, event.target.value)}
+                                    className="w-12 border-0 bg-transparent p-0 text-center text-sm font-semibold text-slate-800 outline-none"
+                                    inputMode="numeric"
+                                  />
+                                  <button
+                                    type="button"
+                                    className="flex h-8 w-8 items-center justify-center rounded-full text-lg font-semibold text-slate-700 transition hover:bg-slate-100"
+                                    onClick={() => handleIncreaseQuantity(item.product)}
+                                  >
+                                    +
+                                  </button>
+                                </div>
+                                <div className="text-right">
+                                  <div className="text-xs text-slate-400">小计</div>
+                                  <div className="text-base font-semibold text-sky-700">
+                                    {formatMerchantOrderAmount(subtotal, pricePrefix)}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-500">
+                    购物车还是空的，先从产品列表里加购吧。
+                  </div>
+                )}
+              </div>
+              <div className="border-t border-slate-200 bg-slate-50/70 px-6 py-5 lg:border-l lg:border-t-0">
+                <div className="text-lg font-semibold text-slate-900">客户信息</div>
+                <div className="mt-1 text-sm text-slate-500">提交订单时会把这里的客户信息一起发给商家后台。</div>
+                <div className="mt-5 space-y-4">
+                  <label className="block">
+                    <div className="mb-2 text-sm text-slate-600">姓名</div>
+                    <input
+                      type="text"
+                      value={cartCustomer.name ?? ""}
+                      onChange={(event) => handleCartCustomerChange("name", event.target.value)}
+                      className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-200"
+                    />
+                  </label>
+                  <label className="block">
+                    <div className="mb-2 text-sm text-slate-600">电话</div>
+                    <input
+                      type="tel"
+                      value={cartCustomer.phone ?? ""}
+                      onChange={(event) => handleCartCustomerChange("phone", event.target.value)}
+                      className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-200"
+                    />
+                  </label>
+                  <label className="block">
+                    <div className="mb-2 text-sm text-slate-600">邮箱</div>
+                    <input
+                      type="email"
+                      value={cartCustomer.email ?? ""}
+                      onChange={(event) => handleCartCustomerChange("email", event.target.value)}
+                      className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-200"
+                    />
+                  </label>
+                  <label className="block">
+                    <div className="mb-2 text-sm text-slate-600">备注</div>
+                    <textarea
+                      rows={4}
+                      value={cartCustomer.note ?? ""}
+                      onChange={(event) => handleCartCustomerChange("note", event.target.value)}
+                      className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-200"
+                    />
+                  </label>
+                </div>
+                <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-4">
+                  <div className="flex items-center justify-between text-sm text-slate-500">
+                    <span>已勾选商品</span>
+                    <span>{checkedCartTotalQuantity} 件</span>
+                  </div>
+                  <div className="mt-3 flex items-center justify-between text-lg font-semibold text-slate-900">
+                    <span>合计</span>
+                    <span>{formatMerchantOrderAmount(checkedCartTotalAmount, pricePrefix)}</span>
+                  </div>
+                </div>
+                <div className="mt-5 flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    className="rounded-full border border-slate-300 bg-white px-5 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+                    onClick={() => setCartOpen(false)}
+                  >
+                    继续逛逛
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-full bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+                    onClick={() => void handleSubmitOrder()}
+                    disabled={cartSubmitting || checkedCartItems.length === 0}
+                  >
+                    {cartSubmitting ? "提交中..." : "提交订单"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {activeProduct ? (
         <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60 p-4" onClick={() => setActiveProductId(null)}>
           <div
