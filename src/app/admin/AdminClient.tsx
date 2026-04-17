@@ -1,7 +1,9 @@
 ﻿"use client";
 
 import {
+  memo,
   useCallback,
+  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -4884,7 +4886,11 @@ export default function AdminClient({
     startOffsets: Record<string, { x: number; y: number }>;
     historyRecorded: boolean;
   } | null>(null);
+  const dragMoveRafRef = useRef<number | null>(null);
+  const dragPendingPointerRef = useRef<{ x: number; y: number } | null>(null);
   const blocksRef = useRef<Block[]>(initialBlocks);
+  const editorAvailablePagesRef = useRef<Array<{ id: string; name: string }>>([]);
+  const editorAvailablePagesKeyRef = useRef("");
   const [newBlockType, setNewBlockType] = useState<Block["type"]>("common");
   const [previewViewport, setPreviewViewport] = useState<"desktop" | "mobile">("desktop");
   const [tip, setTip] = useState<string>("");
@@ -7934,11 +7940,14 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   useEffect(() => {
     if (!draggingBlockId) return;
 
-    const onPointerMove = (event: MouseEvent) => {
+    const flushPendingDragMove = () => {
+      dragMoveRafRef.current = null;
+      const pendingPointer = dragPendingPointerRef.current;
       const start = dragStartRef.current;
-      if (!start || start.blockId !== draggingBlockId) return;
-      const deltaX = event.clientX - start.pointerX;
-      const deltaY = event.clientY - start.pointerY;
+      if (!pendingPointer || !start || start.blockId !== draggingBlockId) return;
+      dragPendingPointerRef.current = null;
+      const deltaX = pendingPointer.x - start.pointerX;
+      const deltaY = pendingPointer.y - start.pointerY;
       if (!start.historyRecorded && (deltaX !== 0 || deltaY !== 0)) {
         recordDragHistoryRef.current();
         start.historyRecorded = true;
@@ -7981,16 +7990,36 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       });
     };
 
-    const onPointerUp = () => {
+    const scheduleDragMoveFlush = () => {
+      if (dragMoveRafRef.current !== null) return;
+      dragMoveRafRef.current = window.requestAnimationFrame(flushPendingDragMove);
+    };
+
+    const clearPendingDragMove = () => {
+      if (dragMoveRafRef.current !== null) {
+        window.cancelAnimationFrame(dragMoveRafRef.current);
+        dragMoveRafRef.current = null;
+      }
+      dragPendingPointerRef.current = null;
+    };
+
+    const onPointerMove = (event: MouseEvent) => {
+      const start = dragStartRef.current;
+      if (!start || start.blockId !== draggingBlockId) return;
+      dragPendingPointerRef.current = { x: event.clientX, y: event.clientY };
+      scheduleDragMoveFlush();
+    };
+
+    const finishDragging = () => {
+      flushPendingDragMove();
+      clearPendingDragMove();
       dragStartRef.current = null;
       setDraggingBlockId(null);
       persistDraggingDraftRef.current();
     };
-    const onBlur = () => {
-      dragStartRef.current = null;
-      setDraggingBlockId(null);
-      persistDraggingDraftRef.current();
-    };
+
+    const onPointerUp = () => finishDragging();
+    const onBlur = () => finishDragging();
     const previousUserSelect = document.body.style.userSelect;
     document.body.style.userSelect = "none";
     window.addEventListener("mousemove", onPointerMove);
@@ -7998,6 +8027,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     window.addEventListener("blur", onBlur);
 
     return () => {
+      clearPendingDragMove();
       document.body.style.userSelect = previousUserSelect;
       window.removeEventListener("mousemove", onPointerMove);
       window.removeEventListener("mouseup", onPointerUp);
@@ -13128,6 +13158,31 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     };
   }, [shouldUseDesktopEditorSidebar, toggleDesktopEditorSidebar]);
 
+  const pageBackgroundSource = blocks[0]?.props;
+  const pageBackgroundStyle = getBackgroundStyle({
+    imageUrl: pageBackgroundSource?.pageBgImageUrl,
+    fillMode: pageBackgroundSource?.pageBgFillMode,
+    position: pageBackgroundSource?.pageBgPosition,
+    color: pageBackgroundSource?.pageBgColor,
+    opacity: pageBackgroundSource?.pageBgOpacity,
+    imageOpacity: pageBackgroundSource?.pageBgImageOpacity,
+    colorOpacity: pageBackgroundSource?.pageBgColorOpacity,
+  });
+  const editingPlan = planConfig.plans.find((plan) => plan.id === editingPlanId) ?? planConfig.plans[0];
+  const editingPages = editingPlan?.pages?.length
+    ? editingPlan.pages
+    : [{ id: "page-1", name: "页面1", blocks: editingPlan?.blocks ?? defaultEditorBlocks }];
+  const editingPageIndex = Math.max(0, editingPages.findIndex((page) => page.id === editingPageId));
+  const editorAvailablePagesKey = editingPages
+    .map((page) => `${page.id}:${toPlainText(page.name, page.id)}`)
+    .join("||");
+  if (editorAvailablePagesKeyRef.current !== editorAvailablePagesKey) {
+    editorAvailablePagesKeyRef.current = editorAvailablePagesKey;
+    editorAvailablePagesRef.current = editingPages.map((page) => ({ id: page.id, name: toPlainText(page.name, page.id) }));
+  }
+  const editorAvailablePages = editorAvailablePagesRef.current;
+  const deferredPreviewBlocks = useDeferredValue(blocks);
+
   if (checkingAuth) {
     if (!isPlatformEditor) {
       return (
@@ -13278,21 +13333,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     );
   }
 
-  const pageBackgroundSource = blocks[0]?.props;
-  const pageBackgroundStyle = getBackgroundStyle({
-    imageUrl: pageBackgroundSource?.pageBgImageUrl,
-    fillMode: pageBackgroundSource?.pageBgFillMode,
-    position: pageBackgroundSource?.pageBgPosition,
-    color: pageBackgroundSource?.pageBgColor,
-    opacity: pageBackgroundSource?.pageBgOpacity,
-    imageOpacity: pageBackgroundSource?.pageBgImageOpacity,
-    colorOpacity: pageBackgroundSource?.pageBgColorOpacity,
-  });
-  const editingPlan = planConfig.plans.find((plan) => plan.id === editingPlanId) ?? planConfig.plans[0];
-  const editingPages = editingPlan?.pages?.length
-    ? editingPlan.pages
-    : [{ id: "page-1", name: "页面1", blocks: editingPlan?.blocks ?? defaultEditorBlocks }];
-  const editingPageIndex = Math.max(0, editingPages.findIndex((page) => page.id === editingPageId));
   const pageCopyTargetPages = editingPages.filter((page) => page.id !== editingPageId);
   const pageCopyBlockOptions = blocks.map((block, index) => ({
     id: buildPageCopyItemIdForBlock(block.id),
@@ -16747,10 +16787,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                   >
                     <div className="editor-mobile-preview relative z-10 w-full py-4">
                       <BlockRenderer
-                        blocks={blocks}
+                        blocks={deferredPreviewBlocks}
                         currentPageId={editingPageId}
                         currentPageIndex={editingPageIndex}
-                        availablePages={editingPages.map((page) => ({ id: page.id, name: toPlainText(page.name, page.id) }))}
+                        availablePages={editorAvailablePages}
                         forceMobileViewport
                         bookingSiteId={editingSiteId || ""}
                         bookingSiteName={merchantDisplayName}
@@ -16786,7 +16826,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                               : getBlockRenderStackOrder(block, index, blocks.length);
                         return (
                           <div key={block.id} className="relative" style={{ zIndex: wrapperStackOrder }}>
-                            <InlineEditorBlock
+                            <MemoizedInlineEditorBlock
                               block={block}
                               publicBlockId={buildPublicBlockId(editingPageIndex, index)}
                               draggingBlockId={draggingBlockId}
@@ -16806,7 +16846,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                               onAlert={(message) => {
                                 void openAlert(message);
                               }}
-                              availablePages={editingPages.map((page) => ({ id: page.id, name: toPlainText(page.name, page.id) }))}
+                              availablePages={editorAvailablePages}
                               currentPageId={editingPageId}
                               maxNavItems={merchantPageLimit}
                               recentColors={recentColors}
@@ -16850,7 +16890,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       : getBlockRenderStackOrder(block, index, blocks.length);
                 return (
                   <div key={block.id} className="relative" style={{ zIndex: wrapperStackOrder }}>
-                    <InlineEditorBlock
+                    <MemoizedInlineEditorBlock
                       block={block}
                       publicBlockId={buildPublicBlockId(editingPageIndex, index)}
                       draggingBlockId={draggingBlockId}
@@ -16870,7 +16910,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       onAlert={(message) => {
                         void openAlert(message);
                       }}
-                      availablePages={editingPages.map((page) => ({ id: page.id, name: toPlainText(page.name, page.id) }))}
+                      availablePages={editorAvailablePages}
                       currentPageId={editingPageId}
                       maxNavItems={merchantPageLimit}
                       recentColors={recentColors}
@@ -28318,6 +28358,23 @@ type GalleryEditorImage = {
 
   return null;
 }
+
+const MemoizedInlineEditorBlock = memo(InlineEditorBlock, (previousProps, nextProps) => {
+  return (
+    previousProps.block === nextProps.block &&
+    previousProps.publicBlockId === nextProps.publicBlockId &&
+    previousProps.draggingBlockId === nextProps.draggingBlockId &&
+    previousProps.isSelected === nextProps.isSelected &&
+    previousProps.previewOffsetY === nextProps.previewOffsetY &&
+    previousProps.availablePages === nextProps.availablePages &&
+    previousProps.currentPageId === nextProps.currentPageId &&
+    previousProps.maxNavItems === nextProps.maxNavItems &&
+    previousProps.recentColors === nextProps.recentColors &&
+    previousProps.previewViewport === nextProps.previewViewport &&
+    previousProps.runtimeSiteId === nextProps.runtimeSiteId &&
+    previousProps.runtimeSiteName === nextProps.runtimeSiteName
+  );
+});
 
 type RichFieldName = "title" | "subtitle" | "heading" | "text" | "phone" | "address" | "buttonLabel";
 
