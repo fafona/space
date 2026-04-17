@@ -192,6 +192,21 @@ export default function NavBlock(props: NavBlockProps) {
     };
   }, [hiddenMobileMode, mobileMenuOpen]);
 
+  useEffect(() => {
+    if (!hiddenMobileMode || !mobileMenuOpen) return;
+    if (typeof window === "undefined") return;
+    const closeMenu = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      const button = mobileMenuButtonRef.current;
+      if (button?.contains(target)) return;
+      const popup = document.querySelector("[data-mobile-nav-popup='runtime']");
+      if (popup instanceof HTMLElement && popup.contains(target)) return;
+      setMobileMenuOpenPageId(null);
+    };
+    window.addEventListener("pointerdown", closeMenu, true);
+    return () => window.removeEventListener("pointerdown", closeMenu, true);
+  }, [hiddenMobileMode, mobileMenuOpen]);
+
   const cardStyle = getBackgroundStyle({
     imageUrl: props.bgImageUrl,
     fillMode: props.bgFillMode,
@@ -371,6 +386,7 @@ export default function NavBlock(props: NavBlockProps) {
       {hiddenMobileMode && mobileMenuOpen && mobileMenuPopupPosition && typeof document !== "undefined"
         ? createPortal(
             <div
+              data-mobile-nav-popup="runtime"
               className="pointer-events-auto fixed z-[2147483600] rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-2xl backdrop-blur"
               style={{
                 top: `${mobileMenuPopupPosition.top}px`,
@@ -378,7 +394,6 @@ export default function NavBlock(props: NavBlockProps) {
                 width: `${mobileMenuPopupPosition.width}px`,
               }}
             >
-              <div className="mb-2 text-xs font-medium tracking-[0.12em] text-slate-400 uppercase">选择页面</div>
               <nav className="flex flex-col items-stretch gap-2">
                 {hiddenMobileMenuItems}
               </nav>

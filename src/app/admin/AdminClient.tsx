@@ -17873,6 +17873,20 @@ type GalleryEditorImage = {
       window.removeEventListener("scroll", updatePopupPosition, true);
     };
   }, [block.type, previewNavMobileDisplayMode, previewNavMobileMenuOpen, previewViewport]);
+  useEffect(() => {
+    if (!(previewViewport === "mobile" && block.type === "nav" && previewNavMobileDisplayMode === "hidden" && previewNavMobileMenuOpen)) return;
+    if (typeof window === "undefined") return;
+    const closeMenu = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      const button = previewNavButtonRef.current;
+      if (button?.contains(target)) return;
+      const popup = document.querySelector("[data-mobile-nav-popup='preview']");
+      if (popup instanceof HTMLElement && popup.contains(target)) return;
+      setPreviewNavMobileMenuOpen(false);
+    };
+    window.addEventListener("pointerdown", closeMenu, true);
+    return () => window.removeEventListener("pointerdown", closeMenu, true);
+  }, [block.type, previewNavMobileDisplayMode, previewNavMobileMenuOpen, previewViewport]);
   const [activeContactEntryKeys, setActiveContactEntryKeys] = useState<
     Array<
       | "phone"
@@ -22430,6 +22444,7 @@ type GalleryEditorImage = {
       mobileHiddenNavMode && previewNavMobileMenuOpen && previewNavMobileMenuPosition ? (
         createPortal(
           <div
+            data-mobile-nav-popup="preview"
             className="pointer-events-auto fixed z-[2147483600] rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-2xl backdrop-blur"
             style={{
               top: `${previewNavMobileMenuPosition.top}px`,
@@ -22437,7 +22452,6 @@ type GalleryEditorImage = {
               width: `${previewNavMobileMenuPosition.width}px`,
             }}
           >
-            <div className="mb-2 text-xs font-medium tracking-[0.12em] text-slate-400 uppercase">选择页面</div>
             <div className="flex flex-col items-stretch gap-2">{renderNavPreviewButtons({ closeMenuOnClick: true })}</div>
           </div>,
           document.body,
