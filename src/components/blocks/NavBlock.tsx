@@ -8,7 +8,7 @@ import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/
 import { getBackgroundStyle } from "./backgroundStyle";
 import { getBlockBorderClass, getBlockBorderInlineStyle } from "./borderStyle";
 import { resolveMobileFitCardClass, resolveMobileFitSectionClass } from "./mobileFrame";
-import { stripInlineTextColorStylesFromHtml, toRichHtml } from "./richText";
+import { stripInlineTextColorStylesFromHtml, toInlineHeadingHtml, toRichHtml } from "./richText";
 
 type NavItem = {
   id?: string;
@@ -103,21 +103,6 @@ function buildLabelColorStyle(color: string) {
   return { color: trimmed };
 }
 
-function toPlainNavText(value: string | undefined, fallback = "") {
-  const source = (value ?? "").trim();
-  if (!source) return fallback;
-  const noTags = source
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<[^>]*>/g, "")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'");
-  return noTags.trim() || fallback;
-}
-
 export default function NavBlock(props: NavBlockProps) {
   const { locale } = useI18n();
   const mobileFitScreenWidth = props.mobileFitScreenWidth === true;
@@ -152,9 +137,9 @@ export default function NavBlock(props: NavBlockProps) {
     () => localizedNavItems.find((item) => item.pageId === props.currentPageId)?.label ?? localizedNavItems[0]?.label ?? localizedHeading,
     [localizedHeading, localizedNavItems, props.currentPageId],
   );
-  const hiddenMobileHeadingText = useMemo(() => {
+  const hiddenMobileHeadingHtml = useMemo(() => {
     const localizedSource = props.heading ? localizeSystemDefaultText(props.heading, locale) : "";
-    return toPlainNavText(localizedSource, activeNavLabel || localizedHeading);
+    return toInlineHeadingHtml(localizedSource, activeNavLabel || localizedHeading);
   }, [activeNavLabel, localizedHeading, locale, props.heading]);
   const hiddenMobileMode = props.mobileNavDisplayMode === "hidden" && effectiveMobileViewport;
 
@@ -346,8 +331,11 @@ export default function NavBlock(props: NavBlockProps) {
                 <span className="block h-0.5 w-4 rounded-full" style={{ backgroundColor: mobileNavButtonLineColor }} />
               </span>
             </button>
-            <div className="min-w-0 flex-1 text-sm font-semibold text-slate-700">
-              <div className="truncate">{hiddenMobileHeadingText}</div>
+            <div className="min-w-0 flex-1 text-sm text-slate-700">
+              <div
+                className="truncate font-semibold [&_span]:inline [&_span]:align-middle"
+                dangerouslySetInnerHTML={{ __html: hiddenMobileHeadingHtml }}
+              />
             </div>
           </div>
         ) : (

@@ -112,7 +112,7 @@ import {
   parseSupportMessageAttachmentPreview,
 } from "@/lib/supportMessageAttachments";
 import { BLOCK_BORDER_STYLE_OPTIONS, getBlockBorderClass, getBlockBorderInlineStyle } from "@/components/blocks/borderStyle";
-import { stripInlineTextColorStylesFromHtml, toRichHtml } from "@/components/blocks/richText";
+import { stripInlineTextColorStylesFromHtml, toInlineHeadingHtml, toRichHtml } from "@/components/blocks/richText";
 import {
   buildPersistedBlocksFromPlanConfig,
   cloneBlocks,
@@ -22427,15 +22427,16 @@ type GalleryEditorImage = {
               <span className="block h-0.5 w-4 rounded-full" style={{ backgroundColor: mobileNavButtonLineColor }} />
             </span>
           </button>
-          <div className="min-w-0 flex-1 text-sm font-semibold text-slate-700">
-            <div className="truncate">
-              {toPlainText(
-                block.props.heading
-                  ? localizeSystemDefaultText(block.props.heading, locale)
-                  : "",
-                localizedNavItems.find((item) => item.pageId === selectedNavPageId)?.label ?? localizedNavHeading,
-              )}
-            </div>
+          <div className="min-w-0 flex-1 text-sm text-slate-700">
+            <div
+              className="truncate font-semibold [&_span]:inline [&_span]:align-middle"
+              dangerouslySetInnerHTML={{
+                __html: toInlineHeadingHtml(
+                  block.props.heading ? localizeSystemDefaultText(block.props.heading, locale) : "",
+                  localizedNavItems.find((item) => item.pageId === selectedNavPageId)?.label ?? localizedNavHeading,
+                ),
+              }}
+            />
           </div>
         </div>
       </div>
