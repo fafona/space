@@ -17843,6 +17843,9 @@ type GalleryEditorImage = {
   const [galleryEditorOpen, setGalleryEditorOpen] = useState(false);
   const [previewNavPageId, setPreviewNavPageId] = useState(currentPageId);
   const [previewNavMobileMenuOpen, setPreviewNavMobileMenuOpen] = useState(false);
+  const [previewNavMobileMenuPosition, setPreviewNavMobileMenuPosition] = useState<{ top: number; left: number; width: number } | null>(null);
+  const previewNavButtonRef = useRef<HTMLButtonElement | null>(null);
+  const previewNavMobileDisplayMode = block.type === "nav" ? block.props.mobileNavDisplayMode : undefined;
   const [layoutPanelOpen, setLayoutPanelOpen] = useState(false);
   const [customLayoutDialogOpen, setCustomLayoutDialogOpen] = useState(false);
   const [customLayoutDraft, setCustomLayoutDraft] = useState<CustomGalleryLayout>(createDefaultCustomGalleryLayout());
@@ -17851,6 +17854,25 @@ type GalleryEditorImage = {
   useEffect(() => {
     setPreviewNavMobileMenuOpen(false);
   }, [block.id, currentPageId, previewViewport]);
+  useEffect(() => {
+    if (!(previewViewport === "mobile" && block.type === "nav" && previewNavMobileDisplayMode === "hidden" && previewNavMobileMenuOpen)) return;
+    if (typeof window === "undefined") return;
+    const updatePopupPosition = () => {
+      const rect = previewNavButtonRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const width = Math.min(256, Math.max(180, window.innerWidth - 32));
+      const left = Math.min(Math.max(16, rect.left), Math.max(16, window.innerWidth - width - 16));
+      const top = Math.max(16, rect.bottom + 10);
+      setPreviewNavMobileMenuPosition({ top, left, width });
+    };
+    updatePopupPosition();
+    window.addEventListener("resize", updatePopupPosition);
+    window.addEventListener("scroll", updatePopupPosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePopupPosition);
+      window.removeEventListener("scroll", updatePopupPosition, true);
+    };
+  }, [block.type, previewNavMobileDisplayMode, previewNavMobileMenuOpen, previewViewport]);
   const [activeContactEntryKeys, setActiveContactEntryKeys] = useState<
     Array<
       | "phone"
@@ -22373,6 +22395,7 @@ type GalleryEditorImage = {
       <div>
         <div className="flex items-center justify-between gap-3">
           <button
+            ref={previewNavButtonRef}
             type="button"
             className={`inline-flex h-9 w-9 items-center justify-center rounded-full transition hover:brightness-[0.98] ${getBlockBorderClass(
               mobileNavButtonBorderStyle,
@@ -22404,13 +22427,21 @@ type GalleryEditorImage = {
       </div>
     );
     const hiddenMobileNavPreviewPopup =
-      mobileHiddenNavMode && previewNavMobileMenuOpen ? (
-        <div className="pointer-events-none absolute left-6 top-[calc(100%-0.25rem)] z-30 flex w-[calc(100%-3rem)] max-w-full justify-start">
-          <div className="pointer-events-auto w-[min(16rem,calc(100%-0rem))] max-w-full rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-2xl backdrop-blur">
+      mobileHiddenNavMode && previewNavMobileMenuOpen && previewNavMobileMenuPosition ? (
+        createPortal(
+          <div
+            className="pointer-events-auto fixed z-[2147483600] rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-2xl backdrop-blur"
+            style={{
+              top: `${previewNavMobileMenuPosition.top}px`,
+              left: `${previewNavMobileMenuPosition.left}px`,
+              width: `${previewNavMobileMenuPosition.width}px`,
+            }}
+          >
             <div className="mb-2 text-xs font-medium tracking-[0.12em] text-slate-400 uppercase">选择页面</div>
             <div className="flex flex-col items-stretch gap-2">{renderNavPreviewButtons({ closeMenuOnClick: true })}</div>
-          </div>
-        </div>
+          </div>,
+          document.body,
+        )
       ) : null;
     return (
       <section

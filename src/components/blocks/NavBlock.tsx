@@ -1,6 +1,7 @@
 ﻿"use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { BackgroundEditableProps, BlockBorderStyle } from "@/data/homeBlocks";
 import { useI18n } from "@/components/I18nProvider";
 import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
@@ -122,6 +123,8 @@ export default function NavBlock(props: NavBlockProps) {
   const mobileFitScreenWidth = props.mobileFitScreenWidth === true;
   const [mobileMenuOpenPageId, setMobileMenuOpenPageId] = useState<string | null>(null);
   const [isMobileViewport, setIsMobileViewport] = useState(false);
+  const [mobileMenuPopupPosition, setMobileMenuPopupPosition] = useState<{ top: number; left: number; width: number } | null>(null);
+  const mobileMenuButtonRef = useRef<HTMLButtonElement | null>(null);
   const effectiveMobileViewport = props.forceMobileViewport || isMobileViewport;
   const orientation = props.navOrientation === "vertical" ? "vertical" : "horizontal";
   const navItems =
@@ -153,6 +156,7 @@ export default function NavBlock(props: NavBlockProps) {
     const localizedSource = props.heading ? localizeSystemDefaultText(props.heading, locale) : "";
     return toPlainNavText(localizedSource, activeNavLabel || localizedHeading);
   }, [activeNavLabel, localizedHeading, locale, props.heading]);
+  const hiddenMobileMode = props.mobileNavDisplayMode === "hidden" && effectiveMobileViewport;
 
   useEffect(() => {
     if (props.forceMobileViewport) return;
@@ -167,6 +171,26 @@ export default function NavBlock(props: NavBlockProps) {
     mediaQuery.addListener(syncViewport);
     return () => mediaQuery.removeListener(syncViewport);
   }, [props.forceMobileViewport]);
+
+  useEffect(() => {
+    if (!hiddenMobileMode || !mobileMenuOpen) return;
+    if (typeof window === "undefined") return;
+    const updatePopupPosition = () => {
+      const rect = mobileMenuButtonRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const width = Math.min(256, Math.max(180, window.innerWidth - 32));
+      const left = Math.min(Math.max(16, rect.left), Math.max(16, window.innerWidth - width - 16));
+      const top = Math.max(16, rect.bottom + 10);
+      setMobileMenuPopupPosition({ top, left, width });
+    };
+    updatePopupPosition();
+    window.addEventListener("resize", updatePopupPosition);
+    window.addEventListener("scroll", updatePopupPosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePopupPosition);
+      window.removeEventListener("scroll", updatePopupPosition, true);
+    };
+  }, [hiddenMobileMode, mobileMenuOpen]);
 
   const cardStyle = getBackgroundStyle({
     imageUrl: props.bgImageUrl,
@@ -236,7 +260,6 @@ export default function NavBlock(props: NavBlockProps) {
     ...getBlockBorderInlineStyle(mobileNavButtonBorderStyle, mobileNavButtonBorderColor),
     ...getColorLayerStyle(mobileNavButtonBgColor, mobileNavButtonBgOpacity),
   };
-  const hiddenMobileMode = props.mobileNavDisplayMode === "hidden" && effectiveMobileViewport;
   const hiddenMobileMenuItems = localizedNavItems.map((item) => {
     const isActive = props.currentPageId === item.pageId;
     const labelHtml = toRichHtml(item.label, "");
@@ -293,6 +316,7 @@ export default function NavBlock(props: NavBlockProps) {
         {hiddenMobileMode ? (
           <div className="flex items-center justify-between gap-3">
             <button
+              ref={mobileMenuButtonRef}
               type="button"
               className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition hover:brightness-[0.98] ${getBlockBorderClass(
                 mobileNavButtonBorderStyle,
@@ -344,16 +368,24 @@ export default function NavBlock(props: NavBlockProps) {
           </>
         )}
       </div>
-      {hiddenMobileMode && mobileMenuOpen ? (
-        <div className="pointer-events-none absolute left-6 top-[calc(100%-0.25rem)] z-30 flex w-[calc(100%-3rem)] max-w-full justify-start">
-          <div className="pointer-events-auto w-[min(16rem,calc(100vw-4rem))] max-w-full rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-2xl backdrop-blur">
-            <div className="mb-2 text-xs font-medium tracking-[0.12em] text-slate-400 uppercase">选择页面</div>
-            <nav className="flex flex-col items-stretch gap-2">
-              {hiddenMobileMenuItems}
-            </nav>
-          </div>
-        </div>
-      ) : null}
+      {hiddenMobileMode && mobileMenuOpen && mobileMenuPopupPosition && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              className="pointer-events-auto fixed z-[2147483600] rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-2xl backdrop-blur"
+              style={{
+                top: `${mobileMenuPopupPosition.top}px`,
+                left: `${mobileMenuPopupPosition.left}px`,
+                width: `${mobileMenuPopupPosition.width}px`,
+              }}
+            >
+              <div className="mb-2 text-xs font-medium tracking-[0.12em] text-slate-400 uppercase">选择页面</div>
+              <nav className="flex flex-col items-stretch gap-2">
+                {hiddenMobileMenuItems}
+              </nav>
+            </div>,
+            document.body,
+          )
+        : null}
     </section>
   );
 }
