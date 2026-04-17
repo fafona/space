@@ -8,7 +8,7 @@ import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/
 import { getBackgroundStyle } from "./backgroundStyle";
 import { getBlockBorderClass, getBlockBorderInlineStyle } from "./borderStyle";
 import { resolveMobileFitCardClass, resolveMobileFitSectionClass } from "./mobileFrame";
-import { stripInlineTextColorStylesFromHtml, toInlineHeadingHtml, toRichHtml } from "./richText";
+import { stripInlineTextColorStylesFromHtml, toInlineHeadingHtmlSegments, toRichHtml } from "./richText";
 
 type NavItem = {
   id?: string;
@@ -137,9 +137,9 @@ export default function NavBlock(props: NavBlockProps) {
     () => localizedNavItems.find((item) => item.pageId === props.currentPageId)?.label ?? localizedNavItems[0]?.label ?? localizedHeading,
     [localizedHeading, localizedNavItems, props.currentPageId],
   );
-  const hiddenMobileHeadingHtml = useMemo(() => {
+  const hiddenMobileHeadingSegments = useMemo(() => {
     const localizedSource = props.heading ? localizeSystemDefaultText(props.heading, locale) : "";
-    return toInlineHeadingHtml(localizedSource, activeNavLabel || localizedHeading);
+    return toInlineHeadingHtmlSegments(localizedSource, activeNavLabel || localizedHeading, 2);
   }, [activeNavLabel, localizedHeading, locale, props.heading]);
   const hiddenMobileMode = props.mobileNavDisplayMode === "hidden" && effectiveMobileViewport;
 
@@ -331,11 +331,17 @@ export default function NavBlock(props: NavBlockProps) {
                 <span className="block h-0.5 w-4 rounded-full" style={{ backgroundColor: mobileNavButtonLineColor }} />
               </span>
             </button>
-            <div className="min-w-0 flex-1 text-sm text-slate-700">
+            <div className="min-w-0 flex-1 text-slate-700">
               <div
-                className="truncate font-semibold [&_span]:inline [&_span]:align-middle"
-                dangerouslySetInnerHTML={{ __html: hiddenMobileHeadingHtml }}
+                className="truncate font-semibold leading-none [&_span]:inline [&_span]:align-middle"
+                dangerouslySetInnerHTML={{ __html: hiddenMobileHeadingSegments[0] ?? "" }}
               />
+              {hiddenMobileHeadingSegments[1] ? (
+                <div
+                  className="mt-1 truncate text-[11px] leading-tight text-slate-600 [&_span]:inline [&_span]:align-middle"
+                  dangerouslySetInnerHTML={{ __html: hiddenMobileHeadingSegments[1] }}
+                />
+              ) : null}
             </div>
           </div>
         ) : (

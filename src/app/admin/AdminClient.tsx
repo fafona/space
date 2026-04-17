@@ -112,7 +112,7 @@ import {
   parseSupportMessageAttachmentPreview,
 } from "@/lib/supportMessageAttachments";
 import { BLOCK_BORDER_STYLE_OPTIONS, getBlockBorderClass, getBlockBorderInlineStyle } from "@/components/blocks/borderStyle";
-import { stripInlineTextColorStylesFromHtml, toInlineHeadingHtml, toRichHtml } from "@/components/blocks/richText";
+import { stripInlineTextColorStylesFromHtml, toInlineHeadingHtmlSegments, toRichHtml } from "@/components/blocks/richText";
 import {
   buildPersistedBlocksFromPlanConfig,
   cloneBlocks,
@@ -14107,7 +14107,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           </div>
         </div>
         {supportSelfSectionView === "home" ? (
-          <div className="flex flex-col items-center pr-16 text-center">
+          <div className="flex flex-col items-center px-4 text-center">
             <button
               type="button"
               className="relative flex h-24 w-24 items-center justify-center overflow-hidden rounded-[30px] bg-slate-900 text-xl font-semibold text-white shadow-[0_18px_40px_rgba(15,23,42,0.16)]"
@@ -22404,42 +22404,50 @@ type GalleryEditorImage = {
           </button>
         );
       });
-    const renderHiddenMobileNavPreview = () => (
-      <div>
-        <div className="flex items-center justify-between gap-3">
-          <button
-            ref={previewNavButtonRef}
-            type="button"
-            className={`inline-flex h-9 w-9 items-center justify-center rounded-full transition hover:brightness-[0.98] ${getBlockBorderClass(
-              mobileNavButtonBorderStyle,
-            )}`}
-            aria-label={previewNavMobileMenuOpen ? "收起导航" : "展开导航"}
-            style={mobileNavButtonStyle}
-            onClick={() => {
-              onSelect();
-              setPreviewNavMobileMenuOpen((current) => !current);
-            }}
-          >
-            <span className="inline-flex flex-col items-center justify-center gap-1.5">
-              <span className="block h-0.5 w-4 rounded-full" style={{ backgroundColor: mobileNavButtonLineColor }} />
-              <span className="block h-0.5 w-4 rounded-full" style={{ backgroundColor: mobileNavButtonLineColor }} />
-              <span className="block h-0.5 w-4 rounded-full" style={{ backgroundColor: mobileNavButtonLineColor }} />
-            </span>
-          </button>
-          <div className="min-w-0 flex-1 text-sm text-slate-700">
-            <div
-              className="truncate font-semibold [&_span]:inline [&_span]:align-middle"
-              dangerouslySetInnerHTML={{
-                __html: toInlineHeadingHtml(
-                  block.props.heading ? localizeSystemDefaultText(block.props.heading, locale) : "",
-                  localizedNavItems.find((item) => item.pageId === selectedNavPageId)?.label ?? localizedNavHeading,
-                ),
+    const renderHiddenMobileNavPreview = () => {
+      const hiddenMobileHeadingSegments = toInlineHeadingHtmlSegments(
+        block.props.heading ? localizeSystemDefaultText(block.props.heading, locale) : "",
+        localizedNavItems.find((item) => item.pageId === selectedNavPageId)?.label ?? localizedNavHeading,
+        2,
+      );
+      return (
+        <div>
+          <div className="flex items-center justify-between gap-3">
+            <button
+              ref={previewNavButtonRef}
+              type="button"
+              className={`inline-flex h-9 w-9 items-center justify-center rounded-full transition hover:brightness-[0.98] ${getBlockBorderClass(
+                mobileNavButtonBorderStyle,
+              )}`}
+              aria-label={previewNavMobileMenuOpen ? "收起导航" : "展开导航"}
+              style={mobileNavButtonStyle}
+              onClick={() => {
+                onSelect();
+                setPreviewNavMobileMenuOpen((current) => !current);
               }}
-            />
+            >
+              <span className="inline-flex flex-col items-center justify-center gap-1.5">
+                <span className="block h-0.5 w-4 rounded-full" style={{ backgroundColor: mobileNavButtonLineColor }} />
+                <span className="block h-0.5 w-4 rounded-full" style={{ backgroundColor: mobileNavButtonLineColor }} />
+                <span className="block h-0.5 w-4 rounded-full" style={{ backgroundColor: mobileNavButtonLineColor }} />
+              </span>
+            </button>
+            <div className="min-w-0 flex-1 text-slate-700">
+              <div
+                className="truncate font-semibold leading-none [&_span]:inline [&_span]:align-middle"
+                dangerouslySetInnerHTML={{ __html: hiddenMobileHeadingSegments[0] ?? "" }}
+              />
+              {hiddenMobileHeadingSegments[1] ? (
+                <div
+                  className="mt-1 truncate text-[11px] leading-tight text-slate-600 [&_span]:inline [&_span]:align-middle"
+                  dangerouslySetInnerHTML={{ __html: hiddenMobileHeadingSegments[1] }}
+                />
+              ) : null}
+            </div>
           </div>
         </div>
-      </div>
-    );
+      );
+    };
     const hiddenMobileNavPreviewPopup =
       mobileHiddenNavMode && previewNavMobileMenuOpen && previewNavMobileMenuPosition ? (
         createPortal(

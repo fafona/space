@@ -176,6 +176,7 @@ export default function PwaBootstrap() {
       ? window.matchMedia("(max-width: 767px)").matches
       : false,
   );
+  const [mobileBottomUiHeight, setMobileBottomUiHeight] = useState(0);
   const [installPromptReady, setInstallPromptReady] = useState(false);
   const [showIosInstallGuide, setShowIosInstallGuide] = useState(false);
   const waitingWorkerRef = useRef<ServiceWorker | null>(null);
@@ -233,6 +234,37 @@ export default function PwaBootstrap() {
       mediaQuery.removeEventListener("change", handleChange);
     };
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!isMobileViewport) return;
+
+    const measureBottomUi = () => {
+      const shell = document.querySelector(".support-mobile-nav-shell");
+      if (!(shell instanceof HTMLElement)) {
+        setMobileBottomUiHeight(0);
+        return;
+      }
+      const rect = shell.getBoundingClientRect();
+      setMobileBottomUiHeight(Math.max(0, Math.ceil(rect.height)));
+    };
+
+    measureBottomUi();
+    const frameId = window.requestAnimationFrame(measureBottomUi);
+    const resizeObserver = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measureBottomUi) : null;
+    const shell = document.querySelector(".support-mobile-nav-shell");
+    if (resizeObserver && shell instanceof HTMLElement) {
+      resizeObserver.observe(shell);
+    }
+    window.addEventListener("resize", measureBottomUi);
+    window.addEventListener("orientationchange", measureBottomUi);
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", measureBottomUi);
+      window.removeEventListener("orientationchange", measureBottomUi);
+    };
+  }, [isMobileViewport, pathname]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -437,12 +469,14 @@ export default function PwaBootstrap() {
   const showOfflineBanner = isOffline && typeof window !== "undefined" && window.location.pathname !== "/offline";
   const showUpdatePrompt = updateReady;
   const inStandalone = typeof window !== "undefined" ? isStandaloneDisplayMode() : false;
-  const isMobileAdminShell = isMobileViewport && pathname.startsWith("/admin");
-  const promptBottomClassName = isMobileAdminShell
-    ? "bottom-[calc(env(safe-area-inset-bottom)+6.4rem)]"
-    : inStandalone
-      ? "bottom-[calc(env(safe-area-inset-bottom)+1rem)]"
-      : "bottom-4";
+  const promptBottomStyle = {
+    bottom:
+      mobileBottomUiHeight > 0
+        ? `calc(env(safe-area-inset-bottom) + ${mobileBottomUiHeight + 24}px)`
+        : inStandalone
+          ? "calc(env(safe-area-inset-bottom) + 1rem)"
+          : "1rem",
+  } as const;
   const showInstallPrompt = !inStandalone && !showUpdatePrompt && (installPromptReady || showIosInstallGuide);
   const showInstallCard = showInstallPrompt && !showIosInstallGuide;
   const showBottomPromptStack = showOfflineBanner || showUpdatePrompt || showInstallCard;
@@ -453,7 +487,8 @@ export default function PwaBootstrap() {
     <>
       {showBottomPromptStack ? (
         <div
-          className={`pointer-events-none fixed inset-x-0 z-[2147482500] mx-auto flex max-w-xl flex-col gap-3 px-3 ${promptBottomClassName}`}
+          className="pointer-events-none fixed inset-x-0 z-[2147482500] mx-auto flex max-w-xl flex-col gap-3 px-3"
+          style={promptBottomStyle}
         >
           {showOfflineBanner ? (
             <div className="pointer-events-auto rounded-2xl border border-amber-300 bg-amber-50/95 px-4 py-3 text-slate-900 shadow-[0_16px_40px_rgba(15,23,42,0.18)] backdrop-blur">
