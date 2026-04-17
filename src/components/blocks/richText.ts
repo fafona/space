@@ -54,6 +54,39 @@ function clampInlineHeadingSize(value: string): string {
   return `${Math.max(0.875, Math.min(1.625, amount))}${unit}`;
 }
 
+function extractFirstInlineHeadingSegment(html: string): string {
+  const trimmed = html.trim();
+  if (!trimmed) return trimmed;
+  if (!trimmed.startsWith("<")) {
+    return (trimmed.split(/<br\s*\/?>/i)[0] ?? trimmed).trim();
+  }
+
+  const voidTags = new Set(["br", "img", "hr", "meta", "link", "input"]);
+  let index = 0;
+  let depth = 0;
+
+  while (index < trimmed.length) {
+    const tagStart = trimmed.indexOf("<", index);
+    if (tagStart < 0) break;
+    const tagEnd = trimmed.indexOf(">", tagStart);
+    if (tagEnd < 0) break;
+    const tagContent = trimmed.slice(tagStart + 1, tagEnd).trim();
+    const normalizedTag = tagContent.replace(/^\/+/, "").split(/\s+/)[0]?.toLowerCase() ?? "";
+    const isClosing = tagContent.startsWith("/");
+    const isSelfClosing = tagContent.endsWith("/") || voidTags.has(normalizedTag);
+
+    if (!isClosing && !isSelfClosing) depth += 1;
+    if (isClosing && depth > 0) depth -= 1;
+
+    index = tagEnd + 1;
+    if (depth === 0 && tagStart === 0) {
+      break;
+    }
+  }
+
+  return trimmed.slice(0, index).trim();
+}
+
 function stripTextColorDeclarations(styleValue: string): string {
   return styleValue
     .split(";")
@@ -111,7 +144,7 @@ export function toInlineHeadingHtml(value: string | undefined, fallback: string)
     .replace(/<(div|p|h[1-6]|section|article|header|footer|aside|nav|ul|ol|li|figure|figcaption|blockquote)([^>]*)>/gi, "<span$2>")
     .replace(/<br\s*\/?>/gi, "<br />");
 
-  const firstSegment = normalized.split(/<br\s*\/?>/i)[0] ?? normalized;
+  const firstSegment = extractFirstInlineHeadingSegment(normalized);
 
   return firstSegment
     .replace(/\sstyle=(['"])(.*?)\1/gi, (_match, quote: string, styleValue: string) => {
