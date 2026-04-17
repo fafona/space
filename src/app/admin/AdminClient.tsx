@@ -4889,6 +4889,17 @@ export default function AdminClient({
   const dragMoveRafRef = useRef<number | null>(null);
   const dragPendingPointerRef = useRef<{ x: number; y: number } | null>(null);
   const blocksRef = useRef<Block[]>(initialBlocks);
+  const pendingBlockPatchesRef = useRef<Record<string, Partial<Block["props"]>>>({});
+  const pendingBlockPatchRafRef = useRef<number | null>(null);
+  const blockPatchHistoryBurstRef = useRef(false);
+  const blockPatchHistoryResetTimeoutRef = useRef<number | null>(null);
+  const pendingBlockNudgesRef = useRef<Record<string, { deltaX: number; deltaY: number }>>({});
+  const pendingBlockNudgeRafRef = useRef<number | null>(null);
+  const blockNudgeHistoryBurstRef = useRef(false);
+  const blockNudgeHistoryResetTimeoutRef = useRef<number | null>(null);
+  const pendingPlanSyncBlocksRef = useRef<Block[] | null>(null);
+  const pendingPlanSyncSyncNavPagesRef = useRef(false);
+  const pendingPlanSyncTimeoutRef = useRef<number | null>(null);
   const editorAvailablePagesRef = useRef<Array<{ id: string; name: string }>>([]);
   const editorAvailablePagesKeyRef = useRef("");
   const [newBlockType, setNewBlockType] = useState<Block["type"]>("common");
@@ -5995,6 +6006,7 @@ export default function AdminClient({
   useEffect(() => {
     if (typeof window === "undefined") return;
     const flushScheduledDraftSave = () => {
+      flushPendingEditorChanges();
       flushScheduledBlocksToStorage(storeScope);
     };
     const handleVisibilityChange = () => {
@@ -6017,6 +6029,7 @@ export default function AdminClient({
 
   function switchPreviewViewport(nextViewport: ViewportKey) {
     if (nextViewport === previewViewport) return;
+    flushPendingEditorChanges();
     viewportStatesRef.current[previewViewport] = {
       planConfig: clonePlanConfig(planConfigRef.current),
       editingPlanId: editingPlanIdRef.current,
@@ -6034,6 +6047,7 @@ export default function AdminClient({
   }
 
   async function readDesktopIntoMobile() {
+    flushPendingEditorChanges();
     const confirmed = await openConfirm("读取 PC 配置将覆盖当前手机配置，是否继续？", "读取PC");
     if (!confirmed) return;
     const desktopConfig = clonePlanConfig(viewportStatesRef.current.desktop.planConfig);
@@ -6220,22 +6234,50 @@ export default function AdminClient({
   }
 
   function applySnapshot(snapshot: EditorSnapshot) {
+    pendingBlockPatchesRef.current = {};
+    pendingBlockNudgesRef.current = {};
+    pendingPlanSyncBlocksRef.current = null;
+    pendingPlanSyncSyncNavPagesRef.current = false;
+    if (pendingBlockPatchRafRef.current !== null) {
+      window.cancelAnimationFrame(pendingBlockPatchRafRef.current);
+      pendingBlockPatchRafRef.current = null;
+    }
+    if (pendingBlockNudgeRafRef.current !== null) {
+      window.cancelAnimationFrame(pendingBlockNudgeRafRef.current);
+      pendingBlockNudgeRafRef.current = null;
+    }
+    if (pendingPlanSyncTimeoutRef.current !== null) {
+      window.clearTimeout(pendingPlanSyncTimeoutRef.current);
+      pendingPlanSyncTimeoutRef.current = null;
+    }
+    if (blockPatchHistoryResetTimeoutRef.current !== null) {
+      window.clearTimeout(blockPatchHistoryResetTimeoutRef.current);
+      blockPatchHistoryResetTimeoutRef.current = null;
+    }
+    if (blockNudgeHistoryResetTimeoutRef.current !== null) {
+      window.clearTimeout(blockNudgeHistoryResetTimeoutRef.current);
+      blockNudgeHistoryResetTimeoutRef.current = null;
+    }
+    blockPatchHistoryBurstRef.current = false;
+    blockNudgeHistoryBurstRef.current = false;
     const clonedStates = cloneViewportStates(snapshot.viewportStates);
     viewportStatesRef.current = clonedStates;
     const target = clonedStates[snapshot.previewViewport];
     setPreviewViewport(snapshot.previewViewport);
-    setPlanConfig(clonePlanConfig(target.planConfig));
+    const nextPlanConfig = clonePlanConfig(target.planConfig);
+    const nextBlocks = cloneBlocks(target.blocks);
+    planConfigRef.current = nextPlanConfig;
+    blocksRef.current = nextBlocks;
+    selectedIdRef.current = target.selectedId || "";
+    setPlanConfig(nextPlanConfig);
     setEditingPlanId(target.editingPlanId);
     setEditingPageId(target.editingPageId);
-    setBlocks(cloneBlocks(target.blocks));
+    setBlocks(nextBlocks);
     setSelectedId(target.selectedId || "");
     saveBlocksToStorage(buildCombinedPersistedBlocks(clonedStates.desktop.planConfig, clonedStates.mobile.planConfig), storeScope);
   }
 
-  function applyBlocks(next: Block[], options?: { selectedId?: string; recordHistory?: boolean; syncNavPages?: boolean }) {
-    if (options?.recordHistory !== false) {
-      pushUndoSnapshot(createSnapshot());
-    }
+  function commitPlanConfigForBlocks(next: Block[], options?: { syncNavPages?: boolean }) {
     const navSyncKeyBefore = getNavSyncKey(blocksRef.current);
     const navSyncKeyAfter = getNavSyncKey(next);
     const shouldSyncNavPages = options?.syncNavPages ?? (navSyncKeyBefore !== navSyncKeyAfter);
@@ -6246,15 +6288,199 @@ export default function AdminClient({
       next,
       { syncNavPages: shouldSyncNavPages },
     );
+    planConfigRef.current = nextPlanConfig;
     setPlanConfig(nextPlanConfig);
-    setBlocks(next);
-    if (typeof options?.selectedId === "string") {
-      setSelectedId(options.selectedId);
-    }
     persistDraftForConfigs(nextPlanConfig);
   }
 
+  function flushPendingPlanSync() {
+    if (pendingPlanSyncTimeoutRef.current !== null) {
+      window.clearTimeout(pendingPlanSyncTimeoutRef.current);
+      pendingPlanSyncTimeoutRef.current = null;
+    }
+    const nextBlocks = pendingPlanSyncBlocksRef.current;
+    if (!nextBlocks) return;
+    const syncNavPages = pendingPlanSyncSyncNavPagesRef.current;
+    pendingPlanSyncBlocksRef.current = null;
+    pendingPlanSyncSyncNavPagesRef.current = false;
+    commitPlanConfigForBlocks(nextBlocks, { syncNavPages });
+  }
+
+  function schedulePlanSync(next: Block[], options?: { syncNavPages?: boolean }) {
+    pendingPlanSyncBlocksRef.current = next;
+    pendingPlanSyncSyncNavPagesRef.current =
+      pendingPlanSyncSyncNavPagesRef.current || options?.syncNavPages === true;
+    if (pendingPlanSyncTimeoutRef.current !== null) {
+      window.clearTimeout(pendingPlanSyncTimeoutRef.current);
+    }
+    pendingPlanSyncTimeoutRef.current = window.setTimeout(() => {
+      flushPendingPlanSync();
+    }, 160);
+  }
+
+  function applyBlocks(
+    next: Block[],
+    options?: { selectedId?: string; recordHistory?: boolean; syncNavPages?: boolean; deferPlanSync?: boolean },
+  ) {
+    if (options?.recordHistory !== false) {
+      pushUndoSnapshot(createSnapshot());
+    }
+    blocksRef.current = next;
+    setBlocks(next);
+    if (typeof options?.selectedId === "string") {
+      selectedIdRef.current = options.selectedId;
+      setSelectedId(options.selectedId);
+    }
+    if (options?.deferPlanSync) {
+      schedulePlanSync(next, { syncNavPages: options.syncNavPages });
+      return;
+    }
+    flushPendingPlanSync();
+    commitPlanConfigForBlocks(next, { syncNavPages: options?.syncNavPages });
+  }
+
+  function scheduleBlockPatchHistoryReset() {
+    if (blockPatchHistoryResetTimeoutRef.current !== null) {
+      window.clearTimeout(blockPatchHistoryResetTimeoutRef.current);
+    }
+    blockPatchHistoryResetTimeoutRef.current = window.setTimeout(() => {
+      blockPatchHistoryBurstRef.current = false;
+      blockPatchHistoryResetTimeoutRef.current = null;
+    }, 420);
+  }
+
+  function flushPendingBlockPatches() {
+    if (pendingBlockPatchRafRef.current !== null) {
+      window.cancelAnimationFrame(pendingBlockPatchRafRef.current);
+      pendingBlockPatchRafRef.current = null;
+    }
+    const pendingEntries = Object.entries(pendingBlockPatchesRef.current);
+    if (pendingEntries.length === 0) return;
+    pendingBlockPatchesRef.current = {};
+    const currentBlocks = blocksRef.current;
+    const next = [...currentBlocks];
+    let changed = false;
+    let shouldSyncNavPages = false;
+    pendingEntries.forEach(([blockId, patch]) => {
+      const index = next.findIndex((item) => item.id === blockId);
+      if (index < 0) return;
+      const current = next[index];
+      const nextProps = { ...current.props, ...patch } as Block["props"];
+      let hasPatchChange = false;
+      for (const [key, value] of Object.entries(patch)) {
+        if ((current.props as Record<string, unknown>)[key] !== value) {
+          hasPatchChange = true;
+          break;
+        }
+      }
+      if (!hasPatchChange) return;
+      next[index] = {
+        ...current,
+        props: nextProps as never,
+      } as Block;
+      changed = true;
+      if (current.type === "nav") {
+        shouldSyncNavPages = true;
+      }
+    });
+    if (!changed) return;
+    applyBlocks(next, {
+      recordHistory: !blockPatchHistoryBurstRef.current,
+      syncNavPages: shouldSyncNavPages,
+      deferPlanSync: true,
+    });
+    blockPatchHistoryBurstRef.current = true;
+    scheduleBlockPatchHistoryReset();
+  }
+
+  function schedulePendingBlockPatchFlush() {
+    if (pendingBlockPatchRafRef.current !== null) return;
+    pendingBlockPatchRafRef.current = window.requestAnimationFrame(() => {
+      flushPendingBlockPatches();
+    });
+  }
+
+  function scheduleBlockNudgeHistoryReset() {
+    if (blockNudgeHistoryResetTimeoutRef.current !== null) {
+      window.clearTimeout(blockNudgeHistoryResetTimeoutRef.current);
+    }
+    blockNudgeHistoryResetTimeoutRef.current = window.setTimeout(() => {
+      blockNudgeHistoryBurstRef.current = false;
+      blockNudgeHistoryResetTimeoutRef.current = null;
+    }, 420);
+  }
+
+  function flushPendingBlockNudges() {
+    if (pendingBlockNudgeRafRef.current !== null) {
+      window.cancelAnimationFrame(pendingBlockNudgeRafRef.current);
+      pendingBlockNudgeRafRef.current = null;
+    }
+    const pendingEntries = Object.entries(pendingBlockNudgesRef.current);
+    if (pendingEntries.length === 0) return;
+    flushPendingBlockPatches();
+    pendingBlockNudgesRef.current = {};
+    const currentBlocks = blocksRef.current;
+    const next = [...currentBlocks];
+    let changed = false;
+    pendingEntries.forEach(([blockId, pendingDelta]) => {
+      const index = next.findIndex((item) => item.id === blockId);
+      if (index < 0) return;
+      const current = next[index];
+      if (isBlockLocked(current)) return;
+      const currentX =
+        typeof current.props.blockOffsetX === "number" && Number.isFinite(current.props.blockOffsetX)
+          ? Math.round(current.props.blockOffsetX)
+          : 0;
+      const currentY =
+        typeof current.props.blockOffsetY === "number" && Number.isFinite(current.props.blockOffsetY)
+          ? Math.round(current.props.blockOffsetY)
+          : 0;
+      const horizontalDelta = current.props.mobileFitScreenWidth === true ? 0 : pendingDelta.deltaX;
+      if (!horizontalDelta && !pendingDelta.deltaY) return;
+      const currentBaseX = current.props.mobileFitScreenWidth === true ? 0 : currentX;
+      const clampedOffset = clampBlockOffsetToViewport(
+        blockId,
+        currentBaseX,
+        currentY,
+        currentBaseX + horizontalDelta,
+        currentY + pendingDelta.deltaY,
+      );
+      if (clampedOffset.x === currentX && clampedOffset.y === currentY) return;
+      next[index] = {
+        ...current,
+        props: {
+          ...current.props,
+          blockOffsetX: current.props.mobileFitScreenWidth === true ? 0 : clampedOffset.x,
+          blockOffsetY: clampedOffset.y,
+        } as never,
+      } as Block;
+      changed = true;
+    });
+    if (!changed) return;
+    applyBlocks(next, {
+      recordHistory: !blockNudgeHistoryBurstRef.current,
+      syncNavPages: false,
+      deferPlanSync: true,
+    });
+    blockNudgeHistoryBurstRef.current = true;
+    scheduleBlockNudgeHistoryReset();
+  }
+
+  function schedulePendingBlockNudgeFlush() {
+    if (pendingBlockNudgeRafRef.current !== null) return;
+    pendingBlockNudgeRafRef.current = window.requestAnimationFrame(() => {
+      flushPendingBlockNudges();
+    });
+  }
+
+  function flushPendingEditorChanges() {
+    flushPendingBlockPatches();
+    flushPendingBlockNudges();
+    flushPendingPlanSync();
+  }
+
   function undoEdit() {
+    flushPendingEditorChanges();
     const previous = undoStackRef.current.pop();
     if (!previous) return;
     const current = createSnapshot();
@@ -6267,6 +6493,7 @@ export default function AdminClient({
   }
 
   function redoEdit() {
+    flushPendingEditorChanges();
     const next = redoStackRef.current.pop();
     if (!next) return;
     const current = createSnapshot();
@@ -7294,16 +7521,22 @@ export default function AdminClient({
 
   function updateBlockProps(blockId: string, patch: Partial<Block["props"]>) {
     const currentBlocks = blocksRef.current;
-    const index = currentBlocks.findIndex((b) => b.id === blockId);
-    if (index < 0) return;
-
-    const next = [...currentBlocks];
-    next[index] = {
-      ...next[index],
-      props: { ...next[index].props, ...patch } as never,
-    } as Block;
-
-    applyBlocks(next);
+    const block = currentBlocks.find((item) => item.id === blockId);
+    if (!block) return;
+    const nextPatch = {
+      ...(pendingBlockPatchesRef.current[blockId] ?? {}),
+      ...patch,
+    } as Partial<Block["props"]>;
+    let hasPatchChange = false;
+    for (const [key, value] of Object.entries(nextPatch)) {
+      if ((block.props as Record<string, unknown>)[key] !== value) {
+        hasPatchChange = true;
+        break;
+      }
+    }
+    if (!hasPatchChange) return;
+    pendingBlockPatchesRef.current[blockId] = nextPatch;
+    schedulePendingBlockPatchFlush();
   }
 
   function applyNavSettingsToOtherPages(blockId: string) {
@@ -7724,6 +7957,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
   function updatePageBackground(patch: Partial<PageBackgroundPatch>) {
     if (blocks.length === 0) return;
+    flushPendingEditorChanges();
 
     const next = [...blocks];
     next[0] = {
@@ -7735,6 +7969,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }
 
   function startDraggingBlock(blockId: string, point: { x: number; y: number }) {
+    flushPendingEditorChanges();
     const block = blocksRef.current.find((b) => b.id === blockId);
     if (!block || isBlockLocked(block)) return;
     const blockIds = [blockId];
@@ -7775,7 +8010,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     nextOffsetY: number,
     options?: { allowDragDownOverflow?: boolean },
   ) {
-    const blockRoot = document.querySelector<HTMLElement>(`[data-block-id="${blockId}"]`);
+    const blockRoot =
+      Array.from(document.querySelectorAll<HTMLElement>(`[data-block-id="${blockId}"]`))
+        .reverse()
+        .find((candidate) => candidate.querySelector("[data-editor-toolbar]")) ??
+      document.querySelector<HTMLElement>(`[data-block-id="${blockId}"]`);
     const element = blockRoot?.querySelector<HTMLElement>("[data-block-visual-boundary]") ?? blockRoot;
     if (!element) {
       return {
@@ -7785,12 +8024,18 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
 
     const rect = element.getBoundingClientRect();
+    const viewportBoundary = blockRoot?.closest<HTMLElement>("[data-editor-viewport-boundary]");
+    const viewportRect = viewportBoundary?.getBoundingClientRect();
     const desiredDeltaX = nextOffsetX - currentOffsetX;
     const desiredDeltaY = nextOffsetY - currentOffsetY;
-    const minDeltaX = -rect.left;
-    const maxDeltaX = window.innerWidth - rect.right;
-    const minDeltaY = -rect.top;
-    const maxDeltaY = options?.allowDragDownOverflow ? Number.POSITIVE_INFINITY : window.innerHeight - rect.bottom;
+    const minDeltaX = viewportRect ? viewportRect.left - rect.left : -rect.left;
+    const maxDeltaX = viewportRect ? viewportRect.right - rect.right : window.innerWidth - rect.right;
+    const minDeltaY = viewportRect ? viewportRect.top - rect.top : -rect.top;
+    const maxDeltaY = options?.allowDragDownOverflow
+      ? Number.POSITIVE_INFINITY
+      : viewportRect
+        ? viewportRect.bottom - rect.bottom
+        : window.innerHeight - rect.bottom;
     const clampedDeltaX =
       minDeltaX > maxDeltaX ? 0 : Math.min(Math.max(desiredDeltaX, minDeltaX), maxDeltaX);
     const clampedDeltaY =
@@ -7804,46 +8049,16 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
   function nudgeBlock(blockId: string, deltaX: number, deltaY: number) {
     if (!deltaX && !deltaY) return;
-    const targetBlock = blocks.find((item) => item.id === blockId);
+    const targetBlock = blocksRef.current.find((item) => item.id === blockId);
     if (!targetBlock || isBlockLocked(targetBlock)) return;
     const horizontalDelta = targetBlock.props.mobileFitScreenWidth === true ? 0 : deltaX;
     if (!horizontalDelta && !deltaY) return;
-    const movableIds = [blockId];
-    if (movableIds.length === 0) return;
-    const next = [...blocks];
-    let changed = false;
-    movableIds.forEach((id) => {
-      const index = next.findIndex((item) => item.id === id);
-      if (index < 0) return;
-      const current = next[index];
-      const currentX =
-        typeof current.props.blockOffsetX === "number" && Number.isFinite(current.props.blockOffsetX)
-          ? Math.round(current.props.blockOffsetX)
-          : 0;
-      const currentY =
-        typeof current.props.blockOffsetY === "number" && Number.isFinite(current.props.blockOffsetY)
-          ? Math.round(current.props.blockOffsetY)
-          : 0;
-      const currentBaseX = current.props.mobileFitScreenWidth === true ? 0 : currentX;
-      const clampedOffset = clampBlockOffsetToViewport(
-        id,
-        currentBaseX,
-        currentY,
-        currentBaseX + horizontalDelta,
-        currentY + deltaY,
-      );
-      if (clampedOffset.x === currentX && clampedOffset.y === currentY) return;
-      next[index] = {
-        ...current,
-        props: {
-          ...current.props,
-          blockOffsetX: current.props.mobileFitScreenWidth === true ? 0 : clampedOffset.x,
-          blockOffsetY: clampedOffset.y,
-        } as never,
-      } as Block;
-      changed = true;
-    });
-    if (changed) applyBlocks(next);
+    const currentPending = pendingBlockNudgesRef.current[blockId];
+    pendingBlockNudgesRef.current[blockId] = {
+      deltaX: (currentPending?.deltaX ?? 0) + horizontalDelta,
+      deltaY: (currentPending?.deltaY ?? 0) + deltaY,
+    };
+    schedulePendingBlockNudgeFlush();
   }
   nudgeBlockRef.current = nudgeBlock;
 
@@ -8392,6 +8607,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
   function switchEditingPlan(planId: PlanId) {
     if (planId === editingPlanIdRef.current) return;
+    flushPendingEditorChanges();
     const mergedConfig = mergePlanConfigWithEditingBlocks(
       planConfigRef.current,
       editingPlanIdRef.current,
@@ -8419,6 +8635,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
   function switchEditingPage(pageId: string) {
     if (pageId === editingPageIdRef.current) return;
+    flushPendingEditorChanges();
     const mergedConfig = mergePlanConfigWithEditingBlocks(
       planConfigRef.current,
       editingPlanIdRef.current,
@@ -13182,6 +13399,15 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   }
   const editorAvailablePages = editorAvailablePagesRef.current;
   const deferredPreviewBlocks = useDeferredValue(blocks);
+  const [previewBlocksSnapshot, setPreviewBlocksSnapshot] = useState<Block[]>(() => cloneBlocks(initialBlocks));
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setPreviewBlocksSnapshot(cloneBlocks(deferredPreviewBlocks));
+    }, 90);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [deferredPreviewBlocks]);
 
   if (checkingAuth) {
     if (!isPlatformEditor) {
@@ -16786,19 +17012,21 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     style={{ ...pageBackgroundStyle, paddingBottom: `${mobileFrontendPreviewPadding}px` }}
                   >
                     <div className="editor-mobile-preview relative z-10 w-full py-4">
-                      <BlockRenderer
-                        blocks={deferredPreviewBlocks}
-                        currentPageId={editingPageId}
-                        currentPageIndex={editingPageIndex}
-                        availablePages={editorAvailablePages}
-                        forceMobileViewport
-                        bookingSiteId={editingSiteId || ""}
-                        bookingSiteName={merchantDisplayName}
-                        bookingInteractive={false}
-                        onNavigatePage={(pageId) => {
-                          if (editingPages.some((page) => page.id === pageId)) switchEditingPage(pageId);
-                        }}
-                      />
+                      <div data-editor-viewport-boundary className="contents">
+                        <BlockRenderer
+                          blocks={previewBlocksSnapshot}
+                          currentPageId={editingPageId}
+                          currentPageIndex={editingPageIndex}
+                          availablePages={editorAvailablePages}
+                          forceMobileViewport
+                          bookingSiteId={editingSiteId || ""}
+                          bookingSiteName={merchantDisplayName}
+                          bookingInteractive={false}
+                          onNavigatePage={(pageId) => {
+                            if (editingPages.some((page) => page.id === pageId)) switchEditingPage(pageId);
+                          }}
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -16814,7 +17042,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 >
                   <div className="absolute inset-0 rounded-[28px] overflow-hidden pointer-events-none" style={pageBackgroundStyle} />
                   <div className="relative z-10 w-full py-4">
-                    <div className="space-y-0">
+                    <div data-editor-viewport-boundary className="space-y-0">
                       {blocks.map((block, index) => {
                         const sourceIndex = resizePreview ? blocks.findIndex((item) => item.id === resizePreview.blockId) : -1;
                         const previewOffsetY = sourceIndex >= 0 && index > sourceIndex ? -resizePreview!.heightDelta : 0;
@@ -16878,7 +17106,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           style={{ ...pageBackgroundStyle, minHeight: `${Math.max(backgroundLayerMinHeight, 0)}px` }}
         >
           <div className="max-w-6xl mx-auto px-6 py-6">
-            <div className="space-y-0">
+            <div data-editor-viewport-boundary className="space-y-0">
               {blocks.map((block, index) => {
                 const sourceIndex = resizePreview ? blocks.findIndex((item) => item.id === resizePreview.blockId) : -1;
                 const previewOffsetY = sourceIndex >= 0 && index > sourceIndex ? -resizePreview!.heightDelta : 0;

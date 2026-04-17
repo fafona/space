@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import BookingWorkbenchDialog from "@/components/admin/BookingWorkbenchDialog";
 import BookingStatusFilterDropdown from "@/components/admin/BookingStatusFilterDropdown";
@@ -782,6 +782,19 @@ export default function MerchantBookingManagerDialog({
     );
   };
 
+  const handleSelectionCardClick = (event: ReactMouseEvent<HTMLElement>, bookingId: string) => {
+    if (!selectionMode) return;
+    const target = event.target as HTMLElement | null;
+    if (
+      target?.closest(
+        'button, a, input, textarea, select, label, [role="button"], [data-skip-selection-toggle="true"]',
+      )
+    ) {
+      return;
+    }
+    toggleSelectedBooking(bookingId);
+  };
+
   useEffect(() => {
     if (!selectionMode) return;
     setSelectedBookingIds((current) => {
@@ -1383,6 +1396,7 @@ export default function MerchantBookingManagerDialog({
                   <article
                     key={record.id}
                     className="relative overflow-visible rounded-2xl border bg-slate-50 p-3.5 shadow-sm"
+                    onClick={(event) => handleSelectionCardClick(event, record.id)}
                   >
                     {isNewRecord ? (
                       <span className="absolute left-3 top-0 z-10 inline-flex -translate-y-1/2 items-center rounded-[14px] border border-white/70 bg-emerald-500 px-2.5 py-1 text-[10px] font-semibold tracking-[0.18em] text-white shadow-[0_10px_24px_rgba(16,185,129,0.24)]">
