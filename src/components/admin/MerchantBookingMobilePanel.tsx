@@ -72,6 +72,8 @@ type MerchantBookingMobilePanelProps = {
   allowBookingEmailPrefill?: boolean;
   allowCustomerAutoEmail?: boolean;
   onRecordsChange?: (records: MerchantBookingRecord[]) => void;
+  allowOrderManagement?: boolean;
+  onSectionChange?: (section: "booking" | "orders") => void;
 };
 
 type MerchantBookingAdminDraft = {
@@ -428,10 +430,13 @@ export default function MerchantBookingMobilePanel({
   allowBookingEmailPrefill = false,
   allowCustomerAutoEmail = false,
   onRecordsChange,
+  allowOrderManagement = false,
+  onSectionChange,
 }: MerchantBookingMobilePanelProps) {
   const { locale } = useI18n();
   const rootRef = useRef<HTMLDivElement>(null);
   const detailDialogScrollViewportRef = useRef<HTMLDivElement>(null);
+  const overflowMenuRef = useRef<HTMLDivElement>(null);
   const defaultCustomerEmailLocale = useMemo(
     () => resolveMerchantBookingCustomerEmailLocale("", siteCountryCode),
     [siteCountryCode],
@@ -460,6 +465,7 @@ export default function MerchantBookingMobilePanel({
   const [busyKey, setBusyKey] = useState("");
   const [detailBookingId, setDetailBookingId] = useState<string | null>(null);
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
+  const [overflowMenuOpen, setOverflowMenuOpen] = useState(false);
   const [customerEmailLocale, setCustomerEmailLocale] = useState(defaultCustomerEmailLocale);
   const [customerEmailLocaleLoaded, setCustomerEmailLocaleLoaded] = useState(false);
   const workbenchButtonClassName = workbenchOpen
@@ -470,6 +476,26 @@ export default function MerchantBookingMobilePanel({
     : "rounded-[18px] border border-slate-200 bg-white px-3 py-2.5 text-slate-900 shadow-sm";
   const filterSelectLabelClassName = darkMode ? "text-slate-400" : "text-slate-500";
   const filterSelectIconClassName = darkMode ? "text-slate-500" : "text-slate-400";
+  const showSectionSwitch = allowOrderManagement && typeof onSectionChange === "function";
+  const overflowMenuButtonClassName = overflowMenuOpen
+    ? darkMode
+      ? "relative inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-amber-300/40 bg-amber-200/10 text-amber-100 shadow-sm"
+      : "relative inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-slate-300 bg-slate-900 text-white shadow-sm"
+    : darkMode
+      ? "relative inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-slate-100 shadow-sm transition hover:bg-white/10"
+      : "relative inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:bg-slate-50";
+  const overflowMenuPanelClassName = darkMode
+    ? "absolute right-0 top-[calc(100%+0.6rem)] z-30 w-[min(18rem,calc(100vw-2rem))] rounded-[24px] border border-white/10 bg-[rgba(15,23,42,0.98)] p-3 shadow-[0_24px_60px_rgba(2,6,23,0.4)]"
+    : "absolute right-0 top-[calc(100%+0.6rem)] z-30 w-[min(18rem,calc(100vw-2rem))] rounded-[24px] border border-slate-200 bg-white p-3 shadow-[0_24px_60px_rgba(15,23,42,0.18)]";
+  const overflowMenuPrimaryButtonClassName = darkMode
+    ? "w-full rounded-[18px] border border-amber-300/30 bg-amber-200/10 px-3.5 py-3 text-left text-[13px] font-semibold text-amber-100 shadow-sm transition hover:bg-amber-200/15"
+    : "w-full rounded-[18px] border border-[#d8c7a5] bg-[linear-gradient(135deg,#fffdfa_0%,#f6efe1_62%,#ecdfc2_100%)] px-3.5 py-3 text-left text-[13px] font-semibold text-slate-800 shadow-sm transition hover:brightness-[0.99]";
+  const overflowMenuSecondaryButtonClassName = darkMode
+    ? "w-full rounded-[18px] border border-white/10 bg-white/5 px-3.5 py-3 text-left text-[13px] font-medium text-slate-100 transition hover:bg-white/10"
+    : "w-full rounded-[18px] border border-slate-200 bg-white px-3.5 py-3 text-left text-[13px] font-medium text-slate-700 transition hover:bg-slate-50";
+  const overflowMenuSectionLabelClassName = darkMode
+    ? "text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400"
+    : "text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500";
 
   useEffect(() => {
     setCustomerEmailLocale(defaultCustomerEmailLocale);
@@ -561,6 +587,22 @@ export default function MerchantBookingMobilePanel({
       setSelectedBookingIds([]);
     }
   }, [selectedBookingIds.length, selectionMode]);
+
+  useEffect(() => {
+    if (!overflowMenuOpen || typeof document === "undefined") return;
+    const handlePointerDown = (event: MouseEvent | TouchEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (overflowMenuRef.current?.contains(target)) return;
+      setOverflowMenuOpen(false);
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("touchstart", handlePointerDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("touchstart", handlePointerDown);
+    };
+  }, [overflowMenuOpen]);
 
   useEffect(() => {
     const preferences = loadMerchantBookingManagerPreferences(siteId);
@@ -1297,7 +1339,237 @@ export default function MerchantBookingMobilePanel({
               </span>
             </div>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="relative">
+            <div className="flex items-center gap-2.5">
+              {showSectionSwitch ? (
+                <div
+                  className={`inline-flex shrink-0 items-center rounded-[20px] p-1 shadow-sm ${
+                    darkMode ? "border border-white/10 bg-white/5" : "border border-slate-200 bg-white"
+                  }`}
+                >
+                  <button
+                    type="button"
+                    className="rounded-[16px] bg-emerald-500 px-3.5 py-2 text-[12px] font-semibold text-white shadow-sm"
+                    onClick={() => onSectionChange?.("booking")}
+                  >
+                    预约
+                  </button>
+                  <button
+                    type="button"
+                    className={`rounded-[16px] px-3.5 py-2 text-[12px] font-semibold transition ${
+                      darkMode ? "text-slate-300 hover:bg-white/5" : "text-slate-500 hover:bg-slate-100"
+                    }`}
+                    onClick={() => onSectionChange?.("orders")}
+                  >
+                    订单
+                  </button>
+                </div>
+              ) : (
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-emerald-500 text-[12px] font-semibold text-white shadow-sm">
+                  预约
+                </div>
+              )}
+              <div className="flex min-h-[41px] min-w-0 flex-1 items-center gap-2.5 rounded-[20px] border border-slate-200 bg-[#f3f4f6] px-3.5 py-2 shadow-sm">
+                <svg viewBox="0 0 24 24" className="h-[17px] w-[17px] shrink-0 text-slate-400" fill="none" aria-hidden="true">
+                  <circle cx="11" cy="11" r="6.5" stroke="currentColor" strokeWidth="1.9" />
+                  <path d="m16 16 4 4" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+                </svg>
+                <input
+                  className="min-w-0 flex-1 bg-transparent text-[14px] leading-5 text-slate-900 outline-none placeholder:text-slate-400"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder={getMerchantBookingFieldText("searchMobile", locale)}
+                />
+              </div>
+              <div ref={overflowMenuRef} className="relative shrink-0">
+                <button
+                  type="button"
+                  className={overflowMenuButtonClassName}
+                  onClick={() => setOverflowMenuOpen((current) => !current)}
+                  aria-label={locale.startsWith("es") ? "Más acciones" : "更多操作"}
+                  aria-expanded={overflowMenuOpen}
+                >
+                  <svg viewBox="0 0 24 24" className="h-[18px] w-[18px]" fill="currentColor" aria-hidden="true">
+                    <circle cx="5" cy="12" r="1.8" />
+                    <circle cx="12" cy="12" r="1.8" />
+                    <circle cx="19" cy="12" r="1.8" />
+                  </svg>
+                  {selectedBookingIds.length > 0 ? (
+                    <span className="absolute -right-1 -top-1 inline-flex min-h-5 min-w-5 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-semibold text-white shadow-sm">
+                      {selectedBookingIds.length > 99 ? "99+" : selectedBookingIds.length}
+                    </span>
+                  ) : selectionMode ? (
+                    <span className="absolute right-1.5 top-1.5 h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                  ) : null}
+                </button>
+                {overflowMenuOpen ? (
+                  <div className={overflowMenuPanelClassName}>
+                    <div className="space-y-3">
+                      <button
+                        type="button"
+                        className={overflowMenuPrimaryButtonClassName}
+                        onClick={() => {
+                          setOverflowMenuOpen(false);
+                          setWorkbenchOpen(true);
+                        }}
+                      >
+                        {getMerchantBookingFieldText("workbenchButton", locale)}
+                      </button>
+                      <div className="space-y-2">
+                        <div className={overflowMenuSectionLabelClassName}>筛选</div>
+                        <label className="grid gap-1.5">
+                          <span className={`text-[11px] font-medium ${filterSelectLabelClassName}`}>
+                            {getMerchantBookingSortLabel(locale)}
+                          </span>
+                          <div className={`relative ${filterSelectShellClassName}`}>
+                            <select
+                              className="w-full appearance-none bg-transparent pr-6 text-[13px] font-medium outline-none"
+                              value={sortMode}
+                              onChange={(event) => setSortMode(event.target.value as MerchantBookingSortMode)}
+                            >
+                              {MERCHANT_BOOKING_SORT_MODES.map((mode) => (
+                                <option key={mode} value={mode}>
+                                  {getMerchantBookingSortOptionText(mode, locale)}
+                                </option>
+                              ))}
+                            </select>
+                            <svg
+                              viewBox="0 0 20 20"
+                              fill="none"
+                              aria-hidden="true"
+                              className={`pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 ${filterSelectIconClassName}`}
+                            >
+                              <path d="m5 7.5 5 5 5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                          </div>
+                        </label>
+                        <label className="grid gap-1.5">
+                          <span className={`text-[11px] font-medium ${filterSelectLabelClassName}`}>
+                            {getMerchantBookingHistoryVisibilityLabel(locale)}
+                          </span>
+                          <div className={`relative ${filterSelectShellClassName}`}>
+                            <select
+                              className="w-full appearance-none bg-transparent pr-6 text-[13px] font-medium outline-none"
+                              value={historyVisibility}
+                              onChange={(event) => setHistoryVisibility(event.target.value as MerchantBookingHistoryVisibility)}
+                            >
+                              {MERCHANT_BOOKING_HISTORY_VISIBILITY_OPTIONS.map((value) => (
+                                <option key={value} value={value}>
+                                  {getMerchantBookingHistoryVisibilityText(value, locale)}
+                                </option>
+                              ))}
+                            </select>
+                            <svg
+                              viewBox="0 0 20 20"
+                              fill="none"
+                              aria-hidden="true"
+                              className={`pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 ${filterSelectIconClassName}`}
+                            >
+                              <path d="m5 7.5 5 5 5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                          </div>
+                        </label>
+                      </div>
+                      <div className="space-y-2">
+                        <div className={overflowMenuSectionLabelClassName}>批量</div>
+                        <button
+                          type="button"
+                          className={`${overflowMenuSecondaryButtonClassName} ${
+                            selectionMode
+                              ? darkMode
+                                ? "border-slate-500 bg-slate-100 text-slate-900"
+                                : "border-slate-900 bg-slate-900 text-white"
+                              : ""
+                          }`}
+                          onClick={() => setSelectionMode((current) => !current)}
+                        >
+                          {selectionMode
+                            ? locale.startsWith("es")
+                              ? "Salir de lote"
+                              : "退出批量"
+                            : locale.startsWith("es")
+                              ? "Lote"
+                              : "批量"}
+                        </button>
+                        {selectionMode ? (
+                          <div className="space-y-2">
+                            <button
+                              type="button"
+                              className={overflowMenuSecondaryButtonClassName}
+                              onClick={toggleSelectAllFiltered}
+                            >
+                              {selectedRecordSet.size > 0 && filteredRecords.every((item) => selectedRecordSet.has(item.id))
+                                ? locale.startsWith("es")
+                                  ? "Quitar visibles"
+                                  : "取消当前页"
+                                : locale.startsWith("es")
+                                  ? "Seleccionar visibles"
+                                  : "全选当前页"}
+                            </button>
+                            <div
+                              className={`rounded-[18px] px-3.5 py-2 text-[12px] font-semibold ${
+                                darkMode ? "bg-white/5 text-slate-200" : "bg-slate-100 text-slate-700"
+                              }`}
+                            >
+                              {locale.startsWith("es")
+                                ? `${selectedBookingIds.length} seleccionadas`
+                                : `已选 ${selectedBookingIds.length} 条`}
+                            </div>
+                            {selectedBookingIds.length > 0 ? (
+                              <div className="grid grid-cols-2 gap-2">
+                                <button
+                                  type="button"
+                                  className="rounded-[16px] border border-sky-200 bg-sky-50 px-3 py-2.5 text-xs font-medium text-sky-700"
+                                  onClick={() => void runBatchStatusUpdate("confirmed", "batch-confirm")}
+                                  disabled={busyKey === "batch:batch-confirm"}
+                                >
+                                  {locale.startsWith("es") ? "Confirmar" : "批量确认"}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="rounded-[16px] border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-xs font-medium text-emerald-700"
+                                  onClick={() => void runBatchStatusUpdate("completed", "batch-complete")}
+                                  disabled={busyKey === "batch:batch-complete"}
+                                >
+                                  {locale.startsWith("es") ? "Completar" : "批量完成"}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="rounded-[16px] border border-rose-200 bg-rose-50 px-3 py-2.5 text-xs font-medium text-rose-700"
+                                  onClick={() => void runBatchStatusUpdate("no_show", "batch-noshow")}
+                                  disabled={busyKey === "batch:batch-noshow"}
+                                >
+                                  {locale.startsWith("es") ? "No show" : "批量未到店"}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="rounded-[16px] border border-slate-200 bg-white px-3 py-2.5 text-xs font-medium text-slate-700"
+                                  onClick={() => void runBatchStatusUpdate("cancelled", "batch-cancel")}
+                                  disabled={busyKey === "batch:batch-cancel"}
+                                >
+                                  {locale.startsWith("es") ? "Cancelar" : "批量取消"}
+                                </button>
+                              </div>
+                            ) : null}
+                            {selectedBookingIds.length > 0 ? (
+                              <button
+                                type="button"
+                                className="w-full rounded-[16px] border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-medium text-amber-700"
+                                onClick={() => downloadBookingsCsv(selectedRecords, locale, siteId)}
+                              >
+                                CSV
+                              </button>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </div>
+          <div className="hidden">
             <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-emerald-500 text-sm font-semibold text-white shadow-sm">
               预约
             </div>
@@ -1349,7 +1621,7 @@ export default function MerchantBookingMobilePanel({
                 </button>
               ))}
           </div>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="hidden">
             <label className={`flex min-w-0 items-center gap-2 ${filterSelectShellClassName}`}>
               <span className={`shrink-0 text-[11px] font-medium ${filterSelectLabelClassName}`}>
                 {getMerchantBookingSortLabel(locale)}
@@ -1405,7 +1677,7 @@ export default function MerchantBookingMobilePanel({
               </div>
             </label>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="hidden">
             <button
               type="button"
               className={`rounded-full px-3 py-2 text-xs font-medium transition ${

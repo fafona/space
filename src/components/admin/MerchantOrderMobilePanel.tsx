@@ -12,6 +12,7 @@ type MerchantOrderMobilePanelProps = {
   siteName: string;
   darkMode?: boolean;
   onOrdersChange?: (records: MerchantOrderRecord[]) => void;
+  onSectionChange?: (section: "booking" | "orders") => void;
 };
 
 type MerchantOrderFilter = "all" | MerchantOrderStatus;
@@ -54,6 +55,7 @@ export default function MerchantOrderMobilePanel({
   siteName,
   darkMode = false,
   onOrdersChange,
+  onSectionChange,
 }: MerchantOrderMobilePanelProps) {
   const [records, setRecords] = useState<MerchantOrderRecord[]>([]);
   const [loading, setLoading] = useState(false);
@@ -170,8 +172,59 @@ export default function MerchantOrderMobilePanel({
   return (
     <div className="space-y-4 py-4">
       <div className={panelClassName}>
-        <div className={`text-lg font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>订单管理</div>
-        <div className={`mt-1 text-sm ${darkMode ? "text-slate-300" : "text-slate-500"}`}>{siteName} 的产品订单会在这里集中处理。</div>
+        <div className="space-y-3">
+          <div className="flex items-center gap-2.5">
+            {onSectionChange ? (
+              <div
+                className={`inline-flex shrink-0 items-center rounded-[20px] p-1 shadow-sm ${
+                  darkMode ? "border border-white/10 bg-white/5" : "border border-slate-200 bg-white"
+                }`}
+              >
+                <button
+                  type="button"
+                  className={`rounded-[16px] px-3.5 py-2 text-[12px] font-semibold transition ${
+                    darkMode ? "text-slate-300 hover:bg-white/5" : "text-slate-500 hover:bg-slate-100"
+                  }`}
+                  onClick={() => onSectionChange("booking")}
+                >
+                  预约
+                </button>
+                <button
+                  type="button"
+                  className="rounded-[16px] bg-slate-900 px-3.5 py-2 text-[12px] font-semibold text-white shadow-sm"
+                  onClick={() => onSectionChange("orders")}
+                >
+                  订单
+                </button>
+              </div>
+            ) : (
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-[12px] font-semibold text-white shadow-sm">
+                订单
+              </div>
+            )}
+            <div
+              className={`flex min-h-[41px] min-w-0 flex-1 items-center gap-2.5 rounded-[20px] border px-3.5 py-2 shadow-sm ${
+                darkMode ? "border-white/10 bg-white/5 text-white" : "border-slate-200 bg-white text-slate-900"
+              }`}
+            >
+              <svg viewBox="0 0 24 24" className="h-[17px] w-[17px] shrink-0 text-slate-400" fill="none" aria-hidden="true">
+                <circle cx="11" cy="11" r="6.5" stroke="currentColor" strokeWidth="1.9" />
+                <path d="m16 16 4 4" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+              </svg>
+              <input
+                type="search"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="搜索订单号 / 客户 / 产品"
+                className={`min-w-0 flex-1 bg-transparent text-[14px] leading-5 outline-none ${
+                  darkMode ? "text-white placeholder:text-slate-400" : "text-slate-900 placeholder:text-slate-400"
+                }`}
+              />
+            </div>
+          </div>
+        </div>
+        <div className="hidden">订单管理</div>
+        <div className="hidden">{siteName} 的产品订单会在这里集中处理。</div>
         {error ? <div className="mt-2 text-sm text-rose-500">{error}</div> : null}
         <div className="mt-4 space-y-3">
           <input
@@ -179,9 +232,7 @@ export default function MerchantOrderMobilePanel({
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="搜索订单号 / 客户 / 产品"
-            className={`w-full rounded-[20px] border px-4 py-3 text-sm outline-none ${
-              darkMode ? "border-white/10 bg-white/5 text-white placeholder:text-slate-400" : "border-slate-200 bg-white text-slate-900"
-            }`}
+            className="hidden"
           />
           <div className="flex flex-wrap gap-2">
             {(["all", "pending", "confirmed", "cancelled"] as MerchantOrderFilter[]).map((key) => (

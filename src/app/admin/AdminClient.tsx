@@ -14334,39 +14334,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(env(safe-area-inset-bottom)+5.85rem)] pt-0">
         {supportMobileBookingSiteId ? (
           <div className="space-y-4 pt-4">
-            <div className="sticky top-0 z-20">
-              <div className="inline-flex rounded-[24px] border border-slate-200/70 bg-white/90 p-1 shadow-[0_14px_30px_rgba(15,23,42,0.08)] backdrop-blur">
-                <button
-                  type="button"
-                  className={`min-w-[88px] rounded-[18px] px-4 py-2.5 text-sm font-semibold transition ${
-                    resolvedSupportMobileBusinessSection === "booking"
-                      ? "bg-emerald-500 text-white shadow-sm"
-                      : "text-slate-600"
-                  }`}
-                  onClick={() => setSupportMobileBusinessSection("booking")}
-                >
-                  预约
-                </button>
-                {canUseOrderManagement ? (
-                  <button
-                    type="button"
-                    className={`min-w-[88px] rounded-[18px] px-4 py-2.5 text-sm font-semibold transition ${
-                      resolvedSupportMobileBusinessSection === "orders"
-                        ? "bg-slate-900 text-white shadow-sm"
-                        : "text-slate-600"
-                    }`}
-                    onClick={() => setSupportMobileBusinessSection("orders")}
-                  >
-                    订单
-                  </button>
-                ) : null}
-              </div>
-            </div>
             {resolvedSupportMobileBusinessSection === "orders" && canUseOrderManagement ? (
               <MerchantOrderMobilePanel
                 siteId={supportMobileBookingSiteId}
                 siteName={merchantDisplayName}
                 darkMode={supportMobileDarkMode}
+                onSectionChange={setSupportMobileBusinessSection}
               />
             ) : (
               <MerchantBookingMobilePanel
@@ -14381,23 +14354,13 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 allowBookingEmailPrefill={Boolean(merchantPermissionConfig?.allowBookingEmailPrefill)}
                 allowCustomerAutoEmail={Boolean(merchantPermissionConfig?.allowBookingAutoEmail)}
                 onRecordsChange={handleMerchantBookingRecordsChange}
+                allowOrderManagement={canUseOrderManagement}
+                onSectionChange={setSupportMobileBusinessSection}
               />
             )}
           </div>
         ) : (
           <>
-            <div className="sticky top-0 z-20 -mx-4 border-b border-slate-200/80 bg-[rgba(248,250,252,0.96)] px-4 pb-3 pt-[calc(env(safe-area-inset-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur supports-[backdrop-filter]:bg-[rgba(248,250,252,0.9)]">
-              <div className="inline-flex rounded-[24px] border border-slate-200/70 bg-white/90 p-1 shadow-[0_14px_30px_rgba(15,23,42,0.08)] backdrop-blur">
-                <div className="min-w-[88px] rounded-[18px] bg-emerald-500 px-4 py-2.5 text-center text-sm font-semibold text-white shadow-sm">
-                  预约
-                </div>
-                {canUseOrderManagement ? (
-                  <div className="min-w-[88px] rounded-[18px] px-4 py-2.5 text-center text-sm font-semibold text-slate-500">
-                    订单
-                  </div>
-                ) : null}
-              </div>
-            </div>
             <div className="pt-4">
               <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
                 <div className="text-base font-semibold text-slate-900">当前商户信息还没准备好</div>
