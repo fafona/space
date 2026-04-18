@@ -1369,7 +1369,7 @@ export default function MerchantBookingMobilePanel({
 
   return (
     <>
-      <div ref={rootRef} className="space-y-3" {...pullToRefreshBind}>
+      <div ref={rootRef} className="space-y-3">
         <div
           className={`sticky top-0 z-20 -mx-4 space-y-2.5 border-b border-slate-200/80 px-4 pb-3 pt-0 shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur ${
             darkMode
@@ -1377,30 +1377,6 @@ export default function MerchantBookingMobilePanel({
               : "bg-[rgba(248,250,252,0.96)] supports-[backdrop-filter]:bg-[rgba(248,250,252,0.9)]"
           }`}
         >
-          <div
-            className="overflow-hidden transition-[max-height,opacity,padding] duration-150"
-            style={{
-              maxHeight: pullDistance > 0 || pullRefreshing ? `${Math.max(36, Math.round(pullDistance))}px` : "0px",
-              opacity: pullDistance > 0 || pullRefreshing ? 1 : 0,
-              paddingTop: pullDistance > 0 || pullRefreshing ? "0.25rem" : "0px",
-            }}
-          >
-            <div className="flex justify-center">
-              <span
-                className={`inline-flex items-center rounded-full px-3 py-1 text-[11px] font-medium shadow-sm ${
-                  darkMode
-                    ? "border border-slate-700/70 bg-slate-900/80 text-slate-200"
-                    : "border border-slate-200 bg-white/95 text-slate-500"
-                }`}
-              >
-                {pullRefreshing
-                  ? getMerchantBookingActionText("refreshing", locale)
-                  : readyToRefresh
-                    ? getMerchantBookingActionText("releaseToRefresh", locale)
-                    : getMerchantBookingActionText("pullToRefresh", locale)}
-              </span>
-            </div>
-          </div>
           <div className="relative">
             <div className="flex items-center gap-2.5">
               {showSectionSwitch ? (
@@ -1645,34 +1621,61 @@ export default function MerchantBookingMobilePanel({
           ) : null}
         </div>
 
-        {error ? (
-          <div className="rounded-[24px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-            {error}
+        <div {...pullToRefreshBind}>
+          <div
+            className="overflow-hidden transition-[max-height,opacity,padding] duration-150"
+            style={{
+              maxHeight: pullDistance > 0 || pullRefreshing ? `${Math.max(36, Math.round(pullDistance))}px` : "0px",
+              opacity: pullDistance > 0 || pullRefreshing ? 1 : 0,
+              paddingTop: pullDistance > 0 || pullRefreshing ? "0.25rem" : "0px",
+            }}
+          >
+            <div className="flex justify-center">
+              <span
+                className={`inline-flex items-center rounded-full px-3 py-1 text-[11px] font-medium shadow-sm ${
+                  darkMode
+                    ? "border border-slate-700/70 bg-slate-900/80 text-slate-200"
+                    : "border border-slate-200 bg-white/95 text-slate-500"
+                }`}
+              >
+                {pullRefreshing
+                  ? getMerchantBookingActionText("refreshing", locale)
+                  : readyToRefresh
+                    ? getMerchantBookingActionText("releaseToRefresh", locale)
+                    : getMerchantBookingActionText("pullToRefresh", locale)}
+              </span>
+            </div>
           </div>
-        ) : null}
 
-        {loading ? (
-          <div className="rounded-[28px] border border-slate-200 bg-white px-5 py-8 text-center text-sm text-slate-500 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
-            {getMerchantBookingFieldText("managementLoading", locale)}
-          </div>
-        ) : filteredRecords.length > 0 ? (
           <div className="space-y-3">
-            {filteredRecords.map((record) => {
-              const appointmentParts = splitMerchantBookingDateTime(record.appointmentAt);
-              const displayName = formatMerchantBookingDisplayName(record.customerName, record.title, locale);
-              const isNewRecord = isMerchantBookingPendingMerchantTouch(record);
-              return (
-                <article
-                  key={record.id}
-                  className="relative overflow-visible rounded-[28px] border border-slate-200 bg-white p-4 shadow-[0_14px_34px_rgba(15,23,42,0.08)]"
-                  style={{ WebkitTouchCallout: "none" }}
-                  onClick={(event) => handleSelectionCardClick(event, record.id)}
-                  onPointerDown={(event) => handleSelectionLongPressStart(event, record.id)}
-                  onPointerMove={(event) => handleSelectionLongPressMove(event, record.id)}
-                  onPointerUp={clearLongPressTimer}
-                  onPointerCancel={clearLongPressTimer}
-                  onPointerLeave={clearLongPressTimer}
-                >
+            {error ? (
+              <div className="rounded-[24px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                {error}
+              </div>
+            ) : null}
+
+            {loading ? (
+              <div className="rounded-[28px] border border-slate-200 bg-white px-5 py-8 text-center text-sm text-slate-500 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+                {getMerchantBookingFieldText("managementLoading", locale)}
+              </div>
+            ) : filteredRecords.length > 0 ? (
+              <div className="space-y-3">
+                {filteredRecords.map((record) => {
+                  const appointmentParts = splitMerchantBookingDateTime(record.appointmentAt);
+                  const displayName = formatMerchantBookingDisplayName(record.customerName, record.title, locale);
+                  const isNewRecord = isMerchantBookingPendingMerchantTouch(record);
+                  return (
+                    <article
+                      key={record.id}
+                      className="relative overflow-visible rounded-[28px] border border-slate-200 bg-white p-4 shadow-[0_14px_34px_rgba(15,23,42,0.08)]"
+                      style={{ WebkitTouchCallout: "none" }}
+                      onClick={(event) => handleSelectionCardClick(event, record.id)}
+                      onPointerDown={(event) => handleSelectionLongPressStart(event, record.id)}
+                      onPointerMove={(event) => handleSelectionLongPressMove(event, record.id)}
+                      onPointerUp={clearLongPressTimer}
+                      onPointerCancel={clearLongPressTimer}
+                      onPointerLeave={clearLongPressTimer}
+                    >
                   {isNewRecord ? (
                     <span className="absolute left-3 top-0 z-10 inline-flex -translate-y-1/2 items-center rounded-[14px] border border-white/70 bg-emerald-500 px-2.5 py-1 text-[10px] font-semibold tracking-[0.18em] text-white shadow-[0_10px_24px_rgba(16,185,129,0.28)]">
                       NEW
@@ -1783,15 +1786,17 @@ export default function MerchantBookingMobilePanel({
                       </button>
                     </div>
                   </div>
-                </article>
-              );
-            })}
+                    </article>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="rounded-[28px] border border-dashed border-slate-300 bg-white px-5 py-8 text-center text-sm text-slate-500 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+                {getMerchantBookingFieldText("managementEmpty", locale)}
+              </div>
+            )}
           </div>
-        ) : (
-          <div className="rounded-[28px] border border-dashed border-slate-300 bg-white px-5 py-8 text-center text-sm text-slate-500 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
-            {getMerchantBookingFieldText("managementEmpty", locale)}
-          </div>
-        )}
+        </div>
       </div>
 
       <BookingWorkbenchDialog
