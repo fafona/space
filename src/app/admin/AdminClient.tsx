@@ -5042,7 +5042,16 @@ export default function AdminClient({
   const supportSelfScrollContainerRef = useRef<HTMLDivElement>(null);
   const merchantChatBusinessCardSyncTimerRef = useRef<number | null>(null);
   const merchantChatBusinessCardSyncPayloadRef = useRef("");
+  const hydrateSupportMerchantProfileRef = useRef<
+    (
+      merchantId: string,
+      options?: { persistToLocalSite?: boolean },
+    ) => Promise<{ profile: MerchantListPublishedSite | null; chatBusinessCard: MerchantBusinessCardAsset | null } | null>
+  >(async () => null);
   const supportPeerProfileLoadingIdsRef = useRef(new Set<string>());
+  const supportPeerProfileTaskByMerchantIdRef = useRef<
+    Record<string, Promise<{ profile: MerchantListPublishedSite | null; chatBusinessCard: MerchantBusinessCardAsset | null } | null>>
+  >({});
   const supportPeerProfileFetchedAtRef = useRef<Record<string, number>>({});
   const supportPeerProfileLocalMutationAtRef = useRef<Record<string, number>>({});
   const supportNotificationPreferencesKeyRef = useRef("");
@@ -6908,6 +6917,10 @@ export default function AdminClient({
       const combinedLoaded = buildCombinedPersistedBlocks(desktopLoaded, mobileLoaded);
       savePublishedBlocksToStorage(combinedLoaded, storeScope);
       savePublishedBlocksToStorage(combinedLoaded, buildSiteStoreScope(scopedSiteId));
+      await hydrateSupportMerchantProfileRef.current(scopedSiteId, {
+        persistToLocalSite: true,
+      }).catch(() => null);
+      if (!mounted) return false;
       releaseCheckingScreen({ notice: null });
       return true;
     };
@@ -6930,9 +6943,7 @@ export default function AdminClient({
 
     setRemoteContentVerified(resolveCachedRemoteVerification(getCandidateStoreScopes()));
     const initialCached = applyCachedEditorBlocks();
-    if (initialCached.length > 0) {
-      releaseCheckingScreen();
-    } else {
+    if (initialCached.length === 0) {
       setHasEditorContent(true);
     }
 
@@ -7114,9 +7125,21 @@ export default function AdminClient({
             ensureScopedMerchantSite(currentMerchantSiteId, merchantEmail || null);
             void syncScopedMerchantSiteFromPublishedSnapshot(currentMerchantSiteId, merchantEmail || null);
           }
+          const currentMerchantProfileTask = isMerchantNumericId(currentMerchantSiteId)
+            ? hydrateSupportMerchantProfileRef.current(currentMerchantSiteId, {
+                persistToLocalSite: true,
+              })
+            : Promise.resolve(null);
+          if (initialCached.length > 0) {
+            await currentMerchantProfileTask.catch(() => null);
+            if (!mounted) return;
+            releaseCheckingScreen();
+          }
           const identityNotice = getMerchantIdentityNotice(resolvedMerchantIds);
           if (identityNotice) {
             setHasEditorContent(true);
+            await currentMerchantProfileTask.catch(() => null);
+            if (!mounted) return;
             releaseCheckingScreen({ notice: identityNotice });
             return;
           }
@@ -7136,6 +7159,8 @@ export default function AdminClient({
               }
             });
             markRemoteDraftApplied(remoteDraft.updatedAt, remoteDraftScopes);
+            await currentMerchantProfileTask.catch(() => null);
+            if (!mounted) return;
             releaseCheckingScreen({ notice: null });
             return;
           }
@@ -7160,12 +7185,16 @@ export default function AdminClient({
                 savePublishedBlocksToStorage(combinedLoaded, scope);
               }
             });
+            await currentMerchantProfileTask.catch(() => null);
+            if (!mounted) return;
             releaseCheckingScreen({ notice: null });
             return;
           }
 
           setHasEditorContent(true);
           setRemoteContentVerified(resolveCachedRemoteVerification(getRemoteVerificationScopes(resolvedMerchantIds)));
+          await currentMerchantProfileTask.catch(() => null);
+          if (!mounted) return;
           releaseCheckingScreen({
             notice: gatewayReady ? null : "当前内容加载不完整，请刷新页面或重新登录后重试。",
           });
@@ -11253,6 +11282,85 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     [editingSiteId, requestMerchantChatWithSessionRecovery, storeScope],
   );
 
+  const persistFetchedMerchantProfileToLocalSite = useCallback(
+    (merchantId: string, profile: MerchantListPublishedSite | null | undefined) => {
+      if (!profile) return;
+      const platformState = loadPlatformState();
+      const siteIndex = platformState.sites.findIndex((item) => item.id === merchantId);
+      if (siteIndex < 0) return;
+      const currentSite = platformState.sites[siteIndex];
+      const nextSite = mergeSupportPublishedProfileIntoSite(currentSite, profile);
+      if (JSON.stringify(nextSite) === JSON.stringify(currentSite)) return;
+      const nextSites = [...platformState.sites];
+      nextSites[siteIndex] = nextSite;
+      savePlatformState({
+        ...platformState,
+        sites: nextSites,
+      });
+    },
+    [],
+  );
+
+  const hydrateSupportMerchantProfile = useCallback(
+    async (
+      merchantId: string,
+      options?: {
+        persistToLocalSite?: boolean;
+      },
+    ) => {
+      const normalizedMerchantId = merchantId.trim();
+      if (!/^\d{8}$/.test(normalizedMerchantId)) return null;
+      const existingTask = supportPeerProfileTaskByMerchantIdRef.current[normalizedMerchantId];
+      if (existingTask) return existingTask;
+      const requestStartedAt = Date.now();
+      supportPeerProfileLoadingIdsRef.current.add(normalizedMerchantId);
+      const task = (async () => {
+        try {
+          const response = await requestMerchantChatBusinessCardById(normalizedMerchantId, {
+            cache: "no-store",
+          });
+          const payload = (await response.json().catch(() => null)) as
+            | {
+                profile?: MerchantListPublishedSite | null;
+                chatBusinessCard?: MerchantBusinessCardAsset | null;
+              }
+            | null;
+          if (!response.ok) return null;
+          if ((supportPeerProfileLocalMutationAtRef.current[normalizedMerchantId] ?? 0) > requestStartedAt) {
+            return null;
+          }
+          const nextProfile = payload?.profile ?? null;
+          const nextChatBusinessCard = payload?.chatBusinessCard ?? payload?.profile?.chatBusinessCard ?? null;
+          supportPeerProfileFetchedAtRef.current[normalizedMerchantId] = Date.now();
+          setSupportPeerProfilesByMerchantId((current) => ({
+            ...current,
+            [normalizedMerchantId]: nextProfile,
+          }));
+          setSupportPeerBusinessCardByMerchantId((current) => ({
+            ...current,
+            [normalizedMerchantId]: nextChatBusinessCard,
+          }));
+          if (options?.persistToLocalSite) {
+            persistFetchedMerchantProfileToLocalSite(normalizedMerchantId, nextProfile);
+          }
+          return {
+            profile: nextProfile,
+            chatBusinessCard: nextChatBusinessCard,
+          };
+        } catch {
+          return null;
+        } finally {
+          supportPeerProfileLoadingIdsRef.current.delete(normalizedMerchantId);
+          delete supportPeerProfileTaskByMerchantIdRef.current[normalizedMerchantId];
+        }
+      })();
+      supportPeerProfileTaskByMerchantIdRef.current[normalizedMerchantId] = task;
+      return task;
+    },
+    [persistFetchedMerchantProfileToLocalSite, requestMerchantChatBusinessCardById],
+  );
+  hydrateSupportMerchantProfileRef.current = hydrateSupportMerchantProfile;
+
   useEffect(() => {
     if (isPlatformEditor || !shouldWarmCurrentMerchantProfile) return;
     const merchantId = editingSiteId.trim();
@@ -11260,47 +11368,16 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     const lastFetchedAt = supportPeerProfileFetchedAtRef.current[merchantId] ?? 0;
     if (Date.now() - lastFetchedAt < SUPPORT_MERCHANT_PROFILE_REFRESH_TTL_MS) return;
     if (supportPeerProfileLoadingIdsRef.current.has(merchantId)) return;
-    let cancelled = false;
-    const requestStartedAt = Date.now();
-    supportPeerProfileLoadingIdsRef.current.add(merchantId);
-    void (async () => {
-      try {
-        const response = await requestMerchantChatBusinessCardById(merchantId, {
-          cache: "no-store",
-        });
-        const payload = (await response.json().catch(() => null)) as
-          | {
-              profile?: MerchantListPublishedSite | null;
-              chatBusinessCard?: MerchantBusinessCardAsset | null;
-            }
-          | null;
-        if (cancelled || !response.ok) return;
-        if ((supportPeerProfileLocalMutationAtRef.current[merchantId] ?? 0) > requestStartedAt) return;
-        supportPeerProfileFetchedAtRef.current[merchantId] = Date.now();
-        setSupportPeerProfilesByMerchantId((current) => ({
-          ...current,
-          [merchantId]: payload?.profile ?? null,
-        }));
-        setSupportPeerBusinessCardByMerchantId((current) => ({
-          ...current,
-          [merchantId]: payload?.chatBusinessCard ?? payload?.profile?.chatBusinessCard ?? null,
-        }));
-      } catch {
-        if (cancelled) return;
-      } finally {
-        supportPeerProfileLoadingIdsRef.current.delete(merchantId);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+    void hydrateSupportMerchantProfile(merchantId, {
+      persistToLocalSite: true,
+    });
   }, [
     editingSite?.businessCards,
     editingSiteId,
+    hydrateSupportMerchantProfile,
     isPlatformEditor,
     merchantBookingManagerOpen,
     merchantProfileDialogOpen,
-    requestMerchantChatBusinessCardById,
     shouldWarmCurrentMerchantProfile,
     supportSelfLocalProfile,
   ]);
