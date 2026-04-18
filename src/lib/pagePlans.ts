@@ -38,10 +38,19 @@ function makeDefaultPageName(index: number) {
 }
 
 export function cloneBlocks(source: Block[]) {
-  if (typeof structuredClone === "function") {
-    return structuredClone(source) as Block[];
-  }
-  return JSON.parse(JSON.stringify(source)) as Block[];
+  const cloned =
+    typeof structuredClone === "function"
+      ? (structuredClone(source) as Block[])
+      : (JSON.parse(JSON.stringify(source)) as Block[]);
+  return cloned.filter((block): block is Block => {
+    if (!block || typeof block !== "object") return false;
+    if (typeof block.id !== "string" || !block.id.trim()) return false;
+    if (typeof block.type !== "string" || !block.type.trim()) return false;
+    if (!block.props || typeof block.props !== "object") {
+      (block as Block).props = {} as Block["props"];
+    }
+    return true;
+  });
 }
 
 function clonePlanPages(source: PlanPage[]): PlanPage[] {

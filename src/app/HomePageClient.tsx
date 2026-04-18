@@ -194,6 +194,7 @@ export default function HomePageClient({
     colorOpacity: pageBackgroundSource?.pageBgColorOpacity,
   });
   const maxBlockOffsetY = activeBlocks.reduce((max, block) => {
+    if (!block) return max;
     const value =
       typeof block.props.blockOffsetY === "number" && Number.isFinite(block.props.blockOffsetY)
         ? Math.round(block.props.blockOffsetY)

@@ -341,6 +341,7 @@ export function collectPublishedMerchantSnapshotsFromBlocks(
   current: MerchantListPublishedSite[] = [],
 ): MerchantListPublishedSite[] {
   return blocks.reduce<MerchantListPublishedSite[]>((snapshot, block) => {
+    if (!block) return snapshot;
     let next = snapshot;
     const props = (block.props ?? {}) as Record<string, unknown>;
     if (block.type === "merchant-list" && Array.isArray(props.publishedMerchantSnapshot) && props.publishedMerchantSnapshot.length > 0) {
@@ -357,6 +358,7 @@ export function collectPublishedMerchantSnapshotsFromBlocks(
 
 export function blocksNeedPublishedMerchantSnapshot(blocks: Block[]): boolean {
   return blocks.some((block) => {
+    if (!block) return false;
     const props = (block.props ?? {}) as Record<string, unknown>;
     if (block.type === "merchant-list") {
       const snapshot = props.publishedMerchantSnapshot;
@@ -370,6 +372,7 @@ export function blocksNeedPublishedMerchantSnapshot(blocks: Block[]): boolean {
 
 function blocksContainMerchantList(blocks: Block[]): boolean {
   return blocks.some((block) => {
+    if (!block) return false;
     const props = (block.props ?? {}) as Record<string, unknown>;
     if (block.type === "merchant-list") return true;
     if (blocksContainMerchantListInPlanConfig(props.pagePlanConfig)) return true;
