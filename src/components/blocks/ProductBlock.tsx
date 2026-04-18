@@ -1170,7 +1170,21 @@ export default function ProductBlock(props: ProductBlockProps) {
               setCartOpen(true);
             }}
           >
-            <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-base">??</span>
+            <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-white/10">
+              <svg
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+                className="h-4.5 w-4.5 stroke-current text-white"
+                fill="none"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <circle cx="9" cy="20" r="1.5" />
+                <circle cx="18" cy="20" r="1.5" />
+                <path d="M3 4h2l2.2 9.2a1 1 0 0 0 1 .8h8.9a1 1 0 0 0 1-.76L20 7H7.2" />
+              </svg>
+            </span>
             <span>Cart</span>
             <span className="inline-flex min-w-[1.45rem] items-center justify-center rounded-full bg-emerald-400 px-1.5 py-0.5 text-[11px] font-bold text-slate-950">
               {checkedCartTotalQuantity}
@@ -1300,7 +1314,6 @@ export default function ProductBlock(props: ProductBlockProps) {
               <div className="border-t border-slate-200 bg-slate-50/70 px-6 py-5 lg:border-l lg:border-t-0">
                 <div className="rounded-2xl border border-slate-200 bg-white p-4">
                   <div className="text-lg font-semibold text-slate-900">客户信息</div>
-                  <div className="mt-1 text-sm text-slate-500">点击按钮填写客户信息，提交订单时会一起发给商家后台。</div>
                   {hasCartCustomerIdentity ? (
                     <div className="mt-4 space-y-2 text-sm text-slate-600">
                       {cartCustomer.name ? <div>姓名：{cartCustomer.name}</div> : null}
