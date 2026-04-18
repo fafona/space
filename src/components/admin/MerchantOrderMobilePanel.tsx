@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   formatMerchantOrderAmount,
   type MerchantOrderRecord,
@@ -36,12 +36,18 @@ function getStatusText(status: MerchantOrderStatus) {
 
 function getStatusBadgeClass(status: MerchantOrderStatus, darkMode: boolean) {
   if (status === "confirmed") {
-    return darkMode ? "border border-emerald-400/30 bg-emerald-400/10 text-emerald-200" : "border border-emerald-200 bg-emerald-50 text-emerald-700";
+    return darkMode
+      ? "border border-emerald-400/30 bg-emerald-400/10 text-emerald-200"
+      : "border border-emerald-200 bg-emerald-50 text-emerald-700";
   }
   if (status === "cancelled") {
-    return darkMode ? "border border-rose-400/30 bg-rose-400/10 text-rose-200" : "border border-rose-200 bg-rose-50 text-rose-700";
+    return darkMode
+      ? "border border-rose-400/30 bg-rose-400/10 text-rose-200"
+      : "border border-rose-200 bg-rose-50 text-rose-700";
   }
-  return darkMode ? "border border-amber-400/30 bg-amber-400/10 text-amber-200" : "border border-amber-200 bg-amber-50 text-amber-700";
+  return darkMode
+    ? "border border-amber-400/30 bg-amber-400/10 text-amber-200"
+    : "border border-amber-200 bg-amber-50 text-amber-700";
 }
 
 function buildPrintHtml(order: MerchantOrderRecord) {
@@ -57,19 +63,39 @@ export default function MerchantOrderMobilePanel({
   onOrdersChange,
   onSectionChange,
 }: MerchantOrderMobilePanelProps) {
+  const overflowMenuRef = useRef<HTMLDivElement>(null);
   const [records, setRecords] = useState<MerchantOrderRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<MerchantOrderFilter>("all");
   const [actionBusyId, setActionBusyId] = useState("");
+  const [overflowMenuOpen, setOverflowMenuOpen] = useState(false);
 
   const cardClassName = darkMode
     ? "rounded-[26px] border border-white/10 bg-[rgba(15,23,42,0.84)] p-4 shadow-[0_20px_44px_rgba(2,6,23,0.28)]"
     : "rounded-[26px] border border-slate-200 bg-white p-4 shadow-[0_18px_36px_rgba(15,23,42,0.08)]";
-  const panelClassName = darkMode
-    ? "rounded-[28px] border border-white/10 bg-[rgba(15,23,42,0.84)] p-4 shadow-[0_22px_50px_rgba(2,6,23,0.32)]"
-    : "rounded-[28px] border border-slate-200 bg-white p-4 shadow-[0_22px_50px_rgba(15,23,42,0.08)]";
+  const emptyPanelClassName = darkMode
+    ? "rounded-[28px] border border-white/10 bg-[rgba(15,23,42,0.84)] px-5 py-8 text-center text-sm text-slate-300 shadow-[0_22px_50px_rgba(2,6,23,0.32)]"
+    : "rounded-[28px] border border-slate-200 bg-white px-5 py-8 text-center text-sm text-slate-500 shadow-[0_22px_50px_rgba(15,23,42,0.08)]";
+  const toolbarClassName = `sticky top-0 z-20 -mx-4 space-y-2.5 border-b border-slate-200/80 px-4 pb-3 pt-0 shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur ${
+    darkMode
+      ? "bg-[rgba(15,23,42,0.96)] supports-[backdrop-filter]:bg-[rgba(15,23,42,0.9)]"
+      : "bg-[rgba(248,250,252,0.96)] supports-[backdrop-filter]:bg-[rgba(248,250,252,0.9)]"
+  }`;
+  const overflowMenuButtonClassName = overflowMenuOpen
+    ? darkMode
+      ? "relative inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-amber-300/40 bg-amber-200/10 text-amber-100 shadow-sm"
+      : "relative inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-slate-300 bg-slate-900 text-white shadow-sm"
+    : darkMode
+      ? "relative inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-slate-100 shadow-sm transition hover:bg-white/10"
+      : "relative inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:bg-slate-50";
+  const overflowMenuPanelClassName = darkMode
+    ? "absolute right-0 top-[calc(100%+0.6rem)] z-30 w-[min(16rem,calc(100vw-2rem))] rounded-[24px] border border-white/10 bg-[rgba(15,23,42,0.98)] p-3 shadow-[0_24px_60px_rgba(2,6,23,0.4)]"
+    : "absolute right-0 top-[calc(100%+0.6rem)] z-30 w-[min(16rem,calc(100vw-2rem))] rounded-[24px] border border-slate-200 bg-white p-3 shadow-[0_24px_60px_rgba(15,23,42,0.18)]";
+  const overflowMenuPrimaryButtonClassName = darkMode
+    ? "w-full rounded-[18px] border border-white/10 bg-white/5 px-3.5 py-3 text-left text-[13px] font-medium text-slate-100 transition hover:bg-white/10"
+    : "w-full rounded-[18px] border border-slate-200 bg-white px-3.5 py-3 text-left text-[13px] font-medium text-slate-700 transition hover:bg-slate-50";
 
   const loadOrders = useCallback(async () => {
     if (!siteId) return;
@@ -80,24 +106,44 @@ export default function MerchantOrderMobilePanel({
         cache: "no-store",
         credentials: "same-origin",
       });
-      const payload = (await response.json().catch(() => null)) as { orders?: MerchantOrderRecord[]; message?: string; error?: string } | null;
+      const payload = (await response.json().catch(() => null)) as
+        | { orders?: MerchantOrderRecord[]; message?: string; error?: string }
+        | null;
       if (!response.ok) {
         throw new Error(payload?.message || payload?.error || "order_list_failed");
       }
-      const nextRecords = Array.isArray(payload?.orders) ? payload.orders : [];
-      setRecords(nextRecords);
-      onOrdersChange?.(nextRecords);
+      setRecords(Array.isArray(payload?.orders) ? payload.orders : []);
     } catch (nextError) {
       setError(nextError instanceof Error && nextError.message ? nextError.message : "订单读取失败");
     } finally {
       setLoading(false);
     }
-  }, [onOrdersChange, siteId]);
+  }, [siteId]);
 
   useEffect(() => {
     if (!siteId) return;
     void loadOrders();
   }, [loadOrders, siteId]);
+
+  useEffect(() => {
+    onOrdersChange?.(records);
+  }, [onOrdersChange, records]);
+
+  useEffect(() => {
+    if (!overflowMenuOpen || typeof document === "undefined") return;
+    const handlePointerDown = (event: MouseEvent | TouchEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (overflowMenuRef.current?.contains(target)) return;
+      setOverflowMenuOpen(false);
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("touchstart", handlePointerDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("touchstart", handlePointerDown);
+    };
+  }, [overflowMenuOpen]);
 
   const filteredRecords = useMemo(() => {
     const keyword = search.trim().toLowerCase();
@@ -154,7 +200,9 @@ export default function MerchantOrderMobilePanel({
             action,
           }),
         });
-        const payload = (await response.json().catch(() => null)) as { order?: MerchantOrderRecord; message?: string; error?: string } | null;
+        const payload = (await response.json().catch(() => null)) as
+          | { order?: MerchantOrderRecord; message?: string; error?: string }
+          | null;
         if (!response.ok) {
           throw new Error(payload?.message || payload?.error || "order_update_failed");
         }
@@ -170,9 +218,10 @@ export default function MerchantOrderMobilePanel({
   );
 
   return (
-    <div className="space-y-4 py-4">
-      <div className={panelClassName}>
-        <div className="space-y-3">
+    <div className="space-y-4 pb-4">
+      <div className="sr-only">{siteName}</div>
+      <div className={toolbarClassName}>
+        <div className="relative">
           <div className="flex items-center gap-2.5">
             {onSectionChange ? (
               <div
@@ -204,7 +253,7 @@ export default function MerchantOrderMobilePanel({
             )}
             <div
               className={`flex min-h-[41px] min-w-0 flex-1 items-center gap-2.5 rounded-[20px] border px-3.5 py-2 shadow-sm ${
-                darkMode ? "border-white/10 bg-white/5 text-white" : "border-slate-200 bg-white text-slate-900"
+                darkMode ? "border-white/10 bg-white/5 text-white" : "border-slate-200 bg-[#f3f4f6] text-slate-900"
               }`}
             >
               <svg viewBox="0 0 24 24" className="h-[17px] w-[17px] shrink-0 text-slate-400" fill="none" aria-hidden="true">
@@ -221,45 +270,67 @@ export default function MerchantOrderMobilePanel({
                 }`}
               />
             </div>
+            <div ref={overflowMenuRef} className="relative shrink-0">
+              <button
+                type="button"
+                className={overflowMenuButtonClassName}
+                onClick={() => setOverflowMenuOpen((current) => !current)}
+                aria-label="更多操作"
+                aria-expanded={overflowMenuOpen}
+              >
+                <svg viewBox="0 0 24 24" className="h-[18px] w-[18px]" fill="currentColor" aria-hidden="true">
+                  <circle cx="5" cy="12" r="1.8" />
+                  <circle cx="12" cy="12" r="1.8" />
+                  <circle cx="19" cy="12" r="1.8" />
+                </svg>
+              </button>
+              {overflowMenuOpen ? (
+                <div className={overflowMenuPanelClassName}>
+                  <button
+                    type="button"
+                    className={overflowMenuPrimaryButtonClassName}
+                    onClick={() => {
+                      setOverflowMenuOpen(false);
+                      void loadOrders();
+                    }}
+                  >
+                    {loading ? "正在读取订单..." : "刷新订单"}
+                  </button>
+                </div>
+              ) : null}
+            </div>
           </div>
         </div>
-        <div className="hidden">订单管理</div>
-        <div className="hidden">{siteName} 的产品订单会在这里集中处理。</div>
-        {error ? <div className="mt-2 text-sm text-rose-500">{error}</div> : null}
-        <div className="mt-4 space-y-3">
-          <input
-            type="search"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="搜索订单号 / 客户 / 产品"
-            className="hidden"
-          />
-          <div className="flex flex-wrap gap-2">
-            {(["all", "pending", "confirmed", "cancelled"] as MerchantOrderFilter[]).map((key) => (
-              <button
-                key={key}
-                type="button"
-                className={
-                  filter === key
-                    ? darkMode
-                      ? "rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-900"
-                      : "rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
-                    : darkMode
-                      ? "rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-200"
-                      : "rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-slate-600"
-                }
-                onClick={() => setFilter(key)}
-              >
-                {key === "all" ? "全部" : getStatusText(key)} {counts[key]}
-              </button>
-            ))}
-          </div>
+        <div className="flex flex-wrap gap-2">
+          {(["all", "pending", "confirmed", "cancelled"] as MerchantOrderFilter[]).map((key) => (
+            <button
+              key={key}
+              type="button"
+              className={
+                filter === key
+                  ? darkMode
+                    ? "rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-900"
+                    : "rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
+                  : darkMode
+                    ? "rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-200"
+                    : "rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-slate-600"
+              }
+              onClick={() => setFilter(key)}
+            >
+              {key === "all" ? "全部" : getStatusText(key)} {counts[key]}
+            </button>
+          ))}
         </div>
       </div>
-      {loading ? (
-        <div className={panelClassName}>
-          <div className={`text-sm ${darkMode ? "text-slate-300" : "text-slate-500"}`}>正在读取订单...</div>
+
+      {error ? (
+        <div className="rounded-[24px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          {error}
         </div>
+      ) : null}
+
+      {loading ? (
+        <div className={emptyPanelClassName}>正在读取订单...</div>
       ) : filteredRecords.length > 0 ? (
         filteredRecords.map((record) => (
           <div key={record.id} className={cardClassName}>
@@ -280,7 +351,12 @@ export default function MerchantOrderMobilePanel({
             </div>
             <div className="mt-4 space-y-2">
               {record.items.map((item) => (
-                <div key={`${record.id}-${item.productId}-${item.code}`} className={`rounded-2xl border px-3 py-3 text-sm ${darkMode ? "border-white/10 bg-white/5 text-slate-100" : "border-slate-100 bg-slate-50 text-slate-700"}`}>
+                <div
+                  key={`${record.id}-${item.productId}-${item.code}`}
+                  className={`rounded-2xl border px-3 py-3 text-sm ${
+                    darkMode ? "border-white/10 bg-white/5 text-slate-100" : "border-slate-100 bg-slate-50 text-slate-700"
+                  }`}
+                >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="font-semibold">{item.name || "未命名产品"}</div>
@@ -313,7 +389,9 @@ export default function MerchantOrderMobilePanel({
               ) : null}
               <button
                 type="button"
-                className={`rounded-full px-4 py-2 text-sm font-semibold ${darkMode ? "bg-white/10 text-white" : "border border-slate-200 bg-white text-slate-700"}`}
+                className={`rounded-full px-4 py-2 text-sm font-semibold ${
+                  darkMode ? "bg-white/10 text-white" : "border border-slate-200 bg-white text-slate-700"
+                }`}
                 onClick={() => void handleOrderAction(record, "print")}
                 disabled={actionBusyId === record.id}
               >
@@ -333,9 +411,7 @@ export default function MerchantOrderMobilePanel({
           </div>
         ))
       ) : (
-        <div className={panelClassName}>
-          <div className={`text-sm ${darkMode ? "text-slate-300" : "text-slate-500"}`}>还没有匹配到订单。</div>
-        </div>
+        <div className={emptyPanelClassName}>还没有匹配到订单。</div>
       )}
     </div>
   );

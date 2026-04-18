@@ -14410,7 +14410,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     <>
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(env(safe-area-inset-bottom)+5.85rem)] pt-0">
         {supportMobileBookingSiteId ? (
-          <div className="space-y-4 pt-4">
+          <div className="space-y-4">
             {resolvedSupportMobileBusinessSection === "orders" && canUseOrderManagement ? (
               <MerchantOrderMobilePanel
                 siteId={supportMobileBookingSiteId}

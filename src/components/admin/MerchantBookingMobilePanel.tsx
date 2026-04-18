@@ -1,6 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from "react";
 import { createPortal } from "react-dom";
 import BookingWorkbenchDialog from "@/components/admin/BookingWorkbenchDialog";
 import BookingStatusFilterDropdown from "@/components/admin/BookingStatusFilterDropdown";
@@ -437,6 +446,9 @@ export default function MerchantBookingMobilePanel({
   const rootRef = useRef<HTMLDivElement>(null);
   const detailDialogScrollViewportRef = useRef<HTMLDivElement>(null);
   const overflowMenuRef = useRef<HTMLDivElement>(null);
+  const longPressTimerRef = useRef<number | null>(null);
+  const longPressOriginRef = useRef<{ bookingId: string; x: number; y: number } | null>(null);
+  const longPressTriggeredRef = useRef(false);
   const defaultCustomerEmailLocale = useMemo(
     () => resolveMerchantBookingCustomerEmailLocale("", siteCountryCode),
     [siteCountryCode],
@@ -468,9 +480,6 @@ export default function MerchantBookingMobilePanel({
   const [overflowMenuOpen, setOverflowMenuOpen] = useState(false);
   const [customerEmailLocale, setCustomerEmailLocale] = useState(defaultCustomerEmailLocale);
   const [customerEmailLocaleLoaded, setCustomerEmailLocaleLoaded] = useState(false);
-  const workbenchButtonClassName = workbenchOpen
-    ? "shrink-0 rounded-[18px] rounded-tl-[8px] rounded-br-[24px] border border-[#c7b48f] bg-[linear-gradient(135deg,#1f2b46_0%,#233657_100%)] px-3.5 py-2 text-[12px] font-semibold tracking-[0.02em] text-[#f7e8c2] shadow-[0_14px_26px_rgba(15,23,42,0.22)] ring-1 ring-[#efe2bf]/60 transition"
-    : "shrink-0 rounded-[18px] rounded-tl-[8px] rounded-br-[24px] border border-[#d8c7a5] bg-[linear-gradient(135deg,#fffdfa_0%,#f6efe1_62%,#ecdfc2_100%)] px-3.5 py-2 text-[12px] font-semibold tracking-[0.02em] text-slate-800 shadow-[0_12px_24px_rgba(148,119,66,0.14)] transition active:scale-[0.98]";
   const filterSelectShellClassName = darkMode
     ? "rounded-[18px] border border-slate-700 bg-slate-900/75 px-3 py-2.5 text-slate-100 shadow-sm"
     : "rounded-[18px] border border-slate-200 bg-white px-3 py-2.5 text-slate-900 shadow-sm";
@@ -490,12 +499,6 @@ export default function MerchantBookingMobilePanel({
   const overflowMenuPrimaryButtonClassName = darkMode
     ? "w-full rounded-[18px] border border-amber-300/30 bg-amber-200/10 px-3.5 py-3 text-left text-[13px] font-semibold text-amber-100 shadow-sm transition hover:bg-amber-200/15"
     : "w-full rounded-[18px] border border-[#d8c7a5] bg-[linear-gradient(135deg,#fffdfa_0%,#f6efe1_62%,#ecdfc2_100%)] px-3.5 py-3 text-left text-[13px] font-semibold text-slate-800 shadow-sm transition hover:brightness-[0.99]";
-  const overflowMenuSecondaryButtonClassName = darkMode
-    ? "w-full rounded-[18px] border border-white/10 bg-white/5 px-3.5 py-3 text-left text-[13px] font-medium text-slate-100 transition hover:bg-white/10"
-    : "w-full rounded-[18px] border border-slate-200 bg-white px-3.5 py-3 text-left text-[13px] font-medium text-slate-700 transition hover:bg-slate-50";
-  const overflowMenuSectionLabelClassName = darkMode
-    ? "text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400"
-    : "text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500";
 
   useEffect(() => {
     setCustomerEmailLocale(defaultCustomerEmailLocale);
@@ -957,8 +960,67 @@ export default function MerchantBookingMobilePanel({
     );
   }, [filteredRecords]);
 
+  const clearLongPressTimer = useCallback(() => {
+    if (longPressTimerRef.current !== null && typeof window !== "undefined") {
+      window.clearTimeout(longPressTimerRef.current);
+    }
+    longPressTimerRef.current = null;
+    longPressOriginRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (longPressTimerRef.current !== null && typeof window !== "undefined") {
+        window.clearTimeout(longPressTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleSelectionLongPressStart = useCallback(
+    (event: ReactPointerEvent<HTMLElement>, bookingId: string) => {
+      if (selectionMode || event.pointerType === "mouse" || typeof window === "undefined") return;
+      const target = event.target as HTMLElement | null;
+      if (
+        target?.closest(
+          'button, a, input, textarea, select, label, [role="button"], [data-skip-selection-toggle="true"]',
+        )
+      ) {
+        return;
+      }
+      clearLongPressTimer();
+      longPressTriggeredRef.current = false;
+      longPressOriginRef.current = {
+        bookingId,
+        x: event.clientX,
+        y: event.clientY,
+      };
+      longPressTimerRef.current = window.setTimeout(() => {
+        longPressTriggeredRef.current = true;
+        setSelectionMode(true);
+        setSelectedBookingIds((current) => (current.includes(bookingId) ? current : [...current, bookingId]));
+        longPressTimerRef.current = null;
+      }, 420);
+    },
+    [clearLongPressTimer, selectionMode],
+  );
+
+  const handleSelectionLongPressMove = useCallback(
+    (event: ReactPointerEvent<HTMLElement>, bookingId: string) => {
+      const origin = longPressOriginRef.current;
+      if (!origin || origin.bookingId !== bookingId) return;
+      if (Math.abs(event.clientX - origin.x) > 12 || Math.abs(event.clientY - origin.y) > 12) {
+        clearLongPressTimer();
+      }
+    },
+    [clearLongPressTimer],
+  );
+
   const handleSelectionCardClick = useCallback(
     (event: ReactMouseEvent<HTMLElement>, bookingId: string) => {
+      if (longPressTriggeredRef.current) {
+        longPressTriggeredRef.current = false;
+        return;
+      }
       if (!selectionMode) return;
       const target = event.target as HTMLElement | null;
       if (
@@ -1309,7 +1371,7 @@ export default function MerchantBookingMobilePanel({
     <>
       <div ref={rootRef} className="space-y-3" {...pullToRefreshBind}>
         <div
-          className={`sticky top-0 z-20 -mx-4 space-y-2.5 border-b border-slate-200/80 px-4 pb-2.5 pt-[calc(env(safe-area-inset-top)+0.5rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur ${
+          className={`sticky top-0 z-20 -mx-4 space-y-2.5 border-b border-slate-200/80 px-4 pb-3 pt-0 shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur ${
             darkMode
               ? "bg-[rgba(15,23,42,0.96)] supports-[backdrop-filter]:bg-[rgba(15,23,42,0.9)]"
               : "bg-[rgba(248,250,252,0.96)] supports-[backdrop-filter]:bg-[rgba(248,250,252,0.9)]"
@@ -1416,14 +1478,13 @@ export default function MerchantBookingMobilePanel({
                         {getMerchantBookingFieldText("workbenchButton", locale)}
                       </button>
                       <div className="space-y-2">
-                        <div className={overflowMenuSectionLabelClassName}>筛选</div>
-                        <label className="grid gap-1.5">
-                          <span className={`text-[11px] font-medium ${filterSelectLabelClassName}`}>
+                        <label className="flex items-center gap-2.5">
+                          <span className={`shrink-0 text-[12px] font-medium ${filterSelectLabelClassName}`}>
                             {getMerchantBookingSortLabel(locale)}
                           </span>
-                          <div className={`relative ${filterSelectShellClassName}`}>
+                          <div className={`relative min-w-0 flex-1 ${filterSelectShellClassName}`}>
                             <select
-                              className="w-full appearance-none bg-transparent pr-6 text-[13px] font-medium outline-none"
+                              className="w-full min-w-0 appearance-none bg-transparent pr-6 text-[13px] font-medium outline-none"
                               value={sortMode}
                               onChange={(event) => setSortMode(event.target.value as MerchantBookingSortMode)}
                             >
@@ -1443,13 +1504,13 @@ export default function MerchantBookingMobilePanel({
                             </svg>
                           </div>
                         </label>
-                        <label className="grid gap-1.5">
-                          <span className={`text-[11px] font-medium ${filterSelectLabelClassName}`}>
+                        <label className="flex items-center gap-2.5">
+                          <span className={`shrink-0 text-[12px] font-medium ${filterSelectLabelClassName}`}>
                             {getMerchantBookingHistoryVisibilityLabel(locale)}
                           </span>
-                          <div className={`relative ${filterSelectShellClassName}`}>
+                          <div className={`relative min-w-0 flex-1 ${filterSelectShellClassName}`}>
                             <select
-                              className="w-full appearance-none bg-transparent pr-6 text-[13px] font-medium outline-none"
+                              className="w-full min-w-0 appearance-none bg-transparent pr-6 text-[13px] font-medium outline-none"
                               value={historyVisibility}
                               onChange={(event) => setHistoryVisibility(event.target.value as MerchantBookingHistoryVisibility)}
                             >
@@ -1470,128 +1531,11 @@ export default function MerchantBookingMobilePanel({
                           </div>
                         </label>
                       </div>
-                      <div className="space-y-2">
-                        <div className={overflowMenuSectionLabelClassName}>批量</div>
-                        <button
-                          type="button"
-                          className={`${overflowMenuSecondaryButtonClassName} ${
-                            selectionMode
-                              ? darkMode
-                                ? "border-slate-500 bg-slate-100 text-slate-900"
-                                : "border-slate-900 bg-slate-900 text-white"
-                              : ""
-                          }`}
-                          onClick={() => setSelectionMode((current) => !current)}
-                        >
-                          {selectionMode
-                            ? locale.startsWith("es")
-                              ? "Salir de lote"
-                              : "退出批量"
-                            : locale.startsWith("es")
-                              ? "Lote"
-                              : "批量"}
-                        </button>
-                        {selectionMode ? (
-                          <div className="space-y-2">
-                            <button
-                              type="button"
-                              className={overflowMenuSecondaryButtonClassName}
-                              onClick={toggleSelectAllFiltered}
-                            >
-                              {selectedRecordSet.size > 0 && filteredRecords.every((item) => selectedRecordSet.has(item.id))
-                                ? locale.startsWith("es")
-                                  ? "Quitar visibles"
-                                  : "取消当前页"
-                                : locale.startsWith("es")
-                                  ? "Seleccionar visibles"
-                                  : "全选当前页"}
-                            </button>
-                            <div
-                              className={`rounded-[18px] px-3.5 py-2 text-[12px] font-semibold ${
-                                darkMode ? "bg-white/5 text-slate-200" : "bg-slate-100 text-slate-700"
-                              }`}
-                            >
-                              {locale.startsWith("es")
-                                ? `${selectedBookingIds.length} seleccionadas`
-                                : `已选 ${selectedBookingIds.length} 条`}
-                            </div>
-                            {selectedBookingIds.length > 0 ? (
-                              <div className="grid grid-cols-2 gap-2">
-                                <button
-                                  type="button"
-                                  className="rounded-[16px] border border-sky-200 bg-sky-50 px-3 py-2.5 text-xs font-medium text-sky-700"
-                                  onClick={() => void runBatchStatusUpdate("confirmed", "batch-confirm")}
-                                  disabled={busyKey === "batch:batch-confirm"}
-                                >
-                                  {locale.startsWith("es") ? "Confirmar" : "批量确认"}
-                                </button>
-                                <button
-                                  type="button"
-                                  className="rounded-[16px] border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-xs font-medium text-emerald-700"
-                                  onClick={() => void runBatchStatusUpdate("completed", "batch-complete")}
-                                  disabled={busyKey === "batch:batch-complete"}
-                                >
-                                  {locale.startsWith("es") ? "Completar" : "批量完成"}
-                                </button>
-                                <button
-                                  type="button"
-                                  className="rounded-[16px] border border-rose-200 bg-rose-50 px-3 py-2.5 text-xs font-medium text-rose-700"
-                                  onClick={() => void runBatchStatusUpdate("no_show", "batch-noshow")}
-                                  disabled={busyKey === "batch:batch-noshow"}
-                                >
-                                  {locale.startsWith("es") ? "No show" : "批量未到店"}
-                                </button>
-                                <button
-                                  type="button"
-                                  className="rounded-[16px] border border-slate-200 bg-white px-3 py-2.5 text-xs font-medium text-slate-700"
-                                  onClick={() => void runBatchStatusUpdate("cancelled", "batch-cancel")}
-                                  disabled={busyKey === "batch:batch-cancel"}
-                                >
-                                  {locale.startsWith("es") ? "Cancelar" : "批量取消"}
-                                </button>
-                              </div>
-                            ) : null}
-                            {selectedBookingIds.length > 0 ? (
-                              <button
-                                type="button"
-                                className="w-full rounded-[16px] border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-medium text-amber-700"
-                                onClick={() => downloadBookingsCsv(selectedRecords, locale, siteId)}
-                              >
-                                CSV
-                              </button>
-                            ) : null}
-                          </div>
-                        ) : null}
-                      </div>
                     </div>
                   </div>
                 ) : null}
               </div>
             </div>
-          </div>
-          <div className="hidden">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-emerald-500 text-sm font-semibold text-white shadow-sm">
-              预约
-            </div>
-            <div className="flex min-h-[41px] min-w-0 flex-1 items-center gap-2.5 rounded-[20px] border border-slate-200 bg-[#f3f4f6] px-3.5 py-2 shadow-sm">
-              <svg viewBox="0 0 24 24" className="h-[17px] w-[17px] shrink-0 text-slate-400" fill="none" aria-hidden="true">
-                <circle cx="11" cy="11" r="6.5" stroke="currentColor" strokeWidth="1.9" />
-                <path d="m16 16 4 4" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
-              </svg>
-              <input
-                className="min-w-0 flex-1 bg-transparent text-[14px] leading-5 text-slate-900 outline-none placeholder:text-slate-400"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder={getMerchantBookingFieldText("searchMobile", locale)}
-              />
-            </div>
-            <button
-              type="button"
-              className={workbenchButtonClassName}
-              onClick={() => setWorkbenchOpen(true)}
-            >
-              {getMerchantBookingFieldText("workbenchButton", locale)}
-            </button>
           </div>
           <div className="flex flex-wrap gap-2">
             <BookingStatusFilterDropdown
@@ -1621,136 +1565,84 @@ export default function MerchantBookingMobilePanel({
                 </button>
               ))}
           </div>
-          <div className="hidden">
-            <label className={`flex min-w-0 items-center gap-2 ${filterSelectShellClassName}`}>
-              <span className={`shrink-0 text-[11px] font-medium ${filterSelectLabelClassName}`}>
-                {getMerchantBookingSortLabel(locale)}
-              </span>
-              <div className="relative min-w-0 flex-1">
-                <select
-                  className="w-full min-w-0 appearance-none bg-transparent pr-5 text-[13px] font-medium outline-none"
-                  value={sortMode}
-                  onChange={(event) => setSortMode(event.target.value as MerchantBookingSortMode)}
-                >
-                  {MERCHANT_BOOKING_SORT_MODES.map((mode) => (
-                    <option key={mode} value={mode}>
-                      {getMerchantBookingSortOptionText(mode, locale)}
-                    </option>
-                  ))}
-                </select>
-                <svg
-                  viewBox="0 0 20 20"
-                  fill="none"
-                  aria-hidden="true"
-                  className={`pointer-events-none absolute right-0 top-1/2 h-4 w-4 -translate-y-1/2 ${filterSelectIconClassName}`}
-                >
-                  <path d="m5 7.5 5 5 5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </div>
-            </label>
-            <label className={`flex min-w-0 items-center gap-2 ${filterSelectShellClassName}`}>
-              <span className={`shrink-0 text-[11px] font-medium ${filterSelectLabelClassName}`}>
-                {getMerchantBookingHistoryVisibilityLabel(locale)}
-              </span>
-              <div className="relative min-w-0 flex-1">
-                <select
-                  className="w-full min-w-0 appearance-none bg-transparent pr-5 text-[13px] font-medium outline-none"
-                  value={historyVisibility}
-                  onChange={(event) =>
-                    setHistoryVisibility(event.target.value as MerchantBookingHistoryVisibility)
-                  }
-                >
-                  {MERCHANT_BOOKING_HISTORY_VISIBILITY_OPTIONS.map((value) => (
-                    <option key={value} value={value}>
-                      {getMerchantBookingHistoryVisibilityText(value, locale)}
-                    </option>
-                  ))}
-                </select>
-                <svg
-                  viewBox="0 0 20 20"
-                  fill="none"
-                  aria-hidden="true"
-                  className={`pointer-events-none absolute right-0 top-1/2 h-4 w-4 -translate-y-1/2 ${filterSelectIconClassName}`}
-                >
-                  <path d="m5 7.5 5 5 5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </div>
-            </label>
-          </div>
-          <div className="hidden">
-            <button
-              type="button"
-              className={`rounded-full px-3 py-2 text-xs font-medium transition ${
-                selectionMode ? "bg-slate-900 text-white" : "border border-slate-200 bg-white text-slate-700"
+          {selectionMode ? (
+            <div
+              className={`flex flex-wrap gap-2 rounded-[22px] border px-2.5 py-2 shadow-sm ${
+                darkMode ? "border-white/10 bg-white/5" : "border-slate-200 bg-white/95"
               }`}
-              onClick={() => setSelectionMode((current) => !current)}
             >
-              {locale.startsWith("es") ? "Lote" : "批量"}
-            </button>
-            {selectionMode ? (
-              <>
-                <button
-                  type="button"
-                  className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700"
-                  onClick={toggleSelectAllFiltered}
-                >
-                  {selectedRecordSet.size > 0 && filteredRecords.every((item) => selectedRecordSet.has(item.id))
-                    ? locale.startsWith("es")
-                      ? "Quitar visibles"
-                      : "取消当前页"
-                    : locale.startsWith("es")
-                      ? "Seleccionar visibles"
-                      : "全选当前页"}
-                </button>
-                <span className="rounded-full bg-slate-100 px-3 py-1.5 text-[11px] font-semibold text-slate-700">
-                  {locale.startsWith("es") ? `${selectedBookingIds.length} seleccionadas` : `已选 ${selectedBookingIds.length} 条`}
-                </span>
-                {selectedBookingIds.length > 0 ? (
-                  <>
-                    <button
-                      type="button"
-                      className="rounded-full border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-medium text-sky-700"
-                      onClick={() => void runBatchStatusUpdate("confirmed", "batch-confirm")}
-                      disabled={busyKey === "batch:batch-confirm"}
-                    >
-                      {locale.startsWith("es") ? "Confirmar" : "批量确认"}
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700"
-                      onClick={() => void runBatchStatusUpdate("completed", "batch-complete")}
-                      disabled={busyKey === "batch:batch-complete"}
-                    >
-                      {locale.startsWith("es") ? "Completar" : "批量完成"}
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded-full border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700"
-                      onClick={() => void runBatchStatusUpdate("no_show", "batch-noshow")}
-                      disabled={busyKey === "batch:batch-noshow"}
-                    >
-                      {locale.startsWith("es") ? "No show" : "批量未到店"}
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700"
-                      onClick={() => void runBatchStatusUpdate("cancelled", "batch-cancel")}
-                      disabled={busyKey === "batch:batch-cancel"}
-                    >
-                      {locale.startsWith("es") ? "Cancelar" : "批量取消"}
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded-full border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700"
-                      onClick={() => downloadBookingsCsv(selectedRecords, locale, siteId)}
-                    >
-                      CSV
-                    </button>
-                  </>
-                ) : null}
-              </>
-            ) : null}
-          </div>
+              <div
+                className={`rounded-full px-3 py-2 text-xs font-semibold ${
+                  darkMode ? "bg-slate-900 text-white" : "bg-slate-900 text-white"
+                }`}
+              >
+                {locale.startsWith("es") ? `${selectedBookingIds.length} seleccionadas` : `已选 ${selectedBookingIds.length} 项`}
+              </div>
+              <button
+                type="button"
+                className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700"
+                onClick={toggleSelectAllFiltered}
+              >
+                {selectedRecordSet.size > 0 && filteredRecords.every((item) => selectedRecordSet.has(item.id))
+                  ? locale.startsWith("es")
+                    ? "Quitar visibles"
+                    : "取消当前页"
+                  : locale.startsWith("es")
+                    ? "Seleccionar visibles"
+                    : "全选当前页"}
+              </button>
+              <button
+                type="button"
+                className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700"
+                onClick={() => setSelectionMode(false)}
+              >
+                {locale.startsWith("es") ? "Salir" : "退出"}
+              </button>
+              {selectedBookingIds.length > 0 ? (
+                <>
+                  <button
+                    type="button"
+                    className="rounded-full border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-medium text-sky-700"
+                    onClick={() => void runBatchStatusUpdate("confirmed", "batch-confirm")}
+                    disabled={busyKey === "batch:batch-confirm"}
+                  >
+                    {locale.startsWith("es") ? "Confirmar" : "批量确认"}
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700"
+                    onClick={() => void runBatchStatusUpdate("completed", "batch-complete")}
+                    disabled={busyKey === "batch:batch-complete"}
+                  >
+                    {locale.startsWith("es") ? "Completar" : "批量完成"}
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-full border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700"
+                    onClick={() => void runBatchStatusUpdate("no_show", "batch-noshow")}
+                    disabled={busyKey === "batch:batch-noshow"}
+                  >
+                    {locale.startsWith("es") ? "No show" : "批量未到店"}
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700"
+                    onClick={() => void runBatchStatusUpdate("cancelled", "batch-cancel")}
+                    disabled={busyKey === "batch:batch-cancel"}
+                  >
+                    {locale.startsWith("es") ? "Cancelar" : "批量取消"}
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-full border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700"
+                    onClick={() => downloadBookingsCsv(selectedRecords, locale, siteId)}
+                  >
+                    CSV
+                  </button>
+                </>
+              ) : null}
+            </div>
+          ) : null}
         </div>
 
         {error ? (
@@ -1773,7 +1665,13 @@ export default function MerchantBookingMobilePanel({
                 <article
                   key={record.id}
                   className="relative overflow-visible rounded-[28px] border border-slate-200 bg-white p-4 shadow-[0_14px_34px_rgba(15,23,42,0.08)]"
+                  style={{ WebkitTouchCallout: "none" }}
                   onClick={(event) => handleSelectionCardClick(event, record.id)}
+                  onPointerDown={(event) => handleSelectionLongPressStart(event, record.id)}
+                  onPointerMove={(event) => handleSelectionLongPressMove(event, record.id)}
+                  onPointerUp={clearLongPressTimer}
+                  onPointerCancel={clearLongPressTimer}
+                  onPointerLeave={clearLongPressTimer}
                 >
                   {isNewRecord ? (
                     <span className="absolute left-3 top-0 z-10 inline-flex -translate-y-1/2 items-center rounded-[14px] border border-white/70 bg-emerald-500 px-2.5 py-1 text-[10px] font-semibold tracking-[0.18em] text-white shadow-[0_10px_24px_rgba(16,185,129,0.28)]">
