@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
+import { loadCurrentMerchantSnapshotSiteBySiteId } from "@/lib/publishedMerchantService";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { createMerchantOrderRecord, listMerchantOrders, updateMerchantOrderBySite } from "@/lib/merchantOrders.server";
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
@@ -16,6 +17,11 @@ async function resolveOrderAdminSession(request: Request, siteId: string) {
   return session;
 }
 
+async function isOrderManagementEnabled(siteId: string) {
+  const site = await loadCurrentMerchantSnapshotSiteBySiteId(siteId).catch(() => null);
+  return Boolean(site?.permissionConfig?.allowProductBlock && site?.permissionConfig?.allowOrderManagement);
+}
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -26,6 +32,9 @@ export async function GET(request: Request) {
     const session = await resolveOrderAdminSession(request, siteId);
     if (!session) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    }
+    if (!(await isOrderManagementEnabled(siteId))) {
+      return NextResponse.json({ error: "order_management_disabled" }, { status: 403 });
     }
     const orders = await listMerchantOrders(siteId);
     return NextResponse.json({ ok: true, orders });
@@ -49,6 +58,9 @@ export async function POST(request: Request) {
     const siteId = String(body.siteId ?? "").trim();
     if (!isMerchantNumericId(siteId)) {
       return NextResponse.json({ error: "invalid_site_id" }, { status: 400 });
+    }
+    if (!(await isOrderManagementEnabled(siteId))) {
+      return NextResponse.json({ error: "order_management_disabled" }, { status: 403 });
     }
     const order = await createMerchantOrderRecord({
       siteId,
@@ -87,6 +99,9 @@ export async function PATCH(request: Request) {
     const session = await resolveOrderAdminSession(request, siteId);
     if (!session) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    }
+    if (!(await isOrderManagementEnabled(siteId))) {
+      return NextResponse.json({ error: "order_management_disabled" }, { status: 403 });
     }
     const action =
       body?.action === "confirm" || body?.action === "cancel" || body?.action === "print" ? body.action : null;

@@ -209,6 +209,7 @@ type SitePageClientProps = {
   initialIsMobileViewport?: boolean;
   initialPublishedBlocks?: Block[];
   initialMerchantName?: string;
+  initialOrderManagementEnabled?: boolean;
 };
 
 export function SitePageClient({
@@ -216,6 +217,7 @@ export function SitePageClient({
   initialIsMobileViewport = false,
   initialPublishedBlocks = EMPTY_BLOCKS,
   initialMerchantName = "",
+  initialOrderManagementEnabled = false,
 }: SitePageClientProps = {}) {
   const params = useParams<{ siteId?: string }>();
   const routeSiteId = typeof params?.siteId === "string" ? params.siteId : "";
@@ -276,6 +278,10 @@ export function SitePageClient({
 
   const site = useMemo(() => platformState.sites.find((item) => item.id === siteId) ?? null, [platformState.sites, siteId]);
   const effectiveMerchantName = (site?.merchantName ?? site?.name ?? initialMerchantName).trim();
+  const hasResolvedOrderManagementPermission = typeof site?.permissionConfig?.allowOrderManagement === "boolean";
+  const orderManagementEnabled = hasResolvedOrderManagementPermission
+    ? Boolean(site?.permissionConfig?.allowProductBlock && site?.permissionConfig?.allowOrderManagement)
+    : initialOrderManagementEnabled;
   useEffect(() => {
     if (!hydrated || !site || !resolvedPageId) return;
     trackPageView(`site:${site.id}:${resolvedPageId}`);
@@ -464,6 +470,7 @@ export function SitePageClient({
         availablePages={activePlan?.pages?.map((page) => ({ id: page.id, name: page.name })) ?? []}
         bookingSiteId={site?.id ?? siteId}
         bookingSiteName={effectiveMerchantName}
+        productCartEnabled={orderManagementEnabled}
         bookingInteractive
         bookingViewport={isMobileViewport ? "mobile" : "desktop"}
         onNavigatePage={(pageId) => {

@@ -13627,10 +13627,14 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   const canUseGalleryBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowGalleryBlock);
   const canUseMusicBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowMusicBlock);
   const canUseProductBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowProductBlock);
+  const canUseOrderManagement =
+    !isPlatformEditor &&
+    Boolean(merchantPermissionConfig?.allowProductBlock) &&
+    Boolean(merchantPermissionConfig?.allowOrderManagement);
   const canUseBookingBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowBookingBlock) || merchantHasBookingBlockConfigured;
   const canUseButtonBlock = isPlatformEditor || Boolean(merchantPermissionConfig?.allowButtonBlock);
   const resolvedSupportMobileBusinessSection =
-    canUseProductBlock || supportMobileBusinessSection === "booking" ? supportMobileBusinessSection : "booking";
+    canUseOrderManagement || supportMobileBusinessSection === "booking" ? supportMobileBusinessSection : "booking";
   const isBookingBlockAddLocked = merchantHasBookingBlockConfigured;
   const merchantBookingBadgeLabel =
     merchantBookingAttentionCount > 99 ? "99+" : String(merchantBookingAttentionCount);
@@ -14293,7 +14297,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 >
                   预约
                 </button>
-                {canUseProductBlock ? (
+                {canUseOrderManagement ? (
                   <button
                     type="button"
                     className={`min-w-[88px] rounded-[18px] px-4 py-2.5 text-sm font-semibold transition ${
@@ -14308,7 +14312,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 ) : null}
               </div>
             </div>
-            {resolvedSupportMobileBusinessSection === "orders" && canUseProductBlock ? (
+            {resolvedSupportMobileBusinessSection === "orders" && canUseOrderManagement ? (
               <MerchantOrderMobilePanel
                 siteId={supportMobileBookingSiteId}
                 siteName={merchantDisplayName}
@@ -14337,7 +14341,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 <div className="min-w-[88px] rounded-[18px] bg-emerald-500 px-4 py-2.5 text-center text-sm font-semibold text-white shadow-sm">
                   预约
                 </div>
-                {canUseProductBlock ? (
+                {canUseOrderManagement ? (
                   <div className="min-w-[88px] rounded-[18px] px-4 py-2.5 text-center text-sm font-semibold text-slate-500">
                     订单
                   </div>
@@ -15688,7 +15692,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         }
       : null;
   const merchantOrderManagerDialogCommonProps =
-    !isPlatformEditor && canUseProductBlock
+    canUseOrderManagement
       ? {
           siteId: editingSiteId || "",
           siteName: effectiveMerchantDisplayName || merchantDisplayName,
@@ -16441,7 +16445,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         ) : null}
                       </button>
                     ) : null}
-                    {canUseProductBlock ? (
+                    {canUseOrderManagement ? (
                       <button
                         type="button"
                         className={getMerchantDesktopMenuButtonClassName(merchantDesktopSection === "orders")}
@@ -16553,7 +16557,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     {"预约管理"}
                   </button>
                 ) : null}
-                {!isPlatformEditor && canUseProductBlock ? (
+                {canUseOrderManagement ? (
                   <button
                     className={
                       isMobileMerchantEditorShell
@@ -17131,6 +17135,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                           forceMobileViewport
                           bookingSiteId={editingSiteId || ""}
                           bookingSiteName={merchantDisplayName}
+                          productCartEnabled={canUseOrderManagement}
                           bookingInteractive={false}
                           onNavigatePage={(pageId) => {
                             if (editingPages.some((page) => page.id === pageId)) switchEditingPage(pageId);

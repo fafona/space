@@ -1434,6 +1434,7 @@ function describePermissionValue(
     key === "allowGalleryBlock" ||
     key === "allowMusicBlock" ||
     key === "allowProductBlock" ||
+    key === "allowOrderManagement" ||
     key === "allowBookingBlock"
   ) {
     return value === true ? "是" : "否";
@@ -1482,6 +1483,7 @@ function buildMerchantConfigDiffLines(current: MerchantConfigSnapshot, target: M
     { key: "allowGalleryBlock", label: "可相册区块" },
     { key: "allowMusicBlock", label: "可音乐区块" },
     { key: "allowProductBlock", label: "可产品区块" },
+    { key: "allowOrderManagement", label: "可订单管理" },
     { key: "allowBookingBlock", label: "可预约区块" },
   ];
   permissionFields.forEach(({ key, label }) => {
@@ -1719,6 +1721,7 @@ export default function SuperAdminClient() {
   const [configAllowGalleryBlock, setConfigAllowGalleryBlock] = useState(false);
   const [configAllowMusicBlock, setConfigAllowMusicBlock] = useState(false);
   const [configAllowProductBlock, setConfigAllowProductBlock] = useState(false);
+  const [configAllowOrderManagement, setConfigAllowOrderManagement] = useState(false);
   const [configAllowBookingBlock, setConfigAllowBookingBlock] = useState(false);
   const [configMerchantCardImage, setConfigMerchantCardImage] = useState("");
   const [configMerchantCardImageOpacity, setConfigMerchantCardImageOpacity] = useState(1);
@@ -3683,6 +3686,7 @@ export default function SuperAdminClient() {
     setConfigAllowGalleryBlock(permission.allowGalleryBlock);
     setConfigAllowMusicBlock(permission.allowMusicBlock);
     setConfigAllowProductBlock(permission.allowProductBlock);
+    setConfigAllowOrderManagement(permission.allowProductBlock && permission.allowOrderManagement);
     setConfigAllowBookingBlock(permission.allowBookingBlock);
     setConfigMerchantCardImage((site.merchantCardImageUrl ?? "").trim());
     setConfigMerchantCardImageOpacity(normalizeUnitInterval(site.merchantCardImageOpacity, 1));
@@ -5371,6 +5375,13 @@ export default function SuperAdminClient() {
     if (prevPermission.allowProductBlock !== configAllowProductBlock) {
       pendingChanges.push(`产品区块：${formatBool(prevPermission.allowProductBlock)} -> ${formatBool(configAllowProductBlock)}`);
     }
+    if (prevPermission.allowOrderManagement !== (configAllowProductBlock && configAllowOrderManagement)) {
+      pendingChanges.push(
+        `订单管理：${formatBool(prevPermission.allowOrderManagement)} -> ${formatBool(
+          configAllowProductBlock && configAllowOrderManagement,
+        )}`,
+      );
+    }
     if (prevPermission.allowBookingBlock !== configAllowBookingBlock) {
       pendingChanges.push(`预约区块：${formatBool(prevPermission.allowBookingBlock)} -> ${formatBool(configAllowBookingBlock)}`);
     }
@@ -5435,6 +5446,7 @@ export default function SuperAdminClient() {
         allowGalleryBlock: configAllowGalleryBlock,
         allowMusicBlock: configAllowMusicBlock,
         allowProductBlock: configAllowProductBlock,
+        allowOrderManagement: configAllowProductBlock && configAllowOrderManagement,
         allowBookingBlock: configAllowBookingBlock,
       },
       merchantCardImageUrl: nextMerchantCardImage,
@@ -7742,8 +7754,27 @@ export default function SuperAdminClient() {
                                 音乐区块
                               </label>
                               <label className="flex items-center gap-2 rounded border px-2 py-1.5">
-                                <input type="checkbox" checked={configAllowProductBlock} onChange={(e) => setConfigAllowProductBlock(e.target.checked)} />
+                                <input
+                                  type="checkbox"
+                                  checked={configAllowProductBlock}
+                                  onChange={(e) => {
+                                    const nextChecked = e.target.checked;
+                                    setConfigAllowProductBlock(nextChecked);
+                                    if (!nextChecked) {
+                                      setConfigAllowOrderManagement(false);
+                                    }
+                                  }}
+                                />
                                 产品区块
+                              </label>
+                              <label className={`flex items-center gap-2 rounded border px-2 py-1.5 ${configAllowProductBlock ? "" : "opacity-50"}`}>
+                                <input
+                                  type="checkbox"
+                                  checked={configAllowProductBlock && configAllowOrderManagement}
+                                  onChange={(e) => setConfigAllowOrderManagement(e.target.checked)}
+                                  disabled={!configAllowProductBlock}
+                                />
+                                订单管理
                               </label>
                               <label className="flex items-center gap-2 rounded border px-2 py-1.5">
                                 <input

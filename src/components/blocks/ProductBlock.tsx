@@ -84,6 +84,7 @@ type ProductBlockProps = BackgroundEditableProps &
     runtimeSiteId?: string;
     runtimeSiteName?: string;
     runtimeBlockId?: string;
+    runtimeOrderManagementEnabled?: boolean;
   };
 
 type ProductCartItemState = {
@@ -541,14 +542,17 @@ export default function ProductBlock(props: ProductBlockProps) {
   const [cartOpen, setCartOpen] = useState(false);
   const [cartItems, setCartItems] = useState<ProductCartItemState[]>([]);
   const [cartCustomer, setCartCustomer] = useState<MerchantOrderCustomerInput>({});
+  const [cartCustomerOpen, setCartCustomerOpen] = useState(false);
   const [cartSubmitting, setCartSubmitting] = useState(false);
   const [cartError, setCartError] = useState("");
   const [cartNotice, setCartNotice] = useState("");
+  const [cartCustomerShakeKey, setCartCustomerShakeKey] = useState(0);
   const rootRef = useRef<HTMLElement | null>(null);
   const scrollViewportRef = useRef<HTMLDivElement | null>(null);
+  const cartCustomerNameRef = useRef<HTMLInputElement | null>(null);
   const cartStorageKey =
     props.runtimeSiteId && props.runtimeBlockId ? getProductCartStorageKey(props.runtimeSiteId, props.runtimeBlockId) : "";
-  const cartEnabled = Boolean(props.runtimeSiteId && props.runtimeBlockId);
+  const cartEnabled = Boolean(props.runtimeOrderManagementEnabled && props.runtimeSiteId && props.runtimeBlockId);
   const selectedTag = activeTag && productTags.includes(activeTag) ? activeTag : null;
   const searchMatchedProducts = productSearchEnabled ? filterProductItemsByKeyword(arrangedProducts, searchKeyword) : arrangedProducts;
   const filteredProducts =
@@ -569,6 +573,11 @@ export default function ProductBlock(props: ProductBlockProps) {
   const checkedCartItems = cartItems.filter((item) => item.checked);
   const checkedCartTotalQuantity = checkedCartItems.reduce((sum, item) => sum + item.quantity, 0);
   const checkedCartTotalAmount = checkedCartItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
+  const hasCartCustomerIdentity = Boolean(
+    String(cartCustomer.name ?? "").trim() ||
+      String(cartCustomer.phone ?? "").trim() ||
+      String(cartCustomer.email ?? "").trim(),
+  );
 
   useEffect(() => {
     if (!cartEnabled || !cartStorageKey) {
@@ -602,6 +611,14 @@ export default function ProductBlock(props: ProductBlockProps) {
       window.removeEventListener("keydown", onKeyDown);
     };
   }, [activeProductId]);
+
+  useEffect(() => {
+    if (!cartCustomerOpen) return;
+    const timer = window.setTimeout(() => {
+      cartCustomerNameRef.current?.focus();
+    }, 80);
+    return () => window.clearTimeout(timer);
+  }, [cartCustomerOpen]);
 
   const scrollToProductCard = (targetId: string | null) => {
     if (!targetId) return;
@@ -762,6 +779,7 @@ export default function ProductBlock(props: ProductBlockProps) {
     }
     if (!String(cartCustomer.name ?? "").trim() && !String(cartCustomer.phone ?? "").trim() && !String(cartCustomer.email ?? "").trim()) {
       setCartError("请至少填写姓名、电话或邮箱中的一项。");
+      setCartCustomerShakeKey((current) => current + 1);
       return;
     }
     setCartSubmitting(true);
@@ -799,6 +817,7 @@ export default function ProductBlock(props: ProductBlockProps) {
       const nextOrderId = String(payload?.order?.id ?? "").trim();
       setCartItems((current) => current.filter((item) => !item.checked));
       setCartCustomer({});
+      setCartCustomerOpen(false);
       setCartOpen(false);
       setCartNotice(nextOrderId ? `订单 ${nextOrderId} 已提交。` : "订单已提交。");
     } catch (error) {
@@ -1141,43 +1160,32 @@ export default function ProductBlock(props: ProductBlockProps) {
           <div className="mt-2 break-words whitespace-pre-wrap text-sm leading-6 text-slate-600" dangerouslySetInnerHTML={{ __html: toRichHtml(props.text, "") }} />
         ) : null}
         {renderProductsWithFilters()}
-        {false && cartEnabled ? (
+        {cartEnabled ? (
           <button
             type="button"
-            className="absolute bottom-5 left-5 inline-flex items-center gap-3 rounded-full bg-slate-950 px-4 py-3 text-sm font-semibold text-white shadow-[0_18px_40px_rgba(15,23,42,0.18)] transition hover:bg-slate-800"
+            className="absolute bottom-5 left-5 z-20 inline-flex items-center gap-2 rounded-full bg-slate-950/95 px-3.5 py-2.5 text-sm font-semibold text-white shadow-[0_12px_28px_rgba(15,23,42,0.18)] transition hover:bg-slate-800"
             onClick={() => {
               setCartError("");
               setCartNotice("");
               setCartOpen(true);
             }}
           >
-            <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-lg">🛒</span>
-            <span>购物车</span>
-            <span className="inline-flex min-w-[1.6rem] items-center justify-center rounded-full bg-emerald-400 px-2 py-0.5 text-xs font-bold text-slate-950">
+            <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-base">??</span>
+            <span>Cart</span>
+            <span className="inline-flex min-w-[1.45rem] items-center justify-center rounded-full bg-emerald-400 px-1.5 py-0.5 text-[11px] font-bold text-slate-950">
               {checkedCartTotalQuantity}
             </span>
           </button>
         ) : null}
       </div>
-      {cartEnabled ? (
-        <button
-          type="button"
-          className="absolute bottom-2 left-6 z-20 inline-flex items-center gap-2 rounded-full bg-slate-950/95 px-3.5 py-2.5 text-sm font-semibold text-white shadow-[0_12px_28px_rgba(15,23,42,0.18)] transition hover:bg-slate-800"
+      {cartOpen ? (
+        <div
+          className="fixed inset-0 z-[1100] flex items-center justify-center bg-black/55 p-4"
           onClick={() => {
-            setCartError("");
-            setCartNotice("");
-            setCartOpen(true);
+            setCartCustomerOpen(false);
+            setCartOpen(false);
           }}
         >
-          <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-base">🛒</span>
-          <span>Cart</span>
-          <span className="inline-flex min-w-[1.45rem] items-center justify-center rounded-full bg-emerald-400 px-1.5 py-0.5 text-[11px] font-bold text-slate-950">
-            {checkedCartTotalQuantity}
-          </span>
-        </button>
-      ) : null}
-      {cartOpen ? (
-        <div className="fixed inset-0 z-[1100] flex items-center justify-center bg-black/55 p-4" onClick={() => setCartOpen(false)}>
           <div
             className="relative flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-[28px] bg-white shadow-2xl"
             onClick={(event) => event.stopPropagation()}
@@ -1194,7 +1202,10 @@ export default function ProductBlock(props: ProductBlockProps) {
               <button
                 type="button"
                 className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 text-xl text-slate-500 transition hover:bg-slate-50"
-                onClick={() => setCartOpen(false)}
+                onClick={() => {
+                  setCartCustomerOpen(false);
+                  setCartOpen(false);
+                }}
                 aria-label="关闭购物车"
               >
                 ×
@@ -1287,45 +1298,21 @@ export default function ProductBlock(props: ProductBlockProps) {
                 )}
               </div>
               <div className="border-t border-slate-200 bg-slate-50/70 px-6 py-5 lg:border-l lg:border-t-0">
-                <div className="text-lg font-semibold text-slate-900">客户信息</div>
-                <div className="mt-1 text-sm text-slate-500">提交订单时会把这里的客户信息一起发给商家后台。</div>
-                <div className="mt-5 space-y-4">
-                  <label className="block">
-                    <div className="mb-2 text-sm text-slate-600">姓名</div>
-                    <input
-                      type="text"
-                      value={cartCustomer.name ?? ""}
-                      onChange={(event) => handleCartCustomerChange("name", event.target.value)}
-                      className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-200"
-                    />
-                  </label>
-                  <label className="block">
-                    <div className="mb-2 text-sm text-slate-600">电话</div>
-                    <input
-                      type="tel"
-                      value={cartCustomer.phone ?? ""}
-                      onChange={(event) => handleCartCustomerChange("phone", event.target.value)}
-                      className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-200"
-                    />
-                  </label>
-                  <label className="block">
-                    <div className="mb-2 text-sm text-slate-600">邮箱</div>
-                    <input
-                      type="email"
-                      value={cartCustomer.email ?? ""}
-                      onChange={(event) => handleCartCustomerChange("email", event.target.value)}
-                      className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-200"
-                    />
-                  </label>
-                  <label className="block">
-                    <div className="mb-2 text-sm text-slate-600">备注</div>
-                    <textarea
-                      rows={4}
-                      value={cartCustomer.note ?? ""}
-                      onChange={(event) => handleCartCustomerChange("note", event.target.value)}
-                      className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-200"
-                    />
-                  </label>
+                <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <div className="text-lg font-semibold text-slate-900">客户信息</div>
+                  <div className="mt-1 text-sm text-slate-500">点击按钮填写客户信息，提交订单时会一起发给商家后台。</div>
+                  {hasCartCustomerIdentity ? (
+                    <div className="mt-4 space-y-2 text-sm text-slate-600">
+                      {cartCustomer.name ? <div>姓名：{cartCustomer.name}</div> : null}
+                      {cartCustomer.phone ? <div>电话：{cartCustomer.phone}</div> : null}
+                      {cartCustomer.email ? <div>邮箱：{cartCustomer.email}</div> : null}
+                      {cartCustomer.note ? (
+                        <div className="line-clamp-2 break-words text-slate-500">备注：{cartCustomer.note}</div>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <div className="mt-4 text-sm text-slate-400">暂未填写客户信息</div>
+                  )}
                 </div>
                 <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-4">
                   <div className="flex items-center justify-between text-sm text-slate-500">
@@ -1339,11 +1326,19 @@ export default function ProductBlock(props: ProductBlockProps) {
                 </div>
                 <div className="mt-5 flex flex-wrap gap-3">
                   <button
+                    key={cartCustomerShakeKey}
                     type="button"
-                    className="rounded-full border border-slate-300 bg-white px-5 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
-                    onClick={() => setCartOpen(false)}
+                    className={`rounded-full border px-5 py-3 text-sm font-medium transition ${
+                      hasCartCustomerIdentity
+                        ? "border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                        : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                    } ${!hasCartCustomerIdentity && cartCustomerShakeKey > 0 ? "animate-[cartCustomerButtonShake_0.42s_ease-in-out_2]" : ""}`}
+                    onClick={() => {
+                      setCartError("");
+                      setCartCustomerOpen(true);
+                    }}
                   >
-                    继续逛逛
+                    {hasCartCustomerIdentity ? "客户信息 已填写" : "客户信息"}
                   </button>
                   <button
                     type="button"
@@ -1355,6 +1350,77 @@ export default function ProductBlock(props: ProductBlockProps) {
                   </button>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {cartOpen && cartCustomerOpen ? (
+        <div className="fixed inset-0 z-[1110] flex items-center justify-center bg-black/50 p-4" onClick={() => setCartCustomerOpen(false)}>
+          <div
+            className="w-full max-w-lg rounded-[28px] bg-white p-6 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="text-2xl font-semibold text-slate-900">客户信息</div>
+                <div className="mt-1 text-sm text-slate-500">提交订单时会把这里的客户信息一起发给商家后台。</div>
+              </div>
+              <button
+                type="button"
+                className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 text-xl text-slate-500 transition hover:bg-slate-50"
+                onClick={() => setCartCustomerOpen(false)}
+                aria-label="关闭客户信息"
+              >
+                ×
+              </button>
+            </div>
+            <div className="mt-5 space-y-4">
+              <label className="block">
+                <div className="mb-2 text-sm text-slate-600">姓名</div>
+                <input
+                  ref={cartCustomerNameRef}
+                  type="text"
+                  value={cartCustomer.name ?? ""}
+                  onChange={(event) => handleCartCustomerChange("name", event.target.value)}
+                  className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-200"
+                />
+              </label>
+              <label className="block">
+                <div className="mb-2 text-sm text-slate-600">电话</div>
+                <input
+                  type="tel"
+                  value={cartCustomer.phone ?? ""}
+                  onChange={(event) => handleCartCustomerChange("phone", event.target.value)}
+                  className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-200"
+                />
+              </label>
+              <label className="block">
+                <div className="mb-2 text-sm text-slate-600">邮箱</div>
+                <input
+                  type="email"
+                  value={cartCustomer.email ?? ""}
+                  onChange={(event) => handleCartCustomerChange("email", event.target.value)}
+                  className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-200"
+                />
+              </label>
+              <label className="block">
+                <div className="mb-2 text-sm text-slate-600">备注</div>
+                <textarea
+                  rows={4}
+                  value={cartCustomer.note ?? ""}
+                  onChange={(event) => handleCartCustomerChange("note", event.target.value)}
+                  className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-200"
+                />
+              </label>
+            </div>
+            <div className="mt-6 flex justify-end">
+              <button
+                type="button"
+                className="rounded-full bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
+                onClick={() => setCartCustomerOpen(false)}
+              >
+                完成
+              </button>
             </div>
           </div>
         </div>
@@ -1457,6 +1523,26 @@ export default function ProductBlock(props: ProductBlockProps) {
           </div>
         </div>
       ) : null}
+      <style jsx global>{`
+        @keyframes cartCustomerButtonShake {
+          0%,
+          100% {
+            transform: translateX(0);
+          }
+          20% {
+            transform: translateX(-6px);
+          }
+          40% {
+            transform: translateX(6px);
+          }
+          60% {
+            transform: translateX(-4px);
+          }
+          80% {
+            transform: translateX(4px);
+          }
+        }
+      `}</style>
     </section>
   );
 }

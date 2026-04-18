@@ -135,6 +135,7 @@ export default async function MerchantEntryPage({ params }: MerchantEntryPagePro
           initialIsMobileViewport={initialIsMobileViewport}
           initialPublishedBlocks={publishedSite.blocks}
           initialMerchantName={publishedSite.merchantName}
+          initialOrderManagementEnabled={publishedSite.orderManagementEnabled}
         />
       );
     }

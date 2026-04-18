@@ -49,6 +49,7 @@ export default function BlockRenderer({
   forceMobileViewport = false,
   bookingSiteId,
   bookingSiteName,
+  productCartEnabled = false,
   bookingInteractive = true,
   bookingViewport,
 }: {
@@ -60,6 +61,7 @@ export default function BlockRenderer({
   forceMobileViewport?: boolean;
   bookingSiteId?: string;
   bookingSiteName?: string;
+  productCartEnabled?: boolean;
   bookingInteractive?: boolean;
   bookingViewport?: MerchantBookingRuleViewport;
 }) {
@@ -121,6 +123,7 @@ export default function BlockRenderer({
                 runtimeSiteId={bookingSiteId}
                 runtimeSiteName={bookingSiteName}
                 runtimeBlockId={b.id}
+                runtimeOrderManagementEnabled={productCartEnabled}
               />
             );
             break;

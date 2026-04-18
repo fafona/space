@@ -104,6 +104,7 @@ export type MerchantServicePermissionConfig = {
   allowGalleryBlock: boolean;
   allowMusicBlock: boolean;
   allowProductBlock: boolean;
+  allowOrderManagement: boolean;
   allowBookingBlock: boolean;
   publishSizeLimitMb: number;
 };
@@ -424,6 +425,7 @@ export function createDefaultMerchantPermissionConfig(): MerchantServicePermissi
     allowGalleryBlock: false,
     allowMusicBlock: false,
     allowProductBlock: false,
+    allowOrderManagement: false,
     allowBookingBlock: false,
     publishSizeLimitMb: 5,
   };
@@ -444,6 +446,14 @@ function normalizeNullableRank(value: unknown) {
 export function normalizeMerchantPermissionConfig(value: unknown): MerchantServicePermissionConfig {
   const source = value && typeof value === "object" ? (value as Partial<MerchantServicePermissionConfig>) : {};
   const fallback = createDefaultMerchantPermissionConfig();
+  const allowProductBlock =
+    typeof source.allowProductBlock === "boolean" ? source.allowProductBlock : fallback.allowProductBlock;
+  const allowOrderManagementRaw =
+    typeof source.allowOrderManagement === "boolean"
+      ? source.allowOrderManagement
+      : typeof source.allowProductBlock === "boolean"
+        ? source.allowProductBlock
+        : fallback.allowOrderManagement;
   return {
     planLimit: normalizeInt(source.planLimit, fallback.planLimit, 1, 200),
     pageLimit: normalizeInt(source.pageLimit, fallback.pageLimit, 1, 500),
@@ -496,7 +506,8 @@ export function normalizeMerchantPermissionConfig(value: unknown): MerchantServi
     allowButtonBlock: typeof source.allowButtonBlock === "boolean" ? source.allowButtonBlock : fallback.allowButtonBlock,
     allowGalleryBlock: typeof source.allowGalleryBlock === "boolean" ? source.allowGalleryBlock : fallback.allowGalleryBlock,
     allowMusicBlock: typeof source.allowMusicBlock === "boolean" ? source.allowMusicBlock : fallback.allowMusicBlock,
-    allowProductBlock: typeof source.allowProductBlock === "boolean" ? source.allowProductBlock : fallback.allowProductBlock,
+    allowProductBlock,
+    allowOrderManagement: allowProductBlock && allowOrderManagementRaw,
     allowBookingBlock: typeof source.allowBookingBlock === "boolean" ? source.allowBookingBlock : fallback.allowBookingBlock,
     publishSizeLimitMb: normalizeInt(source.publishSizeLimitMb, fallback.publishSizeLimitMb, 1, 100),
   };

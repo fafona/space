@@ -30,6 +30,7 @@ export default async function SitePage({ params }: SitePageProps) {
       initialIsMobileViewport={initialIsMobileViewport}
       initialPublishedBlocks={publishedSite?.blocks}
       initialMerchantName={publishedSite?.merchantName}
+      initialOrderManagementEnabled={publishedSite?.orderManagementEnabled}
     />
   );
 }

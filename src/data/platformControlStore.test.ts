@@ -34,6 +34,7 @@ test("merchant permission config includes default business card background image
   assert.equal(permission.commonBlockImageLimitKb, 300);
   assert.equal(permission.galleryBlockImageLimitKb, 300);
   assert.equal(permission.allowBookingEmailPrefill, false);
+  assert.equal(permission.allowOrderManagement, false);
 });
 
 test("merchant config history keeps full entries and persists details outside main state payload", () => {

@@ -2,7 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import type { Block } from "@/data/homeBlocks";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import type { PublishedMerchantServiceState } from "@/lib/publishedMerchantService";
-import { loadPublishedMerchantServiceStateBySiteId } from "@/lib/publishedMerchantService";
+import { loadCurrentMerchantSnapshotSiteBySiteId, loadPublishedMerchantServiceStateBySiteId } from "@/lib/publishedMerchantService";
 
 export type PublishedPageRow = {
   blocks?: unknown;
@@ -21,6 +21,7 @@ export type PublishedSitePayload = {
   merchantName: string;
   blocks: Block[];
   serviceState: PublishedMerchantServiceState | null;
+  orderManagementEnabled: boolean;
 };
 
 function readEnv(name: string) {
@@ -134,6 +135,10 @@ export async function fetchPublishedSitePayloadFromSupabase(siteId: string): Pro
     .maybeSingle();
   const merchantName = String((merchantProfile as MerchantProfileRow | null)?.name ?? "").trim();
   const serviceState = await loadPublishedMerchantServiceStateBySiteId(normalizedSiteId).catch(() => null);
+  const snapshotSite = await loadCurrentMerchantSnapshotSiteBySiteId(normalizedSiteId).catch(() => null);
+  const orderManagementEnabled = Boolean(
+    snapshotSite?.permissionConfig?.allowProductBlock && snapshotSite?.permissionConfig?.allowOrderManagement,
+  );
 
   return {
     siteId: normalizedSiteId,
@@ -141,5 +146,6 @@ export async function fetchPublishedSitePayloadFromSupabase(siteId: string): Pro
     merchantName,
     blocks: chosen.blocks,
     serviceState,
+    orderManagementEnabled,
   };
 }
