@@ -451,9 +451,7 @@ export function normalizeMerchantPermissionConfig(value: unknown): MerchantServi
   const allowOrderManagementRaw =
     typeof source.allowOrderManagement === "boolean"
       ? source.allowOrderManagement
-      : typeof source.allowProductBlock === "boolean"
-        ? source.allowProductBlock
-        : fallback.allowOrderManagement;
+      : fallback.allowOrderManagement;
   return {
     planLimit: normalizeInt(source.planLimit, fallback.planLimit, 1, 200),
     pageLimit: normalizeInt(source.pageLimit, fallback.pageLimit, 1, 500),

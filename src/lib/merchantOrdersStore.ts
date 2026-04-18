@@ -1,6 +1,7 @@
 import { normalizeMerchantOrderRecords, type MerchantOrderRecord } from "@/lib/merchantOrders";
 
 const MERCHANT_ORDER_SLUG_PREFIX = "__merchant_orders__:";
+const MERCHANT_ORDER_CHUNK_SIZE = 100;
 
 export type MerchantOrdersStoreClient = {
   // Supabase query builders are heavily generic; this store only relies on runtime chaining.
@@ -53,44 +54,122 @@ function buildOrdersSlug(siteId: string) {
   return `${MERCHANT_ORDER_SLUG_PREFIX}${siteId}`;
 }
 
+function buildOrdersChunkSlug(siteId: string, index: number) {
+  return `${buildOrdersSlug(siteId)}:chunk:${index}`;
+}
+
+function parseOrdersChunkIndex(siteId: string, slug: string) {
+  const normalizedSlug = normalizeText(slug);
+  if (!normalizedSlug) return null;
+  if (normalizedSlug === buildOrdersSlug(siteId)) return -1;
+  const match = normalizedSlug.match(new RegExp(`^${buildOrdersSlug(siteId).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}:chunk:(\\d+)$`));
+  if (!match) return null;
+  const parsed = Number.parseInt(match[1] ?? "", 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+type StoredMerchantOrdersRow = {
+  id?: string | number | null;
+  slug?: unknown;
+  blocks?: unknown;
+  updated_at?: unknown;
+};
+
+export function chunkMerchantOrderRecords(orders: MerchantOrderRecord[], chunkSize = MERCHANT_ORDER_CHUNK_SIZE) {
+  const normalizedChunkSize = Math.max(1, Math.round(chunkSize));
+  const chunks: MerchantOrderRecord[][] = [];
+  for (let index = 0; index < orders.length; index += normalizedChunkSize) {
+    chunks.push(orders.slice(index, index + normalizedChunkSize));
+  }
+  return chunks;
+}
+
+export function mergeStoredMerchantOrdersRows(
+  siteId: string,
+  rows: StoredMerchantOrdersRow[],
+): StoredMerchantOrders | null {
+  const normalizedSiteId = normalizeSiteId(siteId);
+  if (!normalizedSiteId) return null;
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+
+  const withSlug = rows
+    .map((row) => ({
+      ...row,
+      normalizedSlug: normalizeText(row.slug),
+      chunkIndex: parseOrdersChunkIndex(normalizedSiteId, normalizeText(row.slug)),
+    }))
+    .filter((row) => row.chunkIndex !== null);
+
+  if (withSlug.length === 0) return null;
+
+  const preferredRows = withSlug.some((row) => (row.chunkIndex ?? -1) >= 0)
+    ? withSlug
+        .filter((row) => (row.chunkIndex ?? -1) >= 0)
+        .sort((left, right) => (left.chunkIndex ?? 0) - (right.chunkIndex ?? 0))
+    : withSlug.filter((row) => row.chunkIndex === -1);
+
+  const orderMap = new Map<string, MerchantOrderRecord>();
+  for (const row of preferredRows) {
+    for (const order of normalizeMerchantOrderRecords(row.blocks)) {
+      if (!orderMap.has(order.id)) {
+        orderMap.set(order.id, order);
+      }
+    }
+  }
+
+  const updatedAt = preferredRows.reduce<string | null>((latest, row) => {
+    const current = typeof row.updated_at === "string" ? row.updated_at.trim() : "";
+    if (!current) return latest;
+    if (!latest) return current;
+    return Date.parse(current) > Date.parse(latest) ? current : latest;
+  }, null);
+
+  return {
+    siteId: normalizedSiteId,
+    orders: normalizeMerchantOrderRecords(Array.from(orderMap.values())),
+    updatedAt,
+  };
+}
+
+async function listStoredMerchantOrdersRows(supabase: MerchantOrdersStoreClient, siteId: string) {
+  const normalizedSiteId = normalizeSiteId(siteId);
+  if (!normalizedSiteId) return [] as StoredMerchantOrdersRow[];
+  const slugPrefix = `${buildOrdersSlug(normalizedSiteId)}%`;
+
+  const initialQuery = await supabase
+    .from("pages")
+    .select("id,slug,blocks,updated_at")
+    .eq("merchant_id", normalizedSiteId)
+    .like("slug", slugPrefix);
+
+  let data = (initialQuery.data ?? []) as StoredMerchantOrdersRow[];
+  let error = initialQuery.error;
+
+  if (error) {
+    const message = toErrorMessage(error);
+    if (isMissingMerchantIdColumn(message)) {
+      const bySlug = await supabase.from("pages").select("id,slug,blocks,updated_at").like("slug", slugPrefix);
+      data = (bySlug.data ?? []) as StoredMerchantOrdersRow[];
+      error = bySlug.error;
+    } else if (isMissingSlugColumn(message)) {
+      return [];
+    } else {
+      return [];
+    }
+  }
+
+  if (error) return [];
+  return Array.isArray(data) ? data : [];
+}
+
 export async function loadStoredMerchantOrders(
   supabase: MerchantOrdersStoreClient,
   siteId: string,
 ): Promise<StoredMerchantOrders | null> {
   const normalizedSiteId = normalizeSiteId(siteId);
   if (!normalizedSiteId) return null;
-  const slug = buildOrdersSlug(normalizedSiteId);
-
-  const initialQuery = await supabase
-    .from("pages")
-    .select("blocks,updated_at")
-    .eq("merchant_id", normalizedSiteId)
-    .eq("slug", slug)
-    .limit(1)
-    .maybeSingle();
-
-  let data = initialQuery.data as { blocks?: unknown; updated_at?: unknown } | null;
-  let error = initialQuery.error;
-
-  if (error) {
-    const message = toErrorMessage(error);
-    if (isMissingMerchantIdColumn(message)) {
-      const bySlug = await supabase.from("pages").select("blocks,updated_at").eq("slug", slug).limit(1).maybeSingle();
-      data = bySlug.data as { blocks?: unknown; updated_at?: unknown } | null;
-      error = bySlug.error;
-    } else if (isMissingSlugColumn(message)) {
-      return null;
-    } else {
-      return null;
-    }
-  }
-
-  if (error || !data) return null;
-  return {
-    siteId: normalizedSiteId,
-    orders: normalizeMerchantOrderRecords(data.blocks),
-    updatedAt: typeof data?.updated_at === "string" ? data.updated_at.trim() : null,
-  };
+  const rows = await listStoredMerchantOrdersRows(supabase, normalizedSiteId);
+  return mergeStoredMerchantOrdersRows(normalizedSiteId, rows);
 }
 
 export async function saveStoredMerchantOrders(
@@ -103,76 +182,72 @@ export async function saveStoredMerchantOrders(
 ): Promise<{ error: string | null }> {
   const normalizedSiteId = normalizeSiteId(input.siteId);
   if (!normalizedSiteId) return { error: "invalid_site_id" };
-  const slug = buildOrdersSlug(normalizedSiteId);
   const normalizedOrders = normalizeMerchantOrderRecords(input.orders);
   const updatedAt = normalizeText(input.updatedAt) || new Date().toISOString();
-  const basePayload = {
-    blocks: normalizedOrders,
-    updated_at: updatedAt,
-  };
+  const existingRows = await listStoredMerchantOrdersRows(supabase, normalizedSiteId);
+  const existingBySlug = new Map(
+    existingRows
+      .map((row) => [normalizeText(row.slug), row] as const)
+      .filter(([slug]) => Boolean(slug)),
+  );
+  const desiredChunks = chunkMerchantOrderRecords(normalizedOrders);
+  const desiredSlugs = desiredChunks.map((_, index) => buildOrdersChunkSlug(normalizedSiteId, index));
 
-  const queryExisting = async () => {
-    const scoped = await supabase
-      .from("pages")
-      .select("id")
-      .eq("merchant_id", normalizedSiteId)
-      .eq("slug", slug)
-      .limit(1)
-      .maybeSingle();
-    if (!scoped.error) {
-      return {
-        record: (scoped.data ?? null) as { id?: string | number | null } | null,
-        supportsSlug: true,
-        supportsMerchantId: true,
-      };
-    }
+  const upsertChunk = async (slug: string, orders: MerchantOrderRecord[]) => {
+    const existing = existingBySlug.get(slug);
+    const basePayload = {
+      blocks: orders,
+      updated_at: updatedAt,
+    };
 
-    const scopedMessage = toErrorMessage(scoped.error);
-    if (isMissingMerchantIdColumn(scopedMessage)) {
-      const bySlug = await supabase.from("pages").select("id").eq("slug", slug).limit(1).maybeSingle();
-      if (!bySlug.error) {
-        return {
-          record: (bySlug.data ?? null) as { id?: string | number | null } | null,
-          supportsSlug: true,
-          supportsMerchantId: false,
-        };
-      }
-      return { error: toErrorMessage(bySlug.error) };
-    }
-
-    if (isMissingSlugColumn(scopedMessage)) {
-      return { error: "pages_slug_column_missing" };
-    }
-
-    return { error: scopedMessage };
-  };
-
-  const existing = await queryExisting();
-  if ("error" in existing && existing.error) {
-    return { error: existing.error };
-  }
-
-  const updatePayload = async (body: Record<string, unknown>) => {
-    const recordId = existing.record?.id;
-    if (recordId !== undefined && recordId !== null) {
-      const updated = await supabase.from("pages").update(body).eq("id", recordId);
+    const updateExisting = async (body: Record<string, unknown>) => {
+      if (existing?.id === undefined || existing?.id === null) return { error: "missing_existing_id" };
+      const updated = await supabase.from("pages").update(body).eq("id", existing.id);
       return updated.error ? { error: toErrorMessage(updated.error) } : { error: null };
-    }
+    };
 
-    if (existing.supportsSlug) {
+    const insertNew = async (body: Record<string, unknown>) => {
       const inserted = await supabase.from("pages").insert({
         ...body,
         slug,
-        ...(existing.supportsMerchantId ? { merchant_id: normalizedSiteId } : {}),
+        merchant_id: normalizedSiteId,
       });
-      return inserted.error ? { error: toErrorMessage(inserted.error) } : { error: null };
-    }
+      const error = inserted.error ? toErrorMessage(inserted.error) : null;
+      if (!error || !isMissingMerchantIdColumn(error)) {
+        return { error };
+      }
+      const retry = await supabase.from("pages").insert({
+        ...body,
+        slug,
+      });
+      return retry.error ? { error: toErrorMessage(retry.error) } : { error: null };
+    };
 
-    return { error: "pages_slug_column_missing" };
+    const first = existing ? await updateExisting(basePayload) : await insertNew(basePayload);
+    if (!first.error) return first;
+    if (!isMissingUpdatedAtColumn(first.error)) return first;
+    return existing ? updateExisting({ blocks: orders }) : insertNew({ blocks: orders });
   };
 
-  const first = await updatePayload(basePayload);
-  if (!first.error) return { error: null };
-  if (!isMissingUpdatedAtColumn(first.error)) return first;
-  return updatePayload({ blocks: normalizedOrders });
+  for (let index = 0; index < desiredChunks.length; index += 1) {
+    const chunkOrders = desiredChunks[index] ?? [];
+    const slug = desiredSlugs[index] ?? buildOrdersChunkSlug(normalizedSiteId, index);
+    const result = await upsertChunk(slug, chunkOrders);
+    if (result.error) return result;
+  }
+
+  const staleRows = existingRows.filter((row) => {
+    const slug = normalizeText(row.slug);
+    return slug && !desiredSlugs.includes(slug);
+  });
+
+  for (const row of staleRows) {
+    if (row.id === undefined || row.id === null) continue;
+    const deleted = await supabase.from("pages").delete().eq("id", row.id);
+    if (deleted.error) {
+      return { error: toErrorMessage(deleted.error) };
+    }
+  }
+
+  return { error: null };
 }

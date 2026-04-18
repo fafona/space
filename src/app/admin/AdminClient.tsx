@@ -124,7 +124,10 @@ import {
   type PagePlanConfig,
   type PlanId,
 } from "@/lib/pagePlans";
-import { buildMerchantBookingRulesSnapshot } from "@/lib/merchantBookingRules";
+import {
+  buildMerchantBookingRulesSnapshotFromPlanConfigs,
+  type MerchantBookingRulesSnapshot,
+} from "@/lib/merchantBookingRules";
 import { buildPublicBlockId } from "@/lib/blockPublicId";
 import { countInlineAssets, hasInlineAssets } from "@/lib/inlineAssetStats";
 import { useNotificationSound } from "@/lib/useNotificationSound";
@@ -13584,32 +13587,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     pageCopyBlockOptions.filter((item) => pageCopySelections[item.id] === true).length;
   const imageCompressionOptions = getCurrentImageCompressionOptions();
   const otherBookingViewport = previewViewport === "desktop" ? "mobile" : "desktop";
+  const otherBookingPlanConfig = viewportStatesRef.current[otherBookingViewport].planConfig;
   const desktopBookingConfig = previewViewport === "desktop" ? planConfig : viewportStatesRef.current.desktop.planConfig;
   const mobileBookingConfig = previewViewport === "mobile" ? planConfig : viewportStatesRef.current.mobile.planConfig;
-  const activeBookingOptions = collectBookingOptionsFromPlanConfig(planConfig);
-  const otherBookingOptions = collectBookingOptionsFromPlanConfig(viewportStatesRef.current[otherBookingViewport].planConfig);
-  const merchantBookingRulesSnapshot = editingSiteId
-    ? buildMerchantBookingRulesSnapshot(
-        editingSiteId,
-        buildCombinedPersistedBlocks(desktopBookingConfig, mobileBookingConfig),
-        new Date().toISOString(),
-      )
-    : null;
-  const merchantBookingManagerOptions = {
-    storeOptions: normalizeBookingOptionList(
-      [...activeBookingOptions.storeOptions, ...otherBookingOptions.storeOptions],
-      buildDefaultBookingStoreOptions(effectiveMerchantDisplayName || merchantDisplayName),
-    ),
-    itemOptions: normalizeBookingOptionList(
-      [...activeBookingOptions.itemOptions, ...otherBookingOptions.itemOptions],
-      buildDefaultBookingItemOptions(),
-    ),
-    titleOptions: normalizeBookingOptionList(
-      [...activeBookingOptions.titleOptions, ...otherBookingOptions.titleOptions],
-      buildDefaultBookingTitleOptions(),
-    ),
-  };
-  const merchantBookingBlockCount = countBookingBlocksInPlanConfig(planConfig);
+  const merchantBookingBlockCount = useMemo(() => countBookingBlocksInPlanConfig(planConfig), [planConfig]);
   const merchantHasBookingBlockConfigured = merchantBookingBlockCount > 0;
   const merchantPermissionConfig = !isPlatformEditor
     ? (effectiveEditingSite?.permissionConfig ?? editingSite?.permissionConfig ?? createDefaultMerchantPermissionConfig())
@@ -13664,6 +13645,69 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   }, 0);
   const mobileFrontendPreviewPadding = Math.max(120, Math.max(0, maxBlockOffsetY) + 100);
   const isMobileMerchantEditorShell = isMobileMerchantSupportOnlyMode;
+  const shouldPrepareBookingManagerData =
+    !isPlatformEditor &&
+    canUseBookingBlock &&
+    (
+      merchantBookingManagerOpen ||
+      merchantDesktopSection === "booking" ||
+      (isMobileMerchantEditorShell && resolvedSupportMobileBusinessSection === "booking")
+    );
+  const merchantBookingManagerData = useMemo<{
+    storeOptions: string[];
+    itemOptions: string[];
+    titleOptions: string[];
+    bookingRulesSnapshot: MerchantBookingRulesSnapshot | null;
+  }>(() => {
+    if (!shouldPrepareBookingManagerData) {
+      return {
+        storeOptions: [],
+        itemOptions: [],
+        titleOptions: [],
+        bookingRulesSnapshot: null,
+      };
+    }
+
+    const activeBookingOptions = collectBookingOptionsFromPlanConfig(planConfig);
+    const otherBookingOptions = collectBookingOptionsFromPlanConfig(otherBookingPlanConfig);
+    return {
+      storeOptions: normalizeBookingOptionList(
+        [...activeBookingOptions.storeOptions, ...otherBookingOptions.storeOptions],
+        buildDefaultBookingStoreOptions(effectiveMerchantDisplayName || merchantDisplayName),
+      ),
+      itemOptions: normalizeBookingOptionList(
+        [...activeBookingOptions.itemOptions, ...otherBookingOptions.itemOptions],
+        buildDefaultBookingItemOptions(),
+      ),
+      titleOptions: normalizeBookingOptionList(
+        [...activeBookingOptions.titleOptions, ...otherBookingOptions.titleOptions],
+        buildDefaultBookingTitleOptions(),
+      ),
+      bookingRulesSnapshot: editingSiteId
+        ? buildMerchantBookingRulesSnapshotFromPlanConfigs(
+            editingSiteId,
+            desktopBookingConfig,
+            mobileBookingConfig,
+            new Date().toISOString(),
+          )
+        : null,
+    };
+  }, [
+    desktopBookingConfig,
+    editingSiteId,
+    effectiveMerchantDisplayName,
+    merchantDisplayName,
+    mobileBookingConfig,
+    otherBookingPlanConfig,
+    planConfig,
+    shouldPrepareBookingManagerData,
+  ]);
+  const merchantBookingManagerOptions = {
+    storeOptions: merchantBookingManagerData.storeOptions,
+    itemOptions: merchantBookingManagerData.itemOptions,
+    titleOptions: merchantBookingManagerData.titleOptions,
+  };
+  const merchantBookingRulesSnapshot = merchantBookingManagerData.bookingRulesSnapshot;
   const merchantEditorAvatarLabel = !isPlatformEditor ? getSupportContactAvatarLabel(effectiveMerchantDisplayName || merchantDisplayName, "商") : "";
   const shouldShowPublishActions = showPublishActions ?? !isPlatformEditor;
   const isDesktopMerchantWorkspace = desktopMerchantWorkspaceActive;
@@ -13726,39 +13770,42 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           blockCount: blocks.length,
         };
   const planTemplateKeyword = planTemplateSearch.trim().toLowerCase();
-  const filteredPlanTemplates = planTemplates
-    .filter((template) => {
-      if (!matchPlanTemplateCategory(template, planTemplateFilter)) return false;
-      if (!planTemplateKeyword) return true;
-      const haystack = [
-        template.name,
-        template.sourceSiteName,
-        template.sourceSiteDomain,
-        template.sourceSiteId,
-        template.category,
-        template.sourceIndustry,
-      ]
-        .join("\n")
-        .toLowerCase();
-      return haystack.includes(planTemplateKeyword);
-    })
-    .map((template, index) => ({ template, index }))
-    .sort((left, right) => {
-      const leftTime = new Date(left.template.createdAt).getTime();
-      const rightTime = new Date(right.template.createdAt).getTime();
-      const normalizedLeft = Number.isFinite(leftTime) ? leftTime : 0;
-      const normalizedRight = Number.isFinite(rightTime) ? rightTime : 0;
-      if (normalizedRight !== normalizedLeft) {
-        return normalizedRight - normalizedLeft;
-      }
-      return left.index - right.index;
-    })
-    .map(({ template }) => template);
-  const planTemplateCards = filteredPlanTemplates.map((template) => ({
-    template,
-    summary: summarizePlanTemplateBlocks(template.blocks),
-    previewPlans: getPlanTemplatePreviewOptions(template.blocks),
-  }));
+  const planTemplateCards = useMemo(
+    () =>
+      planTemplates
+        .filter((template) => {
+          if (!matchPlanTemplateCategory(template, planTemplateFilter)) return false;
+          if (!planTemplateKeyword) return true;
+          const haystack = [
+            template.name,
+            template.sourceSiteName,
+            template.sourceSiteDomain,
+            template.sourceSiteId,
+            template.category,
+            template.sourceIndustry,
+          ]
+            .join("\n")
+            .toLowerCase();
+          return haystack.includes(planTemplateKeyword);
+        })
+        .map((template, index) => ({ template, index }))
+        .sort((left, right) => {
+          const leftTime = new Date(left.template.createdAt).getTime();
+          const rightTime = new Date(right.template.createdAt).getTime();
+          const normalizedLeft = Number.isFinite(leftTime) ? leftTime : 0;
+          const normalizedRight = Number.isFinite(rightTime) ? rightTime : 0;
+          if (normalizedRight !== normalizedLeft) {
+            return normalizedRight - normalizedLeft;
+          }
+          return left.index - right.index;
+        })
+        .map(({ template }) => ({
+          template,
+          summary: summarizePlanTemplateBlocks(template.blocks),
+          previewPlans: getPlanTemplatePreviewOptions(template.blocks),
+        })),
+    [planTemplateFilter, planTemplateKeyword, planTemplates],
+  );
 
   function renderTopMostOverlay(content: ReactNode) {
     if (typeof window === "undefined") return content;
@@ -17708,7 +17755,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       onChange={(event) => setPlanTemplateSearch(event.target.value)}
                       placeholder="搜索方案名称 / 来源网站 / 域名前缀 / 分类"
                     />
-                    <div className="text-sm text-slate-500">共 {filteredPlanTemplates.length} 个方案</div>
+                    <div className="text-sm text-slate-500">共 {planTemplateCards.length} 个方案</div>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {PLAN_TEMPLATE_FILTER_OPTIONS.map((option) => (

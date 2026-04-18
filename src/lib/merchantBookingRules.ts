@@ -137,23 +137,14 @@ function buildRuleEquivalenceKey(entry: MerchantBookingRuleSnapshotEntry) {
   });
 }
 
-export function buildMerchantBookingRulesSnapshot(
+export function buildMerchantBookingRulesSnapshotFromPlanConfigs(
   siteId: string,
-  blocks: Block[],
+  desktopConfig: PagePlanConfig | null | undefined,
+  mobileConfig: PagePlanConfig | null | undefined,
   publishedAt: string,
 ): MerchantBookingRulesSnapshot {
   const normalizedSiteId = normalizeSiteId(siteId);
   const normalizedPublishedAt = String(publishedAt ?? "").trim() || new Date().toISOString();
-  if (!Array.isArray(blocks) || blocks.length === 0) {
-    return {
-      version: MERCHANT_BOOKING_RULES_VERSION,
-      siteId: normalizedSiteId,
-      publishedAt: normalizedPublishedAt,
-      entries: [],
-    };
-  }
-  const desktopConfig = getPagePlanConfigFromBlocks(blocks);
-  const mobileConfig = getEmbeddedMobilePlanConfig(blocks);
   return {
     version: MERCHANT_BOOKING_RULES_VERSION,
     siteId: normalizedSiteId,
@@ -163,6 +154,19 @@ export function buildMerchantBookingRulesSnapshot(
       ...collectBookingRuleEntriesFromPlanConfig(mobileConfig, "mobile"),
     ],
   };
+}
+
+export function buildMerchantBookingRulesSnapshot(
+  siteId: string,
+  blocks: Block[],
+  publishedAt: string,
+): MerchantBookingRulesSnapshot {
+  if (!Array.isArray(blocks) || blocks.length === 0) {
+    return buildMerchantBookingRulesSnapshotFromPlanConfigs(siteId, null, null, publishedAt);
+  }
+  const desktopConfig = getPagePlanConfigFromBlocks(blocks);
+  const mobileConfig = getEmbeddedMobilePlanConfig(blocks);
+  return buildMerchantBookingRulesSnapshotFromPlanConfigs(siteId, desktopConfig, mobileConfig, publishedAt);
 }
 
 export function normalizeMerchantBookingRulesSnapshot(value: unknown): MerchantBookingRulesSnapshot | null {

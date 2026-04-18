@@ -3,7 +3,11 @@ import test from "node:test";
 import type { Block } from "@/data/homeBlocks";
 import type { PagePlanConfig } from "./pagePlans";
 import { buildCombinedPersistedBlocks } from "./planTemplateRuntime";
-import { buildMerchantBookingRulesSnapshot, resolveMerchantBookingRuleEntry } from "./merchantBookingRules";
+import {
+  buildMerchantBookingRulesSnapshot,
+  buildMerchantBookingRulesSnapshotFromPlanConfigs,
+  resolveMerchantBookingRuleEntry,
+} from "./merchantBookingRules";
 
 function createBookingBlock(id: string, ranges: string[]): Block {
   return {
@@ -73,6 +77,18 @@ test("buildMerchantBookingRulesSnapshot extracts booking rules for desktop and m
       maxBookingsPerSlot: null,
     },
   ]);
+});
+
+test("buildMerchantBookingRulesSnapshotFromPlanConfigs matches block-based snapshot output", () => {
+  const desktopConfig = createPlanConfig([createBookingBlock("booking-desktop", ["09:00-12:00"])]);
+  const mobileConfig = createPlanConfig([createBookingBlock("booking-mobile", ["14:00-18:00"])]);
+  const combinedBlocks = buildCombinedPersistedBlocks(desktopConfig, mobileConfig);
+  const publishedAt = "2026-04-11T09:00:00.000Z";
+
+  assert.deepEqual(
+    buildMerchantBookingRulesSnapshotFromPlanConfigs("10000000", desktopConfig, mobileConfig, publishedAt),
+    buildMerchantBookingRulesSnapshot("10000000", combinedBlocks, publishedAt),
+  );
 });
 
 test("resolveMerchantBookingRuleEntry returns the exact viewport + block rule", () => {

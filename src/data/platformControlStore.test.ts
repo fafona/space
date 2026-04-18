@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createDefaultMerchantPermissionConfig, loadPlatformState, savePlatformState } from "./platformControlStore";
+import {
+  createDefaultMerchantPermissionConfig,
+  loadPlatformState,
+  normalizeMerchantPermissionConfig,
+  savePlatformState,
+} from "./platformControlStore";
 import { getPagePlanConfigFromBlocks } from "@/lib/pagePlans";
 
 function createMemoryStorage(): Storage {
@@ -34,6 +39,14 @@ test("merchant permission config includes default business card background image
   assert.equal(permission.commonBlockImageLimitKb, 300);
   assert.equal(permission.galleryBlockImageLimitKb, 300);
   assert.equal(permission.allowBookingEmailPrefill, false);
+  assert.equal(permission.allowOrderManagement, false);
+});
+
+test("merchant permission config keeps order management disabled for legacy product-only configs", () => {
+  const permission = normalizeMerchantPermissionConfig({
+    allowProductBlock: true,
+  });
+  assert.equal(permission.allowProductBlock, true);
   assert.equal(permission.allowOrderManagement, false);
 });
 
