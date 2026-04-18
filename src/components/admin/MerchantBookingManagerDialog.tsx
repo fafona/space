@@ -449,8 +449,13 @@ export default function MerchantBookingManagerDialog({
   const [customerEmailLocale, setCustomerEmailLocale] = useState(defaultCustomerEmailLocale);
   const [customerEmailLocaleLoaded, setCustomerEmailLocaleLoaded] = useState(false);
   const workbenchButtonClassName = workbenchOpen
-    ? "inline-flex items-center justify-center rounded-[18px] rounded-tl-[8px] rounded-br-[24px] border border-[#c7b48f] bg-[linear-gradient(135deg,#1f2b46_0%,#233657_100%)] px-4 py-2 text-sm font-semibold tracking-[0.02em] text-[#f7e8c2] shadow-[0_16px_30px_rgba(15,23,42,0.22)] ring-1 ring-[#efe2bf]/70 transition"
-    : "inline-flex items-center justify-center rounded-[18px] rounded-tl-[8px] rounded-br-[24px] border border-[#d8c7a5] bg-[linear-gradient(135deg,#fffdfa_0%,#f6efe1_62%,#ecdfc2_100%)] px-4 py-2 text-sm font-semibold tracking-[0.02em] text-slate-800 shadow-[0_12px_24px_rgba(148,119,66,0.14)] transition hover:-translate-y-[1px] hover:shadow-[0_16px_28px_rgba(148,119,66,0.18)]";
+    ? "inline-flex items-center justify-center rounded-[18px] rounded-tl-[8px] rounded-br-[24px] border border-[#34d399] bg-[linear-gradient(135deg,#0f172a_0%,#0f766e_58%,#10b981_100%)] px-4 py-2 text-sm font-semibold tracking-[0.03em] text-white shadow-[0_18px_34px_rgba(15,118,110,0.28)] ring-1 ring-[#99f6e4]/60 transition"
+    : "inline-flex items-center justify-center rounded-[18px] rounded-tl-[8px] rounded-br-[24px] border border-[#f59e0b] bg-[linear-gradient(135deg,#fef3c7_0%,#f59e0b_38%,#f97316_100%)] px-4 py-2 text-sm font-semibold tracking-[0.03em] text-slate-950 shadow-[0_16px_30px_rgba(249,115,22,0.28)] ring-1 ring-[#fde68a]/80 transition hover:-translate-y-[1px] hover:brightness-[1.03] hover:shadow-[0_20px_34px_rgba(249,115,22,0.34)]";
+  const toolbarSelectClassName =
+    "inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-[0_8px_18px_rgba(15,23,42,0.04)]";
+  const compactBatchButtonClassName = selectionMode
+    ? "rounded-full border border-slate-900 bg-slate-900 px-3 py-2 text-sm font-medium text-white shadow-[0_10px_20px_rgba(15,23,42,0.14)] transition"
+    : "rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-[0_8px_18px_rgba(15,23,42,0.04)] transition hover:bg-slate-50";
 
   useEffect(() => {
     if (!open) {
@@ -1189,8 +1194,8 @@ export default function MerchantBookingManagerDialog({
           }`}
         >
         <div className="flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4">
-          <div className="space-y-1">
-            <div className="flex flex-wrap items-center gap-3">
+          <div className="min-w-0 flex-1 space-y-1">
+            <div className="flex flex-wrap items-center gap-2.5">
               <div className="text-lg font-semibold text-slate-900">{getMerchantBookingFieldText("managementTitle", locale)}</div>
               <button
                 type="button"
@@ -1198,6 +1203,63 @@ export default function MerchantBookingManagerDialog({
                 onClick={() => setWorkbenchOpen(true)}
               >
                 {getMerchantBookingFieldText("workbenchButton", locale)}
+              </button>
+              <label className={toolbarSelectClassName}>
+                <span className="text-xs font-medium text-slate-500">{getMerchantBookingSortLabel(locale)}</span>
+                <div className="relative">
+                  <select
+                    className="appearance-none bg-transparent pr-5 text-sm font-medium text-slate-900 outline-none"
+                    value={sortMode}
+                    onChange={(event) => setSortMode(event.target.value as MerchantBookingSortMode)}
+                  >
+                    {MERCHANT_BOOKING_SORT_MODES.map((mode) => (
+                      <option key={mode} value={mode}>
+                        {getMerchantBookingSortOptionText(mode, locale)}
+                      </option>
+                    ))}
+                  </select>
+                  <svg
+                    viewBox="0 0 20 20"
+                    fill="none"
+                    aria-hidden="true"
+                    className="pointer-events-none absolute right-0 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+                  >
+                    <path d="m5 7.5 5 5 5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </div>
+              </label>
+              <label className={toolbarSelectClassName}>
+                <span className="text-xs font-medium text-slate-500">{getMerchantBookingHistoryVisibilityLabel(locale)}</span>
+                <div className="relative">
+                  <select
+                    className="appearance-none bg-transparent pr-5 text-sm font-medium text-slate-900 outline-none"
+                    value={historyVisibility}
+                    onChange={(event) =>
+                      setHistoryVisibility(event.target.value as MerchantBookingHistoryVisibility)
+                    }
+                  >
+                    {MERCHANT_BOOKING_HISTORY_VISIBILITY_OPTIONS.map((value) => (
+                      <option key={value} value={value}>
+                        {getMerchantBookingHistoryVisibilityText(value, locale)}
+                      </option>
+                    ))}
+                  </select>
+                  <svg
+                    viewBox="0 0 20 20"
+                    fill="none"
+                    aria-hidden="true"
+                    className="pointer-events-none absolute right-0 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+                  >
+                    <path d="m5 7.5 5 5 5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </div>
+              </label>
+              <button
+                type="button"
+                className={compactBatchButtonClassName}
+                onClick={() => setSelectionMode((current) => !current)}
+              >
+                {locale.startsWith("es") ? "Lote" : "批量"}
               </button>
             </div>
             <div className="text-sm text-slate-500">{getMerchantBookingManagementSubtitle(siteName || siteId, locale)}</div>
@@ -1249,7 +1311,7 @@ export default function MerchantBookingManagerDialog({
               ))}
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="hidden">
             <label className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
               <span className="text-xs font-medium text-slate-500">{getMerchantBookingSortLabel(locale)}</span>
               <div className="relative">
@@ -1301,12 +1363,10 @@ export default function MerchantBookingManagerDialog({
               </div>
             </label>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className={selectionMode ? "flex flex-wrap items-center gap-2" : "hidden"}>
             <button
               type="button"
-              className={`rounded-full px-3 py-2 text-sm font-medium transition ${
-                selectionMode ? "bg-slate-900 text-white" : "border border-slate-200 bg-white text-slate-700"
-              }`}
+              className="hidden"
               onClick={() => setSelectionMode((current) => !current)}
             >
               {locale.startsWith("es") ? "Lote" : "批量"}
