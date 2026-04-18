@@ -22,6 +22,8 @@ export type MerchantBookingWorkbenchPublicSettings = {
   recurringRules: MerchantBookingRecurringRule[];
 };
 
+export type MerchantBookingAppointmentAutoStatus = "" | "completed" | "no_show";
+
 export type MerchantBookingWorkbenchSettings = MerchantBookingWorkbenchPublicSettings & {
   customerEmailLocale: string;
   customerAutoEmailEnabled: boolean;
@@ -30,6 +32,7 @@ export type MerchantBookingWorkbenchSettings = MerchantBookingWorkbenchPublicSet
   customerEmailSenderName: string;
   customerReminderOffsetsMinutes: number[];
   merchantReminderOffsetsMinutes: number[];
+  appointmentAutoStatus: MerchantBookingAppointmentAutoStatus;
   noShowEnabled: boolean;
   noShowGraceMinutes: number | null;
   calendarSyncToken: string;
@@ -48,6 +51,7 @@ const WORKBENCH_DEFAULTS: MerchantBookingWorkbenchSettings = {
   customerEmailSenderName: "",
   customerReminderOffsetsMinutes: [],
   merchantReminderOffsetsMinutes: [],
+  appointmentAutoStatus: "",
   noShowEnabled: false,
   noShowGraceMinutes: null,
   calendarSyncToken: "",
@@ -113,6 +117,14 @@ function normalizeSingleReminderOffset(value: unknown) {
 function normalizeEmailLocale(value: unknown) {
   const normalized = trimText(value);
   return normalized ? resolveSupportedLocale(normalized) : "";
+}
+
+function normalizeAppointmentAutoStatus(value: unknown): MerchantBookingAppointmentAutoStatus {
+  const normalized = trimText(value);
+  if (normalized === "completed" || normalized === "no_show") {
+    return normalized;
+  }
+  return "";
 }
 
 function normalizeAutoEmailStatuses(value: unknown) {
@@ -223,6 +235,7 @@ export function normalizeMerchantBookingWorkbenchSettings(value: unknown): Merch
     customerEmailSenderName: trimText(source.customerEmailSenderName),
     customerReminderOffsetsMinutes: normalizeSingleReminderOffset(source.customerReminderOffsetsMinutes),
     merchantReminderOffsetsMinutes: normalizeSingleReminderOffset(source.merchantReminderOffsetsMinutes),
+    appointmentAutoStatus: normalizeAppointmentAutoStatus(source.appointmentAutoStatus),
     noShowEnabled: source.noShowEnabled === true,
     noShowGraceMinutes: normalizePositiveMinutes(source.noShowGraceMinutes),
     calendarSyncToken: trimText(source.calendarSyncToken),
@@ -334,6 +347,19 @@ export function shouldMarkMerchantBookingNoShow(
   const appointmentDate = parseLocalDateTime(booking.appointmentAt);
   if (!appointmentDate) return false;
   return appointmentDate.getTime() + settings.noShowGraceMinutes * 60 * 1000 <= now.getTime();
+}
+
+export function getMerchantBookingAutoStatusAtAppointmentTime(
+  booking: Pick<MerchantBookingRecord, "status" | "appointmentAt">,
+  settings: Pick<MerchantBookingWorkbenchSettings, "appointmentAutoStatus">,
+  now = new Date(),
+): Exclude<MerchantBookingAppointmentAutoStatus, ""> | null {
+  if (booking.status !== "active" && booking.status !== "confirmed") return null;
+  const autoStatus = normalizeAppointmentAutoStatus(settings.appointmentAutoStatus);
+  if (!autoStatus) return null;
+  const appointmentDate = parseLocalDateTime(booking.appointmentAt);
+  if (!appointmentDate) return null;
+  return appointmentDate.getTime() <= now.getTime() ? autoStatus : null;
 }
 
 export function isMerchantBookingReminderDue(

@@ -20,6 +20,7 @@ import {
   withoutMerchantBookingToken,
 } from "./merchantBookings";
 import {
+  getMerchantBookingAutoStatusAtAppointmentTime,
   getMerchantBookingAdvanceIssue,
   getMerchantBookingBufferIssue,
   getMerchantBookingDueReminderOffset,
@@ -552,8 +553,22 @@ async function runMerchantBookingAutomationForSite(siteId: string) {
       if (!current || current.siteId !== normalizedSiteId) continue;
       let next = current;
       const previousStatus = current.status;
+      const autoStatusAtAppointmentTime = getMerchantBookingAutoStatusAtAppointmentTime(next, settings, now);
 
-      if (shouldMarkMerchantBookingNoShow(next, settings, now)) {
+      if (autoStatusAtAppointmentTime) {
+        next = {
+          ...next,
+          ...applyStatusMetadata(next, autoStatusAtAppointmentTime, nowIso),
+        };
+        next = appendStatusTimelineEntry(next, {
+          actor: "system",
+          at: nowIso,
+          fromStatus: previousStatus,
+          toStatus: autoStatusAtAppointmentTime,
+          note: "auto",
+        });
+        changed = true;
+      } else if (shouldMarkMerchantBookingNoShow(next, settings, now)) {
         next = {
           ...next,
           ...applyStatusMetadata(next, "no_show", nowIso),
@@ -568,7 +583,7 @@ async function runMerchantBookingAutomationForSite(siteId: string) {
         changed = true;
       }
 
-      if (next.status === "no_show" && previousStatus !== "no_show") {
+      if ((next.status === "no_show" || next.status === "completed") && previousStatus !== next.status) {
         const nextWithEmail = await maybeSendCustomerStatusEmail({
           record: next,
           previousStatus,

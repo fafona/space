@@ -627,6 +627,30 @@ export default function BookingWorkbenchDialog({
       draft.merchantReminderOffsetsMinutes,
     ],
   );
+  const appointmentAutoStatusOptions = useMemo(
+    () =>
+      [
+        {
+          value: "completed" as const,
+          label: locale.startsWith("es") ? "Auto completar al llegar la hora" : "到时自动完成",
+          description: locale.startsWith("es")
+            ? "Cuando llegue la hora de la cita, las reservas aún activas o confirmadas pasarán a completadas."
+            : "预约时间一到，仍是待确认或已确认的记录会自动标记为已完成。",
+        },
+        {
+          value: "no_show" as const,
+          label: locale.startsWith("es") ? "Auto marcar no-show al llegar la hora" : "到时自动未到店",
+          description: locale.startsWith("es")
+            ? "Cuando llegue la hora de la cita, las reservas aún activas o confirmadas pasarán a no-show."
+            : "预约时间一到，仍是待确认或已确认的记录会自动标记为未到店。",
+        },
+      ] satisfies Array<{
+        value: "completed" | "no_show";
+        label: string;
+        description: string;
+      }>,
+    [locale],
+  );
   const currentSectionLabel = useMemo(() => {
     if (sectionView === "home") return getMerchantBookingFieldText("workbenchTitle", locale);
     return menuItems.find((item) => item.key === sectionView)?.label ?? getMerchantBookingFieldText("workbenchTitle", locale);
@@ -1191,6 +1215,61 @@ export default function BookingWorkbenchDialog({
                           onChange={(event) => setDraft((current) => ({ ...current, bufferMinutes: toNumberOrNull(event.target.value) }))}
                         />
                       </label>
+                    </div>
+                  </section>
+
+                  <section className={`rounded-3xl border p-5 ${panelClassName}`}>
+                    <div className="text-base font-semibold">{locale.startsWith("es") ? "Acción automática al llegar la hora" : "到时自动处理"}</div>
+                    <div className={`mt-1 text-sm ${mutedTextClassName}`}>
+                      {locale.startsWith("es")
+                        ? "Puede dejarlo sin activar o elegir solo una opción. Se aplicará cuando llegue la hora exacta de la cita."
+                        : "可不启用，也只能二选一。到预约时间时，系统会按这里选择的结果自动处理仍未结束的预约。"}
+                    </div>
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      {appointmentAutoStatusOptions.map((option) => {
+                        const selected = draft.appointmentAutoStatus === option.value;
+                        return (
+                          <button
+                            key={option.value}
+                            type="button"
+                            className={`rounded-2xl border p-4 text-left transition ${
+                              selected
+                                ? (darkMode
+                                  ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-50"
+                                  : "border-emerald-300 bg-emerald-50 text-slate-900")
+                                : softPanelClassName
+                            }`}
+                            onClick={() =>
+                              setDraft((current) => ({
+                                ...current,
+                                appointmentAutoStatus: current.appointmentAutoStatus === option.value ? "" : option.value,
+                              }))
+                            }
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="text-sm font-semibold">{option.label}</div>
+                                <div className={`mt-1 text-xs leading-5 ${selected && darkMode ? "text-emerald-100/80" : mutedTextClassName}`}>
+                                  {option.description}
+                                </div>
+                              </div>
+                              <span
+                                className={`mt-0.5 inline-flex h-5 w-5 shrink-0 rounded-full border ${
+                                  selected
+                                    ? (darkMode ? "border-emerald-300 bg-emerald-300" : "border-emerald-500 bg-emerald-500")
+                                    : (darkMode ? "border-slate-600 bg-transparent" : "border-slate-300 bg-transparent")
+                                }`}
+                                aria-hidden="true"
+                              />
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className={`mt-3 text-xs ${mutedTextClassName}`}>
+                      {locale.startsWith("es")
+                        ? "Si también está activa la regla de no-show con margen, esta acción al llegar la hora tendrá prioridad."
+                        : "如果同时开启了爽约宽限，优先生效的是这里的到时自动处理。再次点击已选项可取消。"}
                     </div>
                   </section>
 

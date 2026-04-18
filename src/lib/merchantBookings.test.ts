@@ -29,6 +29,7 @@ import {
 } from "./merchantBookings";
 import {
   buildMerchantBookingReminderSummary,
+  getMerchantBookingAutoStatusAtAppointmentTime,
   getMerchantBookingBufferIssue,
   getMerchantBookingDueReminderOffset,
   normalizeMerchantBookingWorkbenchSettings,
@@ -251,6 +252,63 @@ test("getMerchantBookingDueReminderOffset only returns the current reminder buck
   );
 });
 
+test("getMerchantBookingAutoStatusAtAppointmentTime returns the configured status once appointment time is reached", () => {
+  const booking = {
+    status: "confirmed" as const,
+    appointmentAt: "2026-03-19T10:00",
+  };
+
+  assert.equal(
+    getMerchantBookingAutoStatusAtAppointmentTime(
+      booking,
+      { appointmentAutoStatus: "completed" },
+      new Date(2026, 2, 19, 9, 59, 59, 0),
+    ),
+    null,
+  );
+  assert.equal(
+    getMerchantBookingAutoStatusAtAppointmentTime(
+      booking,
+      { appointmentAutoStatus: "completed" },
+      new Date(2026, 2, 19, 10, 0, 0, 0),
+    ),
+    "completed",
+  );
+  assert.equal(
+    getMerchantBookingAutoStatusAtAppointmentTime(
+      booking,
+      { appointmentAutoStatus: "no_show" },
+      new Date(2026, 2, 19, 10, 5, 0, 0),
+    ),
+    "no_show",
+  );
+});
+
+test("getMerchantBookingAutoStatusAtAppointmentTime ignores closed bookings or empty selections", () => {
+  assert.equal(
+    getMerchantBookingAutoStatusAtAppointmentTime(
+      {
+        status: "completed",
+        appointmentAt: "2026-03-19T10:00",
+      },
+      { appointmentAutoStatus: "no_show" },
+      new Date(2026, 2, 19, 10, 5, 0, 0),
+    ),
+    null,
+  );
+  assert.equal(
+    getMerchantBookingAutoStatusAtAppointmentTime(
+      {
+        status: "active",
+        appointmentAt: "2026-03-19T10:00",
+      },
+      { appointmentAutoStatus: "" },
+      new Date(2026, 2, 19, 10, 5, 0, 0),
+    ),
+    null,
+  );
+});
+
 test("buildMerchantBookingReminderSummary ignores already-processed reminder buckets", () => {
   const summary = buildMerchantBookingReminderSummary(
     [
@@ -288,6 +346,7 @@ test("buildMerchantBookingReminderSummary ignores already-processed reminder buc
       recurringRules: [],
       customerReminderOffsetsMinutes: [1440, 120, 30],
       merchantReminderOffsetsMinutes: [30],
+      appointmentAutoStatus: "",
       noShowEnabled: true,
       noShowGraceMinutes: 30,
       calendarSyncToken: "",
@@ -593,6 +652,21 @@ test("normalizeMerchantBookingWorkbenchSettings keeps only one reminder minute p
 
   assert.deepEqual(settings.customerReminderOffsetsMinutes, [30]);
   assert.deepEqual(settings.merchantReminderOffsetsMinutes, [15]);
+});
+
+test("normalizeMerchantBookingWorkbenchSettings keeps only supported appointment auto statuses", () => {
+  assert.equal(
+    normalizeMerchantBookingWorkbenchSettings({
+      appointmentAutoStatus: "completed",
+    }).appointmentAutoStatus,
+    "completed",
+  );
+  assert.equal(
+    normalizeMerchantBookingWorkbenchSettings({
+      appointmentAutoStatus: "unexpected",
+    }).appointmentAutoStatus,
+    "",
+  );
 });
 
 test("getMerchantBookingStatusLabel returns readable labels", () => {
