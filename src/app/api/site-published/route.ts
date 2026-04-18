@@ -4,7 +4,7 @@ import { fetchPublishedSitePayloadFromSupabase } from "@/lib/publishedSiteData";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
-export { isMissingPublishedSlugColumn, pickPublishedPageRow } from "@/lib/publishedSiteData";
+export { isMissingPublishedSlugColumn, isPublishedBlocksPayload, pickPublishedPageRow } from "@/lib/publishedSiteData";
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);

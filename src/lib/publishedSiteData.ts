@@ -32,6 +32,32 @@ function toTimestamp(value: string | null | undefined) {
   return Number.isFinite(time) ? time : 0;
 }
 
+function normalizeSlug(value: string | null | undefined) {
+  return String(value ?? "").trim();
+}
+
+function isInternalPagesSlug(value: string | null | undefined) {
+  const normalized = normalizeSlug(value);
+  return normalized.startsWith("__");
+}
+
+function isPublishedBlockRecord(value: unknown): value is Block {
+  if (!value || typeof value !== "object") return false;
+  const record = value as { id?: unknown; type?: unknown; props?: unknown };
+  return (
+    typeof record.id === "string" &&
+    record.id.trim().length > 0 &&
+    typeof record.type === "string" &&
+    record.type.trim().length > 0 &&
+    !!record.props &&
+    typeof record.props === "object"
+  );
+}
+
+export function isPublishedBlocksPayload(value: unknown): value is Block[] {
+  return Array.isArray(value) && value.length > 0 && value.every((item) => isPublishedBlockRecord(item));
+}
+
 export function isMissingPublishedSlugColumn(message: string) {
   return (
     /column\s+pages\.slug\s+does\s+not\s+exist/i.test(message) ||
@@ -48,7 +74,8 @@ export function choosePreferredPublishedPageRow(current: PublishedPageRow | null
 
 export function pickPublishedPageRow(rows: PublishedPageRow[]) {
   return rows
-    .filter((item) => Array.isArray(item.blocks) && item.blocks.length > 0)
+    .filter((item) => !isInternalPagesSlug(item.slug))
+    .filter((item) => isPublishedBlocksPayload(item.blocks))
     .reduce<PublishedPageRow | null>((best, item) => choosePreferredPublishedPageRow(best, item), null);
 }
 
@@ -95,7 +122,7 @@ export async function fetchPublishedSitePayloadFromSupabase(siteId: string): Pro
   }
 
   const chosen = pickPublishedPageRow((data ?? []) as PublishedPageRow[]);
-  if (!chosen || !Array.isArray(chosen.blocks) || chosen.blocks.length === 0) {
+  if (!chosen || !isPublishedBlocksPayload(chosen.blocks)) {
     return null;
   }
 
@@ -112,7 +139,7 @@ export async function fetchPublishedSitePayloadFromSupabase(siteId: string): Pro
     siteId: normalizedSiteId,
     slug: String(chosen.slug ?? "").trim(),
     merchantName,
-    blocks: chosen.blocks as Block[],
+    blocks: chosen.blocks,
     serviceState,
   };
 }

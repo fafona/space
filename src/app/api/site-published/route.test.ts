@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   GET,
+  isPublishedBlocksPayload,
   isMissingPublishedSlugColumn,
   pickPublishedPageRow,
 } from "@/app/api/site-published/route";
@@ -19,6 +20,41 @@ test("pickPublishedPageRow ignores empty block payloads and keeps the newest val
   assert.equal(chosen?.slug, "new-valid");
 });
 
+test("pickPublishedPageRow ignores internal rows whose blocks are not real published blocks", () => {
+  const chosen = pickPublishedPageRow([
+    {
+      blocks: [
+        {
+          id: "O202604172303304RUF",
+          siteId: "10000000",
+          status: "pending",
+          items: [],
+        },
+      ],
+      slug: "__merchant_orders__:10000000",
+      updated_at: "2026-04-18T08:00:00.000Z",
+    },
+    { blocks: demoBlocks, slug: "fafona", updated_at: "2026-04-18T07:00:00.000Z" },
+  ]);
+
+  assert.equal(chosen?.slug, "fafona");
+});
+
+test("isPublishedBlocksPayload rejects order-like arrays and accepts real block arrays", () => {
+  assert.equal(
+    isPublishedBlocksPayload([
+      {
+        id: "O202604172303304RUF",
+        siteId: "10000000",
+        status: "pending",
+        items: [],
+      },
+    ]),
+    false,
+  );
+  assert.equal(isPublishedBlocksPayload(demoBlocks), true);
+});
+
 test("isMissingPublishedSlugColumn detects known schema-cache slug errors", () => {
   assert.equal(isMissingPublishedSlugColumn('column pages.slug does not exist'), true);
   assert.equal(
@@ -33,4 +69,3 @@ test("site-published rejects invalid site ids before touching env or backend", a
   assert.equal(response.status, 400);
   assert.deepEqual(await response.json(), { error: "invalid_site_id" });
 });
-
