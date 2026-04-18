@@ -10051,6 +10051,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   );
   const supportSelfProfile = supportSelfFetchedProfile ?? supportSelfLocalProfile ?? null;
   const shouldWarmCurrentMerchantProfile =
+    supportSelfFetchedProfile === undefined ||
     merchantProfileDialogOpen ||
     merchantBookingManagerOpen ||
     !hasSupportMerchantProfileCoverage(supportSelfLocalProfile) ||
