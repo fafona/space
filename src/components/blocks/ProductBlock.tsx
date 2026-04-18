@@ -1128,7 +1128,7 @@ export default function ProductBlock(props: ProductBlockProps) {
   return (
     <section ref={rootRef} className={resolveMobileFitSectionClass("mx-auto max-w-6xl px-6 py-6", mobileFitScreenWidth)} style={offsetStyle}>
       <div
-        className={resolveMobileFitCardClass(`relative overflow-hidden rounded-2xl bg-white p-6 shadow-sm ${borderClass} ${cartEnabled ? "pb-24" : ""}`, mobileFitScreenWidth)}
+        className={resolveMobileFitCardClass(`relative overflow-hidden rounded-2xl bg-white p-6 shadow-sm ${borderClass}`, mobileFitScreenWidth)}
         style={{ ...cardStyle, ...sizeStyle, ...borderInlineStyle }}
       >
         {hasHeading ? (
@@ -1141,7 +1141,7 @@ export default function ProductBlock(props: ProductBlockProps) {
           <div className="mt-2 break-words whitespace-pre-wrap text-sm leading-6 text-slate-600" dangerouslySetInnerHTML={{ __html: toRichHtml(props.text, "") }} />
         ) : null}
         {renderProductsWithFilters()}
-        {cartEnabled ? (
+        {false && cartEnabled ? (
           <button
             type="button"
             className="absolute bottom-5 left-5 inline-flex items-center gap-3 rounded-full bg-slate-950 px-4 py-3 text-sm font-semibold text-white shadow-[0_18px_40px_rgba(15,23,42,0.18)] transition hover:bg-slate-800"
@@ -1159,6 +1159,23 @@ export default function ProductBlock(props: ProductBlockProps) {
           </button>
         ) : null}
       </div>
+      {cartEnabled ? (
+        <button
+          type="button"
+          className="absolute bottom-2 left-6 z-20 inline-flex items-center gap-2 rounded-full bg-slate-950/95 px-3.5 py-2.5 text-sm font-semibold text-white shadow-[0_12px_28px_rgba(15,23,42,0.18)] transition hover:bg-slate-800"
+          onClick={() => {
+            setCartError("");
+            setCartNotice("");
+            setCartOpen(true);
+          }}
+        >
+          <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-base">🛒</span>
+          <span>Cart</span>
+          <span className="inline-flex min-w-[1.45rem] items-center justify-center rounded-full bg-emerald-400 px-1.5 py-0.5 text-[11px] font-bold text-slate-950">
+            {checkedCartTotalQuantity}
+          </span>
+        </button>
+      ) : null}
       {cartOpen ? (
         <div className="fixed inset-0 z-[1100] flex items-center justify-center bg-black/55 p-4" onClick={() => setCartOpen(false)}>
           <div
@@ -1226,9 +1243,6 @@ export default function ProductBlock(props: ProductBlockProps) {
                                   删除
                                 </button>
                               </div>
-                              {item.product.description ? (
-                                <div className="mt-2 line-clamp-2 text-sm leading-6 text-slate-500">{item.product.description}</div>
-                              ) : null}
                               <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
                                 <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-2 py-1">
                                   <button
