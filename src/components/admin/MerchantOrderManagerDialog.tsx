@@ -188,6 +188,7 @@ export default function MerchantOrderManagerDialog({
   const [actionBusyId, setActionBusyId] = useState("");
   const [batchBusyKey, setBatchBusyKey] = useState("");
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
+  const [detailOrderId, setDetailOrderId] = useState("");
 
   const workbenchButtonClassName = workbenchOpen
     ? "inline-flex items-center justify-center rounded-[18px] rounded-tl-[8px] rounded-br-[24px] border border-[#34d399] bg-[linear-gradient(135deg,#0f172a_0%,#0f766e_58%,#10b981_100%)] px-4 py-2 text-sm font-semibold tracking-[0.03em] text-white shadow-[0_18px_34px_rgba(15,118,110,0.28)] ring-1 ring-[#99f6e4]/60 transition"
@@ -281,6 +282,10 @@ export default function MerchantOrderManagerDialog({
 
   const visibleRecordIdSet = useMemo(() => new Set(filteredRecords.map((record) => record.id)), [filteredRecords]);
   const selectedRecordSet = useMemo(() => new Set(selectedOrderIds), [selectedOrderIds]);
+  const detailOrder = useMemo(
+    () => (detailOrderId ? records.find((record) => record.id === detailOrderId) ?? null : null),
+    [detailOrderId, records],
+  );
 
   useEffect(() => {
     if (!selectionMode) return;
@@ -414,6 +419,18 @@ export default function MerchantOrderManagerDialog({
     [selectionMode, toggleSelectedOrder],
   );
 
+  const closeDetailDialog = useCallback(() => {
+    setDetailOrderId("");
+  }, []);
+
+  const openDetailDialog = useCallback(
+    (record: MerchantOrderRecord) => {
+      setDetailOrderId(record.id);
+      void markOrderTouched(record.id);
+    },
+    [markOrderTouched],
+  );
+
   const renderOrderActions = useCallback(
     (record: MerchantOrderRecord) => (
       <>
@@ -471,6 +488,147 @@ export default function MerchantOrderManagerDialog({
               >
                 关闭
               </button>
+            </div>
+          </div>
+        </div>,
+      )
+    : null;
+
+  const detailDialog = detailOrder
+    ? overlay(
+        <div
+          className="fixed inset-0 z-[2147482940] flex items-center justify-center bg-black/45 px-4"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              closeDetailDialog();
+            }
+          }}
+        >
+          <div className="w-full max-w-4xl rounded-[28px] border border-slate-200 bg-white shadow-2xl">
+            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 px-6 py-5">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${getStatusBadgeClass(detailOrder.status)}`}>
+                    {getStatusText(detailOrder.status)}
+                  </span>
+                  <div className="truncate text-xl font-semibold text-slate-950">
+                    {detailOrder.customer.name || "未命名客户"}
+                  </div>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-500">
+                  <span>{`订单号: ${detailOrder.id}`}</span>
+                  <span>{`下单时间: ${formatDateTime(detailOrder.createdAt)}`}</span>
+                  <span>{`金额: ${formatMerchantOrderAmount(detailOrder.totalAmount, detailOrder.pricePrefix)}`}</span>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {renderOrderActions(detailOrder)}
+                <button
+                  type="button"
+                  className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50"
+                  onClick={closeDetailDialog}
+                >
+                  关闭
+                </button>
+              </div>
+            </div>
+
+            <div className="grid gap-4 px-6 py-5 lg:grid-cols-[minmax(0,1.1fr)_minmax(300px,0.9fr)]">
+              <div className="space-y-3">
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                  <div className="text-sm font-semibold text-slate-900">商品明细</div>
+                  <div className="mt-3 space-y-3">
+                    {detailOrder.items.map((item) => (
+                      <div
+                        key={`${detailOrder.id}-${item.productId}-${item.code}`}
+                        className="flex items-start justify-between gap-4 rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                      >
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold text-slate-900">{item.name || "未命名产品"}</div>
+                          <div className="mt-1 text-xs uppercase tracking-[0.18em] text-slate-400">{item.code || "-"}</div>
+                          {item.description ? (
+                            <div className="mt-2 whitespace-pre-wrap break-words text-sm text-slate-500">
+                              {item.description}
+                            </div>
+                          ) : null}
+                        </div>
+                        <div className="shrink-0 text-right">
+                          <div className="text-sm text-slate-500">×{item.quantity}</div>
+                          <div className="mt-1 text-base font-semibold text-sky-700">
+                            {formatMerchantOrderAmount(item.subtotal, detailOrder.pricePrefix)}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                  <div className="text-sm font-semibold text-slate-900">客户信息</div>
+                  <div className="mt-3 grid gap-3 text-sm text-slate-600">
+                    <div>
+                      <span className="text-slate-400">店铺：</span>
+                      {detailOrder.siteName || detailOrder.siteId}
+                    </div>
+                    <div>
+                      <span className="text-slate-400">姓名：</span>
+                      {detailOrder.customer.name || "-"}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-slate-400">邮箱：</span>
+                      <span className="min-w-0 flex-1 break-all">{detailOrder.customer.email || "-"}</span>
+                      {detailOrder.customer.email ? (
+                        <a
+                          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
+                          href={`mailto:${detailOrder.customer.email}`}
+                          onClick={() => {
+                            void markOrderTouched(detailOrder.id);
+                          }}
+                          title="发送邮件"
+                          aria-label="发送邮件"
+                        >
+                          <MailIcon />
+                        </a>
+                      ) : null}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-slate-400">电话：</span>
+                      <span className="min-w-0 flex-1 break-all">{detailOrder.customer.phone || "-"}</span>
+                      {detailOrder.customer.phone ? (
+                        <a
+                          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#007AFF] text-white shadow-sm transition hover:bg-[#0066D6]"
+                          href={`tel:${detailOrder.customer.phone}`}
+                          onClick={() => {
+                            void markOrderTouched(detailOrder.id);
+                          }}
+                          title="拨打电话"
+                          aria-label="拨打电话"
+                        >
+                          <PhoneIcon />
+                        </a>
+                      ) : null}
+                    </div>
+                    <div>
+                      <span className="text-slate-400">备注：</span>
+                      {detailOrder.customer.note || "-"}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                  <div className="flex items-center justify-between text-sm text-slate-500">
+                    <span>商品数量</span>
+                    <span>{detailOrder.totalQuantity}</span>
+                  </div>
+                  <div className="mt-3 flex items-center justify-between text-lg font-semibold text-slate-900">
+                    <span>订单合计</span>
+                    <span>{formatMerchantOrderAmount(detailOrder.totalAmount, detailOrder.pricePrefix)}</span>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>,
@@ -547,75 +705,75 @@ export default function MerchantOrderManagerDialog({
           </div>
 
           <div className="space-y-3 border-b px-5 py-4">
-          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
-            <input
-              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-slate-300 focus:ring-2 focus:ring-slate-200"
-              placeholder="搜索订单号 / 客户 / 产品"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-            />
-            <div className="flex flex-wrap gap-2">
-              {([
-                ["all", `全部 ${counts.all}`],
-                ["pending", `待确认 ${counts.pending}`],
-                ["confirmed", `已确认 ${counts.confirmed}`],
-                ["cancelled", `已取消 ${counts.cancelled}`],
-              ] as Array<[MerchantOrderFilter, string]>).map(([key, label]) => (
+            <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
+              <input
+                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-slate-300 focus:ring-2 focus:ring-slate-200"
+                placeholder="搜索订单号 / 客户 / 产品"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+              />
+              <div className="flex flex-wrap gap-2">
+                {([
+                  ["all", `全部 ${counts.all}`],
+                  ["pending", `待确认 ${counts.pending}`],
+                  ["confirmed", `已确认 ${counts.confirmed}`],
+                  ["cancelled", `已取消 ${counts.cancelled}`],
+                ] as Array<[MerchantOrderFilter, string]>).map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    className={getFilterButtonClass(filter === key)}
+                    onClick={() => setFilter(key)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {selectionMode ? (
+              <div className="mt-4 flex flex-wrap items-center gap-2">
                 <button
-                  key={key}
                   type="button"
-                  className={getFilterButtonClass(filter === key)}
-                  onClick={() => setFilter(key)}
+                  className="rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                  onClick={toggleSelectAllFiltered}
                 >
-                  {label}
+                  {selectedRecordSet.size > 0 && filteredRecords.every((item) => selectedRecordSet.has(item.id))
+                    ? "取消当前页"
+                    : "全选当前页"}
                 </button>
-              ))}
-            </div>
-          </div>
+                <span className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700">
+                  已选 {selectedOrderIds.length} 条
+                </span>
+                {selectedOrderIds.length > 0 ? (
+                  <>
+                    <button
+                      type="button"
+                      className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700"
+                      onClick={() => void runBatchOrderAction("confirm")}
+                      disabled={batchBusyKey === "confirm"}
+                    >
+                      批量确认
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-full border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700"
+                      onClick={() => void runBatchOrderAction("cancel")}
+                      disabled={batchBusyKey === "cancel"}
+                    >
+                      批量取消
+                    </button>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
 
-          {selectionMode ? (
-            <div className="mt-4 flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                className="rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
-                onClick={toggleSelectAllFiltered}
-              >
-                {selectedRecordSet.size > 0 && filteredRecords.every((item) => selectedRecordSet.has(item.id))
-                  ? "取消当前页"
-                  : "全选当前页"}
-              </button>
-              <span className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700">
-                已选 {selectedOrderIds.length} 条
-              </span>
-              {selectedOrderIds.length > 0 ? (
-                <>
-                  <button
-                    type="button"
-                    className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700"
-                    onClick={() => void runBatchOrderAction("confirm")}
-                    disabled={batchBusyKey === "confirm"}
-                  >
-                    批量确认
-                  </button>
-                  <button
-                    type="button"
-                    className="rounded-full border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700"
-                    onClick={() => void runBatchOrderAction("cancel")}
-                    disabled={batchBusyKey === "cancel"}
-                  >
-                    批量取消
-                  </button>
-                </>
-              ) : null}
-            </div>
-          ) : null}
-
-          {notice ? (
-            <div className="mt-4 rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{notice}</div>
-          ) : null}
-          {error ? (
-            <div className="mt-4 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>
-          ) : null}
+            {notice ? (
+              <div className="mt-4 rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{notice}</div>
+            ) : null}
+            {error ? (
+              <div className="mt-4 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>
+            ) : null}
           </div>
         </div>
 
@@ -628,19 +786,12 @@ export default function MerchantOrderManagerDialog({
             ) : filteredRecords.length > 0 ? (
               filteredRecords.map((record) => {
                 const displayName = record.customer.name || "未命名客户";
-                const isNewRecord = isMerchantOrderPendingMerchantTouch(record);
                 return (
                   <article
                     key={record.id}
                     className="relative overflow-visible rounded-2xl border bg-slate-50 p-3.5 shadow-sm"
                     onClick={(event) => handleSelectionCardClick(event, record.id)}
                   >
-                    {isNewRecord ? (
-                      <span className="absolute left-3 top-0 z-10 inline-flex -translate-y-1/2 items-center rounded-[14px] border border-white/70 bg-emerald-500 px-2.5 py-1 text-[10px] font-semibold tracking-[0.18em] text-white shadow-[0_10px_24px_rgba(16,185,129,0.24)]">
-                        NEW
-                      </span>
-                    ) : null}
-
                     {selectionMode ? (
                       <label className="absolute right-3 top-3 inline-flex items-center gap-2 rounded-full bg-white px-2.5 py-1 text-xs font-medium text-slate-700 shadow-sm">
                         <input
@@ -653,110 +804,41 @@ export default function MerchantOrderManagerDialog({
                     ) : null}
 
                     <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="flex min-w-0 flex-1 flex-wrap items-start gap-x-5 gap-y-2">
-                        <div className="min-w-[240px] flex-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className={`rounded-full px-2 py-0.5 text-[11px] ${getStatusBadgeClass(record.status)}`}>
-                              {getStatusText(record.status)}
-                            </span>
-                            <div className="truncate text-base font-semibold text-slate-900">{displayName}</div>
-                          </div>
-                          <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
-                            <span>{`订单号: ${record.id}`}</span>
-                            <span>{`下单时间: ${formatDateTime(record.createdAt)}`}</span>
-                          </div>
+                      <div className="min-w-0 flex-1 space-y-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className={`rounded-full px-2 py-0.5 text-[11px] ${getStatusBadgeClass(record.status)}`}>
+                            {getStatusText(record.status)}
+                          </span>
+                          <div className="truncate text-base font-semibold text-slate-900">{displayName}</div>
                         </div>
 
-                        <div className="flex min-w-[280px] items-center gap-2 text-[13px] leading-5 text-slate-700">
-                          <span className="min-w-0 flex-1 truncate">{`邮箱: ${record.customer.email || "-"}`}</span>
-                          {record.customer.email ? (
-                            <a
-                              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
-                              href={`mailto:${record.customer.email}`}
-                              onClick={() => {
-                                void markOrderTouched(record.id);
-                              }}
-                              title="发送邮件"
-                              aria-label="发送邮件"
-                            >
-                              <MailIcon />
-                            </a>
-                          ) : null}
-                        </div>
-
-                        <div className="flex min-w-[240px] items-center gap-2 text-[13px] leading-5 text-slate-700">
-                          <span className="min-w-0 flex-1 truncate">{`电话: ${record.customer.phone || "-"}`}</span>
-                          {record.customer.phone ? (
-                            <a
-                              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#007AFF] text-white shadow-sm transition hover:bg-[#0066D6]"
-                              href={`tel:${record.customer.phone}`}
-                              onClick={() => {
-                                void markOrderTouched(record.id);
-                              }}
-                              title="拨打电话"
-                              aria-label="拨打电话"
-                            >
-                              <PhoneIcon />
-                            </a>
-                          ) : null}
+                        <div className="grid gap-3 text-sm text-slate-600 md:grid-cols-3 xl:grid-cols-4">
+                          <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                            <div className="text-xs text-slate-400">订单号</div>
+                            <div className="mt-1 break-all font-medium text-slate-900">{record.id}</div>
+                          </div>
+                          <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                            <div className="text-xs text-slate-400">下单时间</div>
+                            <div className="mt-1 font-medium text-slate-900">{formatDateTime(record.createdAt)}</div>
+                          </div>
+                          <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 md:col-span-1 xl:col-span-2">
+                            <div className="text-xs text-slate-400">金额</div>
+                            <div className="mt-1 text-lg font-semibold text-slate-900">
+                              {formatMerchantOrderAmount(record.totalAmount, record.pricePrefix)}
+                            </div>
+                          </div>
                         </div>
                       </div>
 
-                      <div className="flex flex-wrap gap-1.5">{renderOrderActions(record)}</div>
-                    </div>
-
-                    <div className="mt-3 grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(280px,0.85fr)]">
-                      <div className="space-y-3">
-                        {record.items.map((item) => (
-                          <div
-                            key={`${record.id}-${item.productId}-${item.code}`}
-                            className="flex items-start justify-between gap-4 rounded-2xl border border-slate-200 bg-white px-4 py-3"
-                          >
-                            <div className="min-w-0">
-                              <div className="text-sm font-semibold text-slate-900">{item.name || "未命名产品"}</div>
-                              <div className="mt-1 text-xs uppercase tracking-[0.18em] text-slate-400">{item.code || "-"}</div>
-                              {item.description ? (
-                                <div className="mt-2 line-clamp-2 text-sm text-slate-500">{item.description}</div>
-                              ) : null}
-                            </div>
-                            <div className="shrink-0 text-right">
-                              <div className="text-sm text-slate-500">×{item.quantity}</div>
-                              <div className="mt-1 text-base font-semibold text-sky-700">
-                                {formatMerchantOrderAmount(item.subtotal, record.pricePrefix)}
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-
-                      <div className="space-y-3">
-                        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
-                          <div className="grid gap-3 text-sm text-slate-600">
-                            <div>
-                              <span className="text-slate-400">店铺：</span>
-                              {record.siteName || record.siteId}
-                            </div>
-                            <div>
-                              <span className="text-slate-400">客户：</span>
-                              {record.customer.name || "-"}
-                            </div>
-                            <div>
-                              <span className="text-slate-400">备注：</span>
-                              {record.customer.note || "-"}
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
-                          <div className="flex items-center justify-between text-sm text-slate-500">
-                            <span>商品数量</span>
-                            <span>{record.totalQuantity}</span>
-                          </div>
-                          <div className="mt-3 flex items-center justify-between text-lg font-semibold text-slate-900">
-                            <span>订单合计</span>
-                            <span>{formatMerchantOrderAmount(record.totalAmount, record.pricePrefix)}</span>
-                          </div>
-                        </div>
+                      <div className="flex shrink-0 flex-wrap gap-1.5">
+                        <button
+                          type="button"
+                          className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50"
+                          onClick={() => openDetailDialog(record)}
+                          data-skip-selection-toggle="true"
+                        >
+                          详情
+                        </button>
                       </div>
                     </div>
                   </article>
@@ -771,6 +853,7 @@ export default function MerchantOrderManagerDialog({
         </div>
       </div>
       {workbenchDialog}
+      {detailDialog}
     </div>
   );
 
