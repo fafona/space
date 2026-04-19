@@ -90,7 +90,7 @@ export async function PATCH(request: Request) {
     const body = (await request.json()) as {
       siteId?: string;
       orderId?: string;
-      action?: "confirm" | "cancel" | "print";
+      action?: "confirm" | "cancel" | "print" | "touch";
     } | null;
     const siteId = String(body?.siteId ?? "").trim();
     if (!isMerchantNumericId(siteId)) {
@@ -104,7 +104,12 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: "order_management_disabled" }, { status: 403 });
     }
     const action =
-      body?.action === "confirm" || body?.action === "cancel" || body?.action === "print" ? body.action : null;
+      body?.action === "confirm" ||
+      body?.action === "cancel" ||
+      body?.action === "print" ||
+      body?.action === "touch"
+        ? body.action
+        : null;
     if (!action) {
       return NextResponse.json({ error: "invalid_order_action" }, { status: 400 });
     }

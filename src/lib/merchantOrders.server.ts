@@ -1,5 +1,6 @@
 import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import {
+  buildMerchantOrderId,
   createMerchantOrder,
   normalizeMerchantOrderRecords,
   type MerchantOrderCreateInput,
@@ -23,14 +24,30 @@ export async function listMerchantOrders(siteId: string) {
 
 export async function createMerchantOrderRecord(input: MerchantOrderCreateInput) {
   const supabase = requireOrdersStoreClient();
-  const next = createMerchantOrder(input);
-  if (!next.siteId) {
+  const siteId = String(input.siteId ?? "").trim();
+  if (!siteId) {
     throw new Error("invalid_site_id");
   }
+  const stored = await loadStoredMerchantOrders(supabase, siteId);
+  const existingOrders = normalizeMerchantOrderRecords(stored?.orders ?? []);
+  const nowDate = new Date();
+  const nextId = buildMerchantOrderId(
+    siteId,
+    nowDate,
+    existingOrders.map((item) => item.id),
+  );
+  if (!nextId) {
+    throw new Error("order_id_generation_failed");
+  }
+  const next = createMerchantOrder(input, {
+    id: nextId,
+    createdAt: nowDate,
+    updatedAt: nowDate,
+    merchantTouchedAt: "",
+  });
   if (next.items.length === 0) {
     throw new Error("order_items_required");
   }
-  const stored = await loadStoredMerchantOrders(supabase, next.siteId);
   const orders = [next, ...(stored?.orders ?? [])];
   const saved = await saveStoredMerchantOrders(supabase, {
     siteId: next.siteId,
@@ -46,7 +63,7 @@ export async function createMerchantOrderRecord(input: MerchantOrderCreateInput)
 export async function updateMerchantOrderBySite(input: {
   siteId: string;
   orderId: string;
-  action: "confirm" | "cancel" | "print";
+  action: "confirm" | "cancel" | "print" | "touch";
 }) {
   const supabase = requireOrdersStoreClient();
   const stored = await loadStoredMerchantOrders(supabase, input.siteId);
@@ -63,6 +80,7 @@ export async function updateMerchantOrderBySite(input: {
           ...current,
           status: "confirmed",
           updatedAt: now,
+          merchantTouchedAt: now,
           confirmedAt: current.confirmedAt ?? now,
           cancelledAt: null,
         }
@@ -71,14 +89,21 @@ export async function updateMerchantOrderBySite(input: {
             ...current,
             status: "cancelled",
             updatedAt: now,
+            merchantTouchedAt: now,
             cancelledAt: now,
           }
-        : {
-            ...current,
-            updatedAt: now,
-            printedAt: now,
-            printCount: current.printCount + 1,
-          };
+        : input.action === "print"
+          ? {
+              ...current,
+              updatedAt: now,
+              merchantTouchedAt: now,
+              printedAt: now,
+              printCount: current.printCount + 1,
+            }
+          : {
+              ...current,
+              merchantTouchedAt: now,
+            };
   const updatedOrders = [...orders];
   updatedOrders[orderIndex] = next;
   const saved = await saveStoredMerchantOrders(supabase, {

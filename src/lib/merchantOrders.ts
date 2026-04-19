@@ -48,6 +48,7 @@ export type MerchantOrderRecord = {
   blockId: string;
   createdAt: string;
   updatedAt: string;
+  merchantTouchedAt?: string;
   status: MerchantOrderStatus;
   customer: MerchantOrderCustomer;
   items: MerchantOrderLineItem[];
@@ -85,6 +86,16 @@ function normalizeMoneyValue(value: unknown) {
   return Math.max(0, Number(next.toFixed(2)));
 }
 
+function padOrderSequence(value: number) {
+  return String(Math.max(0, Math.trunc(value))).padStart(4, "0");
+}
+
+function normalizeIsoDateValue(value: Date | string | null | undefined, fallback: string) {
+  if (!value) return fallback;
+  const source = value instanceof Date ? value : new Date(value);
+  return Number.isFinite(source.getTime()) ? source.toISOString() : fallback;
+}
+
 export function parseMerchantOrderPriceValue(value: string) {
   const raw = trimText(value);
   if (!raw) return 0;
@@ -106,6 +117,30 @@ export function parseMerchantOrderPriceValue(value: string) {
 export function formatMerchantOrderAmount(amount: number, pricePrefix: string) {
   const normalized = Math.max(0, Number.isFinite(amount) ? amount : 0);
   return `${trimText(pricePrefix)}${normalized.toFixed(2)}`;
+}
+
+export function formatMerchantOrderIdDate(value: Date | string) {
+  const source = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(source.getTime())) return "";
+  const year = source.getFullYear();
+  const month = String(source.getMonth() + 1).padStart(2, "0");
+  const day = String(source.getDate()).padStart(2, "0");
+  return `${year}${month}${day}`;
+}
+
+export function buildMerchantOrderId(siteId: string, createdAt: Date | string, existingIds: string[]) {
+  const normalizedSiteId = trimText(siteId);
+  const datePart = formatMerchantOrderIdDate(createdAt);
+  if (!normalizedSiteId || !datePart) {
+    return "";
+  }
+  const prefix = `O${normalizedSiteId}${datePart}`;
+  const maxSequence = existingIds.reduce((highest, currentId) => {
+    if (!currentId.startsWith(prefix)) return highest;
+    const sequence = Number.parseInt(currentId.slice(prefix.length), 10);
+    return Number.isFinite(sequence) ? Math.max(highest, sequence) : highest;
+  }, 0);
+  return `${prefix}${padOrderSequence(maxSequence + 1)}`;
 }
 
 export function normalizeMerchantOrderCustomer(input: MerchantOrderCustomerInput | null | undefined): MerchantOrderCustomer {
@@ -170,6 +205,7 @@ export function normalizeMerchantOrderRecord(input: Partial<MerchantOrderRecord>
     blockId: trimText(input.blockId),
     createdAt: trimText(input.createdAt) || new Date().toISOString(),
     updatedAt: trimText(input.updatedAt) || new Date().toISOString(),
+    merchantTouchedAt: trimText(input.merchantTouchedAt),
     status: MERCHANT_ORDER_STATUSES.includes(input.status as MerchantOrderStatus)
       ? (input.status as MerchantOrderStatus)
       : "pending",
@@ -199,18 +235,39 @@ export function createMerchantOrderId() {
   return `O${stamp}${random}`;
 }
 
-export function createMerchantOrder(input: MerchantOrderCreateInput): MerchantOrderRecord {
+export function isMerchantOrderPendingMerchantTouch(
+  record: Pick<MerchantOrderRecord, "updatedAt" | "merchantTouchedAt">,
+) {
+  const updatedAt = trimText(record.updatedAt);
+  const merchantTouchedAt = trimText(record.merchantTouchedAt ?? "");
+  if (!updatedAt) return !merchantTouchedAt;
+  if (!merchantTouchedAt) return true;
+  return new Date(updatedAt).getTime() > new Date(merchantTouchedAt).getTime();
+}
+
+export function createMerchantOrder(
+  input: MerchantOrderCreateInput,
+  options: {
+    id?: string;
+    createdAt?: Date | string;
+    updatedAt?: Date | string;
+    merchantTouchedAt?: string;
+  } = {},
+): MerchantOrderRecord {
   const now = new Date().toISOString();
+  const createdAt = normalizeIsoDateValue(options.createdAt, now);
+  const updatedAt = normalizeIsoDateValue(options.updatedAt, createdAt);
   const pricePrefix = trimText(input.pricePrefix);
   const items = normalizeMerchantOrderLineItems(input.items ?? [], pricePrefix);
   const summary = summarizeMerchantOrderItems(items);
   return {
-    id: createMerchantOrderId(),
+    id: trimText(options.id) || createMerchantOrderId(),
     siteId: trimText(input.siteId),
     siteName: trimText(input.siteName),
     blockId: trimText(input.blockId),
-    createdAt: now,
-    updatedAt: now,
+    createdAt,
+    updatedAt,
+    merchantTouchedAt: trimText(options.merchantTouchedAt),
     status: "pending",
     customer: normalizeMerchantOrderCustomer(input.customer),
     items,
