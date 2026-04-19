@@ -481,73 +481,73 @@ export default function MerchantOrderManagerDialog({
     <div className={isInline ? "space-y-5" : "max-h-[88vh] overflow-hidden rounded-[28px]"}>
       <div className="flex max-h-[88vh] min-h-[540px] flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.12)]">
         <div
-          className={`border-b border-slate-200 px-6 py-5 ${
-            isInline ? "sticky top-0 z-20 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/85" : "bg-white"
+          className={`${
+            isInline ? "sticky top-0 z-20 bg-white/95 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-white/90" : ""
           }`}
         >
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <div className="text-[26px] font-semibold text-slate-950">订单管理</div>
-              <div className="mt-1 text-sm text-slate-500">{siteName} 收到的产品订单会集中显示在这里。</div>
-            </div>
+          <div className="flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4">
+            <div className="min-w-0 flex-1 space-y-1">
+              <div className="flex flex-wrap items-center gap-2.5">
+                <div className="text-[26px] font-semibold text-slate-950">订单管理</div>
+                <button type="button" className={workbenchButtonClassName} onClick={() => setWorkbenchOpen(true)}>
+                  工作台
+                </button>
 
-            <div className="flex flex-wrap items-center gap-2">
-              <button type="button" className={workbenchButtonClassName} onClick={() => setWorkbenchOpen(true)}>
-                工作台
-              </button>
+                <label className={toolbarSelectClassName}>
+                  <span className="text-slate-400">排序</span>
+                  <select
+                    className="bg-transparent font-medium text-slate-900 outline-none"
+                    value={sortMode}
+                    onChange={(event) => setSortMode(event.target.value as MerchantOrderSortMode)}
+                  >
+                    {MERCHANT_ORDER_SORT_OPTIONS.map((option) => (
+                      <option key={option} value={option}>
+                        {getOrderSortOptionText(option)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
 
-              <label className={toolbarSelectClassName}>
-                <span className="text-slate-400">排序</span>
-                <select
-                  className="bg-transparent font-medium text-slate-900 outline-none"
-                  value={sortMode}
-                  onChange={(event) => setSortMode(event.target.value as MerchantOrderSortMode)}
-                >
-                  {MERCHANT_ORDER_SORT_OPTIONS.map((option) => (
-                    <option key={option} value={option}>
-                      {getOrderSortOptionText(option)}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                <label className={toolbarSelectClassName}>
+                  <span className="text-slate-400">隐藏</span>
+                  <select
+                    className="bg-transparent font-medium text-slate-900 outline-none"
+                    value={historyVisibility}
+                    onChange={(event) => setHistoryVisibility(event.target.value as MerchantOrderHistoryVisibility)}
+                  >
+                    {MERCHANT_ORDER_HISTORY_OPTIONS.map((option) => (
+                      <option key={option} value={option}>
+                        {getOrderHistoryVisibilityText(option)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
 
-              <label className={toolbarSelectClassName}>
-                <span className="text-slate-400">隐藏</span>
-                <select
-                  className="bg-transparent font-medium text-slate-900 outline-none"
-                  value={historyVisibility}
-                  onChange={(event) => setHistoryVisibility(event.target.value as MerchantOrderHistoryVisibility)}
-                >
-                  {MERCHANT_ORDER_HISTORY_OPTIONS.map((option) => (
-                    <option key={option} value={option}>
-                      {getOrderHistoryVisibilityText(option)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <button
-                type="button"
-                className={compactBatchButtonClassName}
-                onClick={() => setSelectionMode((current) => !current)}
-              >
-                {selectionMode ? "完成批量" : "批量"}
-              </button>
-
-              {!isInline && showCloseButton ? (
                 <button
                   type="button"
-                  className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50 hover:text-slate-900"
-                  onClick={onClose}
-                  aria-label="关闭订单管理"
+                  className={compactBatchButtonClassName}
+                  onClick={() => setSelectionMode((current) => !current)}
                 >
-                  ×
+                  {selectionMode ? "完成批量" : "批量"}
                 </button>
-              ) : null}
+              </div>
+              <div className="text-sm text-slate-500">{siteName} 收到的产品订单会集中显示在这里。</div>
             </div>
+
+            {!isInline && showCloseButton ? (
+              <button
+                type="button"
+                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50 hover:text-slate-900"
+                onClick={onClose}
+                aria-label="关闭订单管理"
+              >
+                ×
+              </button>
+            ) : null}
           </div>
 
-          <div className="mt-5 grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
+          <div className="space-y-3 border-b px-5 py-4">
+          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
             <input
               className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-slate-300 focus:ring-2 focus:ring-slate-200"
               placeholder="搜索订单号 / 客户 / 产品"
@@ -616,6 +616,7 @@ export default function MerchantOrderManagerDialog({
           {error ? (
             <div className="mt-4 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>
           ) : null}
+          </div>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
