@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import {
@@ -73,11 +73,6 @@ function formatDateTime(value: string) {
 
 function getDetailItemDraftKey(orderId: string, index: number) {
   return `${orderId}:${index}`;
-}
-
-function parseQuantityDraft(value: string, fallback: number) {
-  const next = Number.parseInt(value, 10);
-  return Number.isFinite(next) && next > 0 ? next : fallback;
 }
 
 function parseQuantityDraftAllowZero(value: string, fallback: number) {
@@ -177,7 +172,6 @@ export default function MerchantOrderMobilePanel({
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
   const [detailOrderId, setDetailOrderId] = useState("");
   const [detailQuantityDrafts, setDetailQuantityDrafts] = useState<Record<string, string>>({});
-  const [quantityBusyKey, setQuantityBusyKey] = useState("");
   const [mobileCustomerInfoOpen, setMobileCustomerInfoOpen] = useState(false);
 
   const cardClassName = darkMode
@@ -308,7 +302,6 @@ export default function MerchantOrderMobilePanel({
   useEffect(() => {
     if (!detailOrder) {
       setDetailQuantityDrafts({});
-      setQuantityBusyKey("");
       setMobileCustomerInfoOpen(false);
       return;
     }
@@ -363,6 +356,71 @@ export default function MerchantOrderMobilePanel({
     [siteId],
   );
 
+  const buildDetailDraftItemsInput = useCallback(
+    (order: MerchantOrderRecord) =>
+      order.items.flatMap((item, index) => {
+        const nextQuantity = parseQuantityDraftAllowZero(
+          detailQuantityDrafts[getDetailItemDraftKey(order.id, index)] ?? String(item.quantity),
+          item.quantity,
+        );
+        if (nextQuantity <= 0) return [];
+        return [
+          {
+            productId: item.productId,
+            code: item.code,
+            name: item.name,
+            description: item.description,
+            imageUrl: item.imageUrl,
+            tag: item.tag,
+            quantity: nextQuantity,
+            unitPrice: item.unitPrice,
+            unitPriceText: item.unitPriceText,
+          },
+        ];
+      }),
+    [detailQuantityDrafts],
+  );
+
+  const hasDetailQuantityDraftChanges = useCallback(
+    (order: MerchantOrderRecord) => {
+      const nextItems = buildDetailDraftItemsInput(order);
+      if (nextItems.length !== order.items.length) return true;
+      return order.items.some((item, index) => {
+        const nextItem = nextItems[index];
+        return !nextItem || Number(nextItem.quantity ?? item.quantity) !== item.quantity;
+      });
+    },
+    [buildDetailDraftItemsInput],
+  );
+
+  const detailPreviewEntries = useMemo(() => {
+    if (!detailOrder) return [];
+    return detailOrder.items
+      .map((item, index) => {
+        const quantity = parseQuantityDraftAllowZero(
+          detailQuantityDrafts[getDetailItemDraftKey(detailOrder.id, index)] ?? String(item.quantity),
+          item.quantity,
+        );
+        return {
+          item,
+          index,
+          quantity,
+          subtotal: Number((item.unitPrice * quantity).toFixed(2)),
+        };
+      })
+      .filter((entry) => entry.quantity > 0);
+  }, [detailOrder, detailQuantityDrafts]);
+
+  const detailPreviewTotalQuantity = useMemo(
+    () => detailPreviewEntries.reduce((sum, entry) => sum + entry.quantity, 0),
+    [detailPreviewEntries],
+  );
+
+  const detailPreviewTotalAmount = useMemo(
+    () => Number(detailPreviewEntries.reduce((sum, entry) => sum + entry.subtotal, 0).toFixed(2)),
+    [detailPreviewEntries],
+  );
+
   const markOrderTouched = useCallback(
     async (orderId: string) => {
       const currentOrder = records.find((item) => item.id === orderId);
@@ -382,21 +440,30 @@ export default function MerchantOrderMobilePanel({
   );
 
   const handleOrderAction = useCallback(
-    async (order: MerchantOrderRecord, action: "confirm" | "cancel" | "restore" | "complete" | "uncomplete" | "print") => {
+    async (
+      order: MerchantOrderRecord,
+      action: "confirm" | "cancel" | "restore" | "complete" | "uncomplete" | "print",
+      options: { persistDetailDraft?: boolean } = {},
+    ) => {
       setActionBusyId(order.id);
       setError("");
       try {
+        let baseOrder = order;
+        if (options.persistDetailDraft && (action === "confirm" || action === "complete") && hasDetailQuantityDraftChanges(order)) {
+          baseOrder = await requestOrderItemsUpdate(order.id, buildDetailDraftItemsInput(order));
+          setRecords((current) => current.map((item) => (item.id === order.id ? baseOrder : item)));
+        }
         if (action === "print" && typeof window !== "undefined") {
           const popup = window.open("", "_blank", "noopener,noreferrer,width=920,height=760");
           if (popup) {
             popup.document.open();
-            popup.document.write(buildPrintHtml(order));
+            popup.document.write(buildPrintHtml(baseOrder));
             popup.document.close();
             popup.focus();
             popup.print();
           }
         }
-        const nextOrder = await requestOrderAction(order.id, action);
+        const nextOrder = await requestOrderAction(baseOrder.id, action);
         setRecords((current) => current.map((item) => (item.id === order.id ? nextOrder : item)));
       } catch (nextError) {
         setError(nextError instanceof Error && nextError.message ? nextError.message : "订单操作失败");
@@ -404,7 +471,7 @@ export default function MerchantOrderMobilePanel({
         setActionBusyId("");
       }
     },
-    [requestOrderAction],
+    [buildDetailDraftItemsInput, hasDetailQuantityDraftChanges, requestOrderAction, requestOrderItemsUpdate],
   );
 
   const openDetailDialog = useCallback(
@@ -427,62 +494,32 @@ export default function MerchantOrderMobilePanel({
     }));
   }, []);
 
-  const commitDetailItemQuantity = useCallback(
-    async (order: MerchantOrderRecord, itemIndex: number, value: string | number) => {
-      const currentItem = order.items[itemIndex];
-      if (!currentItem) return;
-      const draftKey = getDetailItemDraftKey(order.id, itemIndex);
-      const nextQuantity = parseQuantityDraftAllowZero(String(value), currentItem.quantity);
-      setDetailQuantityDrafts((current) => ({
-        ...current,
-        [draftKey]: String(nextQuantity),
-      }));
-      if (nextQuantity === currentItem.quantity) return;
-      setQuantityBusyKey(draftKey);
-      setError("");
-      try {
-        const nextItems = order.items.flatMap((item, index) => {
-          if (index !== itemIndex) return [item];
-          if (nextQuantity <= 0) return [];
-          return [
-            {
-              productId: item.productId,
-              code: item.code,
-              name: item.name,
-              description: item.description,
-              imageUrl: item.imageUrl,
-              tag: item.tag,
-              quantity: nextQuantity,
-              unitPrice: item.unitPrice,
-              unitPriceText: item.unitPriceText,
-            },
-          ];
-        });
-        const nextOrder = await requestOrderItemsUpdate(order.id, nextItems);
-        setRecords((current) => current.map((item) => (item.id === order.id ? nextOrder : item)));
-        setError("");
-      } catch (nextError) {
-        setDetailQuantityDrafts((current) => ({
-          ...current,
-          [draftKey]: String(currentItem.quantity),
-        }));
-        setError(nextError instanceof Error && nextError.message ? nextError.message : "订单商品数量更新失败");
-      } finally {
-        setQuantityBusyKey("");
-      }
-    },
-    [requestOrderItemsUpdate],
-  );
+  const normalizeDetailItemQuantityDraft = useCallback((order: MerchantOrderRecord, itemIndex: number, value: string | number) => {
+    const currentItem = order.items[itemIndex];
+    if (!currentItem) return;
+    const draftKey = getDetailItemDraftKey(order.id, itemIndex);
+    const nextQuantity = parseQuantityDraftAllowZero(String(value), currentItem.quantity);
+    setDetailQuantityDrafts((current) => ({
+      ...current,
+      [draftKey]: String(nextQuantity),
+    }));
+  }, []);
 
   const stepDetailItemQuantity = useCallback(
     (order: MerchantOrderRecord, itemIndex: number, delta: number) => {
       const currentItem = order.items[itemIndex];
       if (!currentItem) return;
       const draftKey = getDetailItemDraftKey(order.id, itemIndex);
-      const baseQuantity = parseQuantityDraft(detailQuantityDrafts[draftKey] ?? String(currentItem.quantity), currentItem.quantity);
-      void commitDetailItemQuantity(order, itemIndex, Math.max(0, baseQuantity + delta));
+      const baseQuantity = parseQuantityDraftAllowZero(
+        detailQuantityDrafts[draftKey] ?? String(currentItem.quantity),
+        currentItem.quantity,
+      );
+      setDetailQuantityDrafts((current) => ({
+        ...current,
+        [draftKey]: String(Math.max(0, baseQuantity + delta)),
+      }));
     },
-    [commitDetailItemQuantity, detailQuantityDrafts],
+    [detailQuantityDrafts],
   );
 
   const renderStatusActions = useCallback(
@@ -688,7 +725,7 @@ export default function MerchantOrderMobilePanel({
             <div className={`flex max-h-[min(42vh,24rem)] min-h-[14rem] flex-col rounded-[24px] border px-4 py-4 ${darkMode ? "border-white/10 bg-white/5" : "border-slate-200 bg-slate-50"}`}>
               <div className={`text-sm font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>商品明细</div>
               <div className="mt-3 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
-                {detailOrder.items.length === 0 ? (
+                {detailPreviewEntries.length === 0 ? (
                   <div
                     className={`flex min-h-28 items-center justify-center rounded-2xl border border-dashed px-4 py-6 text-center text-sm ${
                       darkMode ? "border-white/10 bg-white/5 text-slate-300" : "border-slate-300 bg-white text-slate-500"
@@ -697,10 +734,10 @@ export default function MerchantOrderMobilePanel({
                     该订单当前没有商品。
                   </div>
                 ) : null}
-                {detailOrder.items.map((item, index) => {
+                {detailPreviewEntries.map(({ item, index, quantity, subtotal }) => {
                   const itemDraftKey = getDetailItemDraftKey(detailOrder.id, index);
-                  const draftQuantity = detailQuantityDrafts[itemDraftKey] ?? String(item.quantity);
-                  const isQuantityBusy = quantityBusyKey === itemDraftKey;
+                  const draftQuantity = detailQuantityDrafts[itemDraftKey] ?? String(quantity);
+                  const isDetailActionBusy = actionBusyId === detailOrder.id;
                   return (
                     <div
                       key={`${detailOrder.id}-${item.productId}-${item.code}-${index}`}
@@ -719,7 +756,7 @@ export default function MerchantOrderMobilePanel({
                         </div>
                         <div className="flex flex-wrap items-center justify-end gap-3">
                           <div className="font-semibold text-sky-500">
-                            {formatMerchantOrderAmount(item.subtotal, detailOrder.pricePrefix)}
+                            {formatMerchantOrderAmount(subtotal, detailOrder.pricePrefix)}
                           </div>
                           <div
                             className={`inline-flex items-center gap-1 rounded-full px-1.5 py-1 shadow-sm ${
@@ -732,7 +769,7 @@ export default function MerchantOrderMobilePanel({
                                 darkMode ? "border border-white/10 bg-slate-950/60 text-white hover:bg-slate-900" : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                               }`}
                               onClick={() => stepDetailItemQuantity(detailOrder, index, -1)}
-                              disabled={isQuantityBusy}
+                              disabled={isDetailActionBusy}
                             >
                               -
                             </button>
@@ -748,16 +785,16 @@ export default function MerchantOrderMobilePanel({
                               value={draftQuantity}
                               onChange={(event) => handleDetailQuantityDraftChange(detailOrder.id, index, event.target.value)}
                               onBlur={(event) => {
-                                void commitDetailItemQuantity(detailOrder, index, event.target.value);
+                                normalizeDetailItemQuantityDraft(detailOrder, index, event.target.value);
                               }}
                               onFocus={(event) => event.currentTarget.select()}
                               onKeyDown={(event) => {
                                 if (event.key !== "Enter") return;
                                 event.preventDefault();
-                                void commitDetailItemQuantity(detailOrder, index, event.currentTarget.value);
+                                normalizeDetailItemQuantityDraft(detailOrder, index, event.currentTarget.value);
                                 event.currentTarget.blur();
                               }}
-                              disabled={isQuantityBusy}
+                              disabled={isDetailActionBusy}
                             />
                             <button
                               type="button"
@@ -765,7 +802,7 @@ export default function MerchantOrderMobilePanel({
                                 darkMode ? "border border-white/10 bg-slate-950/60 text-white hover:bg-slate-900" : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                               }`}
                               onClick={() => stepDetailItemQuantity(detailOrder, index, 1)}
-                              disabled={isQuantityBusy}
+                              disabled={isDetailActionBusy}
                             >
                               +
                             </button>
@@ -779,9 +816,9 @@ export default function MerchantOrderMobilePanel({
             </div>
 
             <div className="flex items-center justify-between">
-              <div className={`text-sm ${darkMode ? "text-slate-300" : "text-slate-500"}`}>合计 {detailOrder.totalQuantity} 件</div>
+              <div className={`text-sm ${darkMode ? "text-slate-300" : "text-slate-500"}`}>合计 {detailPreviewTotalQuantity} 件</div>
               <div className={`text-lg font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>
-                {formatMerchantOrderAmount(detailOrder.totalAmount, detailOrder.pricePrefix)}
+                {formatMerchantOrderAmount(detailPreviewTotalAmount, detailOrder.pricePrefix)}
               </div>
             </div>
 
@@ -816,7 +853,7 @@ export default function MerchantOrderMobilePanel({
                       ? "border border-sky-400/30 bg-sky-400/10 text-sky-100"
                       : "border border-sky-300 bg-sky-100 text-sky-800"
                   } disabled:opacity-40`}
-                  onClick={() => void handleOrderAction(detailOrder, "confirm")}
+                  onClick={() => void handleOrderAction(detailOrder, "confirm", { persistDetailDraft: true })}
                   disabled={actionBusyId === detailOrder.id}
                 >
                   确认
@@ -830,7 +867,7 @@ export default function MerchantOrderMobilePanel({
                       ? "border border-emerald-400/30 bg-emerald-400/10 text-emerald-100 shadow-[0_10px_24px_rgba(16,185,129,0.18)]"
                       : "border border-emerald-200 bg-[linear-gradient(180deg,#ffffff_0%,#ecfdf5_100%)] text-emerald-700 shadow-[0_10px_24px_rgba(16,185,129,0.13)]"
                   } disabled:opacity-40`}
-                  onClick={() => void handleOrderAction(detailOrder, "complete")}
+                  onClick={() => void handleOrderAction(detailOrder, "complete", { persistDetailDraft: true })}
                   disabled={actionBusyId === detailOrder.id}
                 >
                   {actionBusyId === detailOrder.id ? (

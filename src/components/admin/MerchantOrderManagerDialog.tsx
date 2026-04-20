@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import OrderStatusFilterDropdown from "@/components/admin/OrderStatusFilterDropdown";
 import {
   formatMerchantOrderAmount,
   isMerchantOrderPendingMerchantTouch,
@@ -28,6 +29,7 @@ type MerchantOrderHistoryVisibility = "none" | "today" | "3d" | "7d";
 
 const MERCHANT_ORDER_SORT_OPTIONS: MerchantOrderSortMode[] = ["created_desc", "created_asc"];
 const MERCHANT_ORDER_HISTORY_OPTIONS: MerchantOrderHistoryVisibility[] = ["none", "today", "3d", "7d"];
+const MERCHANT_ORDER_STATUSES: MerchantOrderStatus[] = ["pending", "confirmed", "completed", "cancelled"];
 
 function overlay(children: ReactNode) {
   if (typeof document === "undefined") return null;
@@ -71,11 +73,6 @@ function getDetailItemDraftKey(orderId: string, index: number) {
   return `${orderId}:${index}`;
 }
 
-function parseQuantityDraft(value: string, fallback: number) {
-  const next = Number.parseInt(value, 10);
-  return Number.isFinite(next) && next > 0 ? next : fallback;
-}
-
 function parseQuantityDraftAllowZero(value: string, fallback: number) {
   const raw = String(value).trim();
   if (raw === "") return fallback;
@@ -98,10 +95,29 @@ function getStatusBadgeClass(status: MerchantOrderStatus) {
   return "border border-amber-200 bg-amber-50 text-amber-700";
 }
 
-function getFilterButtonClass(active: boolean) {
-  return active
-    ? "rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
-    : "rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-slate-600";
+function getFilterChipClass(filter: MerchantOrderFilter, key: MerchantOrderFilter) {
+  const isActive = filter === key;
+  if (key === "pending") {
+    return isActive
+      ? "border border-amber-300 bg-amber-100 text-amber-800"
+      : "border border-amber-200 bg-amber-50 text-amber-700";
+  }
+  if (key === "confirmed") {
+    return isActive
+      ? "border border-sky-300 bg-sky-100 text-sky-800"
+      : "border border-sky-200 bg-sky-50 text-sky-700";
+  }
+  if (key === "completed") {
+    return isActive
+      ? "border border-emerald-300 bg-emerald-100 text-emerald-800"
+      : "border border-emerald-200 bg-emerald-50 text-emerald-700";
+  }
+  if (key === "cancelled") {
+    return isActive
+      ? "border border-slate-300 bg-slate-200 text-slate-800"
+      : "border border-slate-200 bg-slate-100 text-slate-600";
+  }
+  return isActive ? "bg-slate-900 text-white" : "border border-slate-200 bg-white text-slate-600";
 }
 
 function getOrderSortOptionText(mode: MerchantOrderSortMode) {
@@ -191,7 +207,6 @@ export default function MerchantOrderManagerDialog({
   showCloseButton = true,
   className = "",
   siteId,
-  siteName,
   onOrdersChange,
   onClose,
 }: MerchantOrderManagerDialogProps) {
@@ -211,7 +226,7 @@ export default function MerchantOrderManagerDialog({
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
   const [detailOrderId, setDetailOrderId] = useState("");
   const [detailQuantityDrafts, setDetailQuantityDrafts] = useState<Record<string, string>>({});
-  const [quantityBusyKey, setQuantityBusyKey] = useState("");
+  const [selectedStatuses, setSelectedStatuses] = useState<MerchantOrderStatus[]>(() => [...MERCHANT_ORDER_STATUSES]);
 
   const workbenchButtonClassName = workbenchOpen
     ? "inline-flex items-center justify-center rounded-[18px] rounded-tl-[8px] rounded-br-[24px] border border-[#34d399] bg-[linear-gradient(135deg,#0f172a_0%,#0f766e_58%,#10b981_100%)] px-4 py-2 text-sm font-semibold tracking-[0.03em] text-white shadow-[0_18px_34px_rgba(15,118,110,0.28)] ring-1 ring-[#99f6e4]/60 transition"
@@ -285,7 +300,11 @@ export default function MerchantOrderManagerDialog({
     const keyword = search.trim().toLowerCase();
     return sortMerchantOrders(
       historyFilteredRecords.filter((record) => {
-        if (filter !== "all" && record.status !== filter) return false;
+        if (filter === "all") {
+          if (!selectedStatuses.includes(record.status)) return false;
+        } else if (record.status !== filter) {
+          return false;
+        }
         if (!keyword) return true;
         return [
           record.id,
@@ -301,7 +320,7 @@ export default function MerchantOrderManagerDialog({
       }),
       sortMode,
     );
-  }, [filter, historyFilteredRecords, search, sortMode]);
+  }, [filter, historyFilteredRecords, search, selectedStatuses, sortMode]);
 
   const visibleRecordIdSet = useMemo(() => new Set(filteredRecords.map((record) => record.id)), [filteredRecords]);
   const selectedRecordSet = useMemo(() => new Set(selectedOrderIds), [selectedOrderIds]);
@@ -313,7 +332,6 @@ export default function MerchantOrderManagerDialog({
   useEffect(() => {
     if (!detailOrder) {
       setDetailQuantityDrafts({});
-      setQuantityBusyKey("");
       return;
     }
     setDetailQuantityDrafts(
@@ -378,6 +396,71 @@ export default function MerchantOrderManagerDialog({
     [siteId],
   );
 
+  const buildDetailDraftItemsInput = useCallback(
+    (order: MerchantOrderRecord) =>
+      order.items.flatMap((item, index) => {
+        const nextQuantity = parseQuantityDraftAllowZero(
+          detailQuantityDrafts[getDetailItemDraftKey(order.id, index)] ?? String(item.quantity),
+          item.quantity,
+        );
+        if (nextQuantity <= 0) return [];
+        return [
+          {
+            productId: item.productId,
+            code: item.code,
+            name: item.name,
+            description: item.description,
+            imageUrl: item.imageUrl,
+            tag: item.tag,
+            quantity: nextQuantity,
+            unitPrice: item.unitPrice,
+            unitPriceText: item.unitPriceText,
+          },
+        ];
+      }),
+    [detailQuantityDrafts],
+  );
+
+  const hasDetailQuantityDraftChanges = useCallback(
+    (order: MerchantOrderRecord) => {
+      const nextItems = buildDetailDraftItemsInput(order);
+      if (nextItems.length !== order.items.length) return true;
+      return order.items.some((item, index) => {
+        const nextItem = nextItems[index];
+        return !nextItem || Number(nextItem.quantity ?? item.quantity) !== item.quantity;
+      });
+    },
+    [buildDetailDraftItemsInput],
+  );
+
+  const detailPreviewEntries = useMemo(() => {
+    if (!detailOrder) return [];
+    return detailOrder.items
+      .map((item, index) => {
+        const quantity = parseQuantityDraftAllowZero(
+          detailQuantityDrafts[getDetailItemDraftKey(detailOrder.id, index)] ?? String(item.quantity),
+          item.quantity,
+        );
+        return {
+          item,
+          index,
+          quantity,
+          subtotal: Number((item.unitPrice * quantity).toFixed(2)),
+        };
+      })
+      .filter((entry) => entry.quantity > 0);
+  }, [detailOrder, detailQuantityDrafts]);
+
+  const detailPreviewTotalQuantity = useMemo(
+    () => detailPreviewEntries.reduce((sum, entry) => sum + entry.quantity, 0),
+    [detailPreviewEntries],
+  );
+
+  const detailPreviewTotalAmount = useMemo(
+    () => Number(detailPreviewEntries.reduce((sum, entry) => sum + entry.subtotal, 0).toFixed(2)),
+    [detailPreviewEntries],
+  );
+
   const markOrderTouched = useCallback(
     async (orderId: string) => {
       const currentOrder = records.find((item) => item.id === orderId);
@@ -397,22 +480,31 @@ export default function MerchantOrderManagerDialog({
   );
 
   const handleOrderAction = useCallback(
-    async (order: MerchantOrderRecord, action: "confirm" | "cancel" | "restore" | "complete" | "uncomplete" | "print") => {
+    async (
+      order: MerchantOrderRecord,
+      action: "confirm" | "cancel" | "restore" | "complete" | "uncomplete" | "print",
+      options: { persistDetailDraft?: boolean } = {},
+    ) => {
       setActionBusyId(order.id);
       setError("");
       setNotice("");
       try {
+        let baseOrder = order;
+        if (options.persistDetailDraft && (action === "confirm" || action === "complete") && hasDetailQuantityDraftChanges(order)) {
+          baseOrder = await requestOrderItemsUpdate(order.id, buildDetailDraftItemsInput(order));
+          setRecords((current) => current.map((item) => (item.id === order.id ? baseOrder : item)));
+        }
         if (action === "print" && typeof window !== "undefined") {
           const popup = window.open("", "_blank", "noopener,noreferrer,width=920,height=760");
           if (popup) {
             popup.document.open();
-            popup.document.write(buildPrintHtml(order));
+            popup.document.write(buildPrintHtml(baseOrder));
             popup.document.close();
             popup.focus();
             popup.print();
           }
         }
-        const nextOrder = await requestOrderAction(order.id, action);
+        const nextOrder = await requestOrderAction(baseOrder.id, action);
         setRecords((current) => current.map((item) => (item.id === order.id ? nextOrder : item)));
         setNotice(
           action === "confirm"
@@ -425,7 +517,7 @@ export default function MerchantOrderManagerDialog({
                   ? "订单已完成"
                   : action === "uncomplete"
                     ? "订单已恢复为已确认"
-                : "订单已标记为已打印",
+                : "",
         );
       } catch (nextError) {
         setError(nextError instanceof Error && nextError.message ? nextError.message : "订单操作失败");
@@ -433,7 +525,7 @@ export default function MerchantOrderManagerDialog({
         setActionBusyId("");
       }
     },
-    [requestOrderAction],
+    [buildDetailDraftItemsInput, hasDetailQuantityDraftChanges, requestOrderAction, requestOrderItemsUpdate],
   );
 
   const runBatchOrderAction = useCallback(
@@ -509,73 +601,42 @@ export default function MerchantOrderManagerDialog({
     }));
   }, []);
 
-  const commitDetailItemQuantity = useCallback(
-    async (order: MerchantOrderRecord, itemIndex: number, value: string | number) => {
-      const currentItem = order.items[itemIndex];
-      if (!currentItem) return;
-      const draftKey = getDetailItemDraftKey(order.id, itemIndex);
-      const nextQuantity = parseQuantityDraftAllowZero(String(value), currentItem.quantity);
-      setDetailQuantityDrafts((current) => ({
-        ...current,
-        [draftKey]: String(nextQuantity),
-      }));
-      if (nextQuantity === currentItem.quantity) return;
-      setQuantityBusyKey(draftKey);
-      setError("");
-      setNotice("");
-      try {
-        const nextItems = order.items.flatMap((item, index) => {
-          if (index !== itemIndex) return [item];
-          if (nextQuantity <= 0) return [];
-          return [
-            {
-              productId: item.productId,
-              code: item.code,
-              name: item.name,
-              description: item.description,
-              imageUrl: item.imageUrl,
-              tag: item.tag,
-              quantity: nextQuantity,
-              unitPrice: item.unitPrice,
-              unitPriceText: item.unitPriceText,
-            },
-          ];
-        });
-        const nextOrder = await requestOrderItemsUpdate(order.id, nextItems);
-        setRecords((current) => current.map((item) => (item.id === order.id ? nextOrder : item)));
-        setNotice(nextQuantity <= 0 ? "订单商品已删除" : "订单商品数量已更新");
-      } catch (nextError) {
-        setDetailQuantityDrafts((current) => ({
-          ...current,
-          [draftKey]: String(currentItem.quantity),
-        }));
-        setError(nextError instanceof Error && nextError.message ? nextError.message : "订单商品数量更新失败");
-      } finally {
-        setQuantityBusyKey("");
-      }
-    },
-    [requestOrderItemsUpdate],
-  );
+  const normalizeDetailItemQuantityDraft = useCallback((order: MerchantOrderRecord, itemIndex: number, value: string | number) => {
+    const currentItem = order.items[itemIndex];
+    if (!currentItem) return;
+    const draftKey = getDetailItemDraftKey(order.id, itemIndex);
+    const nextQuantity = parseQuantityDraftAllowZero(String(value), currentItem.quantity);
+    setDetailQuantityDrafts((current) => ({
+      ...current,
+      [draftKey]: String(nextQuantity),
+    }));
+  }, []);
 
   const stepDetailItemQuantity = useCallback(
     (order: MerchantOrderRecord, itemIndex: number, delta: number) => {
       const currentItem = order.items[itemIndex];
       if (!currentItem) return;
       const draftKey = getDetailItemDraftKey(order.id, itemIndex);
-      const baseQuantity = parseQuantityDraft(detailQuantityDrafts[draftKey] ?? String(currentItem.quantity), currentItem.quantity);
-      void commitDetailItemQuantity(order, itemIndex, Math.max(0, baseQuantity + delta));
+      const baseQuantity = parseQuantityDraftAllowZero(
+        detailQuantityDrafts[draftKey] ?? String(currentItem.quantity),
+        currentItem.quantity,
+      );
+      setDetailQuantityDrafts((current) => ({
+        ...current,
+        [draftKey]: String(Math.max(0, baseQuantity + delta)),
+      }));
     },
-    [commitDetailItemQuantity, detailQuantityDrafts],
+    [detailQuantityDrafts],
   );
 
   const renderOrderActions = useCallback(
-    (record: MerchantOrderRecord) => (
+    (record: MerchantOrderRecord, options: { persistDetailDraft?: boolean } = {}) => (
       <>
         {record.status === "confirmed" ? (
           <button
             type="button"
             className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            onClick={() => void handleOrderAction(record, "restore")}
+            onClick={() => void handleOrderAction(record, "restore", options)}
             disabled={Boolean(actionBusyId) || Boolean(batchBusyKey)}
           >
             取消确认
@@ -584,7 +645,7 @@ export default function MerchantOrderManagerDialog({
           <button
             type="button"
             className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            onClick={() => void handleOrderAction(record, "restore")}
+            onClick={() => void handleOrderAction(record, "restore", options)}
             disabled={Boolean(actionBusyId) || Boolean(batchBusyKey)}
           >
             恢复待确认
@@ -593,7 +654,7 @@ export default function MerchantOrderManagerDialog({
           <button
             type="button"
             className="rounded border border-sky-300 bg-sky-100 px-3 py-1.5 text-[13px] leading-5 text-sky-800 hover:bg-sky-200 disabled:opacity-50"
-            onClick={() => void handleOrderAction(record, "confirm")}
+            onClick={() => void handleOrderAction(record, "confirm", options)}
             disabled={Boolean(actionBusyId) || Boolean(batchBusyKey)}
           >
             确认
@@ -603,7 +664,7 @@ export default function MerchantOrderManagerDialog({
           <button
             type="button"
             className="rounded border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-[13px] leading-5 text-white hover:bg-emerald-700 disabled:opacity-50"
-            onClick={() => void handleOrderAction(record, "complete")}
+            onClick={() => void handleOrderAction(record, "complete", options)}
             disabled={Boolean(actionBusyId) || Boolean(batchBusyKey)}
           >
             完成
@@ -612,7 +673,7 @@ export default function MerchantOrderManagerDialog({
           <button
             type="button"
             className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            onClick={() => void handleOrderAction(record, "uncomplete")}
+            onClick={() => void handleOrderAction(record, "uncomplete", options)}
             disabled={Boolean(actionBusyId) || Boolean(batchBusyKey)}
           >
             取消完成
@@ -621,7 +682,7 @@ export default function MerchantOrderManagerDialog({
         <button
           type="button"
           className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-          onClick={() => void handleOrderAction(record, "print")}
+          onClick={() => void handleOrderAction(record, "print", options)}
           disabled={Boolean(actionBusyId) || Boolean(batchBusyKey)}
         >
           打印{record.printCount > 0 ? ` (${record.printCount})` : ""}
@@ -630,7 +691,7 @@ export default function MerchantOrderManagerDialog({
           <button
             type="button"
             className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            onClick={() => void handleOrderAction(record, "cancel")}
+            onClick={() => void handleOrderAction(record, "cancel", options)}
             disabled={Boolean(actionBusyId) || Boolean(batchBusyKey)}
           >
             取消
@@ -767,7 +828,7 @@ export default function MerchantOrderManagerDialog({
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
-                {renderOrderActions(detailOrder)}
+                {renderOrderActions(detailOrder, { persistDetailDraft: true })}
                 <button
                   type="button"
                   className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50"
@@ -784,15 +845,15 @@ export default function MerchantOrderManagerDialog({
                   <div className="flex h-[min(72vh,58rem)] min-h-[24rem] max-h-[calc(90vh-12rem)] flex-col rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
                     <div className="text-sm font-semibold text-slate-900">商品明细</div>
                     <div className="mt-3 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
-                      {detailOrder.items.length === 0 ? (
+                      {detailPreviewEntries.length === 0 ? (
                         <div className="flex min-h-40 items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-6 text-sm text-slate-500">
                           该订单当前没有商品。
                         </div>
                       ) : null}
-                      {detailOrder.items.map((item, index) => {
+                      {detailPreviewEntries.map(({ item, index, quantity, subtotal }) => {
                         const itemDraftKey = getDetailItemDraftKey(detailOrder.id, index);
-                        const draftQuantity = detailQuantityDrafts[itemDraftKey] ?? String(item.quantity);
-                        const isQuantityBusy = quantityBusyKey === itemDraftKey;
+                        const draftQuantity = detailQuantityDrafts[itemDraftKey] ?? String(quantity);
+                        const isDetailActionBusy = actionBusyId === detailOrder.id;
                         return (
                           <div
                             key={`${detailOrder.id}-${item.productId}-${item.code}-${index}`}
@@ -809,14 +870,14 @@ export default function MerchantOrderManagerDialog({
                               </div>
                               <div className="flex flex-wrap items-center justify-end gap-3">
                                 <div className="text-sm font-semibold text-sky-700">
-                                  {formatMerchantOrderAmount(item.subtotal, detailOrder.pricePrefix)}
+                                  {formatMerchantOrderAmount(subtotal, detailOrder.pricePrefix)}
                                 </div>
                                 <div className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-1.5 py-1 shadow-sm">
                                   <button
                                     type="button"
                                     className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-base font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                                     onClick={() => stepDetailItemQuantity(detailOrder, index, -1)}
-                                    disabled={isQuantityBusy}
+                                    disabled={isDetailActionBusy}
                                   >
                                     -
                                   </button>
@@ -828,22 +889,22 @@ export default function MerchantOrderManagerDialog({
                                     value={draftQuantity}
                                     onChange={(event) => handleDetailQuantityDraftChange(detailOrder.id, index, event.target.value)}
                                     onBlur={(event) => {
-                                      void commitDetailItemQuantity(detailOrder, index, event.target.value);
+                                      normalizeDetailItemQuantityDraft(detailOrder, index, event.target.value);
                                     }}
                                     onFocus={(event) => event.currentTarget.select()}
                                     onKeyDown={(event) => {
                                       if (event.key !== "Enter") return;
                                       event.preventDefault();
-                                      void commitDetailItemQuantity(detailOrder, index, event.currentTarget.value);
+                                      normalizeDetailItemQuantityDraft(detailOrder, index, event.currentTarget.value);
                                       event.currentTarget.blur();
                                     }}
-                                    disabled={isQuantityBusy}
+                                    disabled={isDetailActionBusy}
                                   />
                                   <button
                                     type="button"
                                     className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-base font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                                     onClick={() => stepDetailItemQuantity(detailOrder, index, 1)}
-                                    disabled={isQuantityBusy}
+                                    disabled={isDetailActionBusy}
                                   >
                                     +
                                   </button>
@@ -911,11 +972,11 @@ export default function MerchantOrderManagerDialog({
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
                     <div className="flex items-center justify-between text-sm text-slate-500">
                       <span>商品数量</span>
-                      <span>{detailOrder.totalQuantity}</span>
+                      <span>{detailPreviewTotalQuantity}</span>
                     </div>
                     <div className="mt-3 flex items-center justify-between text-lg font-semibold text-slate-900">
                       <span>订单合计</span>
-                      <span>{formatMerchantOrderAmount(detailOrder.totalAmount, detailOrder.pricePrefix)}</span>
+                      <span>{formatMerchantOrderAmount(detailPreviewTotalAmount, detailOrder.pricePrefix)}</span>
                     </div>
                   </div>
                 </div>
@@ -943,33 +1004,53 @@ export default function MerchantOrderManagerDialog({
                 </button>
 
                 <label className={toolbarSelectClassName}>
-                  <span className="text-slate-400">排序</span>
-                  <select
-                    className="bg-transparent font-medium text-slate-900 outline-none"
-                    value={sortMode}
-                    onChange={(event) => setSortMode(event.target.value as MerchantOrderSortMode)}
-                  >
-                    {MERCHANT_ORDER_SORT_OPTIONS.map((option) => (
-                      <option key={option} value={option}>
-                        {getOrderSortOptionText(option)}
-                      </option>
-                    ))}
-                  </select>
+                  <span className="text-xs font-medium text-slate-500">排序</span>
+                  <div className="relative">
+                    <select
+                      className="appearance-none bg-transparent pr-5 text-sm font-medium text-slate-900 outline-none"
+                      value={sortMode}
+                      onChange={(event) => setSortMode(event.target.value as MerchantOrderSortMode)}
+                    >
+                      {MERCHANT_ORDER_SORT_OPTIONS.map((option) => (
+                        <option key={option} value={option}>
+                          {getOrderSortOptionText(option)}
+                        </option>
+                      ))}
+                    </select>
+                    <svg
+                      viewBox="0 0 20 20"
+                      fill="none"
+                      aria-hidden="true"
+                      className="pointer-events-none absolute right-0 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+                    >
+                      <path d="m5 7.5 5 5 5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </div>
                 </label>
 
                 <label className={toolbarSelectClassName}>
-                  <span className="text-slate-400">隐藏</span>
-                  <select
-                    className="bg-transparent font-medium text-slate-900 outline-none"
-                    value={historyVisibility}
-                    onChange={(event) => setHistoryVisibility(event.target.value as MerchantOrderHistoryVisibility)}
-                  >
-                    {MERCHANT_ORDER_HISTORY_OPTIONS.map((option) => (
-                      <option key={option} value={option}>
-                        {getOrderHistoryVisibilityText(option)}
-                      </option>
-                    ))}
-                  </select>
+                  <span className="text-xs font-medium text-slate-500">隐藏</span>
+                  <div className="relative">
+                    <select
+                      className="appearance-none bg-transparent pr-5 text-sm font-medium text-slate-900 outline-none"
+                      value={historyVisibility}
+                      onChange={(event) => setHistoryVisibility(event.target.value as MerchantOrderHistoryVisibility)}
+                    >
+                      {MERCHANT_ORDER_HISTORY_OPTIONS.map((option) => (
+                        <option key={option} value={option}>
+                          {getOrderHistoryVisibilityText(option)}
+                        </option>
+                      ))}
+                    </select>
+                    <svg
+                      viewBox="0 0 20 20"
+                      fill="none"
+                      aria-hidden="true"
+                      className="pointer-events-none absolute right-0 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+                    >
+                      <path d="m5 7.5 5 5 5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </div>
                 </label>
 
                 <button
@@ -980,7 +1061,6 @@ export default function MerchantOrderManagerDialog({
                   {selectionMode ? "完成批量" : "批量"}
                 </button>
               </div>
-              <div className="text-sm text-slate-500">{siteName} 收到的产品订单会集中显示在这里。</div>
             </div>
 
             {!isInline && showCloseButton ? (
@@ -1004,20 +1084,34 @@ export default function MerchantOrderManagerDialog({
                 onChange={(event) => setSearch(event.target.value)}
               />
               <div className="flex flex-wrap gap-2">
-                {([
-                  ["all", `全部 ${counts.all}`],
-                  ["pending", `待确认 ${counts.pending}`],
-                  ["confirmed", `已确认 ${counts.confirmed}`],
-                  ["completed", `已完成 ${counts.completed}`],
-                  ["cancelled", `已取消 ${counts.cancelled}`],
-                ] as Array<[MerchantOrderFilter, string]>).map(([key, label]) => (
+                <OrderStatusFilterDropdown
+                  counts={counts}
+                  selectedStatuses={selectedStatuses}
+                  onPress={() => setFilter("all")}
+                  onChange={(statuses) => {
+                    setSelectedStatuses(statuses);
+                    setFilter("all");
+                  }}
+                />
+                {MERCHANT_ORDER_STATUSES.map((key) => (
                   <button
                     key={key}
                     type="button"
-                    className={getFilterButtonClass(filter === key)}
-                    onClick={() => setFilter(key)}
+                    className={`rounded-full px-3 py-2 text-sm transition-colors ${getFilterChipClass(filter, key)}`}
+                    onClick={() => {
+                      setFilter(key);
+                      if (!selectedStatuses.includes(key)) {
+                        setSelectedStatuses((current) => [...current, key]);
+                      }
+                    }}
                   >
-                    {label}
+                    {key === "pending"
+                      ? `待确认 ${counts.pending}`
+                      : key === "confirmed"
+                        ? `已确认 ${counts.confirmed}`
+                        : key === "completed"
+                          ? `已完成 ${counts.completed}`
+                          : `已取消 ${counts.cancelled}`}
                   </button>
                 ))}
               </div>

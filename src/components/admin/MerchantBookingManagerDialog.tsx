@@ -33,7 +33,6 @@ import {
   getMerchantBookingDayLabel,
   getMerchantBookingFieldText,
   getMerchantBookingFilterText,
-  getMerchantBookingManagementSubtitle,
   getMerchantBookingStatusText,
   type MerchantBookingFilter,
 } from "@/lib/merchantBookingLocale";
@@ -1285,7 +1284,6 @@ export default function MerchantBookingManagerDialog({
                 {locale.startsWith("es") ? "Lote" : "批量"}
               </button>
             </div>
-            <div className="text-sm text-slate-500">{getMerchantBookingManagementSubtitle(siteName || siteId, locale)}</div>
           </div>
           {resolvedShowCloseButton ? (
             <button
