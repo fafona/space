@@ -619,7 +619,7 @@ export default function MerchantOrderMobilePanel({
 
   const detailOverlay = detailOrder ? (
     <div
-      className="fixed inset-0 z-[2147483000] overflow-y-auto bg-black/55 px-4 pb-[calc(env(safe-area-inset-bottom)+6.5rem)] pt-4"
+      className="fixed inset-0 z-[2147483000] flex items-start justify-center overflow-hidden overscroll-none bg-black/55 px-4 pb-[calc(env(safe-area-inset-bottom)+6.5rem)] pt-4"
       onMouseDown={(event: ReactMouseEvent<HTMLDivElement>) => {
         if (event.target === event.currentTarget) closeDetailDialog();
       }}
@@ -720,11 +720,11 @@ export default function MerchantOrderMobilePanel({
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-[calc(env(safe-area-inset-bottom)+1.25rem)] pt-4">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pb-[calc(env(safe-area-inset-bottom)+1.25rem)] pt-4">
           <div className="space-y-3">
             <div className={`flex max-h-[min(42vh,24rem)] min-h-[14rem] flex-col rounded-[24px] border px-4 py-4 ${darkMode ? "border-white/10 bg-white/5" : "border-slate-200 bg-slate-50"}`}>
               <div className={`text-sm font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>商品明细</div>
-              <div className="mt-3 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+              <div className="mt-3 min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pr-1">
                 {detailPreviewEntries.length === 0 ? (
                   <div
                     className={`flex min-h-28 items-center justify-center rounded-2xl border border-dashed px-4 py-6 text-center text-sm ${

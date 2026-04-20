@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState, type MouseEvent as ReactMous
 import { createPortal } from "react-dom";
 import OrderStatusFilterDropdown from "@/components/admin/OrderStatusFilterDropdown";
 import {
+  MERCHANT_ORDER_STATUSES,
   formatMerchantOrderAmount,
   isMerchantOrderPendingMerchantTouch,
   type MerchantOrderAction,
@@ -11,6 +12,14 @@ import {
   type MerchantOrderRecord,
   type MerchantOrderStatus,
 } from "@/lib/merchantOrders";
+import {
+  loadMerchantOrderManagerPreferences,
+  MERCHANT_ORDER_HISTORY_OPTIONS,
+  MERCHANT_ORDER_SORT_OPTIONS,
+  saveMerchantOrderManagerPreferences,
+  type MerchantOrderHistoryVisibility,
+  type MerchantOrderSortMode,
+} from "@/lib/merchantOrderManagerPreferences";
 
 type MerchantOrderManagerDialogProps = {
   open: boolean;
@@ -24,12 +33,6 @@ type MerchantOrderManagerDialogProps = {
 };
 
 type MerchantOrderFilter = "all" | MerchantOrderStatus;
-type MerchantOrderSortMode = "created_desc" | "created_asc";
-type MerchantOrderHistoryVisibility = "none" | "today" | "3d" | "7d";
-
-const MERCHANT_ORDER_SORT_OPTIONS: MerchantOrderSortMode[] = ["created_desc", "created_asc"];
-const MERCHANT_ORDER_HISTORY_OPTIONS: MerchantOrderHistoryVisibility[] = ["none", "today", "3d", "7d"];
-const MERCHANT_ORDER_STATUSES: MerchantOrderStatus[] = ["pending", "confirmed", "completed", "cancelled"];
 
 function overlay(children: ReactNode) {
   if (typeof document === "undefined") return null;
@@ -217,8 +220,12 @@ export default function MerchantOrderManagerDialog({
   const [notice, setNotice] = useState("");
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<MerchantOrderFilter>("all");
-  const [sortMode, setSortMode] = useState<MerchantOrderSortMode>("created_desc");
-  const [historyVisibility, setHistoryVisibility] = useState<MerchantOrderHistoryVisibility>("none");
+  const [sortMode, setSortMode] = useState<MerchantOrderSortMode>(
+    () => loadMerchantOrderManagerPreferences(siteId).sortMode,
+  );
+  const [historyVisibility, setHistoryVisibility] = useState<MerchantOrderHistoryVisibility>(
+    () => loadMerchantOrderManagerPreferences(siteId).historyVisibility,
+  );
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
   const [actionBusyId, setActionBusyId] = useState("");
@@ -226,13 +233,20 @@ export default function MerchantOrderManagerDialog({
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
   const [detailOrderId, setDetailOrderId] = useState("");
   const [detailQuantityDrafts, setDetailQuantityDrafts] = useState<Record<string, string>>({});
-  const [selectedStatuses, setSelectedStatuses] = useState<MerchantOrderStatus[]>(() => [...MERCHANT_ORDER_STATUSES]);
+  const [selectedStatuses, setSelectedStatuses] = useState<MerchantOrderStatus[]>(
+    () => loadMerchantOrderManagerPreferences(siteId).selectedStatuses,
+  );
 
   const workbenchButtonClassName = workbenchOpen
     ? "inline-flex items-center justify-center rounded-[18px] rounded-tl-[8px] rounded-br-[24px] border border-[#34d399] bg-[linear-gradient(135deg,#0f172a_0%,#0f766e_58%,#10b981_100%)] px-4 py-2 text-sm font-semibold tracking-[0.03em] text-white shadow-[0_18px_34px_rgba(15,118,110,0.28)] ring-1 ring-[#99f6e4]/60 transition"
     : "inline-flex items-center justify-center rounded-[18px] rounded-tl-[8px] rounded-br-[24px] border border-[#f59e0b] bg-[linear-gradient(135deg,#fef3c7_0%,#f59e0b_38%,#f97316_100%)] px-4 py-2 text-sm font-semibold tracking-[0.03em] text-slate-950 shadow-[0_16px_30px_rgba(249,115,22,0.28)] ring-1 ring-[#fde68a]/80 transition hover:-translate-y-[1px] hover:brightness-[1.03] hover:shadow-[0_20px_34px_rgba(249,115,22,0.34)]";
   const toolbarSelectClassName =
-    "inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-[0_8px_18px_rgba(15,23,42,0.04)]";
+    "inline-flex min-w-[172px] items-center justify-between gap-3 rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-700 shadow-[0_8px_18px_rgba(15,23,42,0.04)]";
+  const toolbarSelectFieldClassName = "relative min-w-[96px] flex-none";
+  const toolbarSelectInputClassName =
+    "w-full appearance-none bg-transparent pr-7 text-sm font-semibold leading-none text-slate-900 outline-none";
+  const toolbarSelectChevronClassName =
+    "pointer-events-none absolute right-0 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400";
   const compactBatchButtonClassName = selectionMode
     ? "rounded-full border border-slate-900 bg-slate-900 px-3 py-2 text-sm font-medium text-white shadow-[0_10px_20px_rgba(15,23,42,0.14)] transition"
     : "rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-[0_8px_18px_rgba(15,23,42,0.04)] transition hover:bg-slate-50";
@@ -271,6 +285,21 @@ export default function MerchantOrderManagerDialog({
   useEffect(() => {
     onOrdersChange?.(records);
   }, [onOrdersChange, records]);
+
+  useEffect(() => {
+    const preferences = loadMerchantOrderManagerPreferences(siteId);
+    setSelectedStatuses(preferences.selectedStatuses);
+    setSortMode(preferences.sortMode);
+    setHistoryVisibility(preferences.historyVisibility);
+  }, [siteId]);
+
+  useEffect(() => {
+    saveMerchantOrderManagerPreferences(siteId, {
+      selectedStatuses,
+      sortMode,
+      historyVisibility,
+    });
+  }, [historyVisibility, selectedStatuses, siteId, sortMode]);
 
   useEffect(() => {
     if (!selectionMode && selectedOrderIds.length > 0) {
@@ -1004,10 +1033,10 @@ export default function MerchantOrderManagerDialog({
                 </button>
 
                 <label className={toolbarSelectClassName}>
-                  <span className="text-xs font-medium text-slate-500">排序</span>
-                  <div className="relative">
+                  <span className="whitespace-nowrap text-xs font-medium text-slate-500">排序</span>
+                  <div className={toolbarSelectFieldClassName}>
                     <select
-                      className="appearance-none bg-transparent pr-5 text-sm font-medium text-slate-900 outline-none"
+                      className={toolbarSelectInputClassName}
                       value={sortMode}
                       onChange={(event) => setSortMode(event.target.value as MerchantOrderSortMode)}
                     >
@@ -1021,7 +1050,7 @@ export default function MerchantOrderManagerDialog({
                       viewBox="0 0 20 20"
                       fill="none"
                       aria-hidden="true"
-                      className="pointer-events-none absolute right-0 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+                      className={toolbarSelectChevronClassName}
                     >
                       <path d="m5 7.5 5 5 5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
@@ -1029,10 +1058,10 @@ export default function MerchantOrderManagerDialog({
                 </label>
 
                 <label className={toolbarSelectClassName}>
-                  <span className="text-xs font-medium text-slate-500">隐藏</span>
-                  <div className="relative">
+                  <span className="whitespace-nowrap text-xs font-medium text-slate-500">隐藏</span>
+                  <div className={toolbarSelectFieldClassName}>
                     <select
-                      className="appearance-none bg-transparent pr-5 text-sm font-medium text-slate-900 outline-none"
+                      className={toolbarSelectInputClassName}
                       value={historyVisibility}
                       onChange={(event) => setHistoryVisibility(event.target.value as MerchantOrderHistoryVisibility)}
                     >
@@ -1046,7 +1075,7 @@ export default function MerchantOrderManagerDialog({
                       viewBox="0 0 20 20"
                       fill="none"
                       aria-hidden="true"
-                      className="pointer-events-none absolute right-0 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+                      className={toolbarSelectChevronClassName}
                     >
                       <path d="m5 7.5 5 5 5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>

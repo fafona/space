@@ -12,6 +12,7 @@ type OrderStatusFilterDropdownProps = {
   selectedStatuses: MerchantOrderStatus[];
   onChange: (statuses: MerchantOrderStatus[]) => void;
   onPress?: () => void;
+  compact?: boolean;
 };
 
 const STATUS_ORDER: MerchantOrderStatus[] = ["pending", "confirmed", "completed", "cancelled"];
@@ -80,6 +81,7 @@ export default function OrderStatusFilterDropdown({
   selectedStatuses,
   onChange,
   onPress,
+  compact = false,
 }: OrderStatusFilterDropdownProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
@@ -134,7 +136,9 @@ export default function OrderStatusFilterDropdown({
       >
         <button
           type="button"
-          className="inline-flex items-center gap-2 px-3 py-2 text-sm transition hover:bg-slate-50"
+          className={`inline-flex items-center gap-2 transition hover:bg-slate-50 ${
+            compact ? "px-3 py-2 text-xs" : "px-3 py-2 text-sm"
+          }`}
           onClick={() => {
             onPress?.();
             setOpen(false);
@@ -145,7 +149,9 @@ export default function OrderStatusFilterDropdown({
         </button>
         <button
           type="button"
-          className="inline-flex w-10 items-center justify-center border-l border-slate-200 text-slate-500 transition hover:bg-slate-50"
+          className={`inline-flex items-center justify-center border-l border-slate-200 text-slate-500 transition hover:bg-slate-50 ${
+            compact ? "w-9" : "w-10"
+          }`}
           onClick={() => setOpen((current) => !current)}
           aria-expanded={open}
           aria-label={getFilterText("all", counts.all)}
@@ -172,7 +178,7 @@ export default function OrderStatusFilterDropdown({
           >
             <div className="flex min-w-0 items-center gap-2">
               <CheckIndicator checked={allSelected} indeterminate={partiallySelected} />
-              <span className="text-sm font-medium">{getFilterText("all", counts.all)}</span>
+              <span className={`${compact ? "text-xs" : "text-sm"} font-medium`}>{getFilterText("all", counts.all)}</span>
             </div>
           </button>
 
@@ -188,7 +194,7 @@ export default function OrderStatusFilterDropdown({
                 >
                   <div className="flex min-w-0 items-center gap-2">
                     <CheckIndicator checked={checked} indeterminate={false} />
-                    <span className="text-sm font-medium">{getFilterText(status, counts[status])}</span>
+                    <span className={`${compact ? "text-xs" : "text-sm"} font-medium`}>{getFilterText(status, counts[status])}</span>
                   </div>
                 </button>
               );
