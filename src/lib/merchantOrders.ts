@@ -323,6 +323,23 @@ export function applyMerchantOrderAction(
   };
 }
 
+export function updateMerchantOrderItems(
+  record: MerchantOrderRecord,
+  itemsInput: MerchantOrderLineItemInput[],
+  actedAt = new Date().toISOString(),
+): MerchantOrderRecord {
+  const items = normalizeMerchantOrderLineItems(itemsInput, record.pricePrefix);
+  const summary = summarizeMerchantOrderItems(items);
+  return {
+    ...record,
+    items,
+    totalQuantity: summary.totalQuantity,
+    totalAmount: summary.totalAmount,
+    updatedAt: actedAt,
+    merchantTouchedAt: actedAt,
+  };
+}
+
 export function createMerchantOrder(
   input: MerchantOrderCreateInput,
   options: {

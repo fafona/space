@@ -5,6 +5,7 @@ import {
   formatMerchantOrderAmount,
   isMerchantOrderPendingMerchantTouch,
   type MerchantOrderAction,
+  type MerchantOrderLineItemInput,
   type MerchantOrderRecord,
   type MerchantOrderStatus,
 } from "@/lib/merchantOrders";
@@ -68,6 +69,15 @@ function formatDateTime(value: string) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(stamp));
+}
+
+function getDetailItemDraftKey(orderId: string, index: number) {
+  return `${orderId}:${index}`;
+}
+
+function parseQuantityDraft(value: string, fallback: number) {
+  const next = Number.parseInt(value, 10);
+  return Number.isFinite(next) && next > 0 ? next : fallback;
 }
 
 function getStatusText(status: MerchantOrderStatus) {
@@ -158,6 +168,8 @@ export default function MerchantOrderMobilePanel({
   const [overflowMenuOpen, setOverflowMenuOpen] = useState(false);
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
   const [detailOrderId, setDetailOrderId] = useState("");
+  const [detailQuantityDrafts, setDetailQuantityDrafts] = useState<Record<string, string>>({});
+  const [quantityBusyKey, setQuantityBusyKey] = useState("");
 
   const cardClassName = darkMode
     ? "rounded-[26px] border border-white/10 bg-[rgba(15,23,42,0.84)] p-4 shadow-[0_20px_44px_rgba(2,6,23,0.28)]"
@@ -284,6 +296,17 @@ export default function MerchantOrderMobilePanel({
     [detailOrderId, records],
   );
 
+  useEffect(() => {
+    if (!detailOrder) {
+      setDetailQuantityDrafts({});
+      setQuantityBusyKey("");
+      return;
+    }
+    setDetailQuantityDrafts(
+      Object.fromEntries(detailOrder.items.map((item, index) => [getDetailItemDraftKey(detailOrder.id, index), String(item.quantity)])),
+    );
+  }, [detailOrder]);
+
   const requestOrderAction = useCallback(
     async (orderId: string, action: MerchantOrderAction) => {
       const response = await fetch("/api/orders", {
@@ -294,6 +317,28 @@ export default function MerchantOrderMobilePanel({
           siteId,
           orderId,
           action,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { order?: MerchantOrderRecord; message?: string; error?: string }
+        | null;
+      if (!response.ok || !payload?.order) {
+        throw new Error(payload?.message || payload?.error || "order_update_failed");
+      }
+      return payload.order;
+    },
+    [siteId],
+  );
+
+  const requestOrderItemsUpdate = useCallback(
+    async (orderId: string, items: MerchantOrderLineItemInput[]) => {
+      const response = await fetch("/api/orders", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          siteId,
+          orderId,
+          items,
         }),
       });
       const payload = (await response.json().catch(() => null)) as
@@ -362,6 +407,69 @@ export default function MerchantOrderMobilePanel({
   const closeDetailDialog = useCallback(() => {
     setDetailOrderId("");
   }, []);
+
+  const handleDetailQuantityDraftChange = useCallback((orderId: string, itemIndex: number, value: string) => {
+    const nextValue = value.replace(/[^\d]/g, "");
+    setDetailQuantityDrafts((current) => ({
+      ...current,
+      [getDetailItemDraftKey(orderId, itemIndex)]: nextValue,
+    }));
+  }, []);
+
+  const commitDetailItemQuantity = useCallback(
+    async (order: MerchantOrderRecord, itemIndex: number, value: string | number) => {
+      const currentItem = order.items[itemIndex];
+      if (!currentItem) return;
+      const draftKey = getDetailItemDraftKey(order.id, itemIndex);
+      const nextQuantity = Math.max(1, parseQuantityDraft(String(value), currentItem.quantity));
+      setDetailQuantityDrafts((current) => ({
+        ...current,
+        [draftKey]: String(nextQuantity),
+      }));
+      if (nextQuantity === currentItem.quantity) return;
+      setQuantityBusyKey(draftKey);
+      setError("");
+      try {
+        const nextItems = order.items.map((item, index) =>
+          index === itemIndex
+            ? {
+                productId: item.productId,
+                code: item.code,
+                name: item.name,
+                description: item.description,
+                imageUrl: item.imageUrl,
+                tag: item.tag,
+                quantity: nextQuantity,
+                unitPrice: item.unitPrice,
+                unitPriceText: item.unitPriceText,
+              }
+            : item,
+        );
+        const nextOrder = await requestOrderItemsUpdate(order.id, nextItems);
+        setRecords((current) => current.map((item) => (item.id === order.id ? nextOrder : item)));
+      } catch (nextError) {
+        setDetailQuantityDrafts((current) => ({
+          ...current,
+          [draftKey]: String(currentItem.quantity),
+        }));
+        setError(nextError instanceof Error && nextError.message ? nextError.message : "订单商品数量更新失败");
+      } finally {
+        setQuantityBusyKey("");
+      }
+    },
+    [requestOrderItemsUpdate],
+  );
+
+  const stepDetailItemQuantity = useCallback(
+    (order: MerchantOrderRecord, itemIndex: number, delta: number) => {
+      const currentItem = order.items[itemIndex];
+      if (!currentItem) return;
+      const draftKey = getDetailItemDraftKey(order.id, itemIndex);
+      const baseQuantity = parseQuantityDraft(detailQuantityDrafts[draftKey] ?? String(currentItem.quantity), currentItem.quantity);
+      void commitDetailItemQuantity(order, itemIndex, Math.max(1, baseQuantity + delta));
+    },
+    [commitDetailItemQuantity, detailQuantityDrafts],
+  );
 
   const renderStatusActions = useCallback(
     (record: MerchantOrderRecord) => (
@@ -479,7 +587,6 @@ export default function MerchantOrderMobilePanel({
             <div className={`mt-2 flex flex-wrap gap-x-3 gap-y-1 text-sm ${darkMode ? "text-slate-300" : "text-slate-500"}`}>
               <span>{`订单号: ${detailOrder.id}`}</span>
               <span>{`下单时间: ${formatDateTime(detailOrder.createdAt)}`}</span>
-              <span>{formatMerchantOrderAmount(detailOrder.totalAmount, detailOrder.pricePrefix)}</span>
             </div>
           </div>
           <button
@@ -496,15 +603,19 @@ export default function MerchantOrderMobilePanel({
             <div className={`flex max-h-[min(42vh,24rem)] min-h-[14rem] flex-col rounded-[24px] border px-4 py-4 ${darkMode ? "border-white/10 bg-white/5" : "border-slate-200 bg-slate-50"}`}>
               <div className={`text-sm font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>商品明细</div>
               <div className="mt-3 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
-                {detailOrder.items.map((item) => (
-                  <div
-                    key={`${detailOrder.id}-${item.productId}-${item.code}`}
-                    className={`rounded-2xl border px-3 py-3 text-sm ${
-                      darkMode ? "border-white/10 bg-white/5 text-slate-100" : "border-slate-200 bg-white text-slate-700"
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
+                {detailOrder.items.map((item, index) => {
+                  const itemDraftKey = getDetailItemDraftKey(detailOrder.id, index);
+                  const draftQuantity = detailQuantityDrafts[itemDraftKey] ?? String(item.quantity);
+                  const normalizedDraftQuantity = parseQuantityDraft(draftQuantity, item.quantity);
+                  const isQuantityBusy = quantityBusyKey === itemDraftKey;
+                  return (
+                    <div
+                      key={`${detailOrder.id}-${item.productId}-${item.code}-${index}`}
+                      className={`rounded-2xl border px-3 py-3 text-sm ${
+                        darkMode ? "border-white/10 bg-white/5 text-slate-100" : "border-slate-200 bg-white text-slate-700"
+                      }`}
+                    >
+                      <div className="space-y-3">
                         <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
                           {item.code ? (
                             <div className={`text-xs uppercase tracking-[0.18em] ${darkMode ? "text-slate-400" : "text-slate-400"}`}>
@@ -513,26 +624,70 @@ export default function MerchantOrderMobilePanel({
                           ) : null}
                           <div className="font-semibold">{item.name || "未命名产品"}</div>
                         </div>
-                      </div>
-                      <div className="shrink-0 text-right">
-                        <div className={darkMode ? "text-slate-300" : "text-slate-500"}>×{item.quantity}</div>
-                        <div className="mt-1 font-semibold text-sky-500">
-                          {formatMerchantOrderAmount(item.subtotal, detailOrder.pricePrefix)}
+                        <div className="flex flex-wrap items-center justify-end gap-3">
+                          <div className="font-semibold text-sky-500">
+                            {formatMerchantOrderAmount(item.subtotal, detailOrder.pricePrefix)}
+                          </div>
+                          <div
+                            className={`inline-flex items-center gap-1 rounded-full px-1.5 py-1 shadow-sm ${
+                              darkMode ? "border border-white/10 bg-white/5" : "border border-slate-200 bg-slate-50"
+                            }`}
+                          >
+                            <button
+                              type="button"
+                              className={`inline-flex h-8 w-8 items-center justify-center rounded-full text-base font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                                darkMode ? "border border-white/10 bg-slate-950/60 text-white hover:bg-slate-900" : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                              }`}
+                              onClick={() => stepDetailItemQuantity(detailOrder, index, -1)}
+                              disabled={isQuantityBusy || normalizedDraftQuantity <= 1}
+                            >
+                              -
+                            </button>
+                            <input
+                              type="number"
+                              inputMode="numeric"
+                              min={1}
+                              className={`h-8 w-14 rounded-full border px-2 text-center text-sm font-semibold outline-none transition disabled:cursor-not-allowed ${
+                                darkMode
+                                  ? "border-white/10 bg-slate-950/60 text-white focus:border-white/20 focus:bg-slate-950"
+                                  : "border-slate-200 bg-white text-slate-900 focus:border-slate-300 focus:ring-2 focus:ring-slate-200"
+                              }`}
+                              value={draftQuantity}
+                              onChange={(event) => handleDetailQuantityDraftChange(detailOrder.id, index, event.target.value)}
+                              onBlur={(event) => {
+                                void commitDetailItemQuantity(detailOrder, index, event.target.value);
+                              }}
+                              onFocus={(event) => event.currentTarget.select()}
+                              onKeyDown={(event) => {
+                                if (event.key !== "Enter") return;
+                                event.preventDefault();
+                                void commitDetailItemQuantity(detailOrder, index, event.currentTarget.value);
+                                event.currentTarget.blur();
+                              }}
+                              disabled={isQuantityBusy}
+                            />
+                            <button
+                              type="button"
+                              className={`inline-flex h-8 w-8 items-center justify-center rounded-full text-base font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                                darkMode ? "border border-white/10 bg-slate-950/60 text-white hover:bg-slate-900" : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                              }`}
+                              onClick={() => stepDetailItemQuantity(detailOrder, index, 1)}
+                              disabled={isQuantityBusy}
+                            >
+                              +
+                            </button>
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 
             <div className={`rounded-[24px] border px-4 py-4 ${darkMode ? "border-white/10 bg-white/5" : "border-slate-200 bg-slate-50"}`}>
               <div className={`text-sm font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>客户信息</div>
               <div className={`mt-3 grid gap-3 text-sm ${darkMode ? "text-slate-200" : "text-slate-600"}`}>
-                <div>
-                  <span className={darkMode ? "text-slate-400" : "text-slate-400"}>店铺：</span>
-                  {detailOrder.siteName || detailOrder.siteId}
-                </div>
                 <div>
                   <span className={darkMode ? "text-slate-400" : "text-slate-400"}>姓名：</span>
                   {detailOrder.customer.name || "-"}

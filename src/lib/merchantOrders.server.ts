@@ -4,8 +4,10 @@ import {
   buildMerchantOrderId,
   createMerchantOrder,
   normalizeMerchantOrderRecords,
+  updateMerchantOrderItems,
   type MerchantOrderAction,
   type MerchantOrderCreateInput,
+  type MerchantOrderLineItemInput,
 } from "@/lib/merchantOrders";
 import { loadStoredMerchantOrders, saveStoredMerchantOrders } from "@/lib/merchantOrdersStore";
 
@@ -64,7 +66,8 @@ export async function createMerchantOrderRecord(input: MerchantOrderCreateInput)
 export async function updateMerchantOrderBySite(input: {
   siteId: string;
   orderId: string;
-  action: MerchantOrderAction;
+  action?: MerchantOrderAction;
+  items?: MerchantOrderLineItemInput[];
 }) {
   const supabase = requireOrdersStoreClient();
   const stored = await loadStoredMerchantOrders(supabase, input.siteId);
@@ -75,7 +78,17 @@ export async function updateMerchantOrderBySite(input: {
   }
   const current = orders[orderIndex];
   const now = new Date().toISOString();
-  const next = applyMerchantOrderAction(current, input.action, now);
+  const next = Array.isArray(input.items)
+    ? updateMerchantOrderItems(current, input.items, now)
+    : input.action
+      ? applyMerchantOrderAction(current, input.action, now)
+      : null;
+  if (!next) {
+    throw new Error("invalid_order_update");
+  }
+  if (next.items.length === 0) {
+    throw new Error("order_items_required");
+  }
   const updatedOrders = [...orders];
   updatedOrders[orderIndex] = next;
   const saved = await saveStoredMerchantOrders(supabase, {

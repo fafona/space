@@ -8,6 +8,7 @@ import {
   isMerchantOrderPendingMerchantTouch,
   normalizeMerchantOrderLineItems,
   parseMerchantOrderPriceValue,
+  updateMerchantOrderItems,
 } from "@/lib/merchantOrders";
 
 test("parseMerchantOrderPriceValue parses formatted values", () => {
@@ -147,4 +148,45 @@ test("applyMerchantOrderAction supports complete and restore flows", () => {
   assert.equal(restoredFromCancelled.completedAt, null);
   assert.equal(restoredFromCancelled.cancelledAt, null);
   assert.equal(restoredFromCancelled.updatedAt, "2026-04-20T09:05:00.000Z");
+});
+
+test("updateMerchantOrderItems recalculates quantity and totals", () => {
+  const base = createMerchantOrder({
+    siteId: "10000000",
+    siteName: "fafona",
+    blockId: "b-product",
+    pricePrefix: "€",
+    customer: {
+      name: "Felix",
+    },
+    items: [
+      {
+        productId: "a",
+        code: "SKU-001",
+        name: "Demo A",
+        quantity: 1,
+        unitPriceText: "39.90",
+      },
+      {
+        productId: "b",
+        code: "SKU-002",
+        name: "Demo B",
+        quantity: 2,
+        unitPriceText: "7.00",
+      },
+    ],
+  });
+
+  const updated = updateMerchantOrderItems(
+    base,
+    base.items.map((item, index) => (index === 0 ? { ...item, quantity: 3 } : item)),
+    "2026-04-20T10:00:00.000Z",
+  );
+
+  assert.equal(updated.items[0]?.quantity, 3);
+  assert.equal(updated.items[0]?.subtotal, 119.7);
+  assert.equal(updated.totalQuantity, 5);
+  assert.equal(updated.totalAmount, 133.7);
+  assert.equal(updated.updatedAt, "2026-04-20T10:00:00.000Z");
+  assert.equal(updated.merchantTouchedAt, "2026-04-20T10:00:00.000Z");
 });

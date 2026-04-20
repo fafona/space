@@ -6,6 +6,7 @@ import {
   formatMerchantOrderAmount,
   isMerchantOrderPendingMerchantTouch,
   type MerchantOrderAction,
+  type MerchantOrderLineItemInput,
   type MerchantOrderRecord,
   type MerchantOrderStatus,
 } from "@/lib/merchantOrders";
@@ -64,6 +65,15 @@ function formatDateTime(value: string) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(stamp));
+}
+
+function getDetailItemDraftKey(orderId: string, index: number) {
+  return `${orderId}:${index}`;
+}
+
+function parseQuantityDraft(value: string, fallback: number) {
+  const next = Number.parseInt(value, 10);
+  return Number.isFinite(next) && next > 0 ? next : fallback;
 }
 
 function getStatusText(status: MerchantOrderStatus) {
@@ -192,6 +202,8 @@ export default function MerchantOrderManagerDialog({
   const [batchBusyKey, setBatchBusyKey] = useState("");
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
   const [detailOrderId, setDetailOrderId] = useState("");
+  const [detailQuantityDrafts, setDetailQuantityDrafts] = useState<Record<string, string>>({});
+  const [quantityBusyKey, setQuantityBusyKey] = useState("");
 
   const workbenchButtonClassName = workbenchOpen
     ? "inline-flex items-center justify-center rounded-[18px] rounded-tl-[8px] rounded-br-[24px] border border-[#34d399] bg-[linear-gradient(135deg,#0f172a_0%,#0f766e_58%,#10b981_100%)] px-4 py-2 text-sm font-semibold tracking-[0.03em] text-white shadow-[0_18px_34px_rgba(15,118,110,0.28)] ring-1 ring-[#99f6e4]/60 transition"
@@ -291,6 +303,17 @@ export default function MerchantOrderManagerDialog({
   );
 
   useEffect(() => {
+    if (!detailOrder) {
+      setDetailQuantityDrafts({});
+      setQuantityBusyKey("");
+      return;
+    }
+    setDetailQuantityDrafts(
+      Object.fromEntries(detailOrder.items.map((item, index) => [getDetailItemDraftKey(detailOrder.id, index), String(item.quantity)])),
+    );
+  }, [detailOrder]);
+
+  useEffect(() => {
     if (!selectionMode) return;
     setSelectedOrderIds((current) => {
       const next = current.filter((id) => visibleRecordIdSet.has(id));
@@ -310,6 +333,30 @@ export default function MerchantOrderManagerDialog({
           siteId,
           orderId,
           action,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { order?: MerchantOrderRecord; message?: string; error?: string }
+        | null;
+      if (!response.ok || !payload?.order) {
+        throw new Error(payload?.message || payload?.error || "order_update_failed");
+      }
+      return payload.order;
+    },
+    [siteId],
+  );
+
+  const requestOrderItemsUpdate = useCallback(
+    async (orderId: string, items: MerchantOrderLineItemInput[]) => {
+      const response = await fetch("/api/orders", {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          siteId,
+          orderId,
+          items,
         }),
       });
       const payload = (await response.json().catch(() => null)) as
@@ -444,6 +491,71 @@ export default function MerchantOrderManagerDialog({
       void markOrderTouched(record.id);
     },
     [markOrderTouched],
+  );
+
+  const handleDetailQuantityDraftChange = useCallback((orderId: string, itemIndex: number, value: string) => {
+    const nextValue = value.replace(/[^\d]/g, "");
+    setDetailQuantityDrafts((current) => ({
+      ...current,
+      [getDetailItemDraftKey(orderId, itemIndex)]: nextValue,
+    }));
+  }, []);
+
+  const commitDetailItemQuantity = useCallback(
+    async (order: MerchantOrderRecord, itemIndex: number, value: string | number) => {
+      const currentItem = order.items[itemIndex];
+      if (!currentItem) return;
+      const draftKey = getDetailItemDraftKey(order.id, itemIndex);
+      const nextQuantity = Math.max(1, parseQuantityDraft(String(value), currentItem.quantity));
+      setDetailQuantityDrafts((current) => ({
+        ...current,
+        [draftKey]: String(nextQuantity),
+      }));
+      if (nextQuantity === currentItem.quantity) return;
+      setQuantityBusyKey(draftKey);
+      setError("");
+      setNotice("");
+      try {
+        const nextItems = order.items.map((item, index) =>
+          index === itemIndex
+            ? {
+                productId: item.productId,
+                code: item.code,
+                name: item.name,
+                description: item.description,
+                imageUrl: item.imageUrl,
+                tag: item.tag,
+                quantity: nextQuantity,
+                unitPrice: item.unitPrice,
+                unitPriceText: item.unitPriceText,
+              }
+            : item,
+        );
+        const nextOrder = await requestOrderItemsUpdate(order.id, nextItems);
+        setRecords((current) => current.map((item) => (item.id === order.id ? nextOrder : item)));
+        setNotice("订单商品数量已更新");
+      } catch (nextError) {
+        setDetailQuantityDrafts((current) => ({
+          ...current,
+          [draftKey]: String(currentItem.quantity),
+        }));
+        setError(nextError instanceof Error && nextError.message ? nextError.message : "订单商品数量更新失败");
+      } finally {
+        setQuantityBusyKey("");
+      }
+    },
+    [requestOrderItemsUpdate],
+  );
+
+  const stepDetailItemQuantity = useCallback(
+    (order: MerchantOrderRecord, itemIndex: number, delta: number) => {
+      const currentItem = order.items[itemIndex];
+      if (!currentItem) return;
+      const draftKey = getDetailItemDraftKey(order.id, itemIndex);
+      const baseQuantity = parseQuantityDraft(detailQuantityDrafts[draftKey] ?? String(currentItem.quantity), currentItem.quantity);
+      void commitDetailItemQuantity(order, itemIndex, Math.max(1, baseQuantity + delta));
+    },
+    [commitDetailItemQuantity, detailQuantityDrafts],
   );
 
   const renderOrderActions = useCallback(
@@ -627,8 +739,8 @@ export default function MerchantOrderManagerDialog({
             }
           }}
         >
-          <div className="flex max-h-[calc(100vh-2rem)] w-full max-w-4xl flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-2xl">
-            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 px-6 py-5">
+          <div className="flex max-h-[90vh] w-full max-w-[84rem] flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-2xl">
+            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 px-7 py-5">
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${getStatusBadgeClass(detailOrder.status)}`}>
@@ -641,7 +753,6 @@ export default function MerchantOrderManagerDialog({
                 <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-500">
                   <span>{`订单号: ${detailOrder.id}`}</span>
                   <span>{`下单时间: ${formatDateTime(detailOrder.createdAt)}`}</span>
-                  <span>{formatMerchantOrderAmount(detailOrder.totalAmount, detailOrder.pricePrefix)}</span>
                 </div>
               </div>
 
@@ -657,33 +768,77 @@ export default function MerchantOrderManagerDialog({
               </div>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-              <div className="grid min-h-0 gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(300px,0.9fr)]">
+            <div className="min-h-0 flex-1 overflow-y-auto px-7 py-6">
+              <div className="grid min-h-0 gap-5 lg:grid-cols-[minmax(0,1.45fr)_minmax(340px,0.85fr)]">
                 <div className="space-y-3">
-                  <div className="flex h-[min(56vh,42rem)] min-h-[18rem] max-h-[calc(100vh-14rem)] flex-col rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                  <div className="flex h-[min(72vh,58rem)] min-h-[24rem] max-h-[calc(90vh-12rem)] flex-col rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
                     <div className="text-sm font-semibold text-slate-900">商品明细</div>
                     <div className="mt-3 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
-                      {detailOrder.items.map((item) => (
-                        <div
-                          key={`${detailOrder.id}-${item.productId}-${item.code}`}
-                          className="flex items-start justify-between gap-4 rounded-2xl border border-slate-200 bg-white px-4 py-3"
-                        >
-                          <div className="min-w-0">
-                            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                              {item.code ? (
-                                <span className="text-xs uppercase tracking-[0.18em] text-slate-400">{item.code}</span>
-                              ) : null}
-                              <div className="text-sm font-semibold text-slate-900">{item.name || "未命名产品"}</div>
+                      {detailOrder.items.map((item, index) => {
+                        const itemDraftKey = getDetailItemDraftKey(detailOrder.id, index);
+                        const draftQuantity = detailQuantityDrafts[itemDraftKey] ?? String(item.quantity);
+                        const normalizedDraftQuantity = parseQuantityDraft(draftQuantity, item.quantity);
+                        const isQuantityBusy = quantityBusyKey === itemDraftKey;
+                        return (
+                          <div
+                            key={`${detailOrder.id}-${item.productId}-${item.code}-${index}`}
+                            className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                          >
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                              <div className="min-w-0 flex-1">
+                                <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                                  {item.code ? (
+                                    <span className="text-xs uppercase tracking-[0.18em] text-slate-400">{item.code}</span>
+                                  ) : null}
+                                  <div className="break-words text-sm font-semibold text-slate-900">{item.name || "未命名产品"}</div>
+                                </div>
+                              </div>
+                              <div className="flex flex-wrap items-center justify-end gap-3">
+                                <div className="text-sm font-semibold text-sky-700">
+                                  {formatMerchantOrderAmount(item.subtotal, detailOrder.pricePrefix)}
+                                </div>
+                                <div className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-1.5 py-1 shadow-sm">
+                                  <button
+                                    type="button"
+                                    className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-base font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                    onClick={() => stepDetailItemQuantity(detailOrder, index, -1)}
+                                    disabled={isQuantityBusy || normalizedDraftQuantity <= 1}
+                                  >
+                                    -
+                                  </button>
+                                  <input
+                                    type="number"
+                                    inputMode="numeric"
+                                    min={1}
+                                    className="h-8 w-14 rounded-full border border-slate-200 bg-white px-2 text-center text-sm font-semibold text-slate-900 outline-none transition focus:border-slate-300 focus:ring-2 focus:ring-slate-200 disabled:cursor-not-allowed disabled:bg-slate-100"
+                                    value={draftQuantity}
+                                    onChange={(event) => handleDetailQuantityDraftChange(detailOrder.id, index, event.target.value)}
+                                    onBlur={(event) => {
+                                      void commitDetailItemQuantity(detailOrder, index, event.target.value);
+                                    }}
+                                    onFocus={(event) => event.currentTarget.select()}
+                                    onKeyDown={(event) => {
+                                      if (event.key !== "Enter") return;
+                                      event.preventDefault();
+                                      void commitDetailItemQuantity(detailOrder, index, event.currentTarget.value);
+                                      event.currentTarget.blur();
+                                    }}
+                                    disabled={isQuantityBusy}
+                                  />
+                                  <button
+                                    type="button"
+                                    className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-base font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                    onClick={() => stepDetailItemQuantity(detailOrder, index, 1)}
+                                    disabled={isQuantityBusy}
+                                  >
+                                    +
+                                  </button>
+                                </div>
+                              </div>
                             </div>
                           </div>
-                          <div className="shrink-0 text-right">
-                            <div className="text-sm text-slate-500">×{item.quantity}</div>
-                            <div className="mt-1 text-base font-semibold text-sky-700">
-                              {formatMerchantOrderAmount(item.subtotal, detailOrder.pricePrefix)}
-                            </div>
-                          </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 </div>
@@ -692,10 +847,6 @@ export default function MerchantOrderManagerDialog({
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
                     <div className="text-sm font-semibold text-slate-900">客户信息</div>
                     <div className="mt-3 grid gap-3 text-sm text-slate-600">
-                      <div>
-                        <span className="text-slate-400">店铺：</span>
-                        {detailOrder.siteName || detailOrder.siteId}
-                      </div>
                       <div>
                         <span className="text-slate-400">姓名：</span>
                         {detailOrder.customer.name || "-"}

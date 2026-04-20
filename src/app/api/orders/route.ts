@@ -4,7 +4,7 @@ import { loadCurrentMerchantSnapshotSiteBySiteId } from "@/lib/publishedMerchant
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { createMerchantOrderRecord, listMerchantOrders, updateMerchantOrderBySite } from "@/lib/merchantOrders.server";
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
-import type { MerchantOrderAction, MerchantOrderCreateInput } from "@/lib/merchantOrders";
+import type { MerchantOrderAction, MerchantOrderCreateInput, MerchantOrderLineItemInput } from "@/lib/merchantOrders";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -91,6 +91,7 @@ export async function PATCH(request: Request) {
       siteId?: string;
       orderId?: string;
       action?: MerchantOrderAction;
+      items?: MerchantOrderLineItemInput[];
     } | null;
     const siteId = String(body?.siteId ?? "").trim();
     if (!isMerchantNumericId(siteId)) {
@@ -103,6 +104,7 @@ export async function PATCH(request: Request) {
     if (!(await isOrderManagementEnabled(siteId))) {
       return NextResponse.json({ error: "order_management_disabled" }, { status: 403 });
     }
+    const items = Array.isArray(body?.items) ? body.items : null;
     const action =
       body?.action === "confirm" ||
       body?.action === "cancel" ||
@@ -113,13 +115,14 @@ export async function PATCH(request: Request) {
       body?.action === "touch"
         ? body.action
         : null;
-    if (!action) {
+    if (!items && !action) {
       return NextResponse.json({ error: "invalid_order_action" }, { status: 400 });
     }
     const order = await updateMerchantOrderBySite({
       siteId,
       orderId: String(body?.orderId ?? "").trim(),
-      action,
+      action: action ?? undefined,
+      items: items ?? undefined,
     });
     return NextResponse.json({ ok: true, order });
   } catch (error) {
