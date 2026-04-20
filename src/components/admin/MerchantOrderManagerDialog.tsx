@@ -804,15 +804,19 @@ export default function MerchantOrderManagerDialog({
                     ) : null}
 
                     <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="min-w-0 flex-1 space-y-3">
+                      <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className={`rounded-full px-2 py-0.5 text-[11px] ${getStatusBadgeClass(record.status)}`}>
                             {getStatusText(record.status)}
                           </span>
                           <div className="truncate text-base font-semibold text-slate-900">{displayName}</div>
                         </div>
+                        <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+                          <span>{`订单号: ${record.id}`}</span>
+                          <span>{`下单时间: ${formatDateTime(record.createdAt)}`}</span>
+                        </div>
 
-                        <div className="grid gap-3 text-sm text-slate-600 md:grid-cols-3 xl:grid-cols-4">
+                        <div className="hidden grid gap-3 text-sm text-slate-600 md:grid-cols-3 xl:grid-cols-4">
                           <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
                             <div className="text-xs text-slate-400">订单号</div>
                             <div className="mt-1 break-all font-medium text-slate-900">{record.id}</div>
@@ -830,7 +834,42 @@ export default function MerchantOrderManagerDialog({
                         </div>
                       </div>
 
-                      <div className="flex shrink-0 flex-wrap gap-1.5">
+                      <div className="flex shrink-0 flex-col items-end gap-2">
+                        <div className="text-right">
+                          <div className="text-[11px] font-medium text-slate-400">金额</div>
+                          <div className="mt-0.5 text-lg font-semibold text-slate-900">
+                            {formatMerchantOrderAmount(record.totalAmount, record.pricePrefix)}
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap items-center justify-end gap-1.5">
+                        {record.customer.email ? (
+                          <a
+                            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
+                            href={`mailto:${record.customer.email}`}
+                            onClick={() => {
+                              void markOrderTouched(record.id);
+                            }}
+                            title="发送邮件"
+                            aria-label="发送邮件"
+                            data-skip-selection-toggle="true"
+                          >
+                            <MailIcon />
+                          </a>
+                        ) : null}
+                        {record.customer.phone ? (
+                          <a
+                            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#007AFF] text-white shadow-sm transition hover:bg-[#0066D6]"
+                            href={`tel:${record.customer.phone}`}
+                            onClick={() => {
+                              void markOrderTouched(record.id);
+                            }}
+                            title="拨打电话"
+                            aria-label="拨打电话"
+                            data-skip-selection-toggle="true"
+                          >
+                            <PhoneIcon />
+                          </a>
+                        ) : null}
                         <button
                           type="button"
                           className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50"
@@ -839,6 +878,7 @@ export default function MerchantOrderManagerDialog({
                         >
                           详情
                         </button>
+                      </div>
                       </div>
                     </div>
                   </article>

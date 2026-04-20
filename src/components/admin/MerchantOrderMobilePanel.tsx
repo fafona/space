@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import {
   formatMerchantOrderAmount,
+  isMerchantOrderPendingMerchantTouch,
   type MerchantOrderRecord,
   type MerchantOrderStatus,
 } from "@/lib/merchantOrders";
@@ -21,6 +22,27 @@ type MerchantOrderHistoryVisibility = "none" | "today" | "3d" | "7d";
 
 const MERCHANT_ORDER_SORT_OPTIONS: MerchantOrderSortMode[] = ["created_desc", "created_asc"];
 const MERCHANT_ORDER_HISTORY_OPTIONS: MerchantOrderHistoryVisibility[] = ["none", "today", "3d", "7d"];
+
+function MailIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
+      <path
+        d="M3 5.5A1.5 1.5 0 0 1 4.5 4h11A1.5 1.5 0 0 1 17 5.5v9A1.5 1.5 0 0 1 15.5 16h-11A1.5 1.5 0 0 1 3 14.5v-9Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      />
+      <path d="m4 6 6 4 6-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function PhoneIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" aria-hidden="true">
+      <path d="M6.62 10.79a15.53 15.53 0 0 0 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1C10.4 21 3 13.6 3 4c0-.55.45-1 1-1h3.49c.55 0 1 .45 1 1 0 1.24.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.19 2.2z" />
+    </svg>
+  );
+}
 
 function formatDateTime(value: string) {
   const stamp = Date.parse(value);
@@ -114,6 +136,7 @@ export default function MerchantOrderMobilePanel({
   const [actionBusyId, setActionBusyId] = useState("");
   const [overflowMenuOpen, setOverflowMenuOpen] = useState(false);
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
+  const [detailOrderId, setDetailOrderId] = useState("");
 
   const cardClassName = darkMode
     ? "rounded-[26px] border border-white/10 bg-[rgba(15,23,42,0.84)] p-4 shadow-[0_20px_44px_rgba(2,6,23,0.28)]"
@@ -144,6 +167,9 @@ export default function MerchantOrderMobilePanel({
   const overflowMenuPrimaryButtonClassName = darkMode
     ? "w-full rounded-[18px] border border-amber-300/30 bg-amber-200/10 px-3.5 py-3 text-left text-[13px] font-semibold text-amber-100 shadow-sm transition hover:bg-amber-200/15"
     : "w-full rounded-[18px] border border-[#d8c7a5] bg-[linear-gradient(135deg,#fffdfa_0%,#f6efe1_62%,#ecdfc2_100%)] px-3.5 py-3 text-left text-[13px] font-semibold text-slate-800 shadow-sm transition hover:brightness-[0.99]";
+  const detailPanelClassName = darkMode
+    ? "w-full max-w-lg rounded-[28px] border border-white/10 bg-[rgba(15,23,42,0.98)] shadow-[0_32px_80px_rgba(2,6,23,0.52)]"
+    : "w-full max-w-lg rounded-[28px] border border-slate-200 bg-white shadow-[0_28px_72px_rgba(15,23,42,0.2)]";
 
   const loadOrders = useCallback(async () => {
     if (!siteId) return;
@@ -232,6 +258,52 @@ export default function MerchantOrderMobilePanel({
     [historyFilteredRecords],
   );
 
+  const detailOrder = useMemo(
+    () => (detailOrderId ? records.find((record) => record.id === detailOrderId) ?? null : null),
+    [detailOrderId, records],
+  );
+
+  const requestOrderAction = useCallback(
+    async (orderId: string, action: "confirm" | "cancel" | "print" | "touch") => {
+      const response = await fetch("/api/orders", {
+        method: "PATCH",
+        keepalive: action === "touch",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          siteId,
+          orderId,
+          action,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { order?: MerchantOrderRecord; message?: string; error?: string }
+        | null;
+      if (!response.ok || !payload?.order) {
+        throw new Error(payload?.message || payload?.error || "order_update_failed");
+      }
+      return payload.order;
+    },
+    [siteId],
+  );
+
+  const markOrderTouched = useCallback(
+    async (orderId: string) => {
+      const currentOrder = records.find((item) => item.id === orderId);
+      if (!currentOrder || !isMerchantOrderPendingMerchantTouch(currentOrder)) return;
+      const touchedAt = new Date().toISOString();
+      setRecords((current) =>
+        current.map((item) => (item.id === orderId ? { ...item, merchantTouchedAt: touchedAt } : item)),
+      );
+      try {
+        const nextOrder = await requestOrderAction(orderId, "touch");
+        setRecords((current) => current.map((item) => (item.id === orderId ? nextOrder : item)));
+      } catch {
+        setRecords((current) => current.map((item) => (item.id === orderId ? currentOrder : item)));
+      }
+    },
+    [records, requestOrderAction],
+  );
+
   const handleOrderAction = useCallback(
     async (order: MerchantOrderRecord, action: "confirm" | "cancel" | "print") => {
       setActionBusyId(order.id);
@@ -247,41 +319,200 @@ export default function MerchantOrderMobilePanel({
             popup.print();
           }
         }
-        const response = await fetch("/api/orders", {
-          method: "PATCH",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            siteId,
-            orderId: order.id,
-            action,
-          }),
-        });
-        const payload = (await response.json().catch(() => null)) as
-          | { order?: MerchantOrderRecord; message?: string; error?: string }
-          | null;
-        if (!response.ok) {
-          throw new Error(payload?.message || payload?.error || "order_update_failed");
-        }
-        const nextOrder = payload?.order ?? null;
-        setRecords((current) => current.map((item) => (item.id === order.id && nextOrder ? nextOrder : item)));
+        const nextOrder = await requestOrderAction(order.id, action);
+        setRecords((current) => current.map((item) => (item.id === order.id ? nextOrder : item)));
       } catch (nextError) {
         setError(nextError instanceof Error && nextError.message ? nextError.message : "订单操作失败");
       } finally {
         setActionBusyId("");
       }
     },
-    [siteId],
+    [requestOrderAction],
   );
 
-  const closeWorkbench = useCallback(() => {
-    setWorkbenchOpen(false);
+  const openDetailDialog = useCallback(
+    (order: MerchantOrderRecord) => {
+      setDetailOrderId(order.id);
+      void markOrderTouched(order.id);
+    },
+    [markOrderTouched],
+  );
+
+  const closeDetailDialog = useCallback(() => {
+    setDetailOrderId("");
   }, []);
+
+  const detailOverlay = detailOrder ? (
+    <div
+      className="fixed inset-0 z-[2147483000] flex items-center justify-center bg-black/55 px-4"
+      onMouseDown={(event: ReactMouseEvent<HTMLDivElement>) => {
+        if (event.target === event.currentTarget) closeDetailDialog();
+      }}
+    >
+      <div className={detailPanelClassName}>
+        <div className={`flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4 ${darkMode ? "border-white/10" : "border-slate-200"}`}>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${getStatusBadgeClass(detailOrder.status, darkMode)}`}>
+                {getStatusText(detailOrder.status)}
+              </span>
+              <div className={`truncate text-lg font-semibold ${darkMode ? "text-white" : "text-slate-950"}`}>
+                {detailOrder.customer.name || "未命名客户"}
+              </div>
+            </div>
+            <div className={`mt-2 flex flex-wrap gap-x-3 gap-y-1 text-sm ${darkMode ? "text-slate-300" : "text-slate-500"}`}>
+              <span>{`订单号: ${detailOrder.id}`}</span>
+              <span>{`下单时间: ${formatDateTime(detailOrder.createdAt)}`}</span>
+              <span>{`金额: ${formatMerchantOrderAmount(detailOrder.totalAmount, detailOrder.pricePrefix)}`}</span>
+            </div>
+          </div>
+          <button
+            type="button"
+            className={`rounded-full px-3 py-2 text-sm font-medium ${darkMode ? "border border-white/10 bg-white/5 text-white" : "border border-slate-200 bg-white text-slate-700"}`}
+            onClick={closeDetailDialog}
+          >
+            关闭
+          </button>
+        </div>
+
+        <div className="max-h-[78vh] overflow-y-auto px-5 py-4">
+          <div className="space-y-3">
+            <div className={`rounded-[24px] border px-4 py-4 ${darkMode ? "border-white/10 bg-white/5" : "border-slate-200 bg-slate-50"}`}>
+              <div className={`text-sm font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>商品明细</div>
+              <div className="mt-3 space-y-3">
+                {detailOrder.items.map((item) => (
+                  <div
+                    key={`${detailOrder.id}-${item.productId}-${item.code}`}
+                    className={`rounded-2xl border px-3 py-3 text-sm ${
+                      darkMode ? "border-white/10 bg-white/5 text-slate-100" : "border-slate-200 bg-white text-slate-700"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="font-semibold">{item.name || "未命名产品"}</div>
+                        <div className={`mt-1 text-xs ${darkMode ? "text-slate-400" : "text-slate-400"}`}>{item.code || "-"}</div>
+                        {item.description ? (
+                          <div className={`mt-2 whitespace-pre-wrap break-words text-sm ${darkMode ? "text-slate-300" : "text-slate-500"}`}>
+                            {item.description}
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <div className={darkMode ? "text-slate-300" : "text-slate-500"}>×{item.quantity}</div>
+                        <div className="mt-1 font-semibold text-sky-500">
+                          {formatMerchantOrderAmount(item.subtotal, detailOrder.pricePrefix)}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className={`rounded-[24px] border px-4 py-4 ${darkMode ? "border-white/10 bg-white/5" : "border-slate-200 bg-slate-50"}`}>
+              <div className={`text-sm font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>客户信息</div>
+              <div className={`mt-3 grid gap-3 text-sm ${darkMode ? "text-slate-200" : "text-slate-600"}`}>
+                <div>
+                  <span className={darkMode ? "text-slate-400" : "text-slate-400"}>店铺：</span>
+                  {detailOrder.siteName || detailOrder.siteId}
+                </div>
+                <div>
+                  <span className={darkMode ? "text-slate-400" : "text-slate-400"}>姓名：</span>
+                  {detailOrder.customer.name || "-"}
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={darkMode ? "text-slate-400" : "text-slate-400"}>邮箱：</span>
+                  <span className="min-w-0 flex-1 break-all">{detailOrder.customer.email || "-"}</span>
+                  {detailOrder.customer.email ? (
+                    <a
+                      className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
+                      href={`mailto:${detailOrder.customer.email}`}
+                      onClick={() => {
+                        void markOrderTouched(detailOrder.id);
+                      }}
+                      title="发送邮件"
+                      aria-label="发送邮件"
+                    >
+                      <MailIcon />
+                    </a>
+                  ) : null}
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={darkMode ? "text-slate-400" : "text-slate-400"}>电话：</span>
+                  <span className="min-w-0 flex-1 break-all">{detailOrder.customer.phone || "-"}</span>
+                  {detailOrder.customer.phone ? (
+                    <a
+                      className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#007AFF] text-white shadow-sm transition hover:bg-[#0066D6]"
+                      href={`tel:${detailOrder.customer.phone}`}
+                      onClick={() => {
+                        void markOrderTouched(detailOrder.id);
+                      }}
+                      title="拨打电话"
+                      aria-label="拨打电话"
+                    >
+                      <PhoneIcon />
+                    </a>
+                  ) : null}
+                </div>
+                {detailOrder.customer.note ? (
+                  <div>
+                    <span className={darkMode ? "text-slate-400" : "text-slate-400"}>备注：</span>
+                    {detailOrder.customer.note}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <div className={`text-sm ${darkMode ? "text-slate-300" : "text-slate-500"}`}>合计 {detailOrder.totalQuantity} 件</div>
+              <div className={`text-lg font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>
+                {formatMerchantOrderAmount(detailOrder.totalAmount, detailOrder.pricePrefix)}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2 pt-1">
+              {detailOrder.status !== "confirmed" ? (
+                <button
+                  type="button"
+                  className="rounded-full bg-emerald-500 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
+                  onClick={() => void handleOrderAction(detailOrder, "confirm")}
+                  disabled={actionBusyId === detailOrder.id}
+                >
+                  确认
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className={`rounded-full px-4 py-2 text-sm font-semibold ${
+                  darkMode ? "bg-white/10 text-white" : "border border-slate-200 bg-white text-slate-700"
+                }`}
+                onClick={() => void handleOrderAction(detailOrder, "print")}
+                disabled={actionBusyId === detailOrder.id}
+              >
+                打印
+              </button>
+              {detailOrder.status !== "cancelled" ? (
+                <button
+                  type="button"
+                  className="rounded-full bg-rose-500 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
+                  onClick={() => void handleOrderAction(detailOrder, "cancel")}
+                  disabled={actionBusyId === detailOrder.id}
+                >
+                  取消
+                </button>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  ) : null;
 
   const workbenchDialog = workbenchOpen ? (
     <div
       className="fixed inset-0 z-[2147482940] flex items-center justify-center bg-black/45 px-4"
       onMouseDown={(event: ReactMouseEvent<HTMLDivElement>) => {
-        if (event.target === event.currentTarget) closeWorkbench();
+        if (event.target === event.currentTarget) setWorkbenchOpen(false);
       }}
     >
       <div className="w-full max-w-sm rounded-[28px] border border-slate-200 bg-white p-5 shadow-2xl">
@@ -290,8 +521,8 @@ export default function MerchantOrderMobilePanel({
         <div className="mt-4 flex justify-end">
           <button
             type="button"
-            className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-            onClick={closeWorkbench}
+            className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+            onClick={() => setWorkbenchOpen(false)}
           >
             关闭
           </button>
@@ -437,6 +668,7 @@ export default function MerchantOrderMobilePanel({
               </div>
             </div>
           </div>
+
           <div className="flex flex-wrap gap-2">
             {(["all", "pending", "confirmed", "cancelled"] as MerchantOrderFilter[]).map((key) => (
               <button
@@ -468,89 +700,103 @@ export default function MerchantOrderMobilePanel({
         {loading ? (
           <div className={emptyPanelClassName}>正在读取订单...</div>
         ) : filteredRecords.length > 0 ? (
-          filteredRecords.map((record) => (
-            <div key={record.id} className={cardClassName}>
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className={`text-lg font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>{record.id}</div>
-                  <div className={`mt-1 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{formatDateTime(record.createdAt)}</div>
-                </div>
-                <span className={`rounded-full px-3 py-1 text-xs font-semibold ${getStatusBadgeClass(record.status, darkMode)}`}>
-                  {getStatusText(record.status)}
-                </span>
-              </div>
-              <div className={`mt-4 grid gap-2 text-sm ${darkMode ? "text-slate-200" : "text-slate-600"}`}>
-                <div>姓名：{record.customer.name || "-"}</div>
-                <div>电话：{record.customer.phone || "-"}</div>
-                <div>邮箱：{record.customer.email || "-"}</div>
-                {record.customer.note ? <div>备注：{record.customer.note}</div> : null}
-              </div>
-              <div className="mt-4 space-y-2">
-                {record.items.map((item) => (
-                  <div
-                    key={`${record.id}-${item.productId}-${item.code}`}
-                    className={`rounded-2xl border px-3 py-3 text-sm ${
-                      darkMode ? "border-white/10 bg-white/5 text-slate-100" : "border-slate-100 bg-slate-50 text-slate-700"
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="font-semibold">{item.name || "未命名产品"}</div>
-                        <div className={`mt-1 text-xs ${darkMode ? "text-slate-400" : "text-slate-400"}`}>{item.code || "-"}</div>
+          filteredRecords.map((record) => {
+            const displayName = record.customer.name || "未命名客户";
+            const isNewRecord = isMerchantOrderPendingMerchantTouch(record);
+            return (
+              <div key={record.id} className={`${cardClassName} relative overflow-visible`}>
+                {isNewRecord ? (
+                  <span className="absolute left-4 top-0 z-10 inline-flex -translate-y-1/2 items-center rounded-[14px] border border-white/70 bg-emerald-500 px-2.5 py-1 text-[10px] font-semibold tracking-[0.18em] text-white shadow-[0_10px_24px_rgba(16,185,129,0.24)]">
+                    NEW
+                  </span>
+                ) : null}
+
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1 space-y-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${getStatusBadgeClass(record.status, darkMode)}`}>
+                        {getStatusText(record.status)}
+                      </span>
+                      <div className={`truncate text-base font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>{displayName}</div>
+                    </div>
+                    <div className={`mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs ${darkMode ? "text-slate-300" : "text-slate-500"}`}>
+                      <span>{`订单号: ${record.id}`}</span>
+                      <span>{`下单时间: ${formatDateTime(record.createdAt)}`}</span>
+                    </div>
+
+                    <div className="hidden grid gap-2 text-sm md:grid-cols-3">
+                      <div className={`rounded-2xl border px-3 py-3 ${darkMode ? "border-white/10 bg-white/5" : "border-slate-200 bg-slate-50"}`}>
+                        <div className={darkMode ? "text-xs text-slate-400" : "text-xs text-slate-400"}>订单号</div>
+                        <div className={`mt-1 break-all font-medium ${darkMode ? "text-white" : "text-slate-900"}`}>{record.id}</div>
                       </div>
-                      <div className="shrink-0 text-right">
-                        <div>×{item.quantity}</div>
-                        <div className="mt-1 font-semibold text-sky-500">{formatMerchantOrderAmount(item.subtotal, record.pricePrefix)}</div>
+                      <div className={`rounded-2xl border px-3 py-3 ${darkMode ? "border-white/10 bg-white/5" : "border-slate-200 bg-slate-50"}`}>
+                        <div className={darkMode ? "text-xs text-slate-400" : "text-xs text-slate-400"}>下单时间</div>
+                        <div className={`mt-1 font-medium ${darkMode ? "text-white" : "text-slate-900"}`}>{formatDateTime(record.createdAt)}</div>
+                      </div>
+                      <div className={`rounded-2xl border px-3 py-3 ${darkMode ? "border-white/10 bg-white/5" : "border-slate-200 bg-slate-50"}`}>
+                        <div className={darkMode ? "text-xs text-slate-400" : "text-xs text-slate-400"}>金额</div>
+                        <div className={`mt-1 text-lg font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>
+                          {formatMerchantOrderAmount(record.totalAmount, record.pricePrefix)}
+                        </div>
                       </div>
                     </div>
                   </div>
-                ))}
-              </div>
-              <div className="mt-4 flex items-center justify-between">
-                <div className={`text-sm ${darkMode ? "text-slate-300" : "text-slate-500"}`}>合计 {record.totalQuantity} 件</div>
-                <div className={`text-lg font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>
-                  {formatMerchantOrderAmount(record.totalAmount, record.pricePrefix)}
+
+                  <div className="flex shrink-0 flex-col items-end gap-2">
+                    <div className="text-right">
+                      <div className={`text-[11px] font-medium ${darkMode ? "text-slate-400" : "text-slate-400"}`}>金额</div>
+                      <div className={`mt-0.5 text-lg font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>
+                        {formatMerchantOrderAmount(record.totalAmount, record.pricePrefix)}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap justify-end gap-2">
+                      {record.customer.email ? (
+                        <a
+                          className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
+                          href={`mailto:${record.customer.email}`}
+                          onClick={() => {
+                            void markOrderTouched(record.id);
+                          }}
+                          title="发送邮件"
+                          aria-label="发送邮件"
+                        >
+                          <MailIcon />
+                        </a>
+                      ) : null}
+                      {record.customer.phone ? (
+                        <a
+                          className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-[#007AFF] text-white shadow-sm transition hover:bg-[#0066D6]"
+                          href={`tel:${record.customer.phone}`}
+                          onClick={() => {
+                            void markOrderTouched(record.id);
+                          }}
+                          title="拨打电话"
+                          aria-label="拨打电话"
+                        >
+                          <PhoneIcon />
+                        </a>
+                      ) : null}
+                    </div>
+                    <button
+                      type="button"
+                      className={`rounded-full px-4 py-2 text-sm font-semibold ${
+                        darkMode ? "bg-white/10 text-white" : "border border-slate-200 bg-white text-slate-700"
+                      }`}
+                      onClick={() => openDetailDialog(record)}
+                    >
+                      详情
+                    </button>
+                  </div>
                 </div>
               </div>
-              <div className="mt-4 flex flex-wrap gap-2">
-                {record.status !== "confirmed" ? (
-                  <button
-                    type="button"
-                    className="rounded-full bg-emerald-500 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
-                    onClick={() => void handleOrderAction(record, "confirm")}
-                    disabled={actionBusyId === record.id}
-                  >
-                    确认
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  className={`rounded-full px-4 py-2 text-sm font-semibold ${
-                    darkMode ? "bg-white/10 text-white" : "border border-slate-200 bg-white text-slate-700"
-                  }`}
-                  onClick={() => void handleOrderAction(record, "print")}
-                  disabled={actionBusyId === record.id}
-                >
-                  打印
-                </button>
-                {record.status !== "cancelled" ? (
-                  <button
-                    type="button"
-                    className="rounded-full bg-rose-500 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
-                    onClick={() => void handleOrderAction(record, "cancel")}
-                    disabled={actionBusyId === record.id}
-                  >
-                    取消
-                  </button>
-                ) : null}
-              </div>
-            </div>
-          ))
+            );
+          })
         ) : (
           <div className={emptyPanelClassName}>还没有匹配到订单。</div>
         )}
       </div>
       {workbenchDialog}
+      {detailOverlay}
     </>
   );
 }
