@@ -338,10 +338,12 @@ function downloadBookingsCsv(records: MerchantBookingRecord[], locale: string, s
 function ReadOnlyBookingField({
   fieldKey,
   value,
+  todayDateValue,
   locale,
 }: {
   fieldKey: "store" | "item" | "appointmentAt" | "title";
   value: string;
+  todayDateValue: string;
   locale: string;
 }) {
   if (fieldKey === "title") return null;
@@ -352,6 +354,7 @@ function ReadOnlyBookingField({
       <AppointmentSummaryField
         dateValue={appointmentMatch[1] === "-" ? "" : appointmentMatch[1]}
         timeValue={appointmentMatch[2] === "-" ? "" : appointmentMatch[2]}
+        todayDateValue={todayDateValue}
         locale={locale}
       />
     );
@@ -367,21 +370,32 @@ function ReadOnlyBookingField({
 function AppointmentSummaryField({
   dateValue,
   timeValue,
+  todayDateValue,
   locale,
 }: {
   dateValue: string;
   timeValue: string;
+  todayDateValue: string;
   locale: string;
 }) {
   const dayLabel = getMerchantBookingDayLabel(dateValue, locale);
   const hasValue = Boolean(dateValue || timeValue);
+  const isTodayAppointment = Boolean(dateValue) && dateValue === todayDateValue;
 
   return (
     <div className="space-y-0.5">
       <div className="text-xs text-slate-500">{getMerchantBookingFieldText("appointmentAt", locale)}</div>
       {hasValue ? (
         <div className="flex flex-wrap items-center gap-2 text-sm text-slate-900">
-          <span>{dateValue || "-"}</span>
+          <span
+            className={
+              isTodayAppointment
+                ? "rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700"
+                : undefined
+            }
+          >
+            {dateValue || "-"}
+          </span>
           {dayLabel ? (
             <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
               {dayLabel}
@@ -426,6 +440,7 @@ export default function MerchantBookingManagerDialog({
   );
   const loadFailedText = locale.startsWith("es") ? "No se pudieron cargar las citas." : "预约记录读取失败";
   const updateFailedText = locale.startsWith("es") ? "No se pudo actualizar la cita." : "预约更新失败";
+  const [todayDateValue, setTodayDateValue] = useState("");
   const [records, setRecords] = useState<MerchantBookingRecord[]>([]);
   const [drafts, setDrafts] = useState<Record<string, MerchantBookingAdminDraft>>({});
   const [loading, setLoading] = useState(false);
@@ -467,6 +482,14 @@ export default function MerchantBookingManagerDialog({
     setCustomerEmailLocale(defaultCustomerEmailLocale);
     setCustomerEmailLocaleLoaded(false);
   }, [defaultCustomerEmailLocale]);
+
+  useEffect(() => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, "0");
+    const day = String(now.getDate()).padStart(2, "0");
+    setTodayDateValue(`${year}-${month}-${day}`);
+  }, []);
 
   const loadWorkbenchCustomerEmailLocale = useCallback(async () => {
     if (!siteId) return defaultCustomerEmailLocale;
@@ -1540,14 +1563,15 @@ export default function MerchantBookingManagerDialog({
                     </div>
 
                     <div className="mt-3 grid gap-2.5 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
-                      <ReadOnlyBookingField fieldKey="store" value={record.store} locale={locale} />
-                      <ReadOnlyBookingField fieldKey="item" value={record.item} locale={locale} />
+                      <ReadOnlyBookingField fieldKey="store" value={record.store} todayDateValue={todayDateValue} locale={locale} />
+                      <ReadOnlyBookingField fieldKey="item" value={record.item} todayDateValue={todayDateValue} locale={locale} />
                       <ReadOnlyBookingField
                         fieldKey="appointmentAt"
                         value={[appointmentParts.date || "-", appointmentParts.time || "-"].join(" ")}
+                        todayDateValue={todayDateValue}
                         locale={locale}
                       />
-                      <ReadOnlyBookingField fieldKey="title" value={record.title || "-"} locale={locale} />
+                      <ReadOnlyBookingField fieldKey="title" value={record.title || "-"} todayDateValue={todayDateValue} locale={locale} />
                       <div className="flex items-end justify-end gap-2">
                         {record.customerEmailLogs?.length ? (
                           <span

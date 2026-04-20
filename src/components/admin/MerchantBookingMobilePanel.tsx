@@ -392,22 +392,33 @@ function SummaryField({ value }: { value: string }) {
 function SummaryAppointmentField({
   dateValue,
   timeValue,
+  todayDateValue,
   action,
   locale,
 }: {
   dateValue: string;
   timeValue: string;
+  todayDateValue: string;
   action?: ReactNode;
   locale: string;
 }) {
   const dayLabel = getMerchantBookingDayLabel(dateValue, locale);
   const hasValue = Boolean(dateValue || timeValue);
+  const isTodayAppointment = Boolean(dateValue) && dateValue === todayDateValue;
 
   return (
     <div className="flex items-center justify-between gap-3">
       {hasValue ? (
         <div className="min-w-0 flex flex-wrap items-center gap-2 text-sm text-slate-900">
-          <span>{dateValue || "-"}</span>
+          <span
+            className={
+              isTodayAppointment
+                ? "rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700"
+                : undefined
+            }
+          >
+            {dateValue || "-"}
+          </span>
           {dayLabel ? (
             <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
               {dayLabel}
@@ -457,6 +468,7 @@ export default function MerchantBookingMobilePanel({
     typeof navigator !== "undefined" && /iPhone|iPad|iPod/i.test(String(navigator.userAgent ?? ""));
   const loadFailedText = locale.startsWith("es") ? "No se pudieron cargar las citas." : "预约记录读取失败";
   const updateFailedText = locale.startsWith("es") ? "No se pudo actualizar la cita." : "预约更新失败";
+  const [todayDateValue, setTodayDateValue] = useState("");
   const [records, setRecords] = useState<MerchantBookingRecord[]>([]);
   const [drafts, setDrafts] = useState<Record<string, MerchantBookingAdminDraft>>({});
   const [loading, setLoading] = useState(false);
@@ -504,6 +516,14 @@ export default function MerchantBookingMobilePanel({
     setCustomerEmailLocale(defaultCustomerEmailLocale);
     setCustomerEmailLocaleLoaded(false);
   }, [defaultCustomerEmailLocale]);
+
+  useEffect(() => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, "0");
+    const day = String(now.getDate()).padStart(2, "0");
+    setTodayDateValue(`${year}-${month}-${day}`);
+  }, []);
 
   const loadWorkbenchCustomerEmailLocale = useCallback(async () => {
     if (!siteId) return defaultCustomerEmailLocale;
@@ -1751,7 +1771,12 @@ export default function MerchantBookingMobilePanel({
                     <div className="grid content-start gap-1">
                       <SummaryField value={record.store} />
                       <SummaryField value={record.item} />
-                      <SummaryAppointmentField dateValue={appointmentParts.date} timeValue={appointmentParts.time} locale={locale} />
+                      <SummaryAppointmentField
+                        dateValue={appointmentParts.date}
+                        timeValue={appointmentParts.time}
+                        todayDateValue={todayDateValue}
+                        locale={locale}
+                      />
                     </div>
                     <div className="relative flex items-end self-end">
                       {(record.customerEmailLogs?.length || record.note) ? (

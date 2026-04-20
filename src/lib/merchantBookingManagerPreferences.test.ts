@@ -46,7 +46,7 @@ test("history visibility hides bookings older than the selected threshold", () =
   );
 });
 
-test("appointment sort keeps earlier appointment times first", () => {
+test("appointment sort keeps later appointment times first", () => {
   const records = [
     createRecord("late", "2026-04-15T11:00", "2026-04-10T08:00:00.000Z"),
     createRecord("early", "2026-04-15T09:00", "2026-04-09T08:00:00.000Z"),
@@ -57,7 +57,7 @@ test("appointment sort keeps earlier appointment times first", () => {
 
   assert.deepEqual(
     sorted.map((record) => record.id),
-    ["early", "late", "next-day"],
+    ["next-day", "late", "early"],
   );
 });
 

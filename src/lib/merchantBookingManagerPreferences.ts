@@ -171,9 +171,9 @@ export function sortMerchantBookingRecords(
     if (sortMode === "submitted") {
       const createdDiff = parseCreatedAtMillis(right) - parseCreatedAtMillis(left);
       if (createdDiff !== 0) return createdDiff;
-      return parseAppointmentMillis(left) - parseAppointmentMillis(right);
+      return parseAppointmentMillis(right) - parseAppointmentMillis(left);
     }
-    const appointmentDiff = parseAppointmentMillis(left) - parseAppointmentMillis(right);
+    const appointmentDiff = parseAppointmentMillis(right) - parseAppointmentMillis(left);
     if (appointmentDiff !== 0) return appointmentDiff;
     return parseCreatedAtMillis(right) - parseCreatedAtMillis(left);
   });
