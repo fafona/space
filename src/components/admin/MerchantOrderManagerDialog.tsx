@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import {
   formatMerchantOrderAmount,
   isMerchantOrderPendingMerchantTouch,
+  type MerchantOrderAction,
   type MerchantOrderRecord,
   type MerchantOrderStatus,
 } from "@/lib/merchantOrders";
@@ -296,7 +297,7 @@ export default function MerchantOrderManagerDialog({
   }, [selectionMode, visibleRecordIdSet]);
 
   const requestOrderAction = useCallback(
-    async (orderId: string, action: "confirm" | "cancel" | "print" | "touch") => {
+    async (orderId: string, action: MerchantOrderAction) => {
       const response = await fetch("/api/orders", {
         method: "PATCH",
         keepalive: action === "touch",
@@ -339,7 +340,7 @@ export default function MerchantOrderManagerDialog({
   );
 
   const handleOrderAction = useCallback(
-    async (order: MerchantOrderRecord, action: "confirm" | "cancel" | "print") => {
+    async (order: MerchantOrderRecord, action: "confirm" | "cancel" | "restore" | "print") => {
       setActionBusyId(order.id);
       setError("");
       setNotice("");
@@ -356,7 +357,15 @@ export default function MerchantOrderManagerDialog({
         }
         const nextOrder = await requestOrderAction(order.id, action);
         setRecords((current) => current.map((item) => (item.id === order.id ? nextOrder : item)));
-        setNotice(action === "confirm" ? "订单已确认" : action === "cancel" ? "订单已取消" : "订单已标记为已打印");
+        setNotice(
+          action === "confirm"
+            ? "订单已确认"
+            : action === "cancel"
+              ? "订单已取消"
+              : action === "restore"
+                ? "订单已恢复为待确认"
+                : "订单已标记为已打印",
+        );
       } catch (nextError) {
         setError(nextError instanceof Error && nextError.message ? nextError.message : "订单操作失败");
       } finally {
@@ -434,7 +443,25 @@ export default function MerchantOrderManagerDialog({
   const renderOrderActions = useCallback(
     (record: MerchantOrderRecord) => (
       <>
-        {record.status !== "confirmed" ? (
+        {record.status === "confirmed" ? (
+          <button
+            type="button"
+            className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            onClick={() => void handleOrderAction(record, "restore")}
+            disabled={Boolean(actionBusyId) || Boolean(batchBusyKey)}
+          >
+            取消确认
+          </button>
+        ) : record.status === "cancelled" ? (
+          <button
+            type="button"
+            className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            onClick={() => void handleOrderAction(record, "restore")}
+            disabled={Boolean(actionBusyId) || Boolean(batchBusyKey)}
+          >
+            恢复待确认
+          </button>
+        ) : (
           <button
             type="button"
             className="rounded border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[13px] leading-5 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
@@ -443,7 +470,7 @@ export default function MerchantOrderManagerDialog({
           >
             确认
           </button>
-        ) : null}
+        )}
         <button
           type="button"
           className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
@@ -470,7 +497,27 @@ export default function MerchantOrderManagerDialog({
   const renderStatusActions = useCallback(
     (record: MerchantOrderRecord) => (
       <>
-        {record.status !== "confirmed" ? (
+        {record.status === "confirmed" ? (
+          <button
+            type="button"
+            className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            onClick={() => void handleOrderAction(record, "restore")}
+            disabled={Boolean(actionBusyId) || Boolean(batchBusyKey)}
+            data-skip-selection-toggle="true"
+          >
+            取消确认
+          </button>
+        ) : record.status === "cancelled" ? (
+          <button
+            type="button"
+            className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            onClick={() => void handleOrderAction(record, "restore")}
+            disabled={Boolean(actionBusyId) || Boolean(batchBusyKey)}
+            data-skip-selection-toggle="true"
+          >
+            恢复待确认
+          </button>
+        ) : (
           <button
             type="button"
             className="rounded border border-sky-300 bg-sky-100 px-3 py-1.5 text-[13px] leading-5 text-sky-800 hover:bg-sky-200 disabled:opacity-50"
@@ -480,7 +527,7 @@ export default function MerchantOrderManagerDialog({
           >
             确认
           </button>
-        ) : null}
+        )}
         {record.status !== "cancelled" ? (
           <button
             type="button"

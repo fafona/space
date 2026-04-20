@@ -70,6 +70,8 @@ export type MerchantOrderCreateInput = {
   items?: MerchantOrderLineItemInput[];
 };
 
+export type MerchantOrderAction = "confirm" | "cancel" | "restore" | "print" | "touch";
+
 function trimText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -243,6 +245,55 @@ export function isMerchantOrderPendingMerchantTouch(
   if (!updatedAt) return !merchantTouchedAt;
   if (!merchantTouchedAt) return true;
   return new Date(updatedAt).getTime() > new Date(merchantTouchedAt).getTime();
+}
+
+export function applyMerchantOrderAction(
+  record: MerchantOrderRecord,
+  action: MerchantOrderAction,
+  actedAt = new Date().toISOString(),
+): MerchantOrderRecord {
+  if (action === "confirm") {
+    return {
+      ...record,
+      status: "confirmed",
+      updatedAt: actedAt,
+      merchantTouchedAt: actedAt,
+      confirmedAt: actedAt,
+      cancelledAt: null,
+    };
+  }
+  if (action === "cancel") {
+    return {
+      ...record,
+      status: "cancelled",
+      updatedAt: actedAt,
+      merchantTouchedAt: actedAt,
+      cancelledAt: actedAt,
+    };
+  }
+  if (action === "restore") {
+    return {
+      ...record,
+      status: "pending",
+      updatedAt: actedAt,
+      merchantTouchedAt: actedAt,
+      confirmedAt: null,
+      cancelledAt: null,
+    };
+  }
+  if (action === "print") {
+    return {
+      ...record,
+      updatedAt: actedAt,
+      merchantTouchedAt: actedAt,
+      printedAt: actedAt,
+      printCount: record.printCount + 1,
+    };
+  }
+  return {
+    ...record,
+    merchantTouchedAt: actedAt,
+  };
 }
 
 export function createMerchantOrder(

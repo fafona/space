@@ -4,7 +4,7 @@ import { loadCurrentMerchantSnapshotSiteBySiteId } from "@/lib/publishedMerchant
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { createMerchantOrderRecord, listMerchantOrders, updateMerchantOrderBySite } from "@/lib/merchantOrders.server";
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
-import type { MerchantOrderCreateInput } from "@/lib/merchantOrders";
+import type { MerchantOrderAction, MerchantOrderCreateInput } from "@/lib/merchantOrders";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -90,7 +90,7 @@ export async function PATCH(request: Request) {
     const body = (await request.json()) as {
       siteId?: string;
       orderId?: string;
-      action?: "confirm" | "cancel" | "print" | "touch";
+      action?: MerchantOrderAction;
     } | null;
     const siteId = String(body?.siteId ?? "").trim();
     if (!isMerchantNumericId(siteId)) {
@@ -106,6 +106,7 @@ export async function PATCH(request: Request) {
     const action =
       body?.action === "confirm" ||
       body?.action === "cancel" ||
+      body?.action === "restore" ||
       body?.action === "print" ||
       body?.action === "touch"
         ? body.action

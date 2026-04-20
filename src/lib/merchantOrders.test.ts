@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  applyMerchantOrderAction,
   buildMerchantOrderId,
   createMerchantOrder,
   formatMerchantOrderAmount,
@@ -90,4 +91,45 @@ test("isMerchantOrderPendingMerchantTouch only clears after a merchant action ca
     }),
     true,
   );
+});
+
+test("applyMerchantOrderAction restores confirmed and cancelled orders back to pending", () => {
+  const base = createMerchantOrder({
+    siteId: "10000000",
+    siteName: "fafona",
+    blockId: "b-product",
+    pricePrefix: "€",
+    customer: {
+      name: "Felix",
+    },
+    items: [
+      {
+        productId: "a",
+        name: "Demo",
+        quantity: 1,
+        unitPriceText: "14",
+      },
+    ],
+  });
+
+  const confirmed = applyMerchantOrderAction(base, "confirm", "2026-04-20T08:00:00.000Z");
+  assert.equal(confirmed.status, "confirmed");
+  assert.equal(confirmed.confirmedAt, "2026-04-20T08:00:00.000Z");
+  assert.equal(confirmed.cancelledAt, null);
+
+  const restoredFromConfirmed = applyMerchantOrderAction(confirmed, "restore", "2026-04-20T08:05:00.000Z");
+  assert.equal(restoredFromConfirmed.status, "pending");
+  assert.equal(restoredFromConfirmed.confirmedAt, null);
+  assert.equal(restoredFromConfirmed.cancelledAt, null);
+  assert.equal(restoredFromConfirmed.updatedAt, "2026-04-20T08:05:00.000Z");
+
+  const cancelled = applyMerchantOrderAction(base, "cancel", "2026-04-20T09:00:00.000Z");
+  assert.equal(cancelled.status, "cancelled");
+  assert.equal(cancelled.cancelledAt, "2026-04-20T09:00:00.000Z");
+
+  const restoredFromCancelled = applyMerchantOrderAction(cancelled, "restore", "2026-04-20T09:05:00.000Z");
+  assert.equal(restoredFromCancelled.status, "pending");
+  assert.equal(restoredFromCancelled.confirmedAt, null);
+  assert.equal(restoredFromCancelled.cancelledAt, null);
+  assert.equal(restoredFromCancelled.updatedAt, "2026-04-20T09:05:00.000Z");
 });

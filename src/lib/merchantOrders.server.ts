@@ -1,10 +1,11 @@
 import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import {
+  applyMerchantOrderAction,
   buildMerchantOrderId,
   createMerchantOrder,
   normalizeMerchantOrderRecords,
+  type MerchantOrderAction,
   type MerchantOrderCreateInput,
-  type MerchantOrderRecord,
 } from "@/lib/merchantOrders";
 import { loadStoredMerchantOrders, saveStoredMerchantOrders } from "@/lib/merchantOrdersStore";
 
@@ -63,7 +64,7 @@ export async function createMerchantOrderRecord(input: MerchantOrderCreateInput)
 export async function updateMerchantOrderBySite(input: {
   siteId: string;
   orderId: string;
-  action: "confirm" | "cancel" | "print" | "touch";
+  action: MerchantOrderAction;
 }) {
   const supabase = requireOrdersStoreClient();
   const stored = await loadStoredMerchantOrders(supabase, input.siteId);
@@ -74,36 +75,7 @@ export async function updateMerchantOrderBySite(input: {
   }
   const current = orders[orderIndex];
   const now = new Date().toISOString();
-  const next: MerchantOrderRecord =
-    input.action === "confirm"
-      ? {
-          ...current,
-          status: "confirmed",
-          updatedAt: now,
-          merchantTouchedAt: now,
-          confirmedAt: current.confirmedAt ?? now,
-          cancelledAt: null,
-        }
-      : input.action === "cancel"
-        ? {
-            ...current,
-            status: "cancelled",
-            updatedAt: now,
-            merchantTouchedAt: now,
-            cancelledAt: now,
-          }
-        : input.action === "print"
-          ? {
-              ...current,
-              updatedAt: now,
-              merchantTouchedAt: now,
-              printedAt: now,
-              printCount: current.printCount + 1,
-            }
-          : {
-              ...current,
-              merchantTouchedAt: now,
-            };
+  const next = applyMerchantOrderAction(current, input.action, now);
   const updatedOrders = [...orders];
   updatedOrders[orderIndex] = next;
   const saved = await saveStoredMerchantOrders(supabase, {
