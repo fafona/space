@@ -467,6 +467,36 @@ export default function MerchantOrderManagerDialog({
     [actionBusyId, batchBusyKey, handleOrderAction],
   );
 
+  const renderStatusActions = useCallback(
+    (record: MerchantOrderRecord) => (
+      <>
+        {record.status !== "confirmed" ? (
+          <button
+            type="button"
+            className="rounded border border-sky-300 bg-sky-100 px-3 py-1.5 text-[13px] leading-5 text-sky-800 hover:bg-sky-200 disabled:opacity-50"
+            onClick={() => void handleOrderAction(record, "confirm")}
+            disabled={Boolean(actionBusyId) || Boolean(batchBusyKey)}
+            data-skip-selection-toggle="true"
+          >
+            确认
+          </button>
+        ) : null}
+        {record.status !== "cancelled" ? (
+          <button
+            type="button"
+            className="rounded border border-rose-300 bg-rose-100 px-3 py-1.5 text-[13px] leading-5 text-rose-800 hover:bg-rose-200 disabled:opacity-50"
+            onClick={() => void handleOrderAction(record, "cancel")}
+            disabled={Boolean(actionBusyId) || Boolean(batchBusyKey)}
+            data-skip-selection-toggle="true"
+          >
+            取消
+          </button>
+        ) : null}
+      </>
+    ),
+    [actionBusyId, batchBusyKey, handleOrderAction],
+  );
+
   const workbenchDialog = workbenchOpen
     ? overlay(
         <div
@@ -518,7 +548,7 @@ export default function MerchantOrderManagerDialog({
                 <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-500">
                   <span>{`订单号: ${detailOrder.id}`}</span>
                   <span>{`下单时间: ${formatDateTime(detailOrder.createdAt)}`}</span>
-                  <span>{`金额: ${formatMerchantOrderAmount(detailOrder.totalAmount, detailOrder.pricePrefix)}`}</span>
+                  <span>{formatMerchantOrderAmount(detailOrder.totalAmount, detailOrder.pricePrefix)}</span>
                 </div>
               </div>
 
@@ -804,81 +834,70 @@ export default function MerchantOrderManagerDialog({
                     ) : null}
 
                     <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className={`rounded-full px-2 py-0.5 text-[11px] ${getStatusBadgeClass(record.status)}`}>
-                            {getStatusText(record.status)}
-                          </span>
-                          <div className="truncate text-base font-semibold text-slate-900">{displayName}</div>
-                        </div>
-                        <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
-                          <span>{`订单号: ${record.id}`}</span>
-                          <span>{`下单时间: ${formatDateTime(record.createdAt)}`}</span>
-                        </div>
-
-                        <div className="hidden grid gap-3 text-sm text-slate-600 md:grid-cols-3 xl:grid-cols-4">
-                          <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                            <div className="text-xs text-slate-400">订单号</div>
-                            <div className="mt-1 break-all font-medium text-slate-900">{record.id}</div>
+                      <div className="flex min-w-0 flex-1 flex-wrap items-start gap-x-5 gap-y-2">
+                        <div className="min-w-[240px] flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className={`rounded-full px-2 py-0.5 text-[11px] ${getStatusBadgeClass(record.status)}`}>
+                              {getStatusText(record.status)}
+                            </span>
+                            <div className="truncate text-base font-semibold text-slate-900">{displayName}</div>
                           </div>
-                          <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                            <div className="text-xs text-slate-400">下单时间</div>
-                            <div className="mt-1 font-medium text-slate-900">{formatDateTime(record.createdAt)}</div>
-                          </div>
-                          <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 md:col-span-1 xl:col-span-2">
-                            <div className="text-xs text-slate-400">金额</div>
-                            <div className="mt-1 text-lg font-semibold text-slate-900">
-                              {formatMerchantOrderAmount(record.totalAmount, record.pricePrefix)}
-                            </div>
+                          <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+                            <span>{`订单号: ${record.id}`}</span>
+                            <span>{`下单时间: ${formatDateTime(record.createdAt)}`}</span>
                           </div>
                         </div>
+                        {record.customer.email ? (
+                          <div className="flex min-w-[280px] items-center gap-2 text-[13px] leading-5 text-slate-700">
+                            <span className="min-w-0 flex-1 truncate">{`邮箱: ${record.customer.email}`}</span>
+                            <a
+                              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
+                              href={`mailto:${record.customer.email}`}
+                              onClick={() => {
+                                void markOrderTouched(record.id);
+                              }}
+                              title="发送邮件"
+                              aria-label="发送邮件"
+                              data-skip-selection-toggle="true"
+                            >
+                              <MailIcon />
+                            </a>
+                          </div>
+                        ) : null}
+                        {record.customer.phone ? (
+                          <div className="flex min-w-[240px] items-center gap-2 text-[13px] leading-5 text-slate-700">
+                            <span className="min-w-0 flex-1 truncate">{`电话: ${record.customer.phone}`}</span>
+                            <a
+                              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#007AFF] text-white shadow-sm transition hover:bg-[#0066D6]"
+                              href={`tel:${record.customer.phone}`}
+                              onClick={() => {
+                                void markOrderTouched(record.id);
+                              }}
+                              title="拨打电话"
+                              aria-label="拨打电话"
+                              data-skip-selection-toggle="true"
+                            >
+                              <PhoneIcon />
+                            </a>
+                          </div>
+                        ) : null}
                       </div>
 
                       <div className="flex shrink-0 flex-col items-end gap-2">
-                        <div className="text-right">
-                          <div className="text-[11px] font-medium text-slate-400">金额</div>
-                          <div className="mt-0.5 text-lg font-semibold text-slate-900">
-                            {formatMerchantOrderAmount(record.totalAmount, record.pricePrefix)}
-                          </div>
+                        <div className="text-right text-lg font-semibold text-slate-900">
+                          {formatMerchantOrderAmount(record.totalAmount, record.pricePrefix)}
                         </div>
                         <div className="flex flex-wrap items-center justify-end gap-1.5">
-                        {record.customer.email ? (
-                          <a
-                            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
-                            href={`mailto:${record.customer.email}`}
-                            onClick={() => {
-                              void markOrderTouched(record.id);
-                            }}
-                            title="发送邮件"
-                            aria-label="发送邮件"
+                          {renderStatusActions(record)}
+                          <button
+                            type="button"
+                            className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50"
+                            onClick={() => openDetailDialog(record)}
                             data-skip-selection-toggle="true"
                           >
-                            <MailIcon />
-                          </a>
-                        ) : null}
-                        {record.customer.phone ? (
-                          <a
-                            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#007AFF] text-white shadow-sm transition hover:bg-[#0066D6]"
-                            href={`tel:${record.customer.phone}`}
-                            onClick={() => {
-                              void markOrderTouched(record.id);
-                            }}
-                            title="拨打电话"
-                            aria-label="拨打电话"
-                            data-skip-selection-toggle="true"
-                          >
-                            <PhoneIcon />
-                          </a>
-                        ) : null}
-                        <button
-                          type="button"
-                          className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50"
-                          onClick={() => openDetailDialog(record)}
-                          data-skip-selection-toggle="true"
-                        >
-                          详情
-                        </button>
-                      </div>
+                            详情
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </article>

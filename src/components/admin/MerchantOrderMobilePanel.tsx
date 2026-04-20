@@ -342,6 +342,42 @@ export default function MerchantOrderMobilePanel({
     setDetailOrderId("");
   }, []);
 
+  const renderStatusActions = useCallback(
+    (record: MerchantOrderRecord) => (
+      <>
+        {record.status !== "confirmed" ? (
+          <button
+            type="button"
+            className={
+              darkMode
+                ? "rounded-full border border-sky-400/30 bg-sky-400/10 px-3 py-2 text-xs font-medium text-sky-100 transition hover:bg-sky-400/20 disabled:opacity-50"
+                : "rounded-full border border-sky-300 bg-sky-100 px-3 py-2 text-xs font-medium text-sky-800 transition hover:bg-sky-200 disabled:opacity-50"
+            }
+            onClick={() => void handleOrderAction(record, "confirm")}
+            disabled={actionBusyId === record.id}
+          >
+            确认
+          </button>
+        ) : null}
+        {record.status !== "cancelled" ? (
+          <button
+            type="button"
+            className={
+              darkMode
+                ? "rounded-full border border-rose-400/30 bg-rose-400/10 px-3 py-2 text-xs font-medium text-rose-100 transition hover:bg-rose-400/20 disabled:opacity-50"
+                : "rounded-full border border-rose-300 bg-rose-100 px-3 py-2 text-xs font-medium text-rose-800 transition hover:bg-rose-200 disabled:opacity-50"
+            }
+            onClick={() => void handleOrderAction(record, "cancel")}
+            disabled={actionBusyId === record.id}
+          >
+            取消
+          </button>
+        ) : null}
+      </>
+    ),
+    [actionBusyId, darkMode, handleOrderAction],
+  );
+
   const detailOverlay = detailOrder ? (
     <div
       className="fixed inset-0 z-[2147483000] flex items-center justify-center bg-black/55 px-4"
@@ -363,7 +399,7 @@ export default function MerchantOrderMobilePanel({
             <div className={`mt-2 flex flex-wrap gap-x-3 gap-y-1 text-sm ${darkMode ? "text-slate-300" : "text-slate-500"}`}>
               <span>{`订单号: ${detailOrder.id}`}</span>
               <span>{`下单时间: ${formatDateTime(detailOrder.createdAt)}`}</span>
-              <span>{`金额: ${formatMerchantOrderAmount(detailOrder.totalAmount, detailOrder.pricePrefix)}`}</span>
+              <span>{formatMerchantOrderAmount(detailOrder.totalAmount, detailOrder.pricePrefix)}</span>
             </div>
           </div>
           <button
@@ -712,7 +748,7 @@ export default function MerchantOrderMobilePanel({
                 ) : null}
 
                 <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0 flex-1 space-y-3">
+                  <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${getStatusBadgeClass(record.status, darkMode)}`}>
                         {getStatusText(record.status)}
@@ -723,31 +759,11 @@ export default function MerchantOrderMobilePanel({
                       <span>{`订单号: ${record.id}`}</span>
                       <span>{`下单时间: ${formatDateTime(record.createdAt)}`}</span>
                     </div>
-
-                    <div className="hidden grid gap-2 text-sm md:grid-cols-3">
-                      <div className={`rounded-2xl border px-3 py-3 ${darkMode ? "border-white/10 bg-white/5" : "border-slate-200 bg-slate-50"}`}>
-                        <div className={darkMode ? "text-xs text-slate-400" : "text-xs text-slate-400"}>订单号</div>
-                        <div className={`mt-1 break-all font-medium ${darkMode ? "text-white" : "text-slate-900"}`}>{record.id}</div>
-                      </div>
-                      <div className={`rounded-2xl border px-3 py-3 ${darkMode ? "border-white/10 bg-white/5" : "border-slate-200 bg-slate-50"}`}>
-                        <div className={darkMode ? "text-xs text-slate-400" : "text-xs text-slate-400"}>下单时间</div>
-                        <div className={`mt-1 font-medium ${darkMode ? "text-white" : "text-slate-900"}`}>{formatDateTime(record.createdAt)}</div>
-                      </div>
-                      <div className={`rounded-2xl border px-3 py-3 ${darkMode ? "border-white/10 bg-white/5" : "border-slate-200 bg-slate-50"}`}>
-                        <div className={darkMode ? "text-xs text-slate-400" : "text-xs text-slate-400"}>金额</div>
-                        <div className={`mt-1 text-lg font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>
-                          {formatMerchantOrderAmount(record.totalAmount, record.pricePrefix)}
-                        </div>
-                      </div>
-                    </div>
                   </div>
 
                   <div className="flex shrink-0 flex-col items-end gap-2">
-                    <div className="text-right">
-                      <div className={`text-[11px] font-medium ${darkMode ? "text-slate-400" : "text-slate-400"}`}>金额</div>
-                      <div className={`mt-0.5 text-lg font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>
-                        {formatMerchantOrderAmount(record.totalAmount, record.pricePrefix)}
-                      </div>
+                    <div className={`text-right text-lg font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>
+                      {formatMerchantOrderAmount(record.totalAmount, record.pricePrefix)}
                     </div>
                     <div className="flex flex-wrap justify-end gap-2">
                       {record.customer.email ? (
@@ -777,16 +793,20 @@ export default function MerchantOrderMobilePanel({
                         </a>
                       ) : null}
                     </div>
-                    <button
-                      type="button"
-                      className={`rounded-full px-4 py-2 text-sm font-semibold ${
-                        darkMode ? "bg-white/10 text-white" : "border border-slate-200 bg-white text-slate-700"
-                      }`}
-                      onClick={() => openDetailDialog(record)}
-                    >
-                      详情
-                    </button>
                   </div>
+                </div>
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {renderStatusActions(record)}
+                  <button
+                    type="button"
+                    className={`rounded-full px-4 py-2 text-sm font-semibold ${
+                      darkMode ? "bg-white/10 text-white" : "border border-slate-200 bg-white text-slate-700"
+                    }`}
+                    onClick={() => openDetailDialog(record)}
+                  >
+                    详情
+                  </button>
                 </div>
               </div>
             );
