@@ -140,7 +140,7 @@ export default function BookingStatusFilterDropdown({
       >
         <button
           type="button"
-          className={`inline-flex items-center gap-2 transition hover:bg-slate-50 ${
+          className={`inline-flex min-h-10 items-center gap-2 transition hover:bg-slate-50 ${
             compact ? "px-3 py-2 text-xs" : "px-3 py-2 text-sm"
           }`}
           onClick={() => {
@@ -153,7 +153,7 @@ export default function BookingStatusFilterDropdown({
         </button>
         <button
           type="button"
-          className={`inline-flex items-center justify-center border-l border-slate-200 text-slate-500 transition hover:bg-slate-50 ${
+          className={`inline-flex min-h-10 items-center justify-center border-l border-slate-200 text-slate-500 transition hover:bg-slate-50 ${
             compact ? "w-9" : "w-10"
           }`}
           onClick={() => {
