@@ -76,6 +76,14 @@ function parseQuantityDraft(value: string, fallback: number) {
   return Number.isFinite(next) && next > 0 ? next : fallback;
 }
 
+function parseQuantityDraftAllowZero(value: string, fallback: number) {
+  const raw = String(value).trim();
+  if (raw === "") return fallback;
+  const next = Number.parseInt(raw, 10);
+  if (!Number.isFinite(next)) return fallback;
+  return Math.max(0, next);
+}
+
 function getStatusText(status: MerchantOrderStatus) {
   if (status === "completed") return "已完成";
   if (status === "confirmed") return "已确认";
@@ -506,7 +514,7 @@ export default function MerchantOrderManagerDialog({
       const currentItem = order.items[itemIndex];
       if (!currentItem) return;
       const draftKey = getDetailItemDraftKey(order.id, itemIndex);
-      const nextQuantity = Math.max(1, parseQuantityDraft(String(value), currentItem.quantity));
+      const nextQuantity = parseQuantityDraftAllowZero(String(value), currentItem.quantity);
       setDetailQuantityDrafts((current) => ({
         ...current,
         [draftKey]: String(nextQuantity),
@@ -516,24 +524,26 @@ export default function MerchantOrderManagerDialog({
       setError("");
       setNotice("");
       try {
-        const nextItems = order.items.map((item, index) =>
-          index === itemIndex
-            ? {
-                productId: item.productId,
-                code: item.code,
-                name: item.name,
-                description: item.description,
-                imageUrl: item.imageUrl,
-                tag: item.tag,
-                quantity: nextQuantity,
-                unitPrice: item.unitPrice,
-                unitPriceText: item.unitPriceText,
-              }
-            : item,
-        );
+        const nextItems = order.items.flatMap((item, index) => {
+          if (index !== itemIndex) return [item];
+          if (nextQuantity <= 0) return [];
+          return [
+            {
+              productId: item.productId,
+              code: item.code,
+              name: item.name,
+              description: item.description,
+              imageUrl: item.imageUrl,
+              tag: item.tag,
+              quantity: nextQuantity,
+              unitPrice: item.unitPrice,
+              unitPriceText: item.unitPriceText,
+            },
+          ];
+        });
         const nextOrder = await requestOrderItemsUpdate(order.id, nextItems);
         setRecords((current) => current.map((item) => (item.id === order.id ? nextOrder : item)));
-        setNotice("订单商品数量已更新");
+        setNotice(nextQuantity <= 0 ? "订单商品已删除" : "订单商品数量已更新");
       } catch (nextError) {
         setDetailQuantityDrafts((current) => ({
           ...current,
@@ -553,7 +563,7 @@ export default function MerchantOrderManagerDialog({
       if (!currentItem) return;
       const draftKey = getDetailItemDraftKey(order.id, itemIndex);
       const baseQuantity = parseQuantityDraft(detailQuantityDrafts[draftKey] ?? String(currentItem.quantity), currentItem.quantity);
-      void commitDetailItemQuantity(order, itemIndex, Math.max(1, baseQuantity + delta));
+      void commitDetailItemQuantity(order, itemIndex, Math.max(0, baseQuantity + delta));
     },
     [commitDetailItemQuantity, detailQuantityDrafts],
   );
@@ -774,10 +784,14 @@ export default function MerchantOrderManagerDialog({
                   <div className="flex h-[min(72vh,58rem)] min-h-[24rem] max-h-[calc(90vh-12rem)] flex-col rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
                     <div className="text-sm font-semibold text-slate-900">商品明细</div>
                     <div className="mt-3 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+                      {detailOrder.items.length === 0 ? (
+                        <div className="flex min-h-40 items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-6 text-sm text-slate-500">
+                          该订单当前没有商品。
+                        </div>
+                      ) : null}
                       {detailOrder.items.map((item, index) => {
                         const itemDraftKey = getDetailItemDraftKey(detailOrder.id, index);
                         const draftQuantity = detailQuantityDrafts[itemDraftKey] ?? String(item.quantity);
-                        const normalizedDraftQuantity = parseQuantityDraft(draftQuantity, item.quantity);
                         const isQuantityBusy = quantityBusyKey === itemDraftKey;
                         return (
                           <div
@@ -802,14 +816,14 @@ export default function MerchantOrderManagerDialog({
                                     type="button"
                                     className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-base font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                                     onClick={() => stepDetailItemQuantity(detailOrder, index, -1)}
-                                    disabled={isQuantityBusy || normalizedDraftQuantity <= 1}
+                                    disabled={isQuantityBusy}
                                   >
                                     -
                                   </button>
                                   <input
                                     type="number"
                                     inputMode="numeric"
-                                    min={1}
+                                    min={0}
                                     className="h-8 w-14 rounded-full border border-slate-200 bg-white px-2 text-center text-sm font-semibold text-slate-900 outline-none transition focus:border-slate-300 focus:ring-2 focus:ring-slate-200 disabled:cursor-not-allowed disabled:bg-slate-100"
                                     value={draftQuantity}
                                     onChange={(event) => handleDetailQuantityDraftChange(detailOrder.id, index, event.target.value)}

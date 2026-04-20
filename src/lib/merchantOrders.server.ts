@@ -86,9 +86,6 @@ export async function updateMerchantOrderBySite(input: {
   if (!next) {
     throw new Error("invalid_order_update");
   }
-  if (next.items.length === 0) {
-    throw new Error("order_items_required");
-  }
   const updatedOrders = [...orders];
   updatedOrders[orderIndex] = next;
   const saved = await saveStoredMerchantOrders(supabase, {

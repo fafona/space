@@ -190,3 +190,45 @@ test("updateMerchantOrderItems recalculates quantity and totals", () => {
   assert.equal(updated.updatedAt, "2026-04-20T10:00:00.000Z");
   assert.equal(updated.merchantTouchedAt, "2026-04-20T10:00:00.000Z");
 });
+
+test("updateMerchantOrderItems removes items whose quantity becomes zero", () => {
+  const base = createMerchantOrder({
+    siteId: "10000000",
+    siteName: "fafona",
+    blockId: "b-product",
+    pricePrefix: "€",
+    customer: {
+      name: "Felix",
+    },
+    items: [
+      {
+        productId: "a",
+        code: "SKU-001",
+        name: "Demo A",
+        quantity: 1,
+        unitPriceText: "10.00",
+      },
+      {
+        productId: "b",
+        code: "SKU-002",
+        name: "Demo B",
+        quantity: 2,
+        unitPriceText: "7.00",
+      },
+    ],
+  });
+
+  const updated = updateMerchantOrderItems(
+    base,
+    [
+      { ...base.items[0], quantity: 0 },
+      { ...base.items[1], quantity: 2 },
+    ],
+    "2026-04-20T10:10:00.000Z",
+  );
+
+  assert.equal(updated.items.length, 1);
+  assert.equal(updated.items[0]?.code, "SKU-002");
+  assert.equal(updated.totalQuantity, 2);
+  assert.equal(updated.totalAmount, 14);
+});

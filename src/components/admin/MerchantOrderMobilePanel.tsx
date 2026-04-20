@@ -80,6 +80,14 @@ function parseQuantityDraft(value: string, fallback: number) {
   return Number.isFinite(next) && next > 0 ? next : fallback;
 }
 
+function parseQuantityDraftAllowZero(value: string, fallback: number) {
+  const raw = String(value).trim();
+  if (raw === "") return fallback;
+  const next = Number.parseInt(raw, 10);
+  if (!Number.isFinite(next)) return fallback;
+  return Math.max(0, next);
+}
+
 function getStatusText(status: MerchantOrderStatus) {
   if (status === "completed") return "已完成";
   if (status === "confirmed") return "已确认";
@@ -170,6 +178,7 @@ export default function MerchantOrderMobilePanel({
   const [detailOrderId, setDetailOrderId] = useState("");
   const [detailQuantityDrafts, setDetailQuantityDrafts] = useState<Record<string, string>>({});
   const [quantityBusyKey, setQuantityBusyKey] = useState("");
+  const [mobileCustomerInfoOpen, setMobileCustomerInfoOpen] = useState(false);
 
   const cardClassName = darkMode
     ? "rounded-[26px] border border-white/10 bg-[rgba(15,23,42,0.84)] p-4 shadow-[0_20px_44px_rgba(2,6,23,0.28)]"
@@ -201,8 +210,8 @@ export default function MerchantOrderMobilePanel({
     ? "w-full rounded-[18px] border border-amber-300/30 bg-amber-200/10 px-3.5 py-3 text-left text-[13px] font-semibold text-amber-100 shadow-sm transition hover:bg-amber-200/15"
     : "w-full rounded-[18px] border border-[#d8c7a5] bg-[linear-gradient(135deg,#fffdfa_0%,#f6efe1_62%,#ecdfc2_100%)] px-3.5 py-3 text-left text-[13px] font-semibold text-slate-800 shadow-sm transition hover:brightness-[0.99]";
   const detailPanelClassName = darkMode
-    ? "w-full max-w-lg rounded-[28px] border border-white/10 bg-[rgba(15,23,42,0.98)] shadow-[0_32px_80px_rgba(2,6,23,0.52)]"
-    : "w-full max-w-lg rounded-[28px] border border-slate-200 bg-white shadow-[0_28px_72px_rgba(15,23,42,0.2)]";
+    ? "flex w-full max-w-lg max-h-[calc(100dvh-7rem)] flex-col overflow-hidden rounded-[28px] border border-white/10 bg-[rgba(15,23,42,0.98)] shadow-[0_32px_80px_rgba(2,6,23,0.52)]"
+    : "flex w-full max-w-lg max-h-[calc(100dvh-7rem)] flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_28px_72px_rgba(15,23,42,0.2)]";
 
   const loadOrders = useCallback(async () => {
     if (!siteId) return;
@@ -300,11 +309,13 @@ export default function MerchantOrderMobilePanel({
     if (!detailOrder) {
       setDetailQuantityDrafts({});
       setQuantityBusyKey("");
+      setMobileCustomerInfoOpen(false);
       return;
     }
     setDetailQuantityDrafts(
       Object.fromEntries(detailOrder.items.map((item, index) => [getDetailItemDraftKey(detailOrder.id, index), String(item.quantity)])),
     );
+    setMobileCustomerInfoOpen(false);
   }, [detailOrder]);
 
   const requestOrderAction = useCallback(
@@ -421,7 +432,7 @@ export default function MerchantOrderMobilePanel({
       const currentItem = order.items[itemIndex];
       if (!currentItem) return;
       const draftKey = getDetailItemDraftKey(order.id, itemIndex);
-      const nextQuantity = Math.max(1, parseQuantityDraft(String(value), currentItem.quantity));
+      const nextQuantity = parseQuantityDraftAllowZero(String(value), currentItem.quantity);
       setDetailQuantityDrafts((current) => ({
         ...current,
         [draftKey]: String(nextQuantity),
@@ -430,23 +441,26 @@ export default function MerchantOrderMobilePanel({
       setQuantityBusyKey(draftKey);
       setError("");
       try {
-        const nextItems = order.items.map((item, index) =>
-          index === itemIndex
-            ? {
-                productId: item.productId,
-                code: item.code,
-                name: item.name,
-                description: item.description,
-                imageUrl: item.imageUrl,
-                tag: item.tag,
-                quantity: nextQuantity,
-                unitPrice: item.unitPrice,
-                unitPriceText: item.unitPriceText,
-              }
-            : item,
-        );
+        const nextItems = order.items.flatMap((item, index) => {
+          if (index !== itemIndex) return [item];
+          if (nextQuantity <= 0) return [];
+          return [
+            {
+              productId: item.productId,
+              code: item.code,
+              name: item.name,
+              description: item.description,
+              imageUrl: item.imageUrl,
+              tag: item.tag,
+              quantity: nextQuantity,
+              unitPrice: item.unitPrice,
+              unitPriceText: item.unitPriceText,
+            },
+          ];
+        });
         const nextOrder = await requestOrderItemsUpdate(order.id, nextItems);
         setRecords((current) => current.map((item) => (item.id === order.id ? nextOrder : item)));
+        setError("");
       } catch (nextError) {
         setDetailQuantityDrafts((current) => ({
           ...current,
@@ -466,7 +480,7 @@ export default function MerchantOrderMobilePanel({
       if (!currentItem) return;
       const draftKey = getDetailItemDraftKey(order.id, itemIndex);
       const baseQuantity = parseQuantityDraft(detailQuantityDrafts[draftKey] ?? String(currentItem.quantity), currentItem.quantity);
-      void commitDetailItemQuantity(order, itemIndex, Math.max(1, baseQuantity + delta));
+      void commitDetailItemQuantity(order, itemIndex, Math.max(0, baseQuantity + delta));
     },
     [commitDetailItemQuantity, detailQuantityDrafts],
   );
@@ -568,26 +582,97 @@ export default function MerchantOrderMobilePanel({
 
   const detailOverlay = detailOrder ? (
     <div
-      className="fixed inset-0 z-[2147483000] flex items-center justify-center bg-black/55 px-4"
+      className="fixed inset-0 z-[2147483000] overflow-y-auto bg-black/55 px-4 pb-[calc(env(safe-area-inset-bottom)+6.5rem)] pt-4"
       onMouseDown={(event: ReactMouseEvent<HTMLDivElement>) => {
         if (event.target === event.currentTarget) closeDetailDialog();
       }}
     >
-      <div className={detailPanelClassName}>
+      <div className={`mx-auto ${detailPanelClassName}`}>
         <div className={`flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4 ${darkMode ? "border-white/10" : "border-slate-200"}`}>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${getStatusBadgeClass(detailOrder.status, darkMode)}`}>
                 {getStatusText(detailOrder.status)}
               </span>
-              <div className={`truncate text-lg font-semibold ${darkMode ? "text-white" : "text-slate-950"}`}>
-                {detailOrder.customer.name || "未命名客户"}
-              </div>
+              <button
+                type="button"
+                className={`inline-flex min-w-0 max-w-full items-center gap-2 rounded-full px-3 py-1.5 text-left text-sm font-semibold transition ${
+                  darkMode
+                    ? "border border-white/10 bg-white/5 text-white hover:bg-white/10"
+                    : "border border-slate-200 bg-white text-slate-900 hover:bg-slate-50"
+                }`}
+                onClick={() => setMobileCustomerInfoOpen((current) => !current)}
+              >
+                <span className="truncate">{detailOrder.customer.name || "未命名客户"}</span>
+                <span className={`text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                  {mobileCustomerInfoOpen ? "收起" : "客户信息"}
+                </span>
+              </button>
             </div>
             <div className={`mt-2 flex flex-wrap gap-x-3 gap-y-1 text-sm ${darkMode ? "text-slate-300" : "text-slate-500"}`}>
               <span>{`订单号: ${detailOrder.id}`}</span>
               <span>{`下单时间: ${formatDateTime(detailOrder.createdAt)}`}</span>
             </div>
+            {mobileCustomerInfoOpen ? (
+              <div
+                className={`mt-3 rounded-[22px] border px-4 py-4 ${
+                  darkMode ? "border-white/10 bg-white/5" : "border-slate-200 bg-slate-50"
+                }`}
+              >
+                <div className={`grid gap-3 text-sm ${darkMode ? "text-slate-200" : "text-slate-600"}`}>
+                  <div>
+                    <span className={darkMode ? "text-slate-400" : "text-slate-400"}>姓名：</span>
+                    {detailOrder.customer.name || "-"}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={darkMode ? "text-slate-400" : "text-slate-400"}>邮箱：</span>
+                    <span className="min-w-0 flex-1 break-all">{detailOrder.customer.email || "-"}</span>
+                    {detailOrder.customer.email ? (
+                      <a
+                        className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
+                        href={`mailto:${detailOrder.customer.email}`}
+                        onClick={() => {
+                          void markOrderTouched(detailOrder.id);
+                        }}
+                        title="发送邮件"
+                        aria-label="发送邮件"
+                      >
+                        <MailIcon />
+                      </a>
+                    ) : null}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={darkMode ? "text-slate-400" : "text-slate-400"}>电话：</span>
+                    <span className="min-w-0 flex-1 break-all">{detailOrder.customer.phone || "-"}</span>
+                    {detailOrder.customer.phone ? (
+                      <a
+                        className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#007AFF] text-white shadow-sm transition hover:bg-[#0066D6]"
+                        href={`tel:${detailOrder.customer.phone}`}
+                        onClick={() => {
+                          void markOrderTouched(detailOrder.id);
+                        }}
+                        title="拨打电话"
+                        aria-label="拨打电话"
+                      >
+                        <PhoneIcon />
+                      </a>
+                    ) : null}
+                  </div>
+                  {detailOrder.customer.note ? (
+                    <div className="grid gap-1">
+                      <span className={darkMode ? "text-slate-400" : "text-slate-400"}>备注：</span>
+                      <div
+                        className={`max-h-24 overflow-y-auto whitespace-pre-wrap break-words rounded-xl px-3 py-2 ${
+                          darkMode ? "border border-white/10 bg-white/5 text-slate-100" : "border border-slate-200 bg-white text-slate-700"
+                        }`}
+                      >
+                        {detailOrder.customer.note}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
           </div>
           <button
             type="button"
@@ -598,15 +683,23 @@ export default function MerchantOrderMobilePanel({
           </button>
         </div>
 
-        <div className="max-h-[78vh] overflow-y-auto px-5 py-4">
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-[calc(env(safe-area-inset-bottom)+1.25rem)] pt-4">
           <div className="space-y-3">
             <div className={`flex max-h-[min(42vh,24rem)] min-h-[14rem] flex-col rounded-[24px] border px-4 py-4 ${darkMode ? "border-white/10 bg-white/5" : "border-slate-200 bg-slate-50"}`}>
               <div className={`text-sm font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>商品明细</div>
               <div className="mt-3 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+                {detailOrder.items.length === 0 ? (
+                  <div
+                    className={`flex min-h-28 items-center justify-center rounded-2xl border border-dashed px-4 py-6 text-center text-sm ${
+                      darkMode ? "border-white/10 bg-white/5 text-slate-300" : "border-slate-300 bg-white text-slate-500"
+                    }`}
+                  >
+                    该订单当前没有商品。
+                  </div>
+                ) : null}
                 {detailOrder.items.map((item, index) => {
                   const itemDraftKey = getDetailItemDraftKey(detailOrder.id, index);
                   const draftQuantity = detailQuantityDrafts[itemDraftKey] ?? String(item.quantity);
-                  const normalizedDraftQuantity = parseQuantityDraft(draftQuantity, item.quantity);
                   const isQuantityBusy = quantityBusyKey === itemDraftKey;
                   return (
                     <div
@@ -639,14 +732,14 @@ export default function MerchantOrderMobilePanel({
                                 darkMode ? "border border-white/10 bg-slate-950/60 text-white hover:bg-slate-900" : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                               }`}
                               onClick={() => stepDetailItemQuantity(detailOrder, index, -1)}
-                              disabled={isQuantityBusy || normalizedDraftQuantity <= 1}
+                              disabled={isQuantityBusy}
                             >
                               -
                             </button>
                             <input
                               type="number"
                               inputMode="numeric"
-                              min={1}
+                              min={0}
                               className={`h-8 w-14 rounded-full border px-2 text-center text-sm font-semibold outline-none transition disabled:cursor-not-allowed ${
                                 darkMode
                                   ? "border-white/10 bg-slate-950/60 text-white focus:border-white/20 focus:bg-slate-950"
@@ -682,62 +775,6 @@ export default function MerchantOrderMobilePanel({
                     </div>
                   );
                 })}
-              </div>
-            </div>
-
-            <div className={`rounded-[24px] border px-4 py-4 ${darkMode ? "border-white/10 bg-white/5" : "border-slate-200 bg-slate-50"}`}>
-              <div className={`text-sm font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>客户信息</div>
-              <div className={`mt-3 grid gap-3 text-sm ${darkMode ? "text-slate-200" : "text-slate-600"}`}>
-                <div>
-                  <span className={darkMode ? "text-slate-400" : "text-slate-400"}>姓名：</span>
-                  {detailOrder.customer.name || "-"}
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className={darkMode ? "text-slate-400" : "text-slate-400"}>邮箱：</span>
-                  <span className="min-w-0 flex-1 break-all">{detailOrder.customer.email || "-"}</span>
-                  {detailOrder.customer.email ? (
-                    <a
-                      className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
-                      href={`mailto:${detailOrder.customer.email}`}
-                      onClick={() => {
-                        void markOrderTouched(detailOrder.id);
-                      }}
-                      title="发送邮件"
-                      aria-label="发送邮件"
-                    >
-                      <MailIcon />
-                    </a>
-                  ) : null}
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className={darkMode ? "text-slate-400" : "text-slate-400"}>电话：</span>
-                  <span className="min-w-0 flex-1 break-all">{detailOrder.customer.phone || "-"}</span>
-                  {detailOrder.customer.phone ? (
-                    <a
-                      className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#007AFF] text-white shadow-sm transition hover:bg-[#0066D6]"
-                      href={`tel:${detailOrder.customer.phone}`}
-                      onClick={() => {
-                        void markOrderTouched(detailOrder.id);
-                      }}
-                      title="拨打电话"
-                      aria-label="拨打电话"
-                    >
-                      <PhoneIcon />
-                    </a>
-                  ) : null}
-                </div>
-                {detailOrder.customer.note ? (
-                  <div className="grid gap-1">
-                    <span className={darkMode ? "text-slate-400" : "text-slate-400"}>备注：</span>
-                    <div
-                      className={`max-h-24 overflow-y-auto whitespace-pre-wrap break-words rounded-xl px-3 py-2 ${
-                        darkMode ? "border border-white/10 bg-white/5 text-slate-100" : "border border-slate-200 bg-white text-slate-700"
-                      }`}
-                    >
-                      {detailOrder.customer.note}
-                    </div>
-                  </div>
-                ) : null}
               </div>
             </div>
 
