@@ -493,9 +493,9 @@ export default function MerchantOrderMobilePanel({
 
         <div className="max-h-[78vh] overflow-y-auto px-5 py-4">
           <div className="space-y-3">
-            <div className={`rounded-[24px] border px-4 py-4 ${darkMode ? "border-white/10 bg-white/5" : "border-slate-200 bg-slate-50"}`}>
+            <div className={`flex max-h-[min(42vh,24rem)] min-h-[14rem] flex-col rounded-[24px] border px-4 py-4 ${darkMode ? "border-white/10 bg-white/5" : "border-slate-200 bg-slate-50"}`}>
               <div className={`text-sm font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>商品明细</div>
-              <div className="mt-3 space-y-3">
+              <div className="mt-3 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
                 {detailOrder.items.map((item) => (
                   <div
                     key={`${detailOrder.id}-${item.productId}-${item.code}`}
@@ -505,13 +505,14 @@ export default function MerchantOrderMobilePanel({
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <div className="font-semibold">{item.name || "未命名产品"}</div>
-                        <div className={`mt-1 text-xs ${darkMode ? "text-slate-400" : "text-slate-400"}`}>{item.code || "-"}</div>
-                        {item.description ? (
-                          <div className={`mt-2 whitespace-pre-wrap break-words text-sm ${darkMode ? "text-slate-300" : "text-slate-500"}`}>
-                            {item.description}
-                          </div>
-                        ) : null}
+                        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                          {item.code ? (
+                            <div className={`text-xs uppercase tracking-[0.18em] ${darkMode ? "text-slate-400" : "text-slate-400"}`}>
+                              {item.code}
+                            </div>
+                          ) : null}
+                          <div className="font-semibold">{item.name || "未命名产品"}</div>
+                        </div>
                       </div>
                       <div className="shrink-0 text-right">
                         <div className={darkMode ? "text-slate-300" : "text-slate-500"}>×{item.quantity}</div>
@@ -571,9 +572,15 @@ export default function MerchantOrderMobilePanel({
                   ) : null}
                 </div>
                 {detailOrder.customer.note ? (
-                  <div>
+                  <div className="grid gap-1">
                     <span className={darkMode ? "text-slate-400" : "text-slate-400"}>备注：</span>
-                    {detailOrder.customer.note}
+                    <div
+                      className={`max-h-24 overflow-y-auto whitespace-pre-wrap break-words rounded-xl px-3 py-2 ${
+                        darkMode ? "border border-white/10 bg-white/5 text-slate-100" : "border border-slate-200 bg-white text-slate-700"
+                      }`}
+                    >
+                      {detailOrder.customer.note}
+                    </div>
                   </div>
                 ) : null}
               </div>

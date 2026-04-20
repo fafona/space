@@ -627,7 +627,7 @@ export default function MerchantOrderManagerDialog({
             }
           }}
         >
-          <div className="w-full max-w-4xl rounded-[28px] border border-slate-200 bg-white shadow-2xl">
+          <div className="flex max-h-[calc(100vh-2rem)] w-full max-w-4xl flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-2xl">
             <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 px-6 py-5">
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
@@ -657,98 +657,101 @@ export default function MerchantOrderManagerDialog({
               </div>
             </div>
 
-            <div className="grid gap-4 px-6 py-5 lg:grid-cols-[minmax(0,1.1fr)_minmax(300px,0.9fr)]">
-              <div className="space-y-3">
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                  <div className="text-sm font-semibold text-slate-900">商品明细</div>
-                  <div className="mt-3 space-y-3">
-                    {detailOrder.items.map((item) => (
-                      <div
-                        key={`${detailOrder.id}-${item.productId}-${item.code}`}
-                        className="flex items-start justify-between gap-4 rounded-2xl border border-slate-200 bg-white px-4 py-3"
-                      >
-                        <div className="min-w-0">
-                          <div className="text-sm font-semibold text-slate-900">{item.name || "未命名产品"}</div>
-                          <div className="mt-1 text-xs uppercase tracking-[0.18em] text-slate-400">{item.code || "-"}</div>
-                          {item.description ? (
-                            <div className="mt-2 whitespace-pre-wrap break-words text-sm text-slate-500">
-                              {item.description}
+            <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+              <div className="grid min-h-0 gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(300px,0.9fr)]">
+                <div className="space-y-3">
+                  <div className="flex h-[min(56vh,42rem)] min-h-[18rem] max-h-[calc(100vh-14rem)] flex-col rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                    <div className="text-sm font-semibold text-slate-900">商品明细</div>
+                    <div className="mt-3 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+                      {detailOrder.items.map((item) => (
+                        <div
+                          key={`${detailOrder.id}-${item.productId}-${item.code}`}
+                          className="flex items-start justify-between gap-4 rounded-2xl border border-slate-200 bg-white px-4 py-3"
+                        >
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                              {item.code ? (
+                                <span className="text-xs uppercase tracking-[0.18em] text-slate-400">{item.code}</span>
+                              ) : null}
+                              <div className="text-sm font-semibold text-slate-900">{item.name || "未命名产品"}</div>
                             </div>
-                          ) : null}
-                        </div>
-                        <div className="shrink-0 text-right">
-                          <div className="text-sm text-slate-500">×{item.quantity}</div>
-                          <div className="mt-1 text-base font-semibold text-sky-700">
-                            {formatMerchantOrderAmount(item.subtotal, detailOrder.pricePrefix)}
+                          </div>
+                          <div className="shrink-0 text-right">
+                            <div className="text-sm text-slate-500">×{item.quantity}</div>
+                            <div className="mt-1 text-base font-semibold text-sky-700">
+                              {formatMerchantOrderAmount(item.subtotal, detailOrder.pricePrefix)}
+                            </div>
                           </div>
                         </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                    <div className="text-sm font-semibold text-slate-900">客户信息</div>
+                    <div className="mt-3 grid gap-3 text-sm text-slate-600">
+                      <div>
+                        <span className="text-slate-400">店铺：</span>
+                        {detailOrder.siteName || detailOrder.siteId}
                       </div>
-                    ))}
+                      <div>
+                        <span className="text-slate-400">姓名：</span>
+                        {detailOrder.customer.name || "-"}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-slate-400">邮箱：</span>
+                        <span className="min-w-0 flex-1 break-all">{detailOrder.customer.email || "-"}</span>
+                        {detailOrder.customer.email ? (
+                          <a
+                            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
+                            href={`mailto:${detailOrder.customer.email}`}
+                            onClick={() => {
+                              void markOrderTouched(detailOrder.id);
+                            }}
+                            title="发送邮件"
+                            aria-label="发送邮件"
+                          >
+                            <MailIcon />
+                          </a>
+                        ) : null}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-slate-400">电话：</span>
+                        <span className="min-w-0 flex-1 break-all">{detailOrder.customer.phone || "-"}</span>
+                        {detailOrder.customer.phone ? (
+                          <a
+                            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#007AFF] text-white shadow-sm transition hover:bg-[#0066D6]"
+                            href={`tel:${detailOrder.customer.phone}`}
+                            onClick={() => {
+                              void markOrderTouched(detailOrder.id);
+                            }}
+                            title="拨打电话"
+                            aria-label="拨打电话"
+                          >
+                            <PhoneIcon />
+                          </a>
+                        ) : null}
+                      </div>
+                      <div className="grid gap-1">
+                        <span className="text-slate-400">备注：</span>
+                        <div className="max-h-28 overflow-y-auto whitespace-pre-wrap break-words rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-700">
+                          {detailOrder.customer.note || "-"}
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
 
-              <div className="space-y-3">
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                  <div className="text-sm font-semibold text-slate-900">客户信息</div>
-                  <div className="mt-3 grid gap-3 text-sm text-slate-600">
-                    <div>
-                      <span className="text-slate-400">店铺：</span>
-                      {detailOrder.siteName || detailOrder.siteId}
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                    <div className="flex items-center justify-between text-sm text-slate-500">
+                      <span>商品数量</span>
+                      <span>{detailOrder.totalQuantity}</span>
                     </div>
-                    <div>
-                      <span className="text-slate-400">姓名：</span>
-                      {detailOrder.customer.name || "-"}
+                    <div className="mt-3 flex items-center justify-between text-lg font-semibold text-slate-900">
+                      <span>订单合计</span>
+                      <span>{formatMerchantOrderAmount(detailOrder.totalAmount, detailOrder.pricePrefix)}</span>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-slate-400">邮箱：</span>
-                      <span className="min-w-0 flex-1 break-all">{detailOrder.customer.email || "-"}</span>
-                      {detailOrder.customer.email ? (
-                        <a
-                          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
-                          href={`mailto:${detailOrder.customer.email}`}
-                          onClick={() => {
-                            void markOrderTouched(detailOrder.id);
-                          }}
-                          title="发送邮件"
-                          aria-label="发送邮件"
-                        >
-                          <MailIcon />
-                        </a>
-                      ) : null}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-slate-400">电话：</span>
-                      <span className="min-w-0 flex-1 break-all">{detailOrder.customer.phone || "-"}</span>
-                      {detailOrder.customer.phone ? (
-                        <a
-                          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#007AFF] text-white shadow-sm transition hover:bg-[#0066D6]"
-                          href={`tel:${detailOrder.customer.phone}`}
-                          onClick={() => {
-                            void markOrderTouched(detailOrder.id);
-                          }}
-                          title="拨打电话"
-                          aria-label="拨打电话"
-                        >
-                          <PhoneIcon />
-                        </a>
-                      ) : null}
-                    </div>
-                    <div>
-                      <span className="text-slate-400">备注：</span>
-                      {detailOrder.customer.note || "-"}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                  <div className="flex items-center justify-between text-sm text-slate-500">
-                    <span>商品数量</span>
-                    <span>{detailOrder.totalQuantity}</span>
-                  </div>
-                  <div className="mt-3 flex items-center justify-between text-lg font-semibold text-slate-900">
-                    <span>订单合计</span>
-                    <span>{formatMerchantOrderAmount(detailOrder.totalAmount, detailOrder.pricePrefix)}</span>
                   </div>
                 </div>
               </div>
