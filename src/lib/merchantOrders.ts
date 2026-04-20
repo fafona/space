@@ -1,4 +1,4 @@
-export const MERCHANT_ORDER_STATUSES = ["pending", "confirmed", "cancelled"] as const;
+export const MERCHANT_ORDER_STATUSES = ["pending", "confirmed", "completed", "cancelled"] as const;
 
 export type MerchantOrderStatus = (typeof MERCHANT_ORDER_STATUSES)[number];
 
@@ -56,6 +56,7 @@ export type MerchantOrderRecord = {
   totalAmount: number;
   pricePrefix: string;
   confirmedAt: string | null;
+  completedAt: string | null;
   cancelledAt: string | null;
   printedAt: string | null;
   printCount: number;
@@ -70,7 +71,7 @@ export type MerchantOrderCreateInput = {
   items?: MerchantOrderLineItemInput[];
 };
 
-export type MerchantOrderAction = "confirm" | "cancel" | "restore" | "print" | "touch";
+export type MerchantOrderAction = "confirm" | "cancel" | "restore" | "complete" | "uncomplete" | "print" | "touch";
 
 function trimText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
@@ -217,6 +218,7 @@ export function normalizeMerchantOrderRecord(input: Partial<MerchantOrderRecord>
     totalAmount: summary.totalAmount,
     pricePrefix: trimText(input.pricePrefix),
     confirmedAt: trimText(input.confirmedAt) || null,
+    completedAt: trimText((input as Partial<MerchantOrderRecord>).completedAt) || null,
     cancelledAt: trimText(input.cancelledAt) || null,
     printedAt: trimText(input.printedAt) || null,
     printCount: normalizePositiveInt(input.printCount),
@@ -259,6 +261,29 @@ export function applyMerchantOrderAction(
       updatedAt: actedAt,
       merchantTouchedAt: actedAt,
       confirmedAt: actedAt,
+      completedAt: null,
+      cancelledAt: null,
+    };
+  }
+  if (action === "complete") {
+    return {
+      ...record,
+      status: "completed",
+      updatedAt: actedAt,
+      merchantTouchedAt: actedAt,
+      confirmedAt: record.confirmedAt || actedAt,
+      completedAt: actedAt,
+      cancelledAt: null,
+    };
+  }
+  if (action === "uncomplete") {
+    return {
+      ...record,
+      status: "confirmed",
+      updatedAt: actedAt,
+      merchantTouchedAt: actedAt,
+      confirmedAt: record.confirmedAt || actedAt,
+      completedAt: null,
       cancelledAt: null,
     };
   }
@@ -268,6 +293,7 @@ export function applyMerchantOrderAction(
       status: "cancelled",
       updatedAt: actedAt,
       merchantTouchedAt: actedAt,
+      completedAt: null,
       cancelledAt: actedAt,
     };
   }
@@ -278,6 +304,7 @@ export function applyMerchantOrderAction(
       updatedAt: actedAt,
       merchantTouchedAt: actedAt,
       confirmedAt: null,
+      completedAt: null,
       cancelledAt: null,
     };
   }
@@ -326,6 +353,7 @@ export function createMerchantOrder(
     totalAmount: summary.totalAmount,
     pricePrefix,
     confirmedAt: null,
+    completedAt: null,
     cancelledAt: null,
     printedAt: null,
     printCount: 0,

@@ -93,7 +93,7 @@ test("isMerchantOrderPendingMerchantTouch only clears after a merchant action ca
   );
 });
 
-test("applyMerchantOrderAction restores confirmed and cancelled orders back to pending", () => {
+test("applyMerchantOrderAction supports complete and restore flows", () => {
   const base = createMerchantOrder({
     siteId: "10000000",
     siteName: "fafona",
@@ -120,16 +120,31 @@ test("applyMerchantOrderAction restores confirmed and cancelled orders back to p
   const restoredFromConfirmed = applyMerchantOrderAction(confirmed, "restore", "2026-04-20T08:05:00.000Z");
   assert.equal(restoredFromConfirmed.status, "pending");
   assert.equal(restoredFromConfirmed.confirmedAt, null);
+  assert.equal(restoredFromConfirmed.completedAt, null);
   assert.equal(restoredFromConfirmed.cancelledAt, null);
   assert.equal(restoredFromConfirmed.updatedAt, "2026-04-20T08:05:00.000Z");
 
+  const completed = applyMerchantOrderAction(confirmed, "complete", "2026-04-20T08:06:00.000Z");
+  assert.equal(completed.status, "completed");
+  assert.equal(completed.confirmedAt, "2026-04-20T08:00:00.000Z");
+  assert.equal(completed.completedAt, "2026-04-20T08:06:00.000Z");
+  assert.equal(completed.cancelledAt, null);
+
+  const uncompleted = applyMerchantOrderAction(completed, "uncomplete", "2026-04-20T08:07:00.000Z");
+  assert.equal(uncompleted.status, "confirmed");
+  assert.equal(uncompleted.confirmedAt, "2026-04-20T08:00:00.000Z");
+  assert.equal(uncompleted.completedAt, null);
+  assert.equal(uncompleted.cancelledAt, null);
+
   const cancelled = applyMerchantOrderAction(base, "cancel", "2026-04-20T09:00:00.000Z");
   assert.equal(cancelled.status, "cancelled");
+  assert.equal(cancelled.completedAt, null);
   assert.equal(cancelled.cancelledAt, "2026-04-20T09:00:00.000Z");
 
   const restoredFromCancelled = applyMerchantOrderAction(cancelled, "restore", "2026-04-20T09:05:00.000Z");
   assert.equal(restoredFromCancelled.status, "pending");
   assert.equal(restoredFromCancelled.confirmedAt, null);
+  assert.equal(restoredFromCancelled.completedAt, null);
   assert.equal(restoredFromCancelled.cancelledAt, null);
   assert.equal(restoredFromCancelled.updatedAt, "2026-04-20T09:05:00.000Z");
 });

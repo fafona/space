@@ -107,6 +107,8 @@ export async function PATCH(request: Request) {
       body?.action === "confirm" ||
       body?.action === "cancel" ||
       body?.action === "restore" ||
+      body?.action === "complete" ||
+      body?.action === "uncomplete" ||
       body?.action === "print" ||
       body?.action === "touch"
         ? body.action

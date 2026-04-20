@@ -67,13 +67,15 @@ function formatDateTime(value: string) {
 }
 
 function getStatusText(status: MerchantOrderStatus) {
+  if (status === "completed") return "已完成";
   if (status === "confirmed") return "已确认";
   if (status === "cancelled") return "已取消";
   return "待确认";
 }
 
 function getStatusBadgeClass(status: MerchantOrderStatus) {
-  if (status === "confirmed") return "border border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (status === "completed") return "border border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (status === "confirmed") return "border border-sky-200 bg-sky-50 text-sky-700";
   if (status === "cancelled") return "border border-rose-200 bg-rose-50 text-rose-700";
   return "border border-amber-200 bg-amber-50 text-amber-700";
 }
@@ -254,7 +256,7 @@ export default function MerchantOrderManagerDialog({
           summary[item.status] += 1;
           return summary;
         },
-        { all: 0, pending: 0, confirmed: 0, cancelled: 0 } as Record<MerchantOrderFilter, number>,
+        { all: 0, pending: 0, confirmed: 0, completed: 0, cancelled: 0 } as Record<MerchantOrderFilter, number>,
       ),
     [historyFilteredRecords],
   );
@@ -340,7 +342,7 @@ export default function MerchantOrderManagerDialog({
   );
 
   const handleOrderAction = useCallback(
-    async (order: MerchantOrderRecord, action: "confirm" | "cancel" | "restore" | "print") => {
+    async (order: MerchantOrderRecord, action: "confirm" | "cancel" | "restore" | "complete" | "uncomplete" | "print") => {
       setActionBusyId(order.id);
       setError("");
       setNotice("");
@@ -364,6 +366,10 @@ export default function MerchantOrderManagerDialog({
               ? "订单已取消"
               : action === "restore"
                 ? "订单已恢复为待确认"
+                : action === "complete"
+                  ? "订单已完成"
+                  : action === "uncomplete"
+                    ? "订单已恢复为已确认"
                 : "订单已标记为已打印",
         );
       } catch (nextError) {
@@ -464,13 +470,32 @@ export default function MerchantOrderManagerDialog({
         ) : (
           <button
             type="button"
-            className="rounded border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[13px] leading-5 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+            className="rounded border border-sky-300 bg-sky-100 px-3 py-1.5 text-[13px] leading-5 text-sky-800 hover:bg-sky-200 disabled:opacity-50"
             onClick={() => void handleOrderAction(record, "confirm")}
             disabled={Boolean(actionBusyId) || Boolean(batchBusyKey)}
           >
             确认
           </button>
         )}
+        {record.status === "confirmed" ? (
+          <button
+            type="button"
+            className="rounded border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-[13px] leading-5 text-white hover:bg-emerald-700 disabled:opacity-50"
+            onClick={() => void handleOrderAction(record, "complete")}
+            disabled={Boolean(actionBusyId) || Boolean(batchBusyKey)}
+          >
+            完成
+          </button>
+        ) : record.status === "completed" ? (
+          <button
+            type="button"
+            className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            onClick={() => void handleOrderAction(record, "uncomplete")}
+            disabled={Boolean(actionBusyId) || Boolean(batchBusyKey)}
+          >
+            取消完成
+          </button>
+        ) : null}
         <button
           type="button"
           className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
@@ -482,7 +507,7 @@ export default function MerchantOrderManagerDialog({
         {record.status !== "cancelled" ? (
           <button
             type="button"
-            className="rounded border border-rose-200 bg-rose-50 px-3 py-1.5 text-[13px] leading-5 text-rose-700 hover:bg-rose-100 disabled:opacity-50"
+            className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
             onClick={() => void handleOrderAction(record, "cancel")}
             disabled={Boolean(actionBusyId) || Boolean(batchBusyKey)}
           >
@@ -528,10 +553,31 @@ export default function MerchantOrderManagerDialog({
             确认
           </button>
         )}
+        {record.status === "confirmed" ? (
+          <button
+            type="button"
+            className="rounded border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-[13px] leading-5 text-white hover:bg-emerald-700 disabled:opacity-50"
+            onClick={() => void handleOrderAction(record, "complete")}
+            disabled={Boolean(actionBusyId) || Boolean(batchBusyKey)}
+            data-skip-selection-toggle="true"
+          >
+            完成
+          </button>
+        ) : record.status === "completed" ? (
+          <button
+            type="button"
+            className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            onClick={() => void handleOrderAction(record, "uncomplete")}
+            disabled={Boolean(actionBusyId) || Boolean(batchBusyKey)}
+            data-skip-selection-toggle="true"
+          >
+            取消完成
+          </button>
+        ) : null}
         {record.status !== "cancelled" ? (
           <button
             type="button"
-            className="rounded border border-rose-300 bg-rose-100 px-3 py-1.5 text-[13px] leading-5 text-rose-800 hover:bg-rose-200 disabled:opacity-50"
+            className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
             onClick={() => void handleOrderAction(record, "cancel")}
             disabled={Boolean(actionBusyId) || Boolean(batchBusyKey)}
             data-skip-selection-toggle="true"
@@ -794,6 +840,7 @@ export default function MerchantOrderManagerDialog({
                   ["all", `全部 ${counts.all}`],
                   ["pending", `待确认 ${counts.pending}`],
                   ["confirmed", `已确认 ${counts.confirmed}`],
+                  ["completed", `已完成 ${counts.completed}`],
                   ["cancelled", `已取消 ${counts.cancelled}`],
                 ] as Array<[MerchantOrderFilter, string]>).map(([key, label]) => (
                   <button
