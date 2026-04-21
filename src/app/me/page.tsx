@@ -10,7 +10,10 @@ import {
   type MerchantPeerThread,
 } from "@/lib/merchantPeerInbox";
 import { type PlatformSupportMessage, type PlatformSupportThread } from "@/lib/platformSupportInbox";
-import { formatSupportConversationPreview } from "@/lib/supportMessageAttachments";
+import {
+  formatSupportConversationPreview,
+  parseSupportMessageAttachmentPreview,
+} from "@/lib/supportMessageAttachments";
 
 type MeSessionPayload = {
   authenticated?: unknown;
@@ -64,7 +67,36 @@ type PersonalVisibleSupportMessage = Pick<PlatformSupportMessage, "id" | "text" 
   senderLabel: string;
 };
 
+type SupportContactRow = {
+  key: PersonalConversationKey;
+  name: string;
+  badge?: string;
+  subtitle: string;
+  preview: string;
+  updatedAt: string;
+  unread: boolean;
+  avatarLabel: string;
+  avatarImageUrl: string;
+  isOfficial: boolean;
+};
+
 const OFFICIAL_CONVERSATION_KEY: PersonalConversationKey = "official";
+const SUPPORT_PHOTO_PICKER_ACCEPT = "image/png,image/jpeg,image/webp,image/heic,image/heif,image/gif";
+const SUPPORT_FILE_PICKER_ACCEPT = [
+  ".pdf",
+  ".txt",
+  ".csv",
+  ".json",
+  ".zip",
+  ".rar",
+  ".7z",
+  ".doc",
+  ".docx",
+  ".xls",
+  ".xlsx",
+  ".ppt",
+  ".pptx",
+].join(",");
 
 function trimText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
@@ -92,6 +124,18 @@ function getInitialLabel(value: string) {
   if (!trimmed) return "我";
   const first = Array.from(trimmed)[0] ?? "我";
   return first.toUpperCase();
+}
+
+function getSupportContactAvatarLabel(value: string, fallback = "商") {
+  const trimmed = value.trim();
+  if (!trimmed) return fallback;
+  const first = Array.from(trimmed)[0] ?? fallback;
+  if (/^[a-z]$/i.test(first)) return first.toUpperCase();
+  return first;
+}
+
+function buildVisibleSupportMessageKey(message: Pick<PersonalVisibleSupportMessage, "id" | "createdAt">) {
+  return `${message.id}:${normalizeSupportMessageTimestamp(message.createdAt) || message.createdAt}`;
 }
 
 function normalizeSupportMessageTimestamp(value: string | null | undefined) {
@@ -184,6 +228,51 @@ function isSameSupportCalendarDay(left: string | null | undefined, right: string
     leftDate.getMonth() === rightDate.getMonth() &&
     leftDate.getDate() === rightDate.getDate()
   );
+}
+
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      resolve(typeof reader.result === "string" ? reader.result : "");
+    });
+    reader.addEventListener("error", () => {
+      reject(reader.error ?? new Error("file_read_failed"));
+    });
+    reader.readAsDataURL(file);
+  });
+}
+
+function formatSupportAttachmentFileSize(bytes: number) {
+  const size = Number.isFinite(bytes) ? Math.max(0, bytes) : 0;
+  if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)}MB`;
+  if (size >= 1024) return `${Math.round(size / 1024)}KB`;
+  return `${size}B`;
+}
+
+function buildSupportPhotoMessageText(label: "照片" | "拍照", fileName: string, url: string) {
+  return [`${label}：${fileName || "图片"}`, url].filter(Boolean).join("\n");
+}
+
+function buildSupportFileMessageText(file: File, url: string) {
+  const fileName = file.name.trim() || "文件";
+  return [`文件：${fileName} (${formatSupportAttachmentFileSize(file.size)})`, url].join("\n");
+}
+
+function buildSupportLocationMapPreviewUrl(latitude: number, longitude: number) {
+  const lat = latitude.toFixed(6);
+  const lng = longitude.toFixed(6);
+  return `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+}
+
+function buildSupportLocationMessageText(latitude: number, longitude: number, accuracy: number | null) {
+  const lat = latitude.toFixed(6);
+  const lng = longitude.toFixed(6);
+  const accuracyLabel =
+    typeof accuracy === "number" && Number.isFinite(accuracy) && accuracy > 0
+      ? `（约 ${Math.round(accuracy)} 米）`
+      : "";
+  return [`位置：${lat}, ${lng}${accuracyLabel}`, buildSupportLocationMapPreviewUrl(latitude, longitude)].join("\n");
 }
 
 function Icon({ name }: { name: "chat" | "shop" | "shield" | "user" | "calendar" | "order" | "star" | "card" }) {
@@ -416,11 +505,15 @@ export default function MePage() {
   const [supportLoading, setSupportLoading] = useState(false);
   const [peerLoading, setPeerLoading] = useState(false);
   const [supportSending, setSupportSending] = useState(false);
+  const [supportAttachmentBusy, setSupportAttachmentBusy] = useState(false);
+  const [supportAttachmentMenuOpen, setSupportAttachmentMenuOpen] = useState(false);
   const [supportSearching, setSupportSearching] = useState(false);
   const [supportError, setSupportError] = useState("");
+  const [supportSearchError, setSupportSearchError] = useState("");
   const [supportDraft, setSupportDraft] = useState("");
   const [supportContactKeyword, setSupportContactKeyword] = useState("");
   const supportMessagesViewportRef = useRef<HTMLDivElement | null>(null);
+  const supportInputRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -537,18 +630,6 @@ export default function MePage() {
     if (!keyword) return true;
     return ["faolla", "官方", "客服"].some((item) => item.toLowerCase().includes(keyword) || keyword.includes(item.toLowerCase()));
   }, [supportContactKeyword]);
-  const filteredPeerContacts = useMemo(() => {
-    const keyword = supportContactKeyword.trim().toLowerCase();
-    if (!keyword) return peerContacts;
-    return peerContacts.filter((contact) =>
-      [
-        contact.merchantId,
-        contact.merchantName,
-        contact.merchantEmail,
-        formatSupportConversationPreview(contact.lastMessage?.text),
-      ].some((item) => String(item ?? "").toLowerCase().includes(keyword)),
-    );
-  }, [peerContacts, supportContactKeyword]);
   const selectedConversationName = selectedConversationIsOfficial
     ? "Faolla"
     : selectedPeerContact?.merchantName || selectedPeerMerchantId || "商户";
@@ -557,11 +638,41 @@ export default function MePage() {
     : [selectedPeerMerchantId, selectedPeerContact?.merchantEmail].filter(Boolean).join(" / ");
   const selectedConversationAvatarLabel = selectedConversationIsOfficial
     ? "FA"
-    : getInitialLabel(selectedConversationName);
+    : getSupportContactAvatarLabel(selectedConversationName, "商");
   const selectedConversationLoading = selectedConversationIsOfficial ? supportLoading : peerLoading;
   const selectedConversationEmptyText = selectedConversationIsOfficial
-    ? "还没有留言记录，可以直接给 Faolla 留言。"
-    : "还没有聊天记录，可以直接给这个商户发消息。";
+    ? "还没有留言记录，可以直接在下方给 Faolla 留言。"
+    : "还没有聊天记录，可以直接在下方发送第一条消息。";
+  const selectedSupportSendButtonLabel = selectedConversationIsOfficial ? "发送留言" : "发送消息";
+  const supportComposerAvailable = selectedConversationIsOfficial || !!selectedPeerContact;
+  const supportComposerBusy = supportSending || supportAttachmentBusy;
+  const supportCanSend = !!supportDraft.trim() && supportComposerAvailable;
+  const supportContactRows: SupportContactRow[] = [
+    {
+      key: OFFICIAL_CONVERSATION_KEY,
+      name: "Faolla",
+      badge: "官方",
+      subtitle: "www.faolla.com",
+      preview: supportContactPreview || "还没有留言记录，可以直接在右侧给 Faolla 留言。",
+      updatedAt: supportContactUpdatedAt,
+      unread: false,
+      avatarLabel: "FA",
+      avatarImageUrl: "",
+      isOfficial: true,
+    },
+    ...peerContacts.map((contact): SupportContactRow => ({
+      key: `merchant:${contact.merchantId}`,
+      name: contact.merchantName || contact.merchantId,
+      subtitle: contact.merchantId,
+      preview: formatSupportConversationPreview(contact.lastMessage?.text) || "还没有聊天记录，可以直接开始对话。",
+      updatedAt: contact.updatedAt || contact.savedAt,
+      unread: false,
+      avatarLabel: getSupportContactAvatarLabel(contact.merchantName || contact.merchantId, "商"),
+      avatarImageUrl: "",
+      isOfficial: false,
+    })),
+  ];
+  const mobileSupportContactListSummary = `全部 ${supportContactRows.length} 个会话已读`;
 
   const loadSupportThread = useCallback(async (options?: { silent?: boolean }) => {
     if (!accountId) return;
@@ -626,6 +737,7 @@ export default function MePage() {
 
   async function searchConversation() {
     const query = supportContactKeyword.trim();
+    setSupportSearchError("");
     if (!query) {
       setSelectedConversationKey(OFFICIAL_CONVERSATION_KEY);
       await Promise.all([loadSupportThread({ silent: true }), loadPeerInbox({ silent: true })]);
@@ -669,27 +781,31 @@ export default function MePage() {
         setMobileConversationView("thread");
       }
     } catch (error) {
-      setSupportError(error instanceof Error ? error.message : "商户搜索失败，请稍后重试。");
+      setSupportSearchError(error instanceof Error ? error.message : "商户搜索失败，请稍后重试。");
     } finally {
       setSupportSearching(false);
     }
   }
 
-  async function sendSupportMessage() {
-    if (supportSending) return;
-    const text = supportDraft.trim();
+  async function sendSupportTextPayload(rawText: string, options?: { clearDraft?: boolean }) {
+    if (supportSending) return false;
+    const text = rawText.trim();
     if (!text) return;
     if (!accountId) {
       setSupportError("个人账号信息还没准备好，请刷新后重试。");
-      return;
+      return false;
     }
     if (!selectedConversationIsOfficial && !selectedPeerMerchantId) {
       setSupportError("请先选择要聊天的商户。");
-      return;
+      return false;
     }
 
     setSupportSending(true);
     setSupportError("");
+    setSupportAttachmentMenuOpen(false);
+    if (options?.clearDraft) {
+      setSupportDraft("");
+    }
     try {
       const response = await fetch(selectedConversationIsOfficial ? "/api/support-messages" : "/api/merchant-peer-messages", {
         method: "POST",
@@ -727,11 +843,197 @@ export default function MePage() {
         setPeerContacts(Array.isArray(result.contacts) ? result.contacts : []);
         setPeerThreads(Array.isArray(result.threads) ? result.threads : []);
       }
-      setSupportDraft("");
+      if (!options?.clearDraft) {
+        setSupportDraft("");
+      }
+      return true;
     } catch {
       setSupportError("消息发送失败，请稍后重试。");
+      return false;
     } finally {
       setSupportSending(false);
+    }
+  }
+
+  async function sendSupportMessage() {
+    await sendSupportTextPayload(supportDraft, { clearDraft: true });
+  }
+
+  function focusSupportInput() {
+    window.setTimeout(() => supportInputRef.current?.focus(), 0);
+  }
+
+  function openSupportContactThread(key: PersonalConversationKey) {
+    setSelectedConversationKey(key);
+    setMobileConversationView("thread");
+    focusSupportInput();
+  }
+
+  function toggleSupportAttachmentMenu() {
+    if (!supportComposerAvailable || supportComposerBusy) return;
+    setSupportAttachmentMenuOpen((current) => !current);
+  }
+
+  async function uploadSupportAssetDataUrl(
+    dataUrl: string,
+    folder: "merchant-assets" | "merchant-files" = "merchant-assets",
+  ) {
+    const response = await fetch("/api/assets/upload", {
+      method: "POST",
+      cache: "no-store",
+      credentials: "same-origin",
+      headers: {
+        "Content-Type": "application/json",
+        accept: "application/json",
+      },
+      body: JSON.stringify({
+        dataUrl,
+        merchantHint: accountId || "personal",
+        folder,
+        usage: folder === "merchant-files" ? "support-file" : "support-image",
+      }),
+    });
+    const payload = (await response.json().catch(() => null)) as { ok?: unknown; url?: unknown; message?: unknown } | null;
+    const uploadedUrl = typeof payload?.url === "string" ? payload.url.trim() : "";
+    if (response.ok && uploadedUrl) {
+      return { ok: true as const, url: uploadedUrl, message: "" };
+    }
+    return {
+      ok: false as const,
+      url: "",
+      message: typeof payload?.message === "string" ? payload.message.trim() : "",
+    };
+  }
+
+  async function handleSupportImageAttachment(file: File, label: "照片" | "拍照") {
+    if (supportComposerBusy) return;
+    setSupportAttachmentBusy(true);
+    setSupportAttachmentMenuOpen(false);
+    supportInputRef.current?.blur();
+    try {
+      const uploadResult = await uploadSupportAssetDataUrl(await fileToDataUrl(file), "merchant-files");
+      if (!uploadResult.ok || !uploadResult.url) {
+        throw new Error(uploadResult.message || `${label}上传失败，请稍后重试`);
+      }
+      await sendSupportTextPayload(buildSupportPhotoMessageText(label, file.name.trim() || `${label}.jpg`, uploadResult.url));
+    } catch (error) {
+      setSupportError(error instanceof Error ? error.message : `${label}发送失败，请稍后重试`);
+    } finally {
+      setSupportAttachmentBusy(false);
+    }
+  }
+
+  async function handleSupportFileAttachment(file: File) {
+    if (supportComposerBusy) return;
+    setSupportAttachmentBusy(true);
+    setSupportAttachmentMenuOpen(false);
+    supportInputRef.current?.blur();
+    try {
+      const uploadResult = await uploadSupportAssetDataUrl(await fileToDataUrl(file), "merchant-files");
+      if (!uploadResult.ok || !uploadResult.url) {
+        throw new Error(uploadResult.message || "文件上传失败，请稍后重试");
+      }
+      await sendSupportTextPayload(buildSupportFileMessageText(file, uploadResult.url));
+    } catch (error) {
+      setSupportError(error instanceof Error ? error.message : "文件发送失败，请稍后重试");
+    } finally {
+      setSupportAttachmentBusy(false);
+    }
+  }
+
+  async function pickSupportFileViaTemporaryInput(options: {
+    accept: string;
+    capture?: "environment";
+    onFile: (file: File) => Promise<void>;
+  }) {
+    if (typeof document === "undefined") return;
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = options.accept;
+    if (options.capture) input.capture = options.capture;
+    input.style.position = "fixed";
+    input.style.left = "-9999px";
+    input.style.top = "0";
+    const cleanup = () => {
+      input.remove();
+    };
+    input.addEventListener(
+      "change",
+      () => {
+        const file = input.files?.[0] ?? null;
+        cleanup();
+        if (!file) return;
+        void options.onFile(file);
+      },
+      { once: true },
+    );
+    document.body.appendChild(input);
+    input.click();
+  }
+
+  async function openSupportPhotoPicker() {
+    if (supportComposerBusy) return;
+    setSupportAttachmentMenuOpen(false);
+    supportInputRef.current?.blur();
+    await pickSupportFileViaTemporaryInput({
+      accept: SUPPORT_PHOTO_PICKER_ACCEPT,
+      onFile: async (file) => handleSupportImageAttachment(file, "照片"),
+    });
+  }
+
+  async function openSupportCameraPicker() {
+    if (supportComposerBusy) return;
+    setSupportAttachmentMenuOpen(false);
+    supportInputRef.current?.blur();
+    await pickSupportFileViaTemporaryInput({
+      accept: SUPPORT_PHOTO_PICKER_ACCEPT,
+      capture: "environment",
+      onFile: async (file) => handleSupportImageAttachment(file, "拍照"),
+    });
+  }
+
+  async function openSupportFilePicker() {
+    if (supportComposerBusy) return;
+    setSupportAttachmentMenuOpen(false);
+    supportInputRef.current?.blur();
+    await pickSupportFileViaTemporaryInput({
+      accept: SUPPORT_FILE_PICKER_ACCEPT,
+      onFile: async (file) => handleSupportFileAttachment(file),
+    });
+  }
+
+  async function handleSupportLocationAttachment() {
+    if (supportComposerBusy) return;
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      setSupportError("当前设备不支持位置发送");
+      return;
+    }
+    setSupportAttachmentBusy(true);
+    setSupportAttachmentMenuOpen(false);
+    supportInputRef.current?.blur();
+    try {
+      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          timeout: 12000,
+          maximumAge: 60000,
+        });
+      });
+      await sendSupportTextPayload(
+        buildSupportLocationMessageText(
+          position.coords.latitude,
+          position.coords.longitude,
+          position.coords.accuracy,
+        ),
+      );
+    } catch (error) {
+      const message =
+        error && typeof error === "object" && "code" in error && Number((error as { code?: unknown }).code) === 1
+          ? "定位权限被拒绝，请先允许浏览器访问位置"
+          : "位置发送失败，请稍后重试";
+      setSupportError(message);
+    } finally {
+      setSupportAttachmentBusy(false);
     }
   }
 
@@ -770,9 +1072,10 @@ export default function MePage() {
             {visibleSupportMessages.map((message, index) => {
               const previousMessage = index > 0 ? visibleSupportMessages[index - 1] : null;
               const showDateDivider = !previousMessage || !isSameSupportCalendarDay(previousMessage.createdAt, message.createdAt);
+              const messageKey = buildVisibleSupportMessageKey(message);
               const messageMeta = formatSupportClockTime(message.createdAt);
               return (
-                <div key={`${message.id}:${message.createdAt}`} className="space-y-3">
+                <div key={messageKey} className="space-y-3">
                   {showDateDivider ? (
                     <div className="flex justify-center">
                       <span className="rounded-full bg-white/90 px-3 py-1 text-[11px] text-slate-500 shadow-sm">
@@ -784,9 +1087,11 @@ export default function MePage() {
                     <div className={`flex max-w-[82%] min-w-0 items-end ${message.isSelf ? "flex-row" : "flex-row-reverse"}`}>
                       <div
                         className={`min-w-0 rounded-2xl shadow-sm ${
-                          message.isSelf
-                            ? "bg-slate-900 px-4 py-3 text-white"
-                            : "border border-slate-200 bg-white px-4 py-3 text-slate-900"
+                          parseSupportMessageAttachmentPreview(message.text)
+                            ? "border border-transparent bg-transparent px-0 py-0"
+                            : message.isSelf
+                              ? "bg-slate-900 px-4 py-3 text-white"
+                              : "border bg-white px-4 py-3 text-slate-900"
                         }`}
                       >
                         <SupportMessageContent value={message.text} isSelf={message.isSelf} />
@@ -809,14 +1114,15 @@ export default function MePage() {
     );
   }
 
-  function renderSupportComposer(className = "") {
+  function renderDesktopSupportComposer(className = "") {
     return (
       <div className={`min-w-0 shrink-0 space-y-3 border-t border-slate-200 bg-white px-5 py-4 ${className}`}>
         {supportError ? <div className="text-sm text-rose-600">{supportError}</div> : null}
         <textarea
+          ref={supportInputRef}
           rows={4}
           className="w-full max-w-full min-w-0 resize-none rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 caret-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-400"
-          placeholder={`给 ${selectedConversationName} 发消息，Ctrl + Enter 发送`}
+          placeholder=""
           value={supportDraft}
           onChange={(event) => setSupportDraft(event.target.value)}
           onKeyDown={(event) => {
@@ -824,70 +1130,236 @@ export default function MePage() {
             event.preventDefault();
             void sendSupportMessage();
           }}
-          disabled={supportSending}
+          disabled={supportComposerBusy || !supportComposerAvailable}
         />
         <div className="flex min-w-0 justify-end">
           <button
             type="button"
             className="shrink-0 rounded bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50"
             onClick={() => void sendSupportMessage()}
-            disabled={supportSending || !supportDraft.trim()}
+            disabled={supportComposerBusy || !supportCanSend}
           >
-            {supportSending ? "发送中..." : "发送"}
+            {supportComposerBusy ? "发送中..." : selectedSupportSendButtonLabel}
           </button>
         </div>
       </div>
     );
   }
 
-  function renderSupportContactCard(options?: { mobile?: boolean; contact?: MerchantPeerContactSummary | null }) {
-    const contact = options?.contact ?? null;
-    const isOfficial = !contact;
-    const key: PersonalConversationKey = isOfficial ? OFFICIAL_CONVERSATION_KEY : `merchant:${contact.merchantId}`;
-    const active = selectedConversationKey === key;
-    const title = isOfficial ? "Faolla" : contact.merchantName || contact.merchantId;
-    const subtitle = isOfficial ? "www.faolla.com" : [contact.merchantId, contact.merchantEmail].filter(Boolean).join(" / ");
-    const preview = isOfficial
-      ? supportContactPreview
-      : formatSupportConversationPreview(contact.lastMessage?.text) || "还没有聊天记录，可以直接发消息。";
-    const updatedAt = isOfficial ? supportContactUpdatedAt : contact.updatedAt || contact.savedAt;
-    const avatarLabel = isOfficial ? "FA" : getInitialLabel(title);
+  function renderMobileSupportComposer() {
+    return (
+      <div className="shrink-0 overscroll-none border-t border-slate-200/80 bg-[#edf1f7]/98 px-3 pb-[env(safe-area-inset-bottom)] pt-1 shadow-[0_-8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
+        {supportAttachmentMenuOpen ? (
+          <div className="mb-2 rounded-[28px] bg-white px-3 py-3 shadow-[0_12px_28px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/80">
+            <div className="grid grid-cols-5 gap-2">
+              {[
+                {
+                  key: "photo",
+                  label: "照片",
+                  color: "bg-blue-50 text-blue-500",
+                  onClick: () => void openSupportPhotoPicker(),
+                  icon: (
+                    <>
+                      <path d="M6 8h2.3l1.2-1.7A1 1 0 0 1 10.3 6h3.4a1 1 0 0 1 .8.3L15.7 8H18a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2Z" stroke="currentColor" strokeWidth="1.8" />
+                      <circle cx="12" cy="13" r="3.1" stroke="currentColor" strokeWidth="1.8" />
+                    </>
+                  ),
+                },
+                {
+                  key: "camera",
+                  label: "拍照",
+                  color: "bg-slate-100 text-slate-700",
+                  onClick: () => void openSupportCameraPicker(),
+                  icon: (
+                    <>
+                      <path d="M4 9a2 2 0 0 1 2-2h1.8l1.2-1.8A1 1 0 0 1 9.8 5h4.4a1 1 0 0 1 .8.2L16.2 7H18a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V9Z" stroke="currentColor" strokeWidth="1.8" />
+                      <circle cx="12" cy="12.5" r="3.1" stroke="currentColor" strokeWidth="1.8" />
+                    </>
+                  ),
+                },
+                {
+                  key: "location",
+                  label: "位置",
+                  color: "bg-emerald-50 text-emerald-500",
+                  onClick: () => void handleSupportLocationAttachment(),
+                  icon: (
+                    <>
+                      <path d="M12 20s6-5.5 6-10a6 6 0 1 0-12 0c0 4.5 6 10 6 10Z" stroke="currentColor" strokeWidth="1.8" />
+                      <circle cx="12" cy="10" r="2.2" fill="currentColor" />
+                    </>
+                  ),
+                },
+                {
+                  key: "card",
+                  label: "名片",
+                  color: "bg-violet-50 text-violet-500",
+                  onClick: () => setSupportError("名片夹发送下一步接入"),
+                  icon: (
+                    <>
+                      <path d="M5 7.5A2.5 2.5 0 0 1 7.5 5h9A2.5 2.5 0 0 1 19 7.5v9a2.5 2.5 0 0 1-2.5 2.5h-9A2.5 2.5 0 0 1 5 16.5v-9Z" stroke="currentColor" strokeWidth="1.8" />
+                      <circle cx="12" cy="10" r="2.2" stroke="currentColor" strokeWidth="1.8" />
+                      <path d="M8.5 16a3.5 3.5 0 0 1 7 0" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                    </>
+                  ),
+                },
+                {
+                  key: "file",
+                  label: "文件",
+                  color: "bg-amber-50 text-amber-500",
+                  onClick: () => void openSupportFilePicker(),
+                  icon: (
+                    <>
+                      <path d="M8 4.5h5.2L18 9.3V18a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V6.5a2 2 0 0 1 2-2Z" stroke="currentColor" strokeWidth="1.8" />
+                      <path d="M13 4.8V9h4.2" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+                    </>
+                  ),
+                },
+              ].map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  className="flex flex-col items-center gap-2 rounded-2xl px-1 py-2 text-[11px] font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+                  onClick={item.onClick}
+                  disabled={supportComposerBusy}
+                >
+                  <span className={`flex h-12 w-12 items-center justify-center rounded-full ${item.color}`}>
+                    <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" aria-hidden="true">
+                      {item.icon}
+                    </svg>
+                  </span>
+                  <span>{item.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+        {supportError ? <div className="mb-2 rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-600">{supportError}</div> : null}
+        <div className="flex items-end gap-2">
+          <button
+            type="button"
+            className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-slate-700 shadow-[0_8px_18px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/80 transition ${
+              supportAttachmentMenuOpen ? "bg-slate-900 text-white" : "bg-white hover:bg-slate-50"
+            }`}
+            onClick={toggleSupportAttachmentMenu}
+            disabled={!supportComposerAvailable || supportComposerBusy}
+            aria-label="打开附件菜单"
+          >
+            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+              <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+            </svg>
+          </button>
+          <div className="flex min-h-11 min-w-0 flex-1 items-end overflow-hidden rounded-[28px] bg-white px-3 py-2 shadow-[0_8px_18px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/80">
+            <textarea
+              ref={supportInputRef}
+              rows={1}
+              className="min-h-[24px] w-full resize-none overflow-y-hidden bg-transparent px-1 py-0 text-base leading-6 outline-none transition placeholder:text-slate-400"
+              placeholder=""
+              value={supportDraft}
+              onChange={(event) => setSupportDraft(event.target.value)}
+              onFocus={() => setSupportAttachmentMenuOpen(false)}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" || !event.ctrlKey || event.nativeEvent.isComposing) return;
+                event.preventDefault();
+                void sendSupportMessage();
+              }}
+              disabled={supportComposerBusy || !supportComposerAvailable}
+              autoComplete="off"
+              autoCorrect="off"
+              spellCheck={false}
+              enterKeyHint="enter"
+            />
+          </div>
+          <button
+            type="button"
+            className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-white shadow-[0_10px_22px_rgba(34,197,94,0.28)] transition ${
+              supportComposerBusy || supportCanSend
+                ? "bg-emerald-500 hover:bg-emerald-600"
+                : "bg-slate-300 shadow-none"
+            }`}
+            onClick={() => void sendSupportMessage()}
+            disabled={supportComposerBusy || !supportCanSend}
+            aria-label={supportComposerBusy ? "发送中" : selectedSupportSendButtonLabel}
+          >
+            {supportComposerBusy ? (
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/35 border-t-white" />
+            ) : (
+              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+                <path
+                  d="M5 12.5 18.2 5.8c.7-.36 1.5.28 1.29 1.04l-2.84 10.2c-.18.66-.97.92-1.5.5l-3.7-2.94a1 1 0 0 1-.27-1.17l1.63-3.62-4.46 3.54a1 1 0 0 1-.84.2L5.64 13.2A.77.77 0 0 1 5 12.5Z"
+                  fill="currentColor"
+                />
+              </svg>
+            )}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
+  function renderSupportContactRow(contactRow: SupportContactRow, options?: { mobile?: boolean }) {
+    const active = selectedConversationKey === contactRow.key;
     return (
       <button
         type="button"
-        className={`w-full rounded-2xl border px-3 py-3 text-left shadow-sm transition ${
-          active
-            ? "border-slate-900 bg-slate-50"
-            : options?.mobile
-              ? "border-slate-200 bg-white"
-              : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
-        }`}
+        className={
+          options?.mobile
+            ? `w-full rounded-[26px] border px-3 py-3.5 text-left shadow-[0_10px_24px_rgba(15,23,42,0.06)] transition ${
+                active ? "border-slate-900 bg-white" : "border-slate-200 bg-white/90 hover:bg-white"
+              }`
+            : `w-full rounded-2xl border px-3 py-3 text-left transition ${
+                active ? "border-blue-300 bg-blue-50" : "bg-white hover:bg-slate-50"
+              }`
+        }
         onClick={() => {
-          setSelectedConversationKey(key);
-          if (options?.mobile) setMobileConversationView("thread");
+          if (options?.mobile) {
+            openSupportContactThread(contactRow.key);
+          } else {
+            setSelectedConversationKey(contactRow.key);
+            focusSupportInput();
+          }
         }}
       >
         <div className="flex items-start gap-3">
-          <SupportAvatarBadge label={avatarLabel} className="mt-0.5 h-12 w-12 bg-slate-900 text-sm text-white" />
+          <SupportAvatarBadge
+            label={contactRow.avatarLabel}
+            className={`mt-0.5 h-12 w-12 text-sm shadow-sm ${
+              contactRow.isOfficial || contactRow.unread
+                ? "bg-slate-900 text-white"
+                : "bg-slate-100 text-slate-700"
+            }`}
+          />
           <div className="min-w-0 flex-1">
-            <div className="flex items-start justify-between gap-2">
+            <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <div className="truncate text-sm font-medium text-slate-900">{title}</div>
-                  {isOfficial ? (
+                  <div className={`truncate text-sm ${options?.mobile ? "font-semibold" : "font-medium"} text-slate-900`}>
+                    {contactRow.name}
+                  </div>
+                  {!contactRow.isOfficial ? (
+                    <span className="truncate text-[11px] font-medium text-slate-400">{contactRow.subtitle}</span>
+                  ) : null}
+                  {contactRow.badge ? (
                     <span className="inline-flex shrink-0 items-center rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium leading-none text-white">
-                      官方
+                      {contactRow.badge}
                     </span>
                   ) : null}
+                  {contactRow.unread ? (
+                    <span aria-label="有未读消息" className="inline-flex h-2.5 w-2.5 shrink-0 rounded-full bg-rose-500" />
+                  ) : null}
                 </div>
-                <div className="truncate text-[11px] text-slate-500">{subtitle || "-"}</div>
+                {contactRow.isOfficial ? (
+                  <div className={`${options?.mobile ? "mt-1" : ""} truncate text-[11px] text-slate-500`}>
+                    {contactRow.subtitle}
+                  </div>
+                ) : null}
               </div>
               <div className="shrink-0 text-[11px] text-slate-400">
-                {updatedAt ? formatSupportConversationTime(updatedAt) : "未聊天"}
+                {contactRow.updatedAt ? formatSupportConversationTime(contactRow.updatedAt) : options?.mobile ? "未开始" : "未聊天"}
               </div>
             </div>
-            <div className="mt-2 truncate text-xs leading-5 text-slate-600">{preview}</div>
+            <div className={`${options?.mobile ? "text-[13px]" : "text-xs"} mt-2 truncate leading-5 text-slate-600`}>
+              {contactRow.preview}
+            </div>
           </div>
         </div>
       </button>
@@ -896,14 +1368,14 @@ export default function MePage() {
 
   function renderDesktopSupportSurface() {
     return (
-      <div className="flex h-[calc(100vh-10rem)] min-h-[560px] min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_18px_44px_rgba(15,23,42,0.06)] md:grid md:grid-cols-[320px_minmax(0,1fr)]">
-        <div className="flex min-h-0 min-w-0 flex-col overflow-hidden border-r bg-white">
+      <div className="flex h-[calc(100vh-4rem)] min-h-[560px] min-w-0 overflow-hidden rounded-2xl border bg-white shadow-[0_18px_44px_rgba(15,23,42,0.06)] md:grid md:grid-cols-[320px_minmax(0,1fr)]">
+        <div className="flex min-h-0 min-w-0 flex-col overflow-hidden border-b bg-white md:border-b-0 md:border-r">
           <div className="border-b px-4 py-3">
             <div className="flex items-center gap-2">
               <input
                 type="text"
-                className="min-w-0 flex-1 rounded border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-slate-400"
-                placeholder="搜索商户 / Faolla"
+                className="min-w-0 flex-1 rounded border px-3 py-2 text-sm outline-none transition focus:border-slate-400"
+                placeholder="精确搜索ID或邮箱"
                 value={supportContactKeyword}
                 onChange={(event) => setSupportContactKeyword(event.target.value)}
                 onKeyDown={(event) => {
@@ -914,33 +1386,28 @@ export default function MePage() {
               />
               <button
                 type="button"
-                className="shrink-0 rounded border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                className="shrink-0 rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
                 onClick={() => void searchConversation()}
                 disabled={supportSearching}
               >
-                {supportSearching ? "搜索中" : "搜索"}
+                {supportSearching ? "搜索中..." : "搜索"}
               </button>
             </div>
-            {supportError ? <div className="mt-2 text-xs leading-5 text-rose-600">{supportError}</div> : null}
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto bg-white p-3">
+            {supportSearchError ? (
+              <div className="mb-3 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-600">{supportSearchError}</div>
+            ) : null}
             <div className="space-y-2">
-              {renderSupportContactCard()}
-              {filteredPeerContacts.map((contact) => (
-                <div key={contact.merchantId}>{renderSupportContactCard({ contact })}</div>
+              {supportContactRows.map((contactRow) => (
+                <div key={contactRow.key}>{renderSupportContactRow(contactRow)}</div>
               ))}
-              {!filteredPeerContacts.length && !supportContactMatchesSearch ? (
-                <div className="rounded border border-dashed px-3 py-4 text-xs leading-5 text-slate-500">
-                  输入完整 8 位商户 ID 或邮箱后点搜索，即可添加商户会话。
-                </div>
-              ) : null}
             </div>
           </div>
-          {supportError ? <div className="mt-2 text-xs leading-5 text-rose-600">{supportError}</div> : null}
         </div>
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          <div className="flex min-w-0 items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
+          <div className="flex min-w-0 items-center justify-between gap-3 border-b px-5 py-4">
             <div className="flex min-w-0 items-center gap-3">
               <SupportAvatarBadge label={selectedConversationAvatarLabel} className="h-12 w-12 bg-slate-900 text-sm text-white shadow-sm" />
               <div className="min-w-0">
@@ -957,7 +1424,7 @@ export default function MePage() {
             </div>
           </div>
           {renderSupportMessageList("min-h-0 min-w-0 flex-1 overflow-y-auto bg-white px-5 py-5")}
-          {renderSupportComposer()}
+          {renderDesktopSupportComposer()}
         </div>
       </div>
     );
@@ -991,15 +1458,6 @@ export default function MePage() {
       />
     );
   }
-
-  const desktopTitle =
-    desktopSection === "profile"
-      ? "个人信息"
-      : (desktopMenuItems.find((item) => item.key === desktopSection)?.label ?? "会话");
-  const desktopDescription =
-    desktopSection === "profile"
-      ? "管理当前个人账号资料。"
-      : (desktopMenuItems.find((item) => item.key === desktopSection)?.description ?? "查看个人账号内容。");
 
   function renderConsumptionContent() {
     const isBookings = consumptionSection === "bookings";
@@ -1043,35 +1501,43 @@ export default function MePage() {
   function renderMobileConversationsContent() {
     if (mobileConversationView === "thread") {
       return (
-        <div className="flex h-full min-h-0 flex-col bg-white">
-          <div className="shrink-0 border-b border-slate-200/80 bg-white/95 px-4 pb-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700 shadow-sm"
-                onClick={() => setMobileConversationView("list")}
-                aria-label="返回会话列表"
-              >
-                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
-                  <path d="m15 6-6 6 6 6" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </button>
-              <SupportAvatarBadge label={selectedConversationAvatarLabel} className="h-11 w-11 bg-slate-900 text-sm text-white shadow-sm" />
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <div className="truncate text-[15px] font-semibold text-slate-900">{selectedConversationName}</div>
-                  {selectedConversationIsOfficial ? (
-                    <span className="inline-flex shrink-0 items-center rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium leading-none text-white">
-                      官方
-                    </span>
-                  ) : null}
+        <div className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_48%,#f8fafc_100%)]">
+          <div className="shrink-0 border-b border-slate-200/80 bg-white/90 px-3 pb-3 pt-[calc(env(safe-area-inset-top)+0.55rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-3">
+                <button
+                  type="button"
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-slate-900 hover:bg-slate-100"
+                  onClick={() => setMobileConversationView("list")}
+                  aria-label="返回会话列表"
+                >
+                  <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" aria-hidden="true">
+                    <path
+                      d="M19 12H7M12 7l-5 5 5 5"
+                      stroke="currentColor"
+                      strokeWidth="2.2"
+                      strokeLinecap="square"
+                      strokeLinejoin="miter"
+                    />
+                  </svg>
+                </button>
+                <SupportAvatarBadge label={selectedConversationAvatarLabel} className="h-11 w-11 bg-slate-900 text-sm text-white shadow-sm" />
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <div className="truncate text-[15px] font-semibold text-slate-900">{selectedConversationName}</div>
+                    {selectedConversationIsOfficial ? (
+                      <span className="inline-flex shrink-0 items-center rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium leading-none text-white">
+                        官方
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="mt-1 line-clamp-2 text-[11px] leading-5 text-slate-500">{selectedConversationMeta || "-"}</div>
                 </div>
-                <div className="mt-0.5 truncate text-xs text-slate-500">{selectedConversationMeta || "-"}</div>
               </div>
             </div>
           </div>
-          {renderSupportMessageList("min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain bg-[#f8fafc] px-4 py-4")}
-          {renderSupportComposer("pb-[calc(env(safe-area-inset-bottom)+0.9rem)]")}
+          {renderSupportMessageList("min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-4 pt-4")}
+          {renderMobileSupportComposer()}
         </div>
       );
     }
@@ -1085,7 +1551,7 @@ export default function MePage() {
             </div>
             <div className="min-w-0 flex-1">
               <div className="text-[15px] font-semibold text-slate-900">聊天列表</div>
-              <div className="mt-1 text-xs text-slate-500">固定保留 Faolla 官方客服</div>
+              <div className="mt-1 text-xs text-slate-500">{mobileSupportContactListSummary}</div>
             </div>
           </div>
           <div className="mt-4 flex items-center gap-2">
@@ -1097,7 +1563,7 @@ export default function MePage() {
               <input
                 type="text"
                 className="min-w-0 flex-1 bg-transparent text-[14px] leading-5 text-slate-900 outline-none placeholder:text-slate-400"
-                placeholder="商户ID / 邮箱 / Faolla"
+                placeholder="精确搜索ID或邮箱"
                 value={supportContactKeyword}
                 onChange={(event) => setSupportContactKeyword(event.target.value)}
                 onKeyDown={(event) => {
@@ -1109,25 +1575,24 @@ export default function MePage() {
             </div>
             <button
               type="button"
-              className="inline-flex h-[41px] shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white px-4 text-sm shadow-sm hover:bg-slate-50"
+              className="inline-flex h-[41px] shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white px-4 text-sm shadow-sm hover:bg-slate-50 disabled:opacity-50"
               onClick={() => void searchConversation()}
               disabled={supportSearching}
             >
               {supportSearching ? "搜索中" : "搜索"}
             </button>
           </div>
+          {supportSearchError ? (
+            <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-600">
+              {supportSearchError}
+            </div>
+          ) : null}
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-[calc(env(safe-area-inset-bottom)+5.85rem)] pt-3">
           <div className="space-y-2.5">
-            {renderSupportContactCard({ mobile: true })}
-            {filteredPeerContacts.map((contact) => (
-              <div key={contact.merchantId}>{renderSupportContactCard({ mobile: true, contact })}</div>
+            {supportContactRows.map((contactRow) => (
+              <div key={contactRow.key}>{renderSupportContactRow(contactRow, { mobile: true })}</div>
             ))}
-            {!filteredPeerContacts.length && !supportContactMatchesSearch ? (
-              <div className="rounded-2xl border border-dashed border-slate-300 bg-white/80 px-4 py-5 text-sm text-slate-500">
-                输入完整 8 位商户 ID 或邮箱后点搜索，即可添加商户会话。
-              </div>
-            ) : null}
           </div>
         </div>
       </>
@@ -1252,12 +1717,6 @@ export default function MePage() {
         </aside>
 
         <section className="min-h-screen">
-          <div className="border-b border-slate-200 bg-white/90 px-6 py-5 shadow-sm backdrop-blur">
-            <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
-              <div className="text-base font-semibold text-slate-900">{desktopTitle}</div>
-              <div className="mt-1 text-sm text-slate-500">{desktopDescription}</div>
-            </div>
-          </div>
           <div className="px-6 py-8">{renderSectionContent(desktopSection)}</div>
         </section>
       </main>
