@@ -9908,6 +9908,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY
       ? ""
       : normalizeSupportDisplayValue(selectedSupportProfile?.chatAvatarImageUrl) ||
+        normalizeSupportDisplayValue(selectedSupportPeerContact?.avatarImageUrl) ||
+        normalizeSupportDisplayValue(selectedSupportPeerContact?.chatAvatarImageUrl) ||
         normalizeSupportDisplayValue(selectedSupportProfile?.merchantCardImageUrl) ||
         normalizeSupportDisplayValue(selectedSupportPeerSite?.chatAvatarImageUrl) ||
         normalizeSupportDisplayValue(selectedSupportPeerSite?.merchantCardImageUrl);
@@ -10414,6 +10416,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         unread: supportPeerUnreadContactIds.has(contact.merchantId),
         avatarLabel: getSupportContactAvatarLabel(contact.merchantName || contact.merchantId, "商"),
         avatarImageUrl:
+          normalizeSupportDisplayValue(contact.avatarImageUrl) ||
+          normalizeSupportDisplayValue(contact.chatAvatarImageUrl) ||
           normalizeSupportDisplayValue(mergedProfile?.chatAvatarImageUrl) ||
           normalizeSupportDisplayValue(mergedProfile?.merchantCardImageUrl),
         isOfficial: false,

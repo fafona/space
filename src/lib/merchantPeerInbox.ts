@@ -42,6 +42,12 @@ export type MerchantPeerContactSummary = {
   merchantId: string;
   merchantName: string;
   merchantEmail: string;
+  accountType?: "merchant" | "personal";
+  avatarImageUrl?: string;
+  chatAvatarImageUrl?: string;
+  signature?: string;
+  contactPhone?: string;
+  contactCard?: string;
   chatBusinessCard?: MerchantBusinessCardAsset | null;
   savedAt: string;
   updatedAt: string;

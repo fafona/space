@@ -1000,6 +1000,9 @@ export default function MePage() {
   const selectedConversationAvatarLabel = selectedConversationIsOfficial
     ? "FA"
     : getSupportContactAvatarLabel(selectedConversationName, "商");
+  const selectedConversationAvatarImageUrl = selectedConversationIsOfficial
+    ? ""
+    : selectedPeerContact?.avatarImageUrl || selectedPeerContact?.chatAvatarImageUrl || "";
   const selectedConversationLoading = selectedConversationIsOfficial ? supportLoading : peerLoading;
   const selectedConversationEmptyText = selectedConversationIsOfficial
     ? "还没有留言记录，可以直接在下方给 Faolla 留言。"
@@ -1029,7 +1032,7 @@ export default function MePage() {
       updatedAt: contact.updatedAt || contact.savedAt,
       unread: false,
       avatarLabel: getSupportContactAvatarLabel(contact.merchantName || contact.merchantId, "商"),
-      avatarImageUrl: "",
+      avatarImageUrl: contact.avatarImageUrl || contact.chatAvatarImageUrl || "",
       isOfficial: false,
     })),
   ];
@@ -1795,6 +1798,8 @@ export default function MePage() {
         <div className="flex items-start gap-3">
           <SupportAvatarBadge
             label={contactRow.avatarLabel}
+            imageUrl={contactRow.avatarImageUrl}
+            imageAlt={contactRow.name}
             className={`mt-0.5 h-12 w-12 text-sm shadow-sm ${
               contactRow.isOfficial || contactRow.unread
                 ? "bg-slate-900 text-white"
@@ -1882,7 +1887,12 @@ export default function MePage() {
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <div className="flex min-w-0 items-center justify-between gap-3 border-b px-5 py-4">
             <div className="flex min-w-0 items-center gap-3">
-              <SupportAvatarBadge label={selectedConversationAvatarLabel} className="h-12 w-12 bg-slate-900 text-sm text-white shadow-sm" />
+              <SupportAvatarBadge
+                label={selectedConversationAvatarLabel}
+                imageUrl={selectedConversationAvatarImageUrl}
+                imageAlt={selectedConversationName}
+                className="h-12 w-12 bg-slate-900 text-sm text-white shadow-sm"
+              />
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <div className="truncate text-base font-semibold text-slate-900">{selectedConversationName}</div>
@@ -2006,7 +2016,12 @@ export default function MePage() {
                     />
                   </svg>
                 </button>
-                <SupportAvatarBadge label={selectedConversationAvatarLabel} className="h-11 w-11 bg-slate-900 text-sm text-white shadow-sm" />
+                <SupportAvatarBadge
+                  label={selectedConversationAvatarLabel}
+                  imageUrl={selectedConversationAvatarImageUrl}
+                  imageAlt={selectedConversationName}
+                  className="h-11 w-11 bg-slate-900 text-sm text-white shadow-sm"
+                />
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <div className="truncate text-[15px] font-semibold text-slate-900">{selectedConversationName}</div>
