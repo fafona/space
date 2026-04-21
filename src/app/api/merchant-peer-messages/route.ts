@@ -13,7 +13,17 @@ import {
   type MerchantPeerInboxStoreClient,
 } from "@/lib/merchantPeerInboxStore";
 import { buildMerchantPeerPushNotification } from "@/lib/merchantPushEvents";
-import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
+import { type MerchantAuthUserSummary } from "@/lib/merchantAuthIdentity";
+import {
+  readMerchantAuthCookie,
+  readMerchantRequestAccessTokens,
+} from "@/lib/merchantAuthSession";
+import {
+  resolvePlatformAccountIdentityForUser,
+  type PlatformIdentitySupabaseClient,
+} from "@/lib/platformAccountIdentity";
+import { readPlatformUsernameFromMetadata } from "@/lib/platformAccounts";
+import { createServerSupabaseAuthClient, createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
 import { notifyMerchantPushSubscribers } from "@/lib/webPush";
@@ -57,11 +67,40 @@ function noStoreJson(body: unknown, init?: ResponseInit) {
 }
 
 async function resolveMerchantPeerSession(request: Request, hint?: MerchantPeerSessionHintInput) {
-  return resolveMerchantSessionFromRequest(request, {
+  const merchantSession = await resolveMerchantSessionFromRequest(request, {
     hintedMerchantId: normalizeMerchantId(hint?.siteId),
     hintedMerchantEmail: normalizeEmail(hint?.merchantEmail),
     hintedMerchantName: trimText(hint?.merchantName),
   });
+  if (merchantSession) return merchantSession;
+
+  const authSupabase = createServerSupabaseAuthClient();
+  const adminSupabase = createServerSupabaseServiceClient() as unknown as PlatformIdentitySupabaseClient | null;
+  if (!authSupabase) return null;
+
+  const accessTokens = readMerchantRequestAccessTokens(request);
+  const fallbackAccessToken = readMerchantAuthCookie(request);
+  const candidates = [...accessTokens, fallbackAccessToken].map((value) => trimText(value)).filter(Boolean);
+  let user: MerchantAuthUserSummary | null = null;
+  for (const accessToken of candidates) {
+    const { data, error } = await authSupabase.auth
+      .getUser(accessToken)
+      .catch(() => ({ data: null, error: true }));
+    if (!error && data?.user) {
+      user = data.user as MerchantAuthUserSummary;
+      break;
+    }
+  }
+  if (!user) return null;
+
+  const identity = await resolvePlatformAccountIdentityForUser(adminSupabase, user);
+  if (identity.accountType !== "personal" || !identity.accountId) return null;
+
+  return {
+    merchantId: identity.accountId,
+    merchantEmail: normalizeEmail(user.email),
+    merchantName: trimText(hint?.merchantName) || readPlatformUsernameFromMetadata(user) || normalizeEmail(user.email),
+  };
 }
 
 function readResolvedMerchantEmail(record: Record<string, unknown> | null | undefined) {

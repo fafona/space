@@ -1,8 +1,16 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { readMerchantSessionMerchantIds } from "@/lib/authSessionRecovery";
+import SupportMessageContent from "@/components/support/SupportMessageContent";
+import {
+  findMerchantPeerThreadForMerchants,
+  type MerchantPeerContactSummary,
+  type MerchantPeerThread,
+} from "@/lib/merchantPeerInbox";
+import { type PlatformSupportMessage, type PlatformSupportThread } from "@/lib/platformSupportInbox";
+import { formatSupportConversationPreview } from "@/lib/supportMessageAttachments";
 
 type MeSessionPayload = {
   authenticated?: unknown;
@@ -20,6 +28,7 @@ type MeSessionPayload = {
 type DesktopSection = "conversations" | "bookings" | "orders" | "favorites" | "cards" | "profile";
 type MobileTab = "conversations" | "consumption" | "faolla" | "self";
 type ConsumptionSection = "bookings" | "orders";
+type MobileConversationView = "list" | "thread";
 
 type MenuItem = {
   key: DesktopSection;
@@ -27,6 +36,43 @@ type MenuItem = {
   description: string;
   badge?: string;
 };
+
+type SupportResponsePayload = {
+  ok?: unknown;
+  error?: unknown;
+  message?: unknown;
+  thread?: PlatformSupportThread | null;
+};
+
+type MerchantPeerResponsePayload = {
+  ok?: unknown;
+  error?: unknown;
+  message?: unknown;
+  contact?: {
+    merchantId?: unknown;
+    merchantName?: unknown;
+    merchantEmail?: unknown;
+  } | null;
+  contacts?: MerchantPeerContactSummary[];
+  threads?: MerchantPeerThread[];
+};
+
+type PersonalConversationKey = "official" | `merchant:${string}`;
+
+type PersonalVisibleSupportMessage = Pick<PlatformSupportMessage, "id" | "text" | "createdAt"> & {
+  isSelf: boolean;
+  senderLabel: string;
+};
+
+const OFFICIAL_CONVERSATION_KEY: PersonalConversationKey = "official";
+
+function trimText(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function readPayloadMessage(value: unknown, fallback: string) {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
 
 function readDisplayName(payload: MeSessionPayload | null) {
   const userMetadata = payload?.user?.user_metadata ?? null;
@@ -46,6 +92,98 @@ function getInitialLabel(value: string) {
   if (!trimmed) return "我";
   const first = Array.from(trimmed)[0] ?? "我";
   return first.toUpperCase();
+}
+
+function normalizeSupportMessageTimestamp(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return "";
+  const timestamp = new Date(normalized).getTime();
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : "";
+}
+
+function compareSupportMessages(left: Pick<PersonalVisibleSupportMessage, "createdAt" | "id">, right: Pick<PersonalVisibleSupportMessage, "createdAt" | "id">) {
+  const leftTs = new Date(normalizeSupportMessageTimestamp(left.createdAt) || left.createdAt).getTime();
+  const rightTs = new Date(normalizeSupportMessageTimestamp(right.createdAt) || right.createdAt).getTime();
+  if (leftTs !== rightTs) return leftTs - rightTs;
+  return left.id.localeCompare(right.id, "en");
+}
+
+function formatSupportClockTime(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return "-";
+  const timestamp = new Date(normalized).getTime();
+  return Number.isFinite(timestamp)
+    ? new Date(timestamp).toLocaleTimeString("zh-CN", {
+        hour12: false,
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : normalized;
+}
+
+function formatSupportConversationTime(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return "-";
+  const date = new Date(normalized);
+  const timestamp = date.getTime();
+  if (!Number.isFinite(timestamp)) return normalized;
+
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfTarget = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const dayDiff = Math.round((startOfToday - startOfTarget) / 86400000);
+
+  if (dayDiff === 0) return formatSupportClockTime(normalized);
+  if (dayDiff === 1) return "昨天";
+  if (date.getFullYear() === now.getFullYear()) {
+    return date.toLocaleDateString("zh-CN", {
+      month: "numeric",
+      day: "numeric",
+    });
+  }
+  return date.toLocaleDateString("zh-CN", {
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+  });
+}
+
+function formatSupportThreadDateLabel(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return "";
+  const date = new Date(normalized);
+  const timestamp = date.getTime();
+  if (!Number.isFinite(timestamp)) return normalized;
+
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfTarget = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const dayDiff = Math.round((startOfToday - startOfTarget) / 86400000);
+
+  if (dayDiff === 0) return "今天";
+  if (dayDiff === 1) return "昨天";
+  if (date.getFullYear() === now.getFullYear()) {
+    return date.toLocaleDateString("zh-CN", {
+      month: "long",
+      day: "numeric",
+    });
+  }
+  return date.toLocaleDateString("zh-CN", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+}
+
+function isSameSupportCalendarDay(left: string | null | undefined, right: string | null | undefined) {
+  const leftDate = new Date(String(left ?? "").trim());
+  const rightDate = new Date(String(right ?? "").trim());
+  if (!Number.isFinite(leftDate.getTime()) || !Number.isFinite(rightDate.getTime())) return false;
+  return (
+    leftDate.getFullYear() === rightDate.getFullYear() &&
+    leftDate.getMonth() === rightDate.getMonth() &&
+    leftDate.getDate() === rightDate.getDate()
+  );
 }
 
 function Icon({ name }: { name: "chat" | "shop" | "shield" | "user" | "calendar" | "order" | "star" | "card" }) {
@@ -249,6 +387,20 @@ function MobileBottomNav({
   );
 }
 
+function SupportAvatarBadge({
+  label,
+  className = "",
+}: {
+  label: string;
+  className?: string;
+}) {
+  return (
+    <div className={`flex shrink-0 items-center justify-center rounded-2xl font-semibold ${className}`}>
+      {label}
+    </div>
+  );
+}
+
 export default function MePage() {
   const [payload, setPayload] = useState<MeSessionPayload | null>(null);
   const [loading, setLoading] = useState(true);
@@ -256,6 +408,19 @@ export default function MePage() {
   const [desktopSection, setDesktopSection] = useState<DesktopSection>("conversations");
   const [mobileTab, setMobileTab] = useState<MobileTab>("conversations");
   const [consumptionSection, setConsumptionSection] = useState<ConsumptionSection>("bookings");
+  const [mobileConversationView, setMobileConversationView] = useState<MobileConversationView>("list");
+  const [selectedConversationKey, setSelectedConversationKey] = useState<PersonalConversationKey>(OFFICIAL_CONVERSATION_KEY);
+  const [supportThread, setSupportThread] = useState<PlatformSupportThread | null>(null);
+  const [peerContacts, setPeerContacts] = useState<MerchantPeerContactSummary[]>([]);
+  const [peerThreads, setPeerThreads] = useState<MerchantPeerThread[]>([]);
+  const [supportLoading, setSupportLoading] = useState(false);
+  const [peerLoading, setPeerLoading] = useState(false);
+  const [supportSending, setSupportSending] = useState(false);
+  const [supportSearching, setSupportSearching] = useState(false);
+  const [supportError, setSupportError] = useState("");
+  const [supportDraft, setSupportDraft] = useState("");
+  const [supportContactKeyword, setSupportContactKeyword] = useState("");
+  const supportMessagesViewportRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -312,6 +477,275 @@ export default function MePage() {
     ],
     [],
   );
+  const officialVisibleSupportMessages = useMemo<PersonalVisibleSupportMessage[]>(
+    () =>
+      (supportThread?.messages ?? [])
+        .map((message) => ({
+          id: message.id,
+          text: message.text,
+          createdAt: message.createdAt,
+          isSelf: message.sender === "merchant",
+          senderLabel: message.sender === "merchant" ? "我" : "Faolla",
+        }))
+        .sort(compareSupportMessages),
+    [supportThread?.messages],
+  );
+  const selectedConversationIsOfficial = selectedConversationKey === OFFICIAL_CONVERSATION_KEY;
+  const selectedPeerMerchantId = selectedConversationKey.startsWith("merchant:")
+    ? selectedConversationKey.slice("merchant:".length).trim()
+    : "";
+  const selectedPeerContact = peerContacts.find((contact) => contact.merchantId === selectedPeerMerchantId) ?? null;
+  const selectedPeerThread = useMemo(
+    () =>
+      accountId && selectedPeerMerchantId
+        ? findMerchantPeerThreadForMerchants(
+            {
+              contacts: [],
+              threads: peerThreads,
+            },
+            accountId,
+            selectedPeerMerchantId,
+          )
+        : null,
+    [accountId, peerThreads, selectedPeerMerchantId],
+  );
+  const peerVisibleSupportMessages = useMemo<PersonalVisibleSupportMessage[]>(
+    () =>
+      selectedPeerMerchantId
+        ? (selectedPeerThread?.messages ?? [])
+            .map((message) => ({
+              id: message.id,
+              text: message.text,
+              createdAt: message.createdAt,
+              isSelf: message.senderMerchantId === accountId,
+              senderLabel:
+                message.senderMerchantId === accountId
+                  ? "我"
+                  : selectedPeerContact?.merchantName || selectedPeerMerchantId,
+            }))
+            .sort(compareSupportMessages)
+        : [],
+    [accountId, selectedPeerContact?.merchantName, selectedPeerMerchantId, selectedPeerThread?.messages],
+  );
+  const visibleSupportMessages = selectedConversationIsOfficial ? officialVisibleSupportMessages : peerVisibleSupportMessages;
+  const latestSupportMessage = officialVisibleSupportMessages[officialVisibleSupportMessages.length - 1] ?? null;
+  const supportContactPreview =
+    formatSupportConversationPreview(latestSupportMessage?.text) || "还没有留言记录，可以直接给 Faolla 留言。";
+  const supportContactUpdatedAt = latestSupportMessage?.createdAt || "";
+  const supportContactMatchesSearch = useMemo(() => {
+    const keyword = supportContactKeyword.trim().toLowerCase();
+    if (!keyword) return true;
+    return ["faolla", "官方", "客服"].some((item) => item.toLowerCase().includes(keyword) || keyword.includes(item.toLowerCase()));
+  }, [supportContactKeyword]);
+  const filteredPeerContacts = useMemo(() => {
+    const keyword = supportContactKeyword.trim().toLowerCase();
+    if (!keyword) return peerContacts;
+    return peerContacts.filter((contact) =>
+      [
+        contact.merchantId,
+        contact.merchantName,
+        contact.merchantEmail,
+        formatSupportConversationPreview(contact.lastMessage?.text),
+      ].some((item) => String(item ?? "").toLowerCase().includes(keyword)),
+    );
+  }, [peerContacts, supportContactKeyword]);
+  const selectedConversationName = selectedConversationIsOfficial
+    ? "Faolla"
+    : selectedPeerContact?.merchantName || selectedPeerMerchantId || "商户";
+  const selectedConversationMeta = selectedConversationIsOfficial
+    ? "www.faolla.com"
+    : [selectedPeerMerchantId, selectedPeerContact?.merchantEmail].filter(Boolean).join(" / ");
+  const selectedConversationAvatarLabel = selectedConversationIsOfficial
+    ? "FA"
+    : getInitialLabel(selectedConversationName);
+  const selectedConversationLoading = selectedConversationIsOfficial ? supportLoading : peerLoading;
+  const selectedConversationEmptyText = selectedConversationIsOfficial
+    ? "还没有留言记录，可以直接给 Faolla 留言。"
+    : "还没有聊天记录，可以直接给这个商户发消息。";
+
+  const loadSupportThread = useCallback(async (options?: { silent?: boolean }) => {
+    if (!accountId) return;
+    if (!options?.silent) setSupportLoading(true);
+    setSupportError("");
+    try {
+      const params = new URLSearchParams({
+        siteId: accountId,
+      });
+      if (email) params.set("merchantEmail", email);
+      if (profileName) params.set("merchantName", profileName);
+      const response = await fetch(`/api/support-messages?${params.toString()}`, {
+        method: "GET",
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: {
+          accept: "application/json",
+        },
+      });
+      const result = (await response.json().catch(() => null)) as SupportResponsePayload | null;
+      if (!response.ok || !result || result.ok !== true) {
+        throw new Error(typeof result?.error === "string" ? result.error : "support_load_failed");
+      }
+      setSupportThread(result.thread ?? null);
+    } catch {
+      setSupportError("会话加载失败，请稍后重试。");
+    } finally {
+      if (!options?.silent) setSupportLoading(false);
+    }
+  }, [accountId, email, profileName]);
+
+  const loadPeerInbox = useCallback(async (options?: { silent?: boolean }) => {
+    if (!accountId) return;
+    if (!options?.silent) setPeerLoading(true);
+    setSupportError("");
+    try {
+      const params = new URLSearchParams({
+        siteId: accountId,
+      });
+      if (email) params.set("merchantEmail", email);
+      if (profileName) params.set("merchantName", profileName);
+      const response = await fetch(`/api/merchant-peer-messages?${params.toString()}`, {
+        method: "GET",
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: {
+          accept: "application/json",
+        },
+      });
+      const result = (await response.json().catch(() => null)) as MerchantPeerResponsePayload | null;
+      if (!response.ok || !result || result.ok !== true) {
+        throw new Error(typeof result?.error === "string" ? result.error : "peer_load_failed");
+      }
+      setPeerContacts(Array.isArray(result.contacts) ? result.contacts : []);
+      setPeerThreads(Array.isArray(result.threads) ? result.threads : []);
+    } catch {
+      setSupportError("商户会话加载失败，请稍后重试。");
+    } finally {
+      if (!options?.silent) setPeerLoading(false);
+    }
+  }, [accountId, email, profileName]);
+
+  async function searchConversation() {
+    const query = supportContactKeyword.trim();
+    if (!query) {
+      setSelectedConversationKey(OFFICIAL_CONVERSATION_KEY);
+      await Promise.all([loadSupportThread({ silent: true }), loadPeerInbox({ silent: true })]);
+      return;
+    }
+
+    if (supportContactMatchesSearch) {
+      setSelectedConversationKey(OFFICIAL_CONVERSATION_KEY);
+      return;
+    }
+
+    if (!accountId || supportSearching) return;
+    setSupportSearching(true);
+    setSupportError("");
+    try {
+      const response = await fetch("/api/merchant-peer-messages", {
+        method: "POST",
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          accept: "application/json",
+        },
+        body: JSON.stringify({
+          action: "search",
+          query,
+          siteId: accountId,
+          merchantEmail: email,
+          merchantName: profileName,
+        }),
+      });
+      const result = (await response.json().catch(() => null)) as MerchantPeerResponsePayload | null;
+      if (!response.ok || !result || result.ok !== true) {
+        throw new Error(readPayloadMessage(result?.message, "没有找到匹配的商户，请输入完整 8 位商户 ID 或邮箱。"));
+      }
+      setPeerContacts(Array.isArray(result.contacts) ? result.contacts : []);
+      setPeerThreads(Array.isArray(result.threads) ? result.threads : []);
+      const merchantId = trimText(result.contact?.merchantId);
+      if (merchantId) {
+        setSelectedConversationKey(`merchant:${merchantId}`);
+        setMobileConversationView("thread");
+      }
+    } catch (error) {
+      setSupportError(error instanceof Error ? error.message : "商户搜索失败，请稍后重试。");
+    } finally {
+      setSupportSearching(false);
+    }
+  }
+
+  async function sendSupportMessage() {
+    if (supportSending) return;
+    const text = supportDraft.trim();
+    if (!text) return;
+    if (!accountId) {
+      setSupportError("个人账号信息还没准备好，请刷新后重试。");
+      return;
+    }
+    if (!selectedConversationIsOfficial && !selectedPeerMerchantId) {
+      setSupportError("请先选择要聊天的商户。");
+      return;
+    }
+
+    setSupportSending(true);
+    setSupportError("");
+    try {
+      const response = await fetch(selectedConversationIsOfficial ? "/api/support-messages" : "/api/merchant-peer-messages", {
+        method: "POST",
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          accept: "application/json",
+        },
+        body: JSON.stringify(
+          selectedConversationIsOfficial
+            ? {
+                text,
+                siteId: accountId,
+                merchantEmail: email,
+                merchantName: profileName,
+              }
+            : {
+                action: "send",
+                recipientMerchantId: selectedPeerMerchantId,
+                text,
+                siteId: accountId,
+                merchantEmail: email,
+                merchantName: profileName,
+              },
+        ),
+      });
+      const result = (await response.json().catch(() => null)) as (SupportResponsePayload & MerchantPeerResponsePayload) | null;
+      if (!response.ok || !result || result.ok !== true) {
+        throw new Error(typeof result?.error === "string" ? result.error : "support_send_failed");
+      }
+      if (selectedConversationIsOfficial) {
+        setSupportThread(result.thread ?? null);
+      } else {
+        setPeerContacts(Array.isArray(result.contacts) ? result.contacts : []);
+        setPeerThreads(Array.isArray(result.threads) ? result.threads : []);
+      }
+      setSupportDraft("");
+    } catch {
+      setSupportError("消息发送失败，请稍后重试。");
+    } finally {
+      setSupportSending(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!accountId) return;
+    void loadSupportThread();
+    void loadPeerInbox({ silent: true });
+  }, [accountId, loadPeerInbox, loadSupportThread]);
+
+  useEffect(() => {
+    const viewport = supportMessagesViewportRef.current;
+    if (!viewport) return;
+    viewport.scrollTop = viewport.scrollHeight;
+  }, [visibleSupportMessages.length, mobileConversationView, desktopSection, selectedConversationKey]);
 
   async function requestLogout() {
     if (loggingOut) return;
@@ -326,7 +760,213 @@ export default function MePage() {
     }
   }
 
+  function renderSupportMessageList(className: string) {
+    return (
+      <div ref={supportMessagesViewportRef} className={className}>
+        {selectedConversationLoading ? (
+          <div className="rounded-2xl border border-dashed bg-white px-4 py-6 text-center text-sm text-slate-500">正在加载聊天记录...</div>
+        ) : visibleSupportMessages.length ? (
+          <div className="min-w-0 space-y-3">
+            {visibleSupportMessages.map((message, index) => {
+              const previousMessage = index > 0 ? visibleSupportMessages[index - 1] : null;
+              const showDateDivider = !previousMessage || !isSameSupportCalendarDay(previousMessage.createdAt, message.createdAt);
+              const messageMeta = formatSupportClockTime(message.createdAt);
+              return (
+                <div key={`${message.id}:${message.createdAt}`} className="space-y-3">
+                  {showDateDivider ? (
+                    <div className="flex justify-center">
+                      <span className="rounded-full bg-white/90 px-3 py-1 text-[11px] text-slate-500 shadow-sm">
+                        {formatSupportThreadDateLabel(message.createdAt)}
+                      </span>
+                    </div>
+                  ) : null}
+                  <div className={`flex min-w-0 ${message.isSelf ? "justify-end" : "justify-start"}`}>
+                    <div className={`flex max-w-[82%] min-w-0 items-end ${message.isSelf ? "flex-row" : "flex-row-reverse"}`}>
+                      <div
+                        className={`min-w-0 rounded-2xl shadow-sm ${
+                          message.isSelf
+                            ? "bg-slate-900 px-4 py-3 text-white"
+                            : "border border-slate-200 bg-white px-4 py-3 text-slate-900"
+                        }`}
+                      >
+                        <SupportMessageContent value={message.text} isSelf={message.isSelf} />
+                        <div className={`mt-2 text-right text-[10px] ${message.isSelf ? "text-white/70" : "text-slate-400"}`}>
+                          {messageMeta}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-dashed bg-white px-4 py-6 text-center text-sm text-slate-500">
+            {selectedConversationEmptyText}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function renderSupportComposer(className = "") {
+    return (
+      <div className={`min-w-0 shrink-0 space-y-3 border-t border-slate-200 bg-white px-5 py-4 ${className}`}>
+        {supportError ? <div className="text-sm text-rose-600">{supportError}</div> : null}
+        <textarea
+          rows={4}
+          className="w-full max-w-full min-w-0 resize-none rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 caret-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-400"
+          placeholder={`给 ${selectedConversationName} 发消息，Ctrl + Enter 发送`}
+          value={supportDraft}
+          onChange={(event) => setSupportDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" || !event.ctrlKey || event.nativeEvent.isComposing) return;
+            event.preventDefault();
+            void sendSupportMessage();
+          }}
+          disabled={supportSending}
+        />
+        <div className="flex min-w-0 justify-end">
+          <button
+            type="button"
+            className="shrink-0 rounded bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50"
+            onClick={() => void sendSupportMessage()}
+            disabled={supportSending || !supportDraft.trim()}
+          >
+            {supportSending ? "发送中..." : "发送"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  function renderSupportContactCard(options?: { mobile?: boolean; contact?: MerchantPeerContactSummary | null }) {
+    const contact = options?.contact ?? null;
+    const isOfficial = !contact;
+    const key: PersonalConversationKey = isOfficial ? OFFICIAL_CONVERSATION_KEY : `merchant:${contact.merchantId}`;
+    const active = selectedConversationKey === key;
+    const title = isOfficial ? "Faolla" : contact.merchantName || contact.merchantId;
+    const subtitle = isOfficial ? "www.faolla.com" : [contact.merchantId, contact.merchantEmail].filter(Boolean).join(" / ");
+    const preview = isOfficial
+      ? supportContactPreview
+      : formatSupportConversationPreview(contact.lastMessage?.text) || "还没有聊天记录，可以直接发消息。";
+    const updatedAt = isOfficial ? supportContactUpdatedAt : contact.updatedAt || contact.savedAt;
+    const avatarLabel = isOfficial ? "FA" : getInitialLabel(title);
+
+    return (
+      <button
+        type="button"
+        className={`w-full rounded-2xl border px-3 py-3 text-left shadow-sm transition ${
+          active
+            ? "border-slate-900 bg-slate-50"
+            : options?.mobile
+              ? "border-slate-200 bg-white"
+              : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
+        }`}
+        onClick={() => {
+          setSelectedConversationKey(key);
+          if (options?.mobile) setMobileConversationView("thread");
+        }}
+      >
+        <div className="flex items-start gap-3">
+          <SupportAvatarBadge label={avatarLabel} className="mt-0.5 h-12 w-12 bg-slate-900 text-sm text-white" />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <div className="truncate text-sm font-medium text-slate-900">{title}</div>
+                  {isOfficial ? (
+                    <span className="inline-flex shrink-0 items-center rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium leading-none text-white">
+                      官方
+                    </span>
+                  ) : null}
+                </div>
+                <div className="truncate text-[11px] text-slate-500">{subtitle || "-"}</div>
+              </div>
+              <div className="shrink-0 text-[11px] text-slate-400">
+                {updatedAt ? formatSupportConversationTime(updatedAt) : "未聊天"}
+              </div>
+            </div>
+            <div className="mt-2 truncate text-xs leading-5 text-slate-600">{preview}</div>
+          </div>
+        </div>
+      </button>
+    );
+  }
+
+  function renderDesktopSupportSurface() {
+    return (
+      <div className="flex h-[calc(100vh-10rem)] min-h-[560px] min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_18px_44px_rgba(15,23,42,0.06)] md:grid md:grid-cols-[320px_minmax(0,1fr)]">
+        <div className="flex min-h-0 min-w-0 flex-col overflow-hidden border-r bg-white">
+          <div className="border-b px-4 py-3">
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                className="min-w-0 flex-1 rounded border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-slate-400"
+                placeholder="搜索商户 / Faolla"
+                value={supportContactKeyword}
+                onChange={(event) => setSupportContactKeyword(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+                  event.preventDefault();
+                  void searchConversation();
+                }}
+              />
+              <button
+                type="button"
+                className="shrink-0 rounded border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                onClick={() => void searchConversation()}
+                disabled={supportSearching}
+              >
+                {supportSearching ? "搜索中" : "搜索"}
+              </button>
+            </div>
+            {supportError ? <div className="mt-2 text-xs leading-5 text-rose-600">{supportError}</div> : null}
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto bg-white p-3">
+            <div className="space-y-2">
+              {renderSupportContactCard()}
+              {filteredPeerContacts.map((contact) => (
+                <div key={contact.merchantId}>{renderSupportContactCard({ contact })}</div>
+              ))}
+              {!filteredPeerContacts.length && !supportContactMatchesSearch ? (
+                <div className="rounded border border-dashed px-3 py-4 text-xs leading-5 text-slate-500">
+                  输入完整 8 位商户 ID 或邮箱后点搜索，即可添加商户会话。
+                </div>
+              ) : null}
+            </div>
+          </div>
+          {supportError ? <div className="mt-2 text-xs leading-5 text-rose-600">{supportError}</div> : null}
+        </div>
+
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          <div className="flex min-w-0 items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
+            <div className="flex min-w-0 items-center gap-3">
+              <SupportAvatarBadge label={selectedConversationAvatarLabel} className="h-12 w-12 bg-slate-900 text-sm text-white shadow-sm" />
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <div className="truncate text-base font-semibold text-slate-900">{selectedConversationName}</div>
+                  {selectedConversationIsOfficial ? (
+                    <span className="inline-flex shrink-0 items-center rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium leading-none text-white">
+                      官方
+                    </span>
+                  ) : null}
+                </div>
+                <div className="truncate text-xs text-slate-500">{selectedConversationMeta || "-"}</div>
+              </div>
+            </div>
+          </div>
+          {renderSupportMessageList("min-h-0 min-w-0 flex-1 overflow-y-auto bg-white px-5 py-5")}
+          {renderSupportComposer()}
+        </div>
+      </div>
+    );
+  }
+
   function renderSectionContent(section: DesktopSection) {
+    if (section === "conversations") {
+      return renderDesktopSupportSurface();
+    }
     if (section === "profile") {
       return <PersonalInfoPanel accountId={accountId} displayName={displayName} email={email} />;
     }
@@ -400,7 +1040,102 @@ export default function MePage() {
     );
   }
 
+  function renderMobileConversationsContent() {
+    if (mobileConversationView === "thread") {
+      return (
+        <div className="flex h-full min-h-0 flex-col bg-white">
+          <div className="shrink-0 border-b border-slate-200/80 bg-white/95 px-4 pb-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700 shadow-sm"
+                onClick={() => setMobileConversationView("list")}
+                aria-label="返回会话列表"
+              >
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+                  <path d="m15 6-6 6 6 6" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+              <SupportAvatarBadge label={selectedConversationAvatarLabel} className="h-11 w-11 bg-slate-900 text-sm text-white shadow-sm" />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <div className="truncate text-[15px] font-semibold text-slate-900">{selectedConversationName}</div>
+                  {selectedConversationIsOfficial ? (
+                    <span className="inline-flex shrink-0 items-center rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium leading-none text-white">
+                      官方
+                    </span>
+                  ) : null}
+                </div>
+                <div className="mt-0.5 truncate text-xs text-slate-500">{selectedConversationMeta || "-"}</div>
+              </div>
+            </div>
+          </div>
+          {renderSupportMessageList("min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain bg-[#f8fafc] px-4 py-4")}
+          {renderSupportComposer("pb-[calc(env(safe-area-inset-bottom)+0.9rem)]")}
+        </div>
+      );
+    }
+
+    return (
+      <>
+        <div className="shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm">
+              会话
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-[15px] font-semibold text-slate-900">聊天列表</div>
+              <div className="mt-1 text-xs text-slate-500">固定保留 Faolla 官方客服</div>
+            </div>
+          </div>
+          <div className="mt-4 flex items-center gap-2">
+            <div className="flex min-h-[41px] min-w-0 flex-1 items-center gap-2.5 rounded-[20px] border border-slate-200 bg-[#f3f4f6] px-3.5 py-2 shadow-sm">
+              <svg viewBox="0 0 24 24" className="h-[17px] w-[17px] shrink-0 text-slate-400" fill="none" aria-hidden="true">
+                <circle cx="11" cy="11" r="6.5" stroke="currentColor" strokeWidth="1.9" />
+                <path d="m16 16 4 4" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+              </svg>
+              <input
+                type="text"
+                className="min-w-0 flex-1 bg-transparent text-[14px] leading-5 text-slate-900 outline-none placeholder:text-slate-400"
+                placeholder="商户ID / 邮箱 / Faolla"
+                value={supportContactKeyword}
+                onChange={(event) => setSupportContactKeyword(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+                  event.preventDefault();
+                  void searchConversation();
+                }}
+              />
+            </div>
+            <button
+              type="button"
+              className="inline-flex h-[41px] shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white px-4 text-sm shadow-sm hover:bg-slate-50"
+              onClick={() => void searchConversation()}
+              disabled={supportSearching}
+            >
+              {supportSearching ? "搜索中" : "搜索"}
+            </button>
+          </div>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-[calc(env(safe-area-inset-bottom)+5.85rem)] pt-3">
+          <div className="space-y-2.5">
+            {renderSupportContactCard({ mobile: true })}
+            {filteredPeerContacts.map((contact) => (
+              <div key={contact.merchantId}>{renderSupportContactCard({ mobile: true, contact })}</div>
+            ))}
+            {!filteredPeerContacts.length && !supportContactMatchesSearch ? (
+              <div className="rounded-2xl border border-dashed border-slate-300 bg-white/80 px-4 py-5 text-sm text-slate-500">
+                输入完整 8 位商户 ID 或邮箱后点搜索，即可添加商户会话。
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </>
+    );
+  }
+
   function renderMobileContent() {
+    if (mobileTab === "conversations") return renderMobileConversationsContent();
     if (mobileTab === "consumption") return renderConsumptionContent();
     if (mobileTab === "self") {
       return (
@@ -448,15 +1183,7 @@ export default function MePage() {
         </div>
       );
     }
-    return (
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(env(safe-area-inset-bottom)+5.85rem)] pt-[calc(env(safe-area-inset-top)+1rem)]">
-        <EmptyFeatureCard
-          icon={<Icon name="chat" />}
-          title="会话"
-          description="这里会集中展示你和商户、Faolla 的对话。"
-        />
-      </div>
-    );
+    return null;
   }
 
   if (loading) {
@@ -538,7 +1265,9 @@ export default function MePage() {
       <main className="fixed inset-x-0 top-0 bottom-0 z-[120] flex min-h-0 flex-col overflow-hidden overscroll-none bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_48%,#f8fafc_100%)] touch-manipulation md:hidden">
         {renderMobileContent()}
       </main>
-      <MobileBottomNav activeTab={mobileTab} onChange={setMobileTab} />
+      {mobileTab === "conversations" && mobileConversationView === "thread" ? null : (
+        <MobileBottomNav activeTab={mobileTab} onChange={setMobileTab} />
+      )}
     </>
   );
 }
