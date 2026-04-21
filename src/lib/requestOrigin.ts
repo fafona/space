@@ -70,6 +70,9 @@ export function resolveTrustedPublicOrigin(request: Request | URL | string) {
   try {
     const configuredHost = new URL(configuredOrigin).hostname;
     const requestHost = new URL(requestOrigin).hostname;
+    if (isLocalLikeHostname(requestHost)) {
+      return configuredOrigin;
+    }
     if (resolveBaseDomain(configuredHost) === resolveBaseDomain(requestHost)) {
       return configuredOrigin;
     }

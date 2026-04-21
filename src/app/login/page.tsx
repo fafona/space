@@ -29,7 +29,6 @@ import {
   canReachSupabaseGateway,
   getResolvedSupabaseUrl,
   resolvedSupabaseAnonKey,
-  supabase,
 } from "@/lib/supabase";
 import { type PlatformAccountType } from "@/lib/platformAccounts";
 
@@ -50,54 +49,6 @@ type ServerSignInResult = {
 };
 
 type AuthView = "signin" | "signup_personal" | "signup_merchant";
-
-function trimTrailingSlash(value: string) {
-  return value.replace(/\/+$/g, "");
-}
-
-function normalizeOrigin(value: string) {
-  const trimmed = String(value ?? "").trim();
-  if (!trimmed) return "";
-  const candidate = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimTrailingSlash(trimmed)}`;
-  try {
-    const parsed = new URL(candidate);
-    parsed.pathname = "";
-    parsed.search = "";
-    parsed.hash = "";
-    return trimTrailingSlash(parsed.toString());
-  } catch {
-    return "";
-  }
-}
-
-function toRootOrigin(value: string) {
-  const normalized = normalizeOrigin(value);
-  if (!normalized) return "";
-  try {
-    const parsed = new URL(normalized);
-    const hostParts = parsed.hostname.split(".").filter(Boolean);
-    if (hostParts.length >= 3) {
-      parsed.hostname = hostParts.slice(1).join(".");
-    }
-    parsed.pathname = "";
-    parsed.search = "";
-    parsed.hash = "";
-    return trimTrailingSlash(parsed.toString());
-  } catch {
-    return "";
-  }
-}
-
-function resolveAuthEmailRedirectOrigin() {
-  const fromEnv = toRootOrigin(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "");
-  if (fromEnv) return fromEnv;
-  if (typeof window !== "undefined" && window.location?.origin) {
-    const fromWindow = toRootOrigin(window.location.origin);
-    if (fromWindow) return fromWindow;
-    return trimTrailingSlash(window.location.origin);
-  }
-  return "";
-}
 
 function isAndroidBrowser() {
   if (typeof navigator === "undefined") return false;
@@ -154,9 +105,14 @@ function LoginPageInner() {
   const [emailConfirmationRequired, setEmailConfirmationRequired] = useState<boolean | null>(null);
   const [pendingResetEmail, setPendingResetEmail] = useState("");
   const [pendingResetEmailMasked, setPendingResetEmailMasked] = useState("");
+  const [pendingSignupVerificationEmail, setPendingSignupVerificationEmail] = useState("");
+  const [pendingSignupVerificationMaskedEmail, setPendingSignupVerificationMaskedEmail] = useState("");
+  const [pendingSignupVerificationAccountType, setPendingSignupVerificationAccountType] =
+    useState<PlatformAccountType | null>(null);
+  const [signupCode, setSignupCode] = useState("");
   const [authView, setAuthView] = useState<AuthView>("signin");
   const [pendingAction, setPendingAction] = useState<
-    "signin" | "signup" | "forgot" | "resend" | "verify_reset_code" | null
+    "signin" | "signup" | "forgot" | "resend" | "resend_signup_code" | "verify_reset_code" | "verify_signup_code" | null
   >(null);
   const requestedRedirectPath = useMemo(() => {
     const raw = (searchParams.get("redirect") ?? "").trim();
@@ -223,6 +179,21 @@ function LoginPageInner() {
     }
     return "QQ, Foxmail, Hotmail, Outlook, and Live mailboxes should use the email code to reset the password instead of the email link.";
   }, [normalizedLocale]);
+  const signupCodePreferredHint = useMemo(() => {
+    if (normalizedLocale.startsWith("zh-tw")) {
+      return "QQ、Foxmail、Hotmail、Outlook、Live 這些信箱請直接輸入註冊驗證碼，不要點郵件連結。";
+    }
+    if (normalizedLocale.startsWith("ja")) {
+      return "QQ / Foxmail / Hotmail / Outlook / Live のメールは、登録確認コードを入力してください。メールリンクは使わないでください。";
+    }
+    if (normalizedLocale.startsWith("ko")) {
+      return "QQ / Foxmail / Hotmail / Outlook / Live 메일은 가입 인증 코드를 입력해 주세요. 메일 링크는 누르지 마세요.";
+    }
+    if (normalizedLocale.startsWith("zh")) {
+      return "QQ、Foxmail、Hotmail、Outlook、Live 这些邮箱请直接输入注册验证码，不要点邮件链接。";
+    }
+    return "QQ, Foxmail, Hotmail, Outlook, and Live mailboxes should use the registration code instead of the email link.";
+  }, [normalizedLocale]);
   const loginMethodPills = useMemo(() => {
     if (normalizedLocale.startsWith("zh-tw")) return ["信箱", "使用者名稱", "8 位 ID"];
     if (normalizedLocale.startsWith("ja")) return ["メール", "ユーザー名", "8 桁 ID"];
@@ -245,10 +216,13 @@ function LoginPageInner() {
     return "Welcome to Faolla";
   }, [normalizedLocale]);
   const passwordToggleLabels = useMemo(() => getPasswordToggleLabels(locale), [locale]);
-  const authEmailRedirectOrigin = useMemo(() => resolveAuthEmailRedirectOrigin(), []);
   const shouldShowResetCodePreferredHint = useMemo(
     () => shouldPreferResetCodeFlow(pendingResetEmail || account),
     [account, pendingResetEmail],
+  );
+  const shouldShowSignupCodePreferredHint = useMemo(
+    () => shouldPreferResetCodeFlow(pendingSignupVerificationEmail || account),
+    [account, pendingSignupVerificationEmail],
   );
 
   useEffect(() => {
@@ -439,6 +413,55 @@ function LoginPageInner() {
     if (normalizedLocale.startsWith("zh")) return "注册成功，请登录。";
     return "Registration completed. Please sign in.";
   }, [normalizedLocale]);
+  const signUpCodeSentMessage = useMemo(() => {
+    if (normalizedLocale.startsWith("zh-tw")) return "註冊驗證碼已發送，請輸入驗證碼完成註冊。";
+    if (normalizedLocale.startsWith("ja")) return "登録確認コードを送信しました。コードを入力して登録を完了してください。";
+    if (normalizedLocale.startsWith("ko")) return "가입 인증 코드를 보냈습니다. 코드를 입력해 가입을 완료해 주세요.";
+    if (normalizedLocale.startsWith("zh")) return "注册验证码已发送，请输入验证码完成注册。";
+    return "The registration code has been sent. Enter it to complete registration.";
+  }, [normalizedLocale]);
+  const signUpCodeFallbackMessage = useMemo(() => {
+    if (normalizedLocale.startsWith("zh-tw")) return "註冊已提交。請檢查信箱驗證，或使用下方按鈕重發驗證碼。";
+    if (normalizedLocale.startsWith("ja")) return "登録を受け付けました。メールを確認するか、下のボタンで確認コードを再送してください。";
+    if (normalizedLocale.startsWith("ko")) return "가입이 접수되었습니다. 이메일을 확인하거나 아래 버튼으로 인증 코드를 다시 보내세요.";
+    if (normalizedLocale.startsWith("zh")) return "注册已提交。请检查邮箱验证，或使用下方按钮重发验证码。";
+    return "Registration submitted. Check your email or resend the code below.";
+  }, [normalizedLocale]);
+  const signUpCodeVerifiedMessage = useMemo(() => {
+    if (normalizedLocale.startsWith("zh-tw")) return "註冊驗證成功，請登入。";
+    if (normalizedLocale.startsWith("ja")) return "登録確認が完了しました。ログインしてください。";
+    if (normalizedLocale.startsWith("ko")) return "가입 인증이 완료되었습니다. 로그인해 주세요.";
+    if (normalizedLocale.startsWith("zh")) return "注册验证成功，请登录。";
+    return "Registration verified. Please sign in.";
+  }, [normalizedLocale]);
+  const signupCodeLabel = useMemo(() => {
+    if (normalizedLocale.startsWith("zh-tw")) return "註冊驗證碼";
+    if (normalizedLocale.startsWith("ja")) return "登録確認コード";
+    if (normalizedLocale.startsWith("ko")) return "가입 인증 코드";
+    if (normalizedLocale.startsWith("zh")) return "注册验证码";
+    return "Registration Code";
+  }, [normalizedLocale]);
+  const verifySignupCodeLabel = useMemo(() => {
+    if (normalizedLocale.startsWith("zh-tw")) return "驗證並完成註冊";
+    if (normalizedLocale.startsWith("ja")) return "確認して登録完了";
+    if (normalizedLocale.startsWith("ko")) return "인증하고 가입 완료";
+    if (normalizedLocale.startsWith("zh")) return "验证并完成注册";
+    return "Verify and Finish Sign Up";
+  }, [normalizedLocale]);
+  const resendSignupCodeLabel = useMemo(() => {
+    if (normalizedLocale.startsWith("zh-tw")) return "重發註冊驗證碼";
+    if (normalizedLocale.startsWith("ja")) return "登録確認コードを再送";
+    if (normalizedLocale.startsWith("ko")) return "가입 인증 코드 다시 보내기";
+    if (normalizedLocale.startsWith("zh")) return "重发注册验证码";
+    return "Resend Registration Code";
+  }, [normalizedLocale]);
+  const verifyingSignupCodeLabel = useMemo(() => {
+    if (normalizedLocale.startsWith("zh-tw")) return "驗證中...";
+    if (normalizedLocale.startsWith("ja")) return "確認中...";
+    if (normalizedLocale.startsWith("ko")) return "인증 중...";
+    if (normalizedLocale.startsWith("zh")) return "验证中...";
+    return "Verifying...";
+  }, [normalizedLocale]);
   const redirectToAccountHome = useCallback(
     async (
       _user?: {
@@ -617,18 +640,18 @@ function LoginPageInner() {
 
   function getRegisteredAccountMessage() {
     if (normalizedLocale.startsWith("zh-tw")) {
-      return "此信箱可能已註冊。請先直接登入；如果還沒有完成信箱驗證，可以使用下方的「重發驗證郵件」。";
+      return "此信箱可能已註冊。請先直接登入；如果還沒有完成信箱驗證，可以使用下方的「重發註冊驗證碼」。";
     }
     if (normalizedLocale.startsWith("ja")) {
-      return "このメールアドレスは既に登録済みの可能性があります。まずは直接ログインを試し、未確認の場合は下の確認メール再送を使ってください。";
+      return "このメールアドレスは既に登録済みの可能性があります。まずは直接ログインを試し、未確認の場合は下の登録確認コード再送を使ってください。";
     }
     if (normalizedLocale.startsWith("ko")) {
-      return "이 이메일은 이미 등록되어 있을 수 있습니다. 먼저 바로 로그인해 보시고, 아직 이메일 인증이 끝나지 않았다면 아래의 인증 메일 재전송을 눌러 주세요.";
+      return "이 이메일은 이미 등록되어 있을 수 있습니다. 먼저 바로 로그인해 보시고, 아직 이메일 인증이 끝나지 않았다면 아래의 가입 인증 코드 재전송을 눌러 주세요.";
     }
     if (normalizedLocale.startsWith("zh")) {
-      return "该邮箱可能已注册。请先直接登录；如果还没有完成邮箱验证，可以使用下方的“重发验证邮件”。";
+      return "该邮箱可能已注册。请先直接登录；如果还没有完成邮箱验证，可以使用下方的“重发注册验证码”。";
     }
-    return "This email may already be registered. Try signing in first. If the address is still waiting for verification, you can resend the verification email below.";
+    return "This email may already be registered. Try signing in first. If the address is still waiting for verification, you can resend the registration code below.";
   }
 
   function normalizeError(message: string) {
@@ -745,6 +768,10 @@ function LoginPageInner() {
     if (pendingAction) return;
     setMsg("");
     setNeedConfirmEmail(false);
+    setPendingSignupVerificationEmail("");
+    setPendingSignupVerificationMaskedEmail("");
+    setPendingSignupVerificationAccountType(null);
+    setSignupCode("");
 
     const validationError = validateEmailForm();
     if (validationError) return setMsg(validationError);
@@ -764,7 +791,6 @@ function LoginPageInner() {
             email: account.trim(),
             password,
             accountType,
-            emailRedirectTo: `${authEmailRedirectOrigin || window.location.origin}/login`,
           }),
         }),
       );
@@ -778,6 +804,8 @@ function LoginPageInner() {
             accountId?: unknown;
             merchantId?: unknown;
             merchantIds?: unknown;
+            codeSent?: unknown;
+            maskedEmail?: unknown;
             user?: LoginAuthUser | null;
           }
         | null;
@@ -786,6 +814,8 @@ function LoginPageInner() {
         const errorCode = typeof payload?.error === "string" ? payload.error : "";
         if (isUserAlreadyRegistered(message, errorCode)) {
           setNeedConfirmEmail(true);
+          setPendingSignupVerificationEmail(account.trim().toLowerCase());
+          setPendingSignupVerificationAccountType(accountType);
           return setMsg(getRegisteredAccountMessage());
         }
         return setMsg(normalizeError(message));
@@ -794,7 +824,19 @@ function LoginPageInner() {
       setEmailConfirmationRequired(needsConfirmation);
       clearStoredBrowserSupabaseSessionTokens();
       setAuthView("signin");
-      setMsg(needsConfirmation ? t("login.signupSuccess") : signUpSuccessBackToLoginMessage);
+      if (needsConfirmation) {
+        setPendingSignupVerificationEmail(account.trim().toLowerCase());
+        setPendingSignupVerificationMaskedEmail(
+          typeof payload?.maskedEmail === "string" ? payload.maskedEmail : account.trim().toLowerCase(),
+        );
+        setPendingSignupVerificationAccountType(accountType);
+        setMsg(payload?.codeSent === true ? signUpCodeSentMessage : signUpCodeFallbackMessage);
+      } else {
+        setPendingSignupVerificationEmail("");
+        setPendingSignupVerificationMaskedEmail("");
+        setPendingSignupVerificationAccountType(null);
+        setMsg(signUpSuccessBackToLoginMessage);
+      }
       setNeedConfirmEmail(needsConfirmation);
     } catch (error) {
       setMsg(error instanceof Error ? normalizeError(error.message) : t("login.requestFailed"));
@@ -810,7 +852,11 @@ function LoginPageInner() {
     setNeedConfirmEmail(false);
     setPendingResetEmail("");
     setPendingResetEmailMasked("");
+    setPendingSignupVerificationEmail("");
+    setPendingSignupVerificationMaskedEmail("");
+    setPendingSignupVerificationAccountType(null);
     setResetCode("");
+    setSignupCode("");
   }
 
   function submitPrimaryAuthAction() {
@@ -851,6 +897,11 @@ function LoginPageInner() {
     } catch (error) {
       const normalizedMessage = error instanceof Error ? normalizeError(error.message) : t("login.requestFailed");
       setNeedConfirmEmail(normalizedMessage === t("login.emailNotConfirmed"));
+      if (normalizedMessage === t("login.emailNotConfirmed") && account.includes("@")) {
+        setPendingSignupVerificationEmail(account.trim().toLowerCase());
+        setPendingSignupVerificationMaskedEmail(account.trim().toLowerCase());
+        setSignupCode("");
+      }
       const gatewayReady = await Promise.race([
         gatewayProbe,
         Promise.resolve(gatewayReachable),
@@ -869,28 +920,87 @@ function LoginPageInner() {
     if (pendingAction) return;
     setMsg("");
 
-    const trimmedEmail = account.trim();
+    const trimmedEmail = (pendingSignupVerificationEmail || account).trim().toLowerCase();
     if (!trimmedEmail) return setMsg(t("login.inputRegisterEmailFirst"));
     if (!trimmedEmail.includes("@")) return setMsg(t("login.invalidEmail"));
     const gatewayReady = await canReachSupabaseGateway(4000);
     setGatewayReachable(gatewayReady);
 
-    setPendingAction("resend");
+    setPendingAction("resend_signup_code");
     try {
-      const { error } = await withTimeout(
-        supabase.auth.resend({
-          type: "signup",
-          email: trimmedEmail,
-          options: {
-            emailRedirectTo: `${authEmailRedirectOrigin || window.location.origin}/login`,
+      const response = await withTimeout(
+        fetch("/api/auth/merchant-signup/request-code", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            accept: "application/json",
           },
+          body: JSON.stringify({
+            email: trimmedEmail,
+          }),
         }),
       );
 
-      if (error) return setMsg(normalizeError(error.message));
-      setMsg(t("login.resendSuccess"));
+      const payload = (await response.json().catch(() => null)) as
+        | { ok?: unknown; error?: unknown; maskedEmail?: unknown }
+        | null;
+      if (!response.ok || payload?.ok !== true) {
+        const errorMessage = typeof payload?.error === "string" ? payload.error : t("login.requestFailed");
+        return setMsg(normalizeError(errorMessage));
+      }
+      setPendingSignupVerificationEmail(trimmedEmail);
+      setPendingSignupVerificationMaskedEmail(
+        typeof payload?.maskedEmail === "string" ? payload.maskedEmail : trimmedEmail,
+      );
+      setSignupCode("");
+      setMsg(signUpCodeSentMessage);
     } catch (error) {
       setMsg(error instanceof Error ? normalizeError(error.message) : t("login.requestFailed"));
+    } finally {
+      setPendingAction(null);
+    }
+  }
+
+  async function verifySignupCode() {
+    if (pendingAction) return;
+    setMsg("");
+
+    const email = (pendingSignupVerificationEmail || account).trim().toLowerCase();
+    if (!email || !email.includes("@")) return setMsg(t("login.inputRegisterEmailFirst"));
+    if (!signupCode.trim()) return setMsg(t("reset.invalidCode"));
+
+    setPendingAction("verify_signup_code");
+    try {
+      const response = await withTimeout(
+        fetch("/api/auth/merchant-signup/verify-code", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            accept: "application/json",
+          },
+          body: JSON.stringify({
+            email,
+            code: signupCode,
+            accountType: pendingSignupVerificationAccountType ?? undefined,
+          }),
+        }),
+      );
+      const payload = (await response.json().catch(() => null)) as
+        | { ok?: unknown; error?: unknown; verified?: unknown }
+        | null;
+      if (!response.ok || payload?.ok !== true || payload?.verified !== true) {
+        const errorMessage = typeof payload?.error === "string" ? payload.error : t("login.requestFailed");
+        throw new Error(errorMessage);
+      }
+      setPendingSignupVerificationEmail("");
+      setPendingSignupVerificationMaskedEmail("");
+      setPendingSignupVerificationAccountType(null);
+      setSignupCode("");
+      setNeedConfirmEmail(false);
+      setAuthView("signin");
+      setMsg(signUpCodeVerifiedMessage);
+    } catch (error) {
+      setMsg(error instanceof Error ? normalizeResetCodeError(error.message) : t("reset.invalidCode"));
     } finally {
       setPendingAction(null);
     }
@@ -1212,13 +1322,54 @@ function LoginPageInner() {
                     </div>
                   ) : null}
 
+                  {pendingSignupVerificationEmail && shouldShowSignupCodePreferredHint ? (
+                    <div className="rounded-[20px] border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm leading-6 text-emerald-900 md:rounded-[22px]">
+                      {signupCodePreferredHint}
+                    </div>
+                  ) : null}
+
+                  {pendingSignupVerificationEmail ? (
+                    <div className="space-y-3 rounded-[22px] border border-slate-200 bg-white/90 p-4 shadow-[0_14px_32px_rgba(15,23,42,0.05)] md:rounded-[26px]">
+                      <div className="text-sm font-medium text-slate-600">
+                        {signupCodeLabel}
+                        {pendingSignupVerificationMaskedEmail ? (
+                          <span className="ml-2 text-xs text-slate-400">{pendingSignupVerificationMaskedEmail}</span>
+                        ) : null}
+                      </div>
+                      <input
+                        className={fieldClassName}
+                        value={signupCode}
+                        onChange={(event) => setSignupCode(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter") return;
+                          event.preventDefault();
+                          void verifySignupCode();
+                        }}
+                        placeholder={t("login.resetCodePlaceholder")}
+                        autoCapitalize="none"
+                        autoCorrect="off"
+                        spellCheck={false}
+                        inputMode="numeric"
+                      />
+                      <button
+                        className={secondaryButtonClassName}
+                        onClick={verifySignupCode}
+                        disabled={pendingAction !== null}
+                      >
+                        {pendingAction === "verify_signup_code" ? verifyingSignupCodeLabel : verifySignupCodeLabel}
+                      </button>
+                    </div>
+                  ) : null}
+
                   {needConfirmEmail ? (
                     <button
                       className={secondaryButtonClassName}
                       onClick={resendConfirmationEmail}
                       disabled={pendingAction !== null}
                     >
-                      {pendingAction === "resend" ? t("common.sending") : t("login.resend")}
+                      {pendingAction === "resend" || pendingAction === "resend_signup_code"
+                        ? t("common.sending")
+                        : resendSignupCodeLabel}
                     </button>
                   ) : null}
 

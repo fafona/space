@@ -11,6 +11,7 @@ import {
 import { type PlatformAccountType } from "@/lib/platformAccounts";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { resolveTrustedPublicOrigin } from "@/lib/requestOrigin";
+import { maskEmailAddress } from "@/lib/superAdminServer";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -78,6 +79,22 @@ function signUpNeedsEmailConfirmation(data: {
   return !(data.session || user?.email_confirmed_at || emailVerified);
 }
 
+async function sendSignupEmailCode(
+  supabase: ReturnType<typeof createAnonSupabaseClient>,
+  email: string,
+  emailRedirectTo: string,
+) {
+  if (!supabase) return false;
+  const { error } = await supabase.auth.signInWithOtp({
+    email,
+    options: {
+      shouldCreateUser: false,
+      emailRedirectTo,
+    },
+  });
+  return !error;
+}
+
 export async function POST(request: Request) {
   if (!isTrustedSameOriginMutationRequest(request)) {
     return getTrustedMutationRequestErrorResponse();
@@ -137,9 +154,12 @@ export async function POST(request: Request) {
   });
 
   if (needsConfirmation || !data.session?.access_token || !data.session.refresh_token) {
+    const codeSent = needsConfirmation ? await sendSignupEmailCode(supabase, email, emailRedirectTo).catch(() => false) : false;
     return NextResponse.json({
       ok: true,
       needsConfirmation: true,
+      codeSent,
+      maskedEmail: maskEmailAddress(email),
       accountType: platformIdentity.accountType,
       accountId: platformIdentity.accountId,
       merchantId: platformIdentity.merchantId,

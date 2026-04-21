@@ -15,6 +15,19 @@ test("resolveTrustedPublicOrigin keeps the configured origin when it matches the
   }
 });
 
+test("resolveTrustedPublicOrigin prefers the configured origin over localhost requests", () => {
+  const previousBaseDomain = process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN;
+  process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN = "https://www.faolla.com";
+  try {
+    assert.equal(
+      resolveTrustedPublicOrigin("http://localhost:3000/api/auth/merchant-signup"),
+      "https://www.faolla.com",
+    );
+  } finally {
+    process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN = previousBaseDomain;
+  }
+});
+
 test("resolveTrustedPublicOrigin falls back to the live request origin when the configured base domain is stale", () => {
   const previousBaseDomain = process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN;
   process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN = "https://www.fafona.com";
