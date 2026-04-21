@@ -792,6 +792,82 @@ function PersonalLocationInput({
   );
 }
 
+function PersonalBirthdayInput({
+  value,
+  disabled,
+  inputClass,
+  labelClass,
+  onChange,
+}: {
+  value: string;
+  disabled: boolean;
+  inputClass: string;
+  labelClass: string;
+  onChange: (value: string) => void;
+}) {
+  const pickerRef = useRef<HTMLInputElement | null>(null);
+  const pickerValue = /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : "";
+
+  const openPicker = () => {
+    if (disabled) return;
+    const picker = pickerRef.current as (HTMLInputElement & { showPicker?: () => void }) | null;
+    if (!picker) return;
+    if (typeof picker.showPicker === "function") {
+      try {
+        picker.showPicker();
+        return;
+      } catch {
+        // Fall back to focus/click below when the browser blocks showPicker.
+      }
+    }
+    picker.focus();
+    picker.click();
+  };
+
+  return (
+    <label className="relative min-w-0">
+      <span className={labelClass}>生日</span>
+      <input
+        className={`${inputClass} pr-12`}
+        type="text"
+        value={value}
+        placeholder="YYYY-MM-DD"
+        maxLength={10}
+        inputMode="numeric"
+        onChange={(event) => onChange(event.target.value)}
+        disabled={disabled}
+      />
+      <input
+        ref={pickerRef}
+        className="absolute right-4 top-[2.45rem] h-5 w-5 opacity-0"
+        type="date"
+        value={pickerValue}
+        tabIndex={-1}
+        aria-hidden="true"
+        onChange={(event) => onChange(event.target.value)}
+        disabled={disabled}
+      />
+      <button
+        type="button"
+        className="absolute right-3 top-[2.28rem] inline-flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
+        onClick={openPicker}
+        disabled={disabled}
+        aria-label="选择生日"
+      >
+        <svg viewBox="0 0 24 24" className="h-4.5 w-4.5" fill="none" aria-hidden="true">
+          <path
+            d="M7 4v3M17 4v3M5 9h14M7 20h10a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2Z"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </button>
+    </label>
+  );
+}
+
 function PersonalProfileEditor({
   accountId,
   email,
@@ -799,6 +875,7 @@ function PersonalProfileEditor({
   saving,
   message,
   showSaveButton = true,
+  compact = false,
   onChange,
   onSave,
 }: {
@@ -808,6 +885,7 @@ function PersonalProfileEditor({
   saving: boolean;
   message: string;
   showSaveButton?: boolean;
+  compact?: boolean;
   onChange: (field: keyof PersonalProfileDraft, value: string) => void;
   onSave: () => void;
 }) {
@@ -816,8 +894,14 @@ function PersonalProfileEditor({
   const labelClass = "text-[11px] font-semibold tracking-[0.08em] text-slate-400";
 
   return (
-    <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-[0_18px_44px_rgba(15,23,42,0.06)] md:p-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
+    <div
+      className={
+        compact
+          ? "bg-transparent"
+          : "rounded-[30px] border border-slate-200 bg-white p-5 shadow-[0_18px_44px_rgba(15,23,42,0.06)] md:p-6"
+      }
+    >
+      <div className={`flex flex-wrap items-center justify-between gap-4 ${compact ? "hidden" : ""}`}>
         <div>
           <div className="text-sm font-semibold text-slate-950">我的资料</div>
         </div>
@@ -879,17 +963,13 @@ function PersonalProfileEditor({
             disabled={saving}
           />
         </label>
-        <label className="min-w-0">
-          <span className={labelClass}>生日</span>
-          <input
-            className={`${inputClass} h-[46px] appearance-none`}
-            type="date"
-            value={draft.birthday}
-            placeholder="YYYY-MM-DD"
-            onChange={(event) => onChange("birthday", event.target.value)}
-            disabled={saving}
-          />
-        </label>
+        <PersonalBirthdayInput
+          value={draft.birthday}
+          disabled={saving}
+          inputClass={inputClass}
+          labelClass={labelClass}
+          onChange={(value) => onChange("birthday", value)}
+        />
         <label className="min-w-0">
           <span className={labelClass}>性别</span>
           <select
@@ -1080,16 +1160,8 @@ function SupportAvatarBadge({
 
 function MerchantAvatarBadge() {
   return (
-    <span className="pointer-events-none absolute -right-1.5 -top-1.5 z-10 inline-flex h-5 w-5 items-center justify-center rounded-[9px] border-2 border-white bg-slate-950 text-amber-300 shadow-[0_6px_14px_rgba(15,23,42,0.24)]">
-      <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" aria-hidden="true">
-        <path
-          d="M5.5 10.25h13M7 10.25l.85-4.25h8.3L17 10.25M7.25 10.25V18h9.5v-7.75M10.25 18v-3.5h3.5V18"
-          stroke="currentColor"
-          strokeWidth="2.1"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
+    <span className="pointer-events-none absolute -right-1.5 -top-1.5 z-10 inline-flex h-5 w-5 items-center justify-center rounded-[9px] border-2 border-white bg-[linear-gradient(135deg,#020617_0%,#1e293b_62%,#f59e0b_180%)] text-[10px] font-black leading-none tracking-[-0.08em] text-amber-200 shadow-[0_7px_16px_rgba(15,23,42,0.28)] ring-1 ring-slate-950/10">
+      M
     </span>
   );
 }
@@ -2839,6 +2911,7 @@ export default function MePage() {
                 saving={personalProfileSaving}
                 message={personalProfileMessage}
                 showSaveButton={false}
+                compact
                 onChange={updatePersonalProfileDraft}
                 onSave={() => {
                   void savePersonalProfile();

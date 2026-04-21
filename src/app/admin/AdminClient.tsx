@@ -4691,16 +4691,8 @@ function SupportAvatarBadge({
 
 function MerchantAvatarBadge() {
   return (
-    <span className="pointer-events-none absolute -right-1.5 -top-1.5 z-10 inline-flex h-5 w-5 items-center justify-center rounded-[9px] border-2 border-white bg-slate-950 text-amber-300 shadow-[0_6px_14px_rgba(15,23,42,0.24)]">
-      <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" aria-hidden="true">
-        <path
-          d="M5.5 10.25h13M7 10.25l.85-4.25h8.3L17 10.25M7.25 10.25V18h9.5v-7.75M10.25 18v-3.5h3.5V18"
-          stroke="currentColor"
-          strokeWidth="2.1"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
+    <span className="pointer-events-none absolute -right-1.5 -top-1.5 z-10 inline-flex h-5 w-5 items-center justify-center rounded-[9px] border-2 border-white bg-[linear-gradient(135deg,#020617_0%,#1e293b_62%,#f59e0b_180%)] text-[10px] font-black leading-none tracking-[-0.08em] text-amber-200 shadow-[0_7px_16px_rgba(15,23,42,0.28)] ring-1 ring-slate-950/10">
+      M
     </span>
   );
 }
