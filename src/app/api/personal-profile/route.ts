@@ -40,6 +40,21 @@ function normalizeGender(value: unknown) {
   return normalized === "male" || normalized === "female" || normalized === "other" ? normalized : "";
 }
 
+function normalizeStoragePublicUrl(value: unknown, maxLength = 1200) {
+  const normalized = trimText(value, maxLength);
+  if (!normalized) return "";
+  try {
+    const url = new URL(normalized);
+    if (url.protocol === "http:" && url.pathname.startsWith("/storage/v1/object/public/")) {
+      url.protocol = "https:";
+      return url.toString();
+    }
+  } catch {
+    return normalized;
+  }
+  return normalized;
+}
+
 function noStoreJson(body: unknown, init?: ResponseInit) {
   const response = NextResponse.json(body, init);
   response.headers.set("cache-control", "no-store");
@@ -79,7 +94,7 @@ function buildProfileMetadataPatch(user: MerchantAuthUserSummary, patch: Persona
   const nextProfile = {
     ...personalProfile,
     displayName: trimText(patch.displayName, 80),
-    avatarUrl: trimText(patch.avatarUrl, 1200),
+    avatarUrl: normalizeStoragePublicUrl(patch.avatarUrl, 1200),
     signature: trimText(patch.signature, 160),
     phone: trimText(patch.phone, 64),
     email: trimText(patch.email, 160),

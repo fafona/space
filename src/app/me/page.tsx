@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useI18n } from "@/components/I18nProvider";
 import { readMerchantSessionMerchantIds } from "@/lib/authSessionRecovery";
 import { LANGUAGE_OPTIONS } from "@/lib/i18n";
+import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import SupportMessageContent from "@/components/support/SupportMessageContent";
 import {
   findMerchantPeerThreadForMerchants,
@@ -791,11 +792,12 @@ function SupportAvatarBadge({
   className?: string;
   labelClassName?: string;
 }) {
+  const normalizedImageUrl = normalizePublicAssetUrl(imageUrl);
   return (
     <div className={`flex shrink-0 items-center justify-center overflow-hidden rounded-2xl font-semibold ${className}`}>
-      {imageUrl ? (
+      {normalizedImageUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={imageUrl} alt={imageAlt || label} className="h-full w-full object-cover" />
+        <img src={normalizedImageUrl} alt={imageAlt || label} className="h-full w-full object-cover" />
       ) : (
         <span className={labelClassName}>{label}</span>
       )}

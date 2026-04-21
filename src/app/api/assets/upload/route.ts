@@ -95,6 +95,21 @@ function sanitizeMerchantHint(input: string) {
   return normalized || "public";
 }
 
+function normalizeStoragePublicUrl(value: string) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return "";
+  try {
+    const url = new URL(normalized);
+    if (url.protocol === "http:" && url.pathname.startsWith("/storage/v1/object/public/")) {
+      url.protocol = "https:";
+      return url.toString();
+    }
+  } catch {
+    return normalized;
+  }
+  return normalized;
+}
+
 function normalizeAssetUsage(value: unknown, folder: string, mime: string): AssetUsage {
   const normalized = String(value ?? "").trim();
   if (
@@ -312,7 +327,7 @@ export async function POST(request: Request) {
         ok: true,
         bucket,
         objectPath,
-        url: data.publicUrl,
+        url: normalizeStoragePublicUrl(data.publicUrl),
       });
     }
     uploadErrors.push(`${bucket}: failed to resolve public url`);

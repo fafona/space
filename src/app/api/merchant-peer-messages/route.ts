@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import type { MerchantListPublishedSite } from "@/data/homeBlocks";
 import {
   createMerchantPeerMessage,
   findMerchantPeerThreadForMerchants,
@@ -28,6 +29,10 @@ import {
   readPlatformAccountTypeFromMetadata,
   readPlatformUsernameFromMetadata,
 } from "@/lib/platformAccounts";
+import {
+  loadStoredPlatformMerchantSnapshot,
+  type PlatformMerchantSnapshotStoreClient,
+} from "@/lib/platformMerchantSnapshotStore";
 import { createServerSupabaseAuthClient, createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
@@ -43,11 +48,22 @@ type ResolvedMerchantRecord = {
 };
 
 type PersonalPeerProfile = {
+  accountType: "personal";
   displayName: string;
   avatarUrl: string;
   signature: string;
   phone: string;
   email: string;
+  contactCard: string;
+};
+
+type MerchantPeerProfile = {
+  accountType: "merchant";
+  displayName: string;
+  avatarUrl: string;
+  signature: string;
+  email: string;
+  phone: string;
   contactCard: string;
 };
 
@@ -83,6 +99,21 @@ function readMetadataString(metadata: Record<string, unknown> | null | undefined
   return "";
 }
 
+function normalizeStoragePublicUrl(value: unknown) {
+  const normalized = trimText(value);
+  if (!normalized) return "";
+  try {
+    const url = new URL(normalized);
+    if (url.protocol === "http:" && url.pathname.startsWith("/storage/v1/object/public/")) {
+      url.protocol = "https:";
+      return url.toString();
+    }
+  } catch {
+    return normalized;
+  }
+  return normalized;
+}
+
 function readPersonalPeerProfile(user: MerchantAuthUserSummary): PersonalPeerProfile {
   const userMetadata = user.user_metadata && typeof user.user_metadata === "object" ? user.user_metadata : {};
   const appMetadata = user.app_metadata && typeof user.app_metadata === "object" ? user.app_metadata : {};
@@ -94,8 +125,9 @@ function readPersonalPeerProfile(user: MerchantAuthUserSummary): PersonalPeerPro
     readMetadataString(profile, ...keys) || readMetadataString(userMetadata, ...keys) || readMetadataString(appMetadata, ...keys);
 
   return {
+    accountType: "personal",
     displayName: read("displayName", "display_name", "username", "name"),
-    avatarUrl: read("avatarUrl", "avatar_url", "personalAvatarUrl", "chatAvatarImageUrl"),
+    avatarUrl: normalizeStoragePublicUrl(read("avatarUrl", "avatar_url", "personalAvatarUrl", "chatAvatarImageUrl")),
     signature: read("signature", "bio"),
     phone: read("phone", "contact_phone", "contactPhone"),
     email: read("email", "contact_email", "contactEmail") || normalizeEmail(user.email),
@@ -137,6 +169,36 @@ async function loadPersonalPeerProfiles(
     page += 1;
   }
 
+  return profileMap;
+}
+
+function readMerchantPeerProfile(site: MerchantListPublishedSite): MerchantPeerProfile {
+  const avatarUrl = normalizeStoragePublicUrl(site.chatAvatarImageUrl) || normalizeStoragePublicUrl(site.merchantCardImageUrl);
+  return {
+    accountType: "merchant",
+    displayName: trimText(site.merchantName) || trimText(site.name) || trimText(site.id),
+    avatarUrl,
+    signature: trimText(site.signature),
+    email: normalizeEmail(site.contactEmail),
+    phone: trimText(site.contactPhone),
+    contactCard: normalizeStoragePublicUrl(site.merchantCardImageUrl),
+  };
+}
+
+async function loadMerchantPeerProfiles(
+  supabase: PlatformMerchantSnapshotStoreClient | null,
+  accountIds: string[],
+) {
+  const targetIds = new Set(accountIds.map((accountId) => normalizeMerchantId(accountId)).filter(Boolean));
+  const profileMap = new Map<string, MerchantPeerProfile>();
+  if (!supabase || targetIds.size === 0) return profileMap;
+
+  const snapshotPayload = await loadStoredPlatformMerchantSnapshot(supabase).catch(() => null);
+  (snapshotPayload?.snapshot ?? []).forEach((site) => {
+    const siteId = normalizeMerchantId(site.id);
+    if (!siteId || !targetIds.has(siteId)) return;
+    profileMap.set(siteId, readMerchantPeerProfile(site));
+  });
   return profileMap;
 }
 
@@ -286,26 +348,32 @@ async function resolveMerchantByExactQuery(
 async function buildInboxResponse(
   payload: Awaited<ReturnType<typeof loadStoredMerchantPeerInbox>>,
   merchantId: string,
-  supabase?: PlatformIdentitySupabaseClient | null,
+  supabase?: (PlatformIdentitySupabaseClient & PlatformMerchantSnapshotStoreClient) | null,
 ) {
   const contacts = listMerchantPeerContactsForMerchant(payload, merchantId);
   const personalProfiles = await loadPersonalPeerProfiles(
     supabase ?? null,
     contacts.map((contact) => contact.merchantId),
   );
+  const merchantProfiles = await loadMerchantPeerProfiles(
+    supabase ?? null,
+    contacts.map((contact) => contact.merchantId),
+  );
   const enrichedContacts = contacts.map((contact) => {
     const personalProfile = personalProfiles.get(contact.merchantId);
-    if (!personalProfile) return contact;
+    const merchantProfile = merchantProfiles.get(contact.merchantId);
+    const peerProfile = personalProfile ?? merchantProfile ?? null;
+    if (!peerProfile) return contact;
     return {
       ...contact,
-      accountType: "personal" as const,
-      merchantName: personalProfile.displayName || contact.merchantName,
-      merchantEmail: personalProfile.email || contact.merchantEmail,
-      avatarImageUrl: personalProfile.avatarUrl,
-      chatAvatarImageUrl: personalProfile.avatarUrl,
-      signature: personalProfile.signature,
-      contactPhone: personalProfile.phone,
-      contactCard: personalProfile.contactCard,
+      accountType: peerProfile.accountType,
+      merchantName: peerProfile.displayName || contact.merchantName,
+      merchantEmail: peerProfile.email || contact.merchantEmail,
+      avatarImageUrl: peerProfile.avatarUrl,
+      chatAvatarImageUrl: peerProfile.avatarUrl,
+      signature: peerProfile.signature,
+      contactPhone: peerProfile.phone,
+      contactCard: peerProfile.contactCard,
     };
   });
   const threads = listMerchantPeerThreadsForMerchant(payload, merchantId);
@@ -329,7 +397,11 @@ export async function GET(request: Request) {
 
   const payload = await loadStoredMerchantPeerInbox(supabase as unknown as MerchantPeerInboxStoreClient);
   return noStoreJson({
-    ...(await buildInboxResponse(payload, session.merchantId, supabase as unknown as PlatformIdentitySupabaseClient)),
+    ...(await buildInboxResponse(
+      payload,
+      session.merchantId,
+      supabase as unknown as PlatformIdentitySupabaseClient & PlatformMerchantSnapshotStoreClient,
+    )),
     currentMerchantId: session.merchantId,
     currentMerchantEmail: session.merchantEmail,
   });
@@ -406,7 +478,11 @@ export async function POST(request: Request) {
     }
 
     return noStoreJson({
-      ...(await buildInboxResponse(nextPayload, session.merchantId, supabase as unknown as PlatformIdentitySupabaseClient)),
+      ...(await buildInboxResponse(
+        nextPayload,
+        session.merchantId,
+        supabase as unknown as PlatformIdentitySupabaseClient & PlatformMerchantSnapshotStoreClient,
+      )),
       contact: resolved.record,
     });
   }
@@ -469,7 +545,11 @@ export async function POST(request: Request) {
     });
 
     return noStoreJson({
-      ...(await buildInboxResponse(nextPayload, session.merchantId, supabase as unknown as PlatformIdentitySupabaseClient)),
+      ...(await buildInboxResponse(
+        nextPayload,
+        session.merchantId,
+        supabase as unknown as PlatformIdentitySupabaseClient & PlatformMerchantSnapshotStoreClient,
+      )),
       thread: findMerchantPeerThreadForMerchants(nextPayload, session.merchantId, recipient.merchantId),
     });
   }
