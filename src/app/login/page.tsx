@@ -154,7 +154,6 @@ function LoginPageInner() {
   const [emailConfirmationRequired, setEmailConfirmationRequired] = useState<boolean | null>(null);
   const [pendingResetEmail, setPendingResetEmail] = useState("");
   const [pendingResetEmailMasked, setPendingResetEmailMasked] = useState("");
-  const [pendingSignupAccountType, setPendingSignupAccountType] = useState<PlatformAccountType | null>(null);
   const [authView, setAuthView] = useState<AuthView>("signin");
   const [pendingAction, setPendingAction] = useState<
     "signin" | "signup" | "forgot" | "resend" | "verify_reset_code" | null
@@ -417,6 +416,29 @@ function LoginPageInner() {
   }, [authView, loginMethodPills, normalizedLocale]);
   const accountFieldLabel = authView === "signin" ? loginAccountLabel : registrationEmailLabel;
   const accountFieldPlaceholder = authView === "signin" ? loginAccountPlaceholder : registrationEmailPlaceholder;
+  const activeSignupAccountType: PlatformAccountType | null =
+    authView === "signup_personal" ? "personal" : authView === "signup_merchant" ? "merchant" : null;
+  const signUpSubmitLabel = useMemo(() => {
+    if (normalizedLocale.startsWith("zh-tw")) return "註冊";
+    if (normalizedLocale.startsWith("ja")) return "登録";
+    if (normalizedLocale.startsWith("ko")) return "가입";
+    if (normalizedLocale.startsWith("zh")) return "注册";
+    return "Sign Up";
+  }, [normalizedLocale]);
+  const signingUpSubmitLabel = useMemo(() => {
+    if (normalizedLocale.startsWith("zh-tw")) return "註冊中...";
+    if (normalizedLocale.startsWith("ja")) return "登録中...";
+    if (normalizedLocale.startsWith("ko")) return "가입 중...";
+    if (normalizedLocale.startsWith("zh")) return "注册中...";
+    return "Signing up...";
+  }, [normalizedLocale]);
+  const signUpSuccessBackToLoginMessage = useMemo(() => {
+    if (normalizedLocale.startsWith("zh-tw")) return "註冊成功，請登入。";
+    if (normalizedLocale.startsWith("ja")) return "登録が完了しました。ログインしてください。";
+    if (normalizedLocale.startsWith("ko")) return "가입이 완료되었습니다. 로그인해 주세요.";
+    if (normalizedLocale.startsWith("zh")) return "注册成功，请登录。";
+    return "Registration completed. Please sign in.";
+  }, [normalizedLocale]);
   const redirectToAccountHome = useCallback(
     async (
       _user?: {
@@ -721,7 +743,6 @@ function LoginPageInner() {
 
   async function signUp(accountType: PlatformAccountType) {
     if (pendingAction) return;
-    setAuthView(accountType === "personal" ? "signup_personal" : "signup_merchant");
     setMsg("");
     setNeedConfirmEmail(false);
 
@@ -731,7 +752,6 @@ function LoginPageInner() {
     setGatewayReachable(gatewayReady);
 
     setPendingAction("signup");
-    setPendingSignupAccountType(accountType);
     try {
       const response = await withTimeout(
         fetch("/api/auth/merchant-signup", {
@@ -772,30 +792,33 @@ function LoginPageInner() {
       }
       const needsConfirmation = payload?.needsConfirmation === true;
       setEmailConfirmationRequired(needsConfirmation);
-      if (!needsConfirmation) {
-        clearStoredBrowserSupabaseSessionTokens();
-        await redirectToAccountHome(
-          (payload?.user ?? null) as LoginAuthUser | null,
-          {
-            accountType: normalizePlatformAccountType(payload?.accountType) || accountType,
-            accountId: normalizePlatformAccountId(payload?.accountId),
-            merchantId: typeof payload?.merchantId === "string" ? payload.merchantId.trim() : "",
-            merchantIds: readMerchantSessionMerchantIds(payload),
-          },
-          {
-            withSignInBridge: false,
-          },
-        );
-        return;
-      }
-      setMsg(t("login.signupSuccess"));
-      setNeedConfirmEmail(true);
+      clearStoredBrowserSupabaseSessionTokens();
+      setAuthView("signin");
+      setMsg(needsConfirmation ? t("login.signupSuccess") : signUpSuccessBackToLoginMessage);
+      setNeedConfirmEmail(needsConfirmation);
     } catch (error) {
       setMsg(error instanceof Error ? normalizeError(error.message) : t("login.requestFailed"));
     } finally {
-      setPendingSignupAccountType(null);
       setPendingAction(null);
     }
+  }
+
+  function selectSignupView(accountType: PlatformAccountType) {
+    if (pendingAction) return;
+    setAuthView(accountType === "personal" ? "signup_personal" : "signup_merchant");
+    setMsg("");
+    setNeedConfirmEmail(false);
+    setPendingResetEmail("");
+    setPendingResetEmailMasked("");
+    setResetCode("");
+  }
+
+  function submitPrimaryAuthAction() {
+    if (activeSignupAccountType) {
+      void signUp(activeSignupAccountType);
+      return;
+    }
+    void signIn();
   }
 
   async function signIn() {
@@ -975,6 +998,10 @@ function LoginPageInner() {
     "w-full rounded-[20px] border border-slate-200 bg-white px-4 py-3.5 text-[16px] text-slate-900 shadow-[0_10px_28px_rgba(15,23,42,0.06)] outline-none transition placeholder:text-slate-400 focus:border-slate-900 focus:ring-4 focus:ring-slate-900/8 md:rounded-[22px] md:py-4";
   const secondaryButtonClassName =
     "rounded-[18px] border border-slate-200 bg-white/88 px-4 py-3 text-sm font-medium text-slate-700 shadow-[0_8px_24px_rgba(15,23,42,0.06)] transition hover:border-slate-300 hover:bg-white disabled:opacity-50 md:rounded-[20px]";
+  const signupSwitchButtonClassName = (active: boolean) =>
+    active
+      ? "rounded-[18px] border border-slate-950 bg-slate-950 px-4 py-3 text-sm font-medium text-white shadow-[0_8px_24px_rgba(15,23,42,0.14)] transition hover:bg-slate-900 disabled:opacity-50 md:rounded-[20px]"
+      : secondaryButtonClassName;
   const androidKeyboardOpen = isAndroid && androidKeyboardInset >= 100;
   const mobileFormSectionStyle =
     androidKeyboardInset > 0
@@ -1093,7 +1120,7 @@ function LoginPageInner() {
                       onKeyDown={(event) => {
                         if (event.key !== "Enter") return;
                         event.preventDefault();
-                        void signIn();
+                        submitPrimaryAuthAction();
                       }}
                       placeholder={t("login.passwordMin6")}
                       showLabel={passwordToggleLabels.show}
@@ -1112,26 +1139,32 @@ function LoginPageInner() {
                 <div className="space-y-3">
                   <button
                     className="w-full rounded-[20px] bg-slate-950 px-4 py-3.5 text-[15px] font-semibold text-white shadow-[0_18px_40px_rgba(15,23,42,0.24)] transition hover:bg-slate-800 disabled:opacity-50 md:rounded-[22px] md:py-4"
-                    onClick={signIn}
+                    onClick={submitPrimaryAuthAction}
                     disabled={pendingAction !== null}
                   >
-                    {pendingAction === "signin" ? t("login.signingIn") : t("login.signIn")}
+                    {pendingAction === "signin"
+                      ? t("login.signingIn")
+                      : pendingAction === "signup"
+                        ? signingUpSubmitLabel
+                        : activeSignupAccountType
+                          ? signUpSubmitLabel
+                          : t("login.signIn")}
                   </button>
 
                   <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                     <button
-                      className={secondaryButtonClassName}
-                      onClick={() => void signUp("personal")}
+                      className={signupSwitchButtonClassName(authView === "signup_personal")}
+                      onClick={() => selectSignupView("personal")}
                       disabled={pendingAction !== null}
                     >
-                      {pendingAction === "signup" && pendingSignupAccountType === "personal" ? t("login.signingUp") : personalSignUpLabel}
+                      {personalSignUpLabel}
                     </button>
                     <button
-                      className={secondaryButtonClassName}
-                      onClick={() => void signUp("merchant")}
+                      className={signupSwitchButtonClassName(authView === "signup_merchant")}
+                      onClick={() => selectSignupView("merchant")}
                       disabled={pendingAction !== null}
                     >
-                      {pendingAction === "signup" && pendingSignupAccountType === "merchant" ? t("login.signingUp") : merchantSignUpLabel}
+                      {merchantSignUpLabel}
                     </button>
                     <button className={secondaryButtonClassName} onClick={forgotPassword} disabled={pendingAction !== null}>
                       {pendingAction === "forgot" ? t("common.sending") : t("login.forgot")}
