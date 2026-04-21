@@ -84,6 +84,13 @@ type SupportContactRow = {
   isOfficial: boolean;
 };
 
+type ConversationInfoItem = {
+  label: string;
+  value: string;
+  href?: string;
+  openInNewTab?: boolean;
+};
+
 type PersonalProfileDraft = {
   displayName: string;
   avatarUrl: string;
@@ -426,6 +433,15 @@ function buildSupportLocationMessageText(latitude: number, longitude: number, ac
 
 function languageFlagImageUrl(countryCode: string) {
   return `https://flagcdn.com/24x18/${countryCode.toLowerCase()}.png`;
+}
+
+function normalizeExternalInfoUrl(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized || normalized === "-") return "";
+  if (/^(https?:|mailto:|tel:)/i.test(normalized)) return normalized;
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) return `mailto:${normalized}`;
+  if (/^\+?[\d\s().-]{5,}$/.test(normalized)) return `tel:${normalized.replace(/\s+/g, "")}`;
+  return `https://${normalized.replace(/^\/+/, "")}`;
 }
 
 function Icon({ name }: { name: "chat" | "shop" | "shield" | "user" | "calendar" | "order" | "star" | "card" }) {
@@ -816,6 +832,7 @@ export default function MePage() {
   const [mobileConversationView, setMobileConversationView] = useState<MobileConversationView>("list");
   const [mobileSelfSection, setMobileSelfSection] = useState<MobileSelfSection>("home");
   const [mobileSelfLanguageMenuOpen, setMobileSelfLanguageMenuOpen] = useState(false);
+  const [conversationInfoOpen, setConversationInfoOpen] = useState(false);
   const [selectedConversationKey, setSelectedConversationKey] = useState<PersonalConversationKey>(OFFICIAL_CONVERSATION_KEY);
   const [supportThread, setSupportThread] = useState<PlatformSupportThread | null>(null);
   const [peerContacts, setPeerContacts] = useState<MerchantPeerContactSummary[]>([]);
@@ -898,6 +915,19 @@ export default function MePage() {
     });
     return () => window.cancelAnimationFrame(frame);
   }, [payload]);
+
+  useEffect(() => {
+    setConversationInfoOpen(false);
+  }, [selectedConversationKey]);
+
+  useEffect(() => {
+    if (!conversationInfoOpen) return;
+    const conversationsVisible =
+      desktopSection === "conversations" || (mobileTab === "conversations" && mobileConversationView === "thread");
+    if (!conversationsVisible) {
+      setConversationInfoOpen(false);
+    }
+  }, [conversationInfoOpen, desktopSection, mobileConversationView, mobileTab]);
 
   const accountId =
     payload && typeof payload.accountId === "string" && /^\d{8}$/.test(payload.accountId.trim())
@@ -1005,6 +1035,57 @@ export default function MePage() {
   const selectedConversationAvatarImageUrl = selectedConversationIsOfficial
     ? ""
     : selectedPeerContact?.avatarImageUrl || selectedPeerContact?.chatAvatarImageUrl || "";
+  const selectedConversationInfoSubtitle = selectedConversationIsOfficial
+    ? "官方客服"
+    : selectedPeerContact?.signature || selectedConversationMeta || "商户资料";
+  const selectedConversationInfoItems = useMemo<ConversationInfoItem[]>(() => {
+    if (selectedConversationIsOfficial) {
+      return [
+        { label: "身份", value: "官方客服" },
+        { label: "名称", value: "Faolla" },
+        {
+          label: "官网",
+          value: "www.faolla.com",
+          href: "https://www.faolla.com",
+          openInNewTab: true,
+        },
+      ];
+    }
+
+    const contactCard = String(selectedPeerContact?.contactCard ?? "").trim();
+    const phone = String(selectedPeerContact?.contactPhone ?? "").trim();
+    const contactEmail = String(selectedPeerContact?.merchantEmail ?? "").trim();
+    const items: ConversationInfoItem[] = [
+      { label: "ID", value: selectedPeerMerchantId || "-" },
+      { label: "类型", value: selectedPeerContact?.accountType === "personal" ? "个人用户" : "商户" },
+      {
+        label: "电话",
+        value: phone || "-",
+        href: phone ? normalizeExternalInfoUrl(phone) : "",
+      },
+      {
+        label: "邮箱",
+        value: contactEmail || "-",
+        href: contactEmail ? normalizeExternalInfoUrl(contactEmail) : "",
+      },
+      {
+        label: "联系卡",
+        value: contactCard || "-",
+        href: contactCard ? normalizeExternalInfoUrl(contactCard) : "",
+        openInNewTab: true,
+      },
+      { label: "个性签名", value: String(selectedPeerContact?.signature ?? "").trim() || "-" },
+    ];
+    return items;
+  }, [
+    selectedConversationIsOfficial,
+    selectedPeerContact?.accountType,
+    selectedPeerContact?.contactCard,
+    selectedPeerContact?.contactPhone,
+    selectedPeerContact?.merchantEmail,
+    selectedPeerContact?.signature,
+    selectedPeerMerchantId,
+  ]);
   const selectedConversationLoading = selectedConversationIsOfficial ? supportLoading : peerLoading;
   const selectedConversationEmptyText = selectedConversationIsOfficial
     ? "还没有留言记录，可以直接在下方给 Faolla 留言。"
@@ -1846,6 +1927,86 @@ export default function MePage() {
     );
   }
 
+  function renderConversationInfoOverlay() {
+    if (!conversationInfoOpen) return null;
+    const infoContent = (
+      <>
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <SupportAvatarBadge
+              label={selectedConversationAvatarLabel}
+              imageUrl={selectedConversationAvatarImageUrl}
+              imageAlt={selectedConversationName}
+              className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm"
+              labelClassName="text-sm font-semibold text-white"
+            />
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <div className="truncate text-lg font-semibold text-slate-900">{selectedConversationName}</div>
+                {selectedConversationIsOfficial ? (
+                  <span className="inline-flex shrink-0 items-center rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium leading-none text-white">
+                    官方
+                  </span>
+                ) : null}
+              </div>
+              <div className="mt-1 line-clamp-2 text-sm text-slate-500">{selectedConversationInfoSubtitle}</div>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="rounded-full border border-slate-200 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50"
+            onClick={() => setConversationInfoOpen(false)}
+          >
+            关闭
+          </button>
+        </div>
+        <div className="mt-5 divide-y divide-slate-100 overflow-hidden rounded-[24px] border border-slate-100 bg-slate-50/80">
+          {selectedConversationInfoItems.map((item) => (
+            <div key={item.label} className="px-5 py-4">
+              <div className="text-[11px] font-medium tracking-[0.08em] text-slate-400">{item.label}</div>
+              <div className="mt-1 text-sm leading-6 text-slate-900">
+                {item.href ? (
+                  <a
+                    href={item.href}
+                    target={item.openInNewTab ? "_blank" : undefined}
+                    rel={item.openInNewTab ? "noreferrer" : undefined}
+                    className="break-all text-slate-900 underline decoration-slate-300 underline-offset-4"
+                  >
+                    {item.value}
+                  </a>
+                ) : (
+                  <span className="break-words">{item.value}</span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </>
+    );
+
+    return (
+      <>
+        <button
+          type="button"
+          className="fixed inset-0 z-[2147483400] bg-slate-950/40 backdrop-blur-[1px]"
+          onClick={() => setConversationInfoOpen(false)}
+          aria-label="关闭资料"
+        />
+        <div className="fixed inset-x-0 bottom-0 z-[2147483401] px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] md:hidden">
+          <div className="mx-auto w-full max-w-md rounded-[30px] bg-white px-4 pb-4 pt-3 shadow-[0_24px_80px_rgba(15,23,42,0.2)]">
+            <div className="mx-auto h-1.5 w-12 rounded-full bg-slate-200" />
+            <div className="mt-4">{infoContent}</div>
+          </div>
+        </div>
+        <div className="fixed inset-0 z-[2147483401] hidden items-center justify-center p-4 md:flex">
+          <div className="w-full max-w-xl rounded-[30px] bg-white px-6 py-5 shadow-[0_24px_80px_rgba(15,23,42,0.22)]">
+            {infoContent}
+          </div>
+        </div>
+      </>
+    );
+  }
+
   function renderDesktopSupportSurface() {
     return (
       <div className="flex h-[calc(100vh-4rem)] min-h-[560px] min-w-0 overflow-hidden rounded-2xl border bg-white shadow-[0_18px_44px_rgba(15,23,42,0.06)] md:grid md:grid-cols-[320px_minmax(0,1fr)]">
@@ -1889,12 +2050,20 @@ export default function MePage() {
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <div className="flex min-w-0 items-center justify-between gap-3 border-b px-5 py-4">
             <div className="flex min-w-0 items-center gap-3">
-              <SupportAvatarBadge
-                label={selectedConversationAvatarLabel}
-                imageUrl={selectedConversationAvatarImageUrl}
-                imageAlt={selectedConversationName}
-                className="h-12 w-12 bg-slate-900 text-sm text-white shadow-sm"
-              />
+              <button
+                type="button"
+                className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm transition hover:scale-[1.02]"
+                onClick={() => setConversationInfoOpen(true)}
+                aria-label="查看资料"
+              >
+                <SupportAvatarBadge
+                  label={selectedConversationAvatarLabel}
+                  imageUrl={selectedConversationAvatarImageUrl}
+                  imageAlt={selectedConversationName}
+                  className="flex h-full w-full items-center justify-center bg-slate-900 text-white"
+                  labelClassName="text-sm font-semibold text-white"
+                />
+              </button>
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <div className="truncate text-base font-semibold text-slate-900">{selectedConversationName}</div>
@@ -2018,12 +2187,20 @@ export default function MePage() {
                     />
                   </svg>
                 </button>
-                <SupportAvatarBadge
-                  label={selectedConversationAvatarLabel}
-                  imageUrl={selectedConversationAvatarImageUrl}
-                  imageAlt={selectedConversationName}
-                  className="h-11 w-11 bg-slate-900 text-sm text-white shadow-sm"
-                />
+                <button
+                  type="button"
+                  className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm transition hover:scale-[1.02]"
+                  onClick={() => setConversationInfoOpen(true)}
+                  aria-label="查看资料"
+                >
+                  <SupportAvatarBadge
+                    label={selectedConversationAvatarLabel}
+                    imageUrl={selectedConversationAvatarImageUrl}
+                    imageAlt={selectedConversationName}
+                    className="flex h-full w-full items-center justify-center bg-slate-900 text-white"
+                    labelClassName="text-sm font-semibold text-white"
+                  />
+                </button>
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <div className="truncate text-[15px] font-semibold text-slate-900">{selectedConversationName}</div>
@@ -2476,6 +2653,7 @@ export default function MePage() {
       {mobileTab === "conversations" && mobileConversationView === "thread" ? null : (
         <MobileBottomNav activeTab={mobileTab} onChange={setMobileTab} />
       )}
+      {renderConversationInfoOverlay()}
     </>
   );
 }
