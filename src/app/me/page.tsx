@@ -149,7 +149,13 @@ const EMPTY_PERSONAL_PROFILE: PersonalProfileDraft = {
 };
 
 function trimText(value: unknown) {
-  return typeof value === "string" ? value.trim() : "";
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return "";
+}
+
+function readRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
 function readPayloadMessage(value: unknown, fallback: string) {
@@ -198,7 +204,7 @@ function readPersonalProfile(payload: MeSessionPayload | null): PersonalProfileD
     avatarUrl: read("avatarUrl", "avatar_url", "personalAvatarUrl", "chatAvatarImageUrl"),
     signature: read("signature", "bio"),
     phone: read("phone", "contact_phone", "contactPhone"),
-    email: read("email", "contact_email", "contactEmail") || payload?.user?.email?.trim() || "",
+    email: read("email", "contact_email", "contactEmail") || trimText(payload?.user?.email),
     contactCard: read("contactCard", "contact_card", "businessCardUrl", "business_card_url"),
     birthday: read("birthday", "birthdate"),
     gender: read("gender"),
@@ -219,19 +225,103 @@ function mergePersonalProfileDraft(base: PersonalProfileDraft, patch: Partial<Pe
   return next;
 }
 
-function getInitialLabel(value: string) {
-  const trimmed = value.trim();
+function getInitialLabel(value: unknown) {
+  const trimmed = trimText(value);
   if (!trimmed) return "我";
   const first = Array.from(trimmed)[0] ?? "我";
   return first.toUpperCase();
 }
 
-function getSupportContactAvatarLabel(value: string, fallback = "商") {
-  const trimmed = value.trim();
+function getSupportContactAvatarLabel(value: unknown, fallback = "商") {
+  const trimmed = trimText(value);
   if (!trimmed) return fallback;
   const first = Array.from(trimmed)[0] ?? fallback;
   if (/^[a-z]$/i.test(first)) return first.toUpperCase();
   return first;
+}
+
+function sanitizeMerchantPeerMessage(value: unknown): MerchantPeerThread["messages"][number] | null {
+  const record = readRecord(value);
+  if (!record) return null;
+
+  const senderMerchantId = trimText(record.senderMerchantId);
+  const text = trimText(record.text);
+  const createdAt = trimText(record.createdAt);
+  const id = trimText(record.id) || [senderMerchantId, createdAt, text.slice(0, 24)].filter(Boolean).join(":");
+  if (!id && !text && !createdAt) return null;
+
+  return {
+    id: id || `message:${Date.now()}`,
+    senderMerchantId,
+    text,
+    createdAt,
+  };
+}
+
+function sanitizeMerchantPeerContactSummary(value: unknown): MerchantPeerContactSummary | null {
+  const record = readRecord(value);
+  if (!record) return null;
+
+  const merchantId = trimText(record.merchantId);
+  if (!merchantId) return null;
+
+  const accountType =
+    record.accountType === "personal" || record.accountType === "merchant" ? record.accountType : undefined;
+  const savedAt = trimText(record.savedAt);
+  const chatBusinessCard = readRecord(record.chatBusinessCard)
+    ? (record.chatBusinessCard as MerchantPeerContactSummary["chatBusinessCard"])
+    : null;
+
+  const contact: MerchantPeerContactSummary = {
+    merchantId,
+    merchantName: trimText(record.merchantName) || merchantId,
+    merchantEmail: trimText(record.merchantEmail),
+    savedAt,
+    updatedAt: trimText(record.updatedAt) || savedAt,
+    lastMessage: sanitizeMerchantPeerMessage(record.lastMessage),
+  };
+
+  if (accountType) contact.accountType = accountType;
+  const avatarImageUrl = trimText(record.avatarImageUrl);
+  const chatAvatarImageUrl = trimText(record.chatAvatarImageUrl);
+  const signature = trimText(record.signature);
+  const contactPhone = trimText(record.contactPhone);
+  const contactCard = trimText(record.contactCard);
+  if (avatarImageUrl) contact.avatarImageUrl = avatarImageUrl;
+  if (chatAvatarImageUrl) contact.chatAvatarImageUrl = chatAvatarImageUrl;
+  if (signature) contact.signature = signature;
+  if (contactPhone) contact.contactPhone = contactPhone;
+  if (contactCard) contact.contactCard = contactCard;
+  if (chatBusinessCard) contact.chatBusinessCard = chatBusinessCard;
+
+  return contact;
+}
+
+function sanitizeMerchantPeerThread(value: unknown): MerchantPeerThread | null {
+  const record = readRecord(value);
+  if (!record) return null;
+
+  const merchantAId = trimText(record.merchantAId);
+  const merchantBId = trimText(record.merchantBId);
+  const messages = Array.isArray(record.messages)
+    ? record.messages
+        .map(sanitizeMerchantPeerMessage)
+        .filter((message): message is MerchantPeerThread["messages"][number] => message !== null)
+    : [];
+
+  if (!merchantAId && !merchantBId && messages.length === 0) return null;
+
+  return {
+    threadKey: trimText(record.threadKey) || [merchantAId, merchantBId].filter(Boolean).join(":"),
+    merchantAId,
+    merchantAName: trimText(record.merchantAName) || merchantAId,
+    merchantAEmail: trimText(record.merchantAEmail),
+    merchantBId,
+    merchantBName: trimText(record.merchantBName) || merchantBId,
+    merchantBEmail: trimText(record.merchantBEmail),
+    updatedAt: trimText(record.updatedAt),
+    messages,
+  };
 }
 
 function buildVisibleSupportMessageKey(message: Pick<PersonalVisibleSupportMessage, "id" | "createdAt">) {
@@ -933,7 +1023,7 @@ export default function MePage() {
     payload && typeof payload.accountId === "string" && /^\d{8}$/.test(payload.accountId.trim())
       ? payload.accountId.trim()
       : "";
-  const email = payload?.user?.email?.trim() ?? "";
+  const email = trimText(payload?.user?.email);
   const personalProfile = useMemo(() => readPersonalProfile(payload), [payload]);
   const displayName = personalProfile.displayName || readDisplayName(payload);
   const profileName = displayName || email.split("@")[0] || accountId || "个人用户";
@@ -1023,21 +1113,26 @@ export default function MePage() {
     if (!keyword) return true;
     return ["faolla", "官方", "客服"].some((item) => item.toLowerCase().includes(keyword) || keyword.includes(item.toLowerCase()));
   }, [supportContactKeyword]);
-  const selectedConversationName = selectedConversationIsOfficial
-    ? "Faolla"
-    : selectedPeerContact?.merchantName || selectedPeerMerchantId || "商户";
+  const selectedPeerContactName = trimText(selectedPeerContact?.merchantName) || selectedPeerMerchantId || "商户";
+  const selectedPeerContactEmail = trimText(selectedPeerContact?.merchantEmail);
+  const selectedPeerContactSignature = trimText(selectedPeerContact?.signature);
+  const selectedPeerContactPhone = trimText(selectedPeerContact?.contactPhone);
+  const selectedPeerContactCard = trimText(selectedPeerContact?.contactCard);
+  const selectedPeerContactAvatarImageUrl =
+    trimText(selectedPeerContact?.avatarImageUrl) || trimText(selectedPeerContact?.chatAvatarImageUrl);
+  const selectedConversationName = selectedConversationIsOfficial ? "Faolla" : selectedPeerContactName;
   const selectedConversationMeta = selectedConversationIsOfficial
     ? "www.faolla.com"
-    : [selectedPeerMerchantId, selectedPeerContact?.merchantEmail].filter(Boolean).join(" / ");
+    : [selectedPeerMerchantId, selectedPeerContactEmail].filter(Boolean).join(" / ");
   const selectedConversationAvatarLabel = selectedConversationIsOfficial
     ? "FA"
     : getSupportContactAvatarLabel(selectedConversationName, "商");
   const selectedConversationAvatarImageUrl = selectedConversationIsOfficial
     ? ""
-    : selectedPeerContact?.avatarImageUrl || selectedPeerContact?.chatAvatarImageUrl || "";
+    : selectedPeerContactAvatarImageUrl;
   const selectedConversationInfoSubtitle = selectedConversationIsOfficial
     ? "官方客服"
-    : selectedPeerContact?.signature || selectedConversationMeta || "商户资料";
+    : selectedPeerContactSignature || selectedConversationMeta || "商户资料";
   const selectedConversationInfoItems = useMemo<ConversationInfoItem[]>(() => {
     if (selectedConversationIsOfficial) {
       return [
@@ -1052,38 +1147,35 @@ export default function MePage() {
       ];
     }
 
-    const contactCard = String(selectedPeerContact?.contactCard ?? "").trim();
-    const phone = String(selectedPeerContact?.contactPhone ?? "").trim();
-    const contactEmail = String(selectedPeerContact?.merchantEmail ?? "").trim();
     const items: ConversationInfoItem[] = [
       { label: "ID", value: selectedPeerMerchantId || "-" },
       { label: "类型", value: selectedPeerContact?.accountType === "personal" ? "个人用户" : "商户" },
       {
         label: "电话",
-        value: phone || "-",
-        href: phone ? normalizeExternalInfoUrl(phone) : "",
+        value: selectedPeerContactPhone || "-",
+        href: selectedPeerContactPhone ? normalizeExternalInfoUrl(selectedPeerContactPhone) : "",
       },
       {
         label: "邮箱",
-        value: contactEmail || "-",
-        href: contactEmail ? normalizeExternalInfoUrl(contactEmail) : "",
+        value: selectedPeerContactEmail || "-",
+        href: selectedPeerContactEmail ? normalizeExternalInfoUrl(selectedPeerContactEmail) : "",
       },
       {
         label: "联系卡",
-        value: contactCard || "-",
-        href: contactCard ? normalizeExternalInfoUrl(contactCard) : "",
+        value: selectedPeerContactCard || "-",
+        href: selectedPeerContactCard ? normalizeExternalInfoUrl(selectedPeerContactCard) : "",
         openInNewTab: true,
       },
-      { label: "个性签名", value: String(selectedPeerContact?.signature ?? "").trim() || "-" },
+      { label: "个性签名", value: selectedPeerContactSignature || "-" },
     ];
     return items;
   }, [
     selectedConversationIsOfficial,
     selectedPeerContact?.accountType,
-    selectedPeerContact?.contactCard,
-    selectedPeerContact?.contactPhone,
-    selectedPeerContact?.merchantEmail,
-    selectedPeerContact?.signature,
+    selectedPeerContactCard,
+    selectedPeerContactEmail,
+    selectedPeerContactPhone,
+    selectedPeerContactSignature,
     selectedPeerMerchantId,
   ]);
   const selectedConversationLoading = selectedConversationIsOfficial ? supportLoading : peerLoading;
@@ -1107,17 +1199,25 @@ export default function MePage() {
       avatarImageUrl: "",
       isOfficial: true,
     },
-    ...peerContacts.map((contact): SupportContactRow => ({
-      key: `merchant:${contact.merchantId}`,
-      name: contact.merchantName || contact.merchantId,
-      subtitle: contact.merchantId,
-      preview: formatSupportConversationPreview(contact.lastMessage?.text) || "还没有聊天记录，可以直接开始对话。",
-      updatedAt: contact.updatedAt || contact.savedAt,
-      unread: false,
-      avatarLabel: getSupportContactAvatarLabel(contact.merchantName || contact.merchantId, "商"),
-      avatarImageUrl: contact.avatarImageUrl || contact.chatAvatarImageUrl || "",
-      isOfficial: false,
-    })),
+    ...peerContacts.flatMap((contact): SupportContactRow[] => {
+      const contactId = trimText(contact.merchantId);
+      if (!contactId) return [];
+      const contactName = trimText(contact.merchantName) || contactId;
+      const avatarImageUrl = trimText(contact.avatarImageUrl) || trimText(contact.chatAvatarImageUrl);
+      return [
+        {
+          key: `merchant:${contactId}`,
+          name: contactName,
+          subtitle: contactId,
+          preview: formatSupportConversationPreview(contact.lastMessage?.text) || "还没有聊天记录，可以直接开始对话。",
+          updatedAt: trimText(contact.updatedAt) || trimText(contact.savedAt),
+          unread: false,
+          avatarLabel: getSupportContactAvatarLabel(contactName || contactId, "商"),
+          avatarImageUrl,
+          isOfficial: false,
+        },
+      ];
+    }),
   ];
   const mobileSupportContactListSummary = `全部 ${supportContactRows.length} 个会话已读`;
 
@@ -1173,8 +1273,18 @@ export default function MePage() {
       if (!response.ok || !result || result.ok !== true) {
         throw new Error(typeof result?.error === "string" ? result.error : "peer_load_failed");
       }
-      setPeerContacts(Array.isArray(result.contacts) ? result.contacts : []);
-      setPeerThreads(Array.isArray(result.threads) ? result.threads : []);
+      const nextContacts = Array.isArray(result.contacts)
+        ? result.contacts
+            .map(sanitizeMerchantPeerContactSummary)
+            .filter((contact): contact is MerchantPeerContactSummary => contact !== null)
+        : [];
+      const nextThreads = Array.isArray(result.threads)
+        ? result.threads
+            .map(sanitizeMerchantPeerThread)
+            .filter((thread): thread is MerchantPeerThread => thread !== null)
+        : [];
+      setPeerContacts(nextContacts);
+      setPeerThreads(nextThreads);
     } catch {
       setSupportError("商户会话加载失败，请稍后重试。");
     } finally {
