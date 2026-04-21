@@ -65,6 +65,16 @@ type MerchantPeerProfile = {
   email: string;
   phone: string;
   contactCard: string;
+  industry: string;
+  location: MerchantListPublishedSite["location"] | null;
+  contactName: string;
+  contactAddress: string;
+  domain: string;
+  domainPrefix: string;
+  domainSuffix: string;
+  merchantCardImageUrl: string;
+  contactVisibility: MerchantListPublishedSite["contactVisibility"] | null;
+  chatBusinessCard: MerchantListPublishedSite["chatBusinessCard"] | null;
 };
 
 type MerchantPeerSessionHintInput = {
@@ -173,7 +183,13 @@ async function loadPersonalPeerProfiles(
 }
 
 function readMerchantPeerProfile(site: MerchantListPublishedSite): MerchantPeerProfile {
-  const avatarUrl = normalizeStoragePublicUrl(site.chatAvatarImageUrl) || normalizeStoragePublicUrl(site.merchantCardImageUrl);
+  const merchantCardImageUrl = normalizeStoragePublicUrl(site.merchantCardImageUrl);
+  const avatarUrl = normalizeStoragePublicUrl(site.chatAvatarImageUrl) || merchantCardImageUrl;
+  const chatBusinessCard =
+    site.chatBusinessCard ??
+    (Array.isArray(site.businessCards)
+      ? site.businessCards.find((card) => card && card.showInChat !== false && card.chatDisplayDisabled !== true) ?? null
+      : null);
   return {
     accountType: "merchant",
     displayName: trimText(site.merchantName) || trimText(site.name) || trimText(site.id),
@@ -181,7 +197,17 @@ function readMerchantPeerProfile(site: MerchantListPublishedSite): MerchantPeerP
     signature: trimText(site.signature),
     email: normalizeEmail(site.contactEmail),
     phone: trimText(site.contactPhone),
-    contactCard: normalizeStoragePublicUrl(site.merchantCardImageUrl),
+    contactCard: merchantCardImageUrl,
+    industry: trimText(site.industry),
+    location: site.location ?? null,
+    contactName: trimText(site.contactName),
+    contactAddress: trimText(site.contactAddress),
+    domain: trimText(site.domain),
+    domainPrefix: trimText(site.domainPrefix),
+    domainSuffix: trimText(site.domainSuffix),
+    merchantCardImageUrl,
+    contactVisibility: site.contactVisibility ?? null,
+    chatBusinessCard,
   };
 }
 
@@ -374,6 +400,20 @@ async function buildInboxResponse(
       signature: peerProfile.signature,
       contactPhone: peerProfile.phone,
       contactCard: peerProfile.contactCard,
+      ...(merchantProfile
+        ? {
+            industry: merchantProfile.industry,
+            location: merchantProfile.location,
+            contactName: merchantProfile.contactName,
+            contactAddress: merchantProfile.contactAddress,
+            domain: merchantProfile.domain,
+            domainPrefix: merchantProfile.domainPrefix,
+            domainSuffix: merchantProfile.domainSuffix,
+            merchantCardImageUrl: merchantProfile.merchantCardImageUrl,
+            contactVisibility: merchantProfile.contactVisibility,
+            chatBusinessCard: merchantProfile.chatBusinessCard,
+          }
+        : {}),
     };
   });
   const threads = listMerchantPeerThreadsForMerchant(payload, merchantId);

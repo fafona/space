@@ -763,10 +763,10 @@ function buildContactPreviewRows(
 
 function buildInvoicePreviewRows(invoice: MerchantBusinessCardDraft["invoice"]) {
   const rows: Array<{ label: string; value: string }> = [];
-  for (const { key, summaryLabel } of INVOICE_FIELDS) {
+  for (const { key, label } of INVOICE_FIELDS) {
     const value = normalizeText(invoice[key]);
     if (!value) continue;
-    rows.push({ label: summaryLabel, value });
+    rows.push({ label, value });
   }
   return rows;
 }
@@ -788,7 +788,8 @@ function ContactCardSurface({
   imageUrl?: string;
   imageHeight: number;
 }) {
-  const rows = [...buildContactPreviewRows(name, contacts, contactFieldOrder), ...buildInvoicePreviewRows(invoice)];
+  const rows = buildContactPreviewRows(name, contacts, contactFieldOrder);
+  const invoiceRows = buildInvoicePreviewRows(invoice);
   const displayName = normalizeText(name) || "未命名名片";
   const hasImage = Boolean(normalizeText(imageUrl));
   const domainLabel = normalizeText(targetUrl).replace(/^https?:\/\//i, "");
@@ -814,6 +815,20 @@ function ContactCardSurface({
         <div className={`rounded-[28px] border border-slate-200 bg-slate-50 p-5 shadow-[0_16px_42px_rgba(15,23,42,.08)] ${hasImage ? "mt-5" : ""}`}>
           <div className="space-y-4 text-slate-800">
             {rows.map((row) => (
+              <div key={`${row.label}-${row.value}`} className="text-sm leading-7 text-slate-700">
+                <span className="font-semibold text-slate-900">{row.label}：</span>
+                <span className="break-words">{row.value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {invoiceRows.length > 0 ? (
+        <div className="mt-5 rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_16px_42px_rgba(15,23,42,.08)]">
+          <div className="mb-3 text-sm font-semibold text-slate-900">开票信息</div>
+          <div className="space-y-4 text-slate-800">
+            {invoiceRows.map((row) => (
               <div key={`${row.label}-${row.value}`} className="text-sm leading-7 text-slate-700">
                 <span className="font-semibold text-slate-900">{row.label}：</span>
                 <span className="break-words">{row.value}</span>
@@ -1141,7 +1156,7 @@ export default function MerchantBusinessCardManager({
   }, [normalizedCards, onCardsChange]);
 
   const applyDraft = (recipe: (current: MerchantBusinessCardDraft) => MerchantBusinessCardDraft) => {
-    setDraft((current) => normalizeMerchantBusinessCardDraft(recipe(current)));
+    setDraft((current) => recipe(current));
   };
 
   const setSingleSelectedField = (selectionKey: string) => {

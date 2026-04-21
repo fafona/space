@@ -180,6 +180,56 @@ function buildCopyActionHtml(rawValue: string, label: string) {
   </button>`;
 }
 
+function buildInvoiceSummaryRows(contact?: MerchantBusinessCardShareContact): SummaryRow[] {
+  return [
+    contact?.invoiceName
+      ? {
+          label: "\u540d\u79f0",
+          value: contact.invoiceName,
+          actionHtml: buildCopyActionHtml(contact.invoiceName, "\u540d\u79f0"),
+        }
+      : null,
+    contact?.invoiceTaxNumber
+      ? {
+          label: "\u7a0e\u53f7",
+          value: contact.invoiceTaxNumber,
+          actionHtml: buildCopyActionHtml(contact.invoiceTaxNumber, "\u7a0e\u53f7"),
+        }
+      : null,
+    contact?.invoiceAddress
+      ? {
+          label: "\u5730\u5740",
+          value: contact.invoiceAddress,
+          actionHtml: buildCopyActionHtml(contact.invoiceAddress, "\u5730\u5740"),
+        }
+      : null,
+  ].filter((item): item is SummaryRow => !!item);
+}
+
+function buildSummaryRowsHtml(rows: SummaryRow[]) {
+  return rows
+    .map(
+      (row) => `
+        <div class="summary-row">
+          <div class="summary-copy">
+            <strong class="summary-label">${escapeHtml(row.label)}：</strong>
+            <span class="summary-value" data-no-translate="1">${escapeHtml(row.value)}</span>
+          </div>
+          ${row.actionHtml ? `<div class="summary-action">${row.actionHtml}</div>` : ""}
+        </div>`,
+    )
+    .join("");
+}
+
+function buildInvoiceSummarySectionHtml(rows: SummaryRow[]) {
+  if (rows.length === 0) return "";
+  return `
+    <div class="invoice-summary">
+      <div class="invoice-title">\u5f00\u7968\u4fe1\u606f</div>
+      <div class="invoice-body">${buildSummaryRowsHtml(rows)}</div>
+    </div>`;
+}
+
 function buildSummaryActionHtmlFromKey(key: MerchantBusinessCardContactDisplayKey, label: string, value: string) {
   const normalizedValue = normalizeText(value);
   if (!normalizedValue) return "";
@@ -1158,23 +1208,15 @@ function buildContactSummaryHtmlLegacy(input: {
         }
       : null,
   ].filter(Boolean) as Array<{ label: string; value: string; actionHtml: string }>;
+  const invoiceRows = buildInvoiceSummaryRows(input.contact);
+  const invoiceLegacyLabels = new Set(["\u5f00\u7968\u540d\u79f0", "\u7a0e\u53f7", "\u5f00\u7968\u5730\u5740"]);
+  const contactRows = rows.filter((row) => !invoiceLegacyLabels.has(row.label));
 
-  if (rows.length === 0) {
+  if (contactRows.length === 0 && invoiceRows.length === 0) {
     return `<div class="summary-row"><span class="summary-value" data-no-translate="1">${escapeHtml(normalizeText(input.name) || "电子名片")}</span></div>`;
   }
 
-  return rows
-    .map(
-      (row) => `
-        <div class="summary-row">
-          <div class="summary-copy">
-            <strong class="summary-label">${escapeHtml(row.label)}：</strong>
-            <span class="summary-value" data-no-translate="1">${escapeHtml(row.value)}</span>
-          </div>
-          ${row.actionHtml ? `<div class="summary-action">${row.actionHtml}</div>` : ""}
-        </div>`,
-    )
-    .join("");
+  return `${buildSummaryRowsHtml(contactRows)}${buildInvoiceSummarySectionHtml(invoiceRows)}`;
 }
 
 function buildContactSummaryHtml(input: {
@@ -1202,9 +1244,9 @@ function buildOrderedContactSummaryHtml(input: {
   const invoiceRows = [
     contact.invoiceName
       ? {
-          label: "开票名称",
+          label: "\u540d\u79f0",
           value: contact.invoiceName,
-          actionHtml: buildCopyActionHtml(contact.invoiceName, "开票名称"),
+          actionHtml: buildCopyActionHtml(contact.invoiceName, "\u540d\u79f0"),
         }
       : null,
     contact.invoiceTaxNumber
@@ -1216,9 +1258,9 @@ function buildOrderedContactSummaryHtml(input: {
       : null,
     contact.invoiceAddress
       ? {
-          label: "开票地址",
+          label: "\u5730\u5740",
           value: contact.invoiceAddress,
-          actionHtml: buildCopyActionHtml(contact.invoiceAddress, "开票地址"),
+          actionHtml: buildCopyActionHtml(contact.invoiceAddress, "\u5730\u5740"),
         }
       : null,
   ].filter((item): item is SummaryRow => !!item);
@@ -1466,7 +1508,6 @@ function buildOrderedContactSummaryHtml(input: {
 
   const fallbackRowsByKey = buildContactNoteFallbackRows(contact.note);
   const rows: SummaryRow[] = [];
-  let appendedInvoiceRows = false;
   if (contact.title) {
     rows.push({
       label: "职位",
@@ -1483,32 +1524,13 @@ function buildOrderedContactSummaryHtml(input: {
       mergedRows.push(fallbackRow);
     }
     rows.push(...mergedRows);
-    if (key === "address" && invoiceRows.length > 0) {
-      rows.push(...invoiceRows);
-      appendedInvoiceRows = true;
-    }
   }
 
-  if (!appendedInvoiceRows && invoiceRows.length > 0) {
-    rows.push(...invoiceRows);
-  }
-
-  if (rows.length === 0) {
+  if (rows.length === 0 && invoiceRows.length === 0) {
     return `<div class="summary-row"><span class="summary-value" data-no-translate="1">${escapeHtml(normalizeText(input.name) || "电子名片")}</span></div>`;
   }
 
-  return rows
-    .map(
-      (row) => `
-        <div class="summary-row">
-          <div class="summary-copy">
-            <strong class="summary-label">${escapeHtml(row.label)}：</strong>
-            <span class="summary-value" data-no-translate="1">${escapeHtml(row.value)}</span>
-          </div>
-          ${row.actionHtml ? `<div class="summary-action">${row.actionHtml}</div>` : ""}
-        </div>`,
-    )
-    .join("");
+  return `${buildSummaryRowsHtml(rows)}${buildInvoiceSummarySectionHtml(invoiceRows)}`;
 }
 
 function buildShareCardHtml(input: {
@@ -1687,6 +1709,22 @@ function buildShareCardHtml(input: {
       }
       .summary-action {
         flex-shrink: 0;
+      }
+      .invoice-summary {
+        margin-top: 16px;
+        border-radius: 18px;
+        border: 1px solid rgba(15,23,42,.1);
+        background: rgba(248,250,252,.9);
+        padding: 14px;
+      }
+      .invoice-title {
+        margin-bottom: 10px;
+        font-size: 14px;
+        font-weight: 700;
+        color: #0f172a;
+      }
+      .invoice-body .summary-row:first-child {
+        margin-top: 0;
       }
       .inline-action {
         display: inline-flex;

@@ -4831,17 +4831,6 @@ function buildVisibleSupportMessageKey(message: {
   return `${message.id}:${normalizeSupportMessageTimestamp(message.createdAt) || message.createdAt}:${message.localStatus ?? "server"}`;
 }
 
-function scrollSupportMessageToViewportTop(
-  viewport: HTMLDivElement,
-  target: HTMLElement,
-  behavior: ScrollBehavior,
-) {
-  const viewportRect = viewport.getBoundingClientRect();
-  const targetRect = target.getBoundingClientRect();
-  const nextTop = viewport.scrollTop + (targetRect.top - viewportRect.top);
-  viewport.scrollTo({ top: Math.max(0, nextTop), behavior });
-}
-
 export default function AdminClient({
   forcedScope,
   editorTitle = "页面编辑",
@@ -9859,39 +9848,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const latestVisibleSupportMessageKey = latestVisibleSupportMessage
     ? buildVisibleSupportMessageKey(latestVisibleSupportMessage)
     : "";
-  const selectedSupportFirstUnreadMessageKey = useMemo(() => {
-    if (supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY) {
-      if (!supportReadMerchantId || !supportReadStateHydrated.official) return "";
-      const lastReadTimestamp = new Date(supportLastReadAt || 0).getTime();
-      const firstUnreadMessage = officialVisibleSupportMessages.find((message) => {
-        if (message.sender !== "super_admin") return false;
-        const createdAt = new Date(normalizeSupportMessageTimestamp(message.createdAt) || 0).getTime();
-        return createdAt > lastReadTimestamp;
-      });
-      return firstUnreadMessage ? buildVisibleSupportMessageKey(firstUnreadMessage) : "";
-    }
-    if (!currentSupportMerchantId || !selectedSupportPeerMerchantId || !supportReadStateHydrated.peer) return "";
-    const lastReadTimestamp = new Date(
-      normalizeSupportMessageTimestamp(supportPeerLastReadMap[selectedSupportPeerMerchantId]) || 0,
-    ).getTime();
-    const firstUnreadMessage = peerVisibleSupportMessages.find((message) => {
-      if (message.senderMerchantId === currentSupportMerchantId) return false;
-      const createdAt = new Date(normalizeSupportMessageTimestamp(message.createdAt) || 0).getTime();
-      return createdAt > lastReadTimestamp;
-    });
-    return firstUnreadMessage ? buildVisibleSupportMessageKey(firstUnreadMessage) : "";
-  }, [
-    currentSupportMerchantId,
-    officialVisibleSupportMessages,
-    peerVisibleSupportMessages,
-    selectedSupportPeerMerchantId,
-    supportLastReadAt,
-    supportPeerLastReadMap,
-    supportReadMerchantId,
-    supportReadStateHydrated.official,
-    supportReadStateHydrated.peer,
-    supportSelectedContactKey,
-  ]);
   const selectedSupportDisplayName =
     supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY
       ? supportOfficialName
@@ -10278,8 +10234,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY || !!selectedSupportPeerContact;
   const supportComposerBusy = supportSending || supportAttachmentBusy;
   const supportCanSend = !!supportDraft.trim() && supportComposerAvailable;
-  const supportInterfaceOpen = supportDialogOpen || isMobileMerchantSupportOnlyMode;
-  const isMobileSupportDialog = supportInterfaceOpen && !isPlatformEditor && !isDesktopEditorSidebar;
+  const supportDesktopPanelOpen =
+    !isPlatformEditor && (forceDesktopEditorSidebar || isDesktopEditorSidebar) && merchantDesktopSection === "support";
+  const supportInterfaceOpen = supportDialogOpen || isMobileMerchantSupportOnlyMode || supportDesktopPanelOpen;
+  const isMobileSupportDialog = supportInterfaceOpen && !supportDesktopPanelOpen && !isPlatformEditor && !isDesktopEditorSidebar;
   const isIosSupportBrowser =
     typeof navigator !== "undefined" && /iPhone|iPad|iPod/i.test(String(navigator.userAgent ?? ""));
   const selectedSupportConversationVisible = !isMobileSupportDialog || supportMobileView === "thread";
@@ -12471,21 +12429,13 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     const shouldScrollForNewMessage =
       !!latestVisibleSupportMessageKey && supportLastVisibleMessageKeyRef.current !== latestVisibleSupportMessageKey;
     if (!shouldScrollToInitialTarget && !shouldScrollForNewMessage) return;
-    const targetMessageKey = shouldScrollToInitialTarget ? selectedSupportFirstUnreadMessageKey : "";
     const behavior: ScrollBehavior = shouldScrollToInitialTarget || !supportLastVisibleMessageKeyRef.current ? "auto" : "smooth";
     supportScrollToLatestPendingRef.current = false;
     supportLastVisibleMessageKeyRef.current = latestVisibleSupportMessageKey;
     const rafIds = new Set<number>();
-    const timers = [0, 120].map((delay) =>
+    const timers = [0, 80, 240, 600].map((delay) =>
       window.setTimeout(() => {
         const rafId = window.requestAnimationFrame(() => {
-          if (targetMessageKey) {
-            const target = supportMessageElementByKeyRef.current[targetMessageKey];
-            if (target) {
-              scrollSupportMessageToViewportTop(viewport, target, behavior);
-              return;
-            }
-          }
           viewport.scrollTo({ top: viewport.scrollHeight, behavior });
         });
         rafIds.add(rafId);
@@ -12499,7 +12449,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     isPlatformEditor,
     latestVisibleSupportMessageKey,
     selectedSupportConversationVisible,
-    selectedSupportFirstUnreadMessageKey,
     selectedSupportLoading,
     supportInterfaceOpen,
   ]);

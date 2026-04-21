@@ -457,12 +457,24 @@ export function SitePageClient({
     return Math.max(max, value);
   }, 0);
   const backgroundExtendPadding = Math.max(0, maxBlockOffsetY) + 160;
+  const showMerchantLoginButton = Boolean(siteId && siteId !== "site-main");
 
   return (
     <main
       className="min-h-screen w-full overflow-x-hidden bg-gray-50 py-8"
       style={{ ...pageBackgroundStyle, paddingBottom: `calc(2rem + ${backgroundExtendPadding}px)` }}
     >
+      {showMerchantLoginButton ? (
+        <div className="fixed right-3 top-3 z-[2147482000] md:right-6 md:top-6">
+          <Link
+            href="/login"
+            className="inline-flex items-center rounded-full border border-slate-200/80 bg-white/90 px-4 py-2 text-sm font-semibold text-slate-900 shadow-[0_12px_30px_rgba(15,23,42,0.14)] backdrop-blur transition hover:bg-white"
+            aria-label="登录"
+          >
+            登录
+          </Link>
+        </div>
+      ) : null}
       <BlockRenderer
         blocks={activeBlocks}
         currentPageId={activePage?.id}

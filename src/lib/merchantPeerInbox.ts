@@ -1,4 +1,5 @@
 import type { MerchantBusinessCardAsset } from "@/lib/merchantBusinessCards";
+import type { MerchantContactVisibility, SiteLocation } from "@/data/platformControlStore";
 
 type StoredBlock = {
   id?: unknown;
@@ -46,8 +47,17 @@ export type MerchantPeerContactSummary = {
   avatarImageUrl?: string;
   chatAvatarImageUrl?: string;
   signature?: string;
+  industry?: string;
+  location?: Partial<SiteLocation> | null;
+  contactName?: string;
   contactPhone?: string;
   contactCard?: string;
+  contactAddress?: string;
+  domain?: string;
+  domainPrefix?: string;
+  domainSuffix?: string;
+  merchantCardImageUrl?: string;
+  contactVisibility?: MerchantContactVisibility | null;
   chatBusinessCard?: MerchantBusinessCardAsset | null;
   savedAt: string;
   updatedAt: string;

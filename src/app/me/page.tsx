@@ -10,8 +10,12 @@ import {
   getEuropeProvinceOptions,
 } from "@/lib/europeLocationOptions";
 import { LANGUAGE_OPTIONS } from "@/lib/i18n";
+import { buildMerchantBusinessCardShareUrl, resolveMerchantBusinessCardShareOrigin } from "@/lib/merchantBusinessCardShare";
+import { buildMerchantFrontendHref } from "@/lib/siteRouting";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import SupportMessageContent from "@/components/support/SupportMessageContent";
+import type { MerchantBusinessCardAsset } from "@/lib/merchantBusinessCards";
+import type { MerchantContactVisibility, SiteLocation } from "@/data/platformControlStore";
 import {
   findMerchantPeerThreadForMerchants,
   type MerchantPeerContactSummary,
@@ -332,13 +336,40 @@ function sanitizeMerchantPeerContactSummary(value: unknown): MerchantPeerContact
   const avatarImageUrl = trimText(record.avatarImageUrl);
   const chatAvatarImageUrl = trimText(record.chatAvatarImageUrl);
   const signature = trimText(record.signature);
+  const industry = trimText(record.industry);
+  const contactName = trimText(record.contactName);
   const contactPhone = trimText(record.contactPhone);
   const contactCard = trimText(record.contactCard);
+  const contactAddress = trimText(record.contactAddress);
+  const domain = trimText(record.domain);
+  const domainPrefix = trimText(record.domainPrefix);
+  const domainSuffix = trimText(record.domainSuffix);
+  const merchantCardImageUrl = trimText(record.merchantCardImageUrl);
+  const locationRecord = readRecord(record.location);
   if (avatarImageUrl) contact.avatarImageUrl = avatarImageUrl;
   if (chatAvatarImageUrl) contact.chatAvatarImageUrl = chatAvatarImageUrl;
   if (signature) contact.signature = signature;
+  if (industry) contact.industry = industry;
+  if (contactName) contact.contactName = contactName;
   if (contactPhone) contact.contactPhone = contactPhone;
   if (contactCard) contact.contactCard = contactCard;
+  if (contactAddress) contact.contactAddress = contactAddress;
+  if (domain) contact.domain = domain;
+  if (domainPrefix) contact.domainPrefix = domainPrefix;
+  if (domainSuffix) contact.domainSuffix = domainSuffix;
+  if (merchantCardImageUrl) contact.merchantCardImageUrl = merchantCardImageUrl;
+  if (locationRecord) {
+    contact.location = {
+      countryCode: trimText(locationRecord.countryCode),
+      country: trimText(locationRecord.country),
+      provinceCode: trimText(locationRecord.provinceCode),
+      province: trimText(locationRecord.province),
+      city: trimText(locationRecord.city),
+    };
+  }
+  if (record.contactVisibility !== undefined) {
+    contact.contactVisibility = normalizeConversationContactVisibility(record.contactVisibility);
+  }
   if (chatBusinessCard) contact.chatBusinessCard = chatBusinessCard;
 
   return contact;
@@ -579,6 +610,184 @@ function normalizeExternalInfoUrl(value: string | null | undefined) {
   if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) return `mailto:${normalized}`;
   if (/^\+?[\d\s().-]{5,}$/.test(normalized)) return `tel:${normalized.replace(/\s+/g, "")}`;
   return `https://${normalized.replace(/^\/+/, "")}`;
+}
+
+const DEFAULT_MERCHANT_CONTACT_VISIBILITY: MerchantContactVisibility = {
+  phoneHidden: false,
+  emailHidden: false,
+  businessCardHidden: false,
+};
+
+function normalizeConversationDetailText(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeConversationDisplayValue(value: unknown) {
+  const normalized = normalizeConversationDetailText(value);
+  return normalized && normalized !== "-" ? normalized : "";
+}
+
+function normalizeConversationContactVisibility(value: unknown): MerchantContactVisibility {
+  const source = readRecord(value);
+  return {
+    phoneHidden:
+      typeof source?.phoneHidden === "boolean" ? source.phoneHidden : DEFAULT_MERCHANT_CONTACT_VISIBILITY.phoneHidden,
+    emailHidden:
+      typeof source?.emailHidden === "boolean" ? source.emailHidden : DEFAULT_MERCHANT_CONTACT_VISIBILITY.emailHidden,
+    businessCardHidden:
+      typeof source?.businessCardHidden === "boolean"
+        ? source.businessCardHidden
+        : DEFAULT_MERCHANT_CONTACT_VISIBILITY.businessCardHidden,
+  };
+}
+
+function buildConversationMerchantCardShareContact(card: MerchantBusinessCardAsset) {
+  const contacts =
+    card.contacts && typeof card.contacts === "object"
+      ? (card.contacts as Partial<MerchantBusinessCardAsset["contacts"]>)
+      : {};
+  const invoice =
+    card.invoice && typeof card.invoice === "object"
+      ? (card.invoice as Partial<MerchantBusinessCardAsset["invoice"]>)
+      : {};
+  return {
+    displayName: normalizeConversationDetailText(contacts.contactName) || normalizeConversationDetailText(card.name),
+    organization: normalizeConversationDetailText(card.name),
+    title: normalizeConversationDetailText(card.title),
+    phone: normalizeConversationDetailText(contacts.phone),
+    phones: Array.isArray(contacts.phones) ? contacts.phones.filter(Boolean) : [],
+    contactFieldOrder: card.contactFieldOrder,
+    contactOnlyFields: card.contactOnlyFields,
+    email: normalizeConversationDetailText(contacts.email),
+    address: normalizeConversationDetailText(contacts.address),
+    invoiceName: normalizeConversationDetailText(invoice.name),
+    invoiceTaxNumber: normalizeConversationDetailText(invoice.taxNumber),
+    invoiceAddress: normalizeConversationDetailText(invoice.address),
+    wechat: normalizeConversationDetailText(contacts.wechat),
+    whatsapp: normalizeConversationDetailText(contacts.whatsapp),
+    twitter: normalizeConversationDetailText(contacts.twitter),
+    weibo: normalizeConversationDetailText(contacts.weibo),
+    telegram: normalizeConversationDetailText(contacts.telegram),
+    linkedin: normalizeConversationDetailText(contacts.linkedin),
+    discord: normalizeConversationDetailText(contacts.discord),
+    facebook: normalizeConversationDetailText(contacts.facebook),
+    instagram: normalizeConversationDetailText(contacts.instagram),
+    tiktok: normalizeConversationDetailText(contacts.tiktok),
+    douyin: normalizeConversationDetailText(contacts.douyin),
+    xiaohongshu: normalizeConversationDetailText(contacts.xiaohongshu),
+    websiteUrl: normalizeConversationDetailText(card.targetUrl),
+  };
+}
+
+function buildConversationMerchantCardShareInput(card: MerchantBusinessCardAsset | null) {
+  if (!card) return null;
+  const targetUrl = normalizeConversationDetailText(card.targetUrl);
+  if (!targetUrl) return null;
+  return {
+    origin: resolveMerchantBusinessCardShareOrigin(undefined, targetUrl),
+    shareKey: normalizeConversationDetailText(card.shareKey),
+    name: normalizeConversationDetailText(card.name),
+    imageUrl: normalizeConversationDetailText(card.shareImageUrl) || normalizeConversationDetailText(card.imageUrl),
+    detailImageUrl:
+      normalizeConversationDetailText(card.contactPagePublicImageUrl) ||
+      normalizeConversationDetailText(card.contactPageImageUrl),
+    detailImageHeight: card.contactPageImageHeight,
+    targetUrl,
+    contact: buildConversationMerchantCardShareContact(card),
+  };
+}
+
+function buildConversationMerchantCardLink(card: MerchantBusinessCardAsset | null) {
+  if (!card || card.mode !== "link") return "";
+  const input = buildConversationMerchantCardShareInput(card);
+  if (!input) return "";
+  return buildMerchantBusinessCardShareUrl(input);
+}
+
+function normalizeConversationExternalUrl(value: string | null | undefined, fallbackOrigin?: string | null) {
+  const normalized = normalizeConversationDetailText(value);
+  if (!normalized) return "";
+  if (/^https?:\/\//i.test(normalized)) return normalized;
+  if (normalized.startsWith("/")) {
+    const baseOrigin =
+      normalizeConversationDetailText(fallbackOrigin) ||
+      (typeof window !== "undefined" ? normalizeConversationDetailText(window.location.origin) : "");
+    if (!baseOrigin) return normalized;
+    try {
+      return new URL(normalized, baseOrigin).toString();
+    } catch {
+      return normalized;
+    }
+  }
+  return `https://${normalized}`;
+}
+
+function formatConversationUrlLabel(value: string | null | undefined) {
+  const normalized = normalizeConversationDetailText(value);
+  if (!normalized) return "-";
+  try {
+    const url = new URL(normalizeConversationExternalUrl(normalized));
+    return `${url.host}${url.pathname === "/" ? "" : url.pathname}`.replace(/\/+$/g, "") || normalized;
+  } catch {
+    return normalized.replace(/^https?:\/\//i, "").replace(/\/+$/g, "") || normalized;
+  }
+}
+
+function isConversationIpOrLocalHost(value: string) {
+  return (
+    /^https?:\/\/(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?(?:\/|$)/i.test(value) ||
+    /^https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:\/|$)/i.test(value)
+  );
+}
+
+function buildConversationFallbackMerchantCardHref(input: {
+  merchantId?: string | null;
+  merchantName?: string | null;
+  imageUrl?: string | null;
+  websiteHref?: string | null;
+  industry?: string | null;
+  contactName?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  contactAddress?: string | null;
+  location?: Partial<SiteLocation> | null;
+}) {
+  const targetUrl = normalizeConversationExternalUrl(input.websiteHref);
+  if (!targetUrl) return "";
+
+  const merchantName =
+    normalizeConversationDetailText(input.merchantName) ||
+    normalizeConversationDetailText(input.merchantId) ||
+    "商户";
+  const imageUrl = normalizeConversationDetailText(input.imageUrl);
+  const phone = normalizeConversationDetailText(input.phone);
+  const email = normalizeConversationDetailText(input.email);
+  const address = [
+    normalizeConversationDetailText(input.contactAddress),
+    normalizeConversationDetailText(input.location?.city),
+    normalizeConversationDetailText(input.location?.province),
+    normalizeConversationDetailText(input.location?.country),
+  ]
+    .filter(Boolean)
+    .join(" / ");
+
+  return buildMerchantBusinessCardShareUrl({
+    origin: resolveMerchantBusinessCardShareOrigin(undefined, targetUrl),
+    name: merchantName,
+    imageUrl: imageUrl || undefined,
+    detailImageUrl: imageUrl || undefined,
+    targetUrl,
+    contact: {
+      displayName: normalizeConversationDetailText(input.contactName) || merchantName,
+      organization: merchantName,
+      title: normalizeConversationDetailText(input.industry),
+      phone,
+      phones: phone ? [phone] : [],
+      email,
+      address,
+      websiteUrl: targetUrl,
+    },
+  });
 }
 
 function Icon({ name }: { name: "chat" | "shop" | "shield" | "user" | "calendar" | "order" | "star" | "card" }) {
@@ -1359,6 +1568,8 @@ export default function MePage() {
     [accountId, selectedPeerContact?.merchantName, selectedPeerMerchantId, selectedPeerThread?.messages],
   );
   const visibleSupportMessages = selectedConversationIsOfficial ? officialVisibleSupportMessages : peerVisibleSupportMessages;
+  const latestVisibleSupportMessage = visibleSupportMessages[visibleSupportMessages.length - 1] ?? null;
+  const latestVisibleSupportMessageKey = latestVisibleSupportMessage ? buildVisibleSupportMessageKey(latestVisibleSupportMessage) : "";
   const latestSupportMessage = officialVisibleSupportMessages[officialVisibleSupportMessages.length - 1] ?? null;
   const supportContactPreview =
     formatSupportConversationPreview(latestSupportMessage?.text) || "还没有留言记录，可以直接给 Faolla 留言。";
@@ -1373,13 +1584,118 @@ export default function MePage() {
   const selectedPeerContactSignature = trimText(selectedPeerContact?.signature);
   const selectedPeerContactPhone = trimText(selectedPeerContact?.contactPhone);
   const selectedPeerContactCard = trimText(selectedPeerContact?.contactCard);
+  const selectedPeerContactIsMerchant =
+    !selectedConversationIsOfficial && (selectedPeerContact?.accountType ?? "merchant") === "merchant";
+  const selectedPeerContactVisibility = selectedPeerContactIsMerchant
+    ? normalizeConversationContactVisibility(selectedPeerContact?.contactVisibility)
+    : DEFAULT_MERCHANT_CONTACT_VISIBILITY;
+  const selectedPeerMerchantEmail = selectedPeerContactVisibility.emailHidden
+    ? "已隐藏"
+    : selectedPeerContactEmail || "-";
+  const selectedPeerMerchantPhone = selectedPeerContactVisibility.phoneHidden
+    ? "已隐藏"
+    : selectedPeerContactPhone || "-";
+  const selectedPeerMerchantIndustry =
+    normalizeConversationDisplayValue(selectedPeerContact?.industry) || "未设置行业";
+  const selectedPeerMerchantCity = normalizeConversationDisplayValue(selectedPeerContact?.location?.city) || "-";
+  const selectedPeerMerchantPrefix =
+    normalizeConversationDisplayValue(selectedPeerContact?.domainPrefix) ||
+    normalizeConversationDisplayValue(selectedPeerContact?.domainSuffix);
   const selectedPeerContactAvatarImageUrl =
-    trimText(selectedPeerContact?.avatarImageUrl) || trimText(selectedPeerContact?.chatAvatarImageUrl);
-  const selectedPeerContactIsMerchant = !selectedConversationIsOfficial && (selectedPeerContact?.accountType ?? "merchant") === "merchant";
+    trimText(selectedPeerContact?.avatarImageUrl) ||
+    trimText(selectedPeerContact?.chatAvatarImageUrl) ||
+    trimText(selectedPeerContact?.merchantCardImageUrl);
+  const selectedPeerResolvedBusinessCard = selectedPeerContact?.chatBusinessCard ?? null;
+  const selectedPeerMerchantWebsiteHref = useMemo(() => {
+    if (!selectedPeerContactIsMerchant) return "";
+    const publicBaseDomain = normalizeConversationDisplayValue(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN);
+    const explicitDomain = normalizeConversationDisplayValue(selectedPeerContact?.domain);
+    if (selectedPeerMerchantId && selectedPeerMerchantPrefix) {
+      const runtimeHref = normalizeConversationExternalUrl(
+        buildMerchantFrontendHref(selectedPeerMerchantId, selectedPeerMerchantPrefix),
+      );
+      if (runtimeHref && !isConversationIpOrLocalHost(runtimeHref)) {
+        return runtimeHref;
+      }
+      if (publicBaseDomain) {
+        const publicHref = normalizeConversationExternalUrl(
+          buildMerchantFrontendHref(selectedPeerMerchantId, selectedPeerMerchantPrefix, publicBaseDomain),
+          `https://${publicBaseDomain.replace(/^https?:\/\//i, "")}`,
+        );
+        if (publicHref) return publicHref;
+      }
+    }
+    if (explicitDomain && !isConversationIpOrLocalHost(normalizeConversationExternalUrl(explicitDomain))) {
+      return normalizeConversationExternalUrl(
+        explicitDomain,
+        publicBaseDomain ? `https://${publicBaseDomain.replace(/^https?:\/\//i, "")}` : undefined,
+      );
+    }
+    if (!selectedPeerMerchantId) return "";
+    return normalizeConversationExternalUrl(explicitDomain);
+  }, [
+    selectedPeerContact?.domain,
+    selectedPeerContactIsMerchant,
+    selectedPeerMerchantId,
+    selectedPeerMerchantPrefix,
+  ]);
+  const selectedPeerMerchantWebsiteLabel = selectedPeerMerchantWebsiteHref
+    ? formatConversationUrlLabel(selectedPeerMerchantWebsiteHref)
+    : "-";
+  const selectedPeerFallbackCardHref = useMemo(
+    () =>
+      selectedPeerContactIsMerchant
+        ? buildConversationFallbackMerchantCardHref({
+            merchantId: selectedPeerMerchantId,
+            merchantName: selectedPeerContactName,
+            imageUrl: selectedPeerContactAvatarImageUrl,
+            websiteHref: selectedPeerMerchantWebsiteHref,
+            industry: selectedPeerMerchantIndustry,
+            contactName: normalizeConversationDisplayValue(selectedPeerContact?.contactName) || selectedPeerContactName,
+            phone: selectedPeerContactPhone,
+            email: selectedPeerContactEmail,
+            contactAddress: selectedPeerContact?.contactAddress,
+            location: selectedPeerContact?.location,
+          })
+        : "",
+    [
+      selectedPeerContact?.contactAddress,
+      selectedPeerContact?.contactName,
+      selectedPeerContact?.location,
+      selectedPeerContactAvatarImageUrl,
+      selectedPeerContactEmail,
+      selectedPeerContactIsMerchant,
+      selectedPeerContactName,
+      selectedPeerContactPhone,
+      selectedPeerMerchantId,
+      selectedPeerMerchantIndustry,
+      selectedPeerMerchantWebsiteHref,
+    ],
+  );
+  const selectedPeerMerchantCardHref = useMemo(
+    () =>
+      selectedPeerContactVisibility.businessCardHidden
+        ? ""
+        : buildConversationMerchantCardLink(selectedPeerResolvedBusinessCard) || selectedPeerFallbackCardHref,
+    [
+      selectedPeerContactVisibility.businessCardHidden,
+      selectedPeerFallbackCardHref,
+      selectedPeerResolvedBusinessCard,
+    ],
+  );
+  const selectedPeerMerchantCardLabel = selectedPeerContactVisibility.businessCardHidden
+    ? "已隐藏"
+    : selectedPeerMerchantCardHref
+      ? formatConversationUrlLabel(selectedPeerMerchantCardHref)
+      : "-";
   const selectedConversationName = selectedConversationIsOfficial ? "Faolla" : selectedPeerContactName;
   const selectedConversationMeta = selectedConversationIsOfficial
     ? "www.faolla.com"
-    : [selectedPeerMerchantId, selectedPeerContactEmail].filter(Boolean).join(" / ");
+    : selectedPeerContactIsMerchant
+      ? [selectedPeerMerchantId, selectedPeerMerchantEmail !== "-" ? selectedPeerMerchantEmail : ""]
+          .filter(Boolean)
+          .join(" | ")
+      : [selectedPeerMerchantId, selectedPeerContactEmail].filter(Boolean).join(" / ");
   const selectedConversationAvatarLabel = selectedConversationIsOfficial
     ? "FA"
     : getSupportContactAvatarLabel(selectedConversationName, "商");
@@ -1388,7 +1704,9 @@ export default function MePage() {
     : selectedPeerContactAvatarImageUrl;
   const selectedConversationInfoSubtitle = selectedConversationIsOfficial
     ? "官方客服"
-    : selectedPeerContactSignature || selectedConversationMeta || "商户资料";
+    : selectedPeerContactIsMerchant
+      ? selectedPeerMerchantIndustry
+      : selectedPeerContactSignature || selectedConversationMeta || "个人资料";
   const selectedConversationInfoItems = useMemo<ConversationInfoItem[]>(() => {
     if (selectedConversationIsOfficial) {
       return [
@@ -1398,6 +1716,27 @@ export default function MePage() {
           label: "官网",
           value: "www.faolla.com",
           href: "https://www.faolla.com",
+          openInNewTab: true,
+        },
+      ];
+    }
+
+    if (selectedPeerContactIsMerchant) {
+      return [
+        { label: "ID", value: selectedPeerMerchantId || "-" },
+        { label: "电话", value: selectedPeerMerchantPhone },
+        { label: "邮箱", value: selectedPeerMerchantEmail },
+        {
+          label: "联系卡",
+          value: selectedPeerMerchantCardLabel,
+          href: selectedPeerMerchantCardHref,
+          openInNewTab: false,
+        },
+        { label: "城市", value: selectedPeerMerchantCity },
+        {
+          label: "官网",
+          value: selectedPeerMerchantWebsiteLabel,
+          href: selectedPeerMerchantWebsiteHref,
           openInNewTab: true,
         },
       ];
@@ -1429,10 +1768,18 @@ export default function MePage() {
     selectedConversationIsOfficial,
     selectedPeerContact?.accountType,
     selectedPeerContactCard,
+    selectedPeerContactIsMerchant,
     selectedPeerContactEmail,
     selectedPeerContactPhone,
     selectedPeerContactSignature,
+    selectedPeerMerchantCardHref,
+    selectedPeerMerchantCardLabel,
+    selectedPeerMerchantCity,
+    selectedPeerMerchantEmail,
     selectedPeerMerchantId,
+    selectedPeerMerchantPhone,
+    selectedPeerMerchantWebsiteHref,
+    selectedPeerMerchantWebsiteLabel,
   ]);
   const selectedConversationLoading = selectedConversationIsOfficial ? supportLoading : peerLoading;
   const selectedConversationEmptyText = selectedConversationIsOfficial
@@ -1981,8 +2328,24 @@ export default function MePage() {
   useEffect(() => {
     const viewport = supportMessagesViewportRef.current;
     if (!viewport) return;
-    viewport.scrollTop = viewport.scrollHeight;
-  }, [visibleSupportMessages.length, mobileConversationView, desktopSection, selectedConversationKey]);
+    if (typeof window === "undefined") {
+      viewport.scrollTop = viewport.scrollHeight;
+      return;
+    }
+    const rafIds = new Set<number>();
+    const timers = [0, 80, 240, 600].map((delay) =>
+      window.setTimeout(() => {
+        const rafId = window.requestAnimationFrame(() => {
+          viewport.scrollTo({ top: viewport.scrollHeight, behavior: "auto" });
+        });
+        rafIds.add(rafId);
+      }, delay),
+    );
+    return () => {
+      timers.forEach((timer) => window.clearTimeout(timer));
+      rafIds.forEach((rafId) => window.cancelAnimationFrame(rafId));
+    };
+  }, [latestVisibleSupportMessageKey, mobileConversationView, desktopSection, selectedConversationKey]);
 
   async function requestLogout() {
     if (loggingOut) return;
@@ -2306,28 +2669,36 @@ export default function MePage() {
 
   function renderConversationInfoOverlay() {
     if (!conversationInfoOpen) return null;
-    const infoContent = (
+    const renderInfoContent = (isMobile: boolean) => (
       <>
-        <div className="flex items-start justify-between gap-3">
+        <div className={`flex items-start justify-between ${isMobile ? "gap-3" : "gap-4"}`}>
           <div className="flex min-w-0 items-center gap-3">
             <SupportAvatarBadge
               label={selectedConversationAvatarLabel}
               imageUrl={selectedConversationAvatarImageUrl}
               imageAlt={selectedConversationName}
-              className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm"
-              labelClassName="text-sm font-semibold text-white"
+              className={
+                isMobile
+                  ? "flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white"
+                  : "flex h-16 w-16 shrink-0 items-center justify-center rounded-[22px] bg-slate-900 text-base font-semibold text-white shadow-sm"
+              }
+              labelClassName={isMobile ? "text-sm font-semibold text-white" : "text-base font-semibold text-white"}
               showMerchantBadge={selectedPeerContactIsMerchant}
             />
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <div className="truncate text-lg font-semibold text-slate-900">{selectedConversationName}</div>
+                <div className={`truncate font-semibold text-slate-900 ${isMobile ? "text-base" : "text-lg"}`}>
+                  {selectedConversationName}
+                </div>
                 {selectedConversationIsOfficial ? (
                   <span className="inline-flex shrink-0 items-center rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium leading-none text-white">
                     官方
                   </span>
                 ) : null}
               </div>
-              <div className="mt-1 line-clamp-2 text-sm text-slate-500">{selectedConversationInfoSubtitle}</div>
+              <div className={`mt-1 text-slate-500 ${isMobile ? "text-xs" : "text-sm"}`}>
+                {isMobile ? selectedConversationInfoSubtitle : selectedConversationMeta}
+              </div>
             </div>
           </div>
           <button
@@ -2338,9 +2709,13 @@ export default function MePage() {
             关闭
           </button>
         </div>
-        <div className="mt-5 divide-y divide-slate-100 overflow-hidden rounded-[24px] border border-slate-100 bg-slate-50/80">
+        <div
+          className={`divide-y divide-slate-100 overflow-hidden rounded-[24px] border border-slate-100 ${
+            isMobile ? "mt-4 bg-slate-50/70" : "mt-5 bg-slate-50/80"
+          }`}
+        >
           {selectedConversationInfoItems.map((item) => (
-            <div key={item.label} className="px-5 py-4">
+            <div key={item.label} className={isMobile ? "px-4 py-3" : "px-5 py-4"}>
               <div className="text-[11px] font-medium tracking-[0.08em] text-slate-400">{item.label}</div>
               <div className="mt-1 text-sm leading-6 text-slate-900">
                 {item.href ? (
@@ -2373,12 +2748,12 @@ export default function MePage() {
         <div className="fixed inset-x-0 bottom-0 z-[2147483401] px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] md:hidden">
           <div className="mx-auto w-full max-w-md rounded-[30px] bg-white px-4 pb-4 pt-3 shadow-[0_24px_80px_rgba(15,23,42,0.2)]">
             <div className="mx-auto h-1.5 w-12 rounded-full bg-slate-200" />
-            <div className="mt-4">{infoContent}</div>
+            <div className="mt-4">{renderInfoContent(true)}</div>
           </div>
         </div>
         <div className="fixed inset-0 z-[2147483401] hidden items-center justify-center p-4 md:flex">
           <div className="w-full max-w-xl rounded-[30px] bg-white px-6 py-5 shadow-[0_24px_80px_rgba(15,23,42,0.22)]">
-            {infoContent}
+            {renderInfoContent(false)}
           </div>
         </div>
       </>
