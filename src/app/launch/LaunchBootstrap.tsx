@@ -42,6 +42,11 @@ export default function LaunchBootstrap() {
         if (cancelled) return;
 
         if (payload?.authenticated === true) {
+          if (payload.accountType === "personal") {
+            window.location.replace("/me");
+            return;
+          }
+
           const merchantIds = readMerchantSessionMerchantIds(payload);
           const merchantId =
             merchantIds.find((value) => isMerchantNumericId(value)) ??

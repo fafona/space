@@ -44,6 +44,19 @@ export default function manifest(): MetadataRoute.Manifest {
         ],
       },
       {
+        name: "Personal Center",
+        short_name: "Me",
+        description: "Open personal user center",
+        url: "/me",
+        icons: [
+          {
+            src: "/faolla-app-icon-192.png",
+            sizes: "192x192",
+            type: "image/png",
+          },
+        ],
+      },
+      {
         name: "Platform Home",
         short_name: "Home",
         description: "Open the Faolla platform home page",

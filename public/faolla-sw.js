@@ -1,4 +1,4 @@
-const FAOLLA_SW_VERSION = "faolla-pwa-v20260416-6";
+const FAOLLA_SW_VERSION = "faolla-pwa-v20260421-1";
 const FAOLLA_BADGE_CACHE = "faolla-badge-state-v1";
 const FAOLLA_BADGE_STATE_URL = "/__faolla_badge_state__";
 const FAOLLA_VISIBILITY_STATE_URL = "/__faolla_visibility_state__";
@@ -252,7 +252,13 @@ function isAuthNavigationPath(pathname) {
 }
 
 function isAppNavigationPath(pathname) {
-  return pathname === "/admin" || isMerchantBackendPath(pathname) || pathname.startsWith("/super-admin");
+  return (
+    pathname === "/admin" ||
+    pathname === "/me" ||
+    pathname.startsWith("/me/") ||
+    isMerchantBackendPath(pathname) ||
+    pathname.startsWith("/super-admin")
+  );
 }
 
 function shouldPersistNavigationResponse(response) {

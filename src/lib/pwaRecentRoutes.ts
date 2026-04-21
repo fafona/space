@@ -37,8 +37,25 @@ function normalizePathname(value: string | null | undefined) {
   return normalized;
 }
 
+function isPersonalAppPath(pathname: string) {
+  return pathname === "/me" || pathname.startsWith("/me/");
+}
+
+function isMerchantAppPath(pathname: string) {
+  return /^\/\d{8}(?:\/|$)/.test(pathname);
+}
+
+function isPreferredLaunchAppPath(pathname: string) {
+  return isPersonalAppPath(pathname) || isMerchantAppPath(pathname);
+}
+
 function resolveRouteKind(pathname: string): PwaRecentRouteKind {
-  if (pathname === "/admin" || pathname.startsWith("/super-admin") || /^\/\d{8}(?:\/|$)/.test(pathname)) {
+  if (
+    pathname === "/admin" ||
+    pathname.startsWith("/super-admin") ||
+    isPersonalAppPath(pathname) ||
+    isMerchantAppPath(pathname)
+  ) {
     return "app";
   }
   return "public";
@@ -131,8 +148,13 @@ export function shouldAutoWarmPwaRoutes() {
 
 export function resolvePreferredPwaLaunchPath(pathname?: string | null) {
   const normalizedPath = normalizePathname(pathname);
-  if (normalizedPath && /^\/\d{8}(?:\/|$)/.test(normalizedPath)) {
+  if (normalizedPath && isPreferredLaunchAppPath(normalizedPath)) {
     return normalizedPath;
+  }
+
+  const recentPreferredRoute = readRecentPwaRoutes().find((entry) => isPreferredLaunchAppPath(entry.path))?.path ?? "";
+  if (recentPreferredRoute) {
+    return recentPreferredRoute;
   }
 
   const recentMerchantId = readRecentMerchantLaunchMerchantId();

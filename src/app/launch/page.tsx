@@ -6,7 +6,9 @@ import {
   MERCHANT_AUTH_MERCHANT_ID_COOKIE,
   MERCHANT_AUTH_REFRESH_COOKIE,
 } from "@/lib/merchantAuthSession";
+import { readPlatformAccountTypeFromMetadata } from "@/lib/platformAccounts";
 import { buildMerchantBackendHref } from "@/lib/siteRouting";
+import { createServerSupabaseAuthClient } from "@/lib/superAdminServer";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -24,6 +26,22 @@ export default async function LaunchPage() {
 
   if ((accessToken || refreshToken) && merchantId) {
     redirect(buildMerchantBackendHref(merchantId));
+  }
+
+  if (accessToken) {
+    const authSupabase = createServerSupabaseAuthClient();
+    if (authSupabase) {
+      let shouldRedirectPersonal = false;
+      try {
+        const { data } = await authSupabase.auth.getUser(accessToken);
+        shouldRedirectPersonal = readPlatformAccountTypeFromMetadata(data.user, "") === "personal";
+      } catch {
+        // Fall through to the client bootstrap, which can refresh the cookie-backed session.
+      }
+      if (shouldRedirectPersonal) {
+        redirect("/me");
+      }
+    }
   }
 
   return <LaunchBootstrap />;

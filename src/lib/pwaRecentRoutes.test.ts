@@ -109,6 +109,20 @@ test("resolvePreferredPwaLaunchPath prefers the current merchant workspace path"
   }
 });
 
+test("resolvePreferredPwaLaunchPath supports the personal center as an app launch target", () => {
+  const harness = installBrowserHarness();
+  try {
+    persistRecentPwaRoute("/me", Date.now() - 1_000);
+    assert.equal(resolvePreferredPwaLaunchPath("/portal"), "/me");
+    assert.equal(resolvePreferredPwaLaunchPath("/me"), "/me");
+
+    const routes = collectPwaWarmRoutes("/card/demo");
+    assert.deepEqual(routes, ["/card/demo", "/me", "/"]);
+  } finally {
+    harness.restore();
+  }
+});
+
 test("shouldAutoWarmPwaRoutes respects data saver and slow 2g connections", () => {
   const saveDataHarness = installBrowserHarness({ saveData: true, effectiveType: "4g" });
   try {
