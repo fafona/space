@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
+import { useI18n } from "@/components/I18nProvider";
 import { readMerchantSessionMerchantIds } from "@/lib/authSessionRecovery";
+import { LANGUAGE_OPTIONS } from "@/lib/i18n";
 import SupportMessageContent from "@/components/support/SupportMessageContent";
 import {
   findMerchantPeerThreadForMerchants,
@@ -32,6 +34,7 @@ type DesktopSection = "conversations" | "bookings" | "orders" | "favorites" | "c
 type MobileTab = "conversations" | "consumption" | "faolla" | "self";
 type ConsumptionSection = "bookings" | "orders";
 type MobileConversationView = "list" | "thread";
+type MobileSelfSection = "home" | "profile" | "cards" | "notifications";
 
 type MenuItem = {
   key: DesktopSection;
@@ -275,6 +278,10 @@ function buildSupportLocationMessageText(latitude: number, longitude: number, ac
   return [`位置：${lat}, ${lng}${accuracyLabel}`, buildSupportLocationMapPreviewUrl(latitude, longitude)].join("\n");
 }
 
+function languageFlagImageUrl(countryCode: string) {
+  return `https://flagcdn.com/24x18/${countryCode.toLowerCase()}.png`;
+}
+
 function Icon({ name }: { name: "chat" | "shop" | "shield" | "user" | "calendar" | "order" | "star" | "card" }) {
   return (
     <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
@@ -491,6 +498,7 @@ function SupportAvatarBadge({
 }
 
 export default function MePage() {
+  const { locale, setLocale } = useI18n();
   const [payload, setPayload] = useState<MeSessionPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [loggingOut, setLoggingOut] = useState(false);
@@ -498,6 +506,8 @@ export default function MePage() {
   const [mobileTab, setMobileTab] = useState<MobileTab>("conversations");
   const [consumptionSection, setConsumptionSection] = useState<ConsumptionSection>("bookings");
   const [mobileConversationView, setMobileConversationView] = useState<MobileConversationView>("list");
+  const [mobileSelfSection, setMobileSelfSection] = useState<MobileSelfSection>("home");
+  const [mobileSelfLanguageMenuOpen, setMobileSelfLanguageMenuOpen] = useState(false);
   const [selectedConversationKey, setSelectedConversationKey] = useState<PersonalConversationKey>(OFFICIAL_CONVERSATION_KEY);
   const [supportThread, setSupportThread] = useState<PlatformSupportThread | null>(null);
   const [peerContacts, setPeerContacts] = useState<MerchantPeerContactSummary[]>([]);
@@ -514,6 +524,8 @@ export default function MePage() {
   const [supportContactKeyword, setSupportContactKeyword] = useState("");
   const supportMessagesViewportRef = useRef<HTMLDivElement | null>(null);
   const supportInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const mobileSelfLanguageRootRef = useRef<HTMLDivElement | null>(null);
+  const mobileSelfLanguageMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -551,6 +563,21 @@ export default function MePage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!mobileSelfLanguageMenuOpen || typeof document === "undefined") return;
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (mobileSelfLanguageRootRef.current?.contains(target)) return;
+      if (mobileSelfLanguageMenuRef.current?.contains(target)) return;
+      setMobileSelfLanguageMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, [mobileSelfLanguageMenuOpen]);
+
   const accountId =
     payload && typeof payload.accountId === "string" && /^\d{8}$/.test(payload.accountId.trim())
       ? payload.accountId.trim()
@@ -559,6 +586,13 @@ export default function MePage() {
   const displayName = useMemo(() => readDisplayName(payload), [payload]);
   const profileName = displayName || email.split("@")[0] || accountId || "个人用户";
   const avatarLabel = getInitialLabel(profileName);
+  const mobileSelfSelectedLanguage = useMemo(
+    () => LANGUAGE_OPTIONS.find((item) => item.code === locale) ?? LANGUAGE_OPTIONS[0],
+    [locale],
+  );
+  const mobileSelfProfileSummary = [accountId || "-", email || "-"].filter(Boolean).join(" / ");
+  const mobileSelfCardsSummary = "个人名片夹会在下一步接入。";
+  const mobileSelfNotificationSummary = "系统通知、提示音和震动设置。";
 
   const desktopMenuItems: MenuItem[] = useMemo(
     () => [
@@ -1603,29 +1637,212 @@ export default function MePage() {
     if (mobileTab === "conversations") return renderMobileConversationsContent();
     if (mobileTab === "consumption") return renderConsumptionContent();
     if (mobileTab === "self") {
+      const selfMenuItems: Array<{
+        key: MobileSelfSection;
+        label: string;
+        summary: string;
+        icon: ReactNode;
+      }> = [
+        {
+          key: "profile",
+          label: "我的资料",
+          summary: mobileSelfProfileSummary,
+          icon: <Icon name="user" />,
+        },
+        {
+          key: "cards",
+          label: "名片夹",
+          summary: mobileSelfCardsSummary,
+          icon: <Icon name="card" />,
+        },
+        {
+          key: "notifications",
+          label: "通知",
+          summary: mobileSelfNotificationSummary,
+          icon: (
+            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+              <path
+                d="M12 4.5A4.5 4.5 0 0 0 7.5 9v2.1c0 .6-.2 1.2-.6 1.7L5.8 14a1 1 0 0 0 .8 1.6h10.8a1 1 0 0 0 .8-1.6l-1.1-1.2c-.4-.5-.6-1.1-.6-1.7V9A4.5 4.5 0 0 0 12 4.5Z"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinejoin="round"
+              />
+              <path d="M10.3 18a1.9 1.9 0 0 0 3.4 0" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+            </svg>
+          ),
+        },
+      ];
       return (
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(env(safe-area-inset-bottom)+5.85rem)] pt-[calc(env(safe-area-inset-top)+1rem)]">
-          <div className="mb-4 rounded-[30px] border border-white/75 bg-[linear-gradient(135deg,_rgba(8,17,33,0.96)_0%,_rgba(15,23,42,0.92)_52%,_rgba(15,118,110,0.84)_100%)] p-5 text-white shadow-[0_22px_55px_rgba(8,17,33,0.28)]">
-            <div className="flex items-start gap-4">
-              <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-[24px] bg-white/12 text-xl font-semibold tracking-[0.18em] text-white">
-                {avatarLabel}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="text-[11px] font-medium uppercase tracking-[0.28em] text-slate-200/72">Personal Center</div>
-                <div className="mt-2 truncate text-[28px] font-semibold tracking-tight text-white">{profileName}</div>
-                <div className="mt-2 text-sm leading-6 text-slate-200/84">{accountId || email}</div>
+        <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+          <div className="relative shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
+            <div className="absolute right-4 top-[calc(env(safe-area-inset-top)+0.7rem)] z-20">
+              <div ref={mobileSelfLanguageRootRef} className="relative">
+                <button
+                  type="button"
+                  className="flex h-11 items-center gap-2 rounded-full border border-slate-200 bg-white/95 px-3 text-xs font-medium text-slate-800 shadow-[0_10px_24px_rgba(15,23,42,0.08)]"
+                  onClick={() => setMobileSelfLanguageMenuOpen((current) => !current)}
+                  aria-label="切换语言"
+                  aria-expanded={mobileSelfLanguageMenuOpen}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={languageFlagImageUrl(mobileSelfSelectedLanguage.countryCode)}
+                    alt={mobileSelfSelectedLanguage.label}
+                    width={16}
+                    height={12}
+                    className="rounded-[2px] border border-slate-200 object-cover"
+                    loading="eager"
+                  />
+                  <svg viewBox="0 0 24 24" className="h-4 w-4 text-slate-500" fill="none" aria-hidden="true">
+                    <path d="m7 10 5 5 5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </button>
+                {mobileSelfLanguageMenuOpen ? (
+                  <div
+                    ref={mobileSelfLanguageMenuRef}
+                    className="absolute right-0 top-[calc(100%+0.5rem)] max-h-[55vh] w-[220px] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-[0_22px_60px_rgba(15,23,42,0.22)]"
+                  >
+                    <div className="space-y-1">
+                      {LANGUAGE_OPTIONS.map((item) => (
+                        <button
+                          key={item.code}
+                          type="button"
+                          className={`flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left text-sm transition ${
+                            item.code === locale ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-100"
+                          }`}
+                          onClick={() => {
+                            setLocale(item.code);
+                            setMobileSelfLanguageMenuOpen(false);
+                          }}
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={languageFlagImageUrl(item.countryCode)}
+                            alt={item.label}
+                            width={16}
+                            height={12}
+                            className="rounded-[2px] border border-slate-200 object-cover"
+                            loading="lazy"
+                          />
+                          <span className="truncate">{item.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </div>
+            {mobileSelfSection === "home" ? (
+              <div className="flex flex-col items-center px-4 text-center">
+                <div className="relative flex h-24 w-24 items-center justify-center overflow-hidden rounded-[30px] bg-slate-900 text-xl font-semibold text-white shadow-[0_18px_40px_rgba(15,23,42,0.16)]">
+                  {avatarLabel}
+                </div>
+                <div className="mt-4 max-w-full truncate text-[28px] font-semibold leading-none text-slate-950">{profileName}</div>
+                <div className="mt-2 max-w-full truncate text-sm text-slate-500">{accountId || email || "个人中心"}</div>
+              </div>
+            ) : (
+              <div className="flex items-center gap-3 pr-16">
+                <button
+                  type="button"
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-slate-900 hover:bg-slate-100"
+                  onClick={() => setMobileSelfSection("home")}
+                  aria-label="返回自己主页"
+                >
+                  <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" aria-hidden="true">
+                    <path d="M19 12H7M12 7l-5 5 5 5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="square" strokeLinejoin="miter" />
+                  </svg>
+                </button>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[16px] font-semibold text-slate-900">
+                    {mobileSelfSection === "profile" ? "我的资料" : mobileSelfSection === "cards" ? "名片夹" : "通知"}
+                  </div>
+                  <div className="mt-1 truncate text-xs text-slate-500">
+                    {mobileSelfSection === "profile"
+                      ? "这里只显示个人账号资料。"
+                      : mobileSelfSection === "cards"
+                        ? "这里统一管理个人名片夹。"
+                        : "这里控制系统消息通知、提示音和震动。"}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
-          <PersonalInfoPanel accountId={accountId} displayName={displayName} email={email} />
-          <button
-            type="button"
-            className="mt-4 w-full rounded-[22px] border border-rose-200 bg-white px-4 py-3 text-sm font-semibold text-rose-600 shadow-sm"
-            onClick={() => void requestLogout()}
-            disabled={loggingOut}
-          >
-            {loggingOut ? "退出中..." : "退出登录"}
-          </button>
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(env(safe-area-inset-bottom)+5.85rem)] pt-4">
+            {mobileSelfSection === "home" ? (
+              <div className="space-y-4">
+                <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+                  <div className="divide-y divide-slate-100">
+                    {selfMenuItems.map((item) => (
+                      <button
+                        key={item.key}
+                        type="button"
+                        className="flex w-full items-center gap-4 px-5 py-4 text-left transition hover:bg-slate-50"
+                        onClick={() => setMobileSelfSection(item.key)}
+                      >
+                        <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-100 text-slate-700">
+                          {item.icon}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-sm font-semibold text-slate-900">{item.label}</span>
+                          <span className="mt-1 block truncate text-xs leading-5 text-slate-500">{item.summary}</span>
+                        </span>
+                        <span className="text-slate-300">
+                          <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+                            <path d="m9 6 6 6-6 6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="overflow-hidden rounded-[28px] border border-rose-200/80 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left transition hover:bg-rose-50/70 disabled:opacity-50"
+                    onClick={() => void requestLogout()}
+                    disabled={loggingOut}
+                  >
+                    <div className="text-sm font-semibold text-rose-600">{loggingOut ? "退出中..." : "退出登录"}</div>
+                    <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-rose-50 text-rose-600">
+                      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+                        <path d="M14 7h2a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                        <path d="M10 8 6 12l4 4M7 12h9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </span>
+                  </button>
+                </section>
+              </div>
+            ) : mobileSelfSection === "profile" ? (
+              <PersonalInfoPanel accountId={accountId} displayName={displayName} email={email} />
+            ) : mobileSelfSection === "cards" ? (
+              <EmptyFeatureCard
+                icon={<Icon name="card" />}
+                title="名片夹"
+                description="个人名片夹会在下一步接入，这里会统一展示保存和可发送的名片。"
+              />
+            ) : (
+              <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+                <div className="border-b border-slate-100 px-5 py-4">
+                  <div className="text-sm font-semibold text-slate-900">通知</div>
+                  <div className="mt-1 text-xs text-slate-500">个人用户通知设置会在下一步接入。</div>
+                </div>
+                <div className="divide-y divide-slate-100">
+                  {["系统消息通知", "消息提示音", "震动"].map((label) => (
+                    <div key={label} className="flex items-center gap-3 px-5 py-4">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-semibold text-slate-900">{label}</div>
+                        <div className="mt-1 text-xs leading-5 text-slate-500">暂未开启，后续接入个人通知后可在这里控制。</div>
+                      </div>
+                      <span className="relative inline-flex h-7 w-12 shrink-0 items-center rounded-full bg-slate-200 opacity-55">
+                        <span className="inline-block h-5 w-5 translate-x-1 rounded-full bg-white shadow-sm" />
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+          </div>
         </div>
       );
     }
