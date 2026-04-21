@@ -6,6 +6,14 @@ import { loadMerchantIdRulesFromStore } from "@/lib/merchantIdRuleStore";
 import { findBlockingMerchantIdRule } from "@/lib/merchantIdRules";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { loadStoredPlatformMerchantSnapshot, type PlatformMerchantSnapshotStoreClient } from "@/lib/platformMerchantSnapshotStore";
+import {
+  buildPlatformAccountMetadataPatch,
+  isPersonalAccountNumericId,
+  readPlatformAccountIdFromMetadata,
+  readPlatformAccountTypeFromMetadata,
+  readPlatformUsernameFromMetadata,
+  type PlatformAccountType,
+} from "@/lib/platformAccounts";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { isSuperAdminRequestAuthorized } from "@/lib/superAdminRequestAuth";
 
@@ -53,6 +61,8 @@ type MerchantVisitSummary = {
 };
 
 type MerchantAccountItem = {
+  accountType: PlatformAccountType;
+  accountId: string;
   merchantId: string;
   merchantName: string;
   email: string;
@@ -126,12 +136,36 @@ function readMetadataString(metadata: AuthMetadata, ...keys: string[]) {
 function readAccountMetadata(user?: AuthUserSummary | null) {
   const userMetadata = user?.user_metadata ?? null;
   const appMetadata = user?.app_metadata ?? null;
-  const username =
-    readMetadataString(userMetadata, "display_name", "username", "name") ||
-    readMetadataString(appMetadata, "display_name", "username", "name");
+  const accountId = readPlatformAccountIdFromMetadata(user);
+  const metadataAccountType = readPlatformAccountTypeFromMetadata(user, "");
+  const accountType =
+    metadataAccountType || (isPersonalAccountNumericId(accountId) ? "personal" : accountId ? "merchant" : "merchant");
+  const username = readPlatformUsernameFromMetadata(user);
   const loginId =
-    readMetadataString(userMetadata, "login_id", "loginId", "merchant_id", "merchantId", "merchantID") ||
-    readMetadataString(appMetadata, "login_id", "loginId", "merchant_id", "merchantId", "merchantID");
+    readMetadataString(
+      userMetadata,
+      "login_id",
+      "loginId",
+      "account_id",
+      "accountId",
+      "personal_id",
+      "personalId",
+      "merchant_id",
+      "merchantId",
+      "merchantID",
+    ) ||
+    readMetadataString(
+      appMetadata,
+      "login_id",
+      "loginId",
+      "account_id",
+      "accountId",
+      "personal_id",
+      "personalId",
+      "merchant_id",
+      "merchantId",
+      "merchantID",
+    );
   const merchantId =
     readMetadataString(userMetadata, "merchant_id", "merchantId", "merchantID", "login_id", "loginId") ||
     readMetadataString(appMetadata, "merchant_id", "merchantId", "merchantID", "login_id", "loginId");
@@ -142,10 +176,12 @@ function readAccountMetadata(user?: AuthUserSummary | null) {
     appMetadata?.manualUser === true;
 
   return {
+    accountType,
+    accountId,
     username,
     usernameKey: normalizeAccountValue(username),
-    loginId,
-    merchantId,
+    loginId: loginId || accountId,
+    merchantId: accountType === "merchant" ? merchantId || accountId : "",
     manualCreated,
   };
 }
@@ -393,6 +429,8 @@ function buildSupportScopeItems(merchants: MerchantRow[]) {
       const authUserId = String(merchant.auth_user_id ?? merchant.user_id ?? "").trim() || null;
       const manualEmail = merchantId ? buildManualUserEmail(merchantId) : "";
       return {
+        accountType: "merchant",
+        accountId: merchantId,
         merchantId,
         merchantName,
         email,
@@ -492,6 +530,8 @@ export async function GET(request: Request) {
       const merchantName = String(merchant.name ?? "").trim() || String(snapshotSite?.merchantName ?? "").trim();
 
       return {
+        accountType: "merchant",
+        accountId: merchantId,
         merchantId,
         merchantName,
         email,
@@ -531,12 +571,18 @@ export async function GET(request: Request) {
       })
       .map((user) => {
         const metadata = readAccountMetadata(user);
+        const merchantId = metadata.accountType === "merchant" ? metadata.merchantId : "";
         return {
-          merchantId: metadata.merchantId,
-          merchantName: String((snapshotByMerchantId.get(metadata.merchantId)?.merchantName ?? "")).trim(),
+          accountType: metadata.accountType,
+          accountId: metadata.accountId,
+          merchantId,
+          merchantName:
+            metadata.accountType === "merchant"
+              ? String((snapshotByMerchantId.get(merchantId)?.merchantName ?? "")).trim()
+              : "",
           email: normalizeEmail(user.email),
           username: metadata.username,
-          loginId: metadata.loginId || metadata.merchantId,
+          loginId: metadata.loginId || metadata.accountId,
           createdAt: user.created_at ?? null,
           authUserId: user.id,
           emailConfirmed: Boolean(user.email_confirmed_at),
@@ -544,14 +590,17 @@ export async function GET(request: Request) {
           lastSignInAt: user.last_sign_in_at ?? null,
           manualCreated: metadata.manualCreated,
           hasPublishedSite: false,
-          siteSlug: String(snapshotByMerchantId.get(metadata.merchantId)?.domainPrefix ?? snapshotByMerchantId.get(metadata.merchantId)?.domainSuffix ?? "").trim(),
+          siteSlug:
+            metadata.accountType === "merchant"
+              ? String(snapshotByMerchantId.get(merchantId)?.domainPrefix ?? snapshotByMerchantId.get(merchantId)?.domainSuffix ?? "").trim()
+              : "",
           siteUpdatedAt: null,
           publishedBytes: 0,
           publishedBytesKnown: false,
           visits: { today: 0, day7: 0, day30: 0, total: 0 },
           visitsKnown: false,
-          profileSnapshot: snapshotByMerchantId.get(metadata.merchantId) ?? null,
-          profileConfigHistory: configHistoryByMerchantId[metadata.merchantId] ?? [],
+          profileSnapshot: metadata.accountType === "merchant" ? snapshotByMerchantId.get(merchantId) ?? null : null,
+          profileConfigHistory: metadata.accountType === "merchant" ? configHistoryByMerchantId[merchantId] ?? [] : [],
         };
       });
 
@@ -561,17 +610,28 @@ export async function GET(request: Request) {
       dedupedByEmail.set(key, choosePreferredMerchantAccount(dedupedByEmail.get(key), item));
     }
 
-    const normalizedItems = [...dedupedByEmail.values()].map((item) => ({
+    const normalizedItems: MerchantAccountItem[] = [...dedupedByEmail.values()].map((item) => ({
       ...item,
-      merchantId: isNumericMerchantId(item.merchantId) ? item.merchantId : "",
+      accountType: item.accountType === "personal" ? "personal" : "merchant",
+      accountId: item.accountId || (isNumericMerchantId(item.merchantId) ? item.merchantId : ""),
+      merchantId: item.accountType === "merchant" && isNumericMerchantId(item.merchantId) ? item.merchantId : "",
       profileSnapshot:
-        isNumericMerchantId(item.merchantId) ? snapshotByMerchantId.get(item.merchantId) ?? item.profileSnapshot ?? null : null,
+        item.accountType === "merchant" && isNumericMerchantId(item.merchantId)
+          ? snapshotByMerchantId.get(item.merchantId) ?? item.profileSnapshot ?? null
+          : null,
       profileConfigHistory:
-        isNumericMerchantId(item.merchantId)
+        item.accountType === "merchant" && isNumericMerchantId(item.merchantId)
           ? configHistoryByMerchantId[item.merchantId] ?? item.profileConfigHistory ?? []
           : [],
     }));
-    const merchantIds = [...new Set(normalizedItems.map((item) => item.merchantId).filter((item) => isNumericMerchantId(item)))];
+    const merchantIds = [
+      ...new Set(
+        normalizedItems
+          .filter((item) => item.accountType === "merchant")
+          .map((item) => item.merchantId)
+          .filter((item) => isNumericMerchantId(item)),
+      ),
+    ];
     let publishedSiteInfoByMerchantId = new Map<
       string,
       { hasPublishedSite: boolean; siteSlug: string; siteUpdatedAt: string | null; publishedBytes: number; publishedBytesKnown: boolean }
@@ -709,22 +769,27 @@ export async function POST(request: Request) {
       return conflictJson("username_exists", "用户名已存在，请更换后重试");
     }
 
+    const metadataPatch = buildPlatformAccountMetadataPatch(
+      {
+        user_metadata: {
+          username: usernameKey,
+          display_name: username,
+          manual_user: true,
+        },
+        app_metadata: {
+          manual_user: true,
+        },
+      },
+      "merchant",
+      merchantId,
+    );
+
     const { data: createdUserData, error: createUserError } = await supabase.auth.admin.createUser({
       email: manualEmail,
       password,
       email_confirm: true,
-      user_metadata: {
-        username: usernameKey,
-        display_name: username,
-        merchant_id: merchantId,
-        login_id: merchantId,
-        manual_user: true,
-      },
-      app_metadata: {
-        merchant_id: merchantId,
-        login_id: merchantId,
-        manual_user: true,
-      },
+      user_metadata: metadataPatch.user_metadata,
+      app_metadata: metadataPatch.app_metadata,
     });
 
     if (createUserError || !createdUserData.user) {
@@ -763,6 +828,8 @@ export async function POST(request: Request) {
     }
 
     const item: MerchantAccountItem = {
+      accountType: "merchant",
+      accountId: merchantId,
       merchantId,
       merchantName: username,
       email: manualEmail,

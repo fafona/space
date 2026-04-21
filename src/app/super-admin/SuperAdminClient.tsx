@@ -1584,6 +1584,8 @@ type SupportForwardTarget = {
 };
 
 type BackendMerchantAccount = {
+  accountType: "merchant" | "personal";
+  accountId: string;
   merchantId: string;
   merchantName: string;
   email: string;
@@ -1737,6 +1739,7 @@ export default function SuperAdminClient() {
   const [merchantTableSortField, setMerchantTableSortField] = useState<MerchantTableSortField>("seq");
   const [merchantTableSortOrder, setMerchantTableSortOrder] = useState<"asc" | "desc">("asc");
   const [merchantTablePage, setMerchantTablePage] = useState(1);
+  const [userManageAccountTypeFilter, setUserManageAccountTypeFilter] = useState<"all" | "merchant" | "personal">("all");
   const [merchantPanelOpen, setMerchantPanelOpen] = useState(false);
   const [merchantConfigArchiveLoading, setMerchantConfigArchiveLoading] = useState(false);
   const [merchantConfigArchiveError, setMerchantConfigArchiveError] = useState("");
@@ -2393,7 +2396,9 @@ export default function SuperAdminClient() {
         }
       });
 
-    const sorted: MerchantUserRow[] = backendMerchantAccounts.map((account) => {
+    const sorted: MerchantUserRow[] = backendMerchantAccounts
+      .filter((account) => account.accountType === "merchant")
+      .map((account) => {
       const merchantId = normalizeMerchantIdValue(account.merchantId) || "-";
       const matchedSite =
         matchMerchantSite({
@@ -2483,7 +2488,7 @@ export default function SuperAdminClient() {
         statusLabel: canOperateAsSite ? "已建站" : "未建站",
         statusKey: canOperateAsSite ? "linked" : "unlinked",
       };
-    });
+      });
 
     const sortRule = state.homeLayout.merchantDefaultSortRule;
     sorted.sort((a, b) => {
@@ -2493,7 +2498,7 @@ export default function SuperAdminClient() {
       if (sortRule === "monthly_views_desc") return b.visits.day30 - a.visits.day30;
       return new Date(b.registerAt).getTime() - new Date(a.registerAt).getTime();
     });
-    return sorted;
+      return sorted;
   }, [backendMerchantAccounts, merchantOwnerBySiteId, nowMs, state.homeLayout.merchantDefaultSortRule, state.sites, state.users]);
   const filteredMerchantRows = useMemo(
     () =>
@@ -2506,6 +2511,29 @@ export default function SuperAdminClient() {
           .includes(q);
       }),
     [merchantRows, userKeyword],
+  );
+  const personalAccounts = useMemo(
+    () => backendMerchantAccounts.filter((account) => account.accountType === "personal"),
+    [backendMerchantAccounts],
+  );
+  const filteredPersonalAccounts = useMemo(
+    () =>
+      personalAccounts.filter((account) => {
+        const q = userKeyword.trim().toLowerCase();
+        if (!q) return true;
+        return [
+          account.email,
+          account.accountId,
+          account.username,
+          account.loginId,
+          account.createdAt,
+          account.lastSignInAt,
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(q);
+      }),
+    [personalAccounts, userKeyword],
   );
   const planTemplateTargetSite =
     merchantRows.find((row) => row.site.id === planTemplateTargetSiteId)?.site ??
@@ -3526,9 +3554,10 @@ export default function SuperAdminClient() {
     merchantListPreviewProps.merchantCardTextBoxVisible === true
       ? "inline-flex w-fit max-w-full rounded border border-slate-300 bg-white/90 px-1.5 py-0.5"
       : "inline-flex w-fit max-w-full";
+  const filteredAccountCount = filteredMerchantRows.length + filteredPersonalAccounts.length;
+  const filteredPersonalAccountCount = filteredPersonalAccounts.length;
+  const filteredMerchantAccountCount = filteredMerchantRows.length;
   const merchantActiveCount = filteredMerchantRows.filter((item) => item.statusKey === "active" || item.statusKey === "linked").length;
-  const merchantPausedCount = filteredMerchantRows.filter((item) => item.statusKey === "paused").length;
-  const merchantUnlinkedCount = filteredMerchantRows.filter((item) => item.statusKey === "unlinked").length;
   const supportMerchantListCount = supportListRows.length;
   const supportMerchantTotalCount = supportBaseRows.length;
   const releaseChecklistCheckedCount = RELEASE_REGRESSION_CHECKLIST.filter((item) => releaseChecklistState[item.id]).length;
@@ -6514,7 +6543,7 @@ export default function SuperAdminClient() {
                   <section className="space-y-4">
                 <div className="rounded-lg border bg-white p-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="grid min-w-0 flex-1 gap-2 md:grid-cols-5">
+                    <div className="grid min-w-0 flex-1 gap-2 md:grid-cols-6">
                       <input
                         className="rounded border px-3 py-2 text-sm md:col-span-2"
                         placeholder="搜索账号/邮箱/ID/名称/前缀/行业/城市/域名"
@@ -6524,18 +6553,40 @@ export default function SuperAdminClient() {
                           setMerchantTablePage(1);
                         }}
                       />
-                      <div className="rounded border bg-slate-50 px-3 py-2 text-sm">注册用户：{filteredMerchantRows.length}</div>
-                      <div className="rounded border bg-slate-50 px-3 py-2 text-sm">正常用户：{merchantActiveCount}</div>
-                      <div className="rounded border bg-slate-50 px-3 py-2 text-sm">暂停用户：{merchantPausedCount}</div>
-                      <div className="rounded border bg-slate-50 px-3 py-2 text-sm">未建站：{merchantUnlinkedCount}</div>
+                      <div className="rounded border bg-slate-50 px-3 py-2 text-sm">账号总数：{filteredAccountCount}</div>
+                      <div className="rounded border bg-slate-50 px-3 py-2 text-sm">商户账号：{filteredMerchantAccountCount}</div>
+                      <div className="rounded border bg-slate-50 px-3 py-2 text-sm">个人账号：{filteredPersonalAccountCount}</div>
+                      <div className="rounded border bg-slate-50 px-3 py-2 text-sm">正常商户：{merchantActiveCount}</div>
                     </div>
-                    <button
-                      type="button"
-                      className="rounded bg-black px-4 py-2 text-sm text-white hover:bg-slate-800"
-                      onClick={openManualUserDialog}
-                    >
-                      新增用户
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex flex-wrap gap-2 rounded-full border border-slate-200 bg-slate-50 p-1">
+                        {[
+                          { key: "all", label: "全部" },
+                          { key: "merchant", label: "商户" },
+                          { key: "personal", label: "个人" },
+                        ].map((item) => (
+                          <button
+                            key={item.key}
+                            type="button"
+                            className={`rounded-full px-3 py-1.5 text-sm transition ${
+                              userManageAccountTypeFilter === item.key
+                                ? "bg-slate-950 text-white shadow-sm"
+                                : "text-slate-600 hover:bg-white"
+                            }`}
+                            onClick={() => setUserManageAccountTypeFilter(item.key as "all" | "merchant" | "personal")}
+                          >
+                            {item.label}
+                          </button>
+                        ))}
+                      </div>
+                      <button
+                        type="button"
+                        className="rounded bg-black px-4 py-2 text-sm text-white hover:bg-slate-800"
+                        onClick={openManualUserDialog}
+                      >
+                        新增商户
+                      </button>
+                    </div>
                   </div>
                   <div className="mt-2 text-xs">
                     {backendMerchantAccountsLoading ? (
@@ -6543,7 +6594,7 @@ export default function SuperAdminClient() {
                     ) : backendMerchantAccountsError ? (
                       <span className="text-rose-600">后端用户数据加载失败：{describeBackendMerchantAccountsError(backendMerchantAccountsError)}</span>
                     ) : (
-                      <span className="text-slate-500">账号使用后端邮箱；名称只取商户信息；体积和访问量只显示可从线上 `pages / page_events` 核实的值。</span>
+                      <span className="text-slate-500">当前可在这里区分个人与商户账号；“新增商户”仍只创建商户账号，个人账号先走前台注册。</span>
                     )}
                   </div>
                 </div>
@@ -6636,6 +6687,7 @@ export default function SuperAdminClient() {
                   : null}
 
                 <div className="space-y-4">
+                  {userManageAccountTypeFilter !== "personal" ? (
                   <div className="rounded-lg border bg-white p-4">
                     <div className="overflow-x-auto">
                       <table className="min-w-full text-left text-sm">
@@ -6854,6 +6906,73 @@ export default function SuperAdminClient() {
                       </div>
                     </div>
                   </div>
+                  ) : null}
+
+                  {userManageAccountTypeFilter !== "merchant" ? (
+                    <div className="rounded-lg border bg-white p-4">
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-semibold text-slate-900">个人账号</div>
+                          <div className="mt-1 text-xs text-slate-500">个人账号当前展示基础认证信息，后续会接入订单、预约和对话汇总。</div>
+                        </div>
+                        <div className="text-xs text-slate-500">共 {filteredPersonalAccounts.length} 条</div>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full text-left text-sm">
+                          <thead className="bg-slate-50 text-xs text-slate-600">
+                            <tr>
+                              <th className="px-3 py-2">账号</th>
+                              <th className="px-3 py-2">ID</th>
+                              <th className="px-3 py-2">类型</th>
+                              <th className="px-3 py-2">注册时间</th>
+                              <th className="px-3 py-2">最近登录</th>
+                              <th className="px-3 py-2">邮箱验证</th>
+                              <th className="px-3 py-2">状态</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {filteredPersonalAccounts.map((account) => (
+                              <tr key={account.authUserId || account.accountId || account.email} className="border-t">
+                                <td className="px-3 py-2 text-xs">
+                                  <div className="font-medium text-slate-900">{account.username || account.email || "-"}</div>
+                                  {account.email && account.email !== account.username ? (
+                                    <div className="text-[11px] text-slate-400">{account.email}</div>
+                                  ) : null}
+                                </td>
+                                <td className="px-3 py-2 text-xs">{account.accountId || "-"}</td>
+                                <td className="px-3 py-2 text-xs">
+                                  <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-emerald-700">
+                                    个人
+                                  </span>
+                                </td>
+                                <td className="px-3 py-2 text-xs text-slate-500">{fmt(account.createdAt)}</td>
+                                <td className="px-3 py-2 text-xs text-slate-500">{fmt(account.lastSignInAt)}</td>
+                                <td className="px-3 py-2 text-xs">
+                                  <span
+                                    className={`rounded border px-2 py-0.5 ${
+                                      account.emailConfirmed
+                                        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                        : "border-amber-200 bg-amber-50 text-amber-700"
+                                    }`}
+                                  >
+                                    {account.emailConfirmed ? "已验证" : "未验证"}
+                                  </span>
+                                </td>
+                                <td className="px-3 py-2 text-xs text-slate-600">{account.manualCreated ? "手动创建" : "前台注册"}</td>
+                              </tr>
+                            ))}
+                            {filteredPersonalAccounts.length === 0 ? (
+                              <tr>
+                                <td colSpan={7} className="px-3 py-6 text-center text-xs text-slate-500">
+                                  暂无个人用户
+                                </td>
+                              </tr>
+                            ) : null}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  ) : null}
 
                   {planTemplateDialogOpen ? (
                     <>

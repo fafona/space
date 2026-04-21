@@ -2,8 +2,6 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import {
   type MerchantAuthUserSummary,
-  type MerchantIdentitySupabaseClient,
-  resolveMerchantIdentityForUser,
 } from "@/lib/merchantAuthIdentity";
 import {
   clearMerchantAuthCookies,
@@ -13,6 +11,11 @@ import {
   readMerchantRequestRefreshTokens,
   setMerchantAuthCookies,
 } from "@/lib/merchantAuthSession";
+import {
+  resolvePlatformAccountIdentityForUser,
+  type PlatformIdentitySupabaseClient,
+} from "@/lib/platformAccountIdentity";
+import { type PlatformAccountType } from "@/lib/platformAccounts";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 
 export const dynamic = "force-dynamic";
@@ -48,6 +51,8 @@ type AuthenticatedMerchantSessionPayload = {
   refreshToken: string | null;
   expiresIn: number | null;
   tokenType: string;
+  accountType: PlatformAccountType;
+  accountId: string | null;
   merchantId: string | null;
   merchantIds: string[];
   user: MerchantAuthUserSummary;
@@ -55,6 +60,8 @@ type AuthenticatedMerchantSessionPayload = {
 
 type PublicMerchantSessionPayload = {
   authenticated: true;
+  accountType: PlatformAccountType;
+  accountId: string | null;
   merchantId: string | null;
   merchantIds: string[];
   user: MerchantAuthUserSummary;
@@ -93,7 +100,7 @@ function createServerSupabaseClient() {
   });
 }
 
-function createServiceRoleSupabaseClient(): MerchantIdentitySupabaseClient | null {
+function createServiceRoleSupabaseClient(): PlatformIdentitySupabaseClient | null {
   const supabaseUrl = readEnv("NEXT_PUBLIC_SUPABASE_URL");
   const serviceRoleKey = readEnv("SUPABASE_SERVICE_ROLE_KEY") || readEnv("NEXT_SUPABASE_SERVICE_ROLE_KEY");
   if (!supabaseUrl || !serviceRoleKey) return null;
@@ -104,7 +111,7 @@ function createServiceRoleSupabaseClient(): MerchantIdentitySupabaseClient | nul
       autoRefreshToken: false,
       detectSessionInUrl: false,
     },
-  }) as unknown as MerchantIdentitySupabaseClient;
+  }) as unknown as PlatformIdentitySupabaseClient;
 }
 
 async function refreshMerchantSession(refreshToken: string): Promise<MerchantRefreshResult> {
@@ -223,6 +230,8 @@ function clearMerchantSessionCacheFromCandidates(accessTokens: string[], refresh
 function toPublicMerchantSessionPayload(payload: AuthenticatedMerchantSessionPayload): PublicMerchantSessionPayload {
   return {
     authenticated: true,
+    accountType: payload.accountType,
+    accountId: payload.accountId,
     merchantId: payload.merchantId,
     merchantIds: payload.merchantIds,
     user: payload.user,
@@ -318,7 +327,7 @@ export async function GET(request: Request) {
         return null;
       }
 
-      const merchantIdentity = await resolveMerchantIdentityForUser(adminSupabase, user);
+      const platformIdentity = await resolvePlatformAccountIdentityForUser(adminSupabase, user);
 
       const payload = {
         authenticated: true,
@@ -326,8 +335,10 @@ export async function GET(request: Request) {
         refreshToken: refreshToken || null,
         expiresIn,
         tokenType,
-        merchantId: merchantIdentity.merchantId,
-        merchantIds: merchantIdentity.merchantIds,
+        accountType: platformIdentity.accountType,
+        accountId: platformIdentity.accountId,
+        merchantId: platformIdentity.merchantId,
+        merchantIds: platformIdentity.merchantIds,
         user,
       } satisfies AuthenticatedMerchantSessionPayload;
       writeMerchantSessionCache(payload);
@@ -422,7 +433,7 @@ export async function POST(request: Request) {
       return response;
     }
 
-    const merchantIdentity = await resolveMerchantIdentityForUser(adminSupabase, user);
+    const platformIdentity = await resolvePlatformAccountIdentityForUser(adminSupabase, user);
 
     const response = noStoreJson({
       ok: true,
@@ -432,8 +443,10 @@ export async function POST(request: Request) {
         refreshToken: verifiedRefreshToken || null,
         expiresIn: verifiedExpiresIn ?? null,
         tokenType: "bearer",
-        merchantId: merchantIdentity.merchantId,
-        merchantIds: merchantIdentity.merchantIds,
+        accountType: platformIdentity.accountType,
+        accountId: platformIdentity.accountId,
+        merchantId: platformIdentity.merchantId,
+        merchantIds: platformIdentity.merchantIds,
         user,
       }),
     });
@@ -441,7 +454,7 @@ export async function POST(request: Request) {
       accessToken: verifiedAccessToken,
       refreshToken: verifiedRefreshToken,
       maxAgeSeconds: verifiedExpiresIn,
-      merchantId: merchantIdentity.merchantId,
+      merchantId: platformIdentity.merchantId,
     }, request);
     return response;
   } catch {

@@ -5,6 +5,7 @@ import {
   MERCHANT_ID_MIN,
   type MerchantIdRule,
 } from "@/lib/merchantIdRules";
+import { PERSONAL_ACCOUNT_ID_MAX, PERSONAL_ACCOUNT_ID_MIN } from "@/lib/platformAccounts";
 
 type AuthMetadata = Record<string, unknown> | null | undefined;
 
@@ -122,6 +123,10 @@ async function tryAllocateSequentialMerchantId(
     const nextAllowed = findNextAllowedMerchantIdNumber(candidate, blockedRules);
     if (!nextAllowed) return "";
     candidate = nextAllowed;
+    if (candidate >= PERSONAL_ACCOUNT_ID_MIN && candidate <= PERSONAL_ACCOUNT_ID_MAX) {
+      candidate = PERSONAL_ACCOUNT_ID_MAX + 1;
+      continue;
+    }
     const candidateId = String(candidate);
     const { error } = await supabase.from("merchants").insert({
       id: candidateId,

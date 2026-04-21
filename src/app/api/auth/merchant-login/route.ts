@@ -4,9 +4,19 @@ import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import {
   type MerchantAuthUserSummary,
   normalizeMerchantEmail,
-  resolveMerchantIdentityForUser,
 } from "@/lib/merchantAuthIdentity";
 import { setMerchantAuthCookies } from "@/lib/merchantAuthSession";
+import {
+  resolvePlatformAccountIdentityForUser,
+  type PlatformIdentitySupabaseClient,
+} from "@/lib/platformAccountIdentity";
+import {
+  isPersonalAccountNumericId,
+  readPlatformAccountIdFromMetadata,
+  readPlatformAccountTypeFromMetadata,
+  readPlatformUsernameFromMetadata,
+  type PlatformAccountType,
+} from "@/lib/platformAccounts";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 
 export const dynamic = "force-dynamic";
@@ -16,18 +26,12 @@ type AuthMetadata = Record<string, unknown> | null | undefined;
 
 type ResolvedAccountIdentity = {
   email: string;
+  accountType: PlatformAccountType | "";
+  accountId: string;
   merchantId: string;
 };
 
-type AdminListUsersClient = {
-  auth: {
-    admin: {
-      listUsers: (params: { page: number; perPage: number }) => Promise<{
-        data: { users: MerchantAuthUserSummary[] } | null;
-        error: Error | null;
-      }>;
-    };
-  };
+type AdminListUsersClient = PlatformIdentitySupabaseClient & {
   from: (table: string) => {
     select: (columns: string) => {
       eq: (column: string, value: string) => {
@@ -76,17 +80,38 @@ function readMetadataString(metadata: AuthMetadata, ...keys: string[]) {
 }
 
 function readAccountKeys(user: MerchantAuthUserSummary) {
-  const username =
-    readMetadataString(user.user_metadata, "username", "display_name", "name") ||
-    readMetadataString(user.app_metadata, "username", "display_name", "name");
+  const username = readPlatformUsernameFromMetadata(user);
   const loginId =
-    readMetadataString(user.user_metadata, "login_id", "loginId", "merchant_id", "merchantId", "merchantID") ||
-    readMetadataString(user.app_metadata, "login_id", "loginId", "merchant_id", "merchantId", "merchantID");
+    readMetadataString(
+      user.user_metadata,
+      "login_id",
+      "loginId",
+      "account_id",
+      "accountId",
+      "personal_id",
+      "personalId",
+      "merchant_id",
+      "merchantId",
+      "merchantID",
+    ) ||
+    readMetadataString(
+      user.app_metadata,
+      "login_id",
+      "loginId",
+      "account_id",
+      "accountId",
+      "personal_id",
+      "personalId",
+      "merchant_id",
+      "merchantId",
+      "merchantID",
+    );
+  const accountId = readPlatformAccountIdFromMetadata(user);
   const merchantId =
     readMetadataString(user.user_metadata, "merchant_id", "merchantId", "merchantID", "login_id", "loginId") ||
     readMetadataString(user.app_metadata, "merchant_id", "merchantId", "merchantID", "login_id", "loginId");
 
-  return [username, loginId, merchantId].map(normalizeAccountValue).filter(Boolean);
+  return [username, loginId, accountId, merchantId].map(normalizeAccountValue).filter(Boolean);
 }
 
 function createServerSupabaseClient(): AdminListUsersClient | null {
@@ -157,22 +182,27 @@ async function resolveAccountIdentity(supabase: AdminListUsersClient, account: s
   if (cached) return cached;
   const normalizedAccount = normalizeAccountValue(account);
   if (!normalizedAccount) {
-    return { email: "", merchantId: "" };
+    return { email: "", accountType: "", accountId: "", merchantId: "" };
   }
   if (normalizedAccount.includes("@")) {
-    const identity = { email: normalizedAccount, merchantId: "" };
+    const identity: ResolvedAccountIdentity = {
+      email: normalizedAccount,
+      accountType: "",
+      accountId: "",
+      merchantId: "",
+    };
     writeCachedAccountIdentity(account, identity);
     return identity;
   }
 
   if (isMerchantNumericId(normalizedAccount)) {
-    const { data: merchant, error } = await supabase
+    const { data: merchantRows, error } = await supabase
       .from("merchants")
       .select("id,name,email,owner_email,contact_email,user_email")
       .eq("id", normalizedAccount)
-      .limit(1)
-      .maybeSingle();
+      .limit(1);
     if (error) throw error;
+    const merchant = Array.isArray(merchantRows) ? merchantRows[0] ?? null : null;
     const email = normalizeMerchantEmail(
       merchant?.user_email,
       merchant?.email,
@@ -180,7 +210,12 @@ async function resolveAccountIdentity(supabase: AdminListUsersClient, account: s
       merchant?.contact_email,
     );
     if (email) {
-      const identity = { email, merchantId: normalizedAccount };
+      const identity: ResolvedAccountIdentity = {
+        email,
+        accountType: "merchant" as const,
+        accountId: normalizedAccount,
+        merchantId: normalizedAccount,
+      };
       writeCachedAccountIdentity(account, identity);
       return identity;
     }
@@ -188,13 +223,13 @@ async function resolveAccountIdentity(supabase: AdminListUsersClient, account: s
 
   for (const merchantName of [account.trim(), normalizedAccount]) {
     if (!merchantName) continue;
-    const { data: merchantByName, error } = await supabase
+    const { data: merchantRowsByName, error } = await supabase
       .from("merchants")
       .select("id,name,email,owner_email,contact_email,user_email")
       .eq("name", merchantName)
-      .limit(1)
-      .maybeSingle();
+      .limit(1);
     if (error) throw error;
+    const merchantByName = Array.isArray(merchantRowsByName) ? merchantRowsByName[0] ?? null : null;
     const email = normalizeMerchantEmail(
       merchantByName?.user_email,
       merchantByName?.email,
@@ -202,8 +237,10 @@ async function resolveAccountIdentity(supabase: AdminListUsersClient, account: s
       merchantByName?.contact_email,
     );
     if (email) {
-      const identity = {
+      const identity: ResolvedAccountIdentity = {
         email,
+        accountType: "merchant" as const,
+        accountId: isMerchantNumericId(String(merchantByName?.id ?? "").trim()) ? String(merchantByName?.id ?? "").trim() : "",
         merchantId: isMerchantNumericId(String(merchantByName?.id ?? "").trim()) ? String(merchantByName?.id ?? "").trim() : "",
       };
       writeCachedAccountIdentity(account, identity);
@@ -213,9 +250,14 @@ async function resolveAccountIdentity(supabase: AdminListUsersClient, account: s
 
   const authUsers = await listAuthUsers(supabase);
   const matchedUser = authUsers.find((user) => readAccountKeys(user).includes(normalizedAccount));
-  const identity = {
+  const accountId = readPlatformAccountIdFromMetadata(matchedUser);
+  const metadataAccountType = readPlatformAccountTypeFromMetadata(matchedUser, "");
+  const identity: ResolvedAccountIdentity = {
     email: normalizeMerchantEmail(matchedUser?.email),
-    merchantId: "",
+    accountType:
+      metadataAccountType || (isPersonalAccountNumericId(accountId) ? "personal" : accountId ? "merchant" : ""),
+    accountId,
+    merchantId: metadataAccountType === "merchant" || (!metadataAccountType && accountId && !isPersonalAccountNumericId(accountId)) ? accountId : "",
   };
   writeCachedAccountIdentity(account, identity);
   return identity;
@@ -307,16 +349,20 @@ export async function POST(request: Request) {
       upstreamPayload?.user && typeof upstreamPayload.user === "object"
         ? (upstreamPayload.user as MerchantAuthUserSummary)
         : null;
-    const merchantIdentity = await resolveMerchantIdentityForUser(supabase, authUser, {
+    const platformIdentity = await resolvePlatformAccountIdentityForUser(supabase, authUser, {
+      preferredAccountType: resolvedAccount.accountType || null,
+      preferredAccountId: resolvedAccount.accountId || null,
       preferredMerchantId: resolvedAccount.merchantId,
       preferredEmail: email,
     });
-    const merchantId = merchantIdentity.merchantId ?? "";
+    const merchantId = platformIdentity.merchantId ?? "";
 
     const response = NextResponse.json({
       email,
+      accountType: platformIdentity.accountType,
+      accountId: platformIdentity.accountId,
       merchantId: merchantId || null,
-      merchantIds: merchantIdentity.merchantIds,
+      merchantIds: platformIdentity.merchantIds,
       user: authUser,
     });
     setMerchantAuthCookies(response, {

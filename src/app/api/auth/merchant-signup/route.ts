@@ -2,10 +2,13 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import {
   type MerchantAuthUserSummary,
-  type MerchantIdentitySupabaseClient,
-  resolveMerchantIdentityForUser,
 } from "@/lib/merchantAuthIdentity";
 import { setMerchantAuthCookies } from "@/lib/merchantAuthSession";
+import {
+  resolvePlatformAccountIdentityForUser,
+  type PlatformIdentitySupabaseClient,
+} from "@/lib/platformAccountIdentity";
+import { type PlatformAccountType } from "@/lib/platformAccounts";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { resolveTrustedPublicOrigin } from "@/lib/requestOrigin";
 
@@ -15,6 +18,7 @@ export const revalidate = 0;
 type MerchantSignupBody = {
   email?: unknown;
   password?: unknown;
+  accountType?: unknown;
 };
 
 function readEnv(name: string) {
@@ -46,7 +50,7 @@ function createAnonSupabaseClient() {
   });
 }
 
-function createServiceRoleSupabaseClient(): MerchantIdentitySupabaseClient | null {
+function createServiceRoleSupabaseClient(): PlatformIdentitySupabaseClient | null {
   const supabaseUrl = readEnv("NEXT_PUBLIC_SUPABASE_URL");
   const serviceRoleKey = readEnv("SUPABASE_SERVICE_ROLE_KEY") || readEnv("NEXT_SUPABASE_SERVICE_ROLE_KEY");
   if (!supabaseUrl || !serviceRoleKey) return null;
@@ -56,7 +60,11 @@ function createServiceRoleSupabaseClient(): MerchantIdentitySupabaseClient | nul
       autoRefreshToken: false,
       detectSessionInUrl: false,
     },
-  }) as unknown as MerchantIdentitySupabaseClient;
+  }) as unknown as PlatformIdentitySupabaseClient;
+}
+
+function normalizeRequestedAccountType(value: unknown): PlatformAccountType {
+  return value === "personal" ? "personal" : "merchant";
 }
 
 function signUpNeedsEmailConfirmation(data: {
@@ -84,6 +92,7 @@ export async function POST(request: Request) {
 
   const email = normalizeEmail(body?.email);
   const password = normalizePassword(body?.password);
+  const accountType = normalizeRequestedAccountType(body?.accountType);
   if (!isValidEmail(email)) {
     return NextResponse.json({ ok: false, error: "invalid_email" }, { status: 400 });
   }
@@ -105,6 +114,10 @@ export async function POST(request: Request) {
     password,
     options: {
       emailRedirectTo,
+      data: {
+        account_type: accountType,
+        accountType,
+      },
     },
   });
 
@@ -118,30 +131,37 @@ export async function POST(request: Request) {
 
   const needsConfirmation = signUpNeedsEmailConfirmation(data);
   const authUser = (data.session?.user ?? data.user ?? null) as MerchantAuthUserSummary | null;
+  const platformIdentity = await resolvePlatformAccountIdentityForUser(adminSupabase, authUser, {
+    preferredAccountType: accountType,
+    preferredEmail: email,
+  });
 
   if (needsConfirmation || !data.session?.access_token || !data.session.refresh_token) {
     return NextResponse.json({
       ok: true,
       needsConfirmation: true,
+      accountType: platformIdentity.accountType,
+      accountId: platformIdentity.accountId,
+      merchantId: platformIdentity.merchantId,
+      merchantIds: platformIdentity.merchantIds,
       user: authUser,
     });
   }
 
-  const merchantIdentity = await resolveMerchantIdentityForUser(adminSupabase, authUser, {
-    preferredEmail: email,
-  });
   const response = NextResponse.json({
     ok: true,
     needsConfirmation: false,
-    merchantId: merchantIdentity.merchantId,
-    merchantIds: merchantIdentity.merchantIds,
+    accountType: platformIdentity.accountType,
+    accountId: platformIdentity.accountId,
+    merchantId: platformIdentity.merchantId,
+    merchantIds: platformIdentity.merchantIds,
     user: authUser,
   });
   setMerchantAuthCookies(response, {
     accessToken: data.session.access_token,
     refreshToken: data.session.refresh_token,
     maxAgeSeconds: data.session.expires_in,
-    merchantId: merchantIdentity.merchantId,
+    merchantId: platformIdentity.merchantId,
   }, request);
   return response;
 }

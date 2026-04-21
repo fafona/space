@@ -31,6 +31,7 @@ import {
   resolvedSupabaseAnonKey,
   supabase,
 } from "@/lib/supabase";
+import { type PlatformAccountType } from "@/lib/platformAccounts";
 
 type LoginAuthUser = {
   id?: string;
@@ -41,6 +42,8 @@ type LoginAuthUser = {
 
 type ServerSignInResult = {
   user: LoginAuthUser | null;
+  accountType: PlatformAccountType;
+  accountId: string;
   merchantId: string;
   merchantIds: string[];
   needsJustSignedInBridge: boolean;
@@ -111,6 +114,17 @@ function pickPrimaryMerchantId(preferredMerchantId: string | null | undefined, m
   return merchantIds.find((value) => isMerchantNumericId(value)) ?? merchantIds[0] ?? "";
 }
 
+function normalizePlatformAccountType(value: unknown): PlatformAccountType | "" {
+  if (value === "personal") return "personal";
+  if (value === "merchant") return "merchant";
+  return "";
+}
+
+function normalizePlatformAccountId(value: unknown) {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  return /^\d{8}$/.test(normalized) ? normalized : "";
+}
+
 function readAndroidKeyboardInset() {
   if (typeof window === "undefined") return 0;
   const visualViewport = window.visualViewport;
@@ -138,6 +152,7 @@ function LoginPageInner() {
   const [emailConfirmationRequired, setEmailConfirmationRequired] = useState<boolean | null>(null);
   const [pendingResetEmail, setPendingResetEmail] = useState("");
   const [pendingResetEmailMasked, setPendingResetEmailMasked] = useState("");
+  const [pendingSignupAccountType, setPendingSignupAccountType] = useState<PlatformAccountType | null>(null);
   const [pendingAction, setPendingAction] = useState<
     "signin" | "signup" | "forgot" | "resend" | "verify_reset_code" | null
   >(null);
@@ -331,7 +346,15 @@ function LoginPageInner() {
     };
   }, [isAndroid]);
 
-  const redirectToMerchantBackend = useCallback(
+  const personalSignUpLabel = useMemo(() => {
+    if (normalizedLocale.startsWith("zh")) return "个人注册";
+    return "Personal Sign Up";
+  }, [normalizedLocale]);
+  const merchantSignUpLabel = useMemo(() => {
+    if (normalizedLocale.startsWith("zh")) return "商家注册";
+    return "Merchant Sign Up";
+  }, [normalizedLocale]);
+  const redirectToAccountHome = useCallback(
     async (
       _user?: {
         id?: string;
@@ -339,9 +362,21 @@ function LoginPageInner() {
         user_metadata?: Record<string, unknown> | null;
         app_metadata?: Record<string, unknown> | null;
       } | null,
-      preferredMerchantId?: string | null,
-      options?: { withSignInBridge?: boolean; merchantIds?: string[] },
+      session?: {
+        accountType?: PlatformAccountType | "";
+        accountId?: string | null;
+        merchantId?: string | null;
+        merchantIds?: string[];
+      },
+      options?: { withSignInBridge?: boolean },
     ) => {
+      const accountType = session?.accountType === "personal" ? "personal" : "merchant";
+      if (accountType === "personal") {
+        const targetHref = requestedRedirectPath.startsWith("/me") ? requestedRedirectPath : "/me";
+        window.location.href = targetHref;
+        return;
+      }
+
       const decorateMerchantHref = (href: string) => {
         const url = new URL(href, window.location.origin);
         const targetMerchantId = url.pathname.replace(/^\/+/, "").split("/")[0]?.trim() ?? "";
@@ -362,17 +397,17 @@ function LoginPageInner() {
         return `${url.pathname}${url.search}${url.hash}`;
       };
 
-      if (requestedRedirectPath) {
+      if (requestedRedirectPath && !requestedRedirectPath.startsWith("/me")) {
         window.location.href = decorateMerchantHref(requestedRedirectPath);
         return;
       }
 
-      const directMerchantId = String(preferredMerchantId ?? "").trim();
+      const directMerchantId = String(session?.merchantId ?? "").trim();
       if (directMerchantId) {
         window.location.href = decorateMerchantHref(buildMerchantBackendHref(directMerchantId));
         return;
       }
-      const resolvedMerchantId = pickPrimaryMerchantId(null, options?.merchantIds ?? []);
+      const resolvedMerchantId = pickPrimaryMerchantId(null, session?.merchantIds ?? []);
       if (resolvedMerchantId) {
         window.location.href = decorateMerchantHref(buildMerchantBackendHref(resolvedMerchantId));
         return;
@@ -400,8 +435,11 @@ function LoginPageInner() {
     const payload = await readMerchantSessionPayload(2600).catch(() => null);
     if (!payload || payload.authenticated !== true || !payload.user) return null;
     const merchantIds = readMerchantSessionMerchantIds(payload);
+    const accountType = normalizePlatformAccountType(payload.accountType) || (merchantIds.length > 0 ? "merchant" : "");
     return {
       user: payload.user as LoginAuthUser,
+      accountType: accountType || "merchant",
+      accountId: normalizePlatformAccountId(payload.accountId),
       merchantId: pickPrimaryMerchantId(
         typeof payload.merchantId === "string" ? payload.merchantId.trim() : "",
         merchantIds,
@@ -439,9 +477,13 @@ function LoginPageInner() {
         if (!mounted) return;
         if (cookieBackedSession?.user) {
           clearStoredBrowserSupabaseSessionTokens();
-          await redirectToMerchantBackend(cookieBackedSession.user, cookieBackedSession.merchantId, {
-            withSignInBridge: false,
+          await redirectToAccountHome(cookieBackedSession.user, {
+            accountType: cookieBackedSession.accountType,
+            accountId: cookieBackedSession.accountId,
+            merchantId: cookieBackedSession.merchantId,
             merchantIds: cookieBackedSession.merchantIds,
+          }, {
+            withSignInBridge: false,
           });
         }
       } catch {
@@ -452,7 +494,7 @@ function LoginPageInner() {
     return () => {
       mounted = false;
     };
-  }, [redirectToMerchantBackend]);
+  }, [redirectToAccountHome]);
 
   function validateSignInForm(): string | null {
     const trimmedAccount = account.trim();
@@ -583,6 +625,8 @@ function LoginPageInner() {
           error?: unknown;
           message?: unknown;
           user?: LoginAuthUser | null;
+          accountType?: unknown;
+          accountId?: unknown;
           merchantId?: unknown;
           merchantIds?: unknown;
         }
@@ -601,6 +645,8 @@ function LoginPageInner() {
     const merchantIds = readMerchantSessionMerchantIds(payload);
     return {
       user: (payload?.user ?? null) as LoginAuthUser | null,
+      accountType: normalizePlatformAccountType(payload?.accountType) || "merchant",
+      accountId: normalizePlatformAccountId(payload?.accountId),
       merchantId: pickPrimaryMerchantId(
         typeof payload?.merchantId === "string" ? payload.merchantId.trim() : "",
         merchantIds,
@@ -610,7 +656,7 @@ function LoginPageInner() {
     };
   }
 
-  async function signUp() {
+  async function signUp(accountType: PlatformAccountType) {
     if (pendingAction) return;
     setMsg("");
     setNeedConfirmEmail(false);
@@ -621,6 +667,7 @@ function LoginPageInner() {
     setGatewayReachable(gatewayReady);
 
     setPendingAction("signup");
+    setPendingSignupAccountType(accountType);
     try {
       const response = await withTimeout(
         fetch("/api/auth/merchant-signup", {
@@ -632,6 +679,7 @@ function LoginPageInner() {
           body: JSON.stringify({
             email: account.trim(),
             password,
+            accountType,
             emailRedirectTo: `${authEmailRedirectOrigin || window.location.origin}/login`,
           }),
         }),
@@ -642,6 +690,8 @@ function LoginPageInner() {
             error?: unknown;
             message?: unknown;
             needsConfirmation?: unknown;
+            accountType?: unknown;
+            accountId?: unknown;
             merchantId?: unknown;
             merchantIds?: unknown;
             user?: LoginAuthUser | null;
@@ -660,12 +710,16 @@ function LoginPageInner() {
       setEmailConfirmationRequired(needsConfirmation);
       if (!needsConfirmation) {
         clearStoredBrowserSupabaseSessionTokens();
-        await redirectToMerchantBackend(
+        await redirectToAccountHome(
           (payload?.user ?? null) as LoginAuthUser | null,
-          typeof payload?.merchantId === "string" ? payload.merchantId.trim() : "",
+          {
+            accountType: normalizePlatformAccountType(payload?.accountType) || accountType,
+            accountId: normalizePlatformAccountId(payload?.accountId),
+            merchantId: typeof payload?.merchantId === "string" ? payload.merchantId.trim() : "",
+            merchantIds: readMerchantSessionMerchantIds(payload),
+          },
           {
             withSignInBridge: false,
-            merchantIds: readMerchantSessionMerchantIds(payload),
           },
         );
         return;
@@ -675,6 +729,7 @@ function LoginPageInner() {
     } catch (error) {
       setMsg(error instanceof Error ? normalizeError(error.message) : t("login.requestFailed"));
     } finally {
+      setPendingSignupAccountType(null);
       setPendingAction(null);
     }
   }
@@ -695,13 +750,15 @@ function LoginPageInner() {
 
     setPendingAction("signin");
     try {
-      const preferredMerchantId = isMerchantNumericId(account.trim()) ? account.trim() : "";
       const result = await signInViaServer(account, password);
-      const resolvedMerchantId = preferredMerchantId || result.merchantId;
       clearStoredBrowserSupabaseSessionTokens();
-      await redirectToMerchantBackend(result.user, resolvedMerchantId, {
-        withSignInBridge: result.needsJustSignedInBridge,
+      await redirectToAccountHome(result.user, {
+        accountType: result.accountType,
+        accountId: result.accountId,
+        merchantId: result.merchantId,
         merchantIds: result.merchantIds,
+      }, {
+        withSignInBridge: result.needsJustSignedInBridge,
       });
     } catch (error) {
       const normalizedMessage = error instanceof Error ? normalizeError(error.message) : t("login.requestFailed");
@@ -1004,9 +1061,20 @@ function LoginPageInner() {
                     {pendingAction === "signin" ? t("login.signingIn") : t("login.signIn")}
                   </button>
 
-                  <div className="grid grid-cols-2 gap-3">
-                    <button className={secondaryButtonClassName} onClick={signUp} disabled={pendingAction !== null}>
-                      {pendingAction === "signup" ? t("login.signingUp") : t("login.signUp")}
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                    <button
+                      className={secondaryButtonClassName}
+                      onClick={() => void signUp("personal")}
+                      disabled={pendingAction !== null}
+                    >
+                      {pendingAction === "signup" && pendingSignupAccountType === "personal" ? t("login.signingUp") : personalSignUpLabel}
+                    </button>
+                    <button
+                      className={secondaryButtonClassName}
+                      onClick={() => void signUp("merchant")}
+                      disabled={pendingAction !== null}
+                    >
+                      {pendingAction === "signup" && pendingSignupAccountType === "merchant" ? t("login.signingUp") : merchantSignUpLabel}
                     </button>
                     <button className={secondaryButtonClassName} onClick={forgotPassword} disabled={pendingAction !== null}>
                       {pendingAction === "forgot" ? t("common.sending") : t("login.forgot")}

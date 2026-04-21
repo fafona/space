@@ -19,6 +19,8 @@ export type MerchantCookieSessionPayload = {
   refreshToken?: unknown;
   expiresIn?: unknown;
   tokenType?: unknown;
+  accountType?: unknown;
+  accountId?: unknown;
   merchantId?: unknown;
   merchantIds?: unknown;
   user?: Session["user"] | null;
