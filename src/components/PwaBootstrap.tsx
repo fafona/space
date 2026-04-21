@@ -18,6 +18,8 @@ const PWA_INSTALL_DISMISS_STORAGE_KEY = "merchant-space:pwa-install-dismissed:v1
 const PWA_INSTALL_COMPLETED_STORAGE_KEY = "merchant-space:pwa-install-completed:v1";
 const PWA_INSTALL_DISMISS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const PWA_RECENT_ROUTE_WARM_SESSION_KEY = "merchant-space:pwa-recent-routes-warmed:v1";
+const PWA_MOBILE_PROMPT_GAP_PX = 24;
+const PWA_MOBILE_BOTTOM_NAV_FALLBACK_PX = 96;
 
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
@@ -121,6 +123,31 @@ function isMobileSafariBrowser() {
   const isAppleMobile = /iPhone|iPad|iPod/i.test(userAgent);
   if (!isAppleMobile) return false;
   return /Safari/i.test(userAgent) && !/CriOS|FxiOS|EdgiOS|OPiOS|DuckDuckGo/i.test(userAgent);
+}
+
+function shouldReserveMobileBottomNav(pathname: string | null) {
+  const normalizedPath = String(pathname ?? "").trim();
+  return (
+    normalizedPath === "/admin" ||
+    normalizedPath === "/me" ||
+    normalizedPath.startsWith("/me/") ||
+    /^\/\d{8}(?:\/|$)/.test(normalizedPath)
+  );
+}
+
+function readMobileBottomNavOffset() {
+  if (typeof window === "undefined" || typeof document === "undefined") return 0;
+  const viewportHeight = Math.max(0, window.innerHeight || window.visualViewport?.height || 0);
+  const shells = Array.from(document.querySelectorAll<HTMLElement>(".support-mobile-nav-shell"));
+  return shells.reduce((maxOffset, shell) => {
+    const style = window.getComputedStyle(shell);
+    if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") return maxOffset;
+    if (shell.getAttribute("aria-hidden") === "true") return maxOffset;
+    const rect = shell.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return maxOffset;
+    const bottomOverlap = viewportHeight > 0 ? Math.max(0, viewportHeight - rect.top) : 0;
+    return Math.max(maxOffset, Math.ceil(bottomOverlap || rect.height));
+  }, 0);
 }
 
 function hasRecentInstallDismissal() {
@@ -237,30 +264,39 @@ export default function PwaBootstrap() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (!isMobileViewport) return;
+    if (!isMobileViewport) {
+      const resetFrameId = window.requestAnimationFrame(() => {
+        setMobileBottomUiHeight(0);
+      });
+      return () => {
+        window.cancelAnimationFrame(resetFrameId);
+      };
+    }
 
     const measureBottomUi = () => {
-      const shell = document.querySelector(".support-mobile-nav-shell");
-      if (!(shell instanceof HTMLElement)) {
-        setMobileBottomUiHeight(0);
-        return;
-      }
-      const rect = shell.getBoundingClientRect();
-      setMobileBottomUiHeight(Math.max(0, Math.ceil(rect.height)));
+      const nextOffset = readMobileBottomNavOffset();
+      setMobileBottomUiHeight((currentOffset) => (currentOffset === nextOffset ? currentOffset : nextOffset));
     };
 
     measureBottomUi();
     const frameId = window.requestAnimationFrame(measureBottomUi);
     const resizeObserver = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measureBottomUi) : null;
-    const shell = document.querySelector(".support-mobile-nav-shell");
-    if (resizeObserver && shell instanceof HTMLElement) {
-      resizeObserver.observe(shell);
-    }
+    document.querySelectorAll<HTMLElement>(".support-mobile-nav-shell").forEach((shell) => {
+      resizeObserver?.observe(shell);
+    });
+    const mutationObserver = typeof MutationObserver !== "undefined" ? new MutationObserver(measureBottomUi) : null;
+    mutationObserver?.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["class", "style", "aria-hidden"],
+    });
     window.addEventListener("resize", measureBottomUi);
     window.addEventListener("orientationchange", measureBottomUi);
     return () => {
       window.cancelAnimationFrame(frameId);
       resizeObserver?.disconnect();
+      mutationObserver?.disconnect();
       window.removeEventListener("resize", measureBottomUi);
       window.removeEventListener("orientationchange", measureBottomUi);
     };
@@ -469,10 +505,16 @@ export default function PwaBootstrap() {
   const showOfflineBanner = isOffline && typeof window !== "undefined" && window.location.pathname !== "/offline";
   const showUpdatePrompt = updateReady;
   const inStandalone = typeof window !== "undefined" ? isStandaloneDisplayMode() : false;
+  const mobileBottomPromptOffset =
+    isMobileViewport && shouldReserveMobileBottomNav(pathname)
+      ? Math.max(mobileBottomUiHeight, PWA_MOBILE_BOTTOM_NAV_FALLBACK_PX) + PWA_MOBILE_PROMPT_GAP_PX
+      : mobileBottomUiHeight > 0
+        ? mobileBottomUiHeight + PWA_MOBILE_PROMPT_GAP_PX
+        : 0;
   const promptBottomStyle = {
     bottom:
-      mobileBottomUiHeight > 0
-        ? `calc(env(safe-area-inset-bottom) + ${mobileBottomUiHeight + 24}px)`
+      mobileBottomPromptOffset > 0
+        ? `calc(env(safe-area-inset-bottom) + ${mobileBottomPromptOffset}px)`
         : inStandalone
           ? "calc(env(safe-area-inset-bottom) + 1rem)"
           : "1rem",
@@ -487,7 +529,7 @@ export default function PwaBootstrap() {
     <>
       {showBottomPromptStack ? (
         <div
-          className="pointer-events-none fixed inset-x-0 z-[2147482500] mx-auto flex max-w-xl flex-col gap-3 px-3"
+          className="pointer-events-none fixed inset-x-0 z-[2147483450] mx-auto flex max-w-xl flex-col gap-3 px-3"
           style={promptBottomStyle}
         >
           {showOfflineBanner ? (
