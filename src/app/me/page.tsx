@@ -4,6 +4,11 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, ty
 import Link from "next/link";
 import { useI18n } from "@/components/I18nProvider";
 import { readMerchantSessionMerchantIds } from "@/lib/authSessionRecovery";
+import {
+  getEuropeCityOptions,
+  getEuropeCountryOptions,
+  getEuropeProvinceOptions,
+} from "@/lib/europeLocationOptions";
 import { LANGUAGE_OPTIONS } from "@/lib/i18n";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import SupportMessageContent from "@/components/support/SupportMessageContent";
@@ -81,6 +86,7 @@ type SupportContactRow = {
   unread: boolean;
   avatarLabel: string;
   avatarImageUrl: string;
+  accountType?: "merchant" | "personal";
   isOfficial: boolean;
 };
 
@@ -89,6 +95,13 @@ type ConversationInfoItem = {
   value: string;
   href?: string;
   openInNewTab?: boolean;
+};
+
+type PersonalLocationField = "country" | "province" | "city";
+
+type PersonalLocationOption = {
+  value: string;
+  label: string;
 };
 
 type PersonalProfileDraft = {
@@ -116,6 +129,7 @@ type PersonalProfileResponsePayload = {
 
 const OFFICIAL_CONVERSATION_KEY: PersonalConversationKey = "official";
 const SUPPORT_PHOTO_PICKER_ACCEPT = "image/png,image/jpeg,image/webp,image/heic,image/heif,image/gif";
+const PERSONAL_LOCATION_TYPEAHEAD_LIMIT = 30;
 const SUPPORT_FILE_PICKER_ACCEPT = [
   ".pdf",
   ".txt",
@@ -238,6 +252,39 @@ function getSupportContactAvatarLabel(value: unknown, fallback = "商") {
   const first = Array.from(trimmed)[0] ?? fallback;
   if (/^[a-z]$/i.test(first)) return first.toUpperCase();
   return first;
+}
+
+function normalizePersonalLocationValue(value: unknown) {
+  return trimText(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]/gu, "");
+}
+
+function buildPersonalLocationOptions(
+  options: PersonalLocationOption[],
+  inputValue: string,
+  limit = PERSONAL_LOCATION_TYPEAHEAD_LIMIT,
+) {
+  const normalized = normalizePersonalLocationValue(inputValue);
+  if (!normalized) return options.slice(0, limit);
+
+  const starts: PersonalLocationOption[] = [];
+  const includes: PersonalLocationOption[] = [];
+  for (const item of options) {
+    const normalizedLabel = normalizePersonalLocationValue(item.label);
+    const normalizedValue = normalizePersonalLocationValue(item.value);
+    if (normalizedLabel.startsWith(normalized) || normalizedValue.startsWith(normalized)) {
+      starts.push(item);
+      continue;
+    }
+    if (normalizedLabel.includes(normalized) || normalizedValue.includes(normalized)) {
+      includes.push(item);
+    }
+    if (starts.length + includes.length >= limit * 3) break;
+  }
+  return [...starts, ...includes].slice(0, limit);
 }
 
 function sanitizeMerchantPeerMessage(value: unknown): MerchantPeerThread["messages"][number] | null {
@@ -628,12 +675,130 @@ function EmptyFeatureCard({
   );
 }
 
+function PersonalLocationInput({
+  field,
+  label,
+  value,
+  placeholder,
+  disabled,
+  countryValue,
+  provinceValue,
+  onChange,
+}: {
+  field: PersonalLocationField;
+  label: string;
+  value: string;
+  placeholder: string;
+  disabled: boolean;
+  countryValue: string;
+  provinceValue: string;
+  onChange: (field: keyof PersonalProfileDraft, value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const countryOptions = useMemo(() => getEuropeCountryOptions(), []);
+  const selectedCountryCode = useMemo(() => {
+    const normalized = normalizePersonalLocationValue(countryValue);
+    if (!normalized) return "";
+    return (
+      countryOptions.find(
+        (item) => normalizePersonalLocationValue(item.name) === normalized || normalizePersonalLocationValue(item.code) === normalized,
+      )?.code ?? ""
+    );
+  }, [countryOptions, countryValue]);
+  const provinceOptions = useMemo(() => getEuropeProvinceOptions(selectedCountryCode), [selectedCountryCode]);
+  const selectedProvinceCode = useMemo(() => {
+    const normalized = normalizePersonalLocationValue(provinceValue);
+    if (!normalized) return "";
+    return (
+      provinceOptions.find(
+        (item) => normalizePersonalLocationValue(item.name) === normalized || normalizePersonalLocationValue(item.code) === normalized,
+      )?.code ?? ""
+    );
+  }, [provinceOptions, provinceValue]);
+  const cityOptions = useMemo(
+    () => getEuropeCityOptions(selectedCountryCode, selectedProvinceCode),
+    [selectedCountryCode, selectedProvinceCode],
+  );
+
+  const options = useMemo<PersonalLocationOption[]>(() => {
+    if (field === "country") return countryOptions.map((item) => ({ value: item.name, label: item.name }));
+    if (field === "province") return provinceOptions.map((item) => ({ value: item.name, label: item.name }));
+    return cityOptions.map((item) => ({ value: item, label: item }));
+  }, [cityOptions, countryOptions, field, provinceOptions]);
+  const filteredOptions = useMemo(() => buildPersonalLocationOptions(options, value), [options, value]);
+
+  const selectValue = (nextValue: string) => {
+    onChange(field, nextValue);
+    if (field === "country") {
+      onChange("province", "");
+      onChange("city", "");
+    }
+    if (field === "province") {
+      onChange("city", "");
+    }
+    setOpen(false);
+  };
+
+  return (
+    <label className="relative min-w-0">
+      <span className="text-[11px] font-semibold tracking-[0.08em] text-slate-400">{label}</span>
+      <input
+        className="mt-2 w-full rounded-[20px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-slate-300 focus:bg-white disabled:text-slate-500"
+        value={value}
+        placeholder={placeholder}
+        maxLength={80}
+        autoComplete="off"
+        onChange={(event) => {
+          const next = event.target.value;
+          onChange(field, next);
+          if (field === "country" && !next.trim()) {
+            onChange("province", "");
+            onChange("city", "");
+          }
+          if (field === "province" && !next.trim()) {
+            onChange("city", "");
+          }
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => window.setTimeout(() => setOpen(false), 120)}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter") return;
+          event.preventDefault();
+          const first = filteredOptions[0];
+          if (first) selectValue(first.value);
+          else setOpen(false);
+        }}
+        disabled={disabled}
+      />
+      {open && filteredOptions.length > 0 ? (
+        <div className="absolute left-0 right-0 top-[calc(100%+0.35rem)] z-30 max-h-56 overflow-auto rounded-2xl border border-slate-200 bg-white p-1 shadow-[0_18px_44px_rgba(15,23,42,0.16)]">
+          {filteredOptions.map((item) => (
+            <button
+              key={`${field}:${item.value}`}
+              type="button"
+              className="block w-full truncate rounded-xl px-3 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-100"
+              onMouseDown={(event) => {
+                event.preventDefault();
+                selectValue(item.value);
+              }}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </label>
+  );
+}
+
 function PersonalProfileEditor({
   accountId,
   email,
   draft,
   saving,
   message,
+  showSaveButton = true,
   onChange,
   onSave,
 }: {
@@ -642,6 +807,7 @@ function PersonalProfileEditor({
   draft: PersonalProfileDraft;
   saving: boolean;
   message: string;
+  showSaveButton?: boolean;
   onChange: (field: keyof PersonalProfileDraft, value: string) => void;
   onSave: () => void;
 }) {
@@ -654,16 +820,17 @@ function PersonalProfileEditor({
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <div className="text-sm font-semibold text-slate-950">我的资料</div>
-          <div className="mt-1 text-sm text-slate-500">这里维护个人账号资料，不包含商户信息。</div>
         </div>
-        <button
-          type="button"
-          className="rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
-          onClick={onSave}
-          disabled={saving}
-        >
-          {saving ? "保存中..." : "保存资料"}
-        </button>
+        {showSaveButton ? (
+          <button
+            type="button"
+            className="rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+            onClick={onSave}
+            disabled={saving}
+          >
+            {saving ? "保存中..." : "保存资料"}
+          </button>
+        ) : null}
       </div>
       {message ? (
         <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
@@ -716,8 +883,11 @@ function PersonalProfileEditor({
           <span className={labelClass}>生日</span>
           <input
             className={inputClass}
-            type="date"
+            type="text"
             value={draft.birthday}
+            placeholder="YYYY-MM-DD"
+            maxLength={10}
+            inputMode="numeric"
             onChange={(event) => onChange("birthday", event.target.value)}
             disabled={saving}
           />
@@ -736,39 +906,45 @@ function PersonalProfileEditor({
             <option value="other">其他</option>
           </select>
         </label>
+        <PersonalLocationInput
+          field="country"
+          label="国家"
+          value={draft.country}
+          placeholder="输入国家"
+          disabled={saving}
+          countryValue={draft.country}
+          provinceValue={draft.province}
+          onChange={onChange}
+        />
+        <PersonalLocationInput
+          field="province"
+          label="省份"
+          value={draft.province}
+          placeholder="输入省份"
+          disabled={saving}
+          countryValue={draft.country}
+          provinceValue={draft.province}
+          onChange={onChange}
+        />
+        <PersonalLocationInput
+          field="city"
+          label="城市"
+          value={draft.city}
+          placeholder="输入城市"
+          disabled={saving}
+          countryValue={draft.country}
+          provinceValue={draft.province}
+          onChange={onChange}
+        />
         <label className="min-w-0">
-          <span className={labelClass}>国家</span>
+          <span className={labelClass}>地址</span>
           <input
             className={inputClass}
-            value={draft.country}
-            placeholder="请输入国家"
-            maxLength={80}
-            autoComplete="country-name"
-            onChange={(event) => onChange("country", event.target.value)}
-            disabled={saving}
-          />
-        </label>
-        <label className="min-w-0">
-          <span className={labelClass}>省份</span>
-          <input
-            className={inputClass}
-            value={draft.province}
-            placeholder="请输入省份"
-            maxLength={80}
-            autoComplete="address-level1"
-            onChange={(event) => onChange("province", event.target.value)}
-            disabled={saving}
-          />
-        </label>
-        <label className="min-w-0">
-          <span className={labelClass}>城市</span>
-          <input
-            className={inputClass}
-            value={draft.city}
-            placeholder="请输入城市"
-            maxLength={80}
-            autoComplete="address-level2"
-            onChange={(event) => onChange("city", event.target.value)}
+            value={draft.address}
+            placeholder="请输入详细地址"
+            maxLength={240}
+            autoComplete="street-address"
+            onChange={(event) => onChange("address", event.target.value)}
             disabled={saving}
           />
         </label>
@@ -793,18 +969,6 @@ function PersonalProfileEditor({
             maxLength={160}
             autoComplete="off"
             onChange={(event) => onChange("signature", event.target.value)}
-            disabled={saving}
-          />
-        </label>
-        <label className="min-w-0 md:col-span-2">
-          <span className={labelClass}>地址</span>
-          <textarea
-            className={`${inputClass} h-24 resize-none leading-6`}
-            value={draft.address}
-            placeholder="请输入详细地址"
-            maxLength={240}
-            autoComplete="street-address"
-            onChange={(event) => onChange("address", event.target.value)}
             disabled={saving}
           />
         </label>
@@ -891,23 +1055,44 @@ function SupportAvatarBadge({
   imageAlt = "",
   className = "",
   labelClassName = "",
+  showMerchantBadge = false,
 }: {
   label: string;
   imageUrl?: string;
   imageAlt?: string;
   className?: string;
   labelClassName?: string;
+  showMerchantBadge?: boolean;
 }) {
   const normalizedImageUrl = normalizePublicAssetUrl(imageUrl);
   return (
-    <div className={`flex shrink-0 items-center justify-center overflow-hidden rounded-2xl font-semibold ${className}`}>
-      {normalizedImageUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={normalizedImageUrl} alt={imageAlt || label} className="h-full w-full object-cover" />
-      ) : (
-        <span className={labelClassName}>{label}</span>
-      )}
+    <div className={`relative flex shrink-0 items-center justify-center rounded-2xl font-semibold ${className}`}>
+      <div className="flex h-full w-full items-center justify-center overflow-hidden rounded-[inherit]">
+        {normalizedImageUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={normalizedImageUrl} alt={imageAlt || label} className="h-full w-full object-cover" />
+        ) : (
+          <span className={labelClassName}>{label}</span>
+        )}
+      </div>
+      {showMerchantBadge ? <MerchantAvatarBadge /> : null}
     </div>
+  );
+}
+
+function MerchantAvatarBadge() {
+  return (
+    <span className="pointer-events-none absolute -right-0.5 -top-0.5 z-10 inline-flex h-5 w-5 items-center justify-center rounded-full border-2 border-white bg-amber-500 text-white shadow-sm">
+      <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" aria-hidden="true">
+        <path
+          d="M4.5 10.5h15M6 10.5l1-5h10l1 5M7 10.5V19h10v-8.5M10 19v-4h4v4"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </span>
   );
 }
 
@@ -1120,6 +1305,7 @@ export default function MePage() {
   const selectedPeerContactCard = trimText(selectedPeerContact?.contactCard);
   const selectedPeerContactAvatarImageUrl =
     trimText(selectedPeerContact?.avatarImageUrl) || trimText(selectedPeerContact?.chatAvatarImageUrl);
+  const selectedPeerContactIsMerchant = !selectedConversationIsOfficial && (selectedPeerContact?.accountType ?? "merchant") === "merchant";
   const selectedConversationName = selectedConversationIsOfficial ? "Faolla" : selectedPeerContactName;
   const selectedConversationMeta = selectedConversationIsOfficial
     ? "www.faolla.com"
@@ -1214,6 +1400,7 @@ export default function MePage() {
           unread: false,
           avatarLabel: getSupportContactAvatarLabel(contactName || contactId, "商"),
           avatarImageUrl,
+          accountType: contact.accountType ?? "merchant",
           isOfficial: false,
         },
       ];
@@ -1497,40 +1684,49 @@ export default function MePage() {
         if (!current) return current;
         const currentUser = current.user ?? {};
         const currentMetadata = currentUser.user_metadata && typeof currentUser.user_metadata === "object" ? currentUser.user_metadata : {};
-        const user = result.user
-          ? result.user
-          : {
-              ...currentUser,
-              user_metadata: {
-                ...currentMetadata,
-                personal_profile: nextProfile,
-                display_name: nextProfile.displayName,
-                displayName: nextProfile.displayName,
-                avatar_url: nextProfile.avatarUrl,
-                avatarUrl: nextProfile.avatarUrl,
-                signature: nextProfile.signature,
-                phone: nextProfile.phone,
-                contact_phone: nextProfile.phone,
-                contactPhone: nextProfile.phone,
-                email: nextProfile.email,
-                contact_email: nextProfile.email,
-                contactEmail: nextProfile.email,
-                contact_card: nextProfile.contactCard,
-                contactCard: nextProfile.contactCard,
-                birthday: nextProfile.birthday,
-                gender: nextProfile.gender,
-                country: nextProfile.country,
-                province: nextProfile.province,
-                city: nextProfile.city,
-                address: nextProfile.address,
-              },
-            };
+        const resultUserMetadata =
+          result.user?.user_metadata && typeof result.user.user_metadata === "object" ? result.user.user_metadata : {};
+        const user = {
+          ...currentUser,
+          ...(result.user ?? {}),
+          user_metadata: {
+            ...currentMetadata,
+            ...resultUserMetadata,
+            personal_profile: {
+              ...(currentMetadata.personal_profile && typeof currentMetadata.personal_profile === "object"
+                ? (currentMetadata.personal_profile as Record<string, unknown>)
+                : {}),
+              ...(resultUserMetadata.personal_profile && typeof resultUserMetadata.personal_profile === "object"
+                ? (resultUserMetadata.personal_profile as Record<string, unknown>)
+                : {}),
+              ...nextProfile,
+              bio: nextProfile.signature,
+            },
+            display_name: nextProfile.displayName,
+            displayName: nextProfile.displayName,
+            avatar_url: nextProfile.avatarUrl,
+            avatarUrl: nextProfile.avatarUrl,
+            signature: nextProfile.signature,
+            bio: nextProfile.signature,
+            phone: nextProfile.phone,
+            contact_phone: nextProfile.phone,
+            contactPhone: nextProfile.phone,
+            email: nextProfile.email,
+            contact_email: nextProfile.email,
+            contactEmail: nextProfile.email,
+            contact_card: nextProfile.contactCard,
+            contactCard: nextProfile.contactCard,
+            birthday: nextProfile.birthday,
+            gender: nextProfile.gender,
+            country: nextProfile.country,
+            province: nextProfile.province,
+            city: nextProfile.city,
+            address: nextProfile.address,
+          },
+        };
         return {
           ...current,
-          user: {
-            ...currentUser,
-            ...user,
-          },
+          user,
         };
       });
       setPersonalProfileMessage(successMessage);
@@ -1998,6 +2194,7 @@ export default function MePage() {
                 ? "bg-slate-900 text-white"
                 : "bg-slate-100 text-slate-700"
             }`}
+            showMerchantBadge={contactRow.accountType === "merchant"}
           />
           <div className="min-w-0 flex-1">
             <div className="flex items-start justify-between gap-3">
@@ -2049,6 +2246,7 @@ export default function MePage() {
               imageAlt={selectedConversationName}
               className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm"
               labelClassName="text-sm font-semibold text-white"
+              showMerchantBadge={selectedPeerContactIsMerchant}
             />
             <div className="min-w-0">
               <div className="flex items-center gap-2">
@@ -2162,7 +2360,7 @@ export default function MePage() {
             <div className="flex min-w-0 items-center gap-3">
               <button
                 type="button"
-                className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm transition hover:scale-[1.02]"
+                className="flex h-12 w-12 shrink-0 items-center justify-center overflow-visible rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm transition hover:scale-[1.02]"
                 onClick={() => setConversationInfoOpen(true)}
                 aria-label="查看资料"
               >
@@ -2172,6 +2370,7 @@ export default function MePage() {
                   imageAlt={selectedConversationName}
                   className="flex h-full w-full items-center justify-center bg-slate-900 text-white"
                   labelClassName="text-sm font-semibold text-white"
+                  showMerchantBadge={selectedPeerContactIsMerchant}
                 />
               </button>
               <div className="min-w-0">
@@ -2299,7 +2498,7 @@ export default function MePage() {
                 </button>
                 <button
                   type="button"
-                  className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm transition hover:scale-[1.02]"
+                  className="flex h-11 w-11 shrink-0 items-center justify-center overflow-visible rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm transition hover:scale-[1.02]"
                   onClick={() => setConversationInfoOpen(true)}
                   aria-label="查看资料"
                 >
@@ -2309,6 +2508,7 @@ export default function MePage() {
                     imageAlt={selectedConversationName}
                     className="flex h-full w-full items-center justify-center bg-slate-900 text-white"
                     labelClassName="text-sm font-semibold text-white"
+                    showMerchantBadge={selectedPeerContactIsMerchant}
                   />
                 </button>
                 <div className="min-w-0">
@@ -2431,61 +2631,74 @@ export default function MePage() {
         <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
           <div className="relative shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
             <div className="absolute right-4 top-[calc(env(safe-area-inset-top)+0.7rem)] z-20">
-              <div ref={mobileSelfLanguageRootRef} className="relative">
+              {mobileSelfSection === "profile" ? (
                 <button
                   type="button"
-                  className="flex h-11 items-center gap-2 rounded-full border border-slate-200 bg-white/95 px-3 text-xs font-medium text-slate-800 shadow-[0_10px_24px_rgba(15,23,42,0.08)]"
-                  onClick={() => setMobileSelfLanguageMenuOpen((current) => !current)}
-                  aria-label="切换语言"
-                  aria-expanded={mobileSelfLanguageMenuOpen}
+                  className="flex h-11 items-center rounded-full bg-slate-950 px-4 text-xs font-semibold text-white shadow-[0_10px_24px_rgba(15,23,42,0.18)] disabled:cursor-not-allowed disabled:bg-slate-300"
+                  onClick={() => {
+                    void savePersonalProfile();
+                  }}
+                  disabled={personalProfileSaving}
                 >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={languageFlagImageUrl(mobileSelfSelectedLanguage.countryCode)}
-                    alt={mobileSelfSelectedLanguage.label}
-                    width={16}
-                    height={12}
-                    className="rounded-[2px] border border-slate-200 object-cover"
-                    loading="eager"
-                  />
-                  <svg viewBox="0 0 24 24" className="h-4 w-4 text-slate-500" fill="none" aria-hidden="true">
-                    <path d="m7 10 5 5 5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
+                  {personalProfileSaving ? "保存中..." : "保存资料"}
                 </button>
-                {mobileSelfLanguageMenuOpen ? (
-                  <div
-                    ref={mobileSelfLanguageMenuRef}
-                    className="absolute right-0 top-[calc(100%+0.5rem)] max-h-[55vh] w-[220px] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-[0_22px_60px_rgba(15,23,42,0.22)]"
+              ) : (
+                <div ref={mobileSelfLanguageRootRef} className="relative">
+                  <button
+                    type="button"
+                    className="flex h-11 items-center gap-2 rounded-full border border-slate-200 bg-white/95 px-3 text-xs font-medium text-slate-800 shadow-[0_10px_24px_rgba(15,23,42,0.08)]"
+                    onClick={() => setMobileSelfLanguageMenuOpen((current) => !current)}
+                    aria-label="切换语言"
+                    aria-expanded={mobileSelfLanguageMenuOpen}
                   >
-                    <div className="space-y-1">
-                      {LANGUAGE_OPTIONS.map((item) => (
-                        <button
-                          key={item.code}
-                          type="button"
-                          className={`flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left text-sm transition ${
-                            item.code === locale ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-100"
-                          }`}
-                          onClick={() => {
-                            setLocale(item.code);
-                            setMobileSelfLanguageMenuOpen(false);
-                          }}
-                        >
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={languageFlagImageUrl(item.countryCode)}
-                            alt={item.label}
-                            width={16}
-                            height={12}
-                            className="rounded-[2px] border border-slate-200 object-cover"
-                            loading="lazy"
-                          />
-                          <span className="truncate">{item.label}</span>
-                        </button>
-                      ))}
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={languageFlagImageUrl(mobileSelfSelectedLanguage.countryCode)}
+                      alt={mobileSelfSelectedLanguage.label}
+                      width={16}
+                      height={12}
+                      className="rounded-[2px] border border-slate-200 object-cover"
+                      loading="eager"
+                    />
+                    <svg viewBox="0 0 24 24" className="h-4 w-4 text-slate-500" fill="none" aria-hidden="true">
+                      <path d="m7 10 5 5 5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+                  {mobileSelfLanguageMenuOpen ? (
+                    <div
+                      ref={mobileSelfLanguageMenuRef}
+                      className="absolute right-0 top-[calc(100%+0.5rem)] max-h-[55vh] w-[220px] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-[0_22px_60px_rgba(15,23,42,0.22)]"
+                    >
+                      <div className="space-y-1">
+                        {LANGUAGE_OPTIONS.map((item) => (
+                          <button
+                            key={item.code}
+                            type="button"
+                            className={`flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left text-sm transition ${
+                              item.code === locale ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-100"
+                            }`}
+                            onClick={() => {
+                              setLocale(item.code);
+                              setMobileSelfLanguageMenuOpen(false);
+                            }}
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={languageFlagImageUrl(item.countryCode)}
+                              alt={item.label}
+                              width={16}
+                              height={12}
+                              className="rounded-[2px] border border-slate-200 object-cover"
+                              loading="lazy"
+                            />
+                            <span className="truncate">{item.label}</span>
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                ) : null}
-              </div>
+                  ) : null}
+                </div>
+              )}
             </div>
             {mobileSelfSection === "home" ? (
               <div className="flex flex-col items-center px-4 text-center">
@@ -2539,7 +2752,7 @@ export default function MePage() {
                 ) : null}
               </div>
             ) : (
-              <div className="flex items-center gap-3 pr-16">
+              <div className={`flex items-center gap-3 ${mobileSelfSection === "profile" ? "pr-24" : "pr-16"}`}>
                 <button
                   type="button"
                   className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-slate-900 hover:bg-slate-100"
@@ -2554,13 +2767,11 @@ export default function MePage() {
                   <div className="truncate text-[16px] font-semibold text-slate-900">
                     {mobileSelfSection === "profile" ? "我的资料" : mobileSelfSection === "cards" ? "名片夹" : "通知"}
                   </div>
-                  <div className="mt-1 truncate text-xs text-slate-500">
-                    {mobileSelfSection === "profile"
-                      ? "这里只显示个人账号资料。"
-                      : mobileSelfSection === "cards"
-                        ? "这里统一管理个人名片夹。"
-                        : "这里控制系统消息通知、提示音和震动。"}
-                  </div>
+                  {mobileSelfSection === "profile" ? null : (
+                    <div className="mt-1 truncate text-xs text-slate-500">
+                      {mobileSelfSection === "cards" ? "这里统一管理个人名片夹。" : "这里控制系统消息通知、提示音和震动。"}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -2629,6 +2840,7 @@ export default function MePage() {
                 draft={personalProfileDraft}
                 saving={personalProfileSaving}
                 message={personalProfileMessage}
+                showSaveButton={false}
                 onChange={updatePersonalProfileDraft}
                 onSave={() => {
                   void savePersonalProfile();

@@ -91,11 +91,13 @@ function buildProfileMetadataPatch(user: MerchantAuthUserSummary, patch: Persona
     userMetadata.personal_profile && typeof userMetadata.personal_profile === "object"
       ? { ...(userMetadata.personal_profile as Record<string, unknown>) }
       : {};
+  const nextSignature = trimText(patch.signature, 160);
   const nextProfile = {
     ...personalProfile,
     displayName: trimText(patch.displayName, 80),
     avatarUrl: normalizeStoragePublicUrl(patch.avatarUrl, 1200),
-    signature: trimText(patch.signature, 160),
+    signature: nextSignature,
+    bio: nextSignature,
     phone: trimText(patch.phone, 64),
     email: trimText(patch.email, 160),
     contactCard: trimText(patch.contactCard, 1200),
@@ -113,6 +115,7 @@ function buildProfileMetadataPatch(user: MerchantAuthUserSummary, patch: Persona
   userMetadata.avatar_url = nextProfile.avatarUrl;
   userMetadata.avatarUrl = nextProfile.avatarUrl;
   userMetadata.signature = nextProfile.signature;
+  userMetadata.bio = nextProfile.signature;
   userMetadata.phone = nextProfile.phone;
   userMetadata.contact_phone = nextProfile.phone;
   userMetadata.contactPhone = nextProfile.phone;

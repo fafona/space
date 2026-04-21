@@ -4387,6 +4387,7 @@ type SupportContactRow = {
   unread: boolean;
   avatarLabel: string;
   avatarImageUrl?: string;
+  accountType?: "merchant" | "personal";
   isOfficial: boolean;
 };
 
@@ -4578,6 +4579,7 @@ type SupportAvatarBadgeProps = {
   className?: string;
   labelClassName?: string;
   imageAlt?: string;
+  showMerchantBadge?: boolean;
 };
 
 function buildSupportPublishedProfileFromSite(site: Site): MerchantListPublishedSite {
@@ -4669,20 +4671,37 @@ function SupportAvatarBadge({
   className = "",
   labelClassName = "",
   imageAlt = "",
+  showMerchantBadge = false,
 }: SupportAvatarBadgeProps) {
   const normalizedImageUrl = normalizePublicAssetUrl(imageUrl ?? "");
-  if (normalizedImageUrl) {
-    return (
-      <div className={`overflow-hidden bg-slate-100 ${className}`.trim()}>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={normalizedImageUrl} alt={imageAlt || label} className="h-full w-full object-cover" />
-      </div>
-    );
-  }
   return (
-    <div className={className}>
-      <span className={labelClassName}>{label}</span>
+    <div className={`relative ${className}`.trim()}>
+      <div className="flex h-full w-full items-center justify-center overflow-hidden rounded-[inherit]">
+        {normalizedImageUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={normalizedImageUrl} alt={imageAlt || label} className="h-full w-full object-cover" />
+        ) : (
+          <span className={labelClassName}>{label}</span>
+        )}
+      </div>
+      {showMerchantBadge ? <MerchantAvatarBadge /> : null}
     </div>
+  );
+}
+
+function MerchantAvatarBadge() {
+  return (
+    <span className="pointer-events-none absolute -right-0.5 -top-0.5 z-10 inline-flex h-5 w-5 items-center justify-center rounded-full border-2 border-white bg-amber-500 text-white shadow-sm">
+      <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" aria-hidden="true">
+        <path
+          d="M4.5 10.5h15M6 10.5l1-5h10l1 5M7 10.5V19h10v-8.5M10 19v-4h4v4"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </span>
   );
 }
 
@@ -9915,6 +9934,8 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         normalizeSupportDisplayValue(selectedSupportPeerSite?.merchantCardImageUrl);
   const selectedSupportResolvedBusinessCard = selectedSupportProfile?.chatBusinessCard ?? selectedSupportBusinessCard;
   const selectedSupportIsOfficial = supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY;
+  const selectedSupportPeerIsMerchant =
+    !selectedSupportIsOfficial && (selectedSupportPeerContact?.accountType ?? "merchant") === "merchant";
   const selectedSupportSignature =
     selectedSupportIsOfficial
       ? supportOfficialSiteLabel
@@ -10420,6 +10441,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           normalizeSupportDisplayValue(contact.chatAvatarImageUrl) ||
           normalizeSupportDisplayValue(mergedProfile?.chatAvatarImageUrl) ||
           normalizeSupportDisplayValue(mergedProfile?.merchantCardImageUrl),
+        accountType: contact.accountType ?? "merchant",
         isOfficial: false,
       };
     }),
@@ -14373,6 +14395,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         : "bg-slate-100 text-slate-700"
                     }`}
                     labelClassName="text-sm font-semibold"
+                    showMerchantBadge={contactRow.accountType === "merchant"}
                   />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-start justify-between gap-3">
@@ -15152,7 +15175,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             ) : (
               <button
                 type="button"
-                className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm transition hover:scale-[1.02]"
+                className="flex h-11 w-11 shrink-0 items-center justify-center overflow-visible rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm transition hover:scale-[1.02]"
                 onClick={() => setSupportMerchantInfoSheetOpen(true)}
                 aria-label="查看商户资料"
               >
@@ -15162,6 +15185,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                   imageAlt={selectedSupportDisplayName}
                   className="flex h-full w-full items-center justify-center bg-slate-900 text-white"
                   labelClassName="text-sm font-semibold text-white"
+                  showMerchantBadge={selectedSupportPeerIsMerchant}
                 />
               </button>
             )}
@@ -15562,6 +15586,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         imageAlt={selectedSupportDisplayName}
                         className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white"
                         labelClassName="text-sm font-semibold text-white"
+                        showMerchantBadge={selectedSupportPeerIsMerchant}
                       />
                       <div className="min-w-0">
                         <div className="truncate text-base font-semibold text-slate-900">{selectedSupportDisplayName}</div>
@@ -15610,6 +15635,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         imageAlt={selectedSupportDisplayName}
                         className="flex h-16 w-16 shrink-0 items-center justify-center rounded-[22px] bg-slate-900 text-base font-semibold text-white shadow-sm"
                         labelClassName="text-base font-semibold text-white"
+                        showMerchantBadge={selectedSupportPeerIsMerchant}
                       />
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
@@ -16084,6 +16110,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                             : "bg-slate-100 text-slate-700"
                         }`}
                         labelClassName="text-sm font-semibold"
+                        showMerchantBadge={contactRow.accountType === "merchant"}
                       />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
@@ -16140,7 +16167,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             ) : showDesktopMerchantSupportPanel ? (
               <button
                 type="button"
-                className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm transition hover:scale-[1.02]"
+                className="flex h-12 w-12 shrink-0 items-center justify-center overflow-visible rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm transition hover:scale-[1.02]"
                 onClick={() => setSupportMerchantInfoSheetOpen(true)}
                 aria-label="查看商户资料"
               >
@@ -16150,6 +16177,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                   imageAlt={selectedSupportDisplayName}
                   className="flex h-full w-full items-center justify-center bg-slate-900 text-white"
                   labelClassName="text-sm font-semibold text-white"
+                  showMerchantBadge={selectedSupportPeerIsMerchant}
                 />
               </button>
             ) : (
@@ -16159,6 +16187,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 imageAlt={selectedSupportDisplayName}
                 className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white shadow-sm"
                 labelClassName="text-sm font-semibold text-white"
+                showMerchantBadge={selectedSupportPeerIsMerchant}
               />
             )}
             <div className="min-w-0">
