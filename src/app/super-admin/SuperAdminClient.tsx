@@ -71,6 +71,7 @@ import {
   summarizePlanTemplateBlocks,
   type PlanTemplateFilterCategory,
 } from "@/lib/planTemplates";
+import { isPersonalAccountNumericId, type PlatformAccountType } from "@/lib/platformAccounts";
 import { buildMerchantSiteLinker } from "@/lib/merchantSiteLinking";
 import {
   DEFAULT_PLAN_TEMPLATE_REPLACE_OPTIONS,
@@ -1846,6 +1847,7 @@ export default function SuperAdminClient() {
     return () => media.removeEventListener("change", updateMobileSupportOnlyMode);
   }, []);
   const [manualUserDialogOpen, setManualUserDialogOpen] = useState(false);
+  const [manualUserAccountType, setManualUserAccountType] = useState<PlatformAccountType>("merchant");
   const [manualUserId, setManualUserId] = useState("");
   const [manualUserName, setManualUserName] = useState("");
   const [manualUserPassword, setManualUserPassword] = useState("");
@@ -4971,7 +4973,8 @@ export default function SuperAdminClient() {
     setTip("总站页面已保存");
   }
 
-  function resetManualUserDialog() {
+  function resetManualUserDialog(nextAccountType: PlatformAccountType = "merchant") {
+    setManualUserAccountType(nextAccountType);
     setManualUserId("");
     setManualUserName("");
     setManualUserPassword("");
@@ -4980,7 +4983,7 @@ export default function SuperAdminClient() {
 
   function openManualUserDialog() {
     if (!guard("user.manage", "无用户管理权限")) return;
-    resetManualUserDialog();
+    resetManualUserDialog(userManageAccountTypeFilter === "personal" ? "personal" : "merchant");
     setManualUserDialogOpen(true);
   }
 
@@ -4993,12 +4996,21 @@ export default function SuperAdminClient() {
   async function createManualUserAction() {
     if (!guard("user.manage", "无用户管理权限")) return;
 
-    const merchantId = manualUserId.trim();
+    const accountType = manualUserAccountType;
+    const accountId = manualUserId.trim();
     const username = manualUserName.trim();
     const passwordValue = manualUserPassword;
 
-    if (!/^\d{8}$/.test(merchantId)) {
+    if (!/^\d{8}$/.test(accountId)) {
       setManualUserError("ID 必须是 8 位数字");
+      return;
+    }
+    if (accountType === "personal" && !isPersonalAccountNumericId(accountId)) {
+      setManualUserError("个人 ID 必须在 50010105 - 59999999 范围内");
+      return;
+    }
+    if (accountType === "merchant" && isPersonalAccountNumericId(accountId)) {
+      setManualUserError("商户 ID 不能落在个人号段内");
       return;
     }
     if (!username) {
@@ -5020,7 +5032,8 @@ export default function SuperAdminClient() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          merchantId,
+          accountType,
+          accountId,
           username,
           password: passwordValue,
         }),
@@ -5030,28 +5043,40 @@ export default function SuperAdminClient() {
         | null;
 
       if (!response.ok) {
-        setManualUserError(payload?.message || "新增用户失败，请稍后重试");
+        setManualUserError(payload?.message || "新增账号失败，请稍后重试");
         return;
       }
 
       const createdItem = payload?.item;
       if (createdItem) {
         setBackendMerchantAccounts((prev) => {
-          const next = prev.filter((item) => item.merchantId !== createdItem.merchantId);
+          const next = prev.filter(
+            (item) =>
+              !(
+                item.accountType === createdItem.accountType &&
+                (item.accountId === createdItem.accountId ||
+                  (item.authUserId && createdItem.authUserId && item.authUserId === createdItem.authUserId))
+              ),
+          );
           return [createdItem, ...next];
         });
-        setMerchantDetailSiteId(`backend-${createdItem.merchantId || createdItem.email || "merchant"}`);
+        if (createdItem.accountType === "merchant") {
+          setMerchantDetailSiteId(`backend-${createdItem.merchantId || createdItem.email || "merchant"}`);
+        } else {
+          setMerchantDetailSiteId("");
+        }
       } else {
-        setMerchantDetailSiteId(`backend-${merchantId}`);
+        setMerchantDetailSiteId(accountType === "merchant" ? `backend-${accountId}` : "");
       }
 
       setUserPanelMode("detail");
-      setMerchantPanelOpen(true);
+      setMerchantPanelOpen(createdItem?.accountType === "merchant");
+      setUserManageAccountTypeFilter(accountType);
       setManualUserDialogOpen(false);
       resetManualUserDialog();
-      setTip(`已创建用户：${username}（ID ${merchantId}）`);
+      setTip(`已创建${accountType === "personal" ? "个人" : "商户"}账号：${username}（ID ${accountId}）`);
     } catch (error) {
-      setManualUserError(error instanceof Error ? error.message : "新增用户失败，请稍后重试");
+      setManualUserError(error instanceof Error ? error.message : "新增账号失败，请稍后重试");
     } finally {
       setManualUserSubmitting(false);
     }
@@ -6584,7 +6609,7 @@ export default function SuperAdminClient() {
                         className="rounded bg-black px-4 py-2 text-sm text-white hover:bg-slate-800"
                         onClick={openManualUserDialog}
                       >
-                        新增商户
+                        新增账号
                       </button>
                     </div>
                   </div>
@@ -6594,7 +6619,7 @@ export default function SuperAdminClient() {
                     ) : backendMerchantAccountsError ? (
                       <span className="text-rose-600">后端用户数据加载失败：{describeBackendMerchantAccountsError(backendMerchantAccountsError)}</span>
                     ) : (
-                      <span className="text-slate-500">当前可在这里区分个人与商户账号；“新增商户”仍只创建商户账号，个人账号先走前台注册。</span>
+                      <span className="text-slate-500">当前可在这里区分个人与商户账号；超级后台也可以直接新增个人或商户账号。</span>
                     )}
                   </div>
                 </div>
@@ -6606,13 +6631,13 @@ export default function SuperAdminClient() {
                           type="button"
                           className="fixed inset-0 z-[2147483400] bg-black/45"
                           onClick={closeManualUserDialog}
-                          aria-label="关闭新增用户弹窗"
+                          aria-label="关闭新增账号弹窗"
                         />
                         <div className="fixed inset-0 z-[2147483401] flex items-center justify-center p-4">
                           <div className="w-full max-w-md rounded-2xl border bg-white shadow-2xl">
                             <div className="flex items-start justify-between gap-3 border-b px-5 py-4">
                               <div>
-                                <div className="text-base font-semibold text-slate-900">新增用户</div>
+                                <div className="text-base font-semibold text-slate-900">新增账号</div>
                                 <div className="mt-1 text-xs text-slate-500">
                                   直接创建可登录账号，跳过注册。登录时支持用户名或 8 位 ID。
                                 </div>
@@ -6627,13 +6652,39 @@ export default function SuperAdminClient() {
                               </button>
                             </div>
                             <div className="space-y-3 px-5 py-4">
+                              <div className="space-y-1">
+                                <div className="text-sm text-slate-600">账号类型</div>
+                                <div className="flex gap-2">
+                                  {[
+                                    { key: "merchant", label: "商户" },
+                                    { key: "personal", label: "个人" },
+                                  ].map((item) => (
+                                    <button
+                                      key={item.key}
+                                      type="button"
+                                      className={`rounded-full border px-3 py-1.5 text-sm transition ${
+                                        manualUserAccountType === item.key
+                                          ? "border-slate-950 bg-slate-950 text-white"
+                                          : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                                      }`}
+                                      onClick={() => {
+                                        setManualUserAccountType(item.key as PlatformAccountType);
+                                        setManualUserId("");
+                                        setManualUserError("");
+                                      }}
+                                    >
+                                      {item.label}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
                               <label className="space-y-1">
-                                <div className="text-sm text-slate-600">ID</div>
+                                <div className="text-sm text-slate-600">{manualUserAccountType === "personal" ? "个人 ID" : "商户 ID"}</div>
                                 <input
                                   className="w-full rounded border px-3 py-2 text-sm"
                                   inputMode="numeric"
                                   maxLength={8}
-                                  placeholder="8位数字，例如 10000001"
+                                  placeholder={manualUserAccountType === "personal" ? "8位数字，例如 50010105" : "8位数字，例如 10000001"}
                                   value={manualUserId}
                                   onChange={(event) => setManualUserId(event.target.value.replace(/\D+/g, "").slice(0, 8))}
                                 />
@@ -6658,7 +6709,9 @@ export default function SuperAdminClient() {
                                 />
                               </label>
                               <div className="rounded border border-dashed bg-slate-50 px-3 py-2 text-xs text-slate-500">
-                                系统会自动生成内部邮箱并直接完成验证，创建后可按普通注册用户一样登录后台。
+                                {manualUserAccountType === "personal"
+                                  ? "系统会自动生成内部邮箱并直接完成验证；创建后该账号会登录到个人中心。"
+                                  : "系统会自动生成内部邮箱并直接完成验证；创建后该账号会像普通商户一样登录后台。"}
                               </div>
                               {manualUserError ? <div className="text-sm text-rose-600">{manualUserError}</div> : null}
                             </div>

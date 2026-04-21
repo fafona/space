@@ -186,8 +186,8 @@ function readAccountMetadata(user?: AuthUserSummary | null) {
   };
 }
 
-function buildManualUserEmail(merchantId: string) {
-  return `merchant-${merchantId}@manual.merchant-space.invalid`;
+function buildManualUserEmail(accountType: PlatformAccountType, accountId: string) {
+  return `${accountType === "personal" ? "personal" : "merchant"}-${accountId}@manual.merchant-space.invalid`;
 }
 
 function isNumericMerchantId(value: string | null | undefined) {
@@ -427,7 +427,7 @@ function buildSupportScopeItems(merchants: MerchantRow[]) {
       );
       const merchantName = String(merchant.name ?? "").trim() || merchantId;
       const authUserId = String(merchant.auth_user_id ?? merchant.user_id ?? "").trim() || null;
-      const manualEmail = merchantId ? buildManualUserEmail(merchantId) : "";
+      const manualEmail = merchantId ? buildManualUserEmail("merchant", merchantId) : "";
       return {
         accountType: "merchant",
         accountId: merchantId,
@@ -711,17 +711,29 @@ export async function POST(request: Request) {
 
   try {
     const payload = (await request.json().catch(() => null)) as {
+      accountType?: unknown;
+      accountId?: unknown;
       merchantId?: unknown;
       username?: unknown;
       password?: unknown;
     } | null;
-    const merchantId = typeof payload?.merchantId === "string" ? payload.merchantId.trim() : "";
+    const accountType: PlatformAccountType = payload?.accountType === "personal" ? "personal" : "merchant";
+    const accountId =
+      typeof payload?.accountId === "string"
+        ? payload.accountId.trim()
+        : typeof payload?.merchantId === "string"
+          ? payload.merchantId.trim()
+          : "";
+    const merchantId = accountType === "merchant" ? accountId : "";
     const username = typeof payload?.username === "string" ? payload.username.trim() : "";
     const password = typeof payload?.password === "string" ? payload.password : "";
-
-    if (!isMerchantNumericId(merchantId)) {
-      return badRequestJson("invalid_merchant_id", "ID 必须是 8 位数字");
+    if (accountType === "personal" && !isPersonalAccountNumericId(accountId)) {
+      return badRequestJson("invalid_personal_id", "个人 ID 必须是 50010105 - 59999999 之间的 8 位数字");
     }
+    if (accountType === "merchant" && (!isMerchantNumericId(accountId) || isPersonalAccountNumericId(accountId))) {
+      return badRequestJson("invalid_merchant_id", "商户 ID 必须是非个人号段的 8 位数字");
+    }
+
     if (!username) {
       return badRequestJson("invalid_username", "请输入用户名");
     }
@@ -730,11 +742,11 @@ export async function POST(request: Request) {
     }
 
     const usernameKey = normalizeAccountValue(username);
-    const manualEmail = buildManualUserEmail(merchantId);
+    const manualEmail = buildManualUserEmail(accountType, accountId);
 
     const [{ rules: blockedRules }, existingMerchantById, existingMerchantByName, authUsers] = await Promise.all([
       loadMerchantIdRulesFromStore(supabase),
-      supabase.from("merchants").select("id").eq("id", merchantId).limit(1).maybeSingle(),
+      supabase.from("merchants").select("id").eq("id", accountId).limit(1).maybeSingle(),
       supabase.from("merchants").select("id").eq("name", username).limit(1).maybeSingle(),
       listAuthUsers(supabase),
     ]);
@@ -748,15 +760,16 @@ export async function POST(request: Request) {
     if (existingMerchantByName.data?.id) {
       return conflictJson("username_exists", "用户名已存在，请更换后重试");
     }
-    if (findBlockingMerchantIdRule(merchantId, blockedRules)) {
+    if (accountType === "merchant" && findBlockingMerchantIdRule(merchantId, blockedRules)) {
       return conflictJson("merchant_id_disabled", "该 ID 已在禁用设置中，不能用于创建用户");
     }
 
     const duplicateIdUser = authUsers.find((user) => {
       const metadata = readAccountMetadata(user);
       return (
-        metadata.loginId === merchantId ||
-        metadata.merchantId === merchantId ||
+        metadata.loginId === accountId ||
+        metadata.accountId === accountId ||
+        metadata.merchantId === accountId ||
         normalizeEmail(user.email) === manualEmail
       );
     });
@@ -780,8 +793,8 @@ export async function POST(request: Request) {
           manual_user: true,
         },
       },
-      "merchant",
-      merchantId,
+      accountType,
+      accountId,
     );
 
     const { data: createdUserData, error: createUserError } = await supabase.auth.admin.createUser({
@@ -801,40 +814,42 @@ export async function POST(request: Request) {
 
     const authUser = createdUserData.user;
     const authUserId = String(authUser.id ?? "").trim();
-    const { error: merchantInsertError } = await supabase.from("merchants").insert({
-      id: merchantId,
-      name: username,
-      email: manualEmail,
-      owner_email: manualEmail,
-      contact_email: manualEmail,
-      user_email: manualEmail,
-      user_id: authUserId,
-      auth_user_id: authUserId,
-      owner_user_id: authUserId,
-      owner_id: authUserId,
-      auth_id: authUserId,
-      created_by: authUserId,
-      created_by_user_id: authUserId,
-    });
-
-    if (merchantInsertError) {
-      await supabase.auth.admin.deleteUser(authUserId).catch(() => {
-        // Ignore cleanup failure and surface the original insert error below.
+    if (accountType === "merchant") {
+      const { error: merchantInsertError } = await supabase.from("merchants").insert({
+        id: merchantId,
+        name: username,
+        email: manualEmail,
+        owner_email: manualEmail,
+        contact_email: manualEmail,
+        user_email: manualEmail,
+        user_id: authUserId,
+        auth_user_id: authUserId,
+        owner_user_id: authUserId,
+        owner_id: authUserId,
+        auth_id: authUserId,
+        created_by: authUserId,
+        created_by_user_id: authUserId,
       });
-      if (isDuplicateKeyError(merchantInsertError)) {
-        return conflictJson("merchant_id_exists", "ID 已存在，请更换后重试");
+
+      if (merchantInsertError) {
+        await supabase.auth.admin.deleteUser(authUserId).catch(() => {
+          // Ignore cleanup failure and surface the original insert error below.
+        });
+        if (isDuplicateKeyError(merchantInsertError)) {
+          return conflictJson("merchant_id_exists", "ID 已存在，请更换后重试");
+        }
+        throw merchantInsertError;
       }
-      throw merchantInsertError;
     }
 
     const item: MerchantAccountItem = {
-      accountType: "merchant",
-      accountId: merchantId,
-      merchantId,
-      merchantName: username,
+      accountType,
+      accountId,
+      merchantId: accountType === "merchant" ? merchantId : "",
+      merchantName: accountType === "merchant" ? username : "",
       email: manualEmail,
       username,
-      loginId: merchantId,
+      loginId: accountId,
       createdAt: authUser.created_at ?? new Date().toISOString(),
       authUserId,
       emailConfirmed: true,

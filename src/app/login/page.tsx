@@ -49,6 +49,8 @@ type ServerSignInResult = {
   needsJustSignedInBridge: boolean;
 };
 
+type AuthView = "signin" | "signup_personal" | "signup_merchant";
+
 function trimTrailingSlash(value: string) {
   return value.replace(/\/+$/g, "");
 }
@@ -153,6 +155,7 @@ function LoginPageInner() {
   const [pendingResetEmail, setPendingResetEmail] = useState("");
   const [pendingResetEmailMasked, setPendingResetEmailMasked] = useState("");
   const [pendingSignupAccountType, setPendingSignupAccountType] = useState<PlatformAccountType | null>(null);
+  const [authView, setAuthView] = useState<AuthView>("signin");
   const [pendingAction, setPendingAction] = useState<
     "signin" | "signup" | "forgot" | "resend" | "verify_reset_code" | null
   >(null);
@@ -177,6 +180,20 @@ function LoginPageInner() {
     if (normalizedLocale.startsWith("ko")) return "이메일 / 사용자명 / 8자리 ID";
     if (normalizedLocale.startsWith("zh")) return "邮箱 / 用户名 / 8位ID";
     return "Email / Username / 8-digit ID";
+  }, [normalizedLocale]);
+  const registrationEmailLabel = useMemo(() => {
+    if (normalizedLocale.startsWith("zh-tw")) return "註冊信箱";
+    if (normalizedLocale.startsWith("ja")) return "登録メール";
+    if (normalizedLocale.startsWith("ko")) return "가입 이메일";
+    if (normalizedLocale.startsWith("zh")) return "注册邮箱";
+    return "Registration Email";
+  }, [normalizedLocale]);
+  const registrationEmailPlaceholder = useMemo(() => {
+    if (normalizedLocale.startsWith("zh-tw")) return "請輸入註冊信箱";
+    if (normalizedLocale.startsWith("ja")) return "登録メールアドレスを入力";
+    if (normalizedLocale.startsWith("ko")) return "가입 이메일을 입력하세요";
+    if (normalizedLocale.startsWith("zh")) return "请输入注册邮箱";
+    return "Enter your registration email";
   }, [normalizedLocale]);
   const loginAccountRequiredMessage = useMemo(() => {
     if (normalizedLocale.startsWith("zh-tw")) return "請輸入登入帳號";
@@ -221,12 +238,12 @@ function LoginPageInner() {
     if (normalizedLocale.startsWith("zh")) return "安全登录";
     return "Secure sign in";
   }, [normalizedLocale]);
-  const continueLabel = useMemo(() => {
-    if (normalizedLocale.startsWith("zh-tw")) return "繼續進入商戶後台";
-    if (normalizedLocale.startsWith("ja")) return "管理画面に進む";
-    if (normalizedLocale.startsWith("ko")) return "상인 백엔드로 계속";
-    if (normalizedLocale.startsWith("zh")) return "继续进入商户后台";
-    return "Continue to dashboard";
+  const welcomeLoginTitle = useMemo(() => {
+    if (normalizedLocale.startsWith("zh-tw")) return "歡迎登入Faolla";
+    if (normalizedLocale.startsWith("ja")) return "Faollaへようこそ";
+    if (normalizedLocale.startsWith("ko")) return "Faolla에 로그인";
+    if (normalizedLocale.startsWith("zh")) return "欢迎登录Faolla";
+    return "Welcome to Faolla";
   }, [normalizedLocale]);
   const passwordToggleLabels = useMemo(() => getPasswordToggleLabels(locale), [locale]);
   const authEmailRedirectOrigin = useMemo(() => resolveAuthEmailRedirectOrigin(), []);
@@ -354,6 +371,52 @@ function LoginPageInner() {
     if (normalizedLocale.startsWith("zh")) return "商家注册";
     return "Merchant Sign Up";
   }, [normalizedLocale]);
+  const personalSignUpTip = useMemo(() => {
+    if (normalizedLocale.startsWith("zh-tw")) return "使用信箱完成個人帳號註冊，註冊後可進入個人中心。";
+    if (normalizedLocale.startsWith("ja")) return "メールで個人アカウントを登録し、登録後は個人センターに入れます。";
+    if (normalizedLocale.startsWith("ko")) return "이메일로 개인 계정을 등록하면 가입 후 개인 센터로 들어갑니다.";
+    if (normalizedLocale.startsWith("zh")) return "使用邮箱完成个人账号注册，注册后可进入个人中心。";
+    return "Register a personal account with your email, then enter your personal center.";
+  }, [normalizedLocale]);
+  const merchantSignUpTip = useMemo(() => {
+    if (normalizedLocale.startsWith("zh-tw")) return "使用信箱完成商家帳號註冊，註冊後可進入商戶後台。";
+    if (normalizedLocale.startsWith("ja")) return "メールで商家アカウントを登録し、登録後は商戸バックエンドに入れます。";
+    if (normalizedLocale.startsWith("ko")) return "이메일로 상가 계정을 등록하면 가입 후 상인 백엔드로 들어갑니다.";
+    if (normalizedLocale.startsWith("zh")) return "使用邮箱完成商家账号注册，注册后可进入商户后台。";
+    return "Register a merchant account with your email, then enter the merchant admin.";
+  }, [normalizedLocale]);
+  const authSectionLabel = useMemo(() => {
+    if (authView === "signup_personal") return personalSignUpLabel;
+    if (authView === "signup_merchant") return merchantSignUpLabel;
+    if (normalizedLocale.startsWith("zh-tw")) return "帳號";
+    if (normalizedLocale.startsWith("ja")) return "アカウント";
+    if (normalizedLocale.startsWith("ko")) return "계정";
+    if (normalizedLocale.startsWith("zh")) return "账号";
+    return "Account";
+  }, [authView, merchantSignUpLabel, normalizedLocale, personalSignUpLabel]);
+  const authPrimaryTitle = useMemo(() => {
+    if (authView === "signup_personal") return personalSignUpLabel;
+    if (authView === "signup_merchant") return merchantSignUpLabel;
+    return welcomeLoginTitle;
+  }, [authView, merchantSignUpLabel, personalSignUpLabel, welcomeLoginTitle]);
+  const authDescription = useMemo(() => {
+    if (authView === "signup_personal") return personalSignUpTip;
+    if (authView === "signup_merchant") return merchantSignUpTip;
+    return loginAccountTip;
+  }, [authView, loginAccountTip, merchantSignUpTip, personalSignUpTip]);
+  const authHeroPills = useMemo(() => {
+    if (authView === "signup_personal") {
+      if (normalizedLocale.startsWith("zh")) return ["邮箱注册", "个人中心"];
+      return ["Email Sign Up", "Personal Center"];
+    }
+    if (authView === "signup_merchant") {
+      if (normalizedLocale.startsWith("zh")) return ["邮箱注册", "商户后台"];
+      return ["Email Sign Up", "Merchant Admin"];
+    }
+    return loginMethodPills;
+  }, [authView, loginMethodPills, normalizedLocale]);
+  const accountFieldLabel = authView === "signin" ? loginAccountLabel : registrationEmailLabel;
+  const accountFieldPlaceholder = authView === "signin" ? loginAccountPlaceholder : registrationEmailPlaceholder;
   const redirectToAccountHome = useCallback(
     async (
       _user?: {
@@ -658,6 +721,7 @@ function LoginPageInner() {
 
   async function signUp(accountType: PlatformAccountType) {
     if (pendingAction) return;
+    setAuthView(accountType === "personal" ? "signup_personal" : "signup_merchant");
     setMsg("");
     setNeedConfirmEmail(false);
 
@@ -736,6 +800,7 @@ function LoginPageInner() {
 
   async function signIn() {
     if (pendingAction) return;
+    setAuthView("signin");
     setMsg("");
     setNeedConfirmEmail(false);
 
@@ -810,6 +875,7 @@ function LoginPageInner() {
 
   async function forgotPassword() {
     if (pendingAction) return;
+    setAuthView("signin");
     setMsg("");
     setNeedConfirmEmail(false);
     setPendingResetEmail("");
@@ -946,17 +1012,17 @@ function LoginPageInner() {
                 />
               </div>
               <div>
-                <div className="text-xs font-medium uppercase tracking-[0.28em] text-slate-200/72">Merchant Space</div>
-                <div className="mt-1 text-[1.7rem] font-semibold leading-none text-white md:mt-2 md:text-4xl">{t("login.title")}</div>
+                <div className="text-xs font-medium uppercase tracking-[0.28em] text-slate-200/72">Faolla Account</div>
+                <div className="mt-1 text-[1.7rem] font-semibold leading-none text-white md:mt-2 md:text-4xl">{authPrimaryTitle}</div>
               </div>
             </div>
 
             <div className="mt-7 hidden max-w-md text-sm leading-7 text-slate-100/82 md:block md:text-[15px]">
-              {loginAccountTip}
+              {authDescription}
             </div>
 
             <div className="mt-6 hidden flex-wrap gap-2 md:flex">
-              {loginMethodPills.map((pill) => (
+              {authHeroPills.map((pill) => (
                 <span
                   key={pill}
                   className="rounded-full border border-white/14 bg-white/10 px-3 py-1.5 text-xs font-medium text-slate-50/92 backdrop-blur"
@@ -966,15 +1032,6 @@ function LoginPageInner() {
               ))}
             </div>
 
-            <div className="mt-8 hidden gap-3 md:mt-auto md:grid">
-              <div className="rounded-[26px] border border-white/12 bg-white/10 p-4 backdrop-blur">
-                <div className="text-xs uppercase tracking-[0.24em] text-cyan-100/70">Faolla</div>
-                <div className="mt-2 text-lg font-semibold text-white">{continueLabel}</div>
-                <div className="mt-1 text-sm leading-6 text-slate-100/72">
-                  {emailConfirmationRequired === false ? t("login.firstRegisterTipAutoConfirm") : t("login.firstRegisterTip")}
-                </div>
-              </div>
-            </div>
           </section>
 
           <section
@@ -989,14 +1046,14 @@ function LoginPageInner() {
                 androidKeyboardOpen ? "justify-start pt-2" : "justify-center"
               } md:overflow-visible`}
             >
-              <div className="space-y-4 md:space-y-6">
-                <div className="space-y-1.5 md:space-y-2">
-                  <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">Account</div>
-                  <div className="text-2xl font-semibold tracking-tight text-slate-950">{t("login.title")}</div>
+                <div className="space-y-4 md:space-y-6">
+                  <div className="space-y-1.5 md:space-y-2">
+                  <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">{authSectionLabel}</div>
+                  <div className="text-2xl font-semibold tracking-tight text-slate-950">{authPrimaryTitle}</div>
                   <div className="hidden text-sm leading-6 text-slate-500 md:block">
-                    {loggedOut ? t("login.signIn") : loginAccountTip}
+                    {loggedOut ? t("login.signIn") : authDescription}
                   </div>
-                  <div className="text-sm leading-5 text-slate-500 md:hidden">{loggedOut ? t("login.signIn") : secureAccessLabel}</div>
+                  <div className="text-sm leading-5 text-slate-500 md:hidden">{loggedOut ? t("login.signIn") : authDescription}</div>
                 </div>
 
                 <div className="space-y-3 md:space-y-4">
@@ -1006,11 +1063,11 @@ function LoginPageInner() {
                   </div>
 
                   <div className="space-y-2">
-                    <div className="px-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">{loginAccountLabel}</div>
+                    <div className="px-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">{accountFieldLabel}</div>
                     <input
                       ref={accountInputRef}
                       className={fieldClassName}
-                      type="text"
+                      type={authView === "signin" ? "text" : "email"}
                       name="merchant-login-account"
                       autoComplete="off"
                       autoCapitalize="none"
@@ -1019,7 +1076,7 @@ function LoginPageInner() {
                       data-lpignore="true"
                       value={account}
                       onChange={(e) => setAccount(e.target.value)}
-                      placeholder={loginAccountPlaceholder}
+                      placeholder={accountFieldPlaceholder}
                     />
                   </div>
 
