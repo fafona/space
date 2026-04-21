@@ -1,12 +1,19 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { createDefaultMerchantPermissionConfig } from "@/data/platformControlStore";
+import { type MerchantAuthUserSummary } from "@/lib/merchantAuthIdentity";
+import { readMerchantAuthCookie, readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
+import {
+  resolvePlatformAccountIdentityForUser,
+  type PlatformIdentitySupabaseClient,
+} from "@/lib/platformAccountIdentity";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import {
   loadStoredPlatformMerchantSnapshot,
   type PlatformMerchantSnapshotStoreClient,
 } from "@/lib/platformMerchantSnapshotStore";
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
+import { createServerSupabaseAuthClient, createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import { isSuperAdminRequestAuthorized } from "@/lib/superAdminRequestAuth";
 
 const BUCKET_CANDIDATES = ["page-assets", "assets", "uploads", "public"] as const;
@@ -149,7 +156,32 @@ async function resolveActorContext(
 
   const resolvedSession = await resolveMerchantSessionFromRequest(request);
   if (!resolvedSession?.merchantId) {
-    return { ok: false };
+    const authSupabase = createServerSupabaseAuthClient();
+    const adminSupabase = createServerSupabaseServiceClient() as unknown as PlatformIdentitySupabaseClient | null;
+    if (!authSupabase || !adminSupabase) return { ok: false };
+
+    const accessTokens = readMerchantRequestAccessTokens(request);
+    const fallbackAccessToken = readMerchantAuthCookie(request);
+    const candidates = [...accessTokens, fallbackAccessToken].map((value) => String(value ?? "").trim()).filter(Boolean);
+    let user: MerchantAuthUserSummary | null = null;
+    for (const accessToken of candidates) {
+      const { data, error } = await authSupabase.auth
+        .getUser(accessToken)
+        .catch(() => ({ data: null, error: true }));
+      if (!error && data?.user) {
+        user = data.user as MerchantAuthUserSummary;
+        break;
+      }
+    }
+    if (!user) return { ok: false };
+
+    const identity = await resolvePlatformAccountIdentityForUser(adminSupabase, user);
+    if (identity.accountType !== "personal" || !identity.accountId) return { ok: false };
+    return {
+      ok: true,
+      effectiveMerchantHint: sanitizeMerchantHint(identity.accountId || merchantHint || "personal"),
+      permissionConfig: createDefaultMerchantPermissionConfig(),
+    };
   }
 
   const snapshotPayload = await loadStoredPlatformMerchantSnapshot(supabase).catch(() => null);

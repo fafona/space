@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import Link from "next/link";
 import { useI18n } from "@/components/I18nProvider";
 import { readMerchantSessionMerchantIds } from "@/lib/authSessionRecovery";
@@ -83,6 +83,29 @@ type SupportContactRow = {
   isOfficial: boolean;
 };
 
+type PersonalProfileDraft = {
+  displayName: string;
+  avatarUrl: string;
+  signature: string;
+  phone: string;
+  email: string;
+  contactCard: string;
+  birthday: string;
+  gender: string;
+  country: string;
+  province: string;
+  city: string;
+  address: string;
+};
+
+type PersonalProfileResponsePayload = {
+  ok?: unknown;
+  error?: unknown;
+  message?: unknown;
+  user?: MeSessionPayload["user"] | null;
+  profile?: Partial<PersonalProfileDraft> | null;
+};
+
 const OFFICIAL_CONVERSATION_KEY: PersonalConversationKey = "official";
 const SUPPORT_PHOTO_PICKER_ACCEPT = "image/png,image/jpeg,image/webp,image/heic,image/heif,image/gif";
 const SUPPORT_FILE_PICKER_ACCEPT = [
@@ -100,6 +123,22 @@ const SUPPORT_FILE_PICKER_ACCEPT = [
   ".ppt",
   ".pptx",
 ].join(",");
+const PERSONAL_AVATAR_MAX_BYTES = 512 * 1024;
+
+const EMPTY_PERSONAL_PROFILE: PersonalProfileDraft = {
+  displayName: "",
+  avatarUrl: "",
+  signature: "",
+  phone: "",
+  email: "",
+  contactCard: "",
+  birthday: "",
+  gender: "",
+  country: "",
+  province: "",
+  city: "",
+  address: "",
+};
 
 function trimText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
@@ -109,9 +148,23 @@ function readPayloadMessage(value: unknown, fallback: string) {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
 
+function readMetadataString(metadata: Record<string, unknown> | null | undefined, ...keys: string[]) {
+  if (!metadata || typeof metadata !== "object") return "";
+  for (const key of keys) {
+    const value = metadata[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+}
+
 function readDisplayName(payload: MeSessionPayload | null) {
   const userMetadata = payload?.user?.user_metadata ?? null;
   const appMetadata = payload?.user?.app_metadata ?? null;
+  const profile = userMetadata?.personal_profile;
+  if (profile && typeof profile === "object") {
+    const profileName = readMetadataString(profile as Record<string, unknown>, "displayName", "display_name", "name");
+    if (profileName) return profileName;
+  }
   for (const source of [userMetadata, appMetadata]) {
     if (!source || typeof source !== "object") continue;
     for (const key of ["display_name", "displayName", "username", "name"]) {
@@ -120,6 +173,42 @@ function readDisplayName(payload: MeSessionPayload | null) {
     }
   }
   return "";
+}
+
+function readPersonalProfile(payload: MeSessionPayload | null): PersonalProfileDraft {
+  const userMetadata = payload?.user?.user_metadata ?? null;
+  const appMetadata = payload?.user?.app_metadata ?? null;
+  const profile =
+    userMetadata?.personal_profile && typeof userMetadata.personal_profile === "object"
+      ? (userMetadata.personal_profile as Record<string, unknown>)
+      : {};
+  const read = (...keys: string[]) =>
+    readMetadataString(profile, ...keys) || readMetadataString(userMetadata, ...keys) || readMetadataString(appMetadata, ...keys);
+
+  return {
+    displayName: read("displayName", "display_name", "username", "name"),
+    avatarUrl: read("avatarUrl", "avatar_url", "personalAvatarUrl", "chatAvatarImageUrl"),
+    signature: read("signature", "bio"),
+    phone: read("phone", "contact_phone", "contactPhone"),
+    email: read("email", "contact_email", "contactEmail") || payload?.user?.email?.trim() || "",
+    contactCard: read("contactCard", "contact_card", "businessCardUrl", "business_card_url"),
+    birthday: read("birthday", "birthdate"),
+    gender: read("gender"),
+    country: read("country"),
+    province: read("province", "state"),
+    city: read("city"),
+    address: read("address", "contactAddress"),
+  };
+}
+
+function mergePersonalProfileDraft(base: PersonalProfileDraft, patch: Partial<PersonalProfileDraft> | null | undefined) {
+  const next = { ...EMPTY_PERSONAL_PROFILE, ...base };
+  if (!patch || typeof patch !== "object") return next;
+  (Object.keys(EMPTY_PERSONAL_PROFILE) as Array<keyof PersonalProfileDraft>).forEach((key) => {
+    const value = patch[key];
+    if (typeof value === "string") next[key] = value;
+  });
+  return next;
 }
 
 function getInitialLabel(value: string) {
@@ -244,6 +333,62 @@ function fileToDataUrl(file: File): Promise<string> {
     });
     reader.readAsDataURL(file);
   });
+}
+
+function readDataUrlByteLength(dataUrl: string) {
+  const base64 = dataUrl.split(",")[1] ?? "";
+  return Math.ceil((base64.length * 3) / 4);
+}
+
+function loadImageElement(file: File): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("image_load_failed"));
+    };
+    image.src = url;
+  });
+}
+
+async function compressPersonalAvatarFile(file: File) {
+  if (file.size > 0 && file.size <= PERSONAL_AVATAR_MAX_BYTES) return fileToDataUrl(file);
+  const image = await loadImageElement(file);
+  const longestSide = Math.max(image.naturalWidth || image.width, image.naturalHeight || image.height, 1);
+  const steps = [
+    { maxSide: 512, quality: 0.82 },
+    { maxSide: 384, quality: 0.76 },
+    { maxSide: 320, quality: 0.7 },
+    { maxSide: 256, quality: 0.64 },
+    { maxSide: 192, quality: 0.58 },
+  ];
+  let smallest = "";
+  let smallestBytes = Number.POSITIVE_INFINITY;
+  for (const step of steps) {
+    const scale = Math.min(1, step.maxSide / longestSide);
+    const width = Math.max(1, Math.round((image.naturalWidth || image.width || 1) * scale));
+    const height = Math.max(1, Math.round((image.naturalHeight || image.height || 1) * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) continue;
+    context.drawImage(image, 0, 0, width, height);
+    const dataUrl = canvas.toDataURL("image/jpeg", step.quality);
+    const bytes = readDataUrlByteLength(dataUrl);
+    if (bytes < smallestBytes) {
+      smallest = dataUrl;
+      smallestBytes = bytes;
+    }
+    if (bytes <= PERSONAL_AVATAR_MAX_BYTES) return dataUrl;
+  }
+  if (smallest && smallestBytes <= PERSONAL_AVATAR_MAX_BYTES) return smallest;
+  throw new Error(`头像压缩后仍有 ${Math.ceil(smallestBytes / 1024)}KB，请换一张更小的图片`);
 }
 
 function formatSupportAttachmentFileSize(bytes: number) {
@@ -376,36 +521,186 @@ function EmptyFeatureCard({
   );
 }
 
-function PersonalInfoPanel({
+function PersonalProfileEditor({
   accountId,
-  displayName,
   email,
+  draft,
+  saving,
+  message,
+  onChange,
+  onSave,
 }: {
   accountId: string;
-  displayName: string;
   email: string;
+  draft: PersonalProfileDraft;
+  saving: boolean;
+  message: string;
+  onChange: (field: keyof PersonalProfileDraft, value: string) => void;
+  onSave: () => void;
 }) {
-  const items = [
-    { label: "个人 ID", value: accountId || "-" },
-    { label: "昵称", value: displayName || "-" },
-    { label: "邮箱", value: email || "-" },
-  ];
+  const inputClass =
+    "mt-2 w-full rounded-[20px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-slate-300 focus:bg-white disabled:text-slate-500";
+  const labelClass = "text-[11px] font-semibold tracking-[0.08em] text-slate-400";
 
   return (
     <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-[0_18px_44px_rgba(15,23,42,0.06)] md:p-6">
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <div className="text-sm font-semibold text-slate-950">个人信息</div>
-          <div className="mt-1 text-sm text-slate-500">这里显示当前个人账号的基础资料。</div>
+          <div className="text-sm font-semibold text-slate-950">我的资料</div>
+          <div className="mt-1 text-sm text-slate-500">这里维护个人账号资料，不包含商户信息。</div>
         </div>
+        <button
+          type="button"
+          className="rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+          onClick={onSave}
+          disabled={saving}
+        >
+          {saving ? "保存中..." : "保存资料"}
+        </button>
       </div>
-      <div className="mt-5 grid gap-3 md:grid-cols-3">
-        {items.map((item) => (
-          <div key={item.label} className="min-w-0 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-            <div className="text-xs text-slate-500">{item.label}</div>
-            <div className="mt-2 break-all text-base font-semibold text-slate-950">{item.value}</div>
-          </div>
-        ))}
+      {message ? (
+        <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
+          {message}
+        </div>
+      ) : null}
+      <div className="mt-5 grid gap-3 md:grid-cols-2">
+        <label className="min-w-0">
+          <span className={labelClass}>个人 ID</span>
+          <input className={`${inputClass} cursor-default bg-slate-100`} value={accountId || "-"} readOnly disabled />
+        </label>
+        <label className="min-w-0">
+          <span className={labelClass}>昵称</span>
+          <input
+            className={inputClass}
+            value={draft.displayName}
+            placeholder="请输入昵称"
+            maxLength={80}
+            autoComplete="nickname"
+            onChange={(event) => onChange("displayName", event.target.value)}
+            disabled={saving}
+          />
+        </label>
+        <label className="min-w-0">
+          <span className={labelClass}>邮箱</span>
+          <input
+            className={inputClass}
+            value={draft.email}
+            placeholder={email || "请输入邮箱"}
+            maxLength={160}
+            autoComplete="email"
+            onChange={(event) => onChange("email", event.target.value)}
+            disabled={saving}
+          />
+          {email ? <span className="mt-1 block text-[11px] text-slate-400">登录邮箱：{email}</span> : null}
+        </label>
+        <label className="min-w-0">
+          <span className={labelClass}>电话</span>
+          <input
+            className={inputClass}
+            value={draft.phone}
+            placeholder="请输入电话"
+            maxLength={64}
+            autoComplete="tel"
+            onChange={(event) => onChange("phone", event.target.value)}
+            disabled={saving}
+          />
+        </label>
+        <label className="min-w-0">
+          <span className={labelClass}>生日</span>
+          <input
+            className={inputClass}
+            type="date"
+            value={draft.birthday}
+            onChange={(event) => onChange("birthday", event.target.value)}
+            disabled={saving}
+          />
+        </label>
+        <label className="min-w-0">
+          <span className={labelClass}>性别</span>
+          <select
+            className={inputClass}
+            value={draft.gender}
+            onChange={(event) => onChange("gender", event.target.value)}
+            disabled={saving}
+          >
+            <option value="">不选择</option>
+            <option value="female">女</option>
+            <option value="male">男</option>
+            <option value="other">其他</option>
+          </select>
+        </label>
+        <label className="min-w-0">
+          <span className={labelClass}>国家</span>
+          <input
+            className={inputClass}
+            value={draft.country}
+            placeholder="请输入国家"
+            maxLength={80}
+            autoComplete="country-name"
+            onChange={(event) => onChange("country", event.target.value)}
+            disabled={saving}
+          />
+        </label>
+        <label className="min-w-0">
+          <span className={labelClass}>省份</span>
+          <input
+            className={inputClass}
+            value={draft.province}
+            placeholder="请输入省份"
+            maxLength={80}
+            autoComplete="address-level1"
+            onChange={(event) => onChange("province", event.target.value)}
+            disabled={saving}
+          />
+        </label>
+        <label className="min-w-0">
+          <span className={labelClass}>城市</span>
+          <input
+            className={inputClass}
+            value={draft.city}
+            placeholder="请输入城市"
+            maxLength={80}
+            autoComplete="address-level2"
+            onChange={(event) => onChange("city", event.target.value)}
+            disabled={saving}
+          />
+        </label>
+        <label className="min-w-0">
+          <span className={labelClass}>联系卡</span>
+          <input
+            className={inputClass}
+            value={draft.contactCard}
+            placeholder="请输入联系卡链接或说明"
+            maxLength={1200}
+            autoComplete="off"
+            onChange={(event) => onChange("contactCard", event.target.value)}
+            disabled={saving}
+          />
+        </label>
+        <label className="min-w-0 md:col-span-2">
+          <span className={labelClass}>个性签名</span>
+          <textarea
+            className={`${inputClass} h-24 resize-none leading-6`}
+            value={draft.signature}
+            placeholder="请输入个性签名"
+            maxLength={160}
+            autoComplete="off"
+            onChange={(event) => onChange("signature", event.target.value)}
+            disabled={saving}
+          />
+        </label>
+        <label className="min-w-0 md:col-span-2">
+          <span className={labelClass}>地址</span>
+          <textarea
+            className={`${inputClass} h-24 resize-none leading-6`}
+            value={draft.address}
+            placeholder="请输入详细地址"
+            maxLength={240}
+            autoComplete="street-address"
+            onChange={(event) => onChange("address", event.target.value)}
+            disabled={saving}
+          />
+        </label>
       </div>
     </div>
   );
@@ -485,14 +780,25 @@ function MobileBottomNav({
 
 function SupportAvatarBadge({
   label,
+  imageUrl = "",
+  imageAlt = "",
   className = "",
+  labelClassName = "",
 }: {
   label: string;
+  imageUrl?: string;
+  imageAlt?: string;
   className?: string;
+  labelClassName?: string;
 }) {
   return (
-    <div className={`flex shrink-0 items-center justify-center rounded-2xl font-semibold ${className}`}>
-      {label}
+    <div className={`flex shrink-0 items-center justify-center overflow-hidden rounded-2xl font-semibold ${className}`}>
+      {imageUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={imageUrl} alt={imageAlt || label} className="h-full w-full object-cover" />
+      ) : (
+        <span className={labelClassName}>{label}</span>
+      )}
     </div>
   );
 }
@@ -522,8 +828,13 @@ export default function MePage() {
   const [supportSearchError, setSupportSearchError] = useState("");
   const [supportDraft, setSupportDraft] = useState("");
   const [supportContactKeyword, setSupportContactKeyword] = useState("");
+  const [personalProfileDraft, setPersonalProfileDraft] = useState<PersonalProfileDraft>(EMPTY_PERSONAL_PROFILE);
+  const [personalProfileSaving, setPersonalProfileSaving] = useState(false);
+  const [personalAvatarUploading, setPersonalAvatarUploading] = useState(false);
+  const [personalProfileMessage, setPersonalProfileMessage] = useState("");
   const supportMessagesViewportRef = useRef<HTMLDivElement | null>(null);
   const supportInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const personalAvatarInputRef = useRef<HTMLInputElement | null>(null);
   const mobileSelfLanguageRootRef = useRef<HTMLDivElement | null>(null);
   const mobileSelfLanguageMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -578,19 +889,35 @@ export default function MePage() {
     };
   }, [mobileSelfLanguageMenuOpen]);
 
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      setPersonalProfileDraft(readPersonalProfile(payload));
+      setPersonalProfileMessage("");
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [payload]);
+
   const accountId =
     payload && typeof payload.accountId === "string" && /^\d{8}$/.test(payload.accountId.trim())
       ? payload.accountId.trim()
       : "";
   const email = payload?.user?.email?.trim() ?? "";
-  const displayName = useMemo(() => readDisplayName(payload), [payload]);
+  const personalProfile = useMemo(() => readPersonalProfile(payload), [payload]);
+  const displayName = personalProfile.displayName || readDisplayName(payload);
   const profileName = displayName || email.split("@")[0] || accountId || "个人用户";
   const avatarLabel = getInitialLabel(profileName);
+  const personalAvatarImageUrl = personalProfileDraft.avatarUrl || personalProfile.avatarUrl;
   const mobileSelfSelectedLanguage = useMemo(
     () => LANGUAGE_OPTIONS.find((item) => item.code === locale) ?? LANGUAGE_OPTIONS[0],
     [locale],
   );
-  const mobileSelfProfileSummary = [accountId || "-", email || "-"].filter(Boolean).join(" / ");
+  const mobileSelfProfileSummary = [
+    personalProfileDraft.displayName || displayName || accountId,
+    personalProfileDraft.phone,
+    personalProfileDraft.email || email,
+  ]
+    .filter(Boolean)
+    .join(" / ");
   const mobileSelfCardsSummary = "个人名片夹会在下一步接入。";
   const mobileSelfNotificationSummary = "系统通知、提示音和震动设置。";
 
@@ -937,6 +1264,118 @@ export default function MePage() {
       url: "",
       message: typeof payload?.message === "string" ? payload.message.trim() : "",
     };
+  }
+
+  function updatePersonalProfileDraft(field: keyof PersonalProfileDraft, value: string) {
+    setPersonalProfileMessage("");
+    setPersonalProfileDraft((current) => ({
+      ...current,
+      [field]: value,
+    }));
+  }
+
+  async function savePersonalProfile(targetProfile = personalProfileDraft, successMessage = "资料已保存") {
+    if (personalProfileSaving) return false;
+    setPersonalProfileSaving(true);
+    setPersonalProfileMessage("");
+    try {
+      const response = await fetch("/api/personal-profile", {
+        method: "POST",
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          accept: "application/json",
+        },
+        body: JSON.stringify({
+          profile: targetProfile,
+        }),
+      });
+      const result = (await response.json().catch(() => null)) as PersonalProfileResponsePayload | null;
+      if (!response.ok || !result || result.ok !== true) {
+        throw new Error(readPayloadMessage(result?.message, "资料保存失败，请稍后重试。"));
+      }
+      const nextProfile = mergePersonalProfileDraft(targetProfile, result.profile);
+      setPersonalProfileDraft(nextProfile);
+      setPayload((current) => {
+        if (!current) return current;
+        const currentUser = current.user ?? {};
+        const currentMetadata = currentUser.user_metadata && typeof currentUser.user_metadata === "object" ? currentUser.user_metadata : {};
+        const user = result.user
+          ? result.user
+          : {
+              ...currentUser,
+              user_metadata: {
+                ...currentMetadata,
+                personal_profile: nextProfile,
+                display_name: nextProfile.displayName,
+                displayName: nextProfile.displayName,
+                avatar_url: nextProfile.avatarUrl,
+                avatarUrl: nextProfile.avatarUrl,
+                signature: nextProfile.signature,
+                phone: nextProfile.phone,
+                contact_phone: nextProfile.phone,
+                contactPhone: nextProfile.phone,
+                email: nextProfile.email,
+                contact_email: nextProfile.email,
+                contactEmail: nextProfile.email,
+                contact_card: nextProfile.contactCard,
+                contactCard: nextProfile.contactCard,
+                birthday: nextProfile.birthday,
+                gender: nextProfile.gender,
+                country: nextProfile.country,
+                province: nextProfile.province,
+                city: nextProfile.city,
+                address: nextProfile.address,
+              },
+            };
+        return {
+          ...current,
+          user: {
+            ...currentUser,
+            ...user,
+          },
+        };
+      });
+      setPersonalProfileMessage(successMessage);
+      return true;
+    } catch (error) {
+      setPersonalProfileMessage(error instanceof Error ? error.message : "资料保存失败，请稍后重试。");
+      return false;
+    } finally {
+      setPersonalProfileSaving(false);
+    }
+  }
+
+  function openPersonalAvatarPicker() {
+    if (personalAvatarUploading || personalProfileSaving) return;
+    personalAvatarInputRef.current?.click();
+  }
+
+  async function handlePersonalAvatarInputChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0] ?? null;
+    event.target.value = "";
+    if (!file) return;
+    setPersonalAvatarUploading(true);
+    setPersonalProfileMessage("");
+    try {
+      const avatarDataUrl = await compressPersonalAvatarFile(file);
+      const uploadResult = await uploadSupportAssetDataUrl(avatarDataUrl, "merchant-assets");
+      if (!uploadResult.ok || !uploadResult.url) {
+        throw new Error(uploadResult.message || "头像上传失败，请稍后重试");
+      }
+      await savePersonalProfile(
+        {
+          ...personalProfileDraft,
+          avatarUrl: uploadResult.url,
+        },
+        "头像已更新",
+      );
+    } catch (error) {
+      setPersonalProfileMessage(error instanceof Error ? error.message : "头像上传失败，请稍后重试");
+    } finally {
+      setPersonalAvatarUploading(false);
+    }
   }
 
   async function handleSupportImageAttachment(file: File, label: "照片" | "拍照") {
@@ -1469,7 +1908,19 @@ export default function MePage() {
       return renderDesktopSupportSurface();
     }
     if (section === "profile") {
-      return <PersonalInfoPanel accountId={accountId} displayName={displayName} email={email} />;
+      return (
+        <PersonalProfileEditor
+          accountId={accountId}
+          email={email}
+          draft={personalProfileDraft}
+          saving={personalProfileSaving}
+          message={personalProfileMessage}
+          onChange={updatePersonalProfileDraft}
+          onSave={() => {
+            void savePersonalProfile();
+          }}
+        />
+      );
     }
 
     const item = desktopMenuItems.find((entry) => entry.key === section) ?? desktopMenuItems[0];
@@ -1734,11 +2185,54 @@ export default function MePage() {
             </div>
             {mobileSelfSection === "home" ? (
               <div className="flex flex-col items-center px-4 text-center">
-                <div className="relative flex h-24 w-24 items-center justify-center overflow-hidden rounded-[30px] bg-slate-900 text-xl font-semibold text-white shadow-[0_18px_40px_rgba(15,23,42,0.16)]">
-                  {avatarLabel}
-                </div>
+                <button
+                  type="button"
+                  className="relative flex h-24 w-24 items-center justify-center overflow-hidden rounded-[30px] bg-slate-900 text-xl font-semibold text-white shadow-[0_18px_40px_rgba(15,23,42,0.16)]"
+                  onClick={openPersonalAvatarPicker}
+                  disabled={personalAvatarUploading || personalProfileSaving}
+                  aria-label="上传头像"
+                >
+                  <SupportAvatarBadge
+                    label={avatarLabel}
+                    imageUrl={personalAvatarImageUrl}
+                    imageAlt={profileName}
+                    className="flex h-full w-full items-center justify-center bg-slate-900 text-white"
+                    labelClassName="text-xl font-semibold text-white"
+                  />
+                  {personalAvatarUploading || personalProfileSaving ? (
+                    <span className="absolute inset-0 flex items-center justify-center bg-slate-950/35">
+                      <span className="h-6 w-6 animate-spin rounded-full border-2 border-white/35 border-t-white" />
+                    </span>
+                  ) : (
+                    <span className="absolute bottom-2 right-2 inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/80 bg-white text-slate-900 shadow-[0_8px_20px_rgba(15,23,42,0.18)]">
+                      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" aria-hidden="true">
+                        <path
+                          d="M8.5 8.5 9.7 7h4.6l1.2 1.5H18A2 2 0 0 1 20 10.5v5A2.5 2.5 0 0 1 17.5 18h-11A2.5 2.5 0 0 1 4 15.5v-5A2 2 0 0 1 6 8.5h2.5Z"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                        <path
+                          d="M12 14.7a2.4 2.4 0 1 0 0-4.8 2.4 2.4 0 0 0 0 4.8Z"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    </span>
+                  )}
+                </button>
                 <div className="mt-4 max-w-full truncate text-[28px] font-semibold leading-none text-slate-950">{profileName}</div>
-                <div className="mt-2 max-w-full truncate text-sm text-slate-500">{accountId || email || "个人中心"}</div>
+                <div className="mt-2 max-w-full truncate text-sm text-slate-500">
+                  {personalProfileDraft.signature || accountId || email || "点击头像上传资料照片"}
+                </div>
+                {personalProfileMessage ? (
+                  <div className="mt-3 max-w-full rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700">
+                    {personalProfileMessage}
+                  </div>
+                ) : null}
               </div>
             ) : (
               <div className="flex items-center gap-3 pr-16">
@@ -1768,6 +2262,17 @@ export default function MePage() {
             )}
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(env(safe-area-inset-bottom)+5.85rem)] pt-4">
+            <input
+              ref={personalAvatarInputRef}
+              className="hidden"
+              type="file"
+              accept="image/*"
+              tabIndex={-1}
+              aria-hidden="true"
+              onChange={(event) => {
+                void handlePersonalAvatarInputChange(event);
+              }}
+            />
             {mobileSelfSection === "home" ? (
               <div className="space-y-4">
                 <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
@@ -1814,7 +2319,17 @@ export default function MePage() {
                 </section>
               </div>
             ) : mobileSelfSection === "profile" ? (
-              <PersonalInfoPanel accountId={accountId} displayName={displayName} email={email} />
+              <PersonalProfileEditor
+                accountId={accountId}
+                email={email}
+                draft={personalProfileDraft}
+                saving={personalProfileSaving}
+                message={personalProfileMessage}
+                onChange={updatePersonalProfileDraft}
+                onSave={() => {
+                  void savePersonalProfile();
+                }}
+              />
             ) : mobileSelfSection === "cards" ? (
               <EmptyFeatureCard
                 icon={<Icon name="card" />}
