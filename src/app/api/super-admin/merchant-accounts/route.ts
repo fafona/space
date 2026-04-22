@@ -106,6 +106,11 @@ type AdminListUsersClient = {
   };
 };
 
+type AuthUsersLoadResult = {
+  users: AuthUserSummary[];
+  errorMessage: string;
+};
+
 function readEnv(name: string) {
   return (process.env[name] ?? "").trim();
 }
@@ -202,6 +207,46 @@ function isDuplicateKeyError(error: unknown) {
   return /duplicate key|already exists|unique constraint/i.test(message);
 }
 
+function readErrorMessage(error: unknown) {
+  if (!error) return "";
+  if (error instanceof Error) return error.message;
+  if (typeof error === "object") {
+    const record = error as { message?: unknown; code?: unknown };
+    const message = typeof record.message === "string" ? record.message.trim() : "";
+    const code = typeof record.code === "string" ? record.code.trim() : "";
+    return [code, message].filter(Boolean).join(": ") || "unknown_error";
+  }
+  return String(error);
+}
+
+function isTransientSupabaseError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const record = error as { code?: unknown; message?: unknown; status?: unknown };
+  const code = typeof record.code === "string" ? record.code : "";
+  const message = typeof record.message === "string" ? record.message : "";
+  if (code === "PGRST002") return true;
+  if (Number(record.status) === 503) return true;
+  return /schema cache|retrying|temporarily|timeout|connection|database error finding users/i.test(message);
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function runSupabaseQueryWithRetry<T extends { error?: unknown }>(
+  task: () => PromiseLike<T>,
+  attempts = 3,
+) {
+  let result = await task();
+  for (let attempt = 1; attempt < attempts && result.error && isTransientSupabaseError(result.error); attempt += 1) {
+    await wait(350 * attempt);
+    result = await task();
+  }
+  return result;
+}
+
 async function listAuthUsers(supabase: AdminListUsersClient) {
   const users: AuthUserSummary[] = [];
   let page = 1;
@@ -222,6 +267,20 @@ async function listAuthUsers(supabase: AdminListUsersClient) {
     page += 1;
   }
   return users;
+}
+
+async function listAuthUsersBestEffort(supabase: AdminListUsersClient): Promise<AuthUsersLoadResult> {
+  try {
+    return {
+      users: await listAuthUsers(supabase),
+      errorMessage: "",
+    };
+  } catch (error) {
+    return {
+      users: [],
+      errorMessage: readErrorMessage(error) || "auth_users_load_failed",
+    };
+  }
 }
 
 function sortByCreatedAtDesc(items: MerchantAccountItem[]) {
@@ -478,27 +537,32 @@ export async function GET(request: Request) {
 
   try {
     if (scope === "support") {
-      const { data: merchants, error: merchantError } = await supabase
-        .from("merchants")
-        .select("id,name,email,owner_email,contact_email,user_email,user_id,auth_user_id,created_at")
-        .order("created_at", { ascending: false })
-        .limit(500);
+      const { data: merchants, error: merchantError } = await runSupabaseQueryWithRetry(() =>
+        supabase
+          .from("merchants")
+          .select("id,name,email,owner_email,contact_email,user_email,user_id,auth_user_id,created_at")
+          .order("created_at", { ascending: false })
+          .limit(500),
+      );
       if (merchantError) throw merchantError;
       const items = buildSupportScopeItems((merchants ?? []) as MerchantRow[]);
       writeMerchantAccountsCache(scope, items);
       return NextResponse.json({ items });
     }
 
-    const [{ data: merchants, error: merchantError }, authUsers] = await Promise.all([
-      supabase
-        .from("merchants")
-        .select("id,name,email,owner_email,contact_email,user_email,user_id,auth_user_id,created_at")
-        .order("created_at", { ascending: false })
-        .limit(500),
-      listAuthUsers(supabase),
+    const [{ data: merchants, error: merchantError }, authUsersResult] = await Promise.all([
+      runSupabaseQueryWithRetry(() =>
+        supabase
+          .from("merchants")
+          .select("id,name,email,owner_email,contact_email,user_email,user_id,auth_user_id,created_at")
+          .order("created_at", { ascending: false })
+          .limit(500),
+      ),
+      listAuthUsersBestEffort(supabase),
     ]);
 
     if (merchantError) throw merchantError;
+    const authUsers = authUsersResult.users;
 
     const authById = new Map(authUsers.map((user) => [user.id, user] as const));
     const authByEmail = new Map(
@@ -637,11 +701,13 @@ export async function GET(request: Request) {
       { hasPublishedSite: boolean; siteSlug: string; siteUpdatedAt: string | null; publishedBytes: number; publishedBytesKnown: boolean }
     >();
     if (merchantIds.length > 0) {
-      const { data: pageRows, error: pageError } = await supabase
-        .from("pages")
-        .select("merchant_id,slug,updated_at,blocks")
-        .in("merchant_id", merchantIds)
-        .limit(Math.max(merchantIds.length * 4, 100));
+      const { data: pageRows, error: pageError } = await runSupabaseQueryWithRetry(() =>
+        supabase
+          .from("pages")
+          .select("merchant_id,slug,updated_at,blocks")
+          .in("merchant_id", merchantIds)
+          .limit(Math.max(merchantIds.length * 4, 100)),
+      );
       if (!pageError && Array.isArray(pageRows)) {
         publishedSiteInfoByMerchantId = buildPublishedSiteInfoByMerchantId(pageRows as PageRow[]);
       }
@@ -650,15 +716,17 @@ export async function GET(request: Request) {
     let visitsByMerchantId = new Map<string, MerchantVisitSummary>();
     let visitsKnown = false;
     if (merchantIds.length > 0) {
-      const { data: pageEvents, error: pageEventsError } = await supabase
-        .from("page_events")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(5000);
+      const { data: pageEvents, error: pageEventsError } = await runSupabaseQueryWithRetry(() =>
+        supabase
+          .from("page_events")
+          .select("*")
+          .order("created_at", { ascending: false })
+          .limit(5000),
+      );
       if (!pageEventsError && Array.isArray(pageEvents)) {
         visitsByMerchantId = buildMerchantVisitsByMerchantId(pageEvents, Date.now());
         visitsKnown = true;
-      } else if (pageEventsError && isMissingRelationError(pageEventsError.message)) {
+      } else if (pageEventsError && isMissingRelationError(readErrorMessage(pageEventsError))) {
         visitsKnown = false;
       }
     }
@@ -683,14 +751,18 @@ export async function GET(request: Request) {
 
     writeMerchantAccountsCache(scope, items);
 
-    return NextResponse.json({ items });
+    return NextResponse.json({
+      items,
+      authUsersUnavailable: Boolean(authUsersResult.errorMessage),
+      authUsersError: authUsersResult.errorMessage,
+    });
   } catch (error) {
     return NextResponse.json(
       {
         error: "merchant_account_load_failed",
-        message: error instanceof Error ? error.message : "unknown_error",
+        message: readErrorMessage(error) || "unknown_error",
       },
-      { status: 500 },
+      { status: isTransientSupabaseError(error) ? 503 : 500 },
     );
   }
 }
@@ -744,11 +816,11 @@ export async function POST(request: Request) {
     const usernameKey = normalizeAccountValue(username);
     const manualEmail = buildManualUserEmail(accountType, accountId);
 
-    const [{ rules: blockedRules }, existingMerchantById, existingMerchantByName, authUsers] = await Promise.all([
+    const [{ rules: blockedRules }, existingMerchantById, existingMerchantByName, authUsersResult] = await Promise.all([
       loadMerchantIdRulesFromStore(supabase),
-      supabase.from("merchants").select("id").eq("id", accountId).limit(1).maybeSingle(),
-      supabase.from("merchants").select("id").eq("name", username).limit(1).maybeSingle(),
-      listAuthUsers(supabase),
+      runSupabaseQueryWithRetry(() => supabase.from("merchants").select("id").eq("id", accountId).limit(1).maybeSingle()),
+      runSupabaseQueryWithRetry(() => supabase.from("merchants").select("id").eq("name", username).limit(1).maybeSingle()),
+      listAuthUsersBestEffort(supabase),
     ]);
 
     if (existingMerchantById.error) throw existingMerchantById.error;
@@ -764,6 +836,7 @@ export async function POST(request: Request) {
       return conflictJson("merchant_id_disabled", "该 ID 已在禁用设置中，不能用于创建用户");
     }
 
+    const authUsers = authUsersResult.users;
     const duplicateIdUser = authUsers.find((user) => {
       const metadata = readAccountMetadata(user);
       return (
@@ -815,21 +888,23 @@ export async function POST(request: Request) {
     const authUser = createdUserData.user;
     const authUserId = String(authUser.id ?? "").trim();
     if (accountType === "merchant") {
-      const { error: merchantInsertError } = await supabase.from("merchants").insert({
-        id: merchantId,
-        name: username,
-        email: manualEmail,
-        owner_email: manualEmail,
-        contact_email: manualEmail,
-        user_email: manualEmail,
-        user_id: authUserId,
-        auth_user_id: authUserId,
-        owner_user_id: authUserId,
-        owner_id: authUserId,
-        auth_id: authUserId,
-        created_by: authUserId,
-        created_by_user_id: authUserId,
-      });
+      const { error: merchantInsertError } = await runSupabaseQueryWithRetry(() =>
+        supabase.from("merchants").insert({
+          id: merchantId,
+          name: username,
+          email: manualEmail,
+          owner_email: manualEmail,
+          contact_email: manualEmail,
+          user_email: manualEmail,
+          user_id: authUserId,
+          auth_user_id: authUserId,
+          owner_user_id: authUserId,
+          owner_id: authUserId,
+          auth_id: authUserId,
+          created_by: authUserId,
+          created_by_user_id: authUserId,
+        }),
+      );
 
       if (merchantInsertError) {
         await supabase.auth.admin.deleteUser(authUserId).catch(() => {
@@ -873,9 +948,9 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         error: "merchant_account_create_failed",
-        message: error instanceof Error ? error.message : "unknown_error",
+        message: readErrorMessage(error) || "unknown_error",
       },
-      { status: 500 },
+      { status: isTransientSupabaseError(error) ? 503 : 500 },
     );
   }
 }

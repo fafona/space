@@ -821,6 +821,20 @@ function describeBackendMerchantAccountsError(message: string) {
   if (/merchant_account_http_5\d{2}/i.test(message)) {
     return "后端注册账号接口暂时不可用，当前先显示本地站点用户。";
   }
+  if (/PGRST002|schema cache/i.test(message)) {
+    return "Supabase 数据库 schema cache 暂时不可用，请稍后重试。";
+  }
+  if (/Database error finding users/i.test(message)) {
+    return "Supabase Auth 用户列表暂时不可用，请稍后重试。";
+  }
+  return message;
+}
+
+function describeBackendMerchantAccountsWarning(message: string) {
+  if (!message) return "";
+  if (message === "auth_users_unavailable") {
+    return "认证用户列表暂时不可用，已先显示商户表账号；个人账号可能暂时不完整。";
+  }
   return message;
 }
 
@@ -1757,6 +1771,7 @@ export default function SuperAdminClient() {
   const [backendMerchantAccounts, setBackendMerchantAccounts] = useState<BackendMerchantAccount[]>([]);
   const [backendMerchantAccountsLoading, setBackendMerchantAccountsLoading] = useState(false);
   const [backendMerchantAccountsError, setBackendMerchantAccountsError] = useState("");
+  const [backendMerchantAccountsWarning, setBackendMerchantAccountsWarning] = useState("");
   const [supportThreads, setSupportThreads] = useState<PlatformSupportThread[]>([]);
   const [supportThreadsLoading, setSupportThreadsLoading] = useState(false);
   const [supportThreadsError, setSupportThreadsError] = useState("");
@@ -2180,6 +2195,7 @@ export default function SuperAdminClient() {
     const loadAccounts = async () => {
       setBackendMerchantAccountsLoading(true);
       setBackendMerchantAccountsError("");
+      setBackendMerchantAccountsWarning("");
       try {
         const requestUrl = isMobileSupportOnlyMode
           ? "/api/super-admin/merchant-accounts?scope=support"
@@ -2194,15 +2210,21 @@ export default function SuperAdminClient() {
         if ((response.status === 401 || response.status === 403) && (await refreshSuperAdminAuthenticatedState())) {
           response = await requestAccounts();
         }
+        const payload = (await response.json().catch(() => null)) as {
+          items?: BackendMerchantAccount[];
+          authUsersUnavailable?: boolean;
+          message?: string;
+        } | null;
         if (!response.ok) {
-          throw new Error(`merchant_account_http_${response.status}`);
+          throw new Error(payload?.message || `merchant_account_http_${response.status}`);
         }
-        const payload = (await response.json()) as { items?: BackendMerchantAccount[] };
         if (cancelled) return;
-        setBackendMerchantAccounts(Array.isArray(payload.items) ? payload.items : []);
+        setBackendMerchantAccounts(Array.isArray(payload?.items) ? payload.items : []);
+        setBackendMerchantAccountsWarning(payload?.authUsersUnavailable ? "auth_users_unavailable" : "");
       } catch (error) {
         if (cancelled) return;
         setBackendMerchantAccounts([]);
+        setBackendMerchantAccountsWarning("");
         if (error instanceof DOMException && error.name === "AbortError") {
           setBackendMerchantAccountsError("merchant_account_timeout");
           return;
@@ -6618,6 +6640,8 @@ export default function SuperAdminClient() {
                       <span className="text-slate-500">正在同步后端用户数据…</span>
                     ) : backendMerchantAccountsError ? (
                       <span className="text-rose-600">后端用户数据加载失败：{describeBackendMerchantAccountsError(backendMerchantAccountsError)}</span>
+                    ) : backendMerchantAccountsWarning ? (
+                      <span className="text-amber-700">{describeBackendMerchantAccountsWarning(backendMerchantAccountsWarning)}</span>
                     ) : (
                       <span className="text-slate-500">当前可在这里区分个人与商户账号；超级后台也可以直接新增个人或商户账号。</span>
                     )}
