@@ -5543,6 +5543,54 @@ export default function AdminClient({
     });
   }
 
+  function getMerchantRemoteVerificationScopes(merchantIds: string[]) {
+    return [...new Set([storeScope, ...merchantIds.map((siteId) => buildSiteStoreScope(siteId))].filter(Boolean))];
+  }
+
+  function markMerchantRemoteContentVerified(merchantIds: string[], recordedAt?: string | null | undefined) {
+    getMerchantRemoteVerificationScopes(merchantIds).forEach((scope) => {
+      recordRemoteContentVerifiedTimestamp(scope, recordedAt);
+    });
+    setRemoteContentVerified(true);
+  }
+
+  async function ensureRemoteContentVerifiedBeforePublish(targetSiteId = "") {
+    if (isPlatformEditor || remoteContentVerified) return true;
+    const scopedSiteId = getSiteIdFromStoreScope(storeScope).trim();
+    const preferredIds = [targetSiteId, scopedSiteId, editingSiteId].filter(Boolean);
+    const candidateMerchantIds = mergePreferredMerchantIds(preferredIds, merchantIdsRef.current);
+    if (candidateMerchantIds.length === 0) return false;
+
+    const candidateScopes = getMerchantRemoteVerificationScopes(candidateMerchantIds);
+    if (hasRemoteContentVerifiedStamp(candidateScopes)) {
+      setRemoteContentVerified(true);
+      return true;
+    }
+
+    showSavePublishTip("正在验证远端内容...");
+    await readFreshMerchantSessionIdentity(Math.min(3000, AUTH_CHECK_TIMEOUT_MS)).catch(() => null);
+    const resolvedMerchantIds = mergePreferredMerchantIds(preferredIds, merchantIdsRef.current, candidateMerchantIds);
+    const gatewayReady = await canReachSupabaseGateway(Math.min(3000, AUTH_CHECK_TIMEOUT_MS));
+    if (!gatewayReady) return false;
+
+    const remoteDraft = await loadMerchantDraftSnapshotViaApi(resolvedMerchantIds);
+    if (remoteDraft) {
+      markMerchantRemoteContentVerified(resolvedMerchantIds, remoteDraft.updatedAt);
+      return true;
+    }
+
+    const publishedSnapshot = await loadPublishedSiteSnapshotForMerchantIds(resolvedMerchantIds);
+    if (publishedSnapshot) {
+      markMerchantRemoteContentVerified([publishedSnapshot.siteId, ...resolvedMerchantIds]);
+      return true;
+    }
+
+    // If the gateway is reachable but this merchant has no remote draft/published record yet,
+    // the publish target is still safely verified for first publish.
+    markMerchantRemoteContentVerified(resolvedMerchantIds);
+    return true;
+  }
+
   function triggerMerchantProfileAttention() {
     setMerchantProfileAttention(true);
     const button = merchantProfileButtonRef.current;
@@ -9230,11 +9278,14 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       return;
     }
     if (!isPlatformEditor && !remoteContentVerified) {
-      showTip("远端内容未验证，已阻止发布（防止覆盖线上内容）。请先重新加载页面内容后再发布。", {
-        durationMs: 4200,
-        dismissOnPointer: true,
-      });
-      return;
+      const verified = await ensureRemoteContentVerifiedBeforePublish(scopedSiteIdForGuard);
+      if (!verified) {
+        showTip("远端内容未验证，已阻止发布（防止覆盖线上内容）。请检查后端连接后重试。", {
+          durationMs: 4200,
+          dismissOnPointer: true,
+        });
+        return;
+      }
     }
     let publishTargetSiteId = "";
     let publishTargetDomainPrefix = "";
@@ -17143,15 +17194,12 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                             onClick={publishToFrontend}
                             disabled={
                               publishing ||
-                              (!isPlatformEditor && !remoteContentVerified) ||
                               (!isPlatformEditor && !getSiteIdFromStoreScope(storeScope).trim())
                             }
                             title={
                               !isPlatformEditor && !getSiteIdFromStoreScope(storeScope).trim()
                                 ? "缺少 site-xxx 作用域，暂不可发布"
-                                : (!isPlatformEditor && !remoteContentVerified)
-                                  ? "远端内容未验证，暂不可发布"
-                                  : undefined
+                                : undefined
                             }
                           >
                             {publishing ? "发布中..." : "发布"}
