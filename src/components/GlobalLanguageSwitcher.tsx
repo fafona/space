@@ -11,12 +11,6 @@ function flagImageUrl(countryCode: string) {
   return `https://flagcdn.com/${countryCode.toLowerCase()}.svg`;
 }
 
-function triggerFlagImageClassName(countryCode: string) {
-  return countryCode.trim().toLowerCase() === "cn"
-    ? "block h-full w-full origin-left scale-[1.22] object-cover object-left"
-    : "block h-full w-full origin-center scale-[1.08] object-cover";
-}
-
 export default function GlobalLanguageSwitcher() {
   const hydrated = useHydrated();
   const pathname = usePathname();
@@ -233,7 +227,7 @@ export default function GlobalLanguageSwitcher() {
       <div ref={rootRef} className="pointer-events-auto relative">
         <button
           type="button"
-          className="block h-6 w-8 overflow-hidden rounded-[4px] border border-slate-300/80 bg-transparent p-0 transition hover:brightness-105"
+          className="block h-6 w-9 overflow-hidden rounded-[4px] border border-slate-300/80 bg-transparent p-0 transition hover:brightness-105"
           onClick={() => setOpen((prev) => !prev)}
           aria-label={t("lang.placeholder")}
           aria-expanded={open}
@@ -245,7 +239,7 @@ export default function GlobalLanguageSwitcher() {
             alt={selected.label}
             width={80}
             height={60}
-            className={triggerFlagImageClassName(selected.countryCode)}
+            className="block h-full w-full object-cover"
             loading="eager"
           />
         </button>

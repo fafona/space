@@ -315,12 +315,6 @@ function languageFlagImageUrl(countryCode: string) {
   return `https://flagcdn.com/${countryCode.toLowerCase()}.svg`;
 }
 
-function languageTriggerFlagImageClassName(countryCode: string) {
-  return countryCode.trim().toLowerCase() === "cn"
-    ? "block h-full w-full origin-left scale-[1.22] object-cover object-left"
-    : "block h-full w-full origin-center scale-[1.08] object-cover";
-}
-
 function normalizeFontFamilyOptionKey(value: string) {
   return value
     .replaceAll('"', "")
@@ -14510,7 +14504,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           <div ref={supportSelfLanguageRootRef} className="relative">
             <button
               type="button"
-              className="block h-6 w-8 overflow-hidden rounded-[4px] border border-slate-300/80 bg-transparent p-0 transition hover:brightness-105"
+              className="block h-6 w-9 overflow-hidden rounded-[4px] border border-slate-300/80 bg-transparent p-0 transition hover:brightness-105"
               onClick={() => setSupportSelfLanguageMenuOpen((current) => !current)}
               aria-label={t("lang.placeholder")}
               aria-expanded={supportSelfLanguageMenuOpen}
@@ -14522,7 +14516,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 alt={supportSelfSelectedLanguage.label}
                 width={80}
                 height={60}
-                className={languageTriggerFlagImageClassName(supportSelfSelectedLanguage.countryCode)}
+                className="block h-full w-full object-cover"
                 loading="eager"
               />
             </button>
