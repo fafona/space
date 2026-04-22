@@ -5067,6 +5067,18 @@ export default function AdminClient({
   const mobileVisualViewportLayoutHeightRef = useRef(readMobileVisualViewportLayoutHeightCandidate());
   const mobileVisualViewportOrientationRef = useRef(readMobileVisualViewportOrientation());
   const [supportSelfLanguageMenuOpen, setSupportSelfLanguageMenuOpen] = useState(false);
+
+  useEffect(() => {
+    if (typeof document === "undefined" || typeof window === "undefined") return;
+    const visible = merchantDesktopSection === "support";
+    document.documentElement.setAttribute("data-desktop-language-switcher", visible ? "show" : "hide");
+    window.dispatchEvent(new CustomEvent("merchant-desktop-language-switcher-change", { detail: { visible } }));
+    return () => {
+      document.documentElement.removeAttribute("data-desktop-language-switcher");
+      window.dispatchEvent(new CustomEvent("merchant-desktop-language-switcher-change", { detail: { visible: false } }));
+    };
+  }, [merchantDesktopSection]);
+
   const resizeSupportComposerInput = useCallback((target?: HTMLTextAreaElement | null) => {
     const input = target ?? supportInputRef.current;
     if (!input) return;

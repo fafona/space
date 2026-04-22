@@ -1421,6 +1421,17 @@ export default function MePage() {
   const mobileSelfLanguageMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
+    if (typeof document === "undefined" || typeof window === "undefined") return;
+    const visible = desktopSection === "conversations";
+    document.documentElement.setAttribute("data-desktop-language-switcher", visible ? "show" : "hide");
+    window.dispatchEvent(new CustomEvent("merchant-desktop-language-switcher-change", { detail: { visible } }));
+    return () => {
+      document.documentElement.removeAttribute("data-desktop-language-switcher");
+      window.dispatchEvent(new CustomEvent("merchant-desktop-language-switcher-change", { detail: { visible: false } }));
+    };
+  }, [desktopSection]);
+
+  useEffect(() => {
     let cancelled = false;
     const bootstrap = async () => {
       try {

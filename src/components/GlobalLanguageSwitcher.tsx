@@ -25,8 +25,11 @@ export default function GlobalLanguageSwitcher() {
       : false,
   );
   const [allowMobileAdminSwitcher, setAllowMobileAdminSwitcher] = useState(false);
+  const [allowDesktopBackendSwitcher, setAllowDesktopBackendSwitcher] = useState(false);
   const inEditor = pathname.startsWith("/admin") || pathname.startsWith("/super-admin/editor");
   const isAdminPage = pathname.startsWith("/admin");
+  const isMePage = pathname.startsWith("/me");
+  const isBackendPage = isAdminPage || isMePage;
   const isMobileAdminSwitcherVisible = isMobileViewport && allowMobileAdminSwitcher;
   const isMobileAdminPage = isMobileViewport && (isAdminPage || allowMobileAdminSwitcher);
   const mobileAdminTopClassName =
@@ -67,6 +70,7 @@ export default function GlobalLanguageSwitcher() {
     if (typeof window === "undefined" || typeof document === "undefined") return;
     const readVisibility = () => {
       setAllowMobileAdminSwitcher(document.documentElement.getAttribute("data-mobile-language-switcher") === "show");
+      setAllowDesktopBackendSwitcher(document.documentElement.getAttribute("data-desktop-language-switcher") === "show");
     };
     const handleVisibilityChange = (event: Event) => {
       const customEvent = event as CustomEvent<{ visible?: boolean }>;
@@ -82,12 +86,14 @@ export default function GlobalLanguageSwitcher() {
     });
     observer.observe(document.documentElement, {
       attributes: true,
-      attributeFilter: ["data-mobile-language-switcher"],
+      attributeFilter: ["data-mobile-language-switcher", "data-desktop-language-switcher"],
     });
     window.addEventListener("merchant-mobile-language-switcher-change", handleVisibilityChange as EventListener);
+    window.addEventListener("merchant-desktop-language-switcher-change", readVisibility);
     return () => {
       observer.disconnect();
       window.removeEventListener("merchant-mobile-language-switcher-change", handleVisibilityChange as EventListener);
+      window.removeEventListener("merchant-desktop-language-switcher-change", readVisibility);
     };
   }, []);
 
@@ -151,6 +157,7 @@ export default function GlobalLanguageSwitcher() {
   const isLoginPage = pathname === "/login";
   const showOnMobile = isLoginPage;
   if (isMobileViewport && !showOnMobile) return null;
+  if (!isMobileViewport && isBackendPage && !allowDesktopBackendSwitcher) return null;
 
   const menuContent =
     open && menuStyle
