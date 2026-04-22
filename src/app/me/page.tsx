@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
-import Link from "next/link";
 import { useI18n } from "@/components/I18nProvider";
 import { readMerchantSessionMerchantIds } from "@/lib/authSessionRecovery";
 import {
@@ -10,6 +9,7 @@ import {
   getEuropeProvinceOptions,
 } from "@/lib/europeLocationOptions";
 import { LANGUAGE_OPTIONS } from "@/lib/i18n";
+import { buildFaollaShellHref, isFaollaSectionSearch, readFaollaEntryUrlFromSearch } from "@/lib/faollaEntry";
 import { buildMerchantBusinessCardShareUrl, resolveMerchantBusinessCardShareOrigin } from "@/lib/merchantBusinessCardShare";
 import { buildMerchantFrontendHref } from "@/lib/siteRouting";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
@@ -40,7 +40,7 @@ type MeSessionPayload = {
   } | null;
 };
 
-type DesktopSection = "conversations" | "bookings" | "orders" | "favorites" | "cards" | "profile";
+type DesktopSection = "conversations" | "bookings" | "orders" | "favorites" | "cards" | "faolla" | "profile";
 type MobileTab = "conversations" | "consumption" | "faolla" | "self";
 type ConsumptionSection = "bookings" | "orders";
 type MobileConversationView = "list" | "thread";
@@ -1380,8 +1380,15 @@ export default function MePage() {
   const [payload, setPayload] = useState<MeSessionPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [loggingOut, setLoggingOut] = useState(false);
-  const [desktopSection, setDesktopSection] = useState<DesktopSection>("conversations");
-  const [mobileTab, setMobileTab] = useState<MobileTab>("conversations");
+  const [desktopSection, setDesktopSection] = useState<DesktopSection>(() =>
+    typeof window !== "undefined" && isFaollaSectionSearch(window.location.search) ? "faolla" : "conversations",
+  );
+  const [mobileTab, setMobileTab] = useState<MobileTab>(() =>
+    typeof window !== "undefined" && isFaollaSectionSearch(window.location.search) ? "faolla" : "conversations",
+  );
+  const [faollaEmbedHref] = useState(() =>
+    typeof window !== "undefined" ? readFaollaEntryUrlFromSearch(window.location.search, window.location.origin) || "/" : "/",
+  );
   const [consumptionSection, setConsumptionSection] = useState<ConsumptionSection>("bookings");
   const [mobileConversationView, setMobileConversationView] = useState<MobileConversationView>("list");
   const [mobileSelfSection, setMobileSelfSection] = useState<MobileSelfSection>("home");
@@ -1507,6 +1514,16 @@ export default function MePage() {
   const mobileSelfCardsSummary = "个人名片夹会在下一步接入。";
   const mobileSelfNotificationSummary = "系统通知、提示音和震动设置。";
 
+  const faollaTargetHref = useMemo(
+    () =>
+      buildFaollaShellHref(
+        faollaEmbedHref,
+        locale,
+        typeof window !== "undefined" ? window.location.origin : "https://faolla.com",
+      ),
+    [faollaEmbedHref, locale],
+  );
+
   const desktopMenuItems: MenuItem[] = useMemo(
     () => [
       { key: "conversations", label: "会话", description: "查看和商户、Faolla 的对话。" },
@@ -1514,6 +1531,7 @@ export default function MePage() {
       { key: "orders", label: "订单", description: "查看你在商户网站提交的订单。" },
       { key: "favorites", label: "收藏", description: "保存常用商户、页面和产品。" },
       { key: "cards", label: "名片夹", description: "管理收到或保存的名片。" },
+      { key: "faolla", label: "Faolla", description: "Faolla" },
     ],
     [],
   );
@@ -2842,6 +2860,13 @@ export default function MePage() {
     if (section === "conversations") {
       return renderDesktopSupportSurface();
     }
+    if (section === "faolla") {
+      return (
+        <div className="relative h-[calc(100vh-4rem)] min-h-[560px] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <iframe title="Faolla" src={faollaTargetHref} className="absolute inset-0 h-full w-full border-0 bg-transparent" />
+        </div>
+      );
+    }
     if (section === "profile") {
       return (
         <PersonalProfileEditor
@@ -3325,20 +3350,8 @@ export default function MePage() {
     }
     if (mobileTab === "faolla") {
       return (
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(env(safe-area-inset-bottom)+5.85rem)] pt-[calc(env(safe-area-inset-top)+1rem)]">
-          <EmptyFeatureCard
-            icon={<Icon name="shield" />}
-            title="Faolla"
-            description="这里会放 Faolla 平台入口、官方通知和个人用户服务。"
-            action={
-              <Link
-                href="/"
-                className="inline-flex rounded-[18px] bg-slate-950 px-4 py-3 text-sm font-semibold text-white shadow-sm"
-              >
-                打开 Faolla 首页
-              </Link>
-            }
-          />
+        <div className="relative min-h-0 flex-1 overflow-hidden">
+          <iframe title="Faolla" src={faollaTargetHref} className="absolute inset-0 h-full w-full border-0 bg-transparent" />
         </div>
       );
     }

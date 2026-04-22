@@ -24,6 +24,7 @@ import {
   readRecentMerchantLaunchMerchantId,
 } from "@/lib/merchantLaunchState";
 import { clearMerchantSignInBridge, setMerchantSignInBridge } from "@/lib/merchantSignInBridge";
+import { buildBackendFaollaHref, normalizeFaollaEntryUrl } from "@/lib/faollaEntry";
 import { buildMerchantBackendHref } from "@/lib/siteRouting";
 import {
   canReachSupabaseGateway,
@@ -119,6 +120,10 @@ function LoginPageInner() {
     if (!raw.startsWith("/") || raw.startsWith("//")) return "";
     return raw;
   }, [searchParams]);
+  const loginFromUrl = useMemo(
+    () => normalizeFaollaEntryUrl((searchParams.get("loginFrom") ?? "").trim()),
+    [searchParams],
+  );
   const loggedOut = useMemo(() => (searchParams.get("loggedOut") ?? "").trim() === "1", [searchParams]);
   const launchRetry = useMemo(() => (searchParams.get("launchRetry") ?? "").trim() === "1", [searchParams]);
   const normalizedLocale = useMemo(() => locale.trim().toLowerCase(), [locale]);
@@ -480,6 +485,10 @@ function LoginPageInner() {
     ) => {
       const accountType = session?.accountType === "personal" ? "personal" : "merchant";
       if (accountType === "personal") {
+        if (loginFromUrl) {
+          window.location.href = buildBackendFaollaHref("/me", loginFromUrl);
+          return;
+        }
         const targetHref = requestedRedirectPath.startsWith("/me") ? requestedRedirectPath : "/me";
         window.location.href = targetHref;
         return;
@@ -505,24 +514,34 @@ function LoginPageInner() {
         return `${url.pathname}${url.search}${url.hash}`;
       };
 
+      const directMerchantId = String(session?.merchantId ?? "").trim();
+      const resolvedMerchantId = pickPrimaryMerchantId(null, session?.merchantIds ?? []);
+      if (loginFromUrl) {
+        const baseHref = directMerchantId
+          ? buildMerchantBackendHref(directMerchantId)
+          : resolvedMerchantId
+            ? buildMerchantBackendHref(resolvedMerchantId)
+            : "/admin";
+        window.location.href = decorateMerchantHref(buildBackendFaollaHref(baseHref, loginFromUrl));
+        return;
+      }
+
       if (requestedRedirectPath && !requestedRedirectPath.startsWith("/me")) {
         window.location.href = decorateMerchantHref(requestedRedirectPath);
         return;
       }
 
-      const directMerchantId = String(session?.merchantId ?? "").trim();
       if (directMerchantId) {
         window.location.href = decorateMerchantHref(buildMerchantBackendHref(directMerchantId));
         return;
       }
-      const resolvedMerchantId = pickPrimaryMerchantId(null, session?.merchantIds ?? []);
       if (resolvedMerchantId) {
         window.location.href = decorateMerchantHref(buildMerchantBackendHref(resolvedMerchantId));
         return;
       }
       window.location.href = decorateMerchantHref("/admin");
     },
-    [requestedRedirectPath],
+    [loginFromUrl, requestedRedirectPath],
   );
 
   async function readEmailConfirmationRequired() {

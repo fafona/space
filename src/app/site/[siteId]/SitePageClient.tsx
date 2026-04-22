@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import FrontendAuthEntry from "@/components/FrontendAuthEntry";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
 import ServiceMaintenancePage from "@/components/ServiceMaintenancePage";
 import BlockRenderer from "@/components/blocks/BlockRenderer";
@@ -465,14 +466,11 @@ export function SitePageClient({
       style={{ ...pageBackgroundStyle, paddingBottom: `calc(2rem + ${backgroundExtendPadding}px)` }}
     >
       {showMerchantLoginButton ? (
-        <div className="fixed right-3 top-3 z-[2147482000] md:right-6 md:top-6">
-          <Link
-            href="/login"
-            className="inline-flex items-center rounded-full border border-slate-200/80 bg-white/90 px-4 py-2 text-sm font-semibold text-slate-900 shadow-[0_12px_30px_rgba(15,23,42,0.14)] backdrop-blur transition hover:bg-white"
-            aria-label="登录"
-          >
-            登录
-          </Link>
+        <div className="fixed right-16 top-3 z-[20000] md:right-20 md:top-5">
+          <FrontendAuthEntry
+            currentMerchantId={site?.id ?? siteId}
+            merchantAvatarUrl={site?.chatAvatarImageUrl ?? site?.merchantCardImageUrl ?? ""}
+          />
         </div>
       ) : null}
       <BlockRenderer

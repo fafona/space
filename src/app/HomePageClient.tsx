@@ -1,10 +1,10 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import SitePageClient from "@/app/site/[siteId]/SitePageClient";
 import BlockRenderer from "@/components/blocks/BlockRenderer";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
+import FrontendAuthEntry from "@/components/FrontendAuthEntry";
 import { useI18n } from "@/components/I18nProvider";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
 import { homeBlocks, type Block } from "@/data/homeBlocks";
@@ -91,7 +91,7 @@ export default function HomePageClient({
   initialBlocks,
   initialIsMobileViewport = false,
 }: HomePageClientProps) {
-  const { locale, t } = useI18n();
+  const { locale } = useI18n();
   const [platformState, setPlatformState] = useState(() => loadPlatformState());
   const [isMobileViewport, setIsMobileViewport] = useState(initialIsMobileViewport);
   const [suppressStandaloneLaunchRedirect] = useState(() =>
@@ -237,13 +237,8 @@ export default function HomePageClient({
       className="min-h-screen w-full overflow-x-hidden bg-gray-50 py-8"
       style={{ ...pageBackgroundStyle, paddingBottom: `calc(2rem + ${backgroundExtendPadding}px)` }}
     >
-      <div className="max-w-6xl mx-auto mb-4 flex items-center justify-end gap-2 px-6">
-        <Link
-          href="/login"
-          className="inline-flex items-center rounded-lg border bg-white px-4 py-2 text-sm font-medium hover:bg-gray-100"
-        >
-          {t("common.adminLogin")}
-        </Link>
+      <div className="fixed right-16 top-3 z-[20000] md:right-20 md:top-5">
+        <FrontendAuthEntry />
       </div>
       <BlockRenderer
         blocks={activeBlocks}

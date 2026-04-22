@@ -262,7 +262,8 @@ import BookingTimeSlotRulesEditor from "@/components/admin/BookingTimeSlotRulesE
 import MerchantProfileDialog from "@/components/admin/MerchantProfileDialog";
 import { useI18n } from "@/components/I18nProvider";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
-import { I18N_URL_PARAM, LANGUAGE_OPTIONS, resolveSupportedLocale } from "@/lib/i18n";
+import { buildFaollaShellHref, isFaollaSectionSearch, readFaollaEntryUrlFromSearch } from "@/lib/faollaEntry";
+import { LANGUAGE_OPTIONS, resolveSupportedLocale } from "@/lib/i18n";
 import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
 import { getMerchantServiceState } from "@/lib/merchantServiceStatus";
 
@@ -1210,7 +1211,7 @@ const GALLERY_FRAME_WIDTH_LABELS: Record<CustomGalleryFrameWidth, string> = {
   "2/3": "2/3",
 };
 type ViewportKey = "desktop" | "mobile";
-type MerchantDesktopSection = "editor" | "profile" | "cards" | "booking" | "orders" | "analytics" | "support";
+type MerchantDesktopSection = "editor" | "profile" | "cards" | "booking" | "orders" | "analytics" | "support" | "faolla";
 type ProductSettingsSectionKey = "basic" | "typography" | "tags" | "card" | "detail";
 type ProductTypographyRole = "code" | "name" | "description" | "price";
 const MOBILE_SIZE_SCALE = 0.82;
@@ -4922,7 +4923,9 @@ export default function AdminClient({
   );
   const [publishing, setPublishing] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
-  const [merchantDesktopSection, setMerchantDesktopSection] = useState<MerchantDesktopSection>("editor");
+  const [merchantDesktopSection, setMerchantDesktopSection] = useState<MerchantDesktopSection>(() =>
+    typeof window !== "undefined" && isFaollaSectionSearch(window.location.search) ? "faolla" : "editor",
+  );
   const [merchantAnalyticsRemoteSummary, setMerchantAnalyticsRemoteSummary] = useState<RemoteAnalyticsSummary | null>(null);
   const [merchantAnalyticsLoading, setMerchantAnalyticsLoading] = useState(false);
   const [merchantAnalyticsError, setMerchantAnalyticsError] = useState("");
@@ -4955,7 +4958,12 @@ export default function AdminClient({
   const [supportSearchError, setSupportSearchError] = useState("");
   const [supportSelectedContactKey, setSupportSelectedContactKey] = useState(SUPPORT_OFFICIAL_CONTACT_KEY);
   const [supportMobileView, setSupportMobileView] = useState<"list" | "thread">("list");
-  const [supportMobileHomeTab, setSupportMobileHomeTab] = useState<SupportMobileHomeTab>("conversations");
+  const [supportMobileHomeTab, setSupportMobileHomeTab] = useState<SupportMobileHomeTab>(() =>
+    typeof window !== "undefined" && isFaollaSectionSearch(window.location.search) ? "faolla" : "conversations",
+  );
+  const [supportFaollaEmbedHref] = useState(() =>
+    typeof window !== "undefined" ? readFaollaEntryUrlFromSearch(window.location.search, window.location.origin) || "/" : "/",
+  );
   const [supportMobileBusinessSection, setSupportMobileBusinessSection] = useState<"booking" | "orders">("booking");
   const [supportSelfSectionView, setSupportSelfSectionView] = useState<SupportSelfSectionView>("home");
   const [supportPeerLocalMessages, setSupportPeerLocalMessages] = useState<LocalPeerSupportMessage[]>([]);
@@ -10182,22 +10190,15 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     ""
   ).trim();
   const supportMobileFaollaHref =
+    supportFaollaEmbedHref ||
     normalizeSupportExternalUrl(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "", typeof window !== "undefined" ? window.location.origin : "") ||
     "/";
   const supportMobileFaollaTargetHref = useMemo(() => {
-    const normalized = normalizeSupportExternalUrl(supportMobileFaollaHref, typeof window !== "undefined" ? window.location.origin : "");
-    if (!normalized) return "/";
-    try {
-      const url = new URL(
-        normalized,
-        typeof window !== "undefined" && window.location.origin ? window.location.origin : "https://faolla.com",
-      );
-      url.searchParams.set(I18N_URL_PARAM, locale);
-      url.searchParams.set("appShell", "faolla");
-      return url.toString();
-    } catch {
-      return normalized;
-    }
+    return buildFaollaShellHref(
+      supportMobileFaollaHref,
+      locale,
+      typeof window !== "undefined" ? window.location.origin : "https://faolla.com",
+    );
   }, [locale, supportMobileFaollaHref]);
   const supportMobileFaollaContent = (
     <div className="relative min-h-0 flex-1 overflow-hidden">
@@ -11825,6 +11826,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
   useEffect(() => {
     if (!desktopMerchantWorkspaceActive) {
+      if (typeof window !== "undefined" && isFaollaSectionSearch(window.location.search)) return;
       setMerchantDesktopSection("editor");
       return;
     }
@@ -16301,8 +16303,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   );
   const desktopMerchantWorkspaceContent =
     isDesktopMerchantWorkspace && merchantDesktopSection !== "editor" ? (
-      <div className={merchantDesktopSection === "support" ? "min-h-screen bg-white" : "min-h-screen bg-slate-50/70"}>
-        <div className={merchantDesktopSection === "support" ? "w-full" : "w-full px-6 pb-8"}>
+      <div className={merchantDesktopSection === "support" || merchantDesktopSection === "faolla" ? "min-h-screen bg-white" : "min-h-screen bg-slate-50/70"}>
+        <div className={merchantDesktopSection === "support" || merchantDesktopSection === "faolla" ? "w-full" : "w-full px-6 pb-8"}>
           {merchantDesktopSection === "profile" && merchantProfileDialogCommonProps ? (
             <MerchantProfileDialog
               {...merchantProfileDialogCommonProps}
@@ -16332,6 +16334,14 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             />
           ) : merchantDesktopSection === "analytics" ? (
             merchantAnalyticsPanelContent
+          ) : merchantDesktopSection === "faolla" ? (
+            <div className="relative h-[calc(100vh-9rem)] min-h-[560px] overflow-hidden bg-white">
+              <iframe
+                title="Faolla"
+                src={supportMobileFaollaTargetHref}
+                className="absolute inset-0 h-full w-full border-0 bg-transparent"
+              />
+            </div>
           ) : merchantDesktopSection === "support" ? (
             supportDesktopSurfaceContent
           ) : null}
@@ -16545,6 +16555,13 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     </button>
                     <button
                       type="button"
+                      className={getMerchantDesktopMenuButtonClassName(merchantDesktopSection === "faolla")}
+                      onClick={() => setMerchantDesktopSection("faolla")}
+                    >
+                      Faolla
+                    </button>
+                    <button
+                      type="button"
                       className={getMerchantDesktopMenuButtonClassName(
                         merchantDesktopSection === "support",
                         supportHasUnreadMessages ? "alert" : "default",
@@ -16686,6 +16703,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         ? "订单管理"
                       : merchantDesktopSection === "analytics"
                           ? "数据统计"
+                      : merchantDesktopSection === "faolla"
+                          ? "Faolla"
                           : "会话"}
                   </div>
                   <div className="mt-1 text-sm text-slate-500">
@@ -16699,6 +16718,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         ? "这里集中查看和处理前台提交的产品订单。"
                       : merchantDesktopSection === "analytics"
                           ? "这里集中查看访问、发布和联系方式点击等统计。"
+                      : merchantDesktopSection === "faolla"
+                          ? "打开 Faolla 总站或登录前访问的前台页面。"
                           : "这里集中处理官方客服和商户聊天消息。"}
                   </div>
                 </div>

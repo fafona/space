@@ -227,21 +227,21 @@ export default function GlobalLanguageSwitcher() {
       <div ref={rootRef} className="pointer-events-auto relative">
         <button
           type="button"
-          className="flex items-center gap-0 rounded-lg border border-slate-300 bg-white/95 px-2 py-1.5 text-xs text-slate-800 shadow-md backdrop-blur hover:bg-white md:gap-2"
+          className="block h-8 w-10 overflow-hidden rounded-lg border border-slate-300 bg-white shadow-md transition hover:brightness-105 md:h-9 md:w-11"
           onClick={() => setOpen((prev) => !prev)}
           aria-label={t("lang.placeholder")}
           aria-expanded={open}
+          title={selected.label}
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={flagImageUrl(selected.countryCode)}
             alt={selected.label}
-            width={16}
-            height={12}
-            className="rounded-[2px] border border-slate-200 object-cover"
+            width={44}
+            height={36}
+            className="h-full w-full object-cover"
             loading="eager"
           />
-          <span className="hidden md:inline">{selected.label}</span>
         </button>
       </div>
       {menuContent}
