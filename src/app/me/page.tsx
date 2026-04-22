@@ -1414,6 +1414,8 @@ export default function MePage() {
   const [personalProfileMessage, setPersonalProfileMessage] = useState("");
   const supportMessagesViewportRef = useRef<HTMLDivElement | null>(null);
   const supportInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const supportSendingRef = useRef(false);
+  const supportSendPointerHandledRef = useRef(false);
   const personalAvatarInputRef = useRef<HTMLInputElement | null>(null);
   const mobileSelfLanguageRootRef = useRef<HTMLDivElement | null>(null);
   const mobileSelfLanguageMenuRef = useRef<HTMLDivElement | null>(null);
@@ -1967,7 +1969,7 @@ export default function MePage() {
   }
 
   async function sendSupportTextPayload(rawText: string, options?: { clearDraft?: boolean }) {
-    if (supportSending) return false;
+    if (supportSending || supportSendingRef.current) return false;
     const text = rawText.trim();
     if (!text) return;
     if (!accountId) {
@@ -1979,6 +1981,7 @@ export default function MePage() {
       return false;
     }
 
+    supportSendingRef.current = true;
     setSupportSending(true);
     setSupportError("");
     setSupportAttachmentMenuOpen(false);
@@ -2030,6 +2033,7 @@ export default function MePage() {
       setSupportError("消息发送失败，请稍后重试。");
       return false;
     } finally {
+      supportSendingRef.current = false;
       setSupportSending(false);
     }
   }
@@ -2039,7 +2043,11 @@ export default function MePage() {
   }
 
   function focusSupportInput() {
-    window.setTimeout(() => supportInputRef.current?.focus(), 0);
+    window.setTimeout(() => supportInputRef.current?.focus({ preventScroll: true }), 0);
+  }
+
+  function focusSupportInputImmediately() {
+    supportInputRef.current?.focus({ preventScroll: true });
   }
 
   function openSupportContactThread(key: PersonalConversationKey) {
@@ -2578,7 +2586,7 @@ export default function MePage() {
                 event.preventDefault();
                 void sendSupportMessage();
               }}
-              disabled={supportComposerBusy || !supportComposerAvailable}
+              disabled={!supportComposerAvailable}
               autoComplete="off"
               autoCorrect="off"
               spellCheck={false}
@@ -2592,7 +2600,24 @@ export default function MePage() {
                 ? "bg-emerald-500 hover:bg-emerald-600"
                 : "bg-slate-300 shadow-none"
             }`}
-            onClick={() => void sendSupportMessage()}
+            onPointerDown={(event) => {
+              if (supportSendPointerHandledRef.current || supportComposerBusy || !supportCanSend) return;
+              if (event.pointerType !== "touch" && event.pointerType !== "pen") return;
+              event.preventDefault();
+              supportSendPointerHandledRef.current = true;
+              focusSupportInputImmediately();
+              void sendSupportMessage();
+              window.setTimeout(() => {
+                supportSendPointerHandledRef.current = false;
+              }, 600);
+            }}
+            onClick={() => {
+              if (supportSendPointerHandledRef.current) {
+                supportSendPointerHandledRef.current = false;
+                return;
+              }
+              void sendSupportMessage();
+            }}
             disabled={supportComposerBusy || !supportCanSend}
             aria-label={supportComposerBusy ? "发送中" : selectedSupportSendButtonLabel}
           >

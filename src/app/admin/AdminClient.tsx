@@ -5028,6 +5028,7 @@ export default function AdminClient({
   const supportRequestIdRef = useRef(0);
   const supportPeerRequestIdRef = useRef(0);
   const supportSendingRef = useRef(false);
+  const supportSendPointerHandledRef = useRef(false);
   const supportMessagesViewportRef = useRef<HTMLDivElement>(null);
   const supportMessageElementByKeyRef = useRef<Record<string, HTMLDivElement | null>>({});
   const supportMobileConversationsViewportRef = useRef<HTMLDivElement>(null);
@@ -12702,7 +12703,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
 }
 
   async function sendSupportTextPayload(rawText: string, options?: { clearDraft?: boolean }) {
-    if (supportSending) return false;
+    if (supportSending || supportSendingRef.current) return false;
     const text = rawText.trim();
     if (!text) {
       showTip("请先填写留言内容");
@@ -15455,7 +15456,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 event.preventDefault();
                 void sendSupportMessage();
               }}
-              disabled={supportComposerBusy || !supportComposerAvailable}
+              disabled={!supportComposerAvailable}
               autoComplete="off"
               autoCorrect="off"
               spellCheck={false}
@@ -15470,7 +15471,24 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 ? "bg-emerald-500 hover:bg-emerald-600"
                 : "bg-slate-300 shadow-none"
             }`}
-            onClick={() => void sendSupportMessage()}
+            onPointerDown={(event) => {
+              if (supportSendPointerHandledRef.current || supportComposerBusy || !supportCanSend) return;
+              if (event.pointerType !== "touch" && event.pointerType !== "pen") return;
+              event.preventDefault();
+              supportSendPointerHandledRef.current = true;
+              focusSupportInputImmediately();
+              void sendSupportMessage();
+              window.setTimeout(() => {
+                supportSendPointerHandledRef.current = false;
+              }, 600);
+            }}
+            onClick={() => {
+              if (supportSendPointerHandledRef.current) {
+                supportSendPointerHandledRef.current = false;
+                return;
+              }
+              void sendSupportMessage();
+            }}
             disabled={supportComposerBusy || !supportCanSend}
             aria-label={supportComposerBusy ? "发送中" : selectedSupportSendButtonLabel}
           >
