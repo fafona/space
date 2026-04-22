@@ -8,7 +8,7 @@ import { LANGUAGE_OPTIONS, resolveSupportedLocale } from "@/lib/i18n";
 import { useHydrated } from "@/lib/useHydrated";
 
 function flagImageUrl(countryCode: string) {
-  return `https://flagcdn.com/24x18/${countryCode.toLowerCase()}.png`;
+  return `https://flagcdn.com/80x60/${countryCode.toLowerCase()}.png`;
 }
 
 export default function GlobalLanguageSwitcher() {
@@ -227,7 +227,7 @@ export default function GlobalLanguageSwitcher() {
       <div ref={rootRef} className="pointer-events-auto relative">
         <button
           type="button"
-          className="block h-8 w-10 overflow-hidden rounded-lg border border-slate-300 bg-white shadow-md transition hover:brightness-105 md:h-9 md:w-11"
+          className="block h-6 w-8 overflow-hidden rounded-[4px] border border-slate-300/80 bg-transparent p-0 transition hover:brightness-105"
           onClick={() => setOpen((prev) => !prev)}
           aria-label={t("lang.placeholder")}
           aria-expanded={open}
@@ -237,9 +237,9 @@ export default function GlobalLanguageSwitcher() {
           <img
             src={flagImageUrl(selected.countryCode)}
             alt={selected.label}
-            width={44}
-            height={36}
-            className="h-full w-full object-cover"
+            width={80}
+            height={60}
+            className="block h-full w-full object-cover"
             loading="eager"
           />
         </button>

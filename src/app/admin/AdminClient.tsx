@@ -312,7 +312,7 @@ const FONT_FAMILY_OPTIONS = [
 ];
 
 function languageFlagImageUrl(countryCode: string) {
-  return `https://flagcdn.com/24x18/${countryCode.toLowerCase()}.png`;
+  return `https://flagcdn.com/80x60/${countryCode.toLowerCase()}.png`;
 }
 
 function normalizeFontFamilyOptionKey(value: string) {
@@ -14504,29 +14504,21 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           <div ref={supportSelfLanguageRootRef} className="relative">
             <button
               type="button"
-              className="flex h-11 items-center gap-2 rounded-full border border-slate-200 bg-white/95 px-3 text-xs font-medium text-slate-800 shadow-[0_10px_24px_rgba(15,23,42,0.08)]"
+              className="block h-6 w-8 overflow-hidden rounded-[4px] border border-slate-300/80 bg-transparent p-0 transition hover:brightness-105"
               onClick={() => setSupportSelfLanguageMenuOpen((current) => !current)}
               aria-label={t("lang.placeholder")}
               aria-expanded={supportSelfLanguageMenuOpen}
+              title={supportSelfSelectedLanguage.label}
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={languageFlagImageUrl(supportSelfSelectedLanguage.countryCode)}
                 alt={supportSelfSelectedLanguage.label}
-                width={16}
-                height={12}
-                className="rounded-[2px] border border-slate-200 object-cover"
+                width={80}
+                height={60}
+                className="block h-full w-full object-cover"
                 loading="eager"
               />
-              <svg viewBox="0 0 24 24" className="h-4 w-4 text-slate-500" fill="none" aria-hidden="true">
-                <path
-                  d="m7 10 5 5 5-5"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
             </button>
             {supportSelfLanguageMenuOpen ? (
               <div
