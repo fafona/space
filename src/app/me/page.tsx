@@ -600,7 +600,13 @@ function buildSupportLocationMessageText(latitude: number, longitude: number, ac
 }
 
 function languageFlagImageUrl(countryCode: string) {
-  return `https://flagcdn.com/80x60/${countryCode.toLowerCase()}.png`;
+  return `https://flagcdn.com/${countryCode.toLowerCase()}.svg`;
+}
+
+function languageTriggerFlagImageClassName(countryCode: string) {
+  return countryCode.trim().toLowerCase() === "cn"
+    ? "block h-full w-full origin-left scale-[1.22] object-cover object-left"
+    : "block h-full w-full origin-center scale-[1.08] object-cover";
 }
 
 function normalizeExternalInfoUrl(value: string | null | undefined) {
@@ -3153,7 +3159,7 @@ export default function MePage() {
                       alt={mobileSelfSelectedLanguage.label}
                       width={80}
                       height={60}
-                      className="block h-full w-full object-cover"
+                      className={languageTriggerFlagImageClassName(mobileSelfSelectedLanguage.countryCode)}
                       loading="eager"
                     />
                   </button>

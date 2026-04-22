@@ -8,7 +8,13 @@ import { LANGUAGE_OPTIONS, resolveSupportedLocale } from "@/lib/i18n";
 import { useHydrated } from "@/lib/useHydrated";
 
 function flagImageUrl(countryCode: string) {
-  return `https://flagcdn.com/80x60/${countryCode.toLowerCase()}.png`;
+  return `https://flagcdn.com/${countryCode.toLowerCase()}.svg`;
+}
+
+function triggerFlagImageClassName(countryCode: string) {
+  return countryCode.trim().toLowerCase() === "cn"
+    ? "block h-full w-full origin-left scale-[1.22] object-cover object-left"
+    : "block h-full w-full origin-center scale-[1.08] object-cover";
 }
 
 export default function GlobalLanguageSwitcher() {
@@ -239,7 +245,7 @@ export default function GlobalLanguageSwitcher() {
             alt={selected.label}
             width={80}
             height={60}
-            className="block h-full w-full object-cover"
+            className={triggerFlagImageClassName(selected.countryCode)}
             loading="eager"
           />
         </button>
