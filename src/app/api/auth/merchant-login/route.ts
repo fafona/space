@@ -31,6 +31,18 @@ type ResolvedAccountIdentity = {
   merchantId: string;
 };
 
+type PasswordGrantPayload = {
+  access_token?: unknown;
+  refresh_token?: unknown;
+  expires_in?: unknown;
+  user?: unknown;
+  msg?: unknown;
+  message?: unknown;
+  error?: unknown;
+  error_code?: unknown;
+  error_description?: unknown;
+} | null;
+
 type AdminListUsersClient = PlatformIdentitySupabaseClient & {
   from: (table: string) => {
     select: (columns: string) => {
@@ -66,6 +78,63 @@ function readEnv(name: string) {
 
 function normalizeAccountValue(value: string | null | undefined) {
   return String(value ?? "").trim().toLowerCase();
+}
+
+function isEightDigitAccountId(value: string | null | undefined) {
+  return /^\d{8}$/.test(String(value ?? "").trim());
+}
+
+function buildManualUserEmail(accountType: PlatformAccountType, accountId: string) {
+  return `${accountType === "personal" ? "personal" : "merchant"}-${accountId}@manual.merchant-space.invalid`;
+}
+
+function isTransientBackendLookupError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const record = error as { code?: unknown; message?: unknown; status?: unknown };
+  const code = typeof record.code === "string" ? record.code : "";
+  const message = typeof record.message === "string" ? record.message : "";
+  if (code === "PGRST002") return true;
+  if (Number(record.status) === 503) return true;
+  return /schema cache|retrying|temporarily|timeout|connection|database error finding users/i.test(message);
+}
+
+function isTransientAuthPasswordError(status: number, payload: unknown) {
+  if (status >= 500 || status === 429) return true;
+  if (!payload || typeof payload !== "object") return false;
+  const record = payload as { msg?: unknown; message?: unknown; error?: unknown; error_code?: unknown };
+  const text = [record.msg, record.message, record.error, record.error_code]
+    .map((value) => (typeof value === "string" ? value : ""))
+    .join(" ");
+  return /unexpected_failure|database error|querying schema|temporarily|timeout|connection/i.test(text);
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function runBackendLookupWithRetry<T extends { error?: unknown }>(task: () => PromiseLike<T>, attempts = 3) {
+  let result = await task();
+  for (let attempt = 1; attempt < attempts && result.error && isTransientBackendLookupError(result.error); attempt += 1) {
+    await wait(300 * attempt);
+    result = await task();
+  }
+  return result;
+}
+
+function buildManualIdentityFallback(account: string): ResolvedAccountIdentity {
+  const accountId = normalizeAccountValue(account);
+  if (!isEightDigitAccountId(accountId)) {
+    return { email: "", accountType: "", accountId: "", merchantId: "" };
+  }
+  const accountType: PlatformAccountType = isPersonalAccountNumericId(accountId) ? "personal" : "merchant";
+  return {
+    email: buildManualUserEmail(accountType, accountId),
+    accountType,
+    accountId,
+    merchantId: accountType === "merchant" ? accountId : "",
+  };
 }
 
 function readMetadataString(metadata: AuthMetadata, ...keys: string[]) {
@@ -138,7 +207,7 @@ async function listAuthUsers(supabase: AdminListUsersClient) {
   const users: MerchantAuthUserSummary[] = [];
   let page = 1;
   while (true) {
-    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage: 200 });
+    const { data, error } = await runBackendLookupWithRetry(() => supabase.auth.admin.listUsers({ page, perPage: 200 }));
     if (error) throw error;
     const chunk = (data?.users ?? []).map((user) => ({
       email: user.email,
@@ -196,12 +265,21 @@ async function resolveAccountIdentity(supabase: AdminListUsersClient, account: s
   }
 
   if (isMerchantNumericId(normalizedAccount)) {
-    const { data: merchantRows, error } = await supabase
-      .from("merchants")
-      .select("id,name,email,owner_email,contact_email,user_email")
-      .eq("id", normalizedAccount)
-      .limit(1);
-    if (error) throw error;
+    const { data: merchantRows, error } = await runBackendLookupWithRetry(() =>
+      supabase
+        .from("merchants")
+        .select("id,name,email,owner_email,contact_email,user_email")
+        .eq("id", normalizedAccount)
+        .limit(1),
+    );
+    if (error) {
+      const fallbackIdentity = buildManualIdentityFallback(normalizedAccount);
+      if (fallbackIdentity.email && isTransientBackendLookupError(error)) {
+        writeCachedAccountIdentity(account, fallbackIdentity);
+        return fallbackIdentity;
+      }
+      throw error;
+    }
     const merchant = Array.isArray(merchantRows) ? merchantRows[0] ?? null : null;
     const email = normalizeMerchantEmail(
       merchant?.user_email,
@@ -223,11 +301,13 @@ async function resolveAccountIdentity(supabase: AdminListUsersClient, account: s
 
   for (const merchantName of [account.trim(), normalizedAccount]) {
     if (!merchantName) continue;
-    const { data: merchantRowsByName, error } = await supabase
-      .from("merchants")
-      .select("id,name,email,owner_email,contact_email,user_email")
-      .eq("name", merchantName)
-      .limit(1);
+    const { data: merchantRowsByName, error } = await runBackendLookupWithRetry(() =>
+      supabase
+        .from("merchants")
+        .select("id,name,email,owner_email,contact_email,user_email")
+        .eq("name", merchantName)
+        .limit(1),
+    );
     if (error) throw error;
     const merchantByName = Array.isArray(merchantRowsByName) ? merchantRowsByName[0] ?? null : null;
     const email = normalizeMerchantEmail(
@@ -248,7 +328,17 @@ async function resolveAccountIdentity(supabase: AdminListUsersClient, account: s
     }
   }
 
-  const authUsers = await listAuthUsers(supabase);
+  let authUsers: MerchantAuthUserSummary[] = [];
+  try {
+    authUsers = await listAuthUsers(supabase);
+  } catch (error) {
+    const fallbackIdentity = buildManualIdentityFallback(normalizedAccount);
+    if (fallbackIdentity.email && isTransientBackendLookupError(error)) {
+      writeCachedAccountIdentity(account, fallbackIdentity);
+      return fallbackIdentity;
+    }
+    throw error;
+  }
   const matchedUser = authUsers.find((user) => readAccountKeys(user).includes(normalizedAccount));
   const accountId = readPlatformAccountIdFromMetadata(matchedUser);
   const metadataAccountType = readPlatformAccountTypeFromMetadata(matchedUser, "");
@@ -293,33 +383,32 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "invalid_credentials" }, { status: 401 });
     }
 
-    const upstreamResponse = await fetch(`${supabaseUrl.replace(/\/+$/, "")}/auth/v1/token?grant_type=password`, {
-      method: "POST",
-      headers: {
-        apikey: anonKey,
-        Authorization: `Bearer ${anonKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        email,
-        password,
-      }),
-      cache: "no-store",
-    });
+    let upstreamResponse: Response | null = null;
+    let upstreamPayload: PasswordGrantPayload = null;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      upstreamResponse = await fetch(`${supabaseUrl.replace(/\/+$/, "")}/auth/v1/token?grant_type=password`, {
+        method: "POST",
+        headers: {
+          apikey: anonKey,
+          Authorization: `Bearer ${anonKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          email,
+          password,
+        }),
+        cache: "no-store",
+      });
+      upstreamPayload = (await upstreamResponse.json().catch(() => null)) as PasswordGrantPayload;
+      if (!isTransientAuthPasswordError(upstreamResponse.status, upstreamPayload) || attempt >= 3) {
+        break;
+      }
+      await wait(300 * attempt);
+    }
 
-    const upstreamPayload = (await upstreamResponse.json().catch(() => null)) as
-      | {
-          access_token?: unknown;
-          refresh_token?: unknown;
-          expires_in?: unknown;
-          user?: unknown;
-          msg?: unknown;
-          message?: unknown;
-          error?: unknown;
-          error_code?: unknown;
-          error_description?: unknown;
-        }
-      | null;
+    if (!upstreamResponse) {
+      return NextResponse.json({ error: "merchant_login_failed", message: "auth_request_not_started" }, { status: 503 });
+    }
 
     if (!upstreamResponse.ok) {
       const errorCode = String(upstreamPayload?.error_code ?? "").trim().toLowerCase();
