@@ -3,8 +3,11 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  hasStoredBrowserSupabaseSessionTokens,
   readMerchantSessionMerchantIds,
   readMerchantSessionPayload,
+  recoverBrowserSupabaseSessionWithRefresh,
+  syncMerchantSessionCookies,
   type MerchantCookieSessionPayload,
 } from "@/lib/authSessionRecovery";
 import { buildBackendFaollaHref } from "@/lib/faollaEntry";
@@ -108,6 +111,26 @@ function readSessionAccountId(payload: MerchantCookieSessionPayload | null, merc
   );
 }
 
+function isAuthenticatedPayload(payload: MerchantCookieSessionPayload | null | undefined) {
+  return payload?.authenticated === true;
+}
+
+async function resolveFrontendAuthPayload(timeoutMs: number) {
+  const cookiePayload = await readMerchantSessionPayload(timeoutMs).catch(() => null);
+  if (isAuthenticatedPayload(cookiePayload)) return cookiePayload;
+
+  if (hasStoredBrowserSupabaseSessionTokens()) {
+    const session = await recoverBrowserSupabaseSessionWithRefresh(Math.max(4200, timeoutMs + 2600)).catch(() => null);
+    if (session) {
+      const syncedPayload = await syncMerchantSessionCookies(session, Math.max(3200, timeoutMs + 1600)).catch(() => null);
+      if (isAuthenticatedPayload(syncedPayload)) return syncedPayload;
+    }
+  }
+
+  const retryPayload = await readMerchantSessionPayload(Math.max(1800, timeoutMs)).catch(() => null);
+  return isAuthenticatedPayload(retryPayload) ? retryPayload : null;
+}
+
 export default function FrontendAuthEntry({
   className = "",
   loginClassName = "",
@@ -123,13 +146,31 @@ export default function FrontendAuthEntry({
 
   useEffect(() => {
     let cancelled = false;
-    void readMerchantSessionPayload(2500).then((nextPayload) => {
-      if (cancelled) return;
-      setPayload(nextPayload?.authenticated === true ? nextPayload : null);
-      setResolved(true);
-    });
+    const retryDelays = [0, 1200, 3200, 7000];
+    let retryTimer: number | null = null;
+
+    const run = (attemptIndex: number) => {
+      retryTimer = window.setTimeout(() => {
+        void resolveFrontendAuthPayload(attemptIndex === 0 ? 2600 : 4200).then((nextPayload) => {
+          if (cancelled) return;
+          if (nextPayload) {
+            setPayload(nextPayload);
+            setResolved(true);
+            return;
+          }
+          setPayload(null);
+          setResolved(true);
+          if (attemptIndex + 1 < retryDelays.length) {
+            run(attemptIndex + 1);
+          }
+        });
+      }, retryDelays[attemptIndex] ?? 0);
+    };
+
+    run(0);
     return () => {
       cancelled = true;
+      if (retryTimer) window.clearTimeout(retryTimer);
     };
   }, []);
 
