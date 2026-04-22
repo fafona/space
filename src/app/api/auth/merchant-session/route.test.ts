@@ -26,7 +26,7 @@ test("merchant-session GET falls back to an older duplicate cookie when the newe
       if (authorizationHeader === "Bearer access-token-valid") {
         return new Response(
           JSON.stringify({
-            id: "user-1",
+            id: "11111111-1111-4111-8111-111111111111",
             email: "owner@example.com",
             user_metadata: {},
             app_metadata: {},
@@ -40,6 +40,29 @@ test("merchant-session GET falls back to an older duplicate cookie when the newe
         );
       }
       return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
+    }
+
+    if (requestUrl.pathname === "/auth/v1/admin/users/11111111-1111-4111-8111-111111111111") {
+      return new Response(
+        JSON.stringify({
+          user: {
+            id: "11111111-1111-4111-8111-111111111111",
+            email: "owner@example.com",
+            user_metadata: {
+              platform_account_id: "12345678",
+              platform_account_type: "merchant",
+              merchant_id: "12345678",
+            },
+            app_metadata: {},
+          },
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        },
+      );
     }
 
     if (requestUrl.pathname === "/rest/v1/merchants") {
@@ -67,10 +90,12 @@ test("merchant-session GET falls back to an older duplicate cookie when the newe
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), {
       authenticated: true,
+      accountType: "merchant",
+      accountId: "12345678",
       merchantId: "12345678",
       merchantIds: ["12345678"],
       user: {
-        id: "user-1",
+        id: "11111111-1111-4111-8111-111111111111",
         email: "owner@example.com",
         user_metadata: {},
         app_metadata: {},

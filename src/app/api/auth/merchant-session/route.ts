@@ -455,6 +455,7 @@ export async function POST(request: Request) {
       refreshToken: verifiedRefreshToken,
       maxAgeSeconds: verifiedExpiresIn,
       merchantId: platformIdentity.merchantId,
+      preserveRefreshToken: !verifiedRefreshToken,
     }, request);
     return response;
   } catch {

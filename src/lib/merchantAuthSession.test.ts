@@ -104,6 +104,20 @@ test("setMerchantAuthCookies writes browser-session cookies", () => {
   assert.equal(response.cookies.get(MERCHANT_AUTH_MERCHANT_ID_COOKIE)?.value, "12345678");
 });
 
+test("setMerchantAuthCookies can update access without clearing refresh cookie", () => {
+  const response = NextResponse.json({ ok: true });
+  setMerchantAuthCookies(response, {
+    accessToken: "access-token",
+    maxAgeSeconds: 3600,
+    merchantId: "12345678",
+    preserveRefreshToken: true,
+  });
+
+  assert.equal(response.cookies.get(MERCHANT_AUTH_COOKIE)?.value, "access-token");
+  assert.equal(response.cookies.get(MERCHANT_AUTH_REFRESH_COOKIE), undefined);
+  assert.equal(response.cookies.get(MERCHANT_AUTH_MERCHANT_ID_COOKIE)?.value, "12345678");
+});
+
 test("setMerchantAuthCookies shares cookies across faolla subdomains", () => {
   const response = NextResponse.json({ ok: true });
   const request = new Request("https://fafona.faolla.com/api/auth/merchant-login");

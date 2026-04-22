@@ -132,7 +132,13 @@ export function setMerchantAuthCookie(response: NextResponse, accessToken: strin
 
 export function setMerchantAuthCookies(
   response: NextResponse,
-  input: { accessToken: string; refreshToken?: string | null; maxAgeSeconds?: unknown; merchantId?: string | null },
+  input: {
+    accessToken: string;
+    refreshToken?: string | null;
+    maxAgeSeconds?: unknown;
+    merchantId?: string | null;
+    preserveRefreshToken?: boolean;
+  },
   request?: Request,
 ) {
   const normalizedAccessToken = String(input.accessToken ?? "").trim();
@@ -167,7 +173,7 @@ export function setMerchantAuthCookies(
       maxAge: MERCHANT_AUTH_REFRESH_COOKIE_MAX_AGE_SECONDS,
       ...(cookieDomain ? { domain: cookieDomain } : {}),
     });
-  } else {
+  } else if (!input.preserveRefreshToken) {
     response.cookies.set(MERCHANT_AUTH_REFRESH_COOKIE, "", {
       httpOnly: true,
       sameSite: "lax",

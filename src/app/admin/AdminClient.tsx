@@ -6808,25 +6808,22 @@ export default function AdminClient({
         setCheckingAuth(false);
       }
     };
-    const redirectMerchantToLogin = (reason = "session_expired") => {
-      if (!mounted || isPlatformEditor || typeof window === "undefined") return;
-      mounted = false;
-      clearTimeout(safetyTimeoutId);
+    const releaseMerchantUnauthenticatedState = (notice: string) => {
+      if (!mounted) return;
       merchantIdsRef.current = [];
-      clearStoredBrowserSupabaseSessionTokens();
-      clearMerchantSignInBridge();
-      clearRecentMerchantLaunchState();
-      void fetch("/api/auth/merchant-logout", {
-        method: "POST",
-        credentials: "same-origin",
-        keepalive: true,
-      }).catch(() => {
-        // Redirect even if the logout endpoint is unavailable.
-      });
-      void supabase.auth.signOut({ scope: "local" }).catch(() => {
-        // Ignore cleanup failures; redirect is the source of truth for confirmed unauthenticated state.
-      });
-      window.location.replace(`/login?${reason}=1`);
+      setRemoteContentVerified(false);
+      setHasEditorContent(false);
+      setSelectedId("");
+      releaseCheckingScreen({ notice });
+    };
+    const preserveCachedMerchantEditorState = (notice: string) => {
+      if (!mounted || isPlatformEditor) return false;
+      const hasCachedContent = initialCached.length > 0 || hasMeaningfulCachedDraft();
+      if (!hasCachedContent) return false;
+      setRemoteContentVerified(false);
+      setHasEditorContent(true);
+      releaseCheckingScreen({ notice });
+      return true;
     };
     const shouldPreserveMerchantSessionDuringResume = () => {
       if (isPlatformEditor || typeof document === "undefined") return false;
@@ -7021,11 +7018,14 @@ export default function AdminClient({
           if (shouldPreserveMerchantSessionDuringResume()) {
             return;
           }
-          if (justSignedIn) {
-            redirectMerchantToLogin("session_expired");
+          if (preserveCachedMerchantEditorState("登录状态正在恢复，请稍后再发布。")) {
             return;
           }
-          redirectMerchantToLogin("session_expired");
+          if (justSignedIn) {
+            releaseMerchantUnauthenticatedState("登录已断开，请重新登录后继续。");
+            return;
+          }
+          releaseMerchantUnauthenticatedState("当前未登录，请重新登录后继续。");
         })().catch(() => {
           // Ignore listener network failures; keep current editor session.
         });
@@ -7042,22 +7042,38 @@ export default function AdminClient({
         }
 
         if (!isPlatformEditor) {
-          clearStoredBrowserSupabaseSessionTokens();
-          void supabase.auth.signOut({ scope: "local" }).catch(() => {
-            // Ignore local browser-session cleanup failures.
-          });
-          const merchantPayload = await withTimeout(
+          let merchantPayload = await withTimeout(
             readMerchantSessionPayload(Math.max(2200, Math.min(7000, AUTH_CHECK_TIMEOUT_MS))),
             AUTH_CHECK_TIMEOUT_MS,
             "登录检查超时，已使用本地缓存继续编辑",
           ).catch(() => null);
-          const merchantIds = merchantPayload?.authenticated === true ? readMerchantSessionMerchantIds(merchantPayload) : [];
-          const merchantId = merchantIds.find((item) => isMerchantNumericId(item)) ?? merchantIds[0] ?? "";
-          const merchantEmail =
+          let merchantIds = merchantPayload?.authenticated === true ? readMerchantSessionMerchantIds(merchantPayload) : [];
+          let merchantId = merchantIds.find((item) => isMerchantNumericId(item)) ?? merchantIds[0] ?? "";
+          let merchantEmail =
             typeof merchantPayload?.user?.email === "string" ? merchantPayload.user.email.trim() : "";
 
           if (!mounted) return;
           clearTimeout(safetyTimeoutId);
+
+          if (!merchantId && !merchantEmail) {
+            const recoveredSession = await recoverSession(justSignedIn ? 7000 : 5200);
+            if (!mounted) return;
+            if (recoveredSession?.user) {
+              await syncMerchantSessionCookies(
+                recoveredSession,
+                Math.max(2400, Math.min(6500, AUTH_CHECK_TIMEOUT_MS)),
+              ).catch(() => null);
+              merchantPayload = await withTimeout(
+                readMerchantSessionPayload(Math.max(2200, Math.min(7000, AUTH_CHECK_TIMEOUT_MS))),
+                AUTH_CHECK_TIMEOUT_MS,
+                "登录检查超时，已使用本地缓存继续编辑",
+              ).catch(() => null);
+              merchantIds = merchantPayload?.authenticated === true ? readMerchantSessionMerchantIds(merchantPayload) : [];
+              merchantId = merchantIds.find((item) => isMerchantNumericId(item)) ?? merchantIds[0] ?? "";
+              merchantEmail =
+                typeof merchantPayload?.user?.email === "string" ? merchantPayload.user.email.trim() : "";
+            }
+          }
 
           if (merchantIds.length > 0) {
             merchantIdsRef.current = mergePreferredMerchantIds(merchantIds, merchantIdsRef.current);
@@ -7086,10 +7102,16 @@ export default function AdminClient({
               const restored = await tryLoadJustSignedInPublishedContent();
               if (!mounted) return;
               if (restored) return;
-              redirectMerchantToLogin("session_expired");
+              if (preserveCachedMerchantEditorState("登录状态正在恢复，请稍后再发布。")) {
+                return;
+              }
+              releaseMerchantUnauthenticatedState("登录未完成，请重新登录后继续。");
               return;
             }
-            redirectMerchantToLogin("session_expired");
+            if (preserveCachedMerchantEditorState("登录状态正在恢复，请稍后再发布。")) {
+              return;
+            }
+            releaseMerchantUnauthenticatedState("当前未登录，请重新登录后继续。");
             return;
           }
 
@@ -7297,7 +7319,10 @@ export default function AdminClient({
               const restored = await tryLoadJustSignedInPublishedContent();
               if (!mounted) return;
               if (restored) return;
-              redirectMerchantToLogin("session_expired");
+              if (preserveCachedMerchantEditorState("登录状态正在恢复，请稍后再发布。")) {
+                return;
+              }
+              releaseMerchantUnauthenticatedState("登录未完成，请重新登录后继续。");
               return;
             }
             if (cookieBackedMerchantIdentity) {
@@ -7306,7 +7331,10 @@ export default function AdminClient({
               setHasEditorContent(true);
               releaseCheckingScreen({ notice: null });
             } else {
-              redirectMerchantToLogin("session_expired");
+              if (preserveCachedMerchantEditorState("登录状态正在恢复，请稍后再发布。")) {
+                return;
+              }
+              releaseMerchantUnauthenticatedState("当前未登录，请重新登录后继续。");
               return;
             }
           }
