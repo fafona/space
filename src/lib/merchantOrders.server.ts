@@ -8,6 +8,7 @@ import {
   type MerchantOrderAction,
   type MerchantOrderCreateInput,
   type MerchantOrderLineItemInput,
+  type MerchantOrderRecord,
 } from "@/lib/merchantOrders";
 import {
   listStoredMerchantOrdersByCustomer,
@@ -73,6 +74,68 @@ export async function createMerchantOrderRecord(input: MerchantOrderCreateInput)
   if (saved.error) {
     throw new Error(saved.error);
   }
+  return next;
+}
+
+function trimText(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function matchesPersonalOrderCustomer(
+  order: MerchantOrderRecord,
+  input: { accountId: string; userId: string; email: string },
+) {
+  if (input.accountId && trimText(order.customerAccountId) === input.accountId) return true;
+  if (input.userId && trimText(order.customerUserId) === input.userId) return true;
+  if (!input.email) return false;
+  return (
+    trimText(order.customerLoginEmail).toLowerCase() === input.email ||
+    trimText(order.customer.email).toLowerCase() === input.email
+  );
+}
+
+export async function cancelPersonalMerchantOrder(input: {
+  siteId: string;
+  orderId: string;
+  accountId?: string | null;
+  userId?: string | null;
+  email?: string | null;
+}) {
+  const supabase = requireOrdersStoreClient();
+  const siteId = trimText(input.siteId);
+  const orderId = trimText(input.orderId);
+  const lookup = {
+    accountId: trimText(input.accountId),
+    userId: trimText(input.userId),
+    email: trimText(input.email).toLowerCase(),
+  };
+  if (!siteId || !orderId || (!lookup.accountId && !lookup.userId && !lookup.email)) {
+    throw new Error("order_not_found");
+  }
+  const stored = await loadStoredMerchantOrders(supabase, siteId);
+  const orders = normalizeMerchantOrderRecords(stored?.orders ?? []);
+  const orderIndex = orders.findIndex((order) => order.id === orderId);
+  if (orderIndex < 0) throw new Error("order_not_found");
+  const current = orders[orderIndex];
+  if (!matchesPersonalOrderCustomer(current, lookup)) throw new Error("order_not_found");
+  if (current.status !== "pending" || trimText(current.merchantTouchedAt)) {
+    throw new Error("order_customer_action_locked");
+  }
+  const now = new Date().toISOString();
+  const next = {
+    ...current,
+    status: "cancelled" as const,
+    updatedAt: now,
+    cancelledAt: now,
+  };
+  const updatedOrders = [...orders];
+  updatedOrders[orderIndex] = next;
+  const saved = await saveStoredMerchantOrders(supabase, {
+    siteId,
+    orders: updatedOrders,
+    updatedAt: now,
+  });
+  if (saved.error) throw new Error(saved.error);
   return next;
 }
 

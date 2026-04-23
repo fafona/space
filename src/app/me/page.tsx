@@ -30,12 +30,10 @@ import {
 } from "@/lib/supportMessageAttachments";
 import {
   formatMerchantBookingDateTime,
-  getMerchantBookingStatusLabel,
   type MerchantBookingRecord,
 } from "@/lib/merchantBookings";
 import {
   formatMerchantOrderAmount,
-  getMerchantOrderStatusLabel,
   type MerchantOrderRecord,
 } from "@/lib/merchantOrders";
 
@@ -55,6 +53,8 @@ type MeSessionPayload = {
 type DesktopSection = "conversations" | "bookings" | "orders" | "favorites" | "cards" | "faolla" | "profile";
 type MobileTab = "conversations" | "consumption" | "faolla" | "self";
 type ConsumptionSection = "bookings" | "orders";
+type PersonalBookingFilter = "all" | "active" | "confirmed" | "cancelled";
+type PersonalOrderFilter = "all" | "pending" | "confirmed" | "cancelled";
 type MobileConversationView = "list" | "thread";
 type MobileSelfSection = "home" | "profile" | "cards" | "notifications";
 
@@ -148,6 +148,7 @@ type PersonalBookingsResponsePayload = {
   error?: unknown;
   message?: unknown;
   bookings?: MerchantBookingRecord[];
+  merchantContacts?: Record<string, PersonalMerchantContact>;
 };
 
 type PersonalOrdersResponsePayload = {
@@ -155,6 +156,14 @@ type PersonalOrdersResponsePayload = {
   error?: unknown;
   message?: unknown;
   orders?: MerchantOrderRecord[];
+  merchantContacts?: Record<string, PersonalMerchantContact>;
+};
+
+type PersonalMerchantContact = {
+  siteId: string;
+  name: string;
+  email: string;
+  phone: string;
 };
 
 const OFFICIAL_CONVERSATION_KEY: PersonalConversationKey = "official";
@@ -528,6 +537,73 @@ function formatPersonalRecordDateTime(value: string | null | undefined) {
   });
 }
 
+function getPersonalBookingStatus(record: Pick<MerchantBookingRecord, "status">): PersonalBookingFilter {
+  if (record.status === "active" || record.status === "cancelled") return record.status;
+  return "confirmed";
+}
+
+function getPersonalOrderStatus(record: Pick<MerchantOrderRecord, "status">): PersonalOrderFilter {
+  if (record.status === "pending" || record.status === "cancelled") return record.status;
+  return "confirmed";
+}
+
+function getPersonalBookingStatusText(status: PersonalBookingFilter) {
+  if (status === "all") return "全部";
+  if (status === "active") return "待确认";
+  if (status === "confirmed") return "已确认";
+  return "已取消";
+}
+
+function getPersonalOrderStatusText(status: PersonalOrderFilter) {
+  if (status === "all") return "全部";
+  if (status === "pending") return "待确认";
+  if (status === "confirmed") return "已确认";
+  return "已取消";
+}
+
+function getPersonalStatusBadgeClass(status: PersonalBookingFilter | PersonalOrderFilter) {
+  if (status === "active" || status === "pending") return "border border-amber-200 bg-amber-50 text-amber-700";
+  if (status === "confirmed") return "border border-sky-200 bg-sky-50 text-sky-700";
+  if (status === "cancelled") return "border border-slate-200 bg-slate-100 text-slate-600";
+  return "border border-slate-200 bg-white text-slate-600";
+}
+
+function getPersonalFilterChipClass(active: boolean, status: PersonalBookingFilter | PersonalOrderFilter) {
+  if (status === "active" || status === "pending") {
+    return active
+      ? "border border-amber-300 bg-amber-100 text-amber-800"
+      : "border border-amber-200 bg-amber-50 text-amber-700";
+  }
+  if (status === "confirmed") {
+    return active
+      ? "border border-sky-300 bg-sky-100 text-sky-800"
+      : "border border-sky-200 bg-sky-50 text-sky-700";
+  }
+  if (status === "cancelled") {
+    return active
+      ? "border border-slate-300 bg-slate-200 text-slate-800"
+      : "border border-slate-200 bg-slate-100 text-slate-600";
+  }
+  return active ? "bg-slate-900 text-white" : "border border-slate-200 bg-white text-slate-600";
+}
+
+function buildPhoneHref(value: string) {
+  const normalized = value.trim();
+  return normalized ? `tel:${normalized.replace(/\s+/g, "")}` : "";
+}
+
+function hasPersonalMerchantTouch(record: Pick<MerchantBookingRecord | MerchantOrderRecord, "merchantTouchedAt">) {
+  return Boolean(trimText(record.merchantTouchedAt));
+}
+
+function canCancelPersonalBooking(record: MerchantBookingRecord) {
+  return getPersonalBookingStatus(record) === "active" && !hasPersonalMerchantTouch(record);
+}
+
+function canCancelPersonalOrder(record: MerchantOrderRecord) {
+  return getPersonalOrderStatus(record) === "pending" && !hasPersonalMerchantTouch(record);
+}
+
 function isSameSupportCalendarDay(left: string | null | undefined, right: string | null | undefined) {
   const leftDate = new Date(String(left ?? "").trim());
   const rightDate = new Date(String(right ?? "").trim());
@@ -894,6 +970,23 @@ function Icon({ name }: { name: "chat" | "shop" | "shield" | "user" | "calendar"
           <path d="M7.5 10h5M7.5 14h8.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
         </>
       ) : null}
+    </svg>
+  );
+}
+
+function MailIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
+      <path d="M3 5.5A1.5 1.5 0 0 1 4.5 4h11A1.5 1.5 0 0 1 17 5.5v9A1.5 1.5 0 0 1 15.5 16h-11A1.5 1.5 0 0 1 3 14.5v-9Z" stroke="currentColor" strokeWidth="1.5" />
+      <path d="m4 6 6 4 6-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function PhoneIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" aria-hidden="true">
+      <path d="M6.62 10.79a15.53 15.53 0 0 0 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1C10.4 21 3 13.6 3 4c0-.55.45-1 1-1h3.49c.55 0 1 .45 1 1 0 1.24.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.19 2.2z" />
     </svg>
   );
 }
@@ -1455,6 +1548,10 @@ export default function MePage() {
   const [personalProfileMessage, setPersonalProfileMessage] = useState("");
   const [personalBookings, setPersonalBookings] = useState<MerchantBookingRecord[]>([]);
   const [personalOrders, setPersonalOrders] = useState<MerchantOrderRecord[]>([]);
+  const [personalMerchantContacts, setPersonalMerchantContacts] = useState<Record<string, PersonalMerchantContact>>({});
+  const [personalBookingFilter, setPersonalBookingFilter] = useState<PersonalBookingFilter>("all");
+  const [personalOrderFilter, setPersonalOrderFilter] = useState<PersonalOrderFilter>("all");
+  const [personalActionBusyKey, setPersonalActionBusyKey] = useState("");
   const [personalConsumptionLoading, setPersonalConsumptionLoading] = useState(false);
   const [personalConsumptionError, setPersonalConsumptionError] = useState("");
   const [personalConsumptionReloadKey, setPersonalConsumptionReloadKey] = useState(0);
@@ -1610,6 +1707,7 @@ export default function MePage() {
     if (!accountId) {
       setPersonalBookings([]);
       setPersonalOrders([]);
+      setPersonalMerchantContacts({});
       setPersonalConsumptionError("");
       setPersonalConsumptionLoading(false);
       return;
@@ -1647,10 +1745,19 @@ export default function MePage() {
         if (cancelled) return;
         setPersonalBookings(Array.isArray(bookingsPayload.bookings) ? bookingsPayload.bookings : []);
         setPersonalOrders(Array.isArray(ordersPayload.orders) ? ordersPayload.orders : []);
+        setPersonalMerchantContacts({
+          ...(bookingsPayload.merchantContacts && typeof bookingsPayload.merchantContacts === "object"
+            ? bookingsPayload.merchantContacts
+            : {}),
+          ...(ordersPayload.merchantContacts && typeof ordersPayload.merchantContacts === "object"
+            ? ordersPayload.merchantContacts
+            : {}),
+        });
       } catch {
         if (!cancelled) {
           setPersonalBookings([]);
           setPersonalOrders([]);
+          setPersonalMerchantContacts({});
           setPersonalConsumptionError("记录加载失败，请稍后重试。");
         }
       } finally {
@@ -1663,6 +1770,114 @@ export default function MePage() {
       cancelled = true;
     };
   }, [accountId, personalConsumptionReloadKey]);
+
+  const personalBookingCounts = useMemo(() => {
+    const counts: Record<PersonalBookingFilter, number> = { all: personalBookings.length, active: 0, confirmed: 0, cancelled: 0 };
+    personalBookings.forEach((booking) => {
+      counts[getPersonalBookingStatus(booking)] += 1;
+    });
+    return counts;
+  }, [personalBookings]);
+
+  const personalOrderCounts = useMemo(() => {
+    const counts: Record<PersonalOrderFilter, number> = { all: personalOrders.length, pending: 0, confirmed: 0, cancelled: 0 };
+    personalOrders.forEach((order) => {
+      counts[getPersonalOrderStatus(order)] += 1;
+    });
+    return counts;
+  }, [personalOrders]);
+
+  const filteredPersonalBookings = useMemo(
+    () =>
+      personalBookingFilter === "all"
+        ? personalBookings
+        : personalBookings.filter((booking) => getPersonalBookingStatus(booking) === personalBookingFilter),
+    [personalBookingFilter, personalBookings],
+  );
+
+  const filteredPersonalOrders = useMemo(
+    () =>
+      personalOrderFilter === "all"
+        ? personalOrders
+        : personalOrders.filter((order) => getPersonalOrderStatus(order) === personalOrderFilter),
+    [personalOrderFilter, personalOrders],
+  );
+
+  const resolvePersonalMerchantContact = useCallback(
+    (siteId: string, siteName: string) => {
+      const normalizedSiteId = trimText(siteId);
+      const contact = personalMerchantContacts[normalizedSiteId];
+      return {
+        siteId: normalizedSiteId,
+        name: trimText(contact?.name) || trimText(siteName) || normalizedSiteId || "商户",
+        email: trimText(contact?.email),
+        phone: trimText(contact?.phone),
+      };
+    },
+    [personalMerchantContacts],
+  );
+
+  const cancelPersonalBooking = useCallback(
+    async (booking: MerchantBookingRecord) => {
+      if (!canCancelPersonalBooking(booking) || personalActionBusyKey) return;
+      const busyKey = `booking:${booking.id}:cancel`;
+      setPersonalActionBusyKey(busyKey);
+      setPersonalConsumptionError("");
+      try {
+        const response = await fetch("/api/bookings", {
+          method: "PATCH",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json", accept: "application/json" },
+          body: JSON.stringify({ scope: "personal", action: "cancel", bookingId: booking.id }),
+        });
+        const nextPayload = (await response.json().catch(() => null)) as
+          | { ok?: unknown; error?: unknown; message?: unknown; booking?: MerchantBookingRecord }
+          | null;
+        const nextBooking = nextPayload?.booking;
+        if (!response.ok || nextPayload?.ok !== true || !nextBooking) {
+          throw new Error(readPayloadMessage(nextPayload?.message || nextPayload?.error, "cancel_booking_failed"));
+        }
+        setPersonalBookings((current) => current.map((record) => (record.id === nextBooking.id ? nextBooking : record)));
+        refreshPersonalConsumption();
+      } catch {
+        setPersonalConsumptionError("取消预约失败，请稍后重试。");
+      } finally {
+        setPersonalActionBusyKey((current) => (current === busyKey ? "" : current));
+      }
+    },
+    [personalActionBusyKey, refreshPersonalConsumption],
+  );
+
+  const cancelPersonalOrder = useCallback(
+    async (order: MerchantOrderRecord) => {
+      if (!canCancelPersonalOrder(order) || personalActionBusyKey) return;
+      const busyKey = `order:${order.id}:cancel`;
+      setPersonalActionBusyKey(busyKey);
+      setPersonalConsumptionError("");
+      try {
+        const response = await fetch("/api/orders", {
+          method: "PATCH",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json", accept: "application/json" },
+          body: JSON.stringify({ scope: "personal", action: "cancel", siteId: order.siteId, orderId: order.id }),
+        });
+        const nextPayload = (await response.json().catch(() => null)) as
+          | { ok?: unknown; error?: unknown; message?: unknown; order?: MerchantOrderRecord }
+          | null;
+        const nextOrder = nextPayload?.order;
+        if (!response.ok || nextPayload?.ok !== true || !nextOrder) {
+          throw new Error(readPayloadMessage(nextPayload?.message || nextPayload?.error, "cancel_order_failed"));
+        }
+        setPersonalOrders((current) => current.map((record) => (record.id === nextOrder.id ? nextOrder : record)));
+        refreshPersonalConsumption();
+      } catch {
+        setPersonalConsumptionError("取消订单失败，请稍后重试。");
+      } finally {
+        setPersonalActionBusyKey((current) => (current === busyKey ? "" : current));
+      }
+    },
+    [personalActionBusyKey, refreshPersonalConsumption],
+  );
 
   const faollaTargetHref = useMemo(
     () =>
@@ -3053,59 +3268,188 @@ export default function MePage() {
     );
   }
 
+  function renderPersonalBookingFilters() {
+    const options: PersonalBookingFilter[] = ["all", "active", "confirmed", "cancelled"];
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        {options.map((status) => {
+          const active = personalBookingFilter === status;
+          return (
+            <button
+              key={status}
+              type="button"
+              className={`inline-flex h-10 items-center gap-2 rounded-full px-4 text-sm font-semibold shadow-sm transition hover:-translate-y-px ${getPersonalFilterChipClass(
+                active,
+                status,
+              )}`}
+              onClick={() => setPersonalBookingFilter(status)}
+            >
+              <span>{getPersonalBookingStatusText(status)}</span>
+              <span className={`text-xs ${active && status === "all" ? "text-white/75" : "opacity-70"}`}>
+                {personalBookingCounts[status]}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
+
+  function renderPersonalOrderFilters() {
+    const options: PersonalOrderFilter[] = ["all", "pending", "confirmed", "cancelled"];
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        {options.map((status) => {
+          const active = personalOrderFilter === status;
+          return (
+            <button
+              key={status}
+              type="button"
+              className={`inline-flex h-10 items-center gap-2 rounded-full px-4 text-sm font-semibold shadow-sm transition hover:-translate-y-px ${getPersonalFilterChipClass(
+                active,
+                status,
+              )}`}
+              onClick={() => setPersonalOrderFilter(status)}
+            >
+              <span>{getPersonalOrderStatusText(status)}</span>
+              <span className={`text-xs ${active && status === "all" ? "text-white/75" : "opacity-70"}`}>
+                {personalOrderCounts[status]}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
+
   function renderPersonalBookingCards(compact = false) {
-    if (personalConsumptionLoading || personalConsumptionError || personalBookings.length === 0) {
+    if (personalConsumptionLoading || personalConsumptionError) {
       return renderPersonalConsumptionState("bookings");
     }
     return (
       <div className={compact ? "space-y-3" : "space-y-4"}>
-        {personalBookings.map((booking) => (
-          <article
-            key={booking.id}
-            className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]"
-          >
-            <div className="flex items-start justify-between gap-4">
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700">
-                    {getMerchantBookingStatusLabel(booking.status)}
-                  </span>
-                  <span className="truncate text-base font-semibold text-slate-950">
-                    {booking.siteName || booking.siteId || "商户"}
-                  </span>
+        {renderPersonalBookingFilters()}
+        {personalBookings.length === 0 || filteredPersonalBookings.length === 0 ? (
+          renderPersonalConsumptionState("bookings")
+        ) : (
+          filteredPersonalBookings.map((booking) => {
+            const status = getPersonalBookingStatus(booking);
+            const contact = resolvePersonalMerchantContact(booking.siteId, booking.siteName);
+            const canCancel = canCancelPersonalBooking(booking);
+            const busyKey = `booking:${booking.id}:cancel`;
+            const contactEmail = contact.email;
+            const contactPhone = contact.phone;
+            return (
+              <article
+                key={booking.id}
+                className="relative overflow-visible rounded-2xl border bg-slate-50 p-3.5 shadow-sm"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="flex min-w-0 flex-1 flex-wrap items-start gap-x-5 gap-y-2">
+                    <div className="min-w-[220px] flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`rounded-full px-2 py-0.5 text-[11px] ${getPersonalStatusBadgeClass(status)}`}>
+                          {getPersonalBookingStatusText(status)}
+                        </span>
+                        <div className="truncate text-base font-semibold text-slate-900">{contact.name}</div>
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+                        <span>预约号: {booking.id}</span>
+                        <span>创建时间: {formatMerchantBookingDateTime(booking.createdAt)}</span>
+                      </div>
+                    </div>
+
+                    {contactEmail ? (
+                      <div className="flex min-w-[220px] items-center gap-2 text-[13px] leading-5 text-slate-700">
+                        <span className="min-w-0 flex-1 truncate">商家邮箱: {contactEmail}</span>
+                        <a
+                          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
+                          href={`mailto:${contactEmail}`}
+                          title="联系商家邮箱"
+                          aria-label="联系商家邮箱"
+                        >
+                          <MailIcon />
+                        </a>
+                      </div>
+                    ) : null}
+
+                    {contactPhone ? (
+                      <div className="flex min-w-[200px] items-center gap-2 text-[13px] leading-5 text-slate-700">
+                        <span className="min-w-0 flex-1 truncate">商家电话: {contactPhone}</span>
+                        <a
+                          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#007AFF] text-white shadow-sm transition hover:bg-[#0066D6]"
+                          href={buildPhoneHref(contactPhone)}
+                          title="拨打商家电话"
+                          aria-label="拨打商家电话"
+                        >
+                          <PhoneIcon />
+                        </a>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  {canCancel ? (
+                    <button
+                      type="button"
+                      className="rounded border border-rose-200 bg-rose-50 px-3 py-1.5 text-[13px] leading-5 text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      onClick={() => void cancelPersonalBooking(booking)}
+                      disabled={Boolean(personalActionBusyKey)}
+                    >
+                      {personalActionBusyKey === busyKey ? "取消中..." : "取消预约"}
+                    </button>
+                  ) : null}
                 </div>
-                <div className="mt-2 text-xs text-slate-500">预约号：{booking.id}</div>
-              </div>
-              <div className="shrink-0 text-right text-xs text-slate-400">{formatPersonalRecordDateTime(booking.createdAt)}</div>
-            </div>
-            <div className="mt-4 grid gap-3 text-sm text-slate-700 md:grid-cols-3">
-              <div>
-                <div className="text-xs text-slate-400">项目</div>
-                <div className="mt-1 font-semibold text-slate-900">{booking.item || "-"}</div>
-              </div>
-              <div>
-                <div className="text-xs text-slate-400">店铺</div>
-                <div className="mt-1 font-semibold text-slate-900">{booking.store || "-"}</div>
-              </div>
-              <div>
-                <div className="text-xs text-slate-400">预约时间</div>
-                <div className="mt-1 font-semibold text-slate-900">{formatMerchantBookingDateTime(booking.appointmentAt) || "-"}</div>
-              </div>
-            </div>
-            {booking.note ? <div className="mt-3 line-clamp-2 break-words text-sm text-slate-500">{booking.note}</div> : null}
-          </article>
-        ))}
+
+                <div className="mt-3 grid gap-2.5 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
+                  <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+                    <div className="text-[11px] text-slate-400">店铺</div>
+                    <div className="mt-1 break-words text-sm font-semibold text-slate-900">{booking.store || "-"}</div>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+                    <div className="text-[11px] text-slate-400">项目</div>
+                    <div className="mt-1 break-words text-sm font-semibold text-slate-900">{booking.item || "-"}</div>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+                    <div className="text-[11px] text-slate-400">预约时间</div>
+                    <div className="mt-1 break-words text-sm font-semibold text-slate-900">
+                      {formatMerchantBookingDateTime(booking.appointmentAt) || "-"}
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+                    <div className="text-[11px] text-slate-400">姓名</div>
+                    <div className="mt-1 break-words text-sm font-semibold text-slate-900">{booking.customerName || "-"}</div>
+                  </div>
+                </div>
+                {booking.note ? (
+                  <div className="mt-3 rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+                    <div className="whitespace-pre-wrap break-words text-sm text-slate-700">{booking.note}</div>
+                  </div>
+                ) : null}
+              </article>
+            );
+          })
+        )}
       </div>
     );
   }
 
   function renderPersonalOrderCards(compact = false) {
-    if (personalConsumptionLoading || personalConsumptionError || personalOrders.length === 0) {
+    if (personalConsumptionLoading || personalConsumptionError) {
       return renderPersonalConsumptionState("orders");
     }
     return (
       <div className={compact ? "space-y-3" : "space-y-4"}>
-        {personalOrders.map((order) => {
+        {renderPersonalOrderFilters()}
+        {personalOrders.length === 0 || filteredPersonalOrders.length === 0 ? (
+          renderPersonalConsumptionState("orders")
+        ) : (
+          filteredPersonalOrders.map((order) => {
+            const status = getPersonalOrderStatus(order);
+            const contact = resolvePersonalMerchantContact(order.siteId, order.siteName);
+            const canCancel = canCancelPersonalOrder(order);
+            const busyKey = `order:${order.id}:cancel`;
+            const contactEmail = contact.email;
+            const contactPhone = contact.phone;
           const itemPreview = order.items
             .slice(0, 3)
             .map((item) => [item.code, item.name || "未命名产品"].filter(Boolean).join(" "))
@@ -3113,40 +3457,82 @@ export default function MePage() {
           return (
             <article
               key={order.id}
-              className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]"
+              className="relative overflow-visible rounded-2xl border bg-slate-50 p-3.5 shadow-sm"
             >
-              <div className="flex items-start justify-between gap-4">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700">
-                      {getMerchantOrderStatusLabel(order.status)}
-                    </span>
-                    <span className="truncate text-base font-semibold text-slate-950">
-                      {order.siteName || order.siteId || "商户"}
-                    </span>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="flex min-w-0 flex-1 flex-wrap items-start gap-x-5 gap-y-2">
+                  <div className="min-w-[220px] flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`rounded-full px-2 py-0.5 text-[11px] ${getPersonalStatusBadgeClass(status)}`}>
+                        {getPersonalOrderStatusText(status)}
+                      </span>
+                      <div className="truncate text-base font-semibold text-slate-900">{contact.name}</div>
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+                      <span>订单号: {order.id}</span>
+                      <span>下单时间: {formatPersonalRecordDateTime(order.createdAt)}</span>
+                    </div>
                   </div>
-                  <div className="mt-2 text-xs text-slate-500">订单号：{order.id}</div>
+
+                  {contactEmail ? (
+                    <div className="flex min-w-[220px] items-center gap-2 text-[13px] leading-5 text-slate-700">
+                      <span className="min-w-0 flex-1 truncate">商家邮箱: {contactEmail}</span>
+                      <a
+                        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
+                        href={`mailto:${contactEmail}`}
+                        title="联系商家邮箱"
+                        aria-label="联系商家邮箱"
+                      >
+                        <MailIcon />
+                      </a>
+                    </div>
+                  ) : null}
+
+                  {contactPhone ? (
+                    <div className="flex min-w-[200px] items-center gap-2 text-[13px] leading-5 text-slate-700">
+                      <span className="min-w-0 flex-1 truncate">商家电话: {contactPhone}</span>
+                      <a
+                        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#007AFF] text-white shadow-sm transition hover:bg-[#0066D6]"
+                        href={buildPhoneHref(contactPhone)}
+                        title="拨打商家电话"
+                        aria-label="拨打商家电话"
+                      >
+                        <PhoneIcon />
+                      </a>
+                    </div>
+                  ) : null}
                 </div>
-                <div className="shrink-0 text-right">
-                  <div className="text-lg font-black text-slate-950">
+
+                <div className="flex shrink-0 flex-col items-end gap-2">
+                  <div className="text-right text-lg font-semibold text-slate-900">
                     {formatMerchantOrderAmount(order.totalAmount, order.pricePrefix)}
                   </div>
-                  <div className="mt-1 text-xs text-slate-400">{formatPersonalRecordDateTime(order.createdAt)}</div>
+                  {canCancel ? (
+                    <button
+                      type="button"
+                      className="rounded border border-rose-200 bg-rose-50 px-3 py-1.5 text-[13px] leading-5 text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      onClick={() => void cancelPersonalOrder(order)}
+                      disabled={Boolean(personalActionBusyKey)}
+                    >
+                      {personalActionBusyKey === busyKey ? "取消中..." : "取消订单"}
+                    </button>
+                  ) : null}
                 </div>
               </div>
               <div className="mt-4 grid gap-3 text-sm text-slate-700 md:grid-cols-2">
-                <div>
-                  <div className="text-xs text-slate-400">商品</div>
-                  <div className="mt-1 line-clamp-2 font-semibold text-slate-900">{itemPreview || "-"}</div>
+                <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+                  <div className="text-[11px] text-slate-400">商品</div>
+                  <div className="mt-1 line-clamp-2 break-words font-semibold text-slate-900">{itemPreview || "-"}</div>
                 </div>
-                <div>
-                  <div className="text-xs text-slate-400">数量</div>
+                <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+                  <div className="text-[11px] text-slate-400">数量</div>
                   <div className="mt-1 font-semibold text-slate-900">{order.totalQuantity}</div>
                 </div>
               </div>
             </article>
           );
-        })}
+          })
+        )}
       </div>
     );
   }

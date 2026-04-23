@@ -4,6 +4,7 @@ import { loadCurrentMerchantSnapshotSiteBySiteId } from "@/lib/publishedMerchant
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import {
   createMerchantOrderRecord,
+  cancelPersonalMerchantOrder,
   listMerchantOrders,
   listPersonalMerchantOrders,
   updateMerchantOrderBySite,
@@ -12,6 +13,7 @@ import { resolvePersonalAccountSessionFromRequest } from "@/lib/personalAccountS
 import { readPersonalCustomerProfileFromSession } from "@/lib/personalCustomerProfile";
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
 import { verifyFrontendAuthProof } from "@/lib/frontendAuthProof.server";
+import { buildPersonalMerchantContactMap } from "@/lib/personalMerchantContacts.server";
 import type { MerchantOrderAction, MerchantOrderCreateInput, MerchantOrderLineItemInput } from "@/lib/merchantOrders";
 
 export const dynamic = "force-dynamic";
@@ -47,7 +49,8 @@ export async function GET(request: Request) {
         userId: session.userId,
         email: session.email,
       });
-      return NextResponse.json({ ok: true, orders });
+      const merchantContacts = await buildPersonalMerchantContactMap(orders.map((order) => order.siteId));
+      return NextResponse.json({ ok: true, orders, merchantContacts });
     }
 
     const siteId = searchParams.get("siteId")?.trim() ?? "";
@@ -142,12 +145,30 @@ export async function PATCH(request: Request) {
   }
   try {
     const body = (await request.json()) as {
+      scope?: string;
       siteId?: string;
       orderId?: string;
       action?: MerchantOrderAction;
       items?: MerchantOrderLineItemInput[];
     } | null;
     const siteId = String(body?.siteId ?? "").trim();
+
+    if (String(body?.scope ?? "").trim() === "personal" && body?.action === "cancel") {
+      if (!isMerchantNumericId(siteId)) {
+        return NextResponse.json({ error: "invalid_site_id" }, { status: 400 });
+      }
+      const session = await resolvePersonalAccountSessionFromRequest(request);
+      if (!session) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+      const order = await cancelPersonalMerchantOrder({
+        siteId,
+        orderId: String(body?.orderId ?? "").trim(),
+        accountId: session.accountId,
+        userId: session.userId,
+        email: session.email,
+      });
+      return NextResponse.json({ ok: true, order });
+    }
+
     if (!isMerchantNumericId(siteId)) {
       return NextResponse.json({ error: "invalid_site_id" }, { status: 400 });
     }

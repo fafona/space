@@ -3,6 +3,7 @@ import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { buildMerchantBookingPushNotification } from "@/lib/merchantPushEvents";
 import {
   acknowledgeMerchantBookingBySite,
+  cancelPersonalMerchantBooking,
   createMerchantBooking,
   listMerchantBookings,
   listPersonalMerchantBookings,
@@ -19,6 +20,7 @@ import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
 import { resolvePersonalAccountSessionFromRequest } from "@/lib/personalAccountSession.server";
 import { readPersonalCustomerProfileFromSession } from "@/lib/personalCustomerProfile";
 import { verifyFrontendAuthProof } from "@/lib/frontendAuthProof.server";
+import { buildPersonalMerchantContactMap } from "@/lib/personalMerchantContacts.server";
 import type {
   MerchantBookingActionInput,
   MerchantBookingCreateInput,
@@ -63,7 +65,8 @@ export async function GET(request: Request) {
           includeAutomationState: true,
         },
       );
-      return NextResponse.json({ ok: true, bookings });
+      const merchantContacts = await buildPersonalMerchantContactMap(bookings.map((booking) => booking.siteId));
+      return NextResponse.json({ ok: true, bookings, merchantContacts });
     }
 
     const siteId = searchParams.get("siteId")?.trim() ?? "";
@@ -168,6 +171,7 @@ export async function PATCH(request: Request) {
   try {
     const body = (await request.json()) as
         | (Partial<MerchantBookingActionInput> & {
+          scope?: string;
           siteId?: string;
           status?: MerchantBookingStatus;
           markTouched?: boolean;
@@ -175,6 +179,18 @@ export async function PATCH(request: Request) {
           bookingIds?: string[];
         })
       | null;
+
+    if (String(body?.scope ?? "").trim() === "personal" && body?.action === "cancel") {
+      const session = await resolvePersonalAccountSessionFromRequest(request);
+      if (!session) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+      const booking = await cancelPersonalMerchantBooking({
+        bookingId: String(body?.bookingId ?? "").trim(),
+        accountId: session.accountId,
+        userId: session.userId,
+        email: session.email,
+      });
+      return NextResponse.json({ ok: true, booking });
+    }
 
     const maybeSiteId = String(body?.siteId ?? "").trim();
     const maybeStatus =

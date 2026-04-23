@@ -825,6 +825,57 @@ export async function listPersonalMerchantBookings(
   );
 }
 
+export async function cancelPersonalMerchantBooking(input: {
+  bookingId: string;
+  accountId?: string | null;
+  userId?: string | null;
+  email?: string | null;
+}): Promise<MerchantBookingRecord> {
+  const bookingId = trimText(input.bookingId);
+  const lookup = {
+    accountId: trimText(input.accountId),
+    userId: trimText(input.userId),
+    email: trimText(input.email).toLowerCase(),
+  };
+  if (!bookingId || (!lookup.accountId && !lookup.userId && !lookup.email)) {
+    throw new Error("booking_not_found");
+  }
+
+  return withBookingStoreLock(async () => {
+    const store = await readMerchantBookingStore();
+    const targetIndex = store.records.findIndex((record) => record.id === bookingId);
+    if (targetIndex < 0) throw new Error("booking_not_found");
+    const current = store.records[targetIndex];
+    if (!matchesPersonalBookingCustomer(current, lookup)) throw new Error("booking_not_found");
+    if (current.status !== "active" || trimText(current.merchantTouchedAt)) {
+      throw new Error("booking_customer_action_locked");
+    }
+
+    const now = new Date().toISOString();
+    const workbenchSettings = await loadMerchantBookingWorkbenchSettings(current.siteId);
+    const emailRuntime = await loadSiteCustomerEmailRuntime(current.siteId, workbenchSettings, current.siteName);
+    let next: MerchantBookingStoredRecord = {
+      ...current,
+      ...applyStatusMetadata(current, "cancelled", now),
+    };
+    next = appendStatusTimelineEntry(next, {
+      actor: "customer",
+      at: next.updatedAt,
+      fromStatus: current.status,
+      toStatus: "cancelled",
+    });
+    next = await maybeSendCustomerStatusEmail({
+      record: next,
+      previousStatus: current.status,
+      settings: workbenchSettings,
+      runtime: emailRuntime,
+    });
+    store.records[targetIndex] = next;
+    await writeMerchantBookingStore(store);
+    return withoutMerchantBookingToken(next, { includeAutomationState: true, includeCustomerEmailLogs: true, includeTimeline: true });
+  });
+}
+
 async function resolveStoredBookingByEditToken(input: {
   bookingId: string;
   editToken: string;
