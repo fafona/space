@@ -1062,6 +1062,21 @@ function PhoneIcon() {
   );
 }
 
+function NoteIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
+      <path
+        d="M6 3.75h5.75L15.25 7v9.25H6A1.25 1.25 0 0 1 4.75 15V5A1.25 1.25 0 0 1 6 3.75Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+      <path d="M11.75 3.75V7h3.25" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+      <path d="M7.5 10h5M7.5 12.75h5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function EmptyFeatureCard({
   icon,
   title,
@@ -3671,6 +3686,10 @@ export default function MePage() {
     if (personalConsumptionLoading || personalConsumptionError) {
       return renderPersonalConsumptionState("bookings");
     }
+    const compactActionButtonClassName =
+      "rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50";
+    const compactDangerActionButtonClassName =
+      "rounded-full border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50";
     return (
       <div className={compact ? "space-y-3" : "space-y-4"}>
         <input
@@ -3694,6 +3713,119 @@ export default function MePage() {
             const restoreBusyKey = `booking:${booking.id}:restore`;
             const contactEmail = contact.email;
             const contactPhone = contact.phone;
+            if (compact) {
+              return (
+                <article
+                  key={booking.id}
+                  className="relative overflow-visible rounded-[28px] border border-slate-200 bg-white p-4 shadow-[0_14px_34px_rgba(15,23,42,0.08)]"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${getPersonalStatusBadgeClass(status)}`}>
+                          {getPersonalBookingStatusText(status)}
+                        </span>
+                        <div className="truncate text-base font-semibold text-slate-900">{contact.name}</div>
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
+                        <span>{`预约号: ${booking.id}`}</span>
+                        <span>{`创建时间: ${formatPersonalRecordDateTime(booking.createdAt)}`}</span>
+                      </div>
+                    </div>
+                    {contactEmail || contactPhone ? (
+                      <div className="flex shrink-0 items-center gap-2">
+                        {contactEmail ? (
+                          <a
+                            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
+                            href={`mailto:${contactEmail}`}
+                            title="联系商家邮箱"
+                            aria-label="联系商家邮箱"
+                          >
+                            <MailIcon />
+                          </a>
+                        ) : null}
+                        {contactPhone ? (
+                          <a
+                            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#007AFF] text-white shadow-sm transition hover:bg-[#0066D6]"
+                            href={buildPhoneHref(contactPhone)}
+                            title="拨打商家电话"
+                            aria-label="拨打商家电话"
+                          >
+                            <PhoneIcon />
+                          </a>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {status !== "cancelled" ? (
+                      <button
+                        type="button"
+                        className={compactActionButtonClassName}
+                        onClick={() => downloadPersonalBookingCalendar(booking)}
+                      >
+                        导入日历
+                      </button>
+                    ) : null}
+                    {canEdit ? (
+                      <button
+                        type="button"
+                        className={compactActionButtonClassName}
+                        onClick={() => openPersonalBookingEditor(booking)}
+                        disabled={Boolean(personalActionBusyKey)}
+                      >
+                        修改
+                      </button>
+                    ) : null}
+                    {canRestore ? (
+                      <button
+                        type="button"
+                        className={compactActionButtonClassName}
+                        onClick={() => void restorePersonalBooking(booking)}
+                        disabled={Boolean(personalActionBusyKey)}
+                      >
+                        {personalActionBusyKey === restoreBusyKey ? "恢复中..." : "恢复预约"}
+                      </button>
+                    ) : null}
+                    {canCancel ? (
+                      <button
+                        type="button"
+                        className={compactDangerActionButtonClassName}
+                        onClick={() => void cancelPersonalBooking(booking)}
+                        disabled={Boolean(personalActionBusyKey)}
+                      >
+                        {personalActionBusyKey === cancelBusyKey ? "取消中..." : "取消预约"}
+                      </button>
+                    ) : null}
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-[minmax(0,1fr)_auto] items-end gap-x-3">
+                    <div className="grid content-start gap-1">
+                      <div className="text-sm text-slate-900">{booking.store || "-"}</div>
+                      <div className="text-sm text-slate-900">{booking.item || "-"}</div>
+                      {renderPersonalAppointmentSummary(booking.appointmentAt)}
+                    </div>
+                    <div className="relative flex items-end self-end">
+                      {booking.note ? (
+                        <div className="pointer-events-none absolute bottom-full right-0 mb-1 flex items-end">
+                          <span
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-amber-50 text-amber-700"
+                            title="有备注"
+                            aria-label="有备注"
+                          >
+                            <NoteIcon />
+                          </span>
+                        </div>
+                      ) : null}
+                      <div className="max-w-[9rem] truncate rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700">
+                        {booking.customerName || "-"}
+                      </div>
+                    </div>
+                  </div>
+                </article>
+              );
+            }
             return (
               <article
                 key={booking.id}
@@ -3821,6 +3953,10 @@ export default function MePage() {
     if (personalConsumptionLoading || personalConsumptionError) {
       return renderPersonalConsumptionState("orders");
     }
+    const compactActionButtonClassName =
+      "rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50";
+    const compactDangerActionButtonClassName =
+      "rounded-full border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50";
     return (
       <div className={compact ? "space-y-3" : "space-y-4"}>
         {renderPersonalOrderFilters()}
@@ -3834,6 +3970,79 @@ export default function MePage() {
             const busyKey = `order:${order.id}:cancel`;
             const contactEmail = contact.email;
             const contactPhone = contact.phone;
+            if (compact) {
+              const compactItemPreview = order.items
+                .slice(0, 3)
+                .map((item) => [item.code, item.name || "未命名产品"].filter(Boolean).join(" "))
+                .join(" / ");
+              return (
+                <article
+                  key={order.id}
+                  className="relative overflow-visible rounded-[28px] border border-slate-200 bg-white p-4 shadow-[0_14px_34px_rgba(15,23,42,0.08)]"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${getPersonalStatusBadgeClass(status)}`}>
+                          {getPersonalOrderStatusText(status)}
+                        </span>
+                        <div className="truncate text-base font-semibold text-slate-900">{contact.name}</div>
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
+                        <span>{`订单号: ${order.id}`}</span>
+                        <span>{`下单时间: ${formatPersonalRecordDateTime(order.createdAt)}`}</span>
+                        <span>{`${order.totalQuantity} 件`}</span>
+                      </div>
+                      {compactItemPreview ? (
+                        <div className="mt-2 line-clamp-1 text-xs text-slate-500">{compactItemPreview}</div>
+                      ) : null}
+                    </div>
+
+                    <div className="flex shrink-0 flex-col items-end gap-2">
+                      <div className="text-right text-lg font-semibold text-slate-900">
+                        {formatMerchantOrderAmount(order.totalAmount, order.pricePrefix)}
+                      </div>
+                      <div className="flex flex-wrap justify-end gap-2">
+                        {contactEmail ? (
+                          <a
+                            className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
+                            href={`mailto:${contactEmail}`}
+                            title="联系商家邮箱"
+                            aria-label="联系商家邮箱"
+                          >
+                            <MailIcon />
+                          </a>
+                        ) : null}
+                        {contactPhone ? (
+                          <a
+                            className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-[#007AFF] text-white shadow-sm transition hover:bg-[#0066D6]"
+                            href={buildPhoneHref(contactPhone)}
+                            title="拨打商家电话"
+                            aria-label="拨打商家电话"
+                          >
+                            <PhoneIcon />
+                          </a>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <div className={compactActionButtonClassName}>{`${order.totalQuantity} 件商品`}</div>
+                    {canCancel ? (
+                      <button
+                        type="button"
+                        className={compactDangerActionButtonClassName}
+                        onClick={() => void cancelPersonalOrder(order)}
+                        disabled={Boolean(personalActionBusyKey)}
+                      >
+                        {personalActionBusyKey === busyKey ? "取消中..." : "取消订单"}
+                      </button>
+                    ) : null}
+                  </div>
+                </article>
+              );
+            }
           const itemPreview = order.items
             .slice(0, 3)
             .map((item) => [item.code, item.name || "未命名产品"].filter(Boolean).join(" "))
