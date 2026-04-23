@@ -73,6 +73,9 @@ export type MerchantBookingTimelineEntry = {
 export type MerchantBookingCreateInput = MerchantBookingEditableInput & MerchantBookingRuleBinding & {
   siteId: string;
   siteName?: string;
+  customerAccountId?: string;
+  customerUserId?: string;
+  customerLoginEmail?: string;
 };
 
 export type MerchantBookingRecord = MerchantBookingEditableInput &
@@ -81,6 +84,9 @@ export type MerchantBookingRecord = MerchantBookingEditableInput &
     id: string;
     siteId: string;
     siteName: string;
+    customerAccountId?: string;
+    customerUserId?: string;
+    customerLoginEmail?: string;
     status: MerchantBookingStatus;
     createdAt: string;
     updatedAt: string;

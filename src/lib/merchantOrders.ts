@@ -46,6 +46,9 @@ export type MerchantOrderRecord = {
   siteId: string;
   siteName: string;
   blockId: string;
+  customerAccountId?: string;
+  customerUserId?: string;
+  customerLoginEmail?: string;
   createdAt: string;
   updatedAt: string;
   merchantTouchedAt?: string;
@@ -66,6 +69,9 @@ export type MerchantOrderCreateInput = {
   siteId: string;
   siteName?: string;
   blockId?: string;
+  customerAccountId?: string;
+  customerUserId?: string;
+  customerLoginEmail?: string;
   pricePrefix?: string;
   customer?: MerchantOrderCustomerInput;
   items?: MerchantOrderLineItemInput[];
@@ -120,6 +126,13 @@ export function parseMerchantOrderPriceValue(value: string) {
 export function formatMerchantOrderAmount(amount: number, pricePrefix: string) {
   const normalized = Math.max(0, Number.isFinite(amount) ? amount : 0);
   return `${trimText(pricePrefix)}${normalized.toFixed(2)}`;
+}
+
+export function getMerchantOrderStatusLabel(status: MerchantOrderStatus) {
+  if (status === "confirmed") return "已确认";
+  if (status === "completed") return "已完成";
+  if (status === "cancelled") return "已取消";
+  return "待确认";
 }
 
 export function formatMerchantOrderIdDate(value: Date | string) {
@@ -206,6 +219,9 @@ export function normalizeMerchantOrderRecord(input: Partial<MerchantOrderRecord>
     siteId,
     siteName: trimText(input.siteName),
     blockId: trimText(input.blockId),
+    customerAccountId: trimText(input.customerAccountId),
+    customerUserId: trimText(input.customerUserId),
+    customerLoginEmail: trimText(input.customerLoginEmail).toLowerCase(),
     createdAt: trimText(input.createdAt) || new Date().toISOString(),
     updatedAt: trimText(input.updatedAt) || new Date().toISOString(),
     merchantTouchedAt: trimText(input.merchantTouchedAt),
@@ -360,6 +376,9 @@ export function createMerchantOrder(
     siteId: trimText(input.siteId),
     siteName: trimText(input.siteName),
     blockId: trimText(input.blockId),
+    customerAccountId: trimText(input.customerAccountId),
+    customerUserId: trimText(input.customerUserId),
+    customerLoginEmail: trimText(input.customerLoginEmail).toLowerCase(),
     createdAt,
     updatedAt,
     merchantTouchedAt: trimText(options.merchantTouchedAt),

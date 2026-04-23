@@ -75,6 +75,12 @@ type StoredMerchantOrdersRow = {
   updated_at?: unknown;
 };
 
+type MerchantOrderCustomerLookup = {
+  accountId?: string | null;
+  userId?: string | null;
+  email?: string | null;
+};
+
 export function chunkMerchantOrderRecords(orders: MerchantOrderRecord[], chunkSize = MERCHANT_ORDER_CHUNK_SIZE) {
   const normalizedChunkSize = Math.max(1, Math.round(chunkSize));
   const chunks: MerchantOrderRecord[][] = [];
@@ -160,6 +166,76 @@ async function listStoredMerchantOrdersRows(supabase: MerchantOrdersStoreClient,
 
   if (error) return [];
   return Array.isArray(data) ? data : [];
+}
+
+async function listStoredMerchantOrdersRowsBySlugPrefix(supabase: MerchantOrdersStoreClient) {
+  const pageSize = 1000;
+  const rows: StoredMerchantOrdersRow[] = [];
+
+  for (let offset = 0; offset < 10000; offset += pageSize) {
+    const query = await supabase
+      .from("pages")
+      .select("id,slug,blocks,updated_at")
+      .like("slug", `${MERCHANT_ORDER_SLUG_PREFIX}%`)
+      .range(offset, offset + pageSize - 1);
+
+    let data = (query.data ?? []) as StoredMerchantOrdersRow[];
+    let error = query.error;
+
+    if (error) {
+      const message = toErrorMessage(error);
+      if (isMissingSlugColumn(message)) return [] as StoredMerchantOrdersRow[];
+      if (isMissingUpdatedAtColumn(message)) {
+        const retry = await supabase
+          .from("pages")
+          .select("id,slug,blocks")
+          .like("slug", `${MERCHANT_ORDER_SLUG_PREFIX}%`)
+          .range(offset, offset + pageSize - 1);
+        data = (retry.data ?? []) as StoredMerchantOrdersRow[];
+        error = retry.error;
+      }
+    }
+
+    if (error) return rows;
+    if (!Array.isArray(data) || data.length === 0) break;
+    rows.push(...data);
+    if (data.length < pageSize) break;
+  }
+
+  return rows;
+}
+
+function matchesStoredMerchantOrderCustomer(order: MerchantOrderRecord, lookup: Required<MerchantOrderCustomerLookup>) {
+  if (lookup.accountId && normalizeText(order.customerAccountId) === lookup.accountId) return true;
+  if (lookup.userId && normalizeText(order.customerUserId) === lookup.userId) return true;
+  if (!lookup.email) return false;
+  return (
+    normalizeText(order.customerLoginEmail).toLowerCase() === lookup.email ||
+    normalizeText(order.customer.email).toLowerCase() === lookup.email
+  );
+}
+
+export async function listStoredMerchantOrdersByCustomer(
+  supabase: MerchantOrdersStoreClient,
+  input: MerchantOrderCustomerLookup,
+) {
+  const lookup = {
+    accountId: normalizeText(input.accountId),
+    userId: normalizeText(input.userId),
+    email: normalizeText(input.email).toLowerCase(),
+  };
+  if (!lookup.accountId && !lookup.userId && !lookup.email) return [];
+
+  const rows = await listStoredMerchantOrdersRowsBySlugPrefix(supabase);
+  const orderMap = new Map<string, MerchantOrderRecord>();
+  for (const row of rows) {
+    for (const order of normalizeMerchantOrderRecords(row.blocks)) {
+      if (!matchesStoredMerchantOrderCustomer(order, lookup)) continue;
+      orderMap.set(order.id, order);
+    }
+  }
+
+  return normalizeMerchantOrderRecords(Array.from(orderMap.values()));
 }
 
 export async function loadStoredMerchantOrders(

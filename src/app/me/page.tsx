@@ -27,6 +27,16 @@ import {
   formatSupportConversationPreview,
   parseSupportMessageAttachmentPreview,
 } from "@/lib/supportMessageAttachments";
+import {
+  formatMerchantBookingDateTime,
+  getMerchantBookingStatusLabel,
+  type MerchantBookingRecord,
+} from "@/lib/merchantBookings";
+import {
+  formatMerchantOrderAmount,
+  getMerchantOrderStatusLabel,
+  type MerchantOrderRecord,
+} from "@/lib/merchantOrders";
 
 type MeSessionPayload = {
   authenticated?: unknown;
@@ -130,6 +140,20 @@ type PersonalProfileResponsePayload = {
   message?: unknown;
   user?: MeSessionPayload["user"] | null;
   profile?: Partial<PersonalProfileDraft> | null;
+};
+
+type PersonalBookingsResponsePayload = {
+  ok?: unknown;
+  error?: unknown;
+  message?: unknown;
+  bookings?: MerchantBookingRecord[];
+};
+
+type PersonalOrdersResponsePayload = {
+  ok?: unknown;
+  error?: unknown;
+  message?: unknown;
+  orders?: MerchantOrderRecord[];
 };
 
 const OFFICIAL_CONVERSATION_KEY: PersonalConversationKey = "official";
@@ -485,6 +509,21 @@ function formatSupportThreadDateLabel(value: string | null | undefined) {
     year: "numeric",
     month: "long",
     day: "numeric",
+  });
+}
+
+function formatPersonalRecordDateTime(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return "-";
+  const date = new Date(normalized);
+  if (!Number.isFinite(date.getTime())) return normalized.replace("T", " ").slice(0, 16);
+  return date.toLocaleString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
   });
 }
 
@@ -1413,6 +1452,10 @@ export default function MePage() {
   const [personalProfileSaving, setPersonalProfileSaving] = useState(false);
   const [personalAvatarUploading, setPersonalAvatarUploading] = useState(false);
   const [personalProfileMessage, setPersonalProfileMessage] = useState("");
+  const [personalBookings, setPersonalBookings] = useState<MerchantBookingRecord[]>([]);
+  const [personalOrders, setPersonalOrders] = useState<MerchantOrderRecord[]>([]);
+  const [personalConsumptionLoading, setPersonalConsumptionLoading] = useState(false);
+  const [personalConsumptionError, setPersonalConsumptionError] = useState("");
   const supportMessagesViewportRef = useRef<HTMLDivElement | null>(null);
   const supportInputRef = useRef<HTMLTextAreaElement | null>(null);
   const supportSendingRef = useRef(false);
@@ -1531,6 +1574,64 @@ export default function MePage() {
     .join(" / ");
   const mobileSelfCardsSummary = "个人名片夹会在下一步接入。";
   const mobileSelfNotificationSummary = "系统通知、提示音和震动设置。";
+
+  useEffect(() => {
+    if (!accountId) {
+      setPersonalBookings([]);
+      setPersonalOrders([]);
+      setPersonalConsumptionError("");
+      setPersonalConsumptionLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const loadPersonalConsumption = async () => {
+      setPersonalConsumptionLoading(true);
+      setPersonalConsumptionError("");
+      try {
+        const [bookingsResponse, ordersResponse] = await Promise.all([
+          fetch("/api/bookings?scope=personal", {
+            method: "GET",
+            cache: "no-store",
+            credentials: "same-origin",
+            headers: { accept: "application/json" },
+          }),
+          fetch("/api/orders?scope=personal", {
+            method: "GET",
+            cache: "no-store",
+            credentials: "same-origin",
+            headers: { accept: "application/json" },
+          }),
+        ]);
+        const [bookingsPayload, ordersPayload] = (await Promise.all([
+          bookingsResponse.json().catch(() => null),
+          ordersResponse.json().catch(() => null),
+        ])) as [PersonalBookingsResponsePayload | null, PersonalOrdersResponsePayload | null];
+        if (!bookingsResponse.ok || bookingsPayload?.ok !== true) {
+          throw new Error(readPayloadMessage(bookingsPayload?.message || bookingsPayload?.error, "booking_load_failed"));
+        }
+        if (!ordersResponse.ok || ordersPayload?.ok !== true) {
+          throw new Error(readPayloadMessage(ordersPayload?.message || ordersPayload?.error, "order_load_failed"));
+        }
+        if (cancelled) return;
+        setPersonalBookings(Array.isArray(bookingsPayload.bookings) ? bookingsPayload.bookings : []);
+        setPersonalOrders(Array.isArray(ordersPayload.orders) ? ordersPayload.orders : []);
+      } catch {
+        if (!cancelled) {
+          setPersonalBookings([]);
+          setPersonalOrders([]);
+          setPersonalConsumptionError("记录加载失败，请稍后重试。");
+        }
+      } finally {
+        if (!cancelled) setPersonalConsumptionLoading(false);
+      }
+    };
+
+    void loadPersonalConsumption();
+    return () => {
+      cancelled = true;
+    };
+  }, [accountId]);
 
   const faollaTargetHref = useMemo(
     () =>
@@ -2897,6 +2998,128 @@ export default function MePage() {
     );
   }
 
+  function renderPersonalConsumptionState(kind: ConsumptionSection) {
+    if (personalConsumptionLoading) {
+      return (
+        <div className="rounded-[28px] border border-dashed border-slate-200 bg-white px-5 py-8 text-center text-sm font-medium text-slate-500">
+          正在加载记录...
+        </div>
+      );
+    }
+    if (personalConsumptionError) {
+      return (
+        <div className="rounded-[28px] border border-rose-200 bg-rose-50 px-5 py-4 text-sm font-medium text-rose-600">
+          {personalConsumptionError}
+        </div>
+      );
+    }
+    return (
+      <EmptyFeatureCard
+        icon={<Icon name={kind === "bookings" ? "calendar" : "order"} />}
+        title={kind === "bookings" ? "我的预约" : "我的订单"}
+        description={kind === "bookings" ? "还没有登录账号提交的预约。" : "还没有登录账号提交的订单。"}
+      />
+    );
+  }
+
+  function renderPersonalBookingCards(compact = false) {
+    if (personalConsumptionLoading || personalConsumptionError || personalBookings.length === 0) {
+      return renderPersonalConsumptionState("bookings");
+    }
+    return (
+      <div className={compact ? "space-y-3" : "space-y-4"}>
+        {personalBookings.map((booking) => (
+          <article
+            key={booking.id}
+            className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]"
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700">
+                    {getMerchantBookingStatusLabel(booking.status)}
+                  </span>
+                  <span className="truncate text-base font-semibold text-slate-950">
+                    {booking.siteName || booking.siteId || "商户"}
+                  </span>
+                </div>
+                <div className="mt-2 text-xs text-slate-500">预约号：{booking.id}</div>
+              </div>
+              <div className="shrink-0 text-right text-xs text-slate-400">{formatPersonalRecordDateTime(booking.createdAt)}</div>
+            </div>
+            <div className="mt-4 grid gap-3 text-sm text-slate-700 md:grid-cols-3">
+              <div>
+                <div className="text-xs text-slate-400">项目</div>
+                <div className="mt-1 font-semibold text-slate-900">{booking.item || "-"}</div>
+              </div>
+              <div>
+                <div className="text-xs text-slate-400">店铺</div>
+                <div className="mt-1 font-semibold text-slate-900">{booking.store || "-"}</div>
+              </div>
+              <div>
+                <div className="text-xs text-slate-400">预约时间</div>
+                <div className="mt-1 font-semibold text-slate-900">{formatMerchantBookingDateTime(booking.appointmentAt) || "-"}</div>
+              </div>
+            </div>
+            {booking.note ? <div className="mt-3 line-clamp-2 break-words text-sm text-slate-500">{booking.note}</div> : null}
+          </article>
+        ))}
+      </div>
+    );
+  }
+
+  function renderPersonalOrderCards(compact = false) {
+    if (personalConsumptionLoading || personalConsumptionError || personalOrders.length === 0) {
+      return renderPersonalConsumptionState("orders");
+    }
+    return (
+      <div className={compact ? "space-y-3" : "space-y-4"}>
+        {personalOrders.map((order) => {
+          const itemPreview = order.items
+            .slice(0, 3)
+            .map((item) => [item.code, item.name || "未命名产品"].filter(Boolean).join(" "))
+            .join(" / ");
+          return (
+            <article
+              key={order.id}
+              className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]"
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700">
+                      {getMerchantOrderStatusLabel(order.status)}
+                    </span>
+                    <span className="truncate text-base font-semibold text-slate-950">
+                      {order.siteName || order.siteId || "商户"}
+                    </span>
+                  </div>
+                  <div className="mt-2 text-xs text-slate-500">订单号：{order.id}</div>
+                </div>
+                <div className="shrink-0 text-right">
+                  <div className="text-lg font-black text-slate-950">
+                    {formatMerchantOrderAmount(order.totalAmount, order.pricePrefix)}
+                  </div>
+                  <div className="mt-1 text-xs text-slate-400">{formatPersonalRecordDateTime(order.createdAt)}</div>
+                </div>
+              </div>
+              <div className="mt-4 grid gap-3 text-sm text-slate-700 md:grid-cols-2">
+                <div>
+                  <div className="text-xs text-slate-400">商品</div>
+                  <div className="mt-1 line-clamp-2 font-semibold text-slate-900">{itemPreview || "-"}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-400">数量</div>
+                  <div className="mt-1 font-semibold text-slate-900">{order.totalQuantity}</div>
+                </div>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    );
+  }
+
   function renderSectionContent(section: DesktopSection) {
     if (section === "conversations") {
       return renderDesktopSupportSurface();
@@ -2923,18 +3146,15 @@ export default function MePage() {
         />
       );
     }
+    if (section === "bookings") {
+      return renderPersonalBookingCards(false);
+    }
+    if (section === "orders") {
+      return renderPersonalOrderCards(false);
+    }
 
     const item = desktopMenuItems.find((entry) => entry.key === section) ?? desktopMenuItems[0];
-    const iconName =
-      section === "bookings"
-        ? "calendar"
-        : section === "orders"
-          ? "order"
-          : section === "favorites"
-            ? "star"
-            : section === "cards"
-              ? "card"
-              : "chat";
+    const iconName = section === "favorites" ? "star" : section === "cards" ? "card" : "chat";
 
     return (
       <EmptyFeatureCard
@@ -2974,11 +3194,7 @@ export default function MePage() {
           </div>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(env(safe-area-inset-bottom)+5.85rem)] pt-4">
-          <EmptyFeatureCard
-            icon={<Icon name={isBookings ? "calendar" : "order"} />}
-            title={isBookings ? "我的预约" : "我的订单"}
-            description={isBookings ? "这里会集中展示你向商户提交的预约。" : "这里会集中展示你在商户网站提交的产品订单。"}
-          />
+          {isBookings ? renderPersonalBookingCards(true) : renderPersonalOrderCards(true)}
         </div>
       </div>
     );

@@ -37,6 +37,8 @@ import { getBackgroundStyle } from "./backgroundStyle";
 import { getBlockBorderClass, getBlockBorderInlineStyle } from "./borderStyle";
 import { resolveMobileFitCardClass, resolveMobileFitSectionClass } from "./mobileFrame";
 import { toRichHtml } from "./richText";
+import { readMerchantSessionPayload } from "@/lib/authSessionRecovery";
+import { readPersonalCustomerProfileFromSession, type PersonalCustomerProfile } from "@/lib/personalCustomerProfile";
 
 type BookingBlockComponentProps = BookingProps & {
   runtimeSiteId?: string;
@@ -136,6 +138,26 @@ function buildInitialDraft(
   };
 }
 
+function buildBookingCustomerDefaults(profile: PersonalCustomerProfile | null | undefined): Partial<MerchantBookingEditableInput> {
+  return {
+    customerName: String(profile?.name ?? "").trim(),
+    email: String(profile?.email ?? "").trim(),
+    phone: String(profile?.phone ?? "").trim(),
+  };
+}
+
+function mergeBookingCustomerDefaults(
+  current: Partial<MerchantBookingEditableInput>,
+  defaults: Partial<MerchantBookingEditableInput>,
+): Partial<MerchantBookingEditableInput> {
+  return {
+    ...current,
+    customerName: String(current.customerName ?? "").trim() || String(defaults.customerName ?? "").trim(),
+    email: String(current.email ?? "").trim() || String(defaults.email ?? "").trim(),
+    phone: String(current.phone ?? "").trim() || String(defaults.phone ?? "").trim(),
+  };
+}
+
 function getFormFieldClass(disabled: boolean) {
   return `w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-base outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 ${
     disabled ? "cursor-not-allowed bg-slate-100 text-slate-400" : ""
@@ -185,6 +207,7 @@ export default function BookingBlock({
     [props.bookingHolidayDates],
   );
   const [draft, setDraft] = useState(() => buildInitialDraft(storeOptions, itemOptions, titleOptions));
+  const [bookingCustomerDefaults, setBookingCustomerDefaults] = useState<Partial<MerchantBookingEditableInput>>({});
   const [workbenchSettings, setWorkbenchSettings] = useState<MerchantBookingWorkbenchPublicSettings | null>(null);
   const appointmentValue = useMemo(
     () => joinMerchantBookingDateTime(draft.appointmentDateInput, draft.appointmentTimeInput),
@@ -223,6 +246,45 @@ export default function BookingBlock({
   useEffect(() => {
     setDraft((current) => buildInitialDraft(storeOptions, itemOptions, titleOptions, current));
   }, [storeOptions, itemOptions, titleOptions]);
+
+  useEffect(() => {
+    if (!isLiveBooking) {
+      setBookingCustomerDefaults({});
+      return;
+    }
+    let cancelled = false;
+    const loadCustomerDefaults = async () => {
+      const payload = await readMerchantSessionPayload(2600).catch(() => null);
+      if (cancelled) return;
+      if (payload?.authenticated !== true || !payload.user) {
+        setBookingCustomerDefaults({});
+        return;
+      }
+      setBookingCustomerDefaults(buildBookingCustomerDefaults(readPersonalCustomerProfileFromSession(payload)));
+    };
+    void loadCustomerDefaults();
+    return () => {
+      cancelled = true;
+    };
+  }, [isLiveBooking]);
+
+  useEffect(() => {
+    if (!isLiveBooking) return;
+    setDraft((current) =>
+      buildInitialDraft(
+        storeOptions,
+        itemOptions,
+        titleOptions,
+        mergeBookingCustomerDefaults(current, bookingCustomerDefaults),
+      ),
+    );
+  }, [
+    bookingCustomerDefaults,
+    isLiveBooking,
+    itemOptions,
+    storeOptions,
+    titleOptions,
+  ]);
 
   useEffect(() => {
     const next = readBookingSelfServiceParams(searchParams);

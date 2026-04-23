@@ -7,6 +7,7 @@ import {
   formatMerchantOrderAmount,
   isMerchantOrderPendingMerchantTouch,
   normalizeMerchantOrderLineItems,
+  normalizeMerchantOrderRecord,
   parseMerchantOrderPriceValue,
   updateMerchantOrderItems,
 } from "@/lib/merchantOrders";
@@ -55,6 +56,28 @@ test("createMerchantOrder summarizes totals", () => {
   assert.equal(order.totalQuantity, 3);
   assert.equal(order.totalAmount, 21);
   assert.equal(formatMerchantOrderAmount(order.totalAmount, order.pricePrefix), "€21.00");
+});
+
+test("createMerchantOrder keeps personal customer identity", () => {
+  const order = createMerchantOrder({
+    siteId: "10000000",
+    customerAccountId: "50010105",
+    customerUserId: "user-1",
+    customerLoginEmail: "USER@EXAMPLE.COM",
+    customer: {
+      name: "Nana",
+      email: "contact@example.com",
+    },
+    items: [{ productId: "a", name: "Demo", quantity: 1, unitPriceText: "1" }],
+  });
+  assert.equal(order.customerAccountId, "50010105");
+  assert.equal(order.customerUserId, "user-1");
+  assert.equal(order.customerLoginEmail, "user@example.com");
+
+  const normalized = normalizeMerchantOrderRecord(order);
+  assert.equal(normalized?.customerAccountId, "50010105");
+  assert.equal(normalized?.customerUserId, "user-1");
+  assert.equal(normalized?.customerLoginEmail, "user@example.com");
 });
 
 test("buildMerchantOrderId uses O + merchant id + date + 4-digit sequence", () => {

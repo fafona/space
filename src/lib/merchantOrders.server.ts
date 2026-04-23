@@ -9,7 +9,11 @@ import {
   type MerchantOrderCreateInput,
   type MerchantOrderLineItemInput,
 } from "@/lib/merchantOrders";
-import { loadStoredMerchantOrders, saveStoredMerchantOrders } from "@/lib/merchantOrdersStore";
+import {
+  listStoredMerchantOrdersByCustomer,
+  loadStoredMerchantOrders,
+  saveStoredMerchantOrders,
+} from "@/lib/merchantOrdersStore";
 
 function requireOrdersStoreClient() {
   const supabase = createServerSupabaseServiceClient();
@@ -23,6 +27,15 @@ export async function listMerchantOrders(siteId: string) {
   const supabase = requireOrdersStoreClient();
   const stored = await loadStoredMerchantOrders(supabase, siteId);
   return stored?.orders ?? [];
+}
+
+export async function listPersonalMerchantOrders(input: {
+  accountId?: string | null;
+  userId?: string | null;
+  email?: string | null;
+}) {
+  const supabase = requireOrdersStoreClient();
+  return listStoredMerchantOrdersByCustomer(supabase, input);
 }
 
 export async function createMerchantOrderRecord(input: MerchantOrderCreateInput) {

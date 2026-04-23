@@ -781,6 +781,50 @@ export async function listMerchantBookings(
   );
 }
 
+function matchesPersonalBookingCustomer(
+  record: MerchantBookingStoredRecord,
+  input: { accountId: string; userId: string; email: string },
+) {
+  if (input.accountId && trimText(record.customerAccountId) === input.accountId) return true;
+  if (input.userId && trimText(record.customerUserId) === input.userId) return true;
+  if (!input.email) return false;
+  return trimText(record.customerLoginEmail).toLowerCase() === input.email || trimText(record.email).toLowerCase() === input.email;
+}
+
+export async function listPersonalMerchantBookings(
+  input: { accountId?: string | null; userId?: string | null; email?: string | null },
+  options?: { includeAutomationState?: boolean; includeCustomerEmailLogs?: boolean; includeTimeline?: boolean },
+): Promise<MerchantBookingRecord[]> {
+  const lookup = {
+    accountId: trimText(input.accountId),
+    userId: trimText(input.userId),
+    email: trimText(input.email).toLowerCase(),
+  };
+  if (!lookup.accountId && !lookup.userId && !lookup.email) return [];
+
+  let store = await readMerchantBookingStore();
+  const siteIds = Array.from(
+    new Set(
+      store.records
+        .filter((record) => matchesPersonalBookingCustomer(record, lookup))
+        .map((record) => record.siteId)
+        .filter(Boolean),
+    ),
+  );
+  for (const siteId of siteIds) {
+    await runMerchantBookingAutomationForSite(siteId);
+  }
+  if (siteIds.length > 0) {
+    store = await readMerchantBookingStore();
+  }
+
+  return sortNewestFirst(
+    store.records
+      .filter((record) => matchesPersonalBookingCustomer(record, lookup))
+      .map((record) => withoutMerchantBookingToken(record, options)),
+  );
+}
+
 async function resolveStoredBookingByEditToken(input: {
   bookingId: string;
   editToken: string;
@@ -874,6 +918,9 @@ export async function createMerchantBooking(input: MerchantBookingCreateInput): 
       id: nextId,
       siteId,
       siteName: trimText(input.siteName),
+      customerAccountId: trimText(input.customerAccountId),
+      customerUserId: trimText(input.customerUserId),
+      customerLoginEmail: trimText(input.customerLoginEmail).toLowerCase(),
       ...ruleContext.binding,
       ...editable,
       status: "active",

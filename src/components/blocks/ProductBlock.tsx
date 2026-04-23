@@ -40,6 +40,8 @@ import {
   parseMerchantOrderPriceValue,
   type MerchantOrderCustomerInput,
 } from "@/lib/merchantOrders";
+import { readMerchantSessionPayload } from "@/lib/authSessionRecovery";
+import { readPersonalCustomerProfileFromSession, type PersonalCustomerProfile } from "@/lib/personalCustomerProfile";
 
 type ProductBlockProps = BackgroundEditableProps &
   TypographyEditableProps & {
@@ -251,6 +253,28 @@ function normalizeCartCustomer(input: MerchantOrderCustomerInput | undefined): M
     phone: String(input?.phone ?? "").trim(),
     email: String(input?.email ?? "").trim(),
     note: String(input?.note ?? "").trim(),
+  };
+}
+
+function buildCartCustomerDefaults(profile: PersonalCustomerProfile | null | undefined): MerchantOrderCustomerInput {
+  return {
+    name: String(profile?.name ?? "").trim(),
+    phone: String(profile?.phone ?? "").trim(),
+    email: String(profile?.email ?? "").trim(),
+  };
+}
+
+function mergeCartCustomerDefaults(
+  current: MerchantOrderCustomerInput | undefined,
+  defaults: MerchantOrderCustomerInput | undefined,
+): MerchantOrderCustomerInput {
+  const normalizedCurrent = normalizeCartCustomer(current);
+  const normalizedDefaults = normalizeCartCustomer(defaults);
+  return {
+    ...normalizedCurrent,
+    name: normalizedCurrent.name || normalizedDefaults.name,
+    phone: normalizedCurrent.phone || normalizedDefaults.phone,
+    email: normalizedCurrent.email || normalizedDefaults.email,
   };
 }
 
@@ -542,6 +566,7 @@ export default function ProductBlock(props: ProductBlockProps) {
   const [cartOpen, setCartOpen] = useState(false);
   const [cartItems, setCartItems] = useState<ProductCartItemState[]>([]);
   const [cartCustomer, setCartCustomer] = useState<MerchantOrderCustomerInput>({});
+  const [cartCustomerDefaults, setCartCustomerDefaults] = useState<MerchantOrderCustomerInput>({});
   const [cartCustomerOpen, setCartCustomerOpen] = useState(false);
   const [cartSubmitting, setCartSubmitting] = useState(false);
   const [cartError, setCartError] = useState("");
@@ -583,12 +608,39 @@ export default function ProductBlock(props: ProductBlockProps) {
     if (!cartEnabled || !cartStorageKey) {
       setCartItems([]);
       setCartCustomer({});
+      setCartCustomerDefaults({});
       return;
     }
     const stored = loadProductCartStorageState(cartStorageKey, pricePrefix);
     setCartItems(stored.items ?? []);
     setCartCustomer(stored.customer ?? {});
   }, [cartEnabled, cartStorageKey, pricePrefix]);
+
+  useEffect(() => {
+    if (!cartEnabled) {
+      setCartCustomerDefaults({});
+      return;
+    }
+    let cancelled = false;
+    const loadCustomerDefaults = async () => {
+      const payload = await readMerchantSessionPayload(2600).catch(() => null);
+      if (cancelled) return;
+      if (payload?.authenticated !== true || !payload.user) {
+        setCartCustomerDefaults({});
+        return;
+      }
+      setCartCustomerDefaults(buildCartCustomerDefaults(readPersonalCustomerProfileFromSession(payload)));
+    };
+    void loadCustomerDefaults();
+    return () => {
+      cancelled = true;
+    };
+  }, [cartEnabled]);
+
+  useEffect(() => {
+    if (!cartEnabled) return;
+    setCartCustomer((current) => mergeCartCustomerDefaults(current, cartCustomerDefaults));
+  }, [cartCustomerDefaults, cartEnabled]);
 
   useEffect(() => {
     if (!cartEnabled || !cartStorageKey) return;
@@ -816,7 +868,7 @@ export default function ProductBlock(props: ProductBlockProps) {
       }
       const nextOrderId = String(payload?.order?.id ?? "").trim();
       setCartItems((current) => current.filter((item) => !item.checked));
-      setCartCustomer({});
+      setCartCustomer(mergeCartCustomerDefaults({}, cartCustomerDefaults));
       setCartCustomerOpen(false);
       setCartOpen(false);
       setCartNotice(nextOrderId ? `订单 ${nextOrderId} 已提交。` : "订单已提交。");

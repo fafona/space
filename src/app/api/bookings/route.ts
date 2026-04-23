@@ -5,6 +5,7 @@ import {
   acknowledgeMerchantBookingBySite,
   createMerchantBooking,
   listMerchantBookings,
+  listPersonalMerchantBookings,
   sendMerchantBookingManualEmailBySite,
   updateMerchantBooking,
   updateMerchantBookingBySite,
@@ -15,6 +16,8 @@ import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { notifyMerchantPushSubscribers } from "@/lib/webPush";
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
+import { resolvePersonalAccountSessionFromRequest } from "@/lib/personalAccountSession.server";
+import { readPersonalCustomerProfileFromSession } from "@/lib/personalCustomerProfile";
 import type {
   MerchantBookingActionInput,
   MerchantBookingCreateInput,
@@ -29,6 +32,10 @@ function normalizeBookingViewport(value: unknown): MerchantBookingRuleViewport |
   return value === "mobile" || value === "desktop" ? value : undefined;
 }
 
+function trimText(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
 async function resolveBookingAdminSession(request: Request, siteId: string) {
   const session = await resolveMerchantSessionFromRequest(request, {
     hintedMerchantId: siteId,
@@ -40,6 +47,24 @@ async function resolveBookingAdminSession(request: Request, siteId: string) {
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
+    if (searchParams.get("scope")?.trim() === "personal") {
+      const session = await resolvePersonalAccountSessionFromRequest(request);
+      if (!session) {
+        return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+      }
+      const bookings = await listPersonalMerchantBookings(
+        {
+          accountId: session.accountId,
+          userId: session.userId,
+          email: session.email,
+        },
+        {
+          includeAutomationState: true,
+        },
+      );
+      return NextResponse.json({ ok: true, bookings });
+    }
+
     const siteId = searchParams.get("siteId")?.trim() ?? "";
     if (!isMerchantNumericId(siteId)) {
       return NextResponse.json({ error: "invalid_site_id" }, { status: 400 });
@@ -72,6 +97,23 @@ export async function POST(request: Request) {
     if (!isMerchantNumericId(siteId)) {
       return NextResponse.json({ error: "invalid_site_id" }, { status: 400 });
     }
+    const personalSession = await resolvePersonalAccountSessionFromRequest(request).catch(() => null);
+    const personalProfile = personalSession
+      ? readPersonalCustomerProfileFromSession({
+          authenticated: true,
+          accountType: "personal",
+          accountId: personalSession.accountId,
+          user: personalSession.user,
+        })
+      : null;
+    const merchantCustomerSession = personalSession
+      ? null
+      : await resolveMerchantSessionFromRequest(request).catch(() => null);
+    const fallbackCustomerEmail = personalProfile?.email || merchantCustomerSession?.merchantEmail || "";
+    const fallbackCustomerName =
+      personalProfile?.name ||
+      merchantCustomerSession?.merchantName ||
+      (fallbackCustomerEmail.includes("@") ? fallbackCustomerEmail.split("@")[0] ?? "" : "");
     const created = await createMerchantBooking({
       siteId,
       siteName: String(body.siteName ?? "").trim(),
@@ -81,10 +123,13 @@ export async function POST(request: Request) {
       item: String(body.item ?? ""),
       appointmentAt: String(body.appointmentAt ?? ""),
       title: String(body.title ?? ""),
-      customerName: String(body.customerName ?? ""),
-      email: String(body.email ?? ""),
-      phone: String(body.phone ?? ""),
+      customerName: trimText(body.customerName) || fallbackCustomerName,
+      email: trimText(body.email) || fallbackCustomerEmail,
+      phone: trimText(body.phone) || personalProfile?.phone || "",
       note: String(body.note ?? ""),
+      customerAccountId: personalSession?.accountId ?? merchantCustomerSession?.merchantId ?? "",
+      customerUserId: personalSession?.userId ?? "",
+      customerLoginEmail: personalSession?.email ?? merchantCustomerSession?.merchantEmail ?? "",
     });
 
     const supabase = createServerSupabaseServiceClient();
