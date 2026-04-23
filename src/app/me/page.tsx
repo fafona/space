@@ -3925,6 +3925,9 @@ export default function MePage() {
     if (section === "conversations") {
       return renderDesktopSupportSurface();
     }
+    if (section === "faolla") {
+      return null;
+    }
     if (section === "profile") {
       return (
         <PersonalProfileEditor
