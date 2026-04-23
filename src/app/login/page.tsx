@@ -121,7 +121,7 @@ function LoginPageInner() {
     return raw;
   }, [searchParams]);
   const loginFromUrl = useMemo(
-    () => normalizeFaollaEntryUrl((searchParams.get("loginFrom") ?? "").trim()),
+    () => normalizeFaollaEntryUrl((searchParams.get("loginFrom") ?? "").trim(), undefined, { allowFaollaCrossOrigin: true }),
     [searchParams],
   );
   const loggedOut = useMemo(() => (searchParams.get("loggedOut") ?? "").trim() === "1", [searchParams]);

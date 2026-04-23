@@ -8,6 +8,7 @@ export const FAOLLA_APP_SHELL_VALUE = "faolla";
 
 type NormalizeFaollaEntryOptions = {
   allowCrossOrigin?: boolean;
+  allowFaollaCrossOrigin?: boolean;
 };
 
 function getRuntimeOrigin(fallbackOrigin?: string | null) {
@@ -15,6 +16,24 @@ function getRuntimeOrigin(fallbackOrigin?: string | null) {
   if (/^https?:\/\//i.test(fallback)) return fallback;
   if (typeof window !== "undefined" && window.location?.origin) return window.location.origin;
   return "https://faolla.com";
+}
+
+function isFaollaHostname(hostname: string) {
+  const normalized = hostname.trim().toLowerCase();
+  return normalized === "faolla.com" || normalized.endsWith(".faolla.com");
+}
+
+function isSameLocalHostname(left: string, right: string) {
+  const normalizedLeft = left.trim().toLowerCase();
+  const normalizedRight = right.trim().toLowerCase();
+  if (normalizedLeft !== normalizedRight) return false;
+  return normalizedLeft === "localhost" || /^\d+\.\d+\.\d+\.\d+$/.test(normalizedLeft);
+}
+
+function isTrustedFaollaCrossOrigin(candidate: URL, runtime: URL) {
+  if (candidate.origin === runtime.origin) return true;
+  if (isFaollaHostname(candidate.hostname) && isFaollaHostname(runtime.hostname)) return true;
+  return isSameLocalHostname(candidate.hostname, runtime.hostname);
 }
 
 export function normalizeFaollaEntryUrl(
@@ -30,7 +49,14 @@ export function normalizeFaollaEntryUrl(
     const runtimeOrigin = getRuntimeOrigin(fallbackOrigin);
     const url = new URL(raw, runtimeOrigin);
     if (url.protocol !== "http:" && url.protocol !== "https:") return "";
-    if (!options.allowCrossOrigin && url.origin !== new URL(runtimeOrigin).origin) return "";
+    const runtimeUrl = new URL(runtimeOrigin);
+    if (
+      !options.allowCrossOrigin &&
+      url.origin !== runtimeUrl.origin &&
+      !(options.allowFaollaCrossOrigin && isTrustedFaollaCrossOrigin(url, runtimeUrl))
+    ) {
+      return "";
+    }
     return url.toString();
   } catch {
     return "";
@@ -54,6 +80,7 @@ export function readFaollaEntryUrlFromSearch(search: string | null | undefined, 
     return normalizeFaollaEntryUrl(
       new URLSearchParams(String(search ?? "")).get(FAOLLA_URL_PARAM) ?? "",
       fallbackOrigin,
+      { allowFaollaCrossOrigin: true },
     );
   } catch {
     return "";
@@ -61,7 +88,7 @@ export function readFaollaEntryUrlFromSearch(search: string | null | undefined, 
 }
 
 export function buildBackendFaollaHref(baseHref: string, faollaUrl: string, fallbackOrigin?: string | null) {
-  const normalizedFaollaUrl = normalizeFaollaEntryUrl(faollaUrl, fallbackOrigin);
+  const normalizedFaollaUrl = normalizeFaollaEntryUrl(faollaUrl, fallbackOrigin, { allowFaollaCrossOrigin: true });
   if (!normalizedFaollaUrl) return baseHref;
 
   const runtimeOrigin = getRuntimeOrigin(fallbackOrigin);
