@@ -41,6 +41,14 @@ function isBackendOrApiPath(pathname: string) {
   return /^\/(?:admin|api|login|me|super-admin)(?:\/|$)/i.test(pathname);
 }
 
+function isUsableFrontendEntryUrl(value: string) {
+  try {
+    return !isBackendOrApiPath(new URL(value).pathname);
+  } catch {
+    return false;
+  }
+}
+
 export function normalizeFaollaEntryUrl(
   value: unknown,
   fallbackOrigin?: string | null,
@@ -76,7 +84,9 @@ export function readStoredFaollaEntryUrl(fallbackOrigin?: string | null) {
       const normalized = normalizeFaollaEntryUrl(storage.getItem(FAOLLA_LAST_ENTRY_STORAGE_KEY) ?? "", fallbackOrigin, {
         allowFaollaCrossOrigin: true,
       });
-      if (normalized) return normalized;
+      if (!normalized) continue;
+      if (isUsableFrontendEntryUrl(normalized)) return normalized;
+      storage.removeItem(FAOLLA_LAST_ENTRY_STORAGE_KEY);
     } catch {
       // Some browsers block storage in private or embedded contexts.
     }
@@ -88,11 +98,7 @@ export function writeStoredFaollaEntryUrl(value: unknown, fallbackOrigin?: strin
   const normalized = normalizeFaollaEntryUrl(value, fallbackOrigin, { allowFaollaCrossOrigin: true });
   if (!normalized || typeof window === "undefined") return normalized;
 
-  try {
-    if (isBackendOrApiPath(new URL(normalized).pathname)) return "";
-  } catch {
-    return "";
-  }
+  if (!isUsableFrontendEntryUrl(normalized)) return "";
 
   for (const storage of [window.sessionStorage, window.localStorage]) {
     try {
@@ -108,13 +114,14 @@ export function resolveFaollaEntryUrlFromBrowser(search: string | null | undefin
   if (typeof window === "undefined") return "";
   const origin = fallbackOrigin || window.location.origin;
   const fromSearch = readFaollaEntryUrlFromSearch(search, origin);
-  if (fromSearch) return writeStoredFaollaEntryUrl(fromSearch, origin) || fromSearch;
+  if (fromSearch && isUsableFrontendEntryUrl(fromSearch)) return writeStoredFaollaEntryUrl(fromSearch, origin) || fromSearch;
 
   const fromStorage = readStoredFaollaEntryUrl(origin);
   if (fromStorage) return fromStorage;
 
   const fromReferrer = normalizeFaollaEntryUrl(document.referrer, origin, { allowFaollaCrossOrigin: true });
-  return writeStoredFaollaEntryUrl(fromReferrer, origin) || fromReferrer;
+  if (fromReferrer && isUsableFrontendEntryUrl(fromReferrer)) return writeStoredFaollaEntryUrl(fromReferrer, origin) || fromReferrer;
+  return "";
 }
 
 export function isFaollaSectionSearch(search: string | null | undefined) {
@@ -143,7 +150,7 @@ export function readFaollaEntryUrlFromSearch(search: string | null | undefined, 
 
 export function buildBackendFaollaHref(baseHref: string, faollaUrl: string, fallbackOrigin?: string | null) {
   const normalizedFaollaUrl = normalizeFaollaEntryUrl(faollaUrl, fallbackOrigin, { allowFaollaCrossOrigin: true });
-  if (!normalizedFaollaUrl) return baseHref;
+  if (!normalizedFaollaUrl || !isUsableFrontendEntryUrl(normalizedFaollaUrl)) return baseHref;
 
   const runtimeOrigin = getRuntimeOrigin(fallbackOrigin);
   try {
@@ -160,7 +167,7 @@ export function buildFaollaShellHref(sourceHref: string, locale?: string | null,
   const normalized =
     normalizeFaollaEntryUrl(sourceHref || "/", fallbackOrigin, { allowCrossOrigin: true }) ||
     normalizeFaollaEntryUrl("/", fallbackOrigin);
-  if (!normalized) return "/";
+  if (!normalized || !isUsableFrontendEntryUrl(normalized)) return "/";
 
   try {
     const url = new URL(normalized, getRuntimeOrigin(fallbackOrigin));

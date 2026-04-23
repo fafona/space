@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   FAOLLA_LAST_ENTRY_STORAGE_KEY,
   buildBackendFaollaHref,
+  buildFaollaShellHref,
   resolveFaollaEntryUrlFromBrowser,
   writeStoredFaollaEntryUrl,
 } from "./faollaEntry";
@@ -59,8 +60,27 @@ test("does not persist backend or api paths as Faolla frontend entries", () => {
   assert.equal(sessionStorage.getItem(FAOLLA_LAST_ENTRY_STORAGE_KEY), null);
 });
 
+test("clears stale backend entries from Faolla frontend storage", () => {
+  const { localStorage, sessionStorage } = installBrowser();
+
+  localStorage.setItem(FAOLLA_LAST_ENTRY_STORAGE_KEY, "https://faolla.com/me");
+  sessionStorage.setItem(FAOLLA_LAST_ENTRY_STORAGE_KEY, "https://faolla.com/admin");
+
+  assert.equal(resolveFaollaEntryUrlFromBrowser("", "https://faolla.com"), "");
+  assert.equal(localStorage.getItem(FAOLLA_LAST_ENTRY_STORAGE_KEY), null);
+  assert.equal(sessionStorage.getItem(FAOLLA_LAST_ENTRY_STORAGE_KEY), null);
+});
+
 test("uses trusted Faolla referrer as a fallback when query and storage are empty", () => {
   installBrowser("https://fafona.faolla.com/");
 
   assert.equal(resolveFaollaEntryUrlFromBrowser("", "https://faolla.com"), "https://fafona.faolla.com/");
+});
+
+test("does not use backend referrer or shell source as a Faolla frontend entry", () => {
+  installBrowser("https://faolla.com/me");
+
+  assert.equal(resolveFaollaEntryUrlFromBrowser("", "https://faolla.com"), "");
+  assert.equal(buildBackendFaollaHref("/me", "https://faolla.com/me", "https://faolla.com"), "/me");
+  assert.equal(buildFaollaShellHref("https://faolla.com/me", "zh-CN", "https://faolla.com"), "/");
 });
