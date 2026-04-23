@@ -10,7 +10,8 @@ import {
 } from "@/lib/europeLocationOptions";
 import { LANGUAGE_OPTIONS } from "@/lib/i18n";
 import { buildFaollaShellHref, isFaollaSectionSearch, readFaollaEntryUrlFromSearch } from "@/lib/faollaEntry";
-import { installFrontendAuthBridgeResponder } from "@/lib/frontendAuthBridge";
+import { installFrontendAuthBridgeResponder, isTrustedFrontendAuthBridgeOrigin } from "@/lib/frontendAuthBridge";
+import { PERSONAL_CONSUMPTION_CHANGED_MESSAGE } from "@/lib/personalConsumptionBridge";
 import { buildMerchantBusinessCardShareUrl, resolveMerchantBusinessCardShareOrigin } from "@/lib/merchantBusinessCardShare";
 import { buildMerchantFrontendHref } from "@/lib/siteRouting";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
@@ -1456,6 +1457,7 @@ export default function MePage() {
   const [personalOrders, setPersonalOrders] = useState<MerchantOrderRecord[]>([]);
   const [personalConsumptionLoading, setPersonalConsumptionLoading] = useState(false);
   const [personalConsumptionError, setPersonalConsumptionError] = useState("");
+  const [personalConsumptionReloadKey, setPersonalConsumptionReloadKey] = useState(0);
   const supportMessagesViewportRef = useRef<HTMLDivElement | null>(null);
   const supportInputRef = useRef<HTMLTextAreaElement | null>(null);
   const supportSendingRef = useRef(false);
@@ -1575,6 +1577,35 @@ export default function MePage() {
   const mobileSelfCardsSummary = "个人名片夹会在下一步接入。";
   const mobileSelfNotificationSummary = "系统通知、提示音和震动设置。";
 
+  const refreshPersonalConsumption = useCallback(() => {
+    setPersonalConsumptionReloadKey((current) => current + 1);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleMessage = (event: MessageEvent) => {
+      if (!isTrustedFrontendAuthBridgeOrigin(event.origin)) return;
+      const message = readRecord(event.data);
+      if (message?.type === PERSONAL_CONSUMPTION_CHANGED_MESSAGE) {
+        refreshPersonalConsumption();
+      }
+    };
+    const handleLocalChange = () => refreshPersonalConsumption();
+    window.addEventListener("message", handleMessage);
+    window.addEventListener(PERSONAL_CONSUMPTION_CHANGED_MESSAGE, handleLocalChange);
+    return () => {
+      window.removeEventListener("message", handleMessage);
+      window.removeEventListener(PERSONAL_CONSUMPTION_CHANGED_MESSAGE, handleLocalChange);
+    };
+  }, [refreshPersonalConsumption]);
+
+  useEffect(() => {
+    if (!accountId) return;
+    if (desktopSection === "bookings" || desktopSection === "orders" || mobileTab === "consumption") {
+      refreshPersonalConsumption();
+    }
+  }, [accountId, consumptionSection, desktopSection, mobileTab, refreshPersonalConsumption]);
+
   useEffect(() => {
     if (!accountId) {
       setPersonalBookings([]);
@@ -1631,7 +1662,7 @@ export default function MePage() {
     return () => {
       cancelled = true;
     };
-  }, [accountId]);
+  }, [accountId, personalConsumptionReloadKey]);
 
   const faollaTargetHref = useMemo(
     () =>

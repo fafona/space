@@ -39,6 +39,7 @@ import { resolveMobileFitCardClass, resolveMobileFitSectionClass } from "./mobil
 import { toRichHtml } from "./richText";
 import { resolveFrontendAuthPayload } from "@/lib/authSessionRecovery";
 import { readPersonalCustomerProfileFromSession, type PersonalCustomerProfile } from "@/lib/personalCustomerProfile";
+import { notifyPersonalConsumptionChanged } from "@/lib/personalConsumptionBridge";
 
 type BookingBlockComponentProps = BookingProps & {
   runtimeSiteId?: string;
@@ -236,6 +237,7 @@ export default function BookingBlock({
   const [mode, setMode] = useState<"form" | "success">("form");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [bookingCustomerAuthProof, setBookingCustomerAuthProof] = useState("");
   const isLiveBooking = interactive && isMerchantNumericId(runtimeSiteId);
   const [restoredParams, setRestoredParams] = useState<BookingSelfServiceParams>(() => readBookingSelfServiceParams(searchParams));
   const restoredBookingId = restoredParams.bookingId;
@@ -250,6 +252,7 @@ export default function BookingBlock({
   useEffect(() => {
     if (!isLiveBooking) {
       setBookingCustomerDefaults({});
+      setBookingCustomerAuthProof("");
       return;
     }
     let cancelled = false;
@@ -258,8 +261,10 @@ export default function BookingBlock({
       if (cancelled) return;
       if (payload?.authenticated !== true || !payload.user) {
         setBookingCustomerDefaults({});
+        setBookingCustomerAuthProof("");
         return;
       }
+      setBookingCustomerAuthProof(typeof payload.frontendAuthProof === "string" ? payload.frontendAuthProof.trim() : "");
       setBookingCustomerDefaults(buildBookingCustomerDefaults(readPersonalCustomerProfileFromSession(payload)));
     };
     void loadCustomerDefaults();
@@ -469,6 +474,10 @@ export default function BookingBlock({
         ...draft,
         appointmentAt: joinMerchantBookingDateTime(draft.appointmentDateInput, draft.appointmentTimeInput),
       });
+      const latestAuthPayload = submittedState ? null : await resolveFrontendAuthPayload(2600).catch(() => null);
+      const frontendAuthProof =
+        (typeof latestAuthPayload?.frontendAuthProof === "string" ? latestAuthPayload.frontendAuthProof.trim() : "") ||
+        bookingCustomerAuthProof;
       const response = await fetch("/api/bookings", {
         method: submittedState ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
@@ -487,6 +496,7 @@ export default function BookingBlock({
                 siteName: runtimeSiteName,
                 bookingBlockId: runtimeBlockId,
                 bookingViewport: runtimeViewport,
+                frontendAuthProof,
                 ...payload,
               },
         ),
@@ -507,6 +517,7 @@ export default function BookingBlock({
       setSubmittedState(nextState);
       setDraft(buildInitialDraft(storeOptions, itemOptions, titleOptions, json.booking));
       setMode("success");
+      notifyPersonalConsumptionChanged();
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "预约提交失败，请稍后重试");
     } finally {

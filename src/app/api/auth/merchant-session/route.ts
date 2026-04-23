@@ -16,6 +16,7 @@ import {
   type PlatformIdentitySupabaseClient,
 } from "@/lib/platformAccountIdentity";
 import { type PlatformAccountType } from "@/lib/platformAccounts";
+import { createFrontendAuthProof } from "@/lib/frontendAuthProof.server";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 
 export const dynamic = "force-dynamic";
@@ -55,6 +56,7 @@ type AuthenticatedMerchantSessionPayload = {
   accountId: string | null;
   merchantId: string | null;
   merchantIds: string[];
+  frontendAuthProof?: string;
   user: MerchantAuthUserSummary;
 };
 
@@ -64,6 +66,7 @@ type PublicMerchantSessionPayload = {
   accountId: string | null;
   merchantId: string | null;
   merchantIds: string[];
+  frontendAuthProof?: string;
   user: MerchantAuthUserSummary;
 };
 
@@ -234,6 +237,12 @@ function toPublicMerchantSessionPayload(payload: AuthenticatedMerchantSessionPay
     accountId: payload.accountId,
     merchantId: payload.merchantId,
     merchantIds: payload.merchantIds,
+    frontendAuthProof: createFrontendAuthProof({
+      accountType: payload.accountType,
+      accountId: payload.accountId ?? payload.merchantId,
+      userId: payload.user.id,
+      email: payload.user.email,
+    }),
     user: payload.user,
   };
 }

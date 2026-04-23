@@ -18,6 +18,7 @@ import { notifyMerchantPushSubscribers } from "@/lib/webPush";
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
 import { resolvePersonalAccountSessionFromRequest } from "@/lib/personalAccountSession.server";
 import { readPersonalCustomerProfileFromSession } from "@/lib/personalCustomerProfile";
+import { verifyFrontendAuthProof } from "@/lib/frontendAuthProof.server";
 import type {
   MerchantBookingActionInput,
   MerchantBookingCreateInput,
@@ -92,12 +93,14 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as Partial<MerchantBookingCreateInput>;
+    const body = (await request.json()) as Partial<MerchantBookingCreateInput> & { frontendAuthProof?: unknown };
     const siteId = String(body.siteId ?? "").trim();
     if (!isMerchantNumericId(siteId)) {
       return NextResponse.json({ error: "invalid_site_id" }, { status: 400 });
     }
     const personalSession = await resolvePersonalAccountSessionFromRequest(request).catch(() => null);
+    const frontendProof = personalSession ? null : verifyFrontendAuthProof(body.frontendAuthProof);
+    const personalProof = frontendProof?.accountType === "personal" ? frontendProof : null;
     const personalProfile = personalSession
       ? readPersonalCustomerProfileFromSession({
           authenticated: true,
@@ -109,7 +112,7 @@ export async function POST(request: Request) {
     const merchantCustomerSession = personalSession
       ? null
       : await resolveMerchantSessionFromRequest(request).catch(() => null);
-    const fallbackCustomerEmail = personalProfile?.email || merchantCustomerSession?.merchantEmail || "";
+    const fallbackCustomerEmail = personalProfile?.email || personalProof?.email || merchantCustomerSession?.merchantEmail || "";
     const fallbackCustomerName =
       personalProfile?.name ||
       merchantCustomerSession?.merchantName ||
@@ -127,9 +130,9 @@ export async function POST(request: Request) {
       email: trimText(body.email) || fallbackCustomerEmail,
       phone: trimText(body.phone) || personalProfile?.phone || "",
       note: String(body.note ?? ""),
-      customerAccountId: personalSession?.accountId ?? merchantCustomerSession?.merchantId ?? "",
-      customerUserId: personalSession?.userId ?? "",
-      customerLoginEmail: personalSession?.email ?? merchantCustomerSession?.merchantEmail ?? "",
+      customerAccountId: personalSession?.accountId ?? personalProof?.accountId ?? merchantCustomerSession?.merchantId ?? "",
+      customerUserId: personalSession?.userId ?? personalProof?.userId ?? "",
+      customerLoginEmail: personalSession?.email ?? personalProof?.email ?? merchantCustomerSession?.merchantEmail ?? "",
     });
 
     const supabase = createServerSupabaseServiceClient();

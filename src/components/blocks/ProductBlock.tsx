@@ -42,6 +42,7 @@ import {
 } from "@/lib/merchantOrders";
 import { resolveFrontendAuthPayload } from "@/lib/authSessionRecovery";
 import { readPersonalCustomerProfileFromSession, type PersonalCustomerProfile } from "@/lib/personalCustomerProfile";
+import { notifyPersonalConsumptionChanged } from "@/lib/personalConsumptionBridge";
 
 type ProductBlockProps = BackgroundEditableProps &
   TypographyEditableProps & {
@@ -567,6 +568,7 @@ export default function ProductBlock(props: ProductBlockProps) {
   const [cartItems, setCartItems] = useState<ProductCartItemState[]>([]);
   const [cartCustomer, setCartCustomer] = useState<MerchantOrderCustomerInput>({});
   const [cartCustomerDefaults, setCartCustomerDefaults] = useState<MerchantOrderCustomerInput>({});
+  const [cartCustomerAuthProof, setCartCustomerAuthProof] = useState("");
   const [cartCustomerOpen, setCartCustomerOpen] = useState(false);
   const [cartSubmitting, setCartSubmitting] = useState(false);
   const [cartError, setCartError] = useState("");
@@ -609,6 +611,7 @@ export default function ProductBlock(props: ProductBlockProps) {
       setCartItems([]);
       setCartCustomer({});
       setCartCustomerDefaults({});
+      setCartCustomerAuthProof("");
       return;
     }
     const stored = loadProductCartStorageState(cartStorageKey, pricePrefix);
@@ -619,6 +622,7 @@ export default function ProductBlock(props: ProductBlockProps) {
   useEffect(() => {
     if (!cartEnabled) {
       setCartCustomerDefaults({});
+      setCartCustomerAuthProof("");
       return;
     }
     let cancelled = false;
@@ -627,8 +631,10 @@ export default function ProductBlock(props: ProductBlockProps) {
       if (cancelled) return;
       if (payload?.authenticated !== true || !payload.user) {
         setCartCustomerDefaults({});
+        setCartCustomerAuthProof("");
         return;
       }
+      setCartCustomerAuthProof(typeof payload.frontendAuthProof === "string" ? payload.frontendAuthProof.trim() : "");
       setCartCustomerDefaults(buildCartCustomerDefaults(readPersonalCustomerProfileFromSession(payload)));
     };
     void loadCustomerDefaults();
@@ -838,6 +844,10 @@ export default function ProductBlock(props: ProductBlockProps) {
     setCartError("");
     setCartNotice("");
     try {
+      const latestAuthPayload = await resolveFrontendAuthPayload(2600).catch(() => null);
+      const frontendAuthProof =
+        (typeof latestAuthPayload?.frontendAuthProof === "string" ? latestAuthPayload.frontendAuthProof.trim() : "") ||
+        cartCustomerAuthProof;
       const response = await fetch("/api/orders", {
         method: "POST",
         headers: {
@@ -848,6 +858,7 @@ export default function ProductBlock(props: ProductBlockProps) {
           siteName: props.runtimeSiteName,
           blockId: props.runtimeBlockId,
           pricePrefix,
+          frontendAuthProof,
           customer: cartCustomer,
           items: checkedCartItems.map((item) => ({
             productId: item.productId,
@@ -871,6 +882,7 @@ export default function ProductBlock(props: ProductBlockProps) {
       setCartCustomer(mergeCartCustomerDefaults({}, cartCustomerDefaults));
       setCartCustomerOpen(false);
       setCartOpen(false);
+      notifyPersonalConsumptionChanged();
       setCartNotice(nextOrderId ? `订单 ${nextOrderId} 已提交。` : "订单已提交。");
     } catch (error) {
       setCartError(error instanceof Error && error.message ? error.message : "提交订单失败，请稍后重试。");

@@ -57,12 +57,14 @@ export function normalizeFrontendAuthBridgePayload(input: unknown): MerchantCook
     ? record.merchantIds.map((item) => (typeof item === "string" ? item.trim() : "")).filter(Boolean)
     : [];
 
+  const frontendAuthProof = typeof record.frontendAuthProof === "string" ? record.frontendAuthProof.trim() : "";
   return {
     authenticated: true,
     accountType,
     accountId: typeof record.accountId === "string" ? record.accountId.trim() || null : null,
     merchantId: typeof record.merchantId === "string" ? record.merchantId.trim() || null : null,
     merchantIds,
+    ...(frontendAuthProof ? { frontendAuthProof } : {}),
     user: user as unknown as MerchantCookieSessionPayload["user"],
   };
 }
