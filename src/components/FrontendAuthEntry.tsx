@@ -11,6 +11,7 @@ import {
   type MerchantCookieSessionPayload,
 } from "@/lib/authSessionRecovery";
 import { buildBackendFaollaHref } from "@/lib/faollaEntry";
+import { requestParentFrontendAuthPayload } from "@/lib/frontendAuthBridge";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import { buildMerchantBackendHref } from "@/lib/siteRouting";
 
@@ -118,6 +119,11 @@ function isAuthenticatedPayload(payload: MerchantCookieSessionPayload | null | u
 async function resolveFrontendAuthPayload(timeoutMs: number) {
   const cookiePayload = await readMerchantSessionPayload(timeoutMs).catch(() => null);
   if (isAuthenticatedPayload(cookiePayload)) return cookiePayload;
+
+  const parentPayload = await requestParentFrontendAuthPayload(Math.max(800, Math.min(1800, timeoutMs))).catch(
+    () => null,
+  );
+  if (isAuthenticatedPayload(parentPayload)) return parentPayload;
 
   if (hasStoredBrowserSupabaseSessionTokens()) {
     const session = await recoverBrowserSupabaseSessionWithRefresh(Math.max(4200, timeoutMs + 2600)).catch(() => null);

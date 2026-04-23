@@ -287,7 +287,7 @@ export async function readMerchantSessionPayload(timeoutMs = 4500): Promise<Merc
         fetch("/api/auth/merchant-session", {
           method: "GET",
           cache: "no-store",
-          credentials: "same-origin",
+          credentials: "include",
           headers: {
             accept: "application/json",
           },
@@ -409,7 +409,7 @@ export async function syncMerchantSessionCookies(
       fetch("/api/auth/merchant-session", {
         method: "POST",
         cache: "no-store",
-        credentials: "same-origin",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
           accept: "application/json",

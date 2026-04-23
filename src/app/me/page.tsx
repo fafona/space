@@ -10,6 +10,7 @@ import {
 } from "@/lib/europeLocationOptions";
 import { LANGUAGE_OPTIONS } from "@/lib/i18n";
 import { buildFaollaShellHref, isFaollaSectionSearch, readFaollaEntryUrlFromSearch } from "@/lib/faollaEntry";
+import { installFrontendAuthBridgeResponder } from "@/lib/frontendAuthBridge";
 import { buildMerchantBusinessCardShareUrl, resolveMerchantBusinessCardShareOrigin } from "@/lib/merchantBusinessCardShare";
 import { buildMerchantFrontendHref } from "@/lib/siteRouting";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
@@ -1466,6 +1467,10 @@ export default function MePage() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    return installFrontendAuthBridgeResponder(() => payload);
+  }, [payload]);
 
   useEffect(() => {
     if (!mobileSelfLanguageMenuOpen || typeof document === "undefined") return;

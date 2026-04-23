@@ -80,6 +80,7 @@ import {
   startMerchantSessionKeepAlive,
   syncMerchantSessionCookies,
 } from "@/lib/authSessionRecovery";
+import { installFrontendAuthBridgeResponder } from "@/lib/frontendAuthBridge";
 import {
   clearRecentMerchantLaunchState,
   persistRecentMerchantLaunchState,
@@ -5078,6 +5079,10 @@ export default function AdminClient({
       window.dispatchEvent(new CustomEvent("merchant-desktop-language-switcher-change", { detail: { visible: false } }));
     };
   }, [merchantDesktopSection]);
+
+  useEffect(() => {
+    return installFrontendAuthBridgeResponder(() => readMerchantSessionPayload(3200).catch(() => null));
+  }, []);
 
   const resizeSupportComposerInput = useCallback((target?: HTMLTextAreaElement | null) => {
     const input = target ?? supportInputRef.current;
