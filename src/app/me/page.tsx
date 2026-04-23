@@ -9,7 +9,7 @@ import {
   getEuropeProvinceOptions,
 } from "@/lib/europeLocationOptions";
 import { LANGUAGE_OPTIONS } from "@/lib/i18n";
-import { buildFaollaShellHref, isFaollaSectionSearch, readFaollaEntryUrlFromSearch } from "@/lib/faollaEntry";
+import { buildFaollaShellHref, isFaollaSectionSearch, resolveFaollaEntryUrlFromBrowser } from "@/lib/faollaEntry";
 import { installFrontendAuthBridgeResponder, isTrustedFrontendAuthBridgeOrigin } from "@/lib/frontendAuthBridge";
 import { PERSONAL_CONSUMPTION_CHANGED_MESSAGE } from "@/lib/personalConsumptionBridge";
 import { buildMerchantBusinessCardShareUrl, resolveMerchantBusinessCardShareOrigin } from "@/lib/merchantBusinessCardShare";
@@ -1592,7 +1592,7 @@ export default function MePage() {
     typeof window !== "undefined" && isFaollaSectionSearch(window.location.search) ? "faolla" : "conversations",
   );
   const [faollaEmbedHref] = useState(() =>
-    typeof window !== "undefined" ? readFaollaEntryUrlFromSearch(window.location.search, window.location.origin) || "/" : "/",
+    typeof window !== "undefined" ? resolveFaollaEntryUrlFromBrowser(window.location.search, window.location.origin) || "/" : "/",
   );
   const [consumptionSection, setConsumptionSection] = useState<ConsumptionSection>("bookings");
   const [mobileConversationView, setMobileConversationView] = useState<MobileConversationView>("list");

@@ -263,7 +263,7 @@ import BookingTimeSlotRulesEditor from "@/components/admin/BookingTimeSlotRulesE
 import MerchantProfileDialog from "@/components/admin/MerchantProfileDialog";
 import { useI18n } from "@/components/I18nProvider";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
-import { buildFaollaShellHref, isFaollaSectionSearch, readFaollaEntryUrlFromSearch } from "@/lib/faollaEntry";
+import { buildFaollaShellHref, isFaollaSectionSearch, resolveFaollaEntryUrlFromBrowser } from "@/lib/faollaEntry";
 import { LANGUAGE_OPTIONS, resolveSupportedLocale } from "@/lib/i18n";
 import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
 import { getMerchantServiceState } from "@/lib/merchantServiceStatus";
@@ -4963,7 +4963,7 @@ export default function AdminClient({
     typeof window !== "undefined" && isFaollaSectionSearch(window.location.search) ? "faolla" : "conversations",
   );
   const [supportFaollaEmbedHref] = useState(() =>
-    typeof window !== "undefined" ? readFaollaEntryUrlFromSearch(window.location.search, window.location.origin) || "/" : "/",
+    typeof window !== "undefined" ? resolveFaollaEntryUrlFromBrowser(window.location.search, window.location.origin) || "/" : "/",
   );
   const [supportMobileBusinessSection, setSupportMobileBusinessSection] = useState<"booking" | "orders">("booking");
   const [supportSelfSectionView, setSupportSelfSectionView] = useState<SupportSelfSectionView>("home");

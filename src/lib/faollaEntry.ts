@@ -5,6 +5,7 @@ export const FAOLLA_SECTION_VALUE = "faolla";
 export const FAOLLA_URL_PARAM = "faollaUrl";
 export const FAOLLA_APP_SHELL_PARAM = "appShell";
 export const FAOLLA_APP_SHELL_VALUE = "faolla";
+export const FAOLLA_LAST_ENTRY_STORAGE_KEY = "faolla:last-entry-url";
 
 type NormalizeFaollaEntryOptions = {
   allowCrossOrigin?: boolean;
@@ -36,6 +37,10 @@ function isTrustedFaollaCrossOrigin(candidate: URL, runtime: URL) {
   return isSameLocalHostname(candidate.hostname, runtime.hostname);
 }
 
+function isBackendOrApiPath(pathname: string) {
+  return /^\/(?:admin|api|login|me|super-admin)(?:\/|$)/i.test(pathname);
+}
+
 export function normalizeFaollaEntryUrl(
   value: unknown,
   fallbackOrigin?: string | null,
@@ -61,6 +66,55 @@ export function normalizeFaollaEntryUrl(
   } catch {
     return "";
   }
+}
+
+export function readStoredFaollaEntryUrl(fallbackOrigin?: string | null) {
+  if (typeof window === "undefined") return "";
+  const storages = [window.sessionStorage, window.localStorage];
+  for (const storage of storages) {
+    try {
+      const normalized = normalizeFaollaEntryUrl(storage.getItem(FAOLLA_LAST_ENTRY_STORAGE_KEY) ?? "", fallbackOrigin, {
+        allowFaollaCrossOrigin: true,
+      });
+      if (normalized) return normalized;
+    } catch {
+      // Some browsers block storage in private or embedded contexts.
+    }
+  }
+  return "";
+}
+
+export function writeStoredFaollaEntryUrl(value: unknown, fallbackOrigin?: string | null) {
+  const normalized = normalizeFaollaEntryUrl(value, fallbackOrigin, { allowFaollaCrossOrigin: true });
+  if (!normalized || typeof window === "undefined") return normalized;
+
+  try {
+    if (isBackendOrApiPath(new URL(normalized).pathname)) return "";
+  } catch {
+    return "";
+  }
+
+  for (const storage of [window.sessionStorage, window.localStorage]) {
+    try {
+      storage.setItem(FAOLLA_LAST_ENTRY_STORAGE_KEY, normalized);
+    } catch {
+      // Best-effort persistence only.
+    }
+  }
+  return normalized;
+}
+
+export function resolveFaollaEntryUrlFromBrowser(search: string | null | undefined, fallbackOrigin?: string | null) {
+  if (typeof window === "undefined") return "";
+  const origin = fallbackOrigin || window.location.origin;
+  const fromSearch = readFaollaEntryUrlFromSearch(search, origin);
+  if (fromSearch) return writeStoredFaollaEntryUrl(fromSearch, origin) || fromSearch;
+
+  const fromStorage = readStoredFaollaEntryUrl(origin);
+  if (fromStorage) return fromStorage;
+
+  const fromReferrer = normalizeFaollaEntryUrl(document.referrer, origin, { allowFaollaCrossOrigin: true });
+  return writeStoredFaollaEntryUrl(fromReferrer, origin) || fromReferrer;
 }
 
 export function isFaollaSectionSearch(search: string | null | undefined) {
