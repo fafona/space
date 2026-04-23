@@ -4963,7 +4963,7 @@ export default function AdminClient({
     typeof window !== "undefined" && isFaollaSectionSearch(window.location.search) ? "faolla" : "conversations",
   );
   const [supportFaollaEmbedHref] = useState(() =>
-    typeof window !== "undefined" ? resolveFaollaEntryUrlFromBrowser(window.location.search, window.location.origin) || "/" : "/",
+    typeof window !== "undefined" ? resolveFaollaEntryUrlFromBrowser(window.location.search, window.location.origin) : "",
   );
   const [supportMobileBusinessSection, setSupportMobileBusinessSection] = useState<"booking" | "orders">("booking");
   const [supportSelfSectionView, setSupportSelfSectionView] = useState<SupportSelfSectionView>("home");

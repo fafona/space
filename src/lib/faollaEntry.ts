@@ -154,8 +154,10 @@ export function buildBackendFaollaHref(baseHref: string, faollaUrl: string, fall
 
 export function buildFaollaShellHref(sourceHref: string, locale?: string | null, fallbackOrigin?: string | null) {
   const defaultOrigin = getFaollaDefaultOrigin(fallbackOrigin);
+  const rawSourceHref = String(sourceHref ?? "").trim();
+  const source = rawSourceHref === "/" ? defaultOrigin : rawSourceHref || defaultOrigin;
   const normalized =
-    normalizeFaollaEntryUrl(sourceHref || defaultOrigin, fallbackOrigin, { allowCrossOrigin: true }) ||
+    normalizeFaollaEntryUrl(source, fallbackOrigin, { allowCrossOrigin: true }) ||
     normalizeFaollaEntryUrl(defaultOrigin, fallbackOrigin);
   const resolved = normalized && isUsableFrontendEntryUrl(normalized) ? normalized : defaultOrigin;
 

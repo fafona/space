@@ -79,6 +79,7 @@ test("defaults the Faolla shell to the portal home instead of the backend origin
   installBrowser("https://fafona.faolla.com");
 
   assert.equal(buildFaollaShellHref("", "zh-CN", "https://fafona.faolla.com"), "https://faolla.com/?uiLocale=zh-CN&appShell=faolla");
+  assert.equal(buildFaollaShellHref("/", "zh-CN", "https://fafona.faolla.com"), "https://faolla.com/?uiLocale=zh-CN&appShell=faolla");
   assert.equal(
     buildFaollaShellHref("https://faolla.com/me", "zh-CN", "https://faolla.com"),
     "https://faolla.com/?uiLocale=zh-CN&appShell=faolla",

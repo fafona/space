@@ -1592,7 +1592,7 @@ export default function MePage() {
     typeof window !== "undefined" && isFaollaSectionSearch(window.location.search) ? "faolla" : "conversations",
   );
   const [faollaEmbedHref] = useState(() =>
-    typeof window !== "undefined" ? resolveFaollaEntryUrlFromBrowser(window.location.search, window.location.origin) || "/" : "/",
+    typeof window !== "undefined" ? resolveFaollaEntryUrlFromBrowser(window.location.search, window.location.origin) : "",
   );
   const [consumptionSection, setConsumptionSection] = useState<ConsumptionSection>("bookings");
   const [mobileConversationView, setMobileConversationView] = useState<MobileConversationView>("list");
