@@ -7,7 +7,7 @@ import {
   resolveFrontendAuthPayload,
   type MerchantCookieSessionPayload,
 } from "@/lib/authSessionRecovery";
-import { buildBackendFaollaHref, writeStoredFaollaEntryUrl } from "@/lib/faollaEntry";
+import { buildBackendFaollaHref } from "@/lib/faollaEntry";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import { buildMerchantBackendHref } from "@/lib/siteRouting";
 
@@ -120,10 +120,6 @@ export default function FrontendAuthEntry({
   const [payload, setPayload] = useState<MerchantCookieSessionPayload | null>(null);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (currentUrl) writeStoredFaollaEntryUrl(currentUrl);
-  }, [currentUrl]);
 
   useEffect(() => {
     let cancelled = false;

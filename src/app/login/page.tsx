@@ -24,7 +24,7 @@ import {
   readRecentMerchantLaunchMerchantId,
 } from "@/lib/merchantLaunchState";
 import { clearMerchantSignInBridge, setMerchantSignInBridge } from "@/lib/merchantSignInBridge";
-import { buildBackendFaollaHref, normalizeFaollaEntryUrl, writeStoredFaollaEntryUrl } from "@/lib/faollaEntry";
+import { buildBackendFaollaHref, normalizeFaollaEntryUrl } from "@/lib/faollaEntry";
 import { buildMerchantBackendHref } from "@/lib/siteRouting";
 import {
   canReachSupabaseGateway,
@@ -124,9 +124,6 @@ function LoginPageInner() {
     () => normalizeFaollaEntryUrl((searchParams.get("loginFrom") ?? "").trim(), undefined, { allowFaollaCrossOrigin: true }),
     [searchParams],
   );
-  useEffect(() => {
-    if (loginFromUrl) writeStoredFaollaEntryUrl(loginFromUrl);
-  }, [loginFromUrl]);
   const loggedOut = useMemo(() => (searchParams.get("loggedOut") ?? "").trim() === "1", [searchParams]);
   const launchRetry = useMemo(() => (searchParams.get("launchRetry") ?? "").trim() === "1", [searchParams]);
   const normalizedLocale = useMemo(() => locale.trim().toLowerCase(), [locale]);
