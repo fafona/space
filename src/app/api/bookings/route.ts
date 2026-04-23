@@ -3,7 +3,6 @@ import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { buildMerchantBookingPushNotification } from "@/lib/merchantPushEvents";
 import {
   acknowledgeMerchantBookingBySite,
-  cancelPersonalMerchantBooking,
   createMerchantBooking,
   listMerchantBookings,
   listPersonalMerchantBookings,
@@ -11,6 +10,7 @@ import {
   updateMerchantBooking,
   updateMerchantBookingBySite,
   updateMerchantBookingsBatchBySite,
+  updatePersonalMerchantBooking,
 } from "@/lib/merchantBookings.server";
 import type { MerchantPushSubscriptionStoreClient } from "@/lib/merchantPushSubscriptionStore";
 import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
@@ -172,6 +172,7 @@ export async function PATCH(request: Request) {
     const body = (await request.json()) as
         | (Partial<MerchantBookingActionInput> & {
           scope?: string;
+          action?: MerchantBookingActionInput["action"] | "restore";
           siteId?: string;
           status?: MerchantBookingStatus;
           markTouched?: boolean;
@@ -180,14 +181,19 @@ export async function PATCH(request: Request) {
         })
       | null;
 
-    if (String(body?.scope ?? "").trim() === "personal" && body?.action === "cancel") {
+    if (
+      String(body?.scope ?? "").trim() === "personal" &&
+      (body?.action === "cancel" || body?.action === "update" || body?.action === "restore")
+    ) {
       const session = await resolvePersonalAccountSessionFromRequest(request);
       if (!session) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-      const booking = await cancelPersonalMerchantBooking({
+      const booking = await updatePersonalMerchantBooking({
         bookingId: String(body?.bookingId ?? "").trim(),
+        action: body.action,
         accountId: session.accountId,
         userId: session.userId,
         email: session.email,
+        updates: body.updates,
       });
       return NextResponse.json({ ok: true, booking });
     }

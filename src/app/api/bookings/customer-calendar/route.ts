@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { buildMerchantBookingsCalendarIcs } from "@/lib/merchantBookingCalendar";
-import { getMerchantBookingByEditToken } from "@/lib/merchantBookings.server";
+import { getMerchantBookingByEditToken, listPersonalMerchantBookings } from "@/lib/merchantBookings.server";
+import { resolvePersonalAccountSessionFromRequest } from "@/lib/personalAccountSession.server";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -13,6 +14,7 @@ type CustomerCalendarPayload = {
   bookingId?: unknown;
   editToken?: unknown;
   download?: unknown;
+  scope?: unknown;
 };
 
 function readCustomerCalendarInput(request: Request, body?: CustomerCalendarPayload | null) {
@@ -21,18 +23,27 @@ function readCustomerCalendarInput(request: Request, body?: CustomerCalendarPayl
     bookingId: trimText(body?.bookingId ?? url.searchParams.get("bookingId")),
     editToken: trimText(body?.editToken ?? url.searchParams.get("editToken")),
     download: body?.download === true || url.searchParams.get("download") === "1",
+    scope: trimText(body?.scope ?? url.searchParams.get("scope")),
   };
 }
 
 async function buildCalendarResponse(request: Request, body?: CustomerCalendarPayload | null) {
-  const { bookingId, editToken, download } = readCustomerCalendarInput(request, body);
-  if (!bookingId || !editToken) {
+  const { bookingId, editToken, download, scope } = readCustomerCalendarInput(request, body);
+  if (!bookingId) {
     return NextResponse.json({ error: "invalid_booking_token" }, { status: 400 });
   }
-  const booking = await getMerchantBookingByEditToken({
-    bookingId,
-    editToken,
-  });
+  const booking =
+    scope === "personal"
+      ? await resolvePersonalBookingForCalendar(request, bookingId)
+      : editToken
+        ? await getMerchantBookingByEditToken({
+            bookingId,
+            editToken,
+          })
+        : null;
+  if (!booking) {
+    return NextResponse.json({ error: "invalid_booking_token" }, { status: 400 });
+  }
   const ics = buildMerchantBookingsCalendarIcs({
     siteId: booking.siteId,
     siteName: booking.siteName,
@@ -49,6 +60,20 @@ async function buildCalendarResponse(request: Request, body?: CustomerCalendarPa
     response.headers.set("content-disposition", `attachment; filename="booking-${booking.id}.ics"`);
   }
   return response;
+}
+
+async function resolvePersonalBookingForCalendar(request: Request, bookingId: string) {
+  const session = await resolvePersonalAccountSessionFromRequest(request);
+  if (!session) return null;
+  const bookings = await listPersonalMerchantBookings(
+    {
+      accountId: session.accountId,
+      userId: session.userId,
+      email: session.email,
+    },
+    { includeAutomationState: true },
+  );
+  return bookings.find((booking) => booking.id === bookingId) ?? null;
 }
 
 export async function GET(request: Request) {

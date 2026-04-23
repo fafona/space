@@ -29,9 +29,12 @@ import {
   parseSupportMessageAttachmentPreview,
 } from "@/lib/supportMessageAttachments";
 import {
-  formatMerchantBookingDateTime,
+  joinMerchantBookingDateTime,
+  splitMerchantBookingDateTime,
+  type MerchantBookingEditableInput,
   type MerchantBookingRecord,
 } from "@/lib/merchantBookings";
+import { getMerchantBookingDayLabel } from "@/lib/merchantBookingLocale";
 import {
   formatMerchantOrderAmount,
   type MerchantOrderRecord,
@@ -166,6 +169,18 @@ type PersonalMerchantContact = {
   phone: string;
 };
 
+type PersonalBookingEditDraft = {
+  store: string;
+  item: string;
+  title: string;
+  customerName: string;
+  email: string;
+  phone: string;
+  note: string;
+  date: string;
+  time: string;
+};
+
 const OFFICIAL_CONVERSATION_KEY: PersonalConversationKey = "official";
 const SUPPORT_PHOTO_PICKER_ACCEPT = "image/png,image/jpeg,image/webp,image/heic,image/heif,image/gif";
 const PERSONAL_LOCATION_TYPEAHEAD_LIMIT = 30;
@@ -199,6 +214,18 @@ const EMPTY_PERSONAL_PROFILE: PersonalProfileDraft = {
   province: "",
   city: "",
   address: "",
+};
+
+const EMPTY_PERSONAL_BOOKING_EDIT_DRAFT: PersonalBookingEditDraft = {
+  store: "",
+  item: "",
+  title: "",
+  customerName: "",
+  email: "",
+  phone: "",
+  note: "",
+  date: "",
+  time: "",
 };
 
 function trimText(value: unknown) {
@@ -600,8 +627,52 @@ function canCancelPersonalBooking(record: MerchantBookingRecord) {
   return getPersonalBookingStatus(record) === "active" && !hasPersonalMerchantTouch(record);
 }
 
+function canEditPersonalBooking(record: MerchantBookingRecord) {
+  return getPersonalBookingStatus(record) === "active" && !hasPersonalMerchantTouch(record);
+}
+
+function canRestorePersonalBooking(record: MerchantBookingRecord) {
+  return getPersonalBookingStatus(record) === "cancelled" && !hasPersonalMerchantTouch(record);
+}
+
 function canCancelPersonalOrder(record: MerchantOrderRecord) {
   return getPersonalOrderStatus(record) === "pending" && !hasPersonalMerchantTouch(record);
+}
+
+function createPersonalBookingEditDraft(record: MerchantBookingRecord): PersonalBookingEditDraft {
+  const appointmentParts = splitMerchantBookingDateTime(record.appointmentAt);
+  return {
+    store: record.store || "",
+    item: record.item || "",
+    title: record.title || "",
+    customerName: record.customerName || "",
+    email: record.email || "",
+    phone: record.phone || "",
+    note: record.note || "",
+    date: appointmentParts.date,
+    time: appointmentParts.time,
+  };
+}
+
+function buildPersonalBookingEditableInput(draft: PersonalBookingEditDraft): Partial<MerchantBookingEditableInput> {
+  return {
+    store: draft.store,
+    item: draft.item,
+    title: draft.title,
+    customerName: draft.customerName,
+    email: draft.email,
+    phone: draft.phone,
+    note: draft.note,
+    appointmentAt: joinMerchantBookingDateTime(draft.date, draft.time),
+  };
+}
+
+function getTodayDateValue() {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, "0");
+  const day = String(today.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function isSameSupportCalendarDay(left: string | null | undefined, right: string | null | undefined) {
@@ -1552,6 +1623,11 @@ export default function MePage() {
   const [personalBookingFilter, setPersonalBookingFilter] = useState<PersonalBookingFilter>("all");
   const [personalOrderFilter, setPersonalOrderFilter] = useState<PersonalOrderFilter>("all");
   const [personalActionBusyKey, setPersonalActionBusyKey] = useState("");
+  const [personalBookingSearch, setPersonalBookingSearch] = useState("");
+  const [personalBookingEditTargetId, setPersonalBookingEditTargetId] = useState("");
+  const [personalBookingEditDraft, setPersonalBookingEditDraft] = useState<PersonalBookingEditDraft>(
+    EMPTY_PERSONAL_BOOKING_EDIT_DRAFT,
+  );
   const [personalConsumptionLoading, setPersonalConsumptionLoading] = useState(false);
   const [personalConsumptionError, setPersonalConsumptionError] = useState("");
   const [personalConsumptionReloadKey, setPersonalConsumptionReloadKey] = useState(0);
@@ -1787,13 +1863,32 @@ export default function MePage() {
     return counts;
   }, [personalOrders]);
 
-  const filteredPersonalBookings = useMemo(
-    () =>
-      personalBookingFilter === "all"
-        ? personalBookings
-        : personalBookings.filter((booking) => getPersonalBookingStatus(booking) === personalBookingFilter),
-    [personalBookingFilter, personalBookings],
-  );
+  const filteredPersonalBookings = useMemo(() => {
+    const keyword = personalBookingSearch.trim().toLowerCase();
+    return personalBookings.filter((booking) => {
+      if (personalBookingFilter !== "all" && getPersonalBookingStatus(booking) !== personalBookingFilter) return false;
+      if (!keyword) return true;
+      const contact = personalMerchantContacts[trimText(booking.siteId)];
+      return [
+        booking.id,
+        booking.siteId,
+        booking.siteName,
+        booking.store,
+        booking.item,
+        booking.title,
+        booking.customerName,
+        booking.email,
+        booking.phone,
+        booking.note,
+        booking.appointmentAt,
+        contact?.name,
+        contact?.email,
+        contact?.phone,
+      ]
+        .map((value) => trimText(value).toLowerCase())
+        .some((value) => value.includes(keyword));
+    });
+  }, [personalBookingFilter, personalBookingSearch, personalBookings, personalMerchantContacts]);
 
   const filteredPersonalOrders = useMemo(
     () =>
@@ -1816,6 +1911,26 @@ export default function MePage() {
     },
     [personalMerchantContacts],
   );
+
+  const personalBookingEditTarget = useMemo(
+    () => personalBookings.find((booking) => booking.id === personalBookingEditTargetId) ?? null,
+    [personalBookingEditTargetId, personalBookings],
+  );
+
+  const openPersonalBookingEditor = useCallback((booking: MerchantBookingRecord) => {
+    setPersonalBookingEditTargetId(booking.id);
+    setPersonalBookingEditDraft(createPersonalBookingEditDraft(booking));
+    setPersonalConsumptionError("");
+  }, []);
+
+  const closePersonalBookingEditor = useCallback(() => {
+    setPersonalBookingEditTargetId("");
+    setPersonalBookingEditDraft(EMPTY_PERSONAL_BOOKING_EDIT_DRAFT);
+  }, []);
+
+  const updatePersonalBookingEditDraft = useCallback((patch: Partial<PersonalBookingEditDraft>) => {
+    setPersonalBookingEditDraft((current) => ({ ...current, ...patch }));
+  }, []);
 
   const cancelPersonalBooking = useCallback(
     async (booking: MerchantBookingRecord) => {
@@ -1847,6 +1962,84 @@ export default function MePage() {
     },
     [personalActionBusyKey, refreshPersonalConsumption],
   );
+
+  const restorePersonalBooking = useCallback(
+    async (booking: MerchantBookingRecord) => {
+      if (!canRestorePersonalBooking(booking) || personalActionBusyKey) return;
+      const busyKey = `booking:${booking.id}:restore`;
+      setPersonalActionBusyKey(busyKey);
+      setPersonalConsumptionError("");
+      try {
+        const response = await fetch("/api/bookings", {
+          method: "PATCH",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json", accept: "application/json" },
+          body: JSON.stringify({ scope: "personal", action: "restore", bookingId: booking.id }),
+        });
+        const nextPayload = (await response.json().catch(() => null)) as
+          | { ok?: unknown; error?: unknown; message?: unknown; booking?: MerchantBookingRecord }
+          | null;
+        const nextBooking = nextPayload?.booking;
+        if (!response.ok || nextPayload?.ok !== true || !nextBooking) {
+          throw new Error(readPayloadMessage(nextPayload?.message || nextPayload?.error, "restore_booking_failed"));
+        }
+        setPersonalBookings((current) => current.map((record) => (record.id === nextBooking.id ? nextBooking : record)));
+        refreshPersonalConsumption();
+      } catch (error) {
+        setPersonalConsumptionError(error instanceof Error ? error.message : "恢复预约失败，请稍后重试。");
+      } finally {
+        setPersonalActionBusyKey((current) => (current === busyKey ? "" : current));
+      }
+    },
+    [personalActionBusyKey, refreshPersonalConsumption],
+  );
+
+  const savePersonalBookingEdit = useCallback(async () => {
+    const booking = personalBookingEditTarget;
+    if (!booking || !canEditPersonalBooking(booking) || personalActionBusyKey) return;
+    const busyKey = `booking:${booking.id}:update`;
+    setPersonalActionBusyKey(busyKey);
+    setPersonalConsumptionError("");
+    try {
+      const response = await fetch("/api/bookings", {
+        method: "PATCH",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json", accept: "application/json" },
+        body: JSON.stringify({
+          scope: "personal",
+          action: "update",
+          bookingId: booking.id,
+          updates: buildPersonalBookingEditableInput(personalBookingEditDraft),
+        }),
+      });
+      const nextPayload = (await response.json().catch(() => null)) as
+        | { ok?: unknown; error?: unknown; message?: unknown; booking?: MerchantBookingRecord }
+        | null;
+      const nextBooking = nextPayload?.booking;
+      if (!response.ok || nextPayload?.ok !== true || !nextBooking) {
+        throw new Error(readPayloadMessage(nextPayload?.message || nextPayload?.error, "update_booking_failed"));
+      }
+      setPersonalBookings((current) => current.map((record) => (record.id === nextBooking.id ? nextBooking : record)));
+      closePersonalBookingEditor();
+      refreshPersonalConsumption();
+    } catch (error) {
+      setPersonalConsumptionError(error instanceof Error ? error.message : "修改预约失败，请稍后重试。");
+    } finally {
+      setPersonalActionBusyKey((current) => (current === busyKey ? "" : current));
+    }
+  }, [
+    closePersonalBookingEditor,
+    personalActionBusyKey,
+    personalBookingEditDraft,
+    personalBookingEditTarget,
+    refreshPersonalConsumption,
+  ]);
+
+  const downloadPersonalBookingCalendar = useCallback((booking: MerchantBookingRecord) => {
+    if (typeof window === "undefined") return;
+    const url = `/api/bookings/customer-calendar?scope=personal&bookingId=${encodeURIComponent(booking.id)}&download=1`;
+    window.open(url, "_blank", "noopener,noreferrer");
+  }, []);
 
   const cancelPersonalOrder = useCallback(
     async (order: MerchantOrderRecord) => {
@@ -3322,12 +3515,165 @@ export default function MePage() {
     );
   }
 
+  function renderPersonalAppointmentSummary(appointmentAt: string) {
+    const parts = splitMerchantBookingDateTime(appointmentAt);
+    const dayLabel = getMerchantBookingDayLabel(parts.date, locale);
+    const isTodayAppointment = Boolean(parts.date) && parts.date === getTodayDateValue();
+    if (!parts.date && !parts.time) return <div className="text-sm font-semibold text-slate-900">-</div>;
+    return (
+      <div className="flex flex-wrap items-center gap-2 text-sm text-slate-900">
+        <span
+          className={
+            isTodayAppointment
+              ? "rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700"
+              : undefined
+          }
+        >
+          {parts.date || "-"}
+        </span>
+        {dayLabel ? (
+          <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">{dayLabel}</span>
+        ) : null}
+        {parts.time ? (
+          <span className="rounded-full bg-sky-100 px-2.5 py-0.5 text-[11px] font-semibold text-sky-700">{parts.time}</span>
+        ) : null}
+      </div>
+    );
+  }
+
+  function renderPersonalBookingEditDialog() {
+    const booking = personalBookingEditTarget;
+    if (!booking) return null;
+    const busyKey = `booking:${booking.id}:update`;
+    const saving = personalActionBusyKey === busyKey;
+    return (
+      <>
+        <button
+          type="button"
+          className="fixed inset-0 z-[2147483400] bg-slate-950/40 backdrop-blur-[1px]"
+          onClick={closePersonalBookingEditor}
+          aria-label="关闭修改预约"
+        />
+        <div className="fixed inset-0 z-[2147483401] flex items-center justify-center p-3">
+          <div className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-[28px] bg-white p-5 shadow-[0_28px_90px_rgba(15,23,42,0.25)]">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-lg font-black text-slate-950">修改预约</div>
+                <div className="mt-1 text-xs text-slate-500">预约号: {booking.id}</div>
+              </div>
+              <button
+                type="button"
+                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50"
+                onClick={closePersonalBookingEditor}
+              >
+                关闭
+              </button>
+            </div>
+            <div className="mt-5 grid gap-3 md:grid-cols-2">
+              <label className="space-y-1.5 text-xs font-semibold text-slate-500">
+                店铺
+                <input
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-slate-400"
+                  value={personalBookingEditDraft.store}
+                  onChange={(event) => updatePersonalBookingEditDraft({ store: event.target.value })}
+                />
+              </label>
+              <label className="space-y-1.5 text-xs font-semibold text-slate-500">
+                项目
+                <input
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-slate-400"
+                  value={personalBookingEditDraft.item}
+                  onChange={(event) => updatePersonalBookingEditDraft({ item: event.target.value })}
+                />
+              </label>
+              <label className="space-y-1.5 text-xs font-semibold text-slate-500">
+                日期
+                <input
+                  type="date"
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-slate-400"
+                  value={personalBookingEditDraft.date}
+                  onChange={(event) => updatePersonalBookingEditDraft({ date: event.target.value })}
+                />
+              </label>
+              <label className="space-y-1.5 text-xs font-semibold text-slate-500">
+                时间
+                <input
+                  type="time"
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-slate-400"
+                  value={personalBookingEditDraft.time}
+                  onChange={(event) => updatePersonalBookingEditDraft({ time: event.target.value })}
+                />
+              </label>
+              <label className="space-y-1.5 text-xs font-semibold text-slate-500">
+                姓名
+                <input
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-slate-400"
+                  value={personalBookingEditDraft.customerName}
+                  onChange={(event) => updatePersonalBookingEditDraft({ customerName: event.target.value })}
+                />
+              </label>
+              <label className="space-y-1.5 text-xs font-semibold text-slate-500">
+                电话
+                <input
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-slate-400"
+                  value={personalBookingEditDraft.phone}
+                  onChange={(event) => updatePersonalBookingEditDraft({ phone: event.target.value })}
+                />
+              </label>
+              <label className="space-y-1.5 text-xs font-semibold text-slate-500 md:col-span-2">
+                邮箱
+                <input
+                  type="email"
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-slate-400"
+                  value={personalBookingEditDraft.email}
+                  onChange={(event) => updatePersonalBookingEditDraft({ email: event.target.value })}
+                />
+              </label>
+              <label className="space-y-1.5 text-xs font-semibold text-slate-500 md:col-span-2">
+                备注
+                <textarea
+                  className="min-h-24 w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-slate-400"
+                  value={personalBookingEditDraft.note}
+                  onChange={(event) => updatePersonalBookingEditDraft({ note: event.target.value })}
+                />
+              </label>
+            </div>
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                onClick={closePersonalBookingEditor}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                onClick={() => void savePersonalBookingEdit()}
+                disabled={saving || Boolean(personalActionBusyKey && !saving)}
+              >
+                {saving ? "保存中..." : "保存修改"}
+              </button>
+            </div>
+          </div>
+        </div>
+      </>
+    );
+  }
+
   function renderPersonalBookingCards(compact = false) {
     if (personalConsumptionLoading || personalConsumptionError) {
       return renderPersonalConsumptionState("bookings");
     }
     return (
       <div className={compact ? "space-y-3" : "space-y-4"}>
+        <input
+          type="text"
+          className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+          placeholder="搜索预约编号 / 店铺 / 项目 / 姓名 / 邮箱 / 电话 / 备注"
+          value={personalBookingSearch}
+          onChange={(event) => setPersonalBookingSearch(event.target.value)}
+        />
         {renderPersonalBookingFilters()}
         {personalBookings.length === 0 || filteredPersonalBookings.length === 0 ? (
           renderPersonalConsumptionState("bookings")
@@ -3336,7 +3682,10 @@ export default function MePage() {
             const status = getPersonalBookingStatus(booking);
             const contact = resolvePersonalMerchantContact(booking.siteId, booking.siteName);
             const canCancel = canCancelPersonalBooking(booking);
-            const busyKey = `booking:${booking.id}:cancel`;
+            const canEdit = canEditPersonalBooking(booking);
+            const canRestore = canRestorePersonalBooking(booking);
+            const cancelBusyKey = `booking:${booking.id}:cancel`;
+            const restoreBusyKey = `booking:${booking.id}:restore`;
             const contactEmail = contact.email;
             const contactPhone = contact.phone;
             return (
@@ -3355,7 +3704,7 @@ export default function MePage() {
                       </div>
                       <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
                         <span>预约号: {booking.id}</span>
-                        <span>创建时间: {formatMerchantBookingDateTime(booking.createdAt)}</span>
+                        <span>创建时间: {formatPersonalRecordDateTime(booking.createdAt)}</span>
                       </div>
                     </div>
 
@@ -3388,16 +3737,47 @@ export default function MePage() {
                     ) : null}
                   </div>
 
-                  {canCancel ? (
-                    <button
-                      type="button"
-                      className="rounded border border-rose-200 bg-rose-50 px-3 py-1.5 text-[13px] leading-5 text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
-                      onClick={() => void cancelPersonalBooking(booking)}
-                      disabled={Boolean(personalActionBusyKey)}
-                    >
-                      {personalActionBusyKey === busyKey ? "取消中..." : "取消预约"}
-                    </button>
-                  ) : null}
+                  <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+                    {status !== "cancelled" ? (
+                      <button
+                        type="button"
+                        className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50"
+                        onClick={() => downloadPersonalBookingCalendar(booking)}
+                      >
+                        导入日历
+                      </button>
+                    ) : null}
+                    {canEdit ? (
+                      <button
+                        type="button"
+                        className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        onClick={() => openPersonalBookingEditor(booking)}
+                        disabled={Boolean(personalActionBusyKey)}
+                      >
+                        修改
+                      </button>
+                    ) : null}
+                    {canRestore ? (
+                      <button
+                        type="button"
+                        className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        onClick={() => void restorePersonalBooking(booking)}
+                        disabled={Boolean(personalActionBusyKey)}
+                      >
+                        {personalActionBusyKey === restoreBusyKey ? "恢复中..." : "恢复预约"}
+                      </button>
+                    ) : null}
+                    {canCancel ? (
+                      <button
+                        type="button"
+                        className="rounded border border-rose-200 bg-rose-50 px-3 py-1.5 text-[13px] leading-5 text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                        onClick={() => void cancelPersonalBooking(booking)}
+                        disabled={Boolean(personalActionBusyKey)}
+                      >
+                        {personalActionBusyKey === cancelBusyKey ? "取消中..." : "取消预约"}
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
 
                 <div className="mt-3 grid gap-2.5 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
@@ -3411,9 +3791,7 @@ export default function MePage() {
                   </div>
                   <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
                     <div className="text-[11px] text-slate-400">预约时间</div>
-                    <div className="mt-1 break-words text-sm font-semibold text-slate-900">
-                      {formatMerchantBookingDateTime(booking.appointmentAt) || "-"}
-                    </div>
+                    <div className="mt-1">{renderPersonalAppointmentSummary(booking.appointmentAt)}</div>
                   </div>
                   <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
                     <div className="text-[11px] text-slate-400">姓名</div>
@@ -4107,6 +4485,7 @@ export default function MePage() {
         <MobileBottomNav activeTab={mobileTab} onChange={setMobileTab} />
       )}
       {renderConversationInfoOverlay()}
+      {renderPersonalBookingEditDialog()}
     </>
   );
 }

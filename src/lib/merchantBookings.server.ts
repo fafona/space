@@ -876,6 +876,144 @@ export async function cancelPersonalMerchantBooking(input: {
   });
 }
 
+export async function updatePersonalMerchantBooking(input: {
+  bookingId: string;
+  action: "update" | "cancel" | "restore";
+  accountId?: string | null;
+  userId?: string | null;
+  email?: string | null;
+  updates?: Partial<MerchantBookingEditableInput>;
+}): Promise<MerchantBookingRecord> {
+  const bookingId = trimText(input.bookingId);
+  const lookup = {
+    accountId: trimText(input.accountId),
+    userId: trimText(input.userId),
+    email: trimText(input.email).toLowerCase(),
+  };
+  if (!bookingId || (!lookup.accountId && !lookup.userId && !lookup.email)) {
+    throw new Error("booking_not_found");
+  }
+
+  return withBookingStoreLock(async () => {
+    const store = await readMerchantBookingStore();
+    const targetIndex = store.records.findIndex((record) => record.id === bookingId);
+    if (targetIndex < 0) throw new Error("booking_not_found");
+    const current = store.records[targetIndex];
+    if (!matchesPersonalBookingCustomer(current, lookup)) throw new Error("booking_not_found");
+    if (trimText(current.merchantTouchedAt)) {
+      throw new Error("booking_customer_action_locked");
+    }
+
+    const workbenchSettings = await loadMerchantBookingWorkbenchSettings(current.siteId);
+    const emailRuntime = await loadSiteCustomerEmailRuntime(current.siteId, workbenchSettings, current.siteName);
+    const now = new Date().toISOString();
+
+    if (input.action === "cancel") {
+      if (current.status !== "active") throw new Error("booking_customer_action_locked");
+      let next: MerchantBookingStoredRecord = {
+        ...current,
+        ...applyStatusMetadata(current, "cancelled", now),
+      };
+      next = appendStatusTimelineEntry(next, {
+        actor: "customer",
+        at: next.updatedAt,
+        fromStatus: current.status,
+        toStatus: "cancelled",
+      });
+      next = await maybeSendCustomerStatusEmail({
+        record: next,
+        previousStatus: current.status,
+        settings: workbenchSettings,
+        runtime: emailRuntime,
+      });
+      store.records[targetIndex] = next;
+      await writeMerchantBookingStore(store);
+      return withoutMerchantBookingToken(next, { includeAutomationState: true, includeCustomerEmailLogs: true, includeTimeline: true });
+    }
+
+    if (input.action === "restore" && current.status !== "cancelled") {
+      throw new Error("booking_customer_action_locked");
+    }
+    if (input.action === "update" && current.status !== "active") {
+      throw new Error("booking_customer_action_locked");
+    }
+
+    const hasEditableUpdates = input.action === "update";
+    const nextEditable = hasEditableUpdates
+      ? sanitizeMerchantBookingEditableInput(input.updates, current)
+      : sanitizeMerchantBookingEditableInput(current, current);
+    const ruleContext = await resolveBookingRuleContext(current.siteId, {
+      bookingBlockId: current.bookingBlockId,
+      bookingViewport: current.bookingViewport,
+    });
+    const issues = validateMerchantBookingInput(nextEditable, {
+      availableTimeRanges: ruleContext.availableTimeRanges,
+      blockedDates: ruleContext.blockedDates,
+      holidayDates: ruleContext.holidayDates,
+    });
+    issues.push(...collectWorkbenchAvailabilityIssues(nextEditable.appointmentAt, workbenchSettings));
+    if (issues.length > 0) {
+      throw new Error(issues[0]);
+    }
+    const boundRecords = store.records.filter((record) => record.siteId === current.siteId && matchesRuleBinding(record, ruleContext.binding));
+    const slotCapacityIssue = getMerchantBookingSlotCapacityIssue(
+      nextEditable.appointmentAt,
+      ruleContext.timeSlotRules,
+      boundRecords,
+      { excludeBookingId: current.id },
+    );
+    if (slotCapacityIssue) throw new Error(slotCapacityIssue);
+    const bufferIssue = getMerchantBookingBufferIssue(
+      {
+        appointmentAt: nextEditable.appointmentAt,
+        store: nextEditable.store,
+        item: nextEditable.item,
+      },
+      workbenchSettings.bufferMinutes,
+      boundRecords,
+      { excludeBookingId: current.id },
+    );
+    if (bufferIssue) throw new Error(bufferIssue);
+
+    const changedFields = hasEditableUpdates ? collectEditableFieldChanges(current, nextEditable) : [];
+    const nextStatus: MerchantBookingStatus = input.action === "restore" ? "active" : current.status;
+    let next: MerchantBookingStoredRecord = {
+      ...current,
+      ...ruleContext.binding,
+      ...nextEditable,
+      ...buildAutomationStateForEditableUpdate(current, nextEditable),
+      ...applyStatusMetadata(current, nextStatus, now),
+      noShowMarkedAt: current.appointmentAt === nextEditable.appointmentAt ? current.noShowMarkedAt : undefined,
+    };
+    if (changedFields.length > 0) {
+      next = appendTimelineEntry(
+        next,
+        createTimelineEntry({
+          actor: "customer",
+          kind: "updated",
+          at: now,
+          fields: changedFields,
+        }),
+      );
+    }
+    next = appendStatusTimelineEntry(next, {
+      actor: "customer",
+      at: now,
+      fromStatus: current.status,
+      toStatus: next.status,
+    });
+    next = await maybeSendCustomerStatusEmail({
+      record: next,
+      previousStatus: current.status,
+      settings: workbenchSettings,
+      runtime: emailRuntime,
+    });
+    store.records[targetIndex] = next;
+    await writeMerchantBookingStore(store);
+    return withoutMerchantBookingToken(next, { includeAutomationState: true, includeCustomerEmailLogs: true, includeTimeline: true });
+  });
+}
+
 async function resolveStoredBookingByEditToken(input: {
   bookingId: string;
   editToken: string;
