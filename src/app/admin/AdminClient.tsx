@@ -4962,9 +4962,10 @@ export default function AdminClient({
   const [supportMobileHomeTab, setSupportMobileHomeTab] = useState<SupportMobileHomeTab>(() =>
     typeof window !== "undefined" && isFaollaSectionSearch(window.location.search) ? "faolla" : "conversations",
   );
-  const [supportFaollaEmbedHref] = useState(() =>
+  const [supportFaollaEmbedHref, setSupportFaollaEmbedHref] = useState(() =>
     typeof window !== "undefined" ? resolveFaollaEntryUrlFromBrowser(window.location.search, window.location.origin) : "",
   );
+  const [supportFaollaFrameVersion, setSupportFaollaFrameVersion] = useState(0);
   const [supportMobileBusinessSection, setSupportMobileBusinessSection] = useState<"booking" | "orders">("booking");
   const [supportSelfSectionView, setSupportSelfSectionView] = useState<SupportSelfSectionView>("home");
   const [supportPeerLocalMessages, setSupportPeerLocalMessages] = useState<LocalPeerSupportMessage[]>([]);
@@ -10258,10 +10259,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     getSiteIdFromStoreScope(storeScope) ||
     ""
   ).trim();
-  const supportMobileFaollaHref =
-    supportFaollaEmbedHref ||
-    normalizeSupportExternalUrl(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "", typeof window !== "undefined" ? window.location.origin : "") ||
-    "/";
+  const supportMobileFaollaHref = supportFaollaEmbedHref;
   const supportMobileFaollaTargetHref = useMemo(() => {
     return buildFaollaShellHref(
       supportMobileFaollaHref,
@@ -10269,9 +10267,25 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       typeof window !== "undefined" ? window.location.origin : "https://faolla.com",
     );
   }, [locale, supportMobileFaollaHref]);
+  const resetSupportFaollaShell = useCallback(() => {
+    setSupportFaollaEmbedHref("");
+    setSupportFaollaFrameVersion((current) => current + 1);
+  }, []);
+  const openMerchantFaollaPanel = useCallback(() => {
+    resetSupportFaollaShell();
+    setMerchantDesktopSection("faolla");
+  }, [resetSupportFaollaShell]);
+  const openSupportMobileHomeTab = useCallback(
+    (tab: SupportMobileHomeTab) => {
+      if (tab === "faolla") resetSupportFaollaShell();
+      setSupportMobileHomeTab(tab);
+    },
+    [resetSupportFaollaShell],
+  );
   const supportMobileFaollaContent = (
     <div className="relative min-h-0 flex-1 overflow-hidden">
       <iframe
+        key={`mobile-faolla-${supportFaollaFrameVersion}-${supportMobileFaollaTargetHref}`}
         title="Faolla.com"
         src={supportMobileFaollaTargetHref}
         className="absolute inset-0 h-full w-full border-0 bg-transparent"
@@ -15129,7 +15143,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 className={`relative flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-[22px] px-2 py-1.5 text-[10.5px] font-medium transition ${
                   active ? "bg-slate-900 text-white shadow-sm" : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
                 }`}
-                onClick={() => setSupportMobileHomeTab(item.key)}
+                onClick={() => openSupportMobileHomeTab(item.key)}
               >
                 {item.key === "conversations" && supportUnreadBadgeCount > 0 ? (
                   <span className="absolute right-2 top-1 inline-flex min-w-[18px] items-center justify-center rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white shadow-[0_8px_18px_rgba(244,63,94,0.28)]">
@@ -16416,6 +16430,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             <div className="relative h-[calc(100vh-9rem)] min-h-[560px] overflow-hidden bg-white">
               <iframe
                 title="Faolla"
+                key={`desktop-faolla-${supportFaollaFrameVersion}-${supportMobileFaollaTargetHref}`}
                 src={supportMobileFaollaTargetHref}
                 className="absolute inset-0 h-full w-full border-0 bg-transparent"
               />
@@ -16634,7 +16649,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     <button
                       type="button"
                       className={getMerchantDesktopMenuButtonClassName(merchantDesktopSection === "faolla")}
-                      onClick={() => setMerchantDesktopSection("faolla")}
+                      onClick={openMerchantFaollaPanel}
                     >
                       Faolla
                     </button>

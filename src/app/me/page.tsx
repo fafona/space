@@ -1591,9 +1591,10 @@ export default function MePage() {
   const [mobileTab, setMobileTab] = useState<MobileTab>(() =>
     typeof window !== "undefined" && isFaollaSectionSearch(window.location.search) ? "faolla" : "conversations",
   );
-  const [faollaEmbedHref] = useState(() =>
+  const [faollaEmbedHref, setFaollaEmbedHref] = useState(() =>
     typeof window !== "undefined" ? resolveFaollaEntryUrlFromBrowser(window.location.search, window.location.origin) : "",
   );
+  const [faollaFrameVersion, setFaollaFrameVersion] = useState(0);
   const [consumptionSection, setConsumptionSection] = useState<ConsumptionSection>("bookings");
   const [mobileConversationView, setMobileConversationView] = useState<MobileConversationView>("list");
   const [mobileSelfSection, setMobileSelfSection] = useState<MobileSelfSection>("home");
@@ -2080,6 +2081,24 @@ export default function MePage() {
         typeof window !== "undefined" ? window.location.origin : "https://faolla.com",
       ),
     [faollaEmbedHref, locale],
+  );
+  const resetFaollaShell = useCallback(() => {
+    setFaollaEmbedHref("");
+    setFaollaFrameVersion((current) => current + 1);
+  }, []);
+  const openDesktopSection = useCallback(
+    (section: DesktopSection) => {
+      if (section === "faolla") resetFaollaShell();
+      setDesktopSection(section);
+    },
+    [resetFaollaShell],
+  );
+  const openMobileTab = useCallback(
+    (tab: MobileTab) => {
+      if (tab === "faolla") resetFaollaShell();
+      setMobileTab(tab);
+    },
+    [resetFaollaShell],
   );
 
   const desktopMenuItems: MenuItem[] = useMemo(
@@ -3922,7 +3941,12 @@ export default function MePage() {
     if (section === "faolla") {
       return (
         <div className="relative h-[calc(100vh-4rem)] min-h-[560px] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <iframe title="Faolla" src={faollaTargetHref} className="absolute inset-0 h-full w-full border-0 bg-transparent" />
+          <iframe
+            key={`desktop-faolla-${faollaFrameVersion}-${faollaTargetHref}`}
+            title="Faolla"
+            src={faollaTargetHref}
+            className="absolute inset-0 h-full w-full border-0 bg-transparent"
+          />
         </div>
       );
     }
@@ -4401,7 +4425,12 @@ export default function MePage() {
     if (mobileTab === "faolla") {
       return (
         <div className="relative min-h-0 flex-1 overflow-hidden">
-          <iframe title="Faolla" src={faollaTargetHref} className="absolute inset-0 h-full w-full border-0 bg-transparent" />
+          <iframe
+            key={`mobile-faolla-${faollaFrameVersion}-${faollaTargetHref}`}
+            title="Faolla"
+            src={faollaTargetHref}
+            className="absolute inset-0 h-full w-full border-0 bg-transparent"
+          />
         </div>
       );
     }
@@ -4460,7 +4489,7 @@ export default function MePage() {
                     key={item.key}
                     item={item}
                     active={desktopSection === item.key}
-                    onClick={() => setDesktopSection(item.key)}
+                    onClick={() => openDesktopSection(item.key)}
                   />
                 ))}
               </div>
@@ -4482,7 +4511,7 @@ export default function MePage() {
         {renderMobileContent()}
       </main>
       {mobileTab === "conversations" && mobileConversationView === "thread" ? null : (
-        <MobileBottomNav activeTab={mobileTab} onChange={setMobileTab} />
+        <MobileBottomNav activeTab={mobileTab} onChange={openMobileTab} />
       )}
       {renderConversationInfoOverlay()}
       {renderPersonalBookingEditDialog()}
