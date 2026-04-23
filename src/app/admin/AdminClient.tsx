@@ -4962,10 +4962,9 @@ export default function AdminClient({
   const [supportMobileHomeTab, setSupportMobileHomeTab] = useState<SupportMobileHomeTab>(() =>
     typeof window !== "undefined" && isFaollaSectionSearch(window.location.search) ? "faolla" : "conversations",
   );
-  const [supportFaollaEmbedHref, setSupportFaollaEmbedHref] = useState(() =>
+  const [supportFaollaEmbedHref] = useState(() =>
     typeof window !== "undefined" ? resolveFaollaEntryUrlFromBrowser(window.location.search, window.location.origin) : "",
   );
-  const [supportFaollaFrameVersion, setSupportFaollaFrameVersion] = useState(0);
   const [supportMobileBusinessSection, setSupportMobileBusinessSection] = useState<"booking" | "orders">("booking");
   const [supportSelfSectionView, setSupportSelfSectionView] = useState<SupportSelfSectionView>("home");
   const [supportPeerLocalMessages, setSupportPeerLocalMessages] = useState<LocalPeerSupportMessage[]>([]);
@@ -10267,25 +10266,15 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       typeof window !== "undefined" ? window.location.origin : "https://faolla.com",
     );
   }, [locale, supportMobileFaollaHref]);
-  const resetSupportFaollaShell = useCallback(() => {
-    setSupportFaollaEmbedHref("");
-    setSupportFaollaFrameVersion((current) => current + 1);
-  }, []);
   const openMerchantFaollaPanel = useCallback(() => {
-    resetSupportFaollaShell();
     setMerchantDesktopSection("faolla");
-  }, [resetSupportFaollaShell]);
-  const openSupportMobileHomeTab = useCallback(
-    (tab: SupportMobileHomeTab) => {
-      if (tab === "faolla") resetSupportFaollaShell();
-      setSupportMobileHomeTab(tab);
-    },
-    [resetSupportFaollaShell],
-  );
+  }, []);
+  const openSupportMobileHomeTab = useCallback((tab: SupportMobileHomeTab) => {
+    setSupportMobileHomeTab(tab);
+  }, []);
   const supportMobileFaollaContent = (
     <div className="relative min-h-0 flex-1 overflow-hidden">
       <iframe
-        key={`mobile-faolla-${supportFaollaFrameVersion}-${supportMobileFaollaTargetHref}`}
         title="Faolla.com"
         src={supportMobileFaollaTargetHref}
         className="absolute inset-0 h-full w-full border-0 bg-transparent"
@@ -15042,14 +15031,18 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     </div>
   );
 
-  const supportMobileListTabContent =
+  const supportMobilePrimaryTabContent =
     supportMobileHomeTab === "conversations"
       ? supportMobileConversationsContent
       : supportMobileHomeTab === "business"
         ? supportMobileBusinessContent
-        : supportMobileHomeTab === "faolla"
-          ? supportMobileFaollaContent
-          : supportMobileSelfContent;
+        : supportMobileSelfContent;
+  const supportMobileListTabContent = (
+    <>
+      <div className={supportMobileHomeTab === "faolla" ? "hidden" : "contents"}>{supportMobilePrimaryTabContent}</div>
+      <div className={supportMobileHomeTab === "faolla" ? "contents" : "hidden"}>{supportMobileFaollaContent}</div>
+    </>
+  );
   const isSupportMobileKeyboardVisible = mobileVisualViewportMetrics.bottom > 0;
   const supportMobileViewportFrameStyle: CSSProperties | undefined =
     isIosSupportBrowser && isMobileSupportDialog && mobileVisualViewportMetrics.height > 0
@@ -16426,18 +16419,20 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             />
           ) : merchantDesktopSection === "analytics" ? (
             merchantAnalyticsPanelContent
-          ) : merchantDesktopSection === "faolla" ? (
-            <div className="relative h-[calc(100vh-9rem)] min-h-[560px] overflow-hidden bg-white">
-              <iframe
-                title="Faolla"
-                key={`desktop-faolla-${supportFaollaFrameVersion}-${supportMobileFaollaTargetHref}`}
-                src={supportMobileFaollaTargetHref}
-                className="absolute inset-0 h-full w-full border-0 bg-transparent"
-              />
-            </div>
           ) : merchantDesktopSection === "support" ? (
             supportDesktopSurfaceContent
           ) : null}
+          <div
+            className={`relative h-[calc(100vh-9rem)] min-h-[560px] overflow-hidden bg-white ${
+              merchantDesktopSection === "faolla" ? "" : "hidden"
+            }`}
+          >
+            <iframe
+              title="Faolla"
+              src={supportMobileFaollaTargetHref}
+              className="absolute inset-0 h-full w-full border-0 bg-transparent"
+            />
+          </div>
         </div>
       </div>
     ) : null;

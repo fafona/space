@@ -1591,10 +1591,9 @@ export default function MePage() {
   const [mobileTab, setMobileTab] = useState<MobileTab>(() =>
     typeof window !== "undefined" && isFaollaSectionSearch(window.location.search) ? "faolla" : "conversations",
   );
-  const [faollaEmbedHref, setFaollaEmbedHref] = useState(() =>
+  const [faollaEmbedHref] = useState(() =>
     typeof window !== "undefined" ? resolveFaollaEntryUrlFromBrowser(window.location.search, window.location.origin) : "",
   );
-  const [faollaFrameVersion, setFaollaFrameVersion] = useState(0);
   const [consumptionSection, setConsumptionSection] = useState<ConsumptionSection>("bookings");
   const [mobileConversationView, setMobileConversationView] = useState<MobileConversationView>("list");
   const [mobileSelfSection, setMobileSelfSection] = useState<MobileSelfSection>("home");
@@ -2082,24 +2081,12 @@ export default function MePage() {
       ),
     [faollaEmbedHref, locale],
   );
-  const resetFaollaShell = useCallback(() => {
-    setFaollaEmbedHref("");
-    setFaollaFrameVersion((current) => current + 1);
+  const openDesktopSection = useCallback((section: DesktopSection) => {
+    setDesktopSection(section);
   }, []);
-  const openDesktopSection = useCallback(
-    (section: DesktopSection) => {
-      if (section === "faolla") resetFaollaShell();
-      setDesktopSection(section);
-    },
-    [resetFaollaShell],
-  );
-  const openMobileTab = useCallback(
-    (tab: MobileTab) => {
-      if (tab === "faolla") resetFaollaShell();
-      setMobileTab(tab);
-    },
-    [resetFaollaShell],
-  );
+  const openMobileTab = useCallback((tab: MobileTab) => {
+    setMobileTab(tab);
+  }, []);
 
   const desktopMenuItems: MenuItem[] = useMemo(
     () => [
@@ -3938,18 +3925,6 @@ export default function MePage() {
     if (section === "conversations") {
       return renderDesktopSupportSurface();
     }
-    if (section === "faolla") {
-      return (
-        <div className="relative h-[calc(100vh-4rem)] min-h-[560px] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <iframe
-            key={`desktop-faolla-${faollaFrameVersion}-${faollaTargetHref}`}
-            title="Faolla"
-            src={faollaTargetHref}
-            className="absolute inset-0 h-full w-full border-0 bg-transparent"
-          />
-        </div>
-      );
-    }
     if (section === "profile") {
       return (
         <PersonalProfileEditor
@@ -4422,18 +4397,6 @@ export default function MePage() {
         </div>
       );
     }
-    if (mobileTab === "faolla") {
-      return (
-        <div className="relative min-h-0 flex-1 overflow-hidden">
-          <iframe
-            key={`mobile-faolla-${faollaFrameVersion}-${faollaTargetHref}`}
-            title="Faolla"
-            src={faollaTargetHref}
-            className="absolute inset-0 h-full w-full border-0 bg-transparent"
-          />
-        </div>
-      );
-    }
     return null;
   }
 
@@ -4503,12 +4466,32 @@ export default function MePage() {
         </aside>
 
         <section className="min-h-screen">
-          <div className="px-6 py-8">{renderSectionContent(desktopSection)}</div>
+          <div className="px-6 py-8">
+            {renderSectionContent(desktopSection)}
+            <div
+              className={`relative h-[calc(100vh-4rem)] min-h-[560px] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm ${
+                desktopSection === "faolla" ? "" : "hidden"
+              }`}
+            >
+              <iframe
+                title="Faolla"
+                src={faollaTargetHref}
+                className="absolute inset-0 h-full w-full border-0 bg-transparent"
+              />
+            </div>
+          </div>
         </section>
       </main>
 
       <main className="fixed inset-x-0 top-0 bottom-0 z-[120] flex min-h-0 flex-col overflow-hidden overscroll-none bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_48%,#f8fafc_100%)] touch-manipulation md:hidden">
         {renderMobileContent()}
+        <div className={`relative min-h-0 flex-1 overflow-hidden ${mobileTab === "faolla" ? "" : "hidden"}`}>
+          <iframe
+            title="Faolla"
+            src={faollaTargetHref}
+            className="absolute inset-0 h-full w-full border-0 bg-transparent"
+          />
+        </div>
       </main>
       {mobileTab === "conversations" && mobileConversationView === "thread" ? null : (
         <MobileBottomNav activeTab={mobileTab} onChange={openMobileTab} />
