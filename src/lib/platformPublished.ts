@@ -109,9 +109,13 @@ function choosePreferredPublishedMerchantPageRow(
   return current;
 }
 
+function isInternalPagesSlug(value: string | null | undefined) {
+  return String(value ?? "").trim().toLowerCase().startsWith("__");
+}
+
 function normalizePublishedMerchantSlug(value: string | null | undefined) {
   const normalized = String(value ?? "").trim();
-  if (!normalized || normalized.toLowerCase() === "home") return "";
+  if (!normalized || normalized.toLowerCase() === "home" || isInternalPagesSlug(normalized)) return "";
   return normalized;
 }
 
@@ -119,8 +123,17 @@ function normalizeText(value: string | null | undefined) {
   return String(value ?? "").trim();
 }
 
+function normalizePublicDomainValue(value: string | null | undefined) {
+  const normalized = normalizeText(value);
+  return normalized.startsWith("__") ? "" : normalized;
+}
+
 function pickPreferredText(preferred: string | null | undefined, fallback: string | null | undefined) {
   return normalizeText(preferred) || normalizeText(fallback);
+}
+
+function pickPreferredPublicDomainValue(preferred: string | null | undefined, fallback: string | null | undefined) {
+  return normalizePublicDomainValue(preferred) || normalizePublicDomainValue(fallback);
 }
 
 function mergePublishedSnapshotLocation(
@@ -173,10 +186,10 @@ function mergePublishedMerchantSnapshotSite(
     ...fallback,
     ...preferred,
     merchantName: pickPreferredText(preferred.merchantName, fallback.merchantName),
-    domainPrefix: pickPreferredText(preferred.domainPrefix, fallback.domainPrefix),
-    domainSuffix: pickPreferredText(preferred.domainSuffix, fallback.domainSuffix),
+    domainPrefix: pickPreferredPublicDomainValue(preferred.domainPrefix, fallback.domainPrefix),
+    domainSuffix: pickPreferredPublicDomainValue(preferred.domainSuffix, fallback.domainSuffix),
     name: pickPreferredText(preferred.name, fallback.name),
-    domain: pickPreferredText(preferred.domain, fallback.domain),
+    domain: pickPreferredPublicDomainValue(preferred.domain, fallback.domain) || preferred.id,
     category: pickPreferredText(preferred.category, fallback.category),
     industry: (pickPreferredText(preferred.industry, fallback.industry) || "") as MerchantListPublishedSite["industry"],
     location: mergePublishedSnapshotLocation(preferred.location, fallback.location),
@@ -220,6 +233,7 @@ export function buildPublishedMerchantSnapshotFromRows(
   pageRows.forEach((row) => {
     const merchantId = String(row.merchant_id ?? "").trim();
     if (!isNumericMerchantId(merchantId)) return;
+    if (isInternalPagesSlug(row.slug)) return;
     pageByMerchantId.set(
       merchantId,
       choosePreferredPublishedMerchantPageRow(pageByMerchantId.get(merchantId) ?? null, row),

@@ -40,6 +40,11 @@ function normalizeMerchantId(value: unknown) {
   return /^\d{8}$/.test(normalized) ? normalized : "";
 }
 
+function normalizePublicDomainPrefix(value: unknown) {
+  const normalized = normalizeText(value).toLowerCase();
+  return normalized.startsWith("__") ? "" : normalized;
+}
+
 function normalizePlatformMerchantSnapshotRevision(value: unknown) {
   return normalizeText(value);
 }
@@ -258,8 +263,9 @@ function normalizeSnapshotSite(input: unknown): MerchantListPublishedSite | null
   const merchantName = normalizeText(value.merchantName);
   const signature = normalizeText(value.signature);
   const name = normalizeText(value.name) || merchantName || id;
-  const domainPrefix = normalizeText(value.domainPrefix).toLowerCase();
-  const domainSuffix = normalizeText(value.domainSuffix).toLowerCase();
+  const domainPrefix = normalizePublicDomainPrefix(value.domainPrefix);
+  const domainSuffix = normalizePublicDomainPrefix(value.domainSuffix);
+  const domain = normalizePublicDomainPrefix(value.domain) || domainPrefix || domainSuffix || id;
   const businessCards = normalizeMerchantBusinessCards(value.businessCards);
   return {
     id,
@@ -268,7 +274,7 @@ function normalizeSnapshotSite(input: unknown): MerchantListPublishedSite | null
     domainPrefix,
     domainSuffix,
     name,
-    domain: normalizeText(value.domain) || domainPrefix || domainSuffix || id,
+    domain,
     category: normalizeText(value.category),
     industry: normalizeMerchantIndustry(value.industry),
     location: normalizeSiteLocation(value.location),
@@ -335,8 +341,9 @@ export function buildPlatformMerchantSnapshotPayloadFromSites(
     const id = normalizeMerchantId(site.id);
     if (!id) return;
     const merchantName = normalizeText(site.merchantName);
-    const domainPrefix = normalizeText(site.domainPrefix ?? site.domainSuffix).toLowerCase();
-    const domainSuffix = normalizeText(site.domainSuffix ?? site.domainPrefix).toLowerCase();
+    const domainPrefix = normalizePublicDomainPrefix(site.domainPrefix ?? site.domainSuffix);
+    const domainSuffix = normalizePublicDomainPrefix(site.domainSuffix ?? site.domainPrefix);
+    const domain = normalizePublicDomainPrefix(site.domain) || domainPrefix || domainSuffix || id;
     snapshotItems.push({
       id,
       merchantName,
@@ -344,7 +351,7 @@ export function buildPlatformMerchantSnapshotPayloadFromSites(
       domainPrefix,
       domainSuffix,
       name: normalizeText(site.name) || merchantName || id,
-      domain: normalizeText(site.domain) || domainPrefix || domainSuffix || id,
+      domain,
       category: normalizeText(site.category),
       industry: normalizeMerchantIndustry(site.industry),
       location: normalizeSiteLocation(site.location),

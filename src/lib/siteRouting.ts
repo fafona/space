@@ -20,6 +20,10 @@ function normalizeDomainPrefix(value: string | null | undefined) {
     .replace(/[^a-z0-9_-]/g, "");
 }
 
+function isReservedInternalPrefix(value: string | null | undefined) {
+  return normalizeDomainPrefix(value).startsWith("__");
+}
+
 function normalizeHost(value: string | null | undefined) {
   return String(value ?? "")
     .trim()
@@ -87,7 +91,7 @@ function deriveRootHostFromCurrentHost(currentHost?: string | null) {
 
 export function buildMerchantDomain(baseDomain: string | null | undefined, domainPrefix?: string | null, protocol?: string | null) {
   const prefix = normalizeDomainPrefix(domainPrefix);
-  if (!prefix) return "";
+  if (!prefix || isReservedInternalPrefix(prefix)) return "";
   const rootHost = resolveMerchantRootHost(baseDomain);
   if (!rootHost) return "";
   const { hostname, port } = splitHostAndPort(rootHost);
@@ -121,7 +125,7 @@ export function extractMerchantPrefixFromHost(currentHost: string | null | undef
 
 export function buildMerchantFrontendHref(siteId: string, domainPrefix?: string | null, baseDomain?: string | null) {
   const prefix = normalizeDomainPrefix(domainPrefix);
-  if (prefix) {
+  if (prefix && !isReservedInternalPrefix(prefix)) {
     const resolvedBase = resolveRuntimePortalBaseDomain(baseDomain ?? process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "");
     const subdomainHref = buildMerchantDomain(resolvedBase, prefix);
     if (subdomainHref) return subdomainHref;

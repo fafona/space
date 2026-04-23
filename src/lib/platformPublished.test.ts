@@ -57,6 +57,30 @@ test("buildPublishedMerchantSnapshotFromRows maps published merchant pages into 
   assert.equal(byId.get("10000001")?.merchantCardImageOpacity, 1);
 });
 
+test("buildPublishedMerchantSnapshotFromRows ignores internal storage slugs when they are newer", () => {
+  const snapshot = buildPublishedMerchantSnapshotFromRows(
+    [
+      {
+        merchant_id: "10000000",
+        slug: "fafona",
+        updated_at: "2026-04-18T07:00:00.000Z",
+        created_at: "2026-04-18T07:00:00.000Z",
+      },
+      {
+        merchant_id: "10000000",
+        slug: "__merchant_orders__:10000000:chunk:0",
+        updated_at: "2026-04-23T12:00:00.000Z",
+        created_at: "2026-04-23T12:00:00.000Z",
+      },
+    ],
+    [{ id: "10000000", name: "fafona", created_at: "2026-03-02T13:51:41.778Z" }],
+  );
+
+  assert.equal(snapshot.length, 1);
+  assert.equal(snapshot[0]?.domainPrefix, "fafona");
+  assert.equal(snapshot[0]?.domain, "fafona");
+});
+
 test("injectPublishedMerchantSnapshotIntoBlocks patches empty merchant snapshots recursively", () => {
   const blocks: Block[] = [
     {
@@ -678,4 +702,74 @@ test("mergePublishedMerchantSnapshots restores missing published merchants while
   assert.equal(byId.get("10000000")?.merchantCardImageOpacity, 0.45);
   assert.equal(byId.get("10000000")?.industry, "娱乐");
   assert.equal(byId.get("10000001")?.merchantName, "ABC");
+});
+
+test("mergePublishedMerchantSnapshots drops internal storage prefixes from fallback snapshots", () => {
+  const merged = mergePublishedMerchantSnapshots(
+    [
+      {
+        id: "10000000",
+        merchantName: "fafona",
+        domainPrefix: "",
+        domainSuffix: "",
+        name: "fafona",
+        domain: "10000000",
+        category: "",
+        industry: "",
+        location: {
+          countryCode: "",
+          country: "",
+          provinceCode: "",
+          province: "",
+          city: "",
+        },
+        merchantCardImageUrl: "",
+        merchantCardImageOpacity: 1,
+        sortConfig: {
+          recommendedCountryRank: null,
+          recommendedProvinceRank: null,
+          recommendedCityRank: null,
+          industryCountryRank: null,
+          industryProvinceRank: null,
+          industryCityRank: null,
+        },
+        createdAt: "2026-03-29T17:36:59.114Z",
+      },
+    ],
+    [
+      {
+        id: "10000000",
+        merchantName: "fafona",
+        domainPrefix: "__merchant_orders__:10000000:chunk:0",
+        domainSuffix: "__merchant_orders__:10000000:chunk:0",
+        name: "fafona",
+        domain: "__merchant_orders__:10000000:chunk:0",
+        category: "",
+        industry: "",
+        location: {
+          countryCode: "ES",
+          country: "Spain",
+          provinceCode: "41",
+          province: "Sevilla",
+          city: "Sevilla",
+        },
+        merchantCardImageUrl: "https://example.com/card.webp",
+        merchantCardImageOpacity: 0.45,
+        sortConfig: {
+          recommendedCountryRank: null,
+          recommendedProvinceRank: null,
+          recommendedCityRank: null,
+          industryCountryRank: null,
+          industryProvinceRank: null,
+          industryCityRank: null,
+        },
+        createdAt: "2026-03-29T17:36:59.114Z",
+      },
+    ],
+  );
+
+  assert.equal(merged[0]?.domainPrefix, "");
+  assert.equal(merged[0]?.domainSuffix, "");
+  assert.equal(merged[0]?.domain, "10000000");
+  assert.equal(merged[0]?.merchantCardImageUrl, "https://example.com/card.webp");
 });

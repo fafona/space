@@ -1,4 +1,4 @@
-const FAOLLA_SW_VERSION = "faolla-pwa-v20260423-2";
+const FAOLLA_SW_VERSION = "faolla-pwa-v20260423-3";
 const FAOLLA_BADGE_CACHE = "faolla-badge-state-v1";
 const FAOLLA_BADGE_STATE_URL = "/__faolla_badge_state__";
 const FAOLLA_VISIBILITY_STATE_URL = "/__faolla_visibility_state__";
