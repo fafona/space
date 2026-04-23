@@ -40,7 +40,7 @@ import {
   parseMerchantOrderPriceValue,
   type MerchantOrderCustomerInput,
 } from "@/lib/merchantOrders";
-import { readMerchantSessionPayload } from "@/lib/authSessionRecovery";
+import { resolveFrontendAuthPayload } from "@/lib/authSessionRecovery";
 import { readPersonalCustomerProfileFromSession, type PersonalCustomerProfile } from "@/lib/personalCustomerProfile";
 
 type ProductBlockProps = BackgroundEditableProps &
@@ -623,7 +623,7 @@ export default function ProductBlock(props: ProductBlockProps) {
     }
     let cancelled = false;
     const loadCustomerDefaults = async () => {
-      const payload = await readMerchantSessionPayload(2600).catch(() => null);
+      const payload = await resolveFrontendAuthPayload(4200).catch(() => null);
       if (cancelled) return;
       if (payload?.authenticated !== true || !payload.user) {
         setCartCustomerDefaults({});

@@ -1,4 +1,5 @@
 import type { Session } from "@supabase/supabase-js";
+import { requestParentFrontendAuthPayload } from "@/lib/frontendAuthBridge";
 import { legacySupabaseAuthStorageKey, resolvedSupabaseAuthStorageKey, supabase } from "@/lib/supabase";
 
 type SessionTokens = {
@@ -306,6 +307,33 @@ export async function readMerchantSessionPayload(timeoutMs = 4500): Promise<Merc
   })();
   merchantSessionPayloadInFlight = task;
   return task;
+}
+
+function isAuthenticatedMerchantSessionPayload(payload: MerchantCookieSessionPayload | null | undefined) {
+  return payload?.authenticated === true && Boolean(payload.user);
+}
+
+export async function resolveFrontendAuthPayload(timeoutMs = 4500): Promise<MerchantCookieSessionPayload | null> {
+  const cookiePayload = await readMerchantSessionPayload(timeoutMs).catch(() => null);
+  if (isAuthenticatedMerchantSessionPayload(cookiePayload)) return cookiePayload;
+
+  const parentPayload = await requestParentFrontendAuthPayload(Math.max(800, Math.min(1800, timeoutMs))).catch(
+    () => null,
+  );
+  if (isAuthenticatedMerchantSessionPayload(parentPayload)) return parentPayload;
+
+  if (hasStoredBrowserSupabaseSessionTokens()) {
+    const session = await recoverBrowserSupabaseSessionWithRefresh(Math.max(4200, timeoutMs + 2600)).catch(() => null);
+    if (session) {
+      const syncedPayload = await syncMerchantSessionCookies(session, Math.max(3200, timeoutMs + 1600)).catch(
+        () => null,
+      );
+      if (isAuthenticatedMerchantSessionPayload(syncedPayload)) return syncedPayload;
+    }
+  }
+
+  const retryPayload = await readMerchantSessionPayload(Math.max(1800, timeoutMs)).catch(() => null);
+  return isAuthenticatedMerchantSessionPayload(retryPayload) ? retryPayload : null;
 }
 
 async function readMerchantCookieSessionPayload(timeoutMs: number) {

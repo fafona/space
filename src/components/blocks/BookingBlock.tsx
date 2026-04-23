@@ -37,7 +37,7 @@ import { getBackgroundStyle } from "./backgroundStyle";
 import { getBlockBorderClass, getBlockBorderInlineStyle } from "./borderStyle";
 import { resolveMobileFitCardClass, resolveMobileFitSectionClass } from "./mobileFrame";
 import { toRichHtml } from "./richText";
-import { readMerchantSessionPayload } from "@/lib/authSessionRecovery";
+import { resolveFrontendAuthPayload } from "@/lib/authSessionRecovery";
 import { readPersonalCustomerProfileFromSession, type PersonalCustomerProfile } from "@/lib/personalCustomerProfile";
 
 type BookingBlockComponentProps = BookingProps & {
@@ -254,7 +254,7 @@ export default function BookingBlock({
     }
     let cancelled = false;
     const loadCustomerDefaults = async () => {
-      const payload = await readMerchantSessionPayload(2600).catch(() => null);
+      const payload = await resolveFrontendAuthPayload(4200).catch(() => null);
       if (cancelled) return;
       if (payload?.authenticated !== true || !payload.user) {
         setBookingCustomerDefaults({});

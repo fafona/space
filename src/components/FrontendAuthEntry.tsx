@@ -3,15 +3,11 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  hasStoredBrowserSupabaseSessionTokens,
   readMerchantSessionMerchantIds,
-  readMerchantSessionPayload,
-  recoverBrowserSupabaseSessionWithRefresh,
-  syncMerchantSessionCookies,
+  resolveFrontendAuthPayload,
   type MerchantCookieSessionPayload,
 } from "@/lib/authSessionRecovery";
 import { buildBackendFaollaHref } from "@/lib/faollaEntry";
-import { requestParentFrontendAuthPayload } from "@/lib/frontendAuthBridge";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import { buildMerchantBackendHref } from "@/lib/siteRouting";
 
@@ -110,31 +106,6 @@ function readSessionAccountId(payload: MerchantCookieSessionPayload | null, merc
     trimText(payload?.user?.email) ||
     "-"
   );
-}
-
-function isAuthenticatedPayload(payload: MerchantCookieSessionPayload | null | undefined) {
-  return payload?.authenticated === true;
-}
-
-async function resolveFrontendAuthPayload(timeoutMs: number) {
-  const cookiePayload = await readMerchantSessionPayload(timeoutMs).catch(() => null);
-  if (isAuthenticatedPayload(cookiePayload)) return cookiePayload;
-
-  const parentPayload = await requestParentFrontendAuthPayload(Math.max(800, Math.min(1800, timeoutMs))).catch(
-    () => null,
-  );
-  if (isAuthenticatedPayload(parentPayload)) return parentPayload;
-
-  if (hasStoredBrowserSupabaseSessionTokens()) {
-    const session = await recoverBrowserSupabaseSessionWithRefresh(Math.max(4200, timeoutMs + 2600)).catch(() => null);
-    if (session) {
-      const syncedPayload = await syncMerchantSessionCookies(session, Math.max(3200, timeoutMs + 1600)).catch(() => null);
-      if (isAuthenticatedPayload(syncedPayload)) return syncedPayload;
-    }
-  }
-
-  const retryPayload = await readMerchantSessionPayload(Math.max(1800, timeoutMs)).catch(() => null);
-  return isAuthenticatedPayload(retryPayload) ? retryPayload : null;
 }
 
 export default function FrontendAuthEntry({
