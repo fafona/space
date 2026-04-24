@@ -31,6 +31,7 @@ import {
 import { type PlatformSupportMessage, type PlatformSupportThread } from "@/lib/platformSupportInbox";
 import {
   formatSupportConversationPreview,
+  isSupportShortMerchantCardLink,
   parseSupportMessageAttachmentPreview,
 } from "@/lib/supportMessageAttachments";
 import {
@@ -149,6 +150,7 @@ type PersonalProfileResponsePayload = {
   message?: unknown;
   user?: MeSessionPayload["user"] | null;
   profile?: Partial<PersonalProfileDraft> | null;
+  businessCards?: MerchantBusinessCardAsset[] | null;
 };
 
 type PersonalBookingsResponsePayload = {
@@ -205,8 +207,6 @@ const SUPPORT_FILE_PICKER_ACCEPT = [
   ".pptx",
 ].join(",");
 const PERSONAL_AVATAR_MAX_BYTES = 512 * 1024;
-const PERSONAL_BUSINESS_CARD_STORAGE_KEY_PREFIX = "faolla:personal-business-cards:";
-
 const EMPTY_PERSONAL_PROFILE: PersonalProfileDraft = {
   displayName: "",
   avatarUrl: "",
@@ -299,21 +299,6 @@ function readPersonalProfile(payload: MeSessionPayload | null): PersonalProfileD
     city: read("city"),
     address: read("address", "contactAddress"),
   };
-}
-
-function readPersonalBusinessCards(payload: MeSessionPayload | null) {
-  const userMetadata = payload?.user?.user_metadata ?? null;
-  const profile =
-    userMetadata?.personal_profile && typeof userMetadata.personal_profile === "object"
-      ? (userMetadata.personal_profile as Record<string, unknown>)
-      : {};
-  return normalizeMerchantBusinessCards(
-    profile.businessCards ??
-      profile.business_cards ??
-      userMetadata?.businessCards ??
-      userMetadata?.business_cards ??
-      [],
-  );
 }
 
 function mergePersonalProfileDraft(base: PersonalProfileDraft, patch: Partial<PersonalProfileDraft> | null | undefined) {
@@ -911,6 +896,36 @@ function buildConversationMerchantCardLink(card: MerchantBusinessCardAsset | nul
   const input = buildConversationMerchantCardShareInput(card);
   if (!input) return "";
   return buildMerchantBusinessCardShareUrl(input);
+}
+
+function resolvePersonalBusinessCardPreviewUrl(card: MerchantBusinessCardAsset | null | undefined) {
+  if (!card) return "";
+  const preferredUrl =
+    normalizeConversationDetailText(card.shareImageUrl) || normalizeConversationDetailText(card.imageUrl);
+  return normalizePublicAssetUrl(preferredUrl);
+}
+
+function buildPersonalBusinessCardImageMessageText(input: {
+  card: MerchantBusinessCardAsset;
+  imageUrl?: string;
+}) {
+  return (
+    normalizePublicAssetUrl(normalizeConversationDetailText(input.imageUrl)) ||
+    resolvePersonalBusinessCardPreviewUrl(input.card)
+  );
+}
+
+function buildPersonalBusinessCardLinkMessageText(input: {
+  card: MerchantBusinessCardAsset;
+  shareUrl?: string;
+}) {
+  const fallbackShareUrl = buildConversationMerchantCardLink(input.card);
+  const shareUrl = isSupportShortMerchantCardLink(input.shareUrl ?? "")
+    ? normalizeConversationDetailText(input.shareUrl)
+    : isSupportShortMerchantCardLink(fallbackShareUrl)
+      ? normalizeConversationDetailText(fallbackShareUrl)
+      : "";
+  return shareUrl ? ["联系卡", shareUrl].join("\n") : "";
 }
 
 function normalizeConversationExternalUrl(value: string | null | undefined, fallbackOrigin?: string | null) {
@@ -1677,6 +1692,8 @@ export default function MePage() {
   const [supportSearchError, setSupportSearchError] = useState("");
   const [supportDraft, setSupportDraft] = useState("");
   const [supportContactKeyword, setSupportContactKeyword] = useState("");
+  const [supportSelfCardPickerOpen, setSupportSelfCardPickerOpen] = useState(false);
+  const [supportSelfCardPickerCards, setSupportSelfCardPickerCards] = useState<MerchantBusinessCardAsset[]>([]);
   const [personalProfileDraft, setPersonalProfileDraft] = useState<PersonalProfileDraft>(EMPTY_PERSONAL_PROFILE);
   const [personalBusinessCards, setPersonalBusinessCards] = useState<MerchantBusinessCardAsset[]>([]);
   const [personalProfileSaving, setPersonalProfileSaving] = useState(false);
@@ -1700,6 +1717,11 @@ export default function MePage() {
   const supportInputRef = useRef<HTMLTextAreaElement | null>(null);
   const supportSendingRef = useRef(false);
   const supportSendPointerHandledRef = useRef(false);
+  const supportSelfCardShareBundleRef = useRef<Record<string, { shareUrl: string; shareKey: string; imageUrl: string }>>(
+    {},
+  );
+  const personalBusinessCardsRef = useRef<MerchantBusinessCardAsset[]>([]);
+  const personalBusinessCardsSaveRequestIdRef = useRef(0);
   const personalDesktopFaollaFrameRef = useRef<HTMLIFrameElement | null>(null);
   const personalMobileFaollaFrameRef = useRef<HTMLIFrameElement | null>(null);
   const personalAvatarInputRef = useRef<HTMLInputElement | null>(null);
@@ -1801,11 +1823,52 @@ export default function MePage() {
   const personalProfile = useMemo(() => readPersonalProfile(payload), [payload]);
   const displayName = personalProfile.displayName || readDisplayName(payload);
   const profileName = displayName || email.split("@")[0] || accountId || "个人用户";
-  const personalBusinessCardStorageKey = useMemo(
-    () => (accountId ? `${PERSONAL_BUSINESS_CARD_STORAGE_KEY_PREFIX}${accountId}` : ""),
+  const personalBusinessCardPermissionConfig = useMemo(() => createDefaultMerchantPermissionConfig(), []);
+  const persistPersonalBusinessCards = useCallback(
+    async (cards: MerchantBusinessCardAsset[]) => {
+      if (!accountId) return;
+      const normalizedCards = normalizeMerchantBusinessCards(cards);
+      const previousCards = personalBusinessCardsRef.current;
+      personalBusinessCardsRef.current = normalizedCards;
+      setPersonalBusinessCards(normalizedCards);
+      setPersonalProfileMessage("");
+      const requestId = personalBusinessCardsSaveRequestIdRef.current + 1;
+      personalBusinessCardsSaveRequestIdRef.current = requestId;
+      try {
+        const response = await fetch("/api/personal-profile", {
+          method: "POST",
+          cache: "no-store",
+          credentials: "same-origin",
+          headers: {
+            "Content-Type": "application/json",
+            accept: "application/json",
+          },
+          body: JSON.stringify({
+            businessCards: normalizedCards,
+          }),
+        });
+        const result = (await response.json().catch(() => null)) as PersonalProfileResponsePayload | null;
+        if (!response.ok || !result || result.ok !== true) {
+          throw new Error(readPayloadMessage(result?.message, "名片保存失败，请稍后重试"));
+        }
+        const nextCards = normalizeMerchantBusinessCards(result.businessCards);
+        if (personalBusinessCardsSaveRequestIdRef.current === requestId) {
+          personalBusinessCardsRef.current = nextCards;
+          setPersonalBusinessCards(nextCards);
+        }
+      } catch (error) {
+        if (personalBusinessCardsSaveRequestIdRef.current === requestId) {
+          personalBusinessCardsRef.current = previousCards;
+          setPersonalBusinessCards(previousCards);
+          setPersonalProfileMessage(
+            error instanceof Error ? error.message : "名片保存失败，请稍后重试",
+          );
+        }
+        throw error;
+      }
+    },
     [accountId],
   );
-  const personalBusinessCardPermissionConfig = useMemo(() => createDefaultMerchantPermissionConfig(), []);
   const personalBusinessCardProfile = useMemo(
     () =>
       ({
@@ -1835,12 +1898,19 @@ export default function MePage() {
       profileName,
     ],
   );
+  useEffect(() => {
+    personalBusinessCardsRef.current = personalBusinessCards;
+  }, [personalBusinessCards]);
+  useEffect(() => {
+    supportSelfCardShareBundleRef.current = {};
+  }, [personalBusinessCards]);
   const personalBusinessCardTargetUrl = useMemo(() => {
+    if (!accountId) return "https://faolla.com";
     if (typeof window !== "undefined") {
-      return new URL("/me", window.location.origin).toString();
+      return new URL(`/u/${accountId}`, window.location.origin).toString();
     }
-    return "https://faolla.com/me";
-  }, []);
+    return `https://faolla.com/u/${accountId}`;
+  }, [accountId]);
   const personalBusinessCardManagerCommonProps = useMemo(
     () =>
       accountId
@@ -1856,13 +1926,7 @@ export default function MePage() {
             backgroundImageLimitKb: personalBusinessCardPermissionConfig.businessCardBackgroundImageLimitKb,
             contactPageImageLimitKb: personalBusinessCardPermissionConfig.businessCardContactImageLimitKb,
             exportImageLimitKb: personalBusinessCardPermissionConfig.businessCardExportImageLimitKb,
-            onCardsChange: (cards: MerchantBusinessCardAsset[]) => {
-              const normalizedCards = normalizeMerchantBusinessCards(cards);
-              setPersonalBusinessCards(normalizedCards);
-              if (typeof window !== "undefined" && personalBusinessCardStorageKey) {
-                window.localStorage.setItem(personalBusinessCardStorageKey, JSON.stringify(normalizedCards));
-              }
-            },
+            onCardsChange: persistPersonalBusinessCards,
           }
         : null,
     [
@@ -1873,9 +1937,9 @@ export default function MePage() {
       personalBusinessCardPermissionConfig.businessCardExportImageLimitKb,
       personalBusinessCardPermissionConfig.businessCardLimit,
       personalBusinessCardProfile,
-      personalBusinessCardStorageKey,
       personalBusinessCardTargetUrl,
       personalBusinessCards,
+      persistPersonalBusinessCards,
     ],
   );
   useEffect(() => {
@@ -1884,25 +1948,35 @@ export default function MePage() {
       setPersonalBusinessCards([]);
       return;
     }
-    const fallbackCards = readPersonalBusinessCards(payload);
-    if (typeof window === "undefined" || !personalBusinessCardStorageKey) {
-      setPersonalBusinessCards(fallbackCards);
-      return;
-    }
-    try {
-      const stored = window.localStorage.getItem(personalBusinessCardStorageKey);
-      if (stored) {
-        setPersonalBusinessCards(normalizeMerchantBusinessCards(JSON.parse(stored) as unknown));
-        return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await fetch("/api/personal-profile", {
+          method: "GET",
+          cache: "no-store",
+          credentials: "same-origin",
+          headers: {
+            accept: "application/json",
+          },
+        });
+        const result = (await response.json().catch(() => null)) as PersonalProfileResponsePayload | null;
+        if (!response.ok || !result || result.ok !== true) {
+          throw new Error(readPayloadMessage(result?.message, "名片加载失败，请稍后重试"));
+        }
+        if (cancelled) return;
+        const nextCards = normalizeMerchantBusinessCards(result.businessCards);
+        personalBusinessCardsRef.current = nextCards;
+        setPersonalBusinessCards(nextCards);
+      } catch {
+        if (cancelled) return;
+        personalBusinessCardsRef.current = [];
+        setPersonalBusinessCards([]);
       }
-      setPersonalBusinessCards(fallbackCards);
-      if (fallbackCards.length > 0) {
-        window.localStorage.setItem(personalBusinessCardStorageKey, JSON.stringify(fallbackCards));
-      }
-    } catch {
-      setPersonalBusinessCards(fallbackCards);
-    }
-  }, [accountId, loading, payload, personalBusinessCardStorageKey]);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [accountId, loading]);
   const avatarLabel = getInitialLabel(profileName);
   const personalAvatarImageUrl = personalProfileDraft.avatarUrl || personalProfile.avatarUrl;
   const mobileSelfSelectedLanguage = useMemo(
@@ -1916,7 +1990,7 @@ export default function MePage() {
   ]
     .filter(Boolean)
     .join(" / ");
-  const mobileSelfCardsSummary = "个人名片夹会在下一步接入。";
+  const mobileSelfCardsSummary = "管理个人名片、短链和可发送名片。";
   const mobileSelfNotificationSummary = "系统通知、提示音和震动设置。";
 
   const refreshPersonalConsumption = useCallback(() => {
@@ -2276,7 +2350,7 @@ export default function MePage() {
       { key: "bookings", label: "预约", description: "查看你提交给商户的预约记录。" },
       { key: "orders", label: "订单", description: "查看你在商户网站提交的订单。" },
       { key: "favorites", label: "收藏", description: "保存常用商户、页面和产品。" },
-      { key: "cards", label: "名片夹", description: "管理收到或保存的名片。" },
+      { key: "cards", label: "名片夹", description: "管理个人名片、短链和聊天发送用名片。" },
       { key: "faolla", label: "Faolla", description: "Faolla" },
     ],
     [],
@@ -2836,6 +2910,166 @@ export default function MePage() {
     };
   }
 
+  async function ensurePersonalBusinessCardShareBundle(card: MerchantBusinessCardAsset) {
+    const cachedBundle = supportSelfCardShareBundleRef.current[card.id];
+    if (
+      normalizeConversationDetailText(cachedBundle?.imageUrl) &&
+      (card.mode !== "link" || normalizeConversationDetailText(cachedBundle?.shareUrl))
+    ) {
+      return cachedBundle;
+    }
+
+    const resolveShareAssetUrl = async (value: string) => {
+      const normalized = normalizeConversationDetailText(value);
+      if (!normalized) return "";
+      if (/^data:image\//i.test(normalized)) {
+        const uploadResult = await uploadSupportAssetDataUrl(normalized, "merchant-assets");
+        return uploadResult.ok ? normalizePublicAssetUrl(uploadResult.url) : "";
+      }
+      return normalizePublicAssetUrl(normalized);
+    };
+
+    const shareInput = buildConversationMerchantCardShareInput(card);
+    const imageUrl =
+      normalizeConversationDetailText(cachedBundle?.imageUrl) ||
+      (await resolveShareAssetUrl(shareInput?.imageUrl || card.imageUrl));
+
+    if (card.mode !== "link") {
+      const nextBundle = {
+        shareUrl: "",
+        shareKey: normalizeConversationDetailText(card.shareKey),
+        imageUrl,
+      };
+      if (imageUrl) {
+        supportSelfCardShareBundleRef.current[card.id] = nextBundle;
+      }
+      return nextBundle;
+    }
+
+    const fallbackShareUrl = buildConversationMerchantCardLink(card);
+    if (!shareInput?.targetUrl || !imageUrl) {
+      const nextBundle = {
+        shareUrl: isSupportShortMerchantCardLink(fallbackShareUrl) ? fallbackShareUrl : "",
+        shareKey: normalizeConversationDetailText(card.shareKey),
+        imageUrl,
+      };
+      if (imageUrl || nextBundle.shareUrl) {
+        supportSelfCardShareBundleRef.current[card.id] = nextBundle;
+      }
+      return nextBundle;
+    }
+
+    const detailImageUrl = await resolveShareAssetUrl(shareInput.detailImageUrl || "");
+
+    try {
+      const response = await fetch("/api/business-card-share", {
+        method: "POST",
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          accept: "application/json",
+        },
+        body: JSON.stringify({
+          key: shareInput.shareKey,
+          name: shareInput.name,
+          imageUrl,
+          detailImageUrl,
+          detailImageHeight:
+            typeof shareInput.detailImageHeight === "number" ? Math.round(shareInput.detailImageHeight) : undefined,
+          targetUrl: shareInput.targetUrl,
+          contact: shareInput.contact,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | {
+            shareKey?: unknown;
+            shareUrl?: unknown;
+          }
+        | null;
+      const shareUrlRaw = typeof payload?.shareUrl === "string" ? payload.shareUrl.trim() : "";
+      const shareUrl = isSupportShortMerchantCardLink(shareUrlRaw)
+        ? shareUrlRaw
+        : isSupportShortMerchantCardLink(fallbackShareUrl)
+          ? fallbackShareUrl
+          : "";
+      const shareKey =
+        typeof payload?.shareKey === "string" && payload.shareKey.trim()
+          ? payload.shareKey.trim()
+          : normalizeConversationDetailText(card.shareKey);
+      const nextBundle = {
+        shareUrl,
+        shareKey,
+        imageUrl,
+      };
+      if (imageUrl || shareUrl) {
+        supportSelfCardShareBundleRef.current[card.id] = nextBundle;
+      }
+      return nextBundle;
+    } catch {
+      const nextBundle = {
+        shareUrl: isSupportShortMerchantCardLink(fallbackShareUrl) ? fallbackShareUrl : "",
+        shareKey: normalizeConversationDetailText(card.shareKey),
+        imageUrl,
+      };
+      if (imageUrl || nextBundle.shareUrl) {
+        supportSelfCardShareBundleRef.current[card.id] = nextBundle;
+      }
+      return nextBundle;
+    }
+  }
+
+  function openSupportSelfCardPicker() {
+    setSupportAttachmentMenuOpen(false);
+    setSupportError("");
+    supportInputRef.current?.blur();
+    const nextCards = personalBusinessCardsRef.current;
+    if (nextCards.length > 0) {
+      setSupportSelfCardPickerCards(nextCards);
+      setSupportSelfCardPickerOpen(true);
+      return;
+    }
+    setSupportSelfCardPickerCards([]);
+    setSupportError("当前还没有可发送的名片，请先在名片夹里生成名片");
+  }
+
+  async function handleSupportBusinessCardAttachment(card: MerchantBusinessCardAsset) {
+    if (supportComposerBusy) return;
+    setSupportAttachmentBusy(true);
+    setSupportAttachmentMenuOpen(false);
+    setSupportSelfCardPickerOpen(false);
+    supportInputRef.current?.blur();
+    try {
+      const shareBundle = await ensurePersonalBusinessCardShareBundle(card);
+      const imageMessageText = buildPersonalBusinessCardImageMessageText({
+        card,
+        imageUrl: shareBundle.imageUrl,
+      });
+      if (!imageMessageText) {
+        setSupportError("当前名片暂时无法发送，请稍后重试");
+        return;
+      }
+      const sentImage = await sendSupportTextPayload(imageMessageText);
+      if (!sentImage) return;
+      if (card.mode === "link") {
+        const linkMessageText = buildPersonalBusinessCardLinkMessageText({
+          card,
+          shareUrl: shareBundle.shareUrl,
+        });
+        if (!linkMessageText) {
+          setSupportError("联系卡短链暂时没生成成功，已先发送名片图片");
+          return;
+        }
+        const sentLink = await sendSupportTextPayload(linkMessageText);
+        if (!sentLink) {
+          setSupportError("名片图已发送，但联系卡短链发送失败，请稍后重试");
+        }
+      }
+    } finally {
+      setSupportAttachmentBusy(false);
+    }
+  }
+
   function updatePersonalProfileDraft(field: keyof PersonalProfileDraft, value: string) {
     setPersonalProfileMessage("");
     setPersonalProfileDraft((current) => ({
@@ -3200,7 +3434,15 @@ export default function MePage() {
           }}
           disabled={supportComposerBusy || !supportComposerAvailable}
         />
-        <div className="flex min-w-0 justify-end">
+        <div className="flex min-w-0 justify-end gap-2">
+          <button
+            type="button"
+            className="shrink-0 rounded border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+            onClick={openSupportSelfCardPicker}
+            disabled={supportComposerBusy || !supportComposerAvailable}
+          >
+            名片
+          </button>
           <button
             type="button"
             className="shrink-0 rounded bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50"
@@ -3209,6 +3451,84 @@ export default function MePage() {
           >
             {supportComposerBusy ? "发送中..." : selectedSupportSendButtonLabel}
           </button>
+        </div>
+      </div>
+    );
+  }
+
+  function renderSupportSelfCardPickerOverlay() {
+    if (!supportSelfCardPickerOpen) return null;
+    return (
+      <div className="fixed inset-0 z-[2147483398]">
+        <button
+          type="button"
+          className="absolute inset-0 bg-slate-950/40 backdrop-blur-[1px]"
+          onClick={() => setSupportSelfCardPickerOpen(false)}
+          aria-label="关闭名片夹"
+        />
+        <div className="absolute inset-x-0 bottom-0 flex justify-center px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] md:inset-0 md:items-center md:pb-0">
+          <div className="relative flex w-full max-w-md flex-col overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-[0_24px_80px_rgba(15,23,42,0.2)] md:max-w-2xl">
+            <div className="border-b border-slate-100 px-4 pb-3 pt-3 md:px-5 md:py-4">
+              <div className="mx-auto h-1.5 w-12 rounded-full bg-slate-200 md:hidden" />
+              <div className="mt-4 flex items-center justify-between gap-3 md:mt-0">
+                <div>
+                  <div className="text-base font-semibold text-slate-900">我的名片夹</div>
+                  <div className="mt-1 text-xs text-slate-500">选择一张直接发送到当前聊天。</div>
+                </div>
+                <button
+                  type="button"
+                  className="rounded-full border border-slate-200 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50"
+                  onClick={() => setSupportSelfCardPickerOpen(false)}
+                >
+                  关闭
+                </button>
+              </div>
+            </div>
+            <div className="max-h-[58vh] space-y-2 overflow-y-auto px-3 pb-3 pt-3 md:max-h-[70vh] md:px-5 md:pb-5">
+              {supportSelfCardPickerCards.length ? (
+                supportSelfCardPickerCards.map((card) => {
+                  const cardPreviewUrl = resolvePersonalBusinessCardPreviewUrl(card);
+                  const cardModeLabel = card.mode === "link" ? "链接模式" : "图片模式";
+                  const cardShareUrl = buildConversationMerchantCardLink(card);
+                  return (
+                    <button
+                      key={card.id}
+                      type="button"
+                      className="flex w-full items-center gap-3 rounded-[22px] border border-slate-200 bg-slate-50/80 px-3 py-3 text-left transition hover:border-slate-300 hover:bg-white disabled:opacity-50"
+                      onClick={() => {
+                        void handleSupportBusinessCardAttachment(card);
+                      }}
+                      disabled={supportComposerBusy}
+                    >
+                      <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-white p-1 text-xs font-semibold text-slate-700 shadow-sm">
+                        {cardPreviewUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={cardPreviewUrl} alt={card.name} className="h-full w-full rounded-[12px] bg-white object-contain" />
+                        ) : (
+                          getInitialLabel(card.name || "名")
+                        )}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <div className="truncate text-sm font-semibold text-slate-900">{card.name || "未命名名片"}</div>
+                          <span className="shrink-0 rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium text-white">
+                            {cardModeLabel}
+                          </span>
+                        </div>
+                        {card.mode === "link" && isSupportShortMerchantCardLink(cardShareUrl) ? (
+                          <div className="mt-1 truncate text-[11px] text-slate-500">{cardShareUrl}</div>
+                        ) : null}
+                      </div>
+                    </button>
+                  );
+                })
+              ) : (
+                <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+                  当前还没有可发送的名片。
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -3261,7 +3581,7 @@ export default function MePage() {
                   key: "card",
                   label: "名片",
                   color: "bg-violet-50 text-violet-500",
-                  onClick: () => setSupportError("名片夹发送下一步接入"),
+                  onClick: () => void openSupportSelfCardPicker(),
                   icon: (
                     <>
                       <path d="M5 7.5A2.5 2.5 0 0 1 7.5 5h9A2.5 2.5 0 0 1 19 7.5v9a2.5 2.5 0 0 1-2.5 2.5h-9A2.5 2.5 0 0 1 5 16.5v-9Z" stroke="currentColor" strokeWidth="1.8" />
@@ -3287,7 +3607,7 @@ export default function MePage() {
                   key={item.key}
                   type="button"
                   className="flex flex-col items-center gap-2 rounded-2xl px-1 py-2 text-[11px] font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
-                  onClick={item.onClick}
+                  onClick={item.key === "card" ? openSupportSelfCardPicker : item.onClick}
                   disabled={supportComposerBusy}
                 >
                   <span className={`flex h-12 w-12 items-center justify-center rounded-full ${item.color}`}>
@@ -4336,7 +4656,7 @@ export default function MePage() {
       <EmptyFeatureCard
         icon={<Icon name={iconName} />}
         title={item.label}
-        description={`${item.description} 当前先完成个人后台布局，数据接入会在下一步继续补。`}
+        description={item.description}
       />
     );
   }
@@ -4670,7 +4990,7 @@ export default function MePage() {
                   </div>
                   {mobileSelfSection === "profile" ? null : (
                     <div className="mt-1 truncate text-xs text-slate-500">
-                      {mobileSelfSection === "cards" ? "这里统一管理个人名片夹。" : "这里控制系统消息通知、提示音和震动。"}
+                      {mobileSelfSection === "cards" ? "桌面端已接入完整名片夹，当前可在聊天里直接发送已生成名片。" : "这里控制系统消息通知、提示音和震动。"}
                     </div>
                   )}
                 </div>
@@ -4752,7 +5072,7 @@ export default function MePage() {
               <EmptyFeatureCard
                 icon={<Icon name="card" />}
                 title="名片夹"
-                description="个人名片夹会在下一步接入，这里会统一展示保存和可发送的名片。"
+                description="手机端名片夹稍后接入，当前可在桌面端管理名片，并在聊天里直接发送已生成名片。"
               />
             ) : (
               <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
@@ -4842,7 +5162,7 @@ export default function MePage() {
 
             <div className="mt-auto rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
               <div className="text-sm font-semibold text-slate-900">个人中心</div>
-              <p className="mt-2 text-sm leading-6 text-slate-500">个人用户后台会逐步接入会话、预约、订单、收藏和名片夹。</p>
+              <p className="mt-2 text-sm leading-6 text-slate-500">个人用户后台包含会话、预约、订单、收藏、名片夹和 Faolla 菜单。</p>
             </div>
           </div>
         </aside>
@@ -4886,6 +5206,7 @@ export default function MePage() {
       {mobileTab === "conversations" && mobileConversationView === "thread" ? null : (
         <MobileBottomNav activeTab={mobileTab} onChange={openMobileTab} />
       )}
+      {renderSupportSelfCardPickerOverlay()}
       {renderConversationInfoOverlay()}
       {renderPersonalBookingEditDialog()}
     </>

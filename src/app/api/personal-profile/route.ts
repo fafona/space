@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 import { type MerchantAuthUserSummary } from "@/lib/merchantAuthIdentity";
-import { readMerchantAuthCookie, readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
+import { normalizeMerchantBusinessCards, type MerchantBusinessCardAsset } from "@/lib/merchantBusinessCards";
 import {
-  resolvePlatformAccountIdentityForUser,
-  type PlatformIdentitySupabaseClient,
-} from "@/lib/platformAccountIdentity";
+  loadStoredPersonalBusinessCards,
+  saveStoredPersonalBusinessCards,
+} from "@/lib/personalBusinessCardStore";
+import { resolvePersonalAccountSessionFromRequest } from "@/lib/personalAccountSession.server";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
-import { createServerSupabaseAuthClient, createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -24,6 +24,11 @@ type PersonalProfilePatch = {
   province?: unknown;
   city?: unknown;
   address?: unknown;
+};
+
+type PersonalProfileRequestPayload = {
+  profile?: PersonalProfilePatch;
+  businessCards?: unknown;
 };
 
 function trimText(value: unknown, maxLength = 500) {
@@ -62,27 +67,7 @@ function noStoreJson(body: unknown, init?: ResponseInit) {
 }
 
 async function resolvePersonalUser(request: Request) {
-  const authSupabase = createServerSupabaseAuthClient();
-  const adminSupabase = createServerSupabaseServiceClient() as unknown as PlatformIdentitySupabaseClient | null;
-  if (!authSupabase || !adminSupabase) return null;
-
-  const accessTokens = readMerchantRequestAccessTokens(request);
-  const fallbackAccessToken = readMerchantAuthCookie(request);
-  const candidates = [...accessTokens, fallbackAccessToken].map((value) => trimText(value, 4096)).filter(Boolean);
-  let user: MerchantAuthUserSummary | null = null;
-  for (const accessToken of candidates) {
-    const { data, error } = await authSupabase.auth.getUser(accessToken).catch(() => ({ data: null, error: true }));
-    if (!error && data?.user) {
-      user = data.user as MerchantAuthUserSummary;
-      break;
-    }
-  }
-  if (!user?.id) return null;
-
-  const identity = await resolvePlatformAccountIdentityForUser(adminSupabase, user);
-  if (identity.accountType !== "personal" || !identity.accountId) return null;
-
-  return { adminSupabase, user, accountId: identity.accountId };
+  return resolvePersonalAccountSessionFromRequest(request);
 }
 
 function buildProfileMetadataPatch(user: MerchantAuthUserSummary, patch: PersonalProfilePatch) {
@@ -137,10 +122,12 @@ function buildProfileMetadataPatch(user: MerchantAuthUserSummary, patch: Persona
 export async function GET(request: Request) {
   const session = await resolvePersonalUser(request);
   if (!session) return noStoreJson({ ok: false, error: "unauthorized" }, { status: 401 });
+  const cardsPayload = await loadStoredPersonalBusinessCards(session.adminSupabase, session.accountId);
   return noStoreJson({
     ok: true,
     accountId: session.accountId,
     user: session.user,
+    businessCards: cardsPayload?.cards ?? [],
   });
 }
 
@@ -152,28 +139,62 @@ export async function POST(request: Request) {
   const session = await resolvePersonalUser(request);
   if (!session) return noStoreJson({ ok: false, error: "unauthorized" }, { status: 401 });
 
-  const payload = (await request.json().catch(() => null)) as { profile?: PersonalProfilePatch } | null;
+  const payload = (await request.json().catch(() => null)) as PersonalProfileRequestPayload | null;
   const patch = payload?.profile && typeof payload.profile === "object" ? payload.profile : null;
-  if (!patch) return noStoreJson({ ok: false, error: "invalid_profile_payload" }, { status: 400 });
+  const normalizedBusinessCards = payload && "businessCards" in payload
+    ? normalizeMerchantBusinessCards(payload.businessCards)
+    : null;
+  if (!patch && !normalizedBusinessCards) {
+    return noStoreJson({ ok: false, error: "invalid_profile_payload" }, { status: 400 });
+  }
 
-  const { userMetadata, personalProfile } = buildProfileMetadataPatch(session.user, patch);
-  const userId = trimText(session.user.id, 128);
-  if (!userId) return noStoreJson({ ok: false, error: "unauthorized" }, { status: 401 });
+  let nextUser = session.user;
+  let personalProfile =
+    session.user.user_metadata?.personal_profile && typeof session.user.user_metadata.personal_profile === "object"
+      ? (session.user.user_metadata.personal_profile as Record<string, unknown>)
+      : {};
 
-  const { data, error } = await session.adminSupabase.auth.admin.updateUserById(userId, {
-    user_metadata: userMetadata,
-  });
-  if (error) {
-    return noStoreJson({ ok: false, error: "personal_profile_save_failed", message: error.message }, { status: 500 });
+  if (patch) {
+    const { userMetadata, personalProfile: nextProfile } = buildProfileMetadataPatch(session.user, patch);
+    const userId = trimText(session.user.id, 128);
+    if (!userId) return noStoreJson({ ok: false, error: "unauthorized" }, { status: 401 });
+
+    const { data, error } = await session.adminSupabase.auth.admin.updateUserById(userId, {
+      user_metadata: userMetadata,
+    });
+    if (error) {
+      return noStoreJson({ ok: false, error: "personal_profile_save_failed", message: error.message }, { status: 500 });
+    }
+    nextUser = (data?.user as typeof session.user | null) ?? {
+      ...session.user,
+      user_metadata: userMetadata,
+    };
+    personalProfile = nextProfile;
+  }
+
+  let savedBusinessCards: MerchantBusinessCardAsset[] = [];
+  if (normalizedBusinessCards) {
+    const savedCardsResult = await saveStoredPersonalBusinessCards(session.adminSupabase, {
+      accountId: session.accountId,
+      cards: normalizedBusinessCards,
+    });
+    if (savedCardsResult.error) {
+      return noStoreJson(
+        { ok: false, error: "personal_business_cards_save_failed", message: savedCardsResult.error },
+        { status: 500 },
+      );
+    }
+    savedBusinessCards = savedCardsResult.cards ?? normalizedBusinessCards;
+  } else {
+    const cardsPayload = await loadStoredPersonalBusinessCards(session.adminSupabase, session.accountId);
+    savedBusinessCards = cardsPayload?.cards ?? [];
   }
 
   return noStoreJson({
     ok: true,
     accountId: session.accountId,
     profile: personalProfile,
-    user: data?.user ?? {
-      ...session.user,
-      user_metadata: userMetadata,
-    },
+    user: nextUser,
+    businessCards: savedBusinessCards,
   });
 }

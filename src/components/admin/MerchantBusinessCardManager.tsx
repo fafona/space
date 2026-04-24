@@ -56,7 +56,7 @@ type MerchantBusinessCardManagerProps = {
   backgroundImageLimitKb?: number;
   contactPageImageLimitKb?: number;
   exportImageLimitKb?: number;
-  onCardsChange: (cards: MerchantBusinessCardAsset[]) => void;
+  onCardsChange: (cards: MerchantBusinessCardAsset[]) => void | Promise<void>;
 };
 
 type MerchantBusinessCardEditableContactFieldKey = MerchantBusinessCardContactDisplayKey;
@@ -211,6 +211,18 @@ function formatOpacityPercent(value: number) {
 
 function getCardModeLabel(mode: MerchantBusinessCardMode) {
   return mode === "link" ? "链接模式" : "图片模式";
+}
+
+function resolveCardShortLink(card: MerchantBusinessCardAsset | null | undefined) {
+  if (!card || card.mode !== "link") return "";
+  return buildMerchantBusinessCardShareUrl({
+    shareKey: normalizeText(card.shareKey),
+    name: normalizeText(card.name),
+    imageUrl: normalizeText(card.shareImageUrl) || normalizeText(card.imageUrl),
+    detailImageUrl: normalizeText(card.contactPagePublicImageUrl) || normalizeText(card.contactPageImageUrl),
+    detailImageHeight: card.contactPageImageHeight,
+    targetUrl: normalizeText(card.targetUrl),
+  });
 }
 
 function overlay(children: ReactNode) {
@@ -1150,15 +1162,17 @@ export default function MerchantBusinessCardManager({
     if (normalizedCards.length === 0) return;
     const hasManualDisabledState = normalizedCards.some((card) => card.chatDisplayDisabled);
     if (!hasManualDisabledState) return;
-    onCardsChange(
-      normalizeMerchantBusinessCardChatDisplaySelection(
-        normalizedCards.map((card) => ({
-          ...card,
-          showInChat: false,
-          chatDisplayDisabled: false,
-        })),
+    void Promise.resolve(
+      onCardsChange(
+        normalizeMerchantBusinessCardChatDisplaySelection(
+          normalizedCards.map((card) => ({
+            ...card,
+            showInChat: false,
+            chatDisplayDisabled: false,
+          })),
+        ),
       ),
-    );
+    ).catch(() => undefined);
   }, [normalizedCards, onCardsChange]);
 
   const applyDraft = (recipe: (current: MerchantBusinessCardDraft) => MerchantBusinessCardDraft) => {
@@ -1501,7 +1515,7 @@ export default function MerchantBusinessCardManager({
       await deleteCardShare(card);
 
       const nextCards = normalizedCards.filter((item) => item.id !== card.id);
-      onCardsChange(normalizeMerchantBusinessCardChatDisplaySelection(nextCards));
+      await Promise.resolve(onCardsChange(normalizeMerchantBusinessCardChatDisplaySelection(nextCards)));
       if (previewAsset?.id === card.id) {
         setPreviewAsset(null);
         setPreviewOpen(false);
@@ -1528,7 +1542,7 @@ export default function MerchantBusinessCardManager({
   };
 
   const markCardAsChatDisplay = (cardId: string) => {
-    onCardsChange(selectMerchantBusinessCardForChat(normalizedCards, cardId));
+    void Promise.resolve(onCardsChange(selectMerchantBusinessCardForChat(normalizedCards, cardId))).catch(() => undefined);
     setTip("这张名片会在聊天模块中展示");
   };
 
@@ -1603,6 +1617,12 @@ export default function MerchantBusinessCardManager({
                 </div>
                 {card.mode === "link" ? (
                   <div className="space-y-2">
+                    {resolveCardShortLink(card) ? (
+                      <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+                        <div className="text-[11px] font-semibold text-slate-500">短链</div>
+                        <div className="mt-1 break-all text-xs text-slate-900">{resolveCardShortLink(card)}</div>
+                      </div>
+                    ) : null}
                     <div className="grid grid-cols-2 gap-2">
                       <button
                         type="button"
@@ -2525,15 +2545,23 @@ export default function MerchantBusinessCardManager({
                     )}
                   </div>
                   <div className="flex min-h-full items-start justify-center rounded-3xl border border-white/10 bg-white/5 p-4">
-                    <ContactCardSurface
-                      name={previewName}
-                      targetUrl={previewTargetUrl}
-                      contacts={previewContacts}
-                      invoice={previewAsset?.invoice || draft.invoice}
-                      contactFieldOrder={previewContactFieldOrder}
-                      imageUrl={previewContactImageUrl}
-                      imageHeight={previewContactImageHeight}
-                    />
+                    <div className="flex w-full max-w-[430px] flex-col gap-4">
+                      <ContactCardSurface
+                        name={previewName}
+                        targetUrl={previewTargetUrl}
+                        contacts={previewContacts}
+                        invoice={previewAsset?.invoice || draft.invoice}
+                        contactFieldOrder={previewContactFieldOrder}
+                        imageUrl={previewContactImageUrl}
+                        imageHeight={previewContactImageHeight}
+                      />
+                      {resolveCardShortLink(previewAsset) ? (
+                        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-900 shadow-[0_14px_36px_rgba(15,23,42,0.12)]">
+                          <div className="text-xs font-semibold text-slate-500">短链</div>
+                          <div className="mt-2 break-all text-sm">{resolveCardShortLink(previewAsset)}</div>
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
                 </div>
               ) : (
@@ -2810,18 +2838,20 @@ export default function MerchantBusinessCardManager({
     cardId: string,
     patch: Partial<Pick<MerchantBusinessCardAsset, "shareImageUrl" | "shareKey" | "contactPagePublicImageUrl">>,
   ) {
-    onCardsChange(
-      normalizeMerchantBusinessCardChatDisplaySelection(
-        normalizedCards.map((item) =>
-          item.id === cardId
-            ? {
-                ...item,
-                ...patch,
-              }
-            : item,
+    void Promise.resolve(
+      onCardsChange(
+        normalizeMerchantBusinessCardChatDisplaySelection(
+          normalizedCards.map((item) =>
+            item.id === cardId
+              ? {
+                  ...item,
+                  ...patch,
+                }
+              : item,
+          ),
         ),
       ),
-    );
+    ).catch(() => undefined);
   }
 
   async function resolveShareImageUrl(input: {
@@ -3115,7 +3145,7 @@ export default function MerchantBusinessCardManager({
     const nextCards = existingCard
       ? normalizedCards.map((card) => (card.id === existingCard.id ? asset : card))
       : [asset, ...normalizedCards];
-    onCardsChange(normalizeMerchantBusinessCardChatDisplaySelection(nextCards));
+    await Promise.resolve(onCardsChange(normalizeMerchantBusinessCardChatDisplaySelection(nextCards)));
     setEditingCardId(asset.id);
     return asset;
   }
