@@ -1077,6 +1077,34 @@ function NoteIcon() {
   );
 }
 
+function FaollaHomeButton({
+  className,
+  onClick,
+}: {
+  className?: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`inline-flex items-center justify-center rounded-full border border-slate-200/90 bg-white/95 text-slate-700 shadow-[0_10px_24px_rgba(15,23,42,0.14)] backdrop-blur transition hover:-translate-y-[1px] hover:bg-white hover:text-slate-950 ${className ?? ""}`}
+      onClick={onClick}
+      title="返回 Faolla 总站"
+      aria-label="返回 Faolla 总站"
+    >
+      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+        <path
+          d="M4.75 10.5 12 4.75l7.25 5.75V18a1.25 1.25 0 0 1-1.25 1.25H6A1.25 1.25 0 0 1 4.75 18V10.5Z"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinejoin="round"
+        />
+        <path d="M9.25 19.25v-5h5.5v5" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+      </svg>
+    </button>
+  );
+}
+
 function EmptyFeatureCard({
   icon,
   title,
@@ -1606,7 +1634,7 @@ export default function MePage() {
   const [mobileTab, setMobileTab] = useState<MobileTab>(() =>
     typeof window !== "undefined" && isFaollaSectionSearch(window.location.search) ? "faolla" : "conversations",
   );
-  const [faollaEmbedHref] = useState(() =>
+  const [faollaEmbedHref, setFaollaEmbedHref] = useState(() =>
     typeof window !== "undefined" ? resolveFaollaEntryUrlFromBrowser(window.location.search, window.location.origin) : "",
   );
   const [consumptionSection, setConsumptionSection] = useState<ConsumptionSection>("bookings");
@@ -1650,6 +1678,8 @@ export default function MePage() {
   const supportInputRef = useRef<HTMLTextAreaElement | null>(null);
   const supportSendingRef = useRef(false);
   const supportSendPointerHandledRef = useRef(false);
+  const personalDesktopFaollaFrameRef = useRef<HTMLIFrameElement | null>(null);
+  const personalMobileFaollaFrameRef = useRef<HTMLIFrameElement | null>(null);
   const personalAvatarInputRef = useRef<HTMLInputElement | null>(null);
   const mobileSelfLanguageRootRef = useRef<HTMLDivElement | null>(null);
   const mobileSelfLanguageMenuRef = useRef<HTMLDivElement | null>(null);
@@ -2096,6 +2126,19 @@ export default function MePage() {
       ),
     [faollaEmbedHref, locale],
   );
+  const faollaHomeTargetHref = useMemo(
+    () => buildFaollaShellHref("/", locale, typeof window !== "undefined" ? window.location.origin : "https://faolla.com"),
+    [locale],
+  );
+  const navigatePersonalFaollaHome = useCallback(() => {
+    setFaollaEmbedHref("/");
+    if (personalDesktopFaollaFrameRef.current) {
+      personalDesktopFaollaFrameRef.current.src = faollaHomeTargetHref;
+    }
+    if (personalMobileFaollaFrameRef.current) {
+      personalMobileFaollaFrameRef.current.src = faollaHomeTargetHref;
+    }
+  }, [faollaHomeTargetHref]);
   const openDesktopSection = useCallback((section: DesktopSection) => {
     setDesktopSection(section);
   }, []);
@@ -4685,7 +4728,11 @@ export default function MePage() {
                 desktopSection === "faolla" ? "" : "hidden"
               }`}
             >
+              <div className="pointer-events-none absolute left-4 top-4 z-10">
+                <FaollaHomeButton className="pointer-events-auto h-11 w-11" onClick={navigatePersonalFaollaHome} />
+              </div>
               <iframe
+                ref={personalDesktopFaollaFrameRef}
                 title="Faolla"
                 src={faollaTargetHref}
                 className="absolute inset-0 h-full w-full border-0 bg-transparent"
@@ -4698,7 +4745,11 @@ export default function MePage() {
       <main className="fixed inset-x-0 top-0 bottom-0 z-[120] flex min-h-0 flex-col overflow-hidden overscroll-none bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_48%,#f8fafc_100%)] touch-manipulation md:hidden">
         {renderMobileContent()}
         <div className={`relative min-h-0 flex-1 overflow-hidden ${mobileTab === "faolla" ? "" : "hidden"}`}>
+          <div className="pointer-events-none absolute left-4 top-[calc(env(safe-area-inset-top)+0.75rem)] z-10">
+            <FaollaHomeButton className="pointer-events-auto h-11 w-11" onClick={navigatePersonalFaollaHome} />
+          </div>
           <iframe
+            ref={personalMobileFaollaFrameRef}
             title="Faolla"
             src={faollaTargetHref}
             className="absolute inset-0 h-full w-full border-0 bg-transparent"

@@ -276,6 +276,34 @@ const IMAGE_FILL_VALUES: ImageFillMode[] = [
   "repeat-x",
   "repeat-y",
 ];
+
+function FaollaHomeButton({
+  className,
+  onClick,
+}: {
+  className?: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`inline-flex items-center justify-center rounded-full border border-slate-200/90 bg-white/95 text-slate-700 shadow-[0_10px_24px_rgba(15,23,42,0.14)] backdrop-blur transition hover:-translate-y-[1px] hover:bg-white hover:text-slate-950 ${className ?? ""}`}
+      onClick={onClick}
+      title="返回 Faolla 总站"
+      aria-label="返回 Faolla 总站"
+    >
+      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+        <path
+          d="M4.75 10.5 12 4.75l7.25 5.75V18a1.25 1.25 0 0 1-1.25 1.25H6A1.25 1.25 0 0 1 4.75 18V10.5Z"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinejoin="round"
+        />
+        <path d="M9.25 19.25v-5h5.5v5" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+      </svg>
+    </button>
+  );
+}
 const BACKGROUND_POSITION_OPTIONS = [
   "center",
   "top",
@@ -4962,7 +4990,7 @@ export default function AdminClient({
   const [supportMobileHomeTab, setSupportMobileHomeTab] = useState<SupportMobileHomeTab>(() =>
     typeof window !== "undefined" && isFaollaSectionSearch(window.location.search) ? "faolla" : "conversations",
   );
-  const [supportFaollaEmbedHref] = useState(() =>
+  const [supportFaollaEmbedHref, setSupportFaollaEmbedHref] = useState(() =>
     typeof window !== "undefined" ? resolveFaollaEntryUrlFromBrowser(window.location.search, window.location.origin) : "",
   );
   const [supportMobileBusinessSection, setSupportMobileBusinessSection] = useState<"booking" | "orders">("booking");
@@ -5033,6 +5061,8 @@ export default function AdminClient({
   const supportMessagesViewportRef = useRef<HTMLDivElement>(null);
   const supportMessageElementByKeyRef = useRef<Record<string, HTMLDivElement | null>>({});
   const supportMobileConversationsViewportRef = useRef<HTMLDivElement>(null);
+  const supportDesktopFaollaFrameRef = useRef<HTMLIFrameElement>(null);
+  const supportMobileFaollaFrameRef = useRef<HTMLIFrameElement>(null);
   const supportInputRef = useRef<HTMLTextAreaElement>(null);
   const supportComposerRef = useRef<HTMLDivElement>(null);
   const supportSelfLanguageRootRef = useRef<HTMLDivElement>(null);
@@ -10266,6 +10296,22 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       typeof window !== "undefined" ? window.location.origin : "https://faolla.com",
     );
   }, [locale, supportMobileFaollaHref]);
+  const supportFaollaHomeTargetHref = useMemo(() => {
+    return buildFaollaShellHref(
+      "/",
+      locale,
+      typeof window !== "undefined" ? window.location.origin : "https://faolla.com",
+    );
+  }, [locale]);
+  const navigateSupportFaollaHome = useCallback(() => {
+    setSupportFaollaEmbedHref("/");
+    if (supportDesktopFaollaFrameRef.current) {
+      supportDesktopFaollaFrameRef.current.src = supportFaollaHomeTargetHref;
+    }
+    if (supportMobileFaollaFrameRef.current) {
+      supportMobileFaollaFrameRef.current.src = supportFaollaHomeTargetHref;
+    }
+  }, [supportFaollaHomeTargetHref]);
   const openMerchantFaollaPanel = useCallback(() => {
     setMerchantDesktopSection("faolla");
   }, []);
@@ -10274,7 +10320,11 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   }, []);
   const supportMobileFaollaContent = (
     <div className="relative min-h-0 flex-1 overflow-hidden">
+      <div className="pointer-events-none absolute left-4 top-[calc(env(safe-area-inset-top)+0.75rem)] z-10">
+        <FaollaHomeButton className="pointer-events-auto h-11 w-11" onClick={navigateSupportFaollaHome} />
+      </div>
       <iframe
+        ref={supportMobileFaollaFrameRef}
         title="Faolla.com"
         src={supportMobileFaollaTargetHref}
         className="absolute inset-0 h-full w-full border-0 bg-transparent"
@@ -16427,7 +16477,11 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               merchantDesktopSection === "faolla" ? "" : "hidden"
             }`}
           >
+            <div className="pointer-events-none absolute left-4 top-4 z-10">
+              <FaollaHomeButton className="pointer-events-auto h-11 w-11" onClick={navigateSupportFaollaHome} />
+            </div>
             <iframe
+              ref={supportDesktopFaollaFrameRef}
               title="Faolla"
               src={supportMobileFaollaTargetHref}
               className="absolute inset-0 h-full w-full border-0 bg-transparent"
