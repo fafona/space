@@ -17,16 +17,23 @@ import {
   type MerchantBusinessCardShareContact,
   type MerchantBusinessCardSharePayload,
 } from "@/lib/merchantBusinessCardShare";
+import { type MerchantAuthUserSummary } from "@/lib/merchantAuthIdentity";
 import {
   normalizeMerchantBusinessCardContactFieldOrder,
   type MerchantBusinessCardAsset,
   type MerchantBusinessCardContactDisplayKey,
   type MerchantBusinessCardContactOnlyFields,
 } from "@/lib/merchantBusinessCards";
+import { readMerchantAuthCookie, readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
 import { type PlatformMerchantSnapshotPayload } from "@/lib/platformMerchantSnapshot";
 import { loadStoredPlatformMerchantSnapshot, type PlatformMerchantSnapshotStoreClient } from "@/lib/platformMerchantSnapshotStore";
+import {
+  resolvePlatformAccountIdentityForUser,
+  type PlatformIdentitySupabaseClient,
+} from "@/lib/platformAccountIdentity";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
+import { createServerSupabaseAuthClient, createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import { isSuperAdminRequestAuthorized } from "@/lib/superAdminRequestAuth";
 
 const BUCKET_CANDIDATES = ["page-assets", "assets", "uploads", "public"] as const;
@@ -98,6 +105,10 @@ type StoredShareManifest = MerchantBusinessCardSharePayload & {
 type ShareActorContext =
   | {
       kind: "merchant";
+      merchantId: string;
+    }
+  | {
+      kind: "personal";
       merchantId: string;
     }
   | {
@@ -429,11 +440,36 @@ async function resolveShareActorContext(request: Request, hintedMerchantId: stri
   const session = await resolveMerchantSessionFromRequest(request, {
     hintedMerchantId,
   }).catch(() => null);
-  if (!session?.merchantId) return null;
+  if (session?.merchantId) {
+    return {
+      kind: "merchant",
+      merchantId: session.merchantId,
+    } satisfies ShareActorContext;
+  }
+
+  const authSupabase = createServerSupabaseAuthClient();
+  const adminSupabase = createServerSupabaseServiceClient() as unknown as PlatformIdentitySupabaseClient | null;
+  if (!authSupabase || !adminSupabase) return null;
+
+  const accessTokens = readMerchantRequestAccessTokens(request);
+  const fallbackAccessToken = readMerchantAuthCookie(request);
+  const candidates = [...accessTokens, fallbackAccessToken].map((value) => normalizeText(value)).filter(Boolean);
+  let user: MerchantAuthUserSummary | null = null;
+  for (const accessToken of candidates) {
+    const { data, error } = await authSupabase.auth.getUser(accessToken).catch(() => ({ data: null, error: true }));
+    if (!error && data?.user) {
+      user = data.user as MerchantAuthUserSummary;
+      break;
+    }
+  }
+  if (!user?.id) return null;
+
+  const identity = await resolvePlatformAccountIdentityForUser(adminSupabase, user);
+  if (identity.accountType !== "personal" || !identity.accountId) return null;
 
   return {
-    kind: "merchant",
-    merchantId: session.merchantId,
+    kind: "personal",
+    merchantId: identity.accountId,
   } satisfies ShareActorContext;
 }
 

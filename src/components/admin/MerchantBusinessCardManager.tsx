@@ -49,6 +49,7 @@ type MerchantBusinessCardManagerProps = {
   siteBaseDomain: string;
   profile: MerchantBusinessCardProfileInput;
   cards: MerchantBusinessCardAsset[];
+  targetUrlOverride?: string | null;
   folderViewMode?: "overlay" | "page";
   cardLimit?: number;
   allowLinkMode?: boolean;
@@ -914,6 +915,7 @@ export default function MerchantBusinessCardManager({
   siteBaseDomain,
   profile,
   cards,
+  targetUrlOverride,
   folderViewMode = "overlay",
   cardLimit = 1,
   allowLinkMode = true,
@@ -949,16 +951,20 @@ export default function MerchantBusinessCardManager({
   const [contactPageImageFileDetail, setContactPageImageFileDetail] = useState("");
   const [isContactPageImageProcessing, setIsContactPageImageProcessing] = useState(false);
   const hiddenPreviewRef = useRef<HTMLDivElement | null>(null);
+  const normalizedTargetUrlOverride = normalizeText(targetUrlOverride);
 
   const normalizedCards = useMemo(
     () => normalizeMerchantBusinessCardChatDisplaySelection(cards),
     [cards],
   );
-  const missingFields = useMemo(() => getMerchantBusinessCardRequiredFields(profile), [profile]);
+  const missingFields = useMemo(
+    () => (normalizedTargetUrlOverride ? [] : getMerchantBusinessCardRequiredFields(profile)),
+    [normalizedTargetUrlOverride, profile],
+  );
   const canCreate = missingFields.length === 0;
   const websiteUrl = useMemo(
-    () => buildMerchantDomain(siteBaseDomain, normalizeText(profile.domainPrefix), "https"),
-    [siteBaseDomain, profile.domainPrefix],
+    () => normalizedTargetUrlOverride || buildMerchantDomain(siteBaseDomain, normalizeText(profile.domainPrefix), "https"),
+    [normalizedTargetUrlOverride, siteBaseDomain, profile.domainPrefix],
   );
   const primarySelectedFieldKey = selectedFieldKeys[selectedFieldKeys.length - 1] ?? "merchantName";
   const selectedCustomTextId = useMemo(

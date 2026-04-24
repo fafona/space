@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import { useI18n } from "@/components/I18nProvider";
+import MerchantBusinessCardManager from "@/components/admin/MerchantBusinessCardManager";
 import { readMerchantSessionMerchantIds } from "@/lib/authSessionRecovery";
+import { createDefaultMerchantPermissionConfig, type MerchantContactVisibility, type SiteLocation } from "@/data/platformControlStore";
 import {
   getEuropeCityOptions,
   getEuropeCountryOptions,
@@ -16,8 +18,11 @@ import { buildMerchantBusinessCardShareUrl, resolveMerchantBusinessCardShareOrig
 import { buildMerchantFrontendHref } from "@/lib/siteRouting";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import SupportMessageContent from "@/components/support/SupportMessageContent";
-import type { MerchantBusinessCardAsset } from "@/lib/merchantBusinessCards";
-import type { MerchantContactVisibility, SiteLocation } from "@/data/platformControlStore";
+import {
+  normalizeMerchantBusinessCards,
+  type MerchantBusinessCardAsset,
+  type MerchantBusinessCardProfileInput,
+} from "@/lib/merchantBusinessCards";
 import {
   findMerchantPeerThreadForMerchants,
   type MerchantPeerContactSummary,
@@ -200,6 +205,7 @@ const SUPPORT_FILE_PICKER_ACCEPT = [
   ".pptx",
 ].join(",");
 const PERSONAL_AVATAR_MAX_BYTES = 512 * 1024;
+const PERSONAL_BUSINESS_CARD_STORAGE_KEY_PREFIX = "faolla:personal-business-cards:";
 
 const EMPTY_PERSONAL_PROFILE: PersonalProfileDraft = {
   displayName: "",
@@ -293,6 +299,21 @@ function readPersonalProfile(payload: MeSessionPayload | null): PersonalProfileD
     city: read("city"),
     address: read("address", "contactAddress"),
   };
+}
+
+function readPersonalBusinessCards(payload: MeSessionPayload | null) {
+  const userMetadata = payload?.user?.user_metadata ?? null;
+  const profile =
+    userMetadata?.personal_profile && typeof userMetadata.personal_profile === "object"
+      ? (userMetadata.personal_profile as Record<string, unknown>)
+      : {};
+  return normalizeMerchantBusinessCards(
+    profile.businessCards ??
+      profile.business_cards ??
+      userMetadata?.businessCards ??
+      userMetadata?.business_cards ??
+      [],
+  );
 }
 
 function mergePersonalProfileDraft(base: PersonalProfileDraft, patch: Partial<PersonalProfileDraft> | null | undefined) {
@@ -1657,6 +1678,7 @@ export default function MePage() {
   const [supportDraft, setSupportDraft] = useState("");
   const [supportContactKeyword, setSupportContactKeyword] = useState("");
   const [personalProfileDraft, setPersonalProfileDraft] = useState<PersonalProfileDraft>(EMPTY_PERSONAL_PROFILE);
+  const [personalBusinessCards, setPersonalBusinessCards] = useState<MerchantBusinessCardAsset[]>([]);
   const [personalProfileSaving, setPersonalProfileSaving] = useState(false);
   const [personalAvatarUploading, setPersonalAvatarUploading] = useState(false);
   const [personalProfileMessage, setPersonalProfileMessage] = useState("");
@@ -1779,6 +1801,108 @@ export default function MePage() {
   const personalProfile = useMemo(() => readPersonalProfile(payload), [payload]);
   const displayName = personalProfile.displayName || readDisplayName(payload);
   const profileName = displayName || email.split("@")[0] || accountId || "个人用户";
+  const personalBusinessCardStorageKey = useMemo(
+    () => (accountId ? `${PERSONAL_BUSINESS_CARD_STORAGE_KEY_PREFIX}${accountId}` : ""),
+    [accountId],
+  );
+  const personalBusinessCardPermissionConfig = useMemo(() => createDefaultMerchantPermissionConfig(), []);
+  const personalBusinessCardProfile = useMemo(
+    () =>
+      ({
+        merchantName: profileName || accountId || "个人名片",
+        domainPrefix: accountId || "personal",
+        contactAddress: personalProfileDraft.address,
+        contactName: personalProfileDraft.displayName || displayName || accountId,
+        contactPhone: personalProfileDraft.phone,
+        contactEmail: personalProfileDraft.email || email,
+        location: {
+          country: personalProfileDraft.country,
+          province: personalProfileDraft.province,
+          city: personalProfileDraft.city,
+        },
+      }) satisfies MerchantBusinessCardProfileInput,
+    [
+      accountId,
+      displayName,
+      email,
+      personalProfileDraft.address,
+      personalProfileDraft.city,
+      personalProfileDraft.country,
+      personalProfileDraft.displayName,
+      personalProfileDraft.email,
+      personalProfileDraft.phone,
+      personalProfileDraft.province,
+      profileName,
+    ],
+  );
+  const personalBusinessCardTargetUrl = useMemo(() => {
+    if (typeof window !== "undefined") {
+      return new URL("/me", window.location.origin).toString();
+    }
+    return "https://faolla.com/me";
+  }, []);
+  const personalBusinessCardManagerCommonProps = useMemo(
+    () =>
+      accountId
+        ? {
+            merchantId: accountId,
+            siteBaseDomain:
+              typeof window !== "undefined" ? window.location.host : process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN || "faolla.com",
+            profile: personalBusinessCardProfile,
+            cards: personalBusinessCards,
+            targetUrlOverride: personalBusinessCardTargetUrl,
+            cardLimit: personalBusinessCardPermissionConfig.businessCardLimit,
+            allowLinkMode: personalBusinessCardPermissionConfig.allowBusinessCardLinkMode,
+            backgroundImageLimitKb: personalBusinessCardPermissionConfig.businessCardBackgroundImageLimitKb,
+            contactPageImageLimitKb: personalBusinessCardPermissionConfig.businessCardContactImageLimitKb,
+            exportImageLimitKb: personalBusinessCardPermissionConfig.businessCardExportImageLimitKb,
+            onCardsChange: (cards: MerchantBusinessCardAsset[]) => {
+              const normalizedCards = normalizeMerchantBusinessCards(cards);
+              setPersonalBusinessCards(normalizedCards);
+              if (typeof window !== "undefined" && personalBusinessCardStorageKey) {
+                window.localStorage.setItem(personalBusinessCardStorageKey, JSON.stringify(normalizedCards));
+              }
+            },
+          }
+        : null,
+    [
+      accountId,
+      personalBusinessCardPermissionConfig.allowBusinessCardLinkMode,
+      personalBusinessCardPermissionConfig.businessCardBackgroundImageLimitKb,
+      personalBusinessCardPermissionConfig.businessCardContactImageLimitKb,
+      personalBusinessCardPermissionConfig.businessCardExportImageLimitKb,
+      personalBusinessCardPermissionConfig.businessCardLimit,
+      personalBusinessCardProfile,
+      personalBusinessCardStorageKey,
+      personalBusinessCardTargetUrl,
+      personalBusinessCards,
+    ],
+  );
+  useEffect(() => {
+    if (loading) return;
+    if (!accountId) {
+      setPersonalBusinessCards([]);
+      return;
+    }
+    const fallbackCards = readPersonalBusinessCards(payload);
+    if (typeof window === "undefined" || !personalBusinessCardStorageKey) {
+      setPersonalBusinessCards(fallbackCards);
+      return;
+    }
+    try {
+      const stored = window.localStorage.getItem(personalBusinessCardStorageKey);
+      if (stored) {
+        setPersonalBusinessCards(normalizeMerchantBusinessCards(JSON.parse(stored) as unknown));
+        return;
+      }
+      setPersonalBusinessCards(fallbackCards);
+      if (fallbackCards.length > 0) {
+        window.localStorage.setItem(personalBusinessCardStorageKey, JSON.stringify(fallbackCards));
+      }
+    } catch {
+      setPersonalBusinessCards(fallbackCards);
+    }
+  }, [accountId, loading, payload, personalBusinessCardStorageKey]);
   const avatarLabel = getInitialLabel(profileName);
   const personalAvatarImageUrl = personalProfileDraft.avatarUrl || personalProfile.avatarUrl;
   const mobileSelfSelectedLanguage = useMemo(
@@ -4200,6 +4324,9 @@ export default function MePage() {
     }
     if (section === "orders") {
       return renderPersonalOrderCards(false);
+    }
+    if (section === "cards" && personalBusinessCardManagerCommonProps) {
+      return <MerchantBusinessCardManager {...personalBusinessCardManagerCommonProps} folderViewMode="page" />;
     }
 
     const item = desktopMenuItems.find((entry) => entry.key === section) ?? desktopMenuItems[0];
