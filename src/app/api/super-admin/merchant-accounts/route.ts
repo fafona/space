@@ -7,6 +7,13 @@ import { findBlockingMerchantIdRule } from "@/lib/merchantIdRules";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { loadStoredPlatformMerchantSnapshot, type PlatformMerchantSnapshotStoreClient } from "@/lib/platformMerchantSnapshotStore";
 import {
+  buildPersonalAccountServiceMetadataPatch,
+  createDefaultPersonalAccountServiceConfig,
+  normalizePersonalAccountServiceConfig,
+  readPersonalAccountServiceConfigFromMetadata,
+  type PersonalAccountServiceConfig,
+} from "@/lib/personalAccountServiceConfig";
+import {
   buildPlatformAccountMetadataPatch,
   isPersonalAccountNumericId,
   readPlatformAccountIdFromMetadata,
@@ -83,6 +90,8 @@ type MerchantAccountItem = {
   visitsKnown: boolean;
   profileSnapshot: MerchantListPublishedSite | null;
   profileConfigHistory: MerchantConfigHistoryEntry[];
+  personalServiceConfig: PersonalAccountServiceConfig | null;
+  personalServicePaused: boolean;
 };
 
 type MerchantAccountsScope = "full" | "support";
@@ -179,6 +188,8 @@ function readAccountMetadata(user?: AuthUserSummary | null) {
     userMetadata?.manualUser === true ||
     appMetadata?.manual_user === true ||
     appMetadata?.manualUser === true;
+  const personalServiceConfig =
+    accountType === "personal" ? readPersonalAccountServiceConfigFromMetadata(user ?? null) : null;
 
   return {
     accountType,
@@ -188,6 +199,8 @@ function readAccountMetadata(user?: AuthUserSummary | null) {
     loginId: loginId || accountId,
     merchantId: accountType === "merchant" ? merchantId || accountId : "",
     manualCreated,
+    personalServiceConfig,
+    personalServicePaused: personalServiceConfig?.servicePaused === true,
   };
 }
 
@@ -453,6 +466,10 @@ function conflictJson(error: string, message: string) {
   return NextResponse.json({ error, message }, { status: 409 });
 }
 
+function notFoundJson(error: string, message: string) {
+  return NextResponse.json({ error, message }, { status: 404 });
+}
+
 function readMerchantAccountsScope(request: Request): MerchantAccountsScope {
   const scope = new URL(request.url).searchParams.get("scope");
   return scope === "support" ? "support" : "full";
@@ -510,9 +527,46 @@ function buildSupportScopeItems(merchants: MerchantRow[]) {
         visitsKnown: false,
         profileSnapshot: null,
         profileConfigHistory: [],
+        personalServiceConfig: null,
+        personalServicePaused: false,
       } satisfies MerchantAccountItem;
     }),
   );
+}
+
+function buildPersonalAccountItemFromAuthUser(user: AuthUserSummary): MerchantAccountItem {
+  const metadata = readAccountMetadata(user);
+  const personalServiceConfig = normalizePersonalAccountServiceConfig(
+    metadata.personalServiceConfig ?? createDefaultPersonalAccountServiceConfig(),
+  );
+  const email = normalizeEmail(user.email);
+  const username = metadata.username || email || metadata.accountId || "个人用户";
+  return {
+    accountType: "personal",
+    accountId: metadata.accountId,
+    merchantId: "",
+    merchantName: "",
+    email,
+    username,
+    loginId: metadata.loginId || metadata.accountId,
+    createdAt: user.created_at ?? null,
+    authUserId: String(user.id ?? "").trim() || null,
+    emailConfirmed: Boolean(user.email_confirmed_at),
+    emailConfirmedAt: user.email_confirmed_at ?? null,
+    lastSignInAt: user.last_sign_in_at ?? null,
+    manualCreated: metadata.manualCreated,
+    hasPublishedSite: false,
+    siteSlug: "",
+    siteUpdatedAt: null,
+    publishedBytes: 0,
+    publishedBytesKnown: false,
+    visits: { today: 0, day7: 0, day30: 0, total: 0 },
+    visitsKnown: false,
+    profileSnapshot: null,
+    profileConfigHistory: [],
+    personalServiceConfig,
+    personalServicePaused: personalServiceConfig.servicePaused,
+  };
 }
 
 function ensureAuthorized(request: Request) {
@@ -616,6 +670,8 @@ export async function GET(request: Request) {
         visitsKnown: false,
         profileSnapshot: snapshotSite,
         profileConfigHistory: configHistoryByMerchantId[merchantId] ?? [],
+        personalServiceConfig: null,
+        personalServicePaused: false,
       };
     });
 
@@ -665,6 +721,8 @@ export async function GET(request: Request) {
           visitsKnown: false,
           profileSnapshot: metadata.accountType === "merchant" ? snapshotByMerchantId.get(merchantId) ?? null : null,
           profileConfigHistory: metadata.accountType === "merchant" ? configHistoryByMerchantId[merchantId] ?? [] : [],
+          personalServiceConfig: metadata.personalServiceConfig,
+          personalServicePaused: metadata.personalServicePaused,
         };
       });
 
@@ -687,6 +745,11 @@ export async function GET(request: Request) {
         item.accountType === "merchant" && isNumericMerchantId(item.merchantId)
           ? configHistoryByMerchantId[item.merchantId] ?? item.profileConfigHistory ?? []
           : [],
+      personalServiceConfig:
+        item.accountType === "personal"
+          ? normalizePersonalAccountServiceConfig(item.personalServiceConfig ?? createDefaultPersonalAccountServiceConfig())
+          : null,
+      personalServicePaused: item.accountType === "personal" ? item.personalServicePaused === true : false,
     }));
     const merchantIds = [
       ...new Set(
@@ -855,7 +918,7 @@ export async function POST(request: Request) {
       return conflictJson("username_exists", "用户名已存在，请更换后重试");
     }
 
-    const metadataPatch = buildPlatformAccountMetadataPatch(
+    const metadataPatchBase = buildPlatformAccountMetadataPatch(
       {
         user_metadata: {
           username: usernameKey,
@@ -869,6 +932,17 @@ export async function POST(request: Request) {
       accountType,
       accountId,
     );
+    const personalServiceConfig = createDefaultPersonalAccountServiceConfig();
+    const metadataPatch =
+      accountType === "personal"
+        ? buildPersonalAccountServiceMetadataPatch(
+            {
+              user_metadata: metadataPatchBase.user_metadata,
+              app_metadata: metadataPatchBase.app_metadata,
+            },
+            personalServiceConfig,
+          )
+        : metadataPatchBase;
 
     const { data: createdUserData, error: createUserError } = await supabase.auth.admin.createUser({
       email: manualEmail,
@@ -940,6 +1014,8 @@ export async function POST(request: Request) {
       visitsKnown: false,
       profileSnapshot: null,
       profileConfigHistory: [],
+      personalServiceConfig: accountType === "personal" ? personalServiceConfig : null,
+      personalServicePaused: false,
     };
 
     merchantAccountsCache.clear();
@@ -948,6 +1024,105 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         error: "merchant_account_create_failed",
+        message: readErrorMessage(error) || "unknown_error",
+      },
+      { status: isTransientSupabaseError(error) ? 503 : 500 },
+    );
+  }
+}
+
+export async function PATCH(request: Request) {
+  if (!isTrustedSameOriginMutationRequest(request)) {
+    return getTrustedMutationRequestErrorResponse();
+  }
+
+  if (!ensureAuthorized(request)) {
+    return unauthorizedJson();
+  }
+
+  const supabase = createServerSupabaseClient();
+  if (!supabase) {
+    return envMissingJson();
+  }
+
+  try {
+    const payload = (await request.json().catch(() => null)) as {
+      accountId?: unknown;
+      authUserId?: unknown;
+      servicePaused?: unknown;
+      config?: unknown;
+    } | null;
+    const accountId = typeof payload?.accountId === "string" ? payload.accountId.trim() : "";
+    const authUserId = typeof payload?.authUserId === "string" ? payload.authUserId.trim() : "";
+    const servicePaused =
+      typeof payload?.servicePaused === "boolean"
+        ? payload.servicePaused
+        : payload?.servicePaused === null
+          ? null
+          : undefined;
+    const configPatch =
+      payload?.config && typeof payload.config === "object" && !Array.isArray(payload.config)
+        ? (payload.config as Partial<PersonalAccountServiceConfig>)
+        : null;
+
+    if (!accountId && !authUserId) {
+      return badRequestJson("invalid_personal_account", "请选择要操作的个人账号");
+    }
+    if (accountId && !isPersonalAccountNumericId(accountId)) {
+      return badRequestJson("invalid_personal_id", "个人 ID 必须是 50010105 - 59999999 之间的 8 位数字");
+    }
+    if (servicePaused === undefined && !configPatch) {
+      return badRequestJson("invalid_personal_service_update", "请提供要更新的个人账号服务配置");
+    }
+
+    const authUsers = await listAuthUsers(supabase);
+    const targetUser = authUsers.find((user) => {
+      const metadata = readAccountMetadata(user);
+      if (metadata.accountType !== "personal") return false;
+      if (authUserId && String(user.id ?? "").trim() === authUserId) return true;
+      if (accountId && metadata.accountId === accountId) return true;
+      return false;
+    });
+
+    if (!targetUser) {
+      return notFoundJson("personal_account_not_found", "未找到对应的个人账号");
+    }
+
+    const currentConfig = normalizePersonalAccountServiceConfig(
+      readPersonalAccountServiceConfigFromMetadata(targetUser ?? null),
+    );
+    const nextConfig = normalizePersonalAccountServiceConfig({
+      ...currentConfig,
+      ...(configPatch ?? {}),
+      ...(typeof servicePaused === "boolean" ? { servicePaused } : {}),
+    });
+
+    const { data, error } = await supabase.auth.admin.updateUserById(
+      String(targetUser.id ?? "").trim(),
+      buildPersonalAccountServiceMetadataPatch(targetUser, nextConfig),
+    );
+    if (error || !data.user) {
+      throw error ?? new Error("personal_account_update_failed");
+    }
+
+    const updatedUser: AuthUserSummary = {
+      id: data.user.id,
+      email: data.user.email ?? null,
+      created_at: data.user.created_at ?? null,
+      email_confirmed_at: data.user.email_confirmed_at ?? null,
+      last_sign_in_at: data.user.last_sign_in_at ?? null,
+      user_metadata: data.user.user_metadata ?? null,
+      app_metadata: data.user.app_metadata ?? null,
+    };
+
+    merchantAccountsCache.clear();
+    return NextResponse.json({
+      item: buildPersonalAccountItemFromAuthUser(updatedUser),
+    });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error: "personal_account_update_failed",
         message: readErrorMessage(error) || "unknown_error",
       },
       { status: isTransientSupabaseError(error) ? 503 : 500 },

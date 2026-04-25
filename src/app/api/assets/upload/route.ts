@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { createDefaultMerchantPermissionConfig } from "@/data/platformControlStore";
 import { type MerchantAuthUserSummary } from "@/lib/merchantAuthIdentity";
 import { readMerchantAuthCookie, readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
+import { buildPersonalAccountPermissionConfig, readPersonalAccountServiceConfigFromMetadata } from "@/lib/personalAccountServiceConfig";
 import {
   resolvePlatformAccountIdentityForUser,
   type PlatformIdentitySupabaseClient,
@@ -195,7 +196,7 @@ async function resolveActorContext(
     return {
       ok: true,
       effectiveMerchantHint: sanitizeMerchantHint(identity.accountId || merchantHint || "personal"),
-      permissionConfig: createDefaultMerchantPermissionConfig(),
+      permissionConfig: buildPersonalAccountPermissionConfig(readPersonalAccountServiceConfigFromMetadata(user)),
     };
   }
 

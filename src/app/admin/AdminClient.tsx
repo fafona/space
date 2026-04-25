@@ -11944,6 +11944,98 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     setSupportDialogOpen(true);
   }
 
+  async function openSupportConversationFromBusinessRecord(target: {
+    accountId?: string;
+    email?: string;
+    name?: string;
+  }) {
+    if (isPlatformEditor) return;
+    const targetAccountId = String(target.accountId ?? "").trim();
+    const targetEmail = String(target.email ?? "").trim().toLowerCase();
+    const targetName = String(target.name ?? "").trim();
+    if (!targetAccountId && !targetEmail) {
+      showTip("当前用户没有可聊天的账号信息");
+      return;
+    }
+
+    setSupportPeerError("");
+    setSupportSearchError("");
+    setSupportContactKeyword("");
+    setSupportMerchantInfoSheetOpen(false);
+    if (isDesktopEditorSidebar) {
+      setMerchantDesktopSection("support");
+    } else {
+      setSupportMobileHomeTab("conversations");
+    }
+    openSupportDialog();
+
+    const existingContact = supportPeerContacts.find((contact) => {
+      const contactId = String(contact.merchantId ?? "").trim();
+      const contactEmail = String(contact.merchantEmail ?? "").trim().toLowerCase();
+      return (targetAccountId && contactId === targetAccountId) || (targetEmail && contactEmail === targetEmail);
+    });
+    if (existingContact) {
+      setSupportSelectedContactKey(`merchant:${String(existingContact.merchantId ?? "").trim()}`);
+      if (!isDesktopEditorSidebar) {
+        setSupportMobileView("thread");
+      }
+      return;
+    }
+
+    setSupportPeerLoading(true);
+    try {
+      const response = await requestMerchantPeerWithSessionRecovery({
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "ensure_contact",
+          contactAccountId: targetAccountId || undefined,
+          contactEmail: targetEmail || undefined,
+          contactName: targetName || undefined,
+          contactAccountType: "personal",
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | {
+            contacts?: MerchantPeerContactSummary[];
+            threads?: MerchantPeerThread[];
+            contact?: MerchantPeerContactSummary | null;
+            message?: string;
+            error?: string;
+          }
+        | null;
+      if (!response.ok) {
+        throw new Error(payload?.message || "打开会话失败，请稍后重试");
+      }
+      setSupportPeerContacts(Array.isArray(payload?.contacts) ? payload.contacts : []);
+      setSupportPeerThreads(Array.isArray(payload?.threads) ? payload.threads : []);
+      const contactId =
+        String(payload?.contact?.merchantId ?? "").trim() ||
+        String(
+          (Array.isArray(payload?.contacts) ? payload.contacts : []).find((contact) => {
+            const contactMerchantId = String(contact.merchantId ?? "").trim();
+            const contactEmail = String(contact.merchantEmail ?? "").trim().toLowerCase();
+            return (targetAccountId && contactMerchantId === targetAccountId) || (targetEmail && contactEmail === targetEmail);
+          })?.merchantId ?? "",
+        ).trim();
+      if (!contactId) {
+        throw new Error("打开会话失败，请稍后重试");
+      }
+      setSupportSelectedContactKey(`merchant:${contactId}`);
+      if (!isDesktopEditorSidebar) {
+        setSupportMobileView("thread");
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "打开会话失败，请稍后重试";
+      setSupportPeerError(message);
+      showTip(message);
+    } finally {
+      setSupportPeerLoading(false);
+    }
+  }
+
   const desktopMerchantWorkspaceActive = !isPlatformEditor && (forceDesktopEditorSidebar || isDesktopEditorSidebar);
 
   useEffect(() => {
@@ -14524,6 +14616,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 siteId={supportMobileBookingSiteId}
                 siteName={merchantDisplayName}
                 darkMode={supportMobileDarkMode}
+                onOpenConversation={openSupportConversationFromBusinessRecord}
                 onSectionChange={setSupportMobileBusinessSection}
               />
             ) : (
@@ -14540,6 +14633,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 allowCustomerAutoEmail={Boolean(merchantPermissionConfig?.allowBookingAutoEmail)}
                 onRecordsChange={handleMerchantBookingRecordsChange}
                 allowOrderManagement={canUseOrderManagement}
+                onOpenConversation={openSupportConversationFromBusinessRecord}
                 onSectionChange={setSupportMobileBusinessSection}
               />
             )}
@@ -15897,6 +15991,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           allowBookingEmailPrefill: Boolean(merchantPermissionConfig?.allowBookingEmailPrefill),
           allowCustomerAutoEmail: Boolean(merchantPermissionConfig?.allowBookingAutoEmail),
           onRecordsChange: handleMerchantBookingRecordsChange,
+          onOpenConversation: openSupportConversationFromBusinessRecord,
           onClose: () => {
             setMerchantBookingManagerOpen(false);
             if (isDesktopMerchantWorkspace) {
@@ -15910,6 +16005,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       ? {
           siteId: editingSiteId || "",
           siteName: effectiveMerchantDisplayName || merchantDisplayName,
+          onOpenConversation: openSupportConversationFromBusinessRecord,
           onClose: () => {
             setMerchantOrderManagerOpen(false);
             if (isDesktopMerchantWorkspace) {

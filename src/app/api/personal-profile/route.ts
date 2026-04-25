@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
+import { getMerchantBusinessCardPermissionViolation } from "@/lib/merchantPermissionGuards";
 import { type MerchantAuthUserSummary } from "@/lib/merchantAuthIdentity";
 import { normalizeMerchantBusinessCards, type MerchantBusinessCardAsset } from "@/lib/merchantBusinessCards";
 import {
   loadStoredPersonalBusinessCards,
   saveStoredPersonalBusinessCards,
+  type PersonalBusinessCardStoreClient,
 } from "@/lib/personalBusinessCardStore";
 import { resolvePersonalAccountSessionFromRequest } from "@/lib/personalAccountSession.server";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
@@ -122,11 +124,16 @@ function buildProfileMetadataPatch(user: MerchantAuthUserSummary, patch: Persona
 export async function GET(request: Request) {
   const session = await resolvePersonalUser(request);
   if (!session) return noStoreJson({ ok: false, error: "unauthorized" }, { status: 401 });
-  const cardsPayload = await loadStoredPersonalBusinessCards(session.adminSupabase, session.accountId);
+  const cardsPayload = await loadStoredPersonalBusinessCards(
+    session.adminSupabase as unknown as PersonalBusinessCardStoreClient,
+    session.accountId,
+  );
   return noStoreJson({
     ok: true,
     accountId: session.accountId,
     user: session.user,
+    personalServiceConfig: session.serviceConfig,
+    personalServicePaused: session.servicePaused,
     businessCards: cardsPayload?.cards ?? [],
   });
 }
@@ -174,10 +181,20 @@ export async function POST(request: Request) {
 
   let savedBusinessCards: MerchantBusinessCardAsset[] = [];
   if (normalizedBusinessCards) {
-    const savedCardsResult = await saveStoredPersonalBusinessCards(session.adminSupabase, {
-      accountId: session.accountId,
-      cards: normalizedBusinessCards,
-    });
+    const violation = getMerchantBusinessCardPermissionViolation(session.permissionConfig, normalizedBusinessCards);
+    if (violation) {
+      return noStoreJson(
+        { ok: false, error: violation.code, message: violation.message, personalServiceConfig: session.serviceConfig },
+        { status: 400 },
+      );
+    }
+    const savedCardsResult = await saveStoredPersonalBusinessCards(
+      session.adminSupabase as unknown as PersonalBusinessCardStoreClient,
+      {
+        accountId: session.accountId,
+        cards: normalizedBusinessCards,
+      },
+    );
     if (savedCardsResult.error) {
       return noStoreJson(
         { ok: false, error: "personal_business_cards_save_failed", message: savedCardsResult.error },
@@ -186,7 +203,10 @@ export async function POST(request: Request) {
     }
     savedBusinessCards = savedCardsResult.cards ?? normalizedBusinessCards;
   } else {
-    const cardsPayload = await loadStoredPersonalBusinessCards(session.adminSupabase, session.accountId);
+    const cardsPayload = await loadStoredPersonalBusinessCards(
+      session.adminSupabase as unknown as PersonalBusinessCardStoreClient,
+      session.accountId,
+    );
     savedBusinessCards = cardsPayload?.cards ?? [];
   }
 
@@ -195,6 +215,8 @@ export async function POST(request: Request) {
     accountId: session.accountId,
     profile: personalProfile,
     user: nextUser,
+    personalServiceConfig: session.serviceConfig,
+    personalServicePaused: session.servicePaused,
     businessCards: savedBusinessCards,
   });
 }

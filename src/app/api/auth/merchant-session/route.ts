@@ -16,6 +16,10 @@ import {
   type PlatformIdentitySupabaseClient,
 } from "@/lib/platformAccountIdentity";
 import { type PlatformAccountType } from "@/lib/platformAccounts";
+import {
+  readPersonalAccountServiceConfigFromMetadata,
+  type PersonalAccountServiceConfig,
+} from "@/lib/personalAccountServiceConfig";
 import { createFrontendAuthProof } from "@/lib/frontendAuthProof.server";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 
@@ -56,6 +60,8 @@ type AuthenticatedMerchantSessionPayload = {
   accountId: string | null;
   merchantId: string | null;
   merchantIds: string[];
+  personalServiceConfig: PersonalAccountServiceConfig | null;
+  personalServicePaused: boolean;
   frontendAuthProof?: string;
   user: MerchantAuthUserSummary;
 };
@@ -66,6 +72,8 @@ type PublicMerchantSessionPayload = {
   accountId: string | null;
   merchantId: string | null;
   merchantIds: string[];
+  personalServiceConfig: PersonalAccountServiceConfig | null;
+  personalServicePaused: boolean;
   frontendAuthProof?: string;
   user: MerchantAuthUserSummary;
 };
@@ -237,6 +245,8 @@ function toPublicMerchantSessionPayload(payload: AuthenticatedMerchantSessionPay
     accountId: payload.accountId,
     merchantId: payload.merchantId,
     merchantIds: payload.merchantIds,
+    personalServiceConfig: payload.personalServiceConfig,
+    personalServicePaused: payload.personalServicePaused,
     frontendAuthProof: createFrontendAuthProof({
       accountType: payload.accountType,
       accountId: payload.accountId ?? payload.merchantId,
@@ -337,6 +347,8 @@ export async function GET(request: Request) {
       }
 
       const platformIdentity = await resolvePlatformAccountIdentityForUser(adminSupabase, user);
+      const personalServiceConfig =
+        platformIdentity.accountType === "personal" ? readPersonalAccountServiceConfigFromMetadata(user) : null;
 
       const payload = {
         authenticated: true,
@@ -348,6 +360,8 @@ export async function GET(request: Request) {
         accountId: platformIdentity.accountId,
         merchantId: platformIdentity.merchantId,
         merchantIds: platformIdentity.merchantIds,
+        personalServiceConfig,
+        personalServicePaused: personalServiceConfig?.servicePaused === true,
         user,
       } satisfies AuthenticatedMerchantSessionPayload;
       writeMerchantSessionCache(payload);
@@ -443,6 +457,8 @@ export async function POST(request: Request) {
     }
 
     const platformIdentity = await resolvePlatformAccountIdentityForUser(adminSupabase, user);
+    const personalServiceConfig =
+      platformIdentity.accountType === "personal" ? readPersonalAccountServiceConfigFromMetadata(user) : null;
 
     const response = noStoreJson({
       ok: true,
@@ -456,6 +472,8 @@ export async function POST(request: Request) {
         accountId: platformIdentity.accountId,
         merchantId: platformIdentity.merchantId,
         merchantIds: platformIdentity.merchantIds,
+        personalServiceConfig,
+        personalServicePaused: personalServiceConfig?.servicePaused === true,
         user,
       }),
     });

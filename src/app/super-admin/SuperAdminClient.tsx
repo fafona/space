@@ -71,6 +71,11 @@ import {
   summarizePlanTemplateBlocks,
   type PlanTemplateFilterCategory,
 } from "@/lib/planTemplates";
+import {
+  createDefaultPersonalAccountServiceConfig,
+  normalizePersonalAccountServiceConfig,
+  type PersonalAccountServiceConfig,
+} from "@/lib/personalAccountServiceConfig";
 import { isPersonalAccountNumericId, type PlatformAccountType } from "@/lib/platformAccounts";
 import { buildMerchantSiteLinker } from "@/lib/merchantSiteLinking";
 import {
@@ -805,6 +810,10 @@ function badgeClass(value: string) {
     return "border-rose-300 bg-rose-50 text-rose-700";
   }
   return "border-slate-300 bg-slate-50 text-slate-700";
+}
+
+function formatBackendAccountSourceLabel(account: Pick<BackendMerchantAccount, "manualCreated">) {
+  return account.manualCreated ? "手动创建" : "前台注册";
 }
 
 function describeBackendMerchantAccountsError(message: string) {
@@ -1621,6 +1630,8 @@ type BackendMerchantAccount = {
   visitsKnown: boolean;
   profileSnapshot: MerchantListPublishedSite | null;
   profileConfigHistory: MerchantConfigHistoryEntry[];
+  personalServiceConfig: PersonalAccountServiceConfig | null;
+  personalServicePaused: boolean;
 };
 
 type MerchantTableSortField =
@@ -1772,6 +1783,16 @@ export default function SuperAdminClient() {
   const [backendMerchantAccountsLoading, setBackendMerchantAccountsLoading] = useState(false);
   const [backendMerchantAccountsError, setBackendMerchantAccountsError] = useState("");
   const [backendMerchantAccountsWarning, setBackendMerchantAccountsWarning] = useState("");
+  const [personalPanelOpen, setPersonalPanelOpen] = useState(false);
+  const [selectedPersonalAccountId, setSelectedPersonalAccountId] = useState("");
+  const [personalPanelMode, setPersonalPanelMode] = useState<"detail" | "config">("detail");
+  const [personalConfigBusinessCardLimit, setPersonalConfigBusinessCardLimit] = useState("1");
+  const [personalConfigAllowBusinessCardLinkMode, setPersonalConfigAllowBusinessCardLinkMode] = useState(false);
+  const [personalConfigBusinessCardBackgroundImageLimitKb, setPersonalConfigBusinessCardBackgroundImageLimitKb] = useState("100");
+  const [personalConfigBusinessCardContactImageLimitKb, setPersonalConfigBusinessCardContactImageLimitKb] = useState("200");
+  const [personalConfigError, setPersonalConfigError] = useState("");
+  const [personalConfigSubmitting, setPersonalConfigSubmitting] = useState(false);
+  const [personalAccountActionSubmittingId, setPersonalAccountActionSubmittingId] = useState("");
   const [supportThreads, setSupportThreads] = useState<PlatformSupportThread[]>([]);
   const [supportThreadsLoading, setSupportThreadsLoading] = useState(false);
   const [supportThreadsError, setSupportThreadsError] = useState("");
@@ -2367,7 +2388,7 @@ export default function SuperAdminClient() {
     () => trustedDevices.find((item) => item.deviceId === currentSuperAdminDeviceId) ?? null,
     [currentSuperAdminDeviceId, trustedDevices],
   );
-  const hasPermission = (permission: PermissionKey) => permissions.has(permission);
+  const hasPermission = useCallback((permission: PermissionKey) => permissions.has(permission), [permissions]);
 
   const tenantMap = useMemo(
     () => new Map(state.tenants.map((item) => [item.id, item.name])),
@@ -2558,6 +2579,11 @@ export default function SuperAdminClient() {
           .includes(q);
       }),
     [personalAccounts, userKeyword],
+  );
+  const selectedPersonalAccount =
+    personalAccounts.find((account) => account.accountId === selectedPersonalAccountId) ?? null;
+  const selectedPersonalServiceConfig = normalizePersonalAccountServiceConfig(
+    selectedPersonalAccount?.personalServiceConfig ?? createDefaultPersonalAccountServiceConfig(),
   );
   const planTemplateTargetSite =
     merchantRows.find((row) => row.site.id === planTemplateTargetSiteId)?.site ??
@@ -3628,11 +3654,11 @@ export default function SuperAdminClient() {
       )}%`
     : "-";
 
-  const guard = (permission: PermissionKey, message: string) => {
+  const guard = useCallback((permission: PermissionKey, message: string) => {
     if (hasPermission(permission)) return true;
     setTip(message);
     return false;
-  };
+  }, [hasPermission]);
 
   const commit = (updater: (prev: PlatformState) => PlatformState) => {
     const prev = stateRef.current;
@@ -3798,6 +3824,170 @@ export default function SuperAdminClient() {
     (init: RequestInit) => requestSuperAdminWithSessionRecovery("/api/super-admin/data-backups", init),
     [requestSuperAdminWithSessionRecovery],
   );
+  const replaceBackendMerchantAccount = useCallback((nextItem: BackendMerchantAccount) => {
+    setBackendMerchantAccounts((prev) => {
+      const isSameAccount = (item: BackendMerchantAccount) =>
+        item.accountType === nextItem.accountType &&
+        (item.accountId === nextItem.accountId ||
+          (!!item.authUserId && !!nextItem.authUserId && item.authUserId === nextItem.authUserId));
+      let replaced = false;
+      const next = prev.map((item) => {
+        if (!isSameAccount(item)) return item;
+        replaced = true;
+        return nextItem;
+      });
+      return replaced ? next : [nextItem, ...prev];
+    });
+  }, []);
+  const hydratePersonalConfigDraft = useCallback((account: BackendMerchantAccount | null | undefined) => {
+    const config = normalizePersonalAccountServiceConfig(
+      account?.personalServiceConfig ?? createDefaultPersonalAccountServiceConfig(),
+    );
+    setPersonalConfigBusinessCardLimit(`${config.businessCardLimit}`);
+    setPersonalConfigAllowBusinessCardLinkMode(config.allowBusinessCardLinkMode);
+    setPersonalConfigBusinessCardBackgroundImageLimitKb(`${config.businessCardBackgroundImageLimitKb}`);
+    setPersonalConfigBusinessCardContactImageLimitKb(`${config.businessCardContactImageLimitKb}`);
+    setPersonalConfigError("");
+  }, []);
+  const openPersonalDetailPanel = useCallback((account: BackendMerchantAccount) => {
+    setSelectedPersonalAccountId(account.accountId);
+    setPersonalPanelMode("detail");
+    setPersonalPanelOpen(true);
+    setPersonalConfigError("");
+  }, []);
+  const openPersonalConfigPanel = useCallback(
+    (account: BackendMerchantAccount) => {
+      setSelectedPersonalAccountId(account.accountId);
+      hydratePersonalConfigDraft(account);
+      setPersonalPanelMode("config");
+      setPersonalPanelOpen(true);
+    },
+    [hydratePersonalConfigDraft],
+  );
+  const closePersonalPanel = useCallback(() => {
+    setPersonalPanelOpen(false);
+    setPersonalConfigError("");
+  }, []);
+  const togglePersonalServiceAction = useCallback(
+    async (account: BackendMerchantAccount) => {
+      if (!guard("user.manage", SUPER_ADMIN_MESSAGES.noUserPermission)) return;
+      setPersonalAccountActionSubmittingId(account.accountId);
+      setPersonalConfigError("");
+      try {
+        const response = await requestSuperAdminWithSessionRecovery("/api/super-admin/merchant-accounts", {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            accountId: account.accountId,
+            authUserId: account.authUserId,
+            servicePaused: !account.personalServicePaused,
+          }),
+        });
+        const payload = (await response.json().catch(() => null)) as
+          | { item?: BackendMerchantAccount; message?: string }
+          | null;
+        if (!response.ok || !payload?.item) {
+          const message = payload?.message || "个人账号服务状态更新失败，请稍后重试";
+          setPersonalConfigError(message);
+          setTip(message);
+          return;
+        }
+        replaceBackendMerchantAccount(payload.item);
+        if (selectedPersonalAccountId && selectedPersonalAccountId === payload.item.accountId && personalPanelMode === "config") {
+          hydratePersonalConfigDraft(payload.item);
+        }
+        setTip(
+          `${payload.item.username || payload.item.email || payload.item.accountId} 已${payload.item.personalServicePaused ? "暂停" : "开启"}服务`,
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "个人账号服务状态更新失败，请稍后重试";
+        setPersonalConfigError(message);
+        setTip(message);
+      } finally {
+        setPersonalAccountActionSubmittingId("");
+      }
+    },
+    [
+      guard,
+      hydratePersonalConfigDraft,
+      personalPanelMode,
+      replaceBackendMerchantAccount,
+      requestSuperAdminWithSessionRecovery,
+      selectedPersonalAccountId,
+    ],
+  );
+  const savePersonalConfigAction = useCallback(async () => {
+    if (!guard("user.manage", SUPER_ADMIN_MESSAGES.noUserPermission)) return;
+    if (!selectedPersonalAccount) {
+      setPersonalConfigError("请先选择个人账号");
+      return;
+    }
+
+    const businessCardLimit = Number(personalConfigBusinessCardLimit.trim());
+    const backgroundLimit = Number(personalConfigBusinessCardBackgroundImageLimitKb.trim());
+    const contactLimit = Number(personalConfigBusinessCardContactImageLimitKb.trim());
+    if (!Number.isFinite(businessCardLimit) || businessCardLimit < 1 || businessCardLimit > 100) {
+      setPersonalConfigError("名片数量需在 1 - 100 之间");
+      return;
+    }
+    if (!Number.isFinite(backgroundLimit) || backgroundLimit < 50 || backgroundLimit > 5000) {
+      setPersonalConfigError("名片背景图上限需在 50 - 5000 KB 之间");
+      return;
+    }
+    if (!Number.isFinite(contactLimit) || contactLimit < 50 || contactLimit > 5000) {
+      setPersonalConfigError("联系卡展示图上限需在 50 - 5000 KB 之间");
+      return;
+    }
+
+    setPersonalConfigSubmitting(true);
+    setPersonalConfigError("");
+    try {
+      const response = await requestSuperAdminWithSessionRecovery("/api/super-admin/merchant-accounts", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          accountId: selectedPersonalAccount.accountId,
+          authUserId: selectedPersonalAccount.authUserId,
+          config: {
+            businessCardLimit: Math.round(businessCardLimit),
+            allowBusinessCardLinkMode: personalConfigAllowBusinessCardLinkMode,
+            businessCardBackgroundImageLimitKb: Math.round(backgroundLimit),
+            businessCardContactImageLimitKb: Math.round(contactLimit),
+          },
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { item?: BackendMerchantAccount; message?: string }
+        | null;
+      if (!response.ok || !payload?.item) {
+        setPersonalConfigError(payload?.message || "个人账号配置保存失败，请稍后重试");
+        return;
+      }
+      replaceBackendMerchantAccount(payload.item);
+      hydratePersonalConfigDraft(payload.item);
+      setSelectedPersonalAccountId(payload.item.accountId);
+      setPersonalPanelMode("detail");
+      setTip(`已保存个人账号 ${payload.item.username || payload.item.email || payload.item.accountId} 的服务配置`);
+    } catch (error) {
+      setPersonalConfigError(error instanceof Error ? error.message : "个人账号配置保存失败，请稍后重试");
+    } finally {
+      setPersonalConfigSubmitting(false);
+    }
+  }, [
+    guard,
+    hydratePersonalConfigDraft,
+    personalConfigAllowBusinessCardLinkMode,
+    personalConfigBusinessCardBackgroundImageLimitKb,
+    personalConfigBusinessCardContactImageLimitKb,
+    personalConfigBusinessCardLimit,
+    replaceBackendMerchantAccount,
+    requestSuperAdminWithSessionRecovery,
+    selectedPersonalAccount,
+  ]);
   useEffect(() => {
     if (!authed || !hydrated || activeMenu !== "support_messages") return;
     const merchantId = selectedSupportMerchantId.trim();
@@ -5084,15 +5274,23 @@ export default function SuperAdminClient() {
         });
         if (createdItem.accountType === "merchant") {
           setMerchantDetailSiteId(`backend-${createdItem.merchantId || createdItem.email || "merchant"}`);
+          setSelectedPersonalAccountId("");
         } else {
           setMerchantDetailSiteId("");
+          setSelectedPersonalAccountId(createdItem.accountId);
+          hydratePersonalConfigDraft(createdItem);
         }
       } else {
         setMerchantDetailSiteId(accountType === "merchant" ? `backend-${accountId}` : "");
+        if (accountType === "personal") {
+          setSelectedPersonalAccountId(accountId);
+        }
       }
 
       setUserPanelMode("detail");
       setMerchantPanelOpen(createdItem?.accountType === "merchant");
+      setPersonalPanelMode("detail");
+      setPersonalPanelOpen(createdItem?.accountType === "personal");
       setUserManageAccountTypeFilter(accountType);
       setManualUserDialogOpen(false);
       resetManualUserDialog();
@@ -6990,7 +7188,7 @@ export default function SuperAdminClient() {
                       <div className="mb-3 flex items-center justify-between gap-3">
                         <div>
                           <div className="text-sm font-semibold text-slate-900">个人账号</div>
-                          <div className="mt-1 text-xs text-slate-500">个人账号当前展示基础认证信息，后续会接入订单、预约和对话汇总。</div>
+                          <div className="mt-1 text-xs text-slate-500">个人账号注册即可使用，不需要配置有效期；这里可直接查看详情、启停服务并配置名片权限。</div>
                         </div>
                         <div className="text-xs text-slate-500">共 {filteredPersonalAccounts.length} 条</div>
                       </div>
@@ -7005,6 +7203,7 @@ export default function SuperAdminClient() {
                               <th className="px-3 py-2">最近登录</th>
                               <th className="px-3 py-2">邮箱验证</th>
                               <th className="px-3 py-2">状态</th>
+                              <th className="px-3 py-2">操作</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -7035,12 +7234,47 @@ export default function SuperAdminClient() {
                                     {account.emailConfirmed ? "已验证" : "未验证"}
                                   </span>
                                 </td>
-                                <td className="px-3 py-2 text-xs text-slate-600">{account.manualCreated ? "手动创建" : "前台注册"}</td>
+                                <td className="px-3 py-2 text-xs">
+                                  <div className="flex flex-col gap-1">
+                                    <span
+                                      className={`inline-flex w-fit rounded border px-2 py-0.5 ${
+                                        badgeClass(account.personalServicePaused ? "disabled" : "active")
+                                      }`}
+                                    >
+                                      {account.personalServicePaused ? "暂停服务" : "正常服务"}
+                                    </span>
+                                    <span className="text-[11px] text-slate-400">{formatBackendAccountSourceLabel(account)}</span>
+                                  </div>
+                                </td>
+                                <td className="px-3 py-2 text-xs">
+                                  <div className="flex flex-wrap gap-1">
+                                    <button className="rounded border px-2 py-1" onClick={() => openPersonalDetailPanel(account)}>
+                                      详情
+                                    </button>
+                                    <button
+                                      className="rounded border px-2 py-1"
+                                      onClick={() => void togglePersonalServiceAction(account)}
+                                      disabled={personalAccountActionSubmittingId === account.accountId}
+                                    >
+                                      {personalAccountActionSubmittingId === account.accountId
+                                        ? "处理中..."
+                                        : account.personalServicePaused
+                                          ? "开启服务"
+                                          : "暂停服务"}
+                                    </button>
+                                    <button
+                                      className="rounded border bg-black px-2 py-1 text-white hover:bg-slate-800"
+                                      onClick={() => openPersonalConfigPanel(account)}
+                                    >
+                                      配置
+                                    </button>
+                                  </div>
+                                </td>
                               </tr>
                             ))}
                             {filteredPersonalAccounts.length === 0 ? (
                               <tr>
-                                <td colSpan={7} className="px-3 py-6 text-center text-xs text-slate-500">
+                                <td colSpan={8} className="px-3 py-6 text-center text-xs text-slate-500">
                                   暂无个人用户
                                 </td>
                               </tr>
@@ -8788,6 +9022,220 @@ export default function SuperAdminClient() {
                 </div>
               </section>
               )
+            ) : null}
+
+            {personalPanelOpen ? (
+              <>
+                <button
+                  type="button"
+                  className="fixed inset-0 z-[124] bg-black/40"
+                  onClick={closePersonalPanel}
+                  aria-label="关闭个人账号弹窗"
+                />
+                <div className="fixed inset-0 z-[125] flex items-center justify-center p-4">
+                  <div className="max-h-[92vh] w-full max-w-3xl overflow-hidden rounded-lg border bg-white p-4 shadow-2xl">
+                    <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
+                      <div>
+                        <h2 className="font-semibold text-slate-900">个人账号详情 / 配置</h2>
+                        <div className="mt-1 text-xs text-slate-500">个人账号注册即启用，不需要配置有效期。</div>
+                      </div>
+                      <div className="flex items-center gap-2 text-xs">
+                        <button
+                          type="button"
+                          className={`rounded border px-2 py-1 ${personalPanelMode === "detail" ? "bg-black text-white" : "bg-white"}`}
+                          onClick={() => setPersonalPanelMode("detail")}
+                        >
+                          详情
+                        </button>
+                        <button
+                          type="button"
+                          className={`rounded border px-2 py-1 ${personalPanelMode === "config" ? "bg-black text-white" : "bg-white"}`}
+                          onClick={() => {
+                            if (!selectedPersonalAccount) return;
+                            hydratePersonalConfigDraft(selectedPersonalAccount);
+                            setPersonalPanelMode("config");
+                          }}
+                        >
+                          配置
+                        </button>
+                        <button type="button" className="rounded border px-2 py-1" onClick={closePersonalPanel}>
+                          关闭
+                        </button>
+                      </div>
+                    </div>
+                    <div className="mt-3 max-h-[calc(92vh-88px)] space-y-3 overflow-y-auto pr-1 text-xs">
+                      {selectedPersonalAccount ? (
+                        <>
+                          {personalConfigError ? (
+                            <div className="rounded border border-rose-300 bg-rose-50 px-3 py-2 text-rose-700">
+                              {personalConfigError}
+                            </div>
+                          ) : null}
+                          {personalPanelMode === "detail" ? (
+                            <>
+                              <div className="flex flex-wrap items-center justify-between gap-3 rounded border bg-slate-50 px-3 py-3">
+                                <div className="space-y-1">
+                                  <div className="text-[11px] text-slate-500">当前状态</div>
+                                  <span
+                                    className={`inline-flex rounded border px-2 py-0.5 ${
+                                      badgeClass(selectedPersonalAccount.personalServicePaused ? "disabled" : "active")
+                                    }`}
+                                  >
+                                    {selectedPersonalAccount.personalServicePaused ? "暂停服务" : "正常服务"}
+                                  </span>
+                                </div>
+                                <button
+                                  type="button"
+                                  className="rounded border px-3 py-2"
+                                  onClick={() => void togglePersonalServiceAction(selectedPersonalAccount)}
+                                  disabled={personalAccountActionSubmittingId === selectedPersonalAccount.accountId}
+                                >
+                                  {personalAccountActionSubmittingId === selectedPersonalAccount.accountId
+                                    ? "处理中..."
+                                    : selectedPersonalAccount.personalServicePaused
+                                      ? "开启服务"
+                                      : "暂停服务"}
+                                </button>
+                              </div>
+                              <div className="grid gap-2 md:grid-cols-2">
+                                <div className="rounded border px-3 py-2">
+                                  <div className="text-slate-500">账号</div>
+                                  <div className="mt-1 font-medium text-slate-900">
+                                    {selectedPersonalAccount.username || selectedPersonalAccount.email || "-"}
+                                  </div>
+                                  {selectedPersonalAccount.email &&
+                                  selectedPersonalAccount.email !== selectedPersonalAccount.username ? (
+                                    <div className="mt-1 break-all text-[11px] text-slate-400">{selectedPersonalAccount.email}</div>
+                                  ) : null}
+                                </div>
+                                <div className="rounded border px-3 py-2">
+                                  <div className="text-slate-500">个人 ID</div>
+                                  <div className="mt-1 font-medium text-slate-900">{selectedPersonalAccount.accountId || "-"}</div>
+                                </div>
+                                <div className="rounded border px-3 py-2">
+                                  <div className="text-slate-500">类型</div>
+                                  <div className="mt-1 font-medium text-slate-900">个人</div>
+                                </div>
+                                <div className="rounded border px-3 py-2">
+                                  <div className="text-slate-500">来源</div>
+                                  <div className="mt-1 font-medium text-slate-900">{formatBackendAccountSourceLabel(selectedPersonalAccount)}</div>
+                                </div>
+                                <div className="rounded border px-3 py-2">
+                                  <div className="text-slate-500">注册时间</div>
+                                  <div className="mt-1 font-medium text-slate-900">{fmt(selectedPersonalAccount.createdAt)}</div>
+                                </div>
+                                <div className="rounded border px-3 py-2">
+                                  <div className="text-slate-500">最近登录</div>
+                                  <div className="mt-1 font-medium text-slate-900">{fmt(selectedPersonalAccount.lastSignInAt)}</div>
+                                </div>
+                                <div className="rounded border px-3 py-2">
+                                  <div className="text-slate-500">邮箱验证</div>
+                                  <div className="mt-1 font-medium text-slate-900">
+                                    {selectedPersonalAccount.emailConfirmed ? "已验证" : "未验证"}
+                                  </div>
+                                </div>
+                                <div className="rounded border px-3 py-2">
+                                  <div className="text-slate-500">Auth User ID</div>
+                                  <div className="mt-1 break-all font-medium text-slate-900">
+                                    {selectedPersonalAccount.authUserId || "-"}
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="rounded-xl border border-slate-300 bg-slate-50 px-3 py-3">
+                                <div className="mb-3 text-sm font-semibold text-slate-900">当前配置</div>
+                                <div className="grid gap-2 md:grid-cols-2">
+                                  <div className="rounded border bg-white px-3 py-2">
+                                    <div className="text-slate-500">名片数量</div>
+                                    <div className="mt-1 font-medium text-slate-900">{selectedPersonalServiceConfig.businessCardLimit}</div>
+                                  </div>
+                                  <div className="rounded border bg-white px-3 py-2">
+                                    <div className="text-slate-500">链接模式</div>
+                                    <div className="mt-1 font-medium text-slate-900">
+                                      {selectedPersonalServiceConfig.allowBusinessCardLinkMode ? "开启" : "关闭"}
+                                    </div>
+                                  </div>
+                                  <div className="rounded border bg-white px-3 py-2">
+                                    <div className="text-slate-500">名片背景图上限</div>
+                                    <div className="mt-1 font-medium text-slate-900">
+                                      {selectedPersonalServiceConfig.businessCardBackgroundImageLimitKb} KB
+                                    </div>
+                                  </div>
+                                  <div className="rounded border bg-white px-3 py-2">
+                                    <div className="text-slate-500">联系卡展示图上限</div>
+                                    <div className="mt-1 font-medium text-slate-900">
+                                      {selectedPersonalServiceConfig.businessCardContactImageLimitKb} KB
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="rounded border border-slate-200 bg-slate-50 px-3 py-2 text-slate-600">
+                                配置对象：{selectedPersonalAccount.username || selectedPersonalAccount.email || selectedPersonalAccount.accountId}
+                              </div>
+                              <div className="grid gap-3 md:grid-cols-2">
+                                <label className="space-y-1">
+                                  <div className="text-slate-500">名片数量</div>
+                                  <input
+                                    className="w-full rounded border px-2 py-1.5"
+                                    inputMode="numeric"
+                                    value={personalConfigBusinessCardLimit}
+                                    onChange={(event) => setPersonalConfigBusinessCardLimit(event.target.value)}
+                                  />
+                                </label>
+                                <label className="flex items-center gap-2 rounded border bg-white px-3 py-2">
+                                  <input
+                                    type="checkbox"
+                                    checked={personalConfigAllowBusinessCardLinkMode}
+                                    onChange={(event) => setPersonalConfigAllowBusinessCardLinkMode(event.target.checked)}
+                                  />
+                                  链接模式开关
+                                </label>
+                                <label className="space-y-1">
+                                  <div className="text-slate-500">名片背景图上限(KB)</div>
+                                  <input
+                                    className="w-full rounded border px-2 py-1.5"
+                                    inputMode="numeric"
+                                    value={personalConfigBusinessCardBackgroundImageLimitKb}
+                                    onChange={(event) => setPersonalConfigBusinessCardBackgroundImageLimitKb(event.target.value)}
+                                  />
+                                </label>
+                                <label className="space-y-1">
+                                  <div className="text-slate-500">联系卡展示图上限(KB)</div>
+                                  <input
+                                    className="w-full rounded border px-2 py-1.5"
+                                    inputMode="numeric"
+                                    value={personalConfigBusinessCardContactImageLimitKb}
+                                    onChange={(event) => setPersonalConfigBusinessCardContactImageLimitKb(event.target.value)}
+                                  />
+                                </label>
+                              </div>
+                              <div className="flex justify-end gap-2">
+                                <button type="button" className="rounded border px-3 py-2" onClick={closePersonalPanel}>
+                                  关闭
+                                </button>
+                                <button
+                                  type="button"
+                                  className="rounded border bg-black px-3 py-2 text-white hover:bg-slate-800"
+                                  onClick={() => void savePersonalConfigAction()}
+                                  disabled={personalConfigSubmitting}
+                                >
+                                  {personalConfigSubmitting ? "保存中..." : "保存配置"}
+                                </button>
+                              </div>
+                            </>
+                          )}
+                        </>
+                      ) : (
+                        <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-amber-800">
+                          当前个人账号数据已变化，请关闭后重新选择。
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </>
             ) : null}
 
             {supportMerchantInfoSheetOpen && activeMenu === "support_messages" && showMobileSupportThread

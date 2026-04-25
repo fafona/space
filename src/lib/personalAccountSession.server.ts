@@ -1,4 +1,9 @@
 import { type MerchantAuthUserSummary } from "@/lib/merchantAuthIdentity";
+import {
+  buildPersonalAccountPermissionConfig,
+  readPersonalAccountServiceConfigFromMetadata,
+  type PersonalAccountServiceConfig,
+} from "@/lib/personalAccountServiceConfig";
 import { readMerchantAuthCookie, readMerchantRequestAccessTokens } from "@/lib/merchantAuthSession";
 import {
   resolvePlatformAccountIdentityForUser,
@@ -12,6 +17,9 @@ export type PersonalAccountSession = {
   accountId: string;
   userId: string;
   email: string;
+  serviceConfig: PersonalAccountServiceConfig;
+  servicePaused: boolean;
+  permissionConfig: ReturnType<typeof buildPersonalAccountPermissionConfig>;
 };
 
 function trimText(value: unknown, maxLength = 4096) {
@@ -42,6 +50,7 @@ export async function resolvePersonalAccountSessionFromRequest(request: Request)
   const identity = await resolvePlatformAccountIdentityForUser(adminSupabase, user);
   const accountId = trimText(identity.accountId, 32);
   if (identity.accountType !== "personal" || !/^\d{8}$/.test(accountId)) return null;
+  const serviceConfig = readPersonalAccountServiceConfigFromMetadata(user);
 
   return {
     adminSupabase,
@@ -49,5 +58,8 @@ export async function resolvePersonalAccountSessionFromRequest(request: Request)
     accountId,
     userId,
     email: trimText(user.email, 320).toLowerCase(),
+    serviceConfig,
+    servicePaused: serviceConfig.servicePaused,
+    permissionConfig: buildPersonalAccountPermissionConfig(serviceConfig),
   };
 }

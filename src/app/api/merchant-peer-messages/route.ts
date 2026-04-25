@@ -41,10 +41,11 @@ import { notifyMerchantPushSubscribers } from "@/lib/webPush";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-type ResolvedMerchantRecord = {
+type ResolvedPeerRecord = {
   merchantId: string;
   merchantName: string;
   merchantEmail: string;
+  accountType: "merchant" | "personal";
 };
 
 type PersonalPeerProfile = {
@@ -124,6 +125,20 @@ function normalizeStoragePublicUrl(value: unknown) {
   return normalized;
 }
 
+function toAuthUserSummary(user: {
+  id: string;
+  email?: string | null;
+  user_metadata?: Record<string, unknown> | null;
+  app_metadata?: Record<string, unknown> | null;
+}) {
+  return {
+    id: user.id,
+    email: user.email ?? null,
+    user_metadata: user.user_metadata ?? null,
+    app_metadata: user.app_metadata ?? null,
+  } satisfies MerchantAuthUserSummary;
+}
+
 function readPersonalPeerProfile(user: MerchantAuthUserSummary): PersonalPeerProfile {
   const userMetadata = user.user_metadata && typeof user.user_metadata === "object" ? user.user_metadata : {};
   const appMetadata = user.app_metadata && typeof user.app_metadata === "object" ? user.app_metadata : {};
@@ -162,12 +177,7 @@ async function loadPersonalPeerProfiles(
     if (error) break;
     const users = data?.users ?? [];
     for (const user of users) {
-      const summary = {
-        id: user.id,
-        email: user.email ?? null,
-        user_metadata: user.user_metadata ?? null,
-        app_metadata: user.app_metadata ?? null,
-      } satisfies MerchantAuthUserSummary;
+      const summary = toAuthUserSummary(user);
       const accountId = readPlatformAccountIdFromMetadata(summary);
       if (!targetIds.has(accountId)) continue;
       const accountType =
@@ -288,7 +298,27 @@ function toResolvedMerchantRecord(record: Record<string, unknown> | null | undef
     merchantId,
     merchantName: trimText(record?.name) || merchantId,
     merchantEmail: readResolvedMerchantEmail(record),
-  } satisfies ResolvedMerchantRecord;
+    accountType: "merchant",
+  } satisfies ResolvedPeerRecord;
+}
+
+function toResolvedPersonalRecord(user: MerchantAuthUserSummary | null | undefined) {
+  const accountId = readPlatformAccountIdFromMetadata(user);
+  if (!accountId || readPlatformAccountTypeFromMetadata(user, "") !== "personal") return null;
+  const profile = readPersonalPeerProfile(
+    user ?? {
+      id: "",
+      email: null,
+      user_metadata: null,
+      app_metadata: null,
+    },
+  );
+  return {
+    merchantId: accountId,
+    merchantName: profile.displayName || readPlatformUsernameFromMetadata(user) || normalizeEmail(user?.email) || accountId,
+    merchantEmail: profile.email || normalizeEmail(user?.email),
+    accountType: "personal",
+  } satisfies ResolvedPeerRecord;
 }
 
 async function resolveMerchantById(
@@ -323,7 +353,7 @@ async function resolveMerchantByEmail(
         .limit(10),
     ),
   );
-  const records = new Map<string, ResolvedMerchantRecord>();
+  const records = new Map<string, ResolvedPeerRecord>();
   lookups.forEach((result) => {
     if (result.status !== "fulfilled" || result.value.error) return;
     const rows = Array.isArray(result.value.data) ? result.value.data : [];
@@ -333,6 +363,74 @@ async function resolveMerchantByEmail(
       records.set(record.merchantId, record);
     });
   });
+  const resolved = [...records.values()];
+  return {
+    record: resolved[0] ?? null,
+    ambiguous: resolved.length > 1,
+  };
+}
+
+async function resolvePersonalById(
+  supabase: PlatformIdentitySupabaseClient | null,
+  accountId: string,
+) {
+  const normalizedAccountId = normalizeMerchantId(accountId);
+  if (!supabase || !isPersonalAccountNumericId(normalizedAccountId)) return null;
+
+  let page = 1;
+  while (true) {
+    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage: 200 }).catch(() => ({
+      data: null,
+      error: new Error("list_users_failed"),
+    }));
+    if (error) return null;
+    const users = data?.users ?? [];
+    for (const user of users) {
+      const summary = toAuthUserSummary(user);
+      if (readPlatformAccountIdFromMetadata(summary) !== normalizedAccountId) continue;
+      const record = toResolvedPersonalRecord(summary);
+      if (record) return record;
+    }
+    if (users.length < 200) break;
+    page += 1;
+  }
+
+  return null;
+}
+
+async function resolvePersonalByEmail(
+  supabase: PlatformIdentitySupabaseClient | null,
+  email: string,
+) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!supabase || !normalizedEmail || !normalizedEmail.includes("@")) {
+    return { record: null, ambiguous: false };
+  }
+
+  const records = new Map<string, ResolvedPeerRecord>();
+  let page = 1;
+  while (true) {
+    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage: 200 }).catch(() => ({
+      data: null,
+      error: new Error("list_users_failed"),
+    }));
+    if (error) break;
+    const users = data?.users ?? [];
+    for (const user of users) {
+      const summary = toAuthUserSummary(user);
+      if (readPlatformAccountTypeFromMetadata(summary, "") !== "personal") continue;
+      const profile = readPersonalPeerProfile(summary);
+      const matched =
+        normalizeEmail(summary.email) === normalizedEmail || normalizeEmail(profile.email) === normalizedEmail;
+      if (!matched) continue;
+      const record = toResolvedPersonalRecord(summary);
+      if (!record || records.has(record.merchantId)) continue;
+      records.set(record.merchantId, record);
+    }
+    if (users.length < 200) break;
+    page += 1;
+  }
+
   const resolved = [...records.values()];
   return {
     record: resolved[0] ?? null,
@@ -369,6 +467,88 @@ async function resolveMerchantByExactQuery(
   }
 
   return { record: null, error: "search_requires_exact_id_or_email" as const };
+}
+
+async function resolvePeerById(
+  supabase: ReturnType<typeof createServerSupabaseServiceClient> | null,
+  accountId: string,
+) {
+  const normalizedAccountId = normalizeMerchantId(accountId);
+  if (!supabase || !normalizedAccountId) return null;
+  const identitySupabase = supabase as unknown as PlatformIdentitySupabaseClient | null;
+
+  if (isPersonalAccountNumericId(normalizedAccountId)) {
+    const personalRecord = await resolvePersonalById(identitySupabase, normalizedAccountId);
+    return personalRecord ?? (await resolveMerchantById(supabase, normalizedAccountId));
+  }
+
+  const merchantRecord = await resolveMerchantById(supabase, normalizedAccountId);
+  return merchantRecord ?? (await resolvePersonalById(identitySupabase, normalizedAccountId));
+}
+
+async function resolvePeerContact(
+  supabase: ReturnType<typeof createServerSupabaseServiceClient> | null,
+  input: {
+    accountId?: unknown;
+    email?: unknown;
+    preferredAccountType?: unknown;
+  },
+) {
+  const accountId = normalizeMerchantId(input.accountId);
+  const email = normalizeEmail(input.email);
+  const preferredAccountType =
+    input.preferredAccountType === "personal"
+      ? "personal"
+      : input.preferredAccountType === "merchant"
+        ? "merchant"
+        : "";
+  const identitySupabase = supabase as unknown as PlatformIdentitySupabaseClient | null;
+
+  if (accountId) {
+    if (preferredAccountType === "personal") {
+      const personalRecord = await resolvePersonalById(identitySupabase, accountId);
+      const merchantRecord = personalRecord ? null : await resolveMerchantById(supabase, accountId);
+      return {
+        record: personalRecord ?? merchantRecord,
+        error: null,
+      };
+    }
+    if (preferredAccountType === "merchant") {
+      const merchantRecord = await resolveMerchantById(supabase, accountId);
+      const personalRecord = merchantRecord ? null : await resolvePersonalById(identitySupabase, accountId);
+      return {
+        record: merchantRecord ?? personalRecord,
+        error: null,
+      };
+    }
+    return { record: await resolvePeerById(supabase, accountId), error: null };
+  }
+
+  if (!email || !email.includes("@")) {
+    return { record: null, error: "search_requires_exact_id_or_email" as const };
+  }
+
+  if (preferredAccountType === "personal") {
+    const resolved = await resolvePersonalByEmail(identitySupabase, email);
+    if (resolved.ambiguous) return { record: null, error: "search_ambiguous" as const };
+    return { record: resolved.record, error: null };
+  }
+
+  if (preferredAccountType === "merchant") {
+    const resolved = await resolveMerchantByEmail(supabase, email);
+    if (resolved.ambiguous) return { record: null, error: "search_ambiguous" as const };
+    return { record: resolved.record, error: null };
+  }
+
+  const personalResolved = await resolvePersonalByEmail(identitySupabase, email);
+  const merchantResolved = await resolveMerchantByEmail(supabase, email);
+  const candidates = [personalResolved.record, merchantResolved.record].filter(
+    (record): record is ResolvedPeerRecord => Boolean(record),
+  );
+  if (personalResolved.ambiguous || merchantResolved.ambiguous || candidates.length > 1) {
+    return { record: null, error: "search_ambiguous" as const };
+  }
+  return { record: candidates[0] ?? null, error: null };
 }
 
 async function buildInboxResponse(
@@ -453,16 +633,20 @@ export async function POST(request: Request) {
   }
 
   const body = (await request.json().catch(() => null)) as
-    | {
-        action?: unknown;
-        query?: unknown;
-        text?: unknown;
-        recipientMerchantId?: unknown;
-        merchantName?: unknown;
-        merchantEmail?: unknown;
-        siteId?: unknown;
-      }
-    | null;
+      | {
+          action?: unknown;
+          query?: unknown;
+          text?: unknown;
+          recipientMerchantId?: unknown;
+          merchantName?: unknown;
+          merchantEmail?: unknown;
+          siteId?: unknown;
+          contactAccountId?: unknown;
+          contactEmail?: unknown;
+          contactName?: unknown;
+          contactAccountType?: unknown;
+        }
+      | null;
   const session = await resolveMerchantPeerSession(request, body);
   if (!session) {
     return noStoreJson({ error: "unauthorized" }, { status: 401 });
@@ -527,6 +711,59 @@ export async function POST(request: Request) {
     });
   }
 
+  if (action === "ensure_contact") {
+    const resolved = await resolvePeerContact(
+      supabase as unknown as ReturnType<typeof createServerSupabaseServiceClient>,
+      {
+        accountId: body?.contactAccountId,
+        email: body?.contactEmail,
+        preferredAccountType: body?.contactAccountType,
+      },
+    );
+    if (resolved.error === "search_requires_exact_id_or_email") {
+      return noStoreJson(
+        { error: "search_requires_exact_id_or_email", message: "请提供完整的 8 位账号 ID 或邮箱。" },
+        { status: 400 },
+      );
+    }
+    if (resolved.error === "search_ambiguous") {
+      return noStoreJson(
+        { error: "search_ambiguous", message: "这个邮箱对应多个账号，请改用 8 位账号 ID。" },
+        { status: 409 },
+      );
+    }
+    if (!resolved.record) {
+      return noStoreJson({ error: "peer_not_found", message: "没有找到匹配的用户。" }, { status: 404 });
+    }
+    if (resolved.record.merchantId === session.merchantId) {
+      return noStoreJson({ error: "cannot_chat_with_self", message: "不能和自己发起会话。" }, { status: 400 });
+    }
+
+    const payload = await loadStoredMerchantPeerInbox(supabase as unknown as MerchantPeerInboxStoreClient);
+    const nextPayload = upsertMerchantPeerContact(payload, {
+      ownerMerchantId: session.merchantId,
+      contactMerchantId: resolved.record.merchantId,
+      contactName: trimText(body?.contactName) || resolved.record.merchantName,
+      contactEmail: normalizeEmail(body?.contactEmail) || resolved.record.merchantEmail,
+    });
+    const saveResult = await saveMerchantPeerInbox(supabase as unknown as MerchantPeerInboxStoreClient, nextPayload);
+    if (saveResult.error) {
+      return noStoreJson(
+        { error: "merchant_contact_save_failed", message: saveResult.error },
+        { status: 500 },
+      );
+    }
+
+    return noStoreJson({
+      ...(await buildInboxResponse(
+        nextPayload,
+        session.merchantId,
+        supabase as unknown as PlatformIdentitySupabaseClient & PlatformMerchantSnapshotStoreClient,
+      )),
+      contact: resolved.record,
+    });
+  }
+
   if (action === "send") {
     const text = normalizeSupportText(body?.text);
     const recipientMerchantId = normalizeMerchantId(body?.recipientMerchantId);
@@ -537,17 +774,24 @@ export async function POST(request: Request) {
       return noStoreJson({ error: "cannot_chat_with_self", message: "不能给自己发送消息。" }, { status: 400 });
     }
 
-    const recipient = await resolveMerchantById(supabase, recipientMerchantId);
+    const recipient = await resolvePeerById(
+      supabase as unknown as ReturnType<typeof createServerSupabaseServiceClient>,
+      recipientMerchantId,
+    );
     if (!recipient) {
       return noStoreJson({ error: "merchant_not_found", message: "目标商户不存在。" }, { status: 404 });
     }
     const sender =
-      (await resolveMerchantById(supabase, session.merchantId)) ??
+      (await resolvePeerById(
+        supabase as unknown as ReturnType<typeof createServerSupabaseServiceClient>,
+        session.merchantId,
+      )) ??
       ({
         merchantId: session.merchantId,
         merchantName: trimText(body?.merchantName) || session.merchantName || session.merchantId,
         merchantEmail: normalizeEmail(body?.merchantEmail) || session.merchantEmail,
-      } satisfies ResolvedMerchantRecord);
+        accountType: "merchant",
+      } satisfies ResolvedPeerRecord);
 
     const payload = await loadStoredMerchantPeerInbox(supabase as unknown as MerchantPeerInboxStoreClient);
     const nextPayload = upsertMerchantPeerMessage(payload, {
@@ -570,19 +814,21 @@ export async function POST(request: Request) {
       );
     }
 
-    const notification = buildMerchantPeerPushNotification({
-      recipientMerchantId: recipient.merchantId,
-      senderMerchantId: sender.merchantId,
-      senderMerchantName: sender.merchantName,
-      text,
-    });
+    if (recipient.accountType === "merchant") {
+      const notification = buildMerchantPeerPushNotification({
+        recipientMerchantId: recipient.merchantId,
+        senderMerchantId: sender.merchantId,
+        senderMerchantName: sender.merchantName,
+        text,
+      });
 
-    await notifyMerchantPushSubscribers(supabase as unknown as MerchantPeerInboxStoreClient, {
-      merchantId: recipient.merchantId,
-      ...notification,
-    }).catch(() => {
-      // Ignore notification delivery failures; the saved message should still succeed.
-    });
+      await notifyMerchantPushSubscribers(supabase as unknown as MerchantPeerInboxStoreClient, {
+        merchantId: recipient.merchantId,
+        ...notification,
+      }).catch(() => {
+        // Ignore notification delivery failures; the saved message should still succeed.
+      });
+    }
 
     return noStoreJson({
       ...(await buildInboxResponse(

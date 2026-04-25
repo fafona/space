@@ -18,6 +18,7 @@ import {
   type MerchantBusinessCardSharePayload,
 } from "@/lib/merchantBusinessCardShare";
 import { type MerchantAuthUserSummary } from "@/lib/merchantAuthIdentity";
+import { readPersonalAccountServiceConfigFromMetadata } from "@/lib/personalAccountServiceConfig";
 import {
   normalizeMerchantBusinessCardContactFieldOrder,
   type MerchantBusinessCardAsset,
@@ -110,6 +111,7 @@ type ShareActorContext =
   | {
       kind: "personal";
       merchantId: string;
+      allowLinkMode: boolean;
     }
   | {
       kind: "super-admin";
@@ -470,6 +472,7 @@ async function resolveShareActorContext(request: Request, hintedMerchantId: stri
   return {
     kind: "personal",
     merchantId: identity.accountId,
+    allowLinkMode: readPersonalAccountServiceConfigFromMetadata(user).allowBusinessCardLinkMode,
   } satisfies ShareActorContext;
 }
 
@@ -514,6 +517,9 @@ export async function POST(request: Request) {
   const actor = await resolveShareActorContext(request, hintedMerchantId);
   if (!actor) {
     return jsonError(401, "unauthorized");
+  }
+  if (actor.kind === "personal" && !actor.allowLinkMode) {
+    return jsonError(403, "share_link_mode_not_allowed");
   }
 
   const shareKey = normalizeMerchantBusinessCardShareKey(normalizeText(body?.key)) || createShareKey(body);

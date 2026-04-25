@@ -15,6 +15,7 @@ type MerchantOrderMobilePanelProps = {
   siteName: string;
   darkMode?: boolean;
   onOrdersChange?: (records: MerchantOrderRecord[]) => void;
+  onOpenConversation?: (target: { accountId?: string; email?: string; name?: string }) => void;
   onSectionChange?: (section: "booking" | "orders") => void;
 };
 
@@ -34,6 +35,20 @@ function MailIcon() {
         strokeWidth="1.5"
       />
       <path d="m4 6 6 4 6-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function ChatIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
+      <path
+        d="M4.25 5.75A1.75 1.75 0 0 1 6 4h8a1.75 1.75 0 0 1 1.75 1.75v5.5A1.75 1.75 0 0 1 14 13H9.15l-3.4 2.6V13.4A1.75 1.75 0 0 1 4.25 11.75v-6Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
@@ -157,6 +172,7 @@ export default function MerchantOrderMobilePanel({
   siteName,
   darkMode = false,
   onOrdersChange,
+  onOpenConversation,
   onSectionChange,
 }: MerchantOrderMobilePanelProps) {
   const overflowMenuRef = useRef<HTMLDivElement>(null);
@@ -1114,6 +1130,7 @@ export default function MerchantOrderMobilePanel({
           filteredRecords.map((record) => {
             const displayName = record.customer.name || "未命名客户";
             const isNewRecord = isMerchantOrderPendingMerchantTouch(record);
+            const canOpenConversation = Boolean(record.customerAccountId || record.customerLoginEmail);
             return (
               <div key={record.id} className={`${cardClassName} relative overflow-visible`}>
                 {isNewRecord ? (
@@ -1141,6 +1158,24 @@ export default function MerchantOrderMobilePanel({
                       {formatMerchantOrderAmount(record.totalAmount, record.pricePrefix)}
                     </div>
                     <div className="flex flex-wrap justify-end gap-2">
+                      {canOpenConversation ? (
+                        <button
+                          type="button"
+                          className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-slate-900 text-white shadow-sm transition hover:bg-slate-800"
+                          onClick={() => {
+                            void markOrderTouched(record.id);
+                            void onOpenConversation?.({
+                              accountId: record.customerAccountId,
+                              email: record.customerLoginEmail,
+                              name: record.customer.name,
+                            });
+                          }}
+                          title="打开与客户的会话"
+                          aria-label="打开与客户的会话"
+                        >
+                          <ChatIcon />
+                        </button>
+                      ) : null}
                       {record.customer.email ? (
                         <a
                           className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"

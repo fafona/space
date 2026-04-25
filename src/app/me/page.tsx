@@ -4,7 +4,12 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, ty
 import { useI18n } from "@/components/I18nProvider";
 import MerchantBusinessCardManager from "@/components/admin/MerchantBusinessCardManager";
 import { readMerchantSessionMerchantIds } from "@/lib/authSessionRecovery";
-import { createDefaultMerchantPermissionConfig, type MerchantContactVisibility, type SiteLocation } from "@/data/platformControlStore";
+import { type MerchantContactVisibility, type SiteLocation } from "@/data/platformControlStore";
+import {
+  buildPersonalAccountPermissionConfig,
+  normalizePersonalAccountServiceConfig,
+  type PersonalAccountServiceConfig,
+} from "@/lib/personalAccountServiceConfig";
 import {
   getEuropeCityOptions,
   getEuropeCountryOptions,
@@ -52,6 +57,8 @@ type MeSessionPayload = {
   accountId?: unknown;
   merchantId?: unknown;
   merchantIds?: unknown;
+  personalServiceConfig?: unknown;
+  personalServicePaused?: unknown;
   user?: {
     email?: string | null;
     user_metadata?: Record<string, unknown> | null;
@@ -1090,6 +1097,20 @@ function MailIcon() {
   );
 }
 
+function ChatIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
+      <path
+        d="M4.25 5.75A1.75 1.75 0 0 1 6 4h8a1.75 1.75 0 0 1 1.75 1.75v5.5A1.75 1.75 0 0 1 14 13H9.15l-3.4 2.6V13.4A1.75 1.75 0 0 1 4.25 11.75v-6Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 function PhoneIcon() {
   return (
     <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" aria-hidden="true">
@@ -1823,7 +1844,17 @@ export default function MePage() {
   const personalProfile = useMemo(() => readPersonalProfile(payload), [payload]);
   const displayName = personalProfile.displayName || readDisplayName(payload);
   const profileName = displayName || email.split("@")[0] || accountId || "个人用户";
-  const personalBusinessCardPermissionConfig = useMemo(() => createDefaultMerchantPermissionConfig(), []);
+  const personalServiceConfig = useMemo(
+    () =>
+      normalizePersonalAccountServiceConfig(
+        (payload?.personalServiceConfig ?? null) as PersonalAccountServiceConfig | null,
+      ),
+    [payload?.personalServiceConfig],
+  );
+  const personalBusinessCardPermissionConfig = useMemo(
+    () => buildPersonalAccountPermissionConfig(personalServiceConfig),
+    [personalServiceConfig],
+  );
   const persistPersonalBusinessCards = useCallback(
     async (cards: MerchantBusinessCardAsset[]) => {
       if (!accountId) return;
@@ -2872,6 +2903,96 @@ export default function MePage() {
     setSelectedConversationKey(key);
     setMobileConversationView("thread");
     focusSupportInput();
+  }
+
+  async function openPersonalMerchantConversation(target: {
+    siteId?: string;
+    email?: string;
+    name?: string;
+  }) {
+    const merchantId = trimText(target.siteId);
+    const merchantEmail = trimText(target.email).toLowerCase();
+    const merchantName = trimText(target.name) || merchantId || "商户";
+    if (!merchantId && !merchantEmail) return;
+
+    setSupportError("");
+    setSupportSearchError("");
+    setSupportContactKeyword("");
+    setSupportAttachmentMenuOpen(false);
+    setConversationInfoOpen(false);
+    setDesktopSection("conversations");
+    setMobileTab("conversations");
+
+    const existingContact = peerContacts.find((contact) => {
+      const contactId = trimText(contact.merchantId);
+      const contactEmail = trimText(contact.merchantEmail).toLowerCase();
+      return (merchantId && contactId === merchantId) || (merchantEmail && contactEmail === merchantEmail);
+    });
+    if (existingContact) {
+      setSelectedConversationKey(`merchant:${trimText(existingContact.merchantId)}`);
+      setMobileConversationView("thread");
+      return;
+    }
+
+    if (!accountId) {
+      setSupportError("个人账号信息还没准备好，请稍后重试。");
+      return;
+    }
+    if (supportSearching) return;
+
+    setSupportSearching(true);
+    try {
+      const response = await fetch("/api/merchant-peer-messages", {
+        method: "POST",
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          accept: "application/json",
+        },
+        body: JSON.stringify({
+          action: "search",
+          query: merchantId || merchantEmail,
+          siteId: accountId,
+          merchantEmail: email,
+          merchantName: profileName,
+        }),
+      });
+      const result = (await response.json().catch(() => null)) as MerchantPeerResponsePayload | null;
+      if (!response.ok || !result || result.ok !== true) {
+        throw new Error(readPayloadMessage(result?.message, `没有找到 ${merchantName} 的会话入口，请稍后重试。`));
+      }
+      const nextContacts = Array.isArray(result.contacts)
+        ? result.contacts
+            .map(sanitizeMerchantPeerContactSummary)
+            .filter((contact): contact is MerchantPeerContactSummary => contact !== null)
+        : [];
+      const nextThreads = Array.isArray(result.threads)
+        ? result.threads.map(sanitizeMerchantPeerThread).filter((thread): thread is MerchantPeerThread => thread !== null)
+        : [];
+      setPeerContacts(nextContacts);
+      setPeerThreads(nextThreads);
+      const foundMerchantId =
+        trimText(result.contact?.merchantId) ||
+        trimText(
+          nextContacts.find((contact) => {
+            const contactId = trimText(contact.merchantId);
+            const contactEmail = trimText(contact.merchantEmail).toLowerCase();
+            return (merchantId && contactId === merchantId) || (merchantEmail && contactEmail === merchantEmail);
+          })?.merchantId,
+        );
+      if (!foundMerchantId) {
+        throw new Error(`没有找到 ${merchantName} 的会话入口，请稍后重试。`);
+      }
+      setSelectedConversationKey(`merchant:${foundMerchantId}`);
+      setMobileConversationView("thread");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "打开会话失败，请稍后重试。";
+      setSupportError(message);
+      setSupportSearchError(message);
+    } finally {
+      setSupportSearching(false);
+    }
   }
 
   function toggleSupportAttachmentMenu() {
@@ -4200,6 +4321,7 @@ export default function MePage() {
             const restoreBusyKey = `booking:${booking.id}:restore`;
             const contactEmail = contact.email;
             const contactPhone = contact.phone;
+            const canOpenConversation = Boolean(contact.siteId || contactEmail);
             if (compact) {
               return (
                 <article
@@ -4219,8 +4341,25 @@ export default function MePage() {
                         <span>{`创建时间: ${formatPersonalRecordDateTime(booking.createdAt)}`}</span>
                       </div>
                     </div>
-                    {contactEmail || contactPhone ? (
+                    {canOpenConversation || contactEmail || contactPhone ? (
                       <div className="flex shrink-0 items-center gap-2">
+                        {canOpenConversation ? (
+                          <button
+                            type="button"
+                            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white shadow-sm transition hover:bg-slate-800"
+                            onClick={() =>
+                              void openPersonalMerchantConversation({
+                                siteId: contact.siteId,
+                                email: contactEmail,
+                                name: contact.name,
+                              })
+                            }
+                            title="打开与商户的会话"
+                            aria-label="打开与商户的会话"
+                          >
+                            <ChatIcon />
+                          </button>
+                        ) : null}
                         {contactEmail ? (
                           <a
                             className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
@@ -4333,17 +4472,36 @@ export default function MePage() {
                       </div>
                     </div>
 
-                    {contactEmail ? (
+                    {canOpenConversation || contactEmail ? (
                       <div className="flex min-w-[220px] items-center gap-2 text-[13px] leading-5 text-slate-700">
                         <span className="min-w-0 flex-1 truncate">商家邮箱: {contactEmail}</span>
-                        <a
-                          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
-                          href={`mailto:${contactEmail}`}
+                        {canOpenConversation ? (
+                          <button
+                            type="button"
+                            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white shadow-sm transition hover:bg-slate-800"
+                            onClick={() =>
+                              void openPersonalMerchantConversation({
+                                siteId: contact.siteId,
+                                email: contactEmail,
+                                name: contact.name,
+                              })
+                            }
+                            title="打开与商户的会话"
+                            aria-label="打开与商户的会话"
+                          >
+                            <ChatIcon />
+                          </button>
+                        ) : null}
+                        {contactEmail ? (
+                          <a
+                            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
+                            href={`mailto:${contactEmail}`}
                           title="联系商家邮箱"
                           aria-label="联系商家邮箱"
                         >
                           <MailIcon />
-                        </a>
+                          </a>
+                        ) : null}
                       </div>
                     ) : null}
 
@@ -4457,6 +4615,7 @@ export default function MePage() {
             const busyKey = `order:${order.id}:cancel`;
             const contactEmail = contact.email;
             const contactPhone = contact.phone;
+            const canOpenConversation = Boolean(contact.siteId || contactEmail);
             if (compact) {
               const compactItemPreview = order.items
                 .slice(0, 3)
@@ -4490,6 +4649,23 @@ export default function MePage() {
                         {formatMerchantOrderAmount(order.totalAmount, order.pricePrefix)}
                       </div>
                       <div className="flex flex-wrap justify-end gap-2">
+                        {canOpenConversation ? (
+                          <button
+                            type="button"
+                            className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-slate-900 text-white shadow-sm transition hover:bg-slate-800"
+                            onClick={() =>
+                              void openPersonalMerchantConversation({
+                                siteId: contact.siteId,
+                                email: contactEmail,
+                                name: contact.name,
+                              })
+                            }
+                            title="打开与商户的会话"
+                            aria-label="打开与商户的会话"
+                          >
+                            <ChatIcon />
+                          </button>
+                        ) : null}
                         {contactEmail ? (
                           <a
                             className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
@@ -4554,17 +4730,36 @@ export default function MePage() {
                     </div>
                   </div>
 
-                  {contactEmail ? (
+                  {canOpenConversation || contactEmail ? (
                     <div className="flex min-w-[220px] items-center gap-2 text-[13px] leading-5 text-slate-700">
                       <span className="min-w-0 flex-1 truncate">商家邮箱: {contactEmail}</span>
-                      <a
-                        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
-                        href={`mailto:${contactEmail}`}
+                      {canOpenConversation ? (
+                        <button
+                          type="button"
+                          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white shadow-sm transition hover:bg-slate-800"
+                          onClick={() =>
+                            void openPersonalMerchantConversation({
+                              siteId: contact.siteId,
+                              email: contactEmail,
+                              name: contact.name,
+                            })
+                          }
+                          title="打开与商户的会话"
+                          aria-label="打开与商户的会话"
+                        >
+                          <ChatIcon />
+                        </button>
+                      ) : null}
+                      {contactEmail ? (
+                        <a
+                          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
+                          href={`mailto:${contactEmail}`}
                         title="联系商家邮箱"
                         aria-label="联系商家邮箱"
                       >
                         <MailIcon />
-                      </a>
+                        </a>
+                      ) : null}
                     </div>
                   ) : null}
 

@@ -74,6 +74,7 @@ type MerchantBookingManagerDialogProps = {
   allowBookingEmailPrefill?: boolean;
   allowCustomerAutoEmail?: boolean;
   onRecordsChange?: (records: MerchantBookingRecord[]) => void;
+  onOpenConversation?: (target: { accountId?: string; email?: string; name?: string }) => void;
   onClose: () => void;
 };
 
@@ -188,6 +189,20 @@ function MailIcon() {
         strokeWidth="1.5"
       />
       <path d="m4 6 6 4 6-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function ChatIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
+      <path
+        d="M4.25 5.75A1.75 1.75 0 0 1 6 4h8a1.75 1.75 0 0 1 1.75 1.75v5.5A1.75 1.75 0 0 1 14 13H9.15l-3.4 2.6V13.4A1.75 1.75 0 0 1 4.25 11.75v-6Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
@@ -428,6 +443,7 @@ export default function MerchantBookingManagerDialog({
   allowBookingEmailPrefill = false,
   allowCustomerAutoEmail = false,
   onRecordsChange,
+  onOpenConversation,
   onClose,
 }: MerchantBookingManagerDialogProps) {
   const { locale } = useI18n();
@@ -1478,6 +1494,7 @@ export default function MerchantBookingManagerDialog({
                 const appointmentParts = splitMerchantBookingDateTime(record.appointmentAt);
                 const displayName = formatMerchantBookingDisplayName(record.customerName, record.title, locale);
                 const isNewRecord = isMerchantBookingPendingMerchantTouch(record);
+                const canOpenConversation = Boolean(record.customerAccountId || record.customerLoginEmail);
                 return (
                   <article
                     key={record.id}
@@ -1518,6 +1535,24 @@ export default function MerchantBookingManagerDialog({
 
                         <div className="flex min-w-[280px] items-center gap-2 text-[13px] leading-5 text-slate-700">
                           <span className="min-w-0 flex-1 truncate">{`${getMerchantBookingFieldText("email", locale)}: ${record.email || "-"}`}</span>
+                          {canOpenConversation ? (
+                            <button
+                              type="button"
+                              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white shadow-sm transition hover:bg-slate-800"
+                              onClick={() => {
+                                void markBookingTouched(record.id);
+                                void onOpenConversation?.({
+                                  accountId: record.customerAccountId,
+                                  email: record.customerLoginEmail,
+                                  name: record.customerName,
+                                });
+                              }}
+                              title="打开与客户的会话"
+                              aria-label="打开与客户的会话"
+                            >
+                              <ChatIcon />
+                            </button>
+                          ) : null}
                           {record.email ? (
                             <a
                               className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"

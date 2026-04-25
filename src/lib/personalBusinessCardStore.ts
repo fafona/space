@@ -3,7 +3,26 @@ import { normalizeMerchantBusinessCards, type MerchantBusinessCardAsset } from "
 const PERSONAL_BUSINESS_CARD_SLUG_PREFIX = "__personal_business_cards__:";
 
 export type PersonalBusinessCardStoreClient = {
-  from: (table: string) => any;
+  from: (table: string) => {
+    select: (columns: string) => {
+      is: (column: string, value: null) => {
+        eq: (column: string, value: string) => {
+          limit: (count: number) => {
+            maybeSingle: () => Promise<{ data: unknown; error: unknown }>;
+          };
+        };
+      };
+      eq: (column: string, value: string) => {
+        limit: (count: number) => {
+          maybeSingle: () => Promise<{ data: unknown; error: unknown }>;
+        };
+      };
+    };
+    update: (body: Record<string, unknown>) => {
+      eq: (column: string, value: string | number | null) => Promise<{ error: unknown }>;
+    };
+    insert: (body: Record<string, unknown>) => Promise<{ error: unknown }>;
+  };
 };
 
 export type StoredPersonalBusinessCards = {

@@ -82,6 +82,7 @@ type MerchantBookingMobilePanelProps = {
   allowCustomerAutoEmail?: boolean;
   onRecordsChange?: (records: MerchantBookingRecord[]) => void;
   allowOrderManagement?: boolean;
+  onOpenConversation?: (target: { accountId?: string; email?: string; name?: string }) => void;
   onSectionChange?: (section: "booking" | "orders") => void;
 };
 
@@ -230,6 +231,20 @@ function ActionCloseIcon() {
         d="M5 5l6 6M11 5l-6 6"
         stroke="currentColor"
         strokeWidth="2.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function ChatIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
+      <path
+        d="M4.25 5.75A1.75 1.75 0 0 1 6 4h8a1.75 1.75 0 0 1 1.75 1.75v5.5A1.75 1.75 0 0 1 14 13H9.15l-3.4 2.6V13.4A1.75 1.75 0 0 1 4.25 11.75v-6Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
@@ -451,6 +466,7 @@ export default function MerchantBookingMobilePanel({
   allowCustomerAutoEmail = false,
   onRecordsChange,
   allowOrderManagement = false,
+  onOpenConversation,
   onSectionChange,
 }: MerchantBookingMobilePanelProps) {
   const { locale } = useI18n();
@@ -1684,6 +1700,7 @@ export default function MerchantBookingMobilePanel({
                   const appointmentParts = splitMerchantBookingDateTime(record.appointmentAt);
                   const displayName = formatMerchantBookingDisplayName(record.customerName, record.title, locale);
                   const isNewRecord = isMerchantBookingPendingMerchantTouch(record);
+                  const canOpenConversation = Boolean(record.customerAccountId || record.customerLoginEmail);
                   return (
                     <article
                       key={record.id}
@@ -1722,8 +1739,26 @@ export default function MerchantBookingMobilePanel({
                         </div>
                       </div>
                     </div>
-                    {record.email || record.phone ? (
+                    {canOpenConversation || record.email || record.phone ? (
                       <div className="flex shrink-0 items-center gap-2">
+                        {canOpenConversation ? (
+                          <button
+                            type="button"
+                            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white shadow-sm transition hover:bg-slate-800"
+                            onClick={() => {
+                              void markBookingTouched(record.id);
+                              void onOpenConversation?.({
+                                accountId: record.customerAccountId,
+                                email: record.customerLoginEmail,
+                                name: record.customerName,
+                              });
+                            }}
+                            title="打开与客户的会话"
+                            aria-label="打开与客户的会话"
+                          >
+                            <ChatIcon />
+                          </button>
+                        ) : null}
                         {record.email ? (
                           <a
                             className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
