@@ -4474,7 +4474,6 @@ export default function MePage() {
 
                     {canOpenConversation || contactEmail ? (
                       <div className="flex min-w-[220px] items-center gap-2 text-[13px] leading-5 text-slate-700">
-                        <span className="min-w-0 flex-1 truncate">商家邮箱: {contactEmail}</span>
                         {canOpenConversation ? (
                           <button
                             type="button"
@@ -4492,6 +4491,7 @@ export default function MePage() {
                             <ChatIcon />
                           </button>
                         ) : null}
+                        <span className="min-w-0 flex-1 truncate">商家邮箱: {contactEmail}</span>
                         {contactEmail ? (
                           <a
                             className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
@@ -4732,7 +4732,6 @@ export default function MePage() {
 
                   {canOpenConversation || contactEmail ? (
                     <div className="flex min-w-[220px] items-center gap-2 text-[13px] leading-5 text-slate-700">
-                      <span className="min-w-0 flex-1 truncate">商家邮箱: {contactEmail}</span>
                       {canOpenConversation ? (
                         <button
                           type="button"
@@ -4750,6 +4749,7 @@ export default function MePage() {
                           <ChatIcon />
                         </button>
                       ) : null}
+                      <span className="min-w-0 flex-1 truncate">商家邮箱: {contactEmail}</span>
                       {contactEmail ? (
                         <a
                           className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
