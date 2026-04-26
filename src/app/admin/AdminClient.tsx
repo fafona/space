@@ -4952,9 +4952,7 @@ export default function AdminClient({
   );
   const [publishing, setPublishing] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
-  const [merchantDesktopSection, setMerchantDesktopSection] = useState<MerchantDesktopSection>(() =>
-    typeof window !== "undefined" && isFaollaSectionSearch(window.location.search) ? "faolla" : "editor",
-  );
+  const [merchantDesktopSection, setMerchantDesktopSection] = useState<MerchantDesktopSection>("editor");
   const [merchantAnalyticsRemoteSummary, setMerchantAnalyticsRemoteSummary] = useState<RemoteAnalyticsSummary | null>(null);
   const [merchantAnalyticsLoading, setMerchantAnalyticsLoading] = useState(false);
   const [merchantAnalyticsError, setMerchantAnalyticsError] = useState("");
@@ -4987,12 +4985,14 @@ export default function AdminClient({
   const [supportSearchError, setSupportSearchError] = useState("");
   const [supportSelectedContactKey, setSupportSelectedContactKey] = useState(SUPPORT_OFFICIAL_CONTACT_KEY);
   const [supportMobileView, setSupportMobileView] = useState<"list" | "thread">("list");
-  const [supportMobileHomeTab, setSupportMobileHomeTab] = useState<SupportMobileHomeTab>(() =>
-    typeof window !== "undefined" && isFaollaSectionSearch(window.location.search) ? "faolla" : "conversations",
-  );
-  const [supportFaollaEmbedHref, setSupportFaollaEmbedHref] = useState(() =>
-    typeof window !== "undefined" ? resolveFaollaEntryUrlFromBrowser(window.location.search, window.location.origin) : "",
-  );
+  const [supportMobileHomeTab, setSupportMobileHomeTab] = useState<SupportMobileHomeTab>("conversations");
+  const [supportFaollaEmbedHref, setSupportFaollaEmbedHref] = useState("");
+  useEffect(() => {
+    if (typeof window === "undefined" || !isFaollaSectionSearch(window.location.search)) return;
+    setSupportFaollaEmbedHref(resolveFaollaEntryUrlFromBrowser(window.location.search, window.location.origin));
+    setMerchantDesktopSection("faolla");
+    setSupportMobileHomeTab("faolla");
+  }, []);
   const [supportMobileBusinessSection, setSupportMobileBusinessSection] = useState<"booking" | "orders">("booking");
   const [supportSelfSectionView, setSupportSelfSectionView] = useState<SupportSelfSectionView>("home");
   const [supportPeerLocalMessages, setSupportPeerLocalMessages] = useState<LocalPeerSupportMessage[]>([]);

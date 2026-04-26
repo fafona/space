@@ -1685,15 +1685,15 @@ export default function MePage() {
   const [payload, setPayload] = useState<MeSessionPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [loggingOut, setLoggingOut] = useState(false);
-  const [desktopSection, setDesktopSection] = useState<DesktopSection>(() =>
-    typeof window !== "undefined" && isFaollaSectionSearch(window.location.search) ? "faolla" : "conversations",
-  );
-  const [mobileTab, setMobileTab] = useState<MobileTab>(() =>
-    typeof window !== "undefined" && isFaollaSectionSearch(window.location.search) ? "faolla" : "conversations",
-  );
-  const [faollaEmbedHref, setFaollaEmbedHref] = useState(() =>
-    typeof window !== "undefined" ? resolveFaollaEntryUrlFromBrowser(window.location.search, window.location.origin) : "",
-  );
+  const [desktopSection, setDesktopSection] = useState<DesktopSection>("conversations");
+  const [mobileTab, setMobileTab] = useState<MobileTab>("conversations");
+  const [faollaEmbedHref, setFaollaEmbedHref] = useState("");
+  useEffect(() => {
+    if (typeof window === "undefined" || !isFaollaSectionSearch(window.location.search)) return;
+    setFaollaEmbedHref(resolveFaollaEntryUrlFromBrowser(window.location.search, window.location.origin));
+    setDesktopSection("faolla");
+    setMobileTab("faolla");
+  }, []);
   const [consumptionSection, setConsumptionSection] = useState<ConsumptionSection>("bookings");
   const [mobileConversationView, setMobileConversationView] = useState<MobileConversationView>("list");
   const [mobileSelfSection, setMobileSelfSection] = useState<MobileSelfSection>("home");
