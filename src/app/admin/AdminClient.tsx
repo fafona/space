@@ -10319,7 +10319,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     setSupportMobileHomeTab(tab);
   }, []);
   const supportMobileFaollaContent = (
-    <div className="relative min-h-0 flex-1 overflow-hidden">
+    <div className="support-preserve-light-surface relative min-h-0 flex-1 overflow-hidden bg-white">
       <div className="pointer-events-none absolute left-4 top-[calc(env(safe-area-inset-top)+0.75rem)] z-10">
         <FaollaHomeButton className="pointer-events-auto h-11 w-11" onClick={navigateSupportFaollaHome} />
       </div>
@@ -10327,7 +10327,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         ref={supportMobileFaollaFrameRef}
         title="Faolla.com"
         src={supportMobileFaollaTargetHref}
-        className="absolute inset-x-0 top-0 bottom-[calc(env(safe-area-inset-bottom)+5.85rem)] w-full border-0 bg-transparent"
+        className="absolute inset-0 h-full w-full border-0 bg-white"
       />
     </div>
   );

@@ -470,7 +470,7 @@ export function SitePageClient({
   const backgroundExtendPadding = Math.max(0, maxBlockOffsetY) + 160;
   const showMerchantLoginButton = Boolean(siteId && siteId !== "site-main");
   const authEntryClassName = faollaAppShell
-    ? "fixed right-3 top-3 z-[20000] md:right-5 md:top-5"
+    ? "fixed right-[max(0.75rem,env(safe-area-inset-right))] top-[calc(env(safe-area-inset-top)+0.75rem)] z-[2147483000] md:right-5 md:top-5"
     : "fixed right-16 top-3 z-[20000] md:right-20 md:top-5";
 
   return (

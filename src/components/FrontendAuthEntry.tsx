@@ -106,6 +106,22 @@ function readSessionAccountId(payload: MerchantCookieSessionPayload | null, merc
   );
 }
 
+function readMerchantPreviewProfile(value: unknown) {
+  const root = readRecord(value);
+  const profile = readRecord(root?.profile);
+  const chatBusinessCard = readRecord(root?.chatBusinessCard) ?? readRecord(profile?.chatBusinessCard);
+  const name =
+    readMetadataString(profile, "merchantName", "name", "displayName", "display_name") ||
+    readMetadataString(chatBusinessCard, "name", "title");
+  const avatarUrl =
+    readMetadataString(profile, "chatAvatarImageUrl", "merchantCardImageUrl", "avatarUrl", "avatar_url", "logoUrl") ||
+    readMetadataString(chatBusinessCard, "imageUrl", "shareImageUrl", "contactPagePublicImageUrl");
+  return {
+    name,
+    avatarUrl,
+  };
+}
+
 export default function FrontendAuthEntry({
   className = "",
   loginClassName = "",
@@ -117,6 +133,7 @@ export default function FrontendAuthEntry({
   const [currentUrl] = useState(() => (typeof window !== "undefined" ? window.location.href : ""));
   const [payload, setPayload] = useState<MerchantCookieSessionPayload | null>(null);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [merchantPreview, setMerchantPreview] = useState({ merchantId: "", name: "", avatarUrl: "" });
   const rootRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -174,6 +191,58 @@ export default function FrontendAuthEntry({
     };
   }, [accountMenuOpen]);
 
+  useEffect(() => {
+    if (!resolved || payload?.authenticated !== true || payload.accountType !== "merchant") {
+      return;
+    }
+
+    const merchantIds = readMerchantSessionMerchantIds(payload);
+    const normalizedCurrentMerchantId = currentMerchantId.trim();
+    const ownMerchantId =
+      trimText(payload.merchantId) ||
+      merchantIds[0] ||
+      (/^\d{8}$/.test(trimText(payload.accountId)) ? trimText(payload.accountId) : "");
+    const lookupMerchantId =
+      normalizedCurrentMerchantId && merchantIds.includes(normalizedCurrentMerchantId)
+        ? normalizedCurrentMerchantId
+        : ownMerchantId;
+    if (!/^\d{8}$/.test(lookupMerchantId)) return;
+
+    let cancelled = false;
+    const controller = new AbortController();
+    void fetch(`/api/merchant-chat-business-card?merchantId=${encodeURIComponent(lookupMerchantId)}`, {
+      method: "GET",
+      cache: "no-store",
+      credentials: "include",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) return null;
+        return (await response.json().catch(() => null)) as unknown;
+      })
+      .then((json) => {
+        if (cancelled || !json) return;
+        const preview = readMerchantPreviewProfile(json);
+        setMerchantPreview({
+          merchantId: lookupMerchantId,
+          name: preview.name,
+          avatarUrl: normalizePublicAssetUrl(preview.avatarUrl),
+        });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setMerchantPreview((current) =>
+            current.merchantId === lookupMerchantId ? { merchantId: lookupMerchantId, name: "", avatarUrl: "" } : current,
+          );
+        }
+      });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [currentMerchantId, payload, resolved]);
+
   if (!resolved) return null;
 
   const loggedIn = payload?.authenticated === true;
@@ -198,9 +267,13 @@ export default function FrontendAuthEntry({
   const merchantIds = readMerchantSessionMerchantIds(payload);
   const currentSiteBelongsToSession =
     payload.accountType === "merchant" && currentMerchantId.trim() && merchantIds.includes(currentMerchantId.trim());
-  const name = readSessionDisplayName(payload);
+  const merchantPreviewApplies =
+    payload.accountType === "merchant" && merchantPreview.merchantId && merchantIds.includes(merchantPreview.merchantId);
+  const name = (merchantPreviewApplies ? merchantPreview.name : "") || readSessionDisplayName(payload);
   const avatarUrl = normalizePublicAssetUrl(
-    readSessionAvatarUrl(payload) || (currentSiteBelongsToSession ? merchantAvatarUrl : ""),
+    readSessionAvatarUrl(payload) ||
+      (merchantPreviewApplies ? merchantPreview.avatarUrl : "") ||
+      (currentSiteBelongsToSession ? merchantAvatarUrl : ""),
   );
   const avatarLabel = getAvatarLabel(name);
   const accountId = readSessionAccountId(payload, merchantIds);
@@ -231,10 +304,10 @@ export default function FrontendAuthEntry({
       </button>
       {accountMenuOpen ? (
         <div
-          className="absolute right-0 top-[calc(100%+0.75rem)] z-[2147483000] w-[min(20rem,calc(100vw-1.5rem))] overflow-hidden rounded-[28px] border border-slate-200/90 bg-white shadow-[0_24px_80px_rgba(15,23,42,0.22)] ring-1 ring-slate-950/5"
+          className="fixed right-[max(0.75rem,env(safe-area-inset-right))] top-[calc(env(safe-area-inset-top)+4.25rem)] z-[2147483000] max-h-[calc(100dvh-6rem)] w-[min(20rem,calc(100vw-1.5rem))] overflow-y-auto rounded-[28px] border border-slate-200/90 bg-white shadow-[0_24px_80px_rgba(15,23,42,0.22)] ring-1 ring-slate-950/5 sm:absolute sm:right-0 sm:top-[calc(100%+0.75rem)]"
           role="menu"
         >
-          <div className="bg-slate-50 px-5 py-5 text-center">
+          <div className="support-preserve-light-surface bg-slate-50 px-5 py-5 text-center">
             <div className="mx-auto flex h-20 w-20 items-center justify-center overflow-hidden rounded-full bg-slate-950 text-lg font-bold text-white ring-4 ring-white">
               {renderAvatar()}
             </div>
