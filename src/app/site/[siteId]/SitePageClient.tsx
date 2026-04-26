@@ -244,7 +244,7 @@ export function SitePageClient({
     hasInitialPublishedBlocks ? initialPublishedBlocks : null,
   );
   const [remoteResolved, setRemoteResolved] = useState(hasInitialPublishedBlocks);
-  const [faollaAppShell] = useState(() => isFaollaAppShell());
+  const faollaAppShell = hydrated ? isFaollaAppShell() : false;
 
   const effectiveScopedPublishedBlocks = scopedPublishedBlocksLocal ?? EMPTY_BLOCKS;
   const hasScopedLocalBlocks = effectiveScopedPublishedBlocks.length > 0;

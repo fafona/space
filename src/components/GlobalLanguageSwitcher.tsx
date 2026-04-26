@@ -35,7 +35,7 @@ export default function GlobalLanguageSwitcher() {
   );
   const [allowMobileAdminSwitcher, setAllowMobileAdminSwitcher] = useState(false);
   const [allowDesktopBackendSwitcher, setAllowDesktopBackendSwitcher] = useState(false);
-  const [faollaAppShell] = useState(() => isFaollaAppShell());
+  const faollaAppShell = hydrated ? isFaollaAppShell() : false;
   const inEditor = pathname.startsWith("/admin") || pathname.startsWith("/super-admin/editor");
   const isAdminPage = pathname.startsWith("/admin");
   const isMePage = pathname.startsWith("/me");

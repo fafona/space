@@ -15,6 +15,7 @@ import { normalizeDomainPrefix } from "@/lib/merchantIdentity";
 import { cloneBlocks, getPagePlanConfigFromBlocks } from "@/lib/pagePlans";
 import { resolvePublishedSiteByPrefix } from "@/lib/publishedSiteLookup";
 import { extractMerchantPrefixFromHost, resolveRuntimePortalBaseDomain } from "@/lib/siteRouting";
+import { useHydrated } from "@/lib/useHydrated";
 import { useMobileHorizontalScrollLock } from "@/lib/useMobileHorizontalScrollLock";
 
 function readViewportWidth() {
@@ -92,14 +93,11 @@ export default function HomePageClient({
   initialIsMobileViewport = false,
 }: HomePageClientProps) {
   const { locale } = useI18n();
+  const hydrated = useHydrated();
   const [platformState, setPlatformState] = useState(() => loadPlatformState());
   const [isMobileViewport, setIsMobileViewport] = useState(initialIsMobileViewport);
-  const [suppressStandaloneLaunchRedirect] = useState(() =>
-    typeof window !== "undefined" ? shouldSuppressStandaloneLaunchRedirect() : false,
-  );
-  const [standaloneSessionBooting] = useState(() =>
-    typeof window !== "undefined" ? isStandaloneDisplayMode() && !shouldSuppressStandaloneLaunchRedirect() : false,
-  );
+  const suppressStandaloneLaunchRedirect = hydrated ? shouldSuppressStandaloneLaunchRedirect() : false;
+  const standaloneSessionBooting = hydrated ? isStandaloneDisplayMode() && !suppressStandaloneLaunchRedirect : false;
   const [remoteHostLookup, setRemoteHostLookup] = useState<{ prefix: string; siteId: string }>({
     prefix: "",
     siteId: "",
