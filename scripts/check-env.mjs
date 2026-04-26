@@ -49,18 +49,53 @@ const mergedEnv = {
 };
 const missingKeys = REQUIRED_ENV_KEYS.filter((key) => !(mergedEnv[key] || "").toString().trim());
 
-if (missingKeys.length === 0) {
+function validateSupabaseUrl(rawValue) {
+  const value = (rawValue || "").toString().trim();
+  if (!value) return null;
+
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return "NEXT_PUBLIC_SUPABASE_URL must be a valid URL.";
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return "NEXT_PUBLIC_SUPABASE_URL must use http or https.";
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  if (hostname === "faolla.com" || hostname === "www.faolla.com" || hostname.endsWith(".faolla.com")) {
+    return "NEXT_PUBLIC_SUPABASE_URL must point to Supabase, not a Faolla frontend domain.";
+  }
+
+  return null;
+}
+
+const invalidMessages = [];
+const supabaseUrlIssue = validateSupabaseUrl(mergedEnv.NEXT_PUBLIC_SUPABASE_URL);
+if (supabaseUrlIssue) invalidMessages.push(supabaseUrlIssue);
+
+if (missingKeys.length === 0 && invalidMessages.length === 0) {
   console.log("[env-check] OK");
   process.exit(0);
 }
 
 const missingMessage = formatMissingMessage(missingKeys);
 if (STRICT_MODE) {
-  console.error(`[env-check] ${missingMessage}`);
-  console.error("[env-check] Copy .env.example to .env.local and fill values before build.");
+  if (missingKeys.length > 0) {
+    console.error(`[env-check] ${missingMessage}`);
+    console.error("[env-check] Copy .env.example to .env.local and fill values before build.");
+  }
+  for (const message of invalidMessages) {
+    console.error(`[env-check] ${message}`);
+  }
   process.exit(1);
 }
 
-console.warn(`[env-check] ${missingMessage}`);
+if (missingKeys.length > 0) console.warn(`[env-check] ${missingMessage}`);
+for (const message of invalidMessages) {
+  console.warn(`[env-check] ${message}`);
+}
 console.warn("[env-check] Dev mode can continue with fallback backend, but remote features may not work.");
 process.exit(0);
