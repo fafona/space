@@ -5394,7 +5394,7 @@ export default function MePage() {
             ref={personalMobileFaollaFrameRef}
             title="Faolla"
             src={faollaTargetHref}
-            className="absolute inset-0 h-full w-full border-0 bg-transparent"
+            className="absolute inset-x-0 top-0 bottom-[calc(env(safe-area-inset-bottom)+5.85rem)] w-full border-0 bg-transparent"
           />
         </div>
       </main>

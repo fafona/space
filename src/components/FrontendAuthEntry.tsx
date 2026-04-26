@@ -7,9 +7,7 @@ import {
   resolveFrontendAuthPayload,
   type MerchantCookieSessionPayload,
 } from "@/lib/authSessionRecovery";
-import { buildBackendFaollaHref } from "@/lib/faollaEntry";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
-import { buildMerchantBackendHref } from "@/lib/siteRouting";
 
 type FrontendAuthEntryProps = {
   className?: string;
@@ -156,17 +154,6 @@ export default function FrontendAuthEntry({
     [currentUrl],
   );
 
-  const backendHref = useMemo(() => {
-    if (!payload?.authenticated || !currentUrl) return "";
-    if (payload.accountType === "personal") {
-      return buildBackendFaollaHref("/me", currentUrl);
-    }
-    const merchantIds = readMerchantSessionMerchantIds(payload);
-    const primaryMerchantId = trimText(payload.merchantId) || merchantIds[0] || "";
-    const baseHref = primaryMerchantId ? buildMerchantBackendHref(primaryMerchantId) : "/admin";
-    return buildBackendFaollaHref(baseHref, currentUrl);
-  }, [currentUrl, payload]);
-
   useEffect(() => {
     if (!accountMenuOpen) return;
     const handlePointerDown = (event: MouseEvent | TouchEvent) => {
@@ -217,8 +204,7 @@ export default function FrontendAuthEntry({
   );
   const avatarLabel = getAvatarLabel(name);
   const accountId = readSessionAccountId(payload, merchantIds);
-  const accountTypeLabel = payload.accountType === "personal" ? "个人用户" : "商户用户";
-  const resolvedBackendHref = backendHref || (payload.accountType === "personal" ? "/me" : "/admin");
+  const accountTypeLabel = payload.accountType === "personal" ? "普通用户" : "商户用户";
   const renderAvatar = () =>
     avatarUrl ? (
       // eslint-disable-next-line @next/next/no-img-element
@@ -258,17 +244,6 @@ export default function FrontendAuthEntry({
               <span className="shrink-0 text-slate-400">ID</span>
               <span className="ml-1 truncate">{accountId}</span>
             </div>
-          </div>
-          <div className="p-3">
-            <Link
-              href={resolvedBackendHref}
-              target="_top"
-              className="flex w-full items-center justify-center rounded-full bg-slate-950 px-4 py-3 text-sm font-semibold text-white shadow-[0_12px_28px_rgba(15,23,42,0.18)] transition hover:bg-slate-800"
-              role="menuitem"
-              onClick={() => setAccountMenuOpen(false)}
-            >
-              进入后台
-            </Link>
           </div>
         </div>
       ) : null}

@@ -232,12 +232,16 @@ export default function HomePageClient({
     );
   }
 
+  const authEntryClassName = suppressStandaloneLaunchRedirect
+    ? "fixed right-3 top-3 z-[20000] md:right-5 md:top-5"
+    : "fixed right-16 top-3 z-[20000] md:right-20 md:top-5";
+
   return (
     <main
       className="min-h-screen w-full overflow-x-hidden bg-gray-50 py-8"
       style={{ ...pageBackgroundStyle, paddingBottom: `calc(2rem + ${backgroundExtendPadding}px)` }}
     >
-      <div className="fixed right-16 top-3 z-[20000] md:right-20 md:top-5">
+      <div className={authEntryClassName}>
         <FrontendAuthEntry />
       </div>
       <BlockRenderer

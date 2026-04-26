@@ -11,6 +11,15 @@ function flagImageUrl(countryCode: string) {
   return `https://flagcdn.com/${countryCode.toLowerCase()}.svg`;
 }
 
+function isFaollaAppShell() {
+  if (typeof window === "undefined") return false;
+  try {
+    return (new URLSearchParams(window.location.search || "").get("appShell") ?? "").trim().toLowerCase() === "faolla";
+  } catch {
+    return false;
+  }
+}
+
 export default function GlobalLanguageSwitcher() {
   const hydrated = useHydrated();
   const pathname = usePathname();
@@ -26,6 +35,7 @@ export default function GlobalLanguageSwitcher() {
   );
   const [allowMobileAdminSwitcher, setAllowMobileAdminSwitcher] = useState(false);
   const [allowDesktopBackendSwitcher, setAllowDesktopBackendSwitcher] = useState(false);
+  const [faollaAppShell] = useState(() => isFaollaAppShell());
   const inEditor = pathname.startsWith("/admin") || pathname.startsWith("/super-admin/editor");
   const isAdminPage = pathname.startsWith("/admin");
   const isMePage = pathname.startsWith("/me");
@@ -153,6 +163,7 @@ export default function GlobalLanguageSwitcher() {
   }, [isMobileAdminPage, open]);
 
   if (!hydrated) return null;
+  if (faollaAppShell) return null;
 
   const isLoginPage = pathname === "/login";
   const showOnMobile = isLoginPage;

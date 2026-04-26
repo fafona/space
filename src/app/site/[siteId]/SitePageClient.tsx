@@ -48,6 +48,15 @@ function readViewportWidth() {
   return window.innerWidth;
 }
 
+function isFaollaAppShell() {
+  if (typeof window === "undefined") return false;
+  try {
+    return (new URLSearchParams(window.location.search || "").get("appShell") ?? "").trim().toLowerCase() === "faolla";
+  } catch {
+    return false;
+  }
+}
+
 function getPublishedScopeCandidates(siteId: string, siteScope: string) {
   const normalizedSiteId = (siteId ?? "").trim();
   const normalizedScope = (siteScope ?? "").trim() || "default";
@@ -235,6 +244,7 @@ export function SitePageClient({
     hasInitialPublishedBlocks ? initialPublishedBlocks : null,
   );
   const [remoteResolved, setRemoteResolved] = useState(hasInitialPublishedBlocks);
+  const [faollaAppShell] = useState(() => isFaollaAppShell());
 
   const effectiveScopedPublishedBlocks = scopedPublishedBlocksLocal ?? EMPTY_BLOCKS;
   const hasScopedLocalBlocks = effectiveScopedPublishedBlocks.length > 0;
@@ -459,6 +469,9 @@ export function SitePageClient({
   }, 0);
   const backgroundExtendPadding = Math.max(0, maxBlockOffsetY) + 160;
   const showMerchantLoginButton = Boolean(siteId && siteId !== "site-main");
+  const authEntryClassName = faollaAppShell
+    ? "fixed right-3 top-3 z-[20000] md:right-5 md:top-5"
+    : "fixed right-16 top-3 z-[20000] md:right-20 md:top-5";
 
   return (
     <main
@@ -466,7 +479,7 @@ export function SitePageClient({
       style={{ ...pageBackgroundStyle, paddingBottom: `calc(2rem + ${backgroundExtendPadding}px)` }}
     >
       {showMerchantLoginButton ? (
-        <div className="fixed right-16 top-3 z-[20000] md:right-20 md:top-5">
+        <div className={authEntryClassName}>
           <FrontendAuthEntry
             currentMerchantId={site?.id ?? siteId}
             merchantAvatarUrl={site?.chatAvatarImageUrl ?? site?.merchantCardImageUrl ?? ""}
