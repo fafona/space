@@ -22,6 +22,7 @@ import {
   isFaollaBackendShellUrl,
   isFaollaSectionSearch,
   normalizeFaollaEntryUrl,
+  readFaollaEntryUrlFromSearch,
   resolveFaollaEntryUrlFromBrowser,
 } from "@/lib/faollaEntry";
 import { installFrontendAuthBridgeResponder, isTrustedFrontendAuthBridgeOrigin } from "@/lib/frontendAuthBridge";
@@ -375,6 +376,16 @@ function isStandaloneDisplayMode() {
   if (typeof window === "undefined" || typeof navigator === "undefined") return false;
   const navigatorWithStandalone = navigator as Navigator & { standalone?: boolean };
   return window.matchMedia?.("(display-mode: standalone)").matches || navigatorWithStandalone.standalone === true;
+}
+
+function shouldOpenFaollaShellInitially() {
+  if (typeof window === "undefined") return false;
+  return isFaollaSectionSearch(window.location.search) || isStandaloneDisplayMode();
+}
+
+function readInitialFaollaEmbedHref() {
+  if (typeof window === "undefined" || !isFaollaSectionSearch(window.location.search)) return "";
+  return readFaollaEntryUrlFromSearch(window.location.search, window.location.origin);
 }
 
 function normalizePersonalLocationValue(value: unknown) {
@@ -1729,9 +1740,13 @@ export default function MePage() {
   const [payload, setPayload] = useState<MeSessionPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [loggingOut, setLoggingOut] = useState(false);
-  const [desktopSection, setDesktopSection] = useState<DesktopSection>("conversations");
-  const [mobileTab, setMobileTab] = useState<MobileTab>("conversations");
-  const [faollaEmbedHref, setFaollaEmbedHref] = useState("");
+  const [desktopSection, setDesktopSection] = useState<DesktopSection>(() =>
+    shouldOpenFaollaShellInitially() ? "faolla" : "conversations",
+  );
+  const [mobileTab, setMobileTab] = useState<MobileTab>(() =>
+    shouldOpenFaollaShellInitially() ? "faolla" : "conversations",
+  );
+  const [faollaEmbedHref, setFaollaEmbedHref] = useState(readInitialFaollaEmbedHref);
   useEffect(() => {
     if (typeof window === "undefined") return;
     const explicitFaollaSection = isFaollaSectionSearch(window.location.search);
