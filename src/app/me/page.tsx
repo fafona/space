@@ -383,6 +383,14 @@ function shouldOpenFaollaShellInitially() {
   return isFaollaSectionSearch(window.location.search) || isStandaloneDisplayMode();
 }
 
+function readPersonalMobileViewport() {
+  if (typeof window === "undefined") return false;
+  if (typeof window.matchMedia === "function") {
+    return window.matchMedia("(max-width: 767px)").matches;
+  }
+  return window.innerWidth < 768;
+}
+
 function readInitialFaollaEmbedHref() {
   if (typeof window === "undefined" || !isFaollaSectionSearch(window.location.search)) return "";
   return readFaollaEntryUrlFromSearch(window.location.search, window.location.origin);
@@ -1747,6 +1755,18 @@ export default function MePage() {
     shouldOpenFaollaShellInitially() ? "faolla" : "conversations",
   );
   const [faollaEmbedHref, setFaollaEmbedHref] = useState(readInitialFaollaEmbedHref);
+  const [isMobileViewport, setIsMobileViewport] = useState(readPersonalMobileViewport);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const syncViewport = () => setIsMobileViewport(readPersonalMobileViewport());
+    syncViewport();
+    window.addEventListener("resize", syncViewport);
+    window.visualViewport?.addEventListener("resize", syncViewport);
+    return () => {
+      window.removeEventListener("resize", syncViewport);
+      window.visualViewport?.removeEventListener("resize", syncViewport);
+    };
+  }, []);
   useEffect(() => {
     if (typeof window === "undefined") return;
     const explicitFaollaSection = isFaollaSectionSearch(window.location.search);
@@ -2402,6 +2422,8 @@ export default function MePage() {
     () => buildFaollaShellHref("/", locale, typeof window !== "undefined" ? window.location.origin : "https://faolla.com"),
     [locale],
   );
+  const desktopFaollaTargetHref = desktopSection === "faolla" && !isMobileViewport ? faollaTargetHref : "about:blank";
+  const mobileFaollaTargetHref = mobileTab === "faolla" && isMobileViewport ? faollaTargetHref : "about:blank";
   const navigatePersonalFaollaHome = useCallback(() => {
     setFaollaEmbedHref("/");
     if (personalDesktopFaollaFrameRef.current) {
@@ -5435,7 +5457,7 @@ export default function MePage() {
               <iframe
                 ref={personalDesktopFaollaFrameRef}
                 title="Faolla"
-                src={faollaTargetHref}
+                src={desktopFaollaTargetHref}
                 className="absolute inset-0 h-full w-full border-0 bg-transparent"
               />
             </div>
@@ -5452,7 +5474,7 @@ export default function MePage() {
           <iframe
             ref={personalMobileFaollaFrameRef}
             title="Faolla"
-            src={faollaTargetHref}
+            src={mobileFaollaTargetHref}
             className="absolute inset-0 h-full w-full border-0 bg-white"
           />
         </div>
