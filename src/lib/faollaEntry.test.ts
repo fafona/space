@@ -8,6 +8,7 @@ import {
   isFaollaBackendShellUrl,
   isFaollaAppShellSearch,
   isFaollaAppShellUrl,
+  preserveFaollaAppShellHref,
   resolveFaollaEntryUrlFromBrowser,
 } from "./faollaEntry";
 
@@ -106,4 +107,17 @@ test("detects Faolla app shell URLs for login suppression", () => {
   assert.equal(isFaollaAppShellUrl("https://faolla.com/?appShell=faolla", "https://faolla.com"), true);
   assert.equal(isFaollaAppShellUrl("https://fafona.faolla.com/?uiLocale=zh-CN&appShell=faolla", "https://faolla.com"), true);
   assert.equal(isFaollaAppShellUrl("https://faolla.com/login", "https://faolla.com"), false);
+});
+
+test("preserves Faolla shell params for frontend merchant navigation", () => {
+  installBrowser();
+
+  assert.equal(
+    preserveFaollaAppShellHref("https://fafona.faolla.com/", "zh-CN", "https://faolla.com"),
+    "https://fafona.faolla.com/?uiLocale=zh-CN&appShell=faolla",
+  );
+  assert.equal(
+    preserveFaollaAppShellHref("https://faolla.com/me", "zh-CN", "https://faolla.com"),
+    "https://faolla.com/me",
+  );
 });

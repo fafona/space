@@ -6,6 +6,7 @@ export const FAOLLA_URL_PARAM = "faollaUrl";
 export const FAOLLA_APP_SHELL_PARAM = "appShell";
 export const FAOLLA_APP_SHELL_VALUE = "faolla";
 export const FAOLLA_LAST_ENTRY_STORAGE_KEY = "faolla:last-entry-url";
+export const FAOLLA_APP_SHELL_LOCATION_MESSAGE = "faolla:app-shell-location";
 
 type NormalizeFaollaEntryOptions = {
   allowCrossOrigin?: boolean;
@@ -201,6 +202,21 @@ export function buildFaollaShellHref(sourceHref: string, locale?: string | null,
     return url.toString();
   } catch {
     return defaultOrigin;
+  }
+}
+
+export function preserveFaollaAppShellHref(sourceHref: string, locale?: string | null, fallbackOrigin?: string | null) {
+  const normalized = normalizeFaollaEntryUrl(sourceHref, fallbackOrigin, { allowFaollaCrossOrigin: true });
+  if (!normalized || !isUsableFrontendEntryUrl(normalized)) return sourceHref;
+
+  try {
+    const url = new URL(normalized);
+    const normalizedLocale = String(locale ?? "").trim();
+    if (normalizedLocale) url.searchParams.set(I18N_URL_PARAM, normalizedLocale);
+    url.searchParams.set(FAOLLA_APP_SHELL_PARAM, FAOLLA_APP_SHELL_VALUE);
+    return url.toString();
+  } catch {
+    return sourceHref;
   }
 }
 

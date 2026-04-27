@@ -107,6 +107,50 @@ const STANDALONE_LAUNCH_SCRIPT = `
 })();
 `;
 
+const FAOLLA_APP_SHELL_LOCATION_SCRIPT = `
+(() => {
+  if (typeof window === "undefined") return;
+  let isAppShell = false;
+  try {
+    isAppShell = (new URLSearchParams(window.location.search || "").get("appShell") || "").trim().toLowerCase() === "faolla";
+  } catch {
+    isAppShell = false;
+  }
+  if (!isAppShell || !window.parent || window.parent === window) return;
+
+  const notifyParent = () => {
+    try {
+      window.parent.postMessage(
+        {
+          type: "faolla:app-shell-location",
+          href: window.location.href,
+        },
+        "*",
+      );
+    } catch {
+      // The embedded shell location bridge is best-effort only.
+    }
+  };
+
+  const wrapHistoryMethod = (name) => {
+    const original = window.history && window.history[name];
+    if (typeof original !== "function") return;
+    window.history[name] = function (...args) {
+      const result = original.apply(this, args);
+      window.setTimeout(notifyParent, 0);
+      return result;
+    };
+  };
+
+  wrapHistoryMethod("pushState");
+  wrapHistoryMethod("replaceState");
+  window.addEventListener("popstate", notifyParent);
+  window.addEventListener("hashchange", notifyParent);
+  window.addEventListener("pageshow", notifyParent);
+  window.setTimeout(notifyParent, 0);
+})();
+`;
+
 export default async function RootLayout({
   children,
 }: {
@@ -138,6 +182,9 @@ export default async function RootLayout({
       <body>
         <Script id="standalone-launch" strategy="beforeInteractive">
           {STANDALONE_LAUNCH_SCRIPT}
+        </Script>
+        <Script id="faolla-app-shell-location" strategy="beforeInteractive">
+          {FAOLLA_APP_SHELL_LOCATION_SCRIPT}
         </Script>
         <Script id="i18n-pending" strategy="beforeInteractive">
           {I18N_PENDING_SCRIPT}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode, type SyntheticEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import { useI18n } from "@/components/I18nProvider";
 import MerchantBusinessCardManager from "@/components/admin/MerchantBusinessCardManager";
 import { readMerchantSessionMerchantIds } from "@/lib/authSessionRecovery";
@@ -17,9 +17,11 @@ import {
 } from "@/lib/europeLocationOptions";
 import { LANGUAGE_OPTIONS } from "@/lib/i18n";
 import {
+  FAOLLA_APP_SHELL_LOCATION_MESSAGE,
   buildFaollaShellHref,
   isFaollaBackendShellUrl,
   isFaollaSectionSearch,
+  normalizeFaollaEntryUrl,
   resolveFaollaEntryUrlFromBrowser,
 } from "@/lib/faollaEntry";
 import { installFrontendAuthBridgeResponder, isTrustedFrontendAuthBridgeOrigin } from "@/lib/frontendAuthBridge";
@@ -2394,19 +2396,22 @@ export default function MePage() {
       personalMobileFaollaFrameRef.current.src = faollaHomeTargetHref;
     }
   }, [faollaHomeTargetHref]);
-  const handlePersonalFaollaFrameLoad = useCallback(
-    (event: SyntheticEvent<HTMLIFrameElement>) => {
-      try {
-        const currentHref = event.currentTarget.contentWindow?.location.href ?? "";
-        if (!currentHref || !isFaollaBackendShellUrl(currentHref, window.location.origin)) return;
-        event.currentTarget.src = faollaHomeTargetHref;
-        setFaollaEmbedHref("/");
-      } catch {
-        // Cross-origin public merchant pages cannot be inspected and should be left alone.
-      }
-    },
-    [faollaHomeTargetHref],
-  );
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleMessage = (event: MessageEvent) => {
+      if (!isTrustedFrontendAuthBridgeOrigin(event.origin, window.location.origin)) return;
+      const message = readRecord(event.data);
+      if (message?.type !== FAOLLA_APP_SHELL_LOCATION_MESSAGE) return;
+      const href = typeof message.href === "string" ? message.href.trim() : "";
+      const normalized = normalizeFaollaEntryUrl(href, window.location.origin, { allowFaollaCrossOrigin: true });
+      if (!normalized || isFaollaBackendShellUrl(normalized, window.location.origin)) return;
+      setFaollaEmbedHref((current) => (current === normalized ? current : normalized));
+    };
+    window.addEventListener("message", handleMessage);
+    return () => {
+      window.removeEventListener("message", handleMessage);
+    };
+  }, []);
   const openDesktopSection = useCallback((section: DesktopSection) => {
     setDesktopSection(section);
   }, []);
@@ -5416,7 +5421,6 @@ export default function MePage() {
                 ref={personalDesktopFaollaFrameRef}
                 title="Faolla"
                 src={faollaTargetHref}
-                onLoad={handlePersonalFaollaFrameLoad}
                 className="absolute inset-0 h-full w-full border-0 bg-transparent"
               />
             </div>
@@ -5434,7 +5438,6 @@ export default function MePage() {
             ref={personalMobileFaollaFrameRef}
             title="Faolla"
             src={faollaTargetHref}
-            onLoad={handlePersonalFaollaFrameLoad}
             className="absolute inset-0 h-full w-full border-0 bg-white"
           />
         </div>

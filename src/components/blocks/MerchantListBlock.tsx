@@ -30,6 +30,7 @@ import {
 import { buildMerchantFrontendHref } from "@/lib/siteRouting";
 import { useI18n } from "@/components/I18nProvider";
 import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
+import { isFaollaAppShellSearch, preserveFaollaAppShellHref } from "@/lib/faollaEntry";
 import { getMerchantServiceState } from "@/lib/merchantServiceStatus";
 import { getBackgroundStyle } from "./backgroundStyle";
 import { getBlockBorderClass, getBlockBorderInlineStyle } from "./borderStyle";
@@ -419,6 +420,7 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
   const mobileFitScreenWidth = props.mobileFitScreenWidth === true;
   const { locale } = useI18n();
   const [platformState, setPlatformState] = useState<PlatformState>(() => loadPlatformState());
+  const [faollaAppShell, setFaollaAppShell] = useState(false);
   const [searchFilter, setSearchFilter] = useState<SearchFilter>(EMPTY_SEARCH_FILTER);
   const [activeTabId, setActiveTabId] = useState("tab-recommended");
   const [pageIndex, setPageIndex] = useState(0);
@@ -431,6 +433,16 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
       }),
     [],
   );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const frame = window.requestAnimationFrame(() => {
+      setFaollaAppShell(isFaollaAppShellSearch(window.location.search));
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -767,6 +779,14 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
                   ? Math.max(0, Math.min(1, site.merchantCardImageOpacity))
                   : 1;
               const hasMerchantCardImage = merchantCardImageUrl.length > 0;
+              const baseMerchantHref = buildMerchantFrontendHref(site.id, site.domainPrefix ?? site.domainSuffix);
+              const merchantHref = faollaAppShell
+                ? preserveFaollaAppShellHref(
+                    baseMerchantHref,
+                    locale,
+                    typeof window !== "undefined" ? window.location.origin : undefined,
+                  )
+                : baseMerchantHref;
               const merchantCardStyle = hasMerchantCardImage
                 ? {
                     ...getBlockBorderInlineStyle(styleConfig.borderStyle, styleConfig.borderColor),
@@ -779,7 +799,7 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
               return (
                 <Link
                   key={site.id}
-                  href={buildMerchantFrontendHref(site.id, site.domainPrefix ?? site.domainSuffix)}
+                  href={merchantHref}
                   className={`absolute block rounded-xl p-4 overflow-auto hover:brightness-[0.98] ${getBlockBorderClass(
                     styleConfig.borderStyle,
                   )}`}
