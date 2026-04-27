@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
 import { useI18n } from "@/components/I18nProvider";
 import { readMerchantSessionMerchantIds, readMerchantSessionPayload } from "@/lib/authSessionRecovery";
+import { buildBackendFaollaHref } from "@/lib/faollaEntry";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { persistRecentMerchantLaunchState, readRecentMerchantLaunchMerchantId } from "@/lib/merchantLaunchState";
 import { buildMerchantBackendHref } from "@/lib/siteRouting";
@@ -43,7 +44,7 @@ export default function LaunchBootstrap() {
 
         if (payload?.authenticated === true) {
           if (payload.accountType === "personal") {
-            window.location.replace("/me");
+            window.location.replace(buildBackendFaollaHref("/me", "/"));
             return;
           }
 
@@ -54,7 +55,7 @@ export default function LaunchBootstrap() {
             (typeof payload.merchantId === "string" ? payload.merchantId.trim() : "");
           if (isMerchantNumericId(merchantId)) {
             persistRecentMerchantLaunchState(merchantId);
-            window.location.replace(buildMerchantBackendHref(merchantId));
+            window.location.replace(buildBackendFaollaHref(buildMerchantBackendHref(merchantId), "/"));
             return;
           }
         }

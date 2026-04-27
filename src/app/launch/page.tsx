@@ -7,6 +7,7 @@ import {
   MERCHANT_AUTH_REFRESH_COOKIE,
 } from "@/lib/merchantAuthSession";
 import { readPlatformAccountTypeFromMetadata } from "@/lib/platformAccounts";
+import { buildBackendFaollaHref } from "@/lib/faollaEntry";
 import { buildMerchantBackendHref } from "@/lib/siteRouting";
 import { createServerSupabaseAuthClient } from "@/lib/superAdminServer";
 
@@ -25,7 +26,7 @@ export default async function LaunchPage() {
   const merchantId = normalizeMerchantId(cookieStore.get(MERCHANT_AUTH_MERCHANT_ID_COOKIE)?.value);
 
   if ((accessToken || refreshToken) && merchantId) {
-    redirect(buildMerchantBackendHref(merchantId));
+    redirect(buildBackendFaollaHref(buildMerchantBackendHref(merchantId), "/"));
   }
 
   if (accessToken) {
@@ -39,7 +40,7 @@ export default async function LaunchPage() {
         // Fall through to the client bootstrap, which can refresh the cookie-backed session.
       }
       if (shouldRedirectPersonal) {
-        redirect("/me");
+        redirect(buildBackendFaollaHref("/me", "/"));
       }
     }
   }

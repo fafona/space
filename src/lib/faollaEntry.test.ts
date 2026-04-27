@@ -52,6 +52,10 @@ test("uses only explicit Faolla frontend URL query as backend shell entry", () =
     buildBackendFaollaHref("/me", "https://fafona.faolla.com/", "https://faolla.com"),
     "/me?section=faolla&faollaUrl=https%3A%2F%2Ffafona.faolla.com%2F",
   );
+  assert.equal(
+    buildBackendFaollaHref("/me", "/", "https://faolla.com"),
+    "/me?section=faolla&faollaUrl=https%3A%2F%2Ffaolla.com%2F",
+  );
 });
 
 test("does not use cached or referrer guesses for Faolla shell entry", () => {

@@ -4988,8 +4988,12 @@ export default function AdminClient({
   const [supportMobileHomeTab, setSupportMobileHomeTab] = useState<SupportMobileHomeTab>("conversations");
   const [supportFaollaEmbedHref, setSupportFaollaEmbedHref] = useState("");
   useEffect(() => {
-    if (typeof window === "undefined" || !isFaollaSectionSearch(window.location.search)) return;
-    setSupportFaollaEmbedHref(resolveFaollaEntryUrlFromBrowser(window.location.search, window.location.origin));
+    if (typeof window === "undefined") return;
+    const explicitFaollaSection = isFaollaSectionSearch(window.location.search);
+    if (!explicitFaollaSection && !isSupportStandaloneDisplayMode()) return;
+    setSupportFaollaEmbedHref(
+      explicitFaollaSection ? resolveFaollaEntryUrlFromBrowser(window.location.search, window.location.origin) : "",
+    );
     setMerchantDesktopSection("faolla");
     setSupportMobileHomeTab("faolla");
   }, []);

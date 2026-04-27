@@ -333,6 +333,12 @@ function getSupportContactAvatarLabel(value: unknown, fallback = "商") {
   return first;
 }
 
+function isStandaloneDisplayMode() {
+  if (typeof window === "undefined" || typeof navigator === "undefined") return false;
+  const navigatorWithStandalone = navigator as Navigator & { standalone?: boolean };
+  return window.matchMedia?.("(display-mode: standalone)").matches || navigatorWithStandalone.standalone === true;
+}
+
 function normalizePersonalLocationValue(value: unknown) {
   return trimText(value)
     .normalize("NFD")
@@ -1689,8 +1695,12 @@ export default function MePage() {
   const [mobileTab, setMobileTab] = useState<MobileTab>("conversations");
   const [faollaEmbedHref, setFaollaEmbedHref] = useState("");
   useEffect(() => {
-    if (typeof window === "undefined" || !isFaollaSectionSearch(window.location.search)) return;
-    setFaollaEmbedHref(resolveFaollaEntryUrlFromBrowser(window.location.search, window.location.origin));
+    if (typeof window === "undefined") return;
+    const explicitFaollaSection = isFaollaSectionSearch(window.location.search);
+    if (!explicitFaollaSection && !isStandaloneDisplayMode()) return;
+    setFaollaEmbedHref(
+      explicitFaollaSection ? resolveFaollaEntryUrlFromBrowser(window.location.search, window.location.origin) : "",
+    );
     setDesktopSection("faolla");
     setMobileTab("faolla");
   }, []);
