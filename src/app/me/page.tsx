@@ -255,6 +255,37 @@ function readPayloadMessage(value: unknown, fallback: string) {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
 
+async function fetchPersonalConsumptionPayload<T extends { ok?: unknown; message?: unknown; error?: unknown }>(
+  path: string,
+  fallbackMessage: string,
+) {
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const separator = path.includes("?") ? "&" : "?";
+      const response = await fetch(`${path}${separator}_=${Date.now()}-${attempt}`, {
+        method: "GET",
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: {
+          accept: "application/json",
+          "cache-control": "no-cache",
+          pragma: "no-cache",
+        },
+      });
+      const payload = (await response.json().catch(() => null)) as T | null;
+      if (response.ok && payload?.ok === true) return payload;
+      lastError = new Error(readPayloadMessage(payload?.message || payload?.error, fallbackMessage));
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(fallbackMessage);
+    }
+    if (attempt < 2) {
+      await new Promise((resolve) => setTimeout(resolve, 300 * (attempt + 1)));
+    }
+  }
+  throw lastError ?? new Error(fallbackMessage);
+}
+
 function readMetadataString(metadata: Record<string, unknown> | null | undefined, ...keys: string[]) {
   if (!metadata || typeof metadata !== "object") return "";
   for (const key of keys) {
@@ -2078,30 +2109,13 @@ export default function MePage() {
       setPersonalConsumptionLoading(true);
       setPersonalConsumptionError("");
       try {
-        const [bookingsResponse, ordersResponse] = await Promise.all([
-          fetch("/api/bookings?scope=personal", {
-            method: "GET",
-            cache: "no-store",
-            credentials: "same-origin",
-            headers: { accept: "application/json" },
-          }),
-          fetch("/api/orders?scope=personal", {
-            method: "GET",
-            cache: "no-store",
-            credentials: "same-origin",
-            headers: { accept: "application/json" },
-          }),
+        const [bookingsPayload, ordersPayload] = await Promise.all([
+          fetchPersonalConsumptionPayload<PersonalBookingsResponsePayload>(
+            "/api/bookings?scope=personal",
+            "booking_load_failed",
+          ),
+          fetchPersonalConsumptionPayload<PersonalOrdersResponsePayload>("/api/orders?scope=personal", "order_load_failed"),
         ]);
-        const [bookingsPayload, ordersPayload] = (await Promise.all([
-          bookingsResponse.json().catch(() => null),
-          ordersResponse.json().catch(() => null),
-        ])) as [PersonalBookingsResponsePayload | null, PersonalOrdersResponsePayload | null];
-        if (!bookingsResponse.ok || bookingsPayload?.ok !== true) {
-          throw new Error(readPayloadMessage(bookingsPayload?.message || bookingsPayload?.error, "booking_load_failed"));
-        }
-        if (!ordersResponse.ok || ordersPayload?.ok !== true) {
-          throw new Error(readPayloadMessage(ordersPayload?.message || ordersPayload?.error, "order_load_failed"));
-        }
         if (cancelled) return;
         setPersonalBookings(Array.isArray(bookingsPayload.bookings) ? bookingsPayload.bookings : []);
         setPersonalOrders(Array.isArray(ordersPayload.orders) ? ordersPayload.orders : []);
@@ -2115,9 +2129,6 @@ export default function MePage() {
         });
       } catch {
         if (!cancelled) {
-          setPersonalBookings([]);
-          setPersonalOrders([]);
-          setPersonalMerchantContacts({});
           setPersonalConsumptionError("记录加载失败，请稍后重试。");
         }
       } finally {
