@@ -7,7 +7,9 @@ import {
   resolveFrontendAuthPayload,
   type MerchantCookieSessionPayload,
 } from "@/lib/authSessionRecovery";
+import { isFaollaAppShellSearch } from "@/lib/faollaEntry";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
+import { useHydrated } from "@/lib/useHydrated";
 
 type FrontendAuthEntryProps = {
   className?: string;
@@ -129,6 +131,7 @@ export default function FrontendAuthEntry({
   currentMerchantId = "",
   merchantAvatarUrl = "",
 }: FrontendAuthEntryProps) {
+  const hydrated = useHydrated();
   const [resolved, setResolved] = useState(false);
   const [currentUrl] = useState(() => (typeof window !== "undefined" ? window.location.href : ""));
   const [payload, setPayload] = useState<MerchantCookieSessionPayload | null>(null);
@@ -247,6 +250,7 @@ export default function FrontendAuthEntry({
 
   const loggedIn = payload?.authenticated === true;
   if (!loggedIn) {
+    if (hydrated && typeof window !== "undefined" && isFaollaAppShellSearch(window.location.search)) return null;
     return (
       <div className={className}>
         <Link

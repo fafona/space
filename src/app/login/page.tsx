@@ -24,7 +24,13 @@ import {
   readRecentMerchantLaunchMerchantId,
 } from "@/lib/merchantLaunchState";
 import { clearMerchantSignInBridge, setMerchantSignInBridge } from "@/lib/merchantSignInBridge";
-import { buildBackendFaollaHref, normalizeFaollaEntryUrl } from "@/lib/faollaEntry";
+import {
+  buildBackendFaollaHref,
+  buildFaollaShellHref,
+  isFaollaAppShellSearch,
+  isFaollaAppShellUrl,
+  normalizeFaollaEntryUrl,
+} from "@/lib/faollaEntry";
 import { buildMerchantBackendHref } from "@/lib/siteRouting";
 import {
   canReachSupabaseGateway,
@@ -124,6 +130,13 @@ function LoginPageInner() {
     () => normalizeFaollaEntryUrl((searchParams.get("loginFrom") ?? "").trim(), undefined, { allowFaollaCrossOrigin: true }),
     [searchParams],
   );
+  const isFaollaAppShellLogin = useMemo(() => {
+    const rawSearch = searchParams.toString();
+    return (
+      isFaollaAppShellSearch(rawSearch ? `?${rawSearch}` : "") ||
+      isFaollaAppShellUrl(searchParams.get("loginFrom") ?? "", typeof window !== "undefined" ? window.location.origin : undefined)
+    );
+  }, [searchParams]);
   const loggedOut = useMemo(() => (searchParams.get("loggedOut") ?? "").trim() === "1", [searchParams]);
   const launchRetry = useMemo(() => (searchParams.get("launchRetry") ?? "").trim() === "1", [searchParams]);
   const normalizedLocale = useMemo(() => locale.trim().toLowerCase(), [locale]);
@@ -169,6 +182,11 @@ function LoginPageInner() {
     if (normalizedLocale.startsWith("zh")) return "登录支持邮箱、用户名或 8 位 ID；注册仍需填写邮箱。";
     return "Sign in supports email, username, or 8-digit ID. Sign up still requires an email.";
   }, [normalizedLocale]);
+
+  useEffect(() => {
+    if (!isFaollaAppShellLogin || typeof window === "undefined") return;
+    window.location.replace(buildFaollaShellHref(loginFromUrl || "/", locale, window.location.origin));
+  }, [isFaollaAppShellLogin, locale, loginFromUrl]);
   const resetCodePreferredHint = useMemo(() => {
     if (normalizedLocale.startsWith("zh-tw")) {
       return "QQ、Foxmail、Hotmail、Outlook、Live 這些信箱請使用郵件驗證碼重設密碼，不要點郵件連結。";
@@ -467,6 +485,7 @@ function LoginPageInner() {
     if (normalizedLocale.startsWith("zh")) return "验证中...";
     return "Verifying...";
   }, [normalizedLocale]);
+
   const redirectToAccountHome = useCallback(
     async (
       _user?: {
@@ -1138,6 +1157,10 @@ function LoginPageInner() {
           paddingBottom: `calc(env(safe-area-inset-bottom) + 0.9rem + ${androidKeyboardInset}px)`,
         }
       : undefined;
+
+  if (isFaollaAppShellLogin) {
+    return <main className="min-h-screen bg-white" aria-hidden="true" />;
+  }
 
   return (
     <main className="relative h-[100dvh] min-h-screen overflow-hidden overscroll-none bg-[#0b1424] text-slate-900">

@@ -5,6 +5,8 @@ import {
   FAOLLA_LAST_ENTRY_STORAGE_KEY,
   buildBackendFaollaHref,
   buildFaollaShellHref,
+  isFaollaAppShellSearch,
+  isFaollaAppShellUrl,
   resolveFaollaEntryUrlFromBrowser,
 } from "./faollaEntry";
 
@@ -84,4 +86,14 @@ test("defaults the Faolla shell to the portal home instead of the backend origin
     buildFaollaShellHref("https://faolla.com/me", "zh-CN", "https://faolla.com"),
     "https://faolla.com/?uiLocale=zh-CN&appShell=faolla",
   );
+});
+
+test("detects Faolla app shell URLs for login suppression", () => {
+  installBrowser();
+
+  assert.equal(isFaollaAppShellSearch("?appShell=faolla"), true);
+  assert.equal(isFaollaAppShellSearch("?appShell=browser"), false);
+  assert.equal(isFaollaAppShellUrl("https://faolla.com/?appShell=faolla", "https://faolla.com"), true);
+  assert.equal(isFaollaAppShellUrl("https://fafona.faolla.com/?uiLocale=zh-CN&appShell=faolla", "https://faolla.com"), true);
+  assert.equal(isFaollaAppShellUrl("https://faolla.com/login", "https://faolla.com"), false);
 });

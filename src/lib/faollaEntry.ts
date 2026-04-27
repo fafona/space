@@ -125,6 +125,28 @@ export function isFaollaSectionSearch(search: string | null | undefined) {
   }
 }
 
+export function isFaollaAppShellSearch(search: string | null | undefined) {
+  try {
+    return (
+      (new URLSearchParams(String(search ?? "")).get(FAOLLA_APP_SHELL_PARAM) ?? "")
+        .trim()
+        .toLowerCase() === FAOLLA_APP_SHELL_VALUE
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function isFaollaAppShellUrl(value: unknown, fallbackOrigin?: string | null) {
+  const normalized = normalizeFaollaEntryUrl(value, fallbackOrigin, { allowFaollaCrossOrigin: true });
+  if (!normalized) return false;
+  try {
+    return isFaollaAppShellSearch(new URL(normalized).search);
+  } catch {
+    return false;
+  }
+}
+
 export function readFaollaEntryUrlFromSearch(search: string | null | undefined, fallbackOrigin?: string | null) {
   try {
     return normalizeFaollaEntryUrl(
