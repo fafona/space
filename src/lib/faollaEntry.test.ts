@@ -5,6 +5,7 @@ import {
   FAOLLA_LAST_ENTRY_STORAGE_KEY,
   buildBackendFaollaHref,
   buildFaollaShellHref,
+  isFaollaBackendShellUrl,
   isFaollaAppShellSearch,
   isFaollaAppShellUrl,
   resolveFaollaEntryUrlFromBrowser,
@@ -79,6 +80,11 @@ test("rejects backend routes as Faolla frontend entries", () => {
     resolveFaollaEntryUrlFromBrowser("?section=faolla&faollaUrl=https%3A%2F%2Ffaolla.com%2F10000000", "https://faolla.com"),
     "",
   );
+  assert.equal(isFaollaBackendShellUrl("https://faolla.com/me?section=faolla", "https://faolla.com"), true);
+  assert.equal(isFaollaBackendShellUrl("https://faolla.com/login", "https://faolla.com"), true);
+  assert.equal(isFaollaBackendShellUrl("https://faolla.com/10000000", "https://faolla.com"), true);
+  assert.equal(isFaollaBackendShellUrl("https://faolla.com/industry/food", "https://faolla.com"), false);
+  assert.equal(isFaollaBackendShellUrl("https://fafona.faolla.com/", "https://faolla.com"), false);
 });
 
 test("defaults the Faolla shell to the portal home instead of the backend origin", () => {

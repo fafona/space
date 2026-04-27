@@ -49,6 +49,16 @@ function isUsableFrontendEntryUrl(value: string) {
   }
 }
 
+export function isFaollaBackendShellUrl(value: unknown, fallbackOrigin?: string | null) {
+  const normalized = normalizeFaollaEntryUrl(value, fallbackOrigin, { allowFaollaCrossOrigin: true });
+  if (!normalized) return false;
+  try {
+    return isBackendOrApiPath(new URL(normalized).pathname);
+  } catch {
+    return false;
+  }
+}
+
 export function normalizeFaollaEntryUrl(
   value: unknown,
   fallbackOrigin?: string | null,
