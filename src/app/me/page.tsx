@@ -2426,13 +2426,13 @@ export default function MePage() {
   const mobileFaollaTargetHref = mobileTab === "faolla" && isMobileViewport ? faollaTargetHref : "about:blank";
   const navigatePersonalFaollaHome = useCallback(() => {
     setFaollaEmbedHref("/");
-    if (personalDesktopFaollaFrameRef.current) {
+    if (!isMobileViewport && personalDesktopFaollaFrameRef.current) {
       personalDesktopFaollaFrameRef.current.src = faollaHomeTargetHref;
     }
-    if (personalMobileFaollaFrameRef.current) {
+    if (isMobileViewport && personalMobileFaollaFrameRef.current) {
       personalMobileFaollaFrameRef.current.src = faollaHomeTargetHref;
     }
-  }, [faollaHomeTargetHref]);
+  }, [faollaHomeTargetHref, isMobileViewport]);
   useEffect(() => {
     if (typeof window === "undefined") return;
     const handleMessage = (event: MessageEvent) => {
