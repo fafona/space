@@ -203,10 +203,11 @@ export default function HomePageClient({
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    if (!hydrated) return;
     if (suppressStandaloneLaunchRedirect) return;
     if (!isStandaloneDisplayMode()) return;
     window.location.replace("/launch");
-  }, [suppressStandaloneLaunchRedirect]);
+  }, [hydrated, suppressStandaloneLaunchRedirect]);
 
   if (hostMatchedSite) {
     return <SitePageClient forcedSiteId={hostMatchedSite.id} initialIsMobileViewport={isMobileViewport} />;
