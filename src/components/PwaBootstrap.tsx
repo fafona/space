@@ -627,8 +627,8 @@ export default function PwaBootstrap() {
       ) : null}
 
       {showIosInstallGuide ? (
-        <div className="pointer-events-auto fixed inset-0 z-[2147483647] bg-slate-950/62 backdrop-blur-[2px]">
-          <div className="absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+1rem)] mx-auto w-full max-w-sm px-4">
+        <div className="pointer-events-auto fixed inset-0 z-[2147483647] overflow-y-auto bg-slate-950/62 backdrop-blur-[2px]">
+          <div className="mx-auto w-full max-w-sm px-4 pb-4 pt-[calc(env(safe-area-inset-top)+0.75rem)]">
             <div className="mb-3 flex justify-center">
               <div className="flex h-14 w-14 items-center justify-center rounded-full border border-white/15 bg-white/10 text-3xl text-white shadow-[0_12px_32px_rgba(15,23,42,0.35)] animate-bounce">
                 ↑

@@ -1815,7 +1815,8 @@ export default function MePage() {
     EMPTY_PERSONAL_BOOKING_EDIT_DRAFT,
   );
   const [personalConsumptionLoading, setPersonalConsumptionLoading] = useState(false);
-  const [personalConsumptionError, setPersonalConsumptionError] = useState("");
+  const [personalBookingLoadError, setPersonalBookingLoadError] = useState("");
+  const [personalOrderLoadError, setPersonalOrderLoadError] = useState("");
   const [personalConsumptionReloadKey, setPersonalConsumptionReloadKey] = useState(0);
   const supportMessagesViewportRef = useRef<HTMLDivElement | null>(null);
   const supportInputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -2141,7 +2142,8 @@ export default function MePage() {
       setPersonalBookings([]);
       setPersonalOrders([]);
       setPersonalMerchantContacts({});
-      setPersonalConsumptionError("");
+      setPersonalBookingLoadError("");
+      setPersonalOrderLoadError("");
       setPersonalConsumptionLoading(false);
       return;
     }
@@ -2149,33 +2151,46 @@ export default function MePage() {
     let cancelled = false;
     const loadPersonalConsumption = async () => {
       setPersonalConsumptionLoading(true);
-      setPersonalConsumptionError("");
-      try {
-        const [bookingsPayload, ordersPayload] = await Promise.all([
-          fetchPersonalConsumptionPayload<PersonalBookingsResponsePayload>(
-            "/api/bookings?scope=personal",
-            "booking_load_failed",
-          ),
-          fetchPersonalConsumptionPayload<PersonalOrdersResponsePayload>("/api/orders?scope=personal", "order_load_failed"),
-        ]);
-        if (cancelled) return;
+      setPersonalBookingLoadError("");
+      setPersonalOrderLoadError("");
+      const [bookingsResult, ordersResult] = await Promise.allSettled([
+        fetchPersonalConsumptionPayload<PersonalBookingsResponsePayload>(
+          "/api/bookings?scope=personal",
+          "booking_load_failed",
+        ),
+        fetchPersonalConsumptionPayload<PersonalOrdersResponsePayload>("/api/orders?scope=personal", "order_load_failed"),
+      ]);
+      if (cancelled) return;
+
+      const nextContacts: Record<string, PersonalMerchantContact> = {};
+      if (bookingsResult.status === "fulfilled") {
+        const bookingsPayload = bookingsResult.value;
         setPersonalBookings(Array.isArray(bookingsPayload.bookings) ? bookingsPayload.bookings : []);
-        setPersonalOrders(Array.isArray(ordersPayload.orders) ? ordersPayload.orders : []);
-        setPersonalMerchantContacts({
-          ...(bookingsPayload.merchantContacts && typeof bookingsPayload.merchantContacts === "object"
+        Object.assign(
+          nextContacts,
+          bookingsPayload.merchantContacts && typeof bookingsPayload.merchantContacts === "object"
             ? bookingsPayload.merchantContacts
-            : {}),
-          ...(ordersPayload.merchantContacts && typeof ordersPayload.merchantContacts === "object"
-            ? ordersPayload.merchantContacts
-            : {}),
-        });
-      } catch {
-        if (!cancelled) {
-          setPersonalConsumptionError("记录加载失败，请稍后重试。");
-        }
-      } finally {
-        if (!cancelled) setPersonalConsumptionLoading(false);
+            : {},
+        );
+      } else {
+        setPersonalBookingLoadError("预约记录加载失败，请稍后重试。");
       }
+
+      if (ordersResult.status === "fulfilled") {
+        const ordersPayload = ordersResult.value;
+        setPersonalOrders(Array.isArray(ordersPayload.orders) ? ordersPayload.orders : []);
+        Object.assign(
+          nextContacts,
+          ordersPayload.merchantContacts && typeof ordersPayload.merchantContacts === "object"
+            ? ordersPayload.merchantContacts
+            : {},
+        );
+      } else {
+        setPersonalOrderLoadError("订单记录加载失败，请稍后重试。");
+      }
+
+      setPersonalMerchantContacts(nextContacts);
+      setPersonalConsumptionLoading(false);
     };
 
     void loadPersonalConsumption();
@@ -2257,7 +2272,7 @@ export default function MePage() {
   const openPersonalBookingEditor = useCallback((booking: MerchantBookingRecord) => {
     setPersonalBookingEditTargetId(booking.id);
     setPersonalBookingEditDraft(createPersonalBookingEditDraft(booking));
-    setPersonalConsumptionError("");
+    setPersonalBookingLoadError("");
   }, []);
 
   const closePersonalBookingEditor = useCallback(() => {
@@ -2274,7 +2289,7 @@ export default function MePage() {
       if (!canCancelPersonalBooking(booking) || personalActionBusyKey) return;
       const busyKey = `booking:${booking.id}:cancel`;
       setPersonalActionBusyKey(busyKey);
-      setPersonalConsumptionError("");
+      setPersonalBookingLoadError("");
       try {
         const response = await fetch("/api/bookings", {
           method: "PATCH",
@@ -2292,7 +2307,7 @@ export default function MePage() {
         setPersonalBookings((current) => current.map((record) => (record.id === nextBooking.id ? nextBooking : record)));
         refreshPersonalConsumption();
       } catch {
-        setPersonalConsumptionError("取消预约失败，请稍后重试。");
+        setPersonalBookingLoadError("取消预约失败，请稍后重试。");
       } finally {
         setPersonalActionBusyKey((current) => (current === busyKey ? "" : current));
       }
@@ -2305,7 +2320,7 @@ export default function MePage() {
       if (!canRestorePersonalBooking(booking) || personalActionBusyKey) return;
       const busyKey = `booking:${booking.id}:restore`;
       setPersonalActionBusyKey(busyKey);
-      setPersonalConsumptionError("");
+      setPersonalBookingLoadError("");
       try {
         const response = await fetch("/api/bookings", {
           method: "PATCH",
@@ -2323,7 +2338,7 @@ export default function MePage() {
         setPersonalBookings((current) => current.map((record) => (record.id === nextBooking.id ? nextBooking : record)));
         refreshPersonalConsumption();
       } catch (error) {
-        setPersonalConsumptionError(error instanceof Error ? error.message : "恢复预约失败，请稍后重试。");
+        setPersonalBookingLoadError(error instanceof Error ? error.message : "恢复预约失败，请稍后重试。");
       } finally {
         setPersonalActionBusyKey((current) => (current === busyKey ? "" : current));
       }
@@ -2336,7 +2351,7 @@ export default function MePage() {
     if (!booking || !canEditPersonalBooking(booking) || personalActionBusyKey) return;
     const busyKey = `booking:${booking.id}:update`;
     setPersonalActionBusyKey(busyKey);
-    setPersonalConsumptionError("");
+    setPersonalBookingLoadError("");
     try {
       const response = await fetch("/api/bookings", {
         method: "PATCH",
@@ -2360,7 +2375,7 @@ export default function MePage() {
       closePersonalBookingEditor();
       refreshPersonalConsumption();
     } catch (error) {
-      setPersonalConsumptionError(error instanceof Error ? error.message : "修改预约失败，请稍后重试。");
+      setPersonalBookingLoadError(error instanceof Error ? error.message : "修改预约失败，请稍后重试。");
     } finally {
       setPersonalActionBusyKey((current) => (current === busyKey ? "" : current));
     }
@@ -2383,7 +2398,7 @@ export default function MePage() {
       if (!canCancelPersonalOrder(order) || personalActionBusyKey) return;
       const busyKey = `order:${order.id}:cancel`;
       setPersonalActionBusyKey(busyKey);
-      setPersonalConsumptionError("");
+      setPersonalOrderLoadError("");
       try {
         const response = await fetch("/api/orders", {
           method: "PATCH",
@@ -2401,7 +2416,7 @@ export default function MePage() {
         setPersonalOrders((current) => current.map((record) => (record.id === nextOrder.id ? nextOrder : record)));
         refreshPersonalConsumption();
       } catch {
-        setPersonalConsumptionError("取消订单失败，请稍后重试。");
+        setPersonalOrderLoadError("取消订单失败，请稍后重试。");
       } finally {
         setPersonalActionBusyKey((current) => (current === busyKey ? "" : current));
       }
@@ -2433,6 +2448,30 @@ export default function MePage() {
       personalMobileFaollaFrameRef.current.src = faollaHomeTargetHref;
     }
   }, [faollaHomeTargetHref, isMobileViewport]);
+  const renderFaollaShellAvatar = (className = "") => (
+    <button
+      type="button"
+      className={`inline-flex items-center justify-center overflow-hidden rounded-full border border-white/80 bg-slate-950 text-sm font-bold text-white shadow-[0_12px_30px_rgba(15,23,42,0.22)] ring-1 ring-slate-950/10 transition hover:scale-[1.03] ${className}`}
+      onClick={() => {
+        if (isMobileViewport) {
+          setMobileTab("self");
+          setMobileSelfSection("home");
+          return;
+        }
+        setDesktopSection("profile");
+      }}
+      title="账号信息"
+      aria-label="账号信息"
+    >
+      <SupportAvatarBadge
+        label={avatarLabel}
+        imageUrl={personalAvatarImageUrl}
+        imageAlt={profileName}
+        className="h-full w-full rounded-full bg-slate-950 text-white"
+        labelClassName="text-sm font-bold text-white"
+      />
+    </button>
+  );
   useEffect(() => {
     if (typeof window === "undefined") return;
     const handleMessage = (event: MessageEvent) => {
@@ -4148,6 +4187,7 @@ export default function MePage() {
   }
 
   function renderPersonalConsumptionState(kind: ConsumptionSection) {
+    const loadError = kind === "bookings" ? personalBookingLoadError : personalOrderLoadError;
     if (personalConsumptionLoading) {
       return (
         <div className="rounded-[28px] border border-dashed border-slate-200 bg-white px-5 py-8 text-center text-sm font-medium text-slate-500">
@@ -4155,10 +4195,10 @@ export default function MePage() {
         </div>
       );
     }
-    if (personalConsumptionError) {
+    if (loadError) {
       return (
         <div className="rounded-[28px] border border-rose-200 bg-rose-50 px-5 py-4 text-sm font-medium text-rose-600">
-          {personalConsumptionError}
+          {loadError}
         </div>
       );
     }
@@ -4372,7 +4412,7 @@ export default function MePage() {
   }
 
   function renderPersonalBookingCards(compact = false) {
-    if (personalConsumptionLoading || personalConsumptionError) {
+    if (personalConsumptionLoading || personalBookingLoadError) {
       return renderPersonalConsumptionState("bookings");
     }
     const compactActionButtonClassName =
@@ -4676,7 +4716,7 @@ export default function MePage() {
   }
 
   function renderPersonalOrderCards(compact = false) {
-    if (personalConsumptionLoading || personalConsumptionError) {
+    if (personalConsumptionLoading || personalOrderLoadError) {
       return renderPersonalConsumptionState("orders");
     }
     const compactActionButtonClassName =
@@ -5454,6 +5494,9 @@ export default function MePage() {
               <div className="pointer-events-none absolute left-4 top-4 z-10">
                 <FaollaHomeButton className="pointer-events-auto h-11 w-11" onClick={navigatePersonalFaollaHome} />
               </div>
+              <div className="pointer-events-none absolute right-4 top-4 z-20">
+                {renderFaollaShellAvatar("pointer-events-auto h-10 w-10")}
+              </div>
               <iframe
                 ref={personalDesktopFaollaFrameRef}
                 title="Faolla"
@@ -5470,6 +5513,9 @@ export default function MePage() {
         <div className={`support-preserve-light-surface relative min-h-0 flex-1 overflow-hidden bg-white ${mobileTab === "faolla" ? "" : "hidden"}`}>
           <div className="pointer-events-none absolute left-4 top-[calc(env(safe-area-inset-top)+0.75rem)] z-10">
             <FaollaHomeButton className="pointer-events-auto h-11 w-11" onClick={navigatePersonalFaollaHome} />
+          </div>
+          <div className="pointer-events-none absolute right-3 top-[calc(env(safe-area-inset-top)+0.75rem)] z-20">
+            {renderFaollaShellAvatar("pointer-events-auto h-10 w-10")}
           </div>
           <iframe
             ref={personalMobileFaollaFrameRef}
