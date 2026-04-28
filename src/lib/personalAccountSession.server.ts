@@ -22,8 +22,35 @@ export type PersonalAccountSession = {
   permissionConfig: ReturnType<typeof buildPersonalAccountPermissionConfig>;
 };
 
+type AdminGetUserByIdResult = {
+  data?: { user?: MerchantAuthUserSummary | null } | null;
+  error?: unknown;
+};
+
+type PersonalAccountServiceSupabaseClient = PlatformIdentitySupabaseClient & {
+  auth: PlatformIdentitySupabaseClient["auth"] & {
+    admin: PlatformIdentitySupabaseClient["auth"]["admin"] & {
+      getUserById?: (userId: string) => Promise<AdminGetUserByIdResult>;
+    };
+  };
+};
+
 function trimText(value: unknown, maxLength = 4096) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
+async function loadFreshAuthUser(
+  adminSupabase: PlatformIdentitySupabaseClient,
+  userId: string,
+): Promise<MerchantAuthUserSummary | null> {
+  const getUserById = (adminSupabase as PersonalAccountServiceSupabaseClient).auth.admin.getUserById;
+  if (typeof getUserById !== "function") return null;
+  try {
+    const { data, error } = await getUserById(userId);
+    return error || !data?.user ? null : data.user;
+  } catch {
+    return null;
+  }
 }
 
 export async function resolvePersonalAccountSessionFromRequest(request: Request): Promise<PersonalAccountSession | null> {
@@ -46,6 +73,7 @@ export async function resolvePersonalAccountSessionFromRequest(request: Request)
 
   const userId = trimText(user?.id, 128);
   if (!user || !userId) return null;
+  user = (await loadFreshAuthUser(adminSupabase, userId)) ?? user;
 
   const identity = await resolvePlatformAccountIdentityForUser(adminSupabase, user);
   const accountId = trimText(identity.accountId, 32);

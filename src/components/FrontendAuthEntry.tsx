@@ -19,6 +19,12 @@ type FrontendAuthEntryProps = {
   merchantAvatarUrl?: string;
 };
 
+type PersonalProfileResponsePayload = {
+  ok?: unknown;
+  user?: MerchantCookieSessionPayload["user"] | null;
+  profile?: Record<string, unknown> | null;
+};
+
 function trimText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -124,6 +130,46 @@ function readMerchantPreviewProfile(value: unknown) {
   };
 }
 
+function mergePersonalProfileResponseIntoPayload(
+  payload: MerchantCookieSessionPayload | null,
+  result: PersonalProfileResponsePayload | null,
+) {
+  if (!payload?.user || !result || result.ok !== true) return payload;
+  const responseUser = result.user ?? null;
+  const currentMetadata = readRecord(payload.user.user_metadata) ?? {};
+  const responseMetadata = readRecord(responseUser?.user_metadata) ?? {};
+  const currentProfile = readRecord(currentMetadata.personal_profile) ?? {};
+  const responseProfile = readRecord(responseMetadata.personal_profile) ?? {};
+  const explicitProfile = readRecord(result.profile) ?? {};
+  const mergedProfile = {
+    ...currentProfile,
+    ...responseProfile,
+    ...explicitProfile,
+  };
+  const displayName =
+    readMetadataString(mergedProfile, "displayName", "display_name", "name") ||
+    readMetadataString(responseMetadata, "displayName", "display_name", "name") ||
+    readMetadataString(currentMetadata, "displayName", "display_name", "name");
+  const avatarUrl =
+    readMetadataString(mergedProfile, "avatarUrl", "avatar_url", "personalAvatarUrl", "chatAvatarImageUrl") ||
+    readMetadataString(responseMetadata, "avatarUrl", "avatar_url", "personalAvatarUrl", "chatAvatarImageUrl") ||
+    readMetadataString(currentMetadata, "avatarUrl", "avatar_url", "personalAvatarUrl", "chatAvatarImageUrl");
+  return {
+    ...payload,
+    user: {
+      ...payload.user,
+      ...responseUser,
+      user_metadata: {
+        ...currentMetadata,
+        ...responseMetadata,
+        personal_profile: mergedProfile,
+        ...(displayName ? { displayName, display_name: displayName } : {}),
+        ...(avatarUrl ? { avatarUrl, avatar_url: avatarUrl } : {}),
+      },
+    },
+  } satisfies MerchantCookieSessionPayload;
+}
+
 export default function FrontendAuthEntry({
   className = "",
   loginClassName = "",
@@ -193,6 +239,36 @@ export default function FrontendAuthEntry({
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [accountMenuOpen]);
+
+  useEffect(() => {
+    if (!resolved || payload?.authenticated !== true || payload.accountType !== "personal") return;
+    let cancelled = false;
+    const controller = new AbortController();
+    void fetch("/api/personal-profile", {
+      method: "GET",
+      cache: "no-store",
+      credentials: "include",
+      headers: {
+        accept: "application/json",
+      },
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) return null;
+        return (await response.json().catch(() => null)) as PersonalProfileResponsePayload | null;
+      })
+      .then((result) => {
+        if (cancelled || !result) return;
+        setPayload((current) => mergePersonalProfileResponseIntoPayload(current, result));
+      })
+      .catch(() => {
+        // Public pages can still render the current cookie/bridge identity.
+      });
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [payload?.accountId, payload?.accountType, payload?.authenticated, payload?.user?.id, resolved]);
 
   useEffect(() => {
     if (!resolved || payload?.authenticated !== true || payload.accountType !== "merchant") {

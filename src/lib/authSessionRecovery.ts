@@ -314,9 +314,47 @@ function isAuthenticatedMerchantSessionPayload(payload: MerchantCookieSessionPay
   return payload?.authenticated === true && Boolean(payload.user);
 }
 
+function hasParentAuthBridgeCandidate() {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.parent !== window;
+  } catch {
+    return false;
+  }
+}
+
+function trimPayloadText(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function areSameFrontendAccount(
+  first: MerchantCookieSessionPayload | null | undefined,
+  second: MerchantCookieSessionPayload | null | undefined,
+) {
+  const firstUserId = trimPayloadText(first?.user?.id);
+  const secondUserId = trimPayloadText(second?.user?.id);
+  if (firstUserId && secondUserId && firstUserId === secondUserId) return true;
+
+  const firstAccountType = trimPayloadText(first?.accountType);
+  const secondAccountType = trimPayloadText(second?.accountType);
+  const firstAccountId = trimPayloadText(first?.accountId) || trimPayloadText(first?.merchantId);
+  const secondAccountId = trimPayloadText(second?.accountId) || trimPayloadText(second?.merchantId);
+  return Boolean(firstAccountType && firstAccountId && firstAccountType === secondAccountType && firstAccountId === secondAccountId);
+}
+
 export async function resolveFrontendAuthPayload(timeoutMs = 4500): Promise<MerchantCookieSessionPayload | null> {
   const cookiePayload = await readMerchantSessionPayload(timeoutMs).catch(() => null);
-  if (isAuthenticatedMerchantSessionPayload(cookiePayload)) return cookiePayload;
+  if (isAuthenticatedMerchantSessionPayload(cookiePayload)) {
+    if (hasParentAuthBridgeCandidate()) {
+      const parentPayload = await requestParentFrontendAuthPayload(Math.max(500, Math.min(900, timeoutMs))).catch(
+        () => null,
+      );
+      if (isAuthenticatedMerchantSessionPayload(parentPayload) && areSameFrontendAccount(cookiePayload, parentPayload)) {
+        return parentPayload;
+      }
+    }
+    return cookiePayload;
+  }
 
   const parentPayload = await requestParentFrontendAuthPayload(Math.max(800, Math.min(1800, timeoutMs))).catch(
     () => null,

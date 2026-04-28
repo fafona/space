@@ -364,6 +364,72 @@ function mergePersonalProfileDraft(base: PersonalProfileDraft, patch: Partial<Pe
   return next;
 }
 
+function mergeNonEmptyPersonalProfileDraft(base: PersonalProfileDraft, patch: Partial<PersonalProfileDraft> | null | undefined) {
+  const next = { ...EMPTY_PERSONAL_PROFILE, ...base };
+  if (!patch || typeof patch !== "object") return next;
+  (Object.keys(EMPTY_PERSONAL_PROFILE) as Array<keyof PersonalProfileDraft>).forEach((key) => {
+    const value = patch[key];
+    if (typeof value === "string" && value.trim()) next[key] = value;
+  });
+  return next;
+}
+
+function mergePersonalProfileIntoPayload(
+  payload: MeSessionPayload | null,
+  profile: PersonalProfileDraft,
+  userPatch?: MeSessionPayload["user"] | null,
+): MeSessionPayload | null {
+  const baseUser = payload?.user ?? null;
+  const patchUser = userPatch ?? null;
+  const user = patchUser ?? baseUser;
+  if (!payload || !user) return payload;
+
+  const currentMetadata =
+    baseUser?.user_metadata && typeof baseUser.user_metadata === "object" ? baseUser.user_metadata : {};
+  const patchMetadata = patchUser?.user_metadata && typeof patchUser.user_metadata === "object" ? patchUser.user_metadata : {};
+  const currentProfile = readRecord(currentMetadata.personal_profile) ?? {};
+  const patchProfile = readRecord(patchMetadata.personal_profile) ?? {};
+  const nextProfile = {
+    ...currentProfile,
+    ...patchProfile,
+    ...profile,
+    bio: profile.signature,
+  };
+
+  return {
+    ...payload,
+    user: {
+      ...baseUser,
+      ...patchUser,
+      user_metadata: {
+        ...currentMetadata,
+        ...patchMetadata,
+        personal_profile: nextProfile,
+        display_name: profile.displayName,
+        displayName: profile.displayName,
+        avatar_url: profile.avatarUrl,
+        avatarUrl: profile.avatarUrl,
+        signature: profile.signature,
+        bio: profile.signature,
+        phone: profile.phone,
+        contact_phone: profile.phone,
+        contactPhone: profile.phone,
+        email: profile.email,
+        contact_email: profile.email,
+        contactEmail: profile.email,
+        contact_card: profile.contactCard,
+        contactCard: profile.contactCard,
+        birthday: profile.birthday,
+        gender: profile.gender,
+        country: profile.country,
+        province: profile.province,
+        city: profile.city,
+        address: profile.address,
+      },
+    },
+  };
+}
+
 function getInitialLabel(value: unknown) {
   const trimmed = trimText(value);
   if (!trimmed) return "我";
@@ -1885,10 +1951,6 @@ export default function MePage() {
   }, []);
 
   useEffect(() => {
-    return installFrontendAuthBridgeResponder(() => payload);
-  }, [payload]);
-
-  useEffect(() => {
     if (payload?.authenticated !== true || payload.accountType !== "personal") return;
     return startMerchantSessionKeepAlive({
       timeoutMs: 5200,
@@ -1975,6 +2037,17 @@ export default function MePage() {
   const personalProfile = useMemo(() => readPersonalProfile(payload), [payload]);
   const displayName = personalProfile.displayName || readDisplayName(payload);
   const profileName = displayName || email.split("@")[0] || accountId || "个人用户";
+  const frontendAuthBridgeProfile = useMemo(
+    () => mergeNonEmptyPersonalProfileDraft(personalProfile, personalProfileDraft),
+    [personalProfile, personalProfileDraft],
+  );
+  const frontendAuthBridgePayload = useMemo(
+    () => mergePersonalProfileIntoPayload(payload, frontendAuthBridgeProfile),
+    [frontendAuthBridgeProfile, payload],
+  );
+  useEffect(() => {
+    return installFrontendAuthBridgeResponder(() => frontendAuthBridgePayload);
+  }, [frontendAuthBridgePayload]);
   const personalServiceConfig = useMemo(
     () =>
       normalizePersonalAccountServiceConfig(
@@ -2126,6 +2199,17 @@ export default function MePage() {
           throw new Error(readPayloadMessage(result?.message, "名片加载失败，请稍后重试"));
         }
         if (cancelled) return;
+        if (result.user || result.profile) {
+          setPayload((current) => {
+            if (!current) return current;
+            const payloadWithResultUser = {
+              ...current,
+              user: result.user ?? current.user,
+            } as MeSessionPayload;
+            const nextProfile = mergePersonalProfileDraft(readPersonalProfile(payloadWithResultUser), result.profile);
+            return mergePersonalProfileIntoPayload(current, nextProfile, result.user);
+          });
+        }
         const nextCards = normalizeMerchantBusinessCards(result.businessCards);
         personalBusinessCardsRef.current = nextCards;
         setPersonalBusinessCards(nextCards);

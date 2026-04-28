@@ -121,6 +121,13 @@ function buildProfileMetadataPatch(user: MerchantAuthUserSummary, patch: Persona
   return { userMetadata, personalProfile: nextProfile };
 }
 
+function readPersonalProfileMetadata(user: MerchantAuthUserSummary) {
+  const userMetadata = user.user_metadata && typeof user.user_metadata === "object" ? user.user_metadata : {};
+  return userMetadata.personal_profile && typeof userMetadata.personal_profile === "object"
+    ? (userMetadata.personal_profile as Record<string, unknown>)
+    : {};
+}
+
 export async function GET(request: Request) {
   const session = await resolvePersonalUser(request);
   if (!session) return noStoreJson({ ok: false, error: "unauthorized" }, { status: 401 });
@@ -132,6 +139,7 @@ export async function GET(request: Request) {
     ok: true,
     accountId: session.accountId,
     user: session.user,
+    profile: readPersonalProfileMetadata(session.user),
     personalServiceConfig: session.serviceConfig,
     personalServicePaused: session.servicePaused,
     businessCards: cardsPayload?.cards ?? [],
