@@ -1,9 +1,7 @@
 import { createServerSupabaseAuthClient, createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import {
   readMerchantAuthCookie,
-  readMerchantAuthRefreshCookie,
   readMerchantRequestAccessTokens,
-  readMerchantRequestRefreshTokens,
 } from "@/lib/merchantAuthSession";
 
 type AuthUserSummary = {
@@ -23,13 +21,6 @@ type MerchantSessionHintInput = {
   hintedMerchantId?: string | null;
   hintedMerchantEmail?: string | null;
   hintedMerchantName?: string | null;
-};
-
-type RefreshPayload = {
-  access_token?: unknown;
-  refresh_token?: unknown;
-  expires_in?: unknown;
-  user?: unknown;
 };
 
 export type ResolvedMerchantSession = {
@@ -76,14 +67,13 @@ function readMerchantIdFromMetadata(user: AuthUserSummary | null) {
   return /^\d{8}$/.test(candidate) ? candidate : "";
 }
 
-function buildCacheKey(accessToken: string, refreshToken: string, hintedMerchantId: string) {
-  const authKey = accessToken || refreshToken;
-  if (!authKey) return "";
-  return `${authKey}::${hintedMerchantId || "default"}`;
+function buildCacheKey(accessToken: string, hintedMerchantId: string) {
+  if (!accessToken) return "";
+  return `${accessToken}::${hintedMerchantId || "default"}`;
 }
 
-function readCachedSession(accessToken: string, refreshToken: string, hintedMerchantId: string) {
-  const cacheKey = buildCacheKey(accessToken, refreshToken, hintedMerchantId);
+function readCachedSession(accessToken: string, hintedMerchantId: string) {
+  const cacheKey = buildCacheKey(accessToken, hintedMerchantId);
   if (!cacheKey) return null;
   const cached = merchantSessionCache.get(cacheKey) ?? null;
   if (!cached) return null;
@@ -96,47 +86,15 @@ function readCachedSession(accessToken: string, refreshToken: string, hintedMerc
 
 function writeCachedSession(
   accessToken: string,
-  refreshToken: string,
   hintedMerchantId: string,
   session: CachedMerchantSession,
 ) {
-  const cacheKey = buildCacheKey(accessToken, refreshToken, hintedMerchantId);
+  const cacheKey = buildCacheKey(accessToken, hintedMerchantId);
   if (!cacheKey) return;
   merchantSessionCache.set(cacheKey, {
     expiresAt: Date.now() + MERCHANT_SESSION_CACHE_TTL_MS,
     session,
   });
-}
-
-async function refreshMerchantSession(refreshToken: string) {
-  const supabaseUrl = trimText(process.env.NEXT_PUBLIC_SUPABASE_URL);
-  const anonKey = trimText(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
-  if (!supabaseUrl || !anonKey || !refreshToken) return null;
-
-  const response = await fetch(`${supabaseUrl.replace(/\/+$/, "")}/auth/v1/token?grant_type=refresh_token`, {
-    method: "POST",
-    headers: {
-      apikey: anonKey,
-      Authorization: `Bearer ${anonKey}`,
-      "Content-Type": "application/json",
-    },
-    cache: "no-store",
-    body: JSON.stringify({
-      refresh_token: refreshToken,
-    }),
-  }).catch(() => null);
-
-  if (!response?.ok) return null;
-  const payload = (await response.json().catch(() => null)) as RefreshPayload | null;
-  const accessToken = trimText(payload?.access_token);
-  const nextRefreshToken = trimText(payload?.refresh_token);
-  if (!accessToken || !nextRefreshToken) return null;
-
-  return {
-    accessToken,
-    refreshToken: nextRefreshToken,
-    user: payload?.user && typeof payload.user === "object" ? (payload.user as AuthUserSummary) : null,
-  };
 }
 
 async function resolveMerchantIdForUser(user: AuthUserSummary | null) {
@@ -267,11 +225,9 @@ export async function resolveMerchantSessionFromRequest(
 ): Promise<ResolvedMerchantSession | null> {
   const { hintedMerchantId, hintedEmail, hintedName } = readMerchantSessionHints(request, hintInput);
   const accessTokens = readMerchantRequestAccessTokens(request);
-  const refreshTokens = readMerchantRequestRefreshTokens(request);
   const accessToken = accessTokens[0] ?? readMerchantAuthCookie(request);
-  const refreshToken = refreshTokens[0] ?? readMerchantAuthRefreshCookie(request);
 
-  const cached = readCachedSession(accessToken, refreshToken, hintedMerchantId);
+  const cached = readCachedSession(accessToken, hintedMerchantId);
   if (cached) {
     return {
       merchantId: cached.merchantId,
@@ -283,10 +239,10 @@ export async function resolveMerchantSessionFromRequest(
   const authSupabase = createServerSupabaseAuthClient();
   let user: AuthUserSummary | null = null;
   let validatedAccessToken = accessToken;
-  let validatedRefreshToken = refreshToken;
 
   if (authSupabase) {
-    for (const candidateAccessToken of accessTokens) {
+    const candidates = [...accessTokens, accessToken].map((value) => trimText(value)).filter(Boolean);
+    for (const candidateAccessToken of candidates) {
       const { data, error } = await authSupabase.auth
         .getUser(candidateAccessToken)
         .catch(() => ({ data: null, error: true }));
@@ -295,25 +251,6 @@ export async function resolveMerchantSessionFromRequest(
         user = data.user as AuthUserSummary;
         break;
       }
-    }
-  }
-
-  if (!user && authSupabase) {
-    for (const candidateRefreshToken of refreshTokens) {
-      const refreshed = await refreshMerchantSession(candidateRefreshToken);
-      if (!refreshed) continue;
-      validatedAccessToken = refreshed.accessToken;
-      validatedRefreshToken = refreshed.refreshToken;
-      user = refreshed.user;
-      if (!user) {
-        const { data, error } = await authSupabase.auth
-          .getUser(validatedAccessToken)
-          .catch(() => ({ data: null, error: true }));
-        if (!error && data?.user) {
-          user = data.user as AuthUserSummary;
-        }
-      }
-      if (user) break;
     }
   }
 
@@ -334,6 +271,6 @@ export async function resolveMerchantSessionFromRequest(
     merchantEmail: normalizeEmail(user.email, hintedEmail),
     merchantName: hintedName,
   } satisfies CachedMerchantSession;
-  writeCachedSession(validatedAccessToken, validatedRefreshToken, hintedMerchantId, resolved);
+  writeCachedSession(validatedAccessToken, hintedMerchantId, resolved);
   return resolved;
 }

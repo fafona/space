@@ -3,7 +3,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import { useI18n } from "@/components/I18nProvider";
 import MerchantBusinessCardManager from "@/components/admin/MerchantBusinessCardManager";
-import { readMerchantSessionMerchantIds } from "@/lib/authSessionRecovery";
+import {
+  readMerchantSessionMerchantIds,
+  readMerchantSessionPayload,
+  recoverBrowserSupabaseSessionWithRefresh,
+  resolveFrontendAuthPayload,
+  startMerchantSessionKeepAlive,
+  syncMerchantSessionCookies,
+} from "@/lib/authSessionRecovery";
 import { type MerchantContactVisibility, type SiteLocation } from "@/data/platformControlStore";
 import {
   buildPersonalAccountPermissionConfig,
@@ -1827,6 +1834,7 @@ export default function MePage() {
   );
   const personalBusinessCardsRef = useRef<MerchantBusinessCardAsset[]>([]);
   const personalBusinessCardsSaveRequestIdRef = useRef(0);
+  const personalSessionRecoveryInFlightRef = useRef<Promise<MeSessionPayload | null> | null>(null);
   const personalDesktopFaollaFrameRef = useRef<HTMLIFrameElement | null>(null);
   const personalMobileFaollaFrameRef = useRef<HTMLIFrameElement | null>(null);
   const personalAvatarInputRef = useRef<HTMLInputElement | null>(null);
@@ -1848,13 +1856,9 @@ export default function MePage() {
     let cancelled = false;
     const bootstrap = async () => {
       try {
-        const response = await fetch("/api/auth/merchant-session", {
-          method: "GET",
-          cache: "no-store",
-        });
-        const nextPayload = (await response.json().catch(() => null)) as MeSessionPayload | null;
+        const nextPayload = (await resolveFrontendAuthPayload(7200).catch(() => null)) as MeSessionPayload | null;
         if (cancelled) return;
-        if (!response.ok || nextPayload?.authenticated !== true || !nextPayload?.user) {
+        if (nextPayload?.authenticated !== true || !nextPayload?.user) {
           window.location.replace("/login?redirect=/me");
           return;
         }
@@ -1883,6 +1887,49 @@ export default function MePage() {
   useEffect(() => {
     return installFrontendAuthBridgeResponder(() => payload);
   }, [payload]);
+
+  useEffect(() => {
+    if (payload?.authenticated !== true || payload.accountType !== "personal") return;
+    return startMerchantSessionKeepAlive({
+      timeoutMs: 5200,
+    });
+  }, [payload?.accountId, payload?.accountType, payload?.authenticated]);
+
+  const ensurePersonalSessionReady = useCallback(async () => {
+    if (personalSessionRecoveryInFlightRef.current) return personalSessionRecoveryInFlightRef.current;
+    const task = (async (): Promise<MeSessionPayload | null> => {
+      const acceptPayload = (candidate: unknown) => {
+        const nextPayload = candidate as MeSessionPayload | null;
+        if (nextPayload?.authenticated === true && nextPayload.accountType === "personal" && nextPayload.user) {
+          setPayload(nextPayload);
+          return nextPayload;
+        }
+        return null;
+      };
+
+      const cookiePayload = await readMerchantSessionPayload(5200).catch(() => null);
+      const acceptedCookiePayload = acceptPayload(cookiePayload);
+      if (acceptedCookiePayload) return acceptedCookiePayload;
+
+      const recoveredSession = await recoverBrowserSupabaseSessionWithRefresh(7200).catch(() => null);
+      if (recoveredSession) {
+        const syncedPayload = await syncMerchantSessionCookies(recoveredSession, 6200).catch(() => null);
+        const acceptedSyncedPayload = acceptPayload(syncedPayload);
+        if (acceptedSyncedPayload) return acceptedSyncedPayload;
+      }
+
+      const retryPayload = await readMerchantSessionPayload(5200).catch(() => null);
+      return acceptPayload(retryPayload);
+    })();
+    personalSessionRecoveryInFlightRef.current = task;
+    try {
+      return await task;
+    } finally {
+      if (personalSessionRecoveryInFlightRef.current === task) {
+        personalSessionRecoveryInFlightRef.current = null;
+      }
+    }
+  }, []);
 
   useEffect(() => {
     if (!mobileSelfLanguageMenuOpen || typeof document === "undefined") return;
@@ -2153,6 +2200,8 @@ export default function MePage() {
       setPersonalConsumptionLoading(true);
       setPersonalBookingLoadError("");
       setPersonalOrderLoadError("");
+      await ensurePersonalSessionReady();
+      if (cancelled) return;
       const [bookingsResult, ordersResult] = await Promise.allSettled([
         fetchPersonalConsumptionPayload<PersonalBookingsResponsePayload>(
           "/api/bookings?scope=personal",
@@ -2197,7 +2246,7 @@ export default function MePage() {
     return () => {
       cancelled = true;
     };
-  }, [accountId, personalConsumptionReloadKey]);
+  }, [accountId, ensurePersonalSessionReady, personalConsumptionReloadKey]);
 
   const personalBookingCounts = useMemo(() => {
     const counts: Record<PersonalBookingFilter, number> = { all: personalBookings.length, active: 0, confirmed: 0, cancelled: 0 };
@@ -2824,6 +2873,7 @@ export default function MePage() {
       });
       if (email) params.set("merchantEmail", email);
       if (profileName) params.set("merchantName", profileName);
+      await ensurePersonalSessionReady();
       const response = await fetch(`/api/support-messages?${params.toString()}`, {
         method: "GET",
         cache: "no-store",
@@ -2842,7 +2892,7 @@ export default function MePage() {
     } finally {
       if (!options?.silent) setSupportLoading(false);
     }
-  }, [accountId, email, profileName]);
+  }, [accountId, email, ensurePersonalSessionReady, profileName]);
 
   const loadPeerInbox = useCallback(async (options?: { silent?: boolean }) => {
     if (!accountId) return;
@@ -2854,6 +2904,7 @@ export default function MePage() {
       });
       if (email) params.set("merchantEmail", email);
       if (profileName) params.set("merchantName", profileName);
+      await ensurePersonalSessionReady();
       const response = await fetch(`/api/merchant-peer-messages?${params.toString()}`, {
         method: "GET",
         cache: "no-store",
@@ -2883,7 +2934,7 @@ export default function MePage() {
     } finally {
       if (!options?.silent) setPeerLoading(false);
     }
-  }, [accountId, email, profileName]);
+  }, [accountId, email, ensurePersonalSessionReady, profileName]);
 
   async function searchConversation() {
     const query = supportContactKeyword.trim();
@@ -2903,6 +2954,7 @@ export default function MePage() {
     setSupportSearching(true);
     setSupportError("");
     try {
+      await ensurePersonalSessionReady();
       const response = await fetch("/api/merchant-peer-messages", {
         method: "POST",
         cache: "no-store",
@@ -2958,6 +3010,7 @@ export default function MePage() {
       setSupportDraft("");
     }
     try {
+      await ensurePersonalSessionReady();
       const response = await fetch(selectedConversationIsOfficial ? "/api/support-messages" : "/api/merchant-peer-messages", {
         method: "POST",
         cache: "no-store",

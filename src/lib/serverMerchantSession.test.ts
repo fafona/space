@@ -16,6 +16,51 @@ test("resolveMerchantSessionFromRequest does not trust unauthenticated merchant 
   assert.equal(session, null);
 });
 
+test("resolveMerchantSessionFromRequest does not rotate refresh cookies inside business routes", async () => {
+  const originalFetch = globalThis.fetch;
+  const previousUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const previousAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const previousServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  let refreshEndpointCalled = false;
+
+  process.env.NEXT_PUBLIC_SUPABASE_URL = "https://unit-test.supabase.co";
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon-key";
+  process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-key";
+
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const requestUrl = new URL(url);
+    if (requestUrl.pathname === "/auth/v1/token") {
+      refreshEndpointCalled = true;
+      return new Response(JSON.stringify({ access_token: "new-access", refresh_token: "new-refresh" }), { status: 200 });
+    }
+    if (requestUrl.pathname === "/auth/v1/user") {
+      return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
+    }
+    return new Response("not found", { status: 404 });
+  }) as typeof fetch;
+
+  try {
+    const session = await resolveMerchantSessionFromRequest(
+      new Request("https://faolla.com/api/merchant-peer-messages?siteId=12345678", {
+        headers: {
+          cookie:
+            "merchant-space-merchant-auth=stale-access; merchant-space-merchant-refresh=refresh-token",
+        },
+      }),
+      { hintedMerchantId: "12345678" },
+    );
+
+    assert.equal(session, null);
+    assert.equal(refreshEndpointCalled, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env.NEXT_PUBLIC_SUPABASE_URL = previousUrl;
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = previousAnonKey;
+    process.env.SUPABASE_SERVICE_ROLE_KEY = previousServiceRoleKey;
+  }
+});
+
 test("resolveMerchantSessionFromRequest accepts an authorized hinted merchant id after authenticating the user", async () => {
   const originalFetch = globalThis.fetch;
   const previousUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;

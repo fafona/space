@@ -10662,6 +10662,51 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     latestSelectedSupportPeerIncomingMessage?.createdAt,
   );
 
+  const ensureMerchantChatSessionReady = useCallback(async () => {
+    const applyPayloadIdentity = (payload: Awaited<ReturnType<typeof readMerchantSessionPayload>> | null) => {
+      if (!payload || payload.authenticated !== true) return null;
+      const merchantIds = readMerchantSessionMerchantIds(payload);
+      const merchantId = merchantIds.find((item) => isMerchantNumericId(item)) ?? merchantIds[0] ?? "";
+      const email = typeof payload.user?.email === "string" ? payload.user.email.trim() : "";
+      if (merchantIds.length > 0) {
+        merchantIdsRef.current = mergePreferredMerchantIds(merchantIds, merchantIdsRef.current);
+      }
+      if (merchantId || email) {
+        merchantSessionIdentityRef.current = {
+          merchantId,
+          email: email || null,
+        };
+        if (merchantId) {
+          setMerchantSiteIdOverride((current) => current || merchantId);
+        }
+      }
+      return payload;
+    };
+
+    const cookiePayload = await readMerchantSessionPayload(Math.max(1800, Math.min(5200, AUTH_CHECK_TIMEOUT_MS))).catch(
+      () => null,
+    );
+    const acceptedCookiePayload = applyPayloadIdentity(cookiePayload);
+    if (acceptedCookiePayload) return acceptedCookiePayload;
+
+    const recoveredSession = await recoverBrowserSupabaseSessionWithRefresh(
+      Math.max(2600, Math.min(8200, AUTH_CHECK_TIMEOUT_MS + 1600)),
+    ).catch(() => null);
+    if (recoveredSession) {
+      const syncedPayload = await syncMerchantSessionCookies(
+        recoveredSession,
+        Math.max(2200, Math.min(6200, AUTH_CHECK_TIMEOUT_MS)),
+      ).catch(() => null);
+      const acceptedSyncedPayload = applyPayloadIdentity(syncedPayload);
+      if (acceptedSyncedPayload) return acceptedSyncedPayload;
+    }
+
+    const retryPayload = await readMerchantSessionPayload(Math.max(1800, Math.min(5200, AUTH_CHECK_TIMEOUT_MS))).catch(
+      () => null,
+    );
+    return applyPayloadIdentity(retryPayload);
+  }, []);
+
   const requestMerchantChatWithSessionRecovery = useCallback(async (path: string, init: RequestInit) => {
     const buildSupportRequestInit = async (allowRecovery: boolean) => {
       const headers = new Headers(init.headers ?? undefined);
@@ -10697,7 +10742,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       }
 
       if (allowRecovery) {
-        await readMerchantSessionPayload(Math.max(1600, Math.min(4200, AUTH_CHECK_TIMEOUT_MS))).catch(() => null);
+        await ensureMerchantChatSessionReady();
       }
 
       return {
@@ -10715,14 +10760,21 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     if (response.status !== 401 && response.status !== 403) {
       return response;
     }
-    await readMerchantSessionPayload(Math.max(1800, Math.min(5000, AUTH_CHECK_TIMEOUT_MS))).catch(() => null);
+    await ensureMerchantChatSessionReady();
     try {
       response = await sendRequest(true);
     } catch {
       return response;
     }
     return response;
-  }, [editingSite?.contactEmail, editingSiteId, merchantDisplayName, prefetchMerchantSessionIdentity, storeScope]);
+  }, [
+    editingSite?.contactEmail,
+    editingSiteId,
+    ensureMerchantChatSessionReady,
+    merchantDisplayName,
+    prefetchMerchantSessionIdentity,
+    storeScope,
+  ]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;

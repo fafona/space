@@ -477,7 +477,19 @@ export function startMerchantSessionKeepAlive(options?: MerchantSessionKeepAlive
     if (inFlight) return inFlight;
     const task = (async () => {
       try {
-        return await readMerchantSessionPayload(timeoutMs);
+        const payload = await readMerchantSessionPayload(timeoutMs);
+        if (isAuthenticatedMerchantSessionPayload(payload)) return payload;
+
+        const recoveredSession = await recoverBrowserSupabaseSessionWithRefresh(
+          Math.max(3600, Math.min(9000, timeoutMs + 1800)),
+        ).catch(() => null);
+        if (!recoveredSession) return payload;
+
+        const syncedPayload = await syncMerchantSessionCookies(
+          recoveredSession,
+          Math.max(2600, Math.min(7000, timeoutMs + 1000)),
+        ).catch(() => null);
+        return isAuthenticatedMerchantSessionPayload(syncedPayload) ? syncedPayload : payload;
       } catch {
         return null;
       }
