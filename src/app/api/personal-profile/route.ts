@@ -31,6 +31,15 @@ type PersonalProfilePatch = {
 type PersonalProfileRequestPayload = {
   profile?: PersonalProfilePatch;
   businessCards?: unknown;
+  favoriteSites?: unknown;
+};
+
+type PersonalFavoriteSite = {
+  id: string;
+  url: string;
+  name: string;
+  subtitle: string;
+  addedAt: string;
 };
 
 function trimText(value: unknown, maxLength = 500) {
@@ -60,6 +69,45 @@ function normalizeStoragePublicUrl(value: unknown, maxLength = 1200) {
     return normalized;
   }
   return normalized;
+}
+
+function normalizeFavoriteSiteUrl(value: unknown) {
+  const normalized = trimText(value, 1200);
+  if (!normalized) return "";
+  try {
+    const url = new URL(normalized);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return "";
+    url.searchParams.delete("appShell");
+    url.searchParams.delete("uiLocale");
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+function normalizePersonalFavoriteSites(value: unknown): PersonalFavoriteSite[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const output: PersonalFavoriteSite[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const record = item as Record<string, unknown>;
+    const url = normalizeFavoriteSiteUrl(record.url);
+    if (!url) continue;
+    const id = trimText(record.id, 240) || url;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    output.push({
+      id,
+      url,
+      name: trimText(record.name, 120),
+      subtitle: trimText(record.subtitle, 240),
+      addedAt: trimText(record.addedAt, 64) || new Date().toISOString(),
+    });
+    if (output.length >= 200) break;
+  }
+  return output;
 }
 
 function noStoreJson(body: unknown, init?: ResponseInit) {
@@ -135,14 +183,16 @@ export async function GET(request: Request) {
     session.adminSupabase as unknown as PersonalBusinessCardStoreClient,
     session.accountId,
   );
+  const profile = readPersonalProfileMetadata(session.user);
   return noStoreJson({
     ok: true,
     accountId: session.accountId,
     user: session.user,
-    profile: readPersonalProfileMetadata(session.user),
+    profile,
     personalServiceConfig: session.serviceConfig,
     personalServicePaused: session.servicePaused,
     businessCards: cardsPayload?.cards ?? [],
+    favoriteSites: normalizePersonalFavoriteSites(profile.favoriteSites),
   });
 }
 
@@ -159,7 +209,10 @@ export async function POST(request: Request) {
   const normalizedBusinessCards = payload && "businessCards" in payload
     ? normalizeMerchantBusinessCards(payload.businessCards)
     : null;
-  if (!patch && !normalizedBusinessCards) {
+  const normalizedFavoriteSites = payload && "favoriteSites" in payload
+    ? normalizePersonalFavoriteSites(payload.favoriteSites)
+    : null;
+  if (!patch && !normalizedBusinessCards && !normalizedFavoriteSites) {
     return noStoreJson({ ok: false, error: "invalid_profile_payload" }, { status: 400 });
   }
 
@@ -169,8 +222,26 @@ export async function POST(request: Request) {
       ? (session.user.user_metadata.personal_profile as Record<string, unknown>)
       : {};
 
-  if (patch) {
-    const { userMetadata, personalProfile: nextProfile } = buildProfileMetadataPatch(session.user, patch);
+  if (patch || normalizedFavoriteSites) {
+    let userMetadata: Record<string, unknown>;
+    let nextProfile: Record<string, unknown>;
+    if (patch) {
+      const built = buildProfileMetadataPatch(session.user, patch);
+      userMetadata = built.userMetadata;
+      nextProfile = built.personalProfile;
+    } else {
+      userMetadata = session.user.user_metadata && typeof session.user.user_metadata === "object"
+        ? { ...session.user.user_metadata }
+        : {};
+      nextProfile = { ...personalProfile };
+    }
+    if (normalizedFavoriteSites) {
+      nextProfile = {
+        ...nextProfile,
+        favoriteSites: normalizedFavoriteSites,
+      };
+      userMetadata.personal_profile = nextProfile;
+    }
     const userId = trimText(session.user.id, 128);
     if (!userId) return noStoreJson({ ok: false, error: "unauthorized" }, { status: 401 });
 
@@ -226,5 +297,6 @@ export async function POST(request: Request) {
     personalServiceConfig: session.serviceConfig,
     personalServicePaused: session.servicePaused,
     businessCards: savedBusinessCards,
+    favoriteSites: normalizePersonalFavoriteSites(personalProfile.favoriteSites),
   });
 }

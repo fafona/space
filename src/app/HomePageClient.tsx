@@ -240,9 +240,11 @@ export default function HomePageClient({
       className="min-h-screen w-full overflow-x-hidden bg-gray-50 py-8"
       style={{ ...pageBackgroundStyle, paddingBottom: `calc(2rem + ${backgroundExtendPadding}px)` }}
     >
-      <div className={authEntryClassName}>
-        <FrontendAuthEntry />
-      </div>
+      {suppressStandaloneLaunchRedirect ? null : (
+        <div className={authEntryClassName}>
+          <FrontendAuthEntry />
+        </div>
+      )}
       <BlockRenderer
         blocks={activeBlocks}
         currentPageId={activePage?.id}

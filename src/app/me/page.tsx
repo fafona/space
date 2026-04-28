@@ -87,7 +87,7 @@ type ConsumptionSection = "bookings" | "orders";
 type PersonalBookingFilter = "all" | "active" | "confirmed" | "cancelled";
 type PersonalOrderFilter = "all" | "pending" | "confirmed" | "cancelled";
 type MobileConversationView = "list" | "thread";
-type MobileSelfSection = "home" | "profile" | "cards" | "notifications";
+type MobileSelfSection = "home" | "profile" | "favorites" | "cards" | "notifications";
 
 type MenuItem = {
   key: DesktopSection;
@@ -166,6 +166,14 @@ type PersonalProfileDraft = {
   address: string;
 };
 
+type PersonalFavoriteSite = {
+  id: string;
+  url: string;
+  name: string;
+  subtitle: string;
+  addedAt: string;
+};
+
 type PersonalProfileResponsePayload = {
   ok?: unknown;
   error?: unknown;
@@ -173,6 +181,7 @@ type PersonalProfileResponsePayload = {
   user?: MeSessionPayload["user"] | null;
   profile?: Partial<PersonalProfileDraft> | null;
   businessCards?: MerchantBusinessCardAsset[] | null;
+  favoriteSites?: PersonalFavoriteSite[] | null;
 };
 
 type PersonalBookingsResponsePayload = {
@@ -229,6 +238,7 @@ const SUPPORT_FILE_PICKER_ACCEPT = [
   ".pptx",
 ].join(",");
 const PERSONAL_AVATAR_MAX_BYTES = 512 * 1024;
+const PERSONAL_FAVORITE_SITE_LIMIT = 200;
 const EMPTY_PERSONAL_PROFILE: PersonalProfileDraft = {
   displayName: "",
   avatarUrl: "",
@@ -467,6 +477,89 @@ function readPersonalMobileViewport() {
 function readInitialFaollaEmbedHref() {
   if (typeof window === "undefined" || !isFaollaSectionSearch(window.location.search)) return "";
   return readFaollaEntryUrlFromSearch(window.location.search, window.location.origin);
+}
+
+function normalizePersonalFavoriteSiteUrl(value: unknown, fallbackOrigin = "https://faolla.com") {
+  const normalized = normalizeFaollaEntryUrl(value, fallbackOrigin, { allowCrossOrigin: true });
+  if (!normalized || isFaollaBackendShellUrl(normalized, fallbackOrigin)) return "";
+  try {
+    const url = new URL(normalized, fallbackOrigin);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return "";
+    url.searchParams.delete("appShell");
+    url.searchParams.delete("uiLocale");
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+function getFavoriteSiteRootUrl(value: string) {
+  try {
+    const url = new URL(value);
+    url.pathname = "/";
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return value;
+  }
+}
+
+function getFavoriteSiteDefaultName(hostname: string) {
+  const normalized = hostname.trim().toLowerCase();
+  if (!normalized) return "商户网站";
+  if (normalized.endsWith(".faolla.com")) {
+    const prefix = normalized.slice(0, -".faolla.com".length).split(".").filter(Boolean).pop();
+    return prefix || normalized;
+  }
+  return normalized.replace(/^www\./, "");
+}
+
+function normalizePersonalFavoriteSites(value: unknown): PersonalFavoriteSite[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const output: PersonalFavoriteSite[] = [];
+  for (const item of value) {
+    const record = readRecord(item);
+    if (!record) continue;
+    const url = normalizePersonalFavoriteSiteUrl(record.url);
+    if (!url) continue;
+    const rootUrl = getFavoriteSiteRootUrl(url);
+    const parsed = new URL(rootUrl);
+    const id = trimText(record.id) || parsed.origin;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    output.push({
+      id,
+      url: rootUrl,
+      name: trimText(record.name) || getFavoriteSiteDefaultName(parsed.hostname),
+      subtitle: trimText(record.subtitle) || parsed.hostname,
+      addedAt: trimText(record.addedAt) || new Date().toISOString(),
+    });
+    if (output.length >= PERSONAL_FAVORITE_SITE_LIMIT) break;
+  }
+  return output;
+}
+
+function buildCurrentFavoriteSiteFromHref(value: unknown, fallbackOrigin = "https://faolla.com"): PersonalFavoriteSite | null {
+  const url = normalizePersonalFavoriteSiteUrl(value, fallbackOrigin);
+  if (!url) return null;
+  try {
+    const rootUrl = getFavoriteSiteRootUrl(url);
+    const parsed = new URL(rootUrl);
+    const hostname = parsed.hostname.toLowerCase();
+    if (hostname === "faolla.com" || hostname === "www.faolla.com") return null;
+    return {
+      id: parsed.origin,
+      url: rootUrl,
+      name: getFavoriteSiteDefaultName(hostname),
+      subtitle: hostname,
+      addedAt: new Date().toISOString(),
+    };
+  } catch {
+    return null;
+  }
 }
 
 function normalizePersonalLocationValue(value: unknown) {
@@ -1873,6 +1966,7 @@ export default function MePage() {
   const [supportSelfCardPickerCards, setSupportSelfCardPickerCards] = useState<MerchantBusinessCardAsset[]>([]);
   const [personalProfileDraft, setPersonalProfileDraft] = useState<PersonalProfileDraft>(EMPTY_PERSONAL_PROFILE);
   const [personalBusinessCards, setPersonalBusinessCards] = useState<MerchantBusinessCardAsset[]>([]);
+  const [personalFavoriteSites, setPersonalFavoriteSites] = useState<PersonalFavoriteSite[]>([]);
   const [personalProfileSaving, setPersonalProfileSaving] = useState(false);
   const [personalAvatarUploading, setPersonalAvatarUploading] = useState(false);
   const [personalProfileMessage, setPersonalProfileMessage] = useState("");
@@ -1900,6 +1994,8 @@ export default function MePage() {
   );
   const personalBusinessCardsRef = useRef<MerchantBusinessCardAsset[]>([]);
   const personalBusinessCardsSaveRequestIdRef = useRef(0);
+  const personalFavoriteSitesRef = useRef<PersonalFavoriteSite[]>([]);
+  const personalFavoriteSitesSaveRequestIdRef = useRef(0);
   const personalSessionRecoveryInFlightRef = useRef<Promise<MeSessionPayload | null> | null>(null);
   const personalDesktopFaollaFrameRef = useRef<HTMLIFrameElement | null>(null);
   const personalMobileFaollaFrameRef = useRef<HTMLIFrameElement | null>(null);
@@ -2104,6 +2200,49 @@ export default function MePage() {
     },
     [accountId],
   );
+  const persistPersonalFavoriteSites = useCallback(
+    async (sites: PersonalFavoriteSite[]) => {
+      if (!accountId) return;
+      const normalizedSites = normalizePersonalFavoriteSites(sites);
+      const previousSites = personalFavoriteSitesRef.current;
+      const requestId = personalFavoriteSitesSaveRequestIdRef.current + 1;
+      personalFavoriteSitesSaveRequestIdRef.current = requestId;
+      personalFavoriteSitesRef.current = normalizedSites;
+      setPersonalFavoriteSites(normalizedSites);
+      setPersonalProfileMessage("");
+      try {
+        const response = await fetch("/api/personal-profile", {
+          method: "POST",
+          cache: "no-store",
+          credentials: "same-origin",
+          headers: {
+            "Content-Type": "application/json",
+            accept: "application/json",
+          },
+          body: JSON.stringify({
+            favoriteSites: normalizedSites,
+          }),
+        });
+        const result = (await response.json().catch(() => null)) as PersonalProfileResponsePayload | null;
+        if (!response.ok || !result || result.ok !== true) {
+          throw new Error(readPayloadMessage(result?.message, "收藏保存失败，请稍后重试"));
+        }
+        const nextSites = normalizePersonalFavoriteSites(result.favoriteSites);
+        if (personalFavoriteSitesSaveRequestIdRef.current === requestId) {
+          personalFavoriteSitesRef.current = nextSites;
+          setPersonalFavoriteSites(nextSites);
+        }
+      } catch (error) {
+        if (personalFavoriteSitesSaveRequestIdRef.current === requestId) {
+          personalFavoriteSitesRef.current = previousSites;
+          setPersonalFavoriteSites(previousSites);
+          setPersonalProfileMessage(error instanceof Error ? error.message : "收藏保存失败，请稍后重试");
+        }
+        throw error;
+      }
+    },
+    [accountId],
+  );
   const personalBusinessCardProfile = useMemo(
     () =>
       ({
@@ -2136,6 +2275,9 @@ export default function MePage() {
   useEffect(() => {
     personalBusinessCardsRef.current = personalBusinessCards;
   }, [personalBusinessCards]);
+  useEffect(() => {
+    personalFavoriteSitesRef.current = personalFavoriteSites;
+  }, [personalFavoriteSites]);
   useEffect(() => {
     supportSelfCardShareBundleRef.current = {};
   }, [personalBusinessCards]);
@@ -2181,6 +2323,7 @@ export default function MePage() {
     if (loading) return;
     if (!accountId) {
       setPersonalBusinessCards([]);
+      setPersonalFavoriteSites([]);
       return;
     }
     let cancelled = false;
@@ -2213,10 +2356,15 @@ export default function MePage() {
         const nextCards = normalizeMerchantBusinessCards(result.businessCards);
         personalBusinessCardsRef.current = nextCards;
         setPersonalBusinessCards(nextCards);
+        const nextFavoriteSites = normalizePersonalFavoriteSites(result.favoriteSites);
+        personalFavoriteSitesRef.current = nextFavoriteSites;
+        setPersonalFavoriteSites(nextFavoriteSites);
       } catch {
         if (cancelled) return;
         personalBusinessCardsRef.current = [];
         setPersonalBusinessCards([]);
+        personalFavoriteSitesRef.current = [];
+        setPersonalFavoriteSites([]);
       }
     })();
     return () => {
@@ -2581,6 +2729,78 @@ export default function MePage() {
       personalMobileFaollaFrameRef.current.src = faollaHomeTargetHref;
     }
   }, [faollaHomeTargetHref, isMobileViewport]);
+  const currentFaollaFavoriteSite = useMemo(
+    () =>
+      buildCurrentFavoriteSiteFromHref(
+        faollaEmbedHref,
+        typeof window !== "undefined" ? window.location.origin : "https://faolla.com",
+      ),
+    [faollaEmbedHref],
+  );
+  const currentFaollaFavoriteSiteId = currentFaollaFavoriteSite?.id ?? "";
+  const currentFaollaFavoriteActive = useMemo(
+    () => Boolean(currentFaollaFavoriteSiteId && personalFavoriteSites.some((site) => site.id === currentFaollaFavoriteSiteId)),
+    [currentFaollaFavoriteSiteId, personalFavoriteSites],
+  );
+  const openPersonalFavoriteSite = useCallback(
+    (site: PersonalFavoriteSite) => {
+      const normalizedSite = normalizePersonalFavoriteSites([site])[0];
+      if (!normalizedSite) return;
+      const nextHref = normalizedSite.url;
+      const shellHref = buildFaollaShellHref(
+        nextHref,
+        locale,
+        typeof window !== "undefined" ? window.location.origin : "https://faolla.com",
+      );
+      setFaollaEmbedHref(nextHref);
+      setDesktopSection("faolla");
+      setMobileTab("faolla");
+      if (!isMobileViewport && personalDesktopFaollaFrameRef.current) {
+        personalDesktopFaollaFrameRef.current.src = shellHref;
+      }
+      if (isMobileViewport && personalMobileFaollaFrameRef.current) {
+        personalMobileFaollaFrameRef.current.src = shellHref;
+      }
+    },
+    [isMobileViewport, locale],
+  );
+  const removePersonalFavoriteSite = useCallback(
+    (siteId: string) => {
+      const nextSites = personalFavoriteSites.filter((site) => site.id !== siteId);
+      void persistPersonalFavoriteSites(nextSites).catch(() => undefined);
+    },
+    [persistPersonalFavoriteSites, personalFavoriteSites],
+  );
+  const toggleCurrentFaollaFavorite = useCallback(() => {
+    if (!currentFaollaFavoriteSite) return;
+    const nextSites = currentFaollaFavoriteActive
+      ? personalFavoriteSites.filter((site) => site.id !== currentFaollaFavoriteSite.id)
+      : [
+          { ...currentFaollaFavoriteSite, addedAt: new Date().toISOString() },
+          ...personalFavoriteSites.filter((site) => site.id !== currentFaollaFavoriteSite.id),
+        ].slice(0, PERSONAL_FAVORITE_SITE_LIMIT);
+    void persistPersonalFavoriteSites(nextSites).catch(() => undefined);
+  }, [currentFaollaFavoriteActive, currentFaollaFavoriteSite, persistPersonalFavoriteSites, personalFavoriteSites]);
+  const renderFaollaFavoriteButton = (className = "") => (
+    <button
+      type="button"
+      className={`inline-flex items-center justify-center rounded-full border border-white/80 bg-white/95 text-slate-700 shadow-[0_12px_30px_rgba(15,23,42,0.18)] ring-1 ring-slate-950/10 transition hover:scale-[1.03] hover:text-amber-500 disabled:cursor-not-allowed disabled:opacity-45 ${className}`}
+      onClick={toggleCurrentFaollaFavorite}
+      disabled={!currentFaollaFavoriteSite}
+      title={currentFaollaFavoriteActive ? "取消收藏" : "收藏商户"}
+      aria-label={currentFaollaFavoriteActive ? "取消收藏" : "收藏商户"}
+    >
+      <svg viewBox="0 0 24 24" className="h-5 w-5" fill={currentFaollaFavoriteActive ? "currentColor" : "none"} aria-hidden="true">
+        <path
+          d="m12 4.4 2.2 4.5 5 .7-3.6 3.5.9 5-4.5-2.4-4.5 2.4.9-5-3.6-3.5 5-.7L12 4.4Z"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </button>
+  );
   const renderFaollaShellAvatar = (className = "") => (
     <button
       type="button"
@@ -3479,6 +3699,11 @@ export default function MePage() {
       }
       const nextProfile = mergePersonalProfileDraft(targetProfile, result.profile);
       setPersonalProfileDraft(nextProfile);
+      if (result.favoriteSites) {
+        const nextFavoriteSites = normalizePersonalFavoriteSites(result.favoriteSites);
+        personalFavoriteSitesRef.current = nextFavoriteSites;
+        setPersonalFavoriteSites(nextFavoriteSites);
+      }
       setPayload((current) => {
         if (!current) return current;
         const currentUser = current.user ?? {};
@@ -5070,6 +5295,65 @@ export default function MePage() {
     );
   }
 
+  function renderPersonalFavorites(compact = false) {
+    if (personalFavoriteSites.length === 0) {
+      return (
+        <EmptyFeatureCard
+          icon={<Icon name="star" />}
+          title="收藏"
+          description="在 Faolla 菜单打开商户网站后，点击右上角头像左侧的星标即可收藏。"
+        />
+      );
+    }
+
+    return (
+      <div className={compact ? "space-y-3" : "space-y-4"}>
+        {!compact ? (
+          <div className="flex items-center justify-between rounded-[24px] border border-slate-200 bg-white px-5 py-4 shadow-[0_12px_32px_rgba(15,23,42,0.05)]">
+            <div>
+              <div className="text-lg font-semibold text-slate-950">收藏</div>
+              <div className="mt-1 text-sm text-slate-500">已收藏 {personalFavoriteSites.length} 个商户网站。</div>
+            </div>
+          </div>
+        ) : null}
+        <div className={compact ? "space-y-3" : "grid gap-3 md:grid-cols-2 xl:grid-cols-3"}>
+          {personalFavoriteSites.map((site) => (
+            <article
+              key={site.id}
+              className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_14px_34px_rgba(15,23,42,0.07)]"
+            >
+              <div className="flex items-start gap-3">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-amber-50 text-amber-600">
+                  <Icon name="star" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-base font-semibold text-slate-950">{site.name || "商户网站"}</div>
+                  <div className="mt-1 truncate text-xs text-slate-500">{site.subtitle || site.url}</div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className="rounded-full bg-slate-950 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-slate-800"
+                      onClick={() => openPersonalFavoriteSite(site)}
+                    >
+                      打开
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
+                      onClick={() => removePersonalFavoriteSite(site.id)}
+                    >
+                      取消收藏
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   function renderSectionContent(section: DesktopSection) {
     if (section === "conversations") {
       return renderDesktopSupportSurface();
@@ -5098,16 +5382,18 @@ export default function MePage() {
     if (section === "orders") {
       return renderPersonalOrderCards(false);
     }
+    if (section === "favorites") {
+      return renderPersonalFavorites(false);
+    }
     if (section === "cards" && personalBusinessCardManagerCommonProps) {
       return <MerchantBusinessCardManager {...personalBusinessCardManagerCommonProps} folderViewMode="page" />;
     }
 
     const item = desktopMenuItems.find((entry) => entry.key === section) ?? desktopMenuItems[0];
-    const iconName = section === "favorites" ? "star" : section === "cards" ? "card" : "chat";
 
     return (
       <EmptyFeatureCard
-        icon={<Icon name={iconName} />}
+        icon={<Icon name="card" />}
         title={item.label}
         description={item.description}
       />
@@ -5281,6 +5567,12 @@ export default function MePage() {
           icon: <Icon name="user" />,
         },
         {
+          key: "favorites",
+          label: "收藏",
+          summary: personalFavoriteSites.length ? `已收藏 ${personalFavoriteSites.length} 个商户网站` : "保存常用商户网站",
+          icon: <Icon name="star" />,
+        },
+        {
           key: "cards",
           label: "名片夹",
           summary: mobileSelfCardsSummary,
@@ -5439,11 +5731,21 @@ export default function MePage() {
                 </button>
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[16px] font-semibold text-slate-900">
-                    {mobileSelfSection === "profile" ? "我的资料" : mobileSelfSection === "cards" ? "名片夹" : "通知"}
+                    {mobileSelfSection === "profile"
+                      ? "我的资料"
+                      : mobileSelfSection === "favorites"
+                        ? "收藏"
+                        : mobileSelfSection === "cards"
+                          ? "名片夹"
+                          : "通知"}
                   </div>
                   {mobileSelfSection === "profile" ? null : (
                     <div className="mt-1 truncate text-xs text-slate-500">
-                      {mobileSelfSection === "cards" ? "桌面端已接入完整名片夹，当前可在聊天里直接发送已生成名片。" : "这里控制系统消息通知、提示音和震动。"}
+                      {mobileSelfSection === "favorites"
+                        ? "保存常用商户网站。"
+                        : mobileSelfSection === "cards"
+                          ? "桌面端已接入完整名片夹，当前可在聊天里直接发送已生成名片。"
+                          : "这里控制系统消息通知、提示音和震动。"}
                     </div>
                   )}
                 </div>
@@ -5521,6 +5823,8 @@ export default function MePage() {
                   void savePersonalProfile();
                 }}
               />
+            ) : mobileSelfSection === "favorites" ? (
+              renderPersonalFavorites(true)
             ) : mobileSelfSection === "cards" ? (
               <EmptyFeatureCard
                 icon={<Icon name="card" />}
@@ -5631,7 +5935,8 @@ export default function MePage() {
               <div className="pointer-events-none absolute left-4 top-4 z-10">
                 <FaollaHomeButton className="pointer-events-auto h-11 w-11" onClick={navigatePersonalFaollaHome} />
               </div>
-              <div className="pointer-events-none absolute right-4 top-4 z-20">
+              <div className="pointer-events-none absolute right-4 top-4 z-20 flex items-center gap-2">
+                {renderFaollaFavoriteButton("pointer-events-auto h-10 w-10")}
                 {renderFaollaShellAvatar("pointer-events-auto h-10 w-10")}
               </div>
               <iframe
@@ -5651,7 +5956,8 @@ export default function MePage() {
           <div className="pointer-events-none absolute left-4 top-[calc(env(safe-area-inset-top)+0.75rem)] z-10">
             <FaollaHomeButton className="pointer-events-auto h-11 w-11" onClick={navigatePersonalFaollaHome} />
           </div>
-          <div className="pointer-events-none absolute right-3 top-[calc(env(safe-area-inset-top)+0.75rem)] z-20">
+          <div className="pointer-events-none absolute right-3 top-[calc(env(safe-area-inset-top)+0.75rem)] z-20 flex items-center gap-2">
+            {renderFaollaFavoriteButton("pointer-events-auto h-10 w-10")}
             {renderFaollaShellAvatar("pointer-events-auto h-10 w-10")}
           </div>
           <iframe
