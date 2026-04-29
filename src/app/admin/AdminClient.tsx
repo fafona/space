@@ -2757,7 +2757,7 @@ function getMissingMerchantProfileFields(site: MerchantProfileLike | null | unde
   return missing;
 }
 
-type AdminClientProps = {
+export type AdminClientProps = {
   forcedScope?: string;
   editorTitle?: string;
   frontendHref?: string;

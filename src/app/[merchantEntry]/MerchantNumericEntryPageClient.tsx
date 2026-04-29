@@ -2,7 +2,7 @@
 
 import { useParams, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import AdminClient from "@/app/admin/AdminClient";
+import AdminClientLoader from "@/app/admin/AdminClientLoader";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
 import { loadPlatformState, subscribePlatformState } from "@/data/platformControlStore";
 import { readRecentMerchantLaunchMerchantId } from "@/lib/merchantLaunchState";
@@ -222,7 +222,7 @@ export default function MerchantNumericEntryPageClient() {
 
   if (!isSupabaseEnabled || skipEntrySessionCheck || recentSignInBridgeActive) {
     return (
-      <AdminClient
+      <AdminClientLoader
         forcedScope={`site-${numericScopedSiteId || merchantEntry}`}
         initialJustSignedIn={justSignedIn}
         startInLoadingState
@@ -239,7 +239,7 @@ export default function MerchantNumericEntryPageClient() {
     return <LoadingProgressScreen message="正在跳转到登录页..." />;
   }
   return (
-    <AdminClient
+    <AdminClientLoader
       forcedScope={`site-${numericScopedSiteId || merchantEntry}`}
       initialJustSignedIn={justSignedIn}
       startInLoadingState

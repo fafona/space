@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import AdminClient from "./AdminClient";
+import AdminClientLoader from "./AdminClientLoader";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { buildMerchantBackendHref } from "@/lib/siteRouting";
 
@@ -37,7 +37,7 @@ export default async function AdminPage(props: AdminPageProps) {
     redirect(params.size > 0 ? `${targetHref}?${params.toString()}` : targetHref);
   }
   return (
-    <AdminClient
+    <AdminClientLoader
       forcedScope={typeof forcedScope === "string" ? forcedScope : undefined}
       startInLoadingState={internalMerchantRewrite === "1"}
     />

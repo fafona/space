@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import AdminClient from "../../admin/AdminClient";
+import AdminClientLoader from "../../admin/AdminClientLoader";
 import { buildPlatformHomeHref, PLATFORM_EDITOR_SCOPE } from "@/lib/siteRouting";
 import { buildSuperAdminLoginHref, refreshSuperAdminAuthenticatedState } from "@/lib/superAdminAuth";
 import { useHydrated } from "@/lib/useHydrated";
@@ -55,7 +55,7 @@ export default function SuperAdminEditorClient({ initialPublishedBlocks }: Super
       <span className="sr-only" data-super-admin-editor-client-build={editorBuildLabel}>
         {editorBuildLabel}
       </span>
-      <AdminClient
+      <AdminClientLoader
         editorMode="platform"
         forceDesktopEditorSidebar
         showPublishActions
