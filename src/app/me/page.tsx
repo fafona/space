@@ -2801,6 +2801,50 @@ export default function MePage() {
       </svg>
     </button>
   );
+  const renderMobileCurrentFavoriteAction = () => {
+    if (!currentFaollaFavoriteSite) return null;
+    return (
+      <section className="overflow-hidden rounded-[28px] border border-amber-200/80 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+        <button
+          type="button"
+          className="flex w-full items-center gap-4 px-5 py-4 text-left transition hover:bg-amber-50/70"
+          onClick={toggleCurrentFaollaFavorite}
+        >
+          <span
+            className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${
+              currentFaollaFavoriteActive ? "bg-amber-500 text-white" : "bg-amber-50 text-amber-600"
+            }`}
+          >
+            <svg
+              viewBox="0 0 24 24"
+              className="h-5 w-5"
+              fill={currentFaollaFavoriteActive ? "currentColor" : "none"}
+              aria-hidden="true"
+            >
+              <path
+                d="m12 4.4 2.2 4.5 5 .7-3.6 3.5.9 5-4.5-2.4-4.5 2.4.9-5-3.6-3.5 5-.7L12 4.4Z"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-sm font-semibold text-slate-900">
+              {currentFaollaFavoriteActive ? "已收藏当前商户" : "收藏当前商户"}
+            </span>
+            <span className="mt-1 block truncate text-xs leading-5 text-slate-500">
+              {currentFaollaFavoriteSite.name || currentFaollaFavoriteSite.subtitle || "商户网站"}
+            </span>
+          </span>
+          <span className="shrink-0 rounded-full bg-slate-950 px-3 py-1.5 text-xs font-semibold text-white">
+            {currentFaollaFavoriteActive ? "取消" : "收藏"}
+          </span>
+        </button>
+      </section>
+    );
+  };
   const renderFaollaShellAvatar = (className = "") => (
     <button
       type="button"
@@ -5301,7 +5345,7 @@ export default function MePage() {
         <EmptyFeatureCard
           icon={<Icon name="star" />}
           title="收藏"
-          description="在 Faolla 菜单打开商户网站后，点击右上角头像左侧的星标即可收藏。"
+          description="常用商户网站会显示在这里。"
         />
       );
     }
@@ -5766,6 +5810,7 @@ export default function MePage() {
             />
             {mobileSelfSection === "home" ? (
               <div className="space-y-4">
+                {renderMobileCurrentFavoriteAction()}
                 <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
                   <div className="divide-y divide-slate-100">
                     {selfMenuItems.map((item) => (
@@ -5957,7 +6002,6 @@ export default function MePage() {
             <FaollaHomeButton className="pointer-events-auto h-11 w-11" onClick={navigatePersonalFaollaHome} />
           </div>
           <div className="pointer-events-none absolute right-3 top-[calc(env(safe-area-inset-top)+0.75rem)] z-20 flex items-center gap-2">
-            {renderFaollaFavoriteButton("pointer-events-auto h-10 w-10")}
             {renderFaollaShellAvatar("pointer-events-auto h-10 w-10")}
           </div>
           <iframe
