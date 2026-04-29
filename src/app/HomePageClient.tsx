@@ -242,7 +242,7 @@ export default function HomePageClient({
     >
       {suppressStandaloneLaunchRedirect ? null : (
         <div className={authEntryClassName}>
-          <FrontendAuthEntry />
+          <FrontendAuthEntry autoOpenWorkspace />
         </div>
       )}
       <BlockRenderer

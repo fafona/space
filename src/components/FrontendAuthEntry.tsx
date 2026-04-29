@@ -19,6 +19,7 @@ type FrontendAuthEntryProps = {
   avatarClassName?: string;
   currentMerchantId?: string;
   merchantAvatarUrl?: string;
+  autoOpenWorkspace?: boolean;
 };
 
 type PersonalProfileResponsePayload = {
@@ -116,6 +117,26 @@ function readSessionAccountId(payload: MerchantCookieSessionPayload | null, merc
   );
 }
 
+function readPrimaryMerchantId(payload: MerchantCookieSessionPayload | null, merchantIds: string[]) {
+  const payloadMerchantId = trimText(payload?.merchantId);
+  const payloadAccountId = trimText(payload?.accountId);
+  return (
+    merchantIds.find((value) => isMerchantNumericId(value)) ||
+    (isMerchantNumericId(payloadMerchantId) ? payloadMerchantId : "") ||
+    (isMerchantNumericId(payloadAccountId) ? payloadAccountId : "")
+  );
+}
+
+function buildWorkspaceHref(payload: MerchantCookieSessionPayload | null, currentUrl: string) {
+  if (payload?.authenticated !== true) return "";
+  const sourceUrl = currentUrl || "/";
+  if (payload.accountType === "personal") {
+    return buildBackendFaollaHref("/me", sourceUrl);
+  }
+  const primaryMerchantId = readPrimaryMerchantId(payload, readMerchantSessionMerchantIds(payload));
+  return buildBackendFaollaHref(primaryMerchantId ? buildMerchantBackendHref(primaryMerchantId) : "/admin", sourceUrl);
+}
+
 function readMerchantPreviewProfile(value: unknown) {
   const root = readRecord(value);
   const profile = readRecord(root?.profile);
@@ -178,6 +199,7 @@ export default function FrontendAuthEntry({
   avatarClassName = "",
   currentMerchantId = "",
   merchantAvatarUrl = "",
+  autoOpenWorkspace = false,
 }: FrontendAuthEntryProps) {
   const hydrated = useHydrated();
   const [resolved, setResolved] = useState(false);
@@ -273,6 +295,13 @@ export default function FrontendAuthEntry({
   }, [payload?.accountId, payload?.accountType, payload?.authenticated, payload?.user?.id, resolved]);
 
   useEffect(() => {
+    if (!autoOpenWorkspace || !resolved || payload?.authenticated !== true || typeof window === "undefined") return;
+    const nextHref = buildWorkspaceHref(payload, currentUrl || window.location.href);
+    if (!nextHref) return;
+    window.location.replace(nextHref);
+  }, [autoOpenWorkspace, currentUrl, payload, resolved]);
+
+  useEffect(() => {
     if (!resolved || payload?.authenticated !== true || payload.accountType !== "merchant") {
       return;
     }
@@ -347,12 +376,6 @@ export default function FrontendAuthEntry({
   }
 
   const merchantIds = readMerchantSessionMerchantIds(payload);
-  const payloadMerchantId = trimText(payload.merchantId);
-  const payloadAccountId = trimText(payload.accountId);
-  const primaryMerchantId =
-    merchantIds.find((value) => isMerchantNumericId(value)) ||
-    (isMerchantNumericId(payloadMerchantId) ? payloadMerchantId : "") ||
-    (isMerchantNumericId(payloadAccountId) ? payloadAccountId : "");
   const currentSiteBelongsToSession =
     payload.accountType === "merchant" && currentMerchantId.trim() && merchantIds.includes(currentMerchantId.trim());
   const merchantPreviewApplies =
@@ -365,10 +388,7 @@ export default function FrontendAuthEntry({
   );
   const avatarLabel = getAvatarLabel(name);
   const accountId = readSessionAccountId(payload, merchantIds);
-  const workspaceHref =
-    payload.accountType === "personal"
-      ? buildBackendFaollaHref("/me", currentUrl || "/")
-      : buildBackendFaollaHref(primaryMerchantId ? buildMerchantBackendHref(primaryMerchantId) : "/admin", currentUrl || "/");
+  const workspaceHref = buildWorkspaceHref(payload, currentUrl || "/");
   const workspaceLabel = payload.accountType === "personal" ? "进入个人中心" : "进入后台";
   const accountTypeLabel = payload.accountType === "personal" ? "普通用户" : "商户用户";
   const renderAvatar = () =>
