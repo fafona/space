@@ -232,7 +232,7 @@ export default function HomePageClient({
   }
 
   const authEntryClassName = suppressStandaloneLaunchRedirect
-    ? "fixed right-[max(0.75rem,env(safe-area-inset-right))] top-[calc(env(safe-area-inset-top)+0.75rem)] z-[2147483000] md:right-5 md:top-5"
+    ? "fixed right-16 top-[calc(env(safe-area-inset-top)+0.75rem)] z-[2147483000] md:right-16 md:top-5"
     : "fixed right-16 top-3 z-[20000] md:right-20 md:top-5";
 
   return (
@@ -240,11 +240,9 @@ export default function HomePageClient({
       className="min-h-screen w-full overflow-x-hidden bg-gray-50 py-8"
       style={{ ...pageBackgroundStyle, paddingBottom: `calc(2rem + ${backgroundExtendPadding}px)` }}
     >
-      {suppressStandaloneLaunchRedirect ? null : (
-        <div className={authEntryClassName}>
-          <FrontendAuthEntry autoOpenWorkspace />
-        </div>
-      )}
+      <div className={authEntryClassName}>
+        <FrontendAuthEntry autoOpenWorkspace={!suppressStandaloneLaunchRedirect} />
+      </div>
       <BlockRenderer
         blocks={activeBlocks}
         currentPageId={activePage?.id}

@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { usePathname } from "next/navigation";
 import { useI18n } from "@/components/I18nProvider";
 import { LANGUAGE_OPTIONS, resolveSupportedLocale } from "@/lib/i18n";
+import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { useHydrated } from "@/lib/useHydrated";
 
 function flagImageUrl(countryCode: string) {
@@ -39,7 +40,10 @@ export default function GlobalLanguageSwitcher() {
   const inEditor = pathname.startsWith("/admin") || pathname.startsWith("/super-admin/editor");
   const isAdminPage = pathname.startsWith("/admin");
   const isMePage = pathname.startsWith("/me");
-  const isBackendPage = isAdminPage || isMePage;
+  const isSuperAdminPage = pathname.startsWith("/super-admin");
+  const firstPathSegment = pathname.split("/").filter(Boolean)[0] ?? "";
+  const isMerchantBackendEntry = isMerchantNumericId(firstPathSegment);
+  const isBackendPage = isAdminPage || isMePage || isSuperAdminPage || isMerchantBackendEntry;
   const isMobileAdminSwitcherVisible = isMobileViewport && allowMobileAdminSwitcher;
   const isMobileAdminPage = isMobileViewport && (isAdminPage || allowMobileAdminSwitcher);
   const mobileAdminTopClassName =
@@ -166,7 +170,7 @@ export default function GlobalLanguageSwitcher() {
   if (faollaAppShell) return null;
 
   const isLoginPage = pathname === "/login";
-  const showOnMobile = isLoginPage;
+  const showOnMobile = isLoginPage || !isBackendPage;
   if (isMobileViewport && !showOnMobile) return null;
   if (!isMobileViewport && isBackendPage && !allowDesktopBackendSwitcher) return null;
 

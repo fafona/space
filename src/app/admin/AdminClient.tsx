@@ -5105,7 +5105,7 @@ export default function AdminClient({
 
   useEffect(() => {
     if (typeof document === "undefined" || typeof window === "undefined") return;
-    const visible = merchantDesktopSection === "support";
+    const visible = merchantDesktopSection === "support" || merchantDesktopSection === "faolla";
     document.documentElement.setAttribute("data-desktop-language-switcher", visible ? "show" : "hide");
     window.dispatchEvent(new CustomEvent("merchant-desktop-language-switcher-change", { detail: { visible } }));
     return () => {
@@ -10562,7 +10562,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   );
   useEffect(() => {
     if (typeof window === "undefined" || typeof document === "undefined") return;
-    const visible = isMobileSupportDialog && supportMobileHomeTab === "self";
+    const visible = isMobileSupportDialog && (supportMobileHomeTab === "self" || supportMobileHomeTab === "faolla");
     document.documentElement.setAttribute("data-mobile-language-switcher", visible ? "show" : "hide");
     window.dispatchEvent(
       new CustomEvent("merchant-mobile-language-switcher-change", {
@@ -16625,8 +16625,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             supportDesktopSurfaceContent
           ) : null}
           <div
-            className={`relative h-[calc(100vh-9rem)] min-h-[560px] overflow-hidden bg-white ${
-              merchantDesktopSection === "faolla" ? "" : "hidden"
+            className={`relative overflow-hidden bg-white ${
+              merchantDesktopSection === "faolla" ? "h-[100dvh] min-h-[720px]" : "hidden h-[calc(100vh-9rem)] min-h-[560px]"
             }`}
           >
             <div className="pointer-events-none absolute left-4 top-4 z-10">
