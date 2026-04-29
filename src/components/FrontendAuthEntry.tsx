@@ -7,8 +7,10 @@ import {
   resolveFrontendAuthPayload,
   type MerchantCookieSessionPayload,
 } from "@/lib/authSessionRecovery";
-import { isFaollaAppShellSearch } from "@/lib/faollaEntry";
+import { buildBackendFaollaHref, isFaollaAppShellSearch } from "@/lib/faollaEntry";
+import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
+import { buildMerchantBackendHref } from "@/lib/siteRouting";
 import { useHydrated } from "@/lib/useHydrated";
 
 type FrontendAuthEntryProps = {
@@ -345,6 +347,12 @@ export default function FrontendAuthEntry({
   }
 
   const merchantIds = readMerchantSessionMerchantIds(payload);
+  const payloadMerchantId = trimText(payload.merchantId);
+  const payloadAccountId = trimText(payload.accountId);
+  const primaryMerchantId =
+    merchantIds.find((value) => isMerchantNumericId(value)) ||
+    (isMerchantNumericId(payloadMerchantId) ? payloadMerchantId : "") ||
+    (isMerchantNumericId(payloadAccountId) ? payloadAccountId : "");
   const currentSiteBelongsToSession =
     payload.accountType === "merchant" && currentMerchantId.trim() && merchantIds.includes(currentMerchantId.trim());
   const merchantPreviewApplies =
@@ -357,6 +365,11 @@ export default function FrontendAuthEntry({
   );
   const avatarLabel = getAvatarLabel(name);
   const accountId = readSessionAccountId(payload, merchantIds);
+  const workspaceHref =
+    payload.accountType === "personal"
+      ? buildBackendFaollaHref("/me", currentUrl || "/")
+      : buildBackendFaollaHref(primaryMerchantId ? buildMerchantBackendHref(primaryMerchantId) : "/admin", currentUrl || "/");
+  const workspaceLabel = payload.accountType === "personal" ? "进入个人中心" : "进入后台";
   const accountTypeLabel = payload.accountType === "personal" ? "普通用户" : "商户用户";
   const renderAvatar = () =>
     avatarUrl ? (
@@ -397,6 +410,17 @@ export default function FrontendAuthEntry({
               <span className="shrink-0 text-slate-400">ID</span>
               <span className="ml-1 truncate">{accountId}</span>
             </div>
+          </div>
+          <div className="px-4 py-4">
+            <Link
+              href={workspaceHref}
+              target="_top"
+              className="flex w-full items-center justify-center rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
+              role="menuitem"
+              onClick={() => setAccountMenuOpen(false)}
+            >
+              {workspaceLabel}
+            </Link>
           </div>
         </div>
       ) : null}
