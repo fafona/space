@@ -15,6 +15,7 @@ import {
   type TouchEvent,
 } from "react";
 import NextImage from "next/image";
+import dynamic from "next/dynamic";
 import { createPortal } from "react-dom";
 import {
   homeBlocks,
@@ -91,7 +92,6 @@ import { buildMerchantBusinessCardShareUrl, resolveMerchantBusinessCardShareOrig
 import { resolveCommonCanvasLayout } from "@/lib/commonCanvasLayout";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
 import ChatBusinessCardDialog from "@/components/admin/ChatBusinessCardDialog";
-import MerchantBusinessCardManager from "@/components/admin/MerchantBusinessCardManager";
 import SupportMessageContent, { type SupportMessageImageActivatePayload } from "@/components/support/SupportMessageContent";
 import SupportMessageImagePreviewOverlay from "@/components/support/SupportMessageImagePreviewOverlay";
 import {
@@ -140,7 +140,7 @@ import {
   summarizePlanTemplateBlocks,
 } from "@/lib/planTemplates";
 import { extractPlanTemplateCoverBackground } from "@/lib/planTemplateRuntime";
-import { capturePlanTemplatePreviewAssets, PLAN_TEMPLATE_PREVIEW_VARIANT } from "@/lib/planTemplatePreviewCapture";
+import { PLAN_TEMPLATE_PREVIEW_VARIANT } from "@/lib/planTemplatePreviewConstants";
 import {
   CUSTOM_GALLERY_FRAME_WIDTHS,
   GALLERY_LAYOUT_PRESETS,
@@ -231,11 +231,6 @@ import {
   normalizeBookingOptionList,
   type MerchantBookingRecord,
 } from "@/lib/merchantBookings";
-import {
-  mergeImportedProductImages,
-  mergeImportedProductRows,
-  parseProductWorkbook,
-} from "@/lib/productImport";
 import { broadcastPublishSync } from "@/lib/publishSync";
 import {
   BUTTON_BLOCK_MIN_HEIGHT,
@@ -255,18 +250,43 @@ import { buildMerchantSiteLinker } from "@/lib/merchantSiteLinking";
 import BlockRenderer from "@/components/blocks/BlockRenderer";
 import BookingBlock from "@/components/blocks/BookingBlock";
 import BookingDateCalendarEditor from "@/components/admin/BookingDateCalendarEditor";
-import MerchantBookingManagerDialog from "@/components/admin/MerchantBookingManagerDialog";
 import MerchantBookingMobilePanel from "@/components/admin/MerchantBookingMobilePanel";
-import MerchantOrderManagerDialog from "@/components/admin/MerchantOrderManagerDialog";
 import MerchantOrderMobilePanel from "@/components/admin/MerchantOrderMobilePanel";
 import BookingTimeSlotRulesEditor from "@/components/admin/BookingTimeSlotRulesEditor";
-import MerchantProfileDialog from "@/components/admin/MerchantProfileDialog";
 import { useI18n } from "@/components/I18nProvider";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
 import { buildFaollaShellHref, isFaollaSectionSearch, resolveFaollaEntryUrlFromBrowser } from "@/lib/faollaEntry";
 import { LANGUAGE_OPTIONS, resolveSupportedLocale } from "@/lib/i18n";
 import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
 import { getMerchantServiceState } from "@/lib/merchantServiceStatus";
+
+function DeferredAdminPanelLoading({ label }: { label: string }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 text-sm text-slate-500 shadow-sm">
+      {label}
+    </div>
+  );
+}
+
+const MerchantBusinessCardManager = dynamic(() => import("@/components/admin/MerchantBusinessCardManager"), {
+  ssr: false,
+  loading: () => <DeferredAdminPanelLoading label="名片夹加载中..." />,
+});
+
+const MerchantBookingManagerDialog = dynamic(() => import("@/components/admin/MerchantBookingManagerDialog"), {
+  ssr: false,
+  loading: () => <DeferredAdminPanelLoading label="预约管理加载中..." />,
+});
+
+const MerchantOrderManagerDialog = dynamic(() => import("@/components/admin/MerchantOrderManagerDialog"), {
+  ssr: false,
+  loading: () => <DeferredAdminPanelLoading label="订单管理加载中..." />,
+});
+
+const MerchantProfileDialog = dynamic(() => import("@/components/admin/MerchantProfileDialog"), {
+  ssr: false,
+  loading: () => <DeferredAdminPanelLoading label="商户资料加载中..." />,
+});
 
 const IMAGE_FILL_VALUES: ImageFillMode[] = [
   "cover",
@@ -6754,6 +6774,7 @@ export default function AdminClient({
     if (!needsPlanTemplatePreviewRefresh(template)) return template;
     const blocks = Array.isArray(template.blocks) ? (template.blocks as Block[]) : [];
     if (blocks.length === 0) return template;
+    const { capturePlanTemplatePreviewAssets } = await import("@/lib/planTemplatePreviewCapture");
     const previewAssets = await capturePlanTemplatePreviewAssets(blocks).catch(() => null);
     if (!previewAssets) return template;
     const nextTemplate: PlanTemplate = {
@@ -20126,6 +20147,7 @@ type GalleryEditorImage = {
     if (!file) return;
     try {
       const buffer = await file.arrayBuffer();
+      const { mergeImportedProductRows, parseProductWorkbook } = await import("@/lib/productImport");
       const parsed = parseProductWorkbook(buffer);
       if (parsed.items.length === 0) {
         onAlert("表格中没有可导入的产品数据。");
@@ -20151,6 +20173,7 @@ type GalleryEditorImage = {
         fileName: file.name,
         uploaded: await onPersistProductImageFile(file),
       })));
+      const { mergeImportedProductImages } = await import("@/lib/productImport");
       const merged = mergeImportedProductImages(
         getProductItems(),
         uploaded.map((entry) => ({

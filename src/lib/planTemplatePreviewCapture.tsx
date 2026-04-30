@@ -8,11 +8,11 @@ import BlockRenderer from "@/components/blocks/BlockRenderer";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
 import type { Block } from "@/data/homeBlocks";
 import { getPagePlanConfigFromBlocks } from "@/lib/pagePlans";
+import { PLAN_TEMPLATE_PREVIEW_VARIANT } from "@/lib/planTemplatePreviewConstants";
 
 const TEMPLATE_PREVIEW_WIDTH = 1200;
 const TEMPLATE_PREVIEW_QUALITY = 0.68;
 const PAGE_PREVIEW_MIN_HEIGHT = 720;
-export const PLAN_TEMPLATE_PREVIEW_VARIANT = "plan-pages-v1";
 
 type PreviewPlanPage = {
   id: string;

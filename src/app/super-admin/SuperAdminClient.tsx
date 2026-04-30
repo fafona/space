@@ -89,9 +89,8 @@ import {
   type PlanTemplateReplaceOptions,
 } from "@/lib/planTemplateRuntime";
 import {
-  capturePlanTemplatePreviewAssets,
   PLAN_TEMPLATE_PREVIEW_VARIANT,
-} from "@/lib/planTemplatePreviewCapture";
+} from "@/lib/planTemplatePreviewConstants";
 import {
   buildPlatformMerchantSnapshotPayloadFromSites,
   normalizePlatformMerchantSnapshotPayload,
@@ -4530,6 +4529,7 @@ export default function SuperAdminClient() {
     if (!needsPlanTemplatePreviewRefresh(template)) return template;
     const blocks = Array.isArray(template.blocks) ? (template.blocks as Block[]) : [];
     if (blocks.length === 0) return template;
+    const { capturePlanTemplatePreviewAssets } = await import("@/lib/planTemplatePreviewCapture");
     const previewAssets = await capturePlanTemplatePreviewAssets(blocks).catch(() => null);
     if (!previewAssets) return template;
     const nextTemplate: PlanTemplate = {
@@ -4682,6 +4682,7 @@ export default function SuperAdminClient() {
         setTip("该站点暂无可收录的已发布方案，请先发布前台");
         return;
       }
+      const { capturePlanTemplatePreviewAssets } = await import("@/lib/planTemplatePreviewCapture");
       const previewAssets =
         (await capturePlanTemplatePreviewAssets(blocks).catch(() => ({
           previewVariant: "",
