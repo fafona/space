@@ -6001,9 +6001,6 @@ export default function MePage() {
           <div className="pointer-events-none absolute left-4 top-[calc(env(safe-area-inset-top)+0.75rem)] z-10">
             <FaollaHomeButton className="pointer-events-auto h-11 w-11" onClick={navigatePersonalFaollaHome} />
           </div>
-          <div className="pointer-events-none absolute right-3 top-[calc(env(safe-area-inset-top)+0.75rem)] z-20 flex items-center gap-2">
-            {renderFaollaShellAvatar("pointer-events-auto h-10 w-10")}
-          </div>
           <iframe
             ref={personalMobileFaollaFrameRef}
             title="Faolla"
