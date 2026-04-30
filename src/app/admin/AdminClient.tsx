@@ -227,6 +227,7 @@ import {
 } from "@/lib/buttonBlock";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import {
+  buildMerchantBackendHref,
   buildMerchantDomain,
   buildMerchantFrontendHref,
   buildSiteStoreScope,
@@ -2875,6 +2876,12 @@ function getMerchantDesktopMenuButtonClassName(active: boolean, tone: "default" 
   return tone === "alert"
     ? "relative flex items-center justify-between rounded-xl border border-rose-200 bg-white px-3 py-2.5 text-sm font-semibold text-rose-700 transition hover:bg-rose-50"
     : "relative flex items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50";
+}
+
+function getMerchantDesktopSubMenuButtonClassName(active: boolean) {
+  return active
+    ? "relative flex items-center justify-between rounded-lg border border-slate-950 bg-slate-950 px-3 py-2 text-sm font-semibold text-white shadow-sm"
+    : "relative flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50";
 }
 
 type LargeStringField = {
@@ -12173,6 +12180,18 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     setMerchantDesktopSection("analytics");
   }
 
+  async function openMerchantEditorInNewWindow() {
+    const resolvedSiteId = editingSiteId || (await ensureEditableMerchantSiteId());
+    if (!resolvedSiteId) {
+      showTip("当前商户还没准备好网站编辑资料，请稍后重试");
+      return;
+    }
+    const opened = window.open(buildMerchantBackendHref(resolvedSiteId), "_blank", "noopener,noreferrer");
+    if (!opened) {
+      showTip("浏览器拦截了新窗口，请允许弹窗后重试");
+    }
+  }
+
   function openMerchantSupportPanel() {
     setMerchantDesktopSection("support");
     openSupportDialog();
@@ -16242,6 +16261,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   const merchantMobileToolbarSegmentClassName = "grid grid-cols-2 gap-3 rounded-[24px] border border-slate-200 bg-slate-50/90 p-1.5";
   const merchantMobileToolbarSegmentButtonBaseClassName =
     "min-h-[48px] rounded-[18px] px-3 py-2 text-sm font-semibold transition active:scale-[0.99]";
+  const merchantDesktopOperationCenterActive =
+    merchantDesktopSection === "editor" || merchantDesktopSection === "cards" || merchantDesktopSection === "analytics";
   const merchantBookingManagerDialogCommonProps =
     !isPlatformEditor && canUseBookingBlock
       ? {
@@ -17007,20 +17028,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               <div className="grid gap-3">
                 <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
                   <div className="grid gap-2">
-                    <button
-                      type="button"
-                      className={getMerchantDesktopMenuButtonClassName(merchantDesktopSection === "editor")}
-                      onClick={() => setMerchantDesktopSection("editor")}
-                    >
-                      编辑网站
-                    </button>
-                    <button
-                      type="button"
-                      className={getMerchantDesktopMenuButtonClassName(merchantDesktopSection === "cards")}
-                      onClick={openMerchantCardsPanel}
-                    >
-                      名片夹
-                    </button>
                     {canUseBookingBlock ? (
                       <button
                         type="button"
@@ -17050,20 +17057,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     ) : null}
                     <button
                       type="button"
-                      className={getMerchantDesktopMenuButtonClassName(merchantDesktopSection === "analytics")}
-                      onClick={openMerchantAnalyticsPanel}
-                    >
-                      数据统计
-                    </button>
-                    <button
-                      type="button"
-                      className={getMerchantDesktopMenuButtonClassName(merchantDesktopSection === "faolla")}
-                      onClick={openMerchantFaollaPanel}
-                    >
-                      Faolla
-                    </button>
-                    <button
-                      type="button"
                       className={getMerchantDesktopMenuButtonClassName(
                         merchantDesktopSection === "support",
                         supportHasUnreadMessages ? "alert" : "default",
@@ -17081,6 +17074,46 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         ) : null}
                       </span>
                     </button>
+                    <button
+                      type="button"
+                      className={getMerchantDesktopMenuButtonClassName(merchantDesktopSection === "faolla")}
+                      onClick={openMerchantFaollaPanel}
+                    >
+                      Faolla
+                    </button>
+                    <div className="grid gap-2 border-t border-slate-100 pt-2">
+                      <div
+                        className={getMerchantDesktopMenuButtonClassName(merchantDesktopOperationCenterActive)}
+                        aria-current={merchantDesktopOperationCenterActive ? "page" : undefined}
+                      >
+                        经营中心
+                      </div>
+                      <div className="grid gap-1.5 pl-3">
+                        <button
+                          type="button"
+                          className={getMerchantDesktopSubMenuButtonClassName(merchantDesktopSection === "editor")}
+                          onClick={() => {
+                            void openMerchantEditorInNewWindow();
+                          }}
+                        >
+                          网站编辑
+                        </button>
+                        <button
+                          type="button"
+                          className={getMerchantDesktopSubMenuButtonClassName(merchantDesktopSection === "cards")}
+                          onClick={openMerchantCardsPanel}
+                        >
+                          名片夹
+                        </button>
+                        <button
+                          type="button"
+                          className={getMerchantDesktopSubMenuButtonClassName(merchantDesktopSection === "analytics")}
+                          onClick={openMerchantAnalyticsPanel}
+                        >
+                          数据统计
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
