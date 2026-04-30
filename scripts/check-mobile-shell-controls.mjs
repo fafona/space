@@ -94,6 +94,33 @@ function countMockAvatarButtons(buttons) {
   return buttons.filter((button) => button.text === "AB").length;
 }
 
+async function assertNoWorkspaceCtaInAccountPanel(page) {
+  const avatarButton = page
+    .locator("button")
+    .filter({ hasText: /^AB$/ })
+    .first();
+  await avatarButton.click();
+  await page.waitForTimeout(300);
+  const panelCtas = await page.locator("a, button").evaluateAll((nodes) =>
+    nodes
+      .map((node) => {
+        const rect = node.getBoundingClientRect();
+        const style = window.getComputedStyle(node);
+        return {
+          text: (node.textContent || "").trim(),
+          visible: rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none",
+        };
+      })
+      .filter((item) => item.visible)
+      .map((item) => item.text),
+  );
+  assert(
+    !panelCtas.some((text) => text.includes("进入后台") || text.includes("进入个人中心")),
+    "Expected the public account panel not to show a workspace entry CTA.",
+    panelCtas,
+  );
+}
+
 function assert(condition, message, details) {
   if (condition) return;
   const suffix = details ? `\n${JSON.stringify(details, null, 2)}` : "";
@@ -168,6 +195,7 @@ async function main() {
       "Expected the embedded Faolla shell home to show exactly one mocked avatar.",
       appShellButtons,
     );
+    await assertNoWorkspaceCtaInAccountPanel(page);
 
     await page.close();
     page = await browser.newPage(mobilePageOptions);
@@ -196,7 +224,12 @@ async function main() {
         {
           ok: true,
           baseUrl,
-          checks: ["mobile-language-switcher", "single-app-shell-avatar", "no-extra-personal-shell-avatar"],
+          checks: [
+            "mobile-language-switcher",
+            "single-app-shell-avatar",
+            "no-extra-personal-shell-avatar",
+            "no-public-account-workspace-cta",
+          ],
         },
         null,
         2,

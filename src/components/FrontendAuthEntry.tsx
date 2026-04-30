@@ -412,8 +412,6 @@ export default function FrontendAuthEntry({
   );
   const avatarLabel = getAvatarLabel(name);
   const accountId = readSessionAccountId(payload, merchantIds);
-  const workspaceHref = buildWorkspaceHref(payload, currentUrl || "/");
-  const workspaceLabel = payload.accountType === "personal" ? "进入个人中心" : "进入后台";
   const accountTypeLabel = payload.accountType === "personal" ? "普通用户" : "商户用户";
   const renderAvatar = () =>
     avatarUrl ? (
@@ -442,7 +440,6 @@ export default function FrontendAuthEntry({
       {accountMenuOpen ? (
         <div
           className="fixed right-[max(0.75rem,env(safe-area-inset-right))] top-[calc(env(safe-area-inset-top)+4.25rem)] z-[2147483000] max-h-[calc(100dvh-6rem)] w-[min(20rem,calc(100vw-1.5rem))] overflow-y-auto rounded-[28px] border border-slate-200/90 bg-white shadow-[0_24px_80px_rgba(15,23,42,0.22)] ring-1 ring-slate-950/5 sm:absolute sm:right-0 sm:top-[calc(100%+0.75rem)]"
-          role="menu"
         >
           <div className="support-preserve-light-surface bg-slate-50 px-5 py-5 text-center">
             <div className="mx-auto flex h-20 w-20 items-center justify-center overflow-hidden rounded-full bg-slate-950 text-lg font-bold text-white ring-4 ring-white">
@@ -454,17 +451,6 @@ export default function FrontendAuthEntry({
               <span className="shrink-0 text-slate-400">ID</span>
               <span className="ml-1 truncate">{accountId}</span>
             </div>
-          </div>
-          <div className="px-4 py-4">
-            <Link
-              href={workspaceHref}
-              target="_top"
-              className="flex w-full items-center justify-center rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
-              role="menuitem"
-              onClick={() => setAccountMenuOpen(false)}
-            >
-              {workspaceLabel}
-            </Link>
           </div>
         </div>
       ) : null}
