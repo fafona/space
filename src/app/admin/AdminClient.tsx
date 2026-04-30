@@ -1777,6 +1777,50 @@ function isEditorTypingTarget(target: EventTarget | null) {
   );
 }
 
+function BookingOptionsTextarea({
+  className,
+  value,
+  placeholder,
+  onChange,
+}: {
+  className?: string;
+  value: unknown;
+  placeholder?: string;
+  onChange: (nextOptions: string[]) => void;
+}) {
+  const normalizedText = useMemo(() => normalizeBookingOptionList(value).join("\n"), [value]);
+  const [draftText, setDraftText] = useState<string | null>(null);
+  const textValue = draftText ?? normalizedText;
+
+  const commitText = useCallback(
+    (nextText: string) => {
+      const nextOptions = normalizeBookingOptionList(nextText);
+      onChange(nextOptions);
+    },
+    [onChange],
+  );
+
+  return (
+    <textarea
+      className={className}
+      value={textValue}
+      placeholder={placeholder}
+      onFocus={() => {
+        setDraftText((currentText) => currentText ?? normalizedText);
+      }}
+      onChange={(event) => {
+        const nextText = event.target.value;
+        setDraftText(nextText);
+        commitText(nextText);
+      }}
+      onBlur={() => {
+        commitText(textValue);
+        setDraftText(null);
+      }}
+    />
+  );
+}
+
 function isEditorToolbarInteractionTarget(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) return false;
   if (target.closest("[data-editor-overlay]")) return true;
@@ -28234,9 +28278,6 @@ type GalleryEditorImage = {
   }
 
   if (block.type === "booking") {
-    const bookingStoreOptionsText = normalizeBookingOptionList(block.props.bookingStoreOptions).join("\n");
-    const bookingItemOptionsText = normalizeBookingOptionList(block.props.bookingItemOptions).join("\n");
-    const bookingTitleOptionsText = normalizeBookingOptionList(block.props.bookingTitleOptions).join("\n");
     const bookingPreview = (
       <BookingBlock
         {...block.props}
@@ -28326,29 +28367,29 @@ type GalleryEditorImage = {
                 </label>
                 <label className="space-y-1 text-sm text-gray-700">
                   <span className="block text-gray-600">预约店铺选项</span>
-                  <textarea
+                  <BookingOptionsTextarea
                     className="min-h-[120px] w-full rounded border px-3 py-2"
-                    value={bookingStoreOptionsText}
+                    value={block.props.bookingStoreOptions}
                     placeholder={"每行一个店铺，例如：\n主店\n分店 A"}
-                    onChange={(event) => onChange({ bookingStoreOptions: normalizeBookingOptionList(event.target.value) })}
+                    onChange={(nextOptions) => onChange({ bookingStoreOptions: nextOptions })}
                   />
                 </label>
                 <label className="space-y-1 text-sm text-gray-700">
                   <span className="block text-gray-600">预约项目或类型</span>
-                  <textarea
+                  <BookingOptionsTextarea
                     className="min-h-[120px] w-full rounded border px-3 py-2"
-                    value={bookingItemOptionsText}
+                    value={block.props.bookingItemOptions}
                     placeholder={"每行一个项目，例如：\n咨询预约\n到店服务"}
-                    onChange={(event) => onChange({ bookingItemOptions: normalizeBookingOptionList(event.target.value) })}
+                    onChange={(nextOptions) => onChange({ bookingItemOptions: nextOptions })}
                   />
                 </label>
                 <label className="space-y-1 text-sm text-gray-700">
                   <span className="block text-gray-600">称谓选项</span>
-                  <textarea
+                  <BookingOptionsTextarea
                     className="min-h-[96px] w-full rounded border px-3 py-2"
-                    value={bookingTitleOptionsText}
+                    value={block.props.bookingTitleOptions}
                     placeholder={"每行一个称谓，例如：\n先生\n女士"}
-                    onChange={(event) => onChange({ bookingTitleOptions: normalizeBookingOptionList(event.target.value) })}
+                    onChange={(nextOptions) => onChange({ bookingTitleOptions: nextOptions })}
                   />
                 </label>
                 <div className="space-y-1 text-sm text-gray-700 lg:col-span-2">
