@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
+import dynamic from "next/dynamic";
 import { useI18n } from "@/components/I18nProvider";
-import MerchantBusinessCardManager from "@/components/admin/MerchantBusinessCardManager";
 import {
   readMerchantSessionMerchantIds,
   readMerchantSessionPayload,
@@ -33,7 +33,6 @@ import { PERSONAL_CONSUMPTION_CHANGED_MESSAGE } from "@/lib/personalConsumptionB
 import { buildMerchantBusinessCardShareUrl, resolveMerchantBusinessCardShareOrigin } from "@/lib/merchantBusinessCardShare";
 import { buildMerchantFrontendHref } from "@/lib/siteRouting";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
-import SupportMessageContent from "@/components/support/SupportMessageContent";
 import {
   normalizeMerchantBusinessCards,
   type MerchantBusinessCardAsset,
@@ -61,6 +60,20 @@ import {
   formatMerchantOrderAmount,
   type MerchantOrderRecord,
 } from "@/lib/merchantOrders";
+
+const MerchantBusinessCardManager = dynamic(() => import("@/components/admin/MerchantBusinessCardManager"), {
+  ssr: false,
+  loading: () => (
+    <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 text-sm text-slate-500 shadow-sm">
+      名片夹加载中...
+    </div>
+  ),
+});
+
+const SupportMessageContent = dynamic(() => import("@/components/support/SupportMessageContent"), {
+  ssr: false,
+  loading: () => null,
+});
 
 type MeSessionPayload = {
   authenticated?: unknown;
