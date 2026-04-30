@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import SitePageClient from "@/app/site/[siteId]/SitePageClient";
+import dynamic from "next/dynamic";
 import BlockRenderer from "@/components/blocks/BlockRenderer";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
 import FrontendAuthEntry from "@/components/FrontendAuthEntry";
@@ -16,6 +16,10 @@ import { resolvePublishedSiteByPrefix } from "@/lib/publishedSiteLookup";
 import { extractMerchantPrefixFromHost, resolveRuntimePortalBaseDomain } from "@/lib/siteRouting";
 import { useHydrated } from "@/lib/useHydrated";
 import { useMobileHorizontalScrollLock } from "@/lib/useMobileHorizontalScrollLock";
+
+const DeferredSitePageClient = dynamic(() => import("@/app/site/[siteId]/SitePageClient"), {
+  loading: () => <LoadingProgressScreen />,
+});
 
 function readViewportWidth() {
   if (typeof window === "undefined") return 0;
@@ -211,11 +215,11 @@ export default function HomePageClient({
   }, [hydrated, suppressStandaloneLaunchRedirect]);
 
   if (hostMatchedSite) {
-    return <SitePageClient forcedSiteId={hostMatchedSite.id} initialIsMobileViewport={isMobileViewport} />;
+    return <DeferredSitePageClient forcedSiteId={hostMatchedSite.id} initialIsMobileViewport={isMobileViewport} />;
   }
 
   if (resolvedHostSiteId) {
-    return <SitePageClient forcedSiteId={resolvedHostSiteId} initialIsMobileViewport={isMobileViewport} />;
+    return <DeferredSitePageClient forcedSiteId={resolvedHostSiteId} initialIsMobileViewport={isMobileViewport} />;
   }
 
   if (standaloneSessionBooting) {
