@@ -2,11 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  readMerchantSessionMerchantIds,
-  resolveFrontendAuthPayload,
-  type MerchantCookieSessionPayload,
-} from "@/lib/authSessionRecovery";
+import type { MerchantCookieSessionPayload } from "@/lib/authSessionRecovery";
 import { buildBackendFaollaHref, isFaollaAppShellSearch } from "@/lib/faollaEntry";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
@@ -30,6 +26,27 @@ type PersonalProfileResponsePayload = {
 
 function trimText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function readFrontendAuthMerchantIds(payload: { merchantId?: unknown; merchantIds?: unknown } | null | undefined) {
+  const merchantIds: string[] = [];
+  const pushId = (value: unknown) => {
+    const trimmed = trimText(value);
+    if (!trimmed || merchantIds.includes(trimmed)) return;
+    merchantIds.push(trimmed);
+  };
+
+  pushId(payload?.merchantId);
+  if (Array.isArray(payload?.merchantIds)) {
+    payload.merchantIds.forEach(pushId);
+  }
+
+  return merchantIds;
+}
+
+async function resolveDeferredFrontendAuthPayload(timeoutMs: number) {
+  const { resolveFrontendAuthPayload } = await import("@/lib/authSessionRecovery");
+  return resolveFrontendAuthPayload(timeoutMs);
 }
 
 function readRecord(value: unknown): Record<string, unknown> | null {
@@ -133,7 +150,7 @@ function buildWorkspaceHref(payload: MerchantCookieSessionPayload | null, curren
   if (payload.accountType === "personal") {
     return buildBackendFaollaHref("/me", sourceUrl);
   }
-  const primaryMerchantId = readPrimaryMerchantId(payload, readMerchantSessionMerchantIds(payload));
+  const primaryMerchantId = readPrimaryMerchantId(payload, readFrontendAuthMerchantIds(payload));
   return buildBackendFaollaHref(primaryMerchantId ? buildMerchantBackendHref(primaryMerchantId) : "/admin", sourceUrl);
 }
 
@@ -216,13 +233,20 @@ export default function FrontendAuthEntry({
 
     const run = (attemptIndex: number) => {
       retryTimer = window.setTimeout(() => {
-        void resolveFrontendAuthPayload(attemptIndex === 0 ? 2600 : 4200).then((nextPayload) => {
+        void resolveDeferredFrontendAuthPayload(attemptIndex === 0 ? 2600 : 4200).then((nextPayload) => {
           if (cancelled) return;
           if (nextPayload) {
             setPayload(nextPayload);
             setResolved(true);
             return;
           }
+          setPayload(null);
+          setResolved(true);
+          if (attemptIndex + 1 < retryDelays.length) {
+            run(attemptIndex + 1);
+          }
+        }).catch(() => {
+          if (cancelled) return;
           setPayload(null);
           setResolved(true);
           if (attemptIndex + 1 < retryDelays.length) {
@@ -306,7 +330,7 @@ export default function FrontendAuthEntry({
       return;
     }
 
-    const merchantIds = readMerchantSessionMerchantIds(payload);
+    const merchantIds = readFrontendAuthMerchantIds(payload);
     const normalizedCurrentMerchantId = currentMerchantId.trim();
     const ownMerchantId =
       trimText(payload.merchantId) ||
@@ -375,7 +399,7 @@ export default function FrontendAuthEntry({
     );
   }
 
-  const merchantIds = readMerchantSessionMerchantIds(payload);
+  const merchantIds = readFrontendAuthMerchantIds(payload);
   const currentSiteBelongsToSession =
     payload.accountType === "merchant" && currentMerchantId.trim() && merchantIds.includes(currentMerchantId.trim());
   const merchantPreviewApplies =
