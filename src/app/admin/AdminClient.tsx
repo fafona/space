@@ -91,9 +91,7 @@ import { buildPublishedMerchantProfilePatch } from "@/lib/merchantProfileBinding
 import { buildMerchantBusinessCardShareUrl, resolveMerchantBusinessCardShareOrigin } from "@/lib/merchantBusinessCardShare";
 import { resolveCommonCanvasLayout } from "@/lib/commonCanvasLayout";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
-import ChatBusinessCardDialog from "@/components/admin/ChatBusinessCardDialog";
 import SupportMessageContent, { type SupportMessageImageActivatePayload } from "@/components/support/SupportMessageContent";
-import SupportMessageImagePreviewOverlay from "@/components/support/SupportMessageImagePreviewOverlay";
 import {
   normalizeMerchantBusinessCards,
   normalizeMerchantBusinessCardChatDisplaySelection,
@@ -249,10 +247,6 @@ import {
 import { buildMerchantSiteLinker } from "@/lib/merchantSiteLinking";
 import BlockRenderer from "@/components/blocks/BlockRenderer";
 import BookingBlock from "@/components/blocks/BookingBlock";
-import BookingDateCalendarEditor from "@/components/admin/BookingDateCalendarEditor";
-import MerchantBookingMobilePanel from "@/components/admin/MerchantBookingMobilePanel";
-import MerchantOrderMobilePanel from "@/components/admin/MerchantOrderMobilePanel";
-import BookingTimeSlotRulesEditor from "@/components/admin/BookingTimeSlotRulesEditor";
 import { useI18n } from "@/components/I18nProvider";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
 import { buildFaollaShellHref, isFaollaSectionSearch, resolveFaollaEntryUrlFromBrowser } from "@/lib/faollaEntry";
@@ -286,6 +280,36 @@ const MerchantOrderManagerDialog = dynamic(() => import("@/components/admin/Merc
 const MerchantProfileDialog = dynamic(() => import("@/components/admin/MerchantProfileDialog"), {
   ssr: false,
   loading: () => <DeferredAdminPanelLoading label="商户资料加载中..." />,
+});
+
+const MerchantBookingMobilePanel = dynamic(() => import("@/components/admin/MerchantBookingMobilePanel"), {
+  ssr: false,
+  loading: () => <DeferredAdminPanelLoading label="预约列表加载中..." />,
+});
+
+const MerchantOrderMobilePanel = dynamic(() => import("@/components/admin/MerchantOrderMobilePanel"), {
+  ssr: false,
+  loading: () => <DeferredAdminPanelLoading label="订单列表加载中..." />,
+});
+
+const ChatBusinessCardDialog = dynamic(() => import("@/components/admin/ChatBusinessCardDialog"), {
+  ssr: false,
+  loading: () => null,
+});
+
+const SupportMessageImagePreviewOverlay = dynamic(() => import("@/components/support/SupportMessageImagePreviewOverlay"), {
+  ssr: false,
+  loading: () => null,
+});
+
+const BookingTimeSlotRulesEditor = dynamic(() => import("@/components/admin/BookingTimeSlotRulesEditor"), {
+  ssr: false,
+  loading: () => <DeferredAdminPanelLoading label="时间规则加载中..." />,
+});
+
+const BookingDateCalendarEditor = dynamic(() => import("@/components/admin/BookingDateCalendarEditor"), {
+  ssr: false,
+  loading: () => <DeferredAdminPanelLoading label="日期规则加载中..." />,
 });
 
 const IMAGE_FILL_VALUES: ImageFillMode[] = [
