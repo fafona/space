@@ -14,7 +14,6 @@ import {
 } from "@/data/blockStore";
 import { type Block } from "@/data/homeBlocks";
 import { loadPlatformState, subscribePlatformState } from "@/data/platformControlStore";
-import { trackPageView } from "@/lib/analytics";
 import { sanitizeBlocksForRuntime } from "@/lib/blocksSanitizer";
 import { MOBILE_BREAKPOINT } from "@/lib/deviceViewport";
 import { cloneBlocks, getPagePlanConfigFromBlocks } from "@/lib/pagePlans";
@@ -295,7 +294,9 @@ export function SitePageClient({
     : initialOrderManagementEnabled;
   useEffect(() => {
     if (!hydrated || !site || !resolvedPageId) return;
-    trackPageView(`site:${site.id}:${resolvedPageId}`);
+    void import("@/lib/analytics").then(({ trackPageView }) => {
+      trackPageView(`site:${site.id}:${resolvedPageId}`);
+    });
   }, [hydrated, site, resolvedPageId]);
 
   useEffect(() => {

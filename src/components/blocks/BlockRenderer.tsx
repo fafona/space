@@ -1,24 +1,26 @@
 "use client";
 
 import { Component, type ReactNode } from "react";
+import dynamic from "next/dynamic";
 import type { Block } from "@/data/homeBlocks";
 import HeroBlock from "./HeroBlock";
 import TextBlock from "./TextBlock";
 import ListBlock from "./ListBlock";
 import SearchBarBlock from "./SearchBarBlock";
 import MerchantListBlock from "./MerchantListBlock";
-import ContactBlock from "./ContactBlock";
 import CommonBlock from "./CommonBlock";
-import GalleryBlock from "./GalleryBlock";
-import ChartBlock from "./ChartBlock";
-import MusicBlock from "./MusicBlock";
 import NavBlock from "./NavBlock";
-import ProductBlock from "./ProductBlock";
-import BookingBlock from "./BookingBlock";
 import ButtonBlock from "./ButtonBlock";
 import { getBlockRenderStackOrder } from "@/lib/blockStacking";
 import { buildPublicBlockId } from "@/lib/blockPublicId";
 import type { MerchantBookingRuleViewport } from "@/lib/merchantBookingRules";
+
+const GalleryBlock = dynamic(() => import("./GalleryBlock"), { ssr: false, loading: () => null });
+const ChartBlock = dynamic(() => import("./ChartBlock"), { ssr: false, loading: () => null });
+const MusicBlock = dynamic(() => import("./MusicBlock"), { ssr: false, loading: () => null });
+const ContactBlock = dynamic(() => import("./ContactBlock"), { ssr: false, loading: () => null });
+const ProductBlock = dynamic(() => import("./ProductBlock"), { ssr: false, loading: () => null });
+const BookingBlock = dynamic(() => import("./BookingBlock"), { ssr: false, loading: () => null });
 
 class BlockRuntimeBoundary extends Component<{ blockId: string; children: ReactNode }, { hasError: boolean }> {
   constructor(props: { blockId: string; children: ReactNode }) {

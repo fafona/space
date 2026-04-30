@@ -9,7 +9,6 @@ import { useI18n } from "@/components/I18nProvider";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
 import { homeBlocks, type Block } from "@/data/homeBlocks";
 import { loadPlatformState, subscribePlatformState } from "@/data/platformControlStore";
-import { trackPageView } from "@/lib/analytics";
 import { MOBILE_BREAKPOINT } from "@/lib/deviceViewport";
 import { normalizeDomainPrefix } from "@/lib/merchantIdentity";
 import { cloneBlocks, getPagePlanConfigFromBlocks } from "@/lib/pagePlans";
@@ -134,7 +133,9 @@ export default function HomePageClient({
 
   useEffect(() => {
     if (!resolvedPageId) return;
-    trackPageView(`home:${resolvedPageId}`);
+    void import("@/lib/analytics").then(({ trackPageView }) => {
+      trackPageView(`home:${resolvedPageId}`);
+    });
   }, [resolvedPageId]);
 
   const activePage =

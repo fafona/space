@@ -11,7 +11,6 @@ import type {
   TypographyEditableProps,
 } from "@/data/homeBlocks";
 import { loadPlatformState, subscribePlatformState, type MerchantSortRule, type PlatformState } from "@/data/platformControlStore";
-import { readPageViewDailyStats } from "@/lib/analytics";
 import { loadEuropeLocationOptionsApi, type EuropeLocationOptionsApi } from "@/lib/europeLocationOptionsLoader";
 import {
   buildMerchantCardPlacement,
@@ -115,6 +114,7 @@ const EMPTY_SEARCH_FILTER: SearchFilter = {
 };
 const INITIAL_SORT_NOW_MS = Date.now();
 const REAL_MERCHANT_SITE_ID_REGEX = /^\d{8}$/;
+const MERCHANT_LIST_PAGE_VIEW_DAILY_KEY = "merchant-space:page-views-daily:v1";
 
 function hasVisibleRichText(value?: string) {
   const raw = String(value ?? "");
@@ -369,8 +369,32 @@ function readManualRankForSite(
   return typeof value === "number" && Number.isFinite(value) ? Math.max(1, Math.round(value)) : null;
 }
 
+function readMerchantListPageViewDailyStats(): Record<string, Record<string, number>> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(MERCHANT_LIST_PAGE_VIEW_DAILY_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== "object") return {};
+    const next: Record<string, Record<string, number>> = {};
+    Object.entries(parsed).forEach(([bucket, dayStats]) => {
+      if (!dayStats || typeof dayStats !== "object") return;
+      const safeStats: Record<string, number> = {};
+      Object.entries(dayStats as Record<string, unknown>).forEach(([day, value]) => {
+        if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+          safeStats[day] = Math.round(value);
+        }
+      });
+      if (Object.keys(safeStats).length > 0) next[bucket] = safeStats;
+    });
+    return next;
+  } catch {
+    return {};
+  }
+}
+
 function readSitePageView30dMap(nowMs: number) {
-  const stats = readPageViewDailyStats();
+  const stats = readMerchantListPageViewDailyStats();
   const map = new Map<string, number>();
   Object.entries(stats).forEach(([bucket, daily]) => {
     if (!bucket.startsWith("site:")) return;
