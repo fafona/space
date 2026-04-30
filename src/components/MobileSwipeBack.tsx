@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import {
   createMobileSwipeBackEvent,
   isMobileSwipeBackGesture,
@@ -66,7 +66,6 @@ function getSearchString(searchParams: ReturnType<typeof useSearchParams>) {
 }
 
 export default function MobileSwipeBack() {
-  const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const swipeStartRef = useRef<SwipeStart | null>(null);
@@ -140,11 +139,7 @@ export default function MobileSwipeBack() {
       window.dispatchEvent(swipeEvent);
       if (swipeEvent.defaultPrevented || !fallbackHref) return;
 
-      if (/^https?:\/\//i.test(fallbackHref)) {
-        window.location.assign(fallbackHref);
-        return;
-      }
-      router.push(fallbackHref);
+      window.location.assign(fallbackHref);
     };
 
     document.addEventListener("touchstart", handleTouchStart, { capture: true, passive: true });
@@ -155,7 +150,7 @@ export default function MobileSwipeBack() {
       document.removeEventListener("touchend", handleTouchEnd, { capture: true });
       document.removeEventListener("touchcancel", resetSwipe, { capture: true });
     };
-  }, [router]);
+  }, []);
 
   return null;
 }
