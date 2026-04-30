@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent, type ReactNode, type TouchEvent } from "react";
 import { createPortal } from "react-dom";
 import { buildMerchantBusinessCardShareUrl, resolveMerchantBusinessCardShareOrigin } from "@/lib/merchantBusinessCardShare";
@@ -63,7 +64,6 @@ import {
   type SiteStatus,
 } from "@/data/platformControlStore";
 import { SUPER_ADMIN_MESSAGES } from "@/constants/messages";
-import { readPageViewDailyStats, trackPublishEvent } from "@/lib/analytics";
 import { parseMerchantIdRuleInput, sortMerchantIdRules, type MerchantIdRule } from "@/lib/merchantIdRules";
 import {
   matchPlanTemplateCategory,
@@ -108,9 +108,7 @@ import {
   type PlatformAdminDataBackupListItem,
   type PlatformAdminDataBackupRestoreScope,
 } from "@/lib/platformAdminDataBackup";
-import ChatBusinessCardDialog from "@/components/admin/ChatBusinessCardDialog";
-import SupportMessageContent, { type SupportMessageImageActivatePayload } from "@/components/support/SupportMessageContent";
-import SupportMessageImagePreviewOverlay from "@/components/support/SupportMessageImagePreviewOverlay";
+import type { SupportMessageImageActivatePayload } from "@/components/support/SupportMessageContent";
 import { resolveMerchantBusinessCardForChatDisplay, type MerchantBusinessCardAsset } from "@/lib/merchantBusinessCards";
 import { type PlatformSupportMessage, type PlatformSupportThread } from "@/lib/platformSupportInbox";
 import { getMerchantServiceState } from "@/lib/merchantServiceStatus";
@@ -134,9 +132,26 @@ import { uploadImageDataUrlToPublicStorage } from "@/lib/publicAssetUpload";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import { useNotificationSound } from "@/lib/useNotificationSound";
 
+const ChatBusinessCardDialog = dynamic(() => import("@/components/admin/ChatBusinessCardDialog"), {
+  ssr: false,
+  loading: () => null,
+});
+const SupportMessageContent = dynamic(() => import("@/components/support/SupportMessageContent"), {
+  ssr: false,
+  loading: () => null,
+});
+const SupportMessageImagePreviewOverlay = dynamic(
+  () => import("@/components/support/SupportMessageImagePreviewOverlay"),
+  {
+    ssr: false,
+    loading: () => null,
+  },
+);
+
 const SUPPORT_THREADS_OPEN_POLL_INTERVAL_MS = 1200;
 const SUPPORT_THREADS_IDLE_POLL_INTERVAL_MS = 5000;
 const SUPER_ADMIN_SUPPORT_LAST_READ_STORAGE_KEY_PREFIX = "super-admin-support-last-read:";
+const SUPER_ADMIN_PAGE_VIEW_DAILY_KEY = "merchant-space:page-views-daily:v1";
 
 function fmt(iso: string | null) {
   if (!iso) return "-";
@@ -904,8 +919,32 @@ function readMerchantPublishedBytes(siteId: string) {
   return estimateUtf8Size(raw);
 }
 
+function readSuperAdminPageViewDailyStats(): Record<string, Record<string, number>> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(SUPER_ADMIN_PAGE_VIEW_DAILY_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== "object") return {};
+    const next: Record<string, Record<string, number>> = {};
+    Object.entries(parsed).forEach(([bucket, dayStats]) => {
+      if (!dayStats || typeof dayStats !== "object") return;
+      const safeStats: Record<string, number> = {};
+      Object.entries(dayStats as Record<string, unknown>).forEach(([day, value]) => {
+        if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+          safeStats[day] = Math.round(value);
+        }
+      });
+      if (Object.keys(safeStats).length > 0) next[bucket] = safeStats;
+    });
+    return next;
+  } catch {
+    return {};
+  }
+}
+
 function readMerchantVisits(siteId: string, nowMs: number): MerchantVisits {
-  const all = readPageViewDailyStats();
+  const all = readSuperAdminPageViewDailyStats();
   const prefix = `site:${siteId}:`;
   let today = 0;
   let day7 = 0;
@@ -6168,7 +6207,9 @@ export default function SuperAdminClient() {
       return withAudit(next, "publish_direct", "site", site.id, `${status}:${note}`);
     });
 
-    trackPublishEvent({ success: !failed, bytes: note.length, changedBlocks: 0, reason: note });
+    void import("@/lib/analytics").then(({ trackPublishEvent }) => {
+      trackPublishEvent({ success: !failed, bytes: note.length, changedBlocks: 0, reason: note });
+    });
     setPublishNote("");
   }
 
