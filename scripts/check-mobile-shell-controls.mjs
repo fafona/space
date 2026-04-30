@@ -143,18 +143,21 @@ async function installSessionMocks(page) {
 
 async function main() {
   const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage({
+  const mobilePageOptions = {
     viewport: { width: 390, height: 844 },
     deviceScaleFactor: 2,
     isMobile: true,
     hasTouch: true,
-  });
+  };
+  let page = await browser.newPage(mobilePageOptions);
 
   try {
     await page.goto(buildUrl("/"), { waitUntil: "domcontentloaded", timeout: 60_000 });
     const visibleFlags = await waitForVisibleFlag(page);
     assert(visibleFlags > 0, "Expected mobile portal to show the language switcher flag.");
 
+    await page.close();
+    page = await browser.newPage(mobilePageOptions);
     await installSessionMocks(page);
 
     await page.goto(buildUrl("/", { appShell: "faolla" }), { waitUntil: "domcontentloaded", timeout: 60_000 });
@@ -165,6 +168,10 @@ async function main() {
       "Expected the embedded Faolla shell home to show exactly one mocked avatar.",
       appShellButtons,
     );
+
+    await page.close();
+    page = await browser.newPage(mobilePageOptions);
+    await installSessionMocks(page);
 
     await page.goto(
       buildUrl("/me", {
