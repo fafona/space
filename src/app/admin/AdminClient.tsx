@@ -5002,6 +5002,14 @@ export default function AdminClient({
       return initialJustSignedIn;
     }
   });
+  const [merchantEditorOnly] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return new URLSearchParams(window.location.search).get("editorOnly") === "1";
+    } catch {
+      return false;
+    }
+  });
   const isPlatformEditor = editorMode === "platform";
   const [platformSeedBlocks] = useState<Block[]>(() =>
     isPlatformEditor && Array.isArray(initialPublishedBlocks)
@@ -12186,7 +12194,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       showTip("当前商户还没准备好网站编辑资料，请稍后重试");
       return;
     }
-    const opened = window.open(buildMerchantBackendHref(resolvedSiteId), "_blank", "noopener,noreferrer");
+    const editorHref = new URL(buildMerchantBackendHref(resolvedSiteId), window.location.origin);
+    editorHref.searchParams.set("editorOnly", "1");
+    const opened = window.open(editorHref.toString(), "_blank", "noopener,noreferrer");
     if (!opened) {
       showTip("浏览器拦截了新窗口，请允许弹窗后重试");
     }
@@ -17025,6 +17035,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               ) : null}
             </div>
             {isDesktopMerchantWorkspace ? (
+              merchantEditorOnly ? null : (
               <div className="grid gap-3">
                 <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
                   <div className="grid gap-2">
@@ -17117,6 +17128,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                   </div>
                 </div>
               </div>
+              )
             ) : (
               <div className={toolbarActionsClassName}>
                 <button

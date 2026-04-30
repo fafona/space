@@ -2016,6 +2016,8 @@ export default function MePage() {
   const [personalActionBusyKey, setPersonalActionBusyKey] = useState("");
   const [personalBookingSearch, setPersonalBookingSearch] = useState("");
   const [personalBookingEditTargetId, setPersonalBookingEditTargetId] = useState("");
+  const [personalBookingDetailTargetId, setPersonalBookingDetailTargetId] = useState("");
+  const [personalOrderDetailTargetId, setPersonalOrderDetailTargetId] = useState("");
   const [personalBookingEditDraft, setPersonalBookingEditDraft] = useState<PersonalBookingEditDraft>(
     EMPTY_PERSONAL_BOOKING_EDIT_DRAFT,
   );
@@ -2611,6 +2613,14 @@ export default function MePage() {
   const personalBookingEditTarget = useMemo(
     () => personalBookings.find((booking) => booking.id === personalBookingEditTargetId) ?? null,
     [personalBookingEditTargetId, personalBookings],
+  );
+  const personalBookingDetailTarget = useMemo(
+    () => personalBookings.find((booking) => booking.id === personalBookingDetailTargetId) ?? null,
+    [personalBookingDetailTargetId, personalBookings],
+  );
+  const personalOrderDetailTarget = useMemo(
+    () => personalOrders.find((order) => order.id === personalOrderDetailTargetId) ?? null,
+    [personalOrderDetailTargetId, personalOrders],
   );
 
   const openPersonalBookingEditor = useCallback((booking: MerchantBookingRecord) => {
@@ -4760,6 +4770,142 @@ export default function MePage() {
     );
   }
 
+  function renderPersonalDetailField(label: string, value: ReactNode) {
+    return (
+      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+        <div className="text-[11px] font-semibold text-slate-400">{label}</div>
+        <div className="mt-1 break-words text-sm font-semibold text-slate-900">{value || "-"}</div>
+      </div>
+    );
+  }
+
+  function renderPersonalBookingDetailDialog() {
+    const booking = personalBookingDetailTarget;
+    if (!booking) return null;
+    const status = getPersonalBookingStatus(booking);
+    const contact = resolvePersonalMerchantContact(booking.siteId, booking.siteName);
+    return (
+      <>
+        <button
+          type="button"
+          className="fixed inset-0 z-[2147483380] bg-slate-950/40 backdrop-blur-[1px]"
+          onClick={() => setPersonalBookingDetailTargetId("")}
+          aria-label="关闭预约详情"
+        />
+        <div className="fixed inset-0 z-[2147483381] flex items-end justify-center p-3 sm:items-center">
+          <div className="max-h-[88vh] w-full max-w-2xl overflow-y-auto rounded-[28px] bg-white p-5 shadow-[0_28px_90px_rgba(15,23,42,0.25)]">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-lg font-black text-slate-950">预约详情</div>
+                <div className="mt-1 text-xs text-slate-500">{booking.id}</div>
+              </div>
+              <button
+                type="button"
+                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50"
+                onClick={() => setPersonalBookingDetailTargetId("")}
+              >
+                关闭
+              </button>
+            </div>
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+              {renderPersonalDetailField("状态", getPersonalBookingStatusText(status))}
+              {renderPersonalDetailField("商户", contact.name)}
+              {renderPersonalDetailField("店铺", booking.store || "-")}
+              {renderPersonalDetailField("项目", booking.item || "-")}
+              {renderPersonalDetailField("预约时间", renderPersonalAppointmentSummary(booking.appointmentAt))}
+              {renderPersonalDetailField("称谓", booking.title || "-")}
+              {renderPersonalDetailField("姓名", booking.customerName || "-")}
+              {renderPersonalDetailField("电话", booking.phone || "-")}
+              {renderPersonalDetailField("邮箱", booking.email || "-")}
+              {renderPersonalDetailField("预约号", booking.id)}
+              {renderPersonalDetailField("创建时间", formatPersonalRecordDateTime(booking.createdAt))}
+              {renderPersonalDetailField("更新时间", formatPersonalRecordDateTime(booking.updatedAt))}
+            </div>
+            {booking.note ? (
+              <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                <div className="text-[11px] font-semibold text-slate-400">备注</div>
+                <div className="mt-1 whitespace-pre-wrap break-words text-sm text-slate-900">{booking.note}</div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  function renderPersonalOrderDetailDialog() {
+    const order = personalOrderDetailTarget;
+    if (!order) return null;
+    const status = getPersonalOrderStatus(order);
+    const contact = resolvePersonalMerchantContact(order.siteId, order.siteName);
+    return (
+      <>
+        <button
+          type="button"
+          className="fixed inset-0 z-[2147483380] bg-slate-950/40 backdrop-blur-[1px]"
+          onClick={() => setPersonalOrderDetailTargetId("")}
+          aria-label="关闭订单详情"
+        />
+        <div className="fixed inset-0 z-[2147483381] flex items-end justify-center p-3 sm:items-center">
+          <div className="max-h-[88vh] w-full max-w-2xl overflow-y-auto rounded-[28px] bg-white p-5 shadow-[0_28px_90px_rgba(15,23,42,0.25)]">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-lg font-black text-slate-950">订单详情</div>
+                <div className="mt-1 text-xs text-slate-500">{order.id}</div>
+              </div>
+              <button
+                type="button"
+                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50"
+                onClick={() => setPersonalOrderDetailTargetId("")}
+              >
+                关闭
+              </button>
+            </div>
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+              {renderPersonalDetailField("状态", getPersonalOrderStatusText(status))}
+              {renderPersonalDetailField("商户", contact.name)}
+              {renderPersonalDetailField("订单号", order.id)}
+              {renderPersonalDetailField("下单时间", formatPersonalRecordDateTime(order.createdAt))}
+              {renderPersonalDetailField("总金额", formatPersonalOrderAmount(order.totalAmount, order.pricePrefix))}
+              {renderPersonalDetailField("商品数量", order.totalQuantity)}
+              {renderPersonalDetailField("姓名", order.customer.name || "-")}
+              {renderPersonalDetailField("电话", order.customer.phone || "-")}
+              {renderPersonalDetailField("邮箱", order.customer.email || "-")}
+            </div>
+            {order.customer.note ? (
+              <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                <div className="text-[11px] font-semibold text-slate-400">备注</div>
+                <div className="mt-1 whitespace-pre-wrap break-words text-sm text-slate-900">{order.customer.note}</div>
+              </div>
+            ) : null}
+            <div className="mt-4 space-y-2">
+              <div className="text-xs font-semibold text-slate-500">商品明细</div>
+              {order.items.length ? (
+                order.items.map((item, index) => (
+                  <div key={`${item.productId}:${index}`} className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="break-words text-sm font-semibold text-slate-900">{item.name || "未命名产品"}</div>
+                        <div className="mt-1 text-xs text-slate-500">{[item.code, item.tag].filter(Boolean).join(" / ") || "-"}</div>
+                      </div>
+                      <div className="shrink-0 text-right text-sm font-semibold text-slate-900">
+                        {item.unitPriceText || formatPersonalOrderAmount(item.unitPrice, order.pricePrefix)}
+                        <div className="mt-1 text-xs text-slate-500">x {item.quantity}</div>
+                      </div>
+                    </div>
+                    {item.description ? <div className="mt-2 break-words text-xs leading-5 text-slate-500">{item.description}</div> : null}
+                  </div>
+                ))
+              ) : (
+                <div className="rounded-2xl border border-dashed border-slate-200 px-3 py-4 text-sm text-slate-500">暂无商品明细</div>
+              )}
+            </div>
+          </div>
+        </div>
+      </>
+    );
+  }
+
   function renderPersonalBookingEditDialog() {
     const booking = personalBookingEditTarget;
     if (!booking) return null;
@@ -4925,10 +5071,6 @@ export default function MePage() {
                           {getPersonalBookingStatusText(status)}
                         </span>
                       </div>
-                      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
-                        <span>{`预约号: ${booking.id}`}</span>
-                        <span>{`创建时间: ${formatPersonalRecordDateTime(booking.createdAt)}`}</span>
-                      </div>
                     </div>
                     {canOpenConversation ? (
                       <div className="flex shrink-0 items-center gap-2">
@@ -4954,6 +5096,13 @@ export default function MePage() {
                   </div>
 
                   <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className={compactActionButtonClassName}
+                      onClick={() => setPersonalBookingDetailTargetId(booking.id)}
+                    >
+                      详情
+                    </button>
                     {status !== "cancelled" ? (
                       <button
                         type="button"
@@ -5186,10 +5335,6 @@ export default function MePage() {
             const contactPhone = contact.phone;
             const canOpenConversation = Boolean(contact.siteId || contactEmail);
             if (compact) {
-              const compactItemPreview = order.items
-                .slice(0, 3)
-                .map((item) => [item.code, item.name || "未命名产品"].filter(Boolean).join(" "))
-                .join(" / ");
               return (
                 <article
                   key={order.id}
@@ -5202,14 +5347,7 @@ export default function MePage() {
                           {getPersonalOrderStatusText(status)}
                         </span>
                       </div>
-                      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
-                        <span>{`订单号: ${order.id}`}</span>
-                        <span>{`下单时间: ${formatPersonalRecordDateTime(order.createdAt)}`}</span>
-                        <span>{`${order.totalQuantity} 件`}</span>
-                      </div>
-                      {compactItemPreview ? (
-                        <div className="mt-2 line-clamp-1 text-xs text-slate-500">{compactItemPreview}</div>
-                      ) : null}
+                      <div className="mt-1 text-xs text-slate-500">{formatPersonalRecordDateTime(order.createdAt)}</div>
                     </div>
 
                     <div className="flex shrink-0 flex-col items-end gap-2">
@@ -5239,7 +5377,13 @@ export default function MePage() {
                   </div>
 
                   <div className="mt-3 flex flex-wrap gap-2">
-                    <div className={compactActionButtonClassName}>{`${order.totalQuantity} 件商品`}</div>
+                    <button
+                      type="button"
+                      className={compactActionButtonClassName}
+                      onClick={() => setPersonalOrderDetailTargetId(order.id)}
+                    >
+                      详情
+                    </button>
                     {canCancel ? (
                       <button
                         type="button"
@@ -6022,6 +6166,10 @@ export default function MePage() {
           <div className="pointer-events-none absolute left-4 top-[calc(env(safe-area-inset-top)+0.75rem)] z-10">
             <FaollaHomeButton className="pointer-events-auto h-11 w-11" onClick={navigatePersonalFaollaHome} />
           </div>
+          <div className="pointer-events-none absolute right-4 top-[calc(env(safe-area-inset-top)+0.75rem)] z-20 flex items-center gap-2">
+            {renderFaollaFavoriteButton("pointer-events-auto h-10 w-10")}
+            {renderFaollaShellAvatar("pointer-events-auto h-11 w-11")}
+          </div>
           <iframe
             ref={personalMobileFaollaFrameRef}
             title="Faolla"
@@ -6035,6 +6183,8 @@ export default function MePage() {
       )}
       {renderSupportSelfCardPickerOverlay()}
       {renderConversationInfoOverlay()}
+      {renderPersonalBookingDetailDialog()}
+      {renderPersonalOrderDetailDialog()}
       {renderPersonalBookingEditDialog()}
     </>
   );
