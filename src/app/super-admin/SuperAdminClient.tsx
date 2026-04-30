@@ -1851,6 +1851,7 @@ export default function SuperAdminClient() {
     Record<string, MerchantListPublishedSite | null>
   >({});
   const [supportLastReadMap, setSupportLastReadMap] = useState<Record<string, string>>({});
+  const [supportReadStateHydrated, setSupportReadStateHydrated] = useState(false);
   const supportMessagesViewportRef = useRef<HTMLDivElement>(null);
   const supportReplyInputRef = useRef<HTMLTextAreaElement>(null);
   const supportLastMessageKeyRef = useRef("");
@@ -3036,6 +3037,7 @@ export default function SuperAdminClient() {
       : "";
   const supportUnreadMerchantIds = useMemo(() => {
     const unreadMerchantIds = new Set<string>();
+    if (!supportReadStateHydrated) return unreadMerchantIds;
     supportThreads.forEach((thread) => {
       const lastMessage = thread.messages[thread.messages.length - 1];
       if (!lastMessage || lastMessage.sender !== "merchant") return;
@@ -3047,7 +3049,7 @@ export default function SuperAdminClient() {
       }
     });
     return unreadMerchantIds;
-  }, [supportLastReadMap, supportThreads]);
+  }, [supportLastReadMap, supportReadStateHydrated, supportThreads]);
   const supportHasUnreadThreads = supportUnreadMerchantIds.size > 0;
   const supportUnreadThreadCount = supportUnreadMerchantIds.size;
   const superAdminTabBaseTitle = "Super Admin · FAOLLA";
@@ -3413,7 +3415,10 @@ export default function SuperAdminClient() {
     }
   }, [activeMenu, isMobileSupportOnlyMode, selectedSupportThread, supportMobileView]);
   useEffect(() => {
-    if (!hydrated || typeof window === "undefined") return;
+    if (!hydrated || !authed || typeof window === "undefined") {
+      setSupportReadStateHydrated(false);
+      return;
+    }
     const nextLastReadMap = supportThreads.reduce<Record<string, string>>((accumulator, thread) => {
       const merchantId = thread.merchantId.trim();
       if (!merchantId) return accumulator;
@@ -3436,10 +3441,34 @@ export default function SuperAdminClient() {
       }
       return nextLastReadMap;
     });
-  }, [hydrated, supportThreads]);
+    setSupportReadStateHydrated(true);
+  }, [authed, hydrated, supportThreads]);
   useEffect(() => {
     setSupportReplyDraft("");
   }, [supportSelectedMerchantId]);
+  useEffect(() => {
+    if (!hydrated || !authed || activeMenu !== "support_messages" || !supportReadStateHydrated) return;
+    if (typeof window === "undefined" || supportThreads.length === 0) return;
+
+    let changed = false;
+    const nextLastReadMap = { ...supportLastReadMap };
+    supportThreads.forEach((thread) => {
+      const merchantId = thread.merchantId.trim();
+      if (!merchantId) return;
+      const latestMerchantMessage = [...thread.messages].reverse().find((message) => message.sender === "merchant");
+      const latestMerchantMessageAt = normalizeSupportMessageTimestamp(latestMerchantMessage?.createdAt);
+      if (!latestMerchantMessageAt) return;
+      const currentLastReadAt = normalizeSupportMessageTimestamp(nextLastReadMap[merchantId]);
+      if (new Date(latestMerchantMessageAt).getTime() <= new Date(currentLastReadAt || 0).getTime()) return;
+      window.localStorage.setItem(buildSuperAdminSupportLastReadStorageKey(merchantId), latestMerchantMessageAt);
+      nextLastReadMap[merchantId] = latestMerchantMessageAt;
+      changed = true;
+    });
+
+    if (changed) {
+      setSupportLastReadMap(nextLastReadMap);
+    }
+  }, [activeMenu, authed, hydrated, supportLastReadMap, supportReadStateHydrated, supportThreads]);
   useEffect(() => {
     if (!hydrated || !authed) {
       supportLastIncomingMerchantMessageKeyRef.current = "";
