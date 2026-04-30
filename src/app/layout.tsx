@@ -4,7 +4,7 @@ import Script from "next/script";
 import ClientDomTranslator from "@/components/ClientDomTranslator";
 import GlobalLanguageSwitcher from "@/components/GlobalLanguageSwitcher";
 import { I18nProvider } from "@/components/I18nProvider";
-import PwaBootstrap from "@/components/PwaBootstrap";
+import PwaBootstrapLoader from "@/components/PwaBootstrapLoader";
 import UnhandledRejectionGuard from "@/components/UnhandledRejectionGuard";
 import "./globals.css";
 import { DEFAULT_LOCALE, I18N_COOKIE_KEY, readPreferredLocaleFromAcceptLanguage, resolveSupportedLocale } from "@/lib/i18n";
@@ -195,7 +195,7 @@ export default async function RootLayout({
         <I18nProvider initialLocale={initialLocale}>
           <ClientDomTranslator />
           <UnhandledRejectionGuard />
-          <PwaBootstrap />
+          <PwaBootstrapLoader />
           <GlobalLanguageSwitcher />
           {children}
         </I18nProvider>
