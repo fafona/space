@@ -10,7 +10,7 @@ type ContactClickStats = Record<string, number>;
 type DailyStats = Record<string, number>;
 type ContactClickDailyStats = Record<string, DailyStats>;
 type PageViewDailyStats = Record<string, DailyStats>;
-type PublishEvent = {
+export type PublishEvent = {
   at: string;
   success: boolean;
   bytes: number;

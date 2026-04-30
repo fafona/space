@@ -12,7 +12,7 @@ import type {
 } from "@/data/homeBlocks";
 import { loadPlatformState, subscribePlatformState, type MerchantSortRule, type PlatformState } from "@/data/platformControlStore";
 import { readPageViewDailyStats } from "@/lib/analytics";
-import { findEuropeCountryByCode, getEuropeProvinceOptions } from "@/lib/europeLocationOptions";
+import { loadEuropeLocationOptionsApi, type EuropeLocationOptionsApi } from "@/lib/europeLocationOptionsLoader";
 import {
   buildMerchantCardPlacement,
   getMerchantTabKey,
@@ -253,19 +253,27 @@ function resolveMerchantIndustryCardStyle(
   };
 }
 
-function resolveProvinceName(countryCode: string, provinceCodeOrName: string, fallbackName = "") {
+function resolveProvinceName(
+  locationOptionsApi: EuropeLocationOptionsApi | null,
+  countryCode: string,
+  provinceCodeOrName: string,
+  fallbackName = "",
+) {
   const raw = (provinceCodeOrName ?? "").trim();
   if (!raw) return (fallbackName ?? "").trim();
-  const matched = getEuropeProvinceOptions(countryCode).find((item) => item.code === raw);
+  const matched = locationOptionsApi?.getEuropeProvinceOptions(countryCode).find((item) => item.code === raw);
   return matched?.name ?? raw;
 }
 
-function normalizeSearchFilter(input?: PortalSearchDetail): SearchFilter {
+function normalizeSearchFilter(
+  locationOptionsApi: EuropeLocationOptionsApi | null,
+  input?: PortalSearchDetail,
+): SearchFilter {
   if (!input) return EMPTY_SEARCH_FILTER;
   const countryCode = (input.countryCode ?? "").trim().toUpperCase();
-  const country = (input.country ?? "").trim() || findEuropeCountryByCode(countryCode)?.name || "";
+  const country = (input.country ?? "").trim() || locationOptionsApi?.findEuropeCountryByCode(countryCode)?.name || "";
   const provinceCode = (input.provinceCode ?? "").trim();
-  const province = (input.province ?? "").trim() || resolveProvinceName(countryCode, provinceCode);
+  const province = (input.province ?? "").trim() || resolveProvinceName(locationOptionsApi, countryCode, provinceCode);
   return {
     countryCode,
     country,
@@ -422,6 +430,7 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
   const [platformState, setPlatformState] = useState<PlatformState>(() => loadPlatformState());
   const [faollaAppShell, setFaollaAppShell] = useState(false);
   const [searchFilter, setSearchFilter] = useState<SearchFilter>(EMPTY_SEARCH_FILTER);
+  const [locationOptionsApi, setLocationOptionsApi] = useState<EuropeLocationOptionsApi | null>(null);
   const [activeTabId, setActiveTabId] = useState("tab-recommended");
   const [pageIndex, setPageIndex] = useState(0);
   const [sortNowMs, setSortNowMs] = useState(INITIAL_SORT_NOW_MS);
@@ -445,16 +454,28 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
   }, []);
 
   useEffect(() => {
+    let active = true;
+    loadEuropeLocationOptionsApi()
+      .then((api) => {
+        if (active) setLocationOptionsApi(api);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
     if (typeof window === "undefined") return;
     const onPortalSearch = (event: Event) => {
       const detail = (event as CustomEvent<PortalSearchDetail>).detail;
-      setSearchFilter(normalizeSearchFilter(detail));
+      setSearchFilter(normalizeSearchFilter(locationOptionsApi, detail));
     };
     window.addEventListener("portal-search", onPortalSearch as EventListener);
     return () => {
       window.removeEventListener("portal-search", onPortalSearch as EventListener);
     };
-  }, []);
+  }, [locationOptionsApi]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setSortNowMs(Date.now()), 60_000);

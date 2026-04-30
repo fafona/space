@@ -17,11 +17,7 @@ import {
   normalizePersonalAccountServiceConfig,
   type PersonalAccountServiceConfig,
 } from "@/lib/personalAccountServiceConfig";
-import {
-  getEuropeCityOptions,
-  getEuropeCountryOptions,
-  getEuropeProvinceOptions,
-} from "@/lib/europeLocationOptions";
+import { loadEuropeLocationOptionsApi, type EuropeLocationOptionsApi } from "@/lib/europeLocationOptionsLoader";
 import { LANGUAGE_OPTIONS } from "@/lib/i18n";
 import {
   FAOLLA_APP_SHELL_LOCATION_MESSAGE,
@@ -1438,7 +1434,19 @@ function PersonalLocationInput({
   onChange: (field: keyof PersonalProfileDraft, value: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const countryOptions = useMemo(() => getEuropeCountryOptions(), []);
+  const [locationOptionsApi, setLocationOptionsApi] = useState<EuropeLocationOptionsApi | null>(null);
+  const countryOptions = useMemo(() => locationOptionsApi?.getEuropeCountryOptions() ?? [], [locationOptionsApi]);
+  useEffect(() => {
+    let active = true;
+    loadEuropeLocationOptionsApi()
+      .then((api) => {
+        if (active) setLocationOptionsApi(api);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
   const selectedCountryCode = useMemo(() => {
     const normalized = normalizePersonalLocationValue(countryValue);
     if (!normalized) return "";
@@ -1448,7 +1456,10 @@ function PersonalLocationInput({
       )?.code ?? ""
     );
   }, [countryOptions, countryValue]);
-  const provinceOptions = useMemo(() => getEuropeProvinceOptions(selectedCountryCode), [selectedCountryCode]);
+  const provinceOptions = useMemo(
+    () => locationOptionsApi?.getEuropeProvinceOptions(selectedCountryCode) ?? [],
+    [locationOptionsApi, selectedCountryCode],
+  );
   const selectedProvinceCode = useMemo(() => {
     const normalized = normalizePersonalLocationValue(provinceValue);
     if (!normalized) return "";
@@ -1459,8 +1470,8 @@ function PersonalLocationInput({
     );
   }, [provinceOptions, provinceValue]);
   const cityOptions = useMemo(
-    () => getEuropeCityOptions(selectedCountryCode, selectedProvinceCode),
-    [selectedCountryCode, selectedProvinceCode],
+    () => locationOptionsApi?.getEuropeCityOptions(selectedCountryCode, selectedProvinceCode) ?? [],
+    [locationOptionsApi, selectedCountryCode, selectedProvinceCode],
   );
 
   const options = useMemo<PersonalLocationOption[]>(() => {

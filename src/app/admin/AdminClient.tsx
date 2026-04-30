@@ -91,7 +91,7 @@ import { buildPublishedMerchantProfilePatch } from "@/lib/merchantProfileBinding
 import { buildMerchantBusinessCardShareUrl, resolveMerchantBusinessCardShareOrigin } from "@/lib/merchantBusinessCardShare";
 import { resolveCommonCanvasLayout } from "@/lib/commonCanvasLayout";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
-import SupportMessageContent, { type SupportMessageImageActivatePayload } from "@/components/support/SupportMessageContent";
+import type { SupportMessageImageActivatePayload } from "@/components/support/SupportMessageContent";
 import {
   normalizeMerchantBusinessCards,
   normalizeMerchantBusinessCardChatDisplaySelection,
@@ -155,20 +155,8 @@ import {
   type GalleryRowAlign,
 } from "@/lib/galleryLayout";
 import { sanitizeBlocksForRuntime } from "@/lib/blocksSanitizer";
-import {
-  readContactClickStats,
-  readContactClickDailyStats,
-  readPageViewDailyStats,
-  readPublishEvents,
-  readRemoteAnalyticsSummary,
-  type RemoteAnalyticsSummary,
-  trackPublishEvent,
-} from "@/lib/analytics";
-import {
-  getEuropeCityOptions,
-  getEuropeCountryOptions,
-  getEuropeProvinceOptions,
-} from "@/lib/europeLocationOptions";
+import type { PublishEvent, RemoteAnalyticsSummary } from "@/lib/analytics";
+import { loadEuropeLocationOptionsApi, type EuropeLocationOptionsApi } from "@/lib/europeLocationOptionsLoader";
 import {
   buildMerchantCardPlacement,
   clampMerchantCardLayoutValue,
@@ -298,6 +286,11 @@ const ChatBusinessCardDialog = dynamic(() => import("@/components/admin/ChatBusi
 });
 
 const SupportMessageImagePreviewOverlay = dynamic(() => import("@/components/support/SupportMessageImagePreviewOverlay"), {
+  ssr: false,
+  loading: () => null,
+});
+
+const SupportMessageContent = dynamic(() => import("@/components/support/SupportMessageContent"), {
   ssr: false,
   loading: () => null,
 });
@@ -2904,9 +2897,16 @@ type MerchantAnalyticsSnapshot = {
   visit30d: number;
   clickPairs: Array<[string, number]>;
   topClick7d: Array<{ channel: string; count: number }>;
-  publish7d: ReturnType<typeof readPublishEvents>;
-  publish30d: ReturnType<typeof readPublishEvents>;
+  publish7d: PublishEvent[];
+  publish30d: PublishEvent[];
   failureSnapshots: ReturnType<typeof readPublishFailureSnapshots>;
+};
+
+type MerchantAnalyticsLocalData = {
+  clickStats: Record<string, number>;
+  clickDaily: Record<string, Record<string, number>>;
+  viewDailyByPath: Record<string, Record<string, number>>;
+  publishEvents: PublishEvent[];
 };
 
 const EMPTY_PUBLISH_DIFF_SUMMARY: PublishDiffSummary = {
@@ -2930,6 +2930,30 @@ const EMPTY_MERCHANT_ANALYTICS_SNAPSHOT: MerchantAnalyticsSnapshot = {
   publish30d: [],
   failureSnapshots: [],
 };
+
+const EMPTY_MERCHANT_ANALYTICS_LOCAL_DATA: MerchantAnalyticsLocalData = {
+  clickStats: {},
+  clickDaily: {},
+  viewDailyByPath: {},
+  publishEvents: [],
+};
+
+type PublishEventInput = {
+  success: boolean;
+  bytes: number;
+  changedBlocks: number;
+  reason?: string;
+};
+
+function recordPublishEvent(input: PublishEventInput) {
+  void import("@/lib/analytics")
+    .then(({ trackPublishEvent }) => {
+      trackPublishEvent(input);
+    })
+    .catch(() => {
+      // Analytics must never block publishing.
+    });
+}
 
 function computePublishDiffSummary(nextBlocks: Block[], previousBlocks: Block[]): PublishDiffSummary {
   const toKey = (block: Block) => `${block.type}:${block.id}`;
@@ -4997,9 +5021,11 @@ export default function AdminClient({
   const [publishing, setPublishing] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [merchantDesktopSection, setMerchantDesktopSection] = useState<MerchantDesktopSection>("editor");
+  const [merchantAnalyticsLocalData, setMerchantAnalyticsLocalData] = useState<MerchantAnalyticsLocalData | null>(null);
   const [merchantAnalyticsRemoteSummary, setMerchantAnalyticsRemoteSummary] = useState<RemoteAnalyticsSummary | null>(null);
   const [merchantAnalyticsLoading, setMerchantAnalyticsLoading] = useState(false);
   const [merchantAnalyticsError, setMerchantAnalyticsError] = useState("");
+  const [europeLocationOptionsApi, setEuropeLocationOptionsApi] = useState<EuropeLocationOptionsApi | null>(null);
   const [merchantProfileDialogOpen, setMerchantProfileDialogOpen] = useState(false);
   const [merchantProfileDialogShowBusinessCards, setMerchantProfileDialogShowBusinessCards] = useState(true);
   const [merchantSiteIdOverride, setMerchantSiteIdOverride] = useState("");
@@ -5335,6 +5361,7 @@ export default function AdminClient({
   const [recentColors, setRecentColors] = useState<string[]>([]);
   const [resizePreview, setResizePreview] = useState<{ blockId: string; heightDelta: number } | null>(null);
   const selectedIdRef = useRef(selectedId);
+  const europeLocationOptionsApiTaskRef = useRef<Promise<EuropeLocationOptionsApi> | null>(null);
   const planConfigRef = useRef(planConfig);
 
   useEffect(() => {
@@ -7894,6 +7921,28 @@ export default function AdminClient({
   }, [selectedId]);
 
   useEffect(() => {
+    if (europeLocationOptionsApi) return;
+    const selectedBlock = blocks.find((item) => item.id === selectedId);
+    if (selectedBlock?.type !== "search-bar") return;
+
+    let active = true;
+    if (!europeLocationOptionsApiTaskRef.current) {
+      europeLocationOptionsApiTaskRef.current = loadEuropeLocationOptionsApi().finally(() => {
+        europeLocationOptionsApiTaskRef.current = null;
+      });
+    }
+    europeLocationOptionsApiTaskRef.current
+      .then((api) => {
+        if (active) setEuropeLocationOptionsApi(api);
+      })
+      .catch(() => {});
+
+    return () => {
+      active = false;
+    };
+  }, [blocks, europeLocationOptionsApi, selectedId]);
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
       if (!selectedIdRef.current) return;
@@ -9255,6 +9304,13 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     blocksRef.current.forEach((item) => {
       byType.set(item.type, (byType.get(item.type) ?? 0) + 1);
     });
+    const {
+      readContactClickStats,
+      readContactClickDailyStats,
+      readPageViewDailyStats,
+      readPublishEvents,
+      readRemoteAnalyticsSummary,
+    } = await import("@/lib/analytics");
     const clickStats = readContactClickStats();
     const clickDaily = readContactClickDailyStats();
     const clickPairs = Object.entries(clickStats).sort((a, b) => b[1] - a[1]);
@@ -9523,7 +9579,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           },
           storeScope,
         );
-        trackPublishEvent({
+        recordPublishEvent({
           success: false,
           bytes: estimateUtf8Size(JSON.stringify(payload.blocks)),
           changedBlocks: 1,
@@ -9543,7 +9599,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           },
           storeScope,
         );
-        trackPublishEvent({
+        recordPublishEvent({
           success: false,
           bytes: payloadBytes,
           changedBlocks: 1,
@@ -9556,7 +9612,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       const totalChanges = diffSummary.changedCount + diffSummary.addedCount + diffSummary.removedCount;
       if (totalChanges === 0) {
         showSavePublishTip("无变更，已跳过发布");
-        trackPublishEvent({
+        recordPublishEvent({
           success: true,
           bytes: payloadBytes,
           changedBlocks: 0,
@@ -9567,7 +9623,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
       const preflightPassed = await runPublishPreflightDialog(payload.blocks, payloadBytes);
       if (!preflightPassed) {
-        trackPublishEvent({
+        recordPublishEvent({
           success: false,
           bytes: payloadBytes,
           changedBlocks: totalChanges,
@@ -9590,7 +9646,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           bytes: payloadBytes,
           blocks: combinedBlocks,
         }, storeScope);
-        trackPublishEvent({
+        recordPublishEvent({
           success: false,
           bytes: payloadBytes,
           changedBlocks: totalChanges,
@@ -9642,7 +9698,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           bytes: payloadBytes,
           blocks: combinedBlocks,
         }, storeScope);
-        trackPublishEvent({
+        recordPublishEvent({
           success: false,
           bytes: payloadBytes,
           changedBlocks: totalChanges,
@@ -9683,7 +9739,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         broadcastPublishSync(mirrorSiteIds);
       }
       setRemoteContentVerified(true);
-      trackPublishEvent({
+      recordPublishEvent({
         success: true,
         bytes: payloadBytes,
         changedBlocks: totalChanges,
@@ -9706,7 +9762,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         bytes: payloadBytes,
         blocks: combinedBlocks,
       }, storeScope);
-      trackPublishEvent({
+      recordPublishEvent({
         success: false,
         bytes: payloadBytes,
         changedBlocks: Math.max(
@@ -12166,7 +12222,25 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     let cancelled = false;
     setMerchantAnalyticsLoading(true);
     setMerchantAnalyticsError("");
-    void readRemoteAnalyticsSummary(30)
+    void import("@/lib/analytics")
+      .then(
+        ({
+          readContactClickStats,
+          readContactClickDailyStats,
+          readPageViewDailyStats,
+          readPublishEvents,
+          readRemoteAnalyticsSummary,
+        }) => {
+          if (cancelled) return Promise.resolve(null);
+          setMerchantAnalyticsLocalData({
+            clickStats: readContactClickStats(),
+            clickDaily: readContactClickDailyStats(),
+            viewDailyByPath: readPageViewDailyStats(),
+            publishEvents: readPublishEvents(),
+          });
+          return readRemoteAnalyticsSummary(30);
+        },
+      )
       .then((summary) => {
         if (cancelled) return;
         setMerchantAnalyticsRemoteSummary(summary);
@@ -13968,17 +14042,18 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     blocks.forEach((item) => {
       byType.set(item.type, (byType.get(item.type) ?? 0) + 1);
     });
-    const clickStats = readContactClickStats();
-    const clickDaily = readContactClickDailyStats();
+    const localAnalytics = merchantAnalyticsLocalData ?? EMPTY_MERCHANT_ANALYTICS_LOCAL_DATA;
+    const clickStats = localAnalytics.clickStats;
+    const clickDaily = localAnalytics.clickDaily;
     const clickPairs = Object.entries(clickStats).sort((a, b) => b[1] - a[1]);
-    const viewDailyByPath = readPageViewDailyStats();
+    const viewDailyByPath = localAnalytics.viewDailyByPath;
     const mergedViewDaily: Record<string, number> = {};
     Object.values(viewDailyByPath).forEach((daily) => {
       Object.entries(daily).forEach(([day, count]) => {
         mergedViewDaily[day] = (mergedViewDaily[day] ?? 0) + count;
       });
     });
-    const publishEvents = readPublishEvents();
+    const publishEvents = localAnalytics.publishEvents;
     const nowMs = Date.now();
     const inLastDays = (iso: string, days: number) => {
       const at = new Date(iso).getTime();
@@ -17650,6 +17725,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                               previewViewport={previewViewport}
                               runtimeSiteId={editingSiteId || ""}
                               runtimeSiteName={merchantDisplayName}
+                              europeLocationOptionsApi={europeLocationOptionsApi}
                             />
                           </div>
                         );
@@ -17714,6 +17790,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       previewViewport={previewViewport}
                       runtimeSiteId={editingSiteId || ""}
                       runtimeSiteName={merchantDisplayName}
+                      europeLocationOptionsApi={europeLocationOptionsApi}
                     />
                   </div>
                 );
@@ -18484,6 +18561,7 @@ function InlineEditorBlock({
   previewViewport,
   runtimeSiteId = "",
   runtimeSiteName = "",
+  europeLocationOptionsApi,
 }: {
   block: Block;
   publicBlockId: string;
@@ -18515,6 +18593,7 @@ function InlineEditorBlock({
   previewViewport: "desktop" | "mobile";
   runtimeSiteId?: string;
   runtimeSiteName?: string;
+  europeLocationOptionsApi?: EuropeLocationOptionsApi | null;
 }) {
   const { locale } = useI18n();
   type CommonEditorTextBox = {
@@ -27223,19 +27302,20 @@ type GalleryEditorImage = {
     const countryLabel = resolveLocalizedSystemDefaultText(undefined, "国家", locale);
     const provinceLabel = resolveLocalizedSystemDefaultText(undefined, "省份", locale);
     const searchHintLabel = resolveLocalizedSystemDefaultText(undefined, "可点击定位，或手动选择国家/省份/城市。", locale);
-    const countryOptions = getEuropeCountryOptions();
+    const locationOptionsApi = europeLocationOptionsApi;
+    const countryOptions = locationOptionsApi?.getEuropeCountryOptions() ?? [];
     const resolvedCountryCode = (() => {
       const fromProps = (block.props.defaultCountryCode ?? "").toUpperCase();
       if (countryOptions.some((item) => item.code === fromProps)) return fromProps;
       return "";
     })();
-    const provinceOptions = getEuropeProvinceOptions(resolvedCountryCode);
+    const provinceOptions = locationOptionsApi?.getEuropeProvinceOptions(resolvedCountryCode) ?? [];
     const resolvedProvinceCode = (() => {
       const fromProps = (block.props.defaultProvinceCode ?? "").trim();
       if (provinceOptions.some((item) => item.code === fromProps)) return fromProps;
       return "";
     })();
-    const cityOptions = getEuropeCityOptions(resolvedCountryCode, resolvedProvinceCode);
+    const cityOptions = locationOptionsApi?.getEuropeCityOptions(resolvedCountryCode, resolvedProvinceCode) ?? [];
     const resolvedCity = (() => {
       const fromProps = (block.props.defaultCity ?? "").trim();
       if (cityOptions.includes(fromProps)) return fromProps;
@@ -27744,10 +27824,11 @@ type GalleryEditorImage = {
                   <select
                     className="w-full rounded border p-2"
                     value={resolvedCountryCode}
+                    disabled={!locationOptionsApi}
                     onChange={(event) => {
                       const nextCountryCode = event.target.value;
-                      const nextProvinceCode = getEuropeProvinceOptions(nextCountryCode)[0]?.code ?? "";
-                      const nextCity = getEuropeCityOptions(nextCountryCode, nextProvinceCode)[0] ?? "";
+                      const nextProvinceCode = locationOptionsApi?.getEuropeProvinceOptions(nextCountryCode)[0]?.code ?? "";
+                      const nextCity = locationOptionsApi?.getEuropeCityOptions(nextCountryCode, nextProvinceCode)[0] ?? "";
                       onChange({
                         defaultCountryCode: nextCountryCode,
                         defaultProvinceCode: nextProvinceCode,
@@ -27771,9 +27852,10 @@ type GalleryEditorImage = {
                   <select
                     className="w-full rounded border p-2"
                     value={resolvedProvinceCode}
+                    disabled={!locationOptionsApi}
                     onChange={(event) => {
                       const nextProvinceCode = event.target.value;
-                      const nextCity = getEuropeCityOptions(resolvedCountryCode, nextProvinceCode)[0] ?? "";
+                      const nextCity = locationOptionsApi?.getEuropeCityOptions(resolvedCountryCode, nextProvinceCode)[0] ?? "";
                       onChange({
                         defaultCountryCode: resolvedCountryCode,
                         defaultProvinceCode: nextProvinceCode,
@@ -27797,6 +27879,7 @@ type GalleryEditorImage = {
                   <select
                     className="w-full rounded border p-2"
                     value={resolvedCity}
+                    disabled={!locationOptionsApi}
                     onChange={(event) => onChange({ defaultCity: event.target.value })}
                   >
                     {cityOptions.length > 0 ? (
@@ -29254,7 +29337,8 @@ const MemoizedInlineEditorBlock = memo(InlineEditorBlock, (previousProps, nextPr
     previousProps.recentColors === nextProps.recentColors &&
     previousProps.previewViewport === nextProps.previewViewport &&
     previousProps.runtimeSiteId === nextProps.runtimeSiteId &&
-    previousProps.runtimeSiteName === nextProps.runtimeSiteName
+    previousProps.runtimeSiteName === nextProps.runtimeSiteName &&
+    previousProps.europeLocationOptionsApi === nextProps.europeLocationOptionsApi
   );
 });
 
