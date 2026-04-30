@@ -114,6 +114,7 @@ import { type PlatformSupportMessage, type PlatformSupportThread } from "@/lib/p
 import { getMerchantServiceState } from "@/lib/merchantServiceStatus";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
 import { buildMerchantFrontendHref, buildPlatformHomeHref, buildSiteStoreScope, PLATFORM_EDITOR_SCOPE } from "@/lib/siteRouting";
+import { MOBILE_SWIPE_BACK_EVENT } from "@/lib/mobileSwipeBack";
 import { getPagePlanConfigFromBlocks } from "@/lib/pagePlans";
 import {
   formatSupportConversationPreview,
@@ -6258,6 +6259,25 @@ export default function SuperAdminClient() {
     { key: "logs", label: "日志", hint: "审计与告警记录" },
   ];
   const showMobileSupportThread = isMobileSupportOnlyMode && supportMobileView === "thread" && !!selectedSupportThread;
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleMobileSwipeBack = (event: Event) => {
+      if (!isMobileSupportOnlyMode) return;
+      if (supportMerchantInfoSheetOpen) {
+        event.preventDefault();
+        setSupportMerchantInfoSheetOpen(false);
+        return;
+      }
+      if (supportMobileView === "thread") {
+        event.preventDefault();
+        closeMobileSupportThread();
+      }
+    };
+    window.addEventListener(MOBILE_SWIPE_BACK_EVENT, handleMobileSwipeBack);
+    return () => {
+      window.removeEventListener(MOBILE_SWIPE_BACK_EVENT, handleMobileSwipeBack);
+    };
+  }, [closeMobileSupportThread, isMobileSupportOnlyMode, supportMerchantInfoSheetOpen, supportMobileView]);
   function logoutSuperAdmin() {
     clearSuperAdminAuthenticated();
     void fetch("/api/super-admin/auth/logout", {

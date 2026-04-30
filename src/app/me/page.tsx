@@ -51,6 +51,7 @@ import {
 } from "@/lib/supportMessageAttachments";
 import type { MerchantBookingEditableInput, MerchantBookingRecord } from "@/lib/merchantBookings";
 import { getMerchantBookingDayLabel } from "@/lib/merchantBookingLocale";
+import { MOBILE_SWIPE_BACK_EVENT } from "@/lib/mobileSwipeBack";
 import type { MerchantOrderRecord } from "@/lib/merchantOrders";
 
 const MerchantBusinessCardManager = dynamic(() => import("@/components/admin/MerchantBusinessCardManager"), {
@@ -2161,6 +2162,31 @@ export default function MePage() {
       setConversationInfoOpen(false);
     }
   }, [conversationInfoOpen, desktopSection, mobileConversationView, mobileTab]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleMobileSwipeBack = (event: Event) => {
+      if (!isMobileViewport) return;
+      if (conversationInfoOpen) {
+        event.preventDefault();
+        setConversationInfoOpen(false);
+        return;
+      }
+      if (mobileTab === "conversations" && mobileConversationView === "thread") {
+        event.preventDefault();
+        setMobileConversationView("list");
+        return;
+      }
+      if (mobileTab === "self" && mobileSelfSection !== "home") {
+        event.preventDefault();
+        setMobileSelfSection("home");
+      }
+    };
+    window.addEventListener(MOBILE_SWIPE_BACK_EVENT, handleMobileSwipeBack);
+    return () => {
+      window.removeEventListener(MOBILE_SWIPE_BACK_EVENT, handleMobileSwipeBack);
+    };
+  }, [conversationInfoOpen, isMobileViewport, mobileConversationView, mobileSelfSection, mobileTab]);
 
   const accountId =
     payload && typeof payload.accountId === "string" && /^\d{8}$/.test(payload.accountId.trim())

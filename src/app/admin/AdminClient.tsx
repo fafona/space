@@ -241,6 +241,7 @@ import { buildFaollaShellHref, isFaollaSectionSearch, resolveFaollaEntryUrlFromB
 import { LANGUAGE_OPTIONS, resolveSupportedLocale } from "@/lib/i18n";
 import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
 import { getMerchantServiceState } from "@/lib/merchantServiceStatus";
+import { MOBILE_SWIPE_BACK_EVENT } from "@/lib/mobileSwipeBack";
 
 function DeferredAdminPanelLoading({ label }: { label: string }) {
   return (
@@ -10664,6 +10665,38 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     isMobileSupportDialog &&
     supportMobileView === "thread" &&
     (supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY || !!selectedSupportPeerContact);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleMobileSwipeBack = (event: Event) => {
+      if (!supportInterfaceOpen || !isMobileSupportDialog) return;
+      if (supportMerchantInfoSheetOpen) {
+        event.preventDefault();
+        setSupportMerchantInfoSheetOpen(false);
+        return;
+      }
+      if (supportMobileView === "thread") {
+        event.preventDefault();
+        closeMobileSupportThread();
+        return;
+      }
+      if (supportMobileHomeTab === "self" && supportSelfSectionView !== "home") {
+        event.preventDefault();
+        setSupportSelfSectionView("home");
+      }
+    };
+    window.addEventListener(MOBILE_SWIPE_BACK_EVENT, handleMobileSwipeBack);
+    return () => {
+      window.removeEventListener(MOBILE_SWIPE_BACK_EVENT, handleMobileSwipeBack);
+    };
+  }, [
+    closeMobileSupportThread,
+    isMobileSupportDialog,
+    supportInterfaceOpen,
+    supportMerchantInfoSheetOpen,
+    supportMobileHomeTab,
+    supportMobileView,
+    supportSelfSectionView,
+  ]);
   useEffect(() => {
     supportMessageElementByKeyRef.current = {};
   }, [supportSelectedContactKey]);

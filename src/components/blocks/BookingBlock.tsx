@@ -38,6 +38,7 @@ import { getBlockBorderClass, getBlockBorderInlineStyle } from "./borderStyle";
 import { resolveMobileFitCardClass, resolveMobileFitSectionClass } from "./mobileFrame";
 import { toRichHtml } from "./richText";
 import { resolveFrontendAuthPayload } from "@/lib/authSessionRecovery";
+import { MOBILE_SWIPE_BACK_EVENT } from "@/lib/mobileSwipeBack";
 import { readPersonalCustomerProfileFromSession, type PersonalCustomerProfile } from "@/lib/personalCustomerProfile";
 import { notifyPersonalConsumptionChanged } from "@/lib/personalConsumptionBridge";
 
@@ -244,6 +245,18 @@ export default function BookingBlock({
   const restoredEditToken = restoredParams.editToken;
   const restoredBlockId = restoredParams.bookingBlockId;
   const restoredViewport = restoredParams.bookingViewport;
+
+  useEffect(() => {
+    if (typeof window === "undefined" || mode !== "form" || !submittedState) return;
+    const handleMobileSwipeBack = (event: Event) => {
+      event.preventDefault();
+      setMode("success");
+    };
+    window.addEventListener(MOBILE_SWIPE_BACK_EVENT, handleMobileSwipeBack);
+    return () => {
+      window.removeEventListener(MOBILE_SWIPE_BACK_EVENT, handleMobileSwipeBack);
+    };
+  }, [mode, submittedState]);
 
   useEffect(() => {
     setDraft((current) => buildInitialDraft(storeOptions, itemOptions, titleOptions, current));

@@ -4,6 +4,7 @@ import Script from "next/script";
 import ClientDomTranslator from "@/components/ClientDomTranslator";
 import GlobalLanguageSwitcher from "@/components/GlobalLanguageSwitcher";
 import { I18nProvider } from "@/components/I18nProvider";
+import MobileSwipeBack from "@/components/MobileSwipeBack";
 import PwaBootstrapLoader from "@/components/PwaBootstrapLoader";
 import UnhandledRejectionGuard from "@/components/UnhandledRejectionGuard";
 import "./globals.css";
@@ -197,6 +198,7 @@ export default async function RootLayout({
           <UnhandledRejectionGuard />
           <PwaBootstrapLoader />
           <GlobalLanguageSwitcher />
+          <MobileSwipeBack />
           {children}
         </I18nProvider>
       </body>

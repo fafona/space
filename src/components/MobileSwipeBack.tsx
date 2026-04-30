@@ -1,0 +1,161 @@
+"use client";
+
+import { useEffect, useRef } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import {
+  createMobileSwipeBackEvent,
+  isMobileSwipeBackGesture,
+  resolveMobileSwipeBackHref,
+} from "@/lib/mobileSwipeBack";
+
+type SwipeStart = {
+  x: number;
+  y: number;
+  startedAt: number;
+  target: EventTarget | null;
+  viewportWidth: number;
+};
+
+const INTERACTIVE_SWIPE_START_SELECTOR = [
+  "button",
+  "input",
+  "textarea",
+  "select",
+  "option",
+  "summary",
+  "[contenteditable='true']",
+  "[role='button']",
+  "[role='slider']",
+  "[role='switch']",
+  "[data-mobile-swipe-back-ignore]",
+  ".support-mobile-nav-shell",
+].join(",");
+
+function isMobileSwipeBackEnabled() {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
+  return window.matchMedia("(max-width: 767px), (pointer: coarse)").matches;
+}
+
+function getTargetElement(target: EventTarget | null) {
+  if (!target) return null;
+  if (target instanceof Element) return target;
+  if (target instanceof Node) return target.parentElement;
+  return null;
+}
+
+function isInteractiveSwipeStart(target: EventTarget | null) {
+  const element = getTargetElement(target);
+  return Boolean(element?.closest(INTERACTIVE_SWIPE_START_SELECTOR));
+}
+
+function hasHorizontalScrollAncestor(target: EventTarget | null) {
+  const element = getTargetElement(target);
+  if (!element || typeof window === "undefined") return false;
+
+  for (let node: Element | null = element; node && node !== document.body; node = node.parentElement) {
+    const style = window.getComputedStyle(node);
+    const scrollable = style.overflowX === "auto" || style.overflowX === "scroll";
+    if (scrollable && node.scrollWidth > node.clientWidth + 16) return true;
+  }
+  return false;
+}
+
+function getSearchString(searchParams: ReturnType<typeof useSearchParams>) {
+  const value = searchParams?.toString() ?? "";
+  return value ? `?${value}` : "";
+}
+
+export default function MobileSwipeBack() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const swipeStartRef = useRef<SwipeStart | null>(null);
+  const pathnameRef = useRef(pathname ?? "/");
+  const searchRef = useRef(getSearchString(searchParams));
+
+  useEffect(() => {
+    pathnameRef.current = pathname ?? "/";
+    searchRef.current = getSearchString(searchParams);
+  }, [pathname, searchParams]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof document === "undefined") return;
+
+    const resetSwipe = () => {
+      swipeStartRef.current = null;
+    };
+
+    const handleTouchStart = (event: TouchEvent) => {
+      if (!isMobileSwipeBackEnabled() || event.touches.length !== 1) {
+        resetSwipe();
+        return;
+      }
+      if (isInteractiveSwipeStart(event.target) || hasHorizontalScrollAncestor(event.target)) {
+        resetSwipe();
+        return;
+      }
+
+      const touch = event.touches[0];
+      if (!touch) return;
+      swipeStartRef.current = {
+        x: touch.clientX,
+        y: touch.clientY,
+        startedAt: Date.now(),
+        target: event.target,
+        viewportWidth: window.innerWidth || document.documentElement.clientWidth || 0,
+      };
+    };
+
+    const handleTouchEnd = (event: TouchEvent) => {
+      const start = swipeStartRef.current;
+      resetSwipe();
+      if (!start || event.changedTouches.length !== 1) return;
+
+      const touch = event.changedTouches[0];
+      if (!touch) return;
+      if (
+        !isMobileSwipeBackGesture({
+          startX: start.x,
+          startY: start.y,
+          endX: touch.clientX,
+          endY: touch.clientY,
+          viewportWidth: start.viewportWidth,
+          elapsedMs: Date.now() - start.startedAt,
+        })
+      ) {
+        return;
+      }
+
+      const origin = window.location.origin;
+      const currentPathname = pathnameRef.current || "/";
+      const currentSearch = searchRef.current;
+      const fallbackHref = resolveMobileSwipeBackHref(currentPathname, currentSearch, origin);
+      const swipeEvent = createMobileSwipeBackEvent({
+        pathname: currentPathname,
+        search: currentSearch,
+        fallbackHref,
+        origin,
+      });
+
+      window.dispatchEvent(swipeEvent);
+      if (swipeEvent.defaultPrevented || !fallbackHref) return;
+
+      if (/^https?:\/\//i.test(fallbackHref)) {
+        window.location.assign(fallbackHref);
+        return;
+      }
+      router.push(fallbackHref);
+    };
+
+    document.addEventListener("touchstart", handleTouchStart, { capture: true, passive: true });
+    document.addEventListener("touchend", handleTouchEnd, { capture: true, passive: true });
+    document.addEventListener("touchcancel", resetSwipe, { capture: true, passive: true });
+    return () => {
+      document.removeEventListener("touchstart", handleTouchStart, { capture: true });
+      document.removeEventListener("touchend", handleTouchEnd, { capture: true });
+      document.removeEventListener("touchcancel", resetSwipe, { capture: true });
+    };
+  }, [router]);
+
+  return null;
+}
