@@ -4924,14 +4924,13 @@ export default function MePage() {
                         <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${getPersonalStatusBadgeClass(status)}`}>
                           {getPersonalBookingStatusText(status)}
                         </span>
-                        <div className="truncate text-base font-semibold text-slate-900">{contact.name}</div>
                       </div>
                       <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
                         <span>{`预约号: ${booking.id}`}</span>
                         <span>{`创建时间: ${formatPersonalRecordDateTime(booking.createdAt)}`}</span>
                       </div>
                     </div>
-                    {canOpenConversation || contactEmail || contactPhone ? (
+                    {canOpenConversation ? (
                       <div className="flex shrink-0 items-center gap-2">
                         {canOpenConversation ? (
                           <button
@@ -4949,26 +4948,6 @@ export default function MePage() {
                           >
                             <ChatIcon />
                           </button>
-                        ) : null}
-                        {contactEmail ? (
-                          <a
-                            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
-                            href={`mailto:${contactEmail}`}
-                            title="联系商家邮箱"
-                            aria-label="联系商家邮箱"
-                          >
-                            <MailIcon />
-                          </a>
-                        ) : null}
-                        {contactPhone ? (
-                          <a
-                            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#007AFF] text-white shadow-sm transition hover:bg-[#0066D6]"
-                            href={buildPhoneHref(contactPhone)}
-                            title="拨打商家电话"
-                            aria-label="拨打商家电话"
-                          >
-                            <PhoneIcon />
-                          </a>
                         ) : null}
                       </div>
                     ) : null}
@@ -5222,7 +5201,6 @@ export default function MePage() {
                         <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${getPersonalStatusBadgeClass(status)}`}>
                           {getPersonalOrderStatusText(status)}
                         </span>
-                        <div className="truncate text-base font-semibold text-slate-900">{contact.name}</div>
                       </div>
                       <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
                         <span>{`订单号: ${order.id}`}</span>
@@ -5255,26 +5233,6 @@ export default function MePage() {
                           >
                             <ChatIcon />
                           </button>
-                        ) : null}
-                        {contactEmail ? (
-                          <a
-                            className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
-                            href={`mailto:${contactEmail}`}
-                            title="联系商家邮箱"
-                            aria-label="联系商家邮箱"
-                          >
-                            <MailIcon />
-                          </a>
-                        ) : null}
-                        {contactPhone ? (
-                          <a
-                            className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-[#007AFF] text-white shadow-sm transition hover:bg-[#0066D6]"
-                            href={buildPhoneHref(contactPhone)}
-                            title="拨打商家电话"
-                            aria-label="拨打商家电话"
-                          >
-                            <PhoneIcon />
-                          </a>
                         ) : null}
                       </div>
                     </div>
