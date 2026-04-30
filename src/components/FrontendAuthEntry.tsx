@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { MerchantCookieSessionPayload } from "@/lib/authSessionRecovery";
 import { buildBackendFaollaHref, isFaollaAppShellSearch } from "@/lib/faollaEntry";
+import { readFrontendAuthMerchantIds, resolveFrontendAuthAvatarUrl } from "@/lib/frontendAuthAvatar";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import { buildMerchantBackendHref } from "@/lib/siteRouting";
@@ -14,6 +15,7 @@ type FrontendAuthEntryProps = {
   loginClassName?: string;
   avatarClassName?: string;
   currentMerchantId?: string;
+  merchantName?: string;
   merchantAvatarUrl?: string;
   autoOpenWorkspace?: boolean;
 };
@@ -26,22 +28,6 @@ type PersonalProfileResponsePayload = {
 
 function trimText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
-}
-
-function readFrontendAuthMerchantIds(payload: { merchantId?: unknown; merchantIds?: unknown } | null | undefined) {
-  const merchantIds: string[] = [];
-  const pushId = (value: unknown) => {
-    const trimmed = trimText(value);
-    if (!trimmed || merchantIds.includes(trimmed)) return;
-    merchantIds.push(trimmed);
-  };
-
-  pushId(payload?.merchantId);
-  if (Array.isArray(payload?.merchantIds)) {
-    payload.merchantIds.forEach(pushId);
-  }
-
-  return merchantIds;
 }
 
 async function resolveDeferredFrontendAuthPayload(timeoutMs: number) {
@@ -215,6 +201,7 @@ export default function FrontendAuthEntry({
   loginClassName = "",
   avatarClassName = "",
   currentMerchantId = "",
+  merchantName = "",
   merchantAvatarUrl = "",
   autoOpenWorkspace = false,
 }: FrontendAuthEntryProps) {
@@ -404,11 +391,18 @@ export default function FrontendAuthEntry({
     payload.accountType === "merchant" && currentMerchantId.trim() && merchantIds.includes(currentMerchantId.trim());
   const merchantPreviewApplies =
     payload.accountType === "merchant" && merchantPreview.merchantId && merchantIds.includes(merchantPreview.merchantId);
-  const name = (merchantPreviewApplies ? merchantPreview.name : "") || readSessionDisplayName(payload);
+  const merchantContextName =
+    (merchantPreviewApplies ? merchantPreview.name : "") || (currentSiteBelongsToSession ? merchantName.trim() : "");
+  const name = (payload.accountType === "merchant" ? merchantContextName : "") || readSessionDisplayName(payload);
   const avatarUrl = normalizePublicAssetUrl(
-    readSessionAvatarUrl(payload) ||
-      (merchantPreviewApplies ? merchantPreview.avatarUrl : "") ||
-      (currentSiteBelongsToSession ? merchantAvatarUrl : ""),
+    resolveFrontendAuthAvatarUrl({
+      accountType: payload.accountType,
+      sessionAvatarUrl: readSessionAvatarUrl(payload),
+      merchantPreviewAvatarUrl: merchantPreview.avatarUrl,
+      currentMerchantAvatarUrl: merchantAvatarUrl,
+      merchantPreviewApplies: Boolean(merchantPreviewApplies),
+      currentSiteBelongsToSession: Boolean(currentSiteBelongsToSession),
+    }),
   );
   const avatarLabel = getAvatarLabel(name);
   const accountId = readSessionAccountId(payload, merchantIds);

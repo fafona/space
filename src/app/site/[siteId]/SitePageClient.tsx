@@ -483,6 +483,7 @@ export function SitePageClient({
         <div className={authEntryClassName}>
           <FrontendAuthEntry
             currentMerchantId={site?.id ?? siteId}
+            merchantName={effectiveMerchantName}
             merchantAvatarUrl={site?.chatAvatarImageUrl ?? site?.merchantCardImageUrl ?? ""}
           />
         </div>

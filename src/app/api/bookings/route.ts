@@ -112,13 +112,9 @@ export async function POST(request: Request) {
           user: personalSession.user,
         })
       : null;
-    const merchantCustomerSession = personalSession
-      ? null
-      : await resolveMerchantSessionFromRequest(request).catch(() => null);
-    const fallbackCustomerEmail = personalProfile?.email || personalProof?.email || merchantCustomerSession?.merchantEmail || "";
+    const fallbackCustomerEmail = personalProfile?.email || personalProof?.email || "";
     const fallbackCustomerName =
       personalProfile?.name ||
-      merchantCustomerSession?.merchantName ||
       (fallbackCustomerEmail.includes("@") ? fallbackCustomerEmail.split("@")[0] ?? "" : "");
     const created = await createMerchantBooking({
       siteId,
@@ -133,9 +129,9 @@ export async function POST(request: Request) {
       email: trimText(body.email) || fallbackCustomerEmail,
       phone: trimText(body.phone) || personalProfile?.phone || "",
       note: String(body.note ?? ""),
-      customerAccountId: personalSession?.accountId ?? personalProof?.accountId ?? merchantCustomerSession?.merchantId ?? "",
+      customerAccountId: personalSession?.accountId ?? personalProof?.accountId ?? "",
       customerUserId: personalSession?.userId ?? personalProof?.userId ?? "",
-      customerLoginEmail: personalSession?.email ?? personalProof?.email ?? merchantCustomerSession?.merchantEmail ?? "",
+      customerLoginEmail: personalSession?.email ?? personalProof?.email ?? "",
     });
 
     const supabase = createServerSupabaseServiceClient();

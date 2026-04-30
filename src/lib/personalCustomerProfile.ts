@@ -36,9 +36,21 @@ function readMetadataString(metadata: Record<string, unknown> | null | undefined
   return "";
 }
 
+function createEmptyPersonalCustomerProfile(): PersonalCustomerProfile {
+  return {
+    accountId: "",
+    userId: "",
+    name: "",
+    phone: "",
+    email: "",
+    loginEmail: "",
+  };
+}
+
 export function readPersonalCustomerProfileFromSession(
   payload: PersonalCustomerSessionPayload | null | undefined,
 ): PersonalCustomerProfile {
+  if (payload?.accountType !== "personal") return createEmptyPersonalCustomerProfile();
   const user = payload?.user ?? null;
   const userMetadata = readRecord(user?.user_metadata);
   const appMetadata = readRecord(user?.app_metadata);

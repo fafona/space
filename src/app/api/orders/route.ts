@@ -101,13 +101,9 @@ export async function POST(request: Request) {
           user: personalSession.user,
         })
       : null;
-    const merchantCustomerSession = personalSession
-      ? null
-      : await resolveMerchantSessionFromRequest(request).catch(() => null);
-    const fallbackCustomerEmail = personalProfile?.email || personalProof?.email || merchantCustomerSession?.merchantEmail || "";
+    const fallbackCustomerEmail = personalProfile?.email || personalProof?.email || "";
     const fallbackCustomerName =
       personalProfile?.name ||
-      merchantCustomerSession?.merchantName ||
       (fallbackCustomerEmail.includes("@") ? fallbackCustomerEmail.split("@")[0] ?? "" : "");
     const customer = {
       ...(body.customer ?? {}),
@@ -122,9 +118,9 @@ export async function POST(request: Request) {
       blockId: String(body.blockId ?? "").trim(),
       pricePrefix: String(body.pricePrefix ?? "").trim(),
       customer,
-      customerAccountId: personalSession?.accountId ?? personalProof?.accountId ?? merchantCustomerSession?.merchantId ?? "",
+      customerAccountId: personalSession?.accountId ?? personalProof?.accountId ?? "",
       customerUserId: personalSession?.userId ?? personalProof?.userId ?? "",
-      customerLoginEmail: personalSession?.email ?? personalProof?.email ?? merchantCustomerSession?.merchantEmail ?? "",
+      customerLoginEmail: personalSession?.email ?? personalProof?.email ?? "",
       items: Array.isArray(body.items) ? body.items : [],
     });
     return NextResponse.json({ ok: true, order });
