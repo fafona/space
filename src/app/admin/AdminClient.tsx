@@ -7162,20 +7162,26 @@ export default function AdminClient({
       authSubscription = data.subscription;
     };
 
+    const gatewayReadyTask = canReachSupabaseGateway(Math.min(3000, AUTH_CHECK_TIMEOUT_MS)).catch(() => false);
+    const initialMerchantPayloadTask = !isPlatformEditor
+      ? withTimeout(
+          readMerchantSessionPayload(Math.max(2200, Math.min(7000, AUTH_CHECK_TIMEOUT_MS))),
+          AUTH_CHECK_TIMEOUT_MS,
+          "登录检查超时，已使用本地缓存继续编辑",
+        ).catch(() => null)
+      : null;
+
     (async () => {
       try {
-        const gatewayReady = await canReachSupabaseGateway(Math.min(3000, AUTH_CHECK_TIMEOUT_MS));
-        if (!mounted) return;
-        if (!gatewayReady) {
-          setBackendNotice(isPlatformEditor ? "后端连接不稳定，正在尝试直接获取远端内容..." : null);
-        }
+        let gatewayReady: boolean | null = null;
+        const readGatewayReady = async () => {
+          if (gatewayReady !== null) return gatewayReady;
+          gatewayReady = await gatewayReadyTask;
+          return gatewayReady;
+        };
 
         if (!isPlatformEditor) {
-          let merchantPayload = await withTimeout(
-            readMerchantSessionPayload(Math.max(2200, Math.min(7000, AUTH_CHECK_TIMEOUT_MS))),
-            AUTH_CHECK_TIMEOUT_MS,
-            "登录检查超时，已使用本地缓存继续编辑",
-          ).catch(() => null);
+          let merchantPayload = initialMerchantPayloadTask ? await initialMerchantPayloadTask : null;
           let merchantIds = merchantPayload?.authenticated === true ? readMerchantSessionMerchantIds(merchantPayload) : [];
           let merchantId = merchantIds.find((item) => isMerchantNumericId(item)) ?? merchantIds[0] ?? "";
           let merchantEmail =
@@ -7223,7 +7229,9 @@ export default function AdminClient({
           }
 
           if (!merchantId && !merchantEmail) {
-            if (!gatewayReady) {
+            const merchantGatewayReady = await readGatewayReady();
+            if (!mounted) return;
+            if (!merchantGatewayReady) {
               releaseCheckingScreen({ notice: BACKEND_UNAVAILABLE_NOTICE });
               return;
             }
@@ -7276,15 +7284,13 @@ export default function AdminClient({
               })
             : Promise.resolve(null);
           if (initialCached.length > 0) {
-            await currentMerchantProfileTask.catch(() => null);
-            if (!mounted) return;
+            void currentMerchantProfileTask.catch(() => null);
             releaseCheckingScreen();
           }
           const identityNotice = getMerchantIdentityNotice(resolvedMerchantIds);
           if (identityNotice) {
             setHasEditorContent(true);
-            await currentMerchantProfileTask.catch(() => null);
-            if (!mounted) return;
+            void currentMerchantProfileTask.catch(() => null);
             releaseCheckingScreen({ notice: identityNotice });
             return;
           }
@@ -7304,8 +7310,7 @@ export default function AdminClient({
               }
             });
             markRemoteDraftApplied(remoteDraft.updatedAt, remoteDraftScopes);
-            await currentMerchantProfileTask.catch(() => null);
-            if (!mounted) return;
+            void currentMerchantProfileTask.catch(() => null);
             releaseCheckingScreen({ notice: null });
             return;
           }
@@ -7330,20 +7335,26 @@ export default function AdminClient({
                 savePublishedBlocksToStorage(combinedLoaded, scope);
               }
             });
-            await currentMerchantProfileTask.catch(() => null);
-            if (!mounted) return;
+            void currentMerchantProfileTask.catch(() => null);
             releaseCheckingScreen({ notice: null });
             return;
           }
 
           setHasEditorContent(true);
           setRemoteContentVerified(resolveCachedRemoteVerification(getRemoteVerificationScopes(resolvedMerchantIds)));
-          await currentMerchantProfileTask.catch(() => null);
+          void currentMerchantProfileTask.catch(() => null);
+          const merchantGatewayReady = await readGatewayReady();
           if (!mounted) return;
           releaseCheckingScreen({
-            notice: gatewayReady ? null : "当前内容加载不完整，请刷新页面或重新登录后重试。",
+            notice: merchantGatewayReady ? null : "当前内容加载不完整，请刷新页面或重新登录后重试。",
           });
           return;
+        }
+
+        gatewayReady = await readGatewayReady();
+        if (!mounted) return;
+        if (!gatewayReady) {
+          setBackendNotice("后端连接不稳定，正在尝试直接获取远端内容...");
         }
 
         const {
