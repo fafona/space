@@ -49,17 +49,9 @@ import {
   isSupportShortMerchantCardLink,
   parseSupportMessageAttachmentPreview,
 } from "@/lib/supportMessageAttachments";
-import {
-  joinMerchantBookingDateTime,
-  splitMerchantBookingDateTime,
-  type MerchantBookingEditableInput,
-  type MerchantBookingRecord,
-} from "@/lib/merchantBookings";
+import type { MerchantBookingEditableInput, MerchantBookingRecord } from "@/lib/merchantBookings";
 import { getMerchantBookingDayLabel } from "@/lib/merchantBookingLocale";
-import {
-  formatMerchantOrderAmount,
-  type MerchantOrderRecord,
-} from "@/lib/merchantOrders";
+import type { MerchantOrderRecord } from "@/lib/merchantOrders";
 
 const MerchantBusinessCardManager = dynamic(() => import("@/components/admin/MerchantBusinessCardManager"), {
   ssr: false,
@@ -279,6 +271,27 @@ function trimText(value: unknown) {
   if (typeof value === "string") return value.trim();
   if (typeof value === "number" && Number.isFinite(value)) return String(value);
   return "";
+}
+
+function splitPersonalBookingDateTime(value: string | null | undefined): { date: string; time: string } {
+  const normalized = trimText(value);
+  const matched = normalized.match(/^(\d{4}-\d{2}-\d{2})(?:[T\s](\d{2}:\d{2}))?/);
+  return {
+    date: matched?.[1] ?? "",
+    time: matched?.[2] ?? "",
+  };
+}
+
+function joinPersonalBookingDateTime(date: string, time: string) {
+  const normalizedDate = trimText(date);
+  const normalizedTime = trimText(time);
+  if (!normalizedDate) return "";
+  return normalizedTime ? `${normalizedDate}T${normalizedTime}` : normalizedDate;
+}
+
+function formatPersonalOrderAmount(amount: number, pricePrefix: string) {
+  const normalized = Math.max(0, Number.isFinite(amount) ? amount : 0);
+  return `${trimText(pricePrefix)}${normalized.toFixed(2)}`;
 }
 
 function readRecord(value: unknown): Record<string, unknown> | null {
@@ -891,7 +904,7 @@ function canCancelPersonalOrder(record: MerchantOrderRecord) {
 }
 
 function createPersonalBookingEditDraft(record: MerchantBookingRecord): PersonalBookingEditDraft {
-  const appointmentParts = splitMerchantBookingDateTime(record.appointmentAt);
+  const appointmentParts = splitPersonalBookingDateTime(record.appointmentAt);
   return {
     store: record.store || "",
     item: record.item || "",
@@ -914,7 +927,7 @@ function buildPersonalBookingEditableInput(draft: PersonalBookingEditDraft): Par
     email: draft.email,
     phone: draft.phone,
     note: draft.note,
-    appointmentAt: joinMerchantBookingDateTime(draft.date, draft.time),
+    appointmentAt: joinPersonalBookingDateTime(draft.date, draft.time),
   };
 }
 
@@ -4696,7 +4709,7 @@ export default function MePage() {
   }
 
   function renderPersonalAppointmentSummary(appointmentAt: string) {
-    const parts = splitMerchantBookingDateTime(appointmentAt);
+    const parts = splitPersonalBookingDateTime(appointmentAt);
     const dayLabel = getMerchantBookingDayLabel(parts.date, locale);
     const isTodayAppointment = Boolean(parts.date) && parts.date === getTodayDateValue();
     if (!parts.date && !parts.time) return <div className="text-sm font-semibold text-slate-900">-</div>;
@@ -5197,7 +5210,7 @@ export default function MePage() {
 
                     <div className="flex shrink-0 flex-col items-end gap-2">
                       <div className="text-right text-lg font-semibold text-slate-900">
-                        {formatMerchantOrderAmount(order.totalAmount, order.pricePrefix)}
+                        {formatPersonalOrderAmount(order.totalAmount, order.pricePrefix)}
                       </div>
                       <div className="flex flex-wrap justify-end gap-2">
                         {canOpenConversation ? (
@@ -5331,7 +5344,7 @@ export default function MePage() {
 
                 <div className="flex shrink-0 flex-col items-end gap-2">
                   <div className="text-right text-lg font-semibold text-slate-900">
-                    {formatMerchantOrderAmount(order.totalAmount, order.pricePrefix)}
+                    {formatPersonalOrderAmount(order.totalAmount, order.pricePrefix)}
                   </div>
                   {canCancel ? (
                     <button
