@@ -1533,12 +1533,13 @@ export default function MerchantBookingManagerDialog({
                           </div>
                         </div>
 
-                        <div className="flex min-w-[320px] items-center gap-2 text-[13px] leading-5 text-slate-700">
-                          {record.customerAccountId ? (
-                            <span className="shrink-0 rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 shadow-sm">
-                              ID {record.customerAccountId}
-                            </span>
-                          ) : null}
+                        <div className="grid min-w-[580px] grid-cols-[5.75rem_2rem_minmax(12rem,1fr)_2rem_9rem_2rem] items-center gap-2 text-[13px] leading-5 text-slate-700">
+                          <span
+                            className={`inline-flex h-8 w-[5.75rem] items-center justify-center rounded-full bg-white px-2 text-xs font-semibold text-slate-600 shadow-sm ${record.customerAccountId ? "" : "invisible"}`}
+                            aria-hidden={!record.customerAccountId}
+                          >
+                            ID {record.customerAccountId || "00000000"}
+                          </span>
                           {canOpenConversation ? (
                             <button
                               type="button"
@@ -1556,8 +1557,10 @@ export default function MerchantBookingManagerDialog({
                             >
                               <ChatIcon />
                             </button>
-                          ) : null}
-                          <span className="min-w-0 flex-1 truncate">{`${getMerchantBookingFieldText("email", locale)}: ${record.email || "-"}`}</span>
+                          ) : (
+                            <span className="h-8 w-8" aria-hidden="true" />
+                          )}
+                          <span className="min-w-0 truncate">{`${getMerchantBookingFieldText("email", locale)}: ${record.email || "-"}`}</span>
                           {record.email ? (
                             <a
                               className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
@@ -1581,11 +1584,10 @@ export default function MerchantBookingManagerDialog({
                             >
                               <MailIcon />
                             </a>
-                          ) : null}
-                        </div>
-
-                        <div className="flex min-w-[240px] items-center gap-2 text-[13px] leading-5 text-slate-700">
-                          <span className="min-w-0 flex-1 truncate">{`${getMerchantBookingFieldText("phone", locale)}: ${record.phone || "-"}`}</span>
+                          ) : (
+                            <span className="h-8 w-8" aria-hidden="true" />
+                          )}
+                          <span className="min-w-0 truncate">{`${getMerchantBookingFieldText("phone", locale)}: ${record.phone || "-"}`}</span>
                           {record.phone ? (
                             <a
                               className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#007AFF] text-white shadow-sm transition hover:bg-[#0066D6]"
@@ -1598,7 +1600,9 @@ export default function MerchantBookingManagerDialog({
                             >
                               <PhoneIcon />
                             </a>
-                          ) : null}
+                          ) : (
+                            <span className="h-8 w-8" aria-hidden="true" />
+                          )}
                         </div>
                       </div>
 

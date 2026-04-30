@@ -1249,13 +1249,14 @@ export default function MerchantOrderManagerDialog({
                             <span>{`下单时间: ${formatDateTime(record.createdAt)}`}</span>
                           </div>
                         </div>
-                        {canOpenConversation || record.customer.email ? (
-                          <div className="flex min-w-[320px] items-center gap-2 text-[13px] leading-5 text-slate-700">
-                            {record.customerAccountId ? (
-                              <span className="shrink-0 rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 shadow-sm">
-                                ID {record.customerAccountId}
-                              </span>
-                            ) : null}
+                        {record.customerAccountId || canOpenConversation || record.customer.email || record.customer.phone ? (
+                          <div className="grid min-w-[580px] grid-cols-[5.75rem_2rem_minmax(12rem,1fr)_2rem_9rem_2rem] items-center gap-2 text-[13px] leading-5 text-slate-700">
+                            <span
+                              className={`inline-flex h-8 w-[5.75rem] items-center justify-center rounded-full bg-white px-2 text-xs font-semibold text-slate-600 shadow-sm ${record.customerAccountId ? "" : "invisible"}`}
+                              aria-hidden={!record.customerAccountId}
+                            >
+                              ID {record.customerAccountId || "00000000"}
+                            </span>
                             {canOpenConversation ? (
                               <button
                                 type="button"
@@ -1274,8 +1275,10 @@ export default function MerchantOrderManagerDialog({
                               >
                                 <ChatIcon />
                               </button>
-                            ) : null}
-                            <span className="min-w-0 flex-1 truncate">{`邮箱: ${record.customer.email || "-"}`}</span>
+                            ) : (
+                              <span className="h-8 w-8" aria-hidden="true" />
+                            )}
+                            <span className="min-w-0 truncate">{`邮箱: ${record.customer.email || "-"}`}</span>
                             {record.customer.email ? (
                               <a
                                 className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
@@ -1289,24 +1292,26 @@ export default function MerchantOrderManagerDialog({
                             >
                               <MailIcon />
                               </a>
-                            ) : null}
-                          </div>
-                        ) : null}
-                        {record.customer.phone ? (
-                          <div className="flex min-w-[240px] items-center gap-2 text-[13px] leading-5 text-slate-700">
-                            <span className="min-w-0 flex-1 truncate">{`电话: ${record.customer.phone}`}</span>
-                            <a
-                              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#007AFF] text-white shadow-sm transition hover:bg-[#0066D6]"
-                              href={`tel:${record.customer.phone}`}
-                              onClick={() => {
-                                void markOrderTouched(record.id);
-                              }}
-                              title="拨打电话"
-                              aria-label="拨打电话"
-                              data-skip-selection-toggle="true"
-                            >
-                              <PhoneIcon />
-                            </a>
+                            ) : (
+                              <span className="h-8 w-8" aria-hidden="true" />
+                            )}
+                            <span className="min-w-0 truncate">{`电话: ${record.customer.phone || "-"}`}</span>
+                            {record.customer.phone ? (
+                              <a
+                                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#007AFF] text-white shadow-sm transition hover:bg-[#0066D6]"
+                                href={`tel:${record.customer.phone}`}
+                                onClick={() => {
+                                  void markOrderTouched(record.id);
+                                }}
+                                title="拨打电话"
+                                aria-label="拨打电话"
+                                data-skip-selection-toggle="true"
+                              >
+                                <PhoneIcon />
+                              </a>
+                            ) : (
+                              <span className="h-8 w-8" aria-hidden="true" />
+                            )}
                           </div>
                         ) : null}
                       </div>
