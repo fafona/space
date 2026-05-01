@@ -3,7 +3,7 @@ import test from "node:test";
 import { createDefaultMerchantPermissionConfig } from "@/data/platformControlStore";
 import type { Block } from "@/data/homeBlocks";
 import { normalizeMerchantBusinessCards } from "@/lib/merchantBusinessCards";
-import { buildPersistedBlocksFromPlanConfig, type PagePlanConfig } from "@/lib/pagePlans";
+import { buildPersistedBlocksFromPlanConfig, buildSinglePlanPublishConfig, type PagePlanConfig } from "@/lib/pagePlans";
 import {
   getMerchantBusinessCardPermissionViolation,
   getMerchantPublishPermissionViolation,
@@ -88,6 +88,31 @@ test("getMerchantPublishPermissionViolation blocks distinct extra plans beyond t
   const violation = getMerchantPublishPermissionViolation(permission, blocks);
 
   assert.equal(violation?.code, "plan_limit_exceeded");
+});
+
+test("getMerchantPublishPermissionViolation allows single selected plan publish payloads", () => {
+  const permission = {
+    ...createDefaultMerchantPermissionConfig(),
+    planLimit: 1,
+    allowButtonBlock: true,
+  };
+  const sourceConfig = createPlanConfig([
+    [{ id: "nav-1", type: "nav", props: { text: "plan-1" } as never } as Block],
+    [
+      { id: "nav-2", type: "nav", props: { text: "plan-2" } as never } as Block,
+      { id: "button-1", type: "button", props: { buttonText: "Go" } as never } as Block,
+    ],
+  ]);
+  const publishConfig = buildSinglePlanPublishConfig(sourceConfig, "plan-2");
+  const blocks = buildPersistedBlocksFromPlanConfig(publishConfig);
+
+  const violation = getMerchantPublishPermissionViolation(permission, blocks);
+  const persistedConfig = (blocks[0]?.props as { pagePlanConfig?: PagePlanConfig } | undefined)?.pagePlanConfig;
+  const planTexts = persistedConfig?.plans.map((plan) => (plan.pages[0]?.blocks[0]?.props as { text?: string })?.text);
+
+  assert.equal(violation, null);
+  assert.equal(persistedConfig?.activePlanId, "plan-2");
+  assert.deepEqual(planTexts, ["plan-2", "plan-2", "plan-2"]);
 });
 
 test("getMerchantPublishPermissionViolation blocks plans that exceed the page limit", () => {

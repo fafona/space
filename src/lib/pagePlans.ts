@@ -291,6 +291,39 @@ export function getActivePlanBlocks(sourceBlocks: Block[], pageId?: string) {
   return getBlocksForPage(activePlan, pageId || activePlan.activePageId);
 }
 
+export function buildSinglePlanPublishConfig(config: PagePlanConfig, selectedPlanId?: string): PagePlanConfig {
+  const normalizedPlans = PLAN_IDS.map((id) => {
+    const source = config.plans.find((item) => item.id === id);
+    return syncPlanBlocksWithActivePage(
+      source ?? {
+        id,
+        name: DEFAULT_PLAN_NAMES[id],
+        blocks: cloneBlocks(homeBlocks),
+        pages: normalizePlanPages(undefined, homeBlocks),
+        activePageId: makeDefaultPageId(0),
+      },
+    );
+  });
+  const selected =
+    (isValidPlanId(selectedPlanId) ? normalizedPlans.find((plan) => plan.id === selectedPlanId) : null) ??
+    normalizedPlans.find((plan) => plan.id === config.activePlanId) ??
+    normalizedPlans[0];
+  const selectedPages = clonePlanPages(selected.pages);
+  const selectedBlocks = cloneBlocks(selected.blocks);
+
+  return {
+    activePlanId: selected.id,
+    plans: normalizedPlans.map((plan) =>
+      syncPlanBlocksWithActivePage({
+        ...plan,
+        blocks: cloneBlocks(selectedBlocks),
+        pages: clonePlanPages(selectedPages),
+        activePageId: selected.activePageId,
+      }),
+    ),
+  };
+}
+
 export function buildPersistedBlocksFromPlanConfig(config: PagePlanConfig) {
   const normalizedPlans = PLAN_IDS.map((id) => {
     const source = config.plans.find((item) => item.id === id);

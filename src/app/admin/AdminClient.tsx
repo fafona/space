@@ -115,6 +115,7 @@ import { BLOCK_BORDER_STYLE_OPTIONS, getBlockBorderClass, getBlockBorderInlineSt
 import { stripInlineTextColorStylesFromHtml, toInlineHeadingHtmlSegments, toRichHtml } from "@/components/blocks/richText";
 import {
   buildPersistedBlocksFromPlanConfig,
+  buildSinglePlanPublishConfig,
   cloneBlocks,
   getBlocksForPage,
   getPagePlanConfigFromBlocks,
@@ -5962,6 +5963,19 @@ export default function AdminClient({
     return desktopBlocks;
   }
 
+  function getViewportEditingPlanId(viewport: ViewportKey) {
+    return previewViewport === viewport ? editingPlanIdRef.current : viewportStatesRef.current[viewport].editingPlanId;
+  }
+
+  function buildMerchantSinglePlanPublishBlocks(desktopConfig: PagePlanConfig, mobileConfig: PagePlanConfig) {
+    const desktopPlanId = getViewportEditingPlanId("desktop");
+    const mobilePlanId = getViewportEditingPlanId("mobile");
+    return buildCombinedPersistedBlocks(
+      buildSinglePlanPublishConfig(desktopConfig, desktopPlanId),
+      buildSinglePlanPublishConfig(mobileConfig, mobilePlanId),
+    );
+  }
+
   function buildPublishedMerchantSnapshot(): {
     sites: MerchantListPublishedSite[];
     defaultSortRule: MerchantSortRule;
@@ -9687,7 +9701,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       });
       return;
     }
-    let combinedBlocks = injectPublishedMerchantSnapshot(buildCombinedPersistedBlocks(desktopConfig, mobileConfig));
+    let draftBlocks = injectPublishedMerchantSnapshot(buildCombinedPersistedBlocks(desktopConfig, mobileConfig));
+    let combinedBlocks = isPlatformEditor
+      ? draftBlocks
+      : injectPublishedMerchantSnapshot(buildMerchantSinglePlanPublishBlocks(desktopConfig, mobileConfig));
     if (isPlatformEditor) {
       await syncPlatformMerchantSnapshotToServerRef.current();
     }
@@ -9740,7 +9757,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       });
       if (optimization.optimized) {
         combinedBlocks = optimization.blocks;
-        applyPersistedBlocksToEditorRef.current(combinedBlocks, { resetHistory: false });
+        if (isPlatformEditor) {
+          draftBlocks = combinedBlocks;
+          applyPersistedBlocksToEditorRef.current(combinedBlocks, { resetHistory: false });
+        }
         if (optimization.summary) showSavePublishTip(optimization.summary);
       }
       const payload = {
@@ -9813,7 +9833,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         return;
       }
 
-      saveBlocksToStorage(combinedBlocks, storeScope);
+      saveBlocksToStorage(isPlatformEditor ? combinedBlocks : draftBlocks, storeScope);
       recordPublishedVersion(combinedBlocks, storeScope);
       savePublishedBlocksToStorage(combinedBlocks, storeScope);
 
@@ -9917,7 +9937,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       );
       const desktopConfig = previewViewport === "desktop" ? mergedConfig : viewportStatesRef.current.desktop.planConfig;
       const mobileConfig = previewViewport === "mobile" ? mergedConfig : viewportStatesRef.current.mobile.planConfig;
-      const combinedBlocks = buildCombinedPersistedBlocks(desktopConfig, mobileConfig);
+      const combinedBlocks = isPlatformEditor
+        ? buildCombinedPersistedBlocks(desktopConfig, mobileConfig)
+        : buildMerchantSinglePlanPublishBlocks(desktopConfig, mobileConfig);
       const payloadBytes = estimateUtf8Size(JSON.stringify(combinedBlocks));
       const message = error instanceof Error ? error.message : "发布失败，请检查网络后重试";
       savePublishFailureSnapshot({
