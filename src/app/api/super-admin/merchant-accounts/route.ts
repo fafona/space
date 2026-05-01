@@ -20,12 +20,14 @@ import {
   type PlatformAccountType,
 } from "@/lib/platformAccounts";
 import { getTrustedMutationRequestErrorResponse, isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
+import { createServerSupabaseAuthClient, maskEmailAddress } from "@/lib/superAdminServer";
 import { isSuperAdminRequestAuthorized } from "@/lib/superAdminRequestAuth";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const MERCHANT_ACCOUNTS_CACHE_TTL_MS = 30_000;
+const ACCOUNT_DELETE_VERIFICATION_EMAIL = "caimin6669@qq.com";
 
 type MerchantRow = {
   id: string;
@@ -134,6 +136,14 @@ function normalizeAccountValue(value: string | null | undefined) {
   return String(value ?? "").trim().toLowerCase();
 }
 
+function normalizeLoginEmail(value: string | null | undefined) {
+  const normalized = normalizeAccountValue(value);
+  if (!normalized || !normalized.includes("@")) return "";
+  const [localPart, domainPart] = normalized.split("@");
+  if (!localPart || !domainPart || !domainPart.includes(".")) return "";
+  return normalized;
+}
+
 function readMetadataString(metadata: AuthMetadata, ...keys: string[]) {
   if (!metadata || typeof metadata !== "object") return "";
   for (const key of keys) {
@@ -204,6 +214,56 @@ function readAccountMetadata(user?: AuthUserSummary | null) {
 
 function buildManualUserEmail(accountType: PlatformAccountType, accountId: string) {
   return `${accountType === "personal" ? "personal" : "merchant"}-${accountId}@manual.merchant-space.invalid`;
+}
+
+async function sendAccountDeleteVerificationCode() {
+  const supabase = createServerSupabaseAuthClient();
+  if (!supabase) {
+    return NextResponse.json(
+      {
+        error: "account_delete_verification_env_missing",
+        message: "删除验证码服务暂不可用",
+      },
+      { status: 503 },
+    );
+  }
+
+  const { error } = await supabase.auth.signInWithOtp({
+    email: ACCOUNT_DELETE_VERIFICATION_EMAIL,
+    options: {
+      shouldCreateUser: true,
+    },
+  });
+  if (error) {
+    return NextResponse.json(
+      {
+        error: "account_delete_verification_send_failed",
+        message: error.message || "删除验证码发送失败，请稍后重试",
+      },
+      { status: 503 },
+    );
+  }
+
+  return NextResponse.json({
+    ok: true,
+    verificationEmail: ACCOUNT_DELETE_VERIFICATION_EMAIL,
+    maskedEmail: maskEmailAddress(ACCOUNT_DELETE_VERIFICATION_EMAIL),
+  });
+}
+
+async function verifyAccountDeleteCode(code: string) {
+  const normalizedCode = String(code ?? "").trim().replace(/\s+/g, "");
+  if (!normalizedCode || normalizedCode.length < 4) {
+    return "请输入邮件验证码";
+  }
+  const supabase = createServerSupabaseAuthClient();
+  if (!supabase) return "删除验证码服务暂不可用";
+  const { error } = await supabase.auth.verifyOtp({
+    email: ACCOUNT_DELETE_VERIFICATION_EMAIL,
+    token: normalizedCode,
+    type: "email",
+  });
+  return error ? error.message || "验证码无效或已过期" : "";
 }
 
 function isNumericMerchantId(value: string | null | undefined) {
@@ -844,12 +904,18 @@ export async function POST(request: Request) {
 
   try {
     const payload = (await request.json().catch(() => null)) as {
+      action?: unknown;
       accountType?: unknown;
       accountId?: unknown;
       merchantId?: unknown;
+      loginAccount?: unknown;
       username?: unknown;
       password?: unknown;
     } | null;
+    if (payload?.action === "request_delete_code") {
+      return sendAccountDeleteVerificationCode();
+    }
+
     const accountType: PlatformAccountType = payload?.accountType === "personal" ? "personal" : "merchant";
     const accountId =
       typeof payload?.accountId === "string"
@@ -858,7 +924,12 @@ export async function POST(request: Request) {
           ? payload.merchantId.trim()
           : "";
     const merchantId = accountType === "merchant" ? accountId : "";
-    const username = typeof payload?.username === "string" ? payload.username.trim() : "";
+    const loginAccount =
+      typeof payload?.loginAccount === "string"
+        ? payload.loginAccount.trim()
+        : typeof payload?.username === "string"
+          ? payload.username.trim()
+          : "";
     const password = typeof payload?.password === "string" ? payload.password : "";
     if (accountType === "personal" && !isPersonalAccountNumericId(accountId)) {
       return badRequestJson("invalid_personal_id", "个人 ID 必须是 50010105 - 59999999 之间的 8 位数字");
@@ -867,30 +938,41 @@ export async function POST(request: Request) {
       return badRequestJson("invalid_merchant_id", "商户 ID 必须是非个人号段的 8 位数字");
     }
 
-    if (!username) {
-      return badRequestJson("invalid_username", "请输入用户名");
+    if (!loginAccount) {
+      return badRequestJson("invalid_login_account", "请输入账号");
     }
     if (password.length < 6) {
       return badRequestJson("invalid_password", "密码至少 6 位");
     }
 
-    const usernameKey = normalizeAccountValue(username);
-    const manualEmail = buildManualUserEmail(accountType, accountId);
+    const loginAccountKey = normalizeAccountValue(loginAccount);
+    const loginEmail = normalizeLoginEmail(loginAccount);
+    const authEmail = loginEmail || buildManualUserEmail(accountType, accountId);
+    const displayName = loginAccount.trim();
+    const merchantDisplayName = accountType === "merchant" ? accountId : "";
 
-    const [existingMerchantById, existingMerchantByName, authUsersResult] = await Promise.all([
+    const merchantEmailLookups =
+      loginEmail && accountType === "merchant"
+        ? ["email", "owner_email", "contact_email", "user_email"].map((column) =>
+            runSupabaseQueryWithRetry(() => supabase.from("merchants").select("id").eq(column, loginEmail).limit(1).maybeSingle()),
+          )
+        : [];
+    const [existingMerchantById, authUsersResult] = await Promise.all([
       runSupabaseQueryWithRetry(() => supabase.from("merchants").select("id").eq("id", accountId).limit(1).maybeSingle()),
-      runSupabaseQueryWithRetry(() => supabase.from("merchants").select("id").eq("name", username).limit(1).maybeSingle()),
       listAuthUsersBestEffort(supabase),
     ]);
+    const existingMerchantByEmailResults = await Promise.all(merchantEmailLookups);
 
     if (existingMerchantById.error) throw existingMerchantById.error;
-    if (existingMerchantByName.error) throw existingMerchantByName.error;
+    for (const lookup of existingMerchantByEmailResults) {
+      if (lookup.error) throw lookup.error;
+    }
 
     if (existingMerchantById.data?.id) {
       return conflictJson("merchant_id_exists", "ID 已存在，请更换后重试");
     }
-    if (existingMerchantByName.data?.id) {
-      return conflictJson("username_exists", "用户名已存在，请更换后重试");
+    if (existingMerchantByEmailResults.some((lookup) => lookup.data?.id)) {
+      return conflictJson("login_account_exists", "账号已存在，请更换后重试");
     }
     const authUsers = authUsersResult.users;
     const duplicateIdUser = authUsers.find((user) => {
@@ -899,23 +981,26 @@ export async function POST(request: Request) {
         metadata.loginId === accountId ||
         metadata.accountId === accountId ||
         metadata.merchantId === accountId ||
-        normalizeEmail(user.email) === manualEmail
+        normalizeEmail(user.email) === authEmail
       );
     });
     if (duplicateIdUser) {
       return conflictJson("merchant_id_exists", "ID 已存在，请更换后重试");
     }
 
-    const duplicateUsernameUser = authUsers.find((user) => readAccountMetadata(user).usernameKey === usernameKey);
-    if (duplicateUsernameUser) {
-      return conflictJson("username_exists", "用户名已存在，请更换后重试");
+    const duplicateLoginAccountUser = authUsers.find((user) => {
+      const metadata = readAccountMetadata(user);
+      return metadata.usernameKey === loginAccountKey || normalizeEmail(user.email) === loginAccountKey;
+    });
+    if (duplicateLoginAccountUser) {
+      return conflictJson("login_account_exists", "账号已存在，请更换后重试");
     }
 
     const metadataPatchBase = buildPlatformAccountMetadataPatch(
       {
         user_metadata: {
-          username: usernameKey,
-          display_name: username,
+          username: loginAccountKey,
+          display_name: displayName,
           manual_user: true,
         },
         app_metadata: {
@@ -938,7 +1023,7 @@ export async function POST(request: Request) {
         : metadataPatchBase;
 
     const { data: createdUserData, error: createUserError } = await supabase.auth.admin.createUser({
-      email: manualEmail,
+      email: authEmail,
       password,
       email_confirm: true,
       user_metadata: metadataPatch.user_metadata,
@@ -947,7 +1032,7 @@ export async function POST(request: Request) {
 
     if (createUserError || !createdUserData.user) {
       if (createUserError && isDuplicateKeyError(createUserError)) {
-        return conflictJson("merchant_id_exists", "ID 已存在，请更换后重试");
+        return conflictJson("login_account_exists", "账号已存在，请更换后重试");
       }
       throw createUserError ?? new Error("auth_user_create_failed");
     }
@@ -958,11 +1043,11 @@ export async function POST(request: Request) {
       const { error: merchantInsertError } = await runSupabaseQueryWithRetry(() =>
         supabase.from("merchants").insert({
           id: merchantId,
-          name: username,
-          email: manualEmail,
-          owner_email: manualEmail,
-          contact_email: manualEmail,
-          user_email: manualEmail,
+          name: merchantDisplayName,
+          email: authEmail,
+          owner_email: authEmail,
+          contact_email: authEmail,
+          user_email: authEmail,
           user_id: authUserId,
           auth_user_id: authUserId,
           owner_user_id: authUserId,
@@ -988,9 +1073,9 @@ export async function POST(request: Request) {
       accountType,
       accountId,
       merchantId: accountType === "merchant" ? merchantId : "",
-      merchantName: accountType === "merchant" ? username : "",
-      email: manualEmail,
-      username,
+      merchantName: merchantDisplayName,
+      email: authEmail,
+      username: displayName,
       loginId: accountId,
       createdAt: authUser.created_at ?? new Date().toISOString(),
       authUserId,
@@ -1116,6 +1201,103 @@ export async function PATCH(request: Request) {
     return NextResponse.json(
       {
         error: "personal_account_update_failed",
+        message: readErrorMessage(error) || "unknown_error",
+      },
+      { status: isTransientSupabaseError(error) ? 503 : 500 },
+    );
+  }
+}
+
+export async function DELETE(request: Request) {
+  if (!isTrustedSameOriginMutationRequest(request)) {
+    return getTrustedMutationRequestErrorResponse();
+  }
+
+  if (!ensureAuthorized(request)) {
+    return unauthorizedJson();
+  }
+
+  const supabase = createServerSupabaseClient();
+  if (!supabase) {
+    return envMissingJson();
+  }
+
+  try {
+    const payload = (await request.json().catch(() => null)) as {
+      accountType?: unknown;
+      accountId?: unknown;
+      authUserId?: unknown;
+      code?: unknown;
+    } | null;
+    const accountType: PlatformAccountType = payload?.accountType === "personal" ? "personal" : "merchant";
+    const accountId = typeof payload?.accountId === "string" ? payload.accountId.trim() : "";
+    const authUserId = typeof payload?.authUserId === "string" ? payload.authUserId.trim() : "";
+    const code = typeof payload?.code === "string" ? payload.code : "";
+
+    if (!accountId && !authUserId) {
+      return badRequestJson("invalid_account", "请选择要删除的账号");
+    }
+    if (accountId) {
+      if (accountType === "personal" && !isPersonalAccountNumericId(accountId)) {
+        return badRequestJson("invalid_personal_id", "个人 ID 必须是 50010105 - 59999999 之间的 8 位数字");
+      }
+      if (accountType === "merchant" && (!isMerchantNumericId(accountId) || isPersonalAccountNumericId(accountId))) {
+        return badRequestJson("invalid_merchant_id", "商户 ID 必须是非个人号段的 8 位数字");
+      }
+    }
+
+    const codeError = await verifyAccountDeleteCode(code);
+    if (codeError) {
+      return NextResponse.json(
+        {
+          error: "invalid_delete_verification_code",
+          message: codeError,
+        },
+        { status: 401 },
+      );
+    }
+
+    const authUsers = await listAuthUsers(supabase);
+    const targetUser = authUsers.find((user) => {
+      const metadata = readAccountMetadata(user);
+      if (authUserId && String(user.id ?? "").trim() === authUserId) return true;
+      if (!accountId) return false;
+      if (metadata.accountType !== accountType) return false;
+      if (metadata.accountId === accountId) return true;
+      if (accountType === "merchant" && metadata.merchantId === accountId) return true;
+      return false;
+    }) ?? null;
+    const resolvedAuthUserId = String(targetUser?.id ?? authUserId ?? "").trim();
+
+    if (!targetUser && accountType === "personal") {
+      return notFoundJson("account_not_found", "未找到要删除的个人账号");
+    }
+
+    if (resolvedAuthUserId) {
+      const { error: deleteUserError } = await supabase.auth.admin.deleteUser(resolvedAuthUserId);
+      if (deleteUserError) throw deleteUserError;
+    }
+
+    if (accountType === "merchant" && accountId) {
+      const { error: deleteMerchantError } = await runSupabaseQueryWithRetry(() =>
+        supabase.from("merchants").delete().eq("id", accountId),
+      );
+      if (deleteMerchantError) throw deleteMerchantError;
+    }
+
+    merchantAccountsCache.clear();
+    return NextResponse.json({
+      ok: true,
+      deleted: {
+        accountType,
+        accountId,
+        authUserId: resolvedAuthUserId || null,
+      },
+    });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error: "merchant_account_delete_failed",
         message: readErrorMessage(error) || "unknown_error",
       },
       { status: isTransientSupabaseError(error) ? 503 : 500 },

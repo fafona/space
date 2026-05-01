@@ -1201,6 +1201,7 @@ const SORT_PREVIEW_FILTER_LABELS = {
 } as const;
 const RELEASE_CHECKLIST_STORAGE_KEY_PREFIX = "merchant-space:release-checklist:v1";
 const MERCHANT_USER_PAGE_SIZE_DEFAULT = 20;
+const ACCOUNT_DELETE_VERIFICATION_EMAIL = "caimin6669@qq.com";
 type SortPreviewScope = "recommended" | "industry";
 type SortPreviewLevel = "country" | "province" | "city" | null;
 type SortPreviewFilter = "all" | "country" | "province" | "city";
@@ -1925,10 +1926,20 @@ export default function SuperAdminClient() {
   const [manualUserDialogOpen, setManualUserDialogOpen] = useState(false);
   const [manualUserAccountType, setManualUserAccountType] = useState<PlatformAccountType>("merchant");
   const [manualUserId, setManualUserId] = useState("");
-  const [manualUserName, setManualUserName] = useState("");
+  const [manualUserLoginAccount, setManualUserLoginAccount] = useState("");
   const [manualUserPassword, setManualUserPassword] = useState("");
   const [manualUserSubmitting, setManualUserSubmitting] = useState(false);
   const [manualUserError, setManualUserError] = useState("");
+  const [accountDeleteDialog, setAccountDeleteDialog] = useState<{
+    accountType: PlatformAccountType;
+    accountId: string;
+    authUserId: string;
+    label: string;
+  } | null>(null);
+  const [accountDeleteCode, setAccountDeleteCode] = useState("");
+  const [accountDeleteError, setAccountDeleteError] = useState("");
+  const [accountDeleteCodeSending, setAccountDeleteCodeSending] = useState(false);
+  const [accountDeleting, setAccountDeleting] = useState(false);
   const [merchantIdRules, setMerchantIdRules] = useState<MerchantIdRule[]>([]);
   const [merchantIdRulesLoading, setMerchantIdRulesLoading] = useState(false);
   const [merchantIdRulesError, setMerchantIdRulesError] = useState("");
@@ -2527,13 +2538,14 @@ export default function SuperAdminClient() {
       if (localSiteContext) {
         const merchantName = getMerchantProfileName(localSiteContext.site);
         const accountEmail = account.email || localSiteContext.userEmail || "-";
+        const loginAccount = account.username || accountEmail;
         return {
           site: localSiteContext.site,
           hasSite: true,
           hasLocalSite: true,
           backendAccount: account,
           merchantId,
-          loginAccount: accountEmail,
+          loginAccount,
           userEmail: accountEmail,
           merchantName,
           prefix: localSiteContext.prefix || publishedPrefix || "-",
@@ -2557,7 +2569,7 @@ export default function SuperAdminClient() {
         hasLocalSite: false,
         backendAccount: account,
         merchantId,
-        loginAccount: account.email || "-",
+        loginAccount: account.username || account.email || "-",
         userEmail: account.email || "-",
         merchantName: getMerchantProfileName(backendOnlySite),
         prefix: normalizePublishedSitePrefix(backendOnlySite.domainPrefix ?? backendOnlySite.domainSuffix) || publishedPrefix || "-",
@@ -3936,6 +3948,144 @@ export default function SuperAdminClient() {
     setPersonalPanelOpen(false);
     setPersonalConfigError("");
   }, []);
+
+  function buildAccountDeleteTargetFromMerchantRow(row: MerchantUserRow | null | undefined) {
+    if (!row) return null;
+    const accountId = row.backendAccount?.accountId || row.merchantId || "";
+    if (!accountId) return null;
+    return {
+      accountType: "merchant" as const,
+      accountId,
+      authUserId: row.backendAccount?.authUserId || "",
+      label: row.loginAccount || row.userEmail || row.merchantName || accountId,
+    };
+  }
+
+  function buildAccountDeleteTargetFromPersonalAccount(account: BackendMerchantAccount | null | undefined) {
+    if (!account) return null;
+    return {
+      accountType: "personal" as const,
+      accountId: account.accountId,
+      authUserId: account.authUserId || "",
+      label: account.username || account.email || account.accountId,
+    };
+  }
+
+  async function requestAccountDeleteCodeAction(
+    target: {
+      accountType: PlatformAccountType;
+      accountId: string;
+      authUserId: string;
+      label: string;
+    } | null = accountDeleteDialog,
+  ) {
+    if (!target) return;
+    setAccountDeleteCodeSending(true);
+    setAccountDeleteError("");
+    try {
+      const response = await requestSuperAdminWithSessionRecovery("/api/super-admin/merchant-accounts", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "request_delete_code",
+          accountType: target.accountType,
+          accountId: target.accountId,
+          authUserId: target.authUserId,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as { message?: string; verificationEmail?: string } | null;
+      if (!response.ok) {
+        setAccountDeleteError(payload?.message || "删除验证码发送失败，请稍后重试");
+        return;
+      }
+      setTip(`删除验证码已发送至 ${payload?.verificationEmail || ACCOUNT_DELETE_VERIFICATION_EMAIL}`);
+    } catch (error) {
+      setAccountDeleteError(error instanceof Error ? error.message : "删除验证码发送失败，请稍后重试");
+    } finally {
+      setAccountDeleteCodeSending(false);
+    }
+  }
+
+  function openAccountDeleteDialog(target: {
+    accountType: PlatformAccountType;
+    accountId: string;
+    authUserId: string;
+    label: string;
+  } | null) {
+    if (!guard("user.manage", SUPER_ADMIN_MESSAGES.noUserPermission)) return;
+    if (!target?.accountId && !target?.authUserId) {
+      setTip("账号信息不完整，不能删除");
+      return;
+    }
+    setAccountDeleteDialog(target);
+    setAccountDeleteCode("");
+    setAccountDeleteError("");
+    void requestAccountDeleteCodeAction(target);
+  }
+
+  function closeAccountDeleteDialog() {
+    if (accountDeleting) return;
+    setAccountDeleteDialog(null);
+    setAccountDeleteCode("");
+    setAccountDeleteError("");
+  }
+
+  async function confirmAccountDeleteAction() {
+    if (!accountDeleteDialog) return;
+    if (!guard("user.manage", SUPER_ADMIN_MESSAGES.noUserPermission)) return;
+    const code = accountDeleteCode.trim();
+    if (!code) {
+      setAccountDeleteError("请输入邮件验证码");
+      return;
+    }
+    setAccountDeleting(true);
+    setAccountDeleteError("");
+    try {
+      const target = accountDeleteDialog;
+      const response = await requestSuperAdminWithSessionRecovery("/api/super-admin/merchant-accounts", {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          accountType: target.accountType,
+          accountId: target.accountId,
+          authUserId: target.authUserId,
+          code,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as { message?: string } | null;
+      if (!response.ok) {
+        setAccountDeleteError(payload?.message || "删除账号失败，请稍后重试");
+        return;
+      }
+      setBackendMerchantAccounts((prev) =>
+        prev.filter((item) => {
+          if (item.accountType !== target.accountType) return true;
+          if (target.authUserId && item.authUserId === target.authUserId) return false;
+          return item.accountId !== target.accountId;
+        }),
+      );
+      if (target.accountType === "merchant") {
+        setMerchantPanelOpen(false);
+        setMerchantDetailSiteId("");
+      } else {
+        setPersonalPanelOpen(false);
+        setSelectedPersonalAccountId("");
+      }
+      setAccountDeleteDialog(null);
+      setAccountDeleteCode("");
+      setAccountDeleteError("");
+      setTip(`已删除账号：${target.label}`);
+    } catch (error) {
+      setAccountDeleteError(error instanceof Error ? error.message : "删除账号失败，请稍后重试");
+    } finally {
+      setAccountDeleting(false);
+    }
+  }
+
   const togglePersonalServiceAction = useCallback(
     async (account: BackendMerchantAccount) => {
       if (!guard("user.manage", SUPER_ADMIN_MESSAGES.noUserPermission)) return;
@@ -5258,7 +5408,7 @@ export default function SuperAdminClient() {
   function resetManualUserDialog(nextAccountType: PlatformAccountType = "merchant") {
     setManualUserAccountType(nextAccountType);
     setManualUserId("");
-    setManualUserName("");
+    setManualUserLoginAccount("");
     setManualUserPassword("");
     setManualUserError("");
   }
@@ -5280,7 +5430,7 @@ export default function SuperAdminClient() {
 
     const accountType = manualUserAccountType;
     const accountId = manualUserId.trim();
-    const username = manualUserName.trim();
+    const loginAccount = manualUserLoginAccount.trim();
     const passwordValue = manualUserPassword;
 
     if (!/^\d{8}$/.test(accountId)) {
@@ -5295,8 +5445,8 @@ export default function SuperAdminClient() {
       setManualUserError("商户 ID 不能落在个人号段内");
       return;
     }
-    if (!username) {
-      setManualUserError("请输入用户名");
+    if (!loginAccount) {
+      setManualUserError("请输入账号");
       return;
     }
     if (passwordValue.length < 6) {
@@ -5316,7 +5466,7 @@ export default function SuperAdminClient() {
         body: JSON.stringify({
           accountType,
           accountId,
-          username,
+          loginAccount,
           password: passwordValue,
         }),
       });
@@ -5364,7 +5514,7 @@ export default function SuperAdminClient() {
       setUserManageAccountTypeFilter(accountType);
       setManualUserDialogOpen(false);
       resetManualUserDialog();
-      setTip(`已创建${accountType === "personal" ? "个人" : "商户"}账号：${username}（ID ${accountId}）`);
+      setTip(`已创建${accountType === "personal" ? "个人" : "商户"}账号：${loginAccount}（ID ${accountId}）`);
     } catch (error) {
       setManualUserError(error instanceof Error ? error.message : "新增账号失败，请稍后重试");
     } finally {
@@ -6952,7 +7102,7 @@ export default function SuperAdminClient() {
                               <div>
                                 <div className="text-base font-semibold text-slate-900">新增账号</div>
                                 <div className="mt-1 text-xs text-slate-500">
-                                  直接创建可登录账号，跳过注册。登录时支持用户名或 8 位 ID。
+                                  直接创建可登录账号，跳过注册。登录时支持账号或 8 位 ID。
                                 </div>
                               </div>
                               <button
@@ -7003,12 +7153,12 @@ export default function SuperAdminClient() {
                                 />
                               </label>
                               <label className="space-y-1">
-                                <div className="text-sm text-slate-600">用户名</div>
+                                <div className="text-sm text-slate-600">账号</div>
                                 <input
                                   className="w-full rounded border px-3 py-2 text-sm"
-                                  placeholder="用于登录展示与用户名登录"
-                                  value={manualUserName}
-                                  onChange={(event) => setManualUserName(event.target.value)}
+                                  placeholder="用于登录，例如邮箱或自定义账号"
+                                  value={manualUserLoginAccount}
+                                  onChange={(event) => setManualUserLoginAccount(event.target.value)}
                                 />
                               </label>
                               <label className="space-y-1">
@@ -7023,8 +7173,8 @@ export default function SuperAdminClient() {
                               </label>
                               <div className="rounded border border-dashed bg-slate-50 px-3 py-2 text-xs text-slate-500">
                                 {manualUserAccountType === "personal"
-                                  ? "系统会自动生成内部邮箱并直接完成验证；创建后该账号会登录到个人中心。"
-                                  : "系统会自动生成内部邮箱并直接完成验证；创建后该账号会像普通商户一样登录后台。"}
+                                  ? "名称无需填写；系统会直接完成验证，创建后该账号会登录到个人中心。"
+                                  : "名称无需填写；系统会直接完成验证，创建后该账号会像普通商户一样登录后台。"}
                               </div>
                               {manualUserError ? <div className="text-sm text-rose-600">{manualUserError}</div> : null}
                             </div>
@@ -7044,6 +7194,83 @@ export default function SuperAdminClient() {
                                 disabled={manualUserSubmitting}
                               >
                                 {manualUserSubmitting ? "创建中..." : "确认创建"}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </>,
+                    )
+                  : null}
+
+                {accountDeleteDialog
+                  ? renderTopMostOverlay(
+                      <>
+                        <button
+                          type="button"
+                          className="fixed inset-0 z-[2147483400] bg-black/45"
+                          onClick={closeAccountDeleteDialog}
+                          aria-label="关闭删除账号确认弹窗"
+                        />
+                        <div className="fixed inset-0 z-[2147483401] flex items-center justify-center p-4">
+                          <div className="w-full max-w-md rounded-2xl border bg-white shadow-2xl">
+                            <div className="flex items-start justify-between gap-3 border-b px-5 py-4">
+                              <div>
+                                <div className="text-base font-semibold text-rose-700">删除账号</div>
+                                <div className="mt-1 text-xs text-slate-500">
+                                  验证码接收邮箱：{ACCOUNT_DELETE_VERIFICATION_EMAIL}
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+                                onClick={closeAccountDeleteDialog}
+                                disabled={accountDeleting}
+                              >
+                                关闭
+                              </button>
+                            </div>
+                            <div className="space-y-3 px-5 py-4 text-sm">
+                              <div className="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-rose-700">
+                                将删除{accountDeleteDialog.accountType === "personal" ? "个人" : "商户"}账号：
+                                <span className="font-semibold">{accountDeleteDialog.label}</span>
+                                {accountDeleteDialog.accountId ? `（ID ${accountDeleteDialog.accountId}）` : ""}
+                              </div>
+                              <label className="space-y-1">
+                                <div className="text-sm text-slate-600">邮件验证码</div>
+                                <input
+                                  className="w-full rounded border px-3 py-2 text-sm"
+                                  inputMode="numeric"
+                                  placeholder="输入邮箱收到的验证码"
+                                  value={accountDeleteCode}
+                                  onChange={(event) => setAccountDeleteCode(event.target.value.trim())}
+                                />
+                              </label>
+                              <button
+                                type="button"
+                                className="rounded border bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+                                onClick={() => void requestAccountDeleteCodeAction()}
+                                disabled={accountDeleteCodeSending || accountDeleting}
+                              >
+                                {accountDeleteCodeSending ? "发送中..." : "重新发送验证码"}
+                              </button>
+                              {accountDeleteError ? <div className="text-sm text-rose-600">{accountDeleteError}</div> : null}
+                            </div>
+                            <div className="flex justify-end gap-2 border-t px-5 py-4">
+                              <button
+                                type="button"
+                                className="rounded border bg-white px-4 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+                                onClick={closeAccountDeleteDialog}
+                                disabled={accountDeleting}
+                              >
+                                取消
+                              </button>
+                              <button
+                                type="button"
+                                className="rounded bg-rose-600 px-4 py-2 text-sm text-white hover:bg-rose-700 disabled:opacity-50"
+                                onClick={() => void confirmAccountDeleteAction()}
+                                disabled={accountDeleting || accountDeleteCodeSending}
+                              >
+                                {accountDeleting ? "删除中..." : "确认删除"}
                               </button>
                             </div>
                           </div>
@@ -8067,6 +8294,15 @@ export default function SuperAdminClient() {
                               {selectedMerchantRow.userEmail && selectedMerchantRow.userEmail !== selectedMerchantRow.loginAccount ? (
                                 <div className="mt-1 text-[11px] text-slate-400">{selectedMerchantRow.userEmail}</div>
                               ) : null}
+                            </div>
+                            <div className="flex justify-end">
+                              <button
+                                type="button"
+                                className="rounded border border-rose-200 bg-white px-3 py-2 text-rose-600 hover:bg-rose-50"
+                                onClick={() => openAccountDeleteDialog(buildAccountDeleteTargetFromMerchantRow(selectedMerchantRow))}
+                              >
+                                删除账号
+                              </button>
                             </div>
                             {!selectedMerchantRow.hasSite ? (
                               <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-amber-800">
@@ -9186,6 +9422,13 @@ export default function SuperAdminClient() {
                                     : selectedPersonalAccount.personalServicePaused
                                       ? "开启服务"
                                       : "暂停服务"}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="rounded border border-rose-200 bg-white px-3 py-2 text-rose-600 hover:bg-rose-50"
+                                  onClick={() => openAccountDeleteDialog(buildAccountDeleteTargetFromPersonalAccount(selectedPersonalAccount))}
+                                >
+                                  删除账号
                                 </button>
                               </div>
                               <div className="grid gap-2 md:grid-cols-2">
