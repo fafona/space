@@ -339,6 +339,18 @@ export function applyMerchantOrderAction(
   };
 }
 
+export function applyMerchantOrderStatus(
+  record: MerchantOrderRecord,
+  status: MerchantOrderStatus,
+  actedAt = new Date().toISOString(),
+): MerchantOrderRecord {
+  if (record.status === status) return record;
+  if (status === "pending") return applyMerchantOrderAction(record, "restore", actedAt);
+  if (status === "cancelled") return applyMerchantOrderAction(record, "cancel", actedAt);
+  if (status === "completed") return applyMerchantOrderAction(record, "complete", actedAt);
+  return applyMerchantOrderAction(record, record.status === "completed" ? "uncomplete" : "confirm", actedAt);
+}
+
 export function updateMerchantOrderItems(
   record: MerchantOrderRecord,
   itemsInput: MerchantOrderLineItemInput[],

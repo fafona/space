@@ -246,8 +246,7 @@ export default function MerchantOrderManagerDialog({
   );
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
-  const [actionBusyId, setActionBusyId] = useState("");
-  const [batchBusyKey, setBatchBusyKey] = useState("");
+  const [busyKey, setBusyKey] = useState("");
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
   const [detailOrderId, setDetailOrderId] = useState("");
   const [detailQuantityDrafts, setDetailQuantityDrafts] = useState<Record<string, string>>({});
@@ -418,6 +417,54 @@ export default function MerchantOrderManagerDialog({
     [siteId],
   );
 
+  const requestOrderStatusUpdate = useCallback(
+    async (orderId: string, status: MerchantOrderStatus) => {
+      const response = await fetch("/api/orders", {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          siteId,
+          orderId,
+          status,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { order?: MerchantOrderRecord; message?: string; error?: string }
+        | null;
+      if (!response.ok || !payload?.order) {
+        throw new Error(payload?.message || payload?.error || "order_update_failed");
+      }
+      return payload.order;
+    },
+    [siteId],
+  );
+
+  const requestBatchOrderStatusUpdate = useCallback(
+    async (orderIds: string[], status: MerchantOrderStatus) => {
+      const response = await fetch("/api/orders", {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          siteId,
+          orderIds,
+          status,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { orders?: MerchantOrderRecord[]; message?: string; error?: string }
+        | null;
+      if (!response.ok || !Array.isArray(payload?.orders)) {
+        throw new Error(payload?.message || payload?.error || "order_update_failed");
+      }
+      return payload.orders;
+    },
+    [siteId],
+  );
+
   const requestOrderItemsUpdate = useCallback(
     async (orderId: string, items: MerchantOrderLineItemInput[]) => {
       const response = await fetch("/api/orders", {
@@ -525,79 +572,86 @@ export default function MerchantOrderManagerDialog({
     [records, requestOrderAction],
   );
 
-  const handleOrderAction = useCallback(
+  const patchOrderStatus = useCallback(
     async (
       order: MerchantOrderRecord,
-      action: "confirm" | "cancel" | "restore" | "complete" | "uncomplete" | "print",
+      status: MerchantOrderStatus,
+      busyLabel: string,
+      noticeText: string,
       options: { persistDetailDraft?: boolean } = {},
     ) => {
-      setActionBusyId(order.id);
+      setBusyKey(`${busyLabel}:${order.id}`);
       setError("");
       setNotice("");
       try {
         let baseOrder = order;
-        if (options.persistDetailDraft && (action === "confirm" || action === "complete") && hasDetailQuantityDraftChanges(order)) {
+        if (
+          options.persistDetailDraft &&
+          (status === "confirmed" || status === "completed") &&
+          hasDetailQuantityDraftChanges(order)
+        ) {
           baseOrder = await requestOrderItemsUpdate(order.id, buildDetailDraftItemsInput(order));
           setRecords((current) => current.map((item) => (item.id === order.id ? baseOrder : item)));
         }
-        if (action === "print" && typeof window !== "undefined") {
+        const nextOrder = await requestOrderStatusUpdate(baseOrder.id, status);
+        setRecords((current) => current.map((item) => (item.id === order.id ? nextOrder : item)));
+        setNotice(noticeText);
+      } catch (nextError) {
+        setError(nextError instanceof Error && nextError.message ? nextError.message : "订单操作失败");
+      } finally {
+        setBusyKey("");
+      }
+    },
+    [buildDetailDraftItemsInput, hasDetailQuantityDraftChanges, requestOrderItemsUpdate, requestOrderStatusUpdate],
+  );
+
+  const printOrder = useCallback(
+    async (order: MerchantOrderRecord) => {
+      setBusyKey(`print:${order.id}`);
+      setError("");
+      setNotice("");
+      try {
+        if (typeof window !== "undefined") {
           const popup = window.open("", "_blank", "noopener,noreferrer,width=920,height=760");
           if (popup) {
             popup.document.open();
-            popup.document.write(buildPrintHtml(baseOrder));
+            popup.document.write(buildPrintHtml(order));
             popup.document.close();
             popup.focus();
             popup.print();
           }
         }
-        const nextOrder = await requestOrderAction(baseOrder.id, action);
+        const nextOrder = await requestOrderAction(order.id, "print");
         setRecords((current) => current.map((item) => (item.id === order.id ? nextOrder : item)));
-        setNotice(
-          action === "confirm"
-            ? "订单已确认"
-            : action === "cancel"
-              ? "订单已取消"
-              : action === "restore"
-                ? "订单已恢复为待确认"
-                : action === "complete"
-                  ? "订单已完成"
-                  : action === "uncomplete"
-                    ? "订单已恢复为已确认"
-                : "",
-        );
       } catch (nextError) {
         setError(nextError instanceof Error && nextError.message ? nextError.message : "订单操作失败");
       } finally {
-        setActionBusyId("");
+        setBusyKey("");
       }
     },
-    [buildDetailDraftItemsInput, hasDetailQuantityDraftChanges, requestOrderAction, requestOrderItemsUpdate],
+    [requestOrderAction],
   );
 
-  const runBatchOrderAction = useCallback(
-    async (action: "confirm" | "cancel") => {
+  const runBatchOrderStatusUpdate = useCallback(
+    async (status: MerchantOrderStatus, busyLabel: string, noticeText: string) => {
       if (selectedOrderIds.length === 0) return;
-      setBatchBusyKey(action);
+      setBusyKey(`batch:${busyLabel}`);
       setError("");
       setNotice("");
       try {
-        const updatedOrders: MerchantOrderRecord[] = [];
-        for (const orderId of selectedOrderIds) {
-          const nextOrder = await requestOrderAction(orderId, action);
-          updatedOrders.push(nextOrder);
-        }
+        const updatedOrders = await requestBatchOrderStatusUpdate(selectedOrderIds, status);
         const updatedById = new Map(updatedOrders.map((item) => [item.id, item]));
         setRecords((current) => current.map((item) => updatedById.get(item.id) ?? item));
         setSelectedOrderIds([]);
         setSelectionMode(false);
-        setNotice(action === "confirm" ? "已完成批量确认" : "已完成批量取消");
+        setNotice(noticeText);
       } catch (nextError) {
         setError(nextError instanceof Error && nextError.message ? nextError.message : "批量操作失败");
       } finally {
-        setBatchBusyKey("");
+        setBusyKey("");
       }
     },
-    [requestOrderAction, selectedOrderIds],
+    [requestBatchOrderStatusUpdate, selectedOrderIds],
   );
 
   const toggleSelectedOrder = useCallback((orderId: string) => {
@@ -676,147 +730,159 @@ export default function MerchantOrderManagerDialog({
   );
 
   const renderOrderActions = useCallback(
-    (record: MerchantOrderRecord, options: { persistDetailDraft?: boolean } = {}) => (
-      <>
-        {record.status === "confirmed" ? (
+    (record: MerchantOrderRecord, options: { persistDetailDraft?: boolean } = {}) => {
+      const isBatchBusy = busyKey.startsWith("batch:");
+      const isOrderBusy = busyKey.endsWith(`:${record.id}`);
+      const isBusy = (label: string) => busyKey === `${label}:${record.id}`;
+      const disabled = isBatchBusy || isOrderBusy;
+      return (
+        <>
+          {record.status === "confirmed" ? (
+            <button
+              type="button"
+              className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              onClick={() => void patchOrderStatus(record, "pending", "unconfirm", "订单已恢复为待确认", options)}
+              disabled={disabled}
+            >
+              {isBusy("unconfirm") ? "处理中" : "取消确认"}
+            </button>
+          ) : record.status === "cancelled" ? (
+            <button
+              type="button"
+              className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              onClick={() => void patchOrderStatus(record, "pending", "restore", "订单已恢复为待确认", options)}
+              disabled={disabled}
+            >
+              {isBusy("restore") ? "处理中" : "恢复待确认"}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="rounded border border-sky-300 bg-sky-100 px-3 py-1.5 text-[13px] leading-5 text-sky-800 hover:bg-sky-200 disabled:opacity-50"
+              onClick={() => void patchOrderStatus(record, "confirmed", "confirm", "订单已确认", options)}
+              disabled={disabled}
+            >
+              {isBusy("confirm") ? "处理中" : "确认"}
+            </button>
+          )}
+          {record.status === "confirmed" ? (
+            <button
+              type="button"
+              className="rounded border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-[13px] leading-5 text-white hover:bg-emerald-700 disabled:opacity-50"
+              onClick={() => void patchOrderStatus(record, "completed", "complete", "订单已完成", options)}
+              disabled={disabled}
+            >
+              {isBusy("complete") ? "处理中" : "完成"}
+            </button>
+          ) : record.status === "completed" ? (
+            <button
+              type="button"
+              className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              onClick={() => void patchOrderStatus(record, "confirmed", "uncomplete", "订单已恢复为已确认", options)}
+              disabled={disabled}
+            >
+              {isBusy("uncomplete") ? "处理中" : "取消完成"}
+            </button>
+          ) : null}
           <button
             type="button"
             className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            onClick={() => void handleOrderAction(record, "restore", options)}
-            disabled={Boolean(actionBusyId) || Boolean(batchBusyKey)}
+            onClick={() => void printOrder(record)}
+            disabled={disabled}
           >
-            取消确认
+            {isBusy("print") ? "处理中" : `打印${record.printCount > 0 ? ` (${record.printCount})` : ""}`}
           </button>
-        ) : record.status === "cancelled" ? (
-          <button
-            type="button"
-            className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            onClick={() => void handleOrderAction(record, "restore", options)}
-            disabled={Boolean(actionBusyId) || Boolean(batchBusyKey)}
-          >
-            恢复待确认
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="rounded border border-sky-300 bg-sky-100 px-3 py-1.5 text-[13px] leading-5 text-sky-800 hover:bg-sky-200 disabled:opacity-50"
-            onClick={() => void handleOrderAction(record, "confirm", options)}
-            disabled={Boolean(actionBusyId) || Boolean(batchBusyKey)}
-          >
-            确认
-          </button>
-        )}
-        {record.status === "confirmed" ? (
-          <button
-            type="button"
-            className="rounded border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-[13px] leading-5 text-white hover:bg-emerald-700 disabled:opacity-50"
-            onClick={() => void handleOrderAction(record, "complete", options)}
-            disabled={Boolean(actionBusyId) || Boolean(batchBusyKey)}
-          >
-            完成
-          </button>
-        ) : record.status === "completed" ? (
-          <button
-            type="button"
-            className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            onClick={() => void handleOrderAction(record, "uncomplete", options)}
-            disabled={Boolean(actionBusyId) || Boolean(batchBusyKey)}
-          >
-            取消完成
-          </button>
-        ) : null}
-        <button
-          type="button"
-          className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-          onClick={() => void handleOrderAction(record, "print", options)}
-          disabled={Boolean(actionBusyId) || Boolean(batchBusyKey)}
-        >
-          打印{record.printCount > 0 ? ` (${record.printCount})` : ""}
-        </button>
-        {record.status !== "cancelled" ? (
-          <button
-            type="button"
-            className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            onClick={() => void handleOrderAction(record, "cancel", options)}
-            disabled={Boolean(actionBusyId) || Boolean(batchBusyKey)}
-          >
-            取消
-          </button>
-        ) : null}
-      </>
-    ),
-    [actionBusyId, batchBusyKey, handleOrderAction],
+          {record.status !== "cancelled" ? (
+            <button
+              type="button"
+              className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              onClick={() => void patchOrderStatus(record, "cancelled", "cancel", "订单已取消", options)}
+              disabled={disabled}
+            >
+              {isBusy("cancel") ? "处理中" : "取消"}
+            </button>
+          ) : null}
+        </>
+      );
+    },
+    [busyKey, patchOrderStatus, printOrder],
   );
 
   const renderStatusActions = useCallback(
-    (record: MerchantOrderRecord) => (
-      <>
-        {record.status === "confirmed" ? (
-          <button
-            type="button"
-            className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            onClick={() => void handleOrderAction(record, "restore")}
-            disabled={Boolean(actionBusyId) || Boolean(batchBusyKey)}
-            data-skip-selection-toggle="true"
-          >
-            取消确认
-          </button>
-        ) : record.status === "cancelled" ? (
-          <button
-            type="button"
-            className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            onClick={() => void handleOrderAction(record, "restore")}
-            disabled={Boolean(actionBusyId) || Boolean(batchBusyKey)}
-            data-skip-selection-toggle="true"
-          >
-            恢复待确认
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="rounded border border-sky-300 bg-sky-100 px-3 py-1.5 text-[13px] leading-5 text-sky-800 hover:bg-sky-200 disabled:opacity-50"
-            onClick={() => void handleOrderAction(record, "confirm")}
-            disabled={Boolean(actionBusyId) || Boolean(batchBusyKey)}
-            data-skip-selection-toggle="true"
-          >
-            确认
-          </button>
-        )}
-        {record.status === "confirmed" ? (
-          <button
-            type="button"
-            className="rounded border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-[13px] leading-5 text-white hover:bg-emerald-700 disabled:opacity-50"
-            onClick={() => void handleOrderAction(record, "complete")}
-            disabled={Boolean(actionBusyId) || Boolean(batchBusyKey)}
-            data-skip-selection-toggle="true"
-          >
-            完成
-          </button>
-        ) : record.status === "completed" ? (
-          <button
-            type="button"
-            className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            onClick={() => void handleOrderAction(record, "uncomplete")}
-            disabled={Boolean(actionBusyId) || Boolean(batchBusyKey)}
-            data-skip-selection-toggle="true"
-          >
-            取消完成
-          </button>
-        ) : null}
-        {record.status !== "cancelled" ? (
-          <button
-            type="button"
-            className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            onClick={() => void handleOrderAction(record, "cancel")}
-            disabled={Boolean(actionBusyId) || Boolean(batchBusyKey)}
-            data-skip-selection-toggle="true"
-          >
-            取消
-          </button>
-        ) : null}
-      </>
-    ),
-    [actionBusyId, batchBusyKey, handleOrderAction],
+    (record: MerchantOrderRecord) => {
+      const isBatchBusy = busyKey.startsWith("batch:");
+      const isOrderBusy = busyKey.endsWith(`:${record.id}`);
+      const isBusy = (label: string) => busyKey === `${label}:${record.id}`;
+      const disabled = isBatchBusy || isOrderBusy;
+      return (
+        <>
+          {record.status === "confirmed" ? (
+            <button
+              type="button"
+              className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              onClick={() => void patchOrderStatus(record, "pending", "unconfirm", "订单已恢复为待确认")}
+              disabled={disabled}
+              data-skip-selection-toggle="true"
+            >
+              {isBusy("unconfirm") ? "处理中" : "取消确认"}
+            </button>
+          ) : record.status === "cancelled" ? (
+            <button
+              type="button"
+              className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              onClick={() => void patchOrderStatus(record, "pending", "restore", "订单已恢复为待确认")}
+              disabled={disabled}
+              data-skip-selection-toggle="true"
+            >
+              {isBusy("restore") ? "处理中" : "恢复待确认"}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="rounded border border-sky-300 bg-sky-100 px-3 py-1.5 text-[13px] leading-5 text-sky-800 hover:bg-sky-200 disabled:opacity-50"
+              onClick={() => void patchOrderStatus(record, "confirmed", "confirm", "订单已确认")}
+              disabled={disabled}
+              data-skip-selection-toggle="true"
+            >
+              {isBusy("confirm") ? "处理中" : "确认"}
+            </button>
+          )}
+          {record.status === "confirmed" ? (
+            <button
+              type="button"
+              className="rounded border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-[13px] leading-5 text-white hover:bg-emerald-700 disabled:opacity-50"
+              onClick={() => void patchOrderStatus(record, "completed", "complete", "订单已完成")}
+              disabled={disabled}
+              data-skip-selection-toggle="true"
+            >
+              {isBusy("complete") ? "处理中" : "完成"}
+            </button>
+          ) : record.status === "completed" ? (
+            <button
+              type="button"
+              className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              onClick={() => void patchOrderStatus(record, "confirmed", "uncomplete", "订单已恢复为已确认")}
+              disabled={disabled}
+              data-skip-selection-toggle="true"
+            >
+              {isBusy("uncomplete") ? "处理中" : "取消完成"}
+            </button>
+          ) : null}
+          {record.status !== "cancelled" ? (
+            <button
+              type="button"
+              className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              onClick={() => void patchOrderStatus(record, "cancelled", "cancel", "订单已取消")}
+              disabled={disabled}
+              data-skip-selection-toggle="true"
+            >
+              {isBusy("cancel") ? "处理中" : "取消"}
+            </button>
+          ) : null}
+        </>
+      );
+    },
+    [busyKey, patchOrderStatus],
   );
 
   const workbenchDialog = workbenchOpen
@@ -899,7 +965,7 @@ export default function MerchantOrderManagerDialog({
                       {detailPreviewEntries.map(({ item, index, quantity, subtotal }) => {
                         const itemDraftKey = getDetailItemDraftKey(detailOrder.id, index);
                         const draftQuantity = detailQuantityDrafts[itemDraftKey] ?? String(quantity);
-                        const isDetailActionBusy = actionBusyId === detailOrder.id;
+                        const isDetailActionBusy = busyKey.endsWith(`:${detailOrder.id}`);
                         return (
                           <div
                             key={`${detailOrder.id}-${item.productId}-${item.code}-${index}`}
@@ -1182,18 +1248,18 @@ export default function MerchantOrderManagerDialog({
                     <button
                       type="button"
                       className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700"
-                      onClick={() => void runBatchOrderAction("confirm")}
-                      disabled={batchBusyKey === "confirm"}
+                      onClick={() => void runBatchOrderStatusUpdate("confirmed", "confirm", "已完成批量确认")}
+                      disabled={busyKey.startsWith("batch:")}
                     >
-                      批量确认
+                      {busyKey === "batch:confirm" ? "处理中" : "批量确认"}
                     </button>
                     <button
                       type="button"
                       className="rounded-full border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700"
-                      onClick={() => void runBatchOrderAction("cancel")}
-                      disabled={batchBusyKey === "cancel"}
+                      onClick={() => void runBatchOrderStatusUpdate("cancelled", "cancel", "已完成批量取消")}
+                      disabled={busyKey.startsWith("batch:")}
                     >
-                      批量取消
+                      {busyKey === "batch:cancel" ? "处理中" : "批量取消"}
                     </button>
                   </>
                 ) : null}

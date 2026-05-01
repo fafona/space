@@ -1,6 +1,7 @@
 import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import {
   applyMerchantOrderAction,
+  applyMerchantOrderStatus,
   buildMerchantOrderId,
   createMerchantOrder,
   normalizeMerchantOrderRecords,
@@ -9,6 +10,7 @@ import {
   type MerchantOrderCreateInput,
   type MerchantOrderLineItemInput,
   type MerchantOrderRecord,
+  type MerchantOrderStatus,
 } from "@/lib/merchantOrders";
 import {
   listStoredMerchantOrdersByCustomer,
@@ -143,6 +145,7 @@ export async function updateMerchantOrderBySite(input: {
   siteId: string;
   orderId: string;
   action?: MerchantOrderAction;
+  status?: MerchantOrderStatus;
   items?: MerchantOrderLineItemInput[];
 }) {
   const supabase = requireOrdersStoreClient();
@@ -156,6 +159,8 @@ export async function updateMerchantOrderBySite(input: {
   const now = new Date().toISOString();
   const next = Array.isArray(input.items)
     ? updateMerchantOrderItems(current, input.items, now)
+    : input.status
+      ? applyMerchantOrderStatus(current, input.status, now)
     : input.action
       ? applyMerchantOrderAction(current, input.action, now)
       : null;
@@ -173,4 +178,49 @@ export async function updateMerchantOrderBySite(input: {
     throw new Error(saved.error);
   }
   return next;
+}
+
+export async function updateMerchantOrdersBatchBySite(input: {
+  siteId: string;
+  orderIds: string[];
+  action?: MerchantOrderAction;
+  status?: MerchantOrderStatus;
+}) {
+  const supabase = requireOrdersStoreClient();
+  const siteId = trimText(input.siteId);
+  const orderIds = [...new Set((Array.isArray(input.orderIds) ? input.orderIds : []).map((item) => trimText(item)).filter(Boolean))];
+  if (!siteId || orderIds.length === 0) {
+    throw new Error("order_not_found");
+  }
+  if (!input.action && !input.status) {
+    throw new Error("invalid_order_update");
+  }
+  const stored = await loadStoredMerchantOrders(supabase, siteId);
+  const orders = normalizeMerchantOrderRecords(stored?.orders ?? []);
+  const orderIdSet = new Set(orderIds);
+  const now = new Date().toISOString();
+  const updatedOrders: MerchantOrderRecord[] = [];
+  const nextOrders = orders.map((order) => {
+    if (!orderIdSet.has(order.id)) return order;
+    const next = input.status
+      ? applyMerchantOrderStatus(order, input.status, now)
+      : input.action
+        ? applyMerchantOrderAction(order, input.action, now)
+        : null;
+    if (!next) return order;
+    updatedOrders.push(next);
+    return next;
+  });
+  if (updatedOrders.length === 0) {
+    throw new Error("order_not_found");
+  }
+  const saved = await saveStoredMerchantOrders(supabase, {
+    siteId,
+    orders: nextOrders,
+    updatedAt: now,
+  });
+  if (saved.error) {
+    throw new Error(saved.error);
+  }
+  return updatedOrders;
 }

@@ -7,6 +7,7 @@ import {
   cancelPersonalMerchantOrder,
   listMerchantOrders,
   listPersonalMerchantOrders,
+  updateMerchantOrdersBatchBySite,
   updateMerchantOrderBySite,
 } from "@/lib/merchantOrders.server";
 import { resolvePersonalAccountSessionFromRequest } from "@/lib/personalAccountSession.server";
@@ -14,7 +15,7 @@ import { readPersonalCustomerProfileFromSession } from "@/lib/personalCustomerPr
 import { resolveMerchantSessionFromRequest } from "@/lib/serverMerchantSession";
 import { verifyFrontendAuthProof } from "@/lib/frontendAuthProof.server";
 import { buildPersonalMerchantContactMap } from "@/lib/personalMerchantContacts.server";
-import type { MerchantOrderAction, MerchantOrderCreateInput, MerchantOrderLineItemInput } from "@/lib/merchantOrders";
+import type { MerchantOrderAction, MerchantOrderCreateInput, MerchantOrderLineItemInput, MerchantOrderStatus } from "@/lib/merchantOrders";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -34,6 +35,24 @@ async function isOrderManagementEnabled(siteId: string) {
 
 function trimText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeOrderAction(value: unknown): MerchantOrderAction | null {
+  return value === "confirm" ||
+    value === "cancel" ||
+    value === "restore" ||
+    value === "complete" ||
+    value === "uncomplete" ||
+    value === "print" ||
+    value === "touch"
+    ? value
+    : null;
+}
+
+function normalizeOrderStatus(value: unknown): MerchantOrderStatus | null {
+  return value === "pending" || value === "confirmed" || value === "completed" || value === "cancelled"
+    ? value
+    : null;
 }
 
 export async function GET(request: Request) {
@@ -144,7 +163,9 @@ export async function PATCH(request: Request) {
       scope?: string;
       siteId?: string;
       orderId?: string;
+      orderIds?: string[];
       action?: MerchantOrderAction;
+      status?: MerchantOrderStatus;
       items?: MerchantOrderLineItemInput[];
     } | null;
     const siteId = String(body?.siteId ?? "").trim();
@@ -176,23 +197,29 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: "order_management_disabled" }, { status: 403 });
     }
     const items = Array.isArray(body?.items) ? body.items : null;
-    const action =
-      body?.action === "confirm" ||
-      body?.action === "cancel" ||
-      body?.action === "restore" ||
-      body?.action === "complete" ||
-      body?.action === "uncomplete" ||
-      body?.action === "print" ||
-      body?.action === "touch"
-        ? body.action
-        : null;
-    if (!items && !action) {
+    const action = normalizeOrderAction(body?.action);
+    const status = normalizeOrderStatus(body?.status);
+    const orderIds = Array.isArray(body?.orderIds) ? body.orderIds.map((item) => String(item ?? "").trim()).filter(Boolean) : [];
+    if (orderIds.length > 0) {
+      if (items || (!status && !action) || action === "print" || action === "touch") {
+        return NextResponse.json({ error: "invalid_order_action" }, { status: 400 });
+      }
+      const orders = await updateMerchantOrdersBatchBySite({
+        siteId,
+        orderIds,
+        action: status ? undefined : action ?? undefined,
+        status: status ?? undefined,
+      });
+      return NextResponse.json({ ok: true, orders });
+    }
+    if (!items && !action && !status) {
       return NextResponse.json({ error: "invalid_order_action" }, { status: 400 });
     }
     const order = await updateMerchantOrderBySite({
       siteId,
       orderId: String(body?.orderId ?? "").trim(),
       action: action ?? undefined,
+      status: status ?? undefined,
       items: items ?? undefined,
     });
     return NextResponse.json({ ok: true, order });

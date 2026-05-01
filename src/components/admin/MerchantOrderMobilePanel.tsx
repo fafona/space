@@ -183,7 +183,7 @@ export default function MerchantOrderMobilePanel({
   const [filter, setFilter] = useState<MerchantOrderFilter>("all");
   const [sortMode, setSortMode] = useState<MerchantOrderSortMode>("created_desc");
   const [historyVisibility, setHistoryVisibility] = useState<MerchantOrderHistoryVisibility>("none");
-  const [actionBusyId, setActionBusyId] = useState("");
+  const [busyKey, setBusyKey] = useState("");
   const [overflowMenuOpen, setOverflowMenuOpen] = useState(false);
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
   const [detailOrderId, setDetailOrderId] = useState("");
@@ -350,6 +350,28 @@ export default function MerchantOrderMobilePanel({
     [siteId],
   );
 
+  const requestOrderStatusUpdate = useCallback(
+    async (orderId: string, status: MerchantOrderStatus) => {
+      const response = await fetch("/api/orders", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          siteId,
+          orderId,
+          status,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { order?: MerchantOrderRecord; message?: string; error?: string }
+        | null;
+      if (!response.ok || !payload?.order) {
+        throw new Error(payload?.message || payload?.error || "order_update_failed");
+      }
+      return payload.order;
+    },
+    [siteId],
+  );
+
   const requestOrderItemsUpdate = useCallback(
     async (orderId: string, items: MerchantOrderLineItemInput[]) => {
       const response = await fetch("/api/orders", {
@@ -455,39 +477,60 @@ export default function MerchantOrderMobilePanel({
     [records, requestOrderAction],
   );
 
-  const handleOrderAction = useCallback(
+  const patchOrderStatus = useCallback(
     async (
       order: MerchantOrderRecord,
-      action: "confirm" | "cancel" | "restore" | "complete" | "uncomplete" | "print",
+      status: MerchantOrderStatus,
+      busyLabel: string,
       options: { persistDetailDraft?: boolean } = {},
     ) => {
-      setActionBusyId(order.id);
+      setBusyKey(`${busyLabel}:${order.id}`);
       setError("");
       try {
         let baseOrder = order;
-        if (options.persistDetailDraft && (action === "confirm" || action === "complete") && hasDetailQuantityDraftChanges(order)) {
+        if (
+          options.persistDetailDraft &&
+          (status === "confirmed" || status === "completed") &&
+          hasDetailQuantityDraftChanges(order)
+        ) {
           baseOrder = await requestOrderItemsUpdate(order.id, buildDetailDraftItemsInput(order));
           setRecords((current) => current.map((item) => (item.id === order.id ? baseOrder : item)));
         }
-        if (action === "print" && typeof window !== "undefined") {
+        const nextOrder = await requestOrderStatusUpdate(baseOrder.id, status);
+        setRecords((current) => current.map((item) => (item.id === order.id ? nextOrder : item)));
+      } catch (nextError) {
+        setError(nextError instanceof Error && nextError.message ? nextError.message : "订单操作失败");
+      } finally {
+        setBusyKey("");
+      }
+    },
+    [buildDetailDraftItemsInput, hasDetailQuantityDraftChanges, requestOrderItemsUpdate, requestOrderStatusUpdate],
+  );
+
+  const printOrder = useCallback(
+    async (order: MerchantOrderRecord) => {
+      setBusyKey(`print:${order.id}`);
+      setError("");
+      try {
+        if (typeof window !== "undefined") {
           const popup = window.open("", "_blank", "noopener,noreferrer,width=920,height=760");
           if (popup) {
             popup.document.open();
-            popup.document.write(buildPrintHtml(baseOrder));
+            popup.document.write(buildPrintHtml(order));
             popup.document.close();
             popup.focus();
             popup.print();
           }
         }
-        const nextOrder = await requestOrderAction(baseOrder.id, action);
+        const nextOrder = await requestOrderAction(order.id, "print");
         setRecords((current) => current.map((item) => (item.id === order.id ? nextOrder : item)));
       } catch (nextError) {
         setError(nextError instanceof Error && nextError.message ? nextError.message : "订单操作失败");
       } finally {
-        setActionBusyId("");
+        setBusyKey("");
       }
     },
-    [buildDetailDraftItemsInput, hasDetailQuantityDraftChanges, requestOrderAction, requestOrderItemsUpdate],
+    [requestOrderAction],
   );
 
   const openDetailDialog = useCallback(
@@ -539,99 +582,106 @@ export default function MerchantOrderMobilePanel({
   );
 
   const renderStatusActions = useCallback(
-    (record: MerchantOrderRecord) => (
-      <>
-        {record.status === "confirmed" ? (
-          <button
-            type="button"
-            className={
-              darkMode
-                ? "rounded-full border border-white/15 bg-white/5 px-3 py-2 text-xs font-medium text-white transition hover:bg-white/10 disabled:opacity-50"
-                : "rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
-            }
-            onClick={() => void handleOrderAction(record, "restore")}
-            disabled={actionBusyId === record.id}
-          >
-            取消确认
-          </button>
-        ) : record.status === "cancelled" ? (
-          <button
-            type="button"
-            className={
-              darkMode
-                ? "rounded-full border border-white/15 bg-white/5 px-3 py-2 text-xs font-medium text-white transition hover:bg-white/10 disabled:opacity-50"
-                : "rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
-            }
-            onClick={() => void handleOrderAction(record, "restore")}
-            disabled={actionBusyId === record.id}
-          >
-            恢复待确认
-          </button>
-        ) : (
-          <button
-            type="button"
-            className={
-              darkMode
-                ? "rounded-full border border-sky-400/30 bg-sky-400/10 px-3 py-2 text-xs font-medium text-sky-100 transition hover:bg-sky-400/20 disabled:opacity-50"
-                : "rounded-full border border-sky-300 bg-sky-100 px-3 py-2 text-xs font-medium text-sky-800 transition hover:bg-sky-200 disabled:opacity-50"
-            }
-            onClick={() => void handleOrderAction(record, "confirm")}
-            disabled={actionBusyId === record.id}
-          >
-            确认
-          </button>
-        )}
-        {record.status === "confirmed" ? (
-          <button
-            type="button"
-            className={
-              darkMode
-                ? "inline-flex h-[38px] min-w-[54px] items-center justify-center rounded-[14px] border border-emerald-400/30 bg-emerald-400/10 px-3 text-emerald-100 shadow-[0_10px_24px_rgba(16,185,129,0.18)] transition hover:-translate-y-[1px] hover:bg-emerald-400/15 disabled:opacity-50"
-                : "inline-flex h-[38px] min-w-[54px] items-center justify-center rounded-[14px] border border-emerald-200 bg-[linear-gradient(180deg,#ffffff_0%,#ecfdf5_100%)] px-3 text-emerald-700 shadow-[0_10px_24px_rgba(16,185,129,0.13)] transition hover:-translate-y-[1px] hover:border-emerald-300 hover:shadow-[0_12px_28px_rgba(16,185,129,0.17)] disabled:opacity-50"
-            }
-            onClick={() => void handleOrderAction(record, "complete")}
-            disabled={actionBusyId === record.id}
-          >
-            {actionBusyId === record.id ? (
-              <span className="text-xs font-semibold tracking-[0.18em]">...</span>
-            ) : (
-              <span className="inline-flex items-center justify-center">
-                <ActionCheckIcon />
-              </span>
-            )}
-          </button>
-        ) : record.status === "completed" ? (
-          <button
-            type="button"
-            className={
-              darkMode
-                ? "rounded-full border border-white/15 bg-white/5 px-3 py-2 text-xs font-medium text-white transition hover:bg-white/10 disabled:opacity-50"
-                : "rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
-            }
-            onClick={() => void handleOrderAction(record, "uncomplete")}
-            disabled={actionBusyId === record.id}
-          >
-            取消完成
-          </button>
-        ) : null}
-        {record.status !== "cancelled" ? (
-          <button
-            type="button"
-            className={
-              darkMode
-                ? "rounded-full border border-white/15 bg-white/5 px-3 py-2 text-xs font-medium text-white transition hover:bg-white/10 disabled:opacity-50"
-                : "rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
-            }
-            onClick={() => void handleOrderAction(record, "cancel")}
-            disabled={actionBusyId === record.id}
-          >
-            取消
-          </button>
-        ) : null}
-      </>
-    ),
-    [actionBusyId, darkMode, handleOrderAction],
+    (record: MerchantOrderRecord) => {
+      const isOrderBusy = busyKey.endsWith(`:${record.id}`);
+      const isBusy = (label: string) => busyKey === `${label}:${record.id}`;
+      return (
+        <>
+          {record.status === "confirmed" ? (
+            <button
+              type="button"
+              className={
+                darkMode
+                  ? "rounded-full border border-white/15 bg-white/5 px-3 py-2 text-xs font-medium text-white transition hover:bg-white/10 disabled:opacity-50"
+                  : "rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+              }
+              onClick={() => void patchOrderStatus(record, "pending", "unconfirm")}
+              disabled={isOrderBusy}
+            >
+              {isBusy("unconfirm") ? "处理中" : "取消确认"}
+            </button>
+          ) : record.status === "cancelled" ? (
+            <button
+              type="button"
+              className={
+                darkMode
+                  ? "rounded-full border border-white/15 bg-white/5 px-3 py-2 text-xs font-medium text-white transition hover:bg-white/10 disabled:opacity-50"
+                  : "rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+              }
+              onClick={() => void patchOrderStatus(record, "pending", "restore")}
+              disabled={isOrderBusy}
+            >
+              {isBusy("restore") ? "处理中" : "恢复待确认"}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className={
+                darkMode
+                  ? "rounded-full border border-sky-400/30 bg-sky-400/10 px-3 py-2 text-xs font-medium text-sky-100 transition hover:bg-sky-400/20 disabled:opacity-50"
+                  : "rounded-full border border-sky-300 bg-sky-100 px-3 py-2 text-xs font-medium text-sky-800 transition hover:bg-sky-200 disabled:opacity-50"
+              }
+              onClick={() => void patchOrderStatus(record, "confirmed", "confirm")}
+              disabled={isOrderBusy}
+            >
+              {isBusy("confirm") ? "处理中" : "确认"}
+            </button>
+          )}
+          {record.status === "confirmed" ? (
+            <button
+              type="button"
+              className={
+                darkMode
+                  ? "inline-flex h-[38px] min-w-[54px] items-center justify-center rounded-[14px] border border-emerald-400/30 bg-emerald-400/10 px-3 text-emerald-100 shadow-[0_10px_24px_rgba(16,185,129,0.18)] transition hover:-translate-y-[1px] hover:bg-emerald-400/15 disabled:opacity-50"
+                  : "inline-flex h-[38px] min-w-[54px] items-center justify-center rounded-[14px] border border-emerald-200 bg-[linear-gradient(180deg,#ffffff_0%,#ecfdf5_100%)] px-3 text-emerald-700 shadow-[0_10px_24px_rgba(16,185,129,0.13)] transition hover:-translate-y-[1px] hover:border-emerald-300 hover:shadow-[0_12px_28px_rgba(16,185,129,0.17)] disabled:opacity-50"
+              }
+              onClick={() => void patchOrderStatus(record, "completed", "complete")}
+              disabled={isOrderBusy}
+            >
+              {isBusy("complete") ? (
+                <span className="text-xs font-semibold tracking-[0.18em]">...</span>
+              ) : (
+                <span className="inline-flex items-center justify-center">
+                  <ActionCheckIcon />
+                </span>
+              )}
+            </button>
+          ) : record.status === "completed" ? (
+            <button
+              type="button"
+              className={
+                darkMode
+                  ? "rounded-full border border-white/15 bg-white/5 px-3 py-2 text-xs font-medium text-white transition hover:bg-white/10 disabled:opacity-50"
+                  : "rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+              }
+              onClick={() => void patchOrderStatus(record, "confirmed", "uncomplete")}
+              disabled={isOrderBusy}
+            >
+              {isBusy("uncomplete") ? "处理中" : "取消完成"}
+            </button>
+          ) : null}
+          {record.status !== "cancelled" ? (
+            <button
+              type="button"
+              className={
+                darkMode
+                  ? "rounded-full border border-white/15 bg-white/5 px-3 py-2 text-xs font-medium text-white transition hover:bg-white/10 disabled:opacity-50"
+                  : "rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+              }
+              onClick={() => void patchOrderStatus(record, "cancelled", "cancel")}
+              disabled={isOrderBusy}
+            >
+              {isBusy("cancel") ? "处理中" : "取消"}
+            </button>
+          ) : null}
+        </>
+      );
+    },
+    [busyKey, darkMode, patchOrderStatus],
   );
+
+  const detailOrderBusy = detailOrder ? busyKey.endsWith(`:${detailOrder.id}`) : false;
+  const isDetailOrderActionBusy = (label: string) => (detailOrder ? busyKey === `${label}:${detailOrder.id}` : false);
 
   const detailOverlay = detailOrder ? (
     <div
@@ -753,7 +803,7 @@ export default function MerchantOrderMobilePanel({
                 {detailPreviewEntries.map(({ item, index, quantity, subtotal }) => {
                   const itemDraftKey = getDetailItemDraftKey(detailOrder.id, index);
                   const draftQuantity = detailQuantityDrafts[itemDraftKey] ?? String(quantity);
-                  const isDetailActionBusy = actionBusyId === detailOrder.id;
+                  const isDetailActionBusy = detailOrderBusy;
                   return (
                     <div
                       key={`${detailOrder.id}-${item.productId}-${item.code}-${index}`}
@@ -845,10 +895,10 @@ export default function MerchantOrderMobilePanel({
                   className={`rounded-full px-4 py-2 text-sm font-semibold ${
                     darkMode ? "border border-white/10 bg-white/5 text-white" : "border border-slate-200 bg-white text-slate-700"
                   }`}
-                  onClick={() => void handleOrderAction(detailOrder, "restore")}
-                  disabled={actionBusyId === detailOrder.id}
+                  onClick={() => void patchOrderStatus(detailOrder, "pending", "unconfirm")}
+                  disabled={detailOrderBusy}
                 >
-                  取消确认
+                  {isDetailOrderActionBusy("unconfirm") ? "处理中" : "取消确认"}
                 </button>
               ) : detailOrder.status === "cancelled" ? (
                 <button
@@ -856,10 +906,10 @@ export default function MerchantOrderMobilePanel({
                   className={`rounded-full px-4 py-2 text-sm font-semibold ${
                     darkMode ? "border border-white/10 bg-white/5 text-white" : "border border-slate-200 bg-white text-slate-700"
                   }`}
-                  onClick={() => void handleOrderAction(detailOrder, "restore")}
-                  disabled={actionBusyId === detailOrder.id}
+                  onClick={() => void patchOrderStatus(detailOrder, "pending", "restore")}
+                  disabled={detailOrderBusy}
                 >
-                  恢复待确认
+                  {isDetailOrderActionBusy("restore") ? "处理中" : "恢复待确认"}
                 </button>
               ) : (
                 <button
@@ -869,10 +919,10 @@ export default function MerchantOrderMobilePanel({
                       ? "border border-sky-400/30 bg-sky-400/10 text-sky-100"
                       : "border border-sky-300 bg-sky-100 text-sky-800"
                   } disabled:opacity-40`}
-                  onClick={() => void handleOrderAction(detailOrder, "confirm", { persistDetailDraft: true })}
-                  disabled={actionBusyId === detailOrder.id}
+                  onClick={() => void patchOrderStatus(detailOrder, "confirmed", "confirm", { persistDetailDraft: true })}
+                  disabled={detailOrderBusy}
                 >
-                  确认
+                  {isDetailOrderActionBusy("confirm") ? "处理中" : "确认"}
                 </button>
               )}
               {detailOrder.status === "confirmed" ? (
@@ -883,10 +933,10 @@ export default function MerchantOrderMobilePanel({
                       ? "border border-emerald-400/30 bg-emerald-400/10 text-emerald-100 shadow-[0_10px_24px_rgba(16,185,129,0.18)]"
                       : "border border-emerald-200 bg-[linear-gradient(180deg,#ffffff_0%,#ecfdf5_100%)] text-emerald-700 shadow-[0_10px_24px_rgba(16,185,129,0.13)]"
                   } disabled:opacity-40`}
-                  onClick={() => void handleOrderAction(detailOrder, "complete", { persistDetailDraft: true })}
-                  disabled={actionBusyId === detailOrder.id}
+                  onClick={() => void patchOrderStatus(detailOrder, "completed", "complete", { persistDetailDraft: true })}
+                  disabled={detailOrderBusy}
                 >
-                  {actionBusyId === detailOrder.id ? (
+                  {isDetailOrderActionBusy("complete") ? (
                     <span className="text-xs font-semibold tracking-[0.18em]">...</span>
                   ) : (
                     <span className="inline-flex items-center justify-center">
@@ -900,10 +950,10 @@ export default function MerchantOrderMobilePanel({
                   className={`rounded-full px-4 py-2 text-sm font-semibold ${
                     darkMode ? "border border-white/10 bg-white/5 text-white" : "border border-slate-200 bg-white text-slate-700"
                   }`}
-                  onClick={() => void handleOrderAction(detailOrder, "uncomplete")}
-                  disabled={actionBusyId === detailOrder.id}
+                  onClick={() => void patchOrderStatus(detailOrder, "confirmed", "uncomplete")}
+                  disabled={detailOrderBusy}
                 >
-                  取消完成
+                  {isDetailOrderActionBusy("uncomplete") ? "处理中" : "取消完成"}
                 </button>
               ) : null}
               <button
@@ -911,10 +961,10 @@ export default function MerchantOrderMobilePanel({
                 className={`rounded-full px-4 py-2 text-sm font-semibold ${
                   darkMode ? "bg-white/10 text-white" : "border border-slate-200 bg-white text-slate-700"
                 }`}
-                onClick={() => void handleOrderAction(detailOrder, "print")}
-                disabled={actionBusyId === detailOrder.id}
+                onClick={() => void printOrder(detailOrder)}
+                disabled={detailOrderBusy}
               >
-                打印
+                {isDetailOrderActionBusy("print") ? "处理中" : "打印"}
               </button>
               {detailOrder.status !== "cancelled" ? (
                 <button
@@ -922,10 +972,10 @@ export default function MerchantOrderMobilePanel({
                   className={`rounded-full px-4 py-2 text-sm font-semibold ${
                     darkMode ? "border border-white/10 bg-white/5 text-white" : "border border-slate-200 bg-white text-slate-700"
                   } disabled:opacity-40`}
-                  onClick={() => void handleOrderAction(detailOrder, "cancel")}
-                  disabled={actionBusyId === detailOrder.id}
+                  onClick={() => void patchOrderStatus(detailOrder, "cancelled", "cancel")}
+                  disabled={detailOrderBusy}
                 >
-                  取消
+                  {isDetailOrderActionBusy("cancel") ? "处理中" : "取消"}
                 </button>
               ) : null}
             </div>
