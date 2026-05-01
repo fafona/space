@@ -16668,54 +16668,35 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       <div className="mx-auto max-w-5xl space-y-5">
         <section className="rounded-2xl border border-slate-200 bg-white px-6 py-6 shadow-sm">
           <div className="text-lg font-semibold text-slate-950">经营中心</div>
-          <div className="mt-1 text-sm text-slate-500">网站编辑、名片夹和数据统计集中在这里进入。</div>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="inline-flex h-10 items-center justify-center rounded-lg border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-800 transition hover:border-slate-300 hover:bg-slate-50"
+              onClick={() => {
+                void openMerchantEditorInNewWindow();
+              }}
+            >
+              网站编辑
+            </button>
+            <button
+              type="button"
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-cyan-100 bg-cyan-50 px-4 text-sm font-semibold text-cyan-800 transition hover:border-cyan-200 hover:bg-cyan-100"
+              onClick={openMerchantCardsPanel}
+            >
+              <span>名片夹</span>
+              <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-bold text-cyan-700 ring-1 ring-cyan-100">
+                {merchantBusinessCardCount} 张
+              </span>
+            </button>
+            <button
+              type="button"
+              className="inline-flex h-10 items-center justify-center rounded-lg border border-emerald-100 bg-emerald-50 px-4 text-sm font-semibold text-emerald-800 transition hover:border-emerald-200 hover:bg-emerald-100"
+              onClick={openMerchantAnalyticsPanel}
+            >
+              数据统计
+            </button>
+          </div>
         </section>
-
-        <div className="grid gap-4 md:grid-cols-3">
-          <button
-            type="button"
-            className="group flex min-h-[168px] flex-col items-start justify-between rounded-2xl border border-slate-200 bg-white px-5 py-5 text-left shadow-sm transition hover:-translate-y-[1px] hover:border-slate-300 hover:shadow-md"
-            onClick={() => {
-              void openMerchantEditorInNewWindow();
-            }}
-          >
-            <span>
-              <span className="block text-base font-semibold text-slate-950">网站编辑</span>
-              <span className="mt-2 block text-sm leading-6 text-slate-500">打开独立编辑窗口，继续使用原来的编辑逻辑。</span>
-            </span>
-            <span className="mt-5 inline-flex rounded-full bg-slate-950 px-3 py-1.5 text-xs font-semibold text-white transition group-hover:bg-slate-800">
-              新窗口打开
-            </span>
-          </button>
-
-          <button
-            type="button"
-            className="group flex min-h-[168px] flex-col items-start justify-between rounded-2xl border border-slate-200 bg-white px-5 py-5 text-left shadow-sm transition hover:-translate-y-[1px] hover:border-slate-300 hover:shadow-md"
-            onClick={openMerchantCardsPanel}
-          >
-            <span>
-              <span className="block text-base font-semibold text-slate-950">名片夹</span>
-              <span className="mt-2 block text-sm leading-6 text-slate-500">管理商户名片、联系卡和聊天展示名片。</span>
-            </span>
-            <span className="mt-5 inline-flex rounded-full bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-700 ring-1 ring-cyan-100">
-              {merchantBusinessCardCount} 张
-            </span>
-          </button>
-
-          <button
-            type="button"
-            className="group flex min-h-[168px] flex-col items-start justify-between rounded-2xl border border-slate-200 bg-white px-5 py-5 text-left shadow-sm transition hover:-translate-y-[1px] hover:border-slate-300 hover:shadow-md"
-            onClick={openMerchantAnalyticsPanel}
-          >
-            <span>
-              <span className="block text-base font-semibold text-slate-950">数据统计</span>
-              <span className="mt-2 block text-sm leading-6 text-slate-500">查看访问、发布和联系方式点击统计。</span>
-            </span>
-            <span className="mt-5 inline-flex rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-100">
-              查看统计
-            </span>
-          </button>
-        </div>
       </div>
     </div>
   );
@@ -17427,23 +17408,23 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                           ? "Faolla"
                           : "会话"}
                   </div>
-                  <div className="mt-1 text-sm text-slate-500">
-                    {merchantDesktopSection === "profile"
-                      ? "这里集中维护商户资料、域名前缀和地址联系人。"
-                      : merchantDesktopSection === "business"
-                        ? "这里集中进入网站编辑、名片夹和数据统计。"
-                      : merchantDesktopSection === "cards"
-                        ? "这里集中管理聊天展示名片与联系卡复制内容。"
-                      : merchantDesktopSection === "booking"
-                        ? "这里集中查看和处理当前商户收到的预约记录。"
-                      : merchantDesktopSection === "orders"
-                        ? "这里集中查看和处理前台提交的产品订单。"
-                      : merchantDesktopSection === "analytics"
-                          ? "这里集中查看访问、发布和联系方式点击等统计。"
-                      : merchantDesktopSection === "faolla"
-                          ? "打开 Faolla 总站或登录前访问的前台页面。"
-                          : "这里集中处理官方客服和商户聊天消息。"}
-                  </div>
+                  {merchantDesktopSection === "business" ? null : (
+                    <div className="mt-1 text-sm text-slate-500">
+                      {merchantDesktopSection === "profile"
+                        ? "这里集中维护商户资料、域名前缀和地址联系人。"
+                        : merchantDesktopSection === "cards"
+                          ? "这里集中管理聊天展示名片与联系卡复制内容。"
+                        : merchantDesktopSection === "booking"
+                          ? "这里集中查看和处理当前商户收到的预约记录。"
+                        : merchantDesktopSection === "orders"
+                          ? "这里集中查看和处理前台提交的产品订单。"
+                        : merchantDesktopSection === "analytics"
+                            ? "这里集中查看访问、发布和联系方式点击等统计。"
+                        : merchantDesktopSection === "faolla"
+                            ? "打开 Faolla 总站或登录前访问的前台页面。"
+                            : "这里集中处理官方客服和商户聊天消息。"}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
