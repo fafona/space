@@ -900,8 +900,23 @@ export default function MerchantOrderManagerDialog({
     [busyKey, patchOrderStatus],
   );
 
+  const isSidebarWorkbenchMode = isInline && hideWorkbenchButton;
   const workbenchDialog = workbenchOpen
-    ? overlay(
+    ? isSidebarWorkbenchMode
+      ? (
+        <div className="min-h-[calc(100vh-14rem)] bg-slate-50 text-slate-900">
+          <div className="border-b border-slate-200 bg-white px-5 py-4">
+            <div className="text-xl font-semibold tracking-tight text-slate-950">订单工作台</div>
+          </div>
+          <div className="px-6 py-5">
+            <div className="mx-auto w-full max-w-7xl rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="text-base font-semibold text-slate-900">订单工作台</div>
+              <div className="mt-2 text-sm leading-6 text-slate-500">这里先保留入口，工作台内功能下一步继续做。</div>
+            </div>
+          </div>
+        </div>
+      )
+      : overlay(
         <div
           className="fixed inset-0 z-[2147482940] flex items-center justify-center bg-black/45 px-4"
           onMouseDown={(event) => {
@@ -926,6 +941,8 @@ export default function MerchantOrderManagerDialog({
         </div>,
       )
     : null;
+
+  if (isSidebarWorkbenchMode && workbenchOpen) return workbenchDialog;
 
   const detailDialog = detailOrder
     ? overlay(

@@ -12278,6 +12278,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       return;
     }
     setMerchantSiteIdOverride(resolvedSiteId);
+    setMerchantBookingWorkbenchOpen(false);
     setMerchantDesktopSection("booking");
   }
 
@@ -12288,6 +12289,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       return;
     }
     setMerchantSiteIdOverride(resolvedSiteId);
+    setMerchantOrderWorkbenchOpen(false);
     setMerchantDesktopSection("orders");
   }
 

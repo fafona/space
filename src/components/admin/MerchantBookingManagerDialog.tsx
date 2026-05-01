@@ -1277,6 +1277,31 @@ export default function MerchantBookingManagerDialog({
           </div>,
         )
       : null;
+  const workbenchDialog = (
+    <BookingWorkbenchDialog
+      open={workbenchOpen}
+      mode={isInline && hideWorkbenchButton ? "inline" : "dialog"}
+      hideManagementBackButton={isInline && hideWorkbenchButton}
+      siteId={siteId}
+      siteName={siteName}
+      siteCountryCode={siteCountryCode}
+      records={records}
+      storeOptions={storeOptions}
+      itemOptions={itemOptions}
+      bookingRulesSnapshot={bookingRulesSnapshot}
+      allowCustomerAutoEmail={allowCustomerAutoEmail}
+      onSettingsSaved={(settings) => {
+        setWorkbenchSettings(settings);
+        setCustomerEmailLocale(
+          resolveMerchantBookingCustomerEmailLocale(settings.customerEmailLocale, siteCountryCode),
+        );
+        setCustomerEmailLocaleLoaded(true);
+      }}
+      onClose={() => setWorkbenchOpen(false)}
+    />
+  );
+
+  if (isInline && hideWorkbenchButton && workbenchOpen) return workbenchDialog;
 
   const content = (
     <div
@@ -1765,25 +1790,7 @@ export default function MerchantBookingManagerDialog({
           )}
         </div>
       </div>
-      <BookingWorkbenchDialog
-        open={workbenchOpen}
-        siteId={siteId}
-        siteName={siteName}
-        siteCountryCode={siteCountryCode}
-        records={records}
-        storeOptions={storeOptions}
-        itemOptions={itemOptions}
-        bookingRulesSnapshot={bookingRulesSnapshot}
-        allowCustomerAutoEmail={allowCustomerAutoEmail}
-        onSettingsSaved={(settings) => {
-          setWorkbenchSettings(settings);
-          setCustomerEmailLocale(
-            resolveMerchantBookingCustomerEmailLocale(settings.customerEmailLocale, siteCountryCode),
-          );
-          setCustomerEmailLocaleLoaded(true);
-        }}
-        onClose={() => setWorkbenchOpen(false)}
-      />
+      {workbenchDialog}
       {detailDialog}
     </div>
   );

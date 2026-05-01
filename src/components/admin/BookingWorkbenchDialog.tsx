@@ -24,6 +24,8 @@ import type { MerchantBookingRulesSnapshot } from "@/lib/merchantBookingRules";
 
 type BookingWorkbenchDialogProps = {
   open: boolean;
+  mode?: "dialog" | "inline";
+  hideManagementBackButton?: boolean;
   siteId: string;
   siteName: string;
   siteCountryCode?: string;
@@ -447,6 +449,8 @@ function getMetricValueClass(tone: MetricTone, darkMode: boolean) {
 
 export default function BookingWorkbenchDialog({
   open,
+  mode = "dialog",
+  hideManagementBackButton = false,
   siteId,
   siteName,
   siteCountryCode = "",
@@ -460,6 +464,7 @@ export default function BookingWorkbenchDialog({
   onSettingsSaved,
 }: BookingWorkbenchDialogProps) {
   const { locale } = useI18n();
+  const isInline = mode === "inline";
   const defaultCustomerEmailLocale = useMemo(
     () => resolveMerchantBookingCustomerEmailLocale("", siteCountryCode),
     [siteCountryCode],
@@ -941,7 +946,7 @@ export default function BookingWorkbenchDialog({
   );
 
   const handleTouchStart = ((event) => {
-    if (typeof window === "undefined" || window.innerWidth >= MOBILE_BREAKPOINT) return;
+    if (isInline || typeof window === "undefined" || window.innerWidth >= MOBILE_BREAKPOINT) return;
     const touch = event.touches[0];
     if (!touch || touch.clientX > 42) {
       swipeStateRef.current.tracking = false;
@@ -1027,7 +1032,12 @@ export default function BookingWorkbenchDialog({
     : "flex w-full items-center gap-4 px-5 py-4 text-left transition hover:bg-slate-50";
   const menuDividerClassName = darkMode ? "divide-slate-800" : "divide-slate-100";
   const menuChevronClassName = darkMode ? "text-slate-500" : "text-slate-300";
-  const pageContentBottomClassName = sectionView === "home" ? "pb-[calc(env(safe-area-inset-bottom)+7.5rem)]" : "pb-[calc(env(safe-area-inset-bottom)+6.25rem)]";
+  const pageContentBottomClassName = isInline
+    ? "pb-8"
+    : sectionView === "home"
+      ? "pb-[calc(env(safe-area-inset-bottom)+7.5rem)]"
+      : "pb-[calc(env(safe-area-inset-bottom)+6.25rem)]";
+  const showBackButton = !(hideManagementBackButton && sectionView === "home");
   const effectiveCustomerEmailLocale = draft.customerEmailLocale || defaultCustomerEmailLocale;
   const customerAutoEmailControlsDisabled = !allowCustomerAutoEmail || !draft.customerAutoEmailEnabled;
   const renderOptionColorControls = (
@@ -1119,9 +1129,9 @@ export default function BookingWorkbenchDialog({
   );
 
   const content = (
-    <div className={`fixed inset-0 z-[2147483000] ${shellClassName}`}>
+    <div className={`${isInline ? "relative min-h-[calc(100vh-14rem)] w-full" : "fixed inset-0 z-[2147483000]"} ${shellClassName}`}>
       <div
-        className="flex h-full flex-col"
+        className={isInline ? "flex min-h-[calc(100vh-14rem)] flex-col" : "flex h-full flex-col"}
         style={{
           transform: swipeOffset > 0 ? `translateX(${swipeOffset}px)` : undefined,
           transition: swipeStateRef.current.tracking ? "none" : "transform 180ms ease-out",
@@ -1131,25 +1141,27 @@ export default function BookingWorkbenchDialog({
         onTouchEnd={handleTouchEnd}
         onTouchCancel={handleTouchCancel}
       >
-        <div className={`border-b px-4 pb-3 pt-[calc(env(safe-area-inset-top)+0.55rem)] sm:px-6 sm:py-3 ${darkMode ? "border-slate-800 bg-slate-950" : "border-slate-200 bg-white"}`}>
+        <div className={`border-b ${isInline ? "px-5 py-4" : "px-4 pb-3 pt-[calc(env(safe-area-inset-top)+0.55rem)] sm:px-6 sm:py-3"} ${darkMode ? "border-slate-800 bg-slate-950" : "border-slate-200 bg-white"}`}>
           <div className="flex items-center gap-2.5 sm:gap-3">
-            <button
-              type="button"
-              className={backButtonClassName}
-              onClick={handleBack}
-              aria-label={
-                sectionView === "home"
-                  ? getMerchantBookingFieldText("backToManagement", locale)
-                  : getMerchantBookingFieldText("backToWorkbench", locale)
-              }
-            >
-              <BackIcon />
-              <span className="hidden sm:inline">
-                {sectionView === "home"
-                  ? getMerchantBookingFieldText("backToManagement", locale)
-                  : getMerchantBookingFieldText("backToWorkbench", locale)}
-              </span>
-            </button>
+            {showBackButton ? (
+              <button
+                type="button"
+                className={backButtonClassName}
+                onClick={handleBack}
+                aria-label={
+                  sectionView === "home"
+                    ? getMerchantBookingFieldText("backToManagement", locale)
+                    : getMerchantBookingFieldText("backToWorkbench", locale)
+                }
+              >
+                <BackIcon />
+                <span className="hidden sm:inline">
+                  {sectionView === "home"
+                    ? getMerchantBookingFieldText("backToManagement", locale)
+                    : getMerchantBookingFieldText("backToWorkbench", locale)}
+                </span>
+              </button>
+            ) : null}
             <div className="min-w-0 text-lg font-semibold tracking-tight sm:text-xl">{currentSectionLabel}</div>
           </div>
         </div>
@@ -1832,7 +1844,7 @@ export default function BookingWorkbenchDialog({
       </div>
       {copySuccessNotice ? (
         <div
-          className="pointer-events-none fixed inset-x-0 z-[2147483200] flex justify-center px-4"
+          className={`pointer-events-none ${isInline ? "absolute inset-x-0" : "fixed inset-x-0 z-[2147483200]"} flex justify-center px-4`}
           style={{ top: "max(1.25rem, env(safe-area-inset-top))" }}
         >
           <div className={`rounded-full px-4 py-2 text-sm font-medium shadow-2xl ${darkMode ? "bg-slate-100 text-slate-900" : "bg-slate-900 text-white"}`}>
@@ -1843,5 +1855,5 @@ export default function BookingWorkbenchDialog({
     </div>
   );
 
-  return overlay(content);
+  return isInline ? content : overlay(content);
 }
