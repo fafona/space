@@ -14232,6 +14232,36 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   const shouldShowPublishActions = showPublishActions ?? !isPlatformEditor;
   const isDesktopMerchantWorkspace = desktopMerchantWorkspaceActive;
   const showDesktopMerchantSupportPanel = isDesktopMerchantWorkspace && merchantDesktopSection === "support";
+  const defaultMerchantDesktopSection: MerchantDesktopSection = canUseBookingBlock
+    ? "booking"
+    : canUseOrderManagement
+      ? "orders"
+      : "support";
+  useEffect(() => {
+    if (checkingAuth || !isDesktopMerchantWorkspace || merchantEditorOnly) return;
+    if (merchantDesktopSection !== "editor") return;
+    const merchantWorkspaceSiteId = (
+      editingSiteId ||
+      merchantSiteIdOverride ||
+      getSiteIdFromStoreScope(storeScope) ||
+      merchantSessionIdentityRef.current.merchantId ||
+      ""
+    ).trim();
+    if (!isMerchantNumericId(merchantWorkspaceSiteId)) return;
+    if (!editingSiteId) {
+      setMerchantSiteIdOverride((current) => current || merchantWorkspaceSiteId);
+    }
+    setMerchantDesktopSection(defaultMerchantDesktopSection);
+  }, [
+    checkingAuth,
+    defaultMerchantDesktopSection,
+    editingSiteId,
+    isDesktopMerchantWorkspace,
+    merchantDesktopSection,
+    merchantEditorOnly,
+    merchantSiteIdOverride,
+    storeScope,
+  ]);
   const merchantAnalyticsSnapshot: MerchantAnalyticsSnapshot =
     isDesktopMerchantWorkspace && merchantDesktopSection === "analytics"
       ? (() => {

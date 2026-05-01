@@ -1636,7 +1636,7 @@ export default function MerchantBookingManagerDialog({
                           ) : (
                             <span className="h-8 w-8" aria-hidden="true" />
                           )}
-                          <span className="min-w-0 truncate">{record.email || "-"}</span>
+                          <span className="ml-4 min-w-0 truncate">{record.email || "-"}</span>
                           {record.email ? (
                             <a
                               className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
@@ -1663,7 +1663,7 @@ export default function MerchantBookingManagerDialog({
                           ) : (
                             <span className="h-8 w-8" aria-hidden="true" />
                           )}
-                          <span className="min-w-0 truncate">{record.phone || "-"}</span>
+                          <span className="ml-4 min-w-0 truncate">{record.phone || "-"}</span>
                           {record.phone ? (
                             <a
                               className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#007AFF] text-white shadow-sm transition hover:bg-[#0066D6]"
@@ -1685,7 +1685,7 @@ export default function MerchantBookingManagerDialog({
                       <div className="flex flex-wrap gap-1.5">{renderStatusActions(record)}</div>
                     </div>
 
-                    <div className="mt-3 grid gap-y-2.5 gap-x-4 md:grid-cols-2 xl:grid-cols-[12rem_12rem_12rem_minmax(0,1fr)_auto] xl:gap-x-16">
+                    <div className="mt-3 grid gap-y-2.5 gap-x-4 md:grid-cols-2 xl:grid-cols-[12rem_12rem_12rem_minmax(0,1fr)_auto] xl:gap-x-[4.8rem]">
                       <ReadOnlyBookingField
                         fieldKey="appointmentAt"
                         value={[appointmentParts.date || "-", appointmentParts.time || "-"].join(" ")}

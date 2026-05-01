@@ -1297,7 +1297,7 @@ export default function MerchantOrderManagerDialog({
                             ) : (
                               <span className="h-8 w-8" aria-hidden="true" />
                             )}
-                            <span className="min-w-0 truncate">{record.customer.email || "-"}</span>
+                            <span className="ml-4 min-w-0 truncate">{record.customer.email || "-"}</span>
                             {record.customer.email ? (
                               <a
                                 className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
@@ -1314,7 +1314,7 @@ export default function MerchantOrderManagerDialog({
                             ) : (
                               <span className="h-8 w-8" aria-hidden="true" />
                             )}
-                            <span className="min-w-0 truncate">{record.customer.phone || "-"}</span>
+                            <span className="ml-4 min-w-0 truncate">{record.customer.phone || "-"}</span>
                             {record.customer.phone ? (
                               <a
                                 className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#007AFF] text-white shadow-sm transition hover:bg-[#0066D6]"
