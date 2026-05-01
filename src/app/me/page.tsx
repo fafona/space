@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type ReactNode } from "react";
 import dynamic from "next/dynamic";
 import { useI18n } from "@/components/I18nProvider";
 import {
@@ -67,6 +67,12 @@ const SupportMessageContent = dynamic(() => import("@/components/support/Support
   ssr: false,
   loading: () => null,
 });
+
+const MOBILE_FAOLLA_FRAME_STYLE: CSSProperties = {
+  WebkitOverflowScrolling: "touch",
+  overscrollBehaviorY: "contain",
+  touchAction: "pan-y",
+};
 
 type MeSessionPayload = {
   authenticated?: unknown;
@@ -6174,6 +6180,8 @@ export default function MePage() {
             ref={personalMobileFaollaFrameRef}
             title="Faolla"
             src={mobileFaollaTargetHref}
+            scrolling="yes"
+            style={MOBILE_FAOLLA_FRAME_STYLE}
             className="absolute inset-0 h-full w-full border-0 bg-white"
           />
         </div>

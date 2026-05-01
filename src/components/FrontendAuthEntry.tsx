@@ -214,6 +214,10 @@ export default function FrontendAuthEntry({
   const rootRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
+    if (typeof window !== "undefined" && isFaollaAppShellSearch(window.location.search)) {
+      return;
+    }
+
     let cancelled = false;
     const retryDelays = [0, 1200, 3200, 7000];
     let retryTimer: number | null = null;
@@ -364,11 +368,11 @@ export default function FrontendAuthEntry({
     };
   }, [currentMerchantId, payload, resolved]);
 
-  if (!resolved) return null;
+  const hideInFaollaAppShell = hydrated && typeof window !== "undefined" && isFaollaAppShellSearch(window.location.search);
+  if (hideInFaollaAppShell || !resolved) return null;
 
   const loggedIn = payload?.authenticated === true;
   if (!loggedIn) {
-    if (hydrated && typeof window !== "undefined" && isFaollaAppShellSearch(window.location.search)) return null;
     return (
       <div className={className}>
         <Link
