@@ -28,6 +28,9 @@ type MerchantOrderManagerDialogProps = {
   className?: string;
   siteId: string;
   siteName: string;
+  workbenchOpen?: boolean;
+  hideWorkbenchButton?: boolean;
+  onWorkbenchOpenChange?: (open: boolean) => void;
   onOrdersChange?: (records: MerchantOrderRecord[]) => void;
   onOpenConversation?: (target: { accountId?: string; email?: string; name?: string }) => void;
   onClose: () => void;
@@ -227,6 +230,9 @@ export default function MerchantOrderManagerDialog({
   showCloseButton = true,
   className = "",
   siteId,
+  workbenchOpen: controlledWorkbenchOpen,
+  hideWorkbenchButton = false,
+  onWorkbenchOpenChange,
   onOrdersChange,
   onOpenConversation,
   onClose,
@@ -246,11 +252,22 @@ export default function MerchantOrderManagerDialog({
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
   const [busyKey, setBusyKey] = useState("");
-  const [workbenchOpen, setWorkbenchOpen] = useState(false);
+  const [internalWorkbenchOpen, setInternalWorkbenchOpen] = useState(false);
   const [detailOrderId, setDetailOrderId] = useState("");
   const [detailQuantityDrafts, setDetailQuantityDrafts] = useState<Record<string, string>>({});
   const [selectedStatuses, setSelectedStatuses] = useState<MerchantOrderStatus[]>(
     () => loadMerchantOrderManagerPreferences(siteId).selectedStatuses,
+  );
+  const isWorkbenchOpenControlled = controlledWorkbenchOpen !== undefined;
+  const workbenchOpen = controlledWorkbenchOpen ?? internalWorkbenchOpen;
+  const setWorkbenchOpen = useCallback(
+    (nextOpen: boolean) => {
+      if (!isWorkbenchOpenControlled) {
+        setInternalWorkbenchOpen(nextOpen);
+      }
+      onWorkbenchOpenChange?.(nextOpen);
+    },
+    [isWorkbenchOpenControlled, onWorkbenchOpenChange],
   );
 
   const workbenchButtonClassName = workbenchOpen
@@ -265,6 +282,12 @@ export default function MerchantOrderManagerDialog({
   const compactBatchButtonClassName = selectionMode
     ? "rounded-full border border-slate-900 bg-slate-900 px-3 py-2 text-sm font-medium text-white shadow-[0_10px_20px_rgba(15,23,42,0.14)] transition"
     : "rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-[0_8px_18px_rgba(15,23,42,0.04)] transition hover:bg-slate-50";
+
+  useEffect(() => {
+    if (!open) {
+      setWorkbenchOpen(false);
+    }
+  }, [open, setWorkbenchOpen]);
 
   const loadOrders = useCallback(async () => {
     if (!siteId) return;
@@ -1103,7 +1126,11 @@ export default function MerchantOrderManagerDialog({
             <div className="min-w-0 flex-1 space-y-1">
               <div className="flex flex-wrap items-center gap-2.5">
                 <div className="text-[26px] font-semibold text-slate-950">订单管理</div>
-                <button type="button" className={workbenchButtonClassName} onClick={() => setWorkbenchOpen(true)}>
+                <button
+                  type="button"
+                  className={hideWorkbenchButton ? "hidden" : workbenchButtonClassName}
+                  onClick={() => setWorkbenchOpen(true)}
+                >
                   工作台
                 </button>
 

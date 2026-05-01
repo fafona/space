@@ -83,6 +83,9 @@ type MerchantBookingManagerDialogProps = {
   bookingRulesSnapshot?: MerchantBookingRulesSnapshot | null;
   allowBookingEmailPrefill?: boolean;
   allowCustomerAutoEmail?: boolean;
+  workbenchOpen?: boolean;
+  hideWorkbenchButton?: boolean;
+  onWorkbenchOpenChange?: (open: boolean) => void;
   onRecordsChange?: (records: MerchantBookingRecord[]) => void;
   onOpenConversation?: (target: { accountId?: string; email?: string; name?: string }) => void;
   onClose: () => void;
@@ -476,6 +479,9 @@ export default function MerchantBookingManagerDialog({
   bookingRulesSnapshot = null,
   allowBookingEmailPrefill = false,
   allowCustomerAutoEmail = false,
+  workbenchOpen: controlledWorkbenchOpen,
+  hideWorkbenchButton = false,
+  onWorkbenchOpenChange,
   onRecordsChange,
   onOpenConversation,
   onClose,
@@ -509,12 +515,23 @@ export default function MerchantBookingManagerDialog({
   const [selectedBookingIds, setSelectedBookingIds] = useState<string[]>([]);
   const [busyKey, setBusyKey] = useState("");
   const [detailBookingId, setDetailBookingId] = useState<string | null>(null);
-  const [workbenchOpen, setWorkbenchOpen] = useState(false);
+  const [internalWorkbenchOpen, setInternalWorkbenchOpen] = useState(false);
   const [workbenchSettings, setWorkbenchSettings] = useState<MerchantBookingWorkbenchSettings>(() =>
     normalizeMerchantBookingWorkbenchSettings(null),
   );
   const [customerEmailLocale, setCustomerEmailLocale] = useState(defaultCustomerEmailLocale);
   const [customerEmailLocaleLoaded, setCustomerEmailLocaleLoaded] = useState(false);
+  const isWorkbenchOpenControlled = controlledWorkbenchOpen !== undefined;
+  const workbenchOpen = controlledWorkbenchOpen ?? internalWorkbenchOpen;
+  const setWorkbenchOpen = useCallback(
+    (nextOpen: boolean) => {
+      if (!isWorkbenchOpenControlled) {
+        setInternalWorkbenchOpen(nextOpen);
+      }
+      onWorkbenchOpenChange?.(nextOpen);
+    },
+    [isWorkbenchOpenControlled, onWorkbenchOpenChange],
+  );
   const workbenchButtonClassName = workbenchOpen
     ? "inline-flex items-center justify-center rounded-[18px] rounded-tl-[8px] rounded-br-[24px] border border-[#34d399] bg-[linear-gradient(135deg,#0f172a_0%,#0f766e_58%,#10b981_100%)] px-4 py-2 text-sm font-semibold tracking-[0.03em] text-white shadow-[0_18px_34px_rgba(15,118,110,0.28)] ring-1 ring-[#99f6e4]/60 transition"
     : "inline-flex items-center justify-center rounded-[18px] rounded-tl-[8px] rounded-br-[24px] border border-[#f59e0b] bg-[linear-gradient(135deg,#fef3c7_0%,#f59e0b_38%,#f97316_100%)] px-4 py-2 text-sm font-semibold tracking-[0.03em] text-slate-950 shadow-[0_16px_30px_rgba(249,115,22,0.28)] ring-1 ring-[#fde68a]/80 transition hover:-translate-y-[1px] hover:brightness-[1.03] hover:shadow-[0_20px_34px_rgba(249,115,22,0.34)]";
@@ -532,7 +549,7 @@ export default function MerchantBookingManagerDialog({
     if (!open) {
       setWorkbenchOpen(false);
     }
-  }, [open]);
+  }, [open, setWorkbenchOpen]);
 
   useEffect(() => {
     setCustomerEmailLocale(defaultCustomerEmailLocale);
@@ -1287,15 +1304,17 @@ export default function MerchantBookingManagerDialog({
         >
         <div className="flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4">
           <div className="min-w-0 flex-1 space-y-1">
-            <div className="flex flex-wrap items-center gap-2.5">
+              <div className="flex flex-wrap items-center gap-2.5">
               <div className="text-lg font-semibold text-slate-900">{getMerchantBookingFieldText("managementTitle", locale)}</div>
-              <button
-                type="button"
-                className={workbenchButtonClassName}
-                onClick={() => setWorkbenchOpen(true)}
-              >
-                {getMerchantBookingFieldText("workbenchButton", locale)}
-              </button>
+              {!hideWorkbenchButton ? (
+                <button
+                  type="button"
+                  className={workbenchButtonClassName}
+                  onClick={() => setWorkbenchOpen(true)}
+                >
+                  {getMerchantBookingFieldText("workbenchButton", locale)}
+                </button>
+              ) : null}
               <label className={toolbarSelectClassName}>
                 <span className="whitespace-nowrap text-xs font-medium text-slate-500">{getMerchantBookingSortLabel(locale)}</span>
                 <div className={toolbarSelectFieldClassName}>

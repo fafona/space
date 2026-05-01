@@ -5222,6 +5222,8 @@ export default function AdminClient({
   const [merchantSiteIdOverride, setMerchantSiteIdOverride] = useState("");
   const [merchantBookingManagerOpen, setMerchantBookingManagerOpen] = useState(false);
   const [merchantOrderManagerOpen, setMerchantOrderManagerOpen] = useState(false);
+  const [merchantBookingWorkbenchOpen, setMerchantBookingWorkbenchOpen] = useState(false);
+  const [merchantOrderWorkbenchOpen, setMerchantOrderWorkbenchOpen] = useState(false);
   const [merchantBookingAttentionCount, setMerchantBookingAttentionCount] = useState(0);
   const [supportDialogOpen, setSupportDialogOpen] = useState(false);
   const [supportDataActivated, setSupportDataActivated] = useState(false);
@@ -14263,6 +14265,14 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     merchantSiteIdOverride,
     storeScope,
   ]);
+  useEffect(() => {
+    if (!isDesktopMerchantWorkspace || merchantDesktopSection !== "booking") {
+      setMerchantBookingWorkbenchOpen(false);
+    }
+    if (!isDesktopMerchantWorkspace || merchantDesktopSection !== "orders") {
+      setMerchantOrderWorkbenchOpen(false);
+    }
+  }, [isDesktopMerchantWorkspace, merchantDesktopSection]);
   const merchantAnalyticsSnapshot: MerchantAnalyticsSnapshot =
     isDesktopMerchantWorkspace && merchantDesktopSection === "analytics"
       ? (() => {
@@ -16995,6 +17005,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               open
               mode="inline"
               showCloseButton={false}
+              workbenchOpen={merchantBookingWorkbenchOpen}
+              hideWorkbenchButton
+              onWorkbenchOpenChange={setMerchantBookingWorkbenchOpen}
               className="min-h-[calc(100vh-14rem)]"
             />
           ) : merchantDesktopSection === "orders" && merchantOrderManagerDialogCommonProps ? (
@@ -17003,6 +17016,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               open
               mode="inline"
               showCloseButton={false}
+              workbenchOpen={merchantOrderWorkbenchOpen}
+              hideWorkbenchButton
+              onWorkbenchOpenChange={setMerchantOrderWorkbenchOpen}
               className="min-h-[calc(100vh-14rem)]"
             />
           ) : merchantDesktopSection === "analytics" ? (
@@ -17363,7 +17379,37 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             <div className="border-t">
               <div className="w-full px-6 py-4">
                 <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
-                  {merchantDesktopOperationCenterActive ? (
+                  {merchantDesktopSection === "booking" ? (
+                    <div className="grid gap-2">
+                      <button
+                        type="button"
+                        className={`flex min-h-10 w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left text-sm font-semibold transition ${
+                          merchantBookingWorkbenchOpen
+                            ? "border-amber-200 bg-amber-50 text-amber-800"
+                            : "border-slate-200 bg-white text-slate-800 hover:border-amber-200 hover:bg-amber-50"
+                        }`}
+                        onClick={() => setMerchantBookingWorkbenchOpen(true)}
+                        aria-pressed={merchantBookingWorkbenchOpen}
+                      >
+                        预约工作台
+                      </button>
+                    </div>
+                  ) : merchantDesktopSection === "orders" ? (
+                    <div className="grid gap-2">
+                      <button
+                        type="button"
+                        className={`flex min-h-10 w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left text-sm font-semibold transition ${
+                          merchantOrderWorkbenchOpen
+                            ? "border-amber-200 bg-amber-50 text-amber-800"
+                            : "border-slate-200 bg-white text-slate-800 hover:border-amber-200 hover:bg-amber-50"
+                        }`}
+                        onClick={() => setMerchantOrderWorkbenchOpen(true)}
+                        aria-pressed={merchantOrderWorkbenchOpen}
+                      >
+                        订单工作台
+                      </button>
+                    </div>
+                  ) : merchantDesktopOperationCenterActive ? (
                     <div className="grid gap-2">
                       <button
                         type="button"
@@ -17405,10 +17451,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       <div className="text-base font-semibold text-slate-900">
                         {merchantDesktopSection === "profile"
                           ? "商户信息"
-                        : merchantDesktopSection === "booking"
-                          ? "预约管理"
-                        : merchantDesktopSection === "orders"
-                          ? "订单管理"
                         : merchantDesktopSection === "faolla"
                             ? "Faolla"
                             : "会话"}
@@ -17416,10 +17458,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       <div className="mt-1 text-sm text-slate-500">
                         {merchantDesktopSection === "profile"
                           ? "这里集中维护商户资料、域名前缀和地址联系人。"
-                        : merchantDesktopSection === "booking"
-                          ? "这里集中查看和处理当前商户收到的预约记录。"
-                        : merchantDesktopSection === "orders"
-                          ? "这里集中查看和处理前台提交的产品订单。"
                         : merchantDesktopSection === "faolla"
                             ? "打开 Faolla 总站或登录前访问的前台页面。"
                             : "这里集中处理官方客服和商户聊天消息。"}
