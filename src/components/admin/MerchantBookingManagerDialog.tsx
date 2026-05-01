@@ -1692,6 +1692,7 @@ export default function MerchantBookingManagerDialog({
         siteName={siteName}
         siteCountryCode={siteCountryCode}
         records={records}
+        storeOptions={storeOptions}
         itemOptions={itemOptions}
         bookingRulesSnapshot={bookingRulesSnapshot}
         allowCustomerAutoEmail={allowCustomerAutoEmail}

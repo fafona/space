@@ -2014,6 +2014,11 @@ export default function MePage() {
   const [personalProfileSaving, setPersonalProfileSaving] = useState(false);
   const [personalAvatarUploading, setPersonalAvatarUploading] = useState(false);
   const [personalProfileMessage, setPersonalProfileMessage] = useState("");
+  const [faollaFavoriteToast, setFaollaFavoriteToast] = useState<{
+    id: number;
+    text: string;
+    tone: "success" | "error";
+  } | null>(null);
   const [personalBookings, setPersonalBookings] = useState<MerchantBookingRecord[]>([]);
   const [personalOrders, setPersonalOrders] = useState<MerchantOrderRecord[]>([]);
   const [personalMerchantContacts, setPersonalMerchantContacts] = useState<Record<string, PersonalMerchantContact>>({});
@@ -2850,16 +2855,41 @@ export default function MePage() {
     },
     [persistPersonalFavoriteSites, personalFavoriteSites],
   );
+  const showFaollaFavoriteToast = useCallback((text: string, tone: "success" | "error" = "success") => {
+    setFaollaFavoriteToast({
+      id: Date.now(),
+      text,
+      tone,
+    });
+  }, []);
   const toggleCurrentFaollaFavorite = useCallback(() => {
     if (!currentFaollaFavoriteSite) return;
+    const removingFavorite = currentFaollaFavoriteActive;
     const nextSites = currentFaollaFavoriteActive
       ? personalFavoriteSites.filter((site) => site.id !== currentFaollaFavoriteSite.id)
       : [
           { ...currentFaollaFavoriteSite, addedAt: new Date().toISOString() },
           ...personalFavoriteSites.filter((site) => site.id !== currentFaollaFavoriteSite.id),
         ].slice(0, PERSONAL_FAVORITE_SITE_LIMIT);
-    void persistPersonalFavoriteSites(nextSites).catch(() => undefined);
-  }, [currentFaollaFavoriteActive, currentFaollaFavoriteSite, persistPersonalFavoriteSites, personalFavoriteSites]);
+    void persistPersonalFavoriteSites(nextSites)
+      .then(() => {
+        if (isMobileViewport) {
+          showFaollaFavoriteToast(removingFavorite ? "已取消收藏" : "收藏成功");
+        }
+      })
+      .catch(() => {
+        if (isMobileViewport) {
+          showFaollaFavoriteToast("收藏保存失败，请稍后重试", "error");
+        }
+      });
+  }, [
+    currentFaollaFavoriteActive,
+    currentFaollaFavoriteSite,
+    isMobileViewport,
+    persistPersonalFavoriteSites,
+    personalFavoriteSites,
+    showFaollaFavoriteToast,
+  ]);
   const renderFaollaFavoriteButton = (className = "") => (
     <button
       type="button"
@@ -2964,6 +2994,15 @@ export default function MePage() {
       window.removeEventListener("message", handleMessage);
     };
   }, []);
+  useEffect(() => {
+    if (!faollaFavoriteToast) return;
+    const timer = window.setTimeout(() => {
+      setFaollaFavoriteToast((current) => (current?.id === faollaFavoriteToast.id ? null : current));
+    }, 1800);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [faollaFavoriteToast]);
   const openDesktopSection = useCallback((section: DesktopSection) => {
     setDesktopSection(section);
   }, []);
@@ -6176,6 +6215,19 @@ export default function MePage() {
             {renderFaollaFavoriteButton("pointer-events-auto h-10 w-10")}
             {renderFaollaShellAvatar("pointer-events-auto h-11 w-11")}
           </div>
+          {faollaFavoriteToast ? (
+            <div className="pointer-events-none absolute left-1/2 top-[calc(env(safe-area-inset-top)+4.25rem)] z-30 -translate-x-1/2 px-4">
+              <div
+                className={`whitespace-nowrap rounded-full px-4 py-2 text-sm font-semibold shadow-[0_14px_34px_rgba(15,23,42,0.20)] ring-1 ${
+                  faollaFavoriteToast.tone === "error"
+                    ? "bg-rose-600 text-white ring-rose-200/70"
+                    : "bg-slate-950 text-white ring-white/40"
+                }`}
+              >
+                {faollaFavoriteToast.text}
+              </div>
+            </div>
+          ) : null}
           <iframe
             ref={personalMobileFaollaFrameRef}
             title="Faolla"

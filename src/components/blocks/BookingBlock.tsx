@@ -26,6 +26,7 @@ import {
 } from "@/lib/merchantBookings";
 import {
   getMerchantBookingItemColorStyle,
+  getMerchantBookingStoreColorStyle,
   getMerchantBookingAdvanceIssue,
   getMerchantBookingRecurringIssue,
   type MerchantBookingWorkbenchPublicSettings,
@@ -212,6 +213,10 @@ export default function BookingBlock({
   const [draft, setDraft] = useState(() => buildInitialDraft(storeOptions, itemOptions, titleOptions));
   const [bookingCustomerDefaults, setBookingCustomerDefaults] = useState<Partial<MerchantBookingEditableInput>>({});
   const [workbenchSettings, setWorkbenchSettings] = useState<MerchantBookingWorkbenchPublicSettings | null>(null);
+  const selectedStoreColorStyle = useMemo(
+    () => getMerchantBookingStoreColorStyle(workbenchSettings, draft.store),
+    [draft.store, workbenchSettings],
+  );
   const selectedItemColorStyle = useMemo(
     () => getMerchantBookingItemColorStyle(workbenchSettings, draft.item),
     [draft.item, workbenchSettings],
@@ -240,6 +245,10 @@ export default function BookingBlock({
     [appointmentDateIssue, appointmentValue, workbenchSettings],
   );
   const [submittedState, setSubmittedState] = useState<SubmittedBookingState | null>(null);
+  const submittedStoreColorStyle = useMemo(
+    () => getMerchantBookingStoreColorStyle(workbenchSettings, submittedState?.booking.store ?? ""),
+    [submittedState?.booking.store, workbenchSettings],
+  );
   const submittedItemColorStyle = useMemo(
     () => getMerchantBookingItemColorStyle(workbenchSettings, submittedState?.booking.item ?? ""),
     [submittedState?.booking.item, workbenchSettings],
@@ -657,7 +666,23 @@ export default function BookingBlock({
           </div>
           <div className="mt-4 grid gap-3 text-sm text-slate-700 md:grid-cols-2">
             <div>{`预约编号：${submittedState.booking.id}`}</div>
-            <div>{`${storeLabel}：${submittedState.booking.store}`}</div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span>{`${storeLabel}：`}</span>
+              <span
+                className="inline-flex rounded-full border border-slate-200 px-2.5 py-1 text-xs font-semibold"
+                style={
+                  submittedStoreColorStyle
+                    ? {
+                        color: submittedStoreColorStyle.textColor,
+                        backgroundColor: submittedStoreColorStyle.backgroundColor,
+                        borderColor: submittedStoreColorStyle.backgroundColor,
+                      }
+                    : undefined
+                }
+              >
+                {submittedState.booking.store}
+              </span>
+            </div>
             <div className="flex flex-wrap items-center gap-2">
               <span>{`${itemLabel}：`}</span>
               <span
@@ -725,12 +750,34 @@ export default function BookingBlock({
                 value={draft.store}
                 disabled={!isLiveBooking}
                 onChange={(event) => handleFieldChange("store", event.target.value)}
+                style={
+                  selectedStoreColorStyle
+                    ? {
+                        color: selectedStoreColorStyle.textColor,
+                        backgroundColor: selectedStoreColorStyle.backgroundColor,
+                      }
+                    : undefined
+                }
               >
-                {storeOptions.map((item) => (
-                  <option key={item} value={item}>
-                    {item}
-                  </option>
-                ))}
+                {storeOptions.map((item) => {
+                  const storeColorStyle = getMerchantBookingStoreColorStyle(workbenchSettings, item);
+                  return (
+                    <option
+                      key={item}
+                      value={item}
+                      style={
+                        storeColorStyle
+                          ? {
+                              color: storeColorStyle.textColor,
+                              backgroundColor: storeColorStyle.backgroundColor,
+                            }
+                          : undefined
+                      }
+                    >
+                      {item}
+                    </option>
+                  );
+                })}
               </select>
             </label>
             <label className="space-y-1 text-sm text-slate-700">

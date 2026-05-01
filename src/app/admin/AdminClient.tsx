@@ -1795,6 +1795,7 @@ function BookingOptionsTextarea({
 }) {
   const normalizedText = useMemo(() => normalizeBookingOptionList(value).join("\n"), [value]);
   const [draftText, setDraftText] = useState<string | null>(null);
+  const composingRef = useRef(false);
   const textValue = draftText ?? normalizedText;
 
   const commitText = useCallback(
@@ -1813,13 +1814,81 @@ function BookingOptionsTextarea({
       onFocus={() => {
         setDraftText((currentText) => currentText ?? normalizedText);
       }}
-      onChange={(event) => {
-        const nextText = event.target.value;
+      onCompositionStart={() => {
+        composingRef.current = true;
+      }}
+      onCompositionEnd={(event) => {
+        composingRef.current = false;
+        const nextText = event.currentTarget.value;
         setDraftText(nextText);
         commitText(nextText);
       }}
-      onBlur={() => {
-        commitText(textValue);
+      onChange={(event) => {
+        const nextText = event.target.value;
+        setDraftText(nextText);
+        if (!composingRef.current) {
+          commitText(nextText);
+        }
+      }}
+      onBlur={(event) => {
+        composingRef.current = false;
+        commitText(event.currentTarget.value);
+        setDraftText(null);
+      }}
+    />
+  );
+}
+
+function CompositionSafeTextInput({
+  className,
+  value,
+  placeholder,
+  onChange,
+}: {
+  className?: string;
+  value: unknown;
+  placeholder?: string;
+  onChange: (nextValue: string) => void;
+}) {
+  const normalizedValue = typeof value === "string" ? value : "";
+  const [draftText, setDraftText] = useState<string | null>(null);
+  const composingRef = useRef(false);
+  const textValue = draftText ?? normalizedValue;
+
+  const commitText = useCallback(
+    (nextText: string) => {
+      onChange(nextText);
+    },
+    [onChange],
+  );
+
+  return (
+    <input
+      className={className}
+      value={textValue}
+      placeholder={placeholder}
+      onFocus={() => {
+        setDraftText((currentText) => currentText ?? normalizedValue);
+      }}
+      onCompositionStart={() => {
+        composingRef.current = true;
+      }}
+      onCompositionEnd={(event) => {
+        composingRef.current = false;
+        const nextText = event.currentTarget.value;
+        setDraftText(nextText);
+        commitText(nextText);
+      }}
+      onChange={(event) => {
+        const nextText = event.target.value;
+        setDraftText(nextText);
+        if (!composingRef.current) {
+          commitText(nextText);
+        }
+      }}
+      onBlur={(event) => {
+        composingRef.current = false;
+        commitText(event.currentTarget.value);
         setDraftText(null);
       }}
     />
@@ -28407,25 +28476,25 @@ type GalleryEditorImage = {
               </div>
               <div className="grid gap-4 lg:grid-cols-2">
                 <label className="space-y-1 text-sm text-gray-700">
-                  <span className="block text-gray-600">店铺字段名称</span>
-                  <input
+                  <span className="block text-gray-600">A名称</span>
+                  <CompositionSafeTextInput
                     className="w-full rounded border px-3 py-2"
                     value={block.props.bookingStoreLabel ?? ""}
                     placeholder="预约店铺"
-                    onChange={(event) => onChange({ bookingStoreLabel: event.target.value })}
+                    onChange={(nextValue) => onChange({ bookingStoreLabel: nextValue })}
                   />
                 </label>
                 <label className="space-y-1 text-sm text-gray-700">
-                  <span className="block text-gray-600">项目字段名称</span>
-                  <input
+                  <span className="block text-gray-600">B名称</span>
+                  <CompositionSafeTextInput
                     className="w-full rounded border px-3 py-2"
                     value={block.props.bookingItemLabel ?? ""}
                     placeholder="项目或类型"
-                    onChange={(event) => onChange({ bookingItemLabel: event.target.value })}
+                    onChange={(nextValue) => onChange({ bookingItemLabel: nextValue })}
                   />
                 </label>
                 <label className="space-y-1 text-sm text-gray-700">
-                  <span className="block text-gray-600">预约店铺选项</span>
+                  <span className="block text-gray-600">A选项</span>
                   <BookingOptionsTextarea
                     className="min-h-[120px] w-full rounded border px-3 py-2"
                     value={block.props.bookingStoreOptions}
@@ -28434,7 +28503,7 @@ type GalleryEditorImage = {
                   />
                 </label>
                 <label className="space-y-1 text-sm text-gray-700">
-                  <span className="block text-gray-600">预约项目或类型</span>
+                  <span className="block text-gray-600">B选项</span>
                   <BookingOptionsTextarea
                     className="min-h-[120px] w-full rounded border px-3 py-2"
                     value={block.props.bookingItemOptions}

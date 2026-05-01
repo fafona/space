@@ -14,9 +14,9 @@ import {
   buildMerchantBookingReminderSummary,
   createDefaultMerchantBookingWorkbenchSettings,
   formatMerchantBookingReminderOffset,
-  MERCHANT_BOOKING_ITEM_COLOR_PRESETS,
+  MERCHANT_BOOKING_OPTION_COLOR_PRESETS,
   normalizeMerchantBookingWorkbenchSettings,
-  type MerchantBookingItemColorStyle,
+  type MerchantBookingOptionColorStyle,
   type MerchantBookingWorkbenchSettings,
 } from "@/lib/merchantBookingWorkbench";
 import { normalizeMerchantBookingTimeRangeOptions } from "@/lib/merchantBookings";
@@ -28,6 +28,7 @@ type BookingWorkbenchDialogProps = {
   siteName: string;
   siteCountryCode?: string;
   records: MerchantBookingRecord[];
+  storeOptions?: string[];
   itemOptions?: string[];
   bookingRulesSnapshot?: MerchantBookingRulesSnapshot | null;
   darkMode?: boolean;
@@ -91,6 +92,21 @@ function toNumberOrNull(value: string) {
 
 function getReminderSummaryLabel(value: number[]) {
   return value[0] ? formatMerchantBookingReminderOffset(value[0]) : "未设置";
+}
+
+function getOptionColorPresetId(style: MerchantBookingOptionColorStyle | null | undefined) {
+  if (!style) return "";
+  return (
+    MERCHANT_BOOKING_OPTION_COLOR_PRESETS.find(
+      (preset) => preset.textColor === style.textColor && preset.backgroundColor === style.backgroundColor,
+    )?.id ?? ""
+  );
+}
+
+function getOptionColorPresetById(id: string) {
+  const normalizedId = trimText(id);
+  if (!normalizedId) return null;
+  return MERCHANT_BOOKING_OPTION_COLOR_PRESETS.find((preset) => preset.id === normalizedId) ?? null;
 }
 
 function buildCalendarSyncUrl(origin: string, siteId: string, token: string) {
@@ -435,6 +451,7 @@ export default function BookingWorkbenchDialog({
   siteName,
   siteCountryCode = "",
   records,
+  storeOptions = [],
   itemOptions = [],
   bookingRulesSnapshot = null,
   darkMode = false,
@@ -648,6 +665,17 @@ export default function BookingWorkbenchDialog({
       }>,
     [locale],
   );
+  const bookingStoreColorOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const next: string[] = [];
+    [...storeOptions, ...records.map((record) => record.store)].forEach((item) => {
+      const normalized = trimText(item);
+      if (!normalized || seen.has(normalized)) return;
+      seen.add(normalized);
+      next.push(normalized);
+    });
+    return next;
+  }, [records, storeOptions]);
   const bookingItemColorOptions = useMemo(() => {
     const seen = new Set<string>();
     const next: string[] = [];
@@ -710,11 +738,16 @@ export default function BookingWorkbenchDialog({
     });
   };
 
-  const updateItemColorStyle = (item: string, style: MerchantBookingItemColorStyle | null) => {
+  const updateOptionColorStyle = (
+    group: "store" | "item",
+    item: string,
+    style: MerchantBookingOptionColorStyle | null,
+  ) => {
     const normalizedItem = trimText(item);
     if (!normalizedItem) return;
     setDraft((current) => {
-      const nextStyles = { ...current.itemColorStyles };
+      const sourceStyles = group === "store" ? current.storeColorStyles : current.itemColorStyles;
+      const nextStyles = { ...sourceStyles };
       if (style) {
         nextStyles[normalizedItem] = style;
       } else {
@@ -722,7 +755,7 @@ export default function BookingWorkbenchDialog({
       }
       return {
         ...current,
-        itemColorStyles: nextStyles,
+        ...(group === "store" ? { storeColorStyles: nextStyles } : { itemColorStyles: nextStyles }),
       };
     });
   };
@@ -997,6 +1030,77 @@ export default function BookingWorkbenchDialog({
   const pageContentBottomClassName = sectionView === "home" ? "pb-[calc(env(safe-area-inset-bottom)+7.5rem)]" : "pb-[calc(env(safe-area-inset-bottom)+6.25rem)]";
   const effectiveCustomerEmailLocale = draft.customerEmailLocale || defaultCustomerEmailLocale;
   const customerAutoEmailControlsDisabled = !allowCustomerAutoEmail || !draft.customerAutoEmailEnabled;
+  const renderOptionColorControls = (
+    title: string,
+    options: string[],
+    styles: Record<string, MerchantBookingOptionColorStyle>,
+    group: "store" | "item",
+  ) => (
+    <div className={`rounded-2xl border p-3 ${softPanelClassName}`}>
+      <div className="text-sm font-semibold">{title}</div>
+      <div className="mt-3 space-y-2">
+        {options.length > 0 ? (
+          options.map((item) => {
+            const selectedStyle = styles[item] ?? null;
+            const selectedPresetId = getOptionColorPresetId(selectedStyle);
+            return (
+              <div
+                key={`${group}-${item}`}
+                className={`grid gap-2 rounded-2xl border p-2 sm:grid-cols-[minmax(0,1fr)_13rem] sm:items-center ${
+                  darkMode ? "border-slate-700/80 bg-slate-950/70" : "border-slate-200/70 bg-white/70"
+                }`}
+              >
+                <span
+                  className="inline-flex min-w-0 max-w-full rounded-full border px-3 py-1 text-sm font-semibold"
+                  style={
+                    selectedStyle
+                      ? {
+                          color: selectedStyle.textColor,
+                          backgroundColor: selectedStyle.backgroundColor,
+                          borderColor: selectedStyle.backgroundColor,
+                        }
+                      : undefined
+                  }
+                >
+                  <span className="truncate">{item}</span>
+                </span>
+                <select
+                  className={`h-10 w-full rounded-xl border px-3 text-sm font-medium outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100 ${
+                    darkMode ? "border-slate-700 bg-slate-950 text-slate-100" : "border-slate-300 bg-white text-slate-800"
+                  }`}
+                  value={selectedPresetId}
+                  onChange={(event) => {
+                    const preset = getOptionColorPresetById(event.target.value);
+                    updateOptionColorStyle(
+                      group,
+                      item,
+                      preset
+                        ? {
+                            textColor: preset.textColor,
+                            backgroundColor: preset.backgroundColor,
+                          }
+                        : null,
+                    );
+                  }}
+                >
+                  <option value="">默认</option>
+                  {MERCHANT_BOOKING_OPTION_COLOR_PRESETS.map((preset) => (
+                    <option key={preset.id} value={preset.id}>
+                      {preset.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            );
+          })
+        ) : (
+          <div className={`rounded-2xl border px-4 py-3 text-sm ${softPanelClassName}`}>
+            先在预约模块中添加选项后，这里会显示颜色设置。
+          </div>
+        )}
+      </div>
+    </div>
+  );
 
   const content = (
     <div className={`fixed inset-0 z-[2147483000] ${shellClassName}`}>
@@ -1205,79 +1309,11 @@ export default function BookingWorkbenchDialog({
                   </section>
 
                   <section className={`rounded-3xl border p-5 ${rulePanelClassName("violet")}`}>
-                    <div className="text-base font-semibold">项目颜色</div>
-                    <div className={`mt-1 text-sm ${mutedTextClassName}`}>为不同预约项目选择颜色，前台手机端和 PC 端预约框会同步展示。</div>
-                    <div className="mt-4 space-y-3">
-                      {bookingItemColorOptions.length > 0 ? (
-                        bookingItemColorOptions.map((item) => {
-                          const selectedStyle = draft.itemColorStyles[item] ?? null;
-                          return (
-                            <div key={item} className={`rounded-2xl border p-3 ${softPanelClassName}`}>
-                              <div className="flex flex-wrap items-center justify-between gap-3">
-                                <span
-                                  className="inline-flex rounded-full border px-3 py-1 text-sm font-semibold"
-                                  style={
-                                    selectedStyle
-                                      ? {
-                                          color: selectedStyle.textColor,
-                                          backgroundColor: selectedStyle.backgroundColor,
-                                          borderColor: selectedStyle.backgroundColor,
-                                        }
-                                      : undefined
-                                  }
-                                >
-                                  {item}
-                                </span>
-                                <button
-                                  type="button"
-                                  className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
-                                    darkMode
-                                      ? "border-slate-700 bg-slate-950 text-slate-300 hover:border-slate-500"
-                                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                                  }`}
-                                  onClick={() => updateItemColorStyle(item, null)}
-                                >
-                                  默认
-                                </button>
-                              </div>
-                              <div className="mt-3 grid grid-cols-5 gap-2 sm:grid-cols-10">
-                                {MERCHANT_BOOKING_ITEM_COLOR_PRESETS.map((preset) => {
-                                  const selected =
-                                    selectedStyle?.textColor === preset.textColor &&
-                                    selectedStyle?.backgroundColor === preset.backgroundColor;
-                                  return (
-                                    <button
-                                      key={preset.id}
-                                      type="button"
-                                      className={`h-9 rounded-xl border text-[11px] font-semibold transition ${
-                                        selected ? "ring-2 ring-slate-900 ring-offset-2" : "hover:scale-[1.03]"
-                                      }`}
-                                      style={{
-                                        color: preset.textColor,
-                                        backgroundColor: preset.backgroundColor,
-                                        borderColor: preset.borderColor,
-                                      }}
-                                      onClick={() =>
-                                        updateItemColorStyle(item, {
-                                          textColor: preset.textColor,
-                                          backgroundColor: preset.backgroundColor,
-                                        })
-                                      }
-                                      aria-label={`${item} ${preset.label}`}
-                                    >
-                                      Aa
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          );
-                        })
-                      ) : (
-                        <div className={`rounded-2xl border px-4 py-3 text-sm ${softPanelClassName}`}>
-                          先在预约模块中添加项目后，这里会显示项目颜色设置。
-                        </div>
-                      )}
+                    <div className="text-base font-semibold">选项颜色</div>
+                    <div className={`mt-1 text-sm ${mutedTextClassName}`}>为店铺和项目选项选择颜色，前台手机端和 PC 端预约框会同步展示。</div>
+                    <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                      {renderOptionColorControls("A选项", bookingStoreColorOptions, draft.storeColorStyles, "store")}
+                      {renderOptionColorControls("B选项", bookingItemColorOptions, draft.itemColorStyles, "item")}
                     </div>
                   </section>
 

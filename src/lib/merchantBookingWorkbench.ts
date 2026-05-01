@@ -15,22 +15,27 @@ export type MerchantBookingRecurringRule = {
   timeRanges: string[];
 };
 
-export type MerchantBookingItemColorStyle = {
+export type MerchantBookingOptionColorStyle = {
   textColor: string;
   backgroundColor: string;
 };
 
-export type MerchantBookingItemColorPreset = MerchantBookingItemColorStyle & {
+export type MerchantBookingItemColorStyle = MerchantBookingOptionColorStyle;
+
+export type MerchantBookingOptionColorPreset = MerchantBookingOptionColorStyle & {
   id: string;
   label: string;
   borderColor: string;
 };
+
+export type MerchantBookingItemColorPreset = MerchantBookingOptionColorPreset;
 
 export type MerchantBookingWorkbenchPublicSettings = {
   minAdvanceMinutes: number | null;
   dailyCutoffTime: string;
   bufferMinutes: number | null;
   recurringRules: MerchantBookingRecurringRule[];
+  storeColorStyles: Record<string, MerchantBookingOptionColorStyle>;
   itemColorStyles: Record<string, MerchantBookingItemColorStyle>;
 };
 
@@ -56,6 +61,7 @@ const WORKBENCH_DEFAULTS: MerchantBookingWorkbenchSettings = {
   dailyCutoffTime: "",
   bufferMinutes: null,
   recurringRules: [],
+  storeColorStyles: {},
   itemColorStyles: {},
   customerEmailLocale: "",
   customerAutoEmailEnabled: true,
@@ -72,21 +78,23 @@ const WORKBENCH_DEFAULTS: MerchantBookingWorkbenchSettings = {
 };
 const REMINDER_TRIGGER_GRACE_MINUTES = 15;
 
-export const MERCHANT_BOOKING_ITEM_COLOR_PRESETS: MerchantBookingItemColorPreset[] = [
-  { id: "sky", label: "Sky", textColor: "#075985", backgroundColor: "#E0F2FE", borderColor: "#7DD3FC" },
-  { id: "emerald", label: "Emerald", textColor: "#065F46", backgroundColor: "#D1FAE5", borderColor: "#6EE7B7" },
-  { id: "amber", label: "Amber", textColor: "#92400E", backgroundColor: "#FEF3C7", borderColor: "#FCD34D" },
-  { id: "rose", label: "Rose", textColor: "#9F1239", backgroundColor: "#FFE4E6", borderColor: "#FDA4AF" },
-  { id: "violet", label: "Violet", textColor: "#5B21B6", backgroundColor: "#EDE9FE", borderColor: "#C4B5FD" },
-  { id: "cyan", label: "Cyan", textColor: "#155E75", backgroundColor: "#CFFAFE", borderColor: "#67E8F9" },
-  { id: "lime", label: "Lime", textColor: "#3F6212", backgroundColor: "#ECFCCB", borderColor: "#BEF264" },
-  { id: "orange", label: "Orange", textColor: "#9A3412", backgroundColor: "#FFEDD5", borderColor: "#FDBA74" },
-  { id: "pink", label: "Pink", textColor: "#9D174D", backgroundColor: "#FCE7F3", borderColor: "#F9A8D4" },
-  { id: "slate", label: "Slate", textColor: "#1E293B", backgroundColor: "#F1F5F9", borderColor: "#CBD5E1" },
+export const MERCHANT_BOOKING_OPTION_COLOR_PRESETS: MerchantBookingOptionColorPreset[] = [
+  { id: "blue", label: "蓝色", textColor: "#1D4ED8", backgroundColor: "#DBEAFE", borderColor: "#60A5FA" },
+  { id: "green", label: "绿色", textColor: "#047857", backgroundColor: "#D1FAE5", borderColor: "#34D399" },
+  { id: "yellow", label: "黄色", textColor: "#A16207", backgroundColor: "#FEF9C3", borderColor: "#FACC15" },
+  { id: "red", label: "红色", textColor: "#B91C1C", backgroundColor: "#FEE2E2", borderColor: "#F87171" },
+  { id: "purple", label: "紫色", textColor: "#7E22CE", backgroundColor: "#F3E8FF", borderColor: "#C084FC" },
+  { id: "teal", label: "青绿", textColor: "#0F766E", backgroundColor: "#CCFBF1", borderColor: "#2DD4BF" },
+  { id: "orange", label: "橙色", textColor: "#C2410C", backgroundColor: "#FFEDD5", borderColor: "#FB923C" },
+  { id: "magenta", label: "玫红", textColor: "#BE185D", backgroundColor: "#FCE7F3", borderColor: "#F472B6" },
+  { id: "gray", label: "灰色", textColor: "#334155", backgroundColor: "#E2E8F0", borderColor: "#94A3B8" },
+  { id: "black", label: "黑色", textColor: "#111827", backgroundColor: "#F3F4F6", borderColor: "#4B5563" },
 ];
 
-const ITEM_COLOR_TEXT_VALUES = new Set(MERCHANT_BOOKING_ITEM_COLOR_PRESETS.map((item) => item.textColor));
-const ITEM_COLOR_BACKGROUND_VALUES = new Set(MERCHANT_BOOKING_ITEM_COLOR_PRESETS.map((item) => item.backgroundColor));
+export const MERCHANT_BOOKING_ITEM_COLOR_PRESETS = MERCHANT_BOOKING_OPTION_COLOR_PRESETS;
+
+const OPTION_COLOR_TEXT_VALUES = new Set(MERCHANT_BOOKING_OPTION_COLOR_PRESETS.map((item) => item.textColor));
+const OPTION_COLOR_BACKGROUND_VALUES = new Set(MERCHANT_BOOKING_OPTION_COLOR_PRESETS.map((item) => item.backgroundColor));
 
 function trimText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
@@ -207,15 +215,15 @@ function normalizeRecurringRules(value: unknown) {
   return next;
 }
 
-function normalizeItemColorStyles(value: unknown) {
+function normalizeOptionColorStyles(value: unknown) {
   const source = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
-  const next: Record<string, MerchantBookingItemColorStyle> = {};
+  const next: Record<string, MerchantBookingOptionColorStyle> = {};
   Object.entries(source).forEach(([rawItem, rawStyle]) => {
     const item = trimText(rawItem).slice(0, 120);
     if (!item || !rawStyle || typeof rawStyle !== "object") return;
-    const style = rawStyle as Partial<MerchantBookingItemColorStyle>;
-    const textColor = normalizePaletteColor(style.textColor, ITEM_COLOR_TEXT_VALUES);
-    const backgroundColor = normalizePaletteColor(style.backgroundColor, ITEM_COLOR_BACKGROUND_VALUES);
+    const style = rawStyle as Partial<MerchantBookingOptionColorStyle>;
+    const textColor = normalizePaletteColor(style.textColor, OPTION_COLOR_TEXT_VALUES);
+    const backgroundColor = normalizePaletteColor(style.backgroundColor, OPTION_COLOR_BACKGROUND_VALUES);
     if (!textColor || !backgroundColor) return;
     next[item] = { textColor, backgroundColor };
   });
@@ -260,6 +268,7 @@ export function createDefaultMerchantBookingWorkbenchSettings(): MerchantBooking
   return {
     ...WORKBENCH_DEFAULTS,
     recurringRules: [],
+    storeColorStyles: {},
     itemColorStyles: {},
     customerAutoEmailStatuses: [...WORKBENCH_DEFAULTS.customerAutoEmailStatuses],
     customerAutoEmailMessageByStatus: {},
@@ -275,7 +284,8 @@ export function normalizeMerchantBookingWorkbenchSettings(value: unknown): Merch
     dailyCutoffTime: normalizeClockTime(source.dailyCutoffTime),
     bufferMinutes: normalizePositiveMinutes(source.bufferMinutes),
     recurringRules: normalizeRecurringRules(source.recurringRules),
-    itemColorStyles: normalizeItemColorStyles(source.itemColorStyles),
+    storeColorStyles: normalizeOptionColorStyles(source.storeColorStyles),
+    itemColorStyles: normalizeOptionColorStyles(source.itemColorStyles),
     customerEmailLocale: normalizeEmailLocale(source.customerEmailLocale),
     customerAutoEmailEnabled:
       typeof source.customerAutoEmailEnabled === "boolean"
@@ -303,8 +313,18 @@ export function getMerchantBookingWorkbenchPublicSettings(
     dailyCutoffTime: normalized.dailyCutoffTime,
     bufferMinutes: normalized.bufferMinutes,
     recurringRules: normalized.recurringRules,
+    storeColorStyles: normalized.storeColorStyles,
     itemColorStyles: normalized.itemColorStyles,
   };
+}
+
+export function getMerchantBookingStoreColorStyle(
+  settings: Pick<MerchantBookingWorkbenchPublicSettings, "storeColorStyles"> | null | undefined,
+  store: string,
+): MerchantBookingOptionColorStyle | null {
+  const normalizedStore = trimText(store);
+  if (!normalizedStore) return null;
+  return settings?.storeColorStyles?.[normalizedStore] ?? null;
 }
 
 export function getMerchantBookingItemColorStyle(

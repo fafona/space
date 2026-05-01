@@ -33,6 +33,7 @@ import {
   getMerchantBookingBufferIssue,
   getMerchantBookingDueReminderOffset,
   getMerchantBookingItemColorStyle,
+  getMerchantBookingStoreColorStyle,
   MERCHANT_BOOKING_ITEM_COLOR_PRESETS,
   normalizeMerchantBookingWorkbenchSettings,
 } from "./merchantBookingWorkbench";
@@ -675,6 +676,12 @@ test("normalizeMerchantBookingWorkbenchSettings keeps supported booking item col
   const [preset] = MERCHANT_BOOKING_ITEM_COLOR_PRESETS;
   assert.ok(preset);
   const settings = normalizeMerchantBookingWorkbenchSettings({
+    storeColorStyles: {
+      fafona: {
+        textColor: preset.textColor.toLowerCase(),
+        backgroundColor: preset.backgroundColor.toLowerCase(),
+      },
+    },
     itemColorStyles: {
       "\u54a8\u8be2\u9884\u7ea6": {
         textColor: preset.textColor.toLowerCase(),
@@ -687,6 +694,10 @@ test("normalizeMerchantBookingWorkbenchSettings keeps supported booking item col
     },
   });
 
+  assert.deepEqual(getMerchantBookingStoreColorStyle(settings, "fafona"), {
+    textColor: preset.textColor,
+    backgroundColor: preset.backgroundColor,
+  });
   assert.deepEqual(getMerchantBookingItemColorStyle(settings, "\u54a8\u8be2\u9884\u7ea6"), {
     textColor: preset.textColor,
     backgroundColor: preset.backgroundColor,
