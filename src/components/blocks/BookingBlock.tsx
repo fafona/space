@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import type { BookingProps } from "@/data/homeBlocks";
 import BookingDateTimeInput from "@/components/booking/BookingDateTimeInput";
+import BookingQuickTimeRangePicker from "@/components/booking/BookingQuickTimeRangePicker";
 import {
   buildDefaultBookingItemOptions,
   buildDefaultBookingStoreOptions,
@@ -16,7 +17,6 @@ import {
   normalizeMerchantBookingCustomerNameInput,
   normalizeMerchantBookingDateList,
   normalizeMerchantBookingNoteInput,
-  resolveMerchantBookingTimeRangeSelection,
   normalizeBookingOptionList,
   normalizeMerchantBookingTimeSlotRules,
   sanitizeMerchantBookingEditableInput,
@@ -479,9 +479,8 @@ export default function BookingBlock({
     setDraft((current) => ({ ...current, [key]: nextValue }));
   };
 
-  const handleAvailableTimeRangeSelect = (value: string) => {
+  const handleAvailableTimeRangeSelect = (nextTime: string) => {
     if (!isLiveBooking) return;
-    const nextTime = resolveMerchantBookingTimeRangeSelection(value);
     if (!nextTime) return;
     handleFieldChange("appointmentTimeInput", nextTime);
   };
@@ -836,23 +835,17 @@ export default function BookingBlock({
                 <div className="pt-1 text-sm text-rose-600">{appointmentDateIssue}</div>
               ) : null}
               {availableTimeRanges.length > 0 ? (
-                <div className="flex flex-wrap gap-2 pt-1">
-                  {availableTimeRanges.map((item) => (
-                    <button
-                      key={item}
-                      type="button"
-                      className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition ${
-                        resolveMerchantBookingTimeRangeSelection(item) === draft.appointmentTimeInput
-                          ? "border-sky-300 bg-sky-100 text-sky-800"
-                          : "border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100"
-                      } ${!isLiveBooking ? "cursor-not-allowed opacity-60" : ""}`}
-                      onClick={() => handleAvailableTimeRangeSelect(item)}
-                      disabled={!isLiveBooking}
-                      aria-label={`选择时间 ${item}`}
-                    >
-                      {item}
-                    </button>
-                  ))}
+                <div className="space-y-1 pt-1">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span className="text-sm font-medium text-slate-700">可预约时间</span>
+                    <span className="text-xs text-slate-500">快捷选择</span>
+                  </div>
+                  <BookingQuickTimeRangePicker
+                    ranges={availableTimeRanges}
+                    selectedTime={draft.appointmentTimeInput}
+                    disabled={!isLiveBooking}
+                    onSelect={(nextTime) => handleAvailableTimeRangeSelect(nextTime)}
+                  />
                 </div>
               ) : null}
               {appointmentTimeIssue ? (

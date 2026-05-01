@@ -3,7 +3,6 @@
 import {
   memo,
   useCallback,
-  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -14069,17 +14068,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     editorAvailablePagesRef.current = editingPages.map((page) => ({ id: page.id, name: toPlainText(page.name, page.id) }));
   }
   const editorAvailablePages = editorAvailablePagesRef.current;
-  const deferredPreviewBlocks = useDeferredValue(blocks);
-  const [previewBlocksSnapshot, setPreviewBlocksSnapshot] = useState<Block[]>(() => cloneBlocks(initialBlocks));
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      setPreviewBlocksSnapshot(cloneBlocks(deferredPreviewBlocks));
-    }, 90);
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [deferredPreviewBlocks]);
-
   const pageCopyTargetPages = editingPages.filter((page) => page.id !== editingPageId);
   const pageCopyBlockOptions = blocks.map((block, index) => ({
     id: buildPageCopyItemIdForBlock(block.id),
@@ -17856,7 +17844,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     <div className="editor-mobile-preview relative z-10 w-full py-4">
                       <div data-editor-viewport-boundary className="contents">
                         <BlockRenderer
-                          blocks={previewBlocksSnapshot}
+                          blocks={blocks}
                           currentPageId={editingPageId}
                           currentPageIndex={editingPageIndex}
                           availablePages={editorAvailablePages}

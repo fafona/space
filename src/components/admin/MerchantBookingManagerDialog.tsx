@@ -52,8 +52,18 @@ import {
   type MerchantBookingHistoryVisibility,
   type MerchantBookingSortMode,
 } from "@/lib/merchantBookingManagerPreferences";
-import { resolveMerchantBookingRuleEntry, type MerchantBookingRulesSnapshot } from "@/lib/merchantBookingRules";
-import { normalizeMerchantBookingWorkbenchSettings } from "@/lib/merchantBookingWorkbench";
+import {
+  resolveMerchantBookingRuleEntry,
+  type MerchantBookingRuleSnapshotEntry,
+  type MerchantBookingRulesSnapshot,
+} from "@/lib/merchantBookingRules";
+import {
+  getMerchantBookingItemColorStyle,
+  getMerchantBookingStoreColorStyle,
+  normalizeMerchantBookingWorkbenchSettings,
+  type MerchantBookingOptionColorStyle,
+  type MerchantBookingWorkbenchSettings,
+} from "@/lib/merchantBookingWorkbench";
 import {
   buildMerchantBookingReminderOffsetLabel,
   resolveMerchantBookingCustomerEmailLocale,
@@ -338,6 +348,15 @@ function getTimelineEntryMeta(entry: MerchantBookingTimelineEntry, locale: strin
   return parts.join(" · ");
 }
 
+function resolveBookingRuleFieldLabel(
+  entry: MerchantBookingRuleSnapshotEntry | null | undefined,
+  field: "store" | "item",
+  locale: string,
+) {
+  const customLabel = field === "store" ? entry?.storeLabel : entry?.itemLabel;
+  return customLabel?.trim() || getMerchantBookingFieldText(field, locale);
+}
+
 function downloadBookingsCsv(records: MerchantBookingRecord[], locale: string, siteId: string) {
   if (typeof document === "undefined" || records.length === 0) return;
   const blob = new Blob([buildMerchantBookingsCsv(records, locale)], {
@@ -356,14 +375,18 @@ function ReadOnlyBookingField({
   value,
   todayDateValue,
   locale,
+  colorStyle,
+  labelOverride,
 }: {
   fieldKey: "store" | "item" | "appointmentAt" | "title";
   value: string;
   todayDateValue: string;
   locale: string;
+  colorStyle?: MerchantBookingOptionColorStyle | null;
+  labelOverride?: string;
 }) {
   if (fieldKey === "title") return null;
-  const label = getMerchantBookingFieldText(fieldKey, locale);
+  const label = labelOverride?.trim() || getMerchantBookingFieldText(fieldKey, locale);
   const appointmentMatch = value.match(/^(\d{4}-\d{2}-\d{2}|-)\s+(\d{2}:\d{2}|-)$/);
   if (appointmentMatch) {
     return (
@@ -378,7 +401,16 @@ function ReadOnlyBookingField({
   return (
     <div className="space-y-0.5">
       <div className="text-xs text-slate-500">{label}</div>
-      <div className="text-sm text-slate-900">{value || "-"}</div>
+      <div
+        className={
+          colorStyle
+            ? "inline-flex max-w-full items-center rounded-full px-2.5 py-0.5 text-sm font-semibold"
+            : "text-sm text-slate-900"
+        }
+        style={colorStyle ? { backgroundColor: colorStyle.backgroundColor, color: colorStyle.textColor } : undefined}
+      >
+        <span className="min-w-0 truncate">{value || "-"}</span>
+      </div>
     </div>
   );
 }
@@ -478,6 +510,9 @@ export default function MerchantBookingManagerDialog({
   const [busyKey, setBusyKey] = useState("");
   const [detailBookingId, setDetailBookingId] = useState<string | null>(null);
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
+  const [workbenchSettings, setWorkbenchSettings] = useState<MerchantBookingWorkbenchSettings>(() =>
+    normalizeMerchantBookingWorkbenchSettings(null),
+  );
   const [customerEmailLocale, setCustomerEmailLocale] = useState(defaultCustomerEmailLocale);
   const [customerEmailLocaleLoaded, setCustomerEmailLocaleLoaded] = useState(false);
   const workbenchButtonClassName = workbenchOpen
@@ -503,7 +538,8 @@ export default function MerchantBookingManagerDialog({
   useEffect(() => {
     setCustomerEmailLocale(defaultCustomerEmailLocale);
     setCustomerEmailLocaleLoaded(false);
-  }, [defaultCustomerEmailLocale]);
+    setWorkbenchSettings(normalizeMerchantBookingWorkbenchSettings(null));
+  }, [defaultCustomerEmailLocale, siteId]);
 
   useEffect(() => {
     const now = new Date();
@@ -527,6 +563,7 @@ export default function MerchantBookingManagerDialog({
         throw new Error("load_workbench_locale_failed");
       }
       const normalized = normalizeMerchantBookingWorkbenchSettings(json.settings);
+      setWorkbenchSettings(normalized);
       const resolvedLocale = resolveMerchantBookingCustomerEmailLocale(
         normalized.customerEmailLocale,
         siteCountryCode,
@@ -890,16 +927,19 @@ export default function MerchantBookingManagerDialog({
       ),
     [detailRecord],
   );
-  const detailAvailableTimeRanges = useMemo(
+  const detailRuleEntry = useMemo(
     () =>
       detailRecord
         ? resolveMerchantBookingRuleEntry(bookingRulesSnapshot, {
             bookingBlockId: detailRecord.bookingBlockId,
             bookingViewport: detailRecord.bookingViewport,
-          })?.availableTimeRanges ?? []
-        : [],
+          })
+        : null,
     [bookingRulesSnapshot, detailRecord],
   );
+  const detailAvailableTimeRanges = detailRuleEntry?.availableTimeRanges ?? [];
+  const detailStoreLabel = resolveBookingRuleFieldLabel(detailRuleEntry, "store", locale);
+  const detailItemLabel = resolveBookingRuleFieldLabel(detailRuleEntry, "item", locale);
 
   const saveDetailDialog = async () => {
     if (!detailRecord || !detailDraft) return;
@@ -1094,7 +1134,7 @@ export default function MerchantBookingManagerDialog({
                     </div>
                   ) : null}
                   <label className="space-y-1 text-sm text-slate-700">
-                    <span className="text-xs text-slate-500">{getMerchantBookingFieldText("store", locale)}</span>
+                    <span className="text-xs text-slate-500">{detailStoreLabel}</span>
                     <select
                       className="w-full rounded border px-3 py-2"
                       value={detailDraft.store}
@@ -1109,7 +1149,7 @@ export default function MerchantBookingManagerDialog({
                   </label>
 
                   <label className="space-y-1 text-sm text-slate-700">
-                    <span className="text-xs text-slate-500">{getMerchantBookingFieldText("item", locale)}</span>
+                    <span className="text-xs text-slate-500">{detailItemLabel}</span>
                     <select
                       className="w-full rounded border px-3 py-2"
                       value={detailDraft.item}
@@ -1505,6 +1545,14 @@ export default function MerchantBookingManagerDialog({
                 const displayName = formatMerchantBookingDisplayName(record.customerName, record.title, locale);
                 const isNewRecord = isMerchantBookingPendingMerchantTouch(record);
                 const canOpenConversation = Boolean(record.customerAccountId || record.customerLoginEmail);
+                const storeColorStyle = getMerchantBookingStoreColorStyle(workbenchSettings, record.store);
+                const itemColorStyle = getMerchantBookingItemColorStyle(workbenchSettings, record.item);
+                const recordRuleEntry = resolveMerchantBookingRuleEntry(bookingRulesSnapshot, {
+                  bookingBlockId: record.bookingBlockId,
+                  bookingViewport: record.bookingViewport,
+                });
+                const storeLabel = resolveBookingRuleFieldLabel(recordRuleEntry, "store", locale);
+                const itemLabel = resolveBookingRuleFieldLabel(recordRuleEntry, "item", locale);
                 return (
                   <div
                     key={record.id}
@@ -1546,14 +1594,6 @@ export default function MerchantBookingManagerDialog({
                       ) : null}
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="flex min-w-0 flex-1 flex-wrap items-start gap-x-5 gap-y-2">
-                        <div className="min-w-[180px] shrink-0">
-                          <ReadOnlyBookingField
-                            fieldKey="appointmentAt"
-                            value={[appointmentParts.date || "-", appointmentParts.time || "-"].join(" ")}
-                            todayDateValue={todayDateValue}
-                            locale={locale}
-                          />
-                        </div>
                         <div className="min-w-[240px] flex-1">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className={`rounded-full px-2 py-0.5 text-[11px] ${getStatusBadgeClass(record.status)}`}>
@@ -1645,10 +1685,29 @@ export default function MerchantBookingManagerDialog({
                       <div className="flex flex-wrap gap-1.5">{renderStatusActions(record)}</div>
                     </div>
 
-                    <div className="mt-3 grid gap-2.5 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
-                      <ReadOnlyBookingField fieldKey="store" value={record.store} todayDateValue={todayDateValue} locale={locale} />
-                      <ReadOnlyBookingField fieldKey="item" value={record.item} todayDateValue={todayDateValue} locale={locale} />
-                      <ReadOnlyBookingField fieldKey="title" value={record.title || "-"} todayDateValue={todayDateValue} locale={locale} />
+                    <div className="mt-3 grid gap-2.5 md:grid-cols-2 xl:grid-cols-[minmax(11rem,0.8fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
+                      <ReadOnlyBookingField
+                        fieldKey="appointmentAt"
+                        value={[appointmentParts.date || "-", appointmentParts.time || "-"].join(" ")}
+                        todayDateValue={todayDateValue}
+                        locale={locale}
+                      />
+                      <ReadOnlyBookingField
+                        fieldKey="store"
+                        value={record.store}
+                        todayDateValue={todayDateValue}
+                        locale={locale}
+                        colorStyle={storeColorStyle}
+                        labelOverride={storeLabel}
+                      />
+                      <ReadOnlyBookingField
+                        fieldKey="item"
+                        value={record.item}
+                        todayDateValue={todayDateValue}
+                        locale={locale}
+                        colorStyle={itemColorStyle}
+                        labelOverride={itemLabel}
+                      />
                       <div className="flex items-end justify-end gap-2">
                         {record.customerEmailLogs?.length ? (
                           <span
@@ -1697,6 +1756,7 @@ export default function MerchantBookingManagerDialog({
         bookingRulesSnapshot={bookingRulesSnapshot}
         allowCustomerAutoEmail={allowCustomerAutoEmail}
         onSettingsSaved={(settings) => {
+          setWorkbenchSettings(settings);
           setCustomerEmailLocale(
             resolveMerchantBookingCustomerEmailLocale(settings.customerEmailLocale, siteCountryCode),
           );

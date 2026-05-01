@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import FaollaPullRefreshIndicator from "@/components/FaollaPullRefreshIndicator";
 import FrontendAuthEntry from "@/components/FrontendAuthEntry";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
 import ServiceMaintenancePage from "@/components/ServiceMaintenancePage";
@@ -28,6 +29,7 @@ import {
 } from "@/lib/supabase";
 import { useHydrated } from "@/lib/useHydrated";
 import { useMobileHorizontalScrollLock } from "@/lib/useMobileHorizontalScrollLock";
+import usePullToRefresh from "@/lib/usePullToRefresh";
 
 const EMPTY_BLOCKS: Block[] = [];
 const MIN_INITIAL_LOADING_MS = 0;
@@ -54,6 +56,21 @@ function isFaollaAppShell() {
   } catch {
     return false;
   }
+}
+
+function getDocumentScrollElement() {
+  if (typeof document === "undefined") return null;
+  return document.scrollingElement instanceof HTMLElement ? document.scrollingElement : document.documentElement;
+}
+
+function reloadCurrentDocumentAfterPull() {
+  if (typeof window === "undefined") return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    window.setTimeout(() => {
+      window.location.reload();
+      resolve();
+    }, 160);
+  });
 }
 
 function getPublishedScopeCandidates(siteId: string, siteScope: string) {
@@ -417,6 +434,30 @@ export function SitePageClient({
     };
   }, [hydrated, siteId, siteScope]);
 
+  const faollaPullRefreshEnabled = hydrated && isMobileViewport && faollaAppShell;
+  const {
+    pullDistance: faollaPullDistance,
+    readyToRefresh: faollaReadyToRefresh,
+    refreshing: faollaRefreshing,
+    bind: faollaPullRefreshBind,
+  } = usePullToRefresh({
+    disabled: !faollaPullRefreshEnabled,
+    getScrollElement: getDocumentScrollElement,
+    onRefresh: reloadCurrentDocumentAfterPull,
+    threshold: 64,
+    maxPull: 104,
+    resistance: 0.5,
+  });
+  const faollaPullOffset = faollaPullRefreshEnabled ? (faollaRefreshing ? 64 : faollaPullDistance) : 0;
+  const faollaPullContentStyle =
+    faollaPullRefreshEnabled
+      ? {
+          transform: `translateY(${Math.round(faollaPullOffset)}px)`,
+          transition: faollaPullDistance > 0 && !faollaRefreshing ? "none" : "transform 180ms ease-out",
+          willChange: faollaPullOffset > 0 ? "transform" : undefined,
+        }
+      : undefined;
+
   const waitingForPublishedSync = Boolean(siteId) && !dbBlocks && !hasScopedLocalBlocks && !remoteResolved;
   const shouldHoldForHydration = (!hydrated || isInitialLoading) && !hasInitialPublishedBlocks;
   if (shouldHoldForHydration || waitingForPublishedSync) {
@@ -476,32 +517,40 @@ export function SitePageClient({
 
   return (
     <main
+      {...faollaPullRefreshBind}
       className="min-h-screen w-full overflow-x-hidden bg-gray-50 py-8"
       style={{ ...pageBackgroundStyle, paddingBottom: `calc(2rem + ${backgroundExtendPadding}px)` }}
     >
-      {showMerchantLoginButton ? (
-        <div className={authEntryClassName}>
-          <FrontendAuthEntry
-            currentMerchantId={site?.id ?? siteId}
-            merchantName={effectiveMerchantName}
-            merchantAvatarUrl={site?.chatAvatarImageUrl ?? site?.merchantCardImageUrl ?? ""}
-          />
-        </div>
-      ) : null}
-      <BlockRenderer
-        blocks={activeBlocks}
-        currentPageId={activePage?.id}
-        currentPageIndex={activePageIndex}
-        availablePages={activePlan?.pages?.map((page) => ({ id: page.id, name: page.name })) ?? []}
-        bookingSiteId={site?.id ?? siteId}
-        bookingSiteName={effectiveMerchantName}
-        productCartEnabled={orderManagementEnabled}
-        bookingInteractive
-        bookingViewport={isMobileViewport ? "mobile" : "desktop"}
-        onNavigatePage={(pageId) => {
-          if (activePlan?.pages?.some((page) => page.id === pageId)) setCurrentPageId(pageId);
-        }}
+      <FaollaPullRefreshIndicator
+        pullDistance={faollaPullDistance}
+        readyToRefresh={faollaReadyToRefresh}
+        refreshing={faollaRefreshing}
       />
+      <div style={faollaPullContentStyle}>
+        {showMerchantLoginButton ? (
+          <div className={authEntryClassName}>
+            <FrontendAuthEntry
+              currentMerchantId={site?.id ?? siteId}
+              merchantName={effectiveMerchantName}
+              merchantAvatarUrl={site?.chatAvatarImageUrl ?? site?.merchantCardImageUrl ?? ""}
+            />
+          </div>
+        ) : null}
+        <BlockRenderer
+          blocks={activeBlocks}
+          currentPageId={activePage?.id}
+          currentPageIndex={activePageIndex}
+          availablePages={activePlan?.pages?.map((page) => ({ id: page.id, name: page.name })) ?? []}
+          bookingSiteId={site?.id ?? siteId}
+          bookingSiteName={effectiveMerchantName}
+          productCartEnabled={orderManagementEnabled}
+          bookingInteractive
+          bookingViewport={isMobileViewport ? "mobile" : "desktop"}
+          onNavigatePage={(pageId) => {
+            if (activePlan?.pages?.some((page) => page.id === pageId)) setCurrentPageId(pageId);
+          }}
+        />
+      </div>
     </main>
   );
 }

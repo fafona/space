@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import BlockRenderer from "@/components/blocks/BlockRenderer";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
+import FaollaPullRefreshIndicator from "@/components/FaollaPullRefreshIndicator";
 import FrontendAuthEntry from "@/components/FrontendAuthEntry";
 import { useI18n } from "@/components/I18nProvider";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
@@ -16,6 +17,7 @@ import { resolvePublishedSiteByPrefix } from "@/lib/publishedSiteLookup";
 import { extractMerchantPrefixFromHost, resolveRuntimePortalBaseDomain } from "@/lib/siteRouting";
 import { useHydrated } from "@/lib/useHydrated";
 import { useMobileHorizontalScrollLock } from "@/lib/useMobileHorizontalScrollLock";
+import usePullToRefresh from "@/lib/usePullToRefresh";
 
 const DeferredSitePageClient = dynamic(() => import("@/app/site/[siteId]/SitePageClient"), {
   loading: () => <LoadingProgressScreen />,
@@ -47,6 +49,21 @@ function shouldSuppressStandaloneLaunchRedirect() {
   } catch {
     return false;
   }
+}
+
+function getDocumentScrollElement() {
+  if (typeof document === "undefined") return null;
+  return document.scrollingElement instanceof HTMLElement ? document.scrollingElement : document.documentElement;
+}
+
+function reloadCurrentDocumentAfterPull() {
+  if (typeof window === "undefined") return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    window.setTimeout(() => {
+      window.location.reload();
+      resolve();
+    }, 160);
+  });
 }
 
 function getEmbeddedMobilePlanConfig(sourceBlocks: Block[]) {
@@ -186,6 +203,30 @@ export default function HomePageClient({
   }, [hostMatchedSite, hostPrefix]);
 
   const resolvedHostSiteId = !hostMatchedSite && hostPrefix && remoteHostLookup.prefix === hostPrefix ? remoteHostLookup.siteId : "";
+  const faollaPullRefreshEnabled =
+    hydrated && isMobileViewport && suppressStandaloneLaunchRedirect && !hostMatchedSite && !resolvedHostSiteId;
+  const {
+    pullDistance: faollaPullDistance,
+    readyToRefresh: faollaReadyToRefresh,
+    refreshing: faollaRefreshing,
+    bind: faollaPullRefreshBind,
+  } = usePullToRefresh({
+    disabled: !faollaPullRefreshEnabled,
+    getScrollElement: getDocumentScrollElement,
+    onRefresh: reloadCurrentDocumentAfterPull,
+    threshold: 64,
+    maxPull: 104,
+    resistance: 0.5,
+  });
+  const faollaPullOffset = faollaPullRefreshEnabled ? (faollaRefreshing ? 64 : faollaPullDistance) : 0;
+  const faollaPullContentStyle =
+    faollaPullRefreshEnabled
+      ? {
+          transform: `translateY(${Math.round(faollaPullOffset)}px)`,
+          transition: faollaPullDistance > 0 && !faollaRefreshing ? "none" : "transform 180ms ease-out",
+          willChange: faollaPullOffset > 0 ? "transform" : undefined,
+        }
+      : undefined;
   const pageBackgroundSource = activeBlocks[0]?.props;
   const pageBackgroundStyle = getBackgroundStyle({
     imageUrl: pageBackgroundSource?.pageBgImageUrl,
@@ -242,24 +283,32 @@ export default function HomePageClient({
 
   return (
     <main
+      {...faollaPullRefreshBind}
       className="min-h-screen w-full overflow-x-hidden bg-gray-50 py-8"
       style={{ ...pageBackgroundStyle, paddingBottom: `calc(2rem + ${backgroundExtendPadding}px)` }}
     >
-      <div className={authEntryClassName}>
-        <FrontendAuthEntry autoOpenWorkspace={!suppressStandaloneLaunchRedirect} />
-      </div>
-      <BlockRenderer
-        blocks={activeBlocks}
-        currentPageId={activePage?.id}
-        currentPageIndex={activePageIndex}
-        availablePages={activePlan?.pages?.map((page) => ({ id: page.id, name: page.name })) ?? []}
-        bookingSiteId=""
-        bookingSiteName={platformState.sites.find((site) => site.id === "site-main")?.merchantName ?? "总站首页"}
-        bookingInteractive={false}
-        onNavigatePage={(pageId) => {
-          if (activePlan?.pages?.some((page) => page.id === pageId)) setCurrentPageId(pageId);
-        }}
+      <FaollaPullRefreshIndicator
+        pullDistance={faollaPullDistance}
+        readyToRefresh={faollaReadyToRefresh}
+        refreshing={faollaRefreshing}
       />
+      <div style={faollaPullContentStyle}>
+        <div className={authEntryClassName}>
+          <FrontendAuthEntry autoOpenWorkspace={!suppressStandaloneLaunchRedirect} />
+        </div>
+        <BlockRenderer
+          blocks={activeBlocks}
+          currentPageId={activePage?.id}
+          currentPageIndex={activePageIndex}
+          availablePages={activePlan?.pages?.map((page) => ({ id: page.id, name: page.name })) ?? []}
+          bookingSiteId=""
+          bookingSiteName={platformState.sites.find((site) => site.id === "site-main")?.merchantName ?? "总站首页"}
+          bookingInteractive={false}
+          onNavigatePage={(pageId) => {
+            if (activePlan?.pages?.some((page) => page.id === pageId)) setCurrentPageId(pageId);
+          }}
+        />
+      </div>
     </main>
   );
 }

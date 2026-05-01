@@ -9,7 +9,7 @@ import {
   resolveMerchantBookingRuleEntry,
 } from "./merchantBookingRules";
 
-function createBookingBlock(id: string, ranges: string[]): Block {
+function createBookingBlock(id: string, ranges: string[], labels?: { storeLabel?: string; itemLabel?: string }): Block {
   return {
     id,
     type: "booking",
@@ -18,6 +18,8 @@ function createBookingBlock(id: string, ranges: string[]): Block {
       text: "客户可提交预约",
       bookingStoreOptions: ["Faolla"],
       bookingItemOptions: ["咨询预约"],
+      ...(labels?.storeLabel ? { bookingStoreLabel: labels.storeLabel } : {}),
+      ...(labels?.itemLabel ? { bookingItemLabel: labels.itemLabel } : {}),
       bookingAvailableTimeRanges: ranges,
       bookingTimeSlotRules: ranges.map((timeRange) => ({ timeRange, maxBookings: null })),
       bookingTitleOptions: ["先生", "女士"],
@@ -77,6 +79,22 @@ test("buildMerchantBookingRulesSnapshot extracts booking rules for desktop and m
       maxBookingsPerSlot: null,
     },
   ]);
+});
+
+test("buildMerchantBookingRulesSnapshot keeps custom booking field labels", () => {
+  const block = createBookingBlock("booking-custom-labels", ["09:00-12:00"], {
+    storeLabel: "场地",
+    itemLabel: "时长",
+  });
+
+  const snapshot = buildMerchantBookingRulesSnapshot(
+    "10000000",
+    buildCombinedPersistedBlocks(createPlanConfig([block]), null),
+    "2026-04-11T09:00:00.000Z",
+  );
+
+  assert.equal(snapshot.entries[0]?.storeLabel, "场地");
+  assert.equal(snapshot.entries[0]?.itemLabel, "时长");
 });
 
 test("buildMerchantBookingRulesSnapshotFromPlanConfigs matches block-based snapshot output", () => {

@@ -65,8 +65,18 @@ import {
   buildMerchantBookingReminderOffsetLabel,
   resolveMerchantBookingCustomerEmailLocale,
 } from "@/lib/merchantBookingCustomerEmail";
-import { normalizeMerchantBookingWorkbenchSettings } from "@/lib/merchantBookingWorkbench";
-import { resolveMerchantBookingRuleEntry, type MerchantBookingRulesSnapshot } from "@/lib/merchantBookingRules";
+import {
+  getMerchantBookingItemColorStyle,
+  getMerchantBookingStoreColorStyle,
+  normalizeMerchantBookingWorkbenchSettings,
+  type MerchantBookingOptionColorStyle,
+  type MerchantBookingWorkbenchSettings,
+} from "@/lib/merchantBookingWorkbench";
+import {
+  resolveMerchantBookingRuleEntry,
+  type MerchantBookingRuleSnapshotEntry,
+  type MerchantBookingRulesSnapshot,
+} from "@/lib/merchantBookingRules";
 import usePullToRefresh from "@/lib/usePullToRefresh";
 
 type MerchantBookingMobilePanelProps = {
@@ -387,6 +397,15 @@ function getTimelineEntryMeta(entry: MerchantBookingTimelineEntry, locale: strin
   return parts.join(" · ");
 }
 
+function resolveBookingRuleFieldLabel(
+  entry: MerchantBookingRuleSnapshotEntry | null | undefined,
+  field: "store" | "item",
+  locale: string,
+) {
+  const customLabel = field === "store" ? entry?.storeLabel : entry?.itemLabel;
+  return customLabel?.trim() || getMerchantBookingFieldText(field, locale);
+}
+
 function downloadBookingsCsv(records: MerchantBookingRecord[], locale: string, siteId: string) {
   if (typeof document === "undefined" || records.length === 0) return;
   const blob = new Blob([buildMerchantBookingsCsv(records, locale)], {
@@ -400,8 +419,18 @@ function downloadBookingsCsv(records: MerchantBookingRecord[], locale: string, s
   URL.revokeObjectURL(url);
 }
 
-function SummaryField({ value }: { value: string }) {
-  return <div className="text-sm text-slate-900">{value || "-"}</div>;
+function SummaryField({ value, colorStyle }: { value: string; colorStyle?: MerchantBookingOptionColorStyle | null }) {
+  if (!colorStyle) {
+    return <div className="text-sm text-slate-900">{value || "-"}</div>;
+  }
+  return (
+    <div
+      className="inline-flex max-w-full items-center rounded-full px-2.5 py-0.5 text-sm font-semibold"
+      style={{ backgroundColor: colorStyle.backgroundColor, color: colorStyle.textColor }}
+    >
+      <span className="min-w-0 truncate">{value || "-"}</span>
+    </div>
+  );
 }
 
 function SummaryAppointmentField({
@@ -506,6 +535,9 @@ export default function MerchantBookingMobilePanel({
   const [detailBookingId, setDetailBookingId] = useState<string | null>(null);
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
   const [overflowMenuOpen, setOverflowMenuOpen] = useState(false);
+  const [workbenchSettings, setWorkbenchSettings] = useState<MerchantBookingWorkbenchSettings>(() =>
+    normalizeMerchantBookingWorkbenchSettings(null),
+  );
   const [customerEmailLocale, setCustomerEmailLocale] = useState(defaultCustomerEmailLocale);
   const [customerEmailLocaleLoaded, setCustomerEmailLocaleLoaded] = useState(false);
   const filterSelectShellClassName = darkMode
@@ -531,7 +563,8 @@ export default function MerchantBookingMobilePanel({
   useEffect(() => {
     setCustomerEmailLocale(defaultCustomerEmailLocale);
     setCustomerEmailLocaleLoaded(false);
-  }, [defaultCustomerEmailLocale]);
+    setWorkbenchSettings(normalizeMerchantBookingWorkbenchSettings(null));
+  }, [defaultCustomerEmailLocale, siteId]);
 
   useEffect(() => {
     const now = new Date();
@@ -555,6 +588,7 @@ export default function MerchantBookingMobilePanel({
         throw new Error("load_workbench_locale_failed");
       }
       const normalized = normalizeMerchantBookingWorkbenchSettings(json.settings);
+      setWorkbenchSettings(normalized);
       const resolvedLocale = resolveMerchantBookingCustomerEmailLocale(
         normalized.customerEmailLocale,
         siteCountryCode,
@@ -904,16 +938,19 @@ export default function MerchantBookingMobilePanel({
       ),
     [detailRecord],
   );
-  const detailAvailableTimeRanges = useMemo(
+  const detailRuleEntry = useMemo(
     () =>
       detailRecord
         ? resolveMerchantBookingRuleEntry(bookingRulesSnapshot, {
             bookingBlockId: detailRecord.bookingBlockId,
             bookingViewport: detailRecord.bookingViewport,
-          })?.availableTimeRanges ?? []
-        : [],
+          })
+        : null,
     [bookingRulesSnapshot, detailRecord],
   );
+  const detailAvailableTimeRanges = detailRuleEntry?.availableTimeRanges ?? [];
+  const detailStoreLabel = resolveBookingRuleFieldLabel(detailRuleEntry, "store", locale);
+  const detailItemLabel = resolveBookingRuleFieldLabel(detailRuleEntry, "item", locale);
 
   useEffect(() => {
     if (!detailBookingId || !isIosBrowser || typeof document === "undefined" || typeof window === "undefined") return () => {};
@@ -1282,7 +1319,7 @@ export default function MerchantBookingMobilePanel({
                     </div>
                   ) : null}
                   <label className="space-y-1 text-sm text-slate-700">
-                    <span className="text-xs text-slate-500">{getMerchantBookingFieldText("store", locale)}</span>
+                    <span className="text-xs text-slate-500">{detailStoreLabel}</span>
                     <select
                       className="w-full rounded-[18px] border border-slate-200 px-4 py-3 text-base text-slate-900 outline-none"
                       value={detailDraft.store}
@@ -1297,7 +1334,7 @@ export default function MerchantBookingMobilePanel({
                   </label>
 
                   <label className="space-y-1 text-sm text-slate-700">
-                    <span className="text-xs text-slate-500">{getMerchantBookingFieldText("item", locale)}</span>
+                    <span className="text-xs text-slate-500">{detailItemLabel}</span>
                     <select
                       className="w-full rounded-[18px] border border-slate-200 px-4 py-3 text-base text-slate-900 outline-none"
                       value={detailDraft.item}
@@ -1701,6 +1738,8 @@ export default function MerchantBookingMobilePanel({
                   const displayName = formatMerchantBookingDisplayName(record.customerName, record.title, locale);
                   const isNewRecord = isMerchantBookingPendingMerchantTouch(record);
                   const canOpenConversation = Boolean(record.customerAccountId || record.customerLoginEmail);
+                  const storeColorStyle = getMerchantBookingStoreColorStyle(workbenchSettings, record.store);
+                  const itemColorStyle = getMerchantBookingItemColorStyle(workbenchSettings, record.item);
                   return (
                     <article
                       key={record.id}
@@ -1804,8 +1843,8 @@ export default function MerchantBookingMobilePanel({
 
                   <div className="mt-4 grid grid-cols-[minmax(0,1fr)_auto] items-end gap-x-3">
                     <div className="grid content-start gap-1">
-                      <SummaryField value={record.store} />
-                      <SummaryField value={record.item} />
+                      <SummaryField value={record.store} colorStyle={storeColorStyle} />
+                      <SummaryField value={record.item} colorStyle={itemColorStyle} />
                       <SummaryAppointmentField
                         dateValue={appointmentParts.date}
                         timeValue={appointmentParts.time}
@@ -1871,6 +1910,7 @@ export default function MerchantBookingMobilePanel({
         darkMode={darkMode}
         allowCustomerAutoEmail={allowCustomerAutoEmail}
         onSettingsSaved={(settings) => {
+          setWorkbenchSettings(settings);
           setCustomerEmailLocale(
             resolveMerchantBookingCustomerEmailLocale(settings.customerEmailLocale, siteCountryCode),
           );

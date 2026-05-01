@@ -19,6 +19,8 @@ export type MerchantBookingRuleLocator = {
 export type MerchantBookingRuleSnapshotEntry = {
   viewport: MerchantBookingRuleViewport;
   blockId: string;
+  storeLabel?: string;
+  itemLabel?: string;
   availableTimeRanges: string[];
   timeSlotRules: MerchantBookingTimeSlotRule[];
   blockedDates: string[];
@@ -49,9 +51,13 @@ function normalizeViewport(value: unknown): MerchantBookingRuleViewport | null {
 
 function normalizeEntry(entry: MerchantBookingRuleSnapshotEntry): MerchantBookingRuleSnapshotEntry {
   const timeSlotRules = normalizeMerchantBookingTimeSlotRules(entry.timeSlotRules, entry.availableTimeRanges);
+  const storeLabel = typeof entry.storeLabel === "string" ? entry.storeLabel.trim() : "";
+  const itemLabel = typeof entry.itemLabel === "string" ? entry.itemLabel.trim() : "";
   return {
     viewport: entry.viewport,
     blockId: normalizeBlockId(entry.blockId),
+    ...(storeLabel ? { storeLabel } : {}),
+    ...(itemLabel ? { itemLabel } : {}),
     availableTimeRanges: timeSlotRules.map((item) => item.timeRange),
     timeSlotRules,
     blockedDates: normalizeMerchantBookingDateList(entry.blockedDates),
@@ -76,6 +82,8 @@ function normalizeSnapshotEntries(value: unknown): MerchantBookingRuleSnapshotEn
       normalizeEntry({
         viewport,
         blockId,
+        storeLabel: typeof record.storeLabel === "string" ? record.storeLabel : undefined,
+        itemLabel: typeof record.itemLabel === "string" ? record.itemLabel : undefined,
         availableTimeRanges: Array.isArray(record.availableTimeRanges) ? record.availableTimeRanges : [],
         timeSlotRules: Array.isArray(record.timeSlotRules) ? record.timeSlotRules : [],
         blockedDates: Array.isArray(record.blockedDates) ? record.blockedDates.filter((entry) => typeof entry === "string") : [],
@@ -114,6 +122,8 @@ function collectBookingRuleEntriesFromPlanConfig(
           normalizeEntry({
             viewport,
             blockId,
+            storeLabel: block.props.bookingStoreLabel,
+            itemLabel: block.props.bookingItemLabel,
             availableTimeRanges: timeSlotRules.map((item) => item.timeRange),
             timeSlotRules,
             blockedDates: block.props.bookingBlockedDates ?? [],
