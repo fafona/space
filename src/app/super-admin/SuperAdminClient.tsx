@@ -7368,9 +7368,6 @@ export default function SuperAdminClient() {
                                 <td className="px-3 py-2 text-xs text-slate-500">{seq}</td>
                                 <td className="px-3 py-2 text-xs">
                                   <div className="font-medium text-slate-900">{row.loginAccount || "-"}</div>
-                                  {row.userEmail && row.userEmail !== row.loginAccount ? (
-                                    <div className="text-[11px] text-slate-400">{row.userEmail}</div>
-                                  ) : null}
                                 </td>
                                 <td className="px-3 py-2 text-xs">{row.merchantId || "-"}</td>
                                 <td className="px-3 py-2 text-xs">{row.merchantName}</td>
@@ -7529,9 +7526,6 @@ export default function SuperAdminClient() {
                               <tr key={account.authUserId || account.accountId || account.email} className="border-t">
                                 <td className="px-3 py-2 text-xs">
                                   <div className="font-medium text-slate-900">{account.username || account.email || "-"}</div>
-                                  {account.email && account.email !== account.username ? (
-                                    <div className="text-[11px] text-slate-400">{account.email}</div>
-                                  ) : null}
                                 </td>
                                 <td className="px-3 py-2 text-xs">{account.accountId || "-"}</td>
                                 <td className="px-3 py-2 text-xs">
@@ -8291,9 +8285,6 @@ export default function SuperAdminClient() {
                             <div className="rounded border bg-slate-50 px-3 py-2">
                               <div className="text-slate-500">账号</div>
                               <div className="font-medium text-slate-900">{selectedMerchantRow.loginAccount || "-"}</div>
-                              {selectedMerchantRow.userEmail && selectedMerchantRow.userEmail !== selectedMerchantRow.loginAccount ? (
-                                <div className="mt-1 text-[11px] text-slate-400">{selectedMerchantRow.userEmail}</div>
-                              ) : null}
                             </div>
                             <div className="flex justify-end">
                               <button
@@ -9437,10 +9428,6 @@ export default function SuperAdminClient() {
                                   <div className="mt-1 font-medium text-slate-900">
                                     {selectedPersonalAccount.username || selectedPersonalAccount.email || "-"}
                                   </div>
-                                  {selectedPersonalAccount.email &&
-                                  selectedPersonalAccount.email !== selectedPersonalAccount.username ? (
-                                    <div className="mt-1 break-all text-[11px] text-slate-400">{selectedPersonalAccount.email}</div>
-                                  ) : null}
                                 </div>
                                 <div className="rounded border px-3 py-2">
                                   <div className="text-slate-500">个人 ID</div>
