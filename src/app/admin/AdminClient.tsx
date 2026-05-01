@@ -127,7 +127,7 @@ import {
   type MerchantBookingRulesSnapshot,
 } from "@/lib/merchantBookingRules";
 import { buildPublicBlockId } from "@/lib/blockPublicId";
-import { countInlineAssets, hasInlineAssets } from "@/lib/inlineAssetStats";
+import { countInlineAssets, hasInlineAssets, type InlineAssetStats } from "@/lib/inlineAssetStats";
 import { useNotificationSound } from "@/lib/useNotificationSound";
 import usePullToRefresh from "@/lib/usePullToRefresh";
 import {
@@ -695,16 +695,24 @@ const MAX_IMAGE_FILE_BYTES = 10_000_000;
 const MAX_CHAT_FILE_BYTES = 12_000_000;
 const EXTERNALIZE_MIN_IMAGE_BYTES = 300_000;
 type UploadCompressionPreset = "high" | "balanced" | "compact";
+type ImageCompressionOption = { label: string; maxSide: number; quality: number };
 type EditorImageUploadPurpose = "common" | "gallery";
 type PersistedEditorAssetResult = {
   value: string;
   externalized: boolean;
 };
-const IMAGE_COMPRESSION_OPTIONS: Record<UploadCompressionPreset, { label: string; maxSide: number; quality: number }> = {
+const IMAGE_COMPRESSION_OPTIONS: Record<UploadCompressionPreset, ImageCompressionOption> = {
   high: { label: "高质量", maxSide: 3200, quality: 0.92 },
   balanced: { label: "平衡", maxSide: 2600, quality: 0.88 },
   compact: { label: "压缩优先", maxSide: 2000, quality: 0.8 },
 };
+const PUBLISH_AUTO_COMPRESSION_OPTIONS: Array<ImageCompressionOption & { id: string }> = [
+  { id: "high", ...IMAGE_COMPRESSION_OPTIONS.high },
+  { id: "balanced", ...IMAGE_COMPRESSION_OPTIONS.balanced },
+  { id: "compact", ...IMAGE_COMPRESSION_OPTIONS.compact },
+  { id: "auto-tight", label: "自动强压缩", maxSide: 1600, quality: 0.72 },
+  { id: "auto-min", label: "自动极限压缩", maxSide: 1200, quality: 0.64 },
+];
 const PRODUCT_IMAGE_UPLOAD_OPTIONS = { maxSide: 1600, quality: 0.82 } as const;
 type ThemePresetKey = "none" | "cartoon" | "retro" | "minimal" | "future" | "luxury" | "magazine" | "commerce" | "cinema";
 type ThemeTone = {
@@ -2337,8 +2345,8 @@ async function compressSupportSelfAvatarFile(file: File) {
 
   throw new Error(
     bestCandidate
-      ? `头像压缩后仍有 ${Math.ceil(bestCandidate.bytes / 1024)}KB，请换一张更小的图片`
-      : "头像压缩失败，请换一张更小的图片",
+      ? `头像已自动压缩到 ${Math.ceil(bestCandidate.bytes / 1024)}KB，但仍超过当前上传上限`
+      : "头像自动压缩失败，请稍后重试",
   );
 }
 
@@ -2358,7 +2366,7 @@ async function fileToOriginalImageDataUrl(
 
   const compressedDataUrl = await compressImageDataUrl(dataUrl, options);
   if (compressedDataUrl.length > MAX_ORIGINAL_IMAGE_DATA_URL_LENGTH) {
-    throw new Error("图片过大，更换更小分辨率图");
+    throw new Error("图片自动压缩后仍超过当前处理上限");
   }
   return compressedDataUrl;
 }
@@ -2380,7 +2388,7 @@ async function fileToOptimizedImageDataUrl(
     ? compressedDataUrl
     : originalDataUrl;
   if (candidate.length > MAX_ORIGINAL_IMAGE_DATA_URL_LENGTH) {
-    throw new Error("图片过大，更换更小分辨率图");
+    throw new Error("图片自动压缩后仍超过当前处理上限");
   }
   return candidate;
 }
@@ -3158,6 +3166,25 @@ function runPublishPreflight(blocks: Block[], payloadBytes: number): PublishPref
   return { errors, warnings };
 }
 
+function formatInlineAssetStatsText(stats: InlineAssetStats) {
+  const parts: string[] = [];
+  if (stats.imageCount > 0) parts.push(`图片 ${stats.imageCount}`);
+  if (stats.audioCount > 0) parts.push(`音频 ${stats.audioCount}`);
+  return parts.join("，") || "未知资源";
+}
+
+function buildInlineAssetsRecoveryMessage(stats: InlineAssetStats) {
+  const assetText = formatInlineAssetStatsText(stats);
+  return [
+    `发布没有完成：系统已自动尝试多档压缩和外链化，但仍有未上传成功的资源（${assetText}）。`,
+    "",
+    "可操作处理方法：",
+    "1. 先重新点击发布。若只是网络或后端临时不稳定，第二次通常会自动上传成功。",
+    "2. 若仍失败，找到最近新增或替换的图片/音频，重新上传一次，再发布；系统会自动选择合适压缩档。",
+    "3. 管理员需要检查上传接口 /api/assets/upload、Supabase Storage 的 page-assets 存储桶和服务端密钥配置。",
+  ].join("\n");
+}
+
 type RecompressStats = {
   visited: number;
   changed: number;
@@ -3265,14 +3292,14 @@ async function externalizeInlineImagesUnknown(
   if (Array.isArray(input)) {
     const next: unknown[] = [];
     for (const item of input) {
-      next.push(await externalizeInlineImagesUnknown(item, merchantHint, stats));
+      next.push(await externalizeInlineImagesUnknown(item, merchantHint, stats, minBytes));
     }
     return next;
   }
   if (input && typeof input === "object") {
     const nextRecord: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
-      nextRecord[key] = await externalizeInlineImagesUnknown(value, merchantHint, stats);
+      nextRecord[key] = await externalizeInlineImagesUnknown(value, merchantHint, stats, minBytes);
     }
     return nextRecord;
   }
@@ -3360,11 +3387,17 @@ type PublishOptimizationResult = {
   summary: string | null;
 };
 
+function getPublishCompressionSequence(startPreset: UploadCompressionPreset) {
+  const startIndex = PUBLISH_AUTO_COMPRESSION_OPTIONS.findIndex((item) => item.id === startPreset);
+  return PUBLISH_AUTO_COMPRESSION_OPTIONS.slice(Math.max(0, startIndex));
+}
+
 async function optimizeBlocksForPublishIfNeeded(
   blocks: Block[],
   options: {
     merchantHint: string;
     uploadCompressionPreset: UploadCompressionPreset;
+    targetPayloadBytes?: number | null;
   },
 ): Promise<PublishOptimizationResult> {
   const originalBytes = estimateUtf8Size(JSON.stringify(blocks));
@@ -3377,27 +3410,58 @@ async function optimizeBlocksForPublishIfNeeded(
     };
   }
 
-  const compressionOption =
-    IMAGE_COMPRESSION_OPTIONS[options.uploadCompressionPreset] ?? IMAGE_COMPRESSION_OPTIONS.high;
-  const recompressed = await recompressInlineImagesInBlocks(blocks, compressionOption);
-  const externalized = await externalizeInlineImagesInBlocks(
-    recompressed.blocks,
-    options.merchantHint || "public",
-    1,
-  );
-  const audioExternalized = await externalizeInlineAudioInBlocks(
-    externalized.blocks,
-    options.merchantHint || "public",
-  );
-  const nextBlocks = audioExternalized.blocks;
-  const nextBytes = estimateUtf8Size(JSON.stringify(nextBlocks));
-  const optimized = !isSameBlocksSnapshot(nextBlocks, blocks);
+  const targetPayloadBytes =
+    typeof options.targetPayloadBytes === "number" && Number.isFinite(options.targetPayloadBytes)
+      ? Math.max(1, Math.floor(options.targetPayloadBytes))
+      : null;
+  const compressionSequence = getPublishCompressionSequence(options.uploadCompressionPreset);
+  let bestBlocks = blocks;
+  let bestBytes = originalBytes;
+  let bestInlineAssets = countInlineAssets(blocks);
+  let bestLabel = "";
+  let bestSummary = "";
+
+  for (const compressionOption of compressionSequence) {
+    const recompressed = await recompressInlineImagesInBlocks(blocks, compressionOption);
+    const externalized = await externalizeInlineImagesInBlocks(
+      recompressed.blocks,
+      options.merchantHint || "public",
+      1,
+    );
+    const audioExternalized = await externalizeInlineAudioInBlocks(
+      externalized.blocks,
+      options.merchantHint || "public",
+    );
+    const nextBlocks = audioExternalized.blocks;
+    const nextBytes = estimateUtf8Size(JSON.stringify(nextBlocks));
+    const nextInlineAssets = countInlineAssets(nextBlocks);
+    const isBetter =
+      nextInlineAssets.totalCount < bestInlineAssets.totalCount ||
+      (nextInlineAssets.totalCount === bestInlineAssets.totalCount && nextBytes < bestBytes);
+    if (isBetter) {
+      bestBlocks = nextBlocks;
+      bestBytes = nextBytes;
+      bestInlineAssets = nextInlineAssets;
+      bestLabel = compressionOption.label;
+      bestSummary = `压缩图片 ${recompressed.stats.changed}/${recompressed.stats.visited}，外链图片 ${externalized.stats.replaced}/${externalized.stats.visited}，外链音频 ${audioExternalized.stats.replaced}/${audioExternalized.stats.visited}`;
+    }
+    if (nextInlineAssets.totalCount === 0 && (!targetPayloadBytes || nextBytes <= targetPayloadBytes)) {
+      bestBlocks = nextBlocks;
+      bestBytes = nextBytes;
+      bestInlineAssets = nextInlineAssets;
+      bestLabel = compressionOption.label;
+      bestSummary = `压缩图片 ${recompressed.stats.changed}/${recompressed.stats.visited}，外链图片 ${externalized.stats.replaced}/${externalized.stats.visited}，外链音频 ${audioExternalized.stats.replaced}/${audioExternalized.stats.visited}`;
+      break;
+    }
+  }
+
+  const optimized = !isSameBlocksSnapshot(bestBlocks, blocks);
 
   return {
-    blocks: nextBlocks,
+    blocks: bestBlocks,
     optimized,
     summary: optimized
-      ? `发布前已优化资源：${formatBytes(originalBytes)} -> ${formatBytes(nextBytes)}（压缩图片 ${recompressed.stats.changed}/${recompressed.stats.visited}，外链图片 ${externalized.stats.replaced}/${externalized.stats.visited}，外链音频 ${audioExternalized.stats.replaced}/${audioExternalized.stats.visited}）`
+      ? `发布前已自动优化资源：${formatBytes(originalBytes)} -> ${formatBytes(bestBytes)}${bestLabel ? `（${bestLabel}，${bestSummary}）` : ""}`
       : null,
   };
 }
@@ -5470,7 +5534,7 @@ export default function AdminClient({
   const [topBarHeight, setTopBarHeight] = useState(0);
   const [isDesktopEditorSidebar, setIsDesktopEditorSidebar] = useState(false);
   const isMobileMerchantSupportOnlyMode = !isPlatformEditor && !forceDesktopEditorSidebar && !isDesktopEditorSidebar;
-  const [uploadCompressionPreset, setUploadCompressionPreset] = useState<UploadCompressionPreset>("high");
+  const [uploadCompressionPreset] = useState<UploadCompressionPreset>("high");
   const [themePreset, setThemePreset] = useState<ThemePresetKey>("none");
   const [planTemplateDialogOpen, setPlanTemplateDialogOpen] = useState(false);
   const [planTemplateSearch, setPlanTemplateSearch] = useState("");
@@ -6164,7 +6228,7 @@ export default function AdminClient({
       const limitBytes = limitKb * 1024;
       const compressed = await compressImageFileWithinLimit(file, limitBytes, imageCompressionOptions);
       if (compressed.bytes > limitBytes) {
-        throw new Error(`图片压缩后仍超过 ${limitKb}KB，请换一张更小的图片`);
+        throw new Error(`图片已自动压缩，但仍超过当前上传上限 ${limitKb}KB`);
       }
       dataUrl = compressed.dataUrl;
     } else {
@@ -7051,21 +7115,6 @@ export default function AdminClient({
     applyPersistedBlocksToEditorRef.current(loadedBlocks, { resetHistory: false });
     setPlanTemplateDialogOpen(false);
     showTip(`已应用方案：${template.name}`);
-  }
-
-  function openCompressionPresetDialog(
-    message: string,
-    title = "发布失败",
-  ): Promise<UploadCompressionPreset | null> {
-    return new Promise((resolve) => {
-      setDialog({
-        type: "compression-preset",
-        title,
-        message,
-        currentPreset: uploadCompressionPreset,
-        resolve,
-      });
-    });
   }
 
   applyPersistedBlocksToEditorRef.current = applyPersistedBlocksToEditor;
@@ -9683,9 +9732,14 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
               preferredMerchantIds[0] ||
               "public")
         ).trim() || "public";
+      const publishPayloadLimitBytes =
+        !isPlatformEditor && merchantPublishSizeLimitBytes
+          ? Math.min(MAX_PUBLISH_PAYLOAD_BYTES, merchantPublishSizeLimitBytes)
+          : MAX_PUBLISH_PAYLOAD_BYTES;
       const optimization = await optimizeBlocksForPublishIfNeeded(combinedBlocks, {
         merchantHint,
         uploadCompressionPreset,
+        targetPayloadBytes: publishPayloadLimitBytes,
       });
       if (optimization.optimized) {
         combinedBlocks = optimization.blocks;
@@ -9698,10 +9752,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       };
       const remainingInlineAssets = countInlineAssets(payload.blocks);
       if (remainingInlineAssets.totalCount > 0) {
-        const inlineParts: string[] = [];
-        if (remainingInlineAssets.imageCount > 0) inlineParts.push(`图片 ${remainingInlineAssets.imageCount}`);
-        if (remainingInlineAssets.audioCount > 0) inlineParts.push(`音频 ${remainingInlineAssets.audioCount}`);
-        const message = `发布已阻止：仍有未外链化资源（${inlineParts.join("，")}）`;
+        const message = `发布没有完成：自动外链化后仍有资源未上传成功（${formatInlineAssetStatsText(remainingInlineAssets)}）`;
         showPublishFailedTip(message);
         savePublishFailureSnapshot(
           {
@@ -9717,11 +9768,12 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           changedBlocks: 1,
           reason: "inline-assets-blocked",
         });
+        await openAlert(buildInlineAssetsRecoveryMessage(remainingInlineAssets), "发布资源处理失败");
         return;
       }
       const payloadBytes = estimateUtf8Size(JSON.stringify(payload.blocks));
       if (!isPlatformEditor && merchantPublishSizeLimitBytes && payloadBytes > merchantPublishSizeLimitBytes) {
-        const message = `发布体积超出权限上限（当前 ${formatBytes(payloadBytes)}，上限 ${formatBytes(merchantPublishSizeLimitBytes)}）`;
+        const message = `发布没有完成：系统已自动压缩资源，但发布体积仍超出当前权限上限（当前 ${formatBytes(payloadBytes)}，上限 ${formatBytes(merchantPublishSizeLimitBytes)}）`;
         showPublishFailedTip(message);
         savePublishFailureSnapshot(
           {
@@ -9771,7 +9823,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       if (payloadBytes > MAX_PUBLISH_PAYLOAD_BYTES) {
         const breakdown = getPublishSizeBreakdown(payload.blocks);
         showPublishFailedTip(
-          `发布内容过大（${(payloadBytes / 1024 / 1024).toFixed(2)}MB），请压缩图片/音频或改为外链后再发布`,
+          `发布没有完成：系统已自动压缩资源，但发布体积仍超过系统上限（${(payloadBytes / 1024 / 1024).toFixed(2)}MB）`,
         );
         savePublishFailureSnapshot({
           reason: "体积超限",
@@ -9793,17 +9845,6 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
             : ["- 暂无"]),
         ];
         await openAlert(lines.join("\n"), "发布体积明细");
-        const nextPreset = await openCompressionPresetDialog(
-          "请择上传压缩策略。切换后会作用于后续上传的新图片，已有图片不会自动重压缩",
-          "发布失败：内容过",
-        );
-        if (nextPreset) {
-          setUploadCompressionPreset(nextPreset);
-          showTip(`已切换上传压缩：${IMAGE_COMPRESSION_OPTIONS[nextPreset].label}`, {
-            durationMs: 3200,
-            dismissOnPointer: true,
-          });
-        }
         return;
       }
       let error: SaveErrorLike = null;
@@ -9837,17 +9878,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
           reason: normalizedReason,
         });
         if (shouldOfferCompressionPresetForPublishError(normalizedReason)) {
-          const nextPreset = await openCompressionPresetDialog(
-            `真实错误：${normalizedReason}\n\n可先切换上传压缩策略，再重新上传大图后发布。`,
+          await openAlert(
+            `真实错误：${normalizedReason}\n\n系统发布前已自动尝试压缩和外链化。请先重试发布；若仍失败，请检查上传接口、存储桶和服务端密钥配置。`,
             "发布失败",
           );
-          if (nextPreset) {
-            setUploadCompressionPreset(nextPreset);
-            showTip(`已切换上传压缩：${IMAGE_COMPRESSION_OPTIONS[nextPreset].label}`, {
-              durationMs: 3200,
-              dismissOnPointer: true,
-            });
-          }
         }
         return;
       }
@@ -9907,22 +9941,16 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         reason: message,
       });
       if (error instanceof Error && error.message.includes("保存超时")) {
-        showPublishFailedTip("发布超时，请压缩图片或减少数据量");
+        showPublishFailedTip("发布超时：系统已自动尝试压缩资源，请稍后重试");
       } else {
         showPublishFailedTip(error instanceof Error ? error.message : "发布失败，请检查网络后重试");
       }
       const caughtReason = error instanceof Error ? error.message : "发布失败，请检查网络后重试";
       if (shouldOfferCompressionPresetForPublishError(caughtReason)) {
-        const nextPreset = await openCompressionPresetDialog(
-          `真实错误：${caughtReason}\n\n是否切换上传压缩策略后再试？切换后会作用于后续上传的新图片。`,
+        await openAlert(
+          `真实错误：${caughtReason}\n\n系统发布前已自动尝试压缩和外链化。请先重试发布；若仍失败，请检查上传接口、存储桶和服务端密钥配置。`,
+          "发布失败",
         );
-        if (nextPreset) {
-          setUploadCompressionPreset(nextPreset);
-          showTip(`已切换上传压缩：${IMAGE_COMPRESSION_OPTIONS[nextPreset].label}`, {
-            durationMs: 3200,
-            dismissOnPointer: true,
-          });
-        }
       }
     } finally {
       setPublishing(false);
@@ -13449,7 +13477,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         uploadedBytes = estimateDataUrlBytes(uploadedDataUrl);
       }
       if (uploadedBytes > 50 * 1024) {
-        throw new Error(`${label}压缩失败，请换一张更小的图片`);
+        throw new Error(`${label}已自动压缩，但仍超过当前上传上限`);
       }
       const uploadResult = await uploadSupportAssetDataUrl(uploadedDataUrl, "merchant-assets");
       if (!uploadResult.ok || !uploadResult.url) {
