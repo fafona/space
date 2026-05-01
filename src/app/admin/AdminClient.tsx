@@ -5217,6 +5217,7 @@ export default function AdminClient({
   const [publishing, setPublishing] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [merchantDesktopSection, setMerchantDesktopSection] = useState<MerchantDesktopSection>("editor");
+  const merchantDesktopDefaultSectionSiteRef = useRef("");
   const [merchantAnalyticsLocalData, setMerchantAnalyticsLocalData] = useState<MerchantAnalyticsLocalData | null>(null);
   const [merchantAnalyticsRemoteSummary, setMerchantAnalyticsRemoteSummary] = useState<RemoteAnalyticsSummary | null>(null);
   const [merchantAnalyticsLoading, setMerchantAnalyticsLoading] = useState(false);
@@ -14239,7 +14240,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       : "support";
   useEffect(() => {
     if (checkingAuth || !isDesktopMerchantWorkspace || merchantEditorOnly) return;
-    if (merchantDesktopSection !== "editor") return;
     const merchantWorkspaceSiteId = (
       editingSiteId ||
       merchantSiteIdOverride ||
@@ -14248,6 +14248,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       ""
     ).trim();
     if (!isMerchantNumericId(merchantWorkspaceSiteId)) return;
+    if (merchantDesktopDefaultSectionSiteRef.current === merchantWorkspaceSiteId) return;
+    if (merchantDesktopSection !== "editor" && merchantDesktopSection !== "faolla") return;
+    merchantDesktopDefaultSectionSiteRef.current = merchantWorkspaceSiteId;
     if (!editingSiteId) {
       setMerchantSiteIdOverride((current) => current || merchantWorkspaceSiteId);
     }

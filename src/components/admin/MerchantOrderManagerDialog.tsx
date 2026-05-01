@@ -259,10 +259,10 @@ export default function MerchantOrderManagerDialog({
     ? "inline-flex items-center justify-center rounded-[18px] rounded-tl-[8px] rounded-br-[24px] border border-[#34d399] bg-[linear-gradient(135deg,#0f172a_0%,#0f766e_58%,#10b981_100%)] px-4 py-2 text-sm font-semibold tracking-[0.03em] text-white shadow-[0_18px_34px_rgba(15,118,110,0.28)] ring-1 ring-[#99f6e4]/60 transition"
     : "inline-flex items-center justify-center rounded-[18px] rounded-tl-[8px] rounded-br-[24px] border border-[#f59e0b] bg-[linear-gradient(135deg,#fef3c7_0%,#f59e0b_38%,#f97316_100%)] px-4 py-2 text-sm font-semibold tracking-[0.03em] text-slate-950 shadow-[0_16px_30px_rgba(249,115,22,0.28)] ring-1 ring-[#fde68a]/80 transition hover:-translate-y-[1px] hover:brightness-[1.03] hover:shadow-[0_20px_34px_rgba(249,115,22,0.34)]";
   const toolbarSelectClassName =
-    "inline-flex min-w-[224px] items-center justify-between gap-4 rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-700 shadow-[0_8px_18px_rgba(15,23,42,0.04)]";
-  const toolbarSelectFieldClassName = "relative w-[138px] min-w-[138px] flex-none";
+    "inline-flex h-9 min-w-[224px] items-center justify-between gap-3 rounded-full border border-slate-200 bg-white px-3 py-0 text-sm text-slate-700 shadow-[0_8px_18px_rgba(15,23,42,0.04)]";
+  const toolbarSelectFieldClassName = "relative h-full w-[138px] min-w-[138px] flex-none";
   const toolbarSelectInputClassName =
-    "block w-full appearance-none bg-transparent pr-8 text-sm font-semibold leading-none text-slate-900 outline-none";
+    "pc-select-compact block h-full w-full appearance-none bg-transparent pr-8 text-sm font-semibold leading-none text-slate-900 outline-none";
   const toolbarSelectChevronClassName =
     "pointer-events-none absolute right-0 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400";
   const compactBatchButtonClassName = selectionMode
@@ -1297,7 +1297,7 @@ export default function MerchantOrderManagerDialog({
                             ) : (
                               <span className="h-8 w-8" aria-hidden="true" />
                             )}
-                            <span className="ml-4 min-w-0 truncate">{record.customer.email || "-"}</span>
+                            <span className="min-w-0 truncate text-right">{record.customer.email || "-"}</span>
                             {record.customer.email ? (
                               <a
                                 className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#0A84FF] text-white shadow-sm transition hover:opacity-90"
@@ -1314,7 +1314,7 @@ export default function MerchantOrderManagerDialog({
                             ) : (
                               <span className="h-8 w-8" aria-hidden="true" />
                             )}
-                            <span className="ml-4 min-w-0 truncate">{record.customer.phone || "-"}</span>
+                            <span className="min-w-0 truncate text-right">{record.customer.phone || "-"}</span>
                             {record.customer.phone ? (
                               <a
                                 className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#007AFF] text-white shadow-sm transition hover:bg-[#0066D6]"
