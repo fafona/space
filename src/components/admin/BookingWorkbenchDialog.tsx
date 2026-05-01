@@ -668,25 +668,25 @@ export default function BookingWorkbenchDialog({
   const bookingStoreColorOptions = useMemo(() => {
     const seen = new Set<string>();
     const next: string[] = [];
-    [...storeOptions, ...records.map((record) => record.store)].forEach((item) => {
+    storeOptions.forEach((item) => {
       const normalized = trimText(item);
       if (!normalized || seen.has(normalized)) return;
       seen.add(normalized);
       next.push(normalized);
     });
     return next;
-  }, [records, storeOptions]);
+  }, [storeOptions]);
   const bookingItemColorOptions = useMemo(() => {
     const seen = new Set<string>();
     const next: string[] = [];
-    [...itemOptions, ...records.map((record) => record.item)].forEach((item) => {
+    itemOptions.forEach((item) => {
       const normalized = trimText(item);
       if (!normalized || seen.has(normalized)) return;
       seen.add(normalized);
       next.push(normalized);
     });
     return next;
-  }, [itemOptions, records]);
+  }, [itemOptions]);
   const currentSectionLabel = useMemo(() => {
     if (sectionView === "home") return getMerchantBookingFieldText("workbenchTitle", locale);
     return menuItems.find((item) => item.key === sectionView)?.label ?? getMerchantBookingFieldText("workbenchTitle", locale);
@@ -1046,12 +1046,12 @@ export default function BookingWorkbenchDialog({
             return (
               <div
                 key={`${group}-${item}`}
-                className={`grid gap-2 rounded-2xl border p-2 sm:grid-cols-[minmax(0,1fr)_13rem] sm:items-center ${
+                className={`flex flex-wrap items-center gap-2 rounded-2xl border p-2 ${
                   darkMode ? "border-slate-700/80 bg-slate-950/70" : "border-slate-200/70 bg-white/70"
                 }`}
               >
                 <span
-                  className="inline-flex min-w-0 max-w-full rounded-full border px-3 py-1 text-sm font-semibold"
+                  className="inline-flex max-w-full rounded-full border px-3 py-1 text-sm font-semibold"
                   style={
                     selectedStyle
                       ? {
@@ -1062,12 +1062,21 @@ export default function BookingWorkbenchDialog({
                       : undefined
                   }
                 >
-                  <span className="truncate">{item}</span>
+                  <span className="break-words">{item}</span>
                 </span>
                 <select
-                  className={`h-10 w-full rounded-xl border px-3 text-sm font-medium outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100 ${
+                  className={`h-10 min-w-[9rem] flex-1 rounded-xl border px-3 text-sm font-medium outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100 ${
                     darkMode ? "border-slate-700 bg-slate-950 text-slate-100" : "border-slate-300 bg-white text-slate-800"
                   }`}
+                  style={
+                    selectedStyle
+                      ? {
+                          color: selectedStyle.textColor,
+                          backgroundColor: selectedStyle.backgroundColor,
+                          borderColor: selectedStyle.backgroundColor,
+                        }
+                      : undefined
+                  }
                   value={selectedPresetId}
                   onChange={(event) => {
                     const preset = getOptionColorPresetById(event.target.value);
@@ -1085,7 +1094,14 @@ export default function BookingWorkbenchDialog({
                 >
                   <option value="">默认</option>
                   {MERCHANT_BOOKING_OPTION_COLOR_PRESETS.map((preset) => (
-                    <option key={preset.id} value={preset.id}>
+                    <option
+                      key={preset.id}
+                      value={preset.id}
+                      style={{
+                        color: preset.textColor,
+                        backgroundColor: preset.backgroundColor,
+                      }}
+                    >
                       {preset.label}
                     </option>
                   ))}

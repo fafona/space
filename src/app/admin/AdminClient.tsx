@@ -28498,7 +28498,7 @@ type GalleryEditorImage = {
                   <BookingOptionsTextarea
                     className="min-h-[120px] w-full rounded border px-3 py-2"
                     value={block.props.bookingStoreOptions}
-                    placeholder={"每行一个店铺，例如：\n主店\n分店 A"}
+                    placeholder={"每行一个选项，例如：\n主店\n分店 A"}
                     onChange={(nextOptions) => onChange({ bookingStoreOptions: nextOptions })}
                   />
                 </label>
@@ -28507,7 +28507,7 @@ type GalleryEditorImage = {
                   <BookingOptionsTextarea
                     className="min-h-[120px] w-full rounded border px-3 py-2"
                     value={block.props.bookingItemOptions}
-                    placeholder={"每行一个项目，例如：\n咨询预约\n到店服务"}
+                    placeholder={"每行一个选项，例如：\n咨询预约\n到店服务"}
                     onChange={(nextOptions) => onChange({ bookingItemOptions: nextOptions })}
                   />
                 </label>

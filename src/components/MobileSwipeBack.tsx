@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   createMobileSwipeBackEvent,
   isMobileSwipeBackGesture,
@@ -14,6 +14,8 @@ type SwipeStart = {
   startedAt: number;
   target: EventTarget | null;
   viewportWidth: number;
+  claimed: boolean;
+  cancelled: boolean;
 };
 
 const INTERACTIVE_SWIPE_START_SELECTOR = [
@@ -65,12 +67,26 @@ function getSearchString(searchParams: ReturnType<typeof useSearchParams>) {
   return value ? `?${value}` : "";
 }
 
+function toClientNavigationHref(href: string, origin: string) {
+  if (!href) return "";
+  if (!/^https?:\/\//i.test(href)) return href;
+  try {
+    const url = new URL(href);
+    if (url.origin !== origin) return "";
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return "";
+  }
+}
+
 export default function MobileSwipeBack() {
+  const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const swipeStartRef = useRef<SwipeStart | null>(null);
   const pathnameRef = useRef(pathname ?? "/");
   const searchRef = useRef(getSearchString(searchParams));
+  const handlingSwipeRef = useRef(false);
 
   useEffect(() => {
     pathnameRef.current = pathname ?? "/";
@@ -102,13 +118,39 @@ export default function MobileSwipeBack() {
         startedAt: Date.now(),
         target: event.target,
         viewportWidth: window.innerWidth || document.documentElement.clientWidth || 0,
+        claimed: false,
+        cancelled: false,
       };
+    };
+
+    const handleTouchMove = (event: TouchEvent) => {
+      const start = swipeStartRef.current;
+      if (!start || start.cancelled || event.touches.length !== 1) return;
+      const touch = event.touches[0];
+      if (!touch) return;
+
+      const deltaX = touch.clientX - start.x;
+      const deltaY = touch.clientY - start.y;
+      const verticalDrift = Math.abs(deltaY);
+      if (deltaX < 0 || verticalDrift > 72 || deltaX <= verticalDrift * 1.35) {
+        if (Math.abs(deltaX) > 12 || verticalDrift > 18) {
+          start.cancelled = true;
+        }
+        return;
+      }
+      if (deltaX < 24) return;
+
+      start.claimed = true;
+      if (event.cancelable) {
+        event.preventDefault();
+      }
+      event.stopPropagation();
     };
 
     const handleTouchEnd = (event: TouchEvent) => {
       const start = swipeStartRef.current;
       resetSwipe();
-      if (!start || event.changedTouches.length !== 1) return;
+      if (!start || start.cancelled || event.changedTouches.length !== 1 || handlingSwipeRef.current) return;
 
       const touch = event.changedTouches[0];
       if (!touch) return;
@@ -139,18 +181,29 @@ export default function MobileSwipeBack() {
       window.dispatchEvent(swipeEvent);
       if (swipeEvent.defaultPrevented || !fallbackHref) return;
 
+      handlingSwipeRef.current = true;
+      const clientNavigationHref = toClientNavigationHref(fallbackHref, origin);
+      if (clientNavigationHref) {
+        router.push(clientNavigationHref);
+        window.setTimeout(() => {
+          handlingSwipeRef.current = false;
+        }, 450);
+        return;
+      }
       window.location.assign(fallbackHref);
     };
 
     document.addEventListener("touchstart", handleTouchStart, { capture: true, passive: true });
+    document.addEventListener("touchmove", handleTouchMove, { capture: true, passive: false });
     document.addEventListener("touchend", handleTouchEnd, { capture: true, passive: true });
     document.addEventListener("touchcancel", resetSwipe, { capture: true, passive: true });
     return () => {
       document.removeEventListener("touchstart", handleTouchStart, { capture: true });
+      document.removeEventListener("touchmove", handleTouchMove, { capture: true });
       document.removeEventListener("touchend", handleTouchEnd, { capture: true });
       document.removeEventListener("touchcancel", resetSwipe, { capture: true });
     };
-  }, []);
+  }, [router]);
 
   return null;
 }
