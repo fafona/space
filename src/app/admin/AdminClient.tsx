@@ -1290,7 +1290,7 @@ const GALLERY_FRAME_WIDTH_LABELS: Record<CustomGalleryFrameWidth, string> = {
   "2/3": "2/3",
 };
 type ViewportKey = "desktop" | "mobile";
-type MerchantDesktopSection = "editor" | "profile" | "cards" | "booking" | "orders" | "analytics" | "support" | "faolla";
+type MerchantDesktopSection = "editor" | "profile" | "cards" | "booking" | "orders" | "analytics" | "business" | "support" | "faolla";
 type ProductSettingsSectionKey = "basic" | "typography" | "tags" | "card" | "detail";
 type ProductTypographyRole = "code" | "name" | "description" | "price";
 const MOBILE_SIZE_SCALE = 0.82;
@@ -2956,12 +2956,6 @@ function getMerchantDesktopMenuButtonClassName(active: boolean, tone: "default" 
   return tone === "alert"
     ? "relative flex items-center justify-between rounded-xl border border-rose-200 bg-white px-3 py-2.5 text-sm font-semibold text-rose-700 transition hover:bg-rose-50"
     : "relative flex items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50";
-}
-
-function getMerchantDesktopSubMenuButtonClassName(active: boolean) {
-  return active
-    ? "relative flex items-center justify-between rounded-lg border border-slate-950 bg-slate-950 px-3 py-2 text-sm font-semibold text-white shadow-sm"
-    : "relative flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50";
 }
 
 type LargeStringField = {
@@ -12299,6 +12293,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     setMerchantDesktopSection("analytics");
   }
 
+  function openMerchantBusinessCenterPanel() {
+    setMerchantDesktopSection("business");
+  }
+
   async function openMerchantEditorInNewWindow() {
     const resolvedSiteId = editingSiteId || (await ensureEditableMerchantSiteId());
     if (!resolvedSiteId) {
@@ -16404,7 +16402,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   const merchantMobileToolbarSegmentButtonBaseClassName =
     "min-h-[48px] rounded-[18px] px-3 py-2 text-sm font-semibold transition active:scale-[0.99]";
   const merchantDesktopOperationCenterActive =
-    merchantDesktopSection === "editor" || merchantDesktopSection === "cards" || merchantDesktopSection === "analytics";
+    merchantDesktopSection === "editor" ||
+    merchantDesktopSection === "business" ||
+    merchantDesktopSection === "cards" ||
+    merchantDesktopSection === "analytics";
   const merchantBookingManagerDialogCommonProps =
     !isPlatformEditor && canUseBookingBlock
       ? {
@@ -16656,6 +16657,65 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             )}
           </div>
         </section>
+      </div>
+    </div>
+  );
+  const merchantBusinessCardCount = normalizeMerchantBusinessCards(
+    effectiveEditingSite?.businessCards ?? editingSite?.businessCards ?? [],
+  ).length;
+  const merchantBusinessCenterContent = (
+    <div className="min-h-[calc(100vh-14rem)] px-1 py-1">
+      <div className="mx-auto max-w-5xl space-y-5">
+        <section className="rounded-2xl border border-slate-200 bg-white px-6 py-6 shadow-sm">
+          <div className="text-lg font-semibold text-slate-950">经营中心</div>
+          <div className="mt-1 text-sm text-slate-500">网站编辑、名片夹和数据统计集中在这里进入。</div>
+        </section>
+
+        <div className="grid gap-4 md:grid-cols-3">
+          <button
+            type="button"
+            className="group flex min-h-[168px] flex-col items-start justify-between rounded-2xl border border-slate-200 bg-white px-5 py-5 text-left shadow-sm transition hover:-translate-y-[1px] hover:border-slate-300 hover:shadow-md"
+            onClick={() => {
+              void openMerchantEditorInNewWindow();
+            }}
+          >
+            <span>
+              <span className="block text-base font-semibold text-slate-950">网站编辑</span>
+              <span className="mt-2 block text-sm leading-6 text-slate-500">打开独立编辑窗口，继续使用原来的编辑逻辑。</span>
+            </span>
+            <span className="mt-5 inline-flex rounded-full bg-slate-950 px-3 py-1.5 text-xs font-semibold text-white transition group-hover:bg-slate-800">
+              新窗口打开
+            </span>
+          </button>
+
+          <button
+            type="button"
+            className="group flex min-h-[168px] flex-col items-start justify-between rounded-2xl border border-slate-200 bg-white px-5 py-5 text-left shadow-sm transition hover:-translate-y-[1px] hover:border-slate-300 hover:shadow-md"
+            onClick={openMerchantCardsPanel}
+          >
+            <span>
+              <span className="block text-base font-semibold text-slate-950">名片夹</span>
+              <span className="mt-2 block text-sm leading-6 text-slate-500">管理商户名片、联系卡和聊天展示名片。</span>
+            </span>
+            <span className="mt-5 inline-flex rounded-full bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-700 ring-1 ring-cyan-100">
+              {merchantBusinessCardCount} 张
+            </span>
+          </button>
+
+          <button
+            type="button"
+            className="group flex min-h-[168px] flex-col items-start justify-between rounded-2xl border border-slate-200 bg-white px-5 py-5 text-left shadow-sm transition hover:-translate-y-[1px] hover:border-slate-300 hover:shadow-md"
+            onClick={openMerchantAnalyticsPanel}
+          >
+            <span>
+              <span className="block text-base font-semibold text-slate-950">数据统计</span>
+              <span className="mt-2 block text-sm leading-6 text-slate-500">查看访问、发布和联系方式点击统计。</span>
+            </span>
+            <span className="mt-5 inline-flex rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-100">
+              查看统计
+            </span>
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -16972,6 +17032,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               showBusinessCardManager={false}
               className="min-h-[calc(100vh-14rem)]"
             />
+          ) : merchantDesktopSection === "business" ? (
+            merchantBusinessCenterContent
           ) : merchantDesktopSection === "cards" && merchantBusinessCardManagerCommonProps ? (
             <MerchantBusinessCardManager {...merchantBusinessCardManagerCommonProps} folderViewMode="page" />
           ) : merchantDesktopSection === "booking" && merchantBookingManagerDialogCommonProps ? (
@@ -17225,37 +17287,14 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       Faolla
                     </button>
                     <div className="grid gap-2 border-t border-slate-100 pt-2">
-                      <div
+                      <button
+                        type="button"
                         className={getMerchantDesktopMenuButtonClassName(merchantDesktopOperationCenterActive)}
+                        onClick={openMerchantBusinessCenterPanel}
                         aria-current={merchantDesktopOperationCenterActive ? "page" : undefined}
                       >
                         经营中心
-                      </div>
-                      <div className="grid gap-1.5 pl-3">
-                        <button
-                          type="button"
-                          className={getMerchantDesktopSubMenuButtonClassName(merchantDesktopSection === "editor")}
-                          onClick={() => {
-                            void openMerchantEditorInNewWindow();
-                          }}
-                        >
-                          网站编辑
-                        </button>
-                        <button
-                          type="button"
-                          className={getMerchantDesktopSubMenuButtonClassName(merchantDesktopSection === "cards")}
-                          onClick={openMerchantCardsPanel}
-                        >
-                          名片夹
-                        </button>
-                        <button
-                          type="button"
-                          className={getMerchantDesktopSubMenuButtonClassName(merchantDesktopSection === "analytics")}
-                          onClick={openMerchantAnalyticsPanel}
-                        >
-                          数据统计
-                        </button>
-                      </div>
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -17374,6 +17413,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                   <div className="text-base font-semibold text-slate-900">
                     {merchantDesktopSection === "profile"
                       ? "商户信息"
+                      : merchantDesktopSection === "business"
+                        ? "经营中心"
                       : merchantDesktopSection === "cards"
                         ? "名片夹"
                       : merchantDesktopSection === "booking"
@@ -17389,6 +17430,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                   <div className="mt-1 text-sm text-slate-500">
                     {merchantDesktopSection === "profile"
                       ? "这里集中维护商户资料、域名前缀和地址联系人。"
+                      : merchantDesktopSection === "business"
+                        ? "这里集中进入网站编辑、名片夹和数据统计。"
                       : merchantDesktopSection === "cards"
                         ? "这里集中管理聊天展示名片与联系卡复制内容。"
                       : merchantDesktopSection === "booking"
