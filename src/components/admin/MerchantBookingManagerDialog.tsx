@@ -523,8 +523,7 @@ export default function MerchantBookingManagerDialog({
   const toolbarSelectFieldClassName = "relative h-full w-[138px] min-w-[138px] flex-none";
   const toolbarSelectInputClassName =
     "pc-select-compact block h-full w-full appearance-none bg-transparent pr-8 text-sm font-semibold leading-none text-slate-900 outline-none";
-  const toolbarSelectChevronClassName =
-    "pointer-events-none absolute right-0 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400";
+  const toolbarSelectChevronClassName = "hidden";
   const compactBatchButtonClassName = selectionMode
     ? "rounded-full border border-slate-900 bg-slate-900 px-3 py-2 text-sm font-medium text-white shadow-[0_10px_20px_rgba(15,23,42,0.14)] transition"
     : "rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-[0_8px_18px_rgba(15,23,42,0.04)] transition hover:bg-slate-50";
