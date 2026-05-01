@@ -52,6 +52,32 @@ body {
   margin-top: 0 !important;
 }
 
+@media (min-width: 768px) {
+  select:not([multiple]) {
+    -webkit-appearance: none;
+    appearance: none;
+    min-height: 2.5rem;
+    padding-left: max(1rem, var(--pc-select-padding-left, 1rem)) !important;
+    padding-right: max(2.75rem, var(--pc-select-padding-right, 2.75rem)) !important;
+    line-height: 1.5rem;
+    background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+      linear-gradient(135deg, currentColor 50%, transparent 50%);
+    background-position:
+      calc(100% - 1.08rem) 50%,
+      calc(100% - 0.78rem) 50%;
+    background-size:
+      0.36rem 0.36rem,
+      0.36rem 0.36rem;
+    background-repeat: no-repeat;
+  }
+
+  select:not([multiple]) option {
+    min-height: 2.35rem;
+    padding: 0.65rem 1.05rem;
+    line-height: 1.7;
+  }
+}
+
 .skiptranslate,
 iframe.skiptranslate,
 iframe.goog-te-banner-frame,

@@ -286,7 +286,7 @@ function getTimelineEntryTitle(entry: MerchantBookingTimelineEntry, locale: stri
           : "客户";
 
   if (entry.kind === "created") {
-    return locale.startsWith("es") ? "El cliente creó la reserva" : "客户创建预约";
+    return locale.startsWith("es") ? "El cliente envió la reserva" : "客户提交预约";
   }
   if (entry.kind === "acknowledged") {
     return locale.startsWith("es") ? "El comercio revisó la reserva" : "商家已查看预约";
@@ -1604,8 +1604,7 @@ export default function MerchantBookingManagerDialog({
                             </div>
                           </div>
                           <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
-                            <span>{`${getMerchantBookingFieldText("bookingId", locale)}: ${record.id}`}</span>
-                            <span>{`${getMerchantBookingFieldText("createdAt", locale)}: ${formatMerchantBookingDateTime(record.createdAt, locale)}`}</span>
+                            <span>{`${getMerchantBookingFieldText("submittedAt", locale)}: ${formatMerchantBookingDateTime(record.createdAt, locale)}`}</span>
                           </div>
                         </div>
 
@@ -1719,6 +1718,9 @@ export default function MerchantBookingManagerDialog({
                             <span>{record.customerEmailLogs.length}</span>
                           </span>
                         ) : null}
+                        <span className="inline-flex max-w-[16rem] items-center rounded-full bg-white px-2.5 py-1 text-[11px] font-medium text-slate-500 shadow-sm">
+                          <span className="truncate">{`${getMerchantBookingFieldText("bookingId", locale)}: ${record.id}`}</span>
+                        </span>
                         <button
                           type="button"
                           className="rounded border bg-white px-3 py-1.5 text-[13px] leading-5 hover:bg-slate-50"

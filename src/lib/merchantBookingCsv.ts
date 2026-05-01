@@ -22,7 +22,7 @@ export function buildMerchantBookingsCsv(records: MerchantBookingRecord[], local
     getMerchantBookingFieldText("email", locale),
     getMerchantBookingFieldText("phone", locale),
     getMerchantBookingFieldText("note", locale),
-    getMerchantBookingFieldText("createdAt", locale),
+    getMerchantBookingFieldText("submittedAt", locale),
     statusHeader,
   ];
   const rows = records.map((record) => [

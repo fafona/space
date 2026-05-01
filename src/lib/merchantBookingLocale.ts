@@ -64,7 +64,7 @@ const FIELD_SOURCE: Record<BookingFieldKey, string> = {
   searchDesktop: "搜索预约编号 / 店铺 / 项目 / 姓名 / 邮箱 / 电话 / 备注",
   searchMobile: "搜索预约号 / 姓名 / 邮箱 / 电话",
   bookingId: "预约编号",
-  createdAt: "创建时间",
+  createdAt: "提交时间",
   submittedAt: "提交时间",
   store: "店铺",
   item: "项目",

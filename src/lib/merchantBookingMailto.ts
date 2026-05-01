@@ -30,7 +30,7 @@ export function buildMerchantBookingMailtoHref(
     `${getMerchantBookingFieldText("phone", locale)}: ${normalizeMailtoLine(record.phone)}`,
     `${getMerchantBookingFieldText("email", locale)}: ${normalizeMailtoLine(record.email)}`,
     `${getMerchantBookingFieldText("note", locale)}: ${normalizeMailtoLine(record.note)}`,
-    `${getMerchantBookingFieldText("createdAt", locale)}: ${normalizeMailtoLine(
+    `${getMerchantBookingFieldText("submittedAt", locale)}: ${normalizeMailtoLine(
       formatMerchantBookingDateTime(record.createdAt, locale),
     )}`,
   ].join("\n");

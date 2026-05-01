@@ -335,7 +335,7 @@ function getTimelineEntryTitle(entry: MerchantBookingTimelineEntry, locale: stri
           : "客户";
 
   if (entry.kind === "created") {
-    return locale.startsWith("es") ? "El cliente creó la reserva" : "客户创建了预约";
+    return locale.startsWith("es") ? "El cliente envió la reserva" : "客户提交预约";
   }
   if (entry.kind === "acknowledged") {
     return locale.startsWith("es") ? "El comercio revisó la reserva" : "商家已查看预约";
