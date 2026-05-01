@@ -2,8 +2,6 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import type { MerchantListPublishedSite } from "@/data/homeBlocks";
 import type { MerchantConfigHistoryEntry } from "@/data/platformControlStore";
-import { loadMerchantIdRulesFromStore } from "@/lib/merchantIdRuleStore";
-import { findBlockingMerchantIdRule } from "@/lib/merchantIdRules";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { loadStoredPlatformMerchantSnapshot, type PlatformMerchantSnapshotStoreClient } from "@/lib/platformMerchantSnapshotStore";
 import {
@@ -879,8 +877,7 @@ export async function POST(request: Request) {
     const usernameKey = normalizeAccountValue(username);
     const manualEmail = buildManualUserEmail(accountType, accountId);
 
-    const [{ rules: blockedRules }, existingMerchantById, existingMerchantByName, authUsersResult] = await Promise.all([
-      loadMerchantIdRulesFromStore(supabase),
+    const [existingMerchantById, existingMerchantByName, authUsersResult] = await Promise.all([
       runSupabaseQueryWithRetry(() => supabase.from("merchants").select("id").eq("id", accountId).limit(1).maybeSingle()),
       runSupabaseQueryWithRetry(() => supabase.from("merchants").select("id").eq("name", username).limit(1).maybeSingle()),
       listAuthUsersBestEffort(supabase),
@@ -895,10 +892,6 @@ export async function POST(request: Request) {
     if (existingMerchantByName.data?.id) {
       return conflictJson("username_exists", "用户名已存在，请更换后重试");
     }
-    if (accountType === "merchant" && findBlockingMerchantIdRule(merchantId, blockedRules)) {
-      return conflictJson("merchant_id_disabled", "该 ID 已在禁用设置中，不能用于创建用户");
-    }
-
     const authUsers = authUsersResult.users;
     const duplicateIdUser = authUsers.find((user) => {
       const metadata = readAccountMetadata(user);
