@@ -56,7 +56,7 @@ const FIELD_SOURCE: Record<BookingFieldKey, string> = {
   workbenchTitle: "预约工作台",
   backToManagement: "返回预约管理",
   backToWorkbench: "返回工作台",
-  workbenchRules: "预约规则",
+  workbenchRules: "预约设置",
   workbenchReminders: "提醒通知",
   managementEmpty: "还没有匹配到预约记录。",
   managementLoading: "正在读取预约记录...",

@@ -217,6 +217,10 @@ import {
   normalizeBookingOptionList,
   type MerchantBookingRecord,
 } from "@/lib/merchantBookings";
+import {
+  filterMerchantBookingRecordsByHistory,
+  loadMerchantBookingManagerPreferences,
+} from "@/lib/merchantBookingManagerPreferences";
 import { broadcastPublishSync } from "@/lib/publishSync";
 import {
   BUTTON_BLOCK_MIN_HEIGHT,
@@ -9913,11 +9917,21 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     editingSiteId && merchantPlatformState
       ? merchantPlatformState.sites.find((item) => item.id === editingSiteId) ?? null
       : null;
-  const countMerchantBookingAttention = (records: MerchantBookingRecord[]) =>
-    records.reduce((count, record) => (isMerchantBookingPendingMerchantTouch(record) ? count + 1 : count), 0);
-  const handleMerchantBookingRecordsChange = (records: MerchantBookingRecord[]) => {
-    setMerchantBookingAttentionCount(countMerchantBookingAttention(records));
-  };
+  const countMerchantBookingAttention = useCallback((records: MerchantBookingRecord[], applyPreferences = true) => {
+    const preferences = applyPreferences ? loadMerchantBookingManagerPreferences(editingSiteId) : null;
+    const scopedRecords = preferences
+      ? filterMerchantBookingRecordsByHistory(records, preferences.historyVisibility).filter((record) =>
+          preferences.selectedStatuses.includes(record.status),
+        )
+      : records;
+    return scopedRecords.reduce(
+      (count, record) => (isMerchantBookingPendingMerchantTouch(record) ? count + 1 : count),
+      0,
+    );
+  }, [editingSiteId]);
+  const handleMerchantBookingRecordsChange = useCallback((records: MerchantBookingRecord[]) => {
+    setMerchantBookingAttentionCount(countMerchantBookingAttention(records, false));
+  }, [countMerchantBookingAttention]);
 
   useEffect(() => {
     if (isPlatformEditor || typeof window === "undefined") return;
@@ -9958,7 +9972,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       cancelled = true;
       if (timer) clearInterval(timer);
     };
-  }, [editingSiteId, isPlatformEditor]);
+  }, [countMerchantBookingAttention, editingSiteId, isPlatformEditor]);
 
   useEffect(() => {
     if (isPlatformEditor || typeof window === "undefined" || typeof document === "undefined") return;

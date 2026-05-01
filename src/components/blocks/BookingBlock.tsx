@@ -25,6 +25,7 @@ import {
   type MerchantBookingRecord,
 } from "@/lib/merchantBookings";
 import {
+  getMerchantBookingItemColorStyle,
   getMerchantBookingAdvanceIssue,
   getMerchantBookingRecurringIssue,
   type MerchantBookingWorkbenchPublicSettings,
@@ -211,6 +212,10 @@ export default function BookingBlock({
   const [draft, setDraft] = useState(() => buildInitialDraft(storeOptions, itemOptions, titleOptions));
   const [bookingCustomerDefaults, setBookingCustomerDefaults] = useState<Partial<MerchantBookingEditableInput>>({});
   const [workbenchSettings, setWorkbenchSettings] = useState<MerchantBookingWorkbenchPublicSettings | null>(null);
+  const selectedItemColorStyle = useMemo(
+    () => getMerchantBookingItemColorStyle(workbenchSettings, draft.item),
+    [draft.item, workbenchSettings],
+  );
   const appointmentValue = useMemo(
     () => joinMerchantBookingDateTime(draft.appointmentDateInput, draft.appointmentTimeInput),
     [draft.appointmentDateInput, draft.appointmentTimeInput],
@@ -235,6 +240,10 @@ export default function BookingBlock({
     [appointmentDateIssue, appointmentValue, workbenchSettings],
   );
   const [submittedState, setSubmittedState] = useState<SubmittedBookingState | null>(null);
+  const submittedItemColorStyle = useMemo(
+    () => getMerchantBookingItemColorStyle(workbenchSettings, submittedState?.booking.item ?? ""),
+    [submittedState?.booking.item, workbenchSettings],
+  );
   const [mode, setMode] = useState<"form" | "success">("form");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -649,7 +658,23 @@ export default function BookingBlock({
           <div className="mt-4 grid gap-3 text-sm text-slate-700 md:grid-cols-2">
             <div>{`预约编号：${submittedState.booking.id}`}</div>
             <div>{`${storeLabel}：${submittedState.booking.store}`}</div>
-            <div>{`${itemLabel}：${submittedState.booking.item}`}</div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span>{`${itemLabel}：`}</span>
+              <span
+                className="inline-flex rounded-full border border-slate-200 px-2.5 py-1 text-xs font-semibold"
+                style={
+                  submittedItemColorStyle
+                    ? {
+                        color: submittedItemColorStyle.textColor,
+                        backgroundColor: submittedItemColorStyle.backgroundColor,
+                        borderColor: submittedItemColorStyle.backgroundColor,
+                      }
+                    : undefined
+                }
+              >
+                {submittedState.booking.item}
+              </span>
+            </div>
             <div>{`预约时间：${formatMerchantBookingDateTime(submittedState.booking.appointmentAt)}`}</div>
             <div>{`称谓/姓名：${submittedState.booking.title} ${submittedState.booking.customerName}`}</div>
             <div>{`邮箱：${submittedState.booking.email}`}</div>
@@ -715,12 +740,34 @@ export default function BookingBlock({
                 value={draft.item}
                 disabled={!isLiveBooking}
                 onChange={(event) => handleFieldChange("item", event.target.value)}
+                style={
+                  selectedItemColorStyle
+                    ? {
+                        color: selectedItemColorStyle.textColor,
+                        backgroundColor: selectedItemColorStyle.backgroundColor,
+                      }
+                    : undefined
+                }
               >
-                {itemOptions.map((item) => (
-                  <option key={item} value={item}>
-                    {item}
-                  </option>
-                ))}
+                {itemOptions.map((item) => {
+                  const itemColorStyle = getMerchantBookingItemColorStyle(workbenchSettings, item);
+                  return (
+                    <option
+                      key={item}
+                      value={item}
+                      style={
+                        itemColorStyle
+                          ? {
+                              color: itemColorStyle.textColor,
+                              backgroundColor: itemColorStyle.backgroundColor,
+                            }
+                          : undefined
+                      }
+                    >
+                      {item}
+                    </option>
+                  );
+                })}
               </select>
             </label>
             <label className="space-y-1 text-sm text-slate-700">

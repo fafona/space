@@ -236,6 +236,10 @@ export const UI_GLOSSARY_TRANSLATIONS = {
     "en": "Booking rules",
     "es": "Reglas"
   },
+  "预约设置": {
+    "en": "Booking settings",
+    "es": "Ajustes de reserva"
+  },
   "提醒通知": {
     "en": "Reminders",
     "es": "Avisos"

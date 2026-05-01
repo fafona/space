@@ -1865,6 +1865,7 @@ export default function MerchantBookingMobilePanel({
         siteName={siteName}
         siteCountryCode={siteCountryCode}
         records={records}
+        itemOptions={itemOptions}
         bookingRulesSnapshot={bookingRulesSnapshot}
         darkMode={darkMode}
         allowCustomerAutoEmail={allowCustomerAutoEmail}

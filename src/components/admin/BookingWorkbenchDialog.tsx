@@ -14,7 +14,9 @@ import {
   buildMerchantBookingReminderSummary,
   createDefaultMerchantBookingWorkbenchSettings,
   formatMerchantBookingReminderOffset,
+  MERCHANT_BOOKING_ITEM_COLOR_PRESETS,
   normalizeMerchantBookingWorkbenchSettings,
+  type MerchantBookingItemColorStyle,
   type MerchantBookingWorkbenchSettings,
 } from "@/lib/merchantBookingWorkbench";
 import { normalizeMerchantBookingTimeRangeOptions } from "@/lib/merchantBookings";
@@ -26,6 +28,7 @@ type BookingWorkbenchDialogProps = {
   siteName: string;
   siteCountryCode?: string;
   records: MerchantBookingRecord[];
+  itemOptions?: string[];
   bookingRulesSnapshot?: MerchantBookingRulesSnapshot | null;
   darkMode?: boolean;
   allowCustomerAutoEmail?: boolean;
@@ -432,6 +435,7 @@ export default function BookingWorkbenchDialog({
   siteName,
   siteCountryCode = "",
   records,
+  itemOptions = [],
   bookingRulesSnapshot = null,
   darkMode = false,
   allowCustomerAutoEmail = false,
@@ -632,25 +636,29 @@ export default function BookingWorkbenchDialog({
       [
         {
           value: "completed" as const,
-          label: locale.startsWith("es") ? "Auto completar al llegar la hora" : "到时自动完成",
-          description: locale.startsWith("es")
-            ? "Cuando llegue la hora de la cita, las reservas aún activas o confirmadas pasarán a completadas."
-            : "预约时间一到，仍是待确认或已确认的记录会自动标记为已完成。",
+          label: locale.startsWith("es") ? "Completar automáticamente" : "自动完成",
         },
         {
           value: "no_show" as const,
-          label: locale.startsWith("es") ? "Auto marcar no-show al llegar la hora" : "到时自动未到店",
-          description: locale.startsWith("es")
-            ? "Cuando llegue la hora de la cita, las reservas aún activas o confirmadas pasarán a no-show."
-            : "预约时间一到，仍是待确认或已确认的记录会自动标记为未到店。",
+          label: locale.startsWith("es") ? "Marcar no-show automáticamente" : "自动未到店",
         },
       ] satisfies Array<{
         value: "completed" | "no_show";
         label: string;
-        description: string;
       }>,
     [locale],
   );
+  const bookingItemColorOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const next: string[] = [];
+    [...itemOptions, ...records.map((record) => record.item)].forEach((item) => {
+      const normalized = trimText(item);
+      if (!normalized || seen.has(normalized)) return;
+      seen.add(normalized);
+      next.push(normalized);
+    });
+    return next;
+  }, [itemOptions, records]);
   const currentSectionLabel = useMemo(() => {
     if (sectionView === "home") return getMerchantBookingFieldText("workbenchTitle", locale);
     return menuItems.find((item) => item.key === sectionView)?.label ?? getMerchantBookingFieldText("workbenchTitle", locale);
@@ -698,6 +706,23 @@ export default function BookingWorkbenchDialog({
       return {
         ...current,
         recurringRules: nextRules.sort((left, right) => left.weekday - right.weekday),
+      };
+    });
+  };
+
+  const updateItemColorStyle = (item: string, style: MerchantBookingItemColorStyle | null) => {
+    const normalizedItem = trimText(item);
+    if (!normalizedItem) return;
+    setDraft((current) => {
+      const nextStyles = { ...current.itemColorStyles };
+      if (style) {
+        nextStyles[normalizedItem] = style;
+      } else {
+        delete nextStyles[normalizedItem];
+      }
+      return {
+        ...current,
+        itemColorStyles: nextStyles,
       };
     });
   };
@@ -935,13 +960,25 @@ export default function BookingWorkbenchDialog({
   const shellClassName = darkMode ? "bg-slate-950 text-slate-100" : "bg-slate-50 text-slate-900";
   const panelClassName = darkMode
     ? "border-slate-700/80 bg-slate-900 text-slate-100"
-    : "border-slate-200 bg-white text-slate-900";
+    : "border-slate-200 bg-white text-slate-900 shadow-[0_14px_34px_rgba(15,23,42,0.06)]";
   const softPanelClassName = darkMode
     ? "border-slate-700/80 bg-slate-950 text-slate-100"
-    : "border-slate-200 bg-slate-50 text-slate-900";
+    : "border-slate-200 bg-white text-slate-900 shadow-sm";
   const inputClassName = darkMode
-    ? "block w-full min-w-0 rounded-2xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm text-slate-100 outline-none"
-    : "block w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none";
+    ? "block w-full min-w-0 rounded-2xl border border-slate-600 bg-slate-950 px-4 py-3 text-sm text-slate-100 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-400/20"
+    : "block w-full min-w-0 rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 shadow-inner outline-none transition placeholder:text-slate-400 focus:border-sky-400 focus:ring-2 focus:ring-sky-100";
+  const rulePanelClassName = (tone: "sky" | "violet" | "amber" | "cyan" | "emerald" | "rose" | "slate") => {
+    if (darkMode) {
+      return "border-slate-700/80 bg-slate-900 text-slate-100 shadow-[0_18px_44px_rgba(2,6,23,0.28)]";
+    }
+    if (tone === "sky") return "border-sky-200 bg-sky-50/70 text-slate-900 shadow-[0_14px_34px_rgba(14,165,233,0.08)]";
+    if (tone === "violet") return "border-violet-200 bg-violet-50/70 text-slate-900 shadow-[0_14px_34px_rgba(139,92,246,0.08)]";
+    if (tone === "amber") return "border-amber-200 bg-amber-50/70 text-slate-900 shadow-[0_14px_34px_rgba(245,158,11,0.08)]";
+    if (tone === "cyan") return "border-cyan-200 bg-cyan-50/70 text-slate-900 shadow-[0_14px_34px_rgba(6,182,212,0.08)]";
+    if (tone === "emerald") return "border-emerald-200 bg-emerald-50/70 text-slate-900 shadow-[0_14px_34px_rgba(16,185,129,0.08)]";
+    if (tone === "rose") return "border-rose-200 bg-rose-50/70 text-slate-900 shadow-[0_14px_34px_rgba(244,63,94,0.08)]";
+    return "border-slate-200 bg-white text-slate-900 shadow-[0_14px_34px_rgba(15,23,42,0.06)]";
+  };
   const mutedTextClassName = darkMode ? "text-slate-400" : "text-slate-500";
   const backButtonClassName = darkMode
     ? "flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-slate-100 transition hover:bg-slate-800/60 sm:h-auto sm:w-auto sm:gap-2 sm:border sm:border-slate-700 sm:bg-slate-900 sm:px-3 sm:py-2 sm:text-slate-100 sm:hover:border-slate-500 sm:hover:bg-slate-900"
@@ -1122,9 +1159,8 @@ export default function BookingWorkbenchDialog({
             {!loading && sectionView === "rules" ? (
               <div className="grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
                 <div className="space-y-4">
-                  <section className={`rounded-3xl border p-5 ${panelClassName}`}>
+                  <section className={`rounded-3xl border p-5 ${rulePanelClassName("sky")}`}>
                     <div className="text-base font-semibold">提前预约 / 截止规则</div>
-                    <div className={`mt-1 text-sm ${mutedTextClassName}`}>至少提前多久才能预约，以及当天最晚接受预约到几点。</div>
                     <div className="mt-4 grid gap-3 md:grid-cols-2">
                       <label className="min-w-0 space-y-1">
                         <span className="text-sm">最少提前分钟</span>
@@ -1168,7 +1204,84 @@ export default function BookingWorkbenchDialog({
                     </div>
                   </section>
 
-                  <section className={`rounded-3xl border p-5 ${panelClassName}`}>
+                  <section className={`rounded-3xl border p-5 ${rulePanelClassName("violet")}`}>
+                    <div className="text-base font-semibold">项目颜色</div>
+                    <div className={`mt-1 text-sm ${mutedTextClassName}`}>为不同预约项目选择颜色，前台手机端和 PC 端预约框会同步展示。</div>
+                    <div className="mt-4 space-y-3">
+                      {bookingItemColorOptions.length > 0 ? (
+                        bookingItemColorOptions.map((item) => {
+                          const selectedStyle = draft.itemColorStyles[item] ?? null;
+                          return (
+                            <div key={item} className={`rounded-2xl border p-3 ${softPanelClassName}`}>
+                              <div className="flex flex-wrap items-center justify-between gap-3">
+                                <span
+                                  className="inline-flex rounded-full border px-3 py-1 text-sm font-semibold"
+                                  style={
+                                    selectedStyle
+                                      ? {
+                                          color: selectedStyle.textColor,
+                                          backgroundColor: selectedStyle.backgroundColor,
+                                          borderColor: selectedStyle.backgroundColor,
+                                        }
+                                      : undefined
+                                  }
+                                >
+                                  {item}
+                                </span>
+                                <button
+                                  type="button"
+                                  className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+                                    darkMode
+                                      ? "border-slate-700 bg-slate-950 text-slate-300 hover:border-slate-500"
+                                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                                  }`}
+                                  onClick={() => updateItemColorStyle(item, null)}
+                                >
+                                  默认
+                                </button>
+                              </div>
+                              <div className="mt-3 grid grid-cols-5 gap-2 sm:grid-cols-10">
+                                {MERCHANT_BOOKING_ITEM_COLOR_PRESETS.map((preset) => {
+                                  const selected =
+                                    selectedStyle?.textColor === preset.textColor &&
+                                    selectedStyle?.backgroundColor === preset.backgroundColor;
+                                  return (
+                                    <button
+                                      key={preset.id}
+                                      type="button"
+                                      className={`h-9 rounded-xl border text-[11px] font-semibold transition ${
+                                        selected ? "ring-2 ring-slate-900 ring-offset-2" : "hover:scale-[1.03]"
+                                      }`}
+                                      style={{
+                                        color: preset.textColor,
+                                        backgroundColor: preset.backgroundColor,
+                                        borderColor: preset.borderColor,
+                                      }}
+                                      onClick={() =>
+                                        updateItemColorStyle(item, {
+                                          textColor: preset.textColor,
+                                          backgroundColor: preset.backgroundColor,
+                                        })
+                                      }
+                                      aria-label={`${item} ${preset.label}`}
+                                    >
+                                      Aa
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })
+                      ) : (
+                        <div className={`rounded-2xl border px-4 py-3 text-sm ${softPanelClassName}`}>
+                          先在预约模块中添加项目后，这里会显示项目颜色设置。
+                        </div>
+                      )}
+                    </div>
+                  </section>
+
+                  <section className={`rounded-3xl border p-5 ${rulePanelClassName("amber")}`}>
                     <div className="text-base font-semibold">周期性不可预约</div>
                     <div className="mt-4 space-y-3">
                       {weekdayLabels.map((label, weekday) => {
@@ -1202,9 +1315,9 @@ export default function BookingWorkbenchDialog({
                 </div>
 
                 <div className="space-y-4">
-                  <section className={`rounded-3xl border p-5 ${panelClassName}`}>
+                  <section className={`rounded-3xl border p-5 ${rulePanelClassName("cyan")}`}>
                     <div className="text-base font-semibold">缓冲时间</div>
-                    <div className={`mt-1 text-sm ${mutedTextClassName}`}>只有店铺和项目这两项内容都相同的预约，前后才需要按这个间隔错开。</div>
+                    <div className={`mt-1 text-sm ${mutedTextClassName}`}>只有完全相同的项目预约会采用缓冲时间</div>
                     <div className="mt-4 max-w-sm">
                       <label className="space-y-1">
                         <span className="text-sm">缓冲分钟</span>
@@ -1218,13 +1331,8 @@ export default function BookingWorkbenchDialog({
                     </div>
                   </section>
 
-                  <section className={`rounded-3xl border p-5 ${panelClassName}`}>
-                    <div className="text-base font-semibold">{locale.startsWith("es") ? "Acción automática al llegar la hora" : "到时自动处理"}</div>
-                    <div className={`mt-1 text-sm ${mutedTextClassName}`}>
-                      {locale.startsWith("es")
-                        ? "Puede dejarlo sin activar o elegir solo una opción. Se aplicará cuando llegue la hora exacta de la cita."
-                        : "可不启用，也只能二选一。到预约时间时，系统会按这里选择的结果自动处理仍未结束的预约。"}
-                    </div>
+                  <section className={`rounded-3xl border p-5 ${rulePanelClassName("emerald")}`}>
+                    <div className="text-base font-semibold">{locale.startsWith("es") ? "Acción automática" : "自动处理"}</div>
                     <div className="mt-4 grid gap-3 sm:grid-cols-2">
                       {appointmentAutoStatusOptions.map((option) => {
                         const selected = draft.appointmentAutoStatus === option.value;
@@ -1249,9 +1357,6 @@ export default function BookingWorkbenchDialog({
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
                                 <div className="text-sm font-semibold">{option.label}</div>
-                                <div className={`mt-1 text-xs leading-5 ${selected && darkMode ? "text-emerald-100/80" : mutedTextClassName}`}>
-                                  {option.description}
-                                </div>
                               </div>
                               <span
                                 className={`mt-0.5 inline-flex h-5 w-5 shrink-0 rounded-full border ${
@@ -1266,14 +1371,9 @@ export default function BookingWorkbenchDialog({
                         );
                       })}
                     </div>
-                    <div className={`mt-3 text-xs ${mutedTextClassName}`}>
-                      {locale.startsWith("es")
-                        ? "Si también está activa la regla de no-show con margen, esta acción al llegar la hora tendrá prioridad."
-                        : "如果同时开启了爽约宽限，优先生效的是这里的到时自动处理。再次点击已选项可取消。"}
-                    </div>
                   </section>
 
-                  <section className={`rounded-3xl border p-5 ${panelClassName}`}>
+                  <section className={`rounded-3xl border p-5 ${rulePanelClassName("rose")}`}>
                     <div className="text-base font-semibold">爽约</div>
                     <div className={`mt-1 text-sm ${mutedTextClassName}`}>到预约时间后超过宽限分钟仍未完成或确认，系统会自动标记为未到店。</div>
                     <div className="mt-4 flex flex-wrap items-center gap-4">
@@ -1300,7 +1400,7 @@ export default function BookingWorkbenchDialog({
                     </div>
                   </section>
 
-                  <section className={`rounded-3xl border p-5 ${panelClassName}`}>
+                  <section className={`rounded-3xl border p-5 ${rulePanelClassName("slate")}`}>
                     <div className="text-base font-semibold">{locale.startsWith("es") ? "Vista previa de reglas" : "规则预览"}</div>
                     <div className={`mt-1 text-sm ${mutedTextClassName}`}>
                       {locale.startsWith("es")

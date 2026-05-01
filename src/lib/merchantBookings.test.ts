@@ -32,6 +32,8 @@ import {
   getMerchantBookingAutoStatusAtAppointmentTime,
   getMerchantBookingBufferIssue,
   getMerchantBookingDueReminderOffset,
+  getMerchantBookingItemColorStyle,
+  MERCHANT_BOOKING_ITEM_COLOR_PRESETS,
   normalizeMerchantBookingWorkbenchSettings,
 } from "./merchantBookingWorkbench";
 
@@ -667,6 +669,29 @@ test("normalizeMerchantBookingWorkbenchSettings keeps only supported appointment
     }).appointmentAutoStatus,
     "",
   );
+});
+
+test("normalizeMerchantBookingWorkbenchSettings keeps supported booking item colors", () => {
+  const [preset] = MERCHANT_BOOKING_ITEM_COLOR_PRESETS;
+  assert.ok(preset);
+  const settings = normalizeMerchantBookingWorkbenchSettings({
+    itemColorStyles: {
+      "\u54a8\u8be2\u9884\u7ea6": {
+        textColor: preset.textColor.toLowerCase(),
+        backgroundColor: preset.backgroundColor.toLowerCase(),
+      },
+      "\u5230\u5e97\u670d\u52a1": {
+        textColor: "#ffffff",
+        backgroundColor: "#000000",
+      },
+    },
+  });
+
+  assert.deepEqual(getMerchantBookingItemColorStyle(settings, "\u54a8\u8be2\u9884\u7ea6"), {
+    textColor: preset.textColor,
+    backgroundColor: preset.backgroundColor,
+  });
+  assert.equal(getMerchantBookingItemColorStyle(settings, "\u5230\u5e97\u670d\u52a1"), null);
 });
 
 test("getMerchantBookingStatusLabel returns readable labels", () => {
