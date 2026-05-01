@@ -235,7 +235,6 @@ export default function MerchantOrderManagerDialog({
   const [records, setRecords] = useState<MerchantOrderRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<MerchantOrderFilter>("all");
   const [sortMode, setSortMode] = useState<MerchantOrderSortMode>(
@@ -271,7 +270,6 @@ export default function MerchantOrderManagerDialog({
     if (!siteId) return;
     setLoading(true);
     setError("");
-    setNotice("");
     try {
       const response = await fetch(`/api/orders?siteId=${encodeURIComponent(siteId)}`, {
         cache: "no-store",
@@ -577,12 +575,10 @@ export default function MerchantOrderManagerDialog({
       order: MerchantOrderRecord,
       status: MerchantOrderStatus,
       busyLabel: string,
-      noticeText: string,
       options: { persistDetailDraft?: boolean } = {},
     ) => {
       setBusyKey(`${busyLabel}:${order.id}`);
       setError("");
-      setNotice("");
       try {
         let baseOrder = order;
         if (
@@ -595,7 +591,6 @@ export default function MerchantOrderManagerDialog({
         }
         const nextOrder = await requestOrderStatusUpdate(baseOrder.id, status);
         setRecords((current) => current.map((item) => (item.id === order.id ? nextOrder : item)));
-        setNotice(noticeText);
       } catch (nextError) {
         setError(nextError instanceof Error && nextError.message ? nextError.message : "订单操作失败");
       } finally {
@@ -609,7 +604,6 @@ export default function MerchantOrderManagerDialog({
     async (order: MerchantOrderRecord) => {
       setBusyKey(`print:${order.id}`);
       setError("");
-      setNotice("");
       try {
         if (typeof window !== "undefined") {
           const popup = window.open("", "_blank", "noopener,noreferrer,width=920,height=760");
@@ -633,18 +627,16 @@ export default function MerchantOrderManagerDialog({
   );
 
   const runBatchOrderStatusUpdate = useCallback(
-    async (status: MerchantOrderStatus, busyLabel: string, noticeText: string) => {
+    async (status: MerchantOrderStatus, busyLabel: string) => {
       if (selectedOrderIds.length === 0) return;
       setBusyKey(`batch:${busyLabel}`);
       setError("");
-      setNotice("");
       try {
         const updatedOrders = await requestBatchOrderStatusUpdate(selectedOrderIds, status);
         const updatedById = new Map(updatedOrders.map((item) => [item.id, item]));
         setRecords((current) => current.map((item) => updatedById.get(item.id) ?? item));
         setSelectedOrderIds([]);
         setSelectionMode(false);
-        setNotice(noticeText);
       } catch (nextError) {
         setError(nextError instanceof Error && nextError.message ? nextError.message : "批量操作失败");
       } finally {
@@ -741,7 +733,7 @@ export default function MerchantOrderManagerDialog({
             <button
               type="button"
               className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              onClick={() => void patchOrderStatus(record, "pending", "unconfirm", "订单已恢复为待确认", options)}
+              onClick={() => void patchOrderStatus(record, "pending", "unconfirm", options)}
               disabled={disabled}
             >
               {isBusy("unconfirm") ? "处理中" : "取消确认"}
@@ -750,7 +742,7 @@ export default function MerchantOrderManagerDialog({
             <button
               type="button"
               className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              onClick={() => void patchOrderStatus(record, "pending", "restore", "订单已恢复为待确认", options)}
+              onClick={() => void patchOrderStatus(record, "pending", "restore", options)}
               disabled={disabled}
             >
               {isBusy("restore") ? "处理中" : "恢复待确认"}
@@ -759,7 +751,7 @@ export default function MerchantOrderManagerDialog({
             <button
               type="button"
               className="rounded border border-sky-300 bg-sky-100 px-3 py-1.5 text-[13px] leading-5 text-sky-800 hover:bg-sky-200 disabled:opacity-50"
-              onClick={() => void patchOrderStatus(record, "confirmed", "confirm", "订单已确认", options)}
+              onClick={() => void patchOrderStatus(record, "confirmed", "confirm", options)}
               disabled={disabled}
             >
               {isBusy("confirm") ? "处理中" : "确认"}
@@ -769,7 +761,7 @@ export default function MerchantOrderManagerDialog({
             <button
               type="button"
               className="rounded border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-[13px] leading-5 text-white hover:bg-emerald-700 disabled:opacity-50"
-              onClick={() => void patchOrderStatus(record, "completed", "complete", "订单已完成", options)}
+              onClick={() => void patchOrderStatus(record, "completed", "complete", options)}
               disabled={disabled}
             >
               {isBusy("complete") ? "处理中" : "完成"}
@@ -778,7 +770,7 @@ export default function MerchantOrderManagerDialog({
             <button
               type="button"
               className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              onClick={() => void patchOrderStatus(record, "confirmed", "uncomplete", "订单已恢复为已确认", options)}
+              onClick={() => void patchOrderStatus(record, "confirmed", "uncomplete", options)}
               disabled={disabled}
             >
               {isBusy("uncomplete") ? "处理中" : "取消完成"}
@@ -796,7 +788,7 @@ export default function MerchantOrderManagerDialog({
             <button
               type="button"
               className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              onClick={() => void patchOrderStatus(record, "cancelled", "cancel", "订单已取消", options)}
+              onClick={() => void patchOrderStatus(record, "cancelled", "cancel", options)}
               disabled={disabled}
             >
               {isBusy("cancel") ? "处理中" : "取消"}
@@ -820,7 +812,7 @@ export default function MerchantOrderManagerDialog({
             <button
               type="button"
               className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              onClick={() => void patchOrderStatus(record, "pending", "unconfirm", "订单已恢复为待确认")}
+              onClick={() => void patchOrderStatus(record, "pending", "unconfirm")}
               disabled={disabled}
               data-skip-selection-toggle="true"
             >
@@ -830,7 +822,7 @@ export default function MerchantOrderManagerDialog({
             <button
               type="button"
               className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              onClick={() => void patchOrderStatus(record, "pending", "restore", "订单已恢复为待确认")}
+              onClick={() => void patchOrderStatus(record, "pending", "restore")}
               disabled={disabled}
               data-skip-selection-toggle="true"
             >
@@ -840,7 +832,7 @@ export default function MerchantOrderManagerDialog({
             <button
               type="button"
               className="rounded border border-sky-300 bg-sky-100 px-3 py-1.5 text-[13px] leading-5 text-sky-800 hover:bg-sky-200 disabled:opacity-50"
-              onClick={() => void patchOrderStatus(record, "confirmed", "confirm", "订单已确认")}
+              onClick={() => void patchOrderStatus(record, "confirmed", "confirm")}
               disabled={disabled}
               data-skip-selection-toggle="true"
             >
@@ -851,7 +843,7 @@ export default function MerchantOrderManagerDialog({
             <button
               type="button"
               className="rounded border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-[13px] leading-5 text-white hover:bg-emerald-700 disabled:opacity-50"
-              onClick={() => void patchOrderStatus(record, "completed", "complete", "订单已完成")}
+              onClick={() => void patchOrderStatus(record, "completed", "complete")}
               disabled={disabled}
               data-skip-selection-toggle="true"
             >
@@ -861,7 +853,7 @@ export default function MerchantOrderManagerDialog({
             <button
               type="button"
               className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              onClick={() => void patchOrderStatus(record, "confirmed", "uncomplete", "订单已恢复为已确认")}
+              onClick={() => void patchOrderStatus(record, "confirmed", "uncomplete")}
               disabled={disabled}
               data-skip-selection-toggle="true"
             >
@@ -872,7 +864,7 @@ export default function MerchantOrderManagerDialog({
             <button
               type="button"
               className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              onClick={() => void patchOrderStatus(record, "cancelled", "cancel", "订单已取消")}
+              onClick={() => void patchOrderStatus(record, "cancelled", "cancel")}
               disabled={disabled}
               data-skip-selection-toggle="true"
             >
@@ -1248,7 +1240,7 @@ export default function MerchantOrderManagerDialog({
                     <button
                       type="button"
                       className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700"
-                      onClick={() => void runBatchOrderStatusUpdate("confirmed", "confirm", "已完成批量确认")}
+                      onClick={() => void runBatchOrderStatusUpdate("confirmed", "confirm")}
                       disabled={busyKey.startsWith("batch:")}
                     >
                       {busyKey === "batch:confirm" ? "处理中" : "批量确认"}
@@ -1256,7 +1248,7 @@ export default function MerchantOrderManagerDialog({
                     <button
                       type="button"
                       className="rounded-full border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700"
-                      onClick={() => void runBatchOrderStatusUpdate("cancelled", "cancel", "已完成批量取消")}
+                      onClick={() => void runBatchOrderStatusUpdate("cancelled", "cancel")}
                       disabled={busyKey.startsWith("batch:")}
                     >
                       {busyKey === "batch:cancel" ? "处理中" : "批量取消"}
@@ -1266,9 +1258,6 @@ export default function MerchantOrderManagerDialog({
               </div>
             ) : null}
 
-            {notice ? (
-              <div className="mt-4 rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{notice}</div>
-            ) : null}
             {error ? (
               <div className="mt-4 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>
             ) : null}
