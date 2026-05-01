@@ -292,6 +292,7 @@ test("applyPlanTemplateToBlocks only updates the selected plan", () => {
   );
 
   const mergedConfig = (merged[0]?.props as { pagePlanConfig?: PagePlanConfig } | undefined)?.pagePlanConfig;
+  assert.equal(mergedConfig?.activePlanId, "plan-2");
   const plan1Text = ((mergedConfig?.plans[0]?.pages[0]?.blocks[0]?.props ?? {}) as Record<string, unknown>).text;
   const plan2Text = ((mergedConfig?.plans[1]?.pages[0]?.blocks[0]?.props ?? {}) as Record<string, unknown>).text;
   const plan3Text = ((mergedConfig?.plans[2]?.pages[0]?.blocks[0]?.props ?? {}) as Record<string, unknown>).text;

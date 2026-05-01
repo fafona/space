@@ -377,9 +377,11 @@ function applyViewportTemplate(
   const nextConfig = clonePlanConfig(targetConfig);
   nextConfig.plans = nextConfig.plans.map((plan) => syncPlan(plan));
   const selectedPlanId = typeof scope.selectedPlanId === "string" ? scope.selectedPlanId.trim() : "";
+  const selectedTemplatePlan = templateConfig.plans.find((plan) => plan.id === selectedPlanId);
+  if (!selectedTemplatePlan) return nextConfig;
 
-  templateConfig.plans.forEach((templatePlan) => {
-    if (selectedPlanId && templatePlan.id !== selectedPlanId) return;
+  nextConfig.activePlanId = selectedTemplatePlan.id;
+  [selectedTemplatePlan].forEach((templatePlan) => {
     const planIndex = nextConfig.plans.findIndex((item) => item.id === templatePlan.id);
     if (planIndex < 0) return;
     const targetPlan = syncPlan(nextConfig.plans[planIndex]);
@@ -536,6 +538,7 @@ export function hasPlanTemplateApplySelection(scope: PlanTemplateApplyScope) {
   return (["desktop", "mobile"] as const).some((viewport) => {
     const viewScope = scope[viewport];
     if (!viewScope.enabled) return false;
+    if (!viewScope.selectedPlanId?.trim()) return false;
     return viewScope.applyBackground || viewScope.selectedPageKeys.length > 0;
   });
 }

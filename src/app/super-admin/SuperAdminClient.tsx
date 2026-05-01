@@ -4817,17 +4817,16 @@ export default function SuperAdminClient() {
     };
   }
 
-  function selectPlanTemplatePlan(viewport: "desktop" | "mobile", planId: string) {
-    setPlanTemplateApplyScope((prev) => {
-      const selection = resolvePlanTemplateSelection(viewport, planId);
-      return {
-        ...prev,
-        [viewport]: {
-          ...prev[viewport],
-          ...selection,
-        },
-      };
-    });
+  function getPlanTemplateSingleSelectionId(scope: PlanTemplateApplyScope) {
+    const viewports = ["desktop", "mobile"] as const;
+    const enabledSelection = viewports
+      .map((viewport) => scope[viewport])
+      .find((viewScope) => viewScope.enabled && viewScope.selectedPlanId?.trim());
+    if (enabledSelection?.selectedPlanId) return enabledSelection.selectedPlanId.trim();
+    const storedSelection = viewports
+      .map((viewport) => scope[viewport].selectedPlanId?.trim() ?? "")
+      .find(Boolean);
+    return storedSelection || planTemplateApplyPreviewPlans[0]?.planId || "";
   }
 
   function selectPlanTemplatePlanForAllViewports(planId: string) {
@@ -4847,7 +4846,8 @@ export default function SuperAdminClient() {
 
   function updatePlanTemplateViewportEnabled(viewport: "desktop" | "mobile", enabled: boolean) {
     setPlanTemplateApplyScope((prev) => {
-      const selection = enabled ? resolvePlanTemplateSelection(viewport, prev[viewport].selectedPlanId) : null;
+      const selectedPlanId = getPlanTemplateSingleSelectionId(prev);
+      const selection = enabled ? resolvePlanTemplateSelection(viewport, selectedPlanId || prev[viewport].selectedPlanId) : null;
       return {
         ...prev,
         [viewport]: {
@@ -7933,21 +7933,17 @@ export default function SuperAdminClient() {
                                     {planTemplateApplyPreviewPlans.length > 0 ? (
                                       <div className="rounded-2xl border bg-slate-50 p-4">
                                         <div className="text-sm font-semibold text-slate-900">选择方案</div>
-                                        <div className="mt-1 text-xs text-slate-500">应用时先选其中一套，再决定是否替换 PC 和手机页面。</div>
+                                        <div className="mt-1 text-xs text-slate-500">一次只应用一套方案；选择哪套，草稿或前台就启用哪套。</div>
                                         <div className="mt-3 space-y-2">
                                           {planTemplateApplyPreviewPlans.map((plan) => {
-                                            const enabledScopes = (["desktop", "mobile"] as const)
-                                              .map((viewport) => planTemplateApplyScope[viewport])
-                                              .filter((scope) => scope.enabled);
-                                            const selectedForAllEnabled =
-                                              enabledScopes.length > 0 &&
-                                              enabledScopes.every((scope) => scope.selectedPlanId === plan.planId);
+                                            const selectedPlanId = getPlanTemplateSingleSelectionId(planTemplateApplyScope);
+                                            const selectedForApply = selectedPlanId === plan.planId;
                                             return (
                                               <div key={`${planTemplateApplyTemplate.id}-${plan.planId}`} className="flex items-center gap-2">
                                                 <button
                                                   type="button"
                                                   className={`flex-1 rounded border px-3 py-2 text-sm text-left transition-colors ${
-                                                    selectedForAllEnabled
+                                                    selectedForApply
                                                       ? "border-black bg-black text-white"
                                                       : "bg-white text-slate-700 hover:bg-slate-50"
                                                   }`}
@@ -8004,6 +8000,15 @@ export default function SuperAdminClient() {
                                       <div className="mt-4 space-y-4">
                                         {planTemplateViewportOptions.map((viewportOption) => {
                                           const viewScope = planTemplateApplyScope[viewportOption.viewport];
+                                          const selectedPlanId =
+                                            viewScope.selectedPlanId ||
+                                            getPlanTemplateSingleSelectionId(planTemplateApplyScope) ||
+                                            viewportOption.plans[0]?.planId ||
+                                            "";
+                                          const selectedPlan =
+                                            viewportOption.plans.find((plan) => plan.planId === selectedPlanId) ??
+                                            viewportOption.plans[0] ??
+                                            null;
                                           return (
                                             <div key={viewportOption.viewport} className="rounded-2xl border bg-white p-4">
                                               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -8030,72 +8035,64 @@ export default function SuperAdminClient() {
                                                 </label>
                                               </div>
 
-                                              <div className="mt-4 space-y-4">
-                                                <div className="flex flex-wrap gap-2">
-                                                  {viewportOption.plans.map((plan) => {
-                                                    const planSelected =
-                                                      (viewScope.selectedPlanId || viewportOption.plans[0]?.planId || "") === plan.planId;
-                                                    return (
-                                                      <button
-                                                        key={`${viewportOption.viewport}-plan-${plan.planId}`}
-                                                        type="button"
-                                                        className={`rounded-full border px-3 py-1.5 text-sm transition-colors ${
-                                                          planSelected
-                                                            ? "border-black bg-black text-white"
-                                                            : "bg-white text-slate-700 hover:bg-slate-50"
-                                                        } ${viewScope.enabled ? "" : "cursor-not-allowed opacity-50"}`}
-                                                        onClick={() => viewScope.enabled && selectPlanTemplatePlan(viewportOption.viewport, plan.planId)}
-                                                        disabled={!viewScope.enabled}
-                                                      >
-                                                        {plan.planName}
-                                                      </button>
-                                                    );
-                                                  })}
-                                                </div>
-                                                {viewportOption.plans
-                                                  .filter((plan) => {
-                                                    const selectedPlanId = viewScope.selectedPlanId || viewportOption.plans[0]?.planId || "";
-                                                    return plan.planId === selectedPlanId;
-                                                  })
-                                                  .map((plan) => (
-                                                  <div key={`${viewportOption.viewport}-${plan.planId}`} className="space-y-2">
+                                              <div className="mt-4 space-y-3">
+                                                {selectedPlan ? (
+                                                  <div key={`${viewportOption.viewport}-${selectedPlan.planId}`} className="space-y-3">
                                                     <div className="flex items-center justify-between gap-3">
-                                                      <div className="text-xs font-medium text-slate-500">{plan.planName}</div>
-                                                      {((planTemplateApplyTemplate.planPreviewImageUrls ?? {})[plan.planId] ?? "").trim() ||
+                                                      <div className="flex items-center gap-2 text-xs text-slate-500">
+                                                        <span>当前方案</span>
+                                                        <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 font-medium text-slate-900">
+                                                          {selectedPlan.planName}
+                                                        </span>
+                                                      </div>
+                                                      {((planTemplateApplyTemplate.planPreviewImageUrls ?? {})[selectedPlan.planId] ?? "").trim() ||
                                                       needsPlanTemplatePreviewRefresh(planTemplateApplyTemplate) ? (
                                                         <button
                                                           type="button"
                                                           className="rounded border bg-white px-2 py-1 text-xs text-slate-700 hover:bg-slate-50"
-                                                          onClick={() => void openPlanTemplatePreview(planTemplateApplyTemplate, plan.planId, plan.planName)}
+                                                          onClick={() =>
+                                                            void openPlanTemplatePreview(
+                                                              planTemplateApplyTemplate,
+                                                              selectedPlan.planId,
+                                                              selectedPlan.planName,
+                                                            )
+                                                          }
                                                         >
                                                           预览方案
                                                         </button>
                                                       ) : null}
                                                     </div>
-                                                    <div className="flex flex-wrap gap-2">
-                                                      {plan.pages.map((page) => {
-                                                        const selected = viewScope.selectedPageKeys.includes(page.key);
-                                                        return (
-                                                          <button
-                                                            key={page.key}
-                                                            type="button"
-                                                            className={`rounded-full border px-3 py-1.5 text-sm transition-colors ${
-                                                              selected
-                                                                ? "border-black bg-black text-white"
-                                                                : "bg-white text-slate-700 hover:bg-slate-50"
-                                                            } ${viewScope.enabled ? "" : "cursor-not-allowed opacity-50"}`}
-                                                            onClick={() =>
-                                                              viewScope.enabled && togglePlanTemplatePageSelection(viewportOption.viewport, page.key)
-                                                            }
-                                                            disabled={!viewScope.enabled}
-                                                          >
-                                                            {page.pageName}
-                                                          </button>
-                                                        );
-                                                      })}
+                                                    <div className="space-y-2">
+                                                      <div className="text-xs font-medium text-slate-500">页面范围</div>
+                                                      <div className="flex flex-wrap gap-2">
+                                                        {selectedPlan.pages.map((page) => {
+                                                          const selected = viewScope.selectedPageKeys.includes(page.key);
+                                                          return (
+                                                            <button
+                                                              key={page.key}
+                                                              type="button"
+                                                              className={`rounded-full border px-3 py-1.5 text-sm transition-colors ${
+                                                                selected
+                                                                  ? "border-black bg-black text-white"
+                                                                  : "bg-white text-slate-700 hover:bg-slate-50"
+                                                              } ${viewScope.enabled ? "" : "cursor-not-allowed opacity-50"}`}
+                                                              onClick={() =>
+                                                                viewScope.enabled && togglePlanTemplatePageSelection(viewportOption.viewport, page.key)
+                                                              }
+                                                              disabled={!viewScope.enabled}
+                                                            >
+                                                              {page.pageName}
+                                                            </button>
+                                                          );
+                                                        })}
+                                                      </div>
                                                     </div>
                                                   </div>
-                                                ))}
+                                                ) : (
+                                                  <div className="rounded border border-dashed bg-slate-50 px-3 py-4 text-sm text-slate-500">
+                                                    该端口暂无可应用的方案。
+                                                  </div>
+                                                )}
                                               </div>
                                             </div>
                                           );
@@ -8107,7 +8104,7 @@ export default function SuperAdminClient() {
                               </div>
 
                               <div className="flex flex-wrap items-center justify-between gap-3 border-t px-5 py-4">
-                                <div className="text-xs text-slate-500">可按端口、页面范围和替换项控制模板应用，不会改动商户信息。</div>
+                                <div className="text-xs text-slate-500">一次只应用当前选中的一套方案，可按端口、页面范围和替换项控制，不会改动商户信息。</div>
                                 <div className="flex flex-wrap gap-2">
                                   <button
                                     type="button"
