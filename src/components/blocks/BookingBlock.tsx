@@ -649,12 +649,6 @@ export default function BookingBlock({
         dangerouslySetInnerHTML={{ __html: textHtml }}
       />
 
-      {!isLiveBooking ? (
-        <div className="mt-4 rounded-xl border border-dashed border-slate-300 bg-white/70 px-4 py-3 text-sm text-slate-500">
-          预览模式下仅展示预约表单样式，发布到商户前台后可真实提交预约。
-        </div>
-      ) : null}
-
       {mode === "success" && submittedState ? (
         <div className="mt-5 rounded-2xl border border-slate-200 bg-white/90 p-5 shadow-sm">
           <div className="text-lg font-semibold text-slate-900">

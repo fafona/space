@@ -1685,7 +1685,7 @@ export default function MerchantBookingManagerDialog({
                       <div className="flex flex-wrap gap-1.5">{renderStatusActions(record)}</div>
                     </div>
 
-                    <div className="mt-3 grid gap-2.5 md:grid-cols-2 xl:grid-cols-[minmax(11rem,0.8fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
+                    <div className="mt-3 grid gap-y-2.5 gap-x-4 md:grid-cols-2 xl:grid-cols-[12rem_12rem_12rem_minmax(0,1fr)_auto] xl:gap-x-16">
                       <ReadOnlyBookingField
                         fieldKey="appointmentAt"
                         value={[appointmentParts.date || "-", appointmentParts.time || "-"].join(" ")}
@@ -1708,7 +1708,7 @@ export default function MerchantBookingManagerDialog({
                         colorStyle={itemColorStyle}
                         labelOverride={itemLabel}
                       />
-                      <div className="flex items-end justify-end gap-2">
+                      <div className="flex items-end justify-end gap-2 xl:col-start-5">
                         {record.customerEmailLogs?.length ? (
                           <span
                             className="inline-flex items-center gap-1.5 rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-[11px] font-medium text-sky-700"
