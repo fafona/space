@@ -212,6 +212,26 @@ function readAccountMetadata(user?: AuthUserSummary | null) {
   };
 }
 
+function isUnclaimedAccountDeleteVerificationUser(user: AuthUserSummary, targetEmail: string) {
+  const email = normalizeEmail(user.email);
+  if (!email || email !== normalizeEmail(ACCOUNT_DELETE_VERIFICATION_EMAIL) || email !== normalizeEmail(targetEmail)) {
+    return false;
+  }
+  const metadata = readAccountMetadata(user);
+  const explicitAccountType =
+    readPlatformAccountTypeFromMetadata(user, "") ||
+    readMetadataString(user.user_metadata ?? null, "account_type", "accountType") ||
+    readMetadataString(user.app_metadata ?? null, "account_type", "accountType");
+  return (
+    !explicitAccountType &&
+    !metadata.accountId &&
+    !metadata.loginId &&
+    !metadata.merchantId &&
+    !metadata.usernameKey &&
+    !metadata.manualCreated
+  );
+}
+
 function buildManualUserEmail(accountType: PlatformAccountType, accountId: string) {
   return `${accountType === "personal" ? "personal" : "merchant"}-${accountId}@manual.merchant-space.invalid`;
 }
@@ -978,7 +998,16 @@ export async function POST(request: Request) {
       return conflictJson("login_account_exists", "账号已存在，请更换后重试");
     }
     const authUsers = authUsersResult.users;
-    const duplicateIdUser = authUsers.find((user) => {
+    const unclaimedVerificationUser = authUsers.find((user) => isUnclaimedAccountDeleteVerificationUser(user, authEmail)) ?? null;
+    if (unclaimedVerificationUser) {
+      const { error: deleteUnclaimedUserError } = await supabase.auth.admin.deleteUser(unclaimedVerificationUser.id);
+      if (deleteUnclaimedUserError) throw deleteUnclaimedUserError;
+    }
+    const activeAuthUsers = unclaimedVerificationUser
+      ? authUsers.filter((user) => user.id !== unclaimedVerificationUser.id)
+      : authUsers;
+
+    const duplicateIdUser = activeAuthUsers.find((user) => {
       const metadata = readAccountMetadata(user);
       return (
         metadata.loginId === accountId ||
@@ -990,7 +1019,7 @@ export async function POST(request: Request) {
       return conflictJson("merchant_id_exists", "ID 已存在，请更换后重试");
     }
 
-    const duplicateLoginAccountUser = authUsers.find((user) => {
+    const duplicateLoginAccountUser = activeAuthUsers.find((user) => {
       const metadata = readAccountMetadata(user);
       return metadata.usernameKey === authEmail || normalizeEmail(user.email) === authEmail;
     });
