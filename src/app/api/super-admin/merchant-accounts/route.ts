@@ -273,9 +273,11 @@ function isNumericMerchantId(value: string | null | undefined) {
 function isDuplicateKeyError(error: unknown) {
   if (!error || typeof error !== "object") return false;
   const record = error as { code?: unknown; message?: unknown };
-  if (typeof record.code === "string" && record.code === "23505") return true;
+  if (typeof record.code === "string" && ["23505", "email_exists", "user_already_exists"].includes(record.code)) {
+    return true;
+  }
   const message = typeof record.message === "string" ? record.message : "";
-  return /duplicate key|already exists|unique constraint/i.test(message);
+  return /duplicate key|already exists|already registered|already been registered|user_already_exists|unique constraint/i.test(message);
 }
 
 function readErrorMessage(error: unknown) {
@@ -939,20 +941,21 @@ export async function POST(request: Request) {
     }
 
     if (!loginAccount) {
-      return badRequestJson("invalid_login_account", "请输入账号");
+      return badRequestJson("invalid_login_account", "请输入邮箱");
     }
     if (password.length < 6) {
       return badRequestJson("invalid_password", "密码至少 6 位");
     }
 
-    const loginAccountKey = normalizeAccountValue(loginAccount);
     const loginEmail = normalizeLoginEmail(loginAccount);
-    const authEmail = loginEmail || buildManualUserEmail(accountType, accountId);
-    const displayName = loginAccount.trim();
+    if (!loginEmail) {
+      return badRequestJson("invalid_login_account", "请输入有效邮箱");
+    }
+    const authEmail = loginEmail;
     const merchantDisplayName = accountType === "merchant" ? accountId : "";
 
     const merchantEmailLookups =
-      loginEmail && accountType === "merchant"
+      accountType === "merchant"
         ? ["email", "owner_email", "contact_email", "user_email"].map((column) =>
             runSupabaseQueryWithRetry(() => supabase.from("merchants").select("id").eq(column, loginEmail).limit(1).maybeSingle()),
           )
@@ -980,8 +983,7 @@ export async function POST(request: Request) {
       return (
         metadata.loginId === accountId ||
         metadata.accountId === accountId ||
-        metadata.merchantId === accountId ||
-        normalizeEmail(user.email) === authEmail
+        metadata.merchantId === accountId
       );
     });
     if (duplicateIdUser) {
@@ -990,7 +992,7 @@ export async function POST(request: Request) {
 
     const duplicateLoginAccountUser = authUsers.find((user) => {
       const metadata = readAccountMetadata(user);
-      return metadata.usernameKey === loginAccountKey || normalizeEmail(user.email) === loginAccountKey;
+      return metadata.usernameKey === authEmail || normalizeEmail(user.email) === authEmail;
     });
     if (duplicateLoginAccountUser) {
       return conflictJson("login_account_exists", "账号已存在，请更换后重试");
@@ -999,8 +1001,6 @@ export async function POST(request: Request) {
     const metadataPatchBase = buildPlatformAccountMetadataPatch(
       {
         user_metadata: {
-          username: loginAccountKey,
-          display_name: displayName,
           manual_user: true,
         },
         app_metadata: {
@@ -1075,7 +1075,7 @@ export async function POST(request: Request) {
       merchantId: accountType === "merchant" ? merchantId : "",
       merchantName: merchantDisplayName,
       email: authEmail,
-      username: displayName,
+      username: "",
       loginId: accountId,
       createdAt: authUser.created_at ?? new Date().toISOString(),
       authUserId,

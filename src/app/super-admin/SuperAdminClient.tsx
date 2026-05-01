@@ -510,6 +510,10 @@ function normalizeEmailValue(value: string | null | undefined) {
   return String(value ?? "").trim().toLowerCase();
 }
 
+function isValidEmailValue(value: string | null | undefined) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmailValue(value));
+}
+
 function normalizeMerchantIdValue(value: string | null | undefined) {
   const normalized = String(value ?? "").trim();
   return /^\d+$/.test(normalized) ? normalized : "";
@@ -1926,7 +1930,7 @@ export default function SuperAdminClient() {
   const [manualUserDialogOpen, setManualUserDialogOpen] = useState(false);
   const [manualUserAccountType, setManualUserAccountType] = useState<PlatformAccountType>("merchant");
   const [manualUserId, setManualUserId] = useState("");
-  const [manualUserLoginAccount, setManualUserLoginAccount] = useState("");
+  const [manualUserEmail, setManualUserEmail] = useState("");
   const [manualUserPassword, setManualUserPassword] = useState("");
   const [manualUserSubmitting, setManualUserSubmitting] = useState(false);
   const [manualUserError, setManualUserError] = useState("");
@@ -2538,7 +2542,7 @@ export default function SuperAdminClient() {
       if (localSiteContext) {
         const merchantName = getMerchantProfileName(localSiteContext.site);
         const accountEmail = account.email || localSiteContext.userEmail || "-";
-        const loginAccount = account.username || accountEmail;
+        const loginAccount = accountEmail;
         return {
           site: localSiteContext.site,
           hasSite: true,
@@ -2569,7 +2573,7 @@ export default function SuperAdminClient() {
         hasLocalSite: false,
         backendAccount: account,
         merchantId,
-        loginAccount: account.username || account.email || "-",
+        loginAccount: account.email || "-",
         userEmail: account.email || "-",
         merchantName: getMerchantProfileName(backendOnlySite),
         prefix: normalizePublishedSitePrefix(backendOnlySite.domainPrefix ?? backendOnlySite.domainSuffix) || publishedPrefix || "-",
@@ -3967,7 +3971,7 @@ export default function SuperAdminClient() {
       accountType: "personal" as const,
       accountId: account.accountId,
       authUserId: account.authUserId || "",
-      label: account.username || account.email || account.accountId,
+      label: account.email || account.username || account.accountId,
     };
   }
 
@@ -4117,7 +4121,7 @@ export default function SuperAdminClient() {
           hydratePersonalConfigDraft(payload.item);
         }
         setTip(
-          `${payload.item.username || payload.item.email || payload.item.accountId} 已${payload.item.personalServicePaused ? "暂停" : "开启"}服务`,
+          `${payload.item.email || payload.item.username || payload.item.accountId} 已${payload.item.personalServicePaused ? "暂停" : "开启"}服务`,
         );
       } catch (error) {
         const message = error instanceof Error ? error.message : "个人账号服务状态更新失败，请稍后重试";
@@ -4189,7 +4193,7 @@ export default function SuperAdminClient() {
       hydratePersonalConfigDraft(payload.item);
       setSelectedPersonalAccountId(payload.item.accountId);
       setPersonalPanelMode("detail");
-      setTip(`已保存个人账号 ${payload.item.username || payload.item.email || payload.item.accountId} 的服务配置`);
+      setTip(`已保存个人账号 ${payload.item.email || payload.item.username || payload.item.accountId} 的服务配置`);
     } catch (error) {
       setPersonalConfigError(error instanceof Error ? error.message : "个人账号配置保存失败，请稍后重试");
     } finally {
@@ -5408,7 +5412,7 @@ export default function SuperAdminClient() {
   function resetManualUserDialog(nextAccountType: PlatformAccountType = "merchant") {
     setManualUserAccountType(nextAccountType);
     setManualUserId("");
-    setManualUserLoginAccount("");
+    setManualUserEmail("");
     setManualUserPassword("");
     setManualUserError("");
   }
@@ -5430,7 +5434,7 @@ export default function SuperAdminClient() {
 
     const accountType = manualUserAccountType;
     const accountId = manualUserId.trim();
-    const loginAccount = manualUserLoginAccount.trim();
+    const email = normalizeEmailValue(manualUserEmail);
     const passwordValue = manualUserPassword;
 
     if (!/^\d{8}$/.test(accountId)) {
@@ -5445,8 +5449,12 @@ export default function SuperAdminClient() {
       setManualUserError("商户 ID 不能落在个人号段内");
       return;
     }
-    if (!loginAccount) {
-      setManualUserError("请输入账号");
+    if (!email) {
+      setManualUserError("请输入邮箱");
+      return;
+    }
+    if (!isValidEmailValue(email)) {
+      setManualUserError("请输入有效邮箱");
       return;
     }
     if (passwordValue.length < 6) {
@@ -5466,7 +5474,7 @@ export default function SuperAdminClient() {
         body: JSON.stringify({
           accountType,
           accountId,
-          loginAccount,
+          loginAccount: email,
           password: passwordValue,
         }),
       });
@@ -5514,7 +5522,7 @@ export default function SuperAdminClient() {
       setUserManageAccountTypeFilter(accountType);
       setManualUserDialogOpen(false);
       resetManualUserDialog();
-      setTip(`已创建${accountType === "personal" ? "个人" : "商户"}账号：${loginAccount}（ID ${accountId}）`);
+      setTip(`已创建${accountType === "personal" ? "个人" : "商户"}账号：${email}（ID ${accountId}）`);
     } catch (error) {
       setManualUserError(error instanceof Error ? error.message : "新增账号失败，请稍后重试");
     } finally {
@@ -7102,7 +7110,7 @@ export default function SuperAdminClient() {
                               <div>
                                 <div className="text-base font-semibold text-slate-900">新增账号</div>
                                 <div className="mt-1 text-xs text-slate-500">
-                                  直接创建可登录账号，跳过注册。登录时支持账号或 8 位 ID。
+                                  直接创建可登录账号，跳过注册。邮箱会直接标记为已验证，登录时支持邮箱或 8 位 ID。
                                 </div>
                               </div>
                               <button
@@ -7153,12 +7161,12 @@ export default function SuperAdminClient() {
                                 />
                               </label>
                               <label className="space-y-1">
-                                <div className="text-sm text-slate-600">账号</div>
+                                <div className="text-sm text-slate-600">邮箱</div>
                                 <input
                                   className="w-full rounded border px-3 py-2 text-sm"
-                                  placeholder="用于登录，例如邮箱或自定义账号"
-                                  value={manualUserLoginAccount}
-                                  onChange={(event) => setManualUserLoginAccount(event.target.value)}
+                                  placeholder="用于登录的邮箱"
+                                  value={manualUserEmail}
+                                  onChange={(event) => setManualUserEmail(event.target.value)}
                                 />
                               </label>
                               <label className="space-y-1">
@@ -7173,8 +7181,8 @@ export default function SuperAdminClient() {
                               </label>
                               <div className="rounded border border-dashed bg-slate-50 px-3 py-2 text-xs text-slate-500">
                                 {manualUserAccountType === "personal"
-                                  ? "名称无需填写；系统会直接完成验证，创建后该账号会登录到个人中心。"
-                                  : "名称无需填写；系统会直接完成验证，创建后该账号会像普通商户一样登录后台。"}
+                                  ? "名称无需填写；系统不会发送邮箱验证，创建后该账号会登录到个人中心。"
+                                  : "名称无需填写；系统不会发送邮箱验证，创建后该账号会像普通商户一样登录后台。"}
                               </div>
                               {manualUserError ? <div className="text-sm text-rose-600">{manualUserError}</div> : null}
                             </div>
@@ -7525,7 +7533,7 @@ export default function SuperAdminClient() {
                             {filteredPersonalAccounts.map((account) => (
                               <tr key={account.authUserId || account.accountId || account.email} className="border-t">
                                 <td className="px-3 py-2 text-xs">
-                                  <div className="font-medium text-slate-900">{account.username || account.email || "-"}</div>
+                                  <div className="font-medium text-slate-900">{account.email || "-"}</div>
                                 </td>
                                 <td className="px-3 py-2 text-xs">{account.accountId || "-"}</td>
                                 <td className="px-3 py-2 text-xs">
@@ -9426,7 +9434,7 @@ export default function SuperAdminClient() {
                                 <div className="rounded border px-3 py-2">
                                   <div className="text-slate-500">账号</div>
                                   <div className="mt-1 font-medium text-slate-900">
-                                    {selectedPersonalAccount.username || selectedPersonalAccount.email || "-"}
+                                    {selectedPersonalAccount.email || "-"}
                                   </div>
                                 </div>
                                 <div className="rounded border px-3 py-2">
@@ -9493,7 +9501,7 @@ export default function SuperAdminClient() {
                           ) : (
                             <>
                               <div className="rounded border border-slate-200 bg-slate-50 px-3 py-2 text-slate-600">
-                                配置对象：{selectedPersonalAccount.username || selectedPersonalAccount.email || selectedPersonalAccount.accountId}
+                                配置对象：{selectedPersonalAccount.email || selectedPersonalAccount.username || selectedPersonalAccount.accountId}
                               </div>
                               <div className="grid gap-3 md:grid-cols-2">
                                 <label className="space-y-1">
