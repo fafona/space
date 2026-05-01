@@ -16668,34 +16668,6 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       <div className="mx-auto max-w-5xl space-y-5">
         <section className="rounded-2xl border border-slate-200 bg-white px-6 py-6 shadow-sm">
           <div className="text-lg font-semibold text-slate-950">经营中心</div>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <button
-              type="button"
-              className="inline-flex h-10 items-center justify-center rounded-lg border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-800 transition hover:border-slate-300 hover:bg-slate-50"
-              onClick={() => {
-                void openMerchantEditorInNewWindow();
-              }}
-            >
-              网站编辑
-            </button>
-            <button
-              type="button"
-              className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-cyan-100 bg-cyan-50 px-4 text-sm font-semibold text-cyan-800 transition hover:border-cyan-200 hover:bg-cyan-100"
-              onClick={openMerchantCardsPanel}
-            >
-              <span>名片夹</span>
-              <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-bold text-cyan-700 ring-1 ring-cyan-100">
-                {merchantBusinessCardCount} 张
-              </span>
-            </button>
-            <button
-              type="button"
-              className="inline-flex h-10 items-center justify-center rounded-lg border border-emerald-100 bg-emerald-50 px-4 text-sm font-semibold text-emerald-800 transition hover:border-emerald-200 hover:bg-emerald-100"
-              onClick={openMerchantAnalyticsPanel}
-            >
-              数据统计
-            </button>
-          </div>
         </section>
       </div>
     </div>
@@ -17391,39 +17363,68 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             <div className="border-t">
               <div className="w-full px-6 py-4">
                 <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
-                  <div className="text-base font-semibold text-slate-900">
-                    {merchantDesktopSection === "profile"
-                      ? "商户信息"
-                      : merchantDesktopSection === "business"
-                        ? "经营中心"
-                      : merchantDesktopSection === "cards"
-                        ? "名片夹"
-                      : merchantDesktopSection === "booking"
-                        ? "预约管理"
-                      : merchantDesktopSection === "orders"
-                        ? "订单管理"
-                      : merchantDesktopSection === "analytics"
-                          ? "数据统计"
-                      : merchantDesktopSection === "faolla"
-                          ? "Faolla"
-                          : "会话"}
-                  </div>
-                  {merchantDesktopSection === "business" ? null : (
-                    <div className="mt-1 text-sm text-slate-500">
-                      {merchantDesktopSection === "profile"
-                        ? "这里集中维护商户资料、域名前缀和地址联系人。"
-                        : merchantDesktopSection === "cards"
-                          ? "这里集中管理聊天展示名片与联系卡复制内容。"
+                  {merchantDesktopOperationCenterActive ? (
+                    <div className="grid gap-2">
+                      <button
+                        type="button"
+                        className="flex min-h-10 w-full items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-sm font-semibold text-slate-800 transition hover:border-slate-300 hover:bg-slate-50"
+                        onClick={() => {
+                          void openMerchantEditorInNewWindow();
+                        }}
+                      >
+                        网站编辑
+                      </button>
+                      <button
+                        type="button"
+                        className={`flex min-h-10 w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left text-sm font-semibold transition ${
+                          merchantDesktopSection === "cards"
+                            ? "border-cyan-200 bg-cyan-50 text-cyan-800"
+                            : "border-slate-200 bg-white text-slate-800 hover:border-cyan-200 hover:bg-cyan-50"
+                        }`}
+                        onClick={openMerchantCardsPanel}
+                      >
+                        <span>名片夹</span>
+                        <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-bold text-cyan-700 ring-1 ring-cyan-100">
+                          {merchantBusinessCardCount} 张
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        className={`flex min-h-10 w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left text-sm font-semibold transition ${
+                          merchantDesktopSection === "analytics"
+                            ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                            : "border-slate-200 bg-white text-slate-800 hover:border-emerald-200 hover:bg-emerald-50"
+                        }`}
+                        onClick={openMerchantAnalyticsPanel}
+                      >
+                        数据统计
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="text-base font-semibold text-slate-900">
+                        {merchantDesktopSection === "profile"
+                          ? "商户信息"
+                        : merchantDesktopSection === "booking"
+                          ? "预约管理"
+                        : merchantDesktopSection === "orders"
+                          ? "订单管理"
+                        : merchantDesktopSection === "faolla"
+                            ? "Faolla"
+                            : "会话"}
+                      </div>
+                      <div className="mt-1 text-sm text-slate-500">
+                        {merchantDesktopSection === "profile"
+                          ? "这里集中维护商户资料、域名前缀和地址联系人。"
                         : merchantDesktopSection === "booking"
                           ? "这里集中查看和处理当前商户收到的预约记录。"
                         : merchantDesktopSection === "orders"
                           ? "这里集中查看和处理前台提交的产品订单。"
-                        : merchantDesktopSection === "analytics"
-                            ? "这里集中查看访问、发布和联系方式点击等统计。"
                         : merchantDesktopSection === "faolla"
                             ? "打开 Faolla 总站或登录前访问的前台页面。"
                             : "这里集中处理官方客服和商户聊天消息。"}
-                    </div>
+                      </div>
+                    </>
                   )}
                 </div>
               </div>
