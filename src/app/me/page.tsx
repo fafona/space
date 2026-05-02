@@ -3,10 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type ReactNode } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
+import AccountSwitcherDialog from "@/components/AccountSwitcherDialog";
 import { useI18n } from "@/components/I18nProvider";
 import ShuangkouToolIcon from "@/components/ShuangkouToolIcon";
 import ToolboxIcon from "@/components/ToolboxIcon";
 import {
+  clearStoredBrowserSupabaseSessionTokens,
   readMerchantSessionMerchantIds,
   readMerchantSessionPayload,
   recoverBrowserSupabaseSessionWithRefresh,
@@ -14,6 +16,15 @@ import {
   startMerchantSessionKeepAlive,
   syncMerchantSessionCookies,
 } from "@/lib/authSessionRecovery";
+import {
+  getAccountSwitchEntryKey,
+  getAccountSwitchHomeHref,
+  readAccountSwitchEntries,
+  recordCurrentAccountSwitchSession,
+  removeAccountSwitchEntry,
+  restoreAccountSwitchEntry,
+  type AccountSwitchEntry,
+} from "@/lib/accountSwitching";
 import { type MerchantContactVisibility, type SiteLocation } from "@/data/platformControlStore";
 import {
   buildPersonalAccountPermissionConfig,
@@ -501,7 +512,7 @@ function shouldOpenFaollaShellInitially() {
 function readPersonalMobileViewport() {
   if (typeof window === "undefined") return false;
   if (typeof window.matchMedia === "function") {
-    return window.matchMedia("(max-width: 767px)").matches;
+    return window.matchMedia("(max-width: 767px), (pointer: coarse)").matches;
   }
   return window.innerWidth < 768;
 }
@@ -1967,6 +1978,11 @@ export default function MePage() {
   const [payload, setPayload] = useState<MeSessionPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
+  const [accountSwitcherOpen, setAccountSwitcherOpen] = useState(false);
+  const [accountSwitchEntries, setAccountSwitchEntries] = useState<AccountSwitchEntry[]>(() => readAccountSwitchEntries());
+  const [accountSwitchBusyKey, setAccountSwitchBusyKey] = useState("");
+  const [accountSwitchError, setAccountSwitchError] = useState("");
   const [desktopSection, setDesktopSection] = useState<DesktopSection>(() =>
     shouldOpenFaollaShellInitially() ? "faolla" : "conversations",
   );
@@ -2202,7 +2218,9 @@ export default function MePage() {
       if (mobileTab === "self" && mobileSelfSection !== "home") {
         event.preventDefault();
         setMobileSelfSection("home");
+        return;
       }
+      event.preventDefault();
     };
     window.addEventListener(MOBILE_SWIPE_BACK_EVENT, handleMobileSwipeBack);
     return () => {
@@ -2218,6 +2236,20 @@ export default function MePage() {
   const personalProfile = useMemo(() => readPersonalProfile(payload), [payload]);
   const displayName = personalProfile.displayName || readDisplayName(payload);
   const profileName = displayName || email.split("@")[0] || accountId || "个人用户";
+  const personalAccountSwitchCurrentKey = getAccountSwitchEntryKey("personal", accountId);
+  useEffect(() => {
+    if (payload?.authenticated !== true || payload.accountType !== "personal" || !accountId) return;
+    let cancelled = false;
+    void recordCurrentAccountSwitchSession({
+      displayName: profileName,
+      avatarUrl: personalProfile.avatarUrl,
+    }).then((entries) => {
+      if (!cancelled) setAccountSwitchEntries(entries);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [accountId, payload?.accountType, payload?.authenticated, personalProfile.avatarUrl, profileName]);
   const frontendAuthBridgeProfile = useMemo(
     () => mergeNonEmptyPersonalProfileDraft(personalProfile, personalProfileDraft),
     [personalProfile, personalProfileDraft],
@@ -4125,7 +4157,7 @@ export default function MePage() {
     };
   }, [latestVisibleSupportMessageKey, mobileConversationView, desktopSection, selectedConversationKey]);
 
-  async function requestLogout() {
+  async function performLogout() {
     if (loggingOut) return;
     setLoggingOut(true);
     try {
@@ -4136,6 +4168,52 @@ export default function MePage() {
     } finally {
       window.location.replace("/login?loggedOut=1");
     }
+  }
+
+  function requestLogout() {
+    if (loggingOut) return;
+    setLogoutConfirmOpen(true);
+  }
+
+  async function openAccountSwitcher() {
+    setAccountSwitchError("");
+    const entries = await recordCurrentAccountSwitchSession({
+      displayName: profileName,
+      avatarUrl: personalProfile.avatarUrl,
+    });
+    setAccountSwitchEntries(entries);
+    setAccountSwitcherOpen(true);
+  }
+
+  async function handleAccountSwitch(entry: AccountSwitchEntry) {
+    if (accountSwitchBusyKey || entry.key === personalAccountSwitchCurrentKey) return;
+    setAccountSwitchBusyKey(entry.key);
+    setAccountSwitchError("");
+    try {
+      const nextPayload = await restoreAccountSwitchEntry(entry);
+      window.location.href = getAccountSwitchHomeHref(nextPayload);
+    } catch (error) {
+      removeAccountSwitchEntry(entry.key);
+      setAccountSwitchEntries(readAccountSwitchEntries());
+      setAccountSwitchError(error instanceof Error ? error.message : "账号切换失败，请重新登录。");
+      setAccountSwitchBusyKey("");
+    }
+  }
+
+  async function addAccountFromSwitcher() {
+    if (accountSwitchBusyKey) return;
+    setAccountSwitchBusyKey("__add__");
+    setAccountSwitchError("");
+    await recordCurrentAccountSwitchSession({
+      displayName: profileName,
+      avatarUrl: personalProfile.avatarUrl,
+    }).catch(() => null);
+    await fetch("/api/auth/merchant-logout", {
+      method: "POST",
+      cache: "no-store",
+    }).catch(() => null);
+    clearStoredBrowserSupabaseSessionTokens();
+    window.location.href = "/login?loggedOut=1&redirect=/me";
   }
 
   function renderSupportMessageList(className: string) {
@@ -6101,21 +6179,40 @@ export default function MePage() {
                   </div>
                 </section>
 
-                <section className="overflow-hidden rounded-[28px] border border-rose-200/80 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
-                  <button
-                    type="button"
-                    className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left transition hover:bg-rose-50/70 disabled:opacity-50"
-                    onClick={() => void requestLogout()}
-                    disabled={loggingOut}
-                  >
-                    <div className="text-sm font-semibold text-rose-600">{loggingOut ? "退出中..." : "退出登录"}</div>
-                    <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-rose-50 text-rose-600">
-                      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
-                        <path d="M14 7h2a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                        <path d="M10 8 6 12l4 4M7 12h9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
-                    </span>
-                  </button>
+                <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+                  <div className="grid grid-cols-2 divide-x divide-slate-100">
+                    <button
+                      type="button"
+                      className="flex items-center justify-between gap-3 px-5 py-4 text-left transition hover:bg-slate-50 disabled:opacity-50"
+                      onClick={() => {
+                        void openAccountSwitcher();
+                      }}
+                      disabled={loggingOut || Boolean(accountSwitchBusyKey)}
+                    >
+                      <div className="text-sm font-semibold text-slate-800">切换账号</div>
+                      <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-700">
+                        <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+                          <path d="M8 7.5h7.5a3 3 0 0 1 0 6H9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                          <path d="m11 4.5-3 3 3 3M16 16.5H8.5a3 3 0 0 1 0-6H15" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                          <path d="m13 13.5 3 3-3 3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className="flex items-center justify-between gap-3 px-5 py-4 text-left transition hover:bg-rose-50/70 disabled:opacity-50"
+                      onClick={() => void requestLogout()}
+                      disabled={loggingOut}
+                    >
+                      <div className="text-sm font-semibold text-rose-600">{loggingOut ? "退出中..." : "退出登录"}</div>
+                      <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-rose-50 text-rose-600">
+                        <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+                          <path d="M14 7h2a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                          <path d="M10 8 6 12l4 4M7 12h9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </span>
+                    </button>
+                  </div>
                 </section>
               </div>
             ) : mobileSelfSection === "profile" ? (
@@ -6169,6 +6266,36 @@ export default function MePage() {
     }
     return null;
   }
+
+  const personalLogoutConfirmDialog = logoutConfirmOpen ? (
+    <div className="fixed inset-0 z-[2147483600] flex items-center justify-center bg-slate-950/45 px-5 py-8 backdrop-blur-sm" role="dialog" aria-modal="true">
+      <div className="w-full max-w-sm rounded-[28px] bg-white p-5 shadow-[0_24px_70px_rgba(15,23,42,0.28)]">
+        <div className="text-base font-semibold text-slate-950">退出登录</div>
+        <div className="mt-2 text-sm leading-6 text-slate-600">确认退出当前个人后台吗？</div>
+        <div className="mt-5 grid grid-cols-2 gap-3">
+          <button
+            type="button"
+            className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+            onClick={() => setLogoutConfirmOpen(false)}
+            disabled={loggingOut}
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            className="rounded-2xl bg-rose-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-rose-500 disabled:bg-rose-300"
+            onClick={() => {
+              setLogoutConfirmOpen(false);
+              void performLogout();
+            }}
+            disabled={loggingOut}
+          >
+            {loggingOut ? "退出中..." : "退出登录"}
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
 
   if (loading) {
     return (
@@ -6302,6 +6429,28 @@ export default function MePage() {
       {renderPersonalBookingDetailDialog()}
       {renderPersonalOrderDetailDialog()}
       {renderPersonalBookingEditDialog()}
+      <AccountSwitcherDialog
+        open={accountSwitcherOpen}
+        entries={accountSwitchEntries}
+        currentKey={personalAccountSwitchCurrentKey}
+        busyKey={accountSwitchBusyKey}
+        error={accountSwitchError}
+        onClose={() => {
+          if (accountSwitchBusyKey) return;
+          setAccountSwitcherOpen(false);
+          setAccountSwitchError("");
+        }}
+        onSwitch={(entry) => {
+          void handleAccountSwitch(entry);
+        }}
+        onRemove={(key) => {
+          setAccountSwitchEntries(removeAccountSwitchEntry(key));
+        }}
+        onAddAccount={() => {
+          void addAccountFromSwitcher();
+        }}
+      />
+      {personalLogoutConfirmDialog}
     </>
   );
 }

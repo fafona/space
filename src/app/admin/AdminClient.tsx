@@ -16,6 +16,7 @@ import {
 import NextImage from "next/image";
 import dynamic from "next/dynamic";
 import { createPortal } from "react-dom";
+import AccountSwitcherDialog from "@/components/AccountSwitcherDialog";
 import {
   homeBlocks,
   type BlockBorderStyle,
@@ -238,6 +239,15 @@ import {
   resolveRuntimePortalBaseDomain,
 } from "@/lib/siteRouting";
 import { buildMerchantSiteLinker } from "@/lib/merchantSiteLinking";
+import {
+  getAccountSwitchEntryKey,
+  getAccountSwitchHomeHref,
+  readAccountSwitchEntries,
+  recordCurrentAccountSwitchSession,
+  removeAccountSwitchEntry,
+  restoreAccountSwitchEntry,
+  type AccountSwitchEntry,
+} from "@/lib/accountSwitching";
 import BlockRenderer from "@/components/blocks/BlockRenderer";
 import BookingBlock from "@/components/blocks/BookingBlock";
 import { useI18n } from "@/components/I18nProvider";
@@ -5213,6 +5223,10 @@ export default function AdminClient({
   );
   const [publishing, setPublishing] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [accountSwitcherOpen, setAccountSwitcherOpen] = useState(false);
+  const [accountSwitchEntries, setAccountSwitchEntries] = useState<AccountSwitchEntry[]>(() => readAccountSwitchEntries());
+  const [accountSwitchBusyKey, setAccountSwitchBusyKey] = useState("");
+  const [accountSwitchError, setAccountSwitchError] = useState("");
   const [merchantDesktopSection, setMerchantDesktopSection] = useState<MerchantDesktopSection>("editor");
   const merchantDesktopDefaultSectionSiteRef = useRef("");
   const [merchantAnalyticsLocalData, setMerchantAnalyticsLocalData] = useState<MerchantAnalyticsLocalData | null>(null);
@@ -5256,9 +5270,9 @@ export default function AdminClient({
   useEffect(() => {
     if (typeof window === "undefined") return;
     const explicitFaollaSection = isFaollaSectionSearch(window.location.search);
-    if (!explicitFaollaSection && !isSupportStandaloneDisplayMode()) return;
+    if (!explicitFaollaSection) return;
     setSupportFaollaEmbedHref(
-      explicitFaollaSection ? resolveFaollaEntryUrlFromBrowser(window.location.search, window.location.origin) : "",
+      resolveFaollaEntryUrlFromBrowser(window.location.search, window.location.origin),
     );
     setMerchantDesktopSection("faolla");
     setSupportMobileHomeTab("faolla");
@@ -10020,6 +10034,52 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     await logout();
   }
 
+  async function openAccountSwitcher() {
+    setAccountSwitchError("");
+    const entries = await recordCurrentAccountSwitchSession({
+      displayName: supportSelfDisplayName,
+      avatarUrl: supportSelfAvatarImageUrl,
+    });
+    setAccountSwitchEntries(entries);
+    setAccountSwitcherOpen(true);
+  }
+
+  async function handleAccountSwitch(entry: AccountSwitchEntry) {
+    if (accountSwitchBusyKey || entry.key === merchantAccountSwitchCurrentKey) return;
+    setAccountSwitchBusyKey(entry.key);
+    setAccountSwitchError("");
+    try {
+      const nextPayload = await restoreAccountSwitchEntry(entry);
+      window.location.href = getAccountSwitchHomeHref(nextPayload);
+    } catch (error) {
+      removeAccountSwitchEntry(entry.key);
+      setAccountSwitchEntries(readAccountSwitchEntries());
+      setAccountSwitchError(error instanceof Error ? error.message : "账号切换失败，请重新登录。");
+      setAccountSwitchBusyKey("");
+    }
+  }
+
+  async function addAccountFromSwitcher() {
+    if (accountSwitchBusyKey) return;
+    setAccountSwitchBusyKey("__add__");
+    setAccountSwitchError("");
+    await recordCurrentAccountSwitchSession({
+      displayName: supportSelfDisplayName,
+      avatarUrl: supportSelfAvatarImageUrl,
+    }).catch(() => null);
+    await fetch("/api/auth/merchant-logout", {
+      method: "POST",
+      credentials: "same-origin",
+    }).catch(() => null);
+    if (isSupabaseEnabled) {
+      await supabase.auth.signOut().catch(() => null);
+    }
+    clearStoredBrowserSupabaseSessionTokens();
+    clearMerchantSignInBridge();
+    clearRecentMerchantLaunchState();
+    window.location.href = "/login?loggedOut=1&redirect=/admin";
+  }
+
   const merchantPlatformState = !isPlatformEditor ? loadPlatformState() : null;
   const scopedSiteId = !isPlatformEditor ? getSiteIdFromStoreScope(storeScope) : "";
   const fallbackMerchantSiteId =
@@ -10545,6 +10605,20 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     normalizeSupportDisplayValue(supportSelfProfile?.merchantCardImageUrl) ||
     normalizeSupportDisplayValue(editingSite?.chatAvatarImageUrl) ||
     normalizeSupportDisplayValue(editingSite?.merchantCardImageUrl);
+  const merchantAccountSwitchCurrentKey = getAccountSwitchEntryKey("merchant", currentSupportMerchantId, currentSupportMerchantId);
+  useEffect(() => {
+    if (isPlatformEditor) return;
+    let cancelled = false;
+    void recordCurrentAccountSwitchSession({
+      displayName: supportSelfDisplayName,
+      avatarUrl: supportSelfAvatarImageUrl,
+    }).then((entries) => {
+      if (!cancelled) setAccountSwitchEntries(entries);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isPlatformEditor, supportSelfAvatarImageUrl, supportSelfDisplayName]);
   const supportSelfWebsiteHref = useMemo(() => {
     const publicBaseDomain = normalizeSupportDisplayValue(process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN);
     const merchantId = normalizeSupportDisplayValue(editingSiteId);
@@ -10887,7 +10961,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       if (supportMobileHomeTab === "self" && supportSelfSectionView !== "home") {
         event.preventDefault();
         setSupportSelfSectionView("home");
+        return;
       }
+      event.preventDefault();
     };
     window.addEventListener(MOBILE_SWIPE_BACK_EVENT, handleMobileSwipeBack);
     return () => {
@@ -15375,23 +15451,42 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               </div>
             </section>
 
-            <section className="overflow-hidden rounded-[28px] border border-rose-200/80 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
-              <button
-                type="button"
-                className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left transition hover:bg-rose-50/70 disabled:opacity-50"
-                onClick={() => {
-                  void requestLogout();
-                }}
-                disabled={loggingOut}
-              >
-                <div className="text-sm font-semibold text-rose-600">{loggingOut ? "退出中..." : "退出登录"}</div>
-                <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-rose-50 text-rose-600">
-                  <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
-                    <path d="M14 7h2a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                    <path d="M10 8 6 12l4 4M7 12h9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </span>
-              </button>
+            <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+              <div className="grid grid-cols-2 divide-x divide-slate-100">
+                <button
+                  type="button"
+                  className="flex items-center justify-between gap-3 px-5 py-4 text-left transition hover:bg-slate-50 disabled:opacity-50"
+                  onClick={() => {
+                    void openAccountSwitcher();
+                  }}
+                  disabled={loggingOut || Boolean(accountSwitchBusyKey)}
+                >
+                  <div className="text-sm font-semibold text-slate-800">切换账号</div>
+                  <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-700">
+                    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+                      <path d="M8 7.5h7.5a3 3 0 0 1 0 6H9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                      <path d="m11 4.5-3 3 3 3M16 16.5H8.5a3 3 0 0 1 0-6H15" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                      <path d="m13 13.5 3 3-3 3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="flex items-center justify-between gap-3 px-5 py-4 text-left transition hover:bg-rose-50/70 disabled:opacity-50"
+                  onClick={() => {
+                    void requestLogout();
+                  }}
+                  disabled={loggingOut}
+                >
+                  <div className="text-sm font-semibold text-rose-600">{loggingOut ? "退出中..." : "退出登录"}</div>
+                  <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-rose-50 text-rose-600">
+                    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+                      <path d="M14 7h2a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                      <path d="M10 8 6 12l4 4M7 12h9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </span>
+                </button>
+              </div>
             </section>
           </div>
         ) : supportSelfSectionView === "profile" ? (
@@ -16426,6 +16521,27 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 }
               : null
           }
+        />
+        <AccountSwitcherDialog
+          open={accountSwitcherOpen}
+          entries={accountSwitchEntries}
+          currentKey={merchantAccountSwitchCurrentKey}
+          busyKey={accountSwitchBusyKey}
+          error={accountSwitchError}
+          onClose={() => {
+            if (accountSwitchBusyKey) return;
+            setAccountSwitcherOpen(false);
+            setAccountSwitchError("");
+          }}
+          onSwitch={(entry) => {
+            void handleAccountSwitch(entry);
+          }}
+          onRemove={(key) => {
+            setAccountSwitchEntries(removeAccountSwitchEntry(key));
+          }}
+          onAddAccount={() => {
+            void addAccountFromSwitcher();
+          }}
         />
         {dialogOverlay}
         {tip ? (
