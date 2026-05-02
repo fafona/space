@@ -6,5 +6,5 @@ export const metadata = {
 };
 
 export default function PersonalShuangkouScorePage() {
-  return <ShuangkouScoreClient subtitle="个人后台 / 小工具" />;
+  return <ShuangkouScoreClient backHref="/me" backLabel="返回个人后台" subtitle="个人后台 / 小工具" />;
 }

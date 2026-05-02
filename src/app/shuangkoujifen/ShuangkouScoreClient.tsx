@@ -579,10 +579,16 @@ function ScorePill({ value }: { value: number }) {
 }
 
 type ShuangkouScoreClientProps = {
+  backHref?: string;
+  backLabel?: string;
   subtitle?: string;
 };
 
-export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuangkoujifen" }: ShuangkouScoreClientProps) {
+export default function ShuangkouScoreClient({
+  backHref,
+  backLabel = "返回后台",
+  subtitle = "www.faolla.com/shuangkoujifen",
+}: ShuangkouScoreClientProps) {
   const [participantCount, setParticipantCount] = useState<ParticipantCount>(4);
   const [names, setNames] = useState<Record<PlayerId, string>>(initialNames);
   const [activePlayerIds, setActivePlayerIds] = useState<PlayerId[]>(["p1", "p2", "p3", "p4"]);
@@ -801,6 +807,20 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
     }
   }
 
+  function openBackTarget() {
+    if (!backHref) return;
+    try {
+      const referrerUrl = document.referrer ? new URL(document.referrer) : null;
+      if (referrerUrl?.origin === window.location.origin && window.history.length > 1) {
+        window.history.back();
+        return;
+      }
+    } catch {
+      // Ignore malformed or unavailable referrer values.
+    }
+    window.location.assign(backHref);
+  }
+
   return (
     <main className="min-h-screen bg-[#f5f7f2] text-slate-950">
       <header className="border-b border-slate-200 bg-white">
@@ -815,6 +835,17 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
             </div>
           </div>
           <div className="grid w-full grid-cols-2 gap-2 text-xs sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:text-sm">
+            {backHref ? (
+              <button
+                type="button"
+                className="col-span-2 inline-flex h-9 items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-2 font-bold text-slate-700 hover:bg-slate-50 sm:col-span-1 sm:h-10 sm:px-3"
+                onClick={openBackTarget}
+                title={backLabel}
+              >
+                <Icon name="undo" />
+                {backLabel}
+              </button>
+            ) : null}
             <button
               type="button"
               className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-2 font-bold text-slate-700 hover:bg-slate-50 sm:h-10 sm:px-3"
