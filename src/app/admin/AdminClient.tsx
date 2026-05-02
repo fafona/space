@@ -242,6 +242,7 @@ import BlockRenderer from "@/components/blocks/BlockRenderer";
 import BookingBlock from "@/components/blocks/BookingBlock";
 import { useI18n } from "@/components/I18nProvider";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
+import ShuangkouToolIcon from "@/components/ShuangkouToolIcon";
 import { buildFaollaShellHref, isFaollaSectionSearch, resolveFaollaEntryUrlFromBrowser } from "@/lib/faollaEntry";
 import { LANGUAGE_OPTIONS, resolveSupportedLocale } from "@/lib/i18n";
 import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
@@ -4673,7 +4674,7 @@ type SupportContactRow = {
 };
 
 type SupportMobileHomeTab = "conversations" | "business" | "faolla" | "self";
-type SupportSelfSectionView = "home" | "profile" | "cards" | "notifications";
+type SupportSelfSectionView = "home" | "profile" | "cards" | "tools" | "notifications";
 type SupportNotificationPreferences = {
   systemNotificationsEnabled: boolean;
   messageSoundEnabled: boolean;
@@ -10623,6 +10624,21 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const openSupportMobileHomeTab = useCallback((tab: SupportMobileHomeTab) => {
     setSupportMobileHomeTab(tab);
   }, []);
+  const openSupportShuangkouScoreTool = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const targetUrl = new URL("/admin/tools/shuangkoujifen", window.location.origin).toString();
+    const openedWindow = window.open(targetUrl, "_blank");
+    if (openedWindow) {
+      try {
+        openedWindow.opener = null;
+        openedWindow.focus();
+      } catch {
+        // Some mobile browsers restrict access to the opened window.
+      }
+      return;
+    }
+    window.location.assign(targetUrl);
+  }, []);
   const supportMobileFaollaContent = (
     <div className="support-preserve-light-surface relative min-h-0 flex-1 overflow-hidden bg-white">
       <div className="pointer-events-none absolute left-4 top-[calc(env(safe-area-inset-top)+0.75rem)] z-10">
@@ -15248,14 +15264,18 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                   ? "我的资料"
                   : supportSelfSectionView === "cards"
                     ? "名片夹"
-                    : "通知"}
+                    : supportSelfSectionView === "tools"
+                      ? "小工具"
+                      : "通知"}
               </div>
               <div className="mt-1 truncate text-xs text-slate-500">
                 {supportSelfSectionView === "profile"
                   ? "手机端与电脑端共用同一份商户资料。"
                   : supportSelfSectionView === "cards"
                     ? "这里统一管理聊天展示名片与复制能力。"
-                    : "这里控制系统消息通知、提示音和震动。"}
+                    : supportSelfSectionView === "tools"
+                      ? "商家后台里的常用计分工具。"
+                      : "这里控制系统消息通知、提示音和震动。"}
               </div>
             </div>
           </div>
@@ -15286,10 +15306,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     label: "我的资料",
                     summary: supportSelfProfileSummary,
                     icon: (
-                      <>
+                      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
                         <circle cx="12" cy="8.5" r="3.2" fill="none" stroke="currentColor" strokeWidth="1.8" />
                         <path d="M6.2 18.2a5.8 5.8 0 0 1 11.6 0" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-                      </>
+                      </svg>
                     ),
                     onClick: () => setSupportSelfSectionView("profile" as const),
                   },
@@ -15298,20 +15318,27 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     label: "名片夹",
                     summary: supportSelfCardsSummary,
                     icon: (
-                      <>
+                      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
                         <rect x="4.5" y="6" width="15" height="12" rx="2.5" stroke="currentColor" strokeWidth="1.8" />
                         <circle cx="9" cy="12" r="1.8" stroke="currentColor" strokeWidth="1.8" />
                         <path d="M13 10.2h3.5M13 13h3.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-                      </>
+                      </svg>
                     ),
                     onClick: () => setSupportSelfSectionView("cards" as const),
+                  },
+                  {
+                    key: "tools",
+                    label: "小工具",
+                    summary: "双扣计分等常用工具",
+                    icon: <ShuangkouToolIcon className="scale-[0.72]" />,
+                    onClick: () => setSupportSelfSectionView("tools" as const),
                   },
                   {
                     key: "notifications",
                     label: "通知",
                     summary: supportSelfNotificationSummary,
                     icon: (
-                      <>
+                      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
                         <path
                           d="M12 4.5a4.5 4.5 0 0 0-4.5 4.5v2.1c0 .6-.2 1.2-.6 1.7L5.8 14a1 1 0 0 0 .8 1.6h10.8a1 1 0 0 0 .8-1.6l-1.1-1.2c-.4-.5-.6-1.1-.6-1.7V9A4.5 4.5 0 0 0 12 4.5Z"
                           stroke="currentColor"
@@ -15319,7 +15346,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                           strokeLinejoin="round"
                         />
                         <path d="M10.3 18a1.9 1.9 0 0 0 3.4 0" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-                      </>
+                      </svg>
                     ),
                     onClick: () => setSupportSelfSectionView("notifications" as const),
                   },
@@ -15331,9 +15358,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     onClick={item.onClick}
                   >
                     <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-100 text-slate-700">
-                      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
-                        {item.icon}
-                      </svg>
+                      {item.icon}
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="block text-sm font-semibold text-slate-900">{item.label}</span>
@@ -15557,6 +15582,21 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               </div>
             </section>
           </div>
+        ) : supportSelfSectionView === "tools" ? (
+          <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+            <div className="grid grid-cols-4 gap-x-4 gap-y-5">
+              <button
+                type="button"
+                className="group flex min-w-0 flex-col items-center gap-2.5 text-center"
+                onClick={openSupportShuangkouScoreTool}
+              >
+                <span className="flex h-14 w-14 items-center justify-center rounded-[18px] bg-emerald-700 text-white shadow-[0_12px_24px_rgba(4,120,87,0.28)] transition group-active:scale-95">
+                  <ShuangkouToolIcon />
+                </span>
+                <span className="w-full truncate text-xs font-semibold text-slate-900">双扣计分</span>
+              </button>
+            </div>
+          </section>
         ) : (
           <div className="space-y-4">
             <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
