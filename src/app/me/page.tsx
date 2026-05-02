@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useI18n } from "@/components/I18nProvider";
 import ShuangkouToolIcon from "@/components/ShuangkouToolIcon";
+import ToolboxIcon from "@/components/ToolboxIcon";
 import {
   readMerchantSessionMerchantIds,
   readMerchantSessionPayload,
@@ -1285,7 +1286,7 @@ function Icon({
   name,
   className = "h-5 w-5",
 }: {
-  name: "chat" | "shop" | "shield" | "user" | "calendar" | "order" | "star" | "card" | "tools";
+  name: "chat" | "shop" | "shield" | "user" | "calendar" | "order" | "star" | "card";
   className?: string;
 }) {
   return (
@@ -1348,12 +1349,6 @@ function Icon({
         <>
           <rect x="4" y="6" width="16" height="12" rx="2.5" stroke="currentColor" strokeWidth="1.8" />
           <path d="M7.5 10h5M7.5 14h8.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-        </>
-      ) : null}
-      {name === "tools" ? (
-        <>
-          <rect x="5" y="3.5" width="14" height="17" rx="2.8" stroke="currentColor" strokeWidth="1.8" />
-          <path d="M8 7.5h8M8.2 11.5h2.1M12 11.5h2.1M15.8 11.5h.1M8.2 15.2h2.1M12 15.2h2.1M15.8 15.2h.1" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
         </>
       ) : null}
     </svg>
@@ -5885,7 +5880,7 @@ export default function MePage() {
           key: "tools",
           label: "小工具",
           summary: "常用计分和辅助工具。",
-          icon: <Icon name="tools" />,
+          icon: <ToolboxIcon />,
         },
         {
           key: "notifications",

@@ -243,6 +243,7 @@ import BookingBlock from "@/components/blocks/BookingBlock";
 import { useI18n } from "@/components/I18nProvider";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
 import ShuangkouToolIcon from "@/components/ShuangkouToolIcon";
+import ToolboxIcon from "@/components/ToolboxIcon";
 import { buildFaollaShellHref, isFaollaSectionSearch, resolveFaollaEntryUrlFromBrowser } from "@/lib/faollaEntry";
 import { LANGUAGE_OPTIONS, resolveSupportedLocale } from "@/lib/i18n";
 import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
@@ -15330,7 +15331,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     key: "tools",
                     label: "小工具",
                     summary: "双扣计分等常用工具",
-                    icon: <ShuangkouToolIcon className="scale-[0.72]" />,
+                    icon: <ToolboxIcon />,
                     onClick: () => setSupportSelfSectionView("tools" as const),
                   },
                   {
