@@ -1359,6 +1359,27 @@ function Icon({
   );
 }
 
+function ShuangkouToolIcon() {
+  const cardClass =
+    "absolute grid h-10 w-7 place-items-center rounded-[6px] border border-red-300 bg-white shadow-sm";
+  return (
+    <span className="relative block h-12 w-12" aria-hidden="true">
+      <span className={`${cardClass} left-1.5 top-2 rotate-[-12deg]`}>
+        <span className="grid leading-none text-red-700">
+          <span className="text-[10px] font-black">大王</span>
+          <span className="mt-0.5 text-[7px] font-bold">司令</span>
+        </span>
+      </span>
+      <span className={`${cardClass} left-4 top-1 rotate-[10deg]`}>
+        <span className="grid leading-none text-red-700">
+          <span className="text-[10px] font-black">大王</span>
+          <span className="mt-0.5 text-[7px] font-bold">司令</span>
+        </span>
+      </span>
+    </span>
+  );
+}
+
 function MailIcon() {
   return (
     <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
@@ -5842,8 +5863,8 @@ export default function MePage() {
               window.location.assign(targetUrl);
             }}
           >
-            <span className="flex h-14 w-14 items-center justify-center rounded-[18px] bg-emerald-700 text-white shadow-[0_12px_24px_rgba(4,120,87,0.28)] transition group-active:scale-95">
-              <Icon name="tools" className="h-7 w-7" />
+            <span className="flex h-14 w-14 items-center justify-center rounded-[18px] bg-red-700 text-white shadow-[0_12px_24px_rgba(185,28,28,0.26)] transition group-active:scale-95">
+              <ShuangkouToolIcon />
             </span>
             <span className="w-full truncate text-xs font-semibold text-slate-900">双扣计分</span>
           </Link>
