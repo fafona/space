@@ -5826,6 +5826,21 @@ export default function MePage() {
             target="_blank"
             rel="noopener noreferrer"
             className="group flex min-w-0 flex-col items-center gap-2.5 text-center"
+            onClick={(event) => {
+              event.preventDefault();
+              const targetUrl = new URL("/me/tools/shuangkoujifen", window.location.origin).toString();
+              const openedWindow = window.open(targetUrl, "_blank");
+              if (openedWindow) {
+                try {
+                  openedWindow.opener = null;
+                  openedWindow.focus();
+                } catch {
+                  // Some mobile browsers restrict access to the opened window.
+                }
+                return;
+              }
+              window.location.assign(targetUrl);
+            }}
           >
             <span className="flex h-14 w-14 items-center justify-center rounded-[18px] bg-emerald-700 text-white shadow-[0_12px_24px_rgba(4,120,87,0.28)] transition group-active:scale-95">
               <Icon name="tools" className="h-7 w-7" />
