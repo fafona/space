@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type ReactNode } from "react";
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { useI18n } from "@/components/I18nProvider";
 import {
   readMerchantSessionMerchantIds,
@@ -95,7 +96,7 @@ type ConsumptionSection = "bookings" | "orders";
 type PersonalBookingFilter = "all" | "active" | "confirmed" | "cancelled";
 type PersonalOrderFilter = "all" | "pending" | "confirmed" | "cancelled";
 type MobileConversationView = "list" | "thread";
-type MobileSelfSection = "home" | "profile" | "favorites" | "cards" | "notifications";
+type MobileSelfSection = "home" | "profile" | "favorites" | "cards" | "tools" | "notifications";
 
 type MenuItem = {
   key: DesktopSection;
@@ -1279,9 +1280,15 @@ function buildConversationFallbackMerchantCardHref(input: {
   });
 }
 
-function Icon({ name }: { name: "chat" | "shop" | "shield" | "user" | "calendar" | "order" | "star" | "card" }) {
+function Icon({
+  name,
+  className = "h-5 w-5",
+}: {
+  name: "chat" | "shop" | "shield" | "user" | "calendar" | "order" | "star" | "card" | "tools";
+  className?: string;
+}) {
   return (
-    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+    <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
       {name === "chat" ? (
         <path
           d="M5 7.5A2.5 2.5 0 0 1 7.5 5h9A2.5 2.5 0 0 1 19 7.5v6A2.5 2.5 0 0 1 16.5 16H10l-4 3v-3.2A2.8 2.8 0 0 1 3.5 13V7.5A2.5 2.5 0 0 1 6 5"
@@ -1340,6 +1347,12 @@ function Icon({ name }: { name: "chat" | "shop" | "shield" | "user" | "calendar"
         <>
           <rect x="4" y="6" width="16" height="12" rx="2.5" stroke="currentColor" strokeWidth="1.8" />
           <path d="M7.5 10h5M7.5 14h8.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+        </>
+      ) : null}
+      {name === "tools" ? (
+        <>
+          <rect x="5" y="3.5" width="14" height="17" rx="2.8" stroke="currentColor" strokeWidth="1.8" />
+          <path d="M8 7.5h8M8.2 11.5h2.1M12 11.5h2.1M15.8 11.5h.1M8.2 15.2h2.1M12 15.2h2.1M15.8 15.2h.1" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
         </>
       ) : null}
     </svg>
@@ -5804,6 +5817,21 @@ export default function MePage() {
     );
   }
 
+  function renderMobileToolsContent() {
+    return (
+      <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+        <div className="grid grid-cols-4 gap-x-4 gap-y-5">
+          <Link href="/me/tools/shuangkoujifen" className="group flex min-w-0 flex-col items-center gap-2.5 text-center">
+            <span className="flex h-14 w-14 items-center justify-center rounded-[18px] bg-emerald-700 text-white shadow-[0_12px_24px_rgba(4,120,87,0.28)] transition group-active:scale-95">
+              <Icon name="tools" className="h-7 w-7" />
+            </span>
+            <span className="w-full truncate text-xs font-semibold text-slate-900">双扣计分</span>
+          </Link>
+        </div>
+      </section>
+    );
+  }
+
   function renderMobileContent() {
     if (mobileTab === "conversations") return renderMobileConversationsContent();
     if (mobileTab === "consumption") return renderConsumptionContent();
@@ -5831,6 +5859,12 @@ export default function MePage() {
           label: "名片夹",
           summary: mobileSelfCardsSummary,
           icon: <Icon name="card" />,
+        },
+        {
+          key: "tools",
+          label: "小工具",
+          summary: "常用计分和辅助工具。",
+          icon: <Icon name="tools" />,
         },
         {
           key: "notifications",
@@ -5991,7 +6025,9 @@ export default function MePage() {
                         ? "收藏"
                         : mobileSelfSection === "cards"
                           ? "名片夹"
-                          : "通知"}
+                          : mobileSelfSection === "tools"
+                            ? "小工具"
+                            : "通知"}
                   </div>
                   {mobileSelfSection === "profile" ? null : (
                     <div className="mt-1 truncate text-xs text-slate-500">
@@ -5999,7 +6035,9 @@ export default function MePage() {
                         ? "保存常用商户网站。"
                         : mobileSelfSection === "cards"
                           ? "桌面端已接入完整名片夹，当前可在聊天里直接发送已生成名片。"
-                          : "这里控制系统消息通知、提示音和震动。"}
+                          : mobileSelfSection === "tools"
+                            ? "常用计分和辅助工具。"
+                            : "这里控制系统消息通知、提示音和震动。"}
                     </div>
                   )}
                 </div>
@@ -6086,6 +6124,8 @@ export default function MePage() {
                 title="名片夹"
                 description="手机端名片夹稍后接入，当前可在桌面端管理名片，并在聊天里直接发送已生成名片。"
               />
+            ) : mobileSelfSection === "tools" ? (
+              renderMobileToolsContent()
             ) : (
               <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
                 <div className="border-b border-slate-100 px-5 py-4">
