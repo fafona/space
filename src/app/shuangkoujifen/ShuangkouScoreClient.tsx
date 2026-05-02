@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type PlayerId = "p1" | "p2" | "p3" | "p4" | "p5" | "p6";
 type ParticipantCount = 4 | 5 | 6;
@@ -41,6 +41,31 @@ type RoundRecord = {
   splitBombShareDenominator: number;
   teamAPlayers: PlayerId[];
 };
+
+type PersistedShuangkouState = {
+  rules?: {
+    participantCount?: unknown;
+    names?: unknown;
+    baseScores?: unknown;
+    maxMultiplier?: unknown;
+    contributionScores?: unknown;
+    splitBombSharingEnabled?: unknown;
+    splitBombShareNumerator?: unknown;
+    splitBombShareDenominator?: unknown;
+  };
+  session?: {
+    activePlayerIds?: unknown;
+    teamAPlayers?: unknown;
+    discardedRound?: unknown;
+    finishOrder?: unknown;
+    initialStarByPlayer?: unknown;
+    starByPlayer?: unknown;
+    rounds?: unknown;
+    undoneRounds?: unknown;
+  };
+};
+
+const storageKey = "faolla:shuangkoujifen:v1";
 
 const playerList: PlayerConfig[] = [
   { id: "p1", defaultName: "玩家一" },
@@ -491,6 +516,135 @@ function buildRoundScore({
   };
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isPlayerId(value: unknown): value is PlayerId {
+  return typeof value === "string" && playerList.some((player) => player.id === value);
+}
+
+function isTeamKey(value: unknown): value is TeamKey {
+  return value === "teamA" || value === "teamB";
+}
+
+function sanitizeParticipantCountValue(value: unknown): ParticipantCount {
+  return value === 5 || value === 6 ? value : 4;
+}
+
+function sanitizePlayerIdArray(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.filter(isPlayerId);
+}
+
+function sanitizeFinishOrderValue(value: unknown, activePlayerIds: PlayerId[]) {
+  return uniquePlayerIds(sanitizePlayerIdArray(value))
+    .filter((playerId) => activePlayerIds.includes(playerId))
+    .slice(0, 4);
+}
+
+function sanitizeNonNegativeIntegerValue(value: unknown, fallback: number) {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : fallback;
+}
+
+function sanitizePositiveIntegerValue(value: unknown, fallback: number) {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(1, Math.trunc(value)) : fallback;
+}
+
+function sanitizeScoreNumberValue(value: unknown, fallback = 0) {
+  return typeof value === "number" && Number.isFinite(value) ? roundScore(value) : fallback;
+}
+
+function sanitizeNamesValue(value: unknown) {
+  const source = isPlainRecord(value) ? value : {};
+  return playerList.reduce<Record<PlayerId, string>>((nextNames, player) => {
+    const name = source[player.id];
+    nextNames[player.id] = typeof name === "string" ? name : initialNames[player.id];
+    return nextNames;
+  }, {} as Record<PlayerId, string>);
+}
+
+function sanitizeBaseScoresValue(value: unknown) {
+  const source = isPlainRecord(value) ? value : {};
+  return {
+    double: sanitizeNonNegativeIntegerValue(source.double, defaultBaseScores.double),
+    single: sanitizeNonNegativeIntegerValue(source.single, defaultBaseScores.single),
+    flat: sanitizeNonNegativeIntegerValue(source.flat, defaultBaseScores.flat),
+  };
+}
+
+function sanitizeContributionScoresValue(value: unknown) {
+  const source = isPlainRecord(value) ? value : {};
+  return contributionStars.reduce<ContributionScores>((scores, star) => {
+    scores[star] = sanitizeNonNegativeIntegerValue(source[String(star)], defaultContributionScores[star]);
+    return scores;
+  }, {} as ContributionScores);
+}
+
+function sanitizeStarLevelValue(value: unknown): StarLevel {
+  return typeof value === "number" && starOptions.includes(value as StarLevel) ? (value as StarLevel) : 0;
+}
+
+function sanitizeStarMapValue(value: unknown) {
+  const source = isPlainRecord(value) ? value : {};
+  return playerList.reduce<StarMap>((stars, player) => {
+    stars[player.id] = sanitizeStarLevelValue(source[player.id]);
+    return stars;
+  }, {} as StarMap);
+}
+
+function sanitizeScoreMapValue(value: unknown) {
+  const source = isPlainRecord(value) ? value : {};
+  return playerList.reduce<ScoreMap>((scores, player) => {
+    scores[player.id] = sanitizeScoreNumberValue(source[player.id]);
+    return scores;
+  }, {} as ScoreMap);
+}
+
+function sanitizeRoundRecordsValue(value: unknown, participantCount: ParticipantCount) {
+  if (!Array.isArray(value)) return [];
+  const visiblePlayerIds = getVisiblePlayerIds(participantCount);
+  return value.reduce<RoundRecord[]>((records, item, index) => {
+    if (!isPlainRecord(item)) return records;
+    const activePlayerIds = sanitizeActivePlayers(sanitizePlayerIdArray(item.activePlayerIds), visiblePlayerIds);
+    const teamAPlayers = sanitizeTeamAPlayers(sanitizePlayerIdArray(item.teamAPlayers), activePlayerIds);
+    const discarded = item.discarded === true;
+    const starByPlayer = sanitizeStarMapValue(item.starByPlayer);
+    records.push({
+      id: typeof item.id === "string" && item.id ? item.id : `saved-${Date.now()}-${index}`,
+      at: typeof item.at === "string" ? item.at : "",
+      activePlayerIds,
+      discarded,
+      finishOrder: discarded ? [] : sanitizeFinishOrderValue(item.finishOrder, activePlayerIds),
+      resultName: typeof item.resultName === "string" && item.resultName ? item.resultName : discarded ? "丢牌" : "未完成",
+      scoringTeam: isTeamKey(item.scoringTeam) ? item.scoringTeam : null,
+      baseScore: sanitizeScoreNumberValue(item.baseScore),
+      multiplier: sanitizePositiveIntegerValue(item.multiplier, 1),
+      highestWinningStar: sanitizeStarLevelValue(item.highestWinningStar),
+      scores: sanitizeScoreMapValue(item.scores),
+      starByPlayer,
+      initialStarByPlayer: sanitizeStarMapValue(item.initialStarByPlayer ?? item.starByPlayer),
+      splitBombSharingEnabled: item.splitBombSharingEnabled === true,
+      splitBombShareNumerator: sanitizePositiveIntegerValue(item.splitBombShareNumerator, 2),
+      splitBombShareDenominator: sanitizePositiveIntegerValue(item.splitBombShareDenominator, 3),
+      teamAPlayers,
+    });
+    return records;
+  }, []);
+}
+
+function readPersistedShuangkouState(): PersistedShuangkouState | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    return isPlainRecord(parsed) ? (parsed as PersistedShuangkouState) : null;
+  } catch {
+    return null;
+  }
+}
+
 function PlayerBadge({
   playerId,
   names,
@@ -554,6 +708,106 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
   const [copied, setCopied] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
   const [pendingSwapOutId, setPendingSwapOutId] = useState<PlayerId | null>(null);
+  const [storageReady, setStorageReady] = useState(false);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const persisted = readPersistedShuangkouState();
+      if (!persisted) {
+        setStorageReady(true);
+        return;
+      }
+
+      const rules = isPlainRecord(persisted.rules) ? persisted.rules : {};
+      const session = isPlainRecord(persisted.session) ? persisted.session : {};
+      const nextParticipantCount = sanitizeParticipantCountValue(rules.participantCount);
+      const nextVisiblePlayerIds = getVisiblePlayerIds(nextParticipantCount);
+      const defaultActivePlayerIds = sanitizeActivePlayers(nextVisiblePlayerIds.slice(0, 4), nextVisiblePlayerIds);
+      const savedActivePlayerIds = Array.isArray(session.activePlayerIds)
+        ? sanitizePlayerIdArray(session.activePlayerIds)
+        : defaultActivePlayerIds;
+      const nextActivePlayerIds = sanitizeActivePlayers(savedActivePlayerIds, nextVisiblePlayerIds);
+      const savedTeamAPlayers = Array.isArray(session.teamAPlayers)
+        ? sanitizePlayerIdArray(session.teamAPlayers)
+        : [nextActivePlayerIds[0], nextActivePlayerIds[2]];
+      const nextTeamAPlayers = sanitizeTeamAPlayers(savedTeamAPlayers, nextActivePlayerIds);
+      const nextDiscardedRound = session.discardedRound === true;
+      const nextStarByPlayer = sanitizeStarMapValue(session.starByPlayer);
+      const savedMaxMultiplier = sanitizePositiveIntegerValue(rules.maxMultiplier, 8);
+
+      setParticipantCount(nextParticipantCount);
+      setNames(sanitizeNamesValue(rules.names));
+      setActivePlayerIds(nextActivePlayerIds);
+      setTeamAPlayers(nextTeamAPlayers);
+      setDiscardedRound(nextDiscardedRound);
+      setFinishOrder(nextDiscardedRound ? [] : sanitizeFinishOrderValue(session.finishOrder, nextActivePlayerIds));
+      setInitialStarByPlayer(sanitizeStarMapValue(session.initialStarByPlayer ?? session.starByPlayer));
+      setStarByPlayer(nextStarByPlayer);
+      setBaseScores(sanitizeBaseScoresValue(rules.baseScores));
+      setMaxMultiplier(maxMultiplierOptions.includes(savedMaxMultiplier) ? savedMaxMultiplier : 8);
+      setContributionScores(sanitizeContributionScoresValue(rules.contributionScores));
+      setSplitBombSharingEnabled(rules.splitBombSharingEnabled !== false);
+      setSplitBombShareNumerator(sanitizePositiveIntegerValue(rules.splitBombShareNumerator, 2));
+      setSplitBombShareDenominator(sanitizePositiveIntegerValue(rules.splitBombShareDenominator, 3));
+      setRounds(sanitizeRoundRecordsValue(session.rounds, nextParticipantCount));
+      setUndoneRounds(sanitizeRoundRecordsValue(session.undoneRounds, nextParticipantCount));
+      setPendingSwapOutId(null);
+      setStorageReady(true);
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!storageReady) return;
+    try {
+      window.localStorage.setItem(
+        storageKey,
+        JSON.stringify({
+          rules: {
+            participantCount,
+            names,
+            baseScores,
+            maxMultiplier,
+            contributionScores,
+            splitBombSharingEnabled,
+            splitBombShareNumerator,
+            splitBombShareDenominator,
+          },
+          session: {
+            activePlayerIds,
+            teamAPlayers,
+            discardedRound,
+            finishOrder,
+            initialStarByPlayer,
+            starByPlayer,
+            rounds,
+            undoneRounds,
+          },
+        }),
+      );
+    } catch {
+      // The scorer remains usable even if private browsing or quota limits block persistence.
+    }
+  }, [
+    activePlayerIds,
+    baseScores,
+    contributionScores,
+    discardedRound,
+    finishOrder,
+    initialStarByPlayer,
+    maxMultiplier,
+    names,
+    participantCount,
+    rounds,
+    splitBombShareDenominator,
+    splitBombShareNumerator,
+    splitBombSharingEnabled,
+    starByPlayer,
+    storageReady,
+    teamAPlayers,
+    undoneRounds,
+  ]);
 
   const visiblePlayers = useMemo(() => getVisiblePlayers(participantCount), [participantCount]);
   const visiblePlayerIds = useMemo(() => visiblePlayers.map((player) => player.id), [visiblePlayers]);
