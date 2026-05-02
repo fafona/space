@@ -5821,7 +5821,12 @@ export default function MePage() {
     return (
       <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
         <div className="grid grid-cols-4 gap-x-4 gap-y-5">
-          <Link href="/me/tools/shuangkoujifen" className="group flex min-w-0 flex-col items-center gap-2.5 text-center">
+          <Link
+            href="/me/tools/shuangkoujifen"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="group flex min-w-0 flex-col items-center gap-2.5 text-center"
+          >
             <span className="flex h-14 w-14 items-center justify-center rounded-[18px] bg-emerald-700 text-white shadow-[0_12px_24px_rgba(4,120,87,0.28)] transition group-active:scale-95">
               <Icon name="tools" className="h-7 w-7" />
             </span>
