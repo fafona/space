@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import ShuangkouToolIcon from "@/components/ShuangkouToolIcon";
 
 type PlayerId = "p1" | "p2" | "p3" | "p4" | "p5" | "p6";
 type ParticipantCount = 4 | 5 | 6;
@@ -1051,8 +1052,8 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-3 py-3 sm:gap-4 sm:px-4 sm:py-4 lg:px-6">
           <div className="flex min-w-0 items-center gap-3">
-            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-emerald-700 text-base font-black text-white sm:h-11 sm:w-11 sm:text-lg">
-              双
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[18px] bg-emerald-700 shadow-[0_12px_24px_rgba(4,120,87,0.28)]">
+              <ShuangkouToolIcon />
             </div>
             <div className="min-w-0">
               <h1 className="truncate text-xl font-black text-slate-950 sm:text-2xl">双扣计分工具</h1>
