@@ -9,7 +9,6 @@ import ShuangkouToolIcon from "@/components/ShuangkouToolIcon";
 import ToolboxIcon from "@/components/ToolboxIcon";
 import {
   clearStoredBrowserSupabaseSessionTokens,
-  readMerchantSessionMerchantIds,
   readMerchantSessionPayload,
   recoverBrowserSupabaseSessionWithRefresh,
   resolveFrontendAuthPayload,
@@ -2101,10 +2100,7 @@ export default function MePage() {
           return;
         }
         if (nextPayload.accountType !== "personal") {
-          const merchantIds = readMerchantSessionMerchantIds(nextPayload);
-          const merchantId =
-            (typeof nextPayload.merchantId === "string" ? nextPayload.merchantId.trim() : "") || merchantIds[0] || "";
-          window.location.replace(merchantId ? `/${merchantId}/admin` : "/admin");
+          window.location.replace("/admin");
           return;
         }
         setPayload(nextPayload);

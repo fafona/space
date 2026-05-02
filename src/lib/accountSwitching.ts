@@ -250,7 +250,5 @@ export function getAccountSwitchHomeHref(input: {
 }) {
   const accountType = input.accountType === "personal" ? "personal" : "merchant";
   if (accountType === "personal") return "/me";
-  const merchantIds = readMerchantSessionMerchantIds(input);
-  const merchantId = trimText(input.merchantId) || merchantIds[0] || trimText(input.accountId);
-  return merchantId ? `/${merchantId}/admin` : "/admin";
+  return "/admin";
 }
