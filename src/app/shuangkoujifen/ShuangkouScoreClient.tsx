@@ -258,15 +258,6 @@ function sanitizeTeamAPlayers(teamAPlayers: PlayerId[], activePlayerIds: PlayerI
   return next.slice(0, 2);
 }
 
-function sanitizeFinishOrder(finishOrder: PlayerId[], activePlayerIds: PlayerId[]) {
-  const next = uniquePlayerIds(finishOrder).filter((playerId) => activePlayerIds.includes(playerId));
-  for (const playerId of activePlayerIds) {
-    if (next.length >= 4) break;
-    if (!next.includes(playerId)) next.push(playerId);
-  }
-  return next.slice(0, 4);
-}
-
 function updatePlayerSlot(playerIds: PlayerId[], slotIndex: number, nextPlayer: PlayerId) {
   const currentPlayer = playerIds[slotIndex];
   if (currentPlayer === nextPlayer) return playerIds;
@@ -439,7 +430,7 @@ function buildRoundScore({
   starByPlayer: StarMap;
 }) {
   const result = resolveResult(finishOrder, teamAssignment);
-  const baseScore = baseScores[result.resultKey];
+  const baseScore = result.scoringTeam ? baseScores[result.resultKey] : 0;
   const highestWinningStar =
     result.scoringTeam && baseScore > 0 ? getHighestTeamStar(result.scoringTeam, teamAssignment, starByPlayer) : 0;
   const multiplier = result.scoringTeam && baseScore > 0 ? getCappedMultiplier(highestWinningStar, maxMultiplier) : 1;
@@ -524,50 +515,6 @@ function PlayerBadge({
   );
 }
 
-function RankSelect({
-  rank,
-  value,
-  names,
-  teamAssignment,
-  activePlayerIds,
-  finishOrder,
-  onChange,
-}: {
-  rank: number;
-  value: PlayerId;
-  names: Record<PlayerId, string>;
-  teamAssignment: TeamAssignment;
-  activePlayerIds: PlayerId[];
-  finishOrder: PlayerId[];
-  onChange: (rankIndex: number, playerId: PlayerId) => void;
-}) {
-  return (
-    <label className="grid gap-1.5 rounded-lg border border-slate-200 bg-white p-2 sm:gap-2 sm:p-3">
-      <span className="flex items-center justify-between text-xs font-bold text-slate-700 sm:text-sm">
-        第 {rank} 名
-        <span className="hidden text-xs font-semibold text-slate-400 sm:inline">出完牌</span>
-      </span>
-      <select
-        value={value}
-        onChange={(event) => onChange(rank - 1, event.target.value as PlayerId)}
-        className="h-9 w-full min-w-0 rounded-md border border-slate-200 bg-slate-50 px-2 text-xs font-semibold text-slate-900 outline-none focus:border-emerald-600 focus:bg-white sm:h-11 sm:px-3 sm:text-sm"
-      >
-        {activePlayerIds.map((playerId) => {
-          const usedByOtherRank = finishOrder.some((item, index) => item === playerId && index !== rank - 1);
-          const status = teamAssignment[playerId];
-          const teamLabel = status === "teamA" || status === "teamB" ? teamNames[status] : "未上场";
-          return (
-            <option key={`rank-${rank}-${playerId}`} value={playerId}>
-              {getPlayerName(names, playerId)} · {teamLabel}
-              {usedByOtherRank ? "（交换）" : ""}
-            </option>
-          );
-        })}
-      </select>
-    </label>
-  );
-}
-
 function ScorePill({ value }: { value: number }) {
   const className =
     value > 0
@@ -587,7 +534,7 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
   const [names, setNames] = useState<Record<PlayerId, string>>(initialNames);
   const [activePlayerIds, setActivePlayerIds] = useState<PlayerId[]>(["p1", "p2", "p3", "p4"]);
   const [teamAPlayers, setTeamAPlayers] = useState<PlayerId[]>(["p1", "p3"]);
-  const [finishOrder, setFinishOrder] = useState<PlayerId[]>(["p1", "p3", "p2", "p4"]);
+  const [finishOrder, setFinishOrder] = useState<PlayerId[]>([]);
   const [initialStarByPlayer, setInitialStarByPlayer] = useState<StarMap>(emptyStars);
   const [starByPlayer, setStarByPlayer] = useState<StarMap>(emptyStars);
   const [baseScores, setBaseScores] = useState<BaseScores>(defaultBaseScores);
@@ -597,6 +544,7 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
   const [splitBombShareNumerator, setSplitBombShareNumerator] = useState(2);
   const [splitBombShareDenominator, setSplitBombShareDenominator] = useState(3);
   const [rounds, setRounds] = useState<RoundRecord[]>([]);
+  const [undoneRounds, setUndoneRounds] = useState<RoundRecord[]>([]);
   const [copied, setCopied] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
   const [pendingSwapOutId, setPendingSwapOutId] = useState<PlayerId | null>(null);
@@ -608,10 +556,6 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
     [activePlayerIds, teamAPlayers],
   );
   const teamBPlayers = useMemo(() => getTeamPlayers("teamB", teamAssignment), [teamAssignment]);
-  const benchPlayers = useMemo(
-    () => visiblePlayerIds.filter((playerId) => teamAssignment[playerId] === "bench"),
-    [teamAssignment, visiblePlayerIds],
-  );
   const currentRound = useMemo(
     () =>
       buildRoundScore({
@@ -657,18 +601,17 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
   const leadingScore = Math.max(...visiblePlayers.map((player) => totals[player.id]), 0);
   const teamASummary = getTeamSummary(names, teamAPlayers);
   const teamBSummary = getTeamSummary(names, teamBPlayers);
-  const benchSummary = benchPlayers.length > 0 ? getTeamSummary(names, benchPlayers) : "无";
   const winLossScore = roundScore(currentRound.baseScore * currentRound.multiplier);
+  const canRecordRound = finishOrder.length === 4;
 
   function applyParticipantCount(nextCount: ParticipantCount) {
     const nextVisibleIds = getVisiblePlayerIds(nextCount);
     const nextActive = sanitizeActivePlayers(activePlayerIds, nextVisibleIds);
     const nextTeamA = sanitizeTeamAPlayers(teamAPlayers, nextActive);
-    const nextFinishOrder = sanitizeFinishOrder(finishOrder, nextActive);
     setParticipantCount(nextCount);
     setActivePlayerIds(nextActive);
     setTeamAPlayers(nextTeamA);
-    setFinishOrder(nextFinishOrder);
+    setFinishOrder([]);
     setPendingSwapOutId(null);
   }
 
@@ -683,13 +626,9 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
       teamAPlayers.map((playerId) => (playerId === outPlayerId ? inPlayerId : playerId)),
       nextActive,
     );
-    const nextFinishOrder = sanitizeFinishOrder(
-      finishOrder.map((playerId) => (playerId === outPlayerId ? inPlayerId : playerId)),
-      nextActive,
-    );
     setActivePlayerIds(nextActive);
     setTeamAPlayers(nextTeamA);
-    setFinishOrder(nextFinishOrder);
+    setFinishOrder([]);
     setPendingSwapOutId(null);
   }
 
@@ -745,18 +684,30 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
     setStarByPlayer(emptyStars);
   }
 
+  function clearFinishOrder() {
+    setFinishOrder([]);
+  }
+
+  function toggleFinishOrderPlayer(playerId: PlayerId) {
+    setFinishOrder((current) => {
+      if (current.includes(playerId)) return current.filter((item) => item !== playerId);
+      if (current.length >= 4) return current;
+      return [...current, playerId];
+    });
+  }
+
   function resetRoundOptions() {
     const nextActive = sanitizeActivePlayers(visiblePlayerIds.slice(0, 4), visiblePlayerIds);
     const nextTeamA = sanitizeTeamAPlayers([nextActive[0], nextActive[2]], nextActive);
-    const nextFinishOrder = sanitizeFinishOrder([nextActive[0], nextActive[2], nextActive[1], nextActive[3]], nextActive);
     setActivePlayerIds(nextActive);
     setTeamAPlayers(nextTeamA);
-    setFinishOrder(nextFinishOrder);
+    setFinishOrder([]);
     clearStars();
     setPendingSwapOutId(null);
   }
 
   function addRound() {
+    if (!canRecordRound) return;
     const record: RoundRecord = {
       id: `${Date.now()}-${rounds.length}`,
       at: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
@@ -776,21 +727,36 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
       teamAPlayers: [...teamAPlayers],
     };
     setRounds((current) => [record, ...current]);
+    setUndoneRounds([]);
+    clearStars();
+    clearFinishOrder();
+  }
+
+  function undoRound() {
+    const [latestRound, ...remainingRounds] = rounds;
+    if (!latestRound) return;
+    setRounds(remainingRounds);
+    setUndoneRounds((current) => [latestRound, ...current]);
+  }
+
+  function restoreRound() {
+    const [restoredRound, ...remainingUndoneRounds] = undoneRounds;
+    if (!restoredRound) return;
+    setUndoneRounds(remainingUndoneRounds);
+    setRounds((current) => [restoredRound, ...current]);
+  }
+
+  function restartScoring() {
+    setRounds([]);
+    setUndoneRounds([]);
   }
 
   async function copySummary() {
     const lines = [
-      "双扣计分汇总",
-      `参与人数：${participantCount}人`,
-      `本局上场：${getTeamSummary(names, activePlayerIds)}`,
-      `本局A队：${teamASummary}`,
-      `本局B队：${teamBSummary}`,
-      `本局休息：${benchSummary}`,
-      `胜负分：${currentRound.baseScore} x ${currentRound.multiplier} = ${winLossScore}`,
+      "累计积分",
+      `${rounds.length}局已记录`,
+      `领先：${formatScoreNumber(leadingScore)}`,
       ...visiblePlayers.map((player) => `${getPlayerName(names, player.id)}：${totals[player.id]} 分`),
-      `本局预览：${currentRound.resultName}，${visiblePlayers
-        .map((player) => `${getPlayerName(names, player.id)} ${formatSigned(currentRound.scores[player.id])}`)
-        .join(" / ")}`,
     ];
     try {
       await navigator.clipboard?.writeText(lines.join("\n"));
@@ -818,11 +784,11 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
             <button
               type="button"
               className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-2 font-bold text-slate-700 hover:bg-slate-50 sm:h-10 sm:px-3"
-              onClick={copySummary}
-              title="复制计分汇总"
+              onClick={restartScoring}
+              title="清空记录重新开始"
             >
-              <Icon name="copy" />
-              {copied ? "已复制" : "复制汇总"}
+              <Icon name="refresh" />
+              重新开始
             </button>
             <button
               type="button"
@@ -839,6 +805,45 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
 
       <div className="mx-auto grid max-w-7xl gap-3 px-3 py-3 sm:gap-4 sm:px-4 sm:py-4 lg:px-6">
         <section className="grid gap-3 sm:gap-4">
+          {participantCount === 4 ? (
+            <section className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm sm:p-4">
+              <div className="grid content-start gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2.5 sm:gap-3 sm:p-3">
+                <div className="text-sm font-black text-slate-800">A 队搭档</div>
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="grid gap-2">
+                    <select
+                      aria-label="A队第 1 人"
+                      value={teamAPlayers[0]}
+                      onChange={(event) => applyTeamAPlayerChange(0, event.target.value as PlayerId)}
+                      className="h-9 min-w-0 rounded-md border border-slate-200 bg-white px-2 text-xs font-semibold outline-none focus:border-emerald-600 sm:h-10 sm:px-3 sm:text-sm"
+                    >
+                      {activePlayerIds.map((playerId) => (
+                        <option key={`team-a-first-four-${playerId}`} value={playerId}>
+                          {getPlayerName(names, playerId)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="grid gap-2">
+                    <select
+                      aria-label="A队对家"
+                      value={teamAPlayers[1]}
+                      onChange={(event) => applyTeamAPlayerChange(1, event.target.value as PlayerId)}
+                      className="h-9 min-w-0 rounded-md border border-slate-200 bg-white px-2 text-xs font-semibold outline-none focus:border-emerald-600 sm:h-10 sm:px-3 sm:text-sm"
+                    >
+                      {activePlayerIds.map((playerId) => (
+                        <option key={`team-a-second-four-${playerId}`} value={playerId}>
+                          {getPlayerName(names, playerId)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              </div>
+            </section>
+          ) : null}
+
+          {participantCount > 4 ? (
           <section className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm sm:p-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
@@ -947,53 +952,61 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
                   </select>
                 </label>
                 </div>
-                <div className="rounded-md bg-white p-2 text-xs leading-5 text-slate-600 sm:p-3 sm:text-sm sm:leading-6">
-                  <div>
-                    <strong className="text-emerald-800">A队：</strong>
-                    {teamASummary}
-                  </div>
-                  <div>
-                    <strong className="text-red-800">B队：</strong>
-                    {teamBSummary}
-                  </div>
-                  <div>
-                    <strong className="text-slate-500">休息：</strong>
-                    {benchSummary}
-                  </div>
-                </div>
               </div>
             </div>
           </section>
+          ) : null}
 
           <div className="grid gap-3 sm:gap-4 xl:grid-cols-[minmax(0,1fr)_320px_320px]">
             <section className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm sm:p-4">
-              <div className="flex items-center gap-2 text-sm font-black text-slate-800">
-                <Icon name="medal" />
-                出完顺序
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 text-sm font-black text-slate-800">
+                  <Icon name="medal" />
+                  出完顺序
+                </div>
+                <button
+                  type="button"
+                  className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-slate-200 px-2 text-xs font-bold text-slate-700 hover:bg-slate-50 sm:h-9 sm:px-3 sm:text-sm"
+                  onClick={clearFinishOrder}
+                >
+                  <Icon name="refresh" />
+                  重排
+                </button>
               </div>
-              <div className="mt-3 grid grid-cols-2 gap-2 sm:mt-4 sm:gap-3 md:grid-cols-2">
-                {finishOrder.map((playerId, index) => (
-                  <RankSelect
-                    key={`rank-select-${index + 1}`}
-                    rank={index + 1}
-                    value={playerId}
-                    names={names}
-                    teamAssignment={teamAssignment}
-                    activePlayerIds={activePlayerIds}
-                    finishOrder={finishOrder}
-                    onChange={(rankIndex, nextPlayer) => {
-                      setFinishOrder((current) => updatePlayerSlot(current, rankIndex, nextPlayer));
-                    }}
-                  />
-                ))}
-              </div>
-              <div className="mt-3 grid gap-1.5 rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs sm:mt-4 sm:gap-2 sm:p-3 sm:text-sm">
-                {finishOrder.map((playerId, index) => (
-                  <div key={`rank-line-${playerId}`} className="flex items-center justify-between gap-2">
-                    <span className="font-bold text-slate-500">第 {index + 1} 名</span>
-                    <PlayerBadge playerId={playerId} names={names} teamAssignment={teamAssignment} />
-                  </div>
-                ))}
+              <div className="mt-3 grid grid-cols-2 gap-2 sm:mt-4 sm:gap-3">
+                {activePlayerIds.map((playerId) => {
+                  const rank = finishOrder.indexOf(playerId) + 1;
+                  const selected = rank > 0;
+                  const status = teamAssignment[playerId];
+                  return (
+                    <button
+                      key={`finish-order-${playerId}`}
+                      type="button"
+                      className={`flex min-h-14 min-w-0 items-center justify-between gap-2 rounded-lg border p-2 text-left transition sm:min-h-16 sm:p-3 ${
+                        selected ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-slate-50 hover:border-emerald-400 hover:bg-white"
+                      }`}
+                      onClick={() => toggleFinishOrderPlayer(playerId)}
+                    >
+                      <span className="min-w-0">
+                        <span className="block truncate text-xs font-black text-slate-950 sm:text-sm">{getPlayerName(names, playerId)}</span>
+                        <span className={status === "teamA" ? "mt-1 block text-xs font-bold text-emerald-700" : "mt-1 block text-xs font-bold text-red-700"}>
+                          {status === "teamA" ? "A队" : "B队"}
+                        </span>
+                      </span>
+                      <span
+                        className={`grid h-8 w-8 shrink-0 place-items-center rounded-md text-sm font-black ${
+                          selected
+                            ? "bg-slate-950 text-white"
+                            : status === "teamA"
+                              ? "bg-emerald-700 text-white"
+                              : "bg-red-700 text-white"
+                        }`}
+                      >
+                        {selected ? rank : status === "teamA" ? "A" : "B"}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             </section>
 
@@ -1037,9 +1050,9 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
                         </span>
                       </span>
                       {splitBombSharingEnabled ? (
-                        <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-1 sm:gap-2">
-                          <label className="grid gap-1 text-xs font-bold text-slate-500">
-                            起牌炸弹
+                        <div className="grid gap-1.5 sm:grid-cols-2">
+                          <label className="grid grid-cols-[2.25rem_minmax(0,1fr)] items-center gap-1.5 text-xs font-bold text-slate-500">
+                            <span>起牌</span>
                             <select
                               value={initialStarByPlayer[playerId]}
                               onChange={(event) => applyInitialStarChange(playerId, parseStarLevel(event.target.value))}
@@ -1052,8 +1065,8 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
                               ))}
                             </select>
                           </label>
-                          <label className="grid gap-1 text-xs font-bold text-slate-500">
-                            结算炸弹
+                          <label className="grid grid-cols-[2.25rem_minmax(0,1fr)] items-center gap-1.5 text-xs font-bold text-slate-500">
+                            <span>结算</span>
                             <select
                               value={starByPlayer[playerId]}
                               onChange={(event) => applySettlementStarChange(playerId, parseStarLevel(event.target.value))}
@@ -1096,11 +1109,7 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
             </section>
 
             <aside className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm sm:p-4">
-              <div className="flex items-center gap-2 text-sm font-black text-slate-800">
-                <Icon name="calculator" />
-                本局预览
-              </div>
-              <div className="mt-3 rounded-lg border border-slate-200 bg-[#123f32] p-3 text-white sm:mt-4 sm:p-4">
+              <div className="rounded-lg border border-slate-200 bg-[#123f32] p-3 text-white sm:p-4">
                 <div className="text-xs text-emerald-100 sm:text-sm">结果</div>
                 <div className="mt-1 text-3xl font-black sm:text-4xl">{currentRound.resultName}</div>
                 <div className="mt-2 text-xs text-emerald-100 sm:mt-3 sm:text-sm">
@@ -1129,8 +1138,9 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
               </div>
               <button
                 type="button"
-                className="mt-3 inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-slate-950 px-3 text-sm font-black text-white hover:bg-emerald-800 sm:mt-4 sm:h-11"
+                className="mt-3 inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-slate-950 px-3 text-sm font-black text-white hover:bg-emerald-800 disabled:bg-slate-300 disabled:text-slate-500 sm:mt-4 sm:h-11"
                 onClick={addRound}
+                disabled={!canRecordRound}
                 title="把当前本局分加入累计"
               >
                 <Icon name="plus" />
@@ -1145,7 +1155,18 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
           <section className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm sm:p-4">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <div className="text-sm font-black text-slate-800">累计积分</div>
+                <div className="flex items-center gap-2">
+                  <div className="text-sm font-black text-slate-800">累计积分</div>
+                  <button
+                    type="button"
+                    className="inline-flex h-7 items-center justify-center gap-1 rounded-md border border-slate-200 px-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                    onClick={copySummary}
+                    title="复制累计积分"
+                  >
+                    <Icon name="copy" className="h-3.5 w-3.5" />
+                    {copied ? "已复制" : "复制汇总"}
+                  </button>
+                </div>
                 <p className="mt-1 text-xs text-slate-500 sm:text-sm">{rounds.length} 局已记录</p>
               </div>
               <div className="rounded-md bg-slate-100 px-2 py-1.5 text-xs font-black text-slate-700 sm:px-3 sm:py-2 sm:text-sm">
@@ -1178,7 +1199,7 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
               <button
                 type="button"
                 className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-slate-200 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50 sm:h-10"
-                onClick={() => setRounds((current) => current.slice(1))}
+                onClick={undoRound}
                 disabled={rounds.length === 0}
                 title="撤销上一局"
               >
@@ -1187,13 +1208,13 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
               </button>
               <button
                 type="button"
-                className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-red-200 text-sm font-bold text-red-700 hover:bg-red-50 disabled:opacity-50 sm:h-10"
-                onClick={() => setRounds([])}
-                disabled={rounds.length === 0}
-                title="清空累计局"
+                className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-emerald-200 text-sm font-bold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 sm:h-10"
+                onClick={restoreRound}
+                disabled={undoneRounds.length === 0}
+                title="恢复撤销的一局"
               >
-                <Icon name="trash" />
-                清空
+                <Icon name="refresh" />
+                恢复
               </button>
             </div>
           </section>
