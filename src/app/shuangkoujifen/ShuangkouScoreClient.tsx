@@ -692,7 +692,12 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
     setFinishOrder((current) => {
       if (current.includes(playerId)) return current.filter((item) => item !== playerId);
       if (current.length >= 4) return current;
-      return [...current, playerId];
+      const next = [...current, playerId];
+      if (next.length === 3) {
+        const lastPlayerId = activePlayerIds.find((activePlayerId) => !next.includes(activePlayerId));
+        return lastPlayerId ? [...next, lastPlayerId] : next;
+      }
+      return next;
     });
   }
 
