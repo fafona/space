@@ -291,10 +291,6 @@ function getTeamPlayers(team: TeamKey, teamAssignment: TeamAssignment) {
   return playerList.filter((player) => teamAssignment[player.id] === team).map((player) => player.id);
 }
 
-function getTeamSummary(names: Record<PlayerId, string>, playerIds: PlayerId[]) {
-  return playerIds.map((playerId) => getPlayerName(names, playerId)).join(" + ");
-}
-
 function formatStarSummary(star: StarLevel) {
   return star > 0 ? `${star}星` : "无星";
 }
@@ -555,7 +551,6 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
     () => buildTeamAssignment(activePlayerIds, teamAPlayers),
     [activePlayerIds, teamAPlayers],
   );
-  const teamBPlayers = useMemo(() => getTeamPlayers("teamB", teamAssignment), [teamAssignment]);
   const currentRound = useMemo(
     () =>
       buildRoundScore({
@@ -599,8 +594,6 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
   }, [rounds]);
 
   const leadingScore = Math.max(...visiblePlayers.map((player) => totals[player.id]), 0);
-  const teamASummary = getTeamSummary(names, teamAPlayers);
-  const teamBSummary = getTeamSummary(names, teamBPlayers);
   const winLossScore = roundScore(currentRound.baseScore * currentRound.multiplier);
   const canRecordRound = finishOrder.length === 4;
 
@@ -1033,7 +1026,6 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
               </div>
               <div className="mt-3 grid gap-2 sm:mt-4 sm:gap-3">
                 {activePlayerIds.map((playerId) => {
-                  const contributionPoint = getContributionPoint(starByPlayer[playerId], contributionScores);
                   const partnerId = getTeamPartner(playerId, teamAssignment);
                   const splitBombCompensation = splitBombSharingEnabled
                     ? getSplitBombCompensation({
@@ -1055,13 +1047,13 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
                         </span>
                       </span>
                       {splitBombSharingEnabled ? (
-                        <div className="grid gap-1.5 sm:grid-cols-2">
-                          <label className="grid grid-cols-[2.25rem_minmax(0,1fr)] items-center gap-1.5 text-xs font-bold text-slate-500">
+                        <div className="grid grid-cols-2 gap-1.5">
+                          <label className="grid grid-cols-[1.75rem_minmax(0,1fr)] items-center gap-1.5 text-xs font-bold text-slate-500">
                             <span>起牌</span>
                             <select
                               value={initialStarByPlayer[playerId]}
                               onChange={(event) => applyInitialStarChange(playerId, parseStarLevel(event.target.value))}
-                              className="h-9 w-full min-w-0 rounded-md border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-950 outline-none focus:border-emerald-600 sm:h-10 sm:px-3 sm:text-sm"
+                              className="h-9 w-full min-w-0 rounded-md border border-slate-200 bg-white px-1.5 text-[11px] font-semibold text-slate-950 outline-none focus:border-emerald-600 sm:px-2 sm:text-xs"
                             >
                               {starOptions.map((star) => (
                                 <option key={`${playerId}-initial-${star}`} value={star}>
@@ -1070,12 +1062,12 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
                               ))}
                             </select>
                           </label>
-                          <label className="grid grid-cols-[2.25rem_minmax(0,1fr)] items-center gap-1.5 text-xs font-bold text-slate-500">
+                          <label className="grid grid-cols-[1.75rem_minmax(0,1fr)] items-center gap-1.5 text-xs font-bold text-slate-500">
                             <span>结算</span>
                             <select
                               value={starByPlayer[playerId]}
                               onChange={(event) => applySettlementStarChange(playerId, parseStarLevel(event.target.value))}
-                              className="h-9 w-full min-w-0 rounded-md border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-950 outline-none focus:border-emerald-600 sm:h-10 sm:px-3 sm:text-sm"
+                              className="h-9 w-full min-w-0 rounded-md border border-slate-200 bg-white px-1.5 text-[11px] font-semibold text-slate-950 outline-none focus:border-emerald-600 sm:px-2 sm:text-xs"
                             >
                               {starOptions.map((star) => (
                                 <option key={`${playerId}-settlement-${star}`} value={star}>
@@ -1098,9 +1090,6 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
                           ))}
                         </select>
                       )}
-                      <span className="text-xs text-slate-500">
-                        {contributionPoint > 0 ? `贡献：本人 +${contributionPoint * 3}，其他每人 -${contributionPoint}` : "无贡献分"}
-                      </span>
                       {splitBombCompensation > 0 && partnerId ? (
                         <span className="text-xs font-semibold text-amber-700">
                           拆炸补偿：{getPlayerName(names, partnerId)} -{formatScoreNumber(splitBombCompensation)}，本人 +
@@ -1117,11 +1106,6 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
               <div className="rounded-lg border border-slate-200 bg-[#123f32] p-3 text-white sm:p-4">
                 <div className="text-xs text-emerald-100 sm:text-sm">结果</div>
                 <div className="mt-1 text-3xl font-black sm:text-4xl">{currentRound.resultName}</div>
-                <div className="mt-2 text-xs text-emerald-100 sm:mt-3 sm:text-sm">
-                  {currentRound.scoringTeam && currentRound.baseScore > 0
-                    ? `${currentRound.scoringTeam === "teamA" ? teamASummary : teamBSummary} 计分`
-                    : "双方打和"}
-                </div>
               </div>
               <div className="mt-3 grid gap-1.5 sm:mt-4 sm:gap-2">
                 <div className="flex items-center justify-between rounded-md bg-slate-50 px-2 py-1.5 text-xs sm:px-3 sm:py-2 sm:text-sm">
