@@ -4190,6 +4190,10 @@ export default function MePage() {
     setAccountSwitchBusyKey(entry.key);
     setAccountSwitchError("");
     try {
+      await recordCurrentAccountSwitchSession({
+        displayName: profileName,
+        avatarUrl: personalProfile.avatarUrl,
+      }).then(setAccountSwitchEntries);
       const nextPayload = await restoreAccountSwitchEntry(entry);
       window.location.href = getAccountSwitchHomeHref(nextPayload);
     } catch (error) {

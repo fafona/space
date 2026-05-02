@@ -10049,6 +10049,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     setAccountSwitchBusyKey(entry.key);
     setAccountSwitchError("");
     try {
+      await recordCurrentAccountSwitchSession({
+        displayName: supportSelfDisplayName,
+        avatarUrl: supportSelfAvatarImageUrl,
+      }).then(setAccountSwitchEntries);
       const nextPayload = await restoreAccountSwitchEntry(entry);
       window.location.href = getAccountSwitchHomeHref(nextPayload);
     } catch (error) {
