@@ -1362,26 +1362,29 @@ function Icon({
 function ShuangkouToolIcon() {
   const cardClass =
     "absolute h-10 w-7 rounded-[5px] border border-red-200 bg-white shadow-sm";
-  const letters = ["J", "O", "K", "E", "R"];
   return (
     <span className="relative block h-12 w-12" aria-hidden="true">
       <span className={`${cardClass} left-1.5 top-2 rotate-[-12deg]`}>
-        <span className="absolute left-1 top-1 text-[7px] font-black leading-none text-red-700">J</span>
-        <span className="absolute inset-x-0 top-1.5 grid place-items-center gap-0 leading-[0.72] text-[6px] font-black text-red-700">
-          {letters.map((letter, index) => (
-            <span key={`left-joker-${letter}-${index}`}>{letter}</span>
-          ))}
+        <span className="absolute left-0.5 top-1 text-[4.5px] font-black leading-none text-red-700">
+          JOKER
         </span>
-        <span className="absolute bottom-1 right-1 text-[7px] font-black leading-none text-red-700">J</span>
+        <span className="absolute inset-0 grid place-items-center text-lg font-black italic leading-none text-red-700">
+          F
+        </span>
+        <span className="absolute bottom-1 right-0.5 rotate-180 text-[4.5px] font-black leading-none text-red-700">
+          JOKER
+        </span>
       </span>
       <span className={`${cardClass} left-4 top-1 rotate-[10deg]`}>
-        <span className="absolute left-1 top-1 text-[7px] font-black leading-none text-red-700">J</span>
-        <span className="absolute inset-x-0 top-1.5 grid place-items-center gap-0 leading-[0.72] text-[6px] font-black text-red-700">
-          {letters.map((letter, index) => (
-            <span key={`right-joker-${letter}-${index}`}>{letter}</span>
-          ))}
+        <span className="absolute left-0.5 top-1 text-[4.5px] font-black leading-none text-red-700">
+          JOKER
         </span>
-        <span className="absolute bottom-1 right-1 text-[7px] font-black leading-none text-red-700">J</span>
+        <span className="absolute inset-0 grid place-items-center text-lg font-black italic leading-none text-red-700">
+          F
+        </span>
+        <span className="absolute bottom-1 right-0.5 rotate-180 text-[4.5px] font-black leading-none text-red-700">
+          JOKER
+        </span>
       </span>
     </span>
   );
