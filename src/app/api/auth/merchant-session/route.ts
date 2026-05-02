@@ -72,6 +72,10 @@ type PublicMerchantSessionPayload = {
   accountId: string | null;
   merchantId: string | null;
   merchantIds: string[];
+  accessToken?: string;
+  refreshToken?: string | null;
+  expiresIn?: number | null;
+  tokenType?: string;
   personalServiceConfig: PersonalAccountServiceConfig | null;
   personalServicePaused: boolean;
   frontendAuthProof?: string;
@@ -238,13 +242,32 @@ function clearMerchantSessionCacheFromCandidates(accessTokens: string[], refresh
   });
 }
 
-function toPublicMerchantSessionPayload(payload: AuthenticatedMerchantSessionPayload): PublicMerchantSessionPayload {
+function shouldIncludeAccountSwitchTokens(request: Request) {
+  try {
+    return new URL(request.url).searchParams.get("accountSwitch") === "1";
+  } catch {
+    return false;
+  }
+}
+
+function toPublicMerchantSessionPayload(
+  payload: AuthenticatedMerchantSessionPayload,
+  options?: { includeAccountSwitchTokens?: boolean },
+): PublicMerchantSessionPayload {
   return {
     authenticated: true,
     accountType: payload.accountType,
     accountId: payload.accountId,
     merchantId: payload.merchantId,
     merchantIds: payload.merchantIds,
+    ...(options?.includeAccountSwitchTokens
+      ? {
+          accessToken: payload.accessToken,
+          refreshToken: payload.refreshToken,
+          expiresIn: payload.expiresIn,
+          tokenType: payload.tokenType,
+        }
+      : {}),
     personalServiceConfig: payload.personalServiceConfig,
     personalServicePaused: payload.personalServicePaused,
     frontendAuthProof: createFrontendAuthProof({
@@ -258,7 +281,11 @@ function toPublicMerchantSessionPayload(payload: AuthenticatedMerchantSessionPay
 }
 
 function respondWithMerchantSession(request: Request, payload: AuthenticatedMerchantSessionPayload) {
-  const response = noStoreJson(toPublicMerchantSessionPayload(payload));
+  const response = noStoreJson(
+    toPublicMerchantSessionPayload(payload, {
+      includeAccountSwitchTokens: shouldIncludeAccountSwitchTokens(request),
+    }),
+  );
   setMerchantAuthCookies(response, {
     accessToken: payload.accessToken,
     refreshToken: payload.refreshToken,
@@ -276,7 +303,13 @@ export async function GET(request: Request) {
     const cookieRefreshToken = cookieRefreshTokens[0] ?? readMerchantAuthRefreshCookie(request);
     const cached = readMerchantSessionCacheFromCandidates(cookieAccessTokens, cookieRefreshTokens);
     if (cached) {
-      return respondWithMerchantSession(request, cached);
+      const needsAccountSwitchRefreshToken =
+        shouldIncludeAccountSwitchTokens(request) &&
+        !String(cached.refreshToken ?? "").trim() &&
+        cookieRefreshTokens.length > 0;
+      if (!needsAccountSwitchRefreshToken) {
+        return respondWithMerchantSession(request, cached);
+      }
     }
 
     const supabase = createServerSupabaseClient();

@@ -2,7 +2,6 @@ import type { Session } from "@supabase/supabase-js";
 import {
   establishBrowserSupabaseSession,
   readMerchantSessionMerchantIds,
-  readMerchantSessionPayload,
   syncMerchantSessionCookies,
   type MerchantCookieSessionPayload,
 } from "@/lib/authSessionRecovery";
@@ -143,6 +142,7 @@ function saveAccountSwitchEntry(entry: AccountSwitchEntry) {
 function buildAccountSwitchEntryFromPayload(
   payload: MerchantCookieSessionPayload | null | undefined,
   metadata?: { displayName?: string; avatarUrl?: string },
+  tokens?: { accessToken?: string; refreshToken?: string; expiresIn?: number },
 ) {
   if (!payload || payload.authenticated !== true || !payload.user) return null;
   const accountType = payload.accountType === "personal" ? "personal" : payload.accountType === "merchant" ? "merchant" : null;
@@ -151,8 +151,8 @@ function buildAccountSwitchEntryFromPayload(
   const accountId = trimText(payload.accountId) || (accountType === "personal" ? "" : trimText(payload.merchantId) || merchantIds[0] || "");
   const merchantId = accountType === "merchant" ? trimText(payload.merchantId) || merchantIds[0] || accountId : "";
   const key = getAccountSwitchEntryKey(accountType, accountId, merchantId);
-  const accessToken = trimText(payload.accessToken);
-  const refreshToken = trimText(payload.refreshToken);
+  const accessToken = trimText(tokens?.accessToken) || trimText(payload.accessToken);
+  const refreshToken = trimText(tokens?.refreshToken) || trimText(payload.refreshToken);
   if (!key || !accessToken || !refreshToken) return null;
   const email = trimText(payload.user.email);
   const now = Date.now();
@@ -167,14 +167,46 @@ function buildAccountSwitchEntryFromPayload(
     avatarUrl: trimText(metadata?.avatarUrl),
     accessToken,
     refreshToken,
-    expiresIn: readNumber(payload.expiresIn),
+    expiresIn: readNumber(tokens?.expiresIn) ?? readNumber(payload.expiresIn),
     updatedAt: now,
     lastUsedAt: now,
   } satisfies AccountSwitchEntry;
 }
 
+async function readAccountSwitchSessionPayload(timeoutMs = 4200): Promise<MerchantCookieSessionPayload | null> {
+  if (typeof window === "undefined") return null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const controller = new AbortController();
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new Error("account_switch_session_timeout"));
+    }, Math.max(1200, timeoutMs));
+  });
+  try {
+    const response = await Promise.race([
+      fetch("/api/auth/merchant-session?accountSwitch=1", {
+        method: "GET",
+        cache: "no-store",
+        credentials: "include",
+        signal: controller.signal,
+        headers: {
+          accept: "application/json",
+        },
+      }),
+      timeout,
+    ]);
+    if (!response.ok) return null;
+    return (await response.json().catch(() => null)) as MerchantCookieSessionPayload | null;
+  } catch {
+    return null;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export async function recordCurrentAccountSwitchSession(metadata?: { displayName?: string; avatarUrl?: string }) {
-  const payload = await readMerchantSessionPayload(4200).catch(() => null);
+  const payload = await readAccountSwitchSessionPayload(4200).catch(() => null);
   const entry = buildAccountSwitchEntryFromPayload(payload, metadata);
   if (!entry) return readAccountSwitchEntries();
   return saveAccountSwitchEntry(entry);
@@ -201,6 +233,10 @@ export async function restoreAccountSwitchEntry(entry: AccountSwitchEntry) {
   const nextEntry = buildAccountSwitchEntryFromPayload(payload, {
     displayName: entry.displayName,
     avatarUrl: entry.avatarUrl,
+  }, {
+    accessToken: session.access_token,
+    refreshToken: session.refresh_token,
+    expiresIn: session.expires_in,
   });
   if (nextEntry) saveAccountSwitchEntry(nextEntry);
   return payload;
