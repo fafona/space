@@ -26,6 +26,7 @@ type RoundRecord = {
   id: string;
   at: string;
   activePlayerIds: PlayerId[];
+  discarded: boolean;
   finishOrder: PlayerId[];
   resultName: string;
   scoringTeam: TeamKey | null;
@@ -403,6 +404,7 @@ function getSplitBombCompensation({
 function buildRoundScore({
   activePlayerIds,
   baseScores,
+  discarded,
   maxMultiplier,
   contributionScores,
   finishOrder,
@@ -415,6 +417,7 @@ function buildRoundScore({
 }: {
   activePlayerIds: PlayerId[];
   baseScores: BaseScores;
+  discarded: boolean;
   maxMultiplier: number;
   contributionScores: ContributionScores;
   finishOrder: PlayerId[];
@@ -425,7 +428,13 @@ function buildRoundScore({
   teamAssignment: TeamAssignment;
   starByPlayer: StarMap;
 }) {
-  const result = resolveResult(finishOrder, teamAssignment);
+  const result = discarded
+    ? {
+        resultName: "丢牌",
+        scoringTeam: null,
+        resultKey: "flat" as ResultKey,
+      }
+    : resolveResult(finishOrder, teamAssignment);
   const baseScore = result.scoringTeam ? baseScores[result.resultKey] : 0;
   const highestWinningStar =
     result.scoringTeam && baseScore > 0 ? getHighestTeamStar(result.scoringTeam, teamAssignment, starByPlayer) : 0;
@@ -530,6 +539,7 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
   const [names, setNames] = useState<Record<PlayerId, string>>(initialNames);
   const [activePlayerIds, setActivePlayerIds] = useState<PlayerId[]>(["p1", "p2", "p3", "p4"]);
   const [teamAPlayers, setTeamAPlayers] = useState<PlayerId[]>(["p1", "p3"]);
+  const [discardedRound, setDiscardedRound] = useState(false);
   const [finishOrder, setFinishOrder] = useState<PlayerId[]>([]);
   const [initialStarByPlayer, setInitialStarByPlayer] = useState<StarMap>(emptyStars);
   const [starByPlayer, setStarByPlayer] = useState<StarMap>(emptyStars);
@@ -556,6 +566,7 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
       buildRoundScore({
         activePlayerIds,
         baseScores,
+        discarded: discardedRound,
         maxMultiplier,
         contributionScores,
         finishOrder,
@@ -570,6 +581,7 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
       activePlayerIds,
       baseScores,
       contributionScores,
+      discardedRound,
       finishOrder,
       initialStarByPlayer,
       maxMultiplier,
@@ -595,7 +607,7 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
 
   const leadingScore = Math.max(...visiblePlayers.map((player) => totals[player.id]), 0);
   const winLossScore = roundScore(currentRound.baseScore * currentRound.multiplier);
-  const canRecordRound = finishOrder.length === 4;
+  const canRecordRound = discardedRound || finishOrder.length === 4;
 
   function applyParticipantCount(nextCount: ParticipantCount) {
     const nextVisibleIds = getVisiblePlayerIds(nextCount);
@@ -604,6 +616,7 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
     setParticipantCount(nextCount);
     setActivePlayerIds(nextActive);
     setTeamAPlayers(nextTeamA);
+    setDiscardedRound(false);
     setFinishOrder([]);
     setPendingSwapOutId(null);
   }
@@ -621,6 +634,7 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
     );
     setActivePlayerIds(nextActive);
     setTeamAPlayers(nextTeamA);
+    setDiscardedRound(false);
     setFinishOrder([]);
     setPendingSwapOutId(null);
   }
@@ -678,10 +692,12 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
   }
 
   function clearFinishOrder() {
+    setDiscardedRound(false);
     setFinishOrder([]);
   }
 
   function toggleFinishOrderPlayer(playerId: PlayerId) {
+    if (discardedRound) return;
     setFinishOrder((current) => {
       if (current.includes(playerId)) return current.filter((item) => item !== playerId);
       if (current.length >= 4) return current;
@@ -694,11 +710,20 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
     });
   }
 
+  function toggleDiscardedRound() {
+    setDiscardedRound((current) => {
+      const next = !current;
+      if (next) setFinishOrder([]);
+      return next;
+    });
+  }
+
   function resetRoundOptions() {
     const nextActive = sanitizeActivePlayers(visiblePlayerIds.slice(0, 4), visiblePlayerIds);
     const nextTeamA = sanitizeTeamAPlayers([nextActive[0], nextActive[2]], nextActive);
     setActivePlayerIds(nextActive);
     setTeamAPlayers(nextTeamA);
+    setDiscardedRound(false);
     setFinishOrder([]);
     clearStars();
     setPendingSwapOutId(null);
@@ -710,7 +735,8 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
       id: `${Date.now()}-${rounds.length}`,
       at: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
       activePlayerIds: [...activePlayerIds],
-      finishOrder: [...finishOrder],
+      discarded: discardedRound,
+      finishOrder: discardedRound ? [] : [...finishOrder],
       resultName: currentRound.resultName,
       scoringTeam: currentRound.baseScore > 0 ? currentRound.scoringTeam : null,
       baseScore: currentRound.baseScore,
@@ -726,6 +752,7 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
     };
     setRounds((current) => [record, ...current]);
     setUndoneRounds([]);
+    setDiscardedRound(false);
     clearStars();
     clearFinishOrder();
   }
@@ -961,6 +988,18 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
                 <div className="flex items-center gap-2 text-sm font-black text-slate-800">
                   <Icon name="medal" />
                   出完顺序
+                  <button
+                    type="button"
+                    className={`inline-flex h-7 items-center justify-center rounded-md border px-2 text-xs font-bold transition ${
+                      discardedRound
+                        ? "border-amber-400 bg-amber-50 text-amber-800"
+                        : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                    }`}
+                    onClick={toggleDiscardedRound}
+                    aria-pressed={discardedRound}
+                  >
+                    丢牌
+                  </button>
                 </div>
                 <button
                   type="button"
@@ -981,8 +1020,13 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
                       key={`finish-order-${playerId}`}
                       type="button"
                       className={`flex min-h-14 min-w-0 items-center justify-between gap-2 rounded-lg border p-2 text-left transition sm:min-h-16 sm:p-3 ${
-                        selected ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-slate-50 hover:border-emerald-400 hover:bg-white"
+                        discardedRound
+                          ? "border-slate-200 bg-slate-100 text-slate-400 opacity-60"
+                          : selected
+                            ? "border-emerald-300 bg-emerald-50"
+                            : "border-slate-200 bg-slate-50 hover:border-emerald-400 hover:bg-white"
                       }`}
+                      disabled={discardedRound}
                       onClick={() => toggleFinishOrderPlayer(playerId)}
                     >
                       <span className="min-w-0">
@@ -1231,8 +1275,14 @@ export default function ShuangkouScoreClient({ subtitle = "www.faolla.com/shuang
                         <div className="text-xs text-slate-400">{round.at}</div>
                       </div>
                       <div className="mt-1 text-xs leading-5 text-slate-500">
-                        <div>胜方：{getRoundSideStarSummary(names, roundWinningPlayers, round)}</div>
-                        <div>负方：{getRoundSideStarSummary(names, roundLosingPlayers, round)}</div>
+                        {round.discarded ? (
+                          <div>只计炸弹贡献</div>
+                        ) : (
+                          <>
+                            <div>胜方：{getRoundSideStarSummary(names, roundWinningPlayers, round)}</div>
+                            <div>负方：{getRoundSideStarSummary(names, roundLosingPlayers, round)}</div>
+                          </>
+                        )}
                       </div>
                       <div className="mt-2 grid grid-cols-2 gap-1.5 sm:mt-3 sm:gap-2">
                         {visiblePlayers.map((player) => (
