@@ -4686,7 +4686,7 @@ type SupportContactRow = {
 };
 
 type SupportMobileHomeTab = "conversations" | "business" | "faolla" | "self";
-type SupportSelfSectionView = "home" | "profile" | "cards" | "tools" | "notifications";
+type SupportSelfSectionView = "home" | "profile" | "cards" | "tools" | "games" | "notifications";
 type SupportNotificationPreferences = {
   systemNotificationsEnabled: boolean;
   messageSoundEnabled: boolean;
@@ -15363,6 +15363,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     ? "名片夹"
                     : supportSelfSectionView === "tools"
                       ? "小工具"
+                      : supportSelfSectionView === "games"
+                        ? "小游戏"
                       : "通知"}
               </div>
               <div className="mt-1 truncate text-xs text-slate-500">
@@ -15372,6 +15374,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     ? "这里统一管理聊天展示名片与复制能力。"
                     : supportSelfSectionView === "tools"
                       ? "商家后台里的常用计分工具。"
+                      : supportSelfSectionView === "games"
+                        ? "坦克大战等休闲小游戏。"
                       : "这里控制系统消息通知、提示音和震动。"}
               </div>
             </div>
@@ -15429,6 +15433,13 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     summary: "双扣计分等常用工具",
                     icon: <ToolboxIcon />,
                     onClick: () => setSupportSelfSectionView("tools" as const),
+                  },
+                  {
+                    key: "games",
+                    label: "小游戏",
+                    summary: "坦克大战等休闲小游戏",
+                    icon: <TankBattleIcon className="h-5 w-5" />,
+                    onClick: () => setSupportSelfSectionView("games" as const),
                   },
                   {
                     key: "notifications",
@@ -15699,38 +15710,35 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             </section>
           </div>
         ) : supportSelfSectionView === "tools" ? (
-          <div className="space-y-4">
-            <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
-              <div className="grid grid-cols-4 gap-x-4 gap-y-5">
-                <button
-                  type="button"
-                  className="group flex min-w-0 flex-col items-center gap-2.5 text-center"
-                  onClick={openSupportShuangkouScoreTool}
-                >
-                  <span className="flex h-14 w-14 items-center justify-center rounded-[18px] bg-emerald-700 text-white shadow-[0_12px_24px_rgba(4,120,87,0.28)] transition group-active:scale-95">
-                    <ShuangkouToolIcon />
-                  </span>
-                  <span className="w-full truncate text-xs font-semibold text-slate-900">双扣计分</span>
-                </button>
-              </div>
-            </section>
-
-            <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
-              <div className="mb-4 text-sm font-black text-slate-950">小游戏</div>
-              <div className="grid grid-cols-4 gap-x-4 gap-y-5">
-                <button
-                  type="button"
-                  className="group flex min-w-0 flex-col items-center gap-2.5 text-center"
-                  onClick={openSupportTankBattleGame}
-                >
-                  <span className="flex h-14 w-14 items-center justify-center rounded-[18px] bg-lime-700 text-white shadow-[0_12px_24px_rgba(77,124,15,0.28)] transition group-active:scale-95">
-                    <TankBattleIcon />
-                  </span>
-                  <span className="w-full truncate text-xs font-semibold text-slate-900">坦克大战</span>
-                </button>
-              </div>
-            </section>
-          </div>
+          <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+            <div className="grid grid-cols-4 gap-x-4 gap-y-5">
+              <button
+                type="button"
+                className="group flex min-w-0 flex-col items-center gap-2.5 text-center"
+                onClick={openSupportShuangkouScoreTool}
+              >
+                <span className="flex h-14 w-14 items-center justify-center rounded-[18px] bg-emerald-700 text-white shadow-[0_12px_24px_rgba(4,120,87,0.28)] transition group-active:scale-95">
+                  <ShuangkouToolIcon />
+                </span>
+                <span className="w-full truncate text-xs font-semibold text-slate-900">双扣计分</span>
+              </button>
+            </div>
+          </section>
+        ) : supportSelfSectionView === "games" ? (
+          <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+            <div className="grid grid-cols-4 gap-x-4 gap-y-5">
+              <button
+                type="button"
+                className="group flex min-w-0 flex-col items-center gap-2.5 text-center"
+                onClick={openSupportTankBattleGame}
+              >
+                <span className="flex h-14 w-14 items-center justify-center rounded-[18px] bg-lime-700 text-white shadow-[0_12px_24px_rgba(77,124,15,0.28)] transition group-active:scale-95">
+                  <TankBattleIcon />
+                </span>
+                <span className="w-full truncate text-xs font-semibold text-slate-900">坦克大战</span>
+              </button>
+            </div>
+          </section>
         ) : (
           <div className="space-y-4">
             <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">

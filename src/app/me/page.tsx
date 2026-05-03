@@ -109,7 +109,7 @@ type ConsumptionSection = "bookings" | "orders";
 type PersonalBookingFilter = "all" | "active" | "confirmed" | "cancelled";
 type PersonalOrderFilter = "all" | "pending" | "confirmed" | "cancelled";
 type MobileConversationView = "list" | "thread";
-type MobileSelfSection = "home" | "profile" | "favorites" | "cards" | "tools" | "notifications";
+type MobileSelfSection = "home" | "profile" | "favorites" | "cards" | "tools" | "games" | "notifications";
 
 type MenuItem = {
   key: DesktopSection;
@@ -5893,6 +5893,41 @@ export default function MePage() {
   }
 
   function renderMobileToolsContent() {
+    return (
+      <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+        <div className="grid grid-cols-4 gap-x-4 gap-y-5">
+          <Link
+            href="/me/tools/shuangkoujifen"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="group flex min-w-0 flex-col items-center gap-2.5 text-center"
+            onClick={(event) => {
+              event.preventDefault();
+              const targetUrl = new URL("/me/tools/shuangkoujifen", window.location.origin).toString();
+              const openedWindow = window.open(targetUrl, "_blank");
+              if (openedWindow) {
+                try {
+                  openedWindow.opener = null;
+                  openedWindow.focus();
+                } catch {
+                  // Some mobile browsers restrict access to the opened window.
+                }
+                return;
+              }
+              window.location.assign(targetUrl);
+            }}
+          >
+            <span className="flex h-14 w-14 items-center justify-center rounded-[18px] bg-emerald-700 text-white shadow-[0_12px_24px_rgba(4,120,87,0.28)] transition group-active:scale-95">
+              <ShuangkouToolIcon />
+            </span>
+            <span className="w-full truncate text-xs font-semibold text-slate-900">双扣计分</span>
+          </Link>
+        </div>
+      </section>
+    );
+  }
+
+  function renderMobileGamesContent() {
     const openTankBattleGame = () => {
       const targetUrl = new URL("/me/games/tank-battle", window.location.origin).toString();
       const openedWindow = window.open(targetUrl, "_blank");
@@ -5909,54 +5944,20 @@ export default function MePage() {
     };
 
     return (
-      <div className="space-y-4">
-        <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
-          <div className="grid grid-cols-4 gap-x-4 gap-y-5">
-            <Link
-              href="/me/tools/shuangkoujifen"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="group flex min-w-0 flex-col items-center gap-2.5 text-center"
-              onClick={(event) => {
-                event.preventDefault();
-                const targetUrl = new URL("/me/tools/shuangkoujifen", window.location.origin).toString();
-                const openedWindow = window.open(targetUrl, "_blank");
-                if (openedWindow) {
-                  try {
-                    openedWindow.opener = null;
-                    openedWindow.focus();
-                  } catch {
-                    // Some mobile browsers restrict access to the opened window.
-                  }
-                  return;
-                }
-                window.location.assign(targetUrl);
-              }}
-            >
-              <span className="flex h-14 w-14 items-center justify-center rounded-[18px] bg-emerald-700 text-white shadow-[0_12px_24px_rgba(4,120,87,0.28)] transition group-active:scale-95">
-                <ShuangkouToolIcon />
-              </span>
-              <span className="w-full truncate text-xs font-semibold text-slate-900">双扣计分</span>
-            </Link>
-          </div>
-        </section>
-
-        <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
-          <div className="mb-4 text-sm font-black text-slate-950">小游戏</div>
-          <div className="grid grid-cols-4 gap-x-4 gap-y-5">
-            <button
-              type="button"
-              className="group flex min-w-0 flex-col items-center gap-2.5 text-center"
-              onClick={openTankBattleGame}
-            >
-              <span className="flex h-14 w-14 items-center justify-center rounded-[18px] bg-lime-700 text-white shadow-[0_12px_24px_rgba(77,124,15,0.28)] transition group-active:scale-95">
-                <TankBattleIcon />
-              </span>
-              <span className="w-full truncate text-xs font-semibold text-slate-900">坦克大战</span>
-            </button>
-          </div>
-        </section>
-      </div>
+      <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+        <div className="grid grid-cols-4 gap-x-4 gap-y-5">
+          <button
+            type="button"
+            className="group flex min-w-0 flex-col items-center gap-2.5 text-center"
+            onClick={openTankBattleGame}
+          >
+            <span className="flex h-14 w-14 items-center justify-center rounded-[18px] bg-lime-700 text-white shadow-[0_12px_24px_rgba(77,124,15,0.28)] transition group-active:scale-95">
+              <TankBattleIcon />
+            </span>
+            <span className="w-full truncate text-xs font-semibold text-slate-900">坦克大战</span>
+          </button>
+        </div>
+      </section>
     );
   }
 
@@ -5993,6 +5994,12 @@ export default function MePage() {
           label: "小工具",
           summary: "常用计分和辅助工具。",
           icon: <ToolboxIcon />,
+        },
+        {
+          key: "games",
+          label: "小游戏",
+          summary: "坦克大战等休闲小游戏。",
+          icon: <TankBattleIcon className="h-5 w-5" />,
         },
         {
           key: "notifications",
@@ -6155,6 +6162,8 @@ export default function MePage() {
                           ? "名片夹"
                           : mobileSelfSection === "tools"
                             ? "小工具"
+                            : mobileSelfSection === "games"
+                              ? "小游戏"
                             : "通知"}
                   </div>
                   {mobileSelfSection === "profile" ? null : (
@@ -6162,10 +6171,12 @@ export default function MePage() {
                       {mobileSelfSection === "favorites"
                         ? "保存常用商户网站。"
                         : mobileSelfSection === "cards"
-                          ? "桌面端已接入完整名片夹，当前可在聊天里直接发送已生成名片。"
-                          : mobileSelfSection === "tools"
-                            ? "常用计分和辅助工具。"
-                            : "这里控制系统消息通知、提示音和震动。"}
+                           ? "桌面端已接入完整名片夹，当前可在聊天里直接发送已生成名片。"
+                           : mobileSelfSection === "tools"
+                             ? "常用计分和辅助工具。"
+                             : mobileSelfSection === "games"
+                               ? "坦克大战等休闲小游戏。"
+                             : "这里控制系统消息通知、提示音和震动。"}
                     </div>
                   )}
                 </div>
@@ -6273,6 +6284,8 @@ export default function MePage() {
               />
             ) : mobileSelfSection === "tools" ? (
               renderMobileToolsContent()
+            ) : mobileSelfSection === "games" ? (
+              renderMobileGamesContent()
             ) : (
               <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
                 <div className="border-b border-slate-100 px-5 py-4">
