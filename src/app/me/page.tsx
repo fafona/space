@@ -66,6 +66,7 @@ import {
 import type { MerchantBookingEditableInput, MerchantBookingRecord } from "@/lib/merchantBookings";
 import { getMerchantBookingDayLabel } from "@/lib/merchantBookingLocale";
 import { MOBILE_SWIPE_BACK_EVENT } from "@/lib/mobileSwipeBack";
+import { useMobilePortraitOrientationLock } from "@/lib/useMobilePortraitOrientationLock";
 import type { MerchantOrderRecord } from "@/lib/merchantOrders";
 
 const MerchantBusinessCardManager = dynamic(() => import("@/components/admin/MerchantBusinessCardManager"), {
@@ -512,7 +513,7 @@ function shouldOpenFaollaShellInitially() {
 function readPersonalMobileViewport() {
   if (typeof window === "undefined") return false;
   if (typeof window.matchMedia === "function") {
-    return window.matchMedia("(max-width: 767px), (pointer: coarse)").matches;
+    return window.matchMedia("(max-width: 767px), (pointer: coarse) and (max-width: 1024px)").matches;
   }
   return window.innerWidth < 768;
 }
@@ -1906,7 +1907,7 @@ function MobileBottomNav({
   ];
 
   return (
-    <div className="support-mobile-nav-shell pointer-events-none fixed bottom-0 left-1/2 z-[2147483298] w-full max-w-md -translate-x-1/2 overscroll-none touch-none transition duration-200 md:hidden">
+    <div className="faolla-personal-mobile-bottom-nav support-mobile-nav-shell pointer-events-none fixed bottom-0 left-1/2 z-[2147483298] w-full max-w-md -translate-x-1/2 overscroll-none touch-none transition duration-200 md:hidden">
       <div
         className="pointer-events-auto relative px-4 pt-3 touch-manipulation"
         style={{ paddingBottom: "calc((env(safe-area-inset-bottom) / 2) + 0.03rem)" }}
@@ -1975,6 +1976,7 @@ function MerchantAvatarBadge() {
 
 export default function MePage() {
   const { locale, setLocale } = useI18n();
+  useMobilePortraitOrientationLock();
   const [payload, setPayload] = useState<MeSessionPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [loggingOut, setLoggingOut] = useState(false);
@@ -6354,7 +6356,20 @@ export default function MePage() {
 
   return (
     <>
-      <main className="hidden min-h-screen bg-slate-50/70 pl-[320px] md:block">
+      <style jsx global>{`
+        @media (pointer: coarse) and (max-width: 1024px) {
+          .faolla-personal-desktop-shell {
+            display: none !important;
+          }
+          .faolla-personal-mobile-shell {
+            display: flex !important;
+          }
+          .faolla-personal-mobile-bottom-nav {
+            display: block !important;
+          }
+        }
+      `}</style>
+      <main className="faolla-personal-desktop-shell hidden min-h-screen bg-slate-50/70 pl-[320px] md:block">
         <aside className="fixed inset-y-0 left-0 z-30 w-[320px] border-r border-slate-200 bg-white/96 shadow-[12px_0_34px_rgba(15,23,42,0.06)] backdrop-blur">
           <div className="flex h-full min-h-0 flex-col p-4">
             <div className="rounded border border-slate-300 bg-slate-50 px-3 py-2">
@@ -6435,7 +6450,7 @@ export default function MePage() {
         </section>
       </main>
 
-      <main className="fixed inset-x-0 top-0 bottom-0 z-[120] flex min-h-0 flex-col overflow-hidden overscroll-none bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_48%,#f8fafc_100%)] touch-manipulation md:hidden">
+      <main className="faolla-personal-mobile-shell fixed inset-x-0 top-0 bottom-0 z-[120] flex min-h-0 flex-col overflow-hidden overscroll-none bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_48%,#f8fafc_100%)] touch-manipulation md:hidden">
         {renderMobileContent()}
         <div className={`support-preserve-light-surface relative min-h-0 flex-1 overflow-hidden bg-white ${mobileTab === "faolla" ? "" : "hidden"}`}>
           <div className="pointer-events-none absolute left-4 top-[calc(env(safe-area-inset-top)+0.75rem)] z-10">

@@ -260,6 +260,7 @@ import { LANGUAGE_OPTIONS, resolveSupportedLocale } from "@/lib/i18n";
 import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
 import { getMerchantServiceState } from "@/lib/merchantServiceStatus";
 import { MOBILE_SWIPE_BACK_EVENT } from "@/lib/mobileSwipeBack";
+import { useMobilePortraitOrientationLock } from "@/lib/useMobilePortraitOrientationLock";
 
 function DeferredAdminPanelLoading({ label }: { label: string }) {
   return (
@@ -4609,6 +4610,16 @@ function readMobileVisualViewportOrientation() {
   return window.innerWidth > window.innerHeight ? "landscape" : "portrait";
 }
 
+function shouldUseMerchantDesktopSidebarViewport() {
+  if (typeof window === "undefined") return false;
+  const desktopWidth = typeof window.matchMedia === "function" ? window.matchMedia("(min-width: 1024px)").matches : window.innerWidth >= 1024;
+  const coarseMobileViewport =
+    typeof window.matchMedia === "function"
+      ? window.matchMedia("(pointer: coarse) and (max-width: 1024px)").matches
+      : false;
+  return desktopWidth && !coarseMobileViewport;
+}
+
 function readMobileVisualViewportMetrics(layoutViewportHeight?: number) {
   if (typeof window === "undefined") {
     return { top: 0, bottom: 0, height: 0 };
@@ -5155,6 +5166,7 @@ export default function AdminClient({
     }
   });
   const isPlatformEditor = editorMode === "platform";
+  useMobilePortraitOrientationLock(!isPlatformEditor);
   const [platformSeedBlocks] = useState<Block[]>(() =>
     isPlatformEditor && Array.isArray(initialPublishedBlocks)
       ? sanitizeBlocksForRuntime(initialPublishedBlocks).blocks
@@ -8227,10 +8239,19 @@ export default function AdminClient({
   useEffect(() => {
     if (typeof window === "undefined") return;
     const media = window.matchMedia("(min-width: 1024px)");
-    const updateLayoutMode = () => setIsDesktopEditorSidebar(media.matches);
+    const coarseMobileMedia = window.matchMedia("(pointer: coarse) and (max-width: 1024px)");
+    const updateLayoutMode = () => setIsDesktopEditorSidebar(shouldUseMerchantDesktopSidebarViewport());
     updateLayoutMode();
     media.addEventListener("change", updateLayoutMode);
-    return () => media.removeEventListener("change", updateLayoutMode);
+    coarseMobileMedia.addEventListener("change", updateLayoutMode);
+    window.addEventListener("resize", updateLayoutMode);
+    window.addEventListener("orientationchange", updateLayoutMode);
+    return () => {
+      media.removeEventListener("change", updateLayoutMode);
+      coarseMobileMedia.removeEventListener("change", updateLayoutMode);
+      window.removeEventListener("resize", updateLayoutMode);
+      window.removeEventListener("orientationchange", updateLayoutMode);
+    };
   }, []);
 
   useEffect(() => {
