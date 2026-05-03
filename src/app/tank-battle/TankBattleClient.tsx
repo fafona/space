@@ -314,16 +314,23 @@ function requestTankBattleLandscapeMode() {
 
 function readTankBattleMobileFrame(): TankBattleMobileFrame | null {
   if (typeof window === "undefined") return null;
-  const isMobile =
-    typeof window.matchMedia === "function"
-      ? window.matchMedia("(max-width: 900px), (pointer: coarse) and (max-width: 1024px)").matches
-      : window.innerWidth <= 900;
-  if (!isMobile) return null;
   const visualViewport = window.visualViewport;
   const viewportWidth = Math.round(visualViewport?.width || window.innerWidth || 0);
   const viewportHeight = Math.round(visualViewport?.height || window.innerHeight || 0);
   const fallbackWidth = Number.isFinite(window.screen?.width) ? window.screen.width : viewportWidth;
   const fallbackHeight = Number.isFinite(window.screen?.height) ? window.screen.height : viewportHeight;
+  const shortestSide = Math.min(
+    Math.max(1, viewportWidth),
+    Math.max(1, viewportHeight),
+    Math.max(1, fallbackWidth),
+    Math.max(1, fallbackHeight),
+  );
+  const isMobile =
+    typeof window.matchMedia === "function"
+      ? window.matchMedia("(max-width: 900px), (pointer: coarse) and (max-width: 1024px)").matches ||
+        (window.matchMedia("(pointer: coarse)").matches && shortestSide <= 900)
+      : window.innerWidth <= 900;
+  if (!isMobile) return null;
   const width = Math.max(viewportWidth, viewportHeight, fallbackWidth, fallbackHeight);
   const height = Math.min(
     Math.max(1, viewportWidth),
@@ -1567,6 +1574,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
   const joystickPointerIdRef = useRef<number | null>(null);
   const joystickDirectionRef = useRef<Direction | null>(null);
   const firePointerIdRef = useRef<number | null>(null);
+  const stableMobileFrameRef = useRef<TankBattleMobileFrame | null>(null);
   const [mobileFrame, setMobileFrame] = useState<TankBattleMobileFrame | null>(readTankBattleMobileFrame);
   const [joystickThumb, setJoystickThumb] = useState({ x: 0, y: 0, active: false });
   const [menuView, setMenuView] = useState<"mode" | "online">("mode");
@@ -1602,8 +1610,11 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
     [mobileFrame],
   );
   const syncMobileFrame = useCallback(() => {
+    if (stableMobileFrameRef.current) return;
     const nextFrame = readTankBattleMobileFrame();
-    if (nextFrame) setMobileFrame(nextFrame);
+    if (!nextFrame) return;
+    stableMobileFrameRef.current = nextFrame;
+    setMobileFrame(nextFrame);
   }, []);
   const requestStableLandscapeMode = useCallback(() => {
     requestTankBattleLandscapeMode();
@@ -1612,6 +1623,12 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
     window.setTimeout(syncMobileFrame, 180);
     window.setTimeout(syncMobileFrame, 420);
   }, [syncMobileFrame]);
+
+  useEffect(() => {
+    if (mobileFrame && !stableMobileFrameRef.current) {
+      stableMobileFrameRef.current = mobileFrame;
+    }
+  }, [mobileFrame]);
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof document === "undefined") return;
@@ -2150,6 +2167,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
   return (
     <main
       data-mobile-swipe-back-ignore
+      data-tank-battle-mobile={mobileFrame ? "true" : "false"}
       data-tank-battle-rotated={mobileFrame?.rotateShell ? "true" : "false"}
       className="tank-battle-page min-h-screen bg-[#eef2f3] px-3 pb-[calc(env(safe-area-inset-bottom)+1.25rem)] pt-[calc(env(safe-area-inset-top)+0.9rem)] text-slate-950"
       style={pageStyle}
@@ -2186,161 +2204,159 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
           display: none;
         }
 
-        @media (max-width: 900px) {
-          .tank-battle-page {
-            position: fixed;
-            inset: 0;
-            height: var(--tank-battle-fixed-viewport-height, 100dvh);
-            min-height: var(--tank-battle-fixed-viewport-height, 100dvh);
-            width: var(--tank-battle-fixed-viewport-width, 100vw);
-            overflow: hidden;
-            padding: 0;
-            background: #020617;
-            overscroll-behavior: none;
-          }
+        .tank-battle-page[data-tank-battle-mobile="true"] {
+          position: fixed;
+          inset: 0;
+          height: var(--tank-battle-fixed-viewport-height, 100dvh);
+          min-height: var(--tank-battle-fixed-viewport-height, 100dvh);
+          width: var(--tank-battle-fixed-viewport-width, 100vw);
+          overflow: hidden;
+          padding: 0;
+          background: #020617;
+          overscroll-behavior: none;
+        }
 
-          .tank-battle-shell {
-            position: fixed;
-            left: 0;
-            top: 0;
-            height: var(--tank-battle-landscape-height, 100dvh);
-            width: var(--tank-battle-landscape-width, 100dvw);
-            max-width: none;
-            gap: 0;
-            overflow: hidden;
-            overscroll-behavior: none;
-            touch-action: none;
-            transform: none;
-            transform-origin: top left;
-          }
+        .tank-battle-page[data-tank-battle-mobile="true"] .tank-battle-shell {
+          position: fixed;
+          left: 0;
+          top: 0;
+          height: var(--tank-battle-landscape-height, 100dvh);
+          width: var(--tank-battle-landscape-width, 100dvw);
+          max-width: none;
+          gap: 0;
+          overflow: hidden;
+          overscroll-behavior: none;
+          touch-action: none;
+          transform: none;
+          transform-origin: top left;
+        }
 
-          .tank-battle-page[data-tank-battle-rotated="true"] .tank-battle-shell {
-            transform: rotate(90deg) translateY(-100%);
-          }
+        .tank-battle-page[data-tank-battle-mobile="true"][data-tank-battle-rotated="true"] .tank-battle-shell {
+          transform: rotate(90deg) translateY(-100%);
+        }
 
-          .tank-battle-header,
-          .tank-battle-stats,
-          .tank-battle-mode-controls,
-          .tank-battle-sidebar,
-          .tank-battle-footer {
-            display: none !important;
-          }
+        .tank-battle-page[data-tank-battle-mobile="true"] .tank-battle-header,
+        .tank-battle-page[data-tank-battle-mobile="true"] .tank-battle-stats,
+        .tank-battle-page[data-tank-battle-mobile="true"] .tank-battle-mode-controls,
+        .tank-battle-page[data-tank-battle-mobile="true"] .tank-battle-sidebar,
+        .tank-battle-page[data-tank-battle-mobile="true"] .tank-battle-footer {
+          display: none !important;
+        }
 
-          .tank-battle-layout {
-            display: block;
-            height: var(--tank-battle-landscape-height, 100dvh);
-          }
+        .tank-battle-page[data-tank-battle-mobile="true"] .tank-battle-layout {
+          display: block;
+          height: var(--tank-battle-landscape-height, 100dvh);
+        }
 
-          .tank-battle-stage-card {
-            position: relative;
-            height: var(--tank-battle-landscape-height, 100dvh);
-            overflow: hidden;
-            border: 0;
-            border-radius: 0;
-            background: #020617;
-            padding: 0;
-            box-shadow: none;
-            overscroll-behavior: none;
-            touch-action: none;
-          }
+        .tank-battle-page[data-tank-battle-mobile="true"] .tank-battle-stage-card {
+          position: relative;
+          height: var(--tank-battle-landscape-height, 100dvh);
+          overflow: hidden;
+          border: 0;
+          border-radius: 0;
+          background: #020617;
+          padding: 0;
+          box-shadow: none;
+          overscroll-behavior: none;
+          touch-action: none;
+        }
 
-          .tank-battle-canvas-wrap {
-            height: var(--tank-battle-landscape-height, 100dvh);
-            max-width: none;
-            width: var(--tank-battle-landscape-height, 100dvh);
-            padding: 4px;
-            border-radius: 0;
-            box-shadow: none;
-            overflow: hidden;
-            overscroll-behavior: none;
-            touch-action: none;
-          }
+        .tank-battle-page[data-tank-battle-mobile="true"] .tank-battle-canvas-wrap {
+          height: var(--tank-battle-landscape-height, 100dvh);
+          max-width: none;
+          width: var(--tank-battle-landscape-height, 100dvh);
+          padding: 4px;
+          border-radius: 0;
+          box-shadow: none;
+          overflow: hidden;
+          overscroll-behavior: none;
+          touch-action: none;
+        }
 
-          .tank-battle-canvas-wrap canvas {
-            border-radius: 0;
-            touch-action: none;
-          }
+        .tank-battle-page[data-tank-battle-mobile="true"] .tank-battle-canvas-wrap canvas {
+          border-radius: 0;
+          touch-action: none;
+        }
 
-          .tank-battle-mobile-controls {
-            position: absolute;
-            inset: 0;
-            display: flex !important;
-            align-items: flex-end;
-            margin: 0;
-            border: 0;
-            border-radius: 0;
-            background: linear-gradient(90deg, rgba(2, 6, 23, 0.42), transparent 30%, transparent 70%, rgba(2, 6, 23, 0.42));
-            padding: 0 18px 16px 18px;
-            pointer-events: none;
-            box-shadow: none;
-            overscroll-behavior: none;
-            touch-action: none;
-          }
+        .tank-battle-page[data-tank-battle-mobile="true"] .tank-battle-mobile-controls {
+          position: absolute;
+          inset: 0;
+          display: flex !important;
+          align-items: flex-end;
+          margin: 0;
+          border: 0;
+          border-radius: 0;
+          background: linear-gradient(90deg, rgba(2, 6, 23, 0.42), transparent 30%, transparent 70%, rgba(2, 6, 23, 0.42));
+          padding: 0 18px 16px 18px;
+          pointer-events: none;
+          box-shadow: none;
+          overscroll-behavior: none;
+          touch-action: none;
+        }
 
-          .tank-battle-mobile-controls > div {
-            width: 100%;
-            pointer-events: none;
-          }
+        .tank-battle-page[data-tank-battle-mobile="true"] .tank-battle-mobile-controls > div {
+          width: 100%;
+          pointer-events: none;
+        }
 
-          .tank-battle-mobile-controls button {
-            pointer-events: auto;
-          }
+        .tank-battle-page[data-tank-battle-mobile="true"] .tank-battle-mobile-controls button {
+          pointer-events: auto;
+        }
 
-          .tank-battle-mobile-controls.is-hidden {
-            display: none !important;
-          }
+        .tank-battle-page[data-tank-battle-mobile="true"] .tank-battle-mobile-controls.is-hidden {
+          display: none !important;
+        }
 
-          .tank-battle-mobile-hud {
-            position: absolute;
-            left: 12px;
-            top: 10px;
-            z-index: 3;
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-            pointer-events: none;
-          }
+        .tank-battle-page[data-tank-battle-mobile="true"] .tank-battle-mobile-hud {
+          position: absolute;
+          left: 12px;
+          top: 10px;
+          z-index: 3;
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+          pointer-events: none;
+        }
 
-          .tank-battle-mobile-hud > div {
-            min-width: 86px;
-            border-radius: 14px;
-            border: 1px solid rgba(255, 255, 255, 0.14);
-            background: rgba(2, 6, 23, 0.68);
-            padding: 7px 10px;
-            color: #f8fafc;
-            box-shadow: 0 10px 22px rgba(2, 6, 23, 0.24);
-            backdrop-filter: blur(10px);
-          }
+        .tank-battle-page[data-tank-battle-mobile="true"] .tank-battle-mobile-hud > div {
+          min-width: 86px;
+          border-radius: 14px;
+          border: 1px solid rgba(255, 255, 255, 0.14);
+          background: rgba(2, 6, 23, 0.68);
+          padding: 7px 10px;
+          color: #f8fafc;
+          box-shadow: 0 10px 22px rgba(2, 6, 23, 0.24);
+          backdrop-filter: blur(10px);
+        }
 
-          .tank-battle-mobile-pause-button {
-            position: absolute;
-            right: 12px;
-            top: 10px;
-            z-index: 4;
-            display: inline-flex;
-            height: 44px;
-            width: 44px;
-            align-items: center;
-            justify-content: center;
-            border-radius: 16px;
-            border: 1px solid rgba(255, 255, 255, 0.16);
-            background: rgba(2, 6, 23, 0.72);
-            color: #f8fafc;
-            box-shadow: 0 12px 26px rgba(2, 6, 23, 0.28);
-            backdrop-filter: blur(10px);
-          }
+        .tank-battle-page[data-tank-battle-mobile="true"] .tank-battle-mobile-pause-button {
+          position: absolute;
+          right: 12px;
+          top: 10px;
+          z-index: 4;
+          display: inline-flex;
+          height: 44px;
+          width: 44px;
+          align-items: center;
+          justify-content: center;
+          border-radius: 16px;
+          border: 1px solid rgba(255, 255, 255, 0.16);
+          background: rgba(2, 6, 23, 0.72);
+          color: #f8fafc;
+          box-shadow: 0 12px 26px rgba(2, 6, 23, 0.28);
+          backdrop-filter: blur(10px);
+        }
 
-          .tank-battle-menu-overlay {
-            position: absolute;
-            inset: 0;
-            z-index: 5;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 0;
-            background: radial-gradient(circle at center, rgba(15, 23, 42, 0.24), rgba(2, 6, 23, 0.74));
-            padding: 16px 18px;
-          }
+        .tank-battle-page[data-tank-battle-mobile="true"] .tank-battle-menu-overlay {
+          position: absolute;
+          inset: 0;
+          z-index: 5;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 0;
+          background: radial-gradient(circle at center, rgba(15, 23, 42, 0.24), rgba(2, 6, 23, 0.74));
+          padding: 16px 18px;
         }
       `}</style>
       <div className="tank-battle-shell mx-auto flex max-w-6xl flex-col gap-3">
