@@ -2127,7 +2127,15 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
   const updateJoystickFromPointer = (event: ReactPointerEvent<HTMLButtonElement>) => {
     event.preventDefault();
     const rect = event.currentTarget.getBoundingClientRect();
-    applyJoystickVector(event.clientX - rect.left - rect.width / 2, event.clientY - rect.top - rect.height / 2);
+    const screenX = event.clientX - rect.left - rect.width / 2;
+    const screenY = event.clientY - rect.top - rect.height / 2;
+
+    if (mobileFrame?.rotateShell) {
+      applyJoystickVector(screenY, -screenX);
+      return;
+    }
+
+    applyJoystickVector(screenX, screenY);
   };
 
   const handleJoystickDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
@@ -2337,6 +2345,10 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
           pointer-events: auto;
         }
 
+        .tank-battle-page[data-tank-battle-mobile="true"] .tank-battle-fire-button {
+          margin-right: 24px;
+        }
+
         .tank-battle-page[data-tank-battle-mobile="true"] .tank-battle-mobile-controls.is-hidden {
           display: none !important;
         }
@@ -2499,6 +2511,10 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
 
           .tank-battle-page .tank-battle-mobile-controls button {
             pointer-events: auto;
+          }
+
+          .tank-battle-page .tank-battle-fire-button {
+            margin-right: 24px;
           }
 
           .tank-battle-page .tank-battle-mobile-controls.is-hidden {
@@ -2802,7 +2818,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
                 <button
                   type="button"
                   aria-label="开火"
-                  className="flex h-[76px] w-[76px] shrink-0 touch-none select-none items-center justify-center rounded-full border-[5px] border-rose-300/40 bg-rose-600 text-xl font-black text-white shadow-[0_16px_34px_rgba(190,18,60,0.34)] active:scale-95"
+                  className="tank-battle-fire-button flex h-[76px] w-[76px] shrink-0 touch-none select-none items-center justify-center rounded-full border-[5px] border-rose-300/40 bg-rose-600 text-xl font-black text-white shadow-[0_16px_34px_rgba(190,18,60,0.34)] active:scale-95"
                   onPointerDown={handleFireDown}
                   onPointerUp={clearFire}
                   onPointerCancel={clearFire}
