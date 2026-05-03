@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import TankBattleIcon from "@/components/TankBattleIcon";
 import { hasSupabaseEnv, supabase } from "@/lib/supabase";
 
@@ -1018,7 +1019,10 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
   const remoteInputRef = useRef<InputState>(cloneInput(emptyInput));
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const lastBroadcastRef = useRef(0);
+  const joystickPointerIdRef = useRef<number | null>(null);
+  const firePointerIdRef = useRef<number | null>(null);
   const [touchPlayer, setTouchPlayer] = useState<1 | 2>(1);
+  const [joystickThumb, setJoystickThumb] = useState({ x: 0, y: 0, active: false });
   const [roomInput, setRoomInput] = useState("");
   const [roomId, setRoomId] = useState("");
   const [onlineRole, setOnlineRole] = useState<OnlineRole>("none");
@@ -1288,17 +1292,155 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
     touchInputRef.current = { ...touchInputRef.current, ...patch };
   };
 
-  const clearTouch = () => {
-    touchInputRef.current = cloneInput(emptyInput);
+  const applyJoystickVector = (rawX: number, rawY: number) => {
+    const maxRadius = 42;
+    const deadZone = 10;
+    const distance = Math.hypot(rawX, rawY);
+    const scale = distance > maxRadius ? maxRadius / distance : 1;
+    const x = rawX * scale;
+    const y = rawY * scale;
+    setJoystickThumb({ x, y, active: distance > deadZone });
+
+    if (distance < deadZone) {
+      setTouch({ up: false, down: false, left: false, right: false });
+      return;
+    }
+
+    if (Math.abs(rawX) > Math.abs(rawY)) {
+      setTouch({ up: false, down: false, left: rawX < 0, right: rawX > 0 });
+      return;
+    }
+
+    setTouch({ up: rawY < 0, down: rawY > 0, left: false, right: false });
   };
 
-  const controlButtonClass =
-    "flex h-14 w-14 select-none items-center justify-center rounded-2xl border border-slate-700 bg-slate-900 text-xl font-black text-white shadow-[0_12px_28px_rgba(2,6,23,0.26)] active:scale-95";
+  const updateJoystickFromPointer = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    const rect = event.currentTarget.getBoundingClientRect();
+    applyJoystickVector(event.clientX - rect.left - rect.width / 2, event.clientY - rect.top - rect.height / 2);
+  };
+
+  const handleJoystickDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    joystickPointerIdRef.current = event.pointerId;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    updateJoystickFromPointer(event);
+  };
+
+  const handleJoystickMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (joystickPointerIdRef.current !== event.pointerId) return;
+    updateJoystickFromPointer(event);
+  };
+
+  const clearJoystick = (event?: ReactPointerEvent<HTMLButtonElement>) => {
+    if (event) {
+      event.preventDefault();
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+    }
+    joystickPointerIdRef.current = null;
+    setJoystickThumb({ x: 0, y: 0, active: false });
+    setTouch({ up: false, down: false, left: false, right: false });
+  };
+
+  const handleFireDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    firePointerIdRef.current = event.pointerId;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setTouch({ fire: true });
+  };
+
+  const clearFire = (event?: ReactPointerEvent<HTMLButtonElement>) => {
+    if (event) {
+      event.preventDefault();
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+    }
+    firePointerIdRef.current = null;
+    setTouch({ fire: false });
+  };
 
   return (
-    <main className="min-h-screen bg-[#eef2f3] px-3 pb-[calc(env(safe-area-inset-bottom)+1.25rem)] pt-[calc(env(safe-area-inset-top)+0.9rem)] text-slate-950">
-      <div className="mx-auto flex max-w-6xl flex-col gap-3">
-        <header className="flex items-center justify-between gap-3 rounded-[24px] border border-slate-200 bg-white px-4 py-3 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+    <main className="tank-battle-page min-h-screen bg-[#eef2f3] px-3 pb-[calc(env(safe-area-inset-bottom)+1.25rem)] pt-[calc(env(safe-area-inset-top)+0.9rem)] text-slate-950">
+      <style jsx global>{`
+        @media (orientation: landscape) and (max-height: 640px) {
+          .tank-battle-page {
+            height: 100dvh;
+            overflow: hidden;
+            padding: 0;
+            background: #020617;
+          }
+
+          .tank-battle-shell {
+            height: 100dvh;
+            max-width: none;
+            gap: 0;
+          }
+
+          .tank-battle-header,
+          .tank-battle-stats,
+          .tank-battle-mode-controls,
+          .tank-battle-sidebar,
+          .tank-battle-footer {
+            display: none !important;
+          }
+
+          .tank-battle-layout {
+            display: block;
+            height: 100dvh;
+          }
+
+          .tank-battle-stage-card {
+            position: relative;
+            height: 100dvh;
+            overflow: hidden;
+            border: 0;
+            border-radius: 0;
+            background: #020617;
+            padding: 0;
+            box-shadow: none;
+          }
+
+          .tank-battle-canvas-wrap {
+            height: 100dvh;
+            max-width: none;
+            width: 100dvh;
+            padding: max(4px, env(safe-area-inset-top));
+            border-radius: 0;
+            box-shadow: none;
+          }
+
+          .tank-battle-canvas-wrap canvas {
+            border-radius: 0;
+          }
+
+          .tank-battle-mobile-controls {
+            position: absolute;
+            inset: 0;
+            display: flex !important;
+            align-items: flex-end;
+            margin: 0;
+            border: 0;
+            border-radius: 0;
+            background: linear-gradient(90deg, rgba(2, 6, 23, 0.42), transparent 30%, transparent 70%, rgba(2, 6, 23, 0.42));
+            padding: 0 max(18px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
+            pointer-events: none;
+            box-shadow: none;
+          }
+
+          .tank-battle-mobile-controls > div {
+            width: 100%;
+            pointer-events: none;
+          }
+
+          .tank-battle-mobile-controls button {
+            pointer-events: auto;
+          }
+        }
+      `}</style>
+      <div className="tank-battle-shell mx-auto flex max-w-6xl flex-col gap-3">
+        <header className="tank-battle-header flex items-center justify-between gap-3 rounded-[24px] border border-slate-200 bg-white px-4 py-3 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
           <div className="flex min-w-0 items-center gap-3">
             <span className="flex h-13 w-13 shrink-0 items-center justify-center rounded-[18px] bg-lime-700 text-white shadow-[0_12px_24px_rgba(77,124,15,0.28)]">
               <TankBattleIcon />
@@ -1314,9 +1456,9 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
           </div>
         </header>
 
-        <section className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_330px]">
-          <div className="rounded-[24px] border border-slate-200 bg-white p-3 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
-            <div className="grid grid-cols-4 gap-2 pb-3">
+        <section className="tank-battle-layout grid gap-3 lg:grid-cols-[minmax(0,1fr)_330px]">
+          <div className="tank-battle-stage-card rounded-[24px] border border-slate-200 bg-white p-3 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+            <div className="tank-battle-stats grid grid-cols-4 gap-2 pb-3">
               {[
                 ["关卡", ui.stage],
                 ["模式", modeLabel],
@@ -1330,7 +1472,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
               ))}
             </div>
 
-            <div className="mx-auto aspect-square w-full max-w-[min(92vw,620px)] overflow-hidden rounded-[18px] bg-slate-950 p-1 shadow-inner">
+            <div className="tank-battle-canvas-wrap mx-auto aspect-square w-full max-w-[min(92vw,620px)] overflow-hidden rounded-[18px] bg-slate-950 p-1 shadow-inner">
               <canvas
                 ref={canvasRef}
                 width={CANVAS_SIZE}
@@ -1339,7 +1481,46 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
               />
             </div>
 
-            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <section className="tank-battle-mobile-controls mt-2 rounded-[22px] border border-slate-200 bg-slate-950 px-4 py-3 shadow-inner lg:hidden">
+              <div className="flex items-center justify-between gap-4">
+                <button
+                  type="button"
+                  aria-label="移动轮盘"
+                  className="relative h-[118px] w-[118px] shrink-0 touch-none select-none rounded-full border border-white/15 bg-slate-900/95 shadow-[0_16px_36px_rgba(2,6,23,0.32)] active:scale-[0.99]"
+                  onPointerDown={handleJoystickDown}
+                  onPointerMove={handleJoystickMove}
+                  onPointerUp={clearJoystick}
+                  onPointerCancel={clearJoystick}
+                  onLostPointerCapture={() => clearJoystick()}
+                  onContextMenu={(event) => event.preventDefault()}
+                >
+                  <span className="absolute left-1/2 top-3 h-2 w-2 -translate-x-1/2 rounded-full bg-white/35" />
+                  <span className="absolute bottom-3 left-1/2 h-2 w-2 -translate-x-1/2 rounded-full bg-white/25" />
+                  <span className="absolute left-3 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-white/25" />
+                  <span className="absolute right-3 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-white/25" />
+                  <span className="absolute left-1/2 top-1/2 h-[74px] w-[74px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/10 bg-white/5" />
+                  <span
+                    className={`absolute left-1/2 top-1/2 h-[50px] w-[50px] rounded-full border border-white/20 bg-slate-100 shadow-[0_10px_24px_rgba(0,0,0,0.28)] transition ${joystickThumb.active ? "opacity-100" : "opacity-90"}`}
+                    style={{ transform: `translate(calc(-50% + ${joystickThumb.x}px), calc(-50% + ${joystickThumb.y}px))` }}
+                  />
+                </button>
+
+                <button
+                  type="button"
+                  aria-label="开火"
+                  className="flex h-[76px] w-[76px] shrink-0 touch-none select-none items-center justify-center rounded-full border-[5px] border-rose-300/40 bg-rose-600 text-xl font-black text-white shadow-[0_16px_34px_rgba(190,18,60,0.34)] active:scale-95"
+                  onPointerDown={handleFireDown}
+                  onPointerUp={clearFire}
+                  onPointerCancel={clearFire}
+                  onLostPointerCapture={() => clearFire()}
+                  onContextMenu={(event) => event.preventDefault()}
+                >
+                  火
+                </button>
+              </div>
+            </section>
+
+            <div className="tank-battle-mode-controls mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
               <button type="button" className="rounded-2xl bg-slate-950 px-3 py-3 text-sm font-bold text-white" onClick={startSolo}>
                 单人开始
               </button>
@@ -1355,7 +1536,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
             </div>
           </div>
 
-          <aside className="space-y-3">
+          <aside className="tank-battle-sidebar space-y-3">
             <section className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
               <div className="flex items-center justify-between gap-3">
                 <div>
@@ -1441,32 +1622,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
           </aside>
         </section>
 
-        <section className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_14px_34px_rgba(15,23,42,0.08)] lg:hidden">
-          <div className="grid grid-cols-[1fr_auto] gap-4">
-            <div className="grid w-[190px] grid-cols-3 gap-2">
-              <span />
-              <button type="button" className={controlButtonClass} onPointerDown={() => setTouch({ up: true })} onPointerUp={() => setTouch({ up: false })} onPointerCancel={clearTouch}>↑</button>
-              <span />
-              <button type="button" className={controlButtonClass} onPointerDown={() => setTouch({ left: true })} onPointerUp={() => setTouch({ left: false })} onPointerCancel={clearTouch}>←</button>
-              <button type="button" className={controlButtonClass} onPointerDown={clearTouch}>•</button>
-              <button type="button" className={controlButtonClass} onPointerDown={() => setTouch({ right: true })} onPointerUp={() => setTouch({ right: false })} onPointerCancel={clearTouch}>→</button>
-              <span />
-              <button type="button" className={controlButtonClass} onPointerDown={() => setTouch({ down: true })} onPointerUp={() => setTouch({ down: false })} onPointerCancel={clearTouch}>↓</button>
-              <span />
-            </div>
-            <button
-              type="button"
-              className="flex h-[190px] w-[92px] select-none items-center justify-center rounded-[28px] bg-rose-700 text-xl font-black text-white shadow-[0_14px_34px_rgba(190,18,60,0.28)] active:scale-95"
-              onPointerDown={() => setTouch({ fire: true })}
-              onPointerUp={() => setTouch({ fire: false })}
-              onPointerCancel={clearTouch}
-            >
-              开火
-            </button>
-          </div>
-        </section>
-
-        <section className="rounded-[24px] border border-slate-200 bg-white p-4 text-xs leading-6 text-slate-500 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+        <section className="tank-battle-footer rounded-[24px] border border-slate-200 bg-white p-4 text-xs leading-6 text-slate-500 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
           已实现基地防守、砖墙/钢墙/水域/树林/冰面、敌军出生、敌军 AI、子弹碰撞、玩家生命、火力升级、护盾、清屏、暂停敌军、基地钢墙、加命、关卡循环、单人、本地双人和联网双打。
         </section>
       </div>
