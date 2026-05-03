@@ -119,6 +119,7 @@ type OnlineRole = "none" | "host" | "guest";
 
 type TankBattleClientProps = {
   subtitle?: string;
+  lobbyHref?: string;
 };
 
 type TankBattleSoundName =
@@ -294,7 +295,9 @@ function requestTankBattleLandscapeMode() {
 
   const orientation = window.screen.orientation as LockableScreenOrientation | undefined;
   const lockLandscape = () => {
-    void orientation?.lock?.("landscape").catch(() => undefined);
+    const lock = orientation?.lock?.bind(orientation);
+    if (!lock) return;
+    void lock("landscape-primary").catch(() => lock("landscape").catch(() => undefined));
   };
   const element = document.documentElement as FullscreenElement;
   const requestFullscreen = element.requestFullscreen?.bind(element) ?? element.webkitRequestFullscreen?.bind(element);
@@ -1541,7 +1544,7 @@ function drawGame(ctx: CanvasRenderingContext2D, state: GameState) {
   }
 }
 
-export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }: TankBattleClientProps) {
+export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅", lobbyHref = "/game-lobby" }: TankBattleClientProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const stateRef = useRef<GameState>(createGameState("solo"));
   const keyboardP1Ref = useRef<InputState>(cloneInput(emptyInput));
@@ -1813,6 +1816,13 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
     soundSnapshotRef.current = createTankBattleSoundSnapshot(nextState);
     setUi(buildUiState(nextState, "", "none", 0, "未联网"));
   }, []);
+
+  const returnToGameLobby = useCallback(() => {
+    exitGame();
+    if (typeof window === "undefined") return;
+    const targetUrl = new URL(lobbyHref, window.location.origin).toString();
+    window.location.assign(targetUrl);
+  }, [exitGame, lobbyHref]);
 
   const restartCurrent = useCallback(() => {
     if (isGuest) return;
@@ -2152,7 +2162,11 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
 
         @media (max-width: 900px) {
           .tank-battle-page {
+            position: fixed;
+            inset: 0;
             height: 100dvh;
+            min-height: 100dvh;
+            width: 100vw;
             overflow: hidden;
             padding: 0;
             background: #020617;
@@ -2160,6 +2174,9 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
           }
 
           .tank-battle-shell {
+            position: fixed;
+            left: 0;
+            top: 0;
             height: var(--tank-battle-landscape-height, 100dvh);
             width: var(--tank-battle-landscape-width, 100dvw);
             max-width: none;
@@ -2296,7 +2313,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
 
         @media (orientation: portrait) and (max-width: 900px) {
           .tank-battle-shell {
-            position: absolute;
+            position: fixed;
             left: 0;
             top: 0;
             width: var(--tank-battle-landscape-width, 100dvh);
@@ -2502,6 +2519,13 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
                       onClick={exitGame}
                     >
                       退出游戏
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-2xl border border-sky-300/35 bg-sky-500/18 px-4 py-4 text-base font-black text-sky-50 active:scale-[0.98]"
+                      onClick={returnToGameLobby}
+                    >
+                      返回游戏大厅
                     </button>
                   </div>
                 </div>

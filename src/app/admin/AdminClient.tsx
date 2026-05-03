@@ -5292,6 +5292,24 @@ export default function AdminClient({
   }, []);
   const [supportMobileBusinessSection, setSupportMobileBusinessSection] = useState<"booking" | "orders">("booking");
   const [supportSelfSectionView, setSupportSelfSectionView] = useState<SupportSelfSectionView>("home");
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const targetTab = params.get("mobileTab");
+    const targetSection = params.get("selfSection");
+    if (targetTab !== "self" && !targetSection) return;
+    setSupportMobileHomeTab("self");
+    if (
+      targetSection === "home" ||
+      targetSection === "profile" ||
+      targetSection === "cards" ||
+      targetSection === "tools" ||
+      targetSection === "games" ||
+      targetSection === "notifications"
+    ) {
+      setSupportSelfSectionView(targetSection);
+    }
+  }, []);
   const [supportPeerLocalMessages, setSupportPeerLocalMessages] = useState<LocalPeerSupportMessage[]>([]);
   const [supportBusinessCardDialogOpen, setSupportBusinessCardDialogOpen] = useState(false);
   const [supportMerchantInfoSheetOpen, setSupportMerchantInfoSheetOpen] = useState(false);
@@ -15382,22 +15400,22 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                   ? "我的资料"
                   : supportSelfSectionView === "cards"
                     ? "名片夹"
-                    : supportSelfSectionView === "tools"
-                      ? "小工具"
-                      : supportSelfSectionView === "games"
-                        ? "小游戏"
-                      : "通知"}
+                  : supportSelfSectionView === "tools"
+                    ? "小工具"
+                  : supportSelfSectionView === "games"
+                    ? "游戏大厅"
+                  : "通知"}
               </div>
               <div className="mt-1 truncate text-xs text-slate-500">
                 {supportSelfSectionView === "profile"
                   ? "手机端与电脑端共用同一份商户资料。"
                   : supportSelfSectionView === "cards"
                     ? "这里统一管理聊天展示名片与复制能力。"
-                    : supportSelfSectionView === "tools"
-                      ? "商家后台里的常用计分工具。"
-                      : supportSelfSectionView === "games"
-                        ? "坦克大战等休闲小游戏。"
-                      : "这里控制系统消息通知、提示音和震动。"}
+                  : supportSelfSectionView === "tools"
+                    ? "商家后台里的常用计分工具。"
+                  : supportSelfSectionView === "games"
+                    ? "坦克大战等休闲游戏。"
+                  : "这里控制系统消息通知、提示音和震动。"}
               </div>
             </div>
           </div>
@@ -15457,8 +15475,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                   },
                   {
                     key: "games",
-                    label: "小游戏",
-                    summary: "坦克大战等休闲小游戏",
+                    label: "游戏大厅",
+                    summary: "坦克大战等休闲游戏",
                     icon: <TankBattleIcon className="h-5 w-5" />,
                     onClick: () => setSupportSelfSectionView("games" as const),
                   },

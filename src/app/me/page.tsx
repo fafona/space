@@ -2017,6 +2017,25 @@ export default function MePage() {
   const [consumptionSection, setConsumptionSection] = useState<ConsumptionSection>("bookings");
   const [mobileConversationView, setMobileConversationView] = useState<MobileConversationView>("list");
   const [mobileSelfSection, setMobileSelfSection] = useState<MobileSelfSection>("home");
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const targetTab = params.get("mobileTab");
+    const targetSection = params.get("selfSection");
+    if (targetTab !== "self" && !targetSection) return;
+    setMobileTab("self");
+    if (
+      targetSection === "home" ||
+      targetSection === "profile" ||
+      targetSection === "favorites" ||
+      targetSection === "cards" ||
+      targetSection === "tools" ||
+      targetSection === "games" ||
+      targetSection === "notifications"
+    ) {
+      setMobileSelfSection(targetSection);
+    }
+  }, []);
   const [mobileSelfLanguageMenuOpen, setMobileSelfLanguageMenuOpen] = useState(false);
   const [conversationInfoOpen, setConversationInfoOpen] = useState(false);
   const [selectedConversationKey, setSelectedConversationKey] = useState<PersonalConversationKey>(OFFICIAL_CONVERSATION_KEY);
@@ -5999,8 +6018,8 @@ export default function MePage() {
         },
         {
           key: "games",
-          label: "小游戏",
-          summary: "坦克大战等休闲小游戏。",
+          label: "游戏大厅",
+          summary: "坦克大战等休闲游戏。",
           icon: <TankBattleIcon className="h-5 w-5" />,
         },
         {
@@ -6165,7 +6184,7 @@ export default function MePage() {
                           : mobileSelfSection === "tools"
                             ? "小工具"
                             : mobileSelfSection === "games"
-                              ? "小游戏"
+                              ? "游戏大厅"
                             : "通知"}
                   </div>
                   {mobileSelfSection === "profile" ? null : (
@@ -6177,7 +6196,7 @@ export default function MePage() {
                            : mobileSelfSection === "tools"
                              ? "常用计分和辅助工具。"
                              : mobileSelfSection === "games"
-                               ? "坦克大战等休闲小游戏。"
+                               ? "坦克大战等休闲游戏。"
                              : "这里控制系统消息通知、提示音和震动。"}
                     </div>
                   )}
