@@ -2099,8 +2099,8 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
   };
 
   const applyJoystickVector = (rawX: number, rawY: number) => {
-    const maxRadius = 48;
-    const deadZone = 14;
+    const maxRadius = 44;
+    const deadZone = 8;
     const distance = Math.hypot(rawX, rawY);
     const scale = distance > maxRadius ? maxRadius / distance : 1;
     const x = rawX * scale;
