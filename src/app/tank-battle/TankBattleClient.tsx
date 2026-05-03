@@ -165,6 +165,8 @@ type TankBattleMobileFrame = {
   height: number;
   viewportWidth: number;
   viewportHeight: number;
+  viewportLeft: number;
+  viewportTop: number;
   rotateShell: boolean;
 };
 
@@ -317,6 +319,8 @@ function readTankBattleMobileFrame(): TankBattleMobileFrame | null {
   const visualViewport = window.visualViewport;
   const viewportWidth = Math.round(visualViewport?.width || window.innerWidth || 0);
   const viewportHeight = Math.round(visualViewport?.height || window.innerHeight || 0);
+  const viewportLeft = Math.round(visualViewport?.offsetLeft || 0);
+  const viewportTop = Math.round(visualViewport?.offsetTop || 0);
   const fallbackWidth = Number.isFinite(window.screen?.width) ? window.screen.width : viewportWidth;
   const fallbackHeight = Number.isFinite(window.screen?.height) ? window.screen.height : viewportHeight;
   const shortestSide = Math.min(
@@ -331,19 +335,17 @@ function readTankBattleMobileFrame(): TankBattleMobileFrame | null {
         (window.matchMedia("(pointer: coarse)").matches && shortestSide <= 900)
       : window.innerWidth <= 900;
   if (!isMobile) return null;
-  const width = Math.max(viewportWidth, viewportHeight, fallbackWidth, fallbackHeight);
-  const height = Math.min(
-    Math.max(1, viewportWidth),
-    Math.max(1, viewportHeight),
-    Math.max(1, fallbackWidth),
-    Math.max(1, fallbackHeight),
-  );
+  const rotateShell = viewportWidth < viewportHeight;
+  const safeViewportWidth = Math.max(1, viewportWidth);
+  const safeViewportHeight = Math.max(1, viewportHeight);
   return {
-    width: Math.max(1, Math.round(width)),
-    height: Math.max(1, Math.round(height)),
-    viewportWidth: Math.max(1, viewportWidth),
-    viewportHeight: Math.max(1, viewportHeight),
-    rotateShell: viewportWidth < viewportHeight,
+    width: rotateShell ? safeViewportHeight : safeViewportWidth,
+    height: rotateShell ? safeViewportWidth : safeViewportHeight,
+    viewportWidth: safeViewportWidth,
+    viewportHeight: safeViewportHeight,
+    viewportLeft,
+    viewportTop,
+    rotateShell,
   };
 }
 
@@ -1604,6 +1606,8 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
             "--tank-battle-landscape-height": `${mobileFrame.height}px`,
             "--tank-battle-fixed-viewport-width": `${mobileFrame.viewportWidth}px`,
             "--tank-battle-fixed-viewport-height": `${mobileFrame.viewportHeight}px`,
+            "--tank-battle-viewport-left": `${mobileFrame.viewportLeft}px`,
+            "--tank-battle-viewport-top": `${mobileFrame.viewportTop}px`,
           } as CSSProperties)
         : undefined,
     [mobileFrame],
@@ -1619,6 +1623,8 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
         current.height === nextFrame.height &&
         current.viewportWidth === nextFrame.viewportWidth &&
         current.viewportHeight === nextFrame.viewportHeight &&
+        current.viewportLeft === nextFrame.viewportLeft &&
+        current.viewportTop === nextFrame.viewportTop &&
         current.rotateShell === nextFrame.rotateShell
       ) {
         return current;
@@ -1649,6 +1655,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
       typeof window.matchMedia === "function"
         ? window.matchMedia("(max-width: 900px), (pointer: coarse) and (max-width: 1024px)")
         : null;
+    const visualViewport = window.visualViewport;
     let locked = false;
     let scrollY = 0;
     let previousStyles: {
@@ -1744,6 +1751,8 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
 
     syncViewportLock();
     mobileMedia?.addEventListener?.("change", syncViewportLock);
+    visualViewport?.addEventListener?.("resize", syncViewportLock);
+    visualViewport?.addEventListener?.("scroll", syncViewportLock);
     window.addEventListener("resize", syncViewportLock);
     window.addEventListener("orientationchange", syncViewportLock);
     document.addEventListener("visibilitychange", syncViewportLock);
@@ -1751,6 +1760,8 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
 
     return () => {
       mobileMedia?.removeEventListener?.("change", syncViewportLock);
+      visualViewport?.removeEventListener?.("resize", syncViewportLock);
+      visualViewport?.removeEventListener?.("scroll", syncViewportLock);
       window.removeEventListener("resize", syncViewportLock);
       window.removeEventListener("orientationchange", syncViewportLock);
       document.removeEventListener("visibilitychange", syncViewportLock);
@@ -2120,6 +2131,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
   };
 
   const handleJoystickDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    requestStableLandscapeMode();
     unlockTankBattleAudio();
     joystickPointerIdRef.current = event.pointerId;
     try {
@@ -2154,6 +2166,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
 
   const handleFireDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
     event.preventDefault();
+    requestStableLandscapeMode();
     unlockTankBattleAudio();
     firePointerIdRef.current = event.pointerId;
     try {
@@ -2221,11 +2234,14 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
 
         .tank-battle-page[data-tank-battle-mobile="true"] {
           position: fixed;
-          inset: 0;
-          height: 100dvh;
-          min-height: 100dvh;
-          width: 100dvw;
-          min-width: 100dvw;
+          left: var(--tank-battle-viewport-left, 0);
+          top: var(--tank-battle-viewport-top, 0);
+          right: auto;
+          bottom: auto;
+          height: var(--tank-battle-fixed-viewport-height, 100dvh);
+          min-height: var(--tank-battle-fixed-viewport-height, 100dvh);
+          width: var(--tank-battle-fixed-viewport-width, 100dvw);
+          min-width: var(--tank-battle-fixed-viewport-width, 100dvw);
           overflow: hidden;
           padding: 0;
           background: #020617;
@@ -2243,12 +2259,14 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
           overflow: hidden;
           overscroll-behavior: none;
           touch-action: none;
-          transform: none;
+          backface-visibility: hidden;
+          transform: translate3d(0, 0, 0);
           transform-origin: top left;
+          will-change: transform;
         }
 
         .tank-battle-page[data-tank-battle-mobile="true"][data-tank-battle-rotated="true"] .tank-battle-shell {
-          transform: rotate(90deg) translateY(-100%);
+          transform: rotate(90deg) translate3d(0, -100%, 0);
         }
 
         .tank-battle-page[data-tank-battle-mobile="true"] .tank-battle-header,
@@ -2378,11 +2396,14 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
         @media (max-width: 900px), (pointer: coarse) and (max-width: 1024px) {
           .tank-battle-page {
             position: fixed;
-            inset: 0;
-            height: 100dvh;
-            min-height: 100dvh;
-            width: 100dvw;
-            min-width: 100dvw;
+            left: var(--tank-battle-viewport-left, 0);
+            top: var(--tank-battle-viewport-top, 0);
+            right: auto;
+            bottom: auto;
+            height: var(--tank-battle-fixed-viewport-height, 100dvh);
+            min-height: var(--tank-battle-fixed-viewport-height, 100dvh);
+            width: var(--tank-battle-fixed-viewport-width, 100dvw);
+            min-width: var(--tank-battle-fixed-viewport-width, 100dvw);
             overflow: hidden;
             padding: 0;
             background: #020617;
@@ -2400,13 +2421,15 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
             overflow: hidden;
             overscroll-behavior: none;
             touch-action: none;
-            transform: none;
+            backface-visibility: hidden;
+            transform: translate3d(0, 0, 0);
             transform-origin: top left;
+            will-change: transform;
           }
 
           @media (orientation: portrait) {
             .tank-battle-page .tank-battle-shell {
-              transform: rotate(90deg) translateY(-100%);
+              transform: rotate(90deg) translate3d(0, -100%, 0);
             }
           }
 
