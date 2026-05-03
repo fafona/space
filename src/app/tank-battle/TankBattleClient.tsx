@@ -24,6 +24,7 @@ type Tank = {
   kind: "player" | "enemy";
   player?: 1 | 2;
   active?: boolean;
+  bonus?: boolean;
   x: number;
   y: number;
   dir: Direction;
@@ -185,11 +186,19 @@ const oppositeDirection: Record<Direction, Direction> = {
 };
 const powerupLabels: Record<PowerupType, string> = {
   helmet: "盾",
-  star: "星",
+  star: "★",
   bomb: "爆",
   clock: "停",
-  shovel: "墙",
-  tank: "命",
+  shovel: "铲",
+  tank: "1UP",
+};
+const powerupStyles: Record<PowerupType, { background: string; border: string; foreground: string }> = {
+  helmet: { background: "#38bdf8", border: "#e0f2fe", foreground: "#082f49" },
+  star: { background: "#fde047", border: "#fff7ed", foreground: "#713f12" },
+  bomb: { background: "#fb7185", border: "#ffe4e6", foreground: "#4c0519" },
+  clock: { background: "#a78bfa", border: "#ede9fe", foreground: "#2e1065" },
+  shovel: { background: "#f97316", border: "#ffedd5", foreground: "#431407" },
+  tank: { background: "#22c55e", border: "#dcfce7", foreground: "#052e16" },
 };
 
 let tankBattleAudioContext: AudioContext | null = null;
@@ -197,6 +206,44 @@ let tankBattleMasterGain: GainNode | null = null;
 let tankBattleEngineOscillator: OscillatorNode | null = null;
 let tankBattleEngineGain: GainNode | null = null;
 let tankBattleEngineActive = false;
+let tankBattleMusicTimer: number | null = null;
+let tankBattleMusicStep = 0;
+let tankBattleMusicActive = false;
+
+const tankBattleMusicPattern: Array<{ note?: number; harmony?: number; bass?: number; accent?: boolean }> = [
+  { note: 196, bass: 98, accent: true },
+  { note: 247 },
+  { note: 262 },
+  { note: 196 },
+  { note: 294, bass: 147, accent: true },
+  { note: 262 },
+  { note: 247 },
+  { note: 196 },
+  { note: 220, bass: 110, accent: true },
+  { note: 262, harmony: 330 },
+  { note: 294 },
+  { note: 330 },
+  { note: 294, bass: 147, accent: true },
+  { note: 262 },
+  { note: 220 },
+  {},
+  { note: 196, bass: 98, accent: true },
+  { note: 196 },
+  { note: 247 },
+  { note: 262 },
+  { note: 330, bass: 165, accent: true },
+  { note: 294 },
+  { note: 262 },
+  {},
+  { note: 247, bass: 123, accent: true },
+  { note: 294 },
+  { note: 330, harmony: 392 },
+  { note: 294 },
+  { note: 262, bass: 131, accent: true },
+  { note: 247 },
+  { note: 220 },
+  {},
+];
 
 function getTankBattleAudioContext() {
   if (typeof window === "undefined") return null;
@@ -367,6 +414,71 @@ function playTankBattleSound(name: TankBattleSoundName) {
   } else if (name === "gameOver") {
     scheduleTankBattleTone(ctx, { type: "triangle", frequency: 240, endFrequency: 90, duration: 0.28, gain: 0.07 });
     scheduleTankBattleTone(ctx, { type: "triangle", frequency: 150, endFrequency: 48, delay: 0.18, duration: 0.32, gain: 0.06 });
+  }
+}
+
+function scheduleTankBattleMusicStep(ctx: AudioContext) {
+  const step = tankBattleMusicPattern[tankBattleMusicStep % tankBattleMusicPattern.length] ?? {};
+  if (step.note) {
+    scheduleTankBattleTone(ctx, {
+      type: "square",
+      frequency: step.note,
+      duration: step.accent ? 0.1 : 0.075,
+      gain: step.accent ? 0.022 : 0.016,
+    });
+  }
+  if (step.harmony) {
+    scheduleTankBattleTone(ctx, {
+      type: "triangle",
+      frequency: step.harmony,
+      delay: 0.012,
+      duration: 0.07,
+      gain: 0.009,
+    });
+  }
+  if (step.bass) {
+    scheduleTankBattleTone(ctx, {
+      type: "triangle",
+      frequency: step.bass,
+      duration: 0.13,
+      gain: 0.018,
+    });
+  }
+  if (tankBattleMusicStep % 4 === 0) {
+    scheduleTankBattleNoise(ctx, { duration: 0.026, gain: 0.008, frequency: 1900, type: "highpass" });
+  }
+  tankBattleMusicStep += 1;
+}
+
+function setTankBattleBackgroundMusic(active: boolean) {
+  if (tankBattleMusicActive === active) return;
+  tankBattleMusicActive = active;
+  if (!active) {
+    if (tankBattleMusicTimer !== null) {
+      window.clearInterval(tankBattleMusicTimer);
+      tankBattleMusicTimer = null;
+    }
+    return;
+  }
+
+  const ctx = unlockTankBattleAudio();
+  if (!ctx) {
+    tankBattleMusicActive = false;
+    return;
+  }
+  scheduleTankBattleMusicStep(ctx);
+  tankBattleMusicTimer = window.setInterval(() => {
+    if (!tankBattleMusicActive || !tankBattleAudioContext || tankBattleAudioContext.state === "closed") return;
+    if (tankBattleAudioContext.state === "suspended") return;
+    scheduleTankBattleMusicStep(tankBattleAudioContext);
+  }, 145);
+}
+
+function stopTankBattleBackgroundMusic() {
+  tankBattleMusicActive = false;
+  if (tankBattleMusicTimer !== null) {
+    window.clearInterval(tankBattleMusicTimer);
+    tankBattleMusicTimer = null;
   }
 }
 
@@ -790,7 +902,7 @@ function spawnPowerup(state: GameState, x: number, y: number) {
 
 function applyPowerup(state: GameState, player: Tank, type: PowerupType) {
   if (type === "helmet") {
-    player.invincible = Math.max(player.invincible, 8);
+    player.invincible = Math.max(player.invincible, 10);
     state.message = `${player.player === 1 ? "玩家一" : "玩家二"}获得护盾`;
   } else if (type === "star") {
     player.power = Math.min(4, player.power + 1);
@@ -808,7 +920,7 @@ function applyPowerup(state: GameState, player: Tank, type: PowerupType) {
     state.freezeUntil = state.time + 8;
     state.message = "敌军暂停";
   } else if (type === "shovel") {
-    state.shovelUntil = state.time + 12;
+    state.shovelUntil = state.time + 14;
     state.message = "基地钢墙保护";
   } else if (type === "tank") {
     player.lives += 1;
@@ -953,9 +1065,12 @@ function spawnEnemy(state: GameState) {
     return;
   }
   const level = Math.min(4, 1 + Math.floor((state.stage + state.spawnedEnemies) / 8));
+  const spawnNumber = state.spawnedEnemies + 1;
+  const bonus = spawnNumber % 4 === 0 || (state.stage >= 7 && spawnNumber % 7 === 0);
   const enemy: Tank = {
     id: `enemy-${state.stage}-${state.spawnedEnemies}`,
     kind: "enemy",
+    bonus,
     x: point.x,
     y: point.y,
     dir: "down",
@@ -1026,7 +1141,7 @@ function updateBullets(state: GameState, dt: number) {
           state.enemies = state.enemies.filter((item) => item.id !== enemy.id);
           state.destroyedEnemies += 1;
           if (player) player.score += 500 + enemy.power * 100;
-          if (player && seededValue(state.stage + state.destroyedEnemies, enemy.x, enemy.y) > 0.72) {
+          if (player && (enemy.bonus || seededValue(state.stage + state.destroyedEnemies, enemy.x, enemy.y) > 0.88)) {
             spawnPowerup(state, enemy.x, enemy.y);
           }
         }
@@ -1247,11 +1362,18 @@ function drawTank(ctx: CanvasRenderingContext2D, tank: Tank, time: number) {
   const size = TANK_SIZE * TILE_SIZE;
   const centerX = px + size / 2;
   const centerY = py + size / 2;
+  let bodyColor = tank.color;
+  if (tank.kind === "enemy" && tank.bonus) {
+    bodyColor = Math.floor(time * 7) % 2 === 0 ? "#fde047" : "#fb7185";
+  }
+  if (tank.invincible > 0 && Math.floor(time * 8) % 2 === 0) {
+    bodyColor = "#f8fafc";
+  }
   ctx.save();
   ctx.translate(centerX, centerY);
   const rotation = tank.dir === "up" ? 0 : tank.dir === "right" ? Math.PI / 2 : tank.dir === "down" ? Math.PI : -Math.PI / 2;
   ctx.rotate(rotation);
-  ctx.fillStyle = tank.invincible > 0 && Math.floor(time * 8) % 2 === 0 ? "#f8fafc" : tank.color;
+  ctx.fillStyle = bodyColor;
   drawRoundRect(ctx, -size * 0.42, -size * 0.36, size * 0.84, size * 0.72, 5);
   ctx.fillStyle = "rgba(15, 23, 42, 0.62)";
   ctx.fillRect(-size * 0.48, -size * 0.42, size * 0.18, size * 0.84);
@@ -1262,23 +1384,35 @@ function drawTank(ctx: CanvasRenderingContext2D, tank: Tank, time: number) {
   ctx.font = "bold 12px Arial";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(tank.kind === "player" ? String(tank.player) : tank.power > 2 ? "★" : "", 0, size * 0.05);
+  ctx.fillText(tank.kind === "player" ? String(tank.player) : tank.bonus ? "P" : tank.power > 2 ? "★" : "", 0, size * 0.05);
   ctx.restore();
 }
 
-function drawPowerup(ctx: CanvasRenderingContext2D, powerup: Powerup) {
+function drawPowerup(ctx: CanvasRenderingContext2D, powerup: Powerup, time: number) {
+  const remaining = powerup.expiresAt - time;
+  if (remaining < 3 && Math.floor(time * 9) % 2 === 0) return;
   const px = powerup.x * TILE_SIZE;
   const py = powerup.y * TILE_SIZE;
-  ctx.fillStyle = "#fef3c7";
-  drawRoundRect(ctx, px, py, 25, 25, 6);
-  ctx.strokeStyle = "#f59e0b";
+  const size = 26;
+  const style = powerupStyles[powerup.type];
+  ctx.save();
+  ctx.shadowColor = style.background;
+  ctx.shadowBlur = Math.max(0, 8 - remaining * 0.2);
+  ctx.fillStyle = style.background;
+  drawRoundRect(ctx, px, py, size, size, 4);
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = "#020617";
   ctx.lineWidth = 2;
-  ctx.strokeRect(px + 3, py + 3, 19, 19);
-  ctx.fillStyle = "#92400e";
-  ctx.font = "bold 14px Arial";
+  ctx.strokeRect(px + 1, py + 1, size - 2, size - 2);
+  ctx.strokeStyle = style.border;
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(px + 5, py + 5, size - 10, size - 10);
+  ctx.fillStyle = style.foreground;
+  ctx.font = powerup.type === "tank" ? "900 9px Arial" : "900 14px Arial";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(powerupLabels[powerup.type], px + 12.5, py + 13);
+  ctx.fillText(powerupLabels[powerup.type], px + size / 2, py + size / 2 + 1);
+  ctx.restore();
 }
 
 function drawGame(ctx: CanvasRenderingContext2D, state: GameState) {
@@ -1296,7 +1430,7 @@ function drawGame(ctx: CanvasRenderingContext2D, state: GameState) {
     ctx.stroke();
   }
   drawTerrain(ctx, state.map, state, false);
-  state.powerups.forEach((powerup) => drawPowerup(ctx, powerup));
+  state.powerups.forEach((powerup) => drawPowerup(ctx, powerup, state.time));
   state.players.forEach((player) => drawTank(ctx, player, state.time));
   state.enemies.forEach((enemy) => drawTank(ctx, enemy, state.time));
   ctx.fillStyle = "#fef2f2";
@@ -1624,6 +1758,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
       const p2MovementInput = onlineRole === "guest" ? mergeInput(keyboardP2Ref.current, touchInputRef.current) : emptyInput;
       const localMovementInput = mergeInput(p1MovementInput, p2MovementInput);
       setTankBattleEngineAudio(stateRef.current.status === "playing" && inputDirection(localMovementInput) !== null);
+      setTankBattleBackgroundMusic(stateRef.current.status === "playing");
       soundSnapshotRef.current = playTankBattleStateSounds(soundSnapshotRef.current, stateRef.current);
       const ctx = canvasRef.current?.getContext("2d");
       if (ctx) drawGame(ctx, stateRef.current);
@@ -1637,6 +1772,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
     return () => {
       cancelAnimationFrame(frame);
       stopTankBattleEngineAudio();
+      stopTankBattleBackgroundMusic();
     };
   }, [networkStatus, onlineRole, peers, roomId]);
 
