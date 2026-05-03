@@ -5293,6 +5293,7 @@ export default function AdminClient({
   }, []);
   const [supportMobileBusinessSection, setSupportMobileBusinessSection] = useState<"booking" | "orders">("booking");
   const [supportSelfSectionView, setSupportSelfSectionView] = useState<SupportSelfSectionView>("home");
+  const supportSelfSectionResetReadyRef = useRef(false);
   useEffect(() => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
@@ -11360,6 +11361,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   ]);
 
   useEffect(() => {
+    if (!supportSelfSectionResetReadyRef.current) {
+      supportSelfSectionResetReadyRef.current = true;
+      return;
+    }
     if (supportMobileHomeTab !== "self") {
       setSupportSelfSectionView("home");
     }
