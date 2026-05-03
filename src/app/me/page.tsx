@@ -6,6 +6,7 @@ import Link from "next/link";
 import AccountSwitcherDialog from "@/components/AccountSwitcherDialog";
 import { useI18n } from "@/components/I18nProvider";
 import ShuangkouToolIcon from "@/components/ShuangkouToolIcon";
+import TankBattleIcon from "@/components/TankBattleIcon";
 import ToolboxIcon from "@/components/ToolboxIcon";
 import {
   clearStoredBrowserSupabaseSessionTokens,
@@ -5892,37 +5893,70 @@ export default function MePage() {
   }
 
   function renderMobileToolsContent() {
+    const openTankBattleGame = () => {
+      const targetUrl = new URL("/me/games/tank-battle", window.location.origin).toString();
+      const openedWindow = window.open(targetUrl, "_blank");
+      if (openedWindow) {
+        try {
+          openedWindow.opener = null;
+          openedWindow.focus();
+        } catch {
+          // Some mobile browsers restrict access to the opened window.
+        }
+        return;
+      }
+      window.location.assign(targetUrl);
+    };
+
     return (
-      <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
-        <div className="grid grid-cols-4 gap-x-4 gap-y-5">
-          <Link
-            href="/me/tools/shuangkoujifen"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="group flex min-w-0 flex-col items-center gap-2.5 text-center"
-            onClick={(event) => {
-              event.preventDefault();
-              const targetUrl = new URL("/me/tools/shuangkoujifen", window.location.origin).toString();
-              const openedWindow = window.open(targetUrl, "_blank");
-              if (openedWindow) {
-                try {
-                  openedWindow.opener = null;
-                  openedWindow.focus();
-                } catch {
-                  // Some mobile browsers restrict access to the opened window.
+      <div className="space-y-4">
+        <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+          <div className="grid grid-cols-4 gap-x-4 gap-y-5">
+            <Link
+              href="/me/tools/shuangkoujifen"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="group flex min-w-0 flex-col items-center gap-2.5 text-center"
+              onClick={(event) => {
+                event.preventDefault();
+                const targetUrl = new URL("/me/tools/shuangkoujifen", window.location.origin).toString();
+                const openedWindow = window.open(targetUrl, "_blank");
+                if (openedWindow) {
+                  try {
+                    openedWindow.opener = null;
+                    openedWindow.focus();
+                  } catch {
+                    // Some mobile browsers restrict access to the opened window.
+                  }
+                  return;
                 }
-                return;
-              }
-              window.location.assign(targetUrl);
-            }}
-          >
-            <span className="flex h-14 w-14 items-center justify-center rounded-[18px] bg-emerald-700 text-white shadow-[0_12px_24px_rgba(4,120,87,0.28)] transition group-active:scale-95">
-              <ShuangkouToolIcon />
-            </span>
-            <span className="w-full truncate text-xs font-semibold text-slate-900">双扣计分</span>
-          </Link>
-        </div>
-      </section>
+                window.location.assign(targetUrl);
+              }}
+            >
+              <span className="flex h-14 w-14 items-center justify-center rounded-[18px] bg-emerald-700 text-white shadow-[0_12px_24px_rgba(4,120,87,0.28)] transition group-active:scale-95">
+                <ShuangkouToolIcon />
+              </span>
+              <span className="w-full truncate text-xs font-semibold text-slate-900">双扣计分</span>
+            </Link>
+          </div>
+        </section>
+
+        <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+          <div className="mb-4 text-sm font-black text-slate-950">小游戏</div>
+          <div className="grid grid-cols-4 gap-x-4 gap-y-5">
+            <button
+              type="button"
+              className="group flex min-w-0 flex-col items-center gap-2.5 text-center"
+              onClick={openTankBattleGame}
+            >
+              <span className="flex h-14 w-14 items-center justify-center rounded-[18px] bg-lime-700 text-white shadow-[0_12px_24px_rgba(77,124,15,0.28)] transition group-active:scale-95">
+                <TankBattleIcon />
+              </span>
+              <span className="w-full truncate text-xs font-semibold text-slate-900">坦克大战</span>
+            </button>
+          </div>
+        </section>
+      </div>
     );
   }
 

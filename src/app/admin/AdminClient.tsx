@@ -253,6 +253,7 @@ import BookingBlock from "@/components/blocks/BookingBlock";
 import { useI18n } from "@/components/I18nProvider";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
 import ShuangkouToolIcon from "@/components/ShuangkouToolIcon";
+import TankBattleIcon from "@/components/TankBattleIcon";
 import ToolboxIcon from "@/components/ToolboxIcon";
 import { buildFaollaShellHref, isFaollaSectionSearch, resolveFaollaEntryUrlFromBrowser } from "@/lib/faollaEntry";
 import { LANGUAGE_OPTIONS, resolveSupportedLocale } from "@/lib/i18n";
@@ -10718,6 +10719,21 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     }
     window.location.assign(targetUrl);
   }, []);
+  const openSupportTankBattleGame = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const targetUrl = new URL("/admin/games/tank-battle", window.location.origin).toString();
+    const openedWindow = window.open(targetUrl, "_blank");
+    if (openedWindow) {
+      try {
+        openedWindow.opener = null;
+        openedWindow.focus();
+      } catch {
+        // Some mobile browsers restrict access to the opened window.
+      }
+      return;
+    }
+    window.location.assign(targetUrl);
+  }, []);
   const supportMobileFaollaContent = (
     <div className="support-preserve-light-surface relative min-h-0 flex-1 overflow-hidden bg-white">
       <div className="pointer-events-none absolute left-4 top-[calc(env(safe-area-inset-top)+0.75rem)] z-10">
@@ -15683,20 +15699,38 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             </section>
           </div>
         ) : supportSelfSectionView === "tools" ? (
-          <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
-            <div className="grid grid-cols-4 gap-x-4 gap-y-5">
-              <button
-                type="button"
-                className="group flex min-w-0 flex-col items-center gap-2.5 text-center"
-                onClick={openSupportShuangkouScoreTool}
-              >
-                <span className="flex h-14 w-14 items-center justify-center rounded-[18px] bg-emerald-700 text-white shadow-[0_12px_24px_rgba(4,120,87,0.28)] transition group-active:scale-95">
-                  <ShuangkouToolIcon />
-                </span>
-                <span className="w-full truncate text-xs font-semibold text-slate-900">双扣计分</span>
-              </button>
-            </div>
-          </section>
+          <div className="space-y-4">
+            <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+              <div className="grid grid-cols-4 gap-x-4 gap-y-5">
+                <button
+                  type="button"
+                  className="group flex min-w-0 flex-col items-center gap-2.5 text-center"
+                  onClick={openSupportShuangkouScoreTool}
+                >
+                  <span className="flex h-14 w-14 items-center justify-center rounded-[18px] bg-emerald-700 text-white shadow-[0_12px_24px_rgba(4,120,87,0.28)] transition group-active:scale-95">
+                    <ShuangkouToolIcon />
+                  </span>
+                  <span className="w-full truncate text-xs font-semibold text-slate-900">双扣计分</span>
+                </button>
+              </div>
+            </section>
+
+            <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+              <div className="mb-4 text-sm font-black text-slate-950">小游戏</div>
+              <div className="grid grid-cols-4 gap-x-4 gap-y-5">
+                <button
+                  type="button"
+                  className="group flex min-w-0 flex-col items-center gap-2.5 text-center"
+                  onClick={openSupportTankBattleGame}
+                >
+                  <span className="flex h-14 w-14 items-center justify-center rounded-[18px] bg-lime-700 text-white shadow-[0_12px_24px_rgba(77,124,15,0.28)] transition group-active:scale-95">
+                    <TankBattleIcon />
+                  </span>
+                  <span className="w-full truncate text-xs font-semibold text-slate-900">坦克大战</span>
+                </button>
+              </div>
+            </section>
+          </div>
         ) : (
           <div className="space-y-4">
             <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
