@@ -1499,6 +1499,118 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
   const showGameOverMenu = ui.status === "game-over";
   const showTouchControls = ui.status === "playing" || ui.status === "paused";
 
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof document === "undefined") return;
+
+    const html = document.documentElement;
+    const body = document.body;
+    const mobileMedia =
+      typeof window.matchMedia === "function"
+        ? window.matchMedia("(max-width: 900px), (pointer: coarse) and (max-width: 1024px)")
+        : null;
+    let locked = false;
+    let scrollY = 0;
+    let previousStyles: {
+      htmlOverflow: string;
+      htmlOverscrollBehavior: string;
+      htmlTouchAction: string;
+      htmlHeight: string;
+      bodyOverflow: string;
+      bodyOverscrollBehavior: string;
+      bodyTouchAction: string;
+      bodyPosition: string;
+      bodyTop: string;
+      bodyLeft: string;
+      bodyRight: string;
+      bodyWidth: string;
+      bodyHeight: string;
+    } | null = null;
+
+    const shouldLock = () => mobileMedia?.matches ?? window.innerWidth <= 900;
+    const lockViewport = () => {
+      if (locked) return;
+      locked = true;
+      scrollY = window.scrollY || window.pageYOffset || 0;
+      previousStyles = {
+        htmlOverflow: html.style.overflow,
+        htmlOverscrollBehavior: html.style.overscrollBehavior,
+        htmlTouchAction: html.style.touchAction,
+        htmlHeight: html.style.height,
+        bodyOverflow: body.style.overflow,
+        bodyOverscrollBehavior: body.style.overscrollBehavior,
+        bodyTouchAction: body.style.touchAction,
+        bodyPosition: body.style.position,
+        bodyTop: body.style.top,
+        bodyLeft: body.style.left,
+        bodyRight: body.style.right,
+        bodyWidth: body.style.width,
+        bodyHeight: body.style.height,
+      };
+
+      html.style.overflow = "hidden";
+      html.style.overscrollBehavior = "none";
+      html.style.touchAction = "none";
+      html.style.height = "100%";
+      body.style.overflow = "hidden";
+      body.style.overscrollBehavior = "none";
+      body.style.touchAction = "none";
+      body.style.position = "fixed";
+      body.style.top = `-${scrollY}px`;
+      body.style.left = "0";
+      body.style.right = "0";
+      body.style.width = "100%";
+      body.style.height = "100%";
+    };
+    const unlockViewport = () => {
+      if (!locked || !previousStyles) return;
+      locked = false;
+      html.style.overflow = previousStyles.htmlOverflow;
+      html.style.overscrollBehavior = previousStyles.htmlOverscrollBehavior;
+      html.style.touchAction = previousStyles.htmlTouchAction;
+      html.style.height = previousStyles.htmlHeight;
+      body.style.overflow = previousStyles.bodyOverflow;
+      body.style.overscrollBehavior = previousStyles.bodyOverscrollBehavior;
+      body.style.touchAction = previousStyles.bodyTouchAction;
+      body.style.position = previousStyles.bodyPosition;
+      body.style.top = previousStyles.bodyTop;
+      body.style.left = previousStyles.bodyLeft;
+      body.style.right = previousStyles.bodyRight;
+      body.style.width = previousStyles.bodyWidth;
+      body.style.height = previousStyles.bodyHeight;
+      window.scrollTo(0, scrollY);
+      previousStyles = null;
+    };
+    const syncViewportLock = () => {
+      if (shouldLock()) {
+        lockViewport();
+      } else {
+        unlockViewport();
+      }
+    };
+    const preventDocumentPull = (event: TouchEvent) => {
+      if (!locked) return;
+      const target = event.target;
+      if (target instanceof HTMLElement && target.closest("input, textarea, select, [contenteditable='true']")) return;
+      event.preventDefault();
+    };
+
+    syncViewportLock();
+    mobileMedia?.addEventListener?.("change", syncViewportLock);
+    window.addEventListener("resize", syncViewportLock);
+    window.addEventListener("orientationchange", syncViewportLock);
+    document.addEventListener("visibilitychange", syncViewportLock);
+    document.addEventListener("touchmove", preventDocumentPull, { passive: false });
+
+    return () => {
+      mobileMedia?.removeEventListener?.("change", syncViewportLock);
+      window.removeEventListener("resize", syncViewportLock);
+      window.removeEventListener("orientationchange", syncViewportLock);
+      document.removeEventListener("visibilitychange", syncViewportLock);
+      document.removeEventListener("touchmove", preventDocumentPull);
+      unlockViewport();
+    };
+  }, []);
+
   const resetState = useCallback((mode: GameMode, stage = 1) => {
     stateRef.current = createGameState(mode, stage, undefined, readHighScore());
     stateRef.current.status = mode === "online-guest" ? "ready" : "playing";
@@ -1876,6 +1988,21 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
   return (
     <main className="tank-battle-page min-h-screen bg-[#eef2f3] px-3 pb-[calc(env(safe-area-inset-bottom)+1.25rem)] pt-[calc(env(safe-area-inset-top)+0.9rem)] text-slate-950">
       <style jsx global>{`
+        .tank-battle-page {
+          overscroll-behavior: none;
+          touch-action: none;
+          user-select: none;
+          -webkit-user-select: none;
+        }
+
+        .tank-battle-page input,
+        .tank-battle-page textarea,
+        .tank-battle-page select {
+          touch-action: manipulation;
+          user-select: text;
+          -webkit-user-select: text;
+        }
+
         .tank-battle-menu-overlay {
           position: absolute;
           inset: 0.75rem;
@@ -1893,6 +2020,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
             overflow: hidden;
             padding: 0;
             background: #020617;
+            overscroll-behavior: none;
           }
 
           .tank-battle-shell {
@@ -1900,6 +2028,9 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
             width: 100dvw;
             max-width: none;
             gap: 0;
+            overflow: hidden;
+            overscroll-behavior: none;
+            touch-action: none;
           }
 
           .tank-battle-header,
@@ -1924,6 +2055,8 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
             background: #020617;
             padding: 0;
             box-shadow: none;
+            overscroll-behavior: none;
+            touch-action: none;
           }
 
           .tank-battle-canvas-wrap {
@@ -1933,10 +2066,14 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
             padding: max(4px, env(safe-area-inset-top));
             border-radius: 0;
             box-shadow: none;
+            overflow: hidden;
+            overscroll-behavior: none;
+            touch-action: none;
           }
 
           .tank-battle-canvas-wrap canvas {
             border-radius: 0;
+            touch-action: none;
           }
 
           .tank-battle-mobile-controls {
@@ -1951,6 +2088,8 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
             padding: 0 max(18px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
             pointer-events: none;
             box-shadow: none;
+            overscroll-behavior: none;
+            touch-action: none;
           }
 
           .tank-battle-mobile-controls > div {
