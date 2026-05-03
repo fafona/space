@@ -163,6 +163,9 @@ type TankBattleSoundSnapshot = {
 type TankBattleMobileFrame = {
   width: number;
   height: number;
+  viewportWidth: number;
+  viewportHeight: number;
+  rotateShell: boolean;
 };
 
 type AudioWindow = Window &
@@ -328,7 +331,13 @@ function readTankBattleMobileFrame(): TankBattleMobileFrame | null {
     Math.max(1, fallbackWidth),
     Math.max(1, fallbackHeight),
   );
-  return { width: Math.max(1, Math.round(width)), height: Math.max(1, Math.round(height)) };
+  return {
+    width: Math.max(1, Math.round(width)),
+    height: Math.max(1, Math.round(height)),
+    viewportWidth: Math.max(1, viewportWidth),
+    viewportHeight: Math.max(1, viewportHeight),
+    rotateShell: viewportWidth < viewportHeight,
+  };
 }
 
 function scheduleTankBattleTone(
@@ -1558,7 +1567,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
   const joystickPointerIdRef = useRef<number | null>(null);
   const joystickDirectionRef = useRef<Direction | null>(null);
   const firePointerIdRef = useRef<number | null>(null);
-  const [mobileFrame] = useState<TankBattleMobileFrame | null>(readTankBattleMobileFrame);
+  const [mobileFrame, setMobileFrame] = useState<TankBattleMobileFrame | null>(readTankBattleMobileFrame);
   const [joystickThumb, setJoystickThumb] = useState({ x: 0, y: 0, active: false });
   const [menuView, setMenuView] = useState<"mode" | "online">("mode");
   const [roomInput, setRoomInput] = useState("");
@@ -1586,10 +1595,23 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
         ? ({
             "--tank-battle-landscape-width": `${mobileFrame.width}px`,
             "--tank-battle-landscape-height": `${mobileFrame.height}px`,
+            "--tank-battle-fixed-viewport-width": `${mobileFrame.viewportWidth}px`,
+            "--tank-battle-fixed-viewport-height": `${mobileFrame.viewportHeight}px`,
           } as CSSProperties)
         : undefined,
     [mobileFrame],
   );
+  const syncMobileFrame = useCallback(() => {
+    const nextFrame = readTankBattleMobileFrame();
+    if (nextFrame) setMobileFrame(nextFrame);
+  }, []);
+  const requestStableLandscapeMode = useCallback(() => {
+    requestTankBattleLandscapeMode();
+    if (typeof window === "undefined") return;
+    window.requestAnimationFrame(syncMobileFrame);
+    window.setTimeout(syncMobileFrame, 180);
+    window.setTimeout(syncMobileFrame, 420);
+  }, [syncMobileFrame]);
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof document === "undefined") return;
@@ -1620,7 +1642,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
 
     const shouldLock = () => mobileMedia?.matches ?? window.innerWidth <= 900;
     const lockViewport = () => {
-      if (locked) return;
+      if (locked) return false;
       locked = true;
       scrollY = window.scrollY || window.pageYOffset || 0;
       previousStyles = {
@@ -1652,6 +1674,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
       body.style.right = "0";
       body.style.width = "100%";
       body.style.height = "100%";
+      return true;
     };
     const unlockViewport = () => {
       if (!locked || !previousStyles) return;
@@ -1674,8 +1697,8 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
     };
     const syncViewportLock = () => {
       if (shouldLock()) {
-        lockViewport();
-        requestTankBattleLandscapeMode();
+        const newlyLocked = lockViewport();
+        if (newlyLocked) requestStableLandscapeMode();
       } else {
         unlockViewport();
       }
@@ -1702,7 +1725,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
       document.removeEventListener("touchmove", preventDocumentPull);
       unlockViewport();
     };
-  }, []);
+  }, [requestStableLandscapeMode]);
 
   const resetState = useCallback((mode: GameMode, stage = 1) => {
     stateRef.current = createGameState(mode, stage, undefined, readHighScore());
@@ -1713,7 +1736,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
   }, [networkStatus, onlineRole, peers, roomId]);
 
   const startSolo = useCallback(() => {
-    requestTankBattleLandscapeMode();
+    requestStableLandscapeMode();
     playTankBattleSound("start");
     setMenuView("mode");
     setOnlineRole("none");
@@ -1722,20 +1745,20 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
     setNetworkStatus("未联网");
     setPeers(0);
     resetState("solo");
-  }, [resetState]);
+  }, [requestStableLandscapeMode, resetState]);
 
   const showOnlineSetup = useCallback(() => {
-    requestTankBattleLandscapeMode();
+    requestStableLandscapeMode();
     playTankBattleSound("menu");
     setMenuView("online");
     setOnlineRole("none");
     setRoomId("");
     setNetworkStatus("未联网");
     setPeers(0);
-  }, []);
+  }, [requestStableLandscapeMode]);
 
   const startHost = useCallback(() => {
-    requestTankBattleLandscapeMode();
+    requestStableLandscapeMode();
     playTankBattleSound("menu");
     const nextRoom = createRoomId();
     setMenuView("online");
@@ -1748,18 +1771,18 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
     stateRef.current.message = `房间 ${nextRoom}，等待玩家二`;
     soundSnapshotRef.current = createTankBattleSoundSnapshot(stateRef.current);
     setUi(buildUiState(stateRef.current, nextRoom, "host", peers, canUseOnline ? "创建房间中" : "当前环境未配置联网服务"));
-  }, [canUseOnline, peers]);
+  }, [canUseOnline, peers, requestStableLandscapeMode]);
 
   const startOnlineHostGame = useCallback(() => {
     if (onlineRole !== "host" || !roomId || !hasOnlinePeer) return;
-    requestTankBattleLandscapeMode();
+    requestStableLandscapeMode();
     playTankBattleSound("start");
     stateRef.current = createGameState("online-host", 1, undefined, readHighScore());
     stateRef.current.status = "playing";
     stateRef.current.message = `第 1 关`;
     soundSnapshotRef.current = createTankBattleSoundSnapshot(stateRef.current);
     setUi(buildUiState(stateRef.current, roomId, "host", peers, networkStatus));
-  }, [hasOnlinePeer, networkStatus, onlineRole, peers, roomId]);
+  }, [hasOnlinePeer, networkStatus, onlineRole, peers, requestStableLandscapeMode, roomId]);
 
   const joinRoom = useCallback((targetRoom?: string) => {
     const nextRoom = normalizeRoomId(targetRoom ?? roomInput);
@@ -1767,7 +1790,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
       setNetworkStatus("请输入房间号");
       return;
     }
-    requestTankBattleLandscapeMode();
+    requestStableLandscapeMode();
     playTankBattleSound("menu");
     setMenuView("online");
     setRoomId(nextRoom);
@@ -1778,7 +1801,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
     stateRef.current.message = `等待房主 ${nextRoom}`;
     soundSnapshotRef.current = createTankBattleSoundSnapshot(stateRef.current);
     setUi(buildUiState(stateRef.current, nextRoom, "guest", peers, canUseOnline ? "加入房间中" : "当前环境未配置联网服务"));
-  }, [canUseOnline, peers, roomInput]);
+  }, [canUseOnline, peers, requestStableLandscapeMode, roomInput]);
 
   const pauseOrResume = useCallback(() => {
     if (isGuest) return;
@@ -1828,11 +1851,11 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
 
   const restartCurrent = useCallback(() => {
     if (isGuest) return;
-    requestTankBattleLandscapeMode();
+    requestStableLandscapeMode();
     playTankBattleSound("start");
     const mode = stateRef.current.mode === "online-guest" ? "solo" : stateRef.current.mode;
     resetState(mode, stateRef.current.stage);
-  }, [isGuest, resetState]);
+  }, [isGuest, requestStableLandscapeMode, resetState]);
 
   const copyRoomLink = useCallback(async () => {
     if (!roomId || typeof window === "undefined") return;
@@ -1851,7 +1874,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    requestTankBattleLandscapeMode();
+    requestStableLandscapeMode();
     const params = new URLSearchParams(window.location.search);
     const queryRoom = normalizeRoomId(params.get("room") ?? "");
     if (queryRoom) {
@@ -1862,7 +1885,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
         }
       }, 80);
     }
-  }, [joinRoom]);
+  }, [joinRoom, requestStableLandscapeMode]);
 
   useEffect(() => {
     const applyKey = (event: KeyboardEvent, pressed: boolean) => {
@@ -2127,6 +2150,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
   return (
     <main
       data-mobile-swipe-back-ignore
+      data-tank-battle-rotated={mobileFrame?.rotateShell ? "true" : "false"}
       className="tank-battle-page min-h-screen bg-[#eef2f3] px-3 pb-[calc(env(safe-area-inset-bottom)+1.25rem)] pt-[calc(env(safe-area-inset-top)+0.9rem)] text-slate-950"
       style={pageStyle}
     >
@@ -2166,9 +2190,9 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
           .tank-battle-page {
             position: fixed;
             inset: 0;
-            height: 100dvh;
-            min-height: 100dvh;
-            width: 100vw;
+            height: var(--tank-battle-fixed-viewport-height, 100dvh);
+            min-height: var(--tank-battle-fixed-viewport-height, 100dvh);
+            width: var(--tank-battle-fixed-viewport-width, 100vw);
             overflow: hidden;
             padding: 0;
             background: #020617;
@@ -2186,6 +2210,12 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
             overflow: hidden;
             overscroll-behavior: none;
             touch-action: none;
+            transform: none;
+            transform-origin: top left;
+          }
+
+          .tank-battle-page[data-tank-battle-rotated="true"] .tank-battle-shell {
+            transform: rotate(90deg) translateY(-100%);
           }
 
           .tank-battle-header,
@@ -2218,7 +2248,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
             height: var(--tank-battle-landscape-height, 100dvh);
             max-width: none;
             width: var(--tank-battle-landscape-height, 100dvh);
-            padding: max(4px, env(safe-area-inset-top));
+            padding: 4px;
             border-radius: 0;
             box-shadow: none;
             overflow: hidden;
@@ -2240,7 +2270,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
             border: 0;
             border-radius: 0;
             background: linear-gradient(90deg, rgba(2, 6, 23, 0.42), transparent 30%, transparent 70%, rgba(2, 6, 23, 0.42));
-            padding: 0 max(18px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
+            padding: 0 18px 16px 18px;
             pointer-events: none;
             box-shadow: none;
             overscroll-behavior: none;
@@ -2262,8 +2292,8 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
 
           .tank-battle-mobile-hud {
             position: absolute;
-            left: max(12px, env(safe-area-inset-left));
-            top: max(10px, env(safe-area-inset-top));
+            left: 12px;
+            top: 10px;
             z-index: 3;
             display: flex;
             flex-direction: column;
@@ -2284,8 +2314,8 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
 
           .tank-battle-mobile-pause-button {
             position: absolute;
-            right: max(12px, env(safe-area-inset-right));
-            top: max(10px, env(safe-area-inset-top));
+            right: 12px;
+            top: 10px;
             z-index: 4;
             display: inline-flex;
             height: 44px;
@@ -2309,29 +2339,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
             justify-content: center;
             border-radius: 0;
             background: radial-gradient(circle at center, rgba(15, 23, 42, 0.24), rgba(2, 6, 23, 0.74));
-            padding: max(16px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
-          }
-        }
-
-        @media (orientation: portrait) and (max-width: 900px) {
-          .tank-battle-shell {
-            position: fixed;
-            left: 0;
-            top: 0;
-            width: var(--tank-battle-landscape-width, 100dvh);
-            height: var(--tank-battle-landscape-height, 100dvw);
-            transform: rotate(90deg) translateY(-100%);
-            transform-origin: top left;
-          }
-
-          .tank-battle-canvas-wrap {
-            height: var(--tank-battle-landscape-height, 100dvw);
-            width: var(--tank-battle-landscape-height, 100dvw);
-          }
-
-          .tank-battle-layout,
-          .tank-battle-stage-card {
-            height: var(--tank-battle-landscape-height, 100dvw);
+            padding: 16px 18px;
           }
         }
       `}</style>
