@@ -6,7 +6,7 @@ import TankBattleIcon from "@/components/TankBattleIcon";
 import { hasSupabaseEnv, supabase } from "@/lib/supabase";
 
 type Direction = "up" | "down" | "left" | "right";
-type GameMode = "solo" | "local" | "online-host" | "online-guest";
+type GameMode = "solo" | "online-host" | "online-guest";
 type Terrain = 0 | 1 | 2 | 3 | 4 | 5;
 type PowerupType = "helmet" | "star" | "bomb" | "clock" | "shovel" | "tank";
 type GameStatus = "ready" | "playing" | "paused" | "stage-clear" | "game-over";
@@ -154,6 +154,14 @@ type AudioWindow = Window &
     webkitAudioContext?: typeof AudioContext;
   };
 
+type FullscreenElement = HTMLElement & {
+  webkitRequestFullscreen?: () => Promise<void>;
+};
+
+type LockableScreenOrientation = ScreenOrientation & {
+  lock?: (orientation: string) => Promise<void>;
+};
+
 const GRID_SIZE = 13;
 const TILE_SIZE = 32;
 const CANVAS_SIZE = GRID_SIZE * TILE_SIZE;
@@ -217,6 +225,24 @@ function unlockTankBattleAudio() {
     void ctx.resume().catch(() => undefined);
   }
   return ctx;
+}
+
+function requestTankBattleLandscapeMode() {
+  if (typeof window === "undefined") return;
+  const shouldRequest = window.matchMedia("(max-width: 900px)").matches || navigator.maxTouchPoints > 0;
+  if (!shouldRequest) return;
+
+  const orientation = window.screen.orientation as LockableScreenOrientation | undefined;
+  const lockLandscape = () => {
+    void orientation?.lock?.("landscape").catch(() => undefined);
+  };
+  const element = document.documentElement as FullscreenElement;
+  const requestFullscreen = element.requestFullscreen?.bind(element) ?? element.webkitRequestFullscreen?.bind(element);
+  if (!document.fullscreenElement && requestFullscreen) {
+    void requestFullscreen().then(lockLandscape).catch(lockLandscape);
+    return;
+  }
+  lockLandscape();
 }
 
 function scheduleTankBattleTone(
@@ -425,6 +451,7 @@ function playTankBattleStateSounds(previous: TankBattleSoundSnapshot | null, sta
   if (newSparkCount > 0 && enemyDestroyedDelta <= 0 && !playerLostLife && !baseDestroyed) playTankBattleSound("hit");
 
   if (previous.status !== current.status) {
+    if (current.status === "playing") playTankBattleSound("start");
     if (current.status === "stage-clear") playTankBattleSound("stageClear");
     if (current.status === "game-over" && !baseDestroyed) playTankBattleSound("gameOver");
   } else if (previous.stage !== current.stage && current.status === "playing") {
@@ -654,7 +681,7 @@ function createPlayer(player: 1 | 2, active: boolean): Tank {
 }
 
 function createGameState(mode: GameMode, stage = 1, previousPlayers?: Tank[], highScore = readHighScore()): GameState {
-  const twoPlayers = mode === "local" || mode === "online-host" || mode === "online-guest";
+  const twoPlayers = mode === "online-host" || mode === "online-guest";
   const p1 = createPlayer(1, true);
   const p2 = createPlayer(2, twoPlayers);
   if (previousPlayers?.[0]) {
@@ -1085,7 +1112,10 @@ function maybeAdvanceStage(state: GameState) {
 }
 
 function updateGameState(state: GameState, dt: number, inputP1: InputState, inputP2: InputState) {
-  if (state.status !== "playing") return maybeAdvanceStage(state);
+  if (state.status !== "playing") {
+    if (state.status === "stage-clear") state.time += dt;
+    return maybeAdvanceStage(state);
+  }
   state.time += dt;
   protectBaseWithSteel(state);
   spawnEnemy(state);
@@ -1316,8 +1346,8 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
   const soundSnapshotRef = useRef<TankBattleSoundSnapshot | null>(null);
   const joystickPointerIdRef = useRef<number | null>(null);
   const firePointerIdRef = useRef<number | null>(null);
-  const [touchPlayer, setTouchPlayer] = useState<1 | 2>(1);
   const [joystickThumb, setJoystickThumb] = useState({ x: 0, y: 0, active: false });
+  const [menuView, setMenuView] = useState<"mode" | "online">("mode");
   const [roomInput, setRoomInput] = useState("");
   const [roomId, setRoomId] = useState("");
   const [onlineRole, setOnlineRole] = useState<OnlineRole>("none");
@@ -1328,7 +1358,12 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
 
   const canUseOnline = hasSupabaseEnv;
   const isGuest = onlineRole === "guest";
-  const localTouchPlayer = isGuest ? 2 : touchPlayer;
+  const isOnlineHostReady = onlineRole === "host" && ui.status === "ready";
+  const hasOnlinePeer = peers >= 2;
+  const showModeMenu = menuView === "mode" && onlineRole === "none" && ui.status === "ready";
+  const showOnlineMenu = menuView === "online" && ui.status === "ready";
+  const showGameOverMenu = ui.status === "game-over";
+  const showTouchControls = ui.status === "playing" || ui.status === "paused";
 
   const resetState = useCallback((mode: GameMode, stage = 1) => {
     stateRef.current = createGameState(mode, stage, undefined, readHighScore());
@@ -1339,38 +1374,53 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
   }, [networkStatus, onlineRole, peers, roomId]);
 
   const startSolo = useCallback(() => {
+    requestTankBattleLandscapeMode();
     playTankBattleSound("start");
+    setMenuView("mode");
+    setOnlineRole("none");
+    setRoomId("");
+    setRoomInput("");
+    setNetworkStatus("未联网");
+    setPeers(0);
+    resetState("solo");
+  }, [resetState]);
+
+  const showOnlineSetup = useCallback(() => {
+    requestTankBattleLandscapeMode();
+    playTankBattleSound("menu");
+    setMenuView("online");
     setOnlineRole("none");
     setRoomId("");
     setNetworkStatus("未联网");
     setPeers(0);
-    resetState("solo");
-    setTouchPlayer(1);
-  }, [resetState]);
-
-  const startLocal = useCallback(() => {
-    playTankBattleSound("start");
-    setOnlineRole("none");
-    setRoomId("");
-    setNetworkStatus("本地双人");
-    setPeers(0);
-    resetState("local");
-  }, [resetState]);
+  }, []);
 
   const startHost = useCallback(() => {
-    playTankBattleSound("start");
+    requestTankBattleLandscapeMode();
+    playTankBattleSound("menu");
     const nextRoom = createRoomId();
+    setMenuView("online");
     setRoomId(nextRoom);
     setRoomInput(nextRoom);
     setOnlineRole("host");
     setNetworkStatus(canUseOnline ? "创建房间中" : "当前环境未配置联网服务");
     stateRef.current = createGameState("online-host", 1, undefined, readHighScore());
-    stateRef.current.status = "playing";
-    stateRef.current.message = `房间 ${nextRoom}`;
+    stateRef.current.status = "ready";
+    stateRef.current.message = `房间 ${nextRoom}，等待玩家二`;
     soundSnapshotRef.current = createTankBattleSoundSnapshot(stateRef.current);
-    setTouchPlayer(1);
     setUi(buildUiState(stateRef.current, nextRoom, "host", peers, canUseOnline ? "创建房间中" : "当前环境未配置联网服务"));
   }, [canUseOnline, peers]);
+
+  const startOnlineHostGame = useCallback(() => {
+    if (onlineRole !== "host" || !roomId || !hasOnlinePeer) return;
+    requestTankBattleLandscapeMode();
+    playTankBattleSound("start");
+    stateRef.current = createGameState("online-host", 1, undefined, readHighScore());
+    stateRef.current.status = "playing";
+    stateRef.current.message = `第 1 关`;
+    soundSnapshotRef.current = createTankBattleSoundSnapshot(stateRef.current);
+    setUi(buildUiState(stateRef.current, roomId, "host", peers, networkStatus));
+  }, [hasOnlinePeer, networkStatus, onlineRole, peers, roomId]);
 
   const joinRoom = useCallback((targetRoom?: string) => {
     const nextRoom = normalizeRoomId(targetRoom ?? roomInput);
@@ -1378,7 +1428,9 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
       setNetworkStatus("请输入房间号");
       return;
     }
+    requestTankBattleLandscapeMode();
     playTankBattleSound("menu");
+    setMenuView("online");
     setRoomId(nextRoom);
     setRoomInput(nextRoom);
     setOnlineRole("guest");
@@ -1386,7 +1438,6 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
     stateRef.current = createGameState("online-guest", 1, undefined, readHighScore());
     stateRef.current.message = `等待房主 ${nextRoom}`;
     soundSnapshotRef.current = createTankBattleSoundSnapshot(stateRef.current);
-    setTouchPlayer(2);
     setUi(buildUiState(stateRef.current, nextRoom, "guest", peers, canUseOnline ? "加入房间中" : "当前环境未配置联网服务"));
   }, [canUseOnline, peers, roomInput]);
 
@@ -1407,17 +1458,10 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
 
   const restartCurrent = useCallback(() => {
     if (isGuest) return;
+    requestTankBattleLandscapeMode();
     playTankBattleSound("start");
     const mode = stateRef.current.mode === "online-guest" ? "solo" : stateRef.current.mode;
     resetState(mode, stateRef.current.stage);
-  }, [isGuest, resetState]);
-
-  const nextStage = useCallback(() => {
-    if (isGuest) return;
-    playTankBattleSound("start");
-    const state = stateRef.current;
-    const mode = state.mode === "online-guest" ? "solo" : state.mode;
-    resetState(mode, state.stage >= MAX_STAGE ? 1 : state.stage + 1);
   }, [isGuest, resetState]);
 
   const copyRoomLink = useCallback(async () => {
@@ -1437,6 +1481,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    requestTankBattleLandscapeMode();
     const params = new URLSearchParams(window.location.search);
     const queryRoom = normalizeRoomId(params.get("room") ?? "");
     if (queryRoom) {
@@ -1557,13 +1602,9 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
       last = now;
       const state = stateRef.current;
       if (onlineRole !== "guest") {
-        const p1Touch = localTouchPlayer === 1 ? touchInputRef.current : emptyInput;
-        const p2Touch = localTouchPlayer === 2 ? touchInputRef.current : emptyInput;
+        const p1Touch = touchInputRef.current;
         const p1Input = mergeInput(keyboardP1Ref.current, p1Touch);
-        const p2Input =
-          onlineRole === "host"
-            ? remoteInputRef.current
-            : mergeInput(keyboardP2Ref.current, p2Touch);
+        const p2Input = onlineRole === "host" ? remoteInputRef.current : emptyInput;
         stateRef.current = updateGameState(state, dt, p1Input, p2Input);
         if (onlineRole === "host" && channelRef.current && now - lastBroadcastRef.current > 80) {
           lastBroadcastRef.current = now;
@@ -1579,10 +1620,8 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
       } else {
         stateRef.current.time += dt;
       }
-      const p1MovementInput =
-        onlineRole === "guest" ? emptyInput : mergeInput(keyboardP1Ref.current, localTouchPlayer === 1 ? touchInputRef.current : emptyInput);
-      const p2MovementInput =
-        onlineRole === "host" ? emptyInput : mergeInput(keyboardP2Ref.current, localTouchPlayer === 2 || onlineRole === "guest" ? touchInputRef.current : emptyInput);
+      const p1MovementInput = onlineRole === "guest" ? emptyInput : mergeInput(keyboardP1Ref.current, touchInputRef.current);
+      const p2MovementInput = onlineRole === "guest" ? mergeInput(keyboardP2Ref.current, touchInputRef.current) : emptyInput;
       const localMovementInput = mergeInput(p1MovementInput, p2MovementInput);
       setTankBattleEngineAudio(stateRef.current.status === "playing" && inputDirection(localMovementInput) !== null);
       soundSnapshotRef.current = playTankBattleStateSounds(soundSnapshotRef.current, stateRef.current);
@@ -1599,11 +1638,10 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
       cancelAnimationFrame(frame);
       stopTankBattleEngineAudio();
     };
-  }, [localTouchPlayer, networkStatus, onlineRole, peers, roomId]);
+  }, [networkStatus, onlineRole, peers, roomId]);
 
   const modeLabel = useMemo(() => {
     if (ui.mode === "solo") return "单人";
-    if (ui.mode === "local") return "本地双人";
     if (ui.mode === "online-host") return "联网房主";
     return "联网加入";
   }, [ui.mode]);
@@ -1702,7 +1740,18 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
   return (
     <main className="tank-battle-page min-h-screen bg-[#eef2f3] px-3 pb-[calc(env(safe-area-inset-bottom)+1.25rem)] pt-[calc(env(safe-area-inset-top)+0.9rem)] text-slate-950">
       <style jsx global>{`
-        @media (orientation: landscape) and (max-height: 640px) {
+        .tank-battle-menu-overlay {
+          position: absolute;
+          inset: 0.75rem;
+          z-index: 2;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 18px;
+          background: radial-gradient(circle at center, rgba(15, 23, 42, 0.2), rgba(2, 6, 23, 0.66));
+        }
+
+        @media (max-width: 900px) {
           .tank-battle-page {
             height: 100dvh;
             overflow: hidden;
@@ -1712,6 +1761,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
 
           .tank-battle-shell {
             height: 100dvh;
+            width: 100dvw;
             max-width: none;
             gap: 0;
           }
@@ -1775,6 +1825,44 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
           .tank-battle-mobile-controls button {
             pointer-events: auto;
           }
+
+          .tank-battle-mobile-controls.is-hidden {
+            display: none !important;
+          }
+
+          .tank-battle-menu-overlay {
+            position: absolute;
+            inset: 0;
+            z-index: 2;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 0;
+            background: radial-gradient(circle at center, rgba(15, 23, 42, 0.24), rgba(2, 6, 23, 0.74));
+            padding: max(16px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
+          }
+        }
+
+        @media (orientation: portrait) and (max-width: 900px) {
+          .tank-battle-shell {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100dvh;
+            height: 100dvw;
+            transform: rotate(90deg) translateY(-100%);
+            transform-origin: top left;
+          }
+
+          .tank-battle-canvas-wrap {
+            height: 100dvw;
+            width: 100dvw;
+          }
+
+          .tank-battle-layout,
+          .tank-battle-stage-card {
+            height: 100dvw;
+          }
         }
       `}</style>
       <div className="tank-battle-shell mx-auto flex max-w-6xl flex-col gap-3">
@@ -1795,7 +1883,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
         </header>
 
         <section className="tank-battle-layout grid gap-3 lg:grid-cols-[minmax(0,1fr)_330px]">
-          <div className="tank-battle-stage-card rounded-[24px] border border-slate-200 bg-white p-3 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
+          <div className="tank-battle-stage-card relative rounded-[24px] border border-slate-200 bg-white p-3 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
             <div className="tank-battle-stats grid grid-cols-4 gap-2 pb-3">
               {[
                 ["关卡", ui.stage],
@@ -1819,7 +1907,128 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
               />
             </div>
 
-            <section className="tank-battle-mobile-controls mt-2 rounded-[22px] border border-slate-200 bg-slate-950 px-4 py-3 shadow-inner lg:hidden">
+            {showModeMenu ? (
+              <div className="tank-battle-menu-overlay">
+                <div className="w-full max-w-[360px] rounded-[26px] border border-white/15 bg-slate-950/92 p-4 text-white shadow-[0_24px_60px_rgba(0,0,0,0.38)] backdrop-blur">
+                  <div className="text-center text-2xl font-black">坦克大战</div>
+                  <div className="mt-4 grid gap-3">
+                    <button
+                      type="button"
+                      className="rounded-2xl bg-emerald-500 px-4 py-4 text-base font-black text-slate-950 shadow-[0_14px_34px_rgba(16,185,129,0.28)] active:scale-[0.98]"
+                      onClick={startSolo}
+                    >
+                      单人开始
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-2xl bg-sky-500 px-4 py-4 text-base font-black text-slate-950 shadow-[0_14px_34px_rgba(14,165,233,0.28)] active:scale-[0.98]"
+                      onClick={showOnlineSetup}
+                    >
+                      联网双打
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {showOnlineMenu ? (
+              <div className="tank-battle-menu-overlay">
+                <div className="w-full max-w-[430px] rounded-[26px] border border-white/15 bg-slate-950/94 p-4 text-white shadow-[0_24px_60px_rgba(0,0,0,0.4)] backdrop-blur">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-xl font-black">联网双打</div>
+                    <button
+                      type="button"
+                      className="rounded-full border border-white/15 px-3 py-1.5 text-xs font-bold text-slate-200 active:scale-95"
+                      onClick={() => {
+                        playTankBattleSound("menu");
+                        setMenuView("mode");
+                        setOnlineRole("none");
+                        setRoomId("");
+                        setNetworkStatus("未联网");
+                      }}
+                    >
+                      返回
+                    </button>
+                  </div>
+
+                  {onlineRole === "none" ? (
+                    <div className="mt-4 grid gap-3">
+                      <div className="grid grid-cols-[1fr_auto] gap-2">
+                        <input
+                          value={roomInput}
+                          onChange={(event) => setRoomInput(normalizeRoomId(event.target.value))}
+                          placeholder="房间号"
+                          className="min-w-0 rounded-2xl border border-white/15 bg-white/10 px-3 py-3 text-sm font-black uppercase text-white outline-none placeholder:text-slate-400"
+                        />
+                        <button type="button" className="rounded-2xl bg-sky-500 px-4 py-3 text-sm font-black text-slate-950 active:scale-95" onClick={() => joinRoom()}>
+                          加入
+                        </button>
+                      </div>
+                      <button
+                        type="button"
+                        className="rounded-2xl bg-emerald-500 px-4 py-4 text-base font-black text-slate-950 active:scale-[0.98] disabled:opacity-50"
+                        onClick={startHost}
+                        disabled={!canUseOnline}
+                      >
+                        创建房间
+                      </button>
+                      {!canUseOnline ? <div className="text-center text-xs font-semibold text-rose-200">当前环境未配置联网服务</div> : null}
+                    </div>
+                  ) : (
+                    <div className="mt-4 space-y-3">
+                      <div className="rounded-2xl bg-white/10 px-3 py-3 text-sm font-bold">
+                        房间 {roomId || "未创建"} · {networkStatus} · {peers} 人在线
+                      </div>
+                      {onlineRole === "host" ? (
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            className="rounded-2xl border border-white/15 bg-white/10 px-3 py-3 text-sm font-black text-white disabled:opacity-50"
+                            onClick={copyRoomLink}
+                            disabled={!roomId}
+                          >
+                            {copied ? "已复制" : "复制邀请"}
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded-2xl bg-emerald-500 px-3 py-3 text-sm font-black text-slate-950 disabled:opacity-45"
+                            onClick={startOnlineHostGame}
+                            disabled={!isOnlineHostReady || !hasOnlinePeer}
+                          >
+                            开始
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="rounded-2xl bg-white/10 px-3 py-3 text-center text-sm font-bold text-slate-200">等待房主开始</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : null}
+
+            {showGameOverMenu ? (
+              <div className="tank-battle-menu-overlay">
+                <div className="w-full max-w-[340px] rounded-[26px] border border-white/15 bg-slate-950/92 p-4 text-center text-white shadow-[0_24px_60px_rgba(0,0,0,0.38)] backdrop-blur">
+                  <div className="text-2xl font-black">游戏结束</div>
+                  <div className="mt-2 text-sm font-semibold text-slate-300">总分 {ui.totalScore}</div>
+                  {onlineRole === "guest" ? (
+                    <div className="mt-4 rounded-2xl bg-white/10 px-3 py-3 text-sm font-bold text-slate-200">等待房主重新开始</div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="mt-4 w-full rounded-2xl bg-emerald-500 px-4 py-4 text-base font-black text-slate-950 active:scale-[0.98] disabled:opacity-50"
+                      onClick={onlineRole === "host" ? startOnlineHostGame : startSolo}
+                      disabled={onlineRole === "host" && !hasOnlinePeer}
+                    >
+                      重新开始
+                    </button>
+                  )}
+                </div>
+              </div>
+            ) : null}
+
+            <section className={`tank-battle-mobile-controls mt-2 rounded-[22px] border border-slate-200 bg-slate-950 px-4 py-3 shadow-inner lg:hidden ${showTouchControls ? "" : "is-hidden"}`}>
               <div className="flex items-center justify-between gap-4">
                 <button
                   type="button"
@@ -1862,13 +2071,13 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
               <button type="button" className="rounded-2xl bg-slate-950 px-3 py-3 text-sm font-bold text-white" onClick={startSolo}>
                 单人开始
               </button>
-              <button type="button" className="rounded-2xl bg-slate-900 px-3 py-3 text-sm font-bold text-white" onClick={startLocal}>
-                本地双打
+              <button type="button" className="rounded-2xl bg-slate-900 px-3 py-3 text-sm font-bold text-white" onClick={showOnlineSetup}>
+                联网双打
               </button>
-              <button type="button" className="rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold text-slate-800" onClick={pauseOrResume} disabled={isGuest}>
+              <button type="button" className="rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold text-slate-800 disabled:opacity-50" onClick={pauseOrResume} disabled={isGuest || ui.status === "ready"}>
                 {ui.status === "paused" ? "继续" : "暂停"}
               </button>
-              <button type="button" className="rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold text-slate-800" onClick={restartCurrent} disabled={isGuest}>
+              <button type="button" className="rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold text-slate-800 disabled:opacity-50" onClick={restartCurrent} disabled={isGuest || ui.status === "ready"}>
                 重开本关
               </button>
             </div>
@@ -1876,14 +2085,9 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
 
           <aside className="tank-battle-sidebar space-y-3">
             <section className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <div className="text-sm font-black text-slate-950">状态</div>
-                  <div className="mt-1 text-xs text-slate-500">{ui.message}</div>
-                </div>
-                <button type="button" className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700" onClick={nextStage} disabled={isGuest}>
-                  下一关
-                </button>
+              <div>
+                <div className="text-sm font-black text-slate-950">状态</div>
+                <div className="mt-1 text-xs text-slate-500">{ui.message}</div>
               </div>
               <div className="mt-3 grid grid-cols-2 gap-2">
                 <div className="rounded-2xl bg-emerald-50 px-3 py-2">
@@ -1913,12 +2117,20 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
                   加入
                 </button>
               </div>
-              <div className="mt-2 grid grid-cols-2 gap-2">
-                <button type="button" className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm font-bold text-emerald-800" onClick={startHost}>
+              <div className="mt-2 grid grid-cols-3 gap-2">
+                <button type="button" className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm font-bold text-emerald-800 disabled:opacity-50" onClick={startHost} disabled={!canUseOnline}>
                   创建房间
                 </button>
                 <button type="button" className="rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold text-slate-700 disabled:opacity-50" onClick={copyRoomLink} disabled={!roomId}>
                   {copied ? "已复制" : "复制邀请"}
+                </button>
+                <button
+                  type="button"
+                  className="rounded-2xl bg-slate-950 px-3 py-3 text-sm font-bold text-white disabled:opacity-50"
+                  onClick={startOnlineHostGame}
+                  disabled={!isOnlineHostReady || !hasOnlinePeer}
+                >
+                  开始
                 </button>
               </div>
               <div className="mt-3 rounded-2xl bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-500">
@@ -1938,30 +2150,12 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
                   方向键移动，回车开火
                 </div>
               </div>
-              <div className="mt-3 flex items-center gap-2">
-                <button
-                  type="button"
-                  className={`rounded-2xl px-3 py-2 text-xs font-bold ${localTouchPlayer === 1 ? "bg-emerald-700 text-white" : "bg-slate-100 text-slate-700"}`}
-                  onClick={() => setTouchPlayer(1)}
-                  disabled={isGuest}
-                >
-                  触控玩家一
-                </button>
-                <button
-                  type="button"
-                  className={`rounded-2xl px-3 py-2 text-xs font-bold ${localTouchPlayer === 2 ? "bg-amber-600 text-white" : "bg-slate-100 text-slate-700"}`}
-                  onClick={() => setTouchPlayer(2)}
-                  disabled={ui.mode === "solo" || onlineRole === "host"}
-                >
-                  触控玩家二
-                </button>
-              </div>
             </section>
           </aside>
         </section>
 
         <section className="tank-battle-footer rounded-[24px] border border-slate-200 bg-white p-4 text-xs leading-6 text-slate-500 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
-          已实现基地防守、砖墙/钢墙/水域/树林/冰面、敌军出生、敌军 AI、子弹碰撞、玩家生命、火力升级、护盾、清屏、暂停敌军、基地钢墙、加命、关卡循环、单人、本地双人和联网双打。
+          已实现基地防守、砖墙/钢墙/水域/树林/冰面、敌军出生、敌军 AI、子弹碰撞、玩家生命、火力升级、护盾、清屏、暂停敌军、基地钢墙、加命、关卡循环、单人和联网双打。
         </section>
       </div>
     </main>
