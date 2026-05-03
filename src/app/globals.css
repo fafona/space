@@ -217,10 +217,13 @@ html[data-i18n-pending="1"] body {
 
 .support-mobile-shell.support-mobile-dark .text-slate-950,
 .support-mobile-shell.support-mobile-dark .text-slate-900,
+.support-mobile-shell.support-mobile-dark .text-slate-800,
 .support-mobile-sheet.support-mobile-dark .text-slate-950,
 .support-mobile-sheet.support-mobile-dark .text-slate-900,
+.support-mobile-sheet.support-mobile-dark .text-slate-800,
 .support-mobile-nav-shell.support-mobile-dark .text-slate-950,
-.support-mobile-nav-shell.support-mobile-dark .text-slate-900 {
+.support-mobile-nav-shell.support-mobile-dark .text-slate-900,
+.support-mobile-nav-shell.support-mobile-dark .text-slate-800 {
   color: #f8fafc !important;
 }
 
