@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import TankBattleIcon from "@/components/TankBattleIcon";
-import { hasSupabaseEnv, supabase } from "@/lib/supabase";
 import { writeTankBattleLobbyReturnTarget } from "@/lib/tankBattleLobbyReturn";
 
 type Direction = "up" | "down" | "left" | "right";
@@ -1348,6 +1347,36 @@ function serializeState(state: GameState): GameState {
   return JSON.parse(JSON.stringify(state)) as GameState;
 }
 
+type TankBattleRelayResponse = {
+  ok?: boolean;
+  peers?: number;
+  hasHost?: boolean;
+  hasGuest?: boolean;
+  guestInput?: InputState | null;
+  snapshot?: GameState | null;
+  error?: string;
+};
+
+async function syncTankBattleRelay(payload: {
+  roomId: string;
+  role: Exclude<OnlineRole, "none">;
+  input?: InputState;
+  state?: GameState;
+}): Promise<TankBattleRelayResponse> {
+  const response = await fetch("/api/tank-battle-room", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    credentials: "same-origin",
+    cache: "no-store",
+    body: JSON.stringify(payload),
+  });
+  const data = (await response.json().catch(() => ({}))) as TankBattleRelayResponse;
+  if (!response.ok || data.ok === false) {
+    throw new Error(data.error || `relay_${response.status}`);
+  }
+  return data;
+}
+
 function buildUiState(state: GameState, roomId: string, onlineRole: OnlineRole, peers: number, networkStatus: string): UiState {
   return {
     status: state.status,
@@ -1570,8 +1599,6 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
   const keyboardP2Ref = useRef<InputState>(cloneInput(emptyInput));
   const touchInputRef = useRef<InputState>(cloneInput(emptyInput));
   const remoteInputRef = useRef<InputState>(cloneInput(emptyInput));
-  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
-  const lastBroadcastRef = useRef(0);
   const soundSnapshotRef = useRef<TankBattleSoundSnapshot | null>(null);
   const joystickPointerIdRef = useRef<number | null>(null);
   const joystickDirectionRef = useRef<Direction | null>(null);
@@ -1587,7 +1614,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
   const [copied, setCopied] = useState(false);
   const [ui, setUi] = useState<UiState>(() => buildUiState(createGameState("solo"), "", "none", 0, "未联网"));
 
-  const canUseOnline = hasSupabaseEnv;
+  const canUseOnline = true;
   const isGuest = onlineRole === "guest";
   const isOnlineHostReady = onlineRole === "host" && ui.status === "ready";
   const hasOnlinePeer = peers >= 2;
@@ -1808,13 +1835,14 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
     setRoomId(nextRoom);
     setRoomInput(nextRoom);
     setOnlineRole("host");
-    setNetworkStatus(canUseOnline ? "创建房间中" : "当前环境未配置联网服务");
+    setNetworkStatus("创建房间中");
+    setPeers(1);
     stateRef.current = createGameState("online-host", 1, undefined, readHighScore());
     stateRef.current.status = "ready";
     stateRef.current.message = `房间 ${nextRoom}，等待玩家二`;
     soundSnapshotRef.current = createTankBattleSoundSnapshot(stateRef.current);
-    setUi(buildUiState(stateRef.current, nextRoom, "host", peers, canUseOnline ? "创建房间中" : "当前环境未配置联网服务"));
-  }, [canUseOnline, peers, requestStableLandscapeMode]);
+    setUi(buildUiState(stateRef.current, nextRoom, "host", 1, "创建房间中"));
+  }, [requestStableLandscapeMode]);
 
   const startOnlineHostGame = useCallback(() => {
     if (onlineRole !== "host" || !roomId || !hasOnlinePeer) return;
@@ -1839,12 +1867,13 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
     setRoomId(nextRoom);
     setRoomInput(nextRoom);
     setOnlineRole("guest");
-    setNetworkStatus(canUseOnline ? "加入房间中" : "当前环境未配置联网服务");
+    setNetworkStatus("加入房间中");
+    setPeers(1);
     stateRef.current = createGameState("online-guest", 1, undefined, readHighScore());
     stateRef.current.message = `等待房主 ${nextRoom}`;
     soundSnapshotRef.current = createTankBattleSoundSnapshot(stateRef.current);
-    setUi(buildUiState(stateRef.current, nextRoom, "guest", peers, canUseOnline ? "加入房间中" : "当前环境未配置联网服务"));
-  }, [canUseOnline, peers, requestStableLandscapeMode, roomInput]);
+    setUi(buildUiState(stateRef.current, nextRoom, "guest", 1, "加入房间中"));
+  }, [requestStableLandscapeMode, roomInput]);
 
   const pauseOrResume = useCallback(() => {
     if (isGuest) return;
@@ -1964,70 +1993,51 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
 
   useEffect(() => {
     if (!roomId || onlineRole === "none") return;
-    if (!canUseOnline) return;
-    const channel = supabase.channel(`faolla-tank-battle-${roomId}`, {
-      config: {
-        broadcast: { self: false },
-        presence: { key: `${onlineRole}-${Math.random().toString(16).slice(2)}` },
-      },
-    });
-    channel
-      .on("broadcast", { event: "input" }, ({ payload }) => {
-        if (onlineRole !== "host") return;
-        const record = payload as { input?: InputState; player?: number };
-        if (record.player === 2 && record.input) {
-          remoteInputRef.current = cloneInput(record.input);
+
+    let stopped = false;
+    let timer = 0;
+    let inFlight = false;
+    const delay = onlineRole === "host" ? 90 : 70;
+
+    const sync = async () => {
+      if (stopped || inFlight) return;
+      inFlight = true;
+      try {
+        const response = await syncTankBattleRelay({
+          roomId,
+          role: onlineRole,
+          input: onlineRole === "guest" ? mergeInput(keyboardP2Ref.current, touchInputRef.current) : undefined,
+          state: onlineRole === "host" ? serializeState(stateRef.current) : undefined,
+        });
+        if (stopped) return;
+        const nextPeers = typeof response.peers === "number" ? response.peers : 0;
+        setPeers(nextPeers);
+        if (onlineRole === "host") {
+          remoteInputRef.current = response.hasGuest && response.guestInput ? cloneInput(response.guestInput) : cloneInput(emptyInput);
+          setNetworkStatus(response.hasGuest ? "已连接" : "等待玩家二");
+        } else {
+          if (response.snapshot) {
+            stateRef.current = response.snapshot;
+          }
+          setNetworkStatus(response.hasHost ? "已加入房间" : "等待房主");
         }
-      })
-      .on("broadcast", { event: "snapshot" }, ({ payload }) => {
-        if (onlineRole !== "guest") return;
-        const record = payload as { state?: GameState };
-        if (record.state) {
-          stateRef.current = record.state;
+      } catch {
+        if (!stopped) setNetworkStatus("联网中转异常");
+      } finally {
+        inFlight = false;
+        if (!stopped) {
+          timer = window.setTimeout(sync, delay);
         }
-      })
-      .on("presence", { event: "sync" }, () => {
-        const presenceState = channel.presenceState();
-        setPeers(Object.values(presenceState).reduce((sum, entries) => sum + entries.length, 0));
-      })
-      .subscribe(async (status) => {
-        if (status === "SUBSCRIBED") {
-          await channel.track({ role: onlineRole, roomId, at: Date.now() });
-          setNetworkStatus(onlineRole === "host" ? "房间已创建" : "已加入房间");
-        } else if (status === "CHANNEL_ERROR") {
-          setNetworkStatus("联网通道异常");
-        } else if (status === "TIMED_OUT") {
-          setNetworkStatus("联网超时");
-        } else if (status === "CLOSED") {
-          setNetworkStatus("联网已断开");
-        }
-      });
-    channelRef.current = channel;
+      }
+    };
+
+    void sync();
     return () => {
-      void supabase.removeChannel(channel);
-      if (channelRef.current === channel) channelRef.current = null;
+      stopped = true;
+      window.clearTimeout(timer);
       setPeers(0);
     };
-  }, [canUseOnline, onlineRole, roomId]);
-
-  useEffect(() => {
-    if (onlineRole !== "guest") return;
-    const timer = window.setInterval(() => {
-      const channel = channelRef.current;
-      if (!channel) return;
-      const localInput = mergeInput(keyboardP2Ref.current, touchInputRef.current);
-      void channel.send({
-        type: "broadcast",
-        event: "input",
-        payload: {
-          player: 2,
-          input: localInput,
-          at: Date.now(),
-        },
-      });
-    }, 48);
-    return () => window.clearInterval(timer);
-  }, [onlineRole]);
+  }, [onlineRole, roomId]);
 
   useEffect(() => {
     let frame = 0;
@@ -2042,17 +2052,6 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
         const p1Input = mergeInput(keyboardP1Ref.current, p1Touch);
         const p2Input = onlineRole === "host" ? remoteInputRef.current : emptyInput;
         stateRef.current = updateGameState(state, dt, p1Input, p2Input);
-        if (onlineRole === "host" && channelRef.current && now - lastBroadcastRef.current > 80) {
-          lastBroadcastRef.current = now;
-          void channelRef.current.send({
-            type: "broadcast",
-            event: "snapshot",
-            payload: {
-              state: serializeState(stateRef.current),
-              at: Date.now(),
-            },
-          });
-        }
       } else {
         stateRef.current.time += dt;
       }
@@ -2867,7 +2866,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
             <section className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
               <div className="text-sm font-black text-slate-950">联网双打</div>
               <div className="mt-1 text-xs leading-5 text-slate-500">
-                房主控制玩家一，加入者控制玩家二。联网依赖 Supabase Realtime。
+                房主控制玩家一，加入者控制玩家二。联网通过本站中转。
               </div>
               <div className="mt-3 grid grid-cols-[1fr_auto] gap-2">
                 <input
