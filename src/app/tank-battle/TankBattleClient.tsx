@@ -114,6 +114,46 @@ type TankBattleClientProps = {
   subtitle?: string;
 };
 
+type TankBattleSoundName =
+  | "menu"
+  | "start"
+  | "pause"
+  | "resume"
+  | "shoot"
+  | "enemyShoot"
+  | "hit"
+  | "destroy"
+  | "bomb"
+  | "powerupSpawn"
+  | "powerup"
+  | "playerDown"
+  | "baseDown"
+  | "stageClear"
+  | "gameOver";
+
+type TankBattleSoundSnapshot = {
+  status: GameStatus;
+  stage: number;
+  baseAlive: boolean;
+  destroyedEnemies: number;
+  bulletIds: Set<string>;
+  powerupIds: Set<string>;
+  sparkIds: Set<string>;
+  p1Lives: number;
+  p2Lives: number;
+  p1Power: number;
+  p2Power: number;
+  p1Active: boolean;
+  p2Active: boolean;
+  totalScore: number;
+  message: string;
+};
+
+type AudioWindow = Window &
+  typeof globalThis & {
+    webkitAudioContext?: typeof AudioContext;
+  };
+
 const GRID_SIZE = 13;
 const TILE_SIZE = 32;
 const CANVAS_SIZE = GRID_SIZE * TILE_SIZE;
@@ -143,6 +183,260 @@ const powerupLabels: Record<PowerupType, string> = {
   shovel: "墙",
   tank: "命",
 };
+
+let tankBattleAudioContext: AudioContext | null = null;
+let tankBattleMasterGain: GainNode | null = null;
+let tankBattleEngineOscillator: OscillatorNode | null = null;
+let tankBattleEngineGain: GainNode | null = null;
+let tankBattleEngineActive = false;
+
+function getTankBattleAudioContext() {
+  if (typeof window === "undefined") return null;
+  if (tankBattleAudioContext && tankBattleAudioContext.state !== "closed") return tankBattleAudioContext;
+  const audioWindow = window as AudioWindow;
+  const AudioContextConstructor = audioWindow.AudioContext ?? audioWindow.webkitAudioContext;
+  if (!AudioContextConstructor) return null;
+  tankBattleAudioContext = new AudioContextConstructor();
+  tankBattleMasterGain = null;
+  return tankBattleAudioContext;
+}
+
+function getTankBattleMasterGain(ctx: AudioContext) {
+  if (!tankBattleMasterGain) {
+    tankBattleMasterGain = ctx.createGain();
+    tankBattleMasterGain.gain.value = 0.42;
+    tankBattleMasterGain.connect(ctx.destination);
+  }
+  return tankBattleMasterGain;
+}
+
+function unlockTankBattleAudio() {
+  const ctx = getTankBattleAudioContext();
+  if (!ctx) return null;
+  if (ctx.state === "suspended") {
+    void ctx.resume().catch(() => undefined);
+  }
+  return ctx;
+}
+
+function scheduleTankBattleTone(
+  ctx: AudioContext,
+  {
+    type = "square",
+    frequency,
+    endFrequency,
+    delay = 0,
+    duration,
+    gain = 0.08,
+  }: {
+    type?: OscillatorType;
+    frequency: number;
+    endFrequency?: number;
+    delay?: number;
+    duration: number;
+    gain?: number;
+  },
+) {
+  const start = ctx.currentTime + delay;
+  const stop = start + duration;
+  const oscillator = ctx.createOscillator();
+  const gainNode = ctx.createGain();
+  oscillator.type = type;
+  oscillator.frequency.setValueAtTime(Math.max(1, frequency), start);
+  if (endFrequency !== undefined) {
+    oscillator.frequency.exponentialRampToValueAtTime(Math.max(1, endFrequency), stop);
+  }
+  gainNode.gain.setValueAtTime(0.0001, start);
+  gainNode.gain.exponentialRampToValueAtTime(Math.max(0.0001, gain), start + 0.01);
+  gainNode.gain.exponentialRampToValueAtTime(0.0001, stop);
+  oscillator.connect(gainNode);
+  gainNode.connect(getTankBattleMasterGain(ctx));
+  oscillator.start(start);
+  oscillator.stop(stop + 0.02);
+}
+
+function scheduleTankBattleNoise(
+  ctx: AudioContext,
+  {
+    delay = 0,
+    duration,
+    gain = 0.08,
+    frequency = 900,
+    type = "lowpass",
+  }: {
+    delay?: number;
+    duration: number;
+    gain?: number;
+    frequency?: number;
+    type?: BiquadFilterType;
+  },
+) {
+  const start = ctx.currentTime + delay;
+  const frameCount = Math.max(1, Math.floor(ctx.sampleRate * duration));
+  const buffer = ctx.createBuffer(1, frameCount, ctx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let index = 0; index < frameCount; index += 1) {
+    const decay = 1 - index / frameCount;
+    data[index] = (Math.random() * 2 - 1) * decay;
+  }
+  const source = ctx.createBufferSource();
+  const filter = ctx.createBiquadFilter();
+  const gainNode = ctx.createGain();
+  source.buffer = buffer;
+  filter.type = type;
+  filter.frequency.setValueAtTime(frequency, start);
+  gainNode.gain.setValueAtTime(0.0001, start);
+  gainNode.gain.exponentialRampToValueAtTime(Math.max(0.0001, gain), start + 0.006);
+  gainNode.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+  source.connect(filter);
+  filter.connect(gainNode);
+  gainNode.connect(getTankBattleMasterGain(ctx));
+  source.start(start);
+  source.stop(start + duration + 0.02);
+}
+
+function playTankBattleSound(name: TankBattleSoundName) {
+  const ctx = unlockTankBattleAudio();
+  if (!ctx) return;
+  if (name === "menu") {
+    scheduleTankBattleTone(ctx, { type: "triangle", frequency: 520, endFrequency: 700, duration: 0.09, gain: 0.045 });
+  } else if (name === "start") {
+    scheduleTankBattleTone(ctx, { type: "square", frequency: 220, endFrequency: 330, duration: 0.09, gain: 0.055 });
+    scheduleTankBattleTone(ctx, { type: "square", frequency: 440, endFrequency: 660, delay: 0.08, duration: 0.11, gain: 0.055 });
+  } else if (name === "pause") {
+    scheduleTankBattleTone(ctx, { type: "triangle", frequency: 420, endFrequency: 210, duration: 0.12, gain: 0.05 });
+  } else if (name === "resume") {
+    scheduleTankBattleTone(ctx, { type: "triangle", frequency: 260, endFrequency: 520, duration: 0.12, gain: 0.05 });
+  } else if (name === "shoot") {
+    scheduleTankBattleTone(ctx, { type: "square", frequency: 520, endFrequency: 130, duration: 0.08, gain: 0.075 });
+    scheduleTankBattleNoise(ctx, { duration: 0.05, gain: 0.035, frequency: 1600, type: "bandpass" });
+  } else if (name === "enemyShoot") {
+    scheduleTankBattleTone(ctx, { type: "square", frequency: 280, endFrequency: 90, duration: 0.07, gain: 0.035 });
+  } else if (name === "hit") {
+    scheduleTankBattleNoise(ctx, { duration: 0.07, gain: 0.055, frequency: 1400, type: "bandpass" });
+    scheduleTankBattleTone(ctx, { type: "triangle", frequency: 180, endFrequency: 80, duration: 0.08, gain: 0.035 });
+  } else if (name === "destroy") {
+    scheduleTankBattleNoise(ctx, { duration: 0.18, gain: 0.11, frequency: 620 });
+    scheduleTankBattleTone(ctx, { type: "sawtooth", frequency: 140, endFrequency: 42, duration: 0.2, gain: 0.085 });
+  } else if (name === "bomb") {
+    scheduleTankBattleNoise(ctx, { duration: 0.32, gain: 0.15, frequency: 480 });
+    scheduleTankBattleTone(ctx, { type: "sawtooth", frequency: 170, endFrequency: 32, duration: 0.34, gain: 0.1 });
+    scheduleTankBattleTone(ctx, { type: "square", frequency: 70, endFrequency: 36, delay: 0.06, duration: 0.24, gain: 0.08 });
+  } else if (name === "powerupSpawn") {
+    scheduleTankBattleTone(ctx, { type: "sine", frequency: 760, endFrequency: 1040, duration: 0.1, gain: 0.035 });
+  } else if (name === "powerup") {
+    scheduleTankBattleTone(ctx, { type: "triangle", frequency: 520, duration: 0.08, gain: 0.06 });
+    scheduleTankBattleTone(ctx, { type: "triangle", frequency: 780, delay: 0.06, duration: 0.08, gain: 0.06 });
+    scheduleTankBattleTone(ctx, { type: "triangle", frequency: 1040, delay: 0.12, duration: 0.1, gain: 0.055 });
+  } else if (name === "playerDown") {
+    scheduleTankBattleNoise(ctx, { duration: 0.18, gain: 0.08, frequency: 760 });
+    scheduleTankBattleTone(ctx, { type: "sawtooth", frequency: 260, endFrequency: 58, duration: 0.24, gain: 0.07 });
+  } else if (name === "baseDown") {
+    scheduleTankBattleNoise(ctx, { duration: 0.38, gain: 0.14, frequency: 520 });
+    scheduleTankBattleTone(ctx, { type: "sawtooth", frequency: 120, endFrequency: 26, duration: 0.42, gain: 0.1 });
+  } else if (name === "stageClear") {
+    [392, 523, 659, 784].forEach((frequency, index) => {
+      scheduleTankBattleTone(ctx, { type: "square", frequency, delay: index * 0.07, duration: 0.11, gain: 0.05 });
+    });
+  } else if (name === "gameOver") {
+    scheduleTankBattleTone(ctx, { type: "triangle", frequency: 240, endFrequency: 90, duration: 0.28, gain: 0.07 });
+    scheduleTankBattleTone(ctx, { type: "triangle", frequency: 150, endFrequency: 48, delay: 0.18, duration: 0.32, gain: 0.06 });
+  }
+}
+
+function setTankBattleEngineAudio(active: boolean) {
+  if (tankBattleEngineActive === active) return;
+  tankBattleEngineActive = active;
+  const ctx = tankBattleAudioContext;
+  if (!ctx || ctx.state === "closed") return;
+  const now = ctx.currentTime;
+  if (!tankBattleEngineOscillator || !tankBattleEngineGain) {
+    tankBattleEngineOscillator = ctx.createOscillator();
+    tankBattleEngineGain = ctx.createGain();
+    const filter = ctx.createBiquadFilter();
+    tankBattleEngineOscillator.type = "sawtooth";
+    tankBattleEngineOscillator.frequency.value = 58;
+    filter.type = "lowpass";
+    filter.frequency.value = 180;
+    tankBattleEngineGain.gain.value = 0.0001;
+    tankBattleEngineOscillator.connect(filter);
+    filter.connect(tankBattleEngineGain);
+    tankBattleEngineGain.connect(getTankBattleMasterGain(ctx));
+    tankBattleEngineOscillator.start();
+  }
+  tankBattleEngineGain.gain.cancelScheduledValues(now);
+  tankBattleEngineGain.gain.setTargetAtTime(active ? 0.026 : 0.0001, now, active ? 0.035 : 0.06);
+}
+
+function stopTankBattleEngineAudio() {
+  tankBattleEngineActive = false;
+  tankBattleEngineGain?.disconnect();
+  try {
+    tankBattleEngineOscillator?.stop();
+  } catch {
+    // Oscillator may already have been stopped by the browser.
+  }
+  tankBattleEngineOscillator = null;
+  tankBattleEngineGain = null;
+}
+
+function createTankBattleSoundSnapshot(state: GameState): TankBattleSoundSnapshot {
+  return {
+    status: state.status,
+    stage: state.stage,
+    baseAlive: state.baseAlive,
+    destroyedEnemies: state.destroyedEnemies,
+    bulletIds: new Set(state.bullets.map((bullet) => bullet.id)),
+    powerupIds: new Set(state.powerups.map((powerup) => powerup.id)),
+    sparkIds: new Set(state.sparks.map((spark) => spark.id)),
+    p1Lives: state.players[0]?.lives ?? 0,
+    p2Lives: state.players[1]?.lives ?? 0,
+    p1Power: state.players[0]?.power ?? 1,
+    p2Power: state.players[1]?.power ?? 1,
+    p1Active: Boolean(state.players[0]?.active),
+    p2Active: Boolean(state.players[1]?.active),
+    totalScore: state.players.reduce((sum, player) => sum + player.score, 0),
+    message: state.message,
+  };
+}
+
+function playTankBattleStateSounds(previous: TankBattleSoundSnapshot | null, state: GameState) {
+  const current = createTankBattleSoundSnapshot(state);
+  if (!previous) return current;
+
+  const newBullets = state.bullets.filter((bullet) => !previous.bulletIds.has(bullet.id));
+  newBullets.slice(0, 3).forEach((bullet) => {
+    playTankBattleSound(bullet.ownerKind === "player" ? "shoot" : "enemyShoot");
+  });
+
+  const enemyDestroyedDelta = current.destroyedEnemies - previous.destroyedEnemies;
+  const playerLostLife = current.p1Lives < previous.p1Lives || current.p2Lives < previous.p2Lives || previous.p1Active !== current.p1Active || previous.p2Active !== current.p2Active;
+  const baseDestroyed = previous.baseAlive && !current.baseAlive;
+  const newSparkCount = state.sparks.filter((spark) => !previous.sparkIds.has(spark.id)).length;
+  const removedPowerup = [...previous.powerupIds].some((id) => !current.powerupIds.has(id));
+  const spawnedPowerup = state.powerups.some((powerup) => !previous.powerupIds.has(powerup.id));
+  const playedPowerupPickup = removedPowerup && current.message !== previous.message;
+
+  if (spawnedPowerup) playTankBattleSound("powerupSpawn");
+  if (playedPowerupPickup) playTankBattleSound("powerup");
+  if (enemyDestroyedDelta > 0) playTankBattleSound(enemyDestroyedDelta > 1 ? "bomb" : "destroy");
+  if (playerLostLife) playTankBattleSound("playerDown");
+  if (baseDestroyed) playTankBattleSound("baseDown");
+  if (newSparkCount > 0 && enemyDestroyedDelta <= 0 && !playerLostLife && !baseDestroyed) playTankBattleSound("hit");
+
+  if (previous.status !== current.status) {
+    if (current.status === "stage-clear") playTankBattleSound("stageClear");
+    if (current.status === "game-over" && !baseDestroyed) playTankBattleSound("gameOver");
+  } else if (previous.stage !== current.stage && current.status === "playing") {
+    playTankBattleSound("start");
+  }
+
+  if (!playedPowerupPickup && (current.p1Power > previous.p1Power || current.p2Power > previous.p2Power || current.p1Lives > previous.p1Lives || current.p2Lives > previous.p2Lives)) {
+    playTankBattleSound("powerup");
+  }
+
+  return current;
+}
 const levelTemplates = [
   [
     ".....B.B.....",
@@ -1019,6 +1313,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
   const remoteInputRef = useRef<InputState>(cloneInput(emptyInput));
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const lastBroadcastRef = useRef(0);
+  const soundSnapshotRef = useRef<TankBattleSoundSnapshot | null>(null);
   const joystickPointerIdRef = useRef<number | null>(null);
   const firePointerIdRef = useRef<number | null>(null);
   const [touchPlayer, setTouchPlayer] = useState<1 | 2>(1);
@@ -1039,10 +1334,12 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
     stateRef.current = createGameState(mode, stage, undefined, readHighScore());
     stateRef.current.status = mode === "online-guest" ? "ready" : "playing";
     stateRef.current.message = mode === "online-guest" ? "等待房主同步" : `第 ${stage} 关`;
+    soundSnapshotRef.current = createTankBattleSoundSnapshot(stateRef.current);
     setUi(buildUiState(stateRef.current, roomId, onlineRole, peers, networkStatus));
   }, [networkStatus, onlineRole, peers, roomId]);
 
   const startSolo = useCallback(() => {
+    playTankBattleSound("start");
     setOnlineRole("none");
     setRoomId("");
     setNetworkStatus("未联网");
@@ -1052,6 +1349,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
   }, [resetState]);
 
   const startLocal = useCallback(() => {
+    playTankBattleSound("start");
     setOnlineRole("none");
     setRoomId("");
     setNetworkStatus("本地双人");
@@ -1060,6 +1358,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
   }, [resetState]);
 
   const startHost = useCallback(() => {
+    playTankBattleSound("start");
     const nextRoom = createRoomId();
     setRoomId(nextRoom);
     setRoomInput(nextRoom);
@@ -1068,6 +1367,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
     stateRef.current = createGameState("online-host", 1, undefined, readHighScore());
     stateRef.current.status = "playing";
     stateRef.current.message = `房间 ${nextRoom}`;
+    soundSnapshotRef.current = createTankBattleSoundSnapshot(stateRef.current);
     setTouchPlayer(1);
     setUi(buildUiState(stateRef.current, nextRoom, "host", peers, canUseOnline ? "创建房间中" : "当前环境未配置联网服务"));
   }, [canUseOnline, peers]);
@@ -1078,12 +1378,14 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
       setNetworkStatus("请输入房间号");
       return;
     }
+    playTankBattleSound("menu");
     setRoomId(nextRoom);
     setRoomInput(nextRoom);
     setOnlineRole("guest");
     setNetworkStatus(canUseOnline ? "加入房间中" : "当前环境未配置联网服务");
     stateRef.current = createGameState("online-guest", 1, undefined, readHighScore());
     stateRef.current.message = `等待房主 ${nextRoom}`;
+    soundSnapshotRef.current = createTankBattleSoundSnapshot(stateRef.current);
     setTouchPlayer(2);
     setUi(buildUiState(stateRef.current, nextRoom, "guest", peers, canUseOnline ? "加入房间中" : "当前环境未配置联网服务"));
   }, [canUseOnline, peers, roomInput]);
@@ -1094,21 +1396,25 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
     if (state.status === "playing") {
       state.status = "paused";
       state.message = "暂停";
+      playTankBattleSound("pause");
     } else if (state.status === "paused") {
       state.status = "playing";
       state.message = `第 ${state.stage} 关`;
+      playTankBattleSound("resume");
     }
     setUi(buildUiState(state, roomId, onlineRole, peers, networkStatus));
   }, [isGuest, networkStatus, onlineRole, peers, roomId]);
 
   const restartCurrent = useCallback(() => {
     if (isGuest) return;
+    playTankBattleSound("start");
     const mode = stateRef.current.mode === "online-guest" ? "solo" : stateRef.current.mode;
     resetState(mode, stateRef.current.stage);
   }, [isGuest, resetState]);
 
   const nextStage = useCallback(() => {
     if (isGuest) return;
+    playTankBattleSound("start");
     const state = stateRef.current;
     const mode = state.mode === "online-guest" ? "solo" : state.mode;
     resetState(mode, state.stage >= MAX_STAGE ? 1 : state.stage + 1);
@@ -1121,6 +1427,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
     url.searchParams.set("role", "guest");
     try {
       await navigator.clipboard.writeText(url.toString());
+      playTankBattleSound("menu");
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1400);
     } catch {
@@ -1159,7 +1466,10 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
       else if (event.key === "ArrowRight") p2.right = pressed;
       else if (key === "enter") p2.fire = pressed;
       else handled = false;
-      if (handled) event.preventDefault();
+      if (handled) {
+        if (pressed) unlockTankBattleAudio();
+        event.preventDefault();
+      }
     };
     const onKeyDown = (event: KeyboardEvent) => applyKey(event, true);
     const onKeyUp = (event: KeyboardEvent) => applyKey(event, false);
@@ -1269,6 +1579,13 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
       } else {
         stateRef.current.time += dt;
       }
+      const p1MovementInput =
+        onlineRole === "guest" ? emptyInput : mergeInput(keyboardP1Ref.current, localTouchPlayer === 1 ? touchInputRef.current : emptyInput);
+      const p2MovementInput =
+        onlineRole === "host" ? emptyInput : mergeInput(keyboardP2Ref.current, localTouchPlayer === 2 || onlineRole === "guest" ? touchInputRef.current : emptyInput);
+      const localMovementInput = mergeInput(p1MovementInput, p2MovementInput);
+      setTankBattleEngineAudio(stateRef.current.status === "playing" && inputDirection(localMovementInput) !== null);
+      soundSnapshotRef.current = playTankBattleStateSounds(soundSnapshotRef.current, stateRef.current);
       const ctx = canvasRef.current?.getContext("2d");
       if (ctx) drawGame(ctx, stateRef.current);
       if (now - lastUi > 120) {
@@ -1278,7 +1595,10 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
       frame = requestAnimationFrame(tick);
     };
     frame = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(frame);
+    return () => {
+      cancelAnimationFrame(frame);
+      stopTankBattleEngineAudio();
+    };
   }, [localTouchPlayer, networkStatus, onlineRole, peers, roomId]);
 
   const modeLabel = useMemo(() => {
@@ -1321,8 +1641,13 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
   };
 
   const handleJoystickDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    unlockTankBattleAudio();
     joystickPointerIdRef.current = event.pointerId;
-    event.currentTarget.setPointerCapture(event.pointerId);
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Synthetic or interrupted pointer events may not be capturable.
+    }
     updateJoystickFromPointer(event);
   };
 
@@ -1334,8 +1659,12 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
   const clearJoystick = (event?: ReactPointerEvent<HTMLButtonElement>) => {
     if (event) {
       event.preventDefault();
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-        event.currentTarget.releasePointerCapture(event.pointerId);
+      try {
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        }
+      } catch {
+        // Ignore pointer capture cleanup races.
       }
     }
     joystickPointerIdRef.current = null;
@@ -1345,16 +1674,25 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
 
   const handleFireDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
     event.preventDefault();
+    unlockTankBattleAudio();
     firePointerIdRef.current = event.pointerId;
-    event.currentTarget.setPointerCapture(event.pointerId);
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Synthetic or interrupted pointer events may not be capturable.
+    }
     setTouch({ fire: true });
   };
 
   const clearFire = (event?: ReactPointerEvent<HTMLButtonElement>) => {
     if (event) {
       event.preventDefault();
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-        event.currentTarget.releasePointerCapture(event.pointerId);
+      try {
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        }
+      } catch {
+        // Ignore pointer capture cleanup races.
       }
     }
     firePointerIdRef.current = null;
