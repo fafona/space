@@ -46,6 +46,7 @@ import { installFrontendAuthBridgeResponder, isTrustedFrontendAuthBridgeOrigin }
 import { PERSONAL_CONSUMPTION_CHANGED_MESSAGE } from "@/lib/personalConsumptionBridge";
 import { buildMerchantBusinessCardShareUrl, resolveMerchantBusinessCardShareOrigin } from "@/lib/merchantBusinessCardShare";
 import { buildMerchantFrontendHref } from "@/lib/siteRouting";
+import { clearTankBattleLobbyReturnTarget, readTankBattleLobbyReturnTarget } from "@/lib/tankBattleLobbyReturn";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import {
   normalizeMerchantBusinessCards,
@@ -2022,8 +2023,10 @@ export default function MePage() {
     const params = new URLSearchParams(window.location.search);
     const targetTab = params.get("mobileTab");
     const targetSection = params.get("selfSection");
-    if (targetTab !== "self" && !targetSection) return;
+    const tankBattleReturnTarget = readTankBattleLobbyReturnTarget("personal");
+    if (targetTab !== "self" && !targetSection && !tankBattleReturnTarget) return;
     setMobileTab("self");
+    let clearReturnTargetTimer: number | null = null;
     if (
       targetSection === "home" ||
       targetSection === "profile" ||
@@ -2034,7 +2037,15 @@ export default function MePage() {
       targetSection === "notifications"
     ) {
       setMobileSelfSection(targetSection);
+    } else if (tankBattleReturnTarget) {
+      setMobileSelfSection("games");
     }
+    if (tankBattleReturnTarget) {
+      clearReturnTargetTimer = window.setTimeout(() => clearTankBattleLobbyReturnTarget("personal"), 2500);
+    }
+    return () => {
+      if (clearReturnTargetTimer !== null) window.clearTimeout(clearReturnTargetTimer);
+    };
   }, []);
   const [mobileSelfLanguageMenuOpen, setMobileSelfLanguageMenuOpen] = useState(false);
   const [conversationInfoOpen, setConversationInfoOpen] = useState(false);

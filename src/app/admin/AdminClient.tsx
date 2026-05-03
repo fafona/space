@@ -260,6 +260,7 @@ import { LANGUAGE_OPTIONS, resolveSupportedLocale } from "@/lib/i18n";
 import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
 import { getMerchantServiceState } from "@/lib/merchantServiceStatus";
 import { MOBILE_SWIPE_BACK_EVENT } from "@/lib/mobileSwipeBack";
+import { clearTankBattleLobbyReturnTarget, readTankBattleLobbyReturnTarget } from "@/lib/tankBattleLobbyReturn";
 import { useMobilePortraitOrientationLock } from "@/lib/useMobilePortraitOrientationLock";
 
 function DeferredAdminPanelLoading({ label }: { label: string }) {
@@ -5297,8 +5298,10 @@ export default function AdminClient({
     const params = new URLSearchParams(window.location.search);
     const targetTab = params.get("mobileTab");
     const targetSection = params.get("selfSection");
-    if (targetTab !== "self" && !targetSection) return;
+    const tankBattleReturnTarget = readTankBattleLobbyReturnTarget("merchant");
+    if (targetTab !== "self" && !targetSection && !tankBattleReturnTarget) return;
     setSupportMobileHomeTab("self");
+    let clearReturnTargetTimer: number | null = null;
     if (
       targetSection === "home" ||
       targetSection === "profile" ||
@@ -5308,7 +5311,15 @@ export default function AdminClient({
       targetSection === "notifications"
     ) {
       setSupportSelfSectionView(targetSection);
+    } else if (tankBattleReturnTarget) {
+      setSupportSelfSectionView("games");
     }
+    if (tankBattleReturnTarget && window.location.pathname !== "/admin") {
+      clearReturnTargetTimer = window.setTimeout(() => clearTankBattleLobbyReturnTarget("merchant"), 2500);
+    }
+    return () => {
+      if (clearReturnTargetTimer !== null) window.clearTimeout(clearReturnTargetTimer);
+    };
   }, []);
   const [supportPeerLocalMessages, setSupportPeerLocalMessages] = useState<LocalPeerSupportMessage[]>([]);
   const [supportBusinessCardDialogOpen, setSupportBusinessCardDialogOpen] = useState(false);

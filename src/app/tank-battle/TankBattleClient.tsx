@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import type { PointerEvent as ReactPointerEvent } from "react";
 import TankBattleIcon from "@/components/TankBattleIcon";
 import { hasSupabaseEnv, supabase } from "@/lib/supabase";
+import { writeTankBattleLobbyReturnTarget } from "@/lib/tankBattleLobbyReturn";
 
 type Direction = "up" | "down" | "left" | "right";
 type GameMode = "solo" | "online-host" | "online-guest";
@@ -1820,6 +1821,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 游戏大厅"
   const returnToGameLobby = useCallback(() => {
     exitGame();
     if (typeof window === "undefined") return;
+    writeTankBattleLobbyReturnTarget(lobbyHref);
     const targetUrl = new URL(lobbyHref, window.location.origin).toString();
     window.location.assign(targetUrl);
   }, [exitGame, lobbyHref]);
