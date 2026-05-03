@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import TankBattleIcon from "@/components/TankBattleIcon";
 import { hasSupabaseEnv, supabase } from "@/lib/supabase";
@@ -59,6 +59,11 @@ type Powerup = {
   expiresAt: number;
 };
 
+type PowerupPickup = {
+  id: string;
+  type: PowerupType;
+};
+
 type Spark = {
   id: string;
   x: number;
@@ -86,6 +91,7 @@ type GameState = {
   baseAlive: boolean;
   freezeUntil: number;
   shovelUntil: number;
+  lastPowerupPickup: PowerupPickup | null;
   stageClearAt: number;
   message: string;
   highScore: number;
@@ -148,6 +154,13 @@ type TankBattleSoundSnapshot = {
   p2Active: boolean;
   totalScore: number;
   message: string;
+  lastPowerupPickupId: string;
+  lastPowerupPickupType: PowerupType | null;
+};
+
+type TankBattleMobileFrame = {
+  width: number;
+  height: number;
 };
 
 type AudioWindow = Window &
@@ -211,37 +224,37 @@ let tankBattleMusicStep = 0;
 let tankBattleMusicActive = false;
 
 const tankBattleMusicPattern: Array<{ note?: number; harmony?: number; bass?: number; accent?: boolean }> = [
-  { note: 196, bass: 98, accent: true },
-  { note: 247 },
-  { note: 262 },
-  { note: 196 },
-  { note: 294, bass: 147, accent: true },
-  { note: 262 },
-  { note: 247 },
-  { note: 196 },
   { note: 220, bass: 110, accent: true },
-  { note: 262, harmony: 330 },
-  { note: 294 },
+  { note: 277 },
   { note: 330 },
-  { note: 294, bass: 147, accent: true },
-  { note: 262 },
-  { note: 220 },
-  {},
-  { note: 196, bass: 98, accent: true },
-  { note: 196 },
-  { note: 247 },
-  { note: 262 },
-  { note: 330, bass: 165, accent: true },
-  { note: 294 },
-  { note: 262 },
+  { note: 277 },
+  { note: 392, bass: 147, accent: true },
+  { note: 330 },
+  { note: 277, harmony: 415 },
   {},
   { note: 247, bass: 123, accent: true },
-  { note: 294 },
-  { note: 330, harmony: 392 },
-  { note: 294 },
+  { note: 311 },
+  { note: 370 },
+  { note: 311 },
+  { note: 440, bass: 165, accent: true },
+  { note: 370 },
+  { note: 311, harmony: 466 },
+  {},
   { note: 262, bass: 131, accent: true },
-  { note: 247 },
-  { note: 220 },
+  { note: 330 },
+  { note: 392 },
+  { note: 330 },
+  { note: 494, bass: 196, accent: true },
+  { note: 392 },
+  { note: 330, harmony: 523 },
+  {},
+  { note: 294, bass: 147, accent: true },
+  { note: 370 },
+  { note: 440 },
+  { note: 370 },
+  { note: 523, bass: 220, accent: true },
+  { note: 440 },
+  { note: 370, harmony: 587 },
   {},
 ];
 
@@ -290,6 +303,28 @@ function requestTankBattleLandscapeMode() {
     return;
   }
   lockLandscape();
+}
+
+function readTankBattleMobileFrame(): TankBattleMobileFrame | null {
+  if (typeof window === "undefined") return null;
+  const isMobile =
+    typeof window.matchMedia === "function"
+      ? window.matchMedia("(max-width: 900px), (pointer: coarse) and (max-width: 1024px)").matches
+      : window.innerWidth <= 900;
+  if (!isMobile) return null;
+  const visualViewport = window.visualViewport;
+  const viewportWidth = Math.round(visualViewport?.width || window.innerWidth || 0);
+  const viewportHeight = Math.round(visualViewport?.height || window.innerHeight || 0);
+  const fallbackWidth = Number.isFinite(window.screen?.width) ? window.screen.width : viewportWidth;
+  const fallbackHeight = Number.isFinite(window.screen?.height) ? window.screen.height : viewportHeight;
+  const width = Math.max(viewportWidth, viewportHeight, fallbackWidth, fallbackHeight);
+  const height = Math.min(
+    Math.max(1, viewportWidth),
+    Math.max(1, viewportHeight),
+    Math.max(1, fallbackWidth),
+    Math.max(1, fallbackHeight),
+  );
+  return { width: Math.max(1, Math.round(width)), height: Math.max(1, Math.round(height)) };
 }
 
 function scheduleTankBattleTone(
@@ -417,6 +452,35 @@ function playTankBattleSound(name: TankBattleSoundName) {
   }
 }
 
+function playTankBattlePowerupSound(type: PowerupType) {
+  const ctx = unlockTankBattleAudio();
+  if (!ctx) return;
+  if (type === "helmet") {
+    scheduleTankBattleTone(ctx, { type: "triangle", frequency: 420, duration: 0.07, gain: 0.045 });
+    scheduleTankBattleTone(ctx, { type: "triangle", frequency: 620, delay: 0.06, duration: 0.09, gain: 0.045 });
+    scheduleTankBattleTone(ctx, { type: "sine", frequency: 930, delay: 0.14, duration: 0.14, gain: 0.032 });
+  } else if (type === "star") {
+    [523, 659, 784, 1047].forEach((frequency, index) => {
+      scheduleTankBattleTone(ctx, { type: "square", frequency, delay: index * 0.045, duration: 0.07, gain: 0.046 });
+    });
+  } else if (type === "bomb") {
+    scheduleTankBattleTone(ctx, { type: "sawtooth", frequency: 160, endFrequency: 46, duration: 0.22, gain: 0.08 });
+    scheduleTankBattleNoise(ctx, { delay: 0.04, duration: 0.18, gain: 0.09, frequency: 520 });
+  } else if (type === "clock") {
+    [900, 620, 900, 620].forEach((frequency, index) => {
+      scheduleTankBattleTone(ctx, { type: "square", frequency, delay: index * 0.055, duration: 0.035, gain: 0.038 });
+    });
+  } else if (type === "shovel") {
+    scheduleTankBattleNoise(ctx, { duration: 0.08, gain: 0.05, frequency: 2400, type: "highpass" });
+    scheduleTankBattleTone(ctx, { type: "triangle", frequency: 180, endFrequency: 120, delay: 0.03, duration: 0.11, gain: 0.046 });
+    scheduleTankBattleTone(ctx, { type: "square", frequency: 260, delay: 0.11, duration: 0.06, gain: 0.034 });
+  } else if (type === "tank") {
+    [392, 523, 659, 784, 1047].forEach((frequency, index) => {
+      scheduleTankBattleTone(ctx, { type: "triangle", frequency, delay: index * 0.04, duration: 0.075, gain: 0.048 });
+    });
+  }
+}
+
 function scheduleTankBattleMusicStep(ctx: AudioContext) {
   const step = tankBattleMusicPattern[tankBattleMusicStep % tankBattleMusicPattern.length] ?? {};
   if (step.note) {
@@ -446,6 +510,8 @@ function scheduleTankBattleMusicStep(ctx: AudioContext) {
   }
   if (tankBattleMusicStep % 4 === 0) {
     scheduleTankBattleNoise(ctx, { duration: 0.026, gain: 0.008, frequency: 1900, type: "highpass" });
+  } else if (tankBattleMusicStep % 4 === 2) {
+    scheduleTankBattleNoise(ctx, { duration: 0.018, gain: 0.005, frequency: 2600, type: "highpass" });
   }
   tankBattleMusicStep += 1;
 }
@@ -471,7 +537,7 @@ function setTankBattleBackgroundMusic(active: boolean) {
     if (!tankBattleMusicActive || !tankBattleAudioContext || tankBattleAudioContext.state === "closed") return;
     if (tankBattleAudioContext.state === "suspended") return;
     scheduleTankBattleMusicStep(tankBattleAudioContext);
-  }, 145);
+  }, 132);
 }
 
 function stopTankBattleBackgroundMusic() {
@@ -535,6 +601,8 @@ function createTankBattleSoundSnapshot(state: GameState): TankBattleSoundSnapsho
     p2Active: Boolean(state.players[1]?.active),
     totalScore: state.players.reduce((sum, player) => sum + player.score, 0),
     message: state.message,
+    lastPowerupPickupId: state.lastPowerupPickup?.id ?? "",
+    lastPowerupPickupType: state.lastPowerupPickup?.type ?? null,
   };
 }
 
@@ -551,12 +619,15 @@ function playTankBattleStateSounds(previous: TankBattleSoundSnapshot | null, sta
   const playerLostLife = current.p1Lives < previous.p1Lives || current.p2Lives < previous.p2Lives || previous.p1Active !== current.p1Active || previous.p2Active !== current.p2Active;
   const baseDestroyed = previous.baseAlive && !current.baseAlive;
   const newSparkCount = state.sparks.filter((spark) => !previous.sparkIds.has(spark.id)).length;
-  const removedPowerup = [...previous.powerupIds].some((id) => !current.powerupIds.has(id));
   const spawnedPowerup = state.powerups.some((powerup) => !previous.powerupIds.has(powerup.id));
-  const playedPowerupPickup = removedPowerup && current.message !== previous.message;
+  const playedPowerupPickup = Boolean(
+    current.lastPowerupPickupId &&
+      current.lastPowerupPickupId !== previous.lastPowerupPickupId &&
+      current.lastPowerupPickupType,
+  );
 
   if (spawnedPowerup) playTankBattleSound("powerupSpawn");
-  if (playedPowerupPickup) playTankBattleSound("powerup");
+  if (playedPowerupPickup && current.lastPowerupPickupType) playTankBattlePowerupSound(current.lastPowerupPickupType);
   if (enemyDestroyedDelta > 0) playTankBattleSound(enemyDestroyedDelta > 1 ? "bomb" : "destroy");
   if (playerLostLife) playTankBattleSound("playerDown");
   if (baseDestroyed) playTankBattleSound("baseDown");
@@ -824,6 +895,7 @@ function createGameState(mode: GameMode, stage = 1, previousPlayers?: Tank[], hi
     baseAlive: true,
     freezeUntil: 0,
     shovelUntil: 0,
+    lastPowerupPickup: null,
     stageClearAt: 0,
     message: mode === "online-guest" ? "等待房主开始" : "选择模式后开始",
     highScore,
@@ -1179,6 +1251,7 @@ function updatePowerups(state: GameState) {
     );
     if (!picked) continue;
     applyPowerup(state, player, picked.type);
+    state.lastPowerupPickup = { id: picked.id, type: picked.type };
     state.powerups = state.powerups.filter((item) => item.id !== picked.id);
   }
 }
@@ -1479,7 +1552,9 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
   const lastBroadcastRef = useRef(0);
   const soundSnapshotRef = useRef<TankBattleSoundSnapshot | null>(null);
   const joystickPointerIdRef = useRef<number | null>(null);
+  const joystickDirectionRef = useRef<Direction | null>(null);
   const firePointerIdRef = useRef<number | null>(null);
+  const [mobileFrame] = useState<TankBattleMobileFrame | null>(readTankBattleMobileFrame);
   const [joystickThumb, setJoystickThumb] = useState({ x: 0, y: 0, active: false });
   const [menuView, setMenuView] = useState<"mode" | "online">("mode");
   const [roomInput, setRoomInput] = useState("");
@@ -1498,6 +1573,16 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
   const showOnlineMenu = menuView === "online" && ui.status === "ready";
   const showGameOverMenu = ui.status === "game-over";
   const showTouchControls = ui.status === "playing" || ui.status === "paused";
+  const pageStyle = useMemo(
+    () =>
+      mobileFrame
+        ? ({
+            "--tank-battle-landscape-width": `${mobileFrame.width}px`,
+            "--tank-battle-landscape-height": `${mobileFrame.height}px`,
+          } as CSSProperties)
+        : undefined,
+    [mobileFrame],
+  );
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof document === "undefined") return;
@@ -1583,6 +1668,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
     const syncViewportLock = () => {
       if (shouldLock()) {
         lockViewport();
+        requestTankBattleLandscapeMode();
       } else {
         unlockViewport();
       }
@@ -1898,9 +1984,19 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
     touchInputRef.current = { ...touchInputRef.current, ...patch };
   };
 
+  const applyJoystickDirection = (direction: Direction | null) => {
+    joystickDirectionRef.current = direction;
+    setTouch({
+      up: direction === "up",
+      down: direction === "down",
+      left: direction === "left",
+      right: direction === "right",
+    });
+  };
+
   const applyJoystickVector = (rawX: number, rawY: number) => {
-    const maxRadius = 42;
-    const deadZone = 10;
+    const maxRadius = 48;
+    const deadZone = 14;
     const distance = Math.hypot(rawX, rawY);
     const scale = distance > maxRadius ? maxRadius / distance : 1;
     const x = rawX * scale;
@@ -1908,16 +2004,20 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
     setJoystickThumb({ x, y, active: distance > deadZone });
 
     if (distance < deadZone) {
-      setTouch({ up: false, down: false, left: false, right: false });
+      applyJoystickDirection(null);
       return;
     }
 
-    if (Math.abs(rawX) > Math.abs(rawY)) {
-      setTouch({ up: false, down: false, left: rawX < 0, right: rawX > 0 });
-      return;
-    }
-
-    setTouch({ up: rawY < 0, down: rawY > 0, left: false, right: false });
+    const angle = Math.atan2(y, x);
+    const nextDirection =
+      angle >= -Math.PI * 0.25 && angle < Math.PI * 0.25
+        ? "right"
+        : angle >= Math.PI * 0.25 && angle < Math.PI * 0.75
+          ? "down"
+          : angle <= -Math.PI * 0.25 && angle > -Math.PI * 0.75
+            ? "up"
+            : "left";
+    applyJoystickDirection(nextDirection);
   };
 
   const updateJoystickFromPointer = (event: ReactPointerEvent<HTMLButtonElement>) => {
@@ -1954,6 +2054,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
       }
     }
     joystickPointerIdRef.current = null;
+    joystickDirectionRef.current = null;
     setJoystickThumb({ x: 0, y: 0, active: false });
     setTouch({ up: false, down: false, left: false, right: false });
   };
@@ -1986,7 +2087,10 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
   };
 
   return (
-    <main className="tank-battle-page min-h-screen bg-[#eef2f3] px-3 pb-[calc(env(safe-area-inset-bottom)+1.25rem)] pt-[calc(env(safe-area-inset-top)+0.9rem)] text-slate-950">
+    <main
+      className="tank-battle-page min-h-screen bg-[#eef2f3] px-3 pb-[calc(env(safe-area-inset-bottom)+1.25rem)] pt-[calc(env(safe-area-inset-top)+0.9rem)] text-slate-950"
+      style={pageStyle}
+    >
       <style jsx global>{`
         .tank-battle-page {
           overscroll-behavior: none;
@@ -2024,8 +2128,8 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
           }
 
           .tank-battle-shell {
-            height: 100dvh;
-            width: 100dvw;
+            height: var(--tank-battle-landscape-height, 100dvh);
+            width: var(--tank-battle-landscape-width, 100dvw);
             max-width: none;
             gap: 0;
             overflow: hidden;
@@ -2043,12 +2147,12 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
 
           .tank-battle-layout {
             display: block;
-            height: 100dvh;
+            height: var(--tank-battle-landscape-height, 100dvh);
           }
 
           .tank-battle-stage-card {
             position: relative;
-            height: 100dvh;
+            height: var(--tank-battle-landscape-height, 100dvh);
             overflow: hidden;
             border: 0;
             border-radius: 0;
@@ -2060,9 +2164,9 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
           }
 
           .tank-battle-canvas-wrap {
-            height: 100dvh;
+            height: var(--tank-battle-landscape-height, 100dvh);
             max-width: none;
-            width: 100dvh;
+            width: var(--tank-battle-landscape-height, 100dvh);
             padding: max(4px, env(safe-area-inset-top));
             border-radius: 0;
             box-shadow: none;
@@ -2123,20 +2227,20 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
             position: absolute;
             left: 0;
             top: 0;
-            width: 100dvh;
-            height: 100dvw;
+            width: var(--tank-battle-landscape-width, 100dvh);
+            height: var(--tank-battle-landscape-height, 100dvw);
             transform: rotate(90deg) translateY(-100%);
             transform-origin: top left;
           }
 
           .tank-battle-canvas-wrap {
-            height: 100dvw;
-            width: 100dvw;
+            height: var(--tank-battle-landscape-height, 100dvw);
+            width: var(--tank-battle-landscape-height, 100dvw);
           }
 
           .tank-battle-layout,
           .tank-battle-stage-card {
-            height: 100dvw;
+            height: var(--tank-battle-landscape-height, 100dvw);
           }
         }
       `}</style>
@@ -2316,13 +2420,10 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
                   onLostPointerCapture={() => clearJoystick()}
                   onContextMenu={(event) => event.preventDefault()}
                 >
-                  <span className="absolute left-1/2 top-3 h-2 w-2 -translate-x-1/2 rounded-full bg-white/35" />
-                  <span className="absolute bottom-3 left-1/2 h-2 w-2 -translate-x-1/2 rounded-full bg-white/25" />
-                  <span className="absolute left-3 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-white/25" />
-                  <span className="absolute right-3 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-white/25" />
-                  <span className="absolute left-1/2 top-1/2 h-[74px] w-[74px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/10 bg-white/5" />
+                  <span className="absolute inset-3 rounded-full border border-white/10 bg-[radial-gradient(circle,rgba(255,255,255,0.14)_0%,rgba(255,255,255,0.06)_46%,rgba(15,23,42,0)_72%)]" />
+                  <span className="absolute inset-[30px] rounded-full border border-white/10 bg-white/5" />
                   <span
-                    className={`absolute left-1/2 top-1/2 h-[50px] w-[50px] rounded-full border border-white/20 bg-slate-100 shadow-[0_10px_24px_rgba(0,0,0,0.28)] transition ${joystickThumb.active ? "opacity-100" : "opacity-90"}`}
+                    className={`absolute left-1/2 top-1/2 h-[50px] w-[50px] rounded-full border border-white/20 bg-slate-100 shadow-[0_10px_24px_rgba(0,0,0,0.28)] ${joystickThumb.active ? "opacity-100" : "opacity-90"}`}
                     style={{ transform: `translate(calc(-50% + ${joystickThumb.x}px), calc(-50% + ${joystickThumb.y}px))` }}
                   />
                 </button>
