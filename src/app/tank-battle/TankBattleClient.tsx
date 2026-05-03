@@ -1573,6 +1573,9 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
   const showOnlineMenu = menuView === "online" && ui.status === "ready";
   const showGameOverMenu = ui.status === "game-over";
   const showTouchControls = ui.status === "playing" || ui.status === "paused";
+  const showMobileGameHud = ui.status === "playing" || ui.status === "paused";
+  const showPauseMenu = ui.status === "paused" && !isGuest;
+  const mobileLivesLabel = ui.p2Lives > 0 ? `${ui.p1Lives} / ${ui.p2Lives}` : String(ui.p1Lives);
   const pageStyle = useMemo(
     () =>
       mobileFrame
@@ -1787,6 +1790,29 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
     }
     setUi(buildUiState(state, roomId, onlineRole, peers, networkStatus));
   }, [isGuest, networkStatus, onlineRole, peers, roomId]);
+
+  const exitGame = useCallback(() => {
+    playTankBattleSound("menu");
+    stopTankBattleEngineAudio();
+    stopTankBattleBackgroundMusic();
+    touchInputRef.current = cloneInput(emptyInput);
+    keyboardP1Ref.current = cloneInput(emptyInput);
+    keyboardP2Ref.current = cloneInput(emptyInput);
+    remoteInputRef.current = cloneInput(emptyInput);
+    setJoystickThumb({ x: 0, y: 0, active: false });
+    setMenuView("mode");
+    setOnlineRole("none");
+    setRoomId("");
+    setRoomInput("");
+    setNetworkStatus("未联网");
+    setPeers(0);
+    const nextState = createGameState("solo", 1, undefined, readHighScore());
+    nextState.status = "ready";
+    nextState.message = "选择模式后开始";
+    stateRef.current = nextState;
+    soundSnapshotRef.current = createTankBattleSoundSnapshot(nextState);
+    setUi(buildUiState(nextState, "", "none", 0, "未联网"));
+  }, []);
 
   const restartCurrent = useCallback(() => {
     if (isGuest) return;
@@ -2088,6 +2114,7 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
 
   return (
     <main
+      data-mobile-swipe-back-ignore
       className="tank-battle-page min-h-screen bg-[#eef2f3] px-3 pb-[calc(env(safe-area-inset-bottom)+1.25rem)] pt-[calc(env(safe-area-inset-top)+0.9rem)] text-slate-950"
       style={pageStyle}
     >
@@ -2110,12 +2137,17 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
         .tank-battle-menu-overlay {
           position: absolute;
           inset: 0.75rem;
-          z-index: 2;
+          z-index: 5;
           display: flex;
           align-items: center;
           justify-content: center;
           border-radius: 18px;
           background: radial-gradient(circle at center, rgba(15, 23, 42, 0.2), rgba(2, 6, 23, 0.66));
+        }
+
+        .tank-battle-mobile-hud,
+        .tank-battle-mobile-pause-button {
+          display: none;
         }
 
         @media (max-width: 900px) {
@@ -2209,10 +2241,50 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
             display: none !important;
           }
 
+          .tank-battle-mobile-hud {
+            position: absolute;
+            left: max(12px, env(safe-area-inset-left));
+            top: max(10px, env(safe-area-inset-top));
+            z-index: 3;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            pointer-events: none;
+          }
+
+          .tank-battle-mobile-hud > div {
+            min-width: 86px;
+            border-radius: 14px;
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            background: rgba(2, 6, 23, 0.68);
+            padding: 7px 10px;
+            color: #f8fafc;
+            box-shadow: 0 10px 22px rgba(2, 6, 23, 0.24);
+            backdrop-filter: blur(10px);
+          }
+
+          .tank-battle-mobile-pause-button {
+            position: absolute;
+            right: max(12px, env(safe-area-inset-right));
+            top: max(10px, env(safe-area-inset-top));
+            z-index: 4;
+            display: inline-flex;
+            height: 44px;
+            width: 44px;
+            align-items: center;
+            justify-content: center;
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.16);
+            background: rgba(2, 6, 23, 0.72);
+            color: #f8fafc;
+            box-shadow: 0 12px 26px rgba(2, 6, 23, 0.28);
+            backdrop-filter: blur(10px);
+          }
+
           .tank-battle-menu-overlay {
             position: absolute;
             inset: 0;
-            z-index: 2;
+            z-index: 5;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -2285,6 +2357,32 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
                 className="h-full w-full rounded-[14px] bg-slate-900 [image-rendering:pixelated]"
               />
             </div>
+
+            {showMobileGameHud ? (
+              <>
+                <div className="tank-battle-mobile-hud" aria-hidden="true">
+                  <div>
+                    <div className="text-[10px] font-bold text-slate-300">关卡</div>
+                    <div className="text-lg font-black leading-none tabular-nums">{ui.stage}</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] font-bold text-slate-300">生命</div>
+                    <div className="text-lg font-black leading-none tabular-nums">{mobileLivesLabel}</div>
+                  </div>
+                </div>
+                {ui.status === "playing" && !isGuest ? (
+                  <button
+                    type="button"
+                    className="tank-battle-mobile-pause-button"
+                    onClick={pauseOrResume}
+                    aria-label="暂停"
+                  >
+                    <span className="h-4 w-1.5 rounded-full bg-current" />
+                    <span className="ml-1.5 h-4 w-1.5 rounded-full bg-current" />
+                  </button>
+                ) : null}
+              </>
+            ) : null}
 
             {showModeMenu ? (
               <div className="tank-battle-menu-overlay">
@@ -2382,6 +2480,30 @@ export default function TankBattleClient({ subtitle = "小工具 / 小游戏" }:
                       )}
                     </div>
                   )}
+                </div>
+              </div>
+            ) : null}
+
+            {showPauseMenu ? (
+              <div className="tank-battle-menu-overlay">
+                <div className="w-full max-w-[340px] rounded-[26px] border border-white/15 bg-slate-950/92 p-4 text-center text-white shadow-[0_24px_60px_rgba(0,0,0,0.38)] backdrop-blur">
+                  <div className="text-2xl font-black">暂停</div>
+                  <div className="mt-4 grid gap-3">
+                    <button
+                      type="button"
+                      className="rounded-2xl bg-emerald-500 px-4 py-4 text-base font-black text-slate-950 active:scale-[0.98]"
+                      onClick={pauseOrResume}
+                    >
+                      继续
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-2xl border border-white/15 bg-white/10 px-4 py-4 text-base font-black text-white active:scale-[0.98]"
+                      onClick={exitGame}
+                    >
+                      退出游戏
+                    </button>
+                  </div>
                 </div>
               </div>
             ) : null}
